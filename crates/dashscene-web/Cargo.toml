@@ -1,0 +1,11 @@
+[package]
+name = "dashscene-web"
+version = "0.1.0"
+edition = "2024"
+description = "Web host backend for DashScene"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/driftsys/dashscene"
+documentation = "https://docs.rs/dashscene-web"
+keywords = ["dashscene", "web", "wasm", "browser", "host"]
+categories = ["gui", "web-programming"]

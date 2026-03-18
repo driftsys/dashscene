@@ -1,0 +1,21 @@
+[workspace]
+members = [
+    "crates/dashscene",
+    "crates/dashscore",
+    "crates/dashlang",
+    "crates/dashc",
+    "crates/dashcue",
+    "crates/dashpaint",
+    "crates/dashbuf",
+    "crates/dashscene-core",
+    "crates/dashscene-engine",
+    "crates/dashscene-compose",
+    "crates/dashscene-unity",
+    "crates/dashscene-web",
+]
+resolver = "3"
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1

@@ -1,0 +1,11 @@
+[package]
+name = "dashscene-unity"
+version = "0.1.0"
+edition = "2024"
+description = "Unity host backend for DashScene"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/driftsys/dashscene"
+documentation = "https://docs.rs/dashscene-unity"
+keywords = ["dashscene", "unity", "gamedev", "host", "rendering"]
+categories = ["gui", "rendering"]

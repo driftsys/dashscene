@@ -1,0 +1,11 @@
+[package]
+name = "dashbuf"
+version = "0.1.0"
+edition = "2024"
+description = "Binary serialization and transport layer for DashScene"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/driftsys/dashscene"
+documentation = "https://docs.rs/dashbuf"
+keywords = ["dashscene", "dashbuf", "serialization", "flatbuffer", "transport"]
+categories = ["encoding", "data-structures"]

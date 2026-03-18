@@ -1,0 +1,11 @@
+[package]
+name = "dashcue"
+version = "0.1.0"
+edition = "2024"
+description = "Event, intent, and state model for DashScene"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/driftsys/dashscene"
+documentation = "https://docs.rs/dashcue"
+keywords = ["dashscene", "dashcue", "event", "state", "interaction"]
+categories = ["gui"]

@@ -1,0 +1,11 @@
+[package]
+name = "dashscene-compose"
+version = "0.1.0"
+edition = "2024"
+description = "Android Jetpack Compose host backend for DashScene"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/driftsys/dashscene"
+documentation = "https://docs.rs/dashscene-compose"
+keywords = ["dashscene", "compose", "android", "jetpack", "host"]
+categories = ["gui", "rendering"]

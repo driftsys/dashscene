@@ -1,0 +1,11 @@
+[package]
+name = "dashscene"
+version = "0.1.0"
+edition = "2024"
+description = "Umbrella crate for the DashScene semantic UI scene platform"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/driftsys/dashscene"
+documentation = "https://docs.rs/dashscene"
+keywords = ["dashscene", "ui", "hmi", "cockpit", "dashboard"]
+categories = ["gui"]

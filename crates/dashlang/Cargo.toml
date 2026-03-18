@@ -1,0 +1,11 @@
+[package]
+name = "dashlang"
+version = "0.1.0"
+edition = "2024"
+description = "Declarative language for expressing DashScene content"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/driftsys/dashscene"
+documentation = "https://docs.rs/dashlang"
+keywords = ["dashscene", "dashlang", "dsl", "language", "ui"]
+categories = ["gui", "parsing"]

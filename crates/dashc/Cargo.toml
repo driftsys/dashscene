@@ -1,0 +1,11 @@
+[package]
+name = "dashc"
+version = "0.1.0"
+edition = "2024"
+description = "Compiler, lowering, and artifact generation for DashScene"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/driftsys/dashscene"
+documentation = "https://docs.rs/dashc"
+keywords = ["dashscene", "dashc", "compiler", "lowering", "codegen"]
+categories = ["gui", "compilers"]

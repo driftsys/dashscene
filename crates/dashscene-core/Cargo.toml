@@ -1,0 +1,11 @@
+[package]
+name = "dashscene-core"
+version = "0.1.0"
+edition = "2024"
+description = "Canonical semantic scene model for DashScene"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/driftsys/dashscene"
+documentation = "https://docs.rs/dashscene-core"
+keywords = ["dashscene", "core", "scene", "model", "semantic"]
+categories = ["gui", "data-structures"]

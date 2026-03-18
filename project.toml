@@ -1,0 +1,11 @@
+#:schema https://driftsys.github.io/schemas/project/v1.json
+name = "io.driftsys.dashscene"
+version = "0.0.0"
+category = ["platform", "library"]
+description = "Semantic UI scene platform for adaptive cockpit and dashboard HMIs"
+license = "MIT"
+keywords = ["dashscene", "ui", "hmi", "cockpit", "dashboard"]
+authors = ["driftsys"]
+homepage = "https://github.com/driftsys/dashscene"
+bugs = "https://github.com/driftsys/dashscene/issues"
+repository = "https://github.com/driftsys/dashscene"

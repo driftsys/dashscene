@@ -1,0 +1,11 @@
+[package]
+name = "dashscore"
+version = "0.1.0"
+edition = "2024"
+description = "IDE, studio, and authoring environment for DashScene"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/driftsys/dashscene"
+documentation = "https://docs.rs/dashscore"
+keywords = ["dashscene", "dashscore", "ide", "authoring", "hmi"]
+categories = ["gui", "development-tools"]

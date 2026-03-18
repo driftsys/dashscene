@@ -1,0 +1,11 @@
+[package]
+name = "dashpaint"
+version = "0.1.0"
+edition = "2024"
+description = "Theming, appearance, and branding layer for DashScene"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/driftsys/dashscene"
+documentation = "https://docs.rs/dashpaint"
+keywords = ["dashscene", "dashpaint", "theme", "palette", "branding"]
+categories = ["gui", "rendering"]

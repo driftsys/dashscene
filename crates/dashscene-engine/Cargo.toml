@@ -1,0 +1,11 @@
+[package]
+name = "dashscene-engine"
+version = "0.1.0"
+edition = "2024"
+description = "Adaptive layout engine and realization core for DashScene"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/driftsys/dashscene"
+documentation = "https://docs.rs/dashscene-engine"
+keywords = ["dashscene", "engine", "layout", "adaptive", "realization"]
+categories = ["gui", "rendering"]
