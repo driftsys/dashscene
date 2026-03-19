@@ -7,24 +7,22 @@ A semantic UI scene platform for adaptive cockpit and dashboard HMIs.
 
 DashScene is designed for systems where UI must be renderer-neutral, adaptive, efficient to transport, and host-performed rather than fully pre-rendered.
 
-> **DashScore authors, DashLang expresses, DashC lowers, DashScene arranges, DashCue reacts, DashPaint styles, and each host performs.**
-
 ## Workspace Crates
 
-| Crate | Description |
-|---|---|
-| [`dashscene`](crates/dashscene) | Umbrella crate for the DashScene ecosystem |
-| [`dashscore`](crates/dashscore) | IDE, studio, and authoring environment |
-| [`dashlang`](crates/dashlang) | Declarative language for expressing scenes |
-| [`dashc`](crates/dashc) | Compiler, lowering, and artifact generation |
-| [`dashcue`](crates/dashcue) | Event, intent, and state model |
-| [`dashpaint`](crates/dashpaint) | Theming, appearance, and branding layer |
-| [`dashbuf`](crates/dashbuf) | Binary serialization and transport layer |
-| [`dashscene-core`](crates/dashscene-core) | Canonical semantic scene model |
-| [`dashscene-engine`](crates/dashscene-engine) | Adaptive layout engine and realization core |
-| [`dashscene-compose`](crates/dashscene-compose) | Android Jetpack Compose host backend |
-| [`dashscene-unity`](crates/dashscene-unity) | Unity host backend |
-| [`dashscene-web`](crates/dashscene-web) | Web host backend |
+| Crate                                           | Description                                 |
+| ----------------------------------------------- | ------------------------------------------- |
+| [`dashscene`](crates/dashscene)                 | Umbrella crate for the DashScene ecosystem  |
+| [`dashscore`](crates/dashscore)                 | IDE, studio, and authoring environment      |
+| [`dashlang`](crates/dashlang)                   | Declarative language for expressing scenes  |
+| [`dashc`](crates/dashc)                         | Compiler, lowering, and artifact generation |
+| [`dashcue`](crates/dashcue)                     | Event, intent, and state model              |
+| [`dashpaint`](crates/dashpaint)                 | Theming, appearance, and branding layer     |
+| [`dashbuf`](crates/dashbuf)                     | Binary serialization and transport layer    |
+| [`dashscene-core`](crates/dashscene-core)       | Canonical semantic scene model              |
+| [`dashscene-engine`](crates/dashscene-engine)   | Adaptive layout engine and realization core |
+| [`dashscene-compose`](crates/dashscene-compose) | Android Jetpack Compose host backend        |
+| [`dashscene-unity`](crates/dashscene-unity)     | Unity host backend                          |
+| [`dashscene-web`](crates/dashscene-web)         | Web host backend                            |
 
 ## Architecture
 

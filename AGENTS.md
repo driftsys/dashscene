@@ -2,7 +2,9 @@
 
 ## Project
 
-DashScene is a semantic UI scene platform for adaptive cockpit and dashboard HMIs. It separates authored UI intent from runtime layout and rendering, targeting Android Compose, Unity, and Web hosts.
+DashScene is a semantic UI scene platform for adaptive cockpit and dashboard
+HMIs. It separates authored UI intent from runtime layout and rendering,
+targeting Android Compose, Unity, and Web hosts.
 
 ## Build Commands
 
@@ -20,20 +22,20 @@ DashScene is a semantic UI scene platform for adaptive cockpit and dashboard HMI
 
 Cargo workspace with crates under `crates/`:
 
-| Crate | Role |
-|---|---|
-| `dashscene` | Umbrella crate, re-exports |
-| `dashscore` | IDE, studio, authoring environment |
-| `dashlang` | Declarative language / source form |
-| `dashc` | Compiler, lowering, artifact generation |
-| `dashcue` | Event, intent, state model |
-| `dashpaint` | Theming, appearance, branding |
-| `dashbuf` | Binary serialization, FlatBuffer transport |
-| `dashscene-core` | Canonical semantic scene model |
-| `dashscene-engine` | Adaptive layout engine, realization core |
-| `dashscene-compose` | Android Jetpack Compose host backend |
-| `dashscene-unity` | Unity host backend |
-| `dashscene-web` | Web host backend |
+| Crate               | Role                                       |
+| ------------------- | ------------------------------------------ |
+| `dashscene`         | Umbrella crate, re-exports                 |
+| `dashscore`         | IDE, studio, authoring environment         |
+| `dashlang`          | Declarative language / source form         |
+| `dashc`             | Compiler, lowering, artifact generation    |
+| `dashcue`           | Event, intent, state model                 |
+| `dashpaint`         | Theming, appearance, branding              |
+| `dashbuf`           | Binary serialization, FlatBuffer transport |
+| `dashscene-core`    | Canonical semantic scene model             |
+| `dashscene-engine`  | Adaptive layout engine, realization core   |
+| `dashscene-compose` | Android Jetpack Compose host backend       |
+| `dashscene-unity`   | Unity host backend                         |
+| `dashscene-web`     | Web host backend                           |
 
 ### Design principles
 
