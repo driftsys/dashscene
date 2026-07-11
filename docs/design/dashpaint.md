@@ -38,35 +38,37 @@ All types and the trait live in `crates/dashpaint/src/lib.rs`:
 - `PaintTable` — a dense paint list behind a private field, indexed by
   `RectEntry.paint`: `new`, `push(&mut self, PaintKind) -> u32`
   (returns the sequential index just assigned), `get(&self, u32) ->
-  Option<&PaintKind>`, `len`, `is_empty`.
+  Option<&PaintKind>`, `resolve(&self, u32) -> &PaintKind` (the lookup
+  painters use — panics on an out-of-range index), `len`, `is_empty`.
 - `Painter` — the one trait every paint backend implements:
   `fn paint(&mut self, rects: &[RectEntry], paints: &PaintTable)`.
 
-`Color` and `RectEntry` are `#[repr(C)]` because rect/paint data is
-blittable by design (`specs/DESIGN_1.md` §7.3) and R-T4 plans
-dirty-range instance-buffer uploads straight from the rect table; fixing
-the layout now costs nothing.
+`Color` and `RectEntry` are `#[repr(C)]` because `specs/DESIGN_1.md`
+§7.3 calls rect entries blittable and R-T4 plans dirty-range
+instance-buffer uploads of per-frame painter input; fixing the layout
+now costs nothing.
 
 `Painter::paint` is infallible and the trait is object-safe (`Box<dyn
 Painter>` must work — backend selection is whole-scene, R3). Slice order
-is paint order, back-to-front: DFS order already encodes document
-stacking for v0.1's fixed-rect scenes. See
-`docs/decisions/painter-trait-infallible-slice-input.md` for the
-alternatives considered on the trait's signature.
+defines stacking — a later entry composites over an earlier one, since
+DFS order encodes document stacking. The composited result is the
+contract; iteration order is the implementation's choice (the lean
+painter draws opaque cores front-to-back, `specs/DESIGN_1.md` §9 R-T2).
+An out-of-range paint index is a broken contract between crates;
+`PaintTable::resolve` centralizes the panic for that case, so no painter
+invents its own failure path (a silent skip would be the silent drop P4
+forbids). See `docs/decisions/painter-trait-infallible-slice-input.md`
+for the alternatives considered on the trait's signature.
 
 ## Testing
 
 `crates/dashpaint/tests/boundary_b.rs` exercises the public API only,
-against hand-built fixtures, with no `dashscene-core` dependency:
-
-- `PaintTable` push/get: sequential indices starting at 0, resolution
-  by index, and past-the-end lookups returning `None`.
-- A `RecordingPainter` test double implements `Painter`, resolves each
-  rect's paint index, and records `(RectEntry, Color)` pairs; a
-  two-rect, two-paint fixture asserts the recorded output — order,
-  geometry, and resolved colors.
-- The same fixture driven through `Box<dyn Painter>` proves object
-  safety.
+against hand-built fixtures, with no `dashscene-core` dependency. It
+covers the `PaintTable` indexing contract (including the `resolve`
+panic), the recorded output of a `RecordingPainter` test double over a
+two-rect fixture, and dyn-dispatch through `&mut dyn Painter`. The test
+file is the executable statement of the boundary-B contract; this
+section deliberately does not restate its cases.
 
 ## Trace
 

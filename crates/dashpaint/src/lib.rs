@@ -6,8 +6,9 @@
 
 /// An RGBA color, 4×f32 — the same shape as `dashbuf`'s `Color` struct.
 ///
-/// `#[repr(C)]`: rect/paint data is blittable by design (DESIGN_1.md §7.3),
-/// so the layout is fixed now even though nothing uploads it yet.
+/// `#[repr(C)]` fixes the layout now: solid-fill colors are per-frame
+/// painter input, and DESIGN_1.md §9 (R-T4) plans instance-buffer uploads
+/// of that input, even though nothing uploads it yet.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Color {
@@ -21,6 +22,9 @@ pub struct Color {
 ///
 /// The rect-table index of this entry is the document DFS node index, so
 /// there is no id field. `paint` indexes the [`PaintTable`].
+///
+/// `#[repr(C)]`: DESIGN_1.md §7.3 calls rect entries blittable, and R-T4
+/// plans dirty-range instance-buffer uploads straight from the rect table.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RectEntry {
@@ -31,8 +35,9 @@ pub struct RectEntry {
     pub paint: u32,
 }
 
-/// One paint-table entry. v0.1 knows solid fills only; gradients, images,
-/// strokes, and effects land at v0.3 as new variants.
+/// One paint-table entry. v0.1 knows solid fills only; further paint
+/// kinds land as new variants at their slices (gradients, images, and
+/// stroke handling at v0.3; effects such as shadows and masks at v0.8).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PaintKind {
     Solid { color: Color },
@@ -62,6 +67,21 @@ impl PaintTable {
         self.entries.get(index as usize)
     }
 
+    /// Resolves a rect's paint index. This is the lookup painters use.
+    ///
+    /// Panics on an out-of-range index: indices are validated upstream
+    /// (P4), so a miss is a broken contract between crates, and the
+    /// panic for that case is centralized here — a painter must never
+    /// skip a rect silently.
+    pub fn resolve(&self, index: u32) -> &PaintKind {
+        self.get(index).unwrap_or_else(|| {
+            panic!(
+                "paint index {index} out of range ({} entries): paint indices are validated upstream (P4)",
+                self.entries.len()
+            )
+        })
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -75,12 +95,18 @@ impl PaintTable {
 /// implements. A painter only colors — it never measures, wraps, kerns,
 /// or moves anything (P2).
 pub trait Painter {
-    /// Paints every rect in slice order (back-to-front: DFS order encodes
-    /// document stacking), resolving each [`RectEntry::paint`] index
-    /// against `paints`.
+    /// Paints every rect, resolving each [`RectEntry::paint`] index
+    /// against `paints` (use [`PaintTable::resolve`]).
+    ///
+    /// Slice order defines stacking: a later entry composites over an
+    /// earlier one (DFS order encodes document stacking). The composited
+    /// result is the contract; iteration order is the implementation's
+    /// choice (the lean painter draws opaque cores front-to-back,
+    /// DESIGN_1.md §9 R-T2).
     ///
     /// Infallible by design: vocabulary and indices are validated upstream
-    /// (P4), so an out-of-range `paint` index is a broken contract between
-    /// crates — implementations may panic on it.
+    /// (P4), so there is no legitimate runtime failure. An out-of-range
+    /// `paint` index is a broken contract between crates;
+    /// [`PaintTable::resolve`] centralizes the panic for that case.
     fn paint(&mut self, rects: &[RectEntry], paints: &PaintTable);
 }
