@@ -22,7 +22,9 @@ die() {
 detect_platform() {
   local os arch
   case "$(uname -s)" in
-    Linux) os="unknown-linux-gnu" ;;
+    # git-std publishes musl builds for Linux (static, distro-independent);
+    # there is no *-unknown-linux-gnu release asset.
+    Linux) os="unknown-linux-musl" ;;
     Darwin) os="apple-darwin" ;;
     *) die "unsupported OS: $(uname -s)" ;;
   esac
