@@ -4,7 +4,14 @@
 
 use std::mem::{align_of, size_of};
 
-use dashscene_core::{Color, NO_PAINT, RectEntry};
+use dashscene_core::{Arena, Color, NO_PAINT, Paint, Prop, RectEntry};
+
+const RED: Color = Color {
+    r: 1.0,
+    g: 0.0,
+    b: 0.0,
+    a: 1.0,
+};
 
 #[test]
 fn committed_entries_are_blittable_plain_data() {
@@ -26,4 +33,47 @@ fn committed_entries_are_blittable_plain_data() {
     };
     let copy = entry; // Copy, not a move
     assert_eq!(entry, copy);
+}
+
+#[test]
+fn a_new_arena_commits_to_an_empty_scene() {
+    let mut arena = Arena::new();
+    assert_eq!(arena.committed().generation(), 0);
+    assert!(arena.committed().rects().is_empty());
+
+    let generation = arena.open().commit();
+
+    assert_eq!(generation, 1);
+    let scene = arena.committed();
+    assert_eq!(scene.generation(), 1);
+    assert!(scene.rects().is_empty());
+    assert!(scene.paints().is_empty());
+    assert!(scene.dirty().is_empty());
+}
+
+#[test]
+fn a_single_filled_root_resolves_to_one_rect_and_one_paint() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let root = txn.add_node(None, Some("bg"));
+    txn.set_prop(root, Prop::X(5.0));
+    txn.set_prop(root, Prop::Y(7.0));
+    txn.set_prop(root, Prop::Width(320.0));
+    txn.set_prop(root, Prop::Height(240.0));
+    txn.set_prop(root, Prop::Fill(RED));
+    txn.commit();
+
+    let scene = arena.committed();
+    assert_eq!(
+        scene.rects(),
+        &[RectEntry {
+            x: 5.0,
+            y: 7.0,
+            w: 320.0,
+            h: 240.0,
+            paint: 0,
+        }]
+    );
+    assert_eq!(scene.paints(), &[Paint { color: RED }]);
+    assert_eq!(arena.name(root), Some("bg"));
 }
