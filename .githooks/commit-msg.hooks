@@ -1,0 +1,20 @@
+# git-std hooks — commit-msg.hooks
+#
+# Each line is a command run during the commit-msg hook.
+# Prefix controls behavior:
+#
+#   !  check     run command, block commit on failure
+#   ?  advisory  run command, never block commit
+#
+# $@ contains the list of staged files — commands can use or ignore it.
+#
+# Examples:
+#   ! cargo fmt --check   # fail if code is unformatted
+#   ! cargo clippy        # lint workspace
+#   ? cargo test          # run tests, never block commit
+#
+# Enable/disable this hook:
+#   git std hook enable commit-msg
+#   git std hook disable commit-msg
+#
+! git std lint --file {msg}

@@ -1,0 +1,12 @@
+# git-std hooks — post-version.hooks
+#
+# Runs after version files are updated. $1 is the new version string.
+# Use for: building artifacts, stamping binaries, generating manifests.
+#
+#   !  required   abort bump on failure
+#   ?  advisory   warn on failure, never abort
+#
+# Examples:
+#   ! cargo build --release
+#   ? cp target/release/mybin dist/
+#

@@ -1,0 +1,12 @@
+# git-std hooks — pre-bump.hooks
+#
+# Runs before version detection. Non-zero exit aborts the bump.
+# Use for: guard checks (clean tree, correct branch, tests pass).
+#
+#   !  required   abort bump on failure
+#   ?  advisory   warn on failure, never abort
+#
+# Examples:
+#   ! cargo test --workspace
+#   ! git diff --exit-code   # abort if working tree is dirty
+#

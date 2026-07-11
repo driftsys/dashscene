@@ -126,3 +126,9 @@ while the switch itself is core's. `dashlang` builds directly on
 - **P5** — Figma compatibility is a property of one producer. SCD is a
   schema-first IR with its own spec; no producer's limitations define
   the format.
+
+<!-- git-std:bootstrap -->
+
+## Post-clone setup
+
+Run `./bootstrap` after `git clone` or `git worktree add`.

@@ -1,0 +1,12 @@
+# git-std hooks — post-bump.hooks
+#
+# Runs after commit and tag are created (and after push if --push).
+# Use for: publishing, deployment, notifications.
+#
+#   !  required   report failure
+#   ?  advisory   warn on failure, always continues
+#
+# Examples:
+#   ! cargo publish
+#   ? curl -X POST https://hooks.slack.com/...
+#

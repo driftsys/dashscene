@@ -1,0 +1,11 @@
+# git-std hooks — post-changelog.hooks
+#
+# Runs after CHANGELOG.md is written, before staging and commit.
+# Use for: linting or reformatting the changelog.
+#
+#   !  required   abort bump on failure
+#   ?  advisory   warn on failure, never abort
+#
+# Examples:
+#   ? npx markdownlint CHANGELOG.md
+#

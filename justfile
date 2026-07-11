@@ -36,9 +36,13 @@ check: test lint audit
 # Everything short of a PR: assemble + check.
 build: assemble check
 
-# Run before opening a PR: commit-message lint over the branch range, then build.
+# Run before opening a PR (and as the pre-push hook): commit-message
+# lint over commits not yet on origin/main, then build. Compares against
+# origin/main rather than local main so this doesn't break when working
+# directly on main (main..HEAD is empty in that case) or when local main
+# is stale relative to the remote.
 verify:
-    git std lint --range main..HEAD
+    git std lint --range origin/main..HEAD
     just build
 
 # Reformat everything in place (Rust + markdown).

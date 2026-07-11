@@ -1,17 +1,27 @@
+#:schema https://driftsys.github.io/git-std/schemas/v1/git-std.schema.json
 # git-std configuration for dashscene-staging.
 # See SCOPE_DECISIONS.md §7 — dogfoods git-std's own conventions.
 
 scheme = "semver"
-strict = true
 scopes = "auto"
-
-[versioning]
-tag_prefix = "v"
+strict = true
+types = [
+    "feat",
+    "fix",
+    "docs",
+    "style",
+    "refactor",
+    "perf",
+    "test",
+    "chore",
+    "ci",
+    "build",
+    "revert",
+]
 
 # One [[version_files]] entry per crate, pointing at its version string
 # in Cargo.toml. Every version bump and changelog entry goes through
 # `git std bump` (see `just release`), never a manual edit.
-
 [[version_files]]
 path = "crates/dashscene/Cargo.toml"
 query = "package.version"
@@ -63,3 +73,6 @@ query = "package.version"
 [[version_files]]
 path = "crates/dashscene-web/Cargo.toml"
 query = "package.version"
+
+[versioning]
+tag_prefix = "v"
