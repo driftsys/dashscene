@@ -35,36 +35,34 @@ them without updating both stories.
 All types live in `dashpaint` with no dependencies (in particular, no
 `dashscene-core` and no `dashbuf`).
 
-```rust
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Color { pub r: f32, pub g: f32, pub b: f32, pub a: f32 }
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub struct Color { pub r: f32, pub g: f32, pub b: f32, pub a: f32 }
 
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct RectEntry { pub x: f32, pub y: f32, pub w: f32, pub h: f32, pub paint: u32 }
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub struct RectEntry { pub x: f32, pub y: f32, pub w: f32, pub h: f32, pub paint: u32 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum PaintKind { Solid { color: Color } }
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub enum PaintKind { Solid { color: Color } }
 
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct PaintTable { /* Vec<PaintKind>, private */ }
+    #[derive(Debug, Clone, Default, PartialEq)]
+    pub struct PaintTable { /* Vec<PaintKind>, private */ }
 
-impl PaintTable {
-    pub fn new() -> Self;
-    /// Appends an entry; returns its index (the value `RectEntry.paint` holds).
-    pub fn push(&mut self, kind: PaintKind) -> u32;
-    pub fn get(&self, index: u32) -> Option<&PaintKind>;
-    pub fn len(&self) -> usize;
-    pub fn is_empty(&self) -> bool;
-}
+    impl PaintTable {
+        pub fn new() -> Self;
+        /// Appends an entry; returns its index (the value `RectEntry.paint` holds).
+        pub fn push(&mut self, kind: PaintKind) -> u32;
+        pub fn get(&self, index: u32) -> Option<&PaintKind>;
+        pub fn len(&self) -> usize;
+        pub fn is_empty(&self) -> bool;
+    }
 
-pub trait Painter {
-    /// Paint every rect, in slice order, resolving each `RectEntry.paint`
-    /// index against `paints`.
-    fn paint(&mut self, rects: &[RectEntry], paints: &PaintTable);
-}
-```
+    pub trait Painter {
+        /// Paint every rect, in slice order, resolving each `RectEntry.paint`
+        /// index against `paints`.
+        fn paint(&mut self, rects: &[RectEntry], paints: &PaintTable);
+    }
 
 Notes:
 
