@@ -1,7 +1,7 @@
 //! Boundary-B contract tests against hand-built fixtures (issue #3):
 //! no dashscene-core, no dashbuf — dashpaint's public API only.
 
-use dashpaint::{Color, PaintKind, PaintTable};
+use dashpaint::{Color, PaintKind, PaintTable, Painter, RectEntry};
 
 const RED: Color = Color {
     r: 1.0,
@@ -43,7 +43,22 @@ fn paint_table_get_past_the_end_returns_none() {
     assert_eq!(table.get(u32::MAX), None);
 }
 
-use dashpaint::{Painter, RectEntry};
+#[test]
+fn paint_table_resolve_returns_the_entry() {
+    let mut table = PaintTable::new();
+    let red = table.push(PaintKind::Solid { color: RED });
+
+    assert_eq!(table.resolve(red), &PaintKind::Solid { color: RED });
+}
+
+#[test]
+#[should_panic(expected = "paint index 1 out of range")]
+fn paint_table_resolve_panics_on_an_out_of_range_index() {
+    let mut table = PaintTable::new();
+    table.push(PaintKind::Solid { color: RED });
+
+    table.resolve(1);
+}
 
 /// Test double: resolves each rect's paint index and records what a real
 /// painter would color. A painter only colors (P2) — so recording
@@ -56,9 +71,7 @@ struct RecordingPainter {
 impl Painter for RecordingPainter {
     fn paint(&mut self, rects: &[RectEntry], paints: &PaintTable) {
         for rect in rects {
-            let PaintKind::Solid { color } = paints
-                .get(rect.paint)
-                .expect("paint index validated upstream (P4)");
+            let PaintKind::Solid { color } = paints.resolve(rect.paint);
             self.painted.push((*rect, *color));
         }
     }
@@ -103,7 +116,13 @@ fn painter_receives_rects_in_slice_order_with_resolved_colors() {
 #[test]
 fn painter_trait_is_object_safe() {
     let (rects, paints) = two_rect_fixture();
-    let mut painter: Box<dyn Painter> = Box::new(RecordingPainter::default());
+    let mut painter = RecordingPainter::default();
 
-    painter.paint(&rects, &paints);
+    let dyn_painter: &mut dyn Painter = &mut painter;
+    dyn_painter.paint(&rects, &paints);
+
+    assert_eq!(
+        painter.painted,
+        vec![(rects[0], RED), (rects[1], HALF_BLUE)]
+    );
 }
