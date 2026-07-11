@@ -3,9 +3,15 @@
 Decision records: normative, binding on downstream work, traced to what they
 affect. Gardened from `docs/wip/` sessions into durable, as-built records.
 
-Nothing lives here yet — the project's decision log currently lives in
+The project's scope-level decision log still lives in
 `specs/SCOPE_DECISIONS.md`, a living addendum to `specs/DESIGN_1.md`. It'll
 move here, or be superseded by records written here, as future work gardens
-it in.
+it in. Per-story decisions land here directly:
+
+- [text-track-early-start.md](text-track-early-start.md) — start the v0.5
+  text/atlas track before v0.1 completes (plan sequencing, session C).
+- [q1-msdf-below-14px.md](q1-msdf-below-14px.md) — MSDF-only text rendering
+  in v0; resolves DESIGN_1.md Q-1; binds #27/#28/#30 and the validator's
+  future text checks.
 
 See the `sdd-working-memory-lifecycle` rule.

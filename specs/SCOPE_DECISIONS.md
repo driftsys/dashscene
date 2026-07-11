@@ -560,3 +560,35 @@ not yet created" item:
   are provisional by design. When a slice's epic closes, the remaining
   epics/stories are revised against what was learned before the next
   slice starts; scope-level changes land here.
+
+## 11. Arabic atlas spike (#25): msdf-atlas-gen confirmed; Q-1 resolved for v0
+
+The v0.5 spike (issue #25, worked ahead of epic #1 per
+`docs/decisions/text-track-early-start.md`) validated the pinned
+text-stack tooling against Arabic. Full methodology and evidence:
+`docs/technotes/msdf-arabic-atlas-spike.md`.
+
+- **msdf-atlas-gen holds for Arabic.** Version 1.4.0 accepts glyph-id
+  input (`-glyphset`), loads GSUB-only glyphs (no cmap entry) without
+  issue, and keys its JSON layout by glyph index. A 211-string corpus
+  (every letter in all four joining contexts, harakat, lam-alef
+  variants, digits, tatweel) shaped through HarfBuzz produced 113
+  distinct glyph ids for Noto Sans Arabic (28 GSUB-only) and 248 for
+  Amiri (176 GSUB-only); every one is present and geometrically
+  correct in the generated atlas (Noto: zero deviations beyond 1 px
+  tolerance at 64 px/em; Amiri: hairline quantization only).
+- **Q-1 is resolved for v0** (`docs/decisions/q1-msdf-below-14px.md`):
+  MSDF-only, no per-size bitmap atlases. The visual check puts the
+  MSDF legibility floor at 14 px/em (12 px/em acceptable, below that
+  degraded); raising atlas resolution does not move the floor, so the
+  fallback design stays parked until v1 target-hardware data. Text
+  below 14 px/em becomes a warning-severity validator diagnostic once
+  text validation exists.
+- **Reproducibility input for #27 (R7):** with a pinned generator
+  version and seed, two multi-threaded runs were byte-identical on
+  one machine; cross-machine identity still needs a CI check.
+- **Carried into later stories:** Noto Sans Arabic ships no Latin and
+  no solidus, so mixed-script strings need font fallback and per-font
+  charset unions (#34, #28); glyph runs must carry per-glyph x/y
+  offsets, not just advances (#26, #28); bidi run splitting must
+  precede shaping (as DESIGN §7.2 already requires).
