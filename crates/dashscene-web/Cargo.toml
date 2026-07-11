@@ -1,0 +1,13 @@
+[package]
+name = "dashscene-web"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "wasm/tiny-skia painter — parked until pushed (DESIGN_1.md §8.4)."
+
+[lib]
+name = "dashscene_web"
+
+[dependencies]

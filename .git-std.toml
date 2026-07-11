@@ -1,0 +1,65 @@
+# git-std configuration for dashscene-staging.
+# See SCOPE_DECISIONS.md §7 — dogfoods git-std's own conventions.
+
+scheme = "semver"
+strict = true
+scopes = "auto"
+
+[versioning]
+tag_prefix = "v"
+
+# One [[version_files]] entry per crate, pointing at its version string
+# in Cargo.toml. Every version bump and changelog entry goes through
+# `git std bump` (see `just release`), never a manual edit.
+
+[[version_files]]
+path = "crates/dashscene/Cargo.toml"
+query = "package.version"
+
+[[version_files]]
+path = "crates/dashscene-core/Cargo.toml"
+query = "package.version"
+
+[[version_files]]
+path = "crates/dashscene-engine/Cargo.toml"
+query = "package.version"
+
+[[version_files]]
+path = "crates/dashscene-typeset/Cargo.toml"
+query = "package.version"
+
+[[version_files]]
+path = "crates/dashscene-validator/Cargo.toml"
+query = "package.version"
+
+[[version_files]]
+path = "crates/dashpaint/Cargo.toml"
+query = "package.version"
+
+[[version_files]]
+path = "crates/dashscene-skia/Cargo.toml"
+query = "package.version"
+
+[[version_files]]
+path = "crates/dashcue/Cargo.toml"
+query = "package.version"
+
+[[version_files]]
+path = "crates/dashlang/Cargo.toml"
+query = "package.version"
+
+[[version_files]]
+path = "crates/dashbuf/Cargo.toml"
+query = "package.version"
+
+[[version_files]]
+path = "crates/dashc/Cargo.toml"
+query = "package.version"
+
+[[version_files]]
+path = "crates/dashscene-unity/Cargo.toml"
+query = "package.version"
+
+[[version_files]]
+path = "crates/dashscene-web/Cargo.toml"
+query = "package.version"

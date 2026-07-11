@@ -1,0 +1,122 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    outputs:
+      figma: ${{ steps.filter.outputs.figma }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            figma:
+              - 'importers/figma/**'
+
+  fmt:
+    name: fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  dprint:
+    name: dprint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dprint/check@v2.3
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace
+
+  convco:
+    name: convco
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: install git-std
+        run: ./bootstrap
+        env:
+          GIT_STD_INSTALL_DIR: /usr/local/bin
+      - run: git std lint --range origin/${{ github.base_ref }}..HEAD
+
+  deno:
+    name: deno
+    needs: changes
+    runs-on: ubuntu-latest
+    # Path-filtered: only runs when the Deno importer changes, so Rust-only
+    # changes don't pay for it and vice versa (SCOPE_DECISIONS.md §4/§7).
+    if: needs.changes.outputs.figma == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - working-directory: importers/figma
+        run: |
+          deno task check
+          deno task lint
+          deno task fmt --check
+          deno task test
+
+  wasm-build:
+    name: wasm-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build -p dashc --release --target wasm32-unknown-unknown
+
+  ci:
+    name: ci
+    if: always()
+    needs: [fmt, dprint, clippy, test, wasm-build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: check required jobs
+        run: |
+          echo '${{ toJSON(needs) }}'
+          for result in $(echo '${{ toJSON(needs.*.result) }}' | tr -d '[],"'); do
+            if [ "$result" != "success" ]; then
+              echo "a required job did not succeed: $result"
+              exit 1
+            fi
+          done

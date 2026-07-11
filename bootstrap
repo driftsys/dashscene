@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# bootstrap — set up a fresh clone or worktree of dashscene-staging.
+#
+# Ensures git-std is installed, then hands off to it: `git std bootstrap`
+# does the repo-specific setup (git hooks, etc.) from there. Run this
+# right after cloning or creating a worktree.
+#
+# House style: SCOPE_DECISIONS.md §7. Adapted from driftsys/git-std's own
+# bootstrap script.
+
+set -euo pipefail
+
+GIT_STD_VERSION="${GIT_STD_VERSION:-latest}"
+INSTALL_DIR="${GIT_STD_INSTALL_DIR:-$HOME/.local/bin}"
+
+log() { printf '[bootstrap] %s\n' "$*" >&2; }
+die() {
+  printf '[bootstrap] error: %s\n' "$*" >&2
+  exit 1
+}
+
+detect_platform() {
+  local os arch
+  case "$(uname -s)" in
+    Linux) os="unknown-linux-gnu" ;;
+    Darwin) os="apple-darwin" ;;
+    *) die "unsupported OS: $(uname -s)" ;;
+  esac
+  case "$(uname -m)" in
+    x86_64 | amd64) arch="x86_64" ;;
+    arm64 | aarch64) arch="aarch64" ;;
+    *) die "unsupported architecture: $(uname -m)" ;;
+  esac
+  printf '%s-%s\n' "$arch" "$os"
+}
+
+install_git_std() {
+  if command -v git-std >/dev/null 2>&1; then
+    log "git-std already installed: $(command -v git-std)"
+    return
+  fi
+
+  local target archive url tmp sha_expected sha_actual
+  target="$(detect_platform)"
+  archive="git-std-${target}.tar.gz"
+  url="https://github.com/driftsys/git-std/releases/${GIT_STD_VERSION}/download/${archive}"
+
+  log "downloading git-std (${GIT_STD_VERSION}, ${target})"
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "${tmp}"' RETURN
+
+  curl --fail --silent --show-error --location "${url}" --output "${tmp}/${archive}"
+  curl --fail --silent --show-error --location "${url}.sha256" --output "${tmp}/${archive}.sha256"
+
+  sha_expected="$(cut -d' ' -f1 "${tmp}/${archive}.sha256")"
+  sha_actual="$(sha256sum "${tmp}/${archive}" | cut -d' ' -f1)"
+  [ "${sha_expected}" = "${sha_actual}" ] || die "sha256 mismatch for ${archive}"
+
+  mkdir -p "${INSTALL_DIR}"
+  tar -xzf "${tmp}/${archive}" -C "${tmp}"
+  install -m 0755 "${tmp}/git-std" "${INSTALL_DIR}/git-std"
+
+  log "installed git-std to ${INSTALL_DIR}/git-std"
+  case ":${PATH}:" in
+    *":${INSTALL_DIR}:"*) ;;
+    *) log "note: ${INSTALL_DIR} is not on PATH — add it to your shell profile" ;;
+  esac
+}
+
+install_git_std
+exec git std bootstrap

@@ -1,0 +1,10 @@
+[book]
+title = "dashscene"
+description = "From Figma to code: one intermediate representation, one shared layout+text runtime, interchangeable paint backends."
+authors = ["driftsys"]
+language = "en"
+src = "docs/src"
+
+[output.html]
+git-repository-url = "https://github.com/driftsys/dashscene-staging"
+edit-url-template = "https://github.com/driftsys/dashscene-staging/edit/main/{path}"

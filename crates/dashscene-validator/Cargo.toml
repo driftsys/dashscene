@@ -1,0 +1,13 @@
+[package]
+name = "dashscene-validator"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Shared validation crate: paint-vocabulary profiles, diagnostics, waivers (DESIGN_1.md §3 P4, §5)."
+
+[lib]
+name = "dashscene_validator"
+
+[dependencies]

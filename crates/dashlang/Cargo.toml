@@ -1,0 +1,13 @@
+[package]
+name = "dashlang"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Rust DSL skin over the dashcue producer surface, and the stress-corpus generator (DESIGN_1.md §6.2)."
+
+[lib]
+name = "dashlang"
+
+[dependencies]

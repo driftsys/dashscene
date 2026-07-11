@@ -1,0 +1,13 @@
+[package]
+name = "dashscene-unity"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Rust-side FFI bindings consumed by the Unity painter's C# projection layer; the Unity project itself lives in a separate repo, later (SCOPE_DECISIONS.md §5)."
+
+[lib]
+name = "dashscene_unity"
+
+[dependencies]

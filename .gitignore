@@ -1,0 +1,18 @@
+/target
+**/*.rs.bk
+# Library workspace: Cargo.lock is not committed (dashc, the one binary
+# target, is still fully reproducible via pinned dependency versions).
+Cargo.lock
+
+# mdBook build output
+/docs/book
+
+# Deno
+importers/figma/.deno
+
+# OS/editor cruft
+.DS_Store
+*.swp
+
+# Claude Code worktrees (see markspec's deno.json precedent, SCOPE_DECISIONS §7)
+.claude/worktrees/

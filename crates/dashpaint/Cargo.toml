@@ -1,0 +1,13 @@
+[package]
+name = "dashpaint"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Paint table (fill/stroke/effect params, token refs, material class) + the painter trait — boundary B (DESIGN_1.md §8)."
+
+[lib]
+name = "dashpaint"
+
+[dependencies]

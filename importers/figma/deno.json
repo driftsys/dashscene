@@ -1,0 +1,34 @@
+{
+  "name": "@driftsys/dashscene-figma",
+  "version": "0.0.0",
+  "exports": "./src/mod.ts",
+
+  "workspace": ["."],
+
+  "imports": {
+    "@std/assert": "jsr:@std/assert@^1",
+    "@std/path": "jsr:@std/path@^1",
+    "@std/testing": "jsr:@std/testing@^1",
+    "@figma/rest-api-spec": "npm:@figma/rest-api-spec@^0.28"
+  },
+
+  "tasks": {
+    "check": "deno check src/mod.ts plugin/code.ts",
+    "test": "deno test --allow-net=api.figma.com --allow-read=. --allow-env=FIGMA_TOKEN",
+    "lint": "deno lint",
+    "fmt": "deno fmt"
+  },
+
+  "fmt": {
+    "include": ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mts", "**/*.cts", "**/*.mjs", "**/*.cjs"],
+    "exclude": ["editors/", ".worktrees/", ".claude/worktrees/"]
+  },
+
+  "lint": {
+    "exclude": ["editors/", ".worktrees/", ".claude/worktrees/"]
+  },
+
+  "test": {
+    "exclude": ["editors/", ".worktrees/", ".claude/worktrees/"]
+  }
+}
