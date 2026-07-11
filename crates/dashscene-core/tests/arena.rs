@@ -77,3 +77,198 @@ fn a_single_filled_root_resolves_to_one_rect_and_one_paint() {
     assert_eq!(scene.paints(), &[Paint { color: RED }]);
     assert_eq!(arena.name(root), Some("bg"));
 }
+
+#[test]
+fn dfs_order_and_absolute_positions_resolve_through_nesting() {
+    // root(10,20) ── a(1,2) ── leaf(0.5,0.5)
+    //            └── b(3,4)
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let root = txn.add_node(None, Some("root"));
+    txn.set_prop(root, Prop::X(10.0));
+    txn.set_prop(root, Prop::Y(20.0));
+    let a = txn.add_node(Some(root), Some("a"));
+    txn.set_prop(a, Prop::X(1.0));
+    txn.set_prop(a, Prop::Y(2.0));
+    let leaf = txn.add_node(Some(a), Some("leaf"));
+    txn.set_prop(leaf, Prop::X(0.5));
+    txn.set_prop(leaf, Prop::Y(0.5));
+    let b = txn.add_node(Some(root), Some("b"));
+    txn.set_prop(b, Prop::X(3.0));
+    txn.set_prop(b, Prop::Y(4.0));
+    txn.commit();
+
+    let scene = arena.committed();
+    let positions: Vec<(f32, f32)> = scene.rects().iter().map(|r| (r.x, r.y)).collect();
+    assert_eq!(
+        positions,
+        [(10.0, 20.0), (11.0, 22.0), (11.5, 22.5), (13.0, 24.0)],
+        "DFS order root, a, leaf, b; absolutes sum ancestor offsets"
+    );
+}
+
+#[test]
+fn interleaved_creation_still_yields_dfs_document_order() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let root = txn.add_node(None, Some("root"));
+    let b = txn.add_node(Some(root), Some("b"));
+    txn.add_node(Some(root), Some("a"));
+    txn.add_node(Some(b), Some("leaf"));
+    txn.commit();
+
+    let scene = arena.committed();
+    // Children in creation order under each parent, depth first:
+    // root, b (first child), leaf (b's child), a.
+    let names: Vec<&str> = (0..scene.rects().len())
+        .map(|i| {
+            arena
+                .name(scene.node_of(u32::try_from(i).unwrap()))
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(names, ["root", "b", "leaf", "a"]);
+}
+
+#[test]
+fn node_ids_and_rect_indices_correspond() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let root = txn.add_node(None, None);
+    let b = txn.add_node(Some(root), None);
+    let a = txn.add_node(Some(root), None);
+    txn.commit();
+
+    let scene = arena.committed();
+    for id in [root, b, a] {
+        let rect_index = scene
+            .rect_index_of(id)
+            .expect("committed node has an index");
+        assert_eq!(scene.node_of(rect_index), id);
+    }
+}
+
+#[test]
+fn identical_fills_share_one_paint_entry_in_first_use_order() {
+    const BLUE: Color = Color {
+        r: 0.0,
+        g: 0.0,
+        b: 1.0,
+        a: 1.0,
+    };
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let first = txn.add_node(None, None);
+    txn.set_prop(first, Prop::Fill(RED));
+    let second = txn.add_node(None, None);
+    txn.set_prop(second, Prop::Fill(BLUE));
+    let third = txn.add_node(None, None);
+    txn.set_prop(third, Prop::Fill(RED));
+    txn.commit();
+
+    let scene = arena.committed();
+    assert_eq!(
+        scene.paints(),
+        &[Paint { color: RED }, Paint { color: BLUE }]
+    );
+    let indices: Vec<u32> = scene.rects().iter().map(|r| r.paint).collect();
+    assert_eq!(indices, [0, 1, 0]);
+}
+
+#[test]
+fn an_unfilled_node_paints_as_no_paint() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let container = txn.add_node(None, Some("container"));
+    txn.set_prop(container, Prop::Width(100.0));
+    txn.set_prop(container, Prop::Height(100.0));
+    txn.commit();
+
+    let scene = arena.committed();
+    assert_eq!(scene.rects()[0].paint, NO_PAINT);
+    assert!(scene.paints().is_empty());
+}
+
+#[test]
+fn staged_mutations_are_invisible_until_commit() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let node = txn.add_node(None, None);
+    txn.set_prop(node, Prop::X(1.0));
+    txn.set_prop(node, Prop::Fill(RED));
+    txn.commit();
+    assert_eq!(arena.committed().rects()[0].x, 1.0);
+
+    // Stage a move, then drop the txn without committing: the change
+    // stays pending — the committed buffer still serves the old value.
+    {
+        let mut txn = arena.open();
+        txn.set_prop(node, Prop::X(50.0));
+    }
+    assert_eq!(
+        arena.committed().rects()[0].x,
+        1.0,
+        "uncommitted staging must not be visible"
+    );
+
+    // The pending change publishes with the next commit.
+    arena.open().commit();
+    assert_eq!(arena.committed().rects()[0].x, 50.0);
+}
+
+#[test]
+fn every_commit_bumps_the_generation_even_without_changes() {
+    let mut arena = Arena::new();
+    assert_eq!(arena.open().commit(), 1);
+    assert_eq!(arena.open().commit(), 2);
+    assert_eq!(arena.open().commit(), 3);
+    assert_eq!(arena.committed().generation(), 3);
+}
+
+#[test]
+fn the_first_commit_marks_every_rect_dirty() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let root = txn.add_node(None, None);
+    txn.add_node(Some(root), None);
+    txn.add_node(None, None);
+    txn.commit();
+
+    assert_eq!(arena.committed().dirty(), [0, 1, 2]);
+}
+
+#[test]
+fn moving_a_parent_dirties_it_and_its_descendants_only() {
+    // root ── a ── leaf
+    //     └── b
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let root = txn.add_node(None, None);
+    let a = txn.add_node(Some(root), None);
+    let leaf = txn.add_node(Some(a), None);
+    let b = txn.add_node(Some(root), None);
+    txn.set_prop(leaf, Prop::X(5.0));
+    txn.set_prop(b, Prop::X(9.0));
+    txn.commit();
+
+    let mut txn = arena.open();
+    txn.set_prop(a, Prop::X(100.0));
+    txn.commit();
+
+    // DFS indices: root=0, a=1, leaf=2, b=3. Moving `a` changes the
+    // resolved absolutes of `a` and `leaf`; root and b are untouched.
+    assert_eq!(arena.committed().dirty(), [1, 2]);
+}
+
+#[test]
+fn a_no_op_commit_has_an_empty_dirty_set() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let node = txn.add_node(None, None);
+    txn.set_prop(node, Prop::Fill(RED));
+    txn.commit();
+
+    arena.open().commit();
+    assert!(arena.committed().dirty().is_empty());
+    assert_eq!(arena.committed().generation(), 2);
+}
