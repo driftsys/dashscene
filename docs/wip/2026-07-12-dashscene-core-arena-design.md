@@ -127,22 +127,20 @@ must be authorable.
 
 ## API sketch
 
-```rust
-let mut arena = Arena::new();
-let mut txn = arena.open();
-let root = txn.add_node(None, Some("bg"));
-txn.set_prop(root, Prop::Width(320.0));
-txn.set_prop(root, Prop::Height(240.0));
-txn.set_prop(root, Prop::Fill(Color { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }));
-let child = txn.add_node(Some(root), Some("badge"));
-txn.set_prop(child, Prop::X(10.0));
-txn.set_prop(child, Prop::Y(10.0));
-let generation = txn.commit();
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let root = txn.add_node(None, Some("bg"));
+    txn.set_prop(root, Prop::Width(320.0));
+    txn.set_prop(root, Prop::Height(240.0));
+    txn.set_prop(root, Prop::Fill(Color { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }));
+    let child = txn.add_node(Some(root), Some("badge"));
+    txn.set_prop(child, Prop::X(10.0));
+    txn.set_prop(child, Prop::Y(10.0));
+    let generation = txn.commit();
 
-let scene = arena.committed();
-assert_eq!(scene.generation(), generation);
-assert_eq!(scene.rects().len(), 2);
-```
+    let scene = arena.committed();
+    assert_eq!(scene.generation(), generation);
+    assert_eq!(scene.rects().len(), 2);
 
 `Prop` (v0.1): `X(f32)`, `Y(f32)`, `Width(f32)`, `Height(f32)`,
 `Fill(Color)`. Node names are set at `add_node` (diagnostics aid, not
