@@ -343,10 +343,14 @@ scoped to `importers/figma/`.
 fmt`, both of which run as their own separate lint/fmt steps for their
 respective languages.
 
-**`.git-std.toml`**: `scheme = "semver"`, `strict = true`, `scopes =
-"auto"`, `[versioning] tag_prefix = "v"`, one `[[version_files]]` entry
-per crate pointing at its version string in `Cargo.toml` (git-std
-dogfoods itself this way — every crate version bump and changelog entry
+**`.git-std.toml`**: `scheme = "semver"`, `strict = true`, `scopes` as
+an explicit list — the 13 crate names plus repo-wide scopes (`repo`,
+`docs`, `ci`, `hooks`, `deps`, `release`) — rather than `"auto"`, which
+only discovers `crates/*` and leaves no valid scope for commits that
+aren't crate-specific, `[versioning] tag_prefix = "v"`, one
+`[[version_files]]` entry per crate pointing at its version string in
+`Cargo.toml` (git-std dogfoods itself this way — every crate version
+bump and changelog entry
 goes through `git std bump`, not manual edits).
 
 **CI** (`.github/workflows/ci.yml`, git-std's shape): separate jobs for

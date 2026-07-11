@@ -3,7 +3,30 @@
 # See SCOPE_DECISIONS.md §7 — dogfoods git-std's own conventions.
 
 scheme = "semver"
-scopes = "auto"
+# Explicit rather than "auto" (which only discovers crates/*): "auto"
+# leaves no valid scope for repo-wide commits (docs, CI, hooks, deps).
+# Keep in sync with crates/ when adding/removing a crate.
+scopes = [
+    "dashscene",
+    "dashscene-core",
+    "dashscene-engine",
+    "dashscene-typeset",
+    "dashscene-validator",
+    "dashpaint",
+    "dashscene-skia",
+    "dashcue",
+    "dashlang",
+    "dashbuf",
+    "dashc",
+    "dashscene-unity",
+    "dashscene-web",
+    "repo",
+    "docs",
+    "ci",
+    "hooks",
+    "deps",
+    "release",
+]
 strict = true
 types = [
     "feat",
