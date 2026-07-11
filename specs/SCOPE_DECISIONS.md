@@ -302,6 +302,15 @@ project itself.
 - **Promotion path unset**: how `dashscene-staging` eventually becomes
   (or feeds) public `dashscene` — fresh push vs. history merge — is
   intentionally undecided until there's a real version running (§1).
+- **`docs/` taxonomy scaffolded, not yet migrated into**: `docs/wip/`,
+  `docs/archive/`, `docs/specification/`, `docs/design/`,
+  `docs/decisions/`, `docs/technotes/` now exist per §7's update above,
+  each with a README explaining its role. `specs/DESIGN_1.md` and
+  `specs/SCOPE_DECISIONS.md` remain authoritative; folding their content
+  into this taxonomy is deferred (user decision) to avoid breaking
+  already-written `DESIGN_1.md §N` / `SCOPE_DECISIONS.md §N`
+  cross-references. The online guide (`docs/book/`, mdBook source) was
+  split out separately — overview + usage guide only, not a spec mirror.
 
 ## 7. House style — inspired by driftsys/git-std, driftsys/upskill, driftsys/markspec
 
@@ -375,9 +384,21 @@ worth copying).
 **Governance/docs files**, present in all three repos and expected here
 too: `LICENSE` (MIT), `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`,
 `SECURITY.md`, `.editorconfig`, `.markdownlint.json`, `book.toml` +
-`docs/` (mdBook — DESIGN.md and this file's content eventually get
-published there, docs served at `driftsys.github.io/dashscene-staging/`
-or wherever it lands post-promotion).
+`docs/book/` (mdBook source — an overview and a usage guide, the online
+guide's actual content; served at `driftsys.github.io/dashscene-staging/`
+or wherever it lands post-promotion, once published).
+
+**`docs/` also follows the `sdd-working-memory-lifecycle` rule's
+taxonomy** (separate from `docs/book/`, the online guide): `docs/wip/`
+(Superpowers spec+plan working memory, transient, tracked), `docs/archive/`
+(raw wip content once gardened), `docs/specification/` (requirements),
+`docs/design/` (architecture), `docs/decisions/` (decision records),
+`docs/technotes/` (explanatory notes). All five are currently empty
+scaffolding — `specs/DESIGN_1.md` and `specs/SCOPE_DECISIONS.md` remain
+the authoritative requirements/architecture/decision records for now;
+migrating their content into this taxonomy is deferred to a future
+gardening pass, to avoid breaking the many `DESIGN_1.md §N` /
+`SCOPE_DECISIONS.md §N` references already written into the codebase.
 
 **Resolved**: `dashscene-staging` **does** dogfood `git-std` from day
 one (user-confirmed). The scaffold's `justfile` (`release`/`verify`

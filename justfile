@@ -52,7 +52,7 @@ doc:
 
 # Serve the mdBook docs locally.
 book:
-    mdbook serve docs
+    mdbook serve
 
 # Cut a release: git-std bumps versions, writes the changelog, tags.
 release:

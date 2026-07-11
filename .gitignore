@@ -4,8 +4,9 @@
 # target, is still fully reproducible via pinned dependency versions).
 Cargo.lock
 
-# mdBook build output
-/docs/book
+# mdBook build output (docs/book is the source; mdBook's default
+# build-dir is "book", relative to the root book.toml lives in)
+/book
 
 # Deno
 importers/figma/.deno
