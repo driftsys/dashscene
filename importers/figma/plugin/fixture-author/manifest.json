@@ -1,0 +1,18 @@
+{
+  "name": "dashscene fixture author",
+  "api": "1.0.0",
+  "editorType": ["figma"],
+  "main": "code.js",
+  "networkAccess": { "allowedDomains": ["none"] },
+  "menu": [
+    { "name": "grid-basic", "command": "grid-basic" },
+    { "name": "variables-bound", "command": "variables-bound" },
+    { "name": "effects-2025", "command": "effects-2025" },
+    { "separator": true },
+    { "name": "lowering-wrap", "command": "lowering-wrap" },
+    { "name": "lowering-hug-in-fill", "command": "lowering-hug-in-fill" },
+    { "name": "lowering-negative-gap", "command": "lowering-negative-gap" },
+    { "name": "lowering-baseline", "command": "lowering-baseline" },
+    { "name": "lowering-variant-topology", "command": "lowering-variant-topology" }
+  ]
+}

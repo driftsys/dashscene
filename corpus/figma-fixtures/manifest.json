@@ -1,0 +1,61 @@
+{
+  "description": "Tier-1 self-authored Figma fixtures for the dashscene importer (see specs/SCOPE_DECISIONS.md §8). Each entry maps a fixture name to the Figma file key of a file authored in the project's own account. The capture tooling fetches GET /files/:fileKey?plugin_data=shared (§11, §12) and commits the returned JSON into corpus/figma-fixtures/<name>.json for offline record-and-replay (DESIGN §6.1).",
+  "provenance": "self-authored via the fixture-author dev plugin (importers/figma/plugin/fixture-author); Community-license-safe because nothing captured here is a third-party file (§8).",
+  "captureParams": {
+    "plugin_data": "shared",
+    "note": "?plugin_data=shared is always passed so sharedPluginData roles (§12) round-trip even though no fixture carries them yet."
+  },
+  "fixtures": [
+    {
+      "name": "grid-basic",
+      "fileKey": "BJ1sPobsTmNLQLWqtgjwJU",
+      "covers": "GRID mode: row/column spans, fixed+flex tracks, hug/fill/fixed children, min/max constraints",
+      "emits": true
+    },
+    {
+      "name": "variables-bound",
+      "fileKey": "VtbiQejcN6gYMmeWaaEy1b",
+      "covers": "boundVariables on color + number props across light/dark modes; one subtree pinned to dark",
+      "emits": true,
+      "note": "designated input for token-resolution phase 1 (sidecar) and phase 2 (id->name join), §13"
+    },
+    {
+      "name": "effects-2025",
+      "fileKey": "43LWWEUuYJuK8iCUP9EXqU",
+      "covers": "REJECT-list constructs: noise, texture, progressive blur",
+      "emits": false,
+      "note": "DIAGNOSTIC fixture (§8): under R6 emits no .dsb; the test asserts the diagnostic report names each construct as an error. Variable-width stroke (4th REJECT construct) pending manual application — no plugin API.",
+      "pendingManual": ["variable-width-stroke"]
+    },
+    {
+      "name": "lowering-wrap",
+      "fileKey": "bInPIUfkcxNKAzBOxOOpDZ",
+      "covers": "WRAP auto-layout: fixed-width children wrapping at a fixed container width",
+      "emits": true
+    },
+    {
+      "name": "lowering-hug-in-fill",
+      "fileKey": "48AJL2nXxEYAPC423aM124",
+      "covers": "HUG child inside a FILL container (Figma->CSS sizing lowering)",
+      "emits": true
+    },
+    {
+      "name": "lowering-negative-gap",
+      "fileKey": "w8JdmcqdvZhD1qIB8GVK2u",
+      "covers": "negative itemSpacing (-16) overlap row, lowered to margins (DESIGN §5)",
+      "emits": true
+    },
+    {
+      "name": "lowering-baseline",
+      "fileKey": "R1S4QqZtT54WVcYcFFuQoD",
+      "covers": "mixed-size BASELINE alignment row (DESIGN Q-4) + Arabic RTL run with Arabic-Indic numerals (E2)",
+      "emits": true
+    },
+    {
+      "name": "lowering-variant-topology",
+      "fileKey": "CAWMOi1aDE7gTpNb6zKnxv",
+      "covers": "component set whose variants have different child counts (topology change) + one instance",
+      "emits": true
+    }
+  ]
+}

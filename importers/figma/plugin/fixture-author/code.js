@@ -1,0 +1,464 @@
+// dashscene fixture author — development plugin, never published.
+// Builds one tier-1 corpus fixture (SCOPE_DECISIONS §8) into the CURRENT
+// file. Run the menu command matching the file you have open:
+//   blank file "grid-basic"  ->  Plugins > Development > ... > grid-basic
+// Re-running a command replaces the previously generated frame, so
+// fixtures are regenerable, not hand-built.
+//
+// Plain JS on purpose: no build step, manifest points straight here.
+
+const INTER = { family: "Inter", style: "Regular" };
+const INTER_BOLD = { family: "Inter", style: "Bold" };
+// Arabic coverage for the RTL locale variant (§8: rides on lowering files).
+const ARABIC = { family: "Noto Sans Arabic", style: "Regular" };
+
+const GRAY = (v) => ({ r: v, g: v, b: v });
+const solid = (color, opacity) => ({
+  type: "SOLID",
+  color,
+  opacity: opacity === undefined ? 1 : opacity,
+});
+
+function removePrevious(name) {
+  for (const n of figma.currentPage.children) {
+    if (n.name === name) n.remove();
+  }
+}
+
+function baseFrame(name, w, h) {
+  removePrevious(name);
+  const f = figma.createFrame();
+  f.name = name;
+  f.resize(w, h);
+  f.fills = [solid(GRAY(0.98))];
+  figma.currentPage.appendChild(f);
+  return f;
+}
+
+async function label(text, font, size) {
+  const t = figma.createText();
+  t.fontName = font || INTER;
+  t.fontSize = size || 14;
+  t.characters = text;
+  t.fills = [solid(GRAY(0.1))];
+  return t;
+}
+
+function cell(name, color) {
+  const c = figma.createFrame();
+  c.name = name;
+  c.fills = [solid(color)];
+  c.cornerRadius = 4;
+  return c;
+}
+
+// ---------------------------------------------------------------- grid-basic
+// GRID mode: row/column spans, FIXED + FLEX tracks, hug/fill children,
+// min/max constraints (§8 grid-basic).
+async function gridBasic() {
+  await figma.loadFontAsync(INTER);
+  const grid = baseFrame("grid-basic", 720, 480);
+  grid.layoutMode = "GRID";
+  grid.gridRowCount = 3;
+  grid.gridColumnCount = 3;
+  try {
+    grid.gridItemsPositioning = "FIXED"; // explicit placement, not auto-flow
+  } catch (e) {
+    console.warn("gridItemsPositioning not settable:", e);
+  }
+  grid.gridColumnGap = 12; // GRID mode uses gridColumnGap/gridRowGap,
+  grid.gridRowGap = 12; //     not itemSpacing/counterAxisSpacing
+  grid.paddingLeft = grid.paddingRight = 16;
+  grid.paddingTop = grid.paddingBottom = 16;
+
+  // Track sizing: col 0 fixed, cols 1-2 flex; row 0 fixed, rows 1-2 flex.
+  grid.gridColumnSizes[0].type = "FIXED";
+  grid.gridColumnSizes[0].value = 160;
+  grid.gridColumnSizes[1].type = "FLEX";
+  grid.gridColumnSizes[2].type = "FLEX";
+  grid.gridRowSizes[0].type = "FIXED";
+  grid.gridRowSizes[0].value = 96;
+  grid.gridRowSizes[1].type = "FLEX";
+  grid.gridRowSizes[2].type = "FLEX";
+
+  // header: spans all 3 columns
+  const header = cell("span-3-cols", { r: 0.55, g: 0.65, b: 0.95 });
+  grid.appendChild(header);
+  header.setGridChildPosition(0, 0);
+  header.gridColumnSpan = 3;
+  header.layoutSizingHorizontal = "FILL";
+  header.layoutSizingVertical = "FILL";
+
+  // sidebar: spans 2 rows in the fixed column
+  const sidebar = cell("span-2-rows", { r: 0.6, g: 0.85, b: 0.7 });
+  grid.appendChild(sidebar);
+  sidebar.setGridChildPosition(1, 0);
+  sidebar.gridRowSpan = 2;
+  sidebar.layoutSizingHorizontal = "FILL";
+  sidebar.layoutSizingVertical = "FILL";
+
+  // fill cell with min/max constraints
+  const constrained = cell("fill-minmax", { r: 0.95, g: 0.8, b: 0.55 });
+  grid.appendChild(constrained);
+  constrained.setGridChildPosition(1, 1);
+  constrained.layoutSizingHorizontal = "FILL";
+  constrained.layoutSizingVertical = "FILL";
+  constrained.minWidth = 120;
+  constrained.maxWidth = 400;
+
+  // hug cell: auto-layout wrapping a text node
+  const hug = cell("hug-content", { r: 0.9, g: 0.7, b: 0.85 });
+  grid.appendChild(hug);
+  hug.setGridChildPosition(1, 2);
+  hug.layoutMode = "HORIZONTAL";
+  hug.paddingLeft = hug.paddingRight = 12;
+  hug.paddingTop = hug.paddingBottom = 8;
+  hug.appendChild(await label("hug me"));
+  hug.layoutSizingHorizontal = "HUG";
+  hug.layoutSizingVertical = "HUG";
+
+  // fixed-size cell
+  const fixed = cell("fixed-size", { r: 0.75, g: 0.75, b: 0.75 });
+  grid.appendChild(fixed);
+  fixed.setGridChildPosition(2, 1);
+  fixed.resize(140, 60);
+
+  // bottom-right fill cell
+  const br = cell("fill-plain", { r: 0.65, g: 0.85, b: 0.9 });
+  grid.appendChild(br);
+  br.setGridChildPosition(2, 2);
+  br.layoutSizingHorizontal = "FILL";
+  br.layoutSizingVertical = "FILL";
+
+  return "grid-basic built: 3x3 GRID, fixed+flex tracks, col/row spans, hug/fill/fixed/minmax children";
+}
+
+// ----------------------------------------------------------- variables-bound
+// boundVariables on color + number props across light/dark modes (§8).
+// Designated input for token-resolution phases 1 and 2 (§13).
+async function variablesBound() {
+  await figma.loadFontAsync(INTER);
+
+  // Recreate the collection from scratch so re-runs stay deterministic.
+  const existing = await figma.variables.getLocalVariableCollectionsAsync();
+  for (const c of existing) {
+    if (c.name === "fixture-tokens") c.remove();
+  }
+  const col = figma.variables.createVariableCollection("fixture-tokens");
+  const light = col.modes[0].modeId;
+  col.renameMode(light, "light");
+  const dark = col.addMode("dark");
+
+  const mk = (name, type, lightVal, darkVal) => {
+    const v = figma.variables.createVariable(name, col, type);
+    v.setValueForMode(light, lightVal);
+    v.setValueForMode(dark, darkVal);
+    return v;
+  };
+  const vBg = mk("color/bg", "COLOR",
+    { r: 1, g: 1, b: 1, a: 1 }, { r: 0.08, g: 0.09, b: 0.11, a: 1 });
+  const vAccent = mk("color/accent", "COLOR",
+    { r: 0.13, g: 0.45, b: 0.9, a: 1 }, { r: 0.4, g: 0.65, b: 1, a: 1 });
+  const vGap = mk("size/gap", "FLOAT", 16, 24);
+  const vRadius = mk("size/radius", "FLOAT", 8, 2);
+
+  const root = baseFrame("variables-bound", 640, 360);
+  root.layoutMode = "HORIZONTAL";
+  root.paddingLeft = root.paddingRight = 24;
+  root.paddingTop = root.paddingBottom = 24;
+  root.itemSpacing = 24;
+
+  const makeCard = async (name) => {
+    const card = figma.createFrame();
+    card.name = name;
+    card.layoutMode = "VERTICAL";
+    card.paddingLeft = card.paddingRight = 20;
+    card.paddingTop = card.paddingBottom = 20;
+    // color binding via paint
+    card.fills = [
+      figma.variables.setBoundVariableForPaint(solid(GRAY(1)), "color", vBg),
+    ];
+    // number bindings
+    card.setBoundVariable("itemSpacing", vGap);
+    try {
+      card.setBoundVariable("topLeftRadius", vRadius);
+      card.setBoundVariable("topRightRadius", vRadius);
+      card.setBoundVariable("bottomLeftRadius", vRadius);
+      card.setBoundVariable("bottomRightRadius", vRadius);
+    } catch (e) {
+      console.warn("radius binding failed:", e);
+    }
+    const chip = figma.createFrame();
+    chip.name = "accent-chip";
+    chip.resize(120, 32);
+    chip.fills = [
+      figma.variables.setBoundVariableForPaint(solid(GRAY(0.5)), "color", vAccent),
+    ];
+    card.appendChild(chip);
+    card.appendChild(await label(name));
+    return card;
+  };
+
+  const a = await makeCard("card-inherits-mode");
+  const b = await makeCard("card-explicit-dark");
+  root.appendChild(a);
+  root.appendChild(b);
+  a.layoutSizingHorizontal = "FILL";
+  b.layoutSizingHorizontal = "FILL";
+  // One subtree pinned to dark: capture then shows BOTH modes resolved in
+  // one file — exactly what the phase-1 sidecar needs to prove itself.
+  b.setExplicitVariableModeForCollection(col, dark);
+
+  return "variables-bound built: fixture-tokens collection (light/dark), color+number bindings, one subtree pinned dark";
+}
+
+// --------------------------------------------------------------- effects-2025
+// REJECT-list diagnostic fixture (§8): noise, texture, progressive blur —
+// plus variable-width stroke, which has NO plugin API and stays manual.
+// The 2025 effect types are beta in the plugin API; each write is attempted
+// independently and failures land on the manual checklist.
+async function effects2025() {
+  await figma.loadFontAsync(INTER);
+  const root = baseFrame("effects-2025", 640, 300);
+  root.layoutMode = "HORIZONTAL";
+  root.itemSpacing = 24;
+  root.paddingLeft = root.paddingRight = 24;
+  root.paddingTop = root.paddingBottom = 24;
+
+  const manual = [];
+  const tryEffect = (name, color, effect) => {
+    const r = cell(name, color);
+    root.appendChild(r);
+    r.resize(160, 160);
+    try {
+      r.effects = [effect];
+      return true;
+    } catch (e) {
+      console.warn(name + " effect write failed:", e);
+      manual.push(name);
+      return false;
+    }
+  };
+
+  tryEffect("noise", { r: 0.85, g: 0.6, b: 0.6 }, {
+    type: "NOISE",
+    blendMode: "NORMAL",
+    visible: true,
+    noiseSize: 1,
+    density: 0.5,
+    noiseType: "MONOTONE",
+    color: { r: 0, g: 0, b: 0, a: 0.5 },
+  });
+
+  tryEffect("texture", { r: 0.6, g: 0.8, b: 0.65 }, {
+    type: "TEXTURE",
+    visible: true,
+    noiseSize: 4,
+    radius: 2,
+    clipToShape: true,
+  });
+
+  tryEffect("progressive-blur", { r: 0.6, g: 0.65, b: 0.9 }, {
+    type: "PROGRESSIVE_BLUR",
+    visible: true,
+    radius: 20,
+    startRadius: 0,
+    startOffset: { x: 0.5, y: 0 },
+    endOffset: { x: 0.5, y: 1 },
+  });
+
+  // Variable-width stroke: Figma Draw feature, not scriptable — always manual.
+  manual.push("variable-width stroke (draw a line, Draw tools > variable width)");
+
+  // Leave the checklist inside the file; `_` prefix = trimmed by convention.
+  const note = await label(
+    "_manual-steps:\n" + manual.map((m) => "  - " + m).join("\n"),
+    INTER, 12);
+  note.name = "_manual-checklist";
+  figma.currentPage.appendChild(note);
+  note.x = root.x;
+  note.y = root.y + root.height + 24;
+
+  return "effects-2025 built; manual steps remaining: " + manual.join("; ");
+}
+
+// ------------------------------------------------------------- lowering-wrap
+async function loweringWrap() {
+  await figma.loadFontAsync(INTER);
+  const root = baseFrame("lowering-wrap", 420, 300);
+  root.layoutMode = "HORIZONTAL";
+  root.layoutWrap = "WRAP";
+  // Keep width fixed at 420 so children actually wrap instead of the frame
+  // hugging them into one row; height hugs the resulting rows.
+  root.primaryAxisSizingMode = "FIXED";
+  root.counterAxisSizingMode = "AUTO";
+  root.itemSpacing = 12;
+  root.counterAxisSpacing = 16;
+  root.paddingLeft = root.paddingRight = 16;
+  root.paddingTop = root.paddingBottom = 16;
+  const widths = [120, 80, 160, 100, 140, 90, 110];
+  for (let i = 0; i < widths.length; i++) {
+    const chip = cell("chip-" + (i + 1), {
+      r: 0.55 + (i % 3) * 0.12, g: 0.65, b: 0.9 - (i % 4) * 0.1,
+    });
+    root.appendChild(chip);
+    chip.resize(widths[i], 40);
+  }
+  return "lowering-wrap built: 7 fixed-width chips wrapping in a 420px row";
+}
+
+// ------------------------------------------------------ lowering-hug-in-fill
+async function loweringHugInFill() {
+  await figma.loadFontAsync(INTER);
+  const root = baseFrame("lowering-hug-in-fill", 480, 200);
+  root.layoutMode = "VERTICAL";
+  root.paddingLeft = root.paddingRight = 16;
+  root.paddingTop = root.paddingBottom = 16;
+  root.itemSpacing = 12;
+
+  const fill = cell("fill-container", { r: 0.85, g: 0.88, b: 0.95 });
+  root.appendChild(fill);
+  fill.layoutMode = "HORIZONTAL";
+  fill.paddingLeft = fill.paddingRight = 12;
+  fill.paddingTop = fill.paddingBottom = 12;
+  fill.layoutSizingHorizontal = "FILL"; // fill parent...
+  fill.layoutSizingVertical = "HUG";
+
+  const hug = cell("hug-inside", { r: 0.95, g: 0.75, b: 0.6 });
+  fill.appendChild(hug);
+  hug.layoutMode = "HORIZONTAL";
+  hug.paddingLeft = hug.paddingRight = 10;
+  hug.paddingTop = hug.paddingBottom = 6;
+  hug.appendChild(await label("hug inside fill"));
+  hug.layoutSizingHorizontal = "HUG"; // ...containing a hug child
+  hug.layoutSizingVertical = "HUG";
+
+  return "lowering-hug-in-fill built: HUG child inside FILL container";
+}
+
+// ----------------------------------------------------- lowering-negative-gap
+async function loweringNegativeGap() {
+  const root = baseFrame("lowering-negative-gap", 360, 120);
+  root.layoutMode = "HORIZONTAL";
+  root.itemSpacing = -16; // the construct under test (lowers to margins)
+  root.paddingLeft = root.paddingRight = 24;
+  root.paddingTop = root.paddingBottom = 24;
+  for (let i = 0; i < 5; i++) {
+    const dot = figma.createEllipse();
+    dot.name = "overlap-" + (i + 1);
+    dot.resize(56, 56);
+    dot.fills = [solid({ r: 0.3 + i * 0.15, g: 0.5, b: 0.9 - i * 0.15 }, 0.9)];
+    root.appendChild(dot);
+  }
+  return "lowering-negative-gap built: itemSpacing -16 overlap row";
+}
+
+// --------------------------------------------------------- lowering-baseline
+// Mixed-size baseline row (DESIGN Q-4: Taffy's least-exercised corner) +
+// the RTL/Arabic locale variant with Arabic-Indic numerals (§8, E2).
+async function loweringBaseline() {
+  await figma.loadFontAsync(INTER);
+  await figma.loadFontAsync(INTER_BOLD);
+  let arabicFont = null;
+  try {
+    await figma.loadFontAsync(ARABIC);
+    arabicFont = ARABIC;
+  } catch (e) {
+    console.warn("Noto Sans Arabic unavailable, Arabic run skipped:", e);
+  }
+
+  const root = baseFrame("lowering-baseline", 640, 160);
+  root.layoutMode = "HORIZONTAL";
+  root.counterAxisAlignItems = "BASELINE"; // the construct under test
+  root.itemSpacing = 16;
+  root.paddingLeft = root.paddingRight = 24;
+  root.paddingTop = root.paddingBottom = 24;
+
+  root.appendChild(await label("small", INTER, 12));
+  root.appendChild(await label("MEDIUM", INTER_BOLD, 24));
+  root.appendChild(await label("Large", INTER, 40));
+  const boxed = cell("boxed-text", { r: 0.9, g: 0.9, b: 0.7 });
+  root.appendChild(boxed);
+  boxed.layoutMode = "HORIZONTAL";
+  boxed.paddingLeft = boxed.paddingRight = 8;
+  boxed.paddingTop = boxed.paddingBottom = 4;
+  boxed.appendChild(await label("boxed 18", INTER, 18));
+
+  if (arabicFont) {
+    // Arabic + Arabic-Indic numerals: shaping, RTL, mixed numerals in one run.
+    const ar = await label("السرعة ١٢٠ كم/س", arabicFont, 24);
+    ar.name = "arabic-rtl";
+    root.appendChild(ar);
+  }
+  return "lowering-baseline built: mixed-size baseline row" +
+    (arabicFont ? " incl. Arabic RTL run" : " (Arabic font unavailable — add manually)");
+}
+
+// ------------------------------------------------- lowering-variant-topology
+// A component set whose variants have DIFFERENT child counts — the variant
+// topology change case (E3): switching variants adds/removes nodes.
+async function loweringVariantTopology() {
+  await figma.loadFontAsync(INTER);
+  removePrevious("lowering-variant-topology");
+
+  const mkVariant = async (stateName, childCount) => {
+    const comp = figma.createComponent();
+    comp.name = "state=" + stateName;
+    comp.layoutMode = "VERTICAL";
+    comp.itemSpacing = 8;
+    comp.paddingLeft = comp.paddingRight = 16;
+    comp.paddingTop = comp.paddingBottom = 16;
+    comp.fills = [solid(GRAY(0.96))];
+    comp.appendChild(await label("state: " + stateName, INTER_BOLD, 14));
+    for (let i = 0; i < childCount; i++) {
+      const row = cell("row-" + (i + 1), { r: 0.7, g: 0.75, b: 0.9 });
+      comp.appendChild(row);
+      row.resize(180, 28);
+    }
+    return comp;
+  };
+  await figma.loadFontAsync(INTER_BOLD);
+
+  const a = await mkVariant("collapsed", 1);
+  const b = await mkVariant("expanded", 4);
+  const set = figma.combineAsVariants([a, b], figma.currentPage);
+  set.name = "lowering-variant-topology";
+
+  // An instance of the default variant so the exported tree exercises
+  // instance-of-variant, not just the definitions.
+  const inst = a.createInstance();
+  inst.name = "instance-collapsed";
+  figma.currentPage.appendChild(inst);
+  inst.x = set.x;
+  inst.y = set.y + set.height + 40;
+
+  return "lowering-variant-topology built: 2 variants with different child counts + 1 instance";
+}
+
+// ------------------------------------------------------------------ dispatch
+const COMMANDS = {
+  "grid-basic": gridBasic,
+  "variables-bound": variablesBound,
+  "effects-2025": effects2025,
+  "lowering-wrap": loweringWrap,
+  "lowering-hug-in-fill": loweringHugInFill,
+  "lowering-negative-gap": loweringNegativeGap,
+  "lowering-baseline": loweringBaseline,
+  "lowering-variant-topology": loweringVariantTopology,
+};
+
+(async () => {
+  const fn = COMMANDS[figma.command];
+  if (!fn) {
+    figma.closePlugin("unknown command: " + figma.command);
+    return;
+  }
+  try {
+    const msg = await fn();
+    figma.viewport.scrollAndZoomIntoView(figma.currentPage.children);
+    figma.closePlugin(msg);
+  } catch (e) {
+    console.error(e);
+    figma.closePlugin("FAILED: " + (e && e.message ? e.message : String(e)));
+  }
+})();
