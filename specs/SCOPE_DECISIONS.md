@@ -296,7 +296,9 @@ project itself.
   — the `@driftsys` scope already exists on JSR (owns `markspec`), and
   the package name itself returns 404 (unclaimed). Not yet published;
   that happens once `importers/figma/` has real code to ship.
-- **Milestones/issues**: not yet created (blocked on repo access).
+- **Milestones/issues**: resolved — the full v0 plan now exists as
+  GitHub issues on `driftsys/dashscene-staging` (see §10): one epic and
+  one milestone per DESIGN §11 slice (v0.1–v0.9), broken into stories.
 - **CI**: workflow file is scaffolded (`.github/workflows/ci.yml`) but
   not yet running anywhere (blocked on repo access/push).
 - **Promotion path unset**: how `dashscene-staging` eventually becomes
@@ -529,3 +531,32 @@ plus their runtime scheduling/interpolation. The seam: `set_variant`
 that switch animates is `dashcue` data referenced by the commit.
 `dashcue` lands with slice v0.4 (variants + staged mutation + minimal
 FLIP), not before.
+
+## 10. The v0 plan is tracked as GitHub epics/stories, revised at each phase end
+
+The whole v0 plan (DESIGN §11 slices v0.1–v0.9) now lives as GitHub
+issues on `driftsys/dashscene-staging`, closing §6's "milestones/issues
+not yet created" item:
+
+- One milestone and one `epic`-labeled issue per slice (epic #1 =
+  v0.1 … epic #47 = v0.9), each epic carrying a dependency graph and a
+  story checklist.
+- `story`-labeled issues (#2–#6, #8–#11, #13–#18, #20–#23, #25–#30,
+  #32–#35, #37–#41, #43–#46, #48–#49) split so that independent
+  stories can run in parallel, each in its own git worktree on the
+  branch named in the story issue; every story body lists what it
+  depends on and what it blocks. Cross-epic early starts are marked
+  (e.g. the v0.3 paint/importer track does not depend on v0.2's layout
+  work; the v0.5 atlas pipeline and the Arabic-atlas spike depend only
+  on v0.1).
+- Labels: `epic`, `story`, `debt` (deferred minor review findings);
+  the stock `bug` label covers defects found later.
+- Definition of done for every story (also in AGENTS.md "Plan
+  tracking"): `just build` green; `/code-review` on the story diff
+  before the PR; every finding captured as a PR checklist; critical
+  findings fixed before merge; one `debt` issue per minor finding;
+  merge only when CI is green and the review pass is complete.
+- **Plan revision at phase end**: story breakdowns for future slices
+  are provisional by design. When a slice's epic closes, the remaining
+  epics/stories are revised against what was learned before the next
+  slice starts; scope-level changes land here.

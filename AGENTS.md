@@ -113,6 +113,34 @@ a `set_variant` animates is `dashcue` data referenced by the commit,
 while the switch itself is core's. `dashlang` builds directly on
 `dashscene-core`; `dashcue` doesn't enter the graph until v0.4.
 
+## Plan tracking
+
+The v0 plan lives as GitHub issues on this repo: one `epic`-labeled
+issue and one milestone per `DESIGN_1.md` §11 slice (v0.1 … v0.9),
+broken into `story`-labeled issues. Stories are split so that
+independent stories can run in parallel; each story is worked in its
+own git worktree, on the branch named in the story issue, and its body
+lists what it depends on and what it blocks.
+
+Story workflow — the definition of done for every story:
+
+- `just build` green.
+- Run `/code-review` on the story's diff before opening the PR, and
+  capture every finding as a checklist in the PR description — never
+  drop a finding silently.
+- Fix all critical findings before merging. For minor findings, file
+  one `debt`-labeled issue each (linked to the story) instead of
+  fixing them inline.
+- Merge only when CI is green, the review pass is complete, and all
+  critical findings are resolved.
+
+Plan revision at the end of each phase: story breakdowns for future
+slices are provisional by design. When a slice's epic closes (v0.1,
+v0.2, …), revise the remaining epics and stories against what was
+learned before starting the next slice — update, split, merge, or
+re-order the issues, and record scope-level changes in
+`specs/SCOPE_DECISIONS.md`.
+
 ## Principles (DESIGN_1.md §3 — don't violate these)
 
 - **P1** — the document carries intent, never results. No resolved
