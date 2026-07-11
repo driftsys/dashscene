@@ -48,7 +48,12 @@ taffy = "0.7"
 rustybuzz = "0.20"
 unicode-bidi = "0.3"
 ttf-parser = "0.25"
-flatbuffers = "24"
+# Pinned to the exact flatc release (installed via `brew install
+# flatbuffers` / `apt-get install flatbuffers-compiler`, or downloaded
+# from github.com/google/flatbuffers/releases) — the generated Rust API
+# can change between flatc majors, so compiler and runtime crate must
+# match.
+flatbuffers = "=25.12.19"
 lyon = "1"
 skia-safe = "0.81"
 
