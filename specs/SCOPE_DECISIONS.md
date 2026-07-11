@@ -286,12 +286,16 @@ project itself.
   named `dashc_wasm` in `crates/dashc/Cargo.toml`. Still needed: push to
   `driftsys/dashscene-staging` once it exists and this session (or a
   future one) can reach it.
-- **crates.io reservations**: `dashscene-typeset`, `dashscene-skia`,
-  `dashscene-validator` are confirmed available but not yet reserved —
-  recommend reserving before v0.1 to prevent squatting.
-- **JSR reservation**: `@driftsys/dashscene-figma` (or whatever name is
-  chosen) not yet confirmed available or reserved — user needs to check
-  `jsr.io/@driftsys` directly (see §4).
+- **crates.io reservations**: resolved. `dashscene-typeset`,
+  `dashscene-skia`, `dashscene-validator` are published as v0.1.0
+  doc-comment-stub placeholders (matching the original 12's style:
+  MIT, `repository` pointing at the public `driftsys/dashscene` facade
+  per §1's rationale), squat-proofing the full 15-crate name set ahead
+  of v0.1.
+- **JSR reservation**: `@driftsys/dashscene-figma` confirmed available
+  — the `@driftsys` scope already exists on JSR (owns `markspec`), and
+  the package name itself returns 404 (unclaimed). Not yet published;
+  that happens once `importers/figma/` has real code to ship.
 - **Milestones/issues**: not yet created (blocked on repo access).
 - **CI**: workflow file is scaffolded (`.github/workflows/ci.yml`) but
   not yet running anywhere (blocked on repo access/push).
