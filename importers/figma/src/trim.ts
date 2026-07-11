@@ -12,7 +12,11 @@
  * Stub — implementation begins alongside v0.7 (DESIGN_1.md §11).
  */
 
-export type SharedPluginRole = "placeholder" | "sample-content" | "redline" | "spec";
+export type SharedPluginRole =
+  | "placeholder"
+  | "sample-content"
+  | "redline"
+  | "spec";
 
 export function trim(_node: unknown): never {
   throw new Error("not yet implemented (v0.7, DESIGN_1.md §11)");

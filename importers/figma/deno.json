@@ -3,13 +3,12 @@
   "version": "0.0.0",
   "exports": "./src/mod.ts",
 
-  "workspace": ["."],
-
   "imports": {
     "@std/assert": "jsr:@std/assert@^1",
     "@std/path": "jsr:@std/path@^1",
     "@std/testing": "jsr:@std/testing@^1",
-    "@figma/rest-api-spec": "npm:@figma/rest-api-spec@^0.28"
+    "@figma/rest-api-spec": "npm:@figma/rest-api-spec@^0.28",
+    "@figma/plugin-typings": "npm:@figma/plugin-typings@^1"
   },
 
   "tasks": {

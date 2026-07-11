@@ -24,7 +24,7 @@ lint:
     cargo clippy --workspace --all-targets -- -D warnings
     cargo fmt --all -- --check
     dprint check
-    markdownlint-cli '**/*.md' --ignore target --ignore node_modules
+    markdownlint '**/*.md' --ignore target --ignore node_modules
 
 # Dependency vulnerability audit.
 audit:

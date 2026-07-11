@@ -49,7 +49,7 @@ surface. The tradeoff accepted: when there's a real version running,
 staging's content needs to be promoted into `dashscene` (fresh push or
 history merge — decide then), rather than avoiding that step entirely.
 
-Blocking: this session's GitHub connector has no access to *any*
+Blocking: this session's GitHub connector has no access to _any_
 `driftsys` repo yet — confirmed it's not just a missing individual grant
 but that org-level listing/creation is unavailable entirely ("sessions
 are bound to their configured repositories"). Re-confirmed in a later

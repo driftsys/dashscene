@@ -15,12 +15,14 @@
  * Stub — implementation begins alongside v0.7 (DESIGN_1.md §11).
  */
 
-const NAMESPACE = "dashscene";
-const ROLE_KEY = "role";
+/// <reference types="@figma/plugin-typings" />
+
+const _NAMESPACE = "dashscene";
+const _ROLE_KEY = "role";
 
 type SharedPluginRole = "placeholder" | "sample-content" | "redline" | "spec";
 
-function setRole(_node: SceneNode, _role: SharedPluginRole): never {
+function _setRole(_node: SceneNode, _role: SharedPluginRole): never {
   throw new Error("not yet implemented (v0.7, DESIGN_1.md §11)");
 }
 

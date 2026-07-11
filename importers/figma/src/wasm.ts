@@ -14,6 +14,10 @@ export type CompileResult =
   | { readonly kind: "document"; readonly bytes: Uint8Array }
   | { readonly kind: "diagnostics"; readonly report: unknown };
 
-export async function compileViaWasm(_canonicalJson: unknown): Promise<CompileResult> {
-  throw new Error("not yet implemented (v0.7, DESIGN_1.md §11)");
+export function compileViaWasm(
+  _canonicalJson: unknown,
+): Promise<CompileResult> {
+  return Promise.reject(
+    new Error("not yet implemented (v0.7, DESIGN_1.md §11)"),
+  );
 }
