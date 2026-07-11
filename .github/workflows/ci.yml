@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
 
+# The default token is restricted; dorny/paths-filter needs pull-requests
+# read access to list a PR's changed files via the API.
+permissions:
+  contents: read
+  pull-requests: read
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -120,14 +126,17 @@ jobs:
   ci:
     name: ci
     if: always()
-    needs: [fmt, dprint, clippy, test, wasm-build]
+    # Every job in the workflow, so a red anywhere fails the aggregate
+    # (SCOPE_DECISIONS.md §7). "skipped" is accepted: convco only runs on
+    # pull requests, and deno only when importers/figma/ changed.
+    needs: [changes, fmt, dprint, clippy, test, wasm-build, convco, deno]
     runs-on: ubuntu-latest
     steps:
       - name: check required jobs
         run: |
           echo '${{ toJSON(needs) }}'
           for result in $(echo '${{ toJSON(needs.*.result) }}' | tr -d '[],"'); do
-            if [ "$result" != "success" ]; then
+            if [ "$result" != "success" ] && [ "$result" != "skipped" ]; then
               echo "a required job did not succeed: $result"
               exit 1
             fi
