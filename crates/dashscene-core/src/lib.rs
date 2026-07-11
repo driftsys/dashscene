@@ -5,5 +5,5 @@
 mod arena;
 mod committed;
 
-pub use arena::NodeId;
+pub use arena::{Arena, NodeId, Prop, Txn};
 pub use committed::{Color, CommittedScene, NO_PAINT, Paint, RectEntry};
