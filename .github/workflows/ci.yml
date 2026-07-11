@@ -87,6 +87,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # Lint the PR's own commits: the default pull_request checkout is
+          # a synthetic "Merge X into Y" commit, which can never pass a
+          # conventional-commit lint.
+          ref: ${{ github.event.pull_request.head.sha }}
       - name: install git-std
         run: ./bootstrap
         env:
