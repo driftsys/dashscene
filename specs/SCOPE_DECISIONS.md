@@ -78,7 +78,9 @@ Mapping onto DESIGN_1.md's architecture:
     -------------------  ------------------------------------------------
     dashscene            umbrella crate — facade / public API surface
     dashscene-core        arena, node tree, layout tables, paint tables —
-                          the semantic model (DESIGN §5)
+                          the semantic model (DESIGN §5) — AND the staged
+                          producer-mutation API (open/set_prop/
+                          set_variant/commit), see §9
     dashscene-engine      Taffy solve, variants, FLIP, measure callback —
                           runtime that resolves the model (DESIGN §7.1)
     dashc                 compiler: Figma importer orchestration target,
@@ -91,10 +93,11 @@ Mapping onto DESIGN_1.md's architecture:
     dashpaint             paint table (fill/stroke/effect params, token
                           refs, material class) + the painter trait,
                           boundary B (DESIGN §8)
-    dashcue               producer staged-mutation API (open/set_prop/
-                          set_variant/commit) + animation vocabulary —
-                          variant transitions, FLIP triggers, springs,
-                          keyframes (DESIGN §6.3)
+    dashcue               descriptive animation vocabulary + its runtime
+                          scheduling — variant transitions, FLIP
+                          triggers, springs, keyframes, loop tracks,
+                          enter/exit (DESIGN §6.3); NOT the staged-
+                          mutation API, which is dashscene-core's (§9)
     dashlang              Rust DSL skin (v0) and future typed skins over
                           the one producer surface (DESIGN §6.2)
     dashscene-unity        Rust-side FFI bindings for the Unity painter;
@@ -462,3 +465,38 @@ Open actions from this section: author the four tier-1 fixture groups
 (needs the paid-seat PAT from the capture-tooling work, next topic);
 pick the tier-2 design-system kit; wire the three tier-2 targets into
 the nightly smoke test config when it exists.
+
+## 9. Staged-mutation API lives in dashscene-core, not dashcue — resolved
+
+Resolves the contradiction AGENTS.md flagged: DESIGN §4/§6.2 describe
+the staged-mutation contract (`open`/`set_prop`/`set_variant`/`commit`)
+as a property of the in-memory arena, while this file's §2 crate map had
+assigned it to `dashcue`. **The arena wins: the API is
+`dashscene-core`'s.** The §2 map above has been corrected to match.
+
+Rationale:
+
+- DESIGN §4 says it verbatim: "the in-memory arena + its staged
+  mutation API (open/set_prop/set_variant/commit) is the real contract;
+  .scb is one way to populate it." The API is defined as a property of
+  the arena, and the arena is `dashscene-core`. The §2 assignment to
+  `dashcue` was a mapping error, not a design decision.
+- `commit` is mechanically an arena operation — it swaps the double
+  buffer, bumps the generation stamp, updates the dirty set, all state
+  `dashscene-core` owns. Housing the API elsewhere means either another
+  crate reaching into core's internals or core exposing a lower-level
+  mutation API anyway that the other crate merely wraps.
+- Dependency graph: the v0.1 walking skeleton needs
+  `open`/`set_prop`/`commit` but zero animation. With the API in core,
+  v0.1 is `dashlang → dashscene-core → dashbuf` and `dashcue` doesn't
+  exist until its slice (v0.4). The other way round, every producer
+  drags in the animation crate to set a property.
+
+What `dashcue` is, precisely: the DESIGN §6.3 descriptive animation
+vocabulary — transition specs (tween/spring/keyframes), stagger,
+per-prop smoothing, loop tracks, keyframe tracks, enter/exit specs —
+plus their runtime scheduling/interpolation. The seam: `set_variant`
+(the structural switch) is core's; the transition spec describing how
+that switch animates is `dashcue` data referenced by the commit.
+`dashcue` lands with slice v0.4 (variants + staged mutation + minimal
+FLIP), not before.
