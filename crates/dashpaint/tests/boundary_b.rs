@@ -42,3 +42,68 @@ fn paint_table_get_past_the_end_returns_none() {
     assert_eq!(table.get(1), None);
     assert_eq!(table.get(u32::MAX), None);
 }
+
+use dashpaint::{Painter, RectEntry};
+
+/// Test double: resolves each rect's paint index and records what a real
+/// painter would color. A painter only colors (P2) — so recording
+/// (rect, resolved color) pairs is a complete observation of the contract.
+#[derive(Default)]
+struct RecordingPainter {
+    painted: Vec<(RectEntry, Color)>,
+}
+
+impl Painter for RecordingPainter {
+    fn paint(&mut self, rects: &[RectEntry], paints: &PaintTable) {
+        for rect in rects {
+            let PaintKind::Solid { color } = paints
+                .get(rect.paint)
+                .expect("paint index validated upstream (P4)");
+            self.painted.push((*rect, *color));
+        }
+    }
+}
+
+fn two_rect_fixture() -> (Vec<RectEntry>, PaintTable) {
+    let mut paints = PaintTable::new();
+    let red = paints.push(PaintKind::Solid { color: RED });
+    let blue = paints.push(PaintKind::Solid { color: HALF_BLUE });
+    let rects = vec![
+        RectEntry {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 50.0,
+            paint: red,
+        },
+        RectEntry {
+            x: 10.0,
+            y: 20.0,
+            w: 30.0,
+            h: 40.0,
+            paint: blue,
+        },
+    ];
+    (rects, paints)
+}
+
+#[test]
+fn painter_receives_rects_in_slice_order_with_resolved_colors() {
+    let (rects, paints) = two_rect_fixture();
+    let mut painter = RecordingPainter::default();
+
+    painter.paint(&rects, &paints);
+
+    assert_eq!(
+        painter.painted,
+        vec![(rects[0], RED), (rects[1], HALF_BLUE)]
+    );
+}
+
+#[test]
+fn painter_trait_is_object_safe() {
+    let (rects, paints) = two_rect_fixture();
+    let mut painter: Box<dyn Painter> = Box::new(RecordingPainter::default());
+
+    painter.paint(&rects, &paints);
+}

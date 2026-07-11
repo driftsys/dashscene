@@ -70,3 +70,17 @@ impl PaintTable {
         self.entries.is_empty()
     }
 }
+
+/// Boundary B (DESIGN_1.md §4, §8): the one trait every paint backend
+/// implements. A painter only colors — it never measures, wraps, kerns,
+/// or moves anything (P2).
+pub trait Painter {
+    /// Paints every rect in slice order (back-to-front: DFS order encodes
+    /// document stacking), resolving each [`RectEntry::paint`] index
+    /// against `paints`.
+    ///
+    /// Infallible by design: vocabulary and indices are validated upstream
+    /// (P4), so an out-of-range `paint` index is a broken contract between
+    /// crates — implementations may panic on it.
+    fn paint(&mut self, rects: &[RectEntry], paints: &PaintTable);
+}
