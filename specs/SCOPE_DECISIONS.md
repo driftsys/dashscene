@@ -492,10 +492,33 @@ stored:
       grid or 2025 effects yet, so this target buys scale, not
       construct coverage.
 
-Open actions from this section: author the four tier-1 fixture groups
-(needs the paid-seat PAT from the capture-tooling work, next topic);
-pick the tier-2 design-system kit; wire the three tier-2 targets into
-the nightly smoke test config when it exists.
+**Status update (2026-07-12): all 8 tier-1 fixtures are authored**, in
+the `dashscene-corpus` Figma project; the fixture-name → file-key map
+is committed at `corpus/figma-fixtures/manifest.json` (the committed
+corpus directory landed as `corpus/figma-fixtures/`, not the
+`corpus/figma/` named above). The fixtures were built programmatically
+by a development-only Figma plugin,
+`importers/figma/plugin/fixture-author/` — one menu command per
+fixture; re-running a command rebuilds its frame, so fixtures are
+regenerable rather than hand-built. This plugin is NOT the §12
+annotator plugin: it only creates nodes, it never writes
+sharedPluginData roles. `effects-2025` currently carries 3 of its 4
+REJECT constructs: texture was written via the plugin API; noise and
+progressive blur were applied manually in the Effects panel (their
+plugin-API writes are beta and did not land); variable-width stroke
+has no plugin API at all and is still pending as a manual step (draw a
+line, apply a variable-width profile with the Draw tools). Two
+plugin-API findings worth recording for future fixture authoring: a
+GRID frame reads its gaps from `gridColumnGap`/`gridRowGap`, not
+`itemSpacing`; a WRAP frame must set `primaryAxisSizingMode = "FIXED"`
+after `layoutMode`, otherwise it hugs its children into a single row
+and nothing wraps.
+
+Remaining open actions: apply `effects-2025`'s variable-width stroke
+manually; capture the 8 files' GET /file JSON into
+`corpus/figma-fixtures/` with the capture tooling under the §11 access
+rules; pick the tier-2 design-system kit; wire the three tier-2
+targets into the nightly smoke test config when it exists.
 
 ## 9. Staged-mutation API lives in dashscene-core, not dashcue — resolved
 
@@ -560,6 +583,103 @@ not yet created" item:
   are provisional by design. When a slice's epic closes, the remaining
   epics/stories are revised against what was learned before the next
   slice starts; scope-level changes land here.
+
+## 11. Figma access: plan and seat, PAT lifecycle, scopes, rate limits
+
+Decisions for the paid Figma access the fixture and capture work needs
+(§8's "paid-seat PAT" item). Plan: **Figma Professional with a Full
+seat**. The REST file endpoints are plan- and seat-gated, and
+Starter's Tier-1 allowance is roughly 6 requests per MONTH — unusable
+— so a paid plan is a hard requirement, not a convenience.
+
+**PAT lifecycle.** Figma personal access tokens expire after 90 days —
+a hard cap, with no non-expiring option. Rotation policy: rotate at
+about 75 days. The token is stored as a GitHub Actions secret, never
+in the repo. The nightly live smoke test (DESIGN §6.1) doubles as the
+token canary: when the PAT expires or loses a scope, the smoke test is
+what fails first. Auth failures surface as a named 401/403 diagnostic
+that states the likely causes (expired PAT, missing scope), never as a
+bare HTTP error.
+
+**Scopes** (granular): `file_content:read` — this also covers
+sharedPluginData, returned via `?plugin_data=shared`;
+`file_metadata:read`; `library_content:read`. `file_variables:read` is
+Enterprise-only and therefore unavailable on Professional — see §13
+for the consequence.
+
+**Rate limits.** `GET /file` is Tier 1 = 10 requests/minute on
+Professional. Importer and capture behavior derived from this:
+(1) metadata-version-check first — hit the cheap metadata endpoint,
+compare the file version against the previous capture, and skip the
+full `GET /file` when unchanged; (2) a serialized limiter — at most
+one Figma request in flight at a time; (3) honor `Retry-After` on 429
+responses.
+
+## 12. Annotator plugin: deferred to v1, contract frozen now
+
+The sharedPluginData annotator plugin (DESIGN §6.1's trim-layer
+"machine truth" writer; §4 places it alongside the Deno importer) is
+**deferred to v1**, but its data contract is frozen now so captures
+and importer code written before the plugin exists stay compatible:
+
+- Namespace: sharedPluginData namespace `"dashscene"`.
+- Keys: `role` = `placeholder | sample-content | redline | spec`, and
+  `v` = `"1"` (contract version stamp).
+- Reserved keys, defined now and written later: `contribution-id`
+  (placeholder nodes only) and `material-class` =
+  `lit-opaque | lit-cutout | unlit-overlay` (consumed by the Unity
+  painter, DESIGN §8.2).
+
+The deferral trigger is **event-based, not version-based**: the plugin
+gets built when the first externally-authored Figma file enters the
+pipeline. Self-authored fixtures do not need roles.
+
+Annotation is a three-channel inventory, cheapest channel first:
+(1) native Figma structure (names, the `_` prefix, hidden flags) where
+it already encodes the intent; (2) the repo-side export manifest for
+per-file declarations; (3) sharedPluginData last, only for what
+genuinely must travel on the node inside Figma.
+
+Distribution: the plugin stays in-repo and unpublished. Professional
+cannot publish org-private plugins, so publishing would mean public
+Community publication; distribution is therefore "import plugin from
+manifest" from a checkout (the same mechanism the fixture-author
+plugin uses).
+
+The §8 fixture-author plugin is a DIFFERENT plugin: it only creates
+nodes and never writes roles; this contract does not apply to it.
+
+## 13. Token resolution: phase split; the join table must come from the Plugin API
+
+Refines DESIGN §6.1's two-phase token plan with what the Professional
+plan actually allows.
+
+**Phase 1 — resolved literals plus a sidecar receipt.** The importer
+emits resolved literal values into the `.dsb` and writes a
+`<out>.vars.json` sidecar preserving the `boundVariables` IDs. The
+sidecar is fully derivable from the captured `GET /file` JSON — an
+R7-safe receipt (re-deriving it is byte-reproducible), not a second
+source of truth. Phase-1 documents are single-theme by construction:
+one resolved mode, no runtime theme switching.
+
+**Phase 2 — id → name/collection/mode join**, switching the `.dsb` to
+token refs.
+
+**Key finding (supersedes DESIGN §6.1's "or naming convention"
+parenthetical):** on Professional there is no naming-convention
+fallback. Variable names, collections, and modes are exposed only by
+the Enterprise-gated Variables REST endpoint, so on this plan the join
+table MUST come from the Figma Plugin API. Concretely: one more
+command on the §12 annotator plugin exports the
+id → name/collection/mode table, which makes token export the
+annotator plugin's first mandatory job.
+
+The table format is source-agnostic: if Enterprise REST access ever
+becomes available, it is a drop-in replacement producer for the same
+table. Staleness is guarded by stamping the table with the Figma file
+version it was exported from; a version mismatch against the capture
+is a diagnostic. For fixtures, the table is committed as
+`corpus/figma-fixtures/<file>.vartable.json`.
 
 ## 11. Arabic atlas spike (#25): msdf-atlas-gen confirmed; Q-1 resolved for v0
 
