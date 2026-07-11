@@ -10,6 +10,11 @@
 namespace dashbuf;
 
 struct FixedSizeLayout {
+  // Authored offset relative to the parent node (or the canvas origin
+  // for a root). Intent, not a resolved result (P1) — the resolved
+  // absolute position exists only in the runtime rect table.
+  x: float32;
+  y: float32;
   width: float32;
   height: float32;
 }

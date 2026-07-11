@@ -20,7 +20,7 @@ fn node_round_trips_through_a_document_buffer() {
             color: Some(&color),
         },
     );
-    let layout = FixedSizeLayout::new(100.0, 50.0);
+    let layout = FixedSizeLayout::new(8.0, 4.0, 100.0, 50.0);
     let node = Node::create(
         &mut builder,
         &NodeArgs {
@@ -43,6 +43,8 @@ fn node_round_trips_through_a_document_buffer() {
     assert_eq!(decoded_node.parent(), u32::MAX);
 
     let decoded_layout = decoded_node.layout().expect("layout present");
+    assert_eq!(decoded_layout.x(), 8.0);
+    assert_eq!(decoded_layout.y(), 4.0);
     assert_eq!(decoded_layout.width(), 100.0);
     assert_eq!(decoded_layout.height(), 50.0);
 
@@ -61,7 +63,7 @@ fn node_round_trips_through_a_document_buffer() {
 fn a_root_node_reads_back_the_default_parent_sentinel() {
     let mut builder = FlatBufferBuilder::new();
 
-    let layout = FixedSizeLayout::new(1.0, 1.0);
+    let layout = FixedSizeLayout::new(0.0, 0.0, 1.0, 1.0);
     let paint = SolidFill::create(&mut builder, &SolidFillArgs { color: None });
     let node = Node::create(
         &mut builder,
