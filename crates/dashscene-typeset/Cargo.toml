@@ -12,6 +12,7 @@ name = "dashscene_typeset"
 
 [dependencies]
 ttf-parser.workspace = true
+rustybuzz.workspace = true
 serde.workspace = true
 postcard.workspace = true
 serde_json.workspace = true
