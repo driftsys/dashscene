@@ -107,8 +107,8 @@ All types are generated from `crates/dashbuf/schema/dashbuf.fbs`:
   required fields; a pool-indexed family was considered and rejected,
   since it would lose that verifier-enforced presence check and
   families repeat little once styles themselves are pooled),
-  `size_px: float32` (em size in document units), `weight: ushort =
-  400` (CSS-scale 100..900), `color: Color`.
+  `size: float32` (em size in document units), `weight: ushort =
+  400` (CSS-scale weight, 100 to 900 inclusive), `color: Color`.
 - `Node` (table) — `name: string`, `parent: uint32` (`uint32::MAX`
   sentinel for roots), `layout: FixedSizeLayout`, `paint: SolidFill`
   (legacy), `paint_entry: uint32 = uint32::MAX` (the document-level
@@ -153,7 +153,7 @@ foreign bytes; no test constructs invalid bytes by hand.
 - **#28** (Latin shaping) and **#29** (measure callback / hug sizing)
   read the string and style pools through `dashscene-core`'s
   intent-side accessors (`docs/design/dashscene-core-arena.md`); this
-  schema defines what a text node says, never how it is shaped or
+  schema defines what text a node contains, never how it is shaped or
   measured (P1).
 - **#30** (glyph-run committed output and painting) is where boundary
   B gains positioned glyph runs; nothing in this schema anticipates

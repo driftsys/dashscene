@@ -149,8 +149,8 @@ table TextStyle {
   // mechanism as Gradient's required fields.
   family: string (required);
   // Em size in document units.
-  size_px: float32;
-  // CSS-scale weight, 100..900.
+  size: float32;
+  // CSS-scale weight, 100 to 900 inclusive.
   weight: ushort = 400;
   color: Color;
 }
@@ -171,13 +171,13 @@ table Node {
   // every rect resolves to a pool entry
   // (docs/decisions/boundary-b-unification.md).
   paint_entry: uint32 = 4294967295;
-  // Index into Document.strings, or uint32::MAX (the same sentinel
-  // convention as `parent`/`paint_entry`) for a node without text
-  // content.
+  // Index into Document.strings, or NO_TEXT (uint32::MAX — the same
+  // sentinel convention as `parent`/`paint_entry`; the named constants
+  // live in the crate root) for a node without text content.
   text: uint32 = 4294967295;
-  // Index into Document.text_styles, or uint32::MAX for unstyled text
-  // (a diagnostic once text validation exists; never a silent
-  // default).
+  // Index into Document.text_styles, or NO_TEXT_STYLE (uint32::MAX)
+  // for unstyled text (a diagnostic once text validation exists;
+  // never a silent default).
   text_style: uint32 = 4294967295;
 }
 

@@ -3,14 +3,10 @@
 //! construct, matching paint_roundtrip.rs's style.
 
 use dashbuf::{
-    Color, Document, DocumentArgs, Node, NodeArgs, TextStyle, TextStyleArgs, root_as_document,
+    Color, Document, DocumentArgs, NO_TEXT, NO_TEXT_STYLE, Node, NodeArgs, TextStyle,
+    TextStyleArgs, root_as_document,
 };
 use flatbuffers::FlatBufferBuilder;
-
-/// `Node.text` / `Node.text_style`'s "absent" sentinel — same
-/// convention as `Node.parent`'s NO_PARENT and `paint_entry`'s
-/// NO_PAINT.
-const NO_TEXT: u32 = u32::MAX;
 
 /// Builds a document with `strings`, `text_styles`, and one node per
 /// `(text, text_style)` index pair.
@@ -26,7 +22,7 @@ fn build_doc(strings: &[&str], styles: &[(&str, f32, u16)], nodes: &[(u32, u32)]
                 &mut b,
                 &TextStyleArgs {
                     family: Some(family),
-                    size_px: *size,
+                    size: *size,
                     weight: *weight,
                     color: Some(&Color::new(0.1, 0.2, 0.3, 1.0)),
                 },
@@ -76,7 +72,7 @@ fn text_node_reads_back_through_the_pools() {
     assert_eq!(strings.get(n0.text() as usize), "Speed");
     let style = styles.get(n0.text_style() as usize);
     assert_eq!(style.family(), "Noto Sans");
-    assert_eq!(style.size_px(), 16.0);
+    assert_eq!(style.size(), 16.0);
     assert_eq!(style.weight(), 400);
     assert_eq!(style.color().unwrap().r(), 0.1);
     assert_eq!(strings.get(nodes.get(1).text() as usize), "km/h");
@@ -87,6 +83,12 @@ fn two_nodes_can_share_one_interned_string() {
     let bytes = build_doc(&["OK"], &[("Noto Sans", 12.0, 700)], &[(0, 0), (0, 0)]);
     let doc = root_as_document(&bytes).expect("verifies");
     let nodes = doc.nodes().unwrap();
+    let strings = doc.strings().unwrap();
+    // One pool entry, and both nodes resolve through it to the value —
+    // not just index equality (which would hold vacuously for two
+    // default sentinels).
+    assert_eq!(strings.len(), 1);
+    assert_eq!(strings.get(nodes.get(0).text() as usize), "OK");
     assert_eq!(nodes.get(0).text(), nodes.get(1).text());
 }
 
@@ -107,7 +109,7 @@ fn a_node_without_text_reads_the_sentinels_by_default() {
     let doc = root_as_document(&bytes).expect("verifies");
     let n = doc.nodes().unwrap().get(0);
     assert_eq!(n.text(), NO_TEXT);
-    assert_eq!(n.text_style(), NO_TEXT);
+    assert_eq!(n.text_style(), NO_TEXT_STYLE);
 }
 
 #[test]

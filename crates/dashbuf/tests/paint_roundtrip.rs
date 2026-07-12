@@ -2,16 +2,13 @@
 //! and field survives a build → finish → decode cycle, through the
 //! document-level paint pool (`Document.paints` + `Node.paint_entry`).
 
+use dashbuf::NO_PAINT;
 use dashbuf::{
     Color, Document, DocumentArgs, Fill, Gradient, GradientArgs, GradientKind, GradientStop, Image,
     ImageArgs, ImageFill, ImageFillArgs, ImageFormat, Node, NodeArgs, Paint, PaintArgs, ScaleMode,
     SolidFill, SolidFillArgs, Stroke, StrokeAlign, StrokeArgs, Vec2, root_as_document,
 };
 use flatbuffers::{FlatBufferBuilder, WIPOffset};
-
-/// `Node.paint_entry`'s "draws nothing" sentinel — same convention as
-/// `Node.parent`'s NO_PARENT.
-const NO_PAINT: u32 = u32::MAX;
 
 fn red() -> Color {
     Color::new(1.0, 0.0, 0.0, 1.0)

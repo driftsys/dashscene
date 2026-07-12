@@ -377,7 +377,7 @@ fn text_props_set_and_read_back_through_the_intent_accessors() {
         label,
         Prop::TextStyle(TextStyle {
             family: "Noto Sans".to_string(),
-            size_px: 16.0,
+            size: 16.0,
             weight: 400,
             color: Color {
                 r: 0.0,
@@ -388,8 +388,8 @@ fn text_props_set_and_read_back_through_the_intent_accessors() {
         }),
     );
     txn.commit();
-    assert_eq!(arena.text_of(label), Some("Speed"));
-    let style = arena.text_style_of(label).expect("style set");
+    assert_eq!(arena.text(label), Some("Speed"));
+    let style = arena.text_style(label).expect("style set");
     assert_eq!(style.family, "Noto Sans");
     assert_eq!(style.weight, 400);
 }
@@ -405,7 +405,7 @@ fn text_accessors_read_staged_intent_immediately() {
         txn.set_prop(n, Prop::Text("pending".to_string()));
         n
     }; // txn dropped here — staged, never committed
-    assert_eq!(arena.text_of(n), Some("pending"));
+    assert_eq!(arena.text(n), Some("pending"));
 }
 
 #[test]
@@ -416,7 +416,7 @@ fn text_props_replace_previous_values() {
     txn.set_prop(n, Prop::Text("old".to_string()));
     txn.set_prop(n, Prop::Text("new".to_string()));
     txn.commit();
-    assert_eq!(arena.text_of(n), Some("new"));
+    assert_eq!(arena.text(n), Some("new"));
 }
 
 #[test]
@@ -425,8 +425,8 @@ fn nodes_without_text_read_none() {
     let mut txn = arena.open();
     let n = txn.add_node(None, None);
     txn.commit();
-    assert_eq!(arena.text_of(n), None);
-    assert!(arena.text_style_of(n).is_none());
+    assert_eq!(arena.text(n), None);
+    assert!(arena.text_style(n).is_none());
 }
 
 #[test]
