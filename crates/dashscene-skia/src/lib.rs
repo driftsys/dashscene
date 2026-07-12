@@ -23,7 +23,8 @@ use skia_safe::{
 
 /// The most stops one gradient may carry through this painter. A
 /// budget, not a Skia limit — the validator enforces it upstream once
-/// profiles land; until then the painter refuses loudly (P4).
+/// profiles land; until then the painter panics on an over-budget
+/// gradient (P4).
 const MAX_GRADIENT_STOPS: usize = 8;
 
 /// The reference painter: draws boundary-B input onto a CPU raster
