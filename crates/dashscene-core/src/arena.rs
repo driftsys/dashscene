@@ -11,7 +11,9 @@
 
 use std::collections::HashMap;
 
-use crate::committed::{Color, CommittedScene, NO_PAINT, Paint, RectEntry};
+use crate::committed::{
+    Color, CommittedScene, PaintEntry, PaintIndex, PaintKind, PaintTable, RectEntry,
+};
 
 /// Stable handle to a node in one [`Arena`]. Returned by
 /// [`Txn::add_node`] and never invalidated (v0.1 has no node removal).
@@ -119,8 +121,9 @@ impl Txn<'_> {
     /// from another arena whose index happens to be in range is not
     /// detected), or if the arena already holds `u32::MAX` nodes —
     /// node ids stay below the `u32::MAX` sentinel (`dashbuf`'s
-    /// `NO_PARENT`; also [`NO_PAINT`](crate::NO_PAINT), since the
-    /// paint table can never outgrow the node count).
+    /// `NO_PARENT`), and every paint index stays representable (the
+    /// paint table never exceeds the node count plus the one shared
+    /// draws-nothing entry).
     pub fn add_node(&mut self, parent: Option<NodeId>, name: Option<&str>) -> NodeId {
         if let Some(p) = parent {
             assert!(
@@ -201,27 +204,29 @@ impl Txn<'_> {
             stack.extend(arena.nodes[id.index()].children.iter().rev());
         }
 
-        // Resolve rects + intern paints.
+        // Resolve rects + intern paints. Every rect resolves: an
+        // unfilled node interns the shared draws-nothing entry
+        // (`PaintEntry::default()`) keyed as `None`.
         let mut absolute = vec![(0.0f32, 0.0f32); arena.nodes.len()];
         let mut rects = Vec::with_capacity(order.len());
-        let mut paints = Vec::new();
-        let mut interned: HashMap<[u32; 4], u32> = HashMap::new();
+        let mut paints = PaintTable::new();
+        let mut interned: HashMap<Option<[u32; 4]>, PaintIndex> = HashMap::new();
         let mut rect_index = vec![u32::MAX; arena.nodes.len()];
         for (i, &id) in order.iter().enumerate() {
             let node = &arena.nodes[id.index()];
             let (parent_x, parent_y) = node.parent.map_or((0.0, 0.0), |p| absolute[p.index()]);
             let (x, y) = (parent_x + node.x, parent_y + node.y);
             absolute[id.index()] = (x, y);
-            let paint = match node.fill {
-                None => NO_PAINT,
-                Some(color) => *interned.entry(color_key(color)).or_insert_with(|| {
-                    paints.push(Paint { color });
-                    // Cannot truncate or reach the NO_PAINT sentinel:
-                    // the paint table never outgrows the node count,
-                    // which add_node keeps below u32::MAX.
-                    (paints.len() - 1) as u32
-                }),
-            };
+            let paint =
+                *interned
+                    .entry(node.fill.map(color_key))
+                    .or_insert_with(|| match node.fill {
+                        // Cannot truncate: the paint table never exceeds
+                        // the node count (kept below u32::MAX by add_node)
+                        // plus this one shared entry.
+                        None => paints.push(PaintEntry::default()),
+                        Some(color) => paints.push(PaintEntry::solid(color)),
+                    });
             rects.push(RectEntry {
                 x,
                 y,
@@ -282,12 +287,17 @@ fn entry_bits(entry: &RectEntry) -> [u32; 5] {
         entry.y.to_bits(),
         entry.w.to_bits(),
         entry.h.to_bits(),
-        entry.paint,
+        entry.paint.0,
     ]
 }
 
 /// The fill color an entry resolves to in its own commit's paint table
-/// (`None` for [`NO_PAINT`]), compared by bit pattern like the interner.
-fn resolved_color_bits(entry: &RectEntry, paints: &[Paint]) -> Option<[u32; 4]> {
-    (entry.paint != NO_PAINT).then(|| color_key(paints[entry.paint as usize].color))
+/// (`None` for a fill-less entry), compared by bit pattern like the
+/// interner.
+fn resolved_color_bits(entry: &RectEntry, paints: &PaintTable) -> Option<[u32; 4]> {
+    match paints.resolve(entry.paint).fill {
+        Some(PaintKind::Solid { color }) => Some(color_key(color)),
+        Some(_) => unreachable!("v0.1 producers only stage solid fills"),
+        None => None,
+    }
 }
