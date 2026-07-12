@@ -5,8 +5,8 @@
 use dashbuf::NO_PAINT;
 use dashbuf::{
     Color, Document, DocumentArgs, Fill, Gradient, GradientArgs, GradientKind, GradientStop, Image,
-    ImageArgs, ImageFill, ImageFillArgs, ImageFormat, Node, NodeArgs, Paint, PaintArgs, ScaleMode,
-    SolidFill, SolidFillArgs, Stroke, StrokeAlign, StrokeArgs, Vec2, root_as_document,
+    ImageArgs, ImageFill, ImageFillArgs, ImageFormat, Mat23, Node, NodeArgs, Paint, PaintArgs,
+    ScaleMode, SolidFill, SolidFillArgs, Stroke, StrokeAlign, StrokeArgs, Vec2, root_as_document,
 };
 use flatbuffers::{FlatBufferBuilder, WIPOffset};
 
@@ -129,11 +129,14 @@ fn image_fill_round_trips_every_scale_mode() {
                 bytes: Some(real_bytes),
             },
         );
+        let transform = Mat23::new(1.0, 0.0, 0.0, 1.0, 0.25, 0.5);
         let image_fill = ImageFill::create(
             &mut builder,
             &ImageFillArgs {
                 image: 1,
                 scale_mode,
+                transform: Some(&transform),
+                tile_scale: 2.0,
             },
         );
         let paint = Paint::create(
@@ -159,6 +162,13 @@ fn image_fill_round_trips_every_scale_mode() {
         let fill = paint.fill_as_image_fill().expect("image fill present");
         assert_eq!(fill.image(), 1);
         assert_eq!(fill.scale_mode(), scale_mode);
+        let transform = fill.transform().expect("transform present");
+        assert_eq!(
+            (transform.a(), transform.b(), transform.c(), transform.d()),
+            (1.0, 0.0, 0.0, 1.0)
+        );
+        assert_eq!((transform.tx(), transform.ty()), (0.25, 0.5));
+        assert_eq!(fill.tile_scale(), 2.0);
         let image = document
             .images()
             .expect("images present")
@@ -250,6 +260,40 @@ fn absent_fields_read_back_as_defaults() {
     assert_eq!(paint.stroke(), None);
     assert_eq!(paint.corners(), None);
     assert!(!paint.clip());
+}
+
+#[test]
+fn an_image_fill_without_transform_defaults_to_identity_semantics() {
+    let mut builder = FlatBufferBuilder::new();
+    let image_fill = ImageFill::create(
+        &mut builder,
+        &ImageFillArgs {
+            image: 0,
+            ..Default::default()
+        },
+    );
+    let paint = Paint::create(
+        &mut builder,
+        &PaintArgs {
+            fill_type: Fill::ImageFill,
+            fill: Some(image_fill.as_union_value()),
+            ..Default::default()
+        },
+    );
+    let node = Node::create(
+        &mut builder,
+        &NodeArgs {
+            paint_entry: 0,
+            ..Default::default()
+        },
+    );
+
+    let bytes = finish_document(builder, node, &[paint], &[]);
+    let fill = single_node_paint(&bytes)
+        .fill_as_image_fill()
+        .expect("image fill present");
+    assert_eq!(fill.transform(), None);
+    assert_eq!(fill.tile_scale(), 1.0);
 }
 
 #[test]
