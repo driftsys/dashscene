@@ -37,7 +37,10 @@ All types and the trait live in `crates/dashpaint/src/lib.rs`:
 
 - `Color` — `#[repr(C)]` RGBA, 4×f32 fields `r`, `g`, `b`, `a`.
 - `RectEntry` — `#[repr(C)]`, fields `x`, `y`, `w`, `h: f32`,
-  `paint: u32`.
+  `paint: PaintIndex` (20 bytes total, pinned by test).
+- `PaintIndex` — `#[repr(transparent)]` newtype over `u32` (story #4,
+  debt #54): a node index or other bare `u32` cannot cross into a
+  paint index without an explicit wrap; layout unchanged.
 - `PaintKind` — the fill vocabulary: `Solid { color }` (the pinned
   v0.1 shape), `Gradient(Gradient)`, `Image { image, scale_mode }`.
 - Vocabulary value types — `Vec2`, `GradientStop`, `GradientKind`
@@ -50,10 +53,10 @@ All types and the trait live in `crates/dashpaint/src/lib.rs`:
   `corners: CornerRadii`, `clip: bool`; `PaintEntry::solid(Color)` is
   the v0.1 shorthand. See `docs/decisions/paint-entry-composition.md`.
 - `PaintTable` — a dense entry list behind a private field, indexed by
-  `RectEntry.paint`: `new`, `push(&mut self, PaintEntry) -> u32`
-  (returns the sequential index just assigned), `get(&self, u32) ->
-  Option<&PaintEntry>`, `resolve(&self, u32) -> &PaintEntry` (the
-  lookup painters use — panics on an out-of-range index), `len`,
+  `RectEntry.paint`: `new`, `push(&mut self, PaintEntry) -> PaintIndex`
+  (returns the sequential index just assigned), `get(&self, PaintIndex)
+  -> Option<&PaintEntry>`, `resolve(&self, PaintIndex) -> &PaintEntry`
+  (the lookup painters use — panics on an out-of-range index), `len`,
   `is_empty`.
 - `Painter` — the one trait every paint backend implements:
   `fn paint(&mut self, rects: &[RectEntry], paints: &PaintTable)`.
