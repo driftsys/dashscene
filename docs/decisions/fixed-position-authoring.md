@@ -31,7 +31,7 @@ origin for a root).
   in the document. The resolved absolute position (parent absolute +
   own offset, summed down the tree) exists only in the runtime rect
   table.
-- Struct non-evolvability does not bite: no `.dsb` documents exist
+- Struct non-evolvability has no cost here: no `.dsb` documents exist
   outside dashbuf's own round-trip test, and `FixedSizeLayout` is not
   a long-lived evolution surface — the schema header already plans for
   layout modes to become a union when v0.2 introduces Taffy modes.

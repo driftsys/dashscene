@@ -44,12 +44,13 @@ staged changes pending — they publish with the next commit. `Prop`
 (v0.1 vocabulary): `X`, `Y`, `Width`, `Height`, `Fill(Color)`; node
 names are set at `add_node`, not a mutable prop.
 
-Contract misuse (a `NodeId` from another arena, or otherwise
-out-of-range) is not a validated, named diagnostic — `add_node`
-asserts on an out-of-range `parent` with a custom message; `set_prop`
-and `Arena::name` index directly into the node slice and panic with
-Rust's default out-of-bounds message. Both are programmer-error panics,
-not part of the P4 named-diagnostics vocabulary.
+Contract misuse (an out-of-range `NodeId`) panics with a message
+naming the id and the arena. A `NodeId` from _another_ arena whose
+index happens to be in range is not detected — ids carry no arena
+identity. These are programmer-error panics, not part of the P4
+named-diagnostics vocabulary. `Prop::Fill` can set a fill but never
+clear one back to `NO_PAINT` — a deliberate v0.1 gap
+(`docs/decisions/staged-mutation-v01-scope.md`).
 
 Full rationale and the rejected alternative (op-log with
 rollback-on-drop): `docs/decisions/staged-mutation-v01-scope.md`.
@@ -69,11 +70,17 @@ rollback-on-drop): `docs/decisions/staged-mutation-v01-scope.md`.
    exact bit pattern (`f32::to_bits` on each channel) in first-use
    order, or `NO_PAINT` (`u32::MAX`) if the node has no fill.
 3. **Dirty diff** — after building the new rect table, each index is
-   compared against the same index in the previous front buffer;
-   indices that differ (or did not exist before) form the dirty set.
-   This is an exact per-index diff, not an op-touched set — a node
-   whose _ancestor_ moved gets its own absolute recomputed and so
-   shows up as changed even though no `set_prop` touched it directly.
+   compared against the same index in the previous front buffer; an
+   entry is dirty when its bits changed (compared via `f32::to_bits`,
+   so NaN does not self-compare unequal forever) **or** when its
+   resolved fill color changed. The second clause exists because the
+   paint table is re-interned every commit: a stable paint index can
+   reference a different color (a fill change on the only filled node
+   keeps index 0), and an index shift can leave the color unchanged —
+   entry-bit equality alone would miss real repaints. This is a
+   per-index diff, not an op-touched set — a node whose _ancestor_
+   moved gets its own absolute recomputed and so shows up as changed
+   even though no `set_prop` touched it directly.
 4. **Publish** — generation = previous generation + 1 (every commit
    increments, including a no-op commit); the new `CommittedScene` is
    written into the back buffer and `front` flips.
@@ -113,15 +120,23 @@ side of the same decision as the arena's offset resolution:
 
 ## Scope boundaries (v0.1)
 
-- No `dashpaint` dependency — story #3 defines the painter-side types
-  in parallel; story #4 reconciles the two crates.
+- No `dashpaint` dependency — story #3 defined the painter-side types
+  in parallel (now on `main`: an identical `RectEntry` shape and a
+  `PaintTable` whose `resolve` panics on an out-of-range index);
+  story #4 reconciles the two crates. Known reconciliation point:
+  core emits `NO_PAINT` (`u32::MAX`) for unfilled nodes, while
+  `dashpaint`'s `Painter` contract paints every rect and treats an
+  unresolvable index as a broken contract — story #4 must decide how
+  an unfilled node crosses boundary B
+  (`docs/decisions/core-committed-output-shape.md`).
 - No `dashbuf` dependency — the arena mirrors the schema's field
   shapes; nothing links the generated flatbuffer code.
 - No `set_variant` — `SCOPE_DECISIONS.md` §9 scopes v0.1 to
   `open`/`set_prop`/`commit`. Variants land at v0.4 with the variant
   table.
-- No node removal, no reparenting, no value validation (NaN, negative
-  sizes). The validator crate enters at its own slice.
+- No node removal, no reparenting, no fill clearing, no value
+  validation (NaN, negative sizes). The validator crate enters at its
+  own slice.
 
 ## Module layout
 
