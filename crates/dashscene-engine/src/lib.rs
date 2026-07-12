@@ -148,21 +148,17 @@ fn style_for(layout: &Layout, parent: Option<&Layout>) -> Style {
         width: bound(layout.max_width),
         height: bound(layout.max_height),
     };
-    // Outer margin (negative allowed — expresses overlap, the target
-    // of the negative-gap lowering).
-    style.margin = Rect {
-        left: LengthPercentageAuto::length(layout.margin.left),
-        top: LengthPercentageAuto::length(layout.margin.top),
-        right: LengthPercentageAuto::length(layout.margin.right),
-        bottom: LengthPercentageAuto::length(layout.margin.bottom),
-    };
 
     match parent.map(|p| p.mode) {
         // Root: nothing more to map (location handled at readback).
+        // Margin is flex-flow vocabulary with no meaning here, and
+        // Taffy ignores a root's own margin regardless.
         None => {}
         // Passthrough parent: place by the authored offset. Fill has
         // no free-space axis under a None parent and behaves as Hug
-        // (the validator diagnoses it at its own slice, P4).
+        // (the validator diagnoses it at its own slice, P4). Margin is
+        // inert — placement is the authored offset, matching
+        // `commit()`'s fixed resolution, which ignores margin.
         Some(LayoutMode::None) => {
             style.position = Position::Absolute;
             style.inset = Rect {
@@ -173,6 +169,15 @@ fn style_for(layout: &Layout, parent: Option<&Layout>) -> Style {
             };
         }
         Some(mode @ (LayoutMode::Horizontal | LayoutMode::Vertical)) => {
+            // Outer margin applies only in flex flow (negative allowed
+            // — it expresses overlap, the target of the negative-gap
+            // lowering).
+            style.margin = Rect {
+                left: LengthPercentageAuto::length(layout.margin.left),
+                top: LengthPercentageAuto::length(layout.margin.top),
+                right: LengthPercentageAuto::length(layout.margin.right),
+                bottom: LengthPercentageAuto::length(layout.margin.bottom),
+            };
             // Axis-relative sizing: the parent's main axis maps to
             // flex_basis/grow/shrink; the cross axis maps to size (set
             // above) and align_self.
