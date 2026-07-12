@@ -97,7 +97,8 @@ it in. Per-story decisions land here directly:
 - [asset-model-content-addressed-blobs.md](asset-model-content-addressed-blobs.md)
   — assets are content-addressed raw blobs referenced from a hot
   `AssetTable`; the ui document carries identity and metadata, never
-  bytes (design session, 2026-07-12).
+  bytes; supersedes v0.3's inline `Document.images` (design session,
+  2026-07-12).
 - [id-model-strings-compile-to-indices.md](id-model-strings-compile-to-indices.md)
   — source strings compile to dense indices; content hashes for
   assets, session handles for mutation; opt-in exports table (design

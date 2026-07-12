@@ -174,4 +174,4 @@ correct by construction but is deferred as a target: no BE hardware is
 tested or supported until one exists on the roadmap. The rule is
 structural because every shipping and testing target (x86_64, aarch64,
 wasm32) is little-endian — a native-endian cast would pass every test
-and still be wrong, so no test can hold the line.
+and still be wrong, so no test can enforce the rule.

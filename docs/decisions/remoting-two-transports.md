@@ -15,9 +15,20 @@ difference. The question was how remote UI streams progressively:
 what a snapshot is, what a delta is, how they address nodes, and how
 asset bytes travel.
 
+## Options
+
+1. Two transports: an ordered, reliable channel for UI snapshots plus
+   commit deltas (snapshots address by doc index, deltas by producer
+   handle), and a pull channel fetching assets by content hash.
+2. Positional deltas: one ordered channel, ops addressing doc indices
+   against a generation.
+3. One transport for everything, assets included, in stream order.
+4. Concurrent-editing machinery (operational transforms / CRDTs) so
+   multiple producers can mutate one document.
+
 ## Choice
 
-Two transports, two message kinds on the first:
+Option 1 — two transports, two message kinds on the first:
 
 - **Transport 1 (ordered, reliable): snapshots + commit deltas.**
   - A **snapshot** is materialized committed state at a generation —
@@ -29,12 +40,14 @@ Two transports, two message kinds on the first:
     tree; the producer picks slice boundaries at visually coherent
     subtrees.
   - A **delta** is a serialized commit: `{base_generation,
-    new_generation, ops}` mirroring the staged API (set_prop /
-    set_variant / insert / remove), batched struct-of-arrays.
-    An insert carries its subtree in the same slice vocabulary — "a
-    remote update is structurally a small document" made literal.
-    A commit may reference `dashcue` transition specs (SCOPE §9);
-    scheduling stays runtime-side (P3).
+    new_generation, ops}` mirroring the staged mutation surface —
+    as-built today `add_node` / `set_prop` / `commit` (story #2),
+    `set_variant` at v0.4, and subtree removal when the API grows it;
+    ops are batched struct-of-arrays. A subtree-creating op carries
+    its new nodes in the same slice vocabulary — "a remote update is
+    structurally a small document" made literal. A commit may
+    reference `dashcue` transition specs (SCOPE §9); scheduling stays
+    runtime-side (P3).
   - **Snapshots speak doc indices; deltas speak producer handles**
     (see the id-model record). The receiving arena owns handle→index
     mapping and re-flattens at commit, exactly as for local
@@ -56,6 +69,22 @@ file's framing exactly as the length prefix is the wire's, and a
 `.dsb` is a snapshot whose asset fetches are already resolved into
 cold sections. The envelope itself never crosses the wire.
 
+## Why
+
+- **Option 2 (positional deltas)**: structural inserts shift every
+  later index; a small logical diff becomes a large physical one, and
+  ordering dependencies inside one batch make application fragile.
+- **Option 3 (one transport)**: asset bytes queued behind UI messages
+  block interaction on downloads (head-of-line blocking); the two
+  flows have opposite ordering, priority, and reliability needs.
+- **Option 4 (OT/CRDT)**: out of scope — one producer owns a
+  document's mutation stream (P3); conflict resolution has no source
+  of conflicts.
+- Left open until the wire schema story exists: whether a
+  `SnapshotSlice` can reuse the exact generated table types of the
+  file's hot sections, or only the same vocabulary — either answer
+  preserves SCOPE §3.
+
 ## Receiving-side semantics
 
 - Slices and commits apply atomically through the existing double
@@ -73,24 +102,18 @@ cold sections. The envelope itself never crosses the wire.
 
 1. **Handles ≠ indices in the producer API** (dashscene-core): the
    staged-mutation surface must not conflate "node 17" with "slot 17",
-   or remoting later becomes an API break.
-2. **Pools stay append-friendly** (strings, styles, future asset
-   entries).
+   or remoting later becomes an API break. The as-built API conforms
+   (`NodeId` is a creation-order newtype with an explicit rect-index
+   translation in the committed output).
+2. **Pools must become append-stable before deltas exist.** As-built,
+   the committed paint pool is re-interned from scratch on every
+   commit — the arena documents that an unchanged paint index can
+   reference a different color across commits. That is sound for
+   local painters (the dirty set accounts for it) but incompatible
+   with deltas that reference pool indices across generations. The
+   migration to a stable, append-only interner is named here; it is
+   not a property the code has today. The `dashbuf` string/style
+   pools are plain index-referenced vectors and are append-compatible
+   as-is.
 3. **Subtree-shaped operations reuse the document vocabulary** rather
    than inventing a second encoding.
-
-## Alternatives considered
-
-- **Positional deltas (index-addressed ops)** — rejected: structural
-  inserts shift every later index; a small logical diff becomes a
-  large physical one.
-- **One transport for everything** — rejected: asset bytes behind UI
-  messages block interaction on downloads (head-of-line blocking);
-  the two flows have opposite ordering and reliability needs.
-- **Concurrent-editing machinery (operational transforms / CRDTs)** —
-  out of scope: one producer owns a document's mutation stream (P3);
-  conflict resolution has no source of conflicts.
-- **Whether a `SnapshotSlice` can reuse the exact generated table
-  types of the file's hot sections, or only the same vocabulary** —
-  left open until the wire schema story exists; either answer
-  preserves SCOPE §3.

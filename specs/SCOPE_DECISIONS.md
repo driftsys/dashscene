@@ -830,19 +830,23 @@ scope-level summary.
   dashscene framing, living in blob sections or fetched by hash.
   Layout never blocks on payloads; the signed root transitively
   authenticates lazily fetched blobs; the client cache is a
-  content-addressed store.
+  content-addressed store. Supersedes v0.3's inline
+  `Document.images`, which stays until the asset work lands (the
+  migration is named in the record).
 - **Id model** (`id-model-strings-compile-to-indices.md`): source
   strings compile to dense integer indices; content hashes identify
   assets; session-scoped producer handles (distinct from doc indices)
   address nodes across structural commits. Strings survive only as
-  interned debug names and an opt-in, validator-checked exports
-  table. Allocation is deterministic (canonical DFS first-visit
-  order) per R7.
+  debug names and an opt-in, validator-checked exports table.
+  Allocation is deterministic (canonical DFS first-visit order) per
+  R7.
 - **Remoting** (`remoting-two-transports.md`): two transports —
   ordered snapshots + commit deltas (snapshots speak indices, deltas
   speak handles; DFS-contiguous slices; keyframe resync), and a pull
   channel fetching assets by content hash. The file role is the two
   transports materialized; the envelope never crosses the wire.
   Implementation is v1+, but three rules bind v0 work now: handles ≠
-  indices in the producer API, append-friendly pools, and
-  subtree-shaped operations reusing the document vocabulary.
+  indices in the producer API (as-built `NodeId` already conforms),
+  pools append-stable before deltas exist (the committed paint pool's
+  per-commit re-intern is a named migration), and subtree-shaped
+  operations reusing the document vocabulary.

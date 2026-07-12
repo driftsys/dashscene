@@ -1,8 +1,9 @@
 # Assets are content-addressed raw blobs referenced from a hot AssetTable
 
-    status   accepted (design session, 2026-07-12) — binds the schema
-             shape when asset-bearing paint/text work lands; payload
-             delivery (cold sections, remote fetch) lands v1+
+    status   accepted (design session, 2026-07-12) — supersedes the
+             v0.3 inline `Document.images` storage (migration named
+             below); payload delivery (cold sections, remote fetch)
+             lands v1+
     scope    crates/dashbuf schema, the .dsb blob sections, the future
              asset transport
 
@@ -18,8 +19,11 @@ lives, and what identifies it.
 
 ## Options
 
-1. Asset bytes inline in the ui flatbuffer (a `[ubyte]` field on the
-   paint entry).
+1. Asset bytes inline in the ui flatbuffer — the as-built v0.3 state:
+   story #13 landed `Document.images: [Image]` with
+   `Image.bytes: [ubyte]` embedded in the ui buffer, referenced by
+   `ImageFill.image` (the schema comment already marks it "the
+   simplest storage form").
 2. A hot `AssetTable` of references — content-hash identity plus
    layout-relevant metadata — with payloads as raw blob sections in
    the file and content-addressed fetches on the wire.
@@ -71,7 +75,18 @@ be separate blobs fetched by priority.
 - **Tool transparency.** A blob section extracted byte-for-byte is a
   valid file of its format; existing pipelines can produce and inspect
   assets with no dashscene tooling. Option 3's framing header would
-  break this and buy nothing the `AssetEntry` does not already
-  provide; option 1 is the reverse migration the container decision
-  exists to prevent (bytes inside the ui buffer can never be evicted,
-  page-aligned, or fetched lazily).
+  break this and provide nothing the `AssetEntry` does not already
+  provide; option 1 (the as-built v0.3 state) is the direction the
+  container decision exists to move away from — bytes inside the ui
+  buffer can never be evicted, page-aligned, or fetched lazily.
+
+## Migration from the as-built v0.3 state
+
+`Document.images` stays until the asset work lands, tracked like the
+legacy `Node.paint` field (see
+`document-paint-pool-and-legacy-paint-field.md` for the pattern): the
+asset story introduces `AssetTable` + out-of-band payloads, moves
+`ImageFill.image` to an `AssetTable` index, and retires
+`Document.images` in a coordinated cleanup. Until then, v0 documents
+carry image bytes inline and are correct — this record binds the
+direction, not the current bytes.
