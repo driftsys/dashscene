@@ -116,6 +116,7 @@ fn flex_and_constraint_fields_round_trip() {
             cross_align: CrossAxisAlign::End,
         },
     );
+    let margin = EdgeInsets::new(-8.0, 0.0, 0.0, 0.0);
     let constraints = LayoutConstraints::create(
         &mut builder,
         &LayoutConstraintsArgs {
@@ -125,6 +126,7 @@ fn flex_and_constraint_fields_round_trip() {
             max_width: Some(100.0),
             min_height: Some(5.0),
             max_height: Some(50.0),
+            margin: Some(&margin),
         },
     );
     let layout = FixedSizeLayout::new(0.0, 0.0, 20.0, 30.0);
@@ -181,6 +183,12 @@ fn flex_and_constraint_fields_round_trip() {
     assert_eq!(constraints.max_width(), Some(100.0));
     assert_eq!(constraints.min_height(), Some(5.0));
     assert_eq!(constraints.max_height(), Some(50.0));
+    let margin = constraints.margin().expect("margin present");
+    assert_eq!(
+        (margin.left(), margin.top(), margin.right(), margin.bottom()),
+        (-8.0, 0.0, 0.0, 0.0),
+        "negative margin (a lowering target) round-trips"
+    );
 }
 
 #[test]
@@ -279,4 +287,8 @@ fn empty_flex_tables_read_back_the_schema_defaults() {
     assert_eq!(constraints.max_width(), None);
     assert_eq!(constraints.min_height(), None);
     assert_eq!(constraints.max_height(), None);
+    assert!(
+        constraints.margin().is_none(),
+        "absent margin = zero insets"
+    );
 }
