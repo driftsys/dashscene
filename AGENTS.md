@@ -88,15 +88,22 @@ the `dashscene-skia` CPU-raster painter, the `dashlang` builder DSL,
 and the golden harness in `goldens/`. For as-built component status see
 `docs/design/`; for the decisions behind it see `docs/decisions/`.
 
-Work now proceeds through the GitHub issues (see "Plan tracking"). The
-current slice is v0.2 — flex core (epic #7): Taffy as the sole solver,
-then negative-gap lowering and flex goldens.
+v0.2 — flex core (epic #7) is also complete and on `main`:
+`dashscene-engine` solves every scene with Taffy as the sole solver,
+core carries the flex vocabulary (H/V modes, hug/fill/fixed sizing,
+gap/padding/alignment, min/max clamps) and the negative-gap lowering,
+and four exact-match goldens pin the result.
 
-Everything else — `dashscene-engine` (Taffy, v0.2), `dashscene-typeset`
-(text, v0.5/v0.6), `dashc`'s real Figma-importing behavior (v0.3
-minimal, v0.7 full), `dashcue`'s animation vocabulary (v0.4),
-`dashscene-validator`'s real profile enforcement, `dashscene-unity` /
-`dashscene-web` (v1+) — is out of scope until its slice.
+Work now proceeds through the GitHub issues (see "Plan tracking"). The
+current slice is v0.3 — basic paint + importer (epic #12): the
+validator's named diagnostics, `dashc`'s minimal compile pipeline, and
+the fixture-driven Deno importer.
+
+Everything else — `dashscene-typeset` (text, v0.5/v0.6), `dashc`'s full
+Figma-importing behavior (v0.7), `dashcue`'s animation vocabulary
+(v0.4), `dashscene-validator`'s full profile enforcement (v0.7),
+`dashscene-unity` / `dashscene-web` (v1+) — is out of scope until its
+slice.
 
 **Resolved (`SCOPE_DECISIONS.md` §9):** the staged-mutation contract
 (`open`/`set_prop`/`set_variant`/`commit`) lives on the arena in
