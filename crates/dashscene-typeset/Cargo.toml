@@ -14,3 +14,5 @@ name = "dashscene_typeset"
 ttf-parser.workspace = true
 serde.workspace = true
 postcard.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
