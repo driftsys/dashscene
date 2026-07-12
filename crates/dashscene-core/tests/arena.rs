@@ -848,3 +848,21 @@ fn lower_negative_gaps_is_idempotent() {
     assert_eq!(arena.layout(row).gap, 0.0);
     assert_eq!(arena.layout(b).margin.left, -8.0, "not doubled");
 }
+
+#[test]
+fn lower_negative_gaps_leaves_a_nan_gap_untouched() {
+    // A NaN gap is not genuinely negative; the lowering must not treat
+    // it as such and spray NaN into child margins.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let row = txn.add_node(None, None);
+    txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
+    txn.set_prop(row, Prop::Gap(f32::NAN));
+    txn.add_node(Some(row), None);
+    let b = txn.add_node(Some(row), None);
+    txn.lower_negative_gaps();
+    txn.commit();
+
+    assert!(arena.layout(row).gap.is_nan(), "NaN gap left as-is");
+    assert_eq!(arena.layout(b).margin.left, 0.0, "no NaN in child margin");
+}
