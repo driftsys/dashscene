@@ -2,8 +2,8 @@
 //! no dashscene-core, no dashbuf — dashpaint's public API only.
 
 use dashpaint::{
-    Color, CornerRadii, Gradient, GradientKind, GradientStop, PaintEntry, PaintKind, PaintTable,
-    Painter, RectEntry, ScaleMode, Stroke, StrokeAlign, Vec2,
+    Color, CornerRadii, Gradient, GradientKind, GradientStop, PaintEntry, PaintIndex, PaintKind,
+    PaintTable, Painter, RectEntry, ScaleMode, Stroke, StrokeAlign, Vec2,
 };
 
 const RED: Color = Color {
@@ -27,8 +27,8 @@ fn paint_table_push_returns_sequential_indices_and_get_resolves_them() {
     let red = table.push(PaintEntry::solid(RED));
     let blue = table.push(PaintEntry::solid(HALF_BLUE));
 
-    assert_eq!(red, 0);
-    assert_eq!(blue, 1);
+    assert_eq!(red, PaintIndex(0));
+    assert_eq!(blue, PaintIndex(1));
     assert_eq!(table.len(), 2);
     assert_eq!(table.get(red), Some(&PaintEntry::solid(RED)));
     assert_eq!(table.get(blue), Some(&PaintEntry::solid(HALF_BLUE)));
@@ -39,8 +39,8 @@ fn paint_table_get_past_the_end_returns_none() {
     let mut table = PaintTable::new();
     table.push(PaintEntry::solid(RED));
 
-    assert_eq!(table.get(1), None);
-    assert_eq!(table.get(u32::MAX), None);
+    assert_eq!(table.get(PaintIndex(1)), None);
+    assert_eq!(table.get(PaintIndex(u32::MAX)), None);
 }
 
 #[test]
@@ -57,7 +57,7 @@ fn paint_table_resolve_panics_on_an_out_of_range_index() {
     let mut table = PaintTable::new();
     table.push(PaintEntry::solid(RED));
 
-    table.resolve(1);
+    table.resolve(PaintIndex(1));
 }
 
 #[test]
@@ -199,4 +199,10 @@ fn painter_trait_is_object_safe() {
         painter.painted,
         vec![(rects[0], RED), (rects[1], HALF_BLUE)]
     );
+}
+
+#[test]
+fn paint_index_is_transparent_over_u32() {
+    assert_eq!(std::mem::size_of::<PaintIndex>(), 4);
+    assert_eq!(std::mem::size_of::<RectEntry>(), 20);
 }

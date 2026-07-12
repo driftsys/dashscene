@@ -21,10 +21,21 @@ pub struct Color {
     pub a: f32,
 }
 
+/// An index into the [`PaintTable`] — the type of [`RectEntry::paint`]
+/// and the return of [`PaintTable::push`].
+///
+/// `#[repr(transparent)]` over `u32`: [`RectEntry`] stays blittable and
+/// its layout unchanged, while a node index or any other bare `u32`
+/// cannot be passed where a paint index belongs without an explicit
+/// wrap.
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PaintIndex(pub u32);
+
 /// One resolved rectangle — boundary B's per-node unit (DESIGN_1.md §7.3).
 ///
 /// The rect-table index of this entry is the document DFS node index, so
-/// there is no id field. `paint` indexes the [`PaintTable`].
+/// there is no id field. `paint` resolves in the [`PaintTable`].
 ///
 /// `#[repr(C)]`: DESIGN_1.md §7.3 calls rect entries blittable, and R-T4
 /// plans dirty-range instance-buffer uploads straight from the rect table.
@@ -35,7 +46,7 @@ pub struct RectEntry {
     pub y: f32,
     pub w: f32,
     pub h: f32,
-    pub paint: u32,
+    pub paint: PaintIndex,
 }
 
 /// A 2D point or vector, in the coordinate space its context names.
@@ -165,15 +176,15 @@ impl PaintTable {
 
     /// Appends an entry and returns its index — the value a
     /// [`RectEntry::paint`] field holds to reference it.
-    pub fn push(&mut self, entry: PaintEntry) -> u32 {
+    pub fn push(&mut self, entry: PaintEntry) -> PaintIndex {
         let index =
             u32::try_from(self.entries.len()).expect("paint table exceeds u32::MAX entries");
         self.entries.push(entry);
-        index
+        PaintIndex(index)
     }
 
-    pub fn get(&self, index: u32) -> Option<&PaintEntry> {
-        self.entries.get(index as usize)
+    pub fn get(&self, index: PaintIndex) -> Option<&PaintEntry> {
+        self.entries.get(index.0 as usize)
     }
 
     /// Resolves a rect's paint index. This is the lookup painters use.
@@ -182,10 +193,11 @@ impl PaintTable {
     /// (P4), so a miss is a broken contract between crates, and the
     /// panic for that case is centralized here — a painter must never
     /// skip a rect silently.
-    pub fn resolve(&self, index: u32) -> &PaintEntry {
+    pub fn resolve(&self, index: PaintIndex) -> &PaintEntry {
         self.get(index).unwrap_or_else(|| {
             panic!(
-                "paint index {index} out of range ({} entries): paint indices are validated upstream (P4)",
+                "paint index {} out of range ({} entries): paint indices are validated upstream (P4)",
+                index.0,
                 self.entries.len()
             )
         })
