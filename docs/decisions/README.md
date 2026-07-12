@@ -28,5 +28,12 @@ it in. Per-story decisions land here directly:
 - [core-committed-output-shape.md](core-committed-output-shape.md) —
   `dashscene-core` owns its boundary-B output types; `NO_PAINT` sentinel and
   dirty-set semantics (story #2); binds the story #4 wiring.
+- [document-paint-pool-and-legacy-paint-field.md](document-paint-pool-and-legacy-paint-field.md)
+  — v0.3 paint lives in `Document.paints`, a dedup pool indexed by
+  `Node.paint_entry`; the legacy `paint` field stays until a coordinated
+  cleanup (story #13).
+- [paint-entry-composition.md](paint-entry-composition.md) — `dashpaint`'s
+  table entry is a fill/stroke/corners/clip composition (story #13); relates
+  to debt #55 and the story #4 wiring.
 
 See the `sdd-working-memory-lifecycle` rule.

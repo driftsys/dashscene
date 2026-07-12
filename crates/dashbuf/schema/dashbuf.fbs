@@ -2,11 +2,13 @@
 //
 // Scope: a flattened node tree (doc index = rect-table index, DESIGN
 // §5), one layout mode (fixed-size, no Taffy yet), and the v0.3 paint
-// vocabulary (DESIGN §10.1 NOW): solid fills, the four gradient kinds,
-// image fills with scale modes, stroke with align, rounded corners,
-// axis-aligned + rounded clip. Additional layout modes land when v0.2
-// adds them — FlatBuffers' append-only field ids make every extension
-// additive, not a rewrite (R7).
+// vocabulary (DESIGN §11 v0.3, drawn from the §10.1 NOW list): solid
+// fills, the four gradient kinds, image fills with scale modes, stroke
+// with align, rounded corners, axis-aligned + rounded clip. Paint sits
+// in a document-level dedup pool (DESIGN §5) that nodes reference by
+// index — the same index model as the runtime paint table. Additional
+// layout modes land when v0.2 adds them — FlatBuffers' append-only
+// field ids make every extension additive, not a rewrite (R7).
 
 namespace dashbuf;
 
@@ -83,13 +85,15 @@ enum ImageFormat : uint8 {
 // handle positions in the node's box — the gradient origin, the
 // primary-axis end, and the secondary-axis end (Figma's
 // gradientHandlePositions). Handles are intent; resolved geometry is
-// per-painter math (P1).
+// per-painter math (P1). Handles and stops are required so the
+// flatbuffer verifier itself rejects a geometry-less gradient at the
+// load gate (P4) instead of a painter inventing defaults.
 table Gradient {
   kind: GradientKind;
-  handle_origin: Vec2;
-  handle_primary: Vec2;
-  handle_secondary: Vec2;
-  stops: [GradientStop];
+  handle_origin: Vec2 (required);
+  handle_primary: Vec2 (required);
+  handle_secondary: Vec2 (required);
+  stops: [GradientStop] (required);
 }
 
 table ImageFill {
@@ -107,11 +111,13 @@ union Fill {
 // v0.3 strokes are solid-only (see
 // docs/decisions/paint-entry-composition.md); the color widens to a
 // fill additively if a real file ever needs gradient strokes (R6
-// diagnoses them until then).
+// diagnoses them until then). The color is required: a stroke without
+// one has no meaning, and requiring it keeps the shape identical to
+// dashpaint's mirror (where the color is not optional).
 table Stroke {
   width: float32;
   align: StrokeAlign;
-  color: Color;
+  color: Color (required);
 }
 
 // Embedded encoded image bytes — the simplest storage form; KTX2/Basis
@@ -121,21 +127,33 @@ table Image {
   bytes: [ubyte];
 }
 
+// One entry of the document's paint pool (DESIGN §5's "dedup style
+// pool"): what a node is filled with, how its outline is stroked, how
+// its corners round, and whether it clips its children to the (rounded)
+// box. Nodes reference entries by index; distinct nodes sharing a style
+// share one entry.
+table Paint {
+  fill: Fill;
+  stroke: Stroke;
+  corners: CornerRadii;
+  clip: bool = false;
+}
+
 table Node {
   name: string;
   // Index into Document.nodes of this node's parent, or NO_PARENT
   // (uint32::MAX) for a root node.
   parent: uint32 = 4294967295;
   layout: FixedSizeLayout;
-  // v0.1 walking-skeleton solid shorthand. Superseded by `fill` when
-  // both are present; kept (append-only ids, R7) until the v0.1
+  // v0.1 walking-skeleton solid shorthand. Superseded by `paint_entry`
+  // when that field is set; kept (append-only ids, R7) until the v0.1
   // producers stop writing it, then removed in a coordinated cleanup.
   paint: SolidFill;
-  fill: Fill;
-  stroke: Stroke;
-  corners: CornerRadii;
-  // Clips children to the node's box, rounded by `corners`.
-  clip: bool = false;
+  // Index into Document.paints, or NO_PAINT (uint32::MAX — the same
+  // sentinel convention as `parent`, and as dashscene-core's committed
+  // output, see docs/decisions/core-committed-output-shape.md) for a
+  // node that draws nothing.
+  paint_entry: uint32 = 4294967295;
 }
 
 table Document {
@@ -144,6 +162,8 @@ table Document {
   nodes: [Node];
   // Image assets referenced by ImageFill.image.
   images: [Image];
+  // The paint pool referenced by Node.paint_entry.
+  paints: [Paint];
 }
 
 root_type Document;

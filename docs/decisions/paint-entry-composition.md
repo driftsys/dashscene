@@ -34,7 +34,7 @@ Option 1.
   payload.
 - Option 3 makes "no fill" a member of the fill vocabulary; an `Option`
   keeps `PaintKind` meaning "a way to fill" and cannot be confused with
-  a drawable kind. `fill: None` resolves #55's gap directly.
+  a drawable kind.
 - Contract note: the pinned v0.1 cross-session contract fixes
   `RectEntry`, `Color`, `PaintKind::Solid`'s shape, and the type names —
   all untouched. `PaintTable`'s entry composition is not frozen, and
@@ -42,22 +42,45 @@ Option 1.
   the types; that wiring is this same session's next story, so the shape
   lands with full knowledge on both sides.
 
+## Relation to debt #55 (paint-less nodes) and core's sentinel
+
+Two complementary mechanisms now exist, at different levels:
+
+- `dashscene-core`'s committed output marks an unfilled node at the
+  rect level: `RectEntry.paint = NO_PAINT (u32::MAX)`, no table entry
+  at all (`docs/decisions/core-committed-output-shape.md`, merged with
+  story #2). That record flags the conflict with `PaintTable::resolve`
+  (which panics on any unresolvable index) for story #4 to resolve.
+- This record adds the entry-level representation:
+  `PaintEntry { fill: None, .. }` — needed regardless of the sentinel,
+  because a stroke-only entry has no fill either, and the document
+  schema's pool entry (`dashbuf`'s `Paint` table) has the same optional
+  fill.
+
+Which mechanism an unfilled node uses when crossing boundary B — the
+sentinel, an empty pooled entry, or both with defined meaning — is
+story #4's decision, together with the type unification. Debt #55 stays
+open until that lands.
+
 ## Sub-decisions recorded with this choice
 
 - **Strokes are solid-only at v0.3.** Figma allows gradient/image
-  strokes; the v0 corpus does not need them, `DESIGN_1.md` §10.1's NOW
-  list names stroke _align_ only, and the field widens additively later.
-  Until then the importer diagnoses them by name (R6) rather than
-  dropping them.
-- **Gradient geometry is three normalized handle positions** (origin,
-  primary-axis end, secondary-axis end — Figma's
+  strokes; the v0 corpus does not need them, the v0.3 slice
+  (`DESIGN_1.md` §11) scopes "rrect + stroke align" — not stroke
+  fills — and the field widens additively later. Until then the
+  importer diagnoses them by name (R6) rather than dropping them.
+- **Gradient geometry is three named normalized handle positions**
+  (`handle_origin`, `handle_primary`, `handle_secondary` — Figma's
   gradientHandlePositions) for all four kinds, rather than per-kind
-  parameter sets (center/radius, angle, …). Handles are the authored
-  intent (P1); resolved geometry is per-painter math, and one model
-  round-trips the importer losslessly.
+  parameter sets (center/radius, angle, …) or a positional array.
+  Handles are the authored intent (P1); resolved geometry is
+  per-painter math; named fields keep the schema and the mirror types
+  self-describing so a lowering cannot silently swap axes.
 - **Corner radii and clip live in the paint entry, not `RectEntry`.**
   `RectEntry`'s layout is pinned and blittable (§7.3); corners/clip are
   paint-side shape parameters and share the paint table's dedup pool.
+  Dedup itself is the producer's job — the table is append-only by
+  design (core already interns by color bits, see its record above).
 - **Image assets stay out of boundary B for now.** The schema stores
   embedded encoded bytes (`Document.images`); how decoded pixels reach a
   painter is story #14's plumbing and is recorded there as an open item.
