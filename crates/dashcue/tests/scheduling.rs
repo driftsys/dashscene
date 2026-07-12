@@ -1,7 +1,7 @@
 //! Scheduler tests (issue #21): fixed time steps, hand-computed
 //! expectations — dashcue's public API only.
 
-use dashcue::{Easing, PropKey, Scheduler, TransitionSpec};
+use dashcue::{Easing, Keyframe, PropKey, Scheduler, TransitionSpec};
 
 const K: PropKey = PropKey(1);
 
@@ -78,6 +78,133 @@ fn samples_iterates_live_tracks_in_start_order() {
     s.advance(0.5);
     let got: Vec<(PropKey, f32)> = s.samples().collect();
     assert_eq!(got, vec![(PropKey(2), 0.5), (PropKey(1), 5.5)]);
+}
+
+const STEP: f32 = 1.0 / 120.0;
+
+fn critical_spring() -> TransitionSpec {
+    TransitionSpec::Spring {
+        stiffness: 100.0,
+        damping_ratio: 1.0,
+    }
+}
+
+#[test]
+fn spring_converges_to_the_target_and_finishes() {
+    let mut s = Scheduler::new();
+    s.start(K, 0.0, 100.0, critical_spring(), 0.0);
+
+    let mut steps = 0;
+    while !s.is_empty() {
+        s.advance(STEP);
+        steps += 1;
+        assert!(steps < 10_000, "spring never reached rest");
+    }
+    // The finishing frame sampled exactly `to` before the drop:
+    // rerun and stop on the finishing frame.
+    let mut s = Scheduler::new();
+    s.start(K, 0.0, 100.0, critical_spring(), 0.0);
+    for _ in 0..steps - 1 {
+        s.advance(STEP);
+    }
+    assert_eq!(s.sample(K), Some(100.0));
+}
+
+#[test]
+fn spring_advance_is_bit_deterministic_across_runs() {
+    let run = || {
+        let mut s = Scheduler::new();
+        s.start(K, 0.0, 100.0, critical_spring(), 0.0);
+        let mut samples = Vec::new();
+        for _ in 0..240 {
+            s.advance(STEP);
+            samples.extend(s.sample(K).map(f32::to_bits));
+        }
+        samples
+    };
+    assert_eq!(run(), run());
+}
+
+#[test]
+fn spring_moves_monotonically_toward_the_target_when_critically_damped() {
+    let mut s = Scheduler::new();
+    s.start(K, 0.0, 100.0, critical_spring(), 0.0);
+
+    let mut previous = 0.0;
+    for _ in 0..240 {
+        s.advance(STEP);
+        let Some(now) = s.sample(K) else { break };
+        assert!(
+            now >= previous,
+            "critically damped spring moved away from the target"
+        );
+        assert!(
+            now <= 100.0 + 1.0,
+            "critically damped spring exceeded the target"
+        );
+        previous = now;
+    }
+}
+
+#[test]
+fn keyframes_interpolate_through_declared_frames_including_overshoot() {
+    let mut s = Scheduler::new();
+    s.start(
+        K,
+        0.0,
+        100.0,
+        TransitionSpec::Keyframes {
+            duration: 1.0,
+            frames: vec![Keyframe { t: 0.5, value: 1.5 }],
+        },
+        0.0,
+    );
+
+    s.advance(0.25); // between (0,0) and (0.5,1.5): progress 0.75
+    assert_eq!(s.sample(K), Some(75.0));
+    s.advance(0.25); // at the declared frame: progress 1.5 (overshoot)
+    assert_eq!(s.sample(K), Some(150.0));
+    s.advance(0.25); // between (0.5,1.5) and (1,1): progress 1.25
+    assert_eq!(s.sample(K), Some(125.0));
+    s.advance(0.25); // done: exactly `to`
+    assert_eq!(s.sample(K), Some(100.0));
+}
+
+#[test]
+fn keyframes_with_no_declared_frames_degrade_to_linear() {
+    let mut s = Scheduler::new();
+    s.start(
+        K,
+        0.0,
+        100.0,
+        TransitionSpec::Keyframes {
+            duration: 1.0,
+            frames: vec![],
+        },
+        0.0,
+    );
+
+    s.advance(0.5);
+    assert_eq!(s.sample(K), Some(50.0));
+}
+
+#[test]
+#[should_panic(expected = "strictly increasing")]
+fn start_panics_on_unsorted_keyframes() {
+    let mut s = Scheduler::new();
+    s.start(
+        K,
+        0.0,
+        1.0,
+        TransitionSpec::Keyframes {
+            duration: 1.0,
+            frames: vec![
+                Keyframe { t: 0.6, value: 0.5 },
+                Keyframe { t: 0.4, value: 0.9 },
+            ],
+        },
+        0.0,
+    );
 }
 
 #[test]
