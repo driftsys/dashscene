@@ -3,7 +3,9 @@
 //! (issue #4; DESIGN_1.md §8.1) — the first end-to-end crossing of
 //! boundary B.
 
-use dashpaint::{Color, Gradient, GradientKind, PaintEntry, PaintKind, Painter, RectEntry, Vec2};
+use dashpaint::{
+    Color, Gradient, GradientKind, ImageTable, PaintEntry, PaintKind, Painter, RectEntry, Vec2,
+};
 use dashscene_core::{Arena, Prop};
 use dashscene_skia::SkiaPainter;
 
@@ -47,7 +49,7 @@ fn paints_a_core_committed_scene_with_exact_pixels() {
 
     let scene = arena.committed();
     let mut painter = SkiaPainter::new(4, 4);
-    painter.paint(scene.rects(), scene.paints());
+    painter.paint(scene.rects(), scene.paints(), &ImageTable::new());
 
     let rgba = painter.rgba_bytes();
     assert_eq!(rgba.len(), 4 * 4 * 4);
@@ -79,7 +81,7 @@ fn an_unfilled_node_draws_nothing() {
 
     let scene = arena.committed();
     let mut painter = SkiaPainter::new(4, 4);
-    painter.paint(scene.rects(), scene.paints());
+    painter.paint(scene.rects(), scene.paints(), &ImageTable::new());
 
     let rgba = painter.rgba_bytes();
     assert_eq!(pixel(&rgba, 4, 0, 0), RED_RGBA, "the filled child paints");
@@ -102,7 +104,7 @@ fn encodes_png() {
 
     let scene = arena.committed();
     let mut painter = SkiaPainter::new(2, 2);
-    painter.paint(scene.rects(), scene.paints());
+    painter.paint(scene.rects(), scene.paints(), &ImageTable::new());
 
     let png = painter.png_bytes();
     assert_eq!(
@@ -138,5 +140,5 @@ fn unimplemented_vocabulary_panics_by_name() {
     }];
 
     let mut painter = SkiaPainter::new(1, 1);
-    painter.paint(&rects, &paints);
+    painter.paint(&rects, &paints, &ImageTable::new());
 }

@@ -2,8 +2,9 @@
 //! no dashscene-core, no dashbuf — dashpaint's public API only.
 
 use dashpaint::{
-    Color, CornerRadii, Gradient, GradientKind, GradientStop, PaintEntry, PaintIndex, PaintKind,
-    PaintTable, Painter, RectEntry, ScaleMode, Stroke, StrokeAlign, Vec2,
+    Color, CornerRadii, Gradient, GradientKind, GradientStop, ImageAsset, ImageFormat, ImageTable,
+    PaintEntry, PaintIndex, PaintKind, PaintTable, Painter, RectEntry, ScaleMode, Stroke,
+    StrokeAlign, Vec2,
 };
 
 const RED: Color = Color {
@@ -123,6 +124,8 @@ fn an_image_fill_round_trips_through_the_table() {
         fill: Some(PaintKind::Image {
             image: 7,
             scale_mode: ScaleMode::Crop,
+            transform: None,
+            tile_scale: 1.0,
         }),
         ..PaintEntry::default()
     };
@@ -130,6 +133,29 @@ fn an_image_fill_round_trips_through_the_table() {
     let index = table.push(entry.clone());
 
     assert_eq!(table.resolve(index), &entry);
+}
+
+#[test]
+fn image_table_pushes_and_resolves_assets() {
+    let mut images = ImageTable::new();
+    assert!(images.is_empty());
+
+    let asset = ImageAsset {
+        format: ImageFormat::Png,
+        bytes: vec![1, 2, 3],
+    };
+    let index = images.push(asset.clone());
+
+    assert_eq!(index, 0);
+    assert_eq!(images.len(), 1);
+    assert_eq!(images.resolve(index), &asset);
+    assert_eq!(images.get(1), None);
+}
+
+#[test]
+#[should_panic(expected = "image index 3 out of range")]
+fn image_table_resolve_panics_on_an_out_of_range_index() {
+    ImageTable::new().resolve(3);
 }
 
 /// Test double: resolves each rect's paint index and records what a real
@@ -141,7 +167,7 @@ struct RecordingPainter {
 }
 
 impl Painter for RecordingPainter {
-    fn paint(&mut self, rects: &[RectEntry], paints: &PaintTable) {
+    fn paint(&mut self, rects: &[RectEntry], paints: &PaintTable, _images: &ImageTable) {
         for rect in rects {
             match &paints.resolve(rect.paint).fill {
                 Some(PaintKind::Solid { color }) => self.painted.push((*rect, *color)),
@@ -179,7 +205,7 @@ fn painter_receives_rects_in_slice_order_with_resolved_colors() {
     let (rects, paints) = two_rect_fixture();
     let mut painter = RecordingPainter::default();
 
-    painter.paint(&rects, &paints);
+    painter.paint(&rects, &paints, &ImageTable::new());
 
     assert_eq!(
         painter.painted,
@@ -193,7 +219,7 @@ fn painter_trait_is_object_safe() {
     let mut painter = RecordingPainter::default();
 
     let dyn_painter: &mut dyn Painter = &mut painter;
-    dyn_painter.paint(&rects, &paints);
+    dyn_painter.paint(&rects, &paints, &ImageTable::new());
 
     assert_eq!(
         painter.painted,
