@@ -57,10 +57,12 @@ Two complementary mechanisms now exist, at different levels:
   schema's pool entry (`dashbuf`'s `Paint` table) has the same optional
   fill.
 
-Which mechanism an unfilled node uses when crossing boundary B — the
-sentinel, an empty pooled entry, or both with defined meaning — is
-story #4's decision, together with the type unification. Debt #55 stays
-open until that lands.
+Resolved by story #4 (`docs/decisions/boundary-b-unification.md`):
+the committed output interns the shared empty entry
+(`PaintEntry::default()`) for unfilled nodes — every rect resolves, and
+the `NO_PAINT` sentinel is gone from core's public API. `dashbuf`'s
+document-level `Node.paint_entry` sentinel remains (a format concern,
+not a boundary-B one). Debt #55 closed with story #4.
 
 ## Sub-decisions recorded with this choice
 

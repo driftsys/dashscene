@@ -49,7 +49,7 @@ naming the id and the arena. A `NodeId` from _another_ arena whose
 index happens to be in range is not detected — ids carry no arena
 identity. These are programmer-error panics, not part of the P4
 named-diagnostics vocabulary. `Prop::Fill` can set a fill but never
-clear one back to `NO_PAINT` — a deliberate v0.1 gap
+clear one back to unfilled — a deliberate v0.1 gap
 (`docs/decisions/staged-mutation-v01-scope.md`).
 
 Full rationale and the rejected alternative (op-log with
@@ -68,7 +68,9 @@ rollback-on-drop): `docs/decisions/staged-mutation-v01-scope.md`.
    position = parent's already-resolved absolute (0,0 for a root) +
    the node's own authored offset; paint = the fill color interned by
    exact bit pattern (`f32::to_bits` on each channel) in first-use
-   order, or `NO_PAINT` (`u32::MAX`) if the node has no fill.
+   order — an unfilled node interns the shared draws-nothing entry
+   (`PaintEntry::default()`), so every rect resolves (story #4,
+   `docs/decisions/boundary-b-unification.md`).
 3. **Dirty diff** — after building the new rect table, each index is
    compared against the same index in the previous front buffer; an
    entry is dirty when its bits changed (compared via `f32::to_bits`,
@@ -95,9 +97,10 @@ not re-derived here:
 ## Committed output (boundary B)
 
 `CommittedScene` (in `committed.rs`) is the double-buffered painter
-input: `rects() -> &[RectEntry]` (DFS-indexed, blittable
-`{ x, y, w, h: f32, paint: u32 }`), `paints() -> &[Paint]`
-(deduplicated `{ color: Color }`, `Color` = 4×`f32` RGBA),
+input, built from `dashpaint`'s types since the story #4 unification:
+`rects() -> &[RectEntry]` (DFS-indexed, blittable
+`{ x, y, w, h: f32, paint: PaintIndex }`), `paints() -> &PaintTable`
+(deduplicated `PaintEntry` pool),
 `generation() -> u64`, `dirty() -> &[u32]`, plus the
 NodeId↔rect-index correspondence for the commit that produced it
 (`node_of(rect_index) -> NodeId`,
@@ -105,9 +108,10 @@ NodeId↔rect-index correspondence for the commit that produced it
 that commit). `Arena` holds two `CommittedScene` buffers and a `front`
 index; `Arena::committed()` borrows the front buffer only.
 
-The exact pinned shapes (byte sizes, the `NO_PAINT` sentinel, paint
-dedup/ordering rule, dirty-set definition) and why `dashscene-core`
-owns these types rather than depending on `dashpaint` or reusing
+The exact pinned shapes (byte sizes, paint dedup/ordering rule,
+dirty-set definition) and the original reasoning for core's own mirror
+types (superseded at story #4: core now depends on `dashpaint`, see
+`docs/decisions/boundary-b-unification.md`) rather than reusing
 `dashbuf`'s generated structs: `docs/decisions/core-committed-output-shape.md`.
 
 ## Schema change (`dashbuf`)
@@ -120,15 +124,10 @@ side of the same decision as the arena's offset resolution:
 
 ## Scope boundaries (v0.1)
 
-- No `dashpaint` dependency — story #3 defined the painter-side types
-  in parallel (now on `main`: an identical `RectEntry` shape and a
-  `PaintTable` whose `resolve` panics on an out-of-range index);
-  story #4 reconciles the two crates. Known reconciliation point:
-  core emits `NO_PAINT` (`u32::MAX`) for unfilled nodes, while
-  `dashpaint`'s `Painter` contract paints every rect and treats an
-  unresolvable index as a broken contract — story #4 must decide how
-  an unfilled node crosses boundary B
-  (`docs/decisions/core-committed-output-shape.md`).
+- Depends on `dashpaint` for the boundary-B types since story #4's
+  unification (`docs/decisions/boundary-b-unification.md`): the mirror
+  types of the parallel-development phase are gone, and unfilled nodes
+  resolve to the shared draws-nothing entry instead of a sentinel.
 - No `dashbuf` dependency — the arena mirrors the schema's field
   shapes; nothing links the generated flatbuffer code.
 - No `set_variant` — `SCOPE_DECISIONS.md` §9 scopes v0.1 to
@@ -143,14 +142,15 @@ side of the same decision as the arena's offset resolution:
     crates/dashscene-core/src/lib.rs        crate docs + re-exports
     crates/dashscene-core/src/arena.rs      Arena, NodeId, Prop, Txn,
                                             commit resolution
-    crates/dashscene-core/src/committed.rs  Color, RectEntry, Paint,
-                                            CommittedScene, NO_PAINT
+    crates/dashscene-core/src/committed.rs  CommittedScene + re-exported
+                                            dashpaint types
     crates/dashscene-core/tests/arena.rs    acceptance path (issue #2):
                                             empty-commit, single-root
                                             resolve, DFS nesting and
                                             interleaved creation order,
                                             paint interning/dedup,
-                                            NO_PAINT, staged visibility,
+                                            the shared draws-nothing
+                                            entry, staged visibility,
                                             generation stamping,
                                             dirty-set diffing,
                                             NodeId↔rect-index round-trip

@@ -49,5 +49,9 @@ it in. Per-story decisions land here directly:
   — charset→glyph-id closure is cmap-only for v0.5, with an
   `extra_glyph_ids` escape hatch; full GSUB closure deferred to #34
   (#27).
+- [boundary-b-unification.md](boundary-b-unification.md) — story #4:
+  `dashpaint` owns the boundary-B types (`dashscene-core` depends on it,
+  publish order updated), every committed rect resolves (no `NO_PAINT`
+  sentinel), and paint indices are the `PaintIndex` newtype.
 
 See the `sdd-working-memory-lifecycle` rule.

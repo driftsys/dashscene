@@ -1,7 +1,8 @@
 # dashpaint owns its boundary-B input types, with no dependencies
 
-    status   accepted (story #3, 2026-07-12) — ownership revisited in
-             story #4 per the pinned cross-session contract
+    status   accepted (story #3, 2026-07-12); ownership resolved at
+             story #4 — dashpaint owns the types and dashscene-core
+             depends on it, see docs/decisions/boundary-b-unification.md
     scope    crates/dashpaint
 
 ## Context

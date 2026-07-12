@@ -1,6 +1,9 @@
 # dashscene-core owns its committed-output types (boundary B, v0.1)
 
-    status   accepted (story #2, 2026-07-12)
+    status   accepted (story #2, 2026-07-12); reconciled by story #4 —
+             see docs/decisions/boundary-b-unification.md (core now uses
+             dashpaint's types; NO_PAINT is gone from the committed
+             output — every rect resolves to a pool entry)
     scope    dashscene-core committed output; reconciliation due in story #4
 
 ## Context
