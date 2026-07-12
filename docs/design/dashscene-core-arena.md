@@ -31,9 +31,11 @@ generated code
 (padding as a named `EdgeInsets`, not a positional array), and
 `Arena::roots()` / `Arena::children(NodeId)` expose the tree in
 creation order — together the read seam the story #9 Taffy mapping
-consumes. Until that solve lands, flex intent is stored, not solved:
-`commit` resolves fixed geometry only
-(`docs/decisions/flex-vocabulary-shape.md`).
+consumes. Since story #9, commit takes its
+geometry from a `LayoutSolver` (`docs/decisions/layout-solver-seam.md`):
+`commit()` uses core's internal fixed resolution (the mode-`None`
+passthrough), and flex-aware producers use `commit_with` with the
+engine's `TaffySolver`.
 
 `NodeId` is a stable arena slot index (`u32`), returned by `add_node`
 and never invalidated — v0.1 has no node removal. It is deliberately
@@ -120,11 +122,15 @@ warranted.
    for the same reason. Walk order is roots in creation order, then
    children in creation order under each parent, depth-first. This
    order is the committed rect table's index.
-2. **Resolve + intern** — for each node in DFS order: absolute
-   position = parent's already-resolved absolute (0,0 for a root) +
-   the node's own authored offset; paint = the fill color interned by
-   exact bit pattern (`f32::to_bits` on each channel) in first-use
-   order — an unfilled node interns the shared draws-nothing entry
+2. **Resolve + intern** — geometry comes from the `LayoutSolver`
+   (story #9, `docs/decisions/layout-solver-seam.md`): `commit()`
+   delegates to the internal `FixedSolver` (absolute position =
+   parent's absolute + the node's authored offset, size = authored
+   width/height), while `commit_with` takes any solver — the engine's
+   `TaffySolver` for flex scenes. A solver that omits a node panics
+   (P4). Paint = the fill color interned by exact bit pattern
+   (`f32::to_bits` on each channel) in first-use order — an unfilled
+   node interns the shared draws-nothing entry
    (`PaintEntry::default()`), so every rect resolves (story #4,
    `docs/decisions/boundary-b-unification.md`).
 3. **Dirty diff** — after building the new rect table, each index is

@@ -14,6 +14,9 @@ here, as future work gardens it in. Per-component records land here directly:
 - [dashscene-core-arena.md](dashscene-core-arena.md) — the arena's intent
   model, staged mutation, commit resolution pipeline, and committed output
   (story #2); text content and style as intent, v0.5 (story #26).
+- [dashscene-engine.md](dashscene-engine.md) — the Taffy solve behind the
+  `LayoutSolver` seam: per-root trees, the axis-relative style mapping
+  (story #9).
 - [dashbuf.md](dashbuf.md) — boundary A: the `.dsb` document schema (v0.1
   walking skeleton; v0.3 paint vocabulary, story #13; v0.5 text
   vocabulary, story #26).

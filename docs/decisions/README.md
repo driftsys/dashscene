@@ -65,6 +65,9 @@ it in. Per-story decisions land here directly:
 - [flex-vocabulary-shape.md](flex-vocabulary-shape.md) — the v0.2 flex
   vocabulary is two optional `Node` tables, mirrored in core as stored
   intent (story #8); binds the story #9 Taffy solve and v0.8 wrap/grid.
+- [layout-solver-seam.md](layout-solver-seam.md) — commit takes its geometry
+  from a `LayoutSolver` trait defined in core; the engine implements it with
+  Taffy (story #9); binds #22 (FLIP) and #29 (measure callback).
 
 - [golden-comparison-space.md](golden-comparison-space.md) — goldens compare
   decoded pixels in unpremultiplied RGBA8888, never encoded bytes (story #6;
