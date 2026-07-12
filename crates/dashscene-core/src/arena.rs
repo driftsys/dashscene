@@ -9,6 +9,7 @@
 //! changes pending; they publish with the next commit ("staged" means
 //! batched visibility, not rollback).
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use crate::committed::{
@@ -483,19 +484,32 @@ impl Txn<'_> {
     pub fn lower_negative_gaps(&mut self) {
         let nodes = &mut self.arena.nodes;
         for i in 0..nodes.len() {
-            let gap = nodes[i].layout.gap;
-            let mode = nodes[i].layout.mode;
-            if gap >= 0.0 || matches!(mode, LayoutMode::None) {
+            // Only genuinely-negative gaps lower. `partial_cmp` returns
+            // `None` for NaN, so a NaN gap is skipped, never treated as
+            // negative and never sprayed into child margins.
+            if nodes[i].layout.gap.partial_cmp(&0.0) != Some(Ordering::Less) {
                 continue;
             }
+            let horizontal = match nodes[i].layout.mode {
+                LayoutMode::Horizontal => true,
+                LayoutMode::Vertical => false,
+                // A mode-None container ignores gap entirely; nothing
+                // to lower.
+                LayoutMode::None => continue,
+            };
+            let gap = nodes[i].layout.gap;
             nodes[i].layout.gap = 0.0;
-            let children = nodes[i].children.clone();
-            for &child in children.iter().skip(1) {
+            // Every child after the first (in main-axis order) gains
+            // the negative gap as a leading margin. `NodeId` is `Copy`,
+            // so indexing by position ends the read borrow before the
+            // mutable one — no children clone needed.
+            for k in 1..nodes[i].children.len() {
+                let child = nodes[i].children[k];
                 let margin = &mut nodes[child.index()].layout.margin;
-                match mode {
-                    LayoutMode::Horizontal => margin.left += gap,
-                    LayoutMode::Vertical => margin.top += gap,
-                    LayoutMode::None => unreachable!("guarded above"),
+                if horizontal {
+                    margin.left += gap;
+                } else {
+                    margin.top += gap;
                 }
             }
         }
