@@ -743,3 +743,37 @@ holding its own copy of the shared shapes):
   (#54).
 
 Details and alternatives: `docs/decisions/boundary-b-unification.md`.
+
+## 16. Section-ordering spike (#56): .dsb becomes a sectioned container at v1
+
+The v0.1 spike (issue #56) measured how much physical-layout control
+the FlatBuffers toolchain gives, against the pinned versions (`flatc`
+25.12.19, Rust crate 25.12.19). Decision record:
+`docs/decisions/dsb-sectioned-container.md`; full evidence on the
+issue.
+
+- **A single flatbuffer cannot express DESIGN §5's section
+  discipline.** Content alignment is capped at 32 bytes toolchain-wide
+  (no page alignment); the Rust builder exposes no alignment API and
+  Rust codegen silently ignores vector `force_align`; vtable
+  deduplication is global and not disableable, so hot tables can
+  reference vtable bytes physically located among cold data; the
+  verifier has no subtree scoping, so a hot-only load gate would need
+  a custom partial verifier; and sections have no stable byte ranges
+  to hash.
+- **Direction: `.dsb` becomes a thin container** — a fixed envelope
+  (magic, version, section table with per-section id, flags, offset,
+  length, hash) framing one complete flatbuffer per section, each with
+  its own `root_type` and `file_identifier`. Cold section offsets are
+  page-aligned by the writer; per-section hashes cover contiguous byte
+  ranges. §3's "one schema for file and wire" survives: both roles
+  frame the same per-section flatbuffers, the wire with length
+  prefixes, the file role with the envelope.
+- **Timing:** v0 keeps single-flatbuffer `.dsb` files; the envelope
+  lands with the v1 loading-performance work (R5 mmap measurements).
+- **Carried into the schema stories (#8, #13, #20, #26):**
+  cross-table references stay integer indices — never flatbuffer
+  offsets reaching into another future section — and every
+  section-destined table (node tree, layout, paint, variant,
+  text/strings, heavy decor) stays one offset away from `Document`, so
+  lifting it to a section root later is mechanical.
