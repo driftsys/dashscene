@@ -45,7 +45,12 @@ dashscene-web = { path = "crates/dashscene-web", version = "0.0.0" }
 
 # Stack per DESIGN_1.md §2 — reserved here for crates to opt into as
 # implementation lands; not every crate depends on every entry.
-taffy = "0.12"
+taffy = { version = "0.12", default-features = false, features = [
+    "std",
+    "taffy_tree",
+    "flexbox",
+    "block_layout",
+] }
 rustybuzz = "0.20"
 unicode-bidi = "0.3"
 ttf-parser = "0.25"
