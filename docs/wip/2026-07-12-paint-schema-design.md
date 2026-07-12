@@ -122,8 +122,8 @@ paint-table row ("paint-kind enum, fill/stroke/effect params"):
 The pinned v0.1 cross-session contract fixes the data shapes session A
 produces: `RectEntry { x, y, w, h, paint }`, solid color as 4×f32 RGBA,
 and the type names. It does not freeze `PaintTable`'s entry composition,
-and `dashscene-core` does not depend on `dashpaint` at all until story
-#4 unifies the types — story #4 is this same session's next story, so
+and `dashscene-core` does not depend on `dashpaint` at all until
+story #4 unifies the types — story #4 is this same session's next story, so
 the wiring lands with full knowledge of this shape. The schema side is
 strictly additive; `Node.paint` keeps working unchanged.
 

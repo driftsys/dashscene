@@ -1,8 +1,10 @@
 //! Paint table (fill/stroke/effect params, token refs, material class) + the painter trait — boundary B (DESIGN_1.md §8).
 //!
-//! v0.1 walking-skeleton scope: solid fills only. The rect-table index is
-//! the document DFS node index (DESIGN_1.md §5); `RectEntry.paint` indexes
-//! the [`PaintTable`].
+//! Vocabulary scope: the v0.3 NOW set (DESIGN_1.md §10.1) — solid fills,
+//! the four gradient kinds, image fills with scale modes, stroke with
+//! align, rounded corners, and clip. The rect-table index is the document
+//! DFS node index (DESIGN_1.md §5); `RectEntry.paint` indexes the
+//! [`PaintTable`].
 
 /// An RGBA color, 4×f32 — the same shape as `dashbuf`'s `Color` struct.
 ///
@@ -35,18 +37,122 @@ pub struct RectEntry {
     pub paint: u32,
 }
 
-/// One paint-table entry. v0.1 knows solid fills only; further paint
-/// kinds land as new variants at their slices (gradients, images, and
-/// stroke handling at v0.3; effects such as shadows and masks at v0.8).
+/// A 2D point or vector, in the coordinate space its context names.
+#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Vec2 {
+    pub x: f32,
+    pub y: f32,
+}
+
+/// One gradient color stop; `offset` is normalized 0..1 along the
+/// gradient's primary axis.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GradientStop {
+    pub offset: f32,
+    pub color: Color,
+}
+
+/// The four gradient kinds of DESIGN_1.md §10.1 (angular serves gauges).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GradientKind {
+    Linear,
+    Radial,
+    Angular,
+    Diamond,
+}
+
+/// A gradient fill. One geometry model serves all four kinds: three
+/// normalized handle positions in the node's box — the gradient origin,
+/// the primary-axis end, and the secondary-axis end (Figma's
+/// gradientHandlePositions). Handles are intent; resolved geometry is
+/// per-painter math (P1).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Gradient {
+    pub kind: GradientKind,
+    pub handles: [Vec2; 3],
+    pub stops: Vec<GradientStop>,
+}
+
+/// Figma image-fill scale modes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScaleMode {
+    Fill,
+    Fit,
+    Crop,
+    Tile,
+}
+
+/// Stroke placement relative to the node's outline. Painters that only
+/// stroke on center lower Inside/Outside by path expansion
+/// (DESIGN_1.md §8.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StrokeAlign {
+    Inside,
+    Center,
+    Outside,
+}
+
+/// A stroke. v0.3 strokes are solid-only (see
+/// `docs/decisions/paint-entry-composition.md`); the color widens to a
+/// fill additively if a real file ever needs gradient strokes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Stroke {
+    pub width: f32,
+    pub align: StrokeAlign,
+    pub color: Color,
+}
+
+/// Per-corner radii in document units; all zero (the default) = sharp
+/// corners.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct CornerRadii {
+    pub top_left: f32,
+    pub top_right: f32,
+    pub bottom_right: f32,
+    pub bottom_left: f32,
+}
+
+/// One way to fill a rect. Effects (shadows, masks) land at v0.8 as new
+/// variants.
+#[derive(Debug, Clone, PartialEq)]
 pub enum PaintKind {
     Solid { color: Color },
+    Gradient(Gradient),
+    Image { image: u32, scale_mode: ScaleMode },
+}
+
+/// One paint-table entry (DESIGN_1.md §5's paint-table row: paint-kind
+/// enum plus fill/stroke params): what a rect is filled with, how its
+/// outline is stroked, how its corners round, and whether it clips its
+/// children.
+///
+/// `fill: None` is the paint-less node — a layout-only container draws
+/// nothing but still occupies its rect-table slot (index = DFS node
+/// index).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PaintEntry {
+    pub fill: Option<PaintKind>,
+    pub stroke: Option<Stroke>,
+    pub corners: CornerRadii,
+    pub clip: bool,
+}
+
+impl PaintEntry {
+    /// The v0.1 walking-skeleton shorthand: a solid fill and nothing else.
+    pub fn solid(color: Color) -> Self {
+        Self {
+            fill: Some(PaintKind::Solid { color }),
+            ..Self::default()
+        }
+    }
 }
 
 /// The paint table (DESIGN_1.md §5): dense, indexed by `RectEntry.paint`.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PaintTable {
-    entries: Vec<PaintKind>,
+    entries: Vec<PaintEntry>,
 }
 
 impl PaintTable {
@@ -56,14 +162,14 @@ impl PaintTable {
 
     /// Appends an entry and returns its index — the value a
     /// [`RectEntry::paint`] field holds to reference it.
-    pub fn push(&mut self, kind: PaintKind) -> u32 {
+    pub fn push(&mut self, entry: PaintEntry) -> u32 {
         let index =
             u32::try_from(self.entries.len()).expect("paint table exceeds u32::MAX entries");
-        self.entries.push(kind);
+        self.entries.push(entry);
         index
     }
 
-    pub fn get(&self, index: u32) -> Option<&PaintKind> {
+    pub fn get(&self, index: u32) -> Option<&PaintEntry> {
         self.entries.get(index as usize)
     }
 
@@ -73,7 +179,7 @@ impl PaintTable {
     /// (P4), so a miss is a broken contract between crates, and the
     /// panic for that case is centralized here — a painter must never
     /// skip a rect silently.
-    pub fn resolve(&self, index: u32) -> &PaintKind {
+    pub fn resolve(&self, index: u32) -> &PaintEntry {
         self.get(index).unwrap_or_else(|| {
             panic!(
                 "paint index {index} out of range ({} entries): paint indices are validated upstream (P4)",
