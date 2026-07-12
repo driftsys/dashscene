@@ -1,7 +1,10 @@
 # .dsb becomes a thin sectioned container; each section is one flatbuffer
 
     status   accepted (spike #56, 2026-07-12) — envelope lands with the
-             v1 loading-performance work; binds schema design now
+             v1 loading-performance work; binds schema design now.
+             Refined 2026-07-12 (design session): envelope form,
+             section kinds, alignment policy, endianness — see
+             "Refinements" below.
     scope    crates/dashbuf, the .dsb file format
 
 ## Context
@@ -80,6 +83,95 @@ stories (#8, #13, #20, #26) immediately:
   envelope. Cross-section references as indices cost little: the
   design already prescribes indices (flattened DFS tree, doc index =
   rect-table index, a u32 paint index in the boundary-B rect entry).
-  The one v0.1 deviation is `Node.paint`, an inline table today; story
-  #13 lifts it into a `Document`-level paint table plus index, per
-  rule 1 above.
+  The one deviation at spike time was `Node.paint`, an inline table;
+  story #13 has since landed the `Document.paints` pool indexed by
+  `Node.paint_entry`, satisfying rule 1 (the legacy inline field
+  remains until the coordinated cleanup — see
+  `document-paint-pool-and-legacy-paint-field.md`).
+
+## Refinements (design session, 2026-07-12)
+
+A design session elaborated the container's concrete form. Related
+records from the same session: `asset-model-content-addressed-blobs.md`
+(what the blob sections carry) and `remoting-two-transports.md` (how
+the same sections travel without the envelope).
+
+### Envelope form
+
+The envelope is a hand-specified fixed layout — a `#[repr(C)]` struct
+in `dashbuf` plus a format doc (the slot DESIGN's repo sketch already
+reserves: "format doc (section table, hashes, reserved fields)"):
+
+- **Header**: magic, format version, header size, flags, section
+  count, root hash, and a reserved signature reference. The magic is a
+  byte array, not an integer, so it is endianness-free and visible in
+  a hex dump.
+- **Section table**: N fixed-stride 64-byte entries directly after the
+  header — per entry: section kind, flavor flags, byte offset (u64),
+  byte length (u64), content hash (32 bytes). Fixed stride gives O(1)
+  indexed access, and the signed byte range is
+  `header_size + count * 64` by construction.
+- **Not flatbuffers, including not flatbuffer structs.** The envelope
+  is validated before any parser is trusted, so checking it must be
+  plain bounds/magic/version comparisons on fixed offsets. A struct
+  cannot be a flatbuffer `root_type`, so "flatbuffer structs" would
+  still pull in root-table framing and the verifier — into the one
+  component that exists to stand outside them. The envelope evolves by
+  version bump, not by field-id rules; a frozen layout is the intent.
+- Layout hygiene: no implicit padding (every gap is a named reserved
+  field) and a compile-time size assertion pins the struct size.
+
+### Section kinds: structured vs blob
+
+The section table distinguishes two kinds:
+
+- **Structured** — a complete flatbuffer (the ui document; later
+  splits if profiling justifies them). Verified with the stock
+  flatbuffers verifier after its hash check.
+- **Blob** — raw payload bytes with no dashscene framing (see the
+  asset-model record). Verified by hash only.
+
+So the file holds exactly three byte-languages: the hand-specified
+envelope, ordinary flatbuffers, and raw well-known payload formats.
+
+### Alignment policy
+
+Page alignment is required in exactly one place: the boundary between
+the hot region (envelope + structured sections) and the first cold
+byte — that is what lets the load gate verify hot bytes without
+faulting cold pages. Everything else is writer policy, not format law:
+
+- Blobs align to a small universal quantum (64 bytes) so a pointer
+  into the mapping satisfies any consumer's natural alignment.
+- Large blobs (threshold, for example 64 KiB) are page-aligned so they
+  can be individually prefetched and evicted (`madvise` per range);
+  small blobs pack densely — two small blobs sharing a page is
+  harmless because verification and readiness are per-blob, and a
+  shared page faulting early is free prefetch.
+- The format only records offsets; packing heuristics can improve
+  without a format change.
+
+### Loading model
+
+One `mmap` of the whole file, once. The envelope is read through the
+mapping (page 0 faults — it is the hottest data in the file): validate
+magic/version/bounds, hash the section table against the root hash,
+then hash + verify structured sections, and hand `Document` to the
+arena. Blob sections are untouched until the loader thread prefetches
+them (touch + hash + mark ready). There is no read-then-map two-step
+and no per-section mapping; sections are offset ranges inside the one
+mapping.
+
+### Endianness
+
+The format is little-endian, declared once in the format doc — the
+same commitment flatbuffers already makes, so the whole file has one
+byte-order story. Readers never reinterpret native memory: every
+envelope field is read through an explicit little-endian accessor
+(`from_le_bytes`-style, or explicit-endian field types), which
+compiles to a plain load on little-endian targets. Big-endian remains
+correct by construction but is deferred as a target: no BE hardware is
+tested or supported until one exists on the roadmap. The rule is
+structural because every shipping and testing target (x86_64, aarch64,
+wasm32) is little-endian — a native-endian cast would pass every test
+and still be wrong, so no test can hold the line.
