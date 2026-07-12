@@ -1,4 +1,4 @@
-# dashscene-core: arena + staged-mutation API (v0.1)
+# dashscene-core: arena + staged-mutation API (v0.1, v0.5 text intent)
 
 `dashscene-core` is the semantic model: an arena holding a node tree
 with layout and paint intent (DESIGN_1.md §5), mutated through the
@@ -6,7 +6,9 @@ staged producer API (`open`/`set_prop`/`commit`, SCOPE_DECISIONS.md
 §9), resolving on commit into the committed output a painter consumes
 (boundary B, DESIGN_1.md §7.3). v0.1 scope: fixed-size layout, solid
 fill, no Taffy, no variants — the walking skeleton
-(DESIGN_1.md §11).
+(DESIGN_1.md §11). v0.5 (story #26) added text content and style as
+intent, held on the node but not resolved into any committed output —
+see "Text intent" below.
 
 Source: `crates/dashscene-core/src/lib.rs`, `src/arena.rs`,
 `src/committed.rs`. Acceptance path: `crates/dashscene-core/tests/arena.rs`.
@@ -16,10 +18,12 @@ Source: `crates/dashscene-core/src/lib.rs`, `src/arena.rs`,
 `Arena` holds `Vec<NodeData>` (one entry per node, indexed by arena
 slot) plus a `roots: Vec<NodeId>` in creation order. Each `NodeData`
 carries an optional name, an optional parent, its children in creation
-order, the authored `x`/`y`/`width`/`height` offset, and an optional
-fill color — a direct mirror of the `dashbuf` schema shapes
-(`FixedSizeLayout`, `SolidFill`) without linking the generated code
-(the crate has no `dashbuf` dependency; see Scope boundaries below).
+order, the authored `x`/`y`/`width`/`height` offset, an optional fill
+color, and (v0.5, story #26) an optional text string and an optional
+text style — a direct mirror of the `dashbuf` schema shapes
+(`FixedSizeLayout`, `SolidFill`, `TextStyle`) without linking the
+generated code (the crate has no `dashbuf` dependency; see Scope
+boundaries below).
 
 `NodeId` is a stable arena slot index (`u32`), returned by `add_node`
 and never invalidated — v0.1 has no node removal. It is deliberately
@@ -41,8 +45,12 @@ enforces the contract. `Txn::add_node(parent, name)` and
 nothing is visible to `Arena::committed()` until `Txn::commit(self)`
 resolves and publishes. Dropping a `Txn` without committing leaves the
 staged changes pending — they publish with the next commit. `Prop`
-(v0.1 vocabulary): `X`, `Y`, `Width`, `Height`, `Fill(Color)`; node
-names are set at `add_node`, not a mutable prop.
+(v0.1 vocabulary): `X`, `Y`, `Width`, `Height`, `Fill(Color)`; v0.5
+(story #26) added `Text(String)` and `TextStyle(TextStyle)` (see "Text
+intent" below). Node names are set at `add_node`, not a mutable prop.
+Adding a `String`-carrying variant means `Prop` can no longer derive
+`Copy` — it derives `Clone, Debug, PartialEq` as of v0.5; nothing in
+`dashscene-core` or its `dashlang` consumer depended on `Prop: Copy`.
 
 Contract misuse (an out-of-range `NodeId`) panics with a message
 naming the id and the arena. A `NodeId` from _another_ arena whose
@@ -54,6 +62,40 @@ clear one back to unfilled — a deliberate v0.1 gap
 
 Full rationale and the rejected alternative (op-log with
 rollback-on-drop): `docs/decisions/staged-mutation-v01-scope.md`.
+
+## Text intent (v0.5, story #26)
+
+`Prop::Text(String)` and `Prop::TextStyle(TextStyle)` set/replace a
+node's text content and style; `TextStyle { family: String, size_px:
+f32, weight: u16, color: Color }` mirrors the `dashbuf` `TextStyle`
+table field-for-field. `Arena::text_of(NodeId) -> Option<&str>` and
+`Arena::text_style_of(NodeId) -> Option<&TextStyle>` read them back —
+`None` for a node without text or without a style.
+
+Both accessors read the intent model directly, not `committed()`: a
+staged (uncommitted) value is visible immediately, the same panic
+contract as `Arena::name` for an out-of-range `NodeId`. This is
+deliberate — it is the seam that story #28's standalone typeset
+pipeline and story #29's measure callback are documented to read
+from, ahead of either one existing.
+
+The commit pipeline and the committed output are unchanged by this
+story: text does not influence the v0.5 rect table (text-driven hug
+sizing arrives with #29), and the committed output carries no glyph
+data (P1 — boundary B gains positioned glyph runs at #28/#30). A
+text-only change therefore produces no dirty entry — there is nothing
+in `CommittedScene` for a text edit to change.
+
+Interning styles into a committed style table at commit time (the
+paint-pool precedent — see "Commit resolution pipeline" below) was
+considered and deferred, not rejected outright: no consumer exists
+until #28/#29 define what actually needs to cross boundary B, so
+building the table now would be speculative. Storing text in the
+committed output now was rejected for the same reason. The seam is
+documented here so that whichever of #28/#29 lands first has a stated
+contract to build against, and paint's committed-table shape is the
+precedent to follow when a committed text/style table is finally
+warranted.
 
 ## Commit resolution pipeline
 
@@ -122,6 +164,12 @@ covered by `crates/dashbuf/tests/roundtrip.rs`. This is the document
 side of the same decision as the arena's offset resolution:
 `docs/decisions/fixed-position-authoring.md`.
 
+v0.5 (story #26) added the schema's text vocabulary — `TextStyle`
+table, `Document.strings`/`Document.text_styles` pools, and
+`Node.text`/`Node.text_style` sentinel-indexed fields — that this
+crate's `TextStyle` struct and `Prop::Text`/`Prop::TextStyle` mirror.
+Full schema rationale: `docs/design/dashbuf.md`.
+
 ## Scope boundaries (v0.1)
 
 - Depends on `dashpaint` for the boundary-B types since story #4's
@@ -140,8 +188,9 @@ side of the same decision as the arena's offset resolution:
 ## Module layout
 
     crates/dashscene-core/src/lib.rs        crate docs + re-exports
-    crates/dashscene-core/src/arena.rs      Arena, NodeId, Prop, Txn,
-                                            commit resolution
+    crates/dashscene-core/src/arena.rs      Arena, NodeId, Prop,
+                                            TextStyle, Txn, commit
+                                            resolution
     crates/dashscene-core/src/committed.rs  CommittedScene + re-exported
                                             dashpaint types
     crates/dashscene-core/tests/arena.rs    acceptance path (issue #2):
@@ -153,4 +202,11 @@ side of the same decision as the arena's offset resolution:
                                             entry, staged visibility,
                                             generation stamping,
                                             dirty-set diffing,
-                                            NodeId↔rect-index round-trip
+                                            NodeId↔rect-index
+                                            round-trip; text intent
+                                            (issue #26): set/read
+                                            through the accessors,
+                                            staged visibility, replace
+                                            semantics, no-text default,
+                                            no dirty entry from a
+                                            text-only change
