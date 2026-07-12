@@ -13,3 +13,6 @@ name = "dashscene_skia"
 [dependencies]
 dashpaint.workspace = true
 skia-safe.workspace = true
+
+[dev-dependencies]
+dashscene-core.workspace = true
