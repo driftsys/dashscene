@@ -2,14 +2,33 @@
 //! scene built by hand through `dashscene-core` directly (issue #5;
 //! DESIGN_1.md §6.2).
 
-use dashlang::{anon, node, rgba, scene};
-use dashscene_core::{Arena, NO_PAINT, Prop};
+// Arena and Color come through dashlang's re-export: a DSL consumer
+// needs no direct dashscene-core dependency. Prop/NO_PAINT are the raw
+// core surface, imported directly for the hand-built comparison side.
+use dashlang::{Arena, Color, anon, node, rgba, scene};
+use dashscene_core::{NO_PAINT, Prop};
 
-/// The two arenas must have committed to identical painter input.
+/// The two arenas must have committed to identical painter input, and
+/// the DSL's names must have reached the arena (observable through the
+/// NodeId↔rect-index correspondence).
 fn assert_same_output(dsl: &Arena, hand: &Arena) {
     assert_eq!(dsl.committed().rects(), hand.committed().rects());
     assert_eq!(dsl.committed().paints(), hand.committed().paints());
+    let names = |arena: &Arena| -> Vec<Option<String>> {
+        (0..arena.committed().rects().len())
+            .map(|i| {
+                arena
+                    .name(arena.committed().node_of(u32::try_from(i).unwrap()))
+                    .map(String::from)
+            })
+            .collect()
+    };
+    assert_eq!(names(dsl), names(hand));
 }
+
+// The re-exported Color is nameable in consumer signatures.
+#[allow(dead_code)]
+fn takes_a_dashlang_color(_: Color) {}
 
 #[test]
 fn the_dsl_scene_matches_the_hand_built_scene() {
