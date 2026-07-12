@@ -289,6 +289,20 @@ impl Arena {
         &self.node_data(node).children
     }
 
+    /// Document DFS order (the rect-table index order): roots in
+    /// creation order, children in creation order under each parent,
+    /// depth-first. The one traversal both the rect table and the
+    /// solvers agree on — change it here or nowhere.
+    fn dfs_order(&self) -> Vec<NodeId> {
+        let mut order = Vec::with_capacity(self.nodes.len());
+        let mut stack: Vec<NodeId> = self.roots.iter().rev().copied().collect();
+        while let Some(id) = stack.pop() {
+            order.push(id);
+            stack.extend(self.nodes[id.index()].children.iter().rev());
+        }
+        order
+    }
+
     fn node_data(&self, node: NodeId) -> &NodeData {
         self.nodes
             .get(node.index())
@@ -304,10 +318,11 @@ struct FixedSolver;
 
 impl LayoutSolver for FixedSolver {
     fn solve(&mut self, arena: &Arena) -> Vec<(NodeId, SolvedRect)> {
+        // dfs_order is parent-before-child, so every parent's absolute
+        // is resolved before its children read it.
         let mut out = Vec::with_capacity(arena.nodes.len());
         let mut absolute = vec![(0.0f32, 0.0f32); arena.nodes.len()];
-        let mut stack: Vec<NodeId> = arena.roots.iter().rev().copied().collect();
-        while let Some(id) = stack.pop() {
+        for id in arena.dfs_order() {
             let node = &arena.nodes[id.index()];
             let (parent_x, parent_y) = node.parent.map_or((0.0, 0.0), |p| absolute[p.index()]);
             let (x, y) = (parent_x + node.layout.x, parent_y + node.layout.y);
@@ -321,7 +336,6 @@ impl LayoutSolver for FixedSolver {
                     h: node.layout.height,
                 },
             ));
-            stack.extend(node.children.iter().rev());
         }
         out
     }
@@ -459,17 +473,20 @@ impl Txn<'_> {
         let arena = self.arena;
 
         // DFS document order (rect-table index order).
-        let mut order = Vec::with_capacity(arena.nodes.len());
-        let mut stack: Vec<NodeId> = arena.roots.iter().rev().copied().collect();
-        while let Some(id) = stack.pop() {
-            order.push(id);
-            stack.extend(arena.nodes[id.index()].children.iter().rev());
-        }
+        let order = arena.dfs_order();
 
-        // Geometry from the solver, keyed by arena slot.
+        // Geometry from the solver, keyed by arena slot. Malformed
+        // solver output is a broken contract, named loudly (P4):
+        // duplicates and foreign ids never commit silently.
         let mut solved: Vec<Option<SolvedRect>> = vec![None; arena.nodes.len()];
         for (id, rect) in solver.solve(arena) {
-            solved[id.index()] = Some(rect);
+            let slot = solved.get_mut(id.index()).unwrap_or_else(|| {
+                panic!("solver returned a rect for {id:?}, which is not a node of this arena")
+            });
+            assert!(
+                slot.replace(rect).is_none(),
+                "solver returned two rects for {id:?}"
+            );
         }
 
         // Build rects + intern paints. Every rect resolves: an

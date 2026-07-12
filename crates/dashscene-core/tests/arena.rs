@@ -633,10 +633,77 @@ fn commit_with_uses_the_solver_geometry_verbatim() {
     let rects = arena.committed().rects();
     assert_eq!(rects.len(), 2);
     assert_eq!((rects[0].x, rects[0].y), (0.0, 7.0), "root from solver");
+    assert_eq!(
+        (rects[0].w, rects[0].h),
+        (10.0, 20.0),
+        "root size from solver"
+    );
     assert_eq!((rects[1].x, rects[1].y), (100.0, 7.0), "child from solver");
-    // Paint interning still core's: the fill landed regardless of
-    // where the geometry came from.
-    assert_eq!(rects[0].paint, arena.committed().rects()[0].paint);
+    // Paint interning still core's: the root's fill resolves to solid
+    // RED regardless of where the geometry came from.
+    assert_eq!(
+        arena.committed().paints().resolve(rects[0].paint),
+        &dashscene_core::PaintEntry::solid(RED)
+    );
+}
+
+#[test]
+#[should_panic(expected = "two rects for")]
+fn commit_with_panics_on_a_duplicate_solver_rect() {
+    use dashscene_core::{LayoutSolver, SolvedRect};
+
+    struct StutteringSolver;
+    impl LayoutSolver for StutteringSolver {
+        fn solve(&mut self, arena: &Arena) -> Vec<(dashscene_core::NodeId, SolvedRect)> {
+            let id = arena.roots()[0];
+            let rect = SolvedRect {
+                x: 0.0,
+                y: 0.0,
+                w: 1.0,
+                h: 1.0,
+            };
+            vec![(id, rect), (id, rect)]
+        }
+    }
+
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    txn.add_node(None, None);
+    txn.commit_with(&mut StutteringSolver);
+}
+
+#[test]
+#[should_panic(expected = "not a node of this arena")]
+fn commit_with_panics_on_a_foreign_solver_rect() {
+    use dashscene_core::{LayoutSolver, SolvedRect};
+
+    // A solver that replays an id from a bigger arena: out of range
+    // here, and named as the contract breach it is.
+    struct ReplaySolver(dashscene_core::NodeId);
+    impl LayoutSolver for ReplaySolver {
+        fn solve(&mut self, _arena: &Arena) -> Vec<(dashscene_core::NodeId, SolvedRect)> {
+            vec![(
+                self.0,
+                SolvedRect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 1.0,
+                    h: 1.0,
+                },
+            )]
+        }
+    }
+
+    let mut big = Arena::new();
+    let mut txn = big.open();
+    txn.add_node(None, None);
+    let foreign = txn.add_node(None, None);
+    txn.commit();
+
+    let mut small = Arena::new();
+    let mut txn = small.open();
+    txn.add_node(None, None);
+    txn.commit_with(&mut ReplaySolver(foreign));
 }
 
 #[test]
