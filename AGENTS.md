@@ -82,7 +82,7 @@ driftsys/git-std, driftsys/upskill, driftsys/markspec.
 ## Where to start
 
 The v0.1 walking skeleton (`DESIGN_1.md` §11) is the entry point, in
-this order (dependency order per `SCOPE_DECISIONS.md` §14 — `dashpaint`
+this order (dependency order per `SCOPE_DECISIONS.md` §15 — `dashpaint`
 owns the boundary-B types and `dashscene-core` depends on it):
 
 1. `dashbuf` — minimal schema: node tree, a fixed-size layout mode (no

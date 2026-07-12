@@ -336,7 +336,7 @@ dependency order — for dashscene this means dashbuf → dashpaint →
 dashscene-core → dashscene-typeset → dashscene-engine →
 dashscene-validator → dashscene-skia → dashcue → dashlang → dashc →
 dashscene-unity → dashscene-web → dashscene, since story #4 made
-dashscene-core depend on dashpaint, see §14), `install`, `clean`. Add two dashscene-
+dashscene-core depend on dashpaint, see §15), `install`, `clean`. Add two dashscene-
 specific recipes: `wasm` (build `dashc` for `wasm32-unknown-unknown`,
 needed by the Deno importer, §4) and `deno-check`/`deno-test`/`deno-fmt`
 scoped to `importers/figma/`.
@@ -714,7 +714,7 @@ text-stack tooling against Arabic. Full methodology and evidence:
   offsets, not just advances (#26, #28); bidi run splitting must
   precede shaping (as DESIGN §7.2 already requires).
 
-## 14. Boundary B unified in dashpaint: core depends on it; publish order updated
+## 15. Boundary B unified in dashpaint: core depends on it; publish order updated
 
 Story #4 (dashscene-skia, the first `Painter` implementation) resolved
 the boundary-B reconciliation that stories #2 and #3 each deferred to
