@@ -14,6 +14,7 @@ members = [
   "crates/dashc",
   "crates/dashscene-unity",
   "crates/dashscene-web",
+  "goldens/tooling",
 ]
 
 [workspace.package]

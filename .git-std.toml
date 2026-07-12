@@ -20,6 +20,7 @@ scopes = [
     "dashc",
     "dashscene-unity",
     "dashscene-web",
+    "goldens",
     "repo",
     "docs",
     "ci",

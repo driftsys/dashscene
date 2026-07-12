@@ -17,3 +17,6 @@ importers/figma/.deno
 
 # Claude Code worktrees (see markspec's deno.json precedent, SCOPE_DECISIONS §7)
 .claude/worktrees/
+
+# Golden-harness failure artifacts (goldens/README.md)
+goldens/images/*.actual.png
