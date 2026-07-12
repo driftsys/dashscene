@@ -16,5 +16,7 @@ here, as future work gardens it in. Per-component records land here directly:
   (story #2).
 - [dashbuf.md](dashbuf.md) — boundary A: the `.dsb` document schema (v0.1
   walking skeleton; v0.3 paint vocabulary, story #13).
+- [dashlang.md](dashlang.md) — the value-tree builder surface and its
+  one-commit mapping onto `dashscene-core` (story #5).
 
 See the `sdd-working-memory-lifecycle` rule.
