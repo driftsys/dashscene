@@ -30,28 +30,28 @@ upstream crate) regressed.
 
     UPDATE_GOLDENS=1 cargo test -p goldens
 
-writes the current render over the golden. Inspect the image before
-committing — the golden is the reviewed truth, not a rubber stamp. A
-missing golden never auto-creates on a normal run: CI on a clean
-checkout fails loudly if a golden was not committed.
+writes the current render over every golden the run touches; narrow it
+to one golden with cargo's test-name filter
+(`UPDATE_GOLDENS=1 cargo test -p goldens <test_name>`). Inspect each
+image before committing — a golden is reviewed truth; never commit one
+unreviewed. A missing golden never auto-creates on a normal run: CI on
+a clean checkout fails loudly if a golden was not committed.
 
 ## Determinism
 
 Goldens are bit-exact because the reference painter is CPU raster
 (deterministic by construction, `DESIGN_1.md` §8) with anti-aliasing
-off and a pinned skia-safe version. GPU painters (v1+) will use
-tolerance-based perceptual diffs instead — that tooling grows here.
+off and an exactly pinned skia-safe version (`=0.81.0` in the workspace
+`Cargo.toml`; bumping it is a deliberate, re-goldened change). GPU
+painters (v1+) will use tolerance-based perceptual diffs instead — that
+tooling will be added here.
 
 ## Comparison space
 
 Goldens compare decoded pixels in unpremultiplied RGBA8888 — never
 encoded bytes (an encoder change is not a rendering change; the tooling
-notes byte drift on stderr and passes). Consequences, decided in
-`docs/decisions/golden-comparison-space.md`:
-
-- Opaque colors round-trip byte-exact.
-- A semi-transparent fill bakes skia's premultiplication quantization
-  into the golden: deterministic, bit-exact, but the stored value is
-  the quantized one, not the authored one.
-- v0.1 fixtures use opaque colors and integer coordinates only; the
-  sub-pixel geometry policy is open as debt #85.
+notes byte drift on stderr and passes). Rationale and consequences:
+`docs/decisions/golden-comparison-space.md`. The one fact golden
+authors need: a semi-transparent fill bakes skia's premultiplication
+quantization into the golden — the stored value is the quantized one,
+not the authored one.

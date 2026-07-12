@@ -48,14 +48,15 @@ fn the_walking_skeleton_scene_matches_its_golden() {
 
     // Key properties pinned independently of the image file: the
     // stacking order in the overlap region and the dedup'd gold fill.
+    // Expected bytes are derived from the fixture colors with the same
+    // 8-bit quantization the painter applies, so an intended fixture
+    // change updates them together with the UPDATE_GOLDENS run.
     let rgba_bytes = painter.rgba_bytes();
-    let pixel = |x: usize, y: usize| -> [u8; 4] {
-        rgba_bytes[(y * 64 + x) * 4..(y * 64 + x) * 4 + 4]
-            .try_into()
-            .unwrap()
-    };
-    let green_rgba = [26, 179, 51, 255];
-    let gold_rgba = [230, 179, 26, 255];
+    let q = |c: f32| -> u8 { (c * 255.0).round() as u8 };
+    let quantized = |r: f32, g: f32, b: f32| -> [u8; 4] { [q(r), q(g), q(b), 255] };
+    let green_rgba = quantized(0.1, 0.7, 0.2);
+    let gold_rgba = quantized(0.9, 0.7, 0.1);
+    let pixel = |x, y| goldens::pixel(&rgba_bytes, 64, x, y);
     assert_eq!(pixel(32, 32), green_rgba, "overlap: later sibling wins");
     assert_eq!(pixel(13, 13), gold_rgba, "nested badge at 8+4, 8+4");
     assert_eq!(pixel(53, 5), gold_rgba, "dedup'd gold dot");

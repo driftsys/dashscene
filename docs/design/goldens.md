@@ -9,7 +9,7 @@
 and §8 as how CPU painters generate their own goldens: a scene
 authored in the Rust DSL (`dashlang`), committed through
 `dashscene-core`, painted by the Skia reference painter
-(`dashscene-skia`), and byte-compared against a checked-in PNG — on
+(`dashscene-skia`), and compared pixel by pixel against a checked-in PNG — on
 every `cargo test --workspace` run, with no recipe or CI wiring beyond
 the workspace member. It is the harness every later slice re-goldens
 against on a painter swap (§8).
@@ -22,44 +22,39 @@ images live in `goldens/images/`.
 All in `goldens/tooling/src/lib.rs`:
 
     pub fn assert_matches_golden(name: &str, png_bytes: &[u8])
+    pub fn pixel(rgba: &[u8], width: usize, x: usize, y: usize) -> [u8; 4]
 
-Compares `png_bytes` against the checked-in golden
-`goldens/images/{name}.png`, resolved from `CARGO_MANIFEST_DIR/../images`
-(stable under any cwd). With `UPDATE_GOLDENS=1` in the environment, it
-writes `png_bytes` as the new golden instead of comparing. It panics
-naming the `UPDATE_GOLDENS` workflow when the golden is missing, and it
-panics on any differing pixel after writing the render as
-`{name}.actual.png` next to the golden, naming both paths.
-
-The full workflow — running, regenerating, inspecting a failure — is
-documented in `goldens/README.md`, a shipped doc and the story's own
-acceptance criterion; it is not repeated here. The comparison-space
-choice (decoded, unpremultiplied RGBA8888; encoded-byte drift is
-informational, never a failure) is `docs/decisions/golden-comparison-space.md`.
+`assert_matches_golden` compares a render against the checked-in golden
+`goldens/images/{name}.png`; its exact behavior (update mode, failure
+artifacts, panics) is its rustdoc. `pixel` is the shared RGBA8888
+pixel-indexing helper golden tests use. The full workflow — running,
+regenerating, inspecting a failure — is documented in
+`goldens/README.md`, a shipped doc and the story's own acceptance
+criterion; the comparison-space choice is
+`docs/decisions/golden-comparison-space.md`. Neither is repeated here.
 
 ## Golden scene (fixture)
 
 `goldens/tooling/tests/v01.rs` builds one 64×64 scene through
-`dashlang` exercising the whole v0.1 vocabulary: an unfilled root
-container that draws nothing, a dark background fill, two overlapping
-filled squares (stacking order — the later sibling wins), a nested
-child with an authored offset (absolute position sums the ancestor
-offsets), and two nodes sharing one fill color (paint-table dedup
-upstream of the painter). Three direct pixel assertions pin the
-overlap, the nested offset, and the deduplicated fill independently of
-the image file, ahead of the golden comparison itself. Coordinates are
-integer-aligned and colors are opaque throughout — the sub-pixel
-geometry policy stays open as debt #85, untouched by this fixture.
+`dashlang` exercising the whole v0.1 vocabulary (integer-aligned,
+opaque colors); the element list lives in that file's comments, its one
+home. Three direct pixel assertions — derived from the fixture colors
+by the painter's own quantization — pin stacking, nesting, and dedup
+independently of the image file.
 
 ## Testing
 
 Unit tests in `src/lib.rs` cover the tooling's edge behavior against a
 temporary, injected images root, so they exercise the panic and
 actual-file paths without touching the repository's checked-in
-goldens: matching pixels pass quietly, even when the encoded bytes
-differ; differing pixels panic naming a differing-pixel count and the
-first differing coordinate, and write the actual image; a missing
-golden panics naming the `UPDATE_GOLDENS` workflow. `tests/v01.rs`
+goldens: matching pixels pass (clearing any stale failure artifact);
+differing pixels and dimension mismatches panic with a report and write
+the actual image; a missing golden panics naming the `UPDATE_GOLDENS`
+workflow; a corrupt golden names itself rather than the render. (The
+encoding-drift pass-with-note branch is currently exercised by no unit
+test — constructing two byte-different encodings of identical pixels
+from one pinned encoder is not practical; the branch exists for skia
+version bumps.) `tests/v01.rs`
 against the committed `goldens/images/v01-walking-skeleton.png` is the
 harness's own acceptance path — a clean-checkout `cargo test` passing
 against that image is the exit criterion itself.
