@@ -27,6 +27,10 @@ impl NodeId {
 
 /// One settable node property. v0.1 vocabulary: the authored
 /// parent-relative offset, the fixed size, and the solid fill.
+///
+/// `Fill` sets a fill but cannot clear one back to unfilled
+/// ([`NO_PAINT`](crate::NO_PAINT)) — a deliberate v0.1 gap, recorded
+/// in `docs/decisions/staged-mutation-v01-scope.md`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Prop {
     X(f32),
@@ -84,9 +88,17 @@ impl Arena {
     ///
     /// # Panics
     ///
-    /// Panics if `node` does not belong to this arena.
+    /// Panics if `node` is out of range for this arena. A `NodeId` from
+    /// another arena whose index happens to be in range is not detected
+    /// — ids are only meaningful for the arena that produced them.
     pub fn name(&self, node: NodeId) -> Option<&str> {
-        self.nodes[node.index()].name.as_deref()
+        self.node_data(node).name.as_deref()
+    }
+
+    fn node_data(&self, node: NodeId) -> &NodeData {
+        self.nodes
+            .get(node.index())
+            .unwrap_or_else(|| panic!("{node:?} is not a node of this arena"))
     }
 }
 
@@ -103,7 +115,12 @@ impl Txn<'_> {
     ///
     /// # Panics
     ///
-    /// Panics if `parent` does not belong to this arena.
+    /// Panics if `parent` is out of range for this arena (a `NodeId`
+    /// from another arena whose index happens to be in range is not
+    /// detected), or if the arena already holds `u32::MAX` nodes —
+    /// node ids stay below the `u32::MAX` sentinel (`dashbuf`'s
+    /// `NO_PARENT`; also [`NO_PAINT`](crate::NO_PAINT), since the
+    /// paint table can never outgrow the node count).
     pub fn add_node(&mut self, parent: Option<NodeId>, name: Option<&str>) -> NodeId {
         if let Some(p) = parent {
             assert!(
@@ -111,7 +128,14 @@ impl Txn<'_> {
                 "parent {p:?} is not a node of this arena"
             );
         }
-        let id = NodeId(u32::try_from(self.arena.nodes.len()).expect("node count exceeds u32"));
+        // This guard is the single point where the node count grows, so
+        // every id, DFS index, and paint index stays < u32::MAX and the
+        // plain `as u32` casts in `commit` cannot truncate.
+        assert!(
+            self.arena.nodes.len() < u32::MAX as usize,
+            "arena is full: u32::MAX is reserved as a sentinel"
+        );
+        let id = NodeId(self.arena.nodes.len() as u32);
         self.arena.nodes.push(NodeData {
             name: name.map(String::from),
             parent,
@@ -133,9 +157,15 @@ impl Txn<'_> {
     ///
     /// # Panics
     ///
-    /// Panics if `node` does not belong to this arena.
+    /// Panics if `node` is out of range for this arena. A `NodeId` from
+    /// another arena whose index happens to be in range is not detected
+    /// — ids are only meaningful for the arena that produced them.
     pub fn set_prop(&mut self, node: NodeId, prop: Prop) {
-        let data = &mut self.arena.nodes[node.index()];
+        let data = self
+            .arena
+            .nodes
+            .get_mut(node.index())
+            .unwrap_or_else(|| panic!("{node:?} is not a node of this arena"));
         match prop {
             Prop::X(v) => data.x = v,
             Prop::Y(v) => data.y = v,
@@ -151,8 +181,15 @@ impl Txn<'_> {
     /// Resolution: DFS walk (roots in creation order, children in
     /// creation order), absolute position = parent absolute + own
     /// authored offset, paints interned by exact color bit pattern in
-    /// first-use order, dirty set = exact entry diff against the
-    /// previous commit. Fully deterministic (R7).
+    /// first-use order, dirty set diffed against the previous commit.
+    /// Fully deterministic (R7).
+    ///
+    /// A rect is dirty when its entry bits changed (the bits a painter
+    /// uploads, R-T4) or when its resolved fill color changed — the
+    /// paint table is re-interned every commit, so an unchanged paint
+    /// *index* can reference a different color and an index shift can
+    /// leave the color unchanged; both cases count as dirty, and only
+    /// a rect equal on both counts is clean.
     pub fn commit(self) -> u64 {
         let arena = self.arena;
 
@@ -179,7 +216,10 @@ impl Txn<'_> {
                 None => NO_PAINT,
                 Some(color) => *interned.entry(color_key(color)).or_insert_with(|| {
                     paints.push(Paint { color });
-                    u32::try_from(paints.len() - 1).expect("paint count exceeds u32")
+                    // Cannot truncate or reach the NO_PAINT sentinel:
+                    // the paint table never outgrows the node count,
+                    // which add_node keeps below u32::MAX.
+                    (paints.len() - 1) as u32
                 }),
             };
             rects.push(RectEntry {
@@ -189,16 +229,24 @@ impl Txn<'_> {
                 h: node.height,
                 paint,
             });
-            rect_index[id.index()] = u32::try_from(i).expect("node count exceeds u32");
+            // In range for u32 by the add_node guard.
+            rect_index[id.index()] = i as u32;
         }
 
-        // Dirty = exact diff against the previous commit, by index.
+        // Dirty = diff against the previous commit, by index: entry
+        // bits or resolved fill color changed (see the method docs).
         let previous = &arena.buffers[arena.front];
         let dirty = rects
             .iter()
             .enumerate()
-            .filter(|&(i, rect)| previous.rects.get(i) != Some(rect))
-            .map(|(i, _)| u32::try_from(i).expect("node count exceeds u32"))
+            .filter(|&(i, rect)| {
+                previous.rects.get(i).is_none_or(|old| {
+                    entry_bits(old) != entry_bits(rect)
+                        || resolved_color_bits(old, &previous.paints)
+                            != resolved_color_bits(rect, &paints)
+                })
+            })
+            .map(|(i, _)| i as u32)
             .collect();
 
         let generation = previous.generation + 1;
@@ -223,4 +271,23 @@ fn color_key(color: Color) -> [u32; 4] {
         color.b.to_bits(),
         color.a.to_bits(),
     ]
+}
+
+/// The bits a painter uploads for an entry (R-T4). Bit comparison keeps
+/// the diff deterministic where `f32` equality is not (NaN never equals
+/// itself and would mark a rect permanently dirty).
+fn entry_bits(entry: &RectEntry) -> [u32; 5] {
+    [
+        entry.x.to_bits(),
+        entry.y.to_bits(),
+        entry.w.to_bits(),
+        entry.h.to_bits(),
+        entry.paint,
+    ]
+}
+
+/// The fill color an entry resolves to in its own commit's paint table
+/// (`None` for [`NO_PAINT`]), compared by bit pattern like the interner.
+fn resolved_color_bits(entry: &RectEntry, paints: &[Paint]) -> Option<[u32; 4]> {
+    (entry.paint != NO_PAINT).then(|| color_key(paints[entry.paint as usize].color))
 }
