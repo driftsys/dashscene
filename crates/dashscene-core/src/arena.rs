@@ -33,13 +33,30 @@ impl NodeId {
 /// `Fill` sets a fill but cannot clear one back to unfilled (the
 /// shared draws-nothing pool entry) — a deliberate v0.1 gap, recorded
 /// in `docs/decisions/staged-mutation-v01-scope.md`.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Prop {
     X(f32),
     Y(f32),
     Width(f32),
     Height(f32),
     Fill(Color),
+    /// Set/replace the node's text content (DESIGN §5: strings, never
+    /// glyph positions — P1). v0.5: no effect on committed output;
+    /// text-driven hug sizing arrives with the measure-callback story.
+    Text(String),
+    /// Set/replace the node's text style.
+    TextStyle(TextStyle),
+}
+
+/// Text style intent — mirrors the `dashbuf` `TextStyle` table
+/// (family, em size in document units, CSS-scale weight, color)
+/// without linking the generated code.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextStyle {
+    pub family: String,
+    pub size_px: f32,
+    pub weight: u16,
+    pub color: Color,
 }
 
 /// Intent for one node — mirrors the `dashbuf` schema shapes
@@ -55,6 +72,8 @@ struct NodeData {
     width: f32,
     height: f32,
     fill: Option<Color>,
+    text: Option<String>,
+    text_style: Option<TextStyle>,
 }
 
 /// The semantic model: the node tree with layout + paint intent, and
@@ -95,6 +114,30 @@ impl Arena {
     /// — ids are only meaningful for the arena that produced them.
     pub fn name(&self, node: NodeId) -> Option<&str> {
         self.node_data(node).name.as_deref()
+    }
+
+    /// The node's text content, or `None` for a node without text.
+    ///
+    /// Reads the intent model: staged (uncommitted) values are visible
+    /// immediately, unlike [`Arena::committed`]. This is the seam the
+    /// typeset pipeline and the measure callback read from.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `node` is out of range for this arena (same contract
+    /// as [`Arena::name`]).
+    pub fn text_of(&self, node: NodeId) -> Option<&str> {
+        self.node_data(node).text.as_deref()
+    }
+
+    /// The node's text style, or `None` when unstyled. Intent-side,
+    /// like [`Arena::text_of`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if `node` is out of range for this arena.
+    pub fn text_style_of(&self, node: NodeId) -> Option<&TextStyle> {
+        self.node_data(node).text_style.as_ref()
     }
 
     fn node_data(&self, node: NodeId) -> &NodeData {
@@ -148,6 +191,8 @@ impl Txn<'_> {
             width: 0.0,
             height: 0.0,
             fill: None,
+            text: None,
+            text_style: None,
         });
         match parent {
             Some(p) => self.arena.nodes[p.index()].children.push(id),
@@ -175,6 +220,8 @@ impl Txn<'_> {
             Prop::Width(v) => data.width = v,
             Prop::Height(v) => data.height = v,
             Prop::Fill(c) => data.fill = Some(c),
+            Prop::Text(s) => data.text = Some(s),
+            Prop::TextStyle(ts) => data.text_style = Some(ts),
         }
     }
 

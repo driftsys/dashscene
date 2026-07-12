@@ -4,7 +4,7 @@
 
 use std::mem::{align_of, size_of};
 
-use dashscene_core::{Arena, Color, PaintEntry, PaintIndex, Prop, RectEntry};
+use dashscene_core::{Arena, Color, PaintEntry, PaintIndex, Prop, RectEntry, TextStyle};
 
 const RED: Color = Color {
     r: 1.0,
@@ -365,4 +365,80 @@ fn an_out_of_range_node_id_panics_with_a_clear_message() {
     let mut txn = arena_b.open();
     txn.add_node(None, None);
     txn.set_prop(foreign, Prop::X(1.0));
+}
+
+#[test]
+fn text_props_set_and_read_back_through_the_intent_accessors() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let label = txn.add_node(None, Some("label"));
+    txn.set_prop(label, Prop::Text("Speed".to_string()));
+    txn.set_prop(
+        label,
+        Prop::TextStyle(TextStyle {
+            family: "Noto Sans".to_string(),
+            size_px: 16.0,
+            weight: 400,
+            color: Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0,
+            },
+        }),
+    );
+    txn.commit();
+    assert_eq!(arena.text_of(label), Some("Speed"));
+    let style = arena.text_style_of(label).expect("style set");
+    assert_eq!(style.family, "Noto Sans");
+    assert_eq!(style.weight, 400);
+}
+
+#[test]
+fn text_accessors_read_staged_intent_immediately() {
+    // Intent-side semantics (the #28/#29 seam): staged values are
+    // visible before commit, unlike committed().
+    let mut arena = Arena::new();
+    let n = {
+        let mut txn = arena.open();
+        let n = txn.add_node(None, None);
+        txn.set_prop(n, Prop::Text("pending".to_string()));
+        n
+    }; // txn dropped here — staged, never committed
+    assert_eq!(arena.text_of(n), Some("pending"));
+}
+
+#[test]
+fn text_props_replace_previous_values() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let n = txn.add_node(None, None);
+    txn.set_prop(n, Prop::Text("old".to_string()));
+    txn.set_prop(n, Prop::Text("new".to_string()));
+    txn.commit();
+    assert_eq!(arena.text_of(n), Some("new"));
+}
+
+#[test]
+fn nodes_without_text_read_none() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let n = txn.add_node(None, None);
+    txn.commit();
+    assert_eq!(arena.text_of(n), None);
+    assert!(arena.text_style_of(n).is_none());
+}
+
+#[test]
+fn a_text_only_change_does_not_touch_the_rect_table() {
+    // P1: text influences no v0.5 committed output; hug sizing is #29.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let n = txn.add_node(None, None);
+    txn.set_prop(n, Prop::Width(10.0));
+    txn.commit();
+    let mut txn = arena.open();
+    txn.set_prop(n, Prop::Text("hello".to_string()));
+    txn.commit();
+    assert!(arena.committed().dirty().is_empty());
 }
