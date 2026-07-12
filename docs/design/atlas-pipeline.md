@@ -50,12 +50,16 @@ example regenerates the committed test fixture.
     atlas/closure.rs   charset → (sorted gid set, missing codepoints)
                        via ttf-parser cmap
     atlas/tool.rs      binary discovery, version gate, invocation,
-                       JSON layout parse (`Layout` and friends are
-                       `pub(crate)` — not part of the public API)
+                       JSON layout parse (`Layout` and the related
+                       layout types are `pub(crate)` — not public API)
     atlas/metrics.rs   AtlasMetrics model, font-metrics extraction
                        (ttf-parser), postcard write/load
-    examples/generate_fixture.rs
-                       regenerates the committed ASCII fixture
+    tests/atlas_pipeline.rs
+                       tool-gated integration tests; also owns the
+                       ignored `regenerate_committed_fixture` test that
+                       rewrites the committed ASCII fixture, so the
+                       fixture writer and the fixture checker share one
+                       spec definition
     corpus/fonts/noto-sans/
                        NotoSans-Regular.ttf v2.015, unhinted/ttf build
                        (OFL, license file committed alongside) — shared
@@ -150,17 +154,19 @@ conversion is the painter's job (#30), documented on the type.
 - postcard + pre-sorted vectors ⇒ canonical blob bytes
   (`blob_bytes_are_canonical` test).
 - Provenance (tool version + full canonical-name args) recorded in the
-  blob.
+  blob. The executed argv and the provenance vector are built by one
+  function (`tool::build_invocation`), so recorded == executed holds by
+  construction; execution uses `OsString` paths (non-UTF-8-safe) while
+  provenance holds canonical names only, never machine paths.
 - Same-machine repro: `double_run_is_byte_identical` generates twice and
   byte-compares both artifacts.
 - Cross-machine repro: the CI `atlas-repro` job (Linux) regenerates the
   committed ASCII fixture (`crates/dashscene-typeset/tests/fixtures/ascii/`,
-  produced on macOS by `examples/generate_fixture.rs`) and byte-compares
-  (`committed_fixture_is_reproducible`) — this empirically answers the
-  spike's open cross-machine question on every CI run. As of this story
-  the check passes; if a future toolchain change breaks it, that is a
-  finding to record (per-platform fixtures or a pinned generation
-  platform), not to paper over.
+  produced on macOS by the ignored `regenerate_committed_fixture` test)
+  and byte-compares (`committed_fixture_is_reproducible`) — this
+  empirically answers the spike's open cross-machine question on every
+  CI run. If a toolchain change breaks it, that is a finding to record
+  (per-platform fixtures or a pinned generation platform), not to hide.
 
 ## Error handling
 
@@ -169,9 +175,15 @@ no-thiserror posture): `FontRead(PathBuf, io::Error)`, `FontParse`,
 `ToolMissing` (with an install hint), `ToolVersion { found, required }`,
 `ToolFailed { status, stderr }`, `ToolOutput` (JSON/layout mismatch,
 non-bottom `yOrigin`, missing gid in layout, or an hmtx/tool advance
-mismatch), `Metrics` (blob decode failure or unsupported
-`format_version`), `Io`. Every failure is named and actionable (P4
-spirit); nothing panics on user input.
+mismatch), `Metrics` (blob decode failure, unsupported `format_version`, trailing
+bytes, or unsorted vectors — the documented field contracts are
+enforced at the parse boundary, not only in the producer), `Io`. The
+version gate decodes the leading version field before the body, so a
+future-version blob reports the version error, not a decode error. The
+`-help` probe's error includes the child's exit code and stderr, so a
+binary that spawns but cannot run (for example a loader error on a
+stale cached build) names its own cause. Every failure is named and
+actionable (P4 spirit); nothing panics on user input.
 
 ## Testing
 
@@ -192,12 +204,14 @@ spirit); nothing panics on user input.
   uncovered codepoints reported, not dropped; the committed-fixture
   reproducibility check.
 - Tool-dependent tests self-skip when the binary is absent, but fail
-  loudly when `DASHSCENE_REQUIRE_ATLAS_TOOL=1` — CI's `atlas-repro` job
-  sets it, so absence or skip can never masquerade as green there.
-- CI: the `atlas-repro` job restores a cached pinned-tag
-  (`Chlumsky/msdf-atlas-gen` `v1.4`) source build (or builds it once),
-  then runs `cargo test -p dashscene-typeset` with the env gate on. The
-  job is in the aggregate `ci` job's `needs` list.
+  loudly when `DASHSCENE_REQUIRE_ATLAS_TOOL=1` (the library-owned
+  `REQUIRE_TOOL_ENV` constant) — CI's `atlas-repro` job sets it, so a
+  skipped test cannot be reported as passing there.
+- CI: the `atlas-repro` job restores a cached source build of the
+  pinned `Chlumsky/msdf-atlas-gen` commit (the `v1.4` tag's SHA — a
+  tag is movable, a SHA is not), or builds it once, then runs
+  `cargo test -p dashscene-typeset --test atlas_pipeline` with the env
+  gate on. The job is in the aggregate `ci` job's `needs` list.
 
 ## Seams to later stories
 

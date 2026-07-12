@@ -79,13 +79,37 @@ impl AtlasMetrics {
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, AtlasError> {
-        let m: AtlasMetrics = postcard::from_bytes(bytes)
+        // Gate on the leading version field before decoding the body:
+        // a future-version blob must produce the version error, not a
+        // decode error from a mismatched layout.
+        let (version, _) = postcard::take_from_bytes::<u32>(bytes)
             .map_err(|e| AtlasError::Metrics(format!("blob decode failed: {e}")))?;
-        if m.format_version != FORMAT_VERSION {
+        if version != FORMAT_VERSION {
             return Err(AtlasError::Metrics(format!(
-                "unsupported blob format version {} (supported: {FORMAT_VERSION})",
-                m.format_version
+                "unsupported blob format version {version} (supported: {FORMAT_VERSION})"
             )));
+        }
+        let (m, rest) = postcard::take_from_bytes::<AtlasMetrics>(bytes)
+            .map_err(|e| AtlasError::Metrics(format!("blob decode failed: {e}")))?;
+        if !rest.is_empty() {
+            return Err(AtlasError::Metrics(format!(
+                "{} trailing bytes after the blob",
+                rest.len()
+            )));
+        }
+        // Enforce the documented field contracts at the parse boundary,
+        // not only in the producer: consumers are entitled to
+        // binary-search `glyphs`, and a silent violation would drop
+        // glyphs without a diagnostic (P4).
+        if !m.glyphs.windows(2).all(|w| w[0].glyph_id < w[1].glyph_id) {
+            return Err(AtlasError::Metrics(
+                "glyph entries not sorted and unique by glyph id".to_string(),
+            ));
+        }
+        if !m.missing_codepoints.windows(2).all(|w| w[0] < w[1]) {
+            return Err(AtlasError::Metrics(
+                "missing codepoints not ascending".to_string(),
+            ));
         }
         Ok(m)
     }
@@ -105,10 +129,7 @@ pub fn font_metrics(face: &ttf_parser::Face<'_>) -> FontMetrics {
 mod tests {
     use super::*;
 
-    const FONT: &str = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../corpus/fonts/noto-sans/NotoSans-Regular.ttf"
-    );
+    const FONT: &str = crate::atlas::TEST_FONT;
 
     fn sample() -> AtlasMetrics {
         AtlasMetrics {
@@ -161,16 +182,43 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unknown_format_version() {
+    fn rejects_unknown_format_version_by_name() {
         let mut m = sample();
         m.format_version = FORMAT_VERSION + 1;
         let bytes = m.to_bytes();
-        assert!(AtlasMetrics::from_bytes(&bytes).is_err());
+        let err = AtlasMetrics::from_bytes(&bytes).unwrap_err();
+        assert!(
+            err.to_string().contains("unsupported blob format version"),
+            "want the version error, got: {err}"
+        );
     }
 
     #[test]
     fn rejects_garbage() {
         assert!(AtlasMetrics::from_bytes(&[0xff, 0x00, 0x13]).is_err());
+    }
+
+    #[test]
+    fn rejects_trailing_bytes() {
+        let mut bytes = sample().to_bytes();
+        bytes.extend_from_slice(&[0xAB; 22]);
+        let err = AtlasMetrics::from_bytes(&bytes).unwrap_err();
+        assert!(
+            err.to_string().contains("trailing bytes"),
+            "want the trailing-bytes error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_unsorted_glyph_entries() {
+        let mut m = sample();
+        m.glyphs.reverse();
+        let bytes = m.to_bytes();
+        let err = AtlasMetrics::from_bytes(&bytes).unwrap_err();
+        assert!(
+            err.to_string().contains("not sorted"),
+            "want the sortedness error, got: {err}"
+        );
     }
 
     #[test]

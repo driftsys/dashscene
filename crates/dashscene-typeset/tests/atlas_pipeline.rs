@@ -1,24 +1,27 @@
 //! Tool-dependent pipeline tests. They self-skip when msdf-atlas-gen
 //! is absent, but fail when `DASHSCENE_REQUIRE_ATLAS_TOOL` is set —
-//! CI sets it, so a skip can never masquerade as green there.
+//! CI sets it, so a skipped test cannot be reported as passing there.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
-use dashscene_typeset::atlas::{AtlasBundle, AtlasSpec, generate};
+use dashscene_typeset::atlas::{AtlasBundle, AtlasSpec, REQUIRE_TOOL_ENV, generate};
 
 const FONT: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../corpus/fonts/noto-sans/NotoSans-Regular.ttf"
 );
 
+const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ascii");
+
 /// Returns false (and prints why) when the pinned tool is unavailable
 /// and the environment tolerates that; panics when CI demands it.
 fn tool_available() -> bool {
     match dashscene_typeset::atlas::find_tool_checked() {
         Ok(_) => true,
-        Err(e) if std::env::var_os("DASHSCENE_REQUIRE_ATLAS_TOOL").is_some() => {
-            panic!("DASHSCENE_REQUIRE_ATLAS_TOOL is set but: {e}")
+        Err(e) if std::env::var_os(REQUIRE_TOOL_ENV).is_some() => {
+            panic!("{REQUIRE_TOOL_ENV} is set but: {e}")
         }
         Err(e) => {
             eprintln!("skipping tool-dependent test: {e}");
@@ -31,8 +34,17 @@ fn ascii_charset() -> BTreeSet<char> {
     (0x20u8..=0x7e).map(char::from).collect()
 }
 
+/// The one fixture contract: the committed fixture, the regeneration
+/// test, and every ASCII-atlas assertion all build from this spec.
 fn ascii_spec() -> AtlasSpec {
     AtlasSpec::new(PathBuf::from(FONT), ascii_charset())
+}
+
+/// One shared generation for the read-only tests; `double_run` adds
+/// the second, independent run that proves byte-identity.
+fn shared_ascii_bundle() -> &'static AtlasBundle {
+    static BUNDLE: OnceLock<AtlasBundle> = OnceLock::new();
+    BUNDLE.get_or_init(|| generate(&ascii_spec()).expect("pipeline runs"))
 }
 
 #[test]
@@ -40,7 +52,7 @@ fn generates_ascii_atlas_with_full_coverage() {
     if !tool_available() {
         return;
     }
-    let bundle = generate(&ascii_spec()).expect("pipeline runs");
+    let bundle = shared_ascii_bundle();
     let m = &bundle.metrics;
     assert!(m.missing_codepoints.is_empty());
     // 95 ASCII chars resolve to 95 distinct gids, plus .notdef.
@@ -76,7 +88,7 @@ fn double_run_is_byte_identical() {
     if !tool_available() {
         return;
     }
-    let a = generate(&ascii_spec()).expect("first run");
+    let a = shared_ascii_bundle();
     let b = generate(&ascii_spec()).expect("second run");
     assert_eq!(
         a.image_png, b.image_png,
@@ -94,7 +106,7 @@ fn bundle_write_load_round_trips() {
     if !tool_available() {
         return;
     }
-    let bundle = generate(&ascii_spec()).expect("pipeline runs");
+    let bundle = shared_ascii_bundle();
     let dir = tempfile::tempdir().expect("tempdir");
     bundle.write_to_dir(dir.path()).expect("writes");
     let back = AtlasBundle::load_from_dir(dir.path()).expect("loads");
@@ -107,8 +119,10 @@ fn missing_codepoints_are_reported_not_dropped() {
     if !tool_available() {
         return;
     }
-    let mut spec = ascii_spec();
-    spec.charset.insert('\u{0710}'); // Syriac alaph — not in Noto Sans LGC
+    // A tiny charset is enough: this test only proves the closure's
+    // missing list reaches the blob.
+    let charset: BTreeSet<char> = ['A', '\u{0710}'].into_iter().collect(); // Syriac alaph
+    let spec = AtlasSpec::new(PathBuf::from(FONT), charset);
     let bundle = generate(&spec).expect("pipeline runs");
     assert_eq!(bundle.metrics.missing_codepoints, vec![0x0710]);
 }
@@ -118,12 +132,11 @@ fn committed_fixture_is_reproducible() {
     if !tool_available() {
         return;
     }
-    let fixture_dir = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ascii"));
-    let committed = AtlasBundle::load_from_dir(&fixture_dir).expect(
-        "committed fixture loads — regenerate with \
-         `cargo run -p dashscene-typeset --example generate_fixture`",
+    let committed = AtlasBundle::load_from_dir(&PathBuf::from(FIXTURE_DIR)).expect(
+        "committed fixture loads — regenerate with `cargo test -p dashscene-typeset \
+         --test atlas_pipeline -- --ignored regenerate_committed_fixture`",
     );
-    let fresh = generate(&ascii_spec()).expect("pipeline runs");
+    let fresh = shared_ascii_bundle();
     assert_eq!(
         committed.image_png, fresh.image_png,
         "committed atlas.png no longer reproducible (R7) — if the \
@@ -131,4 +144,22 @@ fn committed_fixture_is_reproducible() {
          record why"
     );
     assert_eq!(committed.metrics.to_bytes(), fresh.metrics.to_bytes());
+}
+
+/// Rewrites the committed fixture from the current pipeline. Ignored:
+/// run it only after a deliberate parameter or toolchain change, then
+/// commit the result with a note recording why.
+#[test]
+#[ignore = "regenerates the committed fixture; run explicitly"]
+fn regenerate_committed_fixture() {
+    let bundle = generate(&ascii_spec()).expect("pipeline runs");
+    bundle
+        .write_to_dir(&PathBuf::from(FIXTURE_DIR))
+        .expect("write fixture");
+    println!(
+        "wrote {FIXTURE_DIR} ({} glyphs, {}x{})",
+        bundle.metrics.glyphs.len(),
+        bundle.metrics.atlas.width,
+        bundle.metrics.atlas.height
+    );
 }

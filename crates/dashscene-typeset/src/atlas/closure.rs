@@ -48,10 +48,7 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
-    const FONT: &str = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../corpus/fonts/noto-sans/NotoSans-Regular.ttf"
-    );
+    const FONT: &str = crate::atlas::TEST_FONT;
 
     fn face(data: &[u8]) -> ttf_parser::Face<'_> {
         ttf_parser::Face::parse(data, 0).expect("fixture font parses")
