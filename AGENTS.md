@@ -131,20 +131,24 @@ Story workflow — the definition of done for every story:
 
 Merging a PR — how the branch lands on `main`:
 
-- Prefer landing a PR as a single commit ("Squash and merge"), so
-  `main` reads as one clean conventional commit per change. This is the
-  default.
-- Keep the individual commits only when they are separately meaningful
-  — for example a preparatory refactor and the behavior change that
-  builds on it, each independently reviewable and revertable. When
-  keeping them, integrate with a merge commit ("Create a merge
-  commit"), not "Rebase and merge".
+- Shape the branch before you merge it, not at the merge button. Rebase
+  onto the latest `main`, squash the branch's commits into one
+  conventional commit, and force-push. The PR then carries exactly one
+  commit, and it applies to `main` without conflict.
+- Keep separate commits only when they are separately meaningful — for
+  example a preparatory refactor and the behavior change that builds on
+  it, each independently reviewable and revertable.
+- Land the PR with a merge commit ("Create a merge commit"). The branch
+  is already squashed, so `main` still reads as one change per PR, and
+  the merge commit records which PR the change came from.
 - Avoid "Rebase and merge". It replays each branch commit onto the
   current `main`, so a conflict already resolved on the branch can come
   back during the replay (this is what blocked PR #108). A merge commit
   integrates the branch as-is and does not re-raise resolved conflicts.
-- Before merging a single-commit PR, rebase it onto the latest `main`
-  and force-push, so the squashed result applies without conflict.
+- All three merge methods stay enabled, and GitHub has no
+  default-merge-method setting: the merge button preselects whichever
+  method that person used last. Never rely on the preselection — name
+  the method explicitly, `gh pr merge --merge`.
 
 Plan revision at the end of each phase: story breakdowns for future
 slices are provisional by design. When a slice's epic closes (v0.1,
