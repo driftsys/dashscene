@@ -21,6 +21,9 @@ here, as future work gardens it in. Per-component records land here directly:
   one-commit mapping onto `dashscene-core` (story #5).
 - [atlas-pipeline.md](atlas-pipeline.md) — the build-time font → MSDF glyph
   atlas + metrics blob pipeline (v0.5, story #27).
+- [typeset-latin.md](typeset-latin.md) — the runtime Latin text pipeline:
+  shape → greedy break → baseline positioning, with a font-unit
+  shaped-run cache (v0.5, story #28).
 - [dashscene-skia.md](dashscene-skia.md) — the Skia CPU-raster reference
   painter, the first `Painter` implementation (story #4).
 - [goldens.md](goldens.md) — the golden-image diff tooling and the v0.1

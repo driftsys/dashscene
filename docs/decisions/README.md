@@ -50,6 +50,14 @@ it in. Per-story decisions land here directly:
   — charset→glyph-id closure is cmap-only for v0.5, with an
   `extra_glyph_ids` escape hatch; full GSUB closure deferred to #34
   (#27).
+- [liga-clig-off-until-gsub-closure.md](liga-clig-off-until-gsub-closure.md)
+  — Latin shaping disables `liga`/`clig` since atlas closure is
+  cmap-only; resolves the #27 seam note; re-enabled together with
+  GSUB closure at #34 (#28).
+- [shaped-run-cache-font-units.md](shaped-run-cache-font-units.md) —
+  the shaped-run cache stores font-unit, unpositioned runs keyed by
+  paragraph text alone, serving every render size from one entry
+  (#28).
 - [boundary-b-unification.md](boundary-b-unification.md) — story #4:
   `dashpaint` owns the boundary-B types (`dashscene-core` depends on it,
   publish order updated), every committed rect resolves (no `NO_PAINT`
