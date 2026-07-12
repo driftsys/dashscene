@@ -23,12 +23,16 @@ images live in `goldens/images/`.
 All in `goldens/tooling/src/lib.rs`:
 
     pub fn assert_matches_golden(name: &str, png_bytes: &[u8])
+    pub fn assert_matches_golden_within(name: &str, png_bytes: &[u8], max_differing_fraction: f64)
     pub fn pixel(rgba: &[u8], width: usize, x: usize, y: usize) -> [u8; 4]
 
 `assert_matches_golden` compares a render against the checked-in golden
-`goldens/images/{name}.png`; its exact behavior (update mode, failure
-artifacts, panics) is its rustdoc. `pixel` is the shared RGBA8888
-pixel-indexing helper golden tests use. The full workflow — running,
+`goldens/images/{name}.png` bit-exactly; `assert_matches_golden_within`
+allows a bounded fraction of pixels to differ, for anti-aliased content
+that is not bit-identical across CPU architectures (story #14; see
+`docs/decisions/golden-comparison-space.md`). Their exact behavior
+(update mode, failure artifacts, panics) is their rustdoc. `pixel` is
+the shared RGBA8888 pixel-indexing helper golden tests use. The full workflow — running,
 regenerating, inspecting a failure — is documented in
 `goldens/README.md`, a shipped doc and the story's own acceptance
 criterion; the comparison-space choice is
@@ -47,9 +51,11 @@ independently of the image file.
 directly at boundary B (no producer stages the v0.3 vocabulary yet)
 covering every paint kind on one canvas — all four gradient kinds,
 stroke align, rounded corners, and every image scale mode against a
-hand-rendered checker asset. Per-kind pixel semantics live in
-`crates/dashscene-skia/tests/painter.rs`; this golden pins the full
-rendering (`v03-paint.png`).
+hand-rendered checker asset. Its gradients and curves are
+anti-aliased, so it compares with a 1% differing-pixel tolerance
+(cross-machine edge jitter); per-kind pixel semantics live in
+`crates/dashscene-skia/tests/painter.rs` as bit-stable interior probes;
+this golden pins the full rendering (`v03-paint.png`).
 
 ## Testing
 

@@ -35,3 +35,14 @@ Option 1.
 - The lean painter's SDF-fringe AA model will differ per §8.3 —
   cross-backend identity is structural (rect tables); pixel truth is
   per-painter goldens.
+
+## Cross-machine consequence
+
+AA is deterministic on one machine but skia's CPU coverage rounding is
+not bit-identical across CPU architectures, so an AA golden generated on
+one architecture differs by a few edge pixels on another. Full-frame AA
+goldens therefore compare with a bounded differing-pixel tolerance
+(`docs/decisions/golden-comparison-space.md`); exact interior
+correctness is pinned by the painter's interior-probe unit tests, which
+are bit-stable across machines. Integer-aligned solid goldens (v0.1)
+stay bit-exact everywhere and need no tolerance.

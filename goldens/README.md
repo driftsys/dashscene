@@ -39,14 +39,30 @@ a clean checkout fails loudly if a golden was not committed.
 
 ## Determinism
 
-Goldens are bit-exact because the reference painter is CPU raster
-(deterministic by construction, `DESIGN_1.md` §8) at an exactly pinned
-skia-safe version (`=0.81.0` in the workspace `Cargo.toml`; bumping it
-is a deliberate, re-goldened change). Anti-aliasing is on
-(`docs/decisions/reference-painter-antialiasing.md`); CPU-raster AA is
-itself deterministic for the pinned version, so it does not weaken the
-bit-exactness. GPU painters (v1+) will use tolerance-based perceptual
-diffs instead — that tooling will be added here.
+The reference painter is CPU raster (deterministic by construction,
+`DESIGN_1.md` §8) at an exactly pinned skia-safe version (`=0.81.0` in
+the workspace `Cargo.toml`; bumping it is a deliberate, re-goldened
+change). On one machine every render is bit-identical.
+
+Across CPU architectures, bit-exactness holds only for integer-aligned,
+un-antialiased geometry — solid fills. Anti-aliasing is on since v0.3
+(`docs/decisions/reference-painter-antialiasing.md`), and skia's
+coverage rounding at a fractional edge is not bit-identical across
+architectures, so gradient and curve edges jitter by a handful of
+pixels between machines. Two comparison functions handle this:
+
+- `assert_matches_golden(name, png)` — exact; use it for solid,
+  integer-aligned content (the v0.1 golden).
+- `assert_matches_golden_within(name, png, max_fraction)` — allows up
+  to `max_fraction` of pixels to differ; use it for anti-aliased
+  content (the v0.3 golden, at 1%). This is `DESIGN_1.md` §8's
+  tolerance-based perceptual diff. Per-kind correctness is pinned
+  separately by the painter's interior-probe unit tests, which are
+  bit-stable across machines. See
+  `docs/decisions/golden-comparison-space.md`.
+
+GPU painters (v1+) will use tolerance-based perceptual diffs throughout
+— that tooling will be added here.
 
 ## Comparison space
 

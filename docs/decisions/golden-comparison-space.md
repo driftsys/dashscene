@@ -1,6 +1,9 @@
 # Goldens compare decoded pixels in unpremultiplied RGBA8888
 
-    status   accepted (story #6, 2026-07-12); resolves debt #86
+    status   accepted (story #6, 2026-07-12); resolves debt #86.
+             Extended by story #14 (a differing-pixel tolerance for
+             anti-aliased content — see "Cross-machine anti-aliasing"
+             below).
     scope    goldens/ tooling; binds golden authoring for every painter
 
 ## Context
@@ -43,3 +46,33 @@ Option 1.
   diffs, when they come, revisit the space — unpremultiplied
   comparison amplifies channel error at low alpha, noted in story #4's
   review).
+
+## Cross-machine anti-aliasing (story #14 extension)
+
+Story #14 turned anti-aliasing on for the reference painter
+(`reference-painter-antialiasing.md`, resolving debt #85). AA is
+deterministic for a pinned skia version on one machine, but skia's CPU
+coverage rounding at a fractional edge is **not bit-identical across CPU
+architectures**: the v0.3 paint golden, generated on one architecture,
+differed by 32 of 9216 pixels (0.35%) on the CI runner's architecture,
+all at gradient and curve edges.
+
+Bit-exact comparison therefore holds only for content that renders
+identically across machines — integer-aligned, un-antialiased geometry
+(solid fills). For anti-aliased content the harness offers a
+differing-pixel **tolerance**: `assert_matches_golden_within(name, png,
+max_fraction)` fails only when more than `max_fraction` of pixels
+differ. This is DESIGN_1.md §8's "tolerance-based perceptual diff",
+which the design placed at GPU painters, brought forward to CPU-raster
+AA because the same cross-architecture coverage jitter applies.
+
+- `assert_matches_golden` stays exact (fraction 0) — v0.1's
+  integer-aligned solid golden uses it and passes bit-exact everywhere.
+- The v0.3 paint golden uses a 1% tolerance (~3× the observed 0.35%
+  jitter, and far below any real rendering change — the smallest scene
+  element covers several percent of the canvas, so a regression moves
+  far more than a thin edge).
+- Interior correctness is not left to the tolerance: the painter's
+  per-kind unit tests assert exact bytes at interior probe pixels away
+  from AA edges, and those are bit-stable across machines (they pass in
+  CI). The golden is the coarse full-frame visual-regression check.
