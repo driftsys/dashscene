@@ -422,3 +422,83 @@ fn a_margin_under_a_passthrough_parent_does_not_shift_the_child() {
     // The child sits at its authored offset, margin ignored.
     assert_eq!(rect(&via_taffy, 1), (10.0, 10.0, 40.0, 30.0));
 }
+
+/// Build the nested scene: an outer row of two inner rows, each inner
+/// row holding two fixed children. `configure` receives the outer row
+/// and, per inner row, the row and its two children. Returns the solved
+/// absolute x of every node, in DFS order.
+fn nested_row_xs(
+    configure: impl FnOnce(&mut dashscene_core::Txn<'_>, NodeId, [(NodeId, [NodeId; 2]); 2]),
+) -> Vec<f32> {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let outer = txn.add_node(None, None);
+    txn.set_prop(outer, Prop::Width(400.0));
+    txn.set_prop(outer, Prop::Height(40.0));
+    txn.set_prop(outer, Prop::Mode(LayoutMode::Horizontal));
+
+    let inners = [(); 2].map(|()| {
+        let inner = txn.add_node(Some(outer), None);
+        txn.set_prop(inner, Prop::Width(100.0));
+        txn.set_prop(inner, Prop::Height(20.0));
+        txn.set_prop(inner, Prop::Mode(LayoutMode::Horizontal));
+        let a = fixed(&mut txn, inner, 30.0, 20.0);
+        let b = fixed(&mut txn, inner, 30.0, 20.0);
+        (inner, [a, b])
+    });
+    configure(&mut txn, outer, inners);
+    txn.commit_with(&mut TaffySolver::new());
+    (0..arena.committed().rects().len())
+        .map(|i| rect(&arena, i).0)
+        .collect()
+}
+
+#[test]
+fn lowered_margins_compose_through_nesting() {
+    // Story #10's acceptance criterion (a negative-gap scene solves to
+    // the same rects as the equivalent margin scene) extended to depth:
+    // a negative-gap row nested inside a negative-gap row.
+    //
+    // Note what this does and does not pin. Taffy takes `gap` as a raw
+    // length and applies a negative one arithmetically, so the rects
+    // alone cannot witness that the lowering ran — an un-lowered scene
+    // solves identically. That the lowering rewrites containers at every
+    // depth is pinned at the intent level, in dashscene-core's
+    // `lower_negative_gaps_reaches_containers_at_every_depth`. What this
+    // test pins is the engine half: nested negative margins compose
+    // correctly through the Taffy style mapping, so the lowering's
+    // output is faithfully solved.
+    let lowered = nested_row_xs(|txn, outer, inners| {
+        txn.set_prop(outer, Prop::Gap(-10.0));
+        for (inner, _) in inners {
+            txn.set_prop(inner, Prop::Gap(-4.0));
+        }
+        txn.lower_negative_gaps();
+    });
+    // The same scene with every lowered margin authored by hand.
+    let authored = nested_row_xs(|txn, _outer, inners| {
+        let pull = |txn: &mut dashscene_core::Txn<'_>, node: NodeId, left: f32| {
+            txn.set_prop(
+                node,
+                Prop::Margin {
+                    left,
+                    top: 0.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                },
+            );
+        };
+        // Second inner row pulled back by the outer gap; second child of
+        // each inner row pulled back by that row's own gap.
+        pull(txn, inners[1].0, -10.0);
+        for (_, [_, second]) in inners {
+            pull(txn, second, -4.0);
+        }
+    });
+
+    assert_eq!(lowered, authored, "nested lowering == authored margins");
+    // DFS: outer, inner0, inner0.a, inner0.b, inner1, inner1.a, inner1.b.
+    // inner0 at 0, its children at 0 and 30-4=26.
+    // inner1 at 100-10=90, its children at 90 and 90+30-4=116.
+    assert_eq!(lowered, [0.0, 0.0, 0.0, 26.0, 90.0, 90.0, 116.0]);
+}
