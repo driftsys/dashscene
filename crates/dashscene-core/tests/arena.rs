@@ -590,3 +590,69 @@ fn roots_and_children_expose_the_intent_tree_in_creation_order() {
     assert_eq!(arena.children(b), [leaf]);
     assert!(arena.children(leaf).is_empty());
 }
+
+#[test]
+fn commit_with_uses_the_solver_geometry_verbatim() {
+    use dashscene_core::{LayoutSolver, SolvedRect};
+
+    // A solver that places every node at a fabricated position: the
+    // committed table must carry exactly these rects, proving commit
+    // takes geometry from the solver and computes none of its own.
+    struct GridSolver;
+    impl LayoutSolver for GridSolver {
+        fn solve(&mut self, arena: &Arena) -> Vec<(dashscene_core::NodeId, SolvedRect)> {
+            let mut out = Vec::new();
+            let mut stack: Vec<_> = arena.roots().to_vec();
+            let mut i = 0.0f32;
+            while let Some(id) = stack.pop() {
+                out.push((
+                    id,
+                    SolvedRect {
+                        x: 100.0 * i,
+                        y: 7.0,
+                        w: 10.0 + i,
+                        h: 20.0 + i,
+                    },
+                ));
+                stack.extend(arena.children(id).iter().copied());
+                i += 1.0;
+            }
+            out
+        }
+    }
+
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let root = txn.add_node(None, None);
+    txn.set_prop(root, Prop::X(999.0)); // must be ignored by commit_with
+    txn.set_prop(root, Prop::Fill(RED));
+    txn.add_node(Some(root), None);
+    let generation = txn.commit_with(&mut GridSolver);
+
+    assert_eq!(generation, 1);
+    let rects = arena.committed().rects();
+    assert_eq!(rects.len(), 2);
+    assert_eq!((rects[0].x, rects[0].y), (0.0, 7.0), "root from solver");
+    assert_eq!((rects[1].x, rects[1].y), (100.0, 7.0), "child from solver");
+    // Paint interning still core's: the fill landed regardless of
+    // where the geometry came from.
+    assert_eq!(rects[0].paint, arena.committed().rects()[0].paint);
+}
+
+#[test]
+#[should_panic(expected = "solver returned no rect")]
+fn commit_with_panics_when_the_solver_omits_a_node() {
+    use dashscene_core::{LayoutSolver, SolvedRect};
+
+    struct ForgetfulSolver;
+    impl LayoutSolver for ForgetfulSolver {
+        fn solve(&mut self, _arena: &Arena) -> Vec<(dashscene_core::NodeId, SolvedRect)> {
+            Vec::new()
+        }
+    }
+
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    txn.add_node(None, None);
+    txn.commit_with(&mut ForgetfulSolver);
+}
