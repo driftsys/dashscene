@@ -52,3 +52,25 @@ Option 1. Pinned version: `1.4.0` (the spike-validated version).
   1.4.0); Linux CI builds the pinned `v1.4` tag from source once and
   caches the binary (the `atlas-repro` job — see
   `docs/design/atlas-pipeline.md`).
+
+## Packaging alternatives raised after the decision (2026-07-12)
+
+Two further packaging ideas were raised. Neither changes the decision.
+
+- **Vendor the prebuilt binary in a dedicated repo (subtree or
+  submodule) and package it inside the final binary.** The second half
+  does not apply: `msdf-atlas-gen` runs at asset-build time, not in the
+  product (`docs/design/atlas-pipeline.md` — the build-time half of
+  DESIGN §7.2). Its outputs — the atlas image and the metrics blob —
+  ship; the tool never runs on a target device, so there is no product
+  binary to package it into. The first half is a narrower idea that
+  addresses only the availability gap named above: distributing a
+  pinned binary to contributors and CI. It stays open as a possible
+  future convenience, not as a change to how the atlas is generated.
+- **Link it as a library through Rust FFI.** This is Option 3 with a
+  library boundary in place of a process boundary. It still forces a
+  C++ toolchain into the workspace build, which is exactly why Option 3
+  was rejected.
+
+The revisit condition is unchanged: reconsider the external-tool
+dependency only if it becomes a real operational problem.
