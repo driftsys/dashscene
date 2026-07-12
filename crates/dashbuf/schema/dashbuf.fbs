@@ -41,6 +41,17 @@ struct Vec2 {
   y: float32;
 }
 
+// A row-major 2x3 affine transform: maps (x, y) to
+// (a*x + b*y + tx, c*x + d*y + ty).
+struct Mat23 {
+  a: float32;
+  b: float32;
+  c: float32;
+  d: float32;
+  tx: float32;
+  ty: float32;
+}
+
 // One gradient color stop; offset is normalized 0..1 along the
 // gradient's primary axis.
 struct GradientStop {
@@ -103,6 +114,11 @@ table ImageFill {
   // Index into Document.images.
   image: uint32;
   scale_mode: ScaleMode;
+  // Normalized image-space transform for ScaleMode::Crop (Figma's
+  // imageTransform); identity when absent.
+  transform: Mat23;
+  // Tile magnification for ScaleMode::Tile (Figma's scalingFactor).
+  tile_scale: float32 = 1.0;
 }
 
 union Fill {
