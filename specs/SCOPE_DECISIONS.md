@@ -505,15 +505,31 @@ regenerable rather than hand-built. This plugin is NOT the §12
 annotator plugin: it only creates nodes, it never writes
 sharedPluginData roles. `effects-2025` currently carries 3 of its 4
 REJECT constructs: texture was written via the plugin API; noise and
-progressive blur were applied manually in the Effects panel (their
-plugin-API writes are beta and did not land); variable-width stroke
-has no plugin API at all and is still pending as a manual step (draw a
-line, apply a variable-width profile with the Draw tools). Two
+progressive blur were applied manually in the Effects panel because
+both plugin-API writes failed in review; variable-width stroke has no
+plugin API at all and is still pending as a manual step (draw a line,
+apply a variable-width profile with the Draw tools). The review found
+the two failures have different causes: the progressive-blur write
+used a nonexistent effect type (`PROGRESSIVE_BLUR`), when the correct
+shape is a `LAYER_BLUR` or `BACKGROUND_BLUR` effect with `blurType`
+`PROGRESSIVE` — so progressive blur IS plugin-authorable, and that
+write is corrected in the fixture-author plugin; the noise write's
+shape was verified field-by-field against the pinned plugin typings
+and is correct, so its failure is the beta-availability case the
+plugin's checklist mechanism exists for, and re-runs now preserve the
+manually applied effect (the plugin harvests the old frame's effects
+before rebuilding). Manual application remains the recorded state of
+the current Figma files until they are regenerated. Three
 plugin-API findings worth recording for future fixture authoring: a
 GRID frame reads its gaps from `gridColumnGap`/`gridRowGap`, not
 `itemSpacing`; a WRAP frame must set `primaryAxisSizingMode = "FIXED"`
 after `layoutMode`, otherwise it hugs its children into a single row
-and nothing wraps.
+and nothing wraps; and `GridTrackSize` exposes only a track `type`
+(`FIXED`/`FLEX`/`HUG`) plus a `value`, with no track-level min/max, so
+the grid-basic row's "min/max tracks" is covered instead as child
+constraints (`minWidth`/`maxWidth` on a grid child), and hug track
+sizing is covered by a `HUG`-typed track (being added to the
+fixture-author plugin now).
 
 Remaining open actions: apply `effects-2025`'s variable-width stroke
 manually; capture the 8 files' GET /file JSON into
@@ -631,9 +647,14 @@ and importer code written before the plugin exists stay compatible:
   `lit-opaque | lit-cutout | unlit-overlay` (consumed by the Unity
   painter, DESIGN §8.2).
 
-The deferral trigger is **event-based, not version-based**: the plugin
-gets built when the first externally-authored Figma file enters the
-pipeline. Self-authored fixtures do not need roles.
+The deferral trigger is **event-based, not version-based**, with two
+triggering events: (a) the first externally-authored Figma file
+entering the pipeline — self-authored fixtures do not need roles, so
+this is what the role-writing machinery waits for; or (b) the start of
+phase-2 token-resolution work, which needs the
+id → name/collection/mode export command (§13). Event (b) may fire
+first and may require only the token-export command, not the
+role-writing machinery.
 
 Annotation is a three-channel inventory, cheapest channel first:
 (1) native Figma structure (names, the `_` prefix, hidden flags) where
@@ -673,7 +694,8 @@ the Enterprise-gated Variables REST endpoint, so on this plan the join
 table MUST come from the Figma Plugin API. Concretely: one more
 command on the §12 annotator plugin exports the
 id → name/collection/mode table, which makes token export the
-annotator plugin's first mandatory job.
+annotator plugin's first mandatory job — and, per §12, the one command
+that phase-2 work can require ahead of the rest of the plugin.
 
 The table format is source-agnostic: if Enterprise REST access ever
 becomes available, it is a drop-in replacement producer for the same

@@ -12,7 +12,9 @@
  * plain JS to Figma, per `main` in manifest.json), but lives alongside it
  * as natural JS-side kin (SCOPE_DECISIONS.md §4).
  *
- * Stub — implementation begins alongside v0.7 (DESIGN_1.md §11).
+ * Stub — deferred to v1 with an event-based trigger: built when the
+ * first externally-authored Figma file enters the pipeline, or
+ * earlier if phase-2 token export needs it (SCOPE_DECISIONS.md §12).
  */
 
 /// <reference types="@figma/plugin-typings" />
