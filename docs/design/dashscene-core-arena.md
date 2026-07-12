@@ -18,12 +18,19 @@ Source: `crates/dashscene-core/src/lib.rs`, `src/arena.rs`,
 `Arena` holds `Vec<NodeData>` (one entry per node, indexed by arena
 slot) plus a `roots: Vec<NodeId>` in creation order. Each `NodeData`
 carries an optional name, an optional parent, its children in creation
-order, the authored `x`/`y`/`width`/`height` offset, an optional fill
-color, and (v0.5, story #26) an optional text string and an optional
-text style — a direct mirror of the `dashbuf` schema shapes
-(`FixedSizeLayout`, `SolidFill`, `TextStyle`) without linking the
+order, an optional fill color, (v0.5, story #26) an optional text
+string and an optional text style, and a `Layout` — the authored
+`x`/`y`/`width`/`height` fixed geometry plus, since v0.2 (story #8),
+the flex vocabulary: mode NONE/H/V, gap, padding, alignment, per-axis
+hug/fill/fixed sizing, optional min/max. All of it is a direct mirror
+of the `dashbuf` schema shapes (`FixedSizeLayout`, `FlexContainer`,
+`LayoutConstraints`, `SolidFill`, `TextStyle`) without linking the
 generated code (the crate has no `dashbuf` dependency; see Scope
-boundaries below).
+boundaries below). `Arena::layout(NodeId) -> Layout` exposes the
+intent by value — the read seam the story #9 Taffy mapping consumes.
+Until that solve lands, flex intent is stored, not solved: `commit`
+resolves fixed geometry only
+(`docs/decisions/flex-vocabulary-shape.md`).
 
 `NodeId` is a stable arena slot index (`u32`), returned by `add_node`
 and never invalidated — v0.1 has no node removal. It is deliberately

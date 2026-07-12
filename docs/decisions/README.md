@@ -54,5 +54,8 @@ it in. Per-story decisions land here directly:
   `dashpaint` owns the boundary-B types (`dashscene-core` depends on it,
   publish order updated), every committed rect resolves (no `NO_PAINT`
   sentinel), and paint indices are the `PaintIndex` newtype.
+- [flex-vocabulary-shape.md](flex-vocabulary-shape.md) — the v0.2 flex
+  vocabulary is two optional `Node` tables, mirrored in core as stored
+  intent (story #8); binds the story #9 Taffy solve and v0.8 wrap/grid.
 
 See the `sdd-working-memory-lifecycle` rule.
