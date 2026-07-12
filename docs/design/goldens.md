@@ -57,6 +57,12 @@ anti-aliased, so it compares with a 1% differing-pixel tolerance
 `crates/dashscene-skia/tests/painter.rs` as bit-stable interior probes;
 this golden pins the full rendering (`v03-paint.png`).
 
+`goldens/tooling/tests/v03_families.rs` (story #18) adds three further
+64×64 scenes, each isolating one construct family — gradients, strokes,
+and images (`v03-gradients.png`, `v03-strokes.png`, `v03-images.png`) —
+so a regression fails only the affected family's golden; scope and
+tolerance are `docs/decisions/v03-paint-goldens-per-family.md`.
+
 ## Testing
 
 Unit tests in `src/lib.rs` cover the tooling's edge behavior against a

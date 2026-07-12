@@ -55,10 +55,11 @@ pixels between machines. Two comparison functions handle this:
   integer-aligned content (the v0.1 golden).
 - `assert_matches_golden_within(name, png, max_fraction)` — allows up
   to `max_fraction` of pixels to differ; use it for anti-aliased
-  content (the v0.3 golden, at 1%). This is `DESIGN_1.md` §8's
-  tolerance-based perceptual diff. Per-kind correctness is pinned
-  separately by the painter's interior-probe unit tests, which are
-  bit-stable across machines. See
+  content. The combined v0.3 golden uses 1%; the smaller per-family
+  v0.3 goldens use 2% (edge jitter is a larger fraction of a smaller
+  canvas). This is `DESIGN_1.md` §8's tolerance-based perceptual diff.
+  Per-kind correctness is pinned separately by the painter's
+  interior-probe unit tests, which are bit-stable across machines. See
   `docs/decisions/golden-comparison-space.md`.
 
 GPU painters (v1+) will use tolerance-based perceptual diffs throughout
