@@ -116,6 +116,10 @@ pub struct Layout {
     pub mode: LayoutMode,
     pub gap: f32,
     pub padding: EdgeInsets,
+    /// Outer margin in the parent's flow. Negative values express
+    /// overlap and are what [`Txn::lower_negative_gaps`] rewrites a
+    /// negative container `gap` into.
+    pub margin: EdgeInsets,
     pub main_align: MainAxisAlign,
     pub cross_align: CrossAxisAlign,
     pub sizing_h: AxisSizing,
@@ -154,6 +158,12 @@ pub enum Prop {
     Mode(LayoutMode),
     Gap(f32),
     Padding {
+        left: f32,
+        top: f32,
+        right: f32,
+        bottom: f32,
+    },
+    Margin {
         left: f32,
         top: f32,
         right: f32,
@@ -428,6 +438,19 @@ impl Txn<'_> {
                     bottom,
                 }
             }
+            Prop::Margin {
+                left,
+                top,
+                right,
+                bottom,
+            } => {
+                data.layout.margin = EdgeInsets {
+                    left,
+                    top,
+                    right,
+                    bottom,
+                }
+            }
             Prop::MainAlign(a) => data.layout.main_align = a,
             Prop::CrossAlign(a) => data.layout.cross_align = a,
             Prop::SizingH(v) => data.layout.sizing_h = v,
@@ -436,6 +459,45 @@ impl Txn<'_> {
             Prop::MaxWidth(v) => data.layout.max_width = Some(v),
             Prop::MinHeight(v) => data.layout.min_height = Some(v),
             Prop::MaxHeight(v) => data.layout.max_height = Some(v),
+        }
+    }
+
+    /// Lower every negative flex gap to child margins (the Figma≠CSS
+    /// lowering, DESIGN_1.md §5).
+    ///
+    /// Figma auto-layout allows a negative item spacing so children
+    /// overlap; CSS/Taffy `gap` cannot go negative. For each container
+    /// node whose mode is `Horizontal`/`Vertical` and whose `gap` is
+    /// negative, this sets the `gap` to `0` and adds the gap to the
+    /// leading main-axis margin of every child after the first
+    /// (`margin.left` for `Horizontal`, `margin.top` for `Vertical`) —
+    /// the same overlap, expressed in vocabulary the solver accepts.
+    /// Positive and zero gaps are untouched; the pass adds to an
+    /// existing child margin rather than replacing it, and is
+    /// idempotent (after it runs no negative gaps remain).
+    ///
+    /// A shared producer step: the DSL/commit path calls it before
+    /// committing, and the Figma importer (`dashc`) reuses it. It
+    /// stages like any other mutation — the rewrite publishes with the
+    /// next commit (P3).
+    pub fn lower_negative_gaps(&mut self) {
+        let nodes = &mut self.arena.nodes;
+        for i in 0..nodes.len() {
+            let gap = nodes[i].layout.gap;
+            let mode = nodes[i].layout.mode;
+            if gap >= 0.0 || matches!(mode, LayoutMode::None) {
+                continue;
+            }
+            nodes[i].layout.gap = 0.0;
+            let children = nodes[i].children.clone();
+            for &child in children.iter().skip(1) {
+                let margin = &mut nodes[child.index()].layout.margin;
+                match mode {
+                    LayoutMode::Horizontal => margin.left += gap,
+                    LayoutMode::Vertical => margin.top += gap,
+                    LayoutMode::None => unreachable!("guarded above"),
+                }
+            }
         }
     }
 

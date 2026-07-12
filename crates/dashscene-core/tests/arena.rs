@@ -4,7 +4,9 @@
 
 use std::mem::{align_of, size_of};
 
-use dashscene_core::{Arena, Color, PaintEntry, PaintIndex, Prop, RectEntry, TextStyle};
+use dashscene_core::{
+    Arena, Color, LayoutMode, PaintEntry, PaintIndex, Prop, RectEntry, TextStyle,
+};
 
 const RED: Color = Color {
     r: 1.0,
@@ -722,4 +724,127 @@ fn commit_with_panics_when_the_solver_omits_a_node() {
     let mut txn = arena.open();
     txn.add_node(None, None);
     txn.commit_with(&mut ForgetfulSolver);
+}
+
+#[test]
+fn margin_prop_sets_and_reads_back() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let node = txn.add_node(None, None);
+    // Default is zero insets.
+    txn.commit();
+    let m = arena.layout(node).margin;
+    assert_eq!((m.left, m.top, m.right, m.bottom), (0.0, 0.0, 0.0, 0.0));
+
+    let mut txn = arena.open();
+    txn.set_prop(
+        node,
+        Prop::Margin {
+            left: -8.0,
+            top: 1.0,
+            right: 2.0,
+            bottom: 3.0,
+        },
+    );
+    txn.commit();
+    let m = arena.layout(node).margin;
+    assert_eq!((m.left, m.top, m.right, m.bottom), (-8.0, 1.0, 2.0, 3.0));
+}
+
+#[test]
+fn lower_negative_gaps_rewrites_a_horizontal_row_to_child_margins() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let row = txn.add_node(None, None);
+    txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
+    txn.set_prop(row, Prop::Gap(-8.0));
+    let a = txn.add_node(Some(row), None);
+    let b = txn.add_node(Some(row), None);
+    let c = txn.add_node(Some(row), None);
+    txn.lower_negative_gaps();
+    txn.commit();
+
+    // The container's negative gap becomes zero...
+    assert_eq!(arena.layout(row).gap, 0.0);
+    // ...the first child is untouched...
+    assert_eq!(arena.layout(a).margin.left, 0.0);
+    // ...and every later child gains the negative gap as a leading
+    // main-axis (left) margin.
+    assert_eq!(arena.layout(b).margin.left, -8.0);
+    assert_eq!(arena.layout(c).margin.left, -8.0);
+    // The cross axis is untouched.
+    assert_eq!(arena.layout(b).margin.top, 0.0);
+}
+
+#[test]
+fn lower_negative_gaps_uses_the_top_margin_for_a_vertical_column() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let col = txn.add_node(None, None);
+    txn.set_prop(col, Prop::Mode(LayoutMode::Vertical));
+    txn.set_prop(col, Prop::Gap(-5.0));
+    let a = txn.add_node(Some(col), None);
+    let b = txn.add_node(Some(col), None);
+    txn.lower_negative_gaps();
+    txn.commit();
+
+    assert_eq!(arena.layout(col).gap, 0.0);
+    assert_eq!(arena.layout(a).margin.top, 0.0);
+    assert_eq!(arena.layout(b).margin.top, -5.0);
+    assert_eq!(arena.layout(b).margin.left, 0.0);
+}
+
+#[test]
+fn lower_negative_gaps_leaves_positive_gaps_and_adds_to_existing_margins() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    // Positive gap: untouched (CSS-native).
+    let kept = txn.add_node(None, None);
+    txn.set_prop(kept, Prop::Mode(LayoutMode::Horizontal));
+    txn.set_prop(kept, Prop::Gap(6.0));
+    txn.add_node(Some(kept), None);
+    txn.add_node(Some(kept), None);
+    // Negative gap over a child that already carries a margin: the
+    // lowering adds to it, never replaces it.
+    let row = txn.add_node(None, None);
+    txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
+    txn.set_prop(row, Prop::Gap(-8.0));
+    txn.add_node(Some(row), None);
+    let b = txn.add_node(Some(row), None);
+    txn.set_prop(
+        b,
+        Prop::Margin {
+            left: 3.0,
+            top: 0.0,
+            right: 0.0,
+            bottom: 0.0,
+        },
+    );
+    txn.lower_negative_gaps();
+    txn.commit();
+
+    assert_eq!(arena.layout(kept).gap, 6.0, "positive gap untouched");
+    assert_eq!(arena.layout(row).gap, 0.0);
+    assert_eq!(
+        arena.layout(b).margin.left,
+        -5.0,
+        "3 + (-8), added not replaced"
+    );
+}
+
+#[test]
+fn lower_negative_gaps_is_idempotent() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let row = txn.add_node(None, None);
+    txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
+    txn.set_prop(row, Prop::Gap(-8.0));
+    txn.add_node(Some(row), None);
+    let b = txn.add_node(Some(row), None);
+    txn.lower_negative_gaps();
+    txn.lower_negative_gaps(); // second pass: no negative gaps remain
+    txn.commit();
+
+    assert_eq!(arena.layout(row).gap, 0.0);
+    assert_eq!(arena.layout(b).margin.left, -8.0, "not doubled");
 }
