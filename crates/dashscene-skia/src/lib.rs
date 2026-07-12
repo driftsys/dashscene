@@ -6,7 +6,7 @@
 //! vocabulary this painter cannot draw yet panics by name — story #14
 //! implements it (P4: never a silent drop).
 
-use dashpaint::{PaintKind, PaintTable, Painter, RectEntry};
+use dashpaint::{CornerRadii, PaintKind, PaintTable, Painter, RectEntry};
 use skia_safe::{AlphaType, Color4f, ColorType, EncodedImageFormat, ImageInfo, Rect, surfaces};
 
 /// The reference painter: draws boundary-B input onto a CPU raster
@@ -42,6 +42,13 @@ impl SkiaPainter {
 
     /// The current surface contents as tightly packed RGBA8888 rows
     /// (unpremultiplied) — test and golden-tooling readback.
+    ///
+    /// Opaque colors round-trip byte-exact. A semi-transparent color is
+    /// stored premultiplied (8-bit quantized) and divided back out here,
+    /// which can shift a channel by one code point — deterministic for a
+    /// fixed skia version, but not equal to direct quantization of the
+    /// authored color. The golden comparison space is decided at
+    /// story #6 (debt #86).
     pub fn rgba_bytes(&mut self) -> Vec<u8> {
         let width = self.surface.width();
         let height = self.surface.height();
@@ -64,27 +71,24 @@ impl SkiaPainter {
 impl Painter for SkiaPainter {
     fn paint(&mut self, rects: &[RectEntry], paints: &PaintTable) {
         let canvas = self.surface.canvas();
-        canvas.clear(Color4f::new(0.0, 0.0, 0.0, 0.0));
+        canvas.clear(skia_safe::colors::TRANSPARENT);
+        // One paint object for every solid fill; anti-aliasing stays
+        // off — axis-aligned integer rects need no coverage math, and
+        // golden comparison requires bit-exact edges (the sub-pixel
+        // geometry policy is open, debt #85).
+        let mut solid = skia_safe::Paint::default();
+        solid.set_anti_alias(false);
         for rect in rects {
             let entry = paints.resolve(rect.paint);
-            if entry.stroke.is_some()
-                || entry.clip
-                || entry.corners != dashpaint::CornerRadii::default()
-            {
+            if entry.stroke.is_some() || entry.clip || entry.corners != CornerRadii::default() {
                 unimplemented!("strokes, clip, and corner radii are painted from story #14 onward");
             }
             match &entry.fill {
                 // A fill-less entry draws nothing (a layout-only node).
                 None => {}
                 Some(PaintKind::Solid { color }) => {
-                    // Anti-aliasing off: axis-aligned rects need no
-                    // coverage math, and goldens want bit-exact edges.
-                    let mut paint = skia_safe::Paint::new(
-                        Color4f::new(color.r, color.g, color.b, color.a),
-                        None,
-                    );
-                    paint.set_anti_alias(false);
-                    canvas.draw_rect(Rect::from_xywh(rect.x, rect.y, rect.w, rect.h), &paint);
+                    solid.set_color4f(Color4f::new(color.r, color.g, color.b, color.a), None);
+                    canvas.draw_rect(Rect::from_xywh(rect.x, rect.y, rect.w, rect.h), &solid);
                 }
                 Some(PaintKind::Gradient(_)) | Some(PaintKind::Image { .. }) => {
                     unimplemented!("gradient and image fills are painted from story #14 onward");

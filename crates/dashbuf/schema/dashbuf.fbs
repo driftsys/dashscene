@@ -150,9 +150,10 @@ table Node {
   // producers stop writing it, then removed in a coordinated cleanup.
   paint: SolidFill;
   // Index into Document.paints, or NO_PAINT (uint32::MAX — the same
-  // sentinel convention as `parent`, and as dashscene-core's committed
-  // output, see docs/decisions/core-committed-output-shape.md) for a
-  // node that draws nothing.
+  // sentinel convention as `parent`) for a node that draws nothing.
+  // Document-level only: the committed runtime output has no sentinel —
+  // every rect resolves to a pool entry
+  // (docs/decisions/boundary-b-unification.md).
   paint_entry: uint32 = 4294967295;
 }
 

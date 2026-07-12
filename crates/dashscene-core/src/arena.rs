@@ -30,8 +30,8 @@ impl NodeId {
 /// One settable node property. v0.1 vocabulary: the authored
 /// parent-relative offset, the fixed size, and the solid fill.
 ///
-/// `Fill` sets a fill but cannot clear one back to unfilled
-/// ([`NO_PAINT`](crate::NO_PAINT)) — a deliberate v0.1 gap, recorded
+/// `Fill` sets a fill but cannot clear one back to unfilled (the
+/// shared draws-nothing pool entry) — a deliberate v0.1 gap, recorded
 /// in `docs/decisions/staged-mutation-v01-scope.md`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Prop {
@@ -297,7 +297,9 @@ fn entry_bits(entry: &RectEntry) -> [u32; 5] {
 fn resolved_color_bits(entry: &RectEntry, paints: &PaintTable) -> Option<[u32; 4]> {
     match paints.resolve(entry.paint).fill {
         Some(PaintKind::Solid { color }) => Some(color_key(color)),
-        Some(_) => unreachable!("v0.1 producers only stage solid fills"),
+        Some(_) => unreachable!(
+            "widen resolved_color_bits when producers can stage non-solid fills (v0.3+ vocabulary)"
+        ),
         None => None,
     }
 }

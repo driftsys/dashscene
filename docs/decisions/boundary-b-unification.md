@@ -40,7 +40,7 @@ Option 1, with every rect resolving and typed indices:
   sentinel (a document node referencing no pool entry still resolves to
   a rect whose runtime entry is the shared empty one).
 - `RectEntry.paint` is `#[repr(transparent)] PaintIndex(u32)`;
-  `PaintTable::push`/`get`/`resolve` trade in it. Layout unchanged
+  `PaintTable::push`/`get`/`resolve` take and return it. Layout unchanged
   (entries stay 20 blittable bytes, pinned by test). Closes #54.
 
 ## Why
@@ -66,6 +66,13 @@ Option 1, with every rect resolving and typed indices:
 ## Consequences
 
 - Debt #54 and #55 close with story #4.
+- Unfilled nodes lose the sentinel's re-interning immunity: the shared
+  empty entry's index follows first-use DFS order like every other
+  entry, so an early fill change can shift it and conservatively
+  over-mark unchanged layout-only rects as dirty. Same direction and
+  mechanism as the recorded index-shift behavior for solid entries
+  (`core-committed-output-shape.md`'s dirty-set definition);
+  over-marking never under-paints.
 - The v0.1 pinned-contract phase ends; the boundary-B surface is
   defined in one place (`dashpaint`) and recorded as-built in
   `docs/design/dashpaint.md`.

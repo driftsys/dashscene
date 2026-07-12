@@ -205,4 +205,7 @@ fn painter_trait_is_object_safe() {
 fn paint_index_is_transparent_over_u32() {
     assert_eq!(std::mem::size_of::<PaintIndex>(), 4);
     assert_eq!(std::mem::size_of::<RectEntry>(), 20);
+    assert_eq!(std::mem::align_of::<RectEntry>(), 4);
+    assert_eq!(std::mem::size_of::<Color>(), 16);
+    assert_eq!(std::mem::align_of::<Color>(), 4);
 }
