@@ -50,8 +50,8 @@ Option 1, with these semantics:
   struct), and the read seam for story #9: `Arena::layout(NodeId)`
   plus tree traversal via `Arena::roots()` and
   `Arena::children(NodeId)`. How the solved rects are injected back
-  into the committed output is story #9's design, not pre-decided
-  here. Setting a min/max constraint cannot be undone (no clear
+  into the committed output was story #9's design — resolved:
+  `docs/decisions/layout-solver-seam.md`. Setting a min/max constraint cannot be undone (no clear
   operation) — the same deliberate gap as fill-clearing
   (`docs/decisions/staged-mutation-v01-scope.md`).
 - Until story #9, flex intent is stored, not solved: `commit` keeps
