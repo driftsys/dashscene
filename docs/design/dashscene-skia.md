@@ -30,7 +30,8 @@ All in `crates/dashscene-skia/src/lib.rs`:
     }
 
     impl Painter for SkiaPainter {
-        fn paint(&mut self, rects: &[RectEntry], paints: &PaintTable);
+        fn paint(&mut self, rects: &[RectEntry], paints: &PaintTable,
+                 images: &ImageTable);
     }
 
 - `new(width, height)` allocates a CPU raster surface (N32
@@ -41,9 +42,9 @@ All in `crates/dashscene-skia/src/lib.rs`:
   packed RGBA8888 rows, unpremultiplied — used by the painter's own
   tests and by future golden tooling for exact pixel comparison.
 
-## Paint semantics (v0.1 vocabulary)
+## Paint semantics (v0.3 vocabulary, story #14)
 
-`paint(rects, paints)` runs in one pass over `rects`:
+`paint(rects, paints, images)` runs in one pass over `rects`:
 
 - Clears the surface to transparent, then draws every rect in slice
   order. Slice order is stacking order — dashpaint's contract is that
@@ -55,16 +56,28 @@ All in `crates/dashscene-skia/src/lib.rs`:
   (`fill: None`) draws nothing — this is the shared draws-nothing
   entry an unfilled node interns at commit
   (`docs/decisions/boundary-b-unification.md`), not a per-painter skip
-  rule. A `Solid` fill draws an axis-aligned rect with anti-aliasing
-  off: v0.1 geometry is always axis-aligned, and disabling AA avoids
-  per-platform coverage-math variance on those edges, which is what
-  keeps goldens bit-exact and machine-independent.
-- Any construct this painter cannot draw yet — a stroke, a non-default
-  corner radius, clip, or a gradient or image fill — panics via
-  `unimplemented!`, naming story #14 in the message. This is not a
-  silent drop (P4): v0.1 producers cannot emit these (core's `Prop`
-  only stages solid fill), so reaching the panic means a producer
-  emitted vocabulary the painter does not implement yet, not that the painter silently dropped input.
+  rule. Non-default corner radii shape the entry's box as a rounded
+  rect for fills and strokes alike.
+- Every draw is anti-aliased
+  (`docs/decisions/reference-painter-antialiasing.md`): deterministic
+  on pinned CPU raster, a no-op on integer-aligned axis-aligned edges.
+- Gradients build one affine frame (unit space through the three
+  normalized handles into the box); linear/radial/angular are skia
+  gradient shaders under that frame, diamond is an SkSL runtime effect
+  sampling a 1D skia ramp child (§8.1 — not a Skia primitive). A
+  degenerate frame falls back to the first stop's color; more than 8
+  stops panics by name (a budget the validator will enforce upstream).
+- Stroke align lowers by geometry expansion (§8.1): inside/outside
+  offset the stroked rrect by half the width (radii adjust) and
+  center-stroke.
+- Image fills resolve their asset in the `ImageTable`
+  (`docs/decisions/image-assets-cross-boundary-b.md`), decode, and
+  draw clipped to the entry's (rounded) box: Fill covers, Fit
+  contains, Tile repeats at `tile_scale`, Crop maps the normalized
+  transform. Nearest sampling, for determinism.
+- `entry.clip` (subtree clipping) panics naming issue #97: ancestor
+  clips must be resolved by `dashscene-core` at commit — a painter
+  cannot re-derive the tree from a flat rect table (P2).
 
 ## Testing
 
@@ -78,17 +91,21 @@ asserted byte-for-byte
 parent that draws nothing while its filled child paints
 (`an_unfilled_node_draws_nothing`, pinning the
 boundary-b-unification crossing); the PNG signature on encoded output
-(`encodes_png`); and the honest-failure contract for vocabulary this
-painter cannot yet draw, via a hand-built `PaintEntry` with a gradient
-fill (`unimplemented_vocabulary_panics_by_name`,
-`#[should_panic(expected = "story #14")]`).
+(`encodes_png`); and, since story #14, per-kind render tests over hand-built
+boundary-B input: hard-stop gradients probed at exact bytes for all
+four kinds, the degenerate-frame fallback, stroke-align band placement,
+rounded-corner coverage, the four image scale modes (plus tile scaling,
+crop transform, and rounded clipping of image overflow), and the named
+panics for subtree clip (issue #97) and the gradient stop budget.
 
 ## Trace
 
-- Satisfies: `specs/DESIGN_1.md` §8.1 (CPU raster reference painter);
-  issue #4 acceptance criteria.
-- Blocks: #6 (golden harness), #14 (v0.3 painting — implements the
-  vocabulary this painter currently panics on).
+- Satisfies: `specs/DESIGN_1.md` §8.1 (CPU raster reference painter,
+  v0.3 lowerings); issues #4 and #14 acceptance criteria.
+- Blocks: #44/#45 (v0.8 masks/shadows build on this surface); issue
+  #97 unblocks subtree clipping.
 - Related decisions: `docs/decisions/boundary-b-unification.md`,
   `docs/decisions/painter-trait-infallible-slice-input.md`,
-  `docs/decisions/paint-entry-composition.md`.
+  `docs/decisions/paint-entry-composition.md`,
+  `docs/decisions/image-assets-cross-boundary-b.md`,
+  `docs/decisions/reference-painter-antialiasing.md`.

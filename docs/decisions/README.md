@@ -77,5 +77,11 @@ it in. Per-story decisions land here directly:
   `.dsb` becomes a thin sectioned container at v1 (fixed envelope +
   section table, one flatbuffer per section); binds the schema stories
   to integer-index cross-references.
+- [image-assets-cross-boundary-b.md](image-assets-cross-boundary-b.md) —
+  encoded, format-tagged image assets are part of the painter input
+  (`Painter::paint` gains an `ImageTable`; story #14).
+- [reference-painter-antialiasing.md](reference-painter-antialiasing.md) —
+  the reference painter anti-aliases every draw (story #14; resolves
+  debt #85).
 
 See the `sdd-working-memory-lifecycle` rule.

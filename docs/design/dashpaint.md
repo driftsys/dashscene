@@ -42,7 +42,9 @@ All types and the trait live in `crates/dashpaint/src/lib.rs`:
   debt #54): a node index or other bare `u32` cannot cross into a
   paint index without an explicit wrap; layout unchanged.
 - `PaintKind` — the fill vocabulary: `Solid { color }` (the pinned
-  v0.1 shape), `Gradient(Gradient)`, `Image { image, scale_mode }`.
+  v0.1 shape), `Gradient(Gradient)`, `Image { image, scale_mode,
+  transform, tile_scale }` (crop transform and tile magnification,
+  story #14).
 - Vocabulary value types — `Vec2`, `GradientStop`, `GradientKind`
   (Linear/Radial/Angular/Diamond), `Gradient` (kind + three normalized
   handle positions + stops), `ScaleMode` (Fill/Fit/Crop/Tile),
@@ -58,8 +60,16 @@ All types and the trait live in `crates/dashpaint/src/lib.rs`:
   -> Option<&PaintEntry>`, `resolve(&self, PaintIndex) -> &PaintEntry`
   (the lookup painters use — panics on an out-of-range index), `len`,
   `is_empty`.
+- `ImageTable` / `ImageAsset` / `ImageFormat` — encoded, format-tagged
+  image assets (mirrors `dashbuf`'s `Document.images`), indexed by
+  `PaintKind::Image`'s `image` field; same push/get/resolve contract as
+  `PaintTable`. See
+  `docs/decisions/image-assets-cross-boundary-b.md` (story #14).
+- `Mat23` — row-major 2×3 affine; the image crop transform's shape.
 - `Painter` — the one trait every paint backend implements:
-  `fn paint(&mut self, rects: &[RectEntry], paints: &PaintTable)`.
+  `fn paint(&mut self, rects: &[RectEntry], paints: &PaintTable,
+  images: &ImageTable)` (an empty table is valid input for image-less
+  scenes).
 
 `Color` and `RectEntry` are `#[repr(C)]` because `specs/DESIGN_1.md`
 §7.3 calls rect entries blittable and R-T4 plans dirty-range
@@ -90,12 +100,12 @@ fixture, and dyn-dispatch through `&mut dyn Painter`. The test file is
 the executable statement of the boundary-B contract; this section
 deliberately does not restate its cases.
 
-## Open for story #14
+## Subtree clipping (open)
 
-An image fill references its asset by index (`image: u32`), matching
-`dashbuf`'s `Document.images`. How decoded pixel data reaches a painter
-— the asset store crossing boundary B — is deliberately unresolved here
-and lands with the painter work in #14.
+`PaintEntry::clip` is representable but not yet paintable: a painter
+cannot re-derive the tree from the flat rect table, so ancestor-clip
+resolution belongs to `dashscene-core`'s commit — issue #97. The
+reference painter panics by name on it until then.
 
 ## Trace
 
