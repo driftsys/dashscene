@@ -134,8 +134,10 @@ All types are generated from `crates/dashbuf/schema/dashbuf.fbs`:
 - `LayoutConstraints` (table) — child-side v0.2 flex properties, valid
   on any node: `sizing_h`, `sizing_v: AxisSizing`, `min_width`,
   `max_width`, `min_height`, `max_height: float32 = null` (absent =
-  unconstrained). Full rationale for the two-table split:
-  `docs/decisions/flex-vocabulary-shape.md`.
+  unconstrained), and `margin: EdgeInsets` (story #10; absent = zero
+  insets, negative values legal — the negative-gap lowering target,
+  `docs/decisions/negative-gap-lowering.md`). Full rationale for the
+  two-table split: `docs/decisions/flex-vocabulary-shape.md`.
 - `Node` (table) — `name: string`, `parent: uint32` (`uint32::MAX`
   sentinel for roots), `layout: FixedSizeLayout`, `paint: SolidFill`
   (legacy), `paint_entry: uint32 = uint32::MAX` (the document-level
