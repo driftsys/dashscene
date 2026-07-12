@@ -13,10 +13,18 @@ pub use closure::{Closure, charset_closure};
 pub use metrics::{
     AtlasInfo, AtlasMetrics, FORMAT_VERSION, FontMetrics, GeneratorInfo, GlyphEntry, font_metrics,
 };
-pub use tool::{REQUIRED_TOOL_VERSION, find_tool_checked};
+pub use tool::{REQUIRE_TOOL_ENV, REQUIRED_TOOL_VERSION, TOOL_ENV, find_tool_checked};
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+
+/// Fixture font shared by this crate's unit tests (integration tests
+/// keep their own copy — they cannot see `pub(crate)` items).
+#[cfg(test)]
+pub(crate) const TEST_FONT: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../corpus/fonts/noto-sans/NotoSans-Regular.ttf"
+);
 
 /// File names inside an atlas bundle directory.
 pub const ATLAS_IMAGE_FILE: &str = "atlas.png";
@@ -24,7 +32,7 @@ pub const ATLAS_METRICS_FILE: &str = "atlas.metrics";
 
 /// Inputs of one atlas generation. Defaults per the Q-1 decision
 /// record: 32 px/em, pxrange 4, seed 1.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct AtlasSpec {
     pub font_path: PathBuf,
     /// The declared charset (DESIGN_1.md §6.1: coverage comes from
@@ -52,7 +60,7 @@ impl AtlasSpec {
 }
 
 /// The two build artifacts, in memory.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub struct AtlasBundle {
     /// The tool's PNG bytes, untouched (R7: no recompression).
     pub image_png: Vec<u8>,
@@ -68,7 +76,7 @@ pub fn generate(spec: &AtlasSpec) -> Result<AtlasBundle, AtlasError> {
         ttf_parser::Face::parse(&data, 0).map_err(|e| AtlasError::FontParse(e.to_string()))?;
     let closure = closure::charset_closure(&face, &spec.charset, &spec.extra_glyph_ids);
 
-    let (image_png, layout) = tool::run(
+    let (image_png, layout, args) = tool::run(
         &tool,
         &spec.font_path,
         &closure.glyph_ids,
@@ -78,23 +86,6 @@ pub fn generate(spec: &AtlasSpec) -> Result<AtlasBundle, AtlasError> {
     )?;
 
     let glyphs = build_glyph_entries(&face, &closure.glyph_ids, &layout)?;
-    // Provenance args use canonical names, never caller paths: an
-    // absolute font path would make the blob machine-dependent and
-    // break cross-machine byte-identity (R7) by construction.
-    let font_name = spec
-        .font_path
-        .file_name()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| spec.font_path.clone());
-    let args = tool::build_args(
-        &font_name,
-        Path::new("glyphs.txt"),
-        Path::new(ATLAS_IMAGE_FILE),
-        Path::new("atlas.json"),
-        spec.px_per_em,
-        spec.px_range,
-        spec.seed,
-    );
     let metrics = AtlasMetrics {
         format_version: FORMAT_VERSION,
         generator: GeneratorInfo {

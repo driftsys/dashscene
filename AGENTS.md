@@ -81,10 +81,8 @@ driftsys/git-std, driftsys/upskill, driftsys/markspec.
 
 ## Where to start
 
-Implementation is under way, tracked by the GitHub issue plan (one
-epic per slice — see "Plan tracking") with as-built records landing in
-`docs/design/` and `docs/decisions/`. The v0.1 walking skeleton
-(`DESIGN_1.md` §11) is the entry point, in this order:
+No implementation exists yet beyond crate stubs. The v0.1 walking
+skeleton (`DESIGN_1.md` §11) is the entry point, in this order:
 
 1. `dashbuf` — minimal schema: node tree, a fixed-size layout mode (no
    Taffy yet), a solid-fill paint kind.

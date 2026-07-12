@@ -1,8 +1,10 @@
 //! msdf-atlas-gen wrapper: discovery, version gate, canonical
 //! invocation (R7: fixed argument order, pinned seed), layout parse.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 
 use serde::Deserialize;
 
@@ -12,10 +14,30 @@ use super::AtlasError;
 /// Anything else is a named error — R7 forbids silent generator drift.
 pub const REQUIRED_TOOL_VERSION: &str = "1.4.0";
 
-/// Finds msdf-atlas-gen — `MSDF_ATLAS_GEN` env override first, then
-/// `PATH` — and enforces [`REQUIRED_TOOL_VERSION`].
+/// Environment variable overriding tool discovery (a path to the
+/// msdf-atlas-gen binary); `PATH` is searched otherwise.
+pub const TOOL_ENV: &str = "MSDF_ATLAS_GEN";
+
+/// Environment variable that turns tool absence from a test self-skip
+/// into a hard failure. CI sets it, so a skipped test cannot be
+/// reported as passing there.
+pub const REQUIRE_TOOL_ENV: &str = "DASHSCENE_REQUIRE_ATLAS_TOOL";
+
+/// Scratch file names inside the tool's working directory; also the
+/// canonical names recorded in blob provenance.
+pub(crate) const GLYPHSET_SCRATCH: &str = "glyphs.txt";
+pub(crate) const LAYOUT_SCRATCH: &str = "atlas.json";
+
+/// Finds msdf-atlas-gen — [`TOOL_ENV`] override first, then `PATH` —
+/// and enforces [`REQUIRED_TOOL_VERSION`]. A successful probe is
+/// cached for the process lifetime (the environment cannot change the
+/// answer mid-process); failures are re-probed on every call.
 pub fn find_tool_checked() -> Result<PathBuf, AtlasError> {
-    let candidate = match std::env::var_os("MSDF_ATLAS_GEN") {
+    static CHECKED: OnceLock<PathBuf> = OnceLock::new();
+    if let Some(p) = CHECKED.get() {
+        return Ok(p.clone());
+    }
+    let candidate = match std::env::var_os(TOOL_ENV) {
         Some(p) => PathBuf::from(p),
         None => PathBuf::from("msdf-atlas-gen"),
     };
@@ -24,19 +46,27 @@ pub fn find_tool_checked() -> Result<PathBuf, AtlasError> {
         .output()
         .map_err(|e| {
             AtlasError::ToolMissing(format!(
-                "{} ({e}); install with `brew install msdf-atlas-gen` or set MSDF_ATLAS_GEN",
+                "{} ({e}); install with `brew install msdf-atlas-gen` or set {TOOL_ENV}",
                 candidate.display()
             ))
         })?;
     let text = String::from_utf8_lossy(&output.stdout);
-    let found = parse_banner_version(&text)
-        .ok_or_else(|| AtlasError::ToolOutput("no version banner in -help output".to_string()))?;
+    let found = parse_banner_version(&text).ok_or_else(|| {
+        // A binary that spawns but cannot run (loader error, wrong
+        // tool) lands here — surface its own evidence, not just ours.
+        AtlasError::ToolOutput(format!(
+            "no version banner in -help output (exit: {:?}, stderr: {})",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    })?;
     if found != REQUIRED_TOOL_VERSION {
         return Err(AtlasError::ToolVersion {
             found,
             required: REQUIRED_TOOL_VERSION,
         });
     }
+    let _ = CHECKED.set(candidate.clone());
     Ok(candidate)
 }
 
@@ -54,10 +84,18 @@ pub(crate) fn parse_banner_version(banner: &str) -> Option<String> {
     (!version.is_empty()).then_some(version)
 }
 
-/// Canonical argument vector — the exact list recorded in the blob's
-/// provenance. Order is fixed; changing it changes the artifacts, so
+/// One invocation, built once: the argv actually executed (`OsString`,
+/// so non-UTF-8 paths survive) and the provenance vector recorded in
+/// the blob (canonical file names, never machine paths). Building both
+/// from one pass makes recorded == executed hold by construction (R7).
+/// The flag order is fixed; changing it changes the artifacts, so
 /// treat any edit as a format decision.
-pub(crate) fn build_args(
+pub(crate) struct Invocation {
+    pub exec: Vec<OsString>,
+    pub provenance: Vec<String>,
+}
+
+pub(crate) fn build_invocation(
     font: &Path,
     glyphset: &Path,
     out_png: &Path,
@@ -65,12 +103,34 @@ pub(crate) fn build_args(
     px_per_em: u16,
     px_range: u16,
     seed: u64,
-) -> Vec<String> {
-    [
-        "-font",
-        &font.display().to_string(),
+) -> Invocation {
+    fn plain(inv: &mut Invocation, s: &str) {
+        inv.exec.push(s.into());
+        inv.provenance.push(s.to_string());
+    }
+    fn path(inv: &mut Invocation, flag: &str, real: &Path, canonical: String) {
+        plain(inv, flag);
+        inv.exec.push(real.as_os_str().to_owned());
+        inv.provenance.push(canonical);
+    }
+
+    let mut inv = Invocation {
+        exec: Vec::new(),
+        provenance: Vec::new(),
+    };
+    let font_name = font
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| font.display().to_string());
+
+    path(&mut inv, "-font", font, font_name);
+    path(
+        &mut inv,
         "-glyphset",
-        &glyphset.display().to_string(),
+        glyphset,
+        GLYPHSET_SCRATCH.to_string(),
+    );
+    for s in [
         "-type",
         "msdf",
         "-size",
@@ -85,14 +145,17 @@ pub(crate) fn build_args(
         &seed.to_string(),
         "-format",
         "png",
+    ] {
+        plain(&mut inv, s);
+    }
+    path(
+        &mut inv,
         "-imageout",
-        &out_png.display().to_string(),
-        "-json",
-        &out_json.display().to_string(),
-    ]
-    .into_iter()
-    .map(String::from)
-    .collect()
+        out_png,
+        super::ATLAS_IMAGE_FILE.to_string(),
+    );
+    path(&mut inv, "-json", out_json, LAYOUT_SCRATCH.to_string());
+    inv
 }
 
 #[derive(Debug, Deserialize)]
@@ -142,8 +205,9 @@ pub(crate) fn parse_layout(json: &str) -> Result<Layout, AtlasError> {
     Ok(layout)
 }
 
-/// Runs the tool in a scratch directory and returns the raw PNG bytes
-/// plus the parsed layout.
+/// Runs the tool in a scratch directory and returns the raw PNG bytes,
+/// the parsed layout, and the provenance args of the invocation that
+/// produced them.
 pub(crate) fn run(
     tool: &Path,
     font: &Path,
@@ -151,11 +215,11 @@ pub(crate) fn run(
     px_per_em: u16,
     px_range: u16,
     seed: u64,
-) -> Result<(Vec<u8>, Layout), AtlasError> {
+) -> Result<(Vec<u8>, Layout, Vec<String>), AtlasError> {
     let dir = tempfile::tempdir()?;
-    let glyphset = dir.path().join("glyphs.txt");
-    let out_png = dir.path().join("atlas.png");
-    let out_json = dir.path().join("atlas.json");
+    let glyphset = dir.path().join(GLYPHSET_SCRATCH);
+    let out_png = dir.path().join(super::ATLAS_IMAGE_FILE);
+    let out_json = dir.path().join(LAYOUT_SCRATCH);
     let list = glyph_ids
         .iter()
         .map(u16::to_string)
@@ -163,10 +227,10 @@ pub(crate) fn run(
         .join(" ");
     std::fs::write(&glyphset, list)?;
 
-    let args = build_args(
+    let inv = build_invocation(
         font, &glyphset, &out_png, &out_json, px_per_em, px_range, seed,
     );
-    let output = Command::new(tool).args(&args).output()?;
+    let output = Command::new(tool).args(&inv.exec).output()?;
     if !output.status.success() {
         return Err(AtlasError::ToolFailed {
             status: output.status.code(),
@@ -175,7 +239,7 @@ pub(crate) fn run(
     }
     let png = std::fs::read(&out_png)?;
     let layout = parse_layout(&std::fs::read_to_string(&out_json)?)?;
-    Ok((png, layout))
+    Ok((png, layout, inv.provenance))
 }
 
 #[cfg(test)]
@@ -195,21 +259,22 @@ mod tests {
     }
 
     #[test]
-    fn builds_canonical_args() {
-        let args = build_args(
-            Path::new("f.ttf"),
-            Path::new("g.txt"),
-            Path::new("a.png"),
-            Path::new("a.json"),
+    fn builds_canonical_invocation() {
+        let inv = build_invocation(
+            Path::new("/tmp/fonts/f.ttf"),
+            Path::new("/scratch/g.txt"),
+            Path::new("/scratch/a.png"),
+            Path::new("/scratch/a.json"),
             32,
             4,
             1,
         );
+        // Provenance holds canonical names, never machine paths.
         let expect: Vec<String> = [
             "-font",
             "f.ttf",
             "-glyphset",
-            "g.txt",
+            "glyphs.txt",
             "-type",
             "msdf",
             "-size",
@@ -225,14 +290,22 @@ mod tests {
             "-format",
             "png",
             "-imageout",
-            "a.png",
+            "atlas.png",
             "-json",
-            "a.json",
+            "atlas.json",
         ]
         .into_iter()
         .map(String::from)
         .collect();
-        assert_eq!(args, expect);
+        assert_eq!(inv.provenance, expect);
+        // The executed argv mirrors the provenance one-to-one, with the
+        // real paths in the path slots.
+        assert_eq!(inv.exec.len(), inv.provenance.len());
+        assert_eq!(inv.exec[1], std::ffi::OsString::from("/tmp/fonts/f.ttf"));
+        assert_eq!(inv.exec[3], std::ffi::OsString::from("/scratch/g.txt"));
+        assert_eq!(inv.exec[19], std::ffi::OsString::from("/scratch/a.png"));
+        assert_eq!(inv.exec[21], std::ffi::OsString::from("/scratch/a.json"));
+        assert_eq!(inv.exec[4], std::ffi::OsString::from("-type"));
     }
 
     #[test]
