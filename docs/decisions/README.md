@@ -35,5 +35,8 @@ it in. Per-story decisions land here directly:
 - [paint-entry-composition.md](paint-entry-composition.md) — `dashpaint`'s
   table entry is a fill/stroke/corners/clip composition (story #13); relates
   to debt #55 and the story #4 wiring.
+- [dashlang-value-tree-builder.md](dashlang-value-tree-builder.md) — the DSL
+  is an inert value tree published by one `build` commit (story #5); binds
+  the golden harness (#6) and later DSL slices.
 
 See the `sdd-working-memory-lifecycle` rule.
