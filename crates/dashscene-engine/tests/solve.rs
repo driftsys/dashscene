@@ -198,6 +198,77 @@ fn min_and_max_constraints_clamp_fill_and_hug() {
 }
 
 #[test]
+fn fractional_geometry_passes_through_unrounded() {
+    // R7: the solver is an f32 passthrough — Taffy's default
+    // whole-pixel rounding must be off, or fractional authored
+    // geometry (and fractional Fill splits) shifts by up to a pixel.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let root = txn.add_node(None, None);
+    txn.set_prop(root, Prop::X(10.5));
+    txn.set_prop(root, Prop::Y(20.25));
+    txn.set_prop(root, Prop::Width(300.5));
+    txn.set_prop(root, Prop::Height(200.25));
+    let child = txn.add_node(Some(root), None);
+    txn.set_prop(child, Prop::X(5.5));
+    txn.set_prop(child, Prop::Y(6.25));
+    txn.set_prop(child, Prop::Width(50.5));
+    txn.set_prop(child, Prop::Height(40.25));
+    txn.commit_with(&mut TaffySolver::new());
+
+    assert_eq!(rect(&arena, 0), (10.5, 20.25, 300.5, 200.25));
+    assert_eq!(rect(&arena, 1), (16.0, 26.5, 50.5, 40.25));
+
+    // Three Fill children split 100 into exact thirds, not 33/34/33.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let row = txn.add_node(None, None);
+    txn.set_prop(row, Prop::Width(100.0));
+    txn.set_prop(row, Prop::Height(10.0));
+    txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
+    for _ in 0..3 {
+        let c = txn.add_node(Some(row), None);
+        txn.set_prop(c, Prop::SizingH(AxisSizing::Fill));
+        txn.set_prop(c, Prop::Height(10.0));
+    }
+    txn.commit_with(&mut TaffySolver::new());
+    // The exact bits depend on Taffy's evaluation order; the contract
+    // is that the split is unrounded (not 33/34/33) and lossless.
+    let widths: Vec<f32> = (1..4).map(|i| rect(&arena, i).2).collect();
+    for w in &widths {
+        assert!((w - 100.0 / 3.0).abs() < 1e-3, "unrounded third, got {w}");
+        assert_ne!(w.fract(), 0.0, "must not round to whole pixels");
+    }
+    let total: f32 = widths.iter().sum();
+    assert!((total - 100.0).abs() < 1e-3, "split sums back, got {total}");
+}
+
+#[test]
+fn hug_under_a_none_parent_wraps_content_not_the_authored_size() {
+    // Under a mode-None parent, Fixed sizing reproduces the fixed
+    // resolve; Hug keeps its content-wrapping meaning (a hug group
+    // inside a plain frame). A childless Hug node therefore sizes to
+    // zero — authored width/height only feed Fixed sizing. Pinned so
+    // the behavior is chosen, not accidental; the fixed-commit
+    // equivalence guarantee applies to fixed-sized trees.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let root = txn.add_node(None, None);
+    txn.set_prop(root, Prop::Width(300.0));
+    txn.set_prop(root, Prop::Height(200.0));
+    let hug = txn.add_node(Some(root), None);
+    txn.set_prop(hug, Prop::X(5.0));
+    txn.set_prop(hug, Prop::Y(6.0));
+    txn.set_prop(hug, Prop::Mode(LayoutMode::Vertical));
+    txn.set_prop(hug, Prop::SizingH(AxisSizing::Hug));
+    txn.set_prop(hug, Prop::SizingV(AxisSizing::Hug));
+    fixed(&mut txn, hug, 40.0, 10.0);
+    txn.commit_with(&mut TaffySolver::new());
+
+    assert_eq!(rect(&arena, 1), (5.0, 6.0, 40.0, 10.0), "hug wraps content");
+}
+
+#[test]
 fn multiple_roots_keep_their_authored_origins() {
     let mut arena = Arena::new();
     let mut txn = arena.open();

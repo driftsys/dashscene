@@ -14,10 +14,12 @@ use taffy::prelude::*;
 use taffy::{AlignItems, AlignSelf, JustifyContent, Position};
 
 /// The Taffy implementation of `dashscene-core`'s `LayoutSolver`.
+///
+/// Stateless today; `LayoutSolver` takes `&mut self` so this can hold
+/// retained trees and measure-callback state at later slices.
 #[derive(Debug, Default)]
-pub struct TaffySolver {
-    _private: (),
-}
+#[non_exhaustive]
+pub struct TaffySolver;
 
 impl TaffySolver {
     pub fn new() -> Self {
@@ -30,6 +32,9 @@ impl LayoutSolver for TaffySolver {
         let mut out = Vec::new();
         for &root in arena.roots() {
             let mut tree: TaffyTree<()> = TaffyTree::new();
+            // R7: the committed table is an f32 passthrough of the
+            // solve — Taffy's default whole-pixel rounding is off.
+            tree.disable_rounding();
             let mut pairs = Vec::new();
             let taffy_root = build(&mut tree, &mut pairs, arena, root, None);
             tree.compute_layout(taffy_root, Size::MAX_CONTENT)
@@ -37,7 +42,16 @@ impl LayoutSolver for TaffySolver {
             // Roots are their own coordinate islands: the subtree
             // translates by the root's authored offset.
             let origin = arena.layout(root);
-            read_back(&tree, &pairs, arena, root, (origin.x, origin.y), &mut out);
+            let mut cursor = 0;
+            read_back(
+                &tree,
+                &pairs,
+                &mut cursor,
+                arena,
+                root,
+                (origin.x, origin.y),
+                &mut out,
+            );
         }
         out
     }
@@ -84,6 +98,9 @@ fn style_for(layout: &Layout, parent: Option<&Layout>) -> Style {
             } else {
                 FlexDirection::Column
             };
+            // The vocabulary has one authored gap; the cross-axis
+            // half is inert until wrap (v0.8), which decides whether
+            // row and column gaps split into separate properties.
             style.gap = Size {
                 width: length(layout.gap),
                 height: length(layout.gap),
@@ -187,15 +204,18 @@ fn style_for(layout: &Layout, parent: Option<&Layout>) -> Style {
 fn read_back(
     tree: &TaffyTree<()>,
     pairs: &[(NodeId, taffy::NodeId)],
+    cursor: &mut usize,
     arena: &Arena,
     node: NodeId,
     parent_origin: (f32, f32),
     out: &mut Vec<(NodeId, SolvedRect)>,
 ) {
-    let &(_, taffy_node) = pairs
-        .iter()
-        .find(|(id, _)| *id == node)
-        .expect("every arena node was mapped during build");
+    // `pairs` is in build order — DFS pre-order — which is exactly the
+    // order this walk visits, so the cursor advances in lockstep
+    // instead of searching.
+    let (paired, taffy_node) = pairs[*cursor];
+    debug_assert_eq!(paired, node, "build order and readback order agree");
+    *cursor += 1;
     let layout = tree
         .layout(taffy_node)
         .expect("layout was computed for the whole tree");
@@ -211,6 +231,6 @@ fn read_back(
         },
     ));
     for &child in arena.children(node) {
-        read_back(tree, pairs, arena, child, (x, y), out);
+        read_back(tree, pairs, cursor, arena, child, (x, y), out);
     }
 }

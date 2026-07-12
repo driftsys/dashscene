@@ -44,8 +44,10 @@ Option 1:
 - Option 3 creates two observable states per commit, breaking commit
   atomicity (P3) and the dirty-set contract.
 - Option 4 inverts the recorded crate direction (`engine → core`) and
-  drags Taffy into every producer build.
-- The trait is also the natural landing point for what comes next:
-  FLIP (#22) compares solver outputs across commits, and the measure
-  callback (#29) is solver-side state — both live behind this seam
-  without further core surgery.
+  adds Taffy to every producer's dependency graph.
+- The trait is also where the next slices attach: the measure
+  callback (#29) is solver-side state behind this seam, and FLIP
+  (#22) hooks the same commit path — noting that FLIP needs to read
+  the previous commit's geometry, which core does not expose yet
+  (only the front buffer is public), so #22 adds a small core
+  accessor for it.

@@ -22,8 +22,16 @@ islands, translated by their authored offsets at readback. The tree
 builds from the arena's read seam (`roots`/`children`/`layout`),
 solves with max-content available space, and reads back absolute
 rects by accumulating parent origins (Taffy reports parent-relative
-locations). f32 passthrough, no rounding (R7; deterministic given the
-same intent).
+locations; readback advances a cursor over the build-order pairing,
+O(n)). f32 passthrough: Taffy's default whole-pixel rounding is
+disabled (`disable_rounding`), asserted by test on fractional
+geometry (R7; deterministic given the same intent — exact bits follow
+Taffy's evaluation order).
+
+The tree is rebuilt from scratch every solve — deliberate at v0.2
+scale. `LayoutSolver` takes `&mut self` exactly so this solver can
+hold retained trees (Taffy supports style updates + dirty marking)
+when per-frame animated commits arrive (v0.4, #22); revisit then.
 
 ## Style mapping (Layout → taffy::Style)
 
@@ -33,8 +41,8 @@ Container side (how a node lays out its children):
 | ------------------ | ---------------------------------------- |
 | mode `None`        | `display: Block`; children positioned    |
 |                    | `Absolute` at their authored offsets —   |
-|                    | the passthrough, asserted equal to       |
-|                    | `commit()`'s fixed resolution            |
+|                    | the passthrough, asserted equal (for     |
+|                    | fixed-sized trees) to `commit()`         |
 | mode `Horizontal`/ | `display: Flex` + `flex_direction`,      |
 | `Vertical`         | `gap`, `padding`, `justify_content` from |
 |                    | `MainAxisAlign`, `align_items` from      |
@@ -52,9 +60,25 @@ authored axis is main):
 |         |                                     | Stretch`, size auto |
 
 `min_width`/`max_width`/`min_height`/`max_height` map to
-`min_size`/`max_size` (absent = auto). A `Fill` child under a
-mode-`None` parent has no free-space axis and behaves as `Hug`; the
-validator diagnoses that construct at its own slice (P4).
+`min_size`/`max_size` (absent = auto).
+
+Degenerate constructs, all pinned by test and named here for the
+validator slice to diagnose (P4):
+
+- A `Fill` child under a mode-`None` parent has no free-space axis
+  and behaves as `Hug`.
+- A `Fill` root has nothing to fill (no viewport concept yet) and
+  collapses to content size.
+- `Hug` keeps its content-wrapping meaning under a mode-`None`
+  parent too (a hug group inside a plain frame is real vocabulary):
+  a childless `Hug` node sizes to zero — authored width/height feed
+  `Fixed` sizing only. The `commit()`-equivalence guarantee therefore
+  applies to fixed-sized trees; trees using `Hug`/`Fill` are solver
+  vocabulary the fixed resolve deliberately ignores.
+
+The single authored `gap` maps to both taffy gap axes; the cross-axis
+half is inert until wrap (v0.8), which decides whether row and column
+gaps become separate authored properties.
 
 ## Trace
 
