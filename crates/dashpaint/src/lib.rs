@@ -57,6 +57,19 @@ pub struct Vec2 {
     pub y: f32,
 }
 
+/// A row-major 2×3 affine transform: maps (x, y) to
+/// (a·x + b·y + tx, c·x + d·y + ty). Same shape as `dashbuf`'s `Mat23`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Mat23 {
+    pub a: f32,
+    pub b: f32,
+    pub c: f32,
+    pub d: f32,
+    pub tx: f32,
+    pub ty: f32,
+}
+
 /// One gradient color stop; `offset` is normalized 0..1 along the
 /// gradient's primary axis.
 #[repr(C)]
@@ -98,6 +111,70 @@ pub enum ScaleMode {
     Tile,
 }
 
+/// Encoded image container formats a painter can decode. Mirrors
+/// `dashbuf`'s `ImageFormat`; GPU-native containers (KTX2, DESIGN_1.md
+/// §9) arrive as new variants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageFormat {
+    Png,
+}
+
+/// One encoded image asset — bytes plus their container format. Each
+/// painter decodes with its own machinery.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageAsset {
+    pub format: ImageFormat,
+    pub bytes: Vec<u8>,
+}
+
+/// The image-asset table (mirrors `dashbuf`'s `Document.images`):
+/// dense, indexed by [`PaintKind::Image`]'s `image` field. Part of the
+/// painter input since the v0.3 vocabulary
+/// (`docs/decisions/image-assets-cross-boundary-b.md`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ImageTable {
+    entries: Vec<ImageAsset>,
+}
+
+impl ImageTable {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Appends an asset and returns its index — the value a
+    /// [`PaintKind::Image`] `image` field holds to reference it.
+    pub fn push(&mut self, asset: ImageAsset) -> u32 {
+        let index =
+            u32::try_from(self.entries.len()).expect("image table exceeds u32::MAX entries");
+        self.entries.push(asset);
+        index
+    }
+
+    pub fn get(&self, index: u32) -> Option<&ImageAsset> {
+        self.entries.get(index as usize)
+    }
+
+    /// Resolves an image index. Panics on an out-of-range index —
+    /// indices are validated upstream (P4), same contract as
+    /// [`PaintTable::resolve`].
+    pub fn resolve(&self, index: u32) -> &ImageAsset {
+        self.get(index).unwrap_or_else(|| {
+            panic!(
+                "image index {index} out of range ({} assets): image indices are validated upstream (P4)",
+                self.entries.len()
+            )
+        })
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
 /// Stroke placement relative to the node's outline. Painters that only
 /// stroke on center lower Inside/Outside by path expansion
 /// (DESIGN_1.md §8.1).
@@ -132,9 +209,20 @@ pub struct CornerRadii {
 /// variants.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PaintKind {
-    Solid { color: Color },
+    Solid {
+        color: Color,
+    },
     Gradient(Gradient),
-    Image { image: u32, scale_mode: ScaleMode },
+    Image {
+        /// Index into the [`ImageTable`].
+        image: u32,
+        scale_mode: ScaleMode,
+        /// Normalized image-space transform for [`ScaleMode::Crop`];
+        /// identity when `None`.
+        transform: Option<Mat23>,
+        /// Tile magnification for [`ScaleMode::Tile`].
+        tile_scale: f32,
+    },
 }
 
 /// One paint-table entry (DESIGN_1.md §5's paint-table row: paint-kind
@@ -217,7 +305,9 @@ impl PaintTable {
 /// or moves anything (P2).
 pub trait Painter {
     /// Paints every rect, resolving each [`RectEntry::paint`] index
-    /// against `paints` (use [`PaintTable::resolve`]).
+    /// against `paints` (use [`PaintTable::resolve`]); image fills
+    /// resolve their asset in `images` (an empty table is valid input
+    /// for image-less scenes).
     ///
     /// Slice order defines stacking: a later entry composites over an
     /// earlier one (DFS order encodes document stacking). The composited
@@ -229,5 +319,5 @@ pub trait Painter {
     /// (P4), so there is no legitimate runtime failure. An out-of-range
     /// `paint` index is a broken contract between crates;
     /// [`PaintTable::resolve`] centralizes the panic for that case.
-    fn paint(&mut self, rects: &[RectEntry], paints: &PaintTable);
+    fn paint(&mut self, rects: &[RectEntry], paints: &PaintTable, images: &ImageTable);
 }

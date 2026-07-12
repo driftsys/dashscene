@@ -6,7 +6,7 @@
 //! vocabulary this painter cannot draw yet panics by name — story #14
 //! implements it (P4: never a silent drop).
 
-use dashpaint::{CornerRadii, PaintKind, PaintTable, Painter, RectEntry};
+use dashpaint::{CornerRadii, ImageTable, PaintKind, PaintTable, Painter, RectEntry};
 use skia_safe::{AlphaType, Color4f, ColorType, EncodedImageFormat, ImageInfo, Rect, surfaces};
 
 /// The reference painter: draws boundary-B input onto a CPU raster
@@ -69,7 +69,7 @@ impl SkiaPainter {
 }
 
 impl Painter for SkiaPainter {
-    fn paint(&mut self, rects: &[RectEntry], paints: &PaintTable) {
+    fn paint(&mut self, rects: &[RectEntry], paints: &PaintTable, _images: &ImageTable) {
         let canvas = self.surface.canvas();
         canvas.clear(skia_safe::colors::TRANSPARENT);
         // One paint object for every solid fill; anti-aliasing stays
