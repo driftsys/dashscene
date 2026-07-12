@@ -4,7 +4,8 @@
     "jsr:@std/assert@1": "1.0.19",
     "jsr:@std/internal@^1.0.12": "1.0.14",
     "npm:@figma/plugin-typings@1": "1.130.0",
-    "npm:@figma/rest-api-spec@0.28": "0.28.0"
+    "npm:@figma/rest-api-spec@0.41": "0.41.0",
+    "npm:@figma/rest-api-spec@0.41.0": "0.41.0"
   },
   "jsr": {
     "@std/assert@1.0.19": {
@@ -21,8 +22,8 @@
     "@figma/plugin-typings@1.130.0": {
       "integrity": "sha512-kz+eU4TXBr99YrMyF2/WtcsdS6K4Ksy3datZZtuCUUSDPRknJAVLZpjhBESCd0tCtHRWKeo4l/I7Aze6lHB52A=="
     },
-    "@figma/rest-api-spec@0.28.0": {
-      "integrity": "sha512-WOUX4lXCDNeK6lbGQlLQcbcMkVetj9wsNf8WMJgjbRovJPSBmmNPqa8JzDBezmjTiRBsj176/Y0oM5yNnhyBJw=="
+    "@figma/rest-api-spec@0.41.0": {
+      "integrity": "sha512-v43HkJE+ZRB0G1MXwN85LKhOE65WG1205kSCjGihdzNN2U9DyOz4Hnb7swjv+9dWyhJ+aYSQt76lFKIFqrLGNQ=="
     }
   },
   "workspace": {
@@ -31,7 +32,7 @@
       "jsr:@std/path@1",
       "jsr:@std/testing@1",
       "npm:@figma/plugin-typings@1",
-      "npm:@figma/rest-api-spec@0.28"
+      "npm:@figma/rest-api-spec@0.41"
     ]
   }
 }

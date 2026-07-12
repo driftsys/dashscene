@@ -1,10 +1,12 @@
 /**
- * Smoke test: confirms `deno test` is wired up correctly and every
- * importer stub throws its documented "not yet implemented" error
- * (real implementation begins alongside v0.7, DESIGN_1.md §11).
+ * Smoke test: confirms `deno test` is wired up correctly, that
+ * `createFigmaClient` is reachable through the public entry point, and
+ * that the remaining importer stubs throw their documented "not yet
+ * implemented" error (real implementation begins alongside v0.7,
+ * DESIGN_1.md §11).
  */
 
-import { assertRejects, assertThrows } from "@std/assert";
+import { assertEquals, assertRejects, assertThrows } from "@std/assert";
 import {
   compileViaWasm,
   computeClosure,
@@ -13,12 +15,10 @@ import {
   trim,
 } from "./mod.ts";
 
-Deno.test("createFigmaClient stub throws not-yet-implemented", () => {
-  assertThrows(
-    () => createFigmaClient({ token: "x" }),
-    Error,
-    "not yet implemented",
-  );
+Deno.test("createFigmaClient returns a client exposing file and fileMeta", () => {
+  const client = createFigmaClient({ token: "x" });
+  assertEquals(typeof client.file, "function");
+  assertEquals(typeof client.fileMeta, "function");
 });
 
 Deno.test("computeClosure stub throws not-yet-implemented", () => {
