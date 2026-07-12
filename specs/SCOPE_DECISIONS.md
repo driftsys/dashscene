@@ -753,14 +753,17 @@ the FlatBuffers toolchain gives, against the pinned versions (`flatc`
 issue.
 
 - **A single flatbuffer cannot express DESIGN §5's section
-  discipline.** Content alignment is capped at 32 bytes toolchain-wide
-  (no page alignment); the Rust builder exposes no alignment API and
-  Rust codegen silently ignores vector `force_align`; vtable
-  deduplication is global and not disableable, so hot tables can
-  reference vtable bytes physically located among cold data; the
-  verifier has no subtree scoping, so a hot-only load gate would need
-  a custom partial verifier; and sections have no stable byte ranges
-  to hash.
+  discipline on the Rust producer path.** Page alignment has no
+  supported route: `flatc` caps struct `force_align` at 32, vector
+  `force_align` above 32 is honored only by C++ codegen (Rust codegen
+  silently ignores it), and the Rust `FlatBufferBuilder` has no direct
+  alignment method. Vtable deduplication in the Rust builder is
+  unconditional (C++ has `DedupVtables(bool)`; Rust has no
+  equivalent), so hot tables can reference vtable bytes physically
+  located among cold data. The verifier's supported entry points have
+  no subtree scoping, so a hot-only load gate would have to be
+  hand-composed from lower-level verifier primitives. And sections
+  have no stable byte ranges to hash.
 - **Direction: `.dsb` becomes a thin container** — a fixed envelope
   (magic, version, section table with per-section id, flags, offset,
   length, hash) framing one complete flatbuffer per section, each with
@@ -772,8 +775,10 @@ issue.
 - **Timing:** v0 keeps single-flatbuffer `.dsb` files; the envelope
   lands with the v1 loading-performance work (R5 mmap measurements).
 - **Carried into the schema stories (#8, #13, #20, #26):**
-  cross-table references stay integer indices — never flatbuffer
+  cross-table references are integer indices — never flatbuffer
   offsets reaching into another future section — and every
   section-destined table (node tree, layout, paint, variant,
   text/strings, heavy decor) stays one offset away from `Document`, so
-  lifting it to a section root later is mechanical.
+  lifting it to a section root later is mechanical. The v0.1 schema's
+  inline `Node.paint` is the one deviation; story #13 lifts it into a
+  `Document`-level paint table plus index.
