@@ -38,12 +38,13 @@ reworked to option 1 before merge.
   per node (real documents have thousands of nodes over tens of
   styles).
 - The pool's index model matches boundary B exactly —
-  `dashscene-core`'s committed output already resolves paints by `u32`
-  index with `u32::MAX` as the no-paint sentinel
-  (`docs/decisions/core-committed-output-shape.md`), and
-  `Node.paint_entry` uses the same sentinel convention as
-  `Node.parent`. Lowering becomes an index-preserving copy rather than
-  per-node hash-consing.
+  `dashscene-core`'s committed output resolves paints by table index
+  (typed `PaintIndex` since story #4), and `Node.paint_entry` uses the
+  same `uint32::MAX` sentinel convention as `Node.parent`. The sentinel
+  is document-level only: since story #4 the committed output has no
+  sentinel — every rect resolves to a pool entry
+  (`docs/decisions/boundary-b-unification.md`). Lowering stays an
+  index-preserving copy rather than per-node hash-consing.
 - Removing or retyping `paint` (option 3) would violate the append-only
   discipline R7 relies on. No crate outside `dashbuf`'s own tests reads
   `Node.paint` today (checked on `main`: `dashscene-core` has no

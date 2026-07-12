@@ -200,7 +200,6 @@ fn unfilled_nodes_resolve_to_one_shared_empty_paint_entry() {
     assert_eq!(scene.rects()[0].paint, scene.rects()[1].paint);
     let entry = scene.paints().resolve(scene.rects()[0].paint);
     assert_eq!(entry, &PaintEntry::default());
-    assert_eq!(entry.fill, None);
     assert_eq!(scene.paints().len(), 1);
 }
 

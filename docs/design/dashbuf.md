@@ -39,7 +39,9 @@ against an older schema version keeps working unchanged.
   `Document.paints: [Paint]` (DESIGN §5's "dedup style pool"),
   referenced by `Node.paint_entry: uint32` — `uint32::MAX` (NO_PAINT)
   means the node draws nothing, the same sentinel convention as
-  `Node.parent` and as `dashscene-core`'s committed output. When
+  `Node.parent`. The sentinel is document-level only: the committed
+  runtime output has no sentinel since story #4 — every rect resolves
+  to a pool entry (`docs/decisions/boundary-b-unification.md`). When
   `paint_entry` is set it supersedes `paint`. See
   `docs/decisions/document-paint-pool-and-legacy-paint-field.md` for
   why both exist and the condition under which `paint` is removed.
@@ -83,8 +85,8 @@ All types are generated from `crates/dashbuf/schema/dashbuf.fbs`:
   `corners: CornerRadii`, `clip: bool = false`.
 - `Node` (table) — `name: string`, `parent: uint32` (`uint32::MAX`
   sentinel for roots), `layout: FixedSizeLayout`, `paint: SolidFill`
-  (legacy), `paint_entry: uint32 = uint32::MAX` (NO_PAINT sentinel;
-  index into `Document.paints`).
+  (legacy), `paint_entry: uint32 = uint32::MAX` (the document-level
+  NO_PAINT sentinel; index into `Document.paints`).
 - `Document` (table, `root_type`) — `nodes: [Node]`, `images: [Image]`,
   `paints: [Paint]`.
 

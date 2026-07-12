@@ -35,8 +35,11 @@ Option 1, with these semantics:
   DESIGN §6.2).
 - `Prop::Fill` sets a fill but cannot clear one back to unfilled —
   v0.1 has no consumer that unfills a node, and a transparent fill is
-  not the same committed output (it interns a paint entry instead of
-  `NO_PAINT`). A clear operation is additive when a consumer needs it.
+  not the same committed output (a transparent solid interns a solid
+  entry; an unfilled node interns the shared fill-less entry —
+  `PaintEntry::default()` since story #4,
+  `docs/decisions/boundary-b-unification.md`). A clear operation is
+  additive when a consumer needs it.
 - API misuse (an out-of-range `NodeId`) panics with a message naming
   the id; a `NodeId` from another arena whose index is in range is
   not detected. P4's named-diagnostics rule covers design vocabulary,

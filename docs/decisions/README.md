@@ -27,7 +27,8 @@ it in. Per-story decisions land here directly:
   (story #2); binds `dashlang` (#5) and the v0.4 variants work.
 - [core-committed-output-shape.md](core-committed-output-shape.md) —
   `dashscene-core` owns its boundary-B output types; `NO_PAINT` sentinel and
-  dirty-set semantics (story #2); binds the story #4 wiring.
+  dirty-set semantics (story #2). Reconciled at story #4 (types now
+  `dashpaint`'s, sentinel gone) — see boundary-b-unification.md.
 - [document-paint-pool-and-legacy-paint-field.md](document-paint-pool-and-legacy-paint-field.md)
   — v0.3 paint lives in `Document.paints`, a dedup pool indexed by
   `Node.paint_entry`; the legacy `paint` field stays until a coordinated

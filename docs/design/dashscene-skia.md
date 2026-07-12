@@ -64,7 +64,7 @@ All in `crates/dashscene-skia/src/lib.rs`:
   `unimplemented!`, naming story #14 in the message. This is not a
   silent drop (P4): v0.1 producers cannot emit these (core's `Prop`
   only stages solid fill), so reaching the panic means a producer
-  outran the painter, not that the painter silently dropped input.
+  emitted vocabulary the painter does not implement yet, not that the painter silently dropped input.
 
 ## Testing
 
