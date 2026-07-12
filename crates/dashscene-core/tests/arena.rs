@@ -272,3 +272,83 @@ fn a_no_op_commit_has_an_empty_dirty_set() {
     assert!(arena.committed().dirty().is_empty());
     assert_eq!(arena.committed().generation(), 2);
 }
+
+#[test]
+fn a_fill_change_marks_the_rect_dirty_even_when_its_paint_index_is_stable() {
+    const BLUE: Color = Color {
+        r: 0.0,
+        g: 0.0,
+        b: 1.0,
+        a: 1.0,
+    };
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let node = txn.add_node(None, None);
+    txn.set_prop(node, Prop::Fill(RED));
+    txn.commit();
+
+    // The re-interned paint table assigns BLUE index 0 again, so the
+    // rect entry's bits are unchanged — but its resolved color is not.
+    let mut txn = arena.open();
+    txn.set_prop(node, Prop::Fill(BLUE));
+    txn.commit();
+
+    assert_eq!(arena.committed().rects()[0].paint, 0);
+    assert_eq!(arena.committed().dirty(), [0]);
+}
+
+#[test]
+fn swapped_fills_mark_both_rects_dirty() {
+    const BLUE: Color = Color {
+        r: 0.0,
+        g: 0.0,
+        b: 1.0,
+        a: 1.0,
+    };
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let a = txn.add_node(None, None);
+    let b = txn.add_node(None, None);
+    txn.set_prop(a, Prop::Fill(RED));
+    txn.set_prop(b, Prop::Fill(BLUE));
+    txn.commit();
+
+    // Swapping the fills keeps both paint indices bit-identical
+    // (first-use interning assigns 0 and 1 again) while both resolved
+    // colors change.
+    let mut txn = arena.open();
+    txn.set_prop(a, Prop::Fill(BLUE));
+    txn.set_prop(b, Prop::Fill(RED));
+    txn.commit();
+
+    assert_eq!(arena.committed().dirty(), [0, 1]);
+}
+
+#[test]
+fn a_node_added_in_a_dropped_txn_persists_and_publishes_with_the_next_commit() {
+    let mut arena = Arena::new();
+    {
+        let mut txn = arena.open();
+        txn.add_node(None, Some("pending"));
+    } // dropped without commit: staged, not rolled back
+    assert!(arena.committed().rects().is_empty());
+
+    arena.open().commit();
+    assert_eq!(arena.committed().rects().len(), 1);
+}
+
+#[test]
+#[should_panic(expected = "is not a node of this arena")]
+fn an_out_of_range_node_id_panics_with_a_clear_message() {
+    let mut arena_a = Arena::new();
+    let mut txn = arena_a.open();
+    txn.add_node(None, None);
+    let foreign = txn.add_node(None, None); // NodeId(1)
+    txn.commit();
+
+    // A second arena with fewer nodes: the foreign id is out of range.
+    let mut arena_b = Arena::new();
+    let mut txn = arena_b.open();
+    txn.add_node(None, None);
+    txn.set_prop(foreign, Prop::X(1.0));
+}
