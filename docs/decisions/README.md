@@ -70,4 +70,9 @@ it in. Per-story decisions land here directly:
   decoded pixels in unpremultiplied RGBA8888, never encoded bytes (story #6;
   resolves debt #86).
 
+- [dsb-sectioned-container.md](dsb-sectioned-container.md) — spike #56:
+  `.dsb` becomes a thin sectioned container at v1 (fixed envelope +
+  section table, one flatbuffer per section); binds the schema stories
+  to integer-index cross-references.
+
 See the `sdd-working-memory-lifecycle` rule.
