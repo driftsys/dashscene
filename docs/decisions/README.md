@@ -55,4 +55,9 @@ it in. Per-story decisions land here directly:
   publish order updated), every committed rect resolves (no `NO_PAINT`
   sentinel), and paint indices are the `PaintIndex` newtype.
 
+- [dsb-sectioned-container.md](dsb-sectioned-container.md) — spike #56:
+  `.dsb` becomes a thin sectioned container at v1 (fixed envelope +
+  section table, one flatbuffer per section); binds the schema stories
+  to integer-index cross-references.
+
 See the `sdd-working-memory-lifecycle` rule.
