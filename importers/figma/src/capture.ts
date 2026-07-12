@@ -35,6 +35,8 @@ export interface FigmaCaptureClientOptions {
   readonly fetchFn?: typeof fetch;
   /** Injectable for tests; defaults to a real setTimeout wait. */
   readonly sleep?: (ms: number) => Promise<void>;
+  /** Called with a line before each Retry-After sleep; defaults to no-op. */
+  readonly log?: (line: string) => void;
 }
 
 /**
@@ -49,10 +51,15 @@ export interface FileMeta {
 const DEFAULT_BASE_URL = "https://api.figma.com";
 const DEFAULT_RETRY_AFTER_SECONDS = 60;
 const MAX_RATE_LIMIT_RETRIES = 3;
+/** Retry-After values above this are not honored automatically. */
+const MAX_RETRY_AFTER_SECONDS = 300;
+
+const REQUIRED_SCOPES =
+  "file_content:read, file_metadata:read, library_content:read";
 
 const AUTH_HINT = "the FIGMA_TOKEN PAT is expired (90-day cap, rotate at " +
-  "~75 days), revoked, or missing a required scope (file_content:read, " +
-  "file_metadata:read, library_content:read) — see SCOPE_DECISIONS.md §11";
+  "~75 days), revoked, or missing a required scope (" + REQUIRED_SCOPES +
+  ") — see SCOPE_DECISIONS.md §11";
 
 function retryAfterSeconds(header: string | null): number {
   const seconds = Number(header);
@@ -66,15 +73,18 @@ export class FigmaCaptureClient {
   readonly #baseUrl: string;
   readonly #fetchFn: typeof fetch;
   readonly #sleep: (ms: number) => Promise<void>;
+  readonly #log: (line: string) => void;
   /** Serialized limiter (§11): requests chain on this queue. */
   #queue: Promise<unknown> = Promise.resolve();
 
   constructor(options: FigmaCaptureClientOptions) {
     this.#token = options.token;
-    this.#baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
+    const baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
+    this.#baseUrl = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
     this.#fetchFn = options.fetchFn ?? fetch;
     this.#sleep = options.sleep ??
       ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.#log = options.log ?? (() => {});
   }
 
   fileMeta(fileKey: string): Promise<FileMeta> {
@@ -106,6 +116,17 @@ export class FigmaCaptureClient {
       if (response.status === 429 && attempt < MAX_RATE_LIMIT_RETRIES) {
         const seconds = retryAfterSeconds(response.headers.get("Retry-After"));
         await response.body?.cancel();
+        if (seconds > MAX_RETRY_AFTER_SECONDS) {
+          throw new Error(
+            `figma-rate-limit: GET ${url} returned 429 with Retry-After ` +
+              `${seconds}s, exceeding the ${MAX_RETRY_AFTER_SECONDS}s cap ` +
+              "— not waiting automatically; the operator must decide",
+          );
+        }
+        this.#log(
+          `rate limited (429), waiting ${seconds}s before retry ` +
+            `${attempt + 1}/${MAX_RATE_LIMIT_RETRIES}: GET ${url}`,
+        );
         await this.#sleep(seconds * 1000);
         continue;
       }
@@ -117,9 +138,19 @@ export class FigmaCaptureClient {
       }
       if (!response.ok) {
         await response.body?.cancel();
+        if (response.status === 429) {
+          throw new Error(
+            `GET ${url} returned 429 after ${MAX_RATE_LIMIT_RETRIES} retries`,
+          );
+        }
         throw new Error(`GET ${url} returned ${response.status}`);
       }
-      return await response.json();
+      try {
+        return await response.json();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`GET ${url} returned invalid JSON: ${message}`);
+      }
     }
   }
 }
@@ -127,8 +158,11 @@ export class FigmaCaptureClient {
 export interface CaptureResult {
   readonly name: string;
   readonly fileKey: string;
-  readonly action: "captured" | "unchanged";
-  readonly version: string;
+  readonly action: "captured" | "unchanged" | "failed";
+  /** Absent when action is "failed" — no version was captured. */
+  readonly version?: string;
+  /** Present only when action is "failed"; the caught error's message. */
+  readonly error?: string;
 }
 
 export interface CaptureFixturesOptions {
@@ -140,9 +174,17 @@ export interface CaptureFixturesOptions {
   readonly log?: (line: string) => void;
 }
 
+/** Fixture `name` and `fileKey` values must match this pattern. */
+const VALID_FIXTURE_TOKEN = /^[A-Za-z0-9_-]+$/;
+/** Reserved: would make the CLI overwrite the manifest file itself. */
+const RESERVED_FIXTURE_NAME = "manifest";
+
 export function parseManifest(text: string): FixtureManifest {
-  const parsed = JSON.parse(text) as { fixtures?: unknown };
-  if (!Array.isArray(parsed.fixtures) || parsed.fixtures.length === 0) {
+  const parsed = JSON.parse(text) as { fixtures?: unknown } | null;
+  if (
+    parsed === null || typeof parsed !== "object" ||
+    !Array.isArray(parsed.fixtures) || parsed.fixtures.length === 0
+  ) {
     throw new Error("manifest has no fixtures array");
   }
   const fixtures = parsed.fixtures.map((entry, index): FixtureEntry => {
@@ -150,8 +192,27 @@ export function parseManifest(text: string): FixtureManifest {
     if (typeof name !== "string" || name.length === 0) {
       throw new Error(`manifest fixture at index ${index} has no name`);
     }
+    if (!VALID_FIXTURE_TOKEN.test(name)) {
+      throw new Error(
+        `manifest fixture "${name}" has an invalid name (must match ` +
+          `${VALID_FIXTURE_TOKEN})`,
+      );
+    }
+    if (name === RESERVED_FIXTURE_NAME) {
+      throw new Error(
+        `manifest fixture "${name}" uses the reserved name ` +
+          `"${RESERVED_FIXTURE_NAME}" (it would overwrite the manifest ` +
+          "file itself)",
+      );
+    }
     if (typeof fileKey !== "string" || fileKey.length === 0) {
       throw new Error(`manifest fixture "${name}" has no fileKey`);
+    }
+    if (!VALID_FIXTURE_TOKEN.test(fileKey)) {
+      throw new Error(
+        `manifest fixture "${name}" has an invalid fileKey "${fileKey}" ` +
+          `(must match ${VALID_FIXTURE_TOKEN})`,
+      );
     }
     return { name, fileKey };
   });
@@ -165,17 +226,29 @@ export async function captureFixtures(
   const log = options.log ?? (() => {});
   const results: CaptureResult[] = [];
   for (const { name, fileKey } of manifest.fixtures) {
-    const captured = await readCapturedVersion(name);
-    const meta = await client.fileMeta(fileKey);
-    if (captured !== null && meta.version === captured) {
-      log(`${name}: unchanged at version ${captured}, skipping`);
-      results.push({ name, fileKey, action: "unchanged", version: captured });
-      continue;
+    try {
+      const captured = await readCapturedVersion(name);
+      if (captured !== null) {
+        const meta = await client.fileMeta(fileKey);
+        if (meta.version === captured) {
+          log(`${name}: unchanged at version ${captured}, skipping`);
+          results.push(
+            { name, fileKey, action: "unchanged", version: captured },
+          );
+          continue;
+        }
+      }
+      const file = await client.file(fileKey);
+      await writeCapture(name, JSON.stringify(file, null, 2) + "\n");
+      log(`${name}: captured version ${file.version}`);
+      results.push(
+        { name, fileKey, action: "captured", version: file.version },
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log(`${name}: failed — ${message}`);
+      results.push({ name, fileKey, action: "failed", error: message });
     }
-    const file = await client.file(fileKey);
-    await writeCapture(name, JSON.stringify(file, null, 2) + "\n");
-    log(`${name}: captured version ${file.version}`);
-    results.push({ name, fileKey, action: "captured", version: file.version });
   }
   return results;
 }
@@ -185,8 +258,8 @@ if (import.meta.main) {
   if (!token) {
     console.error(
       "FIGMA_TOKEN is not set. Create a Figma PAT with the scopes " +
-        "file_content:read, file_metadata:read, and library_content:read " +
-        "(SCOPE_DECISIONS.md §11) and export it. Never commit it.",
+        REQUIRED_SCOPES + " (SCOPE_DECISIONS.md §11) and export it. " +
+        "Never commit it.",
     );
     Deno.exit(1);
   }
@@ -196,7 +269,7 @@ if (import.meta.main) {
   );
   const results = await captureFixtures({
     manifest,
-    client: new FigmaCaptureClient({ token }),
+    client: new FigmaCaptureClient({ token, log: (line) => console.log(line) }),
     readCapturedVersion: async (name) => {
       try {
         const text = await Deno.readTextFile(
@@ -213,7 +286,12 @@ if (import.meta.main) {
     log: (line) => console.log(line),
   });
   const captured = results.filter((r) => r.action === "captured").length;
+  const failed = results.filter((r) => r.action === "failed").length;
+  const unchanged = results.length - captured - failed;
   console.log(
-    `done: ${captured} captured, ${results.length - captured} unchanged`,
+    `done: ${captured} captured, ${unchanged} unchanged, ${failed} failed`,
   );
+  if (failed > 0) {
+    Deno.exit(1);
+  }
 }
