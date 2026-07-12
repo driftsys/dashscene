@@ -35,7 +35,7 @@ against an older schema version keeps working unchanged.
 - `Node.layout: FixedSizeLayout` carries the authored x/y offset plus
   width/height — the datum `Fixed` sizing uses, and where the offset
   applies under a `mode = None` parent. Since v0.2 (story #8),
-  `Node.flex: FlexContainer` and `Node.constraints: LayoutConstraints`
+  `Node.flex: LayoutContainer` and `Node.constraints: LayoutConstraints`
   are two additional optional tables carrying the flex-layout
   vocabulary (mode NONE/H/V, per-axis hug/fill/fixed sizing, gap,
   padding, alignment, min/max) as stored intent — no Taffy yet, the
@@ -125,7 +125,7 @@ All types are generated from `crates/dashbuf/schema/dashbuf.fbs`:
 - `CrossAxisAlign` (`uint8` enum) — `Start`, `Center`, `End`;
   `Baseline` appends at v0.8 (Q-4).
 - `EdgeInsets` — `left`, `top`, `right`, `bottom: float32`.
-- `FlexContainer` (table) — container-side v0.2 flex properties:
+- `LayoutContainer` (table) — container-side v0.2 flex properties:
   `mode: LayoutMode`, `gap: float32`, `padding: EdgeInsets`,
   `main_align: MainAxisAlign`, `cross_align: CrossAxisAlign`.
 - `LayoutConstraints` (table) — child-side v0.2 flex properties, valid
@@ -141,7 +141,7 @@ All types are generated from `crates/dashbuf/schema/dashbuf.fbs`:
   node without text), `text_style: uint32 = uint32::MAX` (index into
   `Document.text_styles`, or the sentinel for unstyled text — a
   diagnostic once text validation exists, never a silent default),
-  `flex: FlexContainer`, `constraints: LayoutConstraints` (both
+  `flex: LayoutContainer`, `constraints: LayoutConstraints` (both
   optional; absent = mode `None` / fully default constraints).
 - `Document` (table, `root_type`) — `nodes: [Node]`, `images: [Image]`,
   `paints: [Paint]`, `strings: [string]`, `text_styles: [TextStyle]`.
@@ -152,7 +152,7 @@ All types are generated from `crates/dashbuf/schema/dashbuf.fbs`:
 criterion E6, `specs/DESIGN_1.md` §11): a document built in memory
 survives a flatbuffer round trip byte-for-byte-equivalent in its decoded
 fields, including the root-node parent sentinel. It also covers the
-v0.2 flex vocabulary (story #8): a node carrying every `FlexContainer`
+v0.2 flex vocabulary (story #8): a node carrying every `LayoutContainer`
 and `LayoutConstraints` field round-trips field-for-field, and a node
 without either table reads back absent.
 
@@ -211,7 +211,9 @@ lands with the painter work in #14 (see also
   (out of scope until later slices); #28's typeset consumption of the
   string and style pools. The story #9 Taffy solve consumes
   `dashscene-core`'s mirrored intent (`Arena::layout`), not these
-  tables directly.
+  tables directly — nothing outside `dashbuf` links the generated
+  code until a `.dsb` load path exists (v0.3+); see
+  `docs/decisions/flex-vocabulary-shape.md`.
 - Related decisions: `docs/decisions/flex-vocabulary-shape.md`,
   `docs/decisions/document-paint-pool-and-legacy-paint-field.md`,
   `docs/decisions/paint-entry-composition.md`,
