@@ -52,6 +52,20 @@ Rejected — automatic lowering inside `commit`/`commit_with`: makes
 every commit pay for a tree scan and hides a semantic transform inside
 a mechanical operation. Lowering is an explicit producer pass.
 
+**Where the lowering suite lives (revisit trigger).** DESIGN_1.md §5
+and SCOPE_DECISIONS.md §4 place all four Figma≠CSS lowerings (negative
+gap, canvas stacking, strokes-in-layout, scale-to-inset) in the
+compiler (`dashc`/`scdc`). Negative gap is the first to be
+implemented; the others are importer scope (v0.3+). It lands as a
+single `dashscene-core` `Txn` method — the shared building block
+`dashc` calls — rather than a dedicated lowering module, because
+abstracting a lowering _suite_ around one member would be premature.
+When the second lowering lands, revisit: if lowerings accumulate as
+core `Txn` methods, extract them into a dedicated lowering module (or
+a `dashc`-side pass that reuses these primitives) so the runtime
+arena's staged-mutation API does not accrete a compiler pass suite.
+Recorded here so that revisit is deliberate, not forgotten.
+
 **Known property (CSS margin semantics).** The lowered margins behave
 as CSS/Taffy margins: a negative margin on a `Fill` child returns its
 absolute value to the container's free space, so `Fill` siblings grow.
