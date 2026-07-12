@@ -455,7 +455,15 @@ fn layout_defaults_match_the_schema_defaults() {
     let layout = arena.layout(node);
     assert_eq!(layout.mode, LayoutMode::None);
     assert_eq!(layout.gap, 0.0);
-    assert_eq!(layout.padding, [0.0; 4]);
+    assert_eq!(
+        (
+            layout.padding.left,
+            layout.padding.top,
+            layout.padding.right,
+            layout.padding.bottom
+        ),
+        (0.0, 0.0, 0.0, 0.0)
+    );
     assert_eq!(layout.main_align, MainAxisAlign::Start);
     assert_eq!(layout.cross_align, CrossAxisAlign::Start);
     assert_eq!(layout.sizing_h, AxisSizing::Fixed);
@@ -503,7 +511,15 @@ fn every_flex_prop_sets_its_layout_field() {
     assert_eq!((layout.width, layout.height), (30.0, 40.0));
     assert_eq!(layout.mode, LayoutMode::Horizontal);
     assert_eq!(layout.gap, 8.0);
-    assert_eq!(layout.padding, [1.0, 2.0, 3.0, 4.0]);
+    assert_eq!(
+        (
+            layout.padding.left,
+            layout.padding.top,
+            layout.padding.right,
+            layout.padding.bottom
+        ),
+        (1.0, 2.0, 3.0, 4.0)
+    );
     assert_eq!(layout.main_align, MainAxisAlign::SpaceBetween);
     assert_eq!(layout.cross_align, CrossAxisAlign::Center);
     assert_eq!(layout.sizing_h, AxisSizing::Hug);
@@ -516,10 +532,11 @@ fn every_flex_prop_sets_its_layout_field() {
 
 #[test]
 fn flex_props_do_not_change_committed_output_yet() {
-    use dashscene_core::{AxisSizing, LayoutMode, MainAxisAlign};
+    use dashscene_core::{AxisSizing, CrossAxisAlign, LayoutMode, MainAxisAlign};
 
     // Until story #9's Taffy solve, commit resolves fixed geometry
-    // only: flex intent is stored, not solved.
+    // only: flex intent is stored, not solved. Every flex prop is set
+    // here so a partial leak into the resolve step cannot pass.
     let mut arena = Arena::new();
     let mut txn = arena.open();
     let root = txn.add_node(None, None);
@@ -534,11 +551,42 @@ fn flex_props_do_not_change_committed_output_yet() {
     let mut txn = arena.open();
     txn.set_prop(root, Prop::Mode(LayoutMode::Horizontal));
     txn.set_prop(root, Prop::Gap(4.0));
+    txn.set_prop(
+        root,
+        Prop::Padding {
+            left: 1.0,
+            top: 2.0,
+            right: 3.0,
+            bottom: 4.0,
+        },
+    );
     txn.set_prop(root, Prop::MainAlign(MainAxisAlign::Center));
+    txn.set_prop(root, Prop::CrossAlign(CrossAxisAlign::End));
     txn.set_prop(child, Prop::SizingH(AxisSizing::Fill));
+    txn.set_prop(child, Prop::SizingV(AxisSizing::Hug));
     txn.set_prop(child, Prop::MinWidth(1.0));
+    txn.set_prop(child, Prop::MaxWidth(90.0));
+    txn.set_prop(child, Prop::MinHeight(2.0));
+    txn.set_prop(child, Prop::MaxHeight(40.0));
     txn.commit();
 
     assert_eq!(arena.committed().rects(), before.as_slice());
     assert!(arena.committed().dirty().is_empty());
+}
+
+#[test]
+fn roots_and_children_expose_the_intent_tree_in_creation_order() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let first_root = txn.add_node(None, None);
+    let b = txn.add_node(Some(first_root), None);
+    let a = txn.add_node(Some(first_root), None);
+    let second_root = txn.add_node(None, None);
+    let leaf = txn.add_node(Some(b), None);
+    txn.commit();
+
+    assert_eq!(arena.roots(), [first_root, second_root]);
+    assert_eq!(arena.children(first_root), [b, a]);
+    assert_eq!(arena.children(b), [leaf]);
+    assert!(arena.children(leaf).is_empty());
 }

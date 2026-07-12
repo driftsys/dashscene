@@ -68,6 +68,17 @@ pub enum CrossAxisAlign {
     End,
 }
 
+/// Padding insets, named to make edge order unmistakable — solver
+/// mappings (story #9: Taffy's rect is left, right, top, bottom) must
+/// not depend on positional convention.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct EdgeInsets {
+    pub left: f32,
+    pub top: f32,
+    pub right: f32,
+    pub bottom: f32,
+}
+
 /// One node's layout intent — the authored fixed geometry plus the
 /// v0.2 flex vocabulary. Mirrors the `dashbuf` schema shapes
 /// (`FixedSizeLayout`, `LayoutContainer`, `LayoutConstraints`) without
@@ -81,8 +92,7 @@ pub struct Layout {
     pub height: f32,
     pub mode: LayoutMode,
     pub gap: f32,
-    /// Left, top, right, bottom.
-    pub padding: [f32; 4],
+    pub padding: EdgeInsets,
     pub main_align: MainAxisAlign,
     pub cross_align: CrossAxisAlign,
     pub sizing_h: AxisSizing,
@@ -239,6 +249,23 @@ impl Arena {
         self.node_data(node).layout
     }
 
+    /// Root nodes in creation order (document DFS root order).
+    pub fn roots(&self) -> &[NodeId] {
+        &self.roots
+    }
+
+    /// A node's children in creation order (document DFS child
+    /// order).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `node` is out of range for this arena. A `NodeId` from
+    /// another arena whose index happens to be in range is not detected
+    /// — ids are only meaningful for the arena that produced them.
+    pub fn children(&self, node: NodeId) -> &[NodeId] {
+        &self.node_data(node).children
+    }
+
     fn node_data(&self, node: NodeId) -> &NodeData {
         self.nodes
             .get(node.index())
@@ -325,7 +352,14 @@ impl Txn<'_> {
                 top,
                 right,
                 bottom,
-            } => data.layout.padding = [left, top, right, bottom],
+            } => {
+                data.layout.padding = EdgeInsets {
+                    left,
+                    top,
+                    right,
+                    bottom,
+                }
+            }
             Prop::MainAlign(a) => data.layout.main_align = a,
             Prop::CrossAlign(a) => data.layout.cross_align = a,
             Prop::SizingH(v) => data.layout.sizing_h = v,
