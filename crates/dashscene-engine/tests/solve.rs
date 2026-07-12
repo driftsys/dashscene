@@ -379,3 +379,46 @@ fn authored_margins_solve_without_any_lowering() {
     assert_eq!(rect(&arena, 1).0, 0.0);
     assert_eq!(rect(&arena, 2).0, 40.0);
 }
+
+#[test]
+fn a_margin_under_a_passthrough_parent_does_not_shift_the_child() {
+    // Margin is flex-flow vocabulary; under a mode-None (passthrough)
+    // parent, placement is the authored offset and margin is inert —
+    // so TaffySolver must agree with commit()'s FixedSolver, which
+    // ignores margin. (The lowering never margins passthrough
+    // children, but a producer may author one directly.)
+    let build = |arena: &mut Arena, taffy: bool| {
+        let mut txn = arena.open();
+        let root = txn.add_node(None, None);
+        txn.set_prop(root, Prop::Width(300.0));
+        txn.set_prop(root, Prop::Height(200.0));
+        // root mode defaults to None (passthrough).
+        let child = txn.add_node(Some(root), None);
+        txn.set_prop(child, Prop::X(10.0));
+        txn.set_prop(child, Prop::Y(10.0));
+        txn.set_prop(child, Prop::Width(40.0));
+        txn.set_prop(child, Prop::Height(30.0));
+        txn.set_prop(
+            child,
+            Prop::Margin {
+                left: 5.0,
+                top: 6.0,
+                right: 0.0,
+                bottom: 0.0,
+            },
+        );
+        if taffy {
+            txn.commit_with(&mut TaffySolver::new());
+        } else {
+            txn.commit();
+        }
+    };
+    let mut via_taffy = Arena::new();
+    build(&mut via_taffy, true);
+    let mut via_fixed = Arena::new();
+    build(&mut via_fixed, false);
+
+    assert_eq!(via_taffy.committed().rects(), via_fixed.committed().rects());
+    // The child sits at its authored offset, margin ignored.
+    assert_eq!(rect(&via_taffy, 1), (10.0, 10.0, 40.0, 30.0));
+}
