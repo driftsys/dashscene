@@ -18,5 +18,7 @@ here, as future work gardens it in. Per-component records land here directly:
   walking skeleton; v0.3 paint vocabulary, story #13).
 - [dashlang.md](dashlang.md) — the value-tree builder surface and its
   one-commit mapping onto `dashscene-core` (story #5).
+- [atlas-pipeline.md](atlas-pipeline.md) — the build-time font → MSDF glyph
+  atlas + metrics blob pipeline (v0.5, story #27).
 
 See the `sdd-working-memory-lifecycle` rule.

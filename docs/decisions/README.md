@@ -38,5 +38,16 @@ it in. Per-story decisions land here directly:
 - [dashlang-value-tree-builder.md](dashlang-value-tree-builder.md) — the DSL
   is an inert value tree published by one `build` commit (story #5); binds
   the golden harness (#6) and later DSL slices.
+- [atlas-gen-external-pinned-binary.md](atlas-gen-external-pinned-binary.md)
+  — atlas generation shells out to an external, version-pinned
+  `msdf-atlas-gen` binary rather than a pure-Rust crate or a vendored
+  build (#27).
+- [atlas-metrics-postcard-blob.md](atlas-metrics-postcard-blob.md) — the
+  atlas metrics blob is a versioned struct, postcard-serialized, with
+  pre-sorted vectors for canonical bytes (#27).
+- [atlas-closure-cmap-plus-extras.md](atlas-closure-cmap-plus-extras.md)
+  — charset→glyph-id closure is cmap-only for v0.5, with an
+  `extra_glyph_ids` escape hatch; full GSUB closure deferred to #34
+  (#27).
 
 See the `sdd-working-memory-lifecycle` rule.
