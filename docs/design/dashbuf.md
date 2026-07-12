@@ -2,6 +2,7 @@
 
     crate    crates/dashbuf
     covers   v0.1 walking skeleton + v0.3 paint vocabulary (story #13)
+             + v0.5 text vocabulary (story #26)
 
 ## Purpose
 
@@ -48,6 +49,23 @@ against an older schema version keeps working unchanged.
 - `Document.images: [Image]` holds embedded encoded image bytes;
   `ImageFill.image` indexes into it. Decoded pixel data crossing boundary
   B is out of scope here — see "Open for story #14" below.
+- Text (v0.5, story #26) mirrors the same dedup-pool pattern as paint —
+  DESIGN §5's document table lists a `text` row: "strings + style
+  refs", never glyph positions. `Document.strings: [string]` is an
+  interned string pool; `Document.text_styles: [TextStyle]` is a dedup
+  style pool. `Node.text` and `Node.text_style: uint32 = uint32::MAX`
+  are sentinel-indexed references into the two pools — the same
+  `uint32::MAX` "absent" convention as `Node.parent` and
+  `paint_entry`. Dedup is the producer's job (the pools make it
+  representable; nothing in the schema forces it), the same posture as
+  `Document.paints`. Two alternatives were rejected: an inline
+  `Node.text: string` field works today, but retrofitting §5's
+  interning later would leave a dead field — append-only evolution
+  (R7) forbids repurposing or removing it, so the pool costs one
+  indirection now instead of a second text field later. Text as a
+  node-kind union was also rejected — it would restructure `Node` for
+  no v0.5 gain, and §5 already models text as node content (strings +
+  style refs), not a parallel node array.
 
 ## Public interface
 
@@ -83,12 +101,24 @@ All types are generated from `crates/dashbuf/schema/dashbuf.fbs`:
 - `Image` (table) — `format: ImageFormat`, `bytes: [ubyte]`.
 - `Paint` (table) — one pool entry: `fill: Fill`, `stroke: Stroke`,
   `corners: CornerRadii`, `clip: bool = false`.
+- `TextStyle` (table) — one text-style-pool entry: `family: string
+  (required)` (font family name; the verifier rejects a family-less
+  style at the load gate — P4, the same mechanism as `Gradient`'s
+  required fields; a pool-indexed family was considered and rejected,
+  since it would lose that verifier-enforced presence check and
+  families repeat little once styles themselves are pooled),
+  `size_px: float32` (em size in document units), `weight: ushort =
+  400` (CSS-scale 100..900), `color: Color`.
 - `Node` (table) — `name: string`, `parent: uint32` (`uint32::MAX`
   sentinel for roots), `layout: FixedSizeLayout`, `paint: SolidFill`
   (legacy), `paint_entry: uint32 = uint32::MAX` (the document-level
-  NO_PAINT sentinel; index into `Document.paints`).
+  NO_PAINT sentinel; index into `Document.paints`), `text: uint32 =
+  uint32::MAX` (index into `Document.strings`, or the sentinel for a
+  node without text), `text_style: uint32 = uint32::MAX` (index into
+  `Document.text_styles`, or the sentinel for unstyled text — a
+  diagnostic once text validation exists, never a silent default).
 - `Document` (table, `root_type`) — `nodes: [Node]`, `images: [Image]`,
-  `paints: [Paint]`.
+  `paints: [Paint]`, `strings: [string]`, `text_styles: [TextStyle]`.
 
 ## Testing
 
@@ -107,6 +137,32 @@ entry, and the pooled fill coexisting with the legacy `paint` field.
 The test file is the executable statement of the schema's v0.3
 contract; this section deliberately does not restate its cases.
 
+`crates/dashbuf/tests/text_roundtrip.rs` covers the v0.5 text
+vocabulary (story #26), one focused test per construct, matching
+`paint_roundtrip.rs`'s style: a text node reading back through both
+pools, two nodes sharing one interned string index, the no-text/
+no-style sentinels as defaults, and `weight`'s 400 default. A
+family-less `TextStyle` cannot be constructed through the generated
+safe API at all — `TextStyleArgs.family: None` panics in `create` for
+a required field — so the verifier-rejection property is enforced at
+build time for Rust producers and by the flatbuffer verifier for
+foreign bytes; no test constructs invalid bytes by hand.
+
+## Seams to later stories
+
+- **#28** (Latin shaping) and **#29** (measure callback / hug sizing)
+  read the string and style pools through `dashscene-core`'s
+  intent-side accessors (`docs/design/dashscene-core-arena.md`); this
+  schema defines what a text node says, never how it is shaped or
+  measured (P1).
+- **#30** (glyph-run committed output and painting) is where boundary
+  B gains positioned glyph runs; nothing in this schema anticipates
+  that shape.
+- **#34** (charset coverage) and the validator's future text
+  diagnostics (an unstyled `text_style` sentinel on a node that has
+  text, a family the atlas pipeline's charset does not cover) are out
+  of scope for this schema change.
+
 ## Open for story #14
 
 `ImageFill.image` names an asset by index into `Document.images`, which
@@ -118,10 +174,14 @@ lands with the painter work in #14 (see also
 ## Trace
 
 - Satisfies: `specs/DESIGN_1.md` §5 document format (including the
-  dedup style pool), §11 v0.1 and v0.3 slices (vocabulary drawn from
-  the §10.1 NOW list), R7 additive schema evolution; issue #13
+  dedup style pool and the text row — strings + style refs), §11 v0.1,
+  v0.3, and v0.5 (text I) slices (vocabulary drawn from the §10.1 NOW
+  list), R7 additive schema evolution; issue #13 and issue #26
   acceptance criteria.
 - Blocks: `dashscene-core` lowering, `dashc`'s importer consumption
-  (out of scope until later slices).
+  (out of scope until later slices); #28's typeset consumption of the
+  string and style pools.
 - Related decisions: `docs/decisions/document-paint-pool-and-legacy-paint-field.md`,
-  `docs/decisions/paint-entry-composition.md`.
+  `docs/decisions/paint-entry-composition.md`,
+  `docs/decisions/text-track-early-start.md` (plan sequencing for
+  issue #26).
