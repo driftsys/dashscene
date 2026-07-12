@@ -102,7 +102,10 @@ All types are generated from `crates/dashbuf/schema/dashbuf.fbs`:
   gradient kinds — Figma's own `gradientHandlePositions` model; see
   `docs/decisions/paint-entry-composition.md`'s sub-decisions.
 - `ImageFill` (table) — `image: uint32` (index into `Document.images`),
-  `scale_mode: ScaleMode`.
+  `scale_mode: ScaleMode`, `transform: Mat23` (normalized image-space
+  crop transform, Figma's imageTransform; identity when absent),
+  `tile_scale: float32 = 1.0` (Figma's scalingFactor; story #14).
+- `Mat23` (struct) — row-major 2×3 affine transform.
 - `Fill` (union) — `SolidFill | Gradient | ImageFill`.
 - `Stroke` (table) — `width: float32`, `align: StrokeAlign`,
   `color: Color (required)`; solid-only at v0.3.
@@ -192,13 +195,9 @@ foreign bytes; no test constructs invalid bytes by hand.
   text, a family the atlas pipeline's charset does not cover) are out
   of scope for this schema change.
 
-## Open for story #14
-
-`ImageFill.image` names an asset by index into `Document.images`, which
-stores embedded encoded bytes. How decoded pixel data reaches a painter —
-the asset store crossing boundary B — is deliberately unresolved here and
-lands with the painter work in #14 (see also
-`docs/design/dashpaint.md`'s matching note).
+The asset path across boundary B is resolved since story #14: painters
+receive the encoded, format-tagged assets as a `dashpaint::ImageTable`
+(`docs/decisions/image-assets-cross-boundary-b.md`).
 
 ## Trace
 

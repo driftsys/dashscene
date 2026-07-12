@@ -83,6 +83,6 @@ not a boundary-B one). Debt #55 closed with story #4.
   paint-side shape parameters and share the paint table's dedup pool.
   Dedup itself is the producer's job — the table is append-only by
   design (core already interns by color bits, see its record above).
-- **Image assets stay out of boundary B for now.** The schema stores
-  embedded encoded bytes (`Document.images`); how decoded pixels reach a
-  painter is story #14's plumbing and is recorded there as an open item.
+- **Image assets stay out of boundary B for now.** Resolved at
+  story #14: encoded assets cross as a `dashpaint::ImageTable` parameter
+  on `Painter::paint` (`docs/decisions/image-assets-cross-boundary-b.md`).
