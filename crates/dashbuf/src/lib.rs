@@ -13,3 +13,12 @@ mod generated {
 }
 
 pub use generated::dashbuf::*;
+
+/// `Node.parent`'s "root node" sentinel.
+pub const NO_PARENT: u32 = u32::MAX;
+/// `Node.paint_entry`'s "draws nothing" sentinel.
+pub const NO_PAINT: u32 = u32::MAX;
+/// `Node.text`'s "no text content" sentinel.
+pub const NO_TEXT: u32 = u32::MAX;
+/// `Node.text_style`'s "unstyled text" sentinel.
+pub const NO_TEXT_STYLE: u32 = u32::MAX;

@@ -66,10 +66,10 @@ rollback-on-drop): `docs/decisions/staged-mutation-v01-scope.md`.
 ## Text intent (v0.5, story #26)
 
 `Prop::Text(String)` and `Prop::TextStyle(TextStyle)` set/replace a
-node's text content and style; `TextStyle { family: String, size_px:
+node's text content and style; `TextStyle { family: String, size:
 f32, weight: u16, color: Color }` mirrors the `dashbuf` `TextStyle`
-table field-for-field. `Arena::text_of(NodeId) -> Option<&str>` and
-`Arena::text_style_of(NodeId) -> Option<&TextStyle>` read them back —
+table field-for-field. `Arena::text(NodeId) -> Option<&str>` and
+`Arena::text_style(NodeId) -> Option<&TextStyle>` read them back —
 `None` for a node without text or without a style.
 
 Both accessors read the intent model directly, not `committed()`: a

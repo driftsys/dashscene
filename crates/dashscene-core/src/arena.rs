@@ -27,12 +27,14 @@ impl NodeId {
     }
 }
 
-/// One settable node property. v0.1 vocabulary: the authored
-/// parent-relative offset, the fixed size, and the solid fill.
+/// One settable node property: the authored parent-relative offset
+/// and fixed size, the solid fill (v0.1), and the text content and
+/// style (v0.5).
 ///
-/// `Fill` sets a fill but cannot clear one back to unfilled (the
-/// shared draws-nothing pool entry) — a deliberate v0.1 gap, recorded
-/// in `docs/decisions/staged-mutation-v01-scope.md`.
+/// `Fill`, `Text`, and `TextStyle` set a value but cannot clear one
+/// back to absent — the same deliberate gap `Fill` opened at v0.1
+/// (`docs/decisions/staged-mutation-v01-scope.md`); a clear operation
+/// lands with the first producer that needs one.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Prop {
     X(f32),
@@ -54,7 +56,9 @@ pub enum Prop {
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextStyle {
     pub family: String,
-    pub size_px: f32,
+    /// Em size in document units.
+    pub size: f32,
+    /// CSS-scale weight, 100 to 900 inclusive.
     pub weight: u16,
     pub color: Color,
 }
@@ -126,17 +130,17 @@ impl Arena {
     ///
     /// Panics if `node` is out of range for this arena (same contract
     /// as [`Arena::name`]).
-    pub fn text_of(&self, node: NodeId) -> Option<&str> {
+    pub fn text(&self, node: NodeId) -> Option<&str> {
         self.node_data(node).text.as_deref()
     }
 
     /// The node's text style, or `None` when unstyled. Intent-side,
-    /// like [`Arena::text_of`].
+    /// like [`Arena::text`].
     ///
     /// # Panics
     ///
     /// Panics if `node` is out of range for this arena.
-    pub fn text_style_of(&self, node: NodeId) -> Option<&TextStyle> {
+    pub fn text_style(&self, node: NodeId) -> Option<&TextStyle> {
         self.node_data(node).text_style.as_ref()
     }
 
