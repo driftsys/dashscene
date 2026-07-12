@@ -28,10 +28,17 @@ fn node_round_trips_through_a_document_buffer() {
             parent: u32::MAX,
             layout: Some(&layout),
             paint: Some(paint),
+            ..Default::default()
         },
     );
     let nodes = builder.create_vector(&[node]);
-    let document = Document::create(&mut builder, &DocumentArgs { nodes: Some(nodes) });
+    let document = Document::create(
+        &mut builder,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            images: None,
+        },
+    );
     builder.finish(document, None);
 
     let decoded = root_as_document(builder.finished_data()).expect("valid dashbuf document");
@@ -72,10 +79,17 @@ fn a_root_node_reads_back_the_default_parent_sentinel() {
             parent: u32::MAX,
             layout: Some(&layout),
             paint: Some(paint),
+            ..Default::default()
         },
     );
     let nodes = builder.create_vector(&[node]);
-    let document = Document::create(&mut builder, &DocumentArgs { nodes: Some(nodes) });
+    let document = Document::create(
+        &mut builder,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            images: None,
+        },
+    );
     builder.finish(document, None);
 
     let decoded = root_as_document(builder.finished_data()).expect("valid dashbuf document");
