@@ -11,3 +11,5 @@ description = "Runtime that resolves the model: Taffy solve, variants, FLIP, mea
 name = "dashscene_engine"
 
 [dependencies]
+dashscene-core.workspace = true
+taffy.workspace = true
