@@ -7,11 +7,13 @@
 
 mod closure;
 mod metrics;
+mod tool;
 
 pub use closure::{Closure, charset_closure};
 pub use metrics::{
     AtlasInfo, AtlasMetrics, FORMAT_VERSION, FontMetrics, GeneratorInfo, GlyphEntry, font_metrics,
 };
+pub use tool::{REQUIRED_TOOL_VERSION, find_tool_checked};
 
 /// Everything that can go wrong in the pipeline — named and actionable
 /// (P4 posture), std-only.
