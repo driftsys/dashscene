@@ -63,7 +63,7 @@ One mapping function `Layout → taffy::Style`, engine-internal:
   `position: Absolute` with `inset` left/top from its authored
   `x`/`y` — Taffy resolves absolute children against the parent box,
   which reproduces core's fixed resolution (passthrough by
-  construction, asserted by test D-t5).
+  construction, asserted by engine test 2).
 - Container, mode `Horizontal`/`Vertical`: `display: Flex`,
   `flex_direction: Row`/`Column`, `gap`, `padding` from `EdgeInsets`,
   `justify_content` from `MainAxisAlign`
@@ -119,20 +119,20 @@ Core (behavior-neutral seam):
 
 Engine (hand-computed cases; all f32-exact):
 
-4. Horizontal row, fixed children, gap + padding:
+1. Horizontal row, fixed children, gap + padding:
    `row(pad 10, gap 5)[a 30×20 fixed, b 50×20 fixed]` →
    a=(10,10,30,20), b=(45,10,50,20); container fixed 200×40.
-5. Mode-`None` passthrough equivalence: a nested fixed-geometry tree
+2. Mode-`None` passthrough equivalence: a nested fixed-geometry tree
    solved via `TaffySolver` equals `commit()`'s output exactly.
-6. Fill-weight: two `Fill` children split free space equally; a
+3. Fill-weight: two `Fill` children split free space equally; a
    `Fixed` sibling keeps its size (hug-in-fill row).
-7. Hug-in-fill: a `Hug` container inside a `Fill` sibling context
+4. Hug-in-fill: a `Hug` container inside a `Fill` sibling context
    sizes to its fixed children, not the free space.
-8. Vertical column with `main_align: SpaceBetween` and
+5. Vertical column with `main_align: SpaceBetween` and
    `cross_align: Center`.
-9. Min/max: a `Fill` child clamped by `max_width`; a `Hug` child
+6. Min/max: a `Fill` child clamped by `max_width`; a `Hug` child
    floored by `min_height`.
-10. Multi-root: two roots keep independent origins (authored x/y).
+7. Multi-root: two roots keep independent origins (authored x/y).
 
 The golden harness stays on `commit()` (fixed scenes) this story;
 flex goldens are #11's scope.

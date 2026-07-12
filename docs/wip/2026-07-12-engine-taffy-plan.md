@@ -55,8 +55,8 @@ if lib.rs passes ~250 lines), `crates/dashscene-engine/tests/solve.rs`
 **Interfaces produced:** `TaffySolver::new()`,
 `impl dashscene_core::LayoutSolver for TaffySolver`.
 
-- [ ] **Step 1: Failing tests** — design tests 4–10 (hand-computed
-      rects; the design spec fixes the numbers for test 4, the rest are
+- [ ] **Step 1: Failing tests** — the engine test list, design spec (hand-computed
+      rects; the design spec fixes the numbers for the first case, the rest are
       computed in-test from the same arithmetic).
 - [ ] **Step 2: Verify failure.**
 - [ ] **Step 3: Implement** — per-root Taffy tree build (style
@@ -85,7 +85,7 @@ delegates geometry to the solver).
 ## Self-review
 
 - Spec coverage: D1 → Task 1; D2/D3 → Task 2; records → Task 3;
-  design tests 1–10 all assigned. ✓
+  all design-spec tests assigned. ✓
 - Placeholders: none; test numbers for the representative case are in
   the design spec. ✓
 - Type consistency: `SolvedRect`/`LayoutSolver`/`commit_with` names
