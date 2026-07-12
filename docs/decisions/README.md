@@ -87,4 +87,8 @@ it in. Per-story decisions land here directly:
   — subtree clipsContent resolves in `dashscene-core`, not the painter
   (story #14); files issue #97.
 
+- [v03-paint-goldens-per-family.md](v03-paint-goldens-per-family.md) —
+  the v0.3 paint goldens are per-family isolation scenes complementing
+  story #14's combined golden; subtree clips deferred to #97 (story #18).
+
 See the `sdd-working-memory-lifecycle` rule.
