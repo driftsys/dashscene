@@ -3,7 +3,7 @@
  *
  * Owns: personal-access-token rotation (tokens expire at 90 days — CI
  * rotation required), granular scopes (file_content:read), and seat-gated
- * rate limits (SCOPE_DECISIONS.md §4, DESIGN_1.md §6.1).
+ * rate limits (SCOPE_DECISIONS.md §11, DESIGN_1.md §6.1).
  *
  * Implements the SCOPE_DECISIONS.md §11 access rules: at most one request
  * is in flight at a time (serialized limiter), `Retry-After` is honored on
@@ -80,7 +80,7 @@ export class FigmaClient {
 
   fileMeta(fileKey: string): Promise<FileMeta> {
     return this.#request(`/v1/files/${fileKey}/meta`).then((body) => {
-      const version = (body as GetFileMetaResponse).file?.version;
+      const version = (body as GetFileMetaResponse | null)?.file?.version;
       return { version: typeof version === "string" ? version : undefined };
     });
   }

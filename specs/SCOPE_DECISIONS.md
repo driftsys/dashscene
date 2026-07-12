@@ -528,8 +528,7 @@ and nothing wraps; and `GridTrackSize` exposes only a track `type`
 (`FIXED`/`FLEX`/`HUG`) plus a `value`, with no track-level min/max, so
 the grid-basic row's "min/max tracks" is covered instead as child
 constraints (`minWidth`/`maxWidth` on a grid child), and hug track
-sizing is covered by a `HUG`-typed track (being added to the
-fixture-author plugin now).
+sizing is covered by a `HUG`-typed track.
 
 Remaining open actions: apply `effects-2025`'s variable-width stroke
 manually; capture the 8 files' GET /file JSON into

@@ -6,7 +6,9 @@
  * for lowering, validation, and `.dsb` emission — the same Rust code path
  * as the native `dashc` CLI (crates/dashc).
  *
- * Stub — implementation begins alongside v0.7 ("importer catch-up",
+ * The REST client (fetch.ts) and the fixture capture tool (capture.ts)
+ * are implemented; closure, trim, tokens, and wasm remain stubs whose
+ * implementation begins alongside v0.7 ("importer catch-up",
  * DESIGN_1.md §11).
  */
 

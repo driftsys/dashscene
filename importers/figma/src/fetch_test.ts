@@ -74,6 +74,14 @@ Deno.test("fileMeta() hits /v1/files/:key/meta and returns the version", async (
   assertEquals(requests, ["https://api.figma.com/v1/files/KEYA/meta"]);
 });
 
+Deno.test("fileMeta() treats a null body as an unknown version, not a crash", async () => {
+  // A 200 whose JSON body is literally `null` must read as version
+  // absent, so the caller falls back to the full file fetch.
+  const { client } = scriptedClient([() => jsonResponse(null)]);
+  const meta = await client.fileMeta("KEYA");
+  assertEquals(meta.version, undefined);
+});
+
 Deno.test("401/403 raise the named figma-auth diagnostic", async () => {
   const { client } = scriptedClient([
     () => new Response("forbidden", { status: 403 }),

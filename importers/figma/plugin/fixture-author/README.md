@@ -18,7 +18,7 @@ One Figma file per fixture (§8: failures must bisect to one construct).
 For each name below: create a blank design file with that exact name,
 then run Plugins → Development → dashscene fixture author → _(name)_.
 
-    grid-basic                   3x3 GRID, fixed+flex tracks, spans,
+    grid-basic                   3x3 GRID, fixed+flex+hug tracks, spans,
                                  hug/fill/fixed/minmax children
     variables-bound              fixture-tokens collection (light/dark),
                                  color + number bindings, one subtree
