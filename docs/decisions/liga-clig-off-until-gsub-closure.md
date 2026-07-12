@@ -23,11 +23,15 @@ what shapes text before an atlas that can guarantee coverage.
 
 ## Options
 
-1. Shape with `liga`/`clig` disabled. Every glyph id shaping can
-   produce is then reachable via cmap (no GSUB substitution occurs),
-   matching cmap-only atlas closure exactly. Kerning (`kern`, a GPOS
-   feature that repositions pen advances but produces no new glyph
-   ids) stays on.
+1. Shape with `liga`/`clig` disabled. This removes the Latin
+   ligature substitutions — the class the fixture font actually
+   applies — but it is a narrowing, not a guarantee: other default-on
+   GSUB features (`ccmp`, and `calt`/`rlig` in other fonts) can still
+   substitute to glyph ids outside cmap's image in fonts that use
+   them. The painter's missing-glyph diagnostic (#30) is the named
+   backstop (P4), and GSUB charset closure (#34) closes the gap for
+   real. Kerning (`kern`, a GPOS feature that repositions pen
+   advances but produces no new glyph ids) stays on.
 2. Shape with `liga`/`clig` on, and extend `AtlasSpec::extra_glyph_ids`
    (already part of the #27 contract) with a hand-maintained list of
    common ligature glyph ids per font, so the atlas covers them

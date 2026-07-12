@@ -1,8 +1,12 @@
-//! Font handle for the runtime pipeline: owns the font bytes, carries
-//! the hhea vertical metrics (the same numbers the atlas metrics blob
-//! records — DESIGN_1.md §2: ttf-parser is the metrics source).
+//! Font handle for the runtime pipeline: owns the font bytes and the
+//! hhea vertical metrics — the same [`FontMetrics`](crate::atlas::FontMetrics)
+//! numbers the atlas metrics blob records (DESIGN_1.md §2: ttf-parser
+//! is the metrics source), extracted through one shared function so
+//! the runtime and the build-time blob cannot disagree.
 
 use std::sync::Arc;
+
+use crate::atlas::FontMetrics;
 
 use super::TypesetError;
 
@@ -14,10 +18,7 @@ use super::TypesetError;
 pub struct Font {
     data: Arc<Vec<u8>>,
     index: u32,
-    units_per_em: u16,
-    ascender: i16,
-    descender: i16,
-    line_gap: i16,
+    metrics: FontMetrics,
 }
 
 impl std::fmt::Debug for Font {
@@ -25,55 +26,58 @@ impl std::fmt::Debug for Font {
         f.debug_struct("Font")
             .field("bytes", &self.data.len())
             .field("index", &self.index)
-            .field("units_per_em", &self.units_per_em)
+            .field("metrics", &self.metrics)
             .finish()
     }
 }
 
 impl Font {
-    /// Parses and validates the face once; everything downstream can
-    /// rely on the bytes being a valid font.
+    /// Parses and validates the face once (rustybuzz's face wraps and
+    /// derefs to ttf-parser's, so a single parse serves shaping and
+    /// metrics); everything downstream can rely on the bytes being a
+    /// valid font.
     pub fn from_bytes(data: Vec<u8>, index: u32) -> Result<Font, TypesetError> {
-        let face = ttf_parser::Face::parse(&data, index)
-            .map_err(|e| TypesetError::FontParse(e.to_string()))?;
-        let (units_per_em, ascender, descender, line_gap) = (
-            face.units_per_em(),
-            face.ascender(),
-            face.descender(),
-            face.line_gap(),
-        );
-        if rustybuzz::Face::from_slice(&data, index).is_none() {
-            return Err(TypesetError::FontParse(
-                "rustybuzz cannot read this face".to_string(),
-            ));
-        }
+        let metrics = {
+            let face = rustybuzz::Face::from_slice(&data, index)
+                .ok_or_else(|| TypesetError::FontParse("not a parseable font face".to_string()))?;
+            crate::atlas::font_metrics(&face)
+        };
         Ok(Font {
             data: Arc::new(data),
             index,
-            units_per_em,
-            ascender,
-            descender,
-            line_gap,
+            metrics,
         })
     }
 
+    /// The blob-shared vertical metrics (hhea, font units).
+    pub fn metrics(&self) -> FontMetrics {
+        self.metrics
+    }
+
     pub fn units_per_em(&self) -> u16 {
-        self.units_per_em
+        self.metrics.units_per_em
     }
 
     /// hhea ascender, font units (positive).
     pub fn ascender(&self) -> i16 {
-        self.ascender
+        self.metrics.ascender
     }
 
     /// hhea descender, font units (negative).
     pub fn descender(&self) -> i16 {
-        self.descender
+        self.metrics.descender
     }
 
     /// hhea line gap, font units.
     pub fn line_gap(&self) -> i16 {
-        self.line_gap
+        self.metrics.line_gap
+    }
+
+    /// Baseline-to-baseline distance, font units — the line metric
+    /// layout uses and the measure callback (#29) needs.
+    pub fn line_advance(&self) -> i32 {
+        i32::from(self.metrics.ascender) - i32::from(self.metrics.descender)
+            + i32::from(self.metrics.line_gap)
     }
 
     /// A shaping face over the owned bytes.
@@ -97,6 +101,11 @@ mod tests {
         assert_eq!(font.line_gap(), direct.line_gap());
         assert!(font.ascender() > 0);
         assert!(font.descender() < 0);
+        assert_eq!(
+            font.line_advance(),
+            i32::from(direct.ascender()) - i32::from(direct.descender())
+                + i32::from(direct.line_gap())
+        );
     }
 
     #[test]
