@@ -3,10 +3,11 @@
 //! DESIGN_1.md §6.2).
 
 // Arena and Color come through dashlang's re-export: a DSL consumer
-// needs no direct dashscene-core dependency. Prop/NO_PAINT are the raw
-// core surface, imported directly for the hand-built comparison side.
+// needs no direct dashscene-core dependency. Prop/PaintEntry are the
+// raw core surface, imported directly for the hand-built comparison
+// side.
 use dashlang::{Arena, Color, anon, node, rgba, scene};
-use dashscene_core::{NO_PAINT, Prop};
+use dashscene_core::{PaintEntry, Prop};
 
 /// The two arenas must have committed to identical painter input, and
 /// the DSL's names must have reached the arena (observable through the
@@ -124,6 +125,12 @@ fn unset_fill_and_geometry_keep_core_defaults() {
     txn.commit();
 
     assert_same_output(&dsl, &hand);
-    assert_eq!(dsl.committed().rects()[0].paint, NO_PAINT);
-    assert_eq!(dsl.committed().rects()[0].w, 0.0);
+    // An unfilled node resolves to the shared draws-nothing entry
+    // (story #4 boundary-B unification).
+    let scene = dsl.committed();
+    assert_eq!(
+        scene.paints().resolve(scene.rects()[0].paint),
+        &PaintEntry::default()
+    );
+    assert_eq!(scene.rects()[0].w, 0.0);
 }
