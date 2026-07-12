@@ -129,6 +129,23 @@ Story workflow — the definition of done for every story:
 - Merge only when CI is green, the review pass is complete, and all
   critical findings are resolved.
 
+Merging a PR — how the branch lands on `main`:
+
+- Prefer landing a PR as a single commit ("Squash and merge"), so
+  `main` reads as one clean conventional commit per change. This is the
+  default.
+- Keep the individual commits only when they are separately meaningful
+  — for example a preparatory refactor and the behavior change that
+  builds on it, each independently reviewable and revertable. When
+  keeping them, integrate with a merge commit ("Create a merge
+  commit"), not "Rebase and merge".
+- Avoid "Rebase and merge". It replays each branch commit onto the
+  current `main`, so a conflict already resolved on the branch can come
+  back during the replay (this is what blocked PR #108). A merge commit
+  integrates the branch as-is and does not re-raise resolved conflicts.
+- Before merging a single-commit PR, rebase it onto the latest `main`
+  and force-push, so the squashed result applies without conflict.
+
 Plan revision at the end of each phase: story breakdowns for future
 slices are provisional by design. When a slice's epic closes (v0.1,
 v0.2, …), revise the remaining epics and stories against what was
