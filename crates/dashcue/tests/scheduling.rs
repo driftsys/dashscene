@@ -147,6 +147,39 @@ fn spring_moves_monotonically_toward_the_target_when_critically_damped() {
 }
 
 #[test]
+fn spring_survives_a_frame_hitch_without_diverging() {
+    // Stiffness 1500 is Compose's default spring stiffness — the
+    // vocabulary is calibrated against it — and dt = 0.1 is one
+    // dropped-frame hitch at 10 fps. Without substepping, one Euler
+    // step of that size diverges (velocity += 10^5 * 0.1).
+    let mut s = Scheduler::new();
+    s.start(
+        K,
+        0.0,
+        100.0,
+        TransitionSpec::Spring {
+            stiffness: 1500.0,
+            damping_ratio: 1.0,
+        },
+        0.0,
+    );
+
+    s.advance(0.1);
+    let after = s.sample(K).unwrap();
+    assert!(
+        after.is_finite() && (0.0..=200.0).contains(&after),
+        "spring diverged across a frame hitch: {after}"
+    );
+
+    let mut steps = 0;
+    while !s.is_empty() {
+        s.advance(0.1);
+        steps += 1;
+        assert!(steps < 10_000, "spring never reached rest after a hitch");
+    }
+}
+
+#[test]
 fn keyframes_interpolate_through_declared_frames_including_overshoot() {
     let mut s = Scheduler::new();
     s.start(

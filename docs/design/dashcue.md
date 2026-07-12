@@ -123,15 +123,21 @@ applies as given. On top of that, keyed by the _new_ spec kind:
 **Determinism.** `advance` uses only IEEE 754 basic operations
 (add/mul/div and `sqrt` for the spring's damping coefficient — all
 correctly rounded, bit-stable across machines). Springs integrate with
-semi-implicit Euler at the caller's step (see
-`docs/decisions/dashcue-spring-uses-semi-implicit-euler.md`); easing
+semi-implicit Euler; the caller's step is split into equal substeps
+below the stability bound `h < 1 / ((2ζ + 1)·ω)`, so one large `dt` (a
+frame hitch) cannot make the integration diverge, and a frame-scale
+step within the bound is a single plain Euler step (see
+`docs/decisions/dashcue-spring-uses-semi-implicit-euler.md`). Easing
 curves are fixed cubic polynomials; keyframes interpolate linearly. No
 transcendental libm calls, no wall clock, no hashing — the same
 `advance` sequence produces bit-identical samples everywhere (needed
 for E5 goldens at t = 0 / 0.5 / 1 and E6).
 
-**Bounded cost (R4).** Each track advances in O(1) with no allocation;
-one frame costs O(live tracks). Track storage is a `Vec` scanned
+**Bounded cost (R4).** A tween or keyframes track advances in O(1); a
+spring track advances in O(substeps), proportional to `dt` over the
+spec's stability bound and cut short as soon as the spring reaches
+rest. No track allocates during `advance`; one frame costs O(live
+tracks). Track storage is a `Vec` scanned
 linearly by key — fine at v0.4 scale, revisit with the v0.8 stress
 corpus.
 
