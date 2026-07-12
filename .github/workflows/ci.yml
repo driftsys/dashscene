@@ -77,6 +77,11 @@ jobs:
           curl -fsSL -o flatc.zip https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip
           unzip -o flatc.zip flatc -d /usr/local/bin
           chmod +x /usr/local/bin/flatc
+      # skia-safe's prebuilt Linux binaries link the system fontconfig;
+      # the runner image ships the runtime library but not the -dev
+      # symlink the linker needs.
+      - name: install skia system libraries
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
       - run: cargo test --workspace
 
   convco:
