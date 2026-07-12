@@ -112,3 +112,23 @@ fn missing_codepoints_are_reported_not_dropped() {
     let bundle = generate(&spec).expect("pipeline runs");
     assert_eq!(bundle.metrics.missing_codepoints, vec![0x0710]);
 }
+
+#[test]
+fn committed_fixture_is_reproducible() {
+    if !tool_available() {
+        return;
+    }
+    let fixture_dir = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ascii"));
+    let committed = AtlasBundle::load_from_dir(&fixture_dir).expect(
+        "committed fixture loads — regenerate with \
+         `cargo run -p dashscene-typeset --example generate_fixture`",
+    );
+    let fresh = generate(&ascii_spec()).expect("pipeline runs");
+    assert_eq!(
+        committed.image_png, fresh.image_png,
+        "committed atlas.png no longer reproducible (R7) — if the \
+         toolchain legitimately changed, regenerate the fixture and \
+         record why"
+    );
+    assert_eq!(committed.metrics.to_bytes(), fresh.metrics.to_bytes());
+}

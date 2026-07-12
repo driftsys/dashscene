@@ -129,7 +129,17 @@ pub(crate) struct LayoutBounds {
 }
 
 pub(crate) fn parse_layout(json: &str) -> Result<Layout, AtlasError> {
-    serde_json::from_str(json).map_err(|e| AtlasError::ToolOutput(format!("layout JSON: {e}")))
+    let layout: Layout = serde_json::from_str(json)
+        .map_err(|e| AtlasError::ToolOutput(format!("layout JSON: {e}")))?;
+    // The metrics blob's texel-bounds convention (FORMAT_VERSION 1) is
+    // bottom-left origin; anything else means the invocation drifted.
+    if layout.atlas.y_origin != "bottom" {
+        return Err(AtlasError::ToolOutput(format!(
+            "unexpected yOrigin {:?} (expected \"bottom\")",
+            layout.atlas.y_origin
+        )));
+    }
+    Ok(layout)
 }
 
 /// Runs the tool in a scratch directory and returns the raw PNG bytes
@@ -223,6 +233,16 @@ mod tests {
         .map(String::from)
         .collect();
         assert_eq!(args, expect);
+    }
+
+    #[test]
+    fn rejects_a_non_bottom_y_origin() {
+        let sample = r#"{
+            "atlas": { "type": "msdf", "distanceRange": 4, "size": 32,
+                       "width": 128, "height": 64, "yOrigin": "top" },
+            "glyphs": []
+        }"#;
+        assert!(parse_layout(sample).is_err());
     }
 
     #[test]
