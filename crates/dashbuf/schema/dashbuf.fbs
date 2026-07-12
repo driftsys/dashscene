@@ -158,13 +158,16 @@ table TextStyle {
   color: Color;
 }
 
-// v0.2 flex layout vocabulary (DESIGN §5, R2). Wrap and Grid append to
-// LayoutMode at v0.8; Baseline appends to CrossAxisAlign (Q-4) — enum
-// value appends are additive.
+// v0.2 flex layout vocabulary (DESIGN §5, R2). New members append at
+// the tail with explicit values (Wrap/Grid on LayoutMode at v0.8,
+// Baseline on CrossAxisAlign, Q-4): appending keeps old documents
+// decoding unchanged, but a reader built before an append receives the
+// unknown value as a raw integer — the load gate must range-check and
+// emit a named diagnostic (P4/R6), never default silently.
 enum LayoutMode : uint8 {
   None = 0,
-  Horizontal,
-  Vertical,
+  Horizontal = 1,
+  Vertical = 2,
 }
 
 // How a node sizes itself along one axis. Fixed uses the
@@ -172,21 +175,21 @@ enum LayoutMode : uint8 {
 // stretches into the parent's free space.
 enum AxisSizing : uint8 {
   Fixed = 0,
-  Hug,
-  Fill,
+  Hug = 1,
+  Fill = 2,
 }
 
 enum MainAxisAlign : uint8 {
   Start = 0,
-  Center,
-  End,
-  SpaceBetween,
+  Center = 1,
+  End = 2,
+  SpaceBetween = 3,
 }
 
 enum CrossAxisAlign : uint8 {
   Start = 0,
-  Center,
-  End,
+  Center = 1,
+  End = 2,
 }
 
 struct EdgeInsets {
@@ -196,12 +199,14 @@ struct EdgeInsets {
   bottom: float32;
 }
 
-// Container-side flex properties — meaningful when mode != None.
+// Container-side layout properties — meaningful when mode != None.
 // Under H/V the container places its children; the children's
 // authored FixedSizeLayout x/y offsets are ignored (the solver owns
 // placement, P1/P2) — an authored offset applies only under a
-// mode=None parent.
-table FlexContainer {
+// mode=None parent. Absent padding means zero insets. Mode-neutral
+// name: the v0.8 grid mode adds its track fields here rather than in
+// a parallel table.
+table LayoutContainer {
   mode: LayoutMode;
   gap: float32;
   padding: EdgeInsets;
@@ -245,10 +250,10 @@ table Node {
   // for unstyled text (a diagnostic once text validation exists;
   // never a silent default).
   text_style: uint32 = 4294967295;
-  // v0.2 flex vocabulary. Absent tables mean: not a flex container
+  // v0.2 flex vocabulary. Absent tables mean: not a layout container
   // (mode None) / fully default constraints (Fixed sizing,
   // unconstrained min/max).
-  flex: FlexContainer;
+  flex: LayoutContainer;
   constraints: LayoutConstraints;
 }
 
