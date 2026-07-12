@@ -127,13 +127,51 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build -p dashc --release --target wasm32-unknown-unknown
 
+  atlas-repro:
+    name: atlas-repro
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: cache msdf-atlas-gen
+        id: cache-tool
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/bin/msdf-atlas-gen
+          key: msdf-atlas-gen-v1.4-${{ runner.os }}
+      - name: build msdf-atlas-gen
+        if: steps.cache-tool.outputs.cache-hit != 'true'
+        # Upstream publishes Windows binaries only; build the pinned tag
+        # once and cache it. The version must stay in lockstep with
+        # dashscene-typeset's REQUIRED_TOOL_VERSION.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libfreetype-dev
+          git clone --depth 1 --branch v1.4 --recurse-submodules \
+            https://github.com/Chlumsky/msdf-atlas-gen.git "$RUNNER_TEMP/mag"
+          cmake -S "$RUNNER_TEMP/mag" -B "$RUNNER_TEMP/mag/build" \
+            -DCMAKE_BUILD_TYPE=Release -DMSDF_ATLAS_USE_VCPKG=OFF \
+            -DMSDF_ATLAS_USE_SKIA=OFF -DMSDF_ATLAS_NO_ARTERY_FONT=ON \
+            -DMSDF_ATLAS_INSTALL=OFF
+          cmake --build "$RUNNER_TEMP/mag/build" -j"$(nproc)"
+          mkdir -p ~/.local/bin
+          install -m 0755 "$(find "$RUNNER_TEMP/mag/build" -name msdf-atlas-gen -type f)" \
+            ~/.local/bin/msdf-atlas-gen
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: atlas pipeline tests (tool required)
+        run: cargo test -p dashscene-typeset
+        env:
+          DASHSCENE_REQUIRE_ATLAS_TOOL: "1"
+          MSDF_ATLAS_GEN: /home/runner/.local/bin/msdf-atlas-gen
+
   ci:
     name: ci
     if: always()
     # Every job in the workflow, so a red anywhere fails the aggregate
     # (SCOPE_DECISIONS.md §7). "skipped" is accepted: convco only runs on
     # pull requests, and deno only when importers/figma/ changed.
-    needs: [changes, fmt, dprint, clippy, test, wasm-build, convco, deno]
+    needs:
+      [changes, fmt, dprint, clippy, test, wasm-build, convco, deno, atlas-repro]
     runs-on: ubuntu-latest
     steps:
       - name: check required jobs
