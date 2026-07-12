@@ -14,9 +14,11 @@ and coexist with story #13's parallel paint-schema work.
 
 ## Options
 
-1. Two new optional `Node` tables: `FlexContainer` (container-side:
-   mode, gap, padding, aligns) and `LayoutConstraints` (child-side:
-   per-axis sizing, optional min/max).
+1. Two new optional `Node` tables: `LayoutContainer` (container-side:
+   mode, gap, padding, aligns — mode-neutral name, so the v0.8 grid
+   mode adds its track fields here rather than in a parallel table)
+   and `LayoutConstraints` (child-side: per-axis sizing, optional
+   min/max).
 2. Flat new fields appended directly on `Node`.
 3. Replace `FixedSizeLayout` with a layout union.
 
@@ -26,7 +28,10 @@ Option 1, with these semantics:
 
 - The split mirrors how the vocabulary is actually owned — container
   properties versus child properties — which is also how both Figma
-  and Taffy group it.
+  and Taffy group it. Enum members carry explicit wire values so a
+  mid-enum insertion cannot silently renumber existing documents; a
+  reader older than an appended value receives a raw integer and must
+  range-check it into a named diagnostic (P4/R6).
 - `FixedSizeLayout` stays the only geometry carrier: width/height are
   the datum `Fixed` sizing uses; authored x/y apply under a
   `mode = None` parent and are ignored under H/V (the solver owns
@@ -37,12 +42,17 @@ Option 1, with these semantics:
   `CrossAxisAlign` (Q-4) — enum-value appends are additive.
 - `dashscene-core` mirrors the vocabulary as its own types (no
   `dashbuf` dependency, per
-  [[core-committed-output-shape]] `docs/decisions/core-committed-output-shape.md`):
-  a public `Layout` snapshot struct, granular `Prop` variants (one
-  property per call — the staged API's existing grain), and
-  `Arena::layout(NodeId)` as the read seam for story #9. Setting a
-  min/max constraint cannot be undone (no clear operation) — the same
-  deliberate gap as fill-clearing
+  `docs/decisions/core-committed-output-shape.md`): a public `Layout`
+  snapshot struct with a named `EdgeInsets` padding (positional edge
+  arrays invite silent transposition against solver types), granular
+  `Prop` variants (one property per call — the staged API's existing
+  grain; padding is one prop because the schema carries it as one
+  struct), and the read seam for story #9: `Arena::layout(NodeId)`
+  plus tree traversal via `Arena::roots()` and
+  `Arena::children(NodeId)`. How the solved rects are injected back
+  into the committed output is story #9's design, not pre-decided
+  here. Setting a min/max constraint cannot be undone (no clear
+  operation) — the same deliberate gap as fill-clearing
   (`docs/decisions/staged-mutation-v01-scope.md`).
 - Until story #9, flex intent is stored, not solved: `commit` keeps
   resolving fixed geometry only, and setting flex props changes no
@@ -50,7 +60,7 @@ Option 1, with these semantics:
 
 ## Why
 
-- Option 2 smears two ownership domains into one namespace and puts
+- Option 2 mixes two ownership domains into one namespace and puts
   eight rarely-set scalars on every node's table for no structural
   gain.
 - Option 3 is not additive — existing writers break — and misreads

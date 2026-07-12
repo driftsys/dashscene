@@ -23,13 +23,16 @@ string and an optional text style, and a `Layout` — the authored
 `x`/`y`/`width`/`height` fixed geometry plus, since v0.2 (story #8),
 the flex vocabulary: mode NONE/H/V, gap, padding, alignment, per-axis
 hug/fill/fixed sizing, optional min/max. All of it is a direct mirror
-of the `dashbuf` schema shapes (`FixedSizeLayout`, `FlexContainer`,
+of the `dashbuf` schema shapes (`FixedSizeLayout`, `LayoutContainer`,
 `LayoutConstraints`, `SolidFill`, `TextStyle`) without linking the
-generated code (the crate has no `dashbuf` dependency; see Scope
-boundaries below). `Arena::layout(NodeId) -> Layout` exposes the
-intent by value — the read seam the story #9 Taffy mapping consumes.
-Until that solve lands, flex intent is stored, not solved: `commit`
-resolves fixed geometry only
+generated code
+(the crate has no `dashbuf` dependency; see Scope boundaries below).
+`Arena::layout(NodeId) -> Layout` exposes the intent by value
+(padding as a named `EdgeInsets`, not a positional array), and
+`Arena::roots()` / `Arena::children(NodeId)` expose the tree in
+creation order — together the read seam the story #9 Taffy mapping
+consumes. Until that solve lands, flex intent is stored, not solved:
+`commit` resolves fixed geometry only
 (`docs/decisions/flex-vocabulary-shape.md`).
 
 `NodeId` is a stable arena slot index (`u32`), returned by `add_node`
