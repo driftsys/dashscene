@@ -81,15 +81,16 @@ driftsys/git-std, driftsys/upskill, driftsys/markspec.
 
 ## Where to start
 
-No implementation exists yet beyond crate stubs. The v0.1 walking
-skeleton (`DESIGN_1.md` §11) is the entry point, in this order:
+The v0.1 walking skeleton (`DESIGN_1.md` §11) is the entry point, in
+this order (dependency order per `SCOPE_DECISIONS.md` §14 — `dashpaint`
+owns the boundary-B types and `dashscene-core` depends on it):
 
 1. `dashbuf` — minimal schema: node tree, a fixed-size layout mode (no
    Taffy yet), a solid-fill paint kind.
-2. `dashscene-core` — the in-memory arena mirroring that schema, plus
+2. `dashpaint` — the painter trait (boundary B) and the paint-table
+   entry types.
+3. `dashscene-core` — the in-memory arena mirroring the schema, plus
    enough of a mutation API to build a scene by hand.
-3. `dashpaint` — the painter trait (boundary B) and the solid-fill
-   paint table entry.
 4. `dashscene-skia` — first `Painter` impl, CPU raster only (this is
    what makes goldens deterministic).
 5. `dashlang` — minimal builder DSL to construct a test scene without

@@ -20,5 +20,7 @@ here, as future work gardens it in. Per-component records land here directly:
   one-commit mapping onto `dashscene-core` (story #5).
 - [atlas-pipeline.md](atlas-pipeline.md) — the build-time font → MSDF glyph
   atlas + metrics blob pipeline (v0.5, story #27).
+- [dashscene-skia.md](dashscene-skia.md) — the Skia CPU-raster reference
+  painter, the first `Painter` implementation (story #4).
 
 See the `sdd-working-memory-lifecycle` rule.
