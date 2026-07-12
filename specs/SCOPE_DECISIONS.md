@@ -804,7 +804,54 @@ issue.
   inline `Node.paint` is the one deviation; story #13 lifts it into a
   `Document`-level paint table plus index.
 
-## 17. v0.1 retrospective: plan revision at the v0.1 epic close
+## 17. Design session (2026-07-12): asset model, id model, remoting transports
+
+A design session following spike #56 elaborated the `.dsb` container
+into a concrete format direction and settled three connected models.
+Each is a decision record in `docs/decisions/`; this entry is the
+scope-level summary.
+
+- **Container refinements** (`dsb-sectioned-container.md`,
+  "Refinements" section): the envelope is a hand-specified fixed
+  layout (`#[repr(C)]` header + fixed-stride 64-byte section-table
+  entries), deliberately not flatbuffers — it is validated before any
+  parser is trusted and evolves by version bump. Section kinds split
+  into structured (a flatbuffer, verifier-checked) and blob (raw
+  bytes, hash-checked). Page alignment is required exactly once, at
+  the hot/cold boundary; per-blob alignment is writer policy (64-byte
+  quantum; page-align large blobs for per-range prefetch/evict). The
+  format is little-endian with explicit-LE accessors; big-endian
+  targets are deferred, correctness kept by construction. Loading is
+  one whole-file `mmap`; the envelope is read through the mapping.
+- **Asset model** (`asset-model-content-addressed-blobs.md`): the ui
+  document carries asset identity and metadata, never bytes — a hot
+  `AssetTable` of content-hash entries with intrinsic metadata;
+  payloads are raw well-known-format bytes (KTX2/PNG/...) with no
+  dashscene framing, living in blob sections or fetched by hash.
+  Layout never blocks on payloads; the signed root transitively
+  authenticates lazily fetched blobs; the client cache is a
+  content-addressed store. Supersedes v0.3's inline
+  `Document.images`, which stays until the asset work lands (the
+  migration is named in the record).
+- **Id model** (`id-model-strings-compile-to-indices.md`): source
+  strings compile to dense integer indices; content hashes identify
+  assets; session-scoped producer handles (distinct from doc indices)
+  address nodes across structural commits. Strings survive only as
+  debug names and an opt-in, validator-checked exports table.
+  Allocation is deterministic (canonical DFS first-visit order) per
+  R7.
+- **Remoting** (`remoting-two-transports.md`): two transports —
+  ordered snapshots + commit deltas (snapshots speak indices, deltas
+  speak handles; DFS-contiguous slices; keyframe resync), and a pull
+  channel fetching assets by content hash. The file role is the two
+  transports materialized; the envelope never crosses the wire.
+  Implementation is v1+, but three rules bind v0 work now: handles ≠
+  indices in the producer API (as-built `NodeId` already conforms),
+  pools append-stable before deltas exist (the committed paint pool's
+  per-commit re-intern is a named migration), and subtree-shaped
+  operations reusing the document vocabulary.
+
+## 18. v0.1 retrospective: plan revision at the v0.1 epic close
 
 Epic #1 (v0.1 — walking skeleton) closed 2026-07-12 with all six
 stories merged (#2, #3, #4, #5, #6, #56). Per §10, the remaining epics

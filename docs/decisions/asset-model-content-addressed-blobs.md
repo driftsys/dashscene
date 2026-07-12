@@ -1,0 +1,92 @@
+# Assets are content-addressed raw blobs referenced from a hot AssetTable
+
+    status   accepted (design session, 2026-07-12) — supersedes the
+             v0.3 inline `Document.images` storage (migration named
+             below); payload delivery (cold sections, remote fetch)
+             lands v1+
+    scope    crates/dashbuf schema, the .dsb blob sections, the future
+             asset transport
+
+## Context
+
+DESIGN §5 places heavy decor payloads (images, baked shadows, atlas
+textures) in cold sections, and the sectioned-container decision
+(`dsb-sectioned-container.md`) gives them a physical home: blob
+sections. Remoting (see `remoting-two-transports.md`) needs the same
+payloads fetched lazily over a pull channel. The question was what an
+asset _is_ in the schema: where its bytes live, where its metadata
+lives, and what identifies it.
+
+## Options
+
+1. Asset bytes inline in the ui flatbuffer — the as-built v0.3 state:
+   story #13 landed `Document.images: [Image]` with
+   `Image.bytes: [ubyte]` embedded in the ui buffer, referenced by
+   `ImageFill.image` (the schema comment already marks it "the
+   simplest storage form").
+2. A hot `AssetTable` of references — content-hash identity plus
+   layout-relevant metadata — with payloads as raw blob sections in
+   the file and content-addressed fetches on the wire.
+3. As option 2, but each blob wrapped in a dashscene framing header
+   (magic, kind, version) so blobs are self-describing in isolation.
+
+## Choice
+
+Option 2. The ui document carries asset _identity and metadata_, never
+asset _bytes_ — P1 ("intent, never results") applied to assets:
+
+- `AssetTable` is a hot, section-destined table, one offset from
+  `Document`, per the container decision's rule 2. Consumers (image
+  fills, baked shadows, later font atlases) reference entries by
+  `u32` index, per rule 1.
+- An `AssetEntry` carries: the **content hash** of the payload (the
+  asset's identity), a **kind** enum, the **intrinsic metadata** the
+  runtime needs before the payload exists (intrinsic size, pixel
+  format, placeholder color), and a **flavor/locator** bit
+  (resident-raw / resident-compressed / external, per DESIGN §5).
+- The payload is **exactly the well-known format's bytes** — a KTX2, a
+  PNG, a raw compressed-texture slab — with no dashscene framing
+  inside. Interpretation lives in the `AssetEntry`, which is hot,
+  signed, and always available before a fetch is issued.
+- The client-side asset cache is a content-addressed store: blob on
+  disk named by its hash.
+
+Left open deliberately: the hash algorithm (BLAKE3 is the candidate —
+it would give chunk-level verified streaming on the wire), and a
+one-to-many `AssetEntry → payload` extension so texture mip tiers can
+be separate blobs fetched by priority.
+
+## Why
+
+- **File/wire byte identity.** The same bytes sit in a cold section
+  and travel over the asset channel; one hash verifies both. There is
+  no "file form" vs "wire form" of an asset.
+- **Layout never blocks on payloads.** Intrinsic metadata in the hot
+  entry means layout and first paint are fully computable with zero
+  assets resident; a missing payload degrades to a defined placeholder
+  paint (P4: defined behavior, not surprise).
+- **The trust story unifies.** The signed root covers the hot
+  sections; the hot sections contain the content hashes; so a lazily
+  fetched blob is transitively authenticated by the same signature
+  whether it arrived from a cold file section or the remote channel.
+- **Content addressing makes the cache trivial and correct.**
+  Deduplication across documents is automatic, re-requests are
+  idempotent, and cached blobs are themselves mmap-able.
+- **Tool transparency.** A blob section extracted byte-for-byte is a
+  valid file of its format; existing pipelines can produce and inspect
+  assets with no dashscene tooling. Option 3's framing header would
+  break this and provide nothing the `AssetEntry` does not already
+  provide; option 1 (the as-built v0.3 state) is the direction the
+  container decision exists to move away from — bytes inside the ui
+  buffer can never be evicted, page-aligned, or fetched lazily.
+
+## Migration from the as-built v0.3 state
+
+`Document.images` stays until the asset work lands, tracked like the
+legacy `Node.paint` field (see
+`document-paint-pool-and-legacy-paint-field.md` for the pattern): the
+asset story introduces `AssetTable` + out-of-band payloads, moves
+`ImageFill.image` to an `AssetTable` index, and retires
+`Document.images` in a coordinated cleanup. Until then, v0 documents
+carry image bytes inline and are correct — this record binds the
+direction, not the current bytes.
