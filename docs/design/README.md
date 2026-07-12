@@ -23,5 +23,8 @@ here, as future work gardens it in. Per-component records land here directly:
   atlas + metrics blob pipeline (v0.5, story #27).
 - [dashscene-skia.md](dashscene-skia.md) — the Skia CPU-raster reference
   painter, the first `Painter` implementation (story #4).
+- [goldens.md](goldens.md) — the golden-image diff tooling and the v0.1
+  walking-skeleton golden scene, the v0.1 slice's closing component
+  (story #6).
 
 See the `sdd-working-memory-lifecycle` rule.
