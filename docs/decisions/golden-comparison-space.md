@@ -3,7 +3,9 @@
     status   accepted (story #6, 2026-07-12); resolves debt #86.
              Extended by story #14 (a differing-pixel tolerance for
              anti-aliased content — see "Cross-machine anti-aliasing"
-             below).
+             below) and story #11 (the exact-match constraint on v0.2
+             flex goldens — see "Flex goldens are exact-match by
+             construction" below).
     scope    goldens/ tooling; binds golden authoring for every painter
 
 ## Context
@@ -76,3 +78,21 @@ AA because the same cross-architecture coverage jitter applies.
   per-kind unit tests assert exact bytes at interior probe pixels away
   from AA edges, and those are bit-stable across machines (they pass in
   CI). The golden is the coarse full-frame visual-regression check.
+
+## Flex goldens are exact-match by construction (story #11 extension)
+
+Story #11 goldens the v0.2 flex vocabulary (nesting, sizing, clamping,
+alignment) with four scenes, each dimensioned so every solved rect
+lands on an integer. Integer-aligned solid fills carry no
+anti-aliased edges, so all four goldens use `assert_matches_golden` —
+the exact-match form, no tolerance budget — the same guarantee the
+v0.1 golden already relies on, now proven again against
+`dashscene-engine`'s `TaffySolver` output rather than the fixed
+solver.
+
+This is a constraint that binds every future flex golden, not an
+incidental property of these four scenes: if a construct cannot be
+made integral, the scene's dimensions are what change, not the
+comparison function. `assert_matches_golden_within` only enters for a
+construct that is genuinely impossible to make integral, with the
+reason recorded at the call site — no v0.2 flex golden needed it.

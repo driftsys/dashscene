@@ -17,3 +17,6 @@ generated scenes.
 - [negative-gap.md](negative-gap.md) — negative flex gap lowered to
   child margins (story #10). Executable proof:
   `crates/dashscene-engine/tests/solve.rs`.
+- [hug-in-fill.md](hug-in-fill.md) — a Hug-sized node among Fill-sized
+  siblings (story #11). Executable proof:
+  `goldens/tooling/tests/v02_flex.rs`.

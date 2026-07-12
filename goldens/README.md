@@ -52,7 +52,9 @@ architectures, so gradient and curve edges jitter by a handful of
 pixels between machines. Two comparison functions handle this:
 
 - `assert_matches_golden(name, png)` — exact; use it for solid,
-  integer-aligned content (the v0.1 golden).
+  integer-aligned content (the v0.1 golden, and the four v0.2 flex
+  goldens, whose scenes are dimensioned so every solved rect lands on
+  an integer — see `docs/decisions/v02-flex-goldens-per-construct.md`).
 - `assert_matches_golden_within(name, png, max_fraction)` — allows up
   to `max_fraction` of pixels to differ; use it for anti-aliased
   content. The combined v0.3 golden uses 1%; the smaller per-family

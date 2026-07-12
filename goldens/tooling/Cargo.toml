@@ -16,4 +16,5 @@ dashlang.workspace = true
 tempfile.workspace = true
 dashpaint.workspace = true
 dashscene-core.workspace = true
+dashscene-engine.workspace = true
 dashscene-skia.workspace = true

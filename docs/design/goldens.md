@@ -2,6 +2,7 @@
 
     crate    goldens/tooling (package `goldens`)
     covers   v0.1 golden harness — the v0.1 slice's exit gate (story #6)
+             + the v0.2 flex-vocabulary goldens (story #11)
              + the v0.3 paint-vocabulary golden (story #14)
 
 ## Purpose
@@ -47,6 +48,21 @@ home. Three direct pixel assertions — derived from the fixture colors
 by the painter's own quantization — pin stacking, nesting, and dedup
 independently of the image file.
 
+`goldens/tooling/tests/v02_flex.rs` (story #11) adds four scenes, one
+per v0.2 flex construct — nesting, sizing (hug-in-fill plus the equal
+`Fill` split), clamping (min/max beats the flex distribution), and
+alignment (every `MainAxisAlign`/`CrossAxisAlign` pairing). `dashlang`
+is not used: it has no flex vocabulary
+(`docs/decisions/negative-gap-lowering.md` D3, tracked as #118), so
+each scene is authored directly against `dashscene-core`'s `Txn` and
+solved by `dashscene-engine`'s `TaffySolver` via `commit_with`. Every
+scene is dimensioned so each solved rect lands on an integer, so all
+four goldens (`v02-nesting.png`, `v02-sizing.png`, `v02-clamping.png`,
+`v02-alignment.png`) compare exact-match; each test also asserts its
+solved rects before comparing the image. Granularity and scope
+(fill weights are out of scope, tracked as #117) are
+`docs/decisions/v02-flex-goldens-per-construct.md`.
+
 `goldens/tooling/tests/v03.rs` (story #14) adds a 96×96 scene built
 directly at boundary B (no producer stages the v0.3 vocabulary yet)
 covering every paint kind on one canvas — all four gradient kinds,
@@ -84,11 +100,15 @@ against that image is the exit criterion itself.
 
 - Satisfies: issue #6 acceptance criteria; `specs/DESIGN_1.md` §11 v0.1
   slice exit ("golden harness"), §8 (CPU painters generate their own
-  goldens); issue #14's v0.3 golden.
+  goldens); issue #11's v0.2 flex goldens; issue #14's v0.3 golden.
 - Closes epic #1's story list (v0.1 walking skeleton, milestone 1).
+- Closes epic #7's story list (v0.2 flex core) — issue #11 was its last
+  open story.
 - Related decisions: `docs/decisions/golden-comparison-space.md`
   (comparison space; resolves debt #86);
   `docs/decisions/reference-painter-antialiasing.md` (sub-pixel
   geometry policy; resolves debt #85, story #14 — anti-aliasing is on
   for every draw, and the v0.1 golden's unchanged pass is that
-  decision's regression proof).
+  decision's regression proof);
+  `docs/decisions/v02-flex-goldens-per-construct.md` (v0.2 flex golden
+  granularity and scope, story #11).
