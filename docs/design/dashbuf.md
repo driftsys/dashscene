@@ -1,7 +1,8 @@
 # dashbuf — the .dsb document schema
 
     crate    crates/dashbuf
-    covers   v0.1 walking skeleton + v0.3 paint vocabulary (story #13)
+    covers   v0.1 walking skeleton + v0.2 flex layout vocabulary
+             (story #8) + v0.3 paint vocabulary (story #13)
              + v0.5 text vocabulary (story #26)
 
 ## Purpose
@@ -31,9 +32,15 @@ against an older schema version keeps working unchanged.
   the rect-table index consumed at boundary B (`specs/DESIGN_1.md` §5).
   `Node.parent` is an index into that same array, or the `uint32::MAX`
   sentinel for a root node.
-- `Node.layout: FixedSizeLayout` is the v0.1 layout mode (authored
-  x/y offset plus width/height; no Taffy yet — `dashscene-engine`'s
-  solve lands at v0.2).
+- `Node.layout: FixedSizeLayout` carries the authored x/y offset plus
+  width/height — the datum `Fixed` sizing uses, and where the offset
+  applies under a `mode = None` parent. Since v0.2 (story #8),
+  `Node.flex: FlexContainer` and `Node.constraints: LayoutConstraints`
+  are two additional optional tables carrying the flex-layout
+  vocabulary (mode NONE/H/V, per-axis hug/fill/fixed sizing, gap,
+  padding, alignment, min/max) as stored intent — no Taffy yet, the
+  solve consuming it is story #9
+  (`docs/decisions/flex-vocabulary-shape.md`).
 - Paint is split across two generations, both present at once by
   design: `Node.paint: SolidFill` is the v0.1 walking-skeleton inline
   shorthand; the v0.3 vocabulary lives in the document-level dedup pool
@@ -71,8 +78,9 @@ against an older schema version keeps working unchanged.
 
 All types are generated from `crates/dashbuf/schema/dashbuf.fbs`:
 
-- `FixedSizeLayout` — `x`, `y`, `width`, `height: float32` (v0.1
-  layout mode; x/y are the authored offset relative to the parent).
+- `FixedSizeLayout` — `x`, `y`, `width`, `height: float32` (x/y are
+  the authored offset relative to the parent; width/height double as
+  the datum `Fixed` sizing uses under v0.2 flex).
 - `Color` — `r`, `g`, `b`, `a: float32`; the same shape `dashpaint`
   reproduces as a plain Rust type (`docs/decisions/dashpaint-owns-boundary-b-types.md`).
 - `SolidFill` — `color: Color`; the legacy `Node.paint` shorthand.
@@ -109,6 +117,22 @@ All types are generated from `crates/dashbuf/schema/dashbuf.fbs`:
   families repeat little once styles themselves are pooled),
   `size: float32` (em size in document units), `weight: ushort =
   400` (CSS-scale weight, 100 to 900 inclusive), `color: Color`.
+- `LayoutMode` (`uint8` enum) — `None`, `Horizontal`, `Vertical`;
+  Wrap and Grid append at v0.8.
+- `AxisSizing` (`uint8` enum) — `Fixed`, `Hug`, `Fill`.
+- `MainAxisAlign` (`uint8` enum) — `Start`, `Center`, `End`,
+  `SpaceBetween`.
+- `CrossAxisAlign` (`uint8` enum) — `Start`, `Center`, `End`;
+  `Baseline` appends at v0.8 (Q-4).
+- `EdgeInsets` — `left`, `top`, `right`, `bottom: float32`.
+- `FlexContainer` (table) — container-side v0.2 flex properties:
+  `mode: LayoutMode`, `gap: float32`, `padding: EdgeInsets`,
+  `main_align: MainAxisAlign`, `cross_align: CrossAxisAlign`.
+- `LayoutConstraints` (table) — child-side v0.2 flex properties, valid
+  on any node: `sizing_h`, `sizing_v: AxisSizing`, `min_width`,
+  `max_width`, `min_height`, `max_height: float32 = null` (absent =
+  unconstrained). Full rationale for the two-table split:
+  `docs/decisions/flex-vocabulary-shape.md`.
 - `Node` (table) — `name: string`, `parent: uint32` (`uint32::MAX`
   sentinel for roots), `layout: FixedSizeLayout`, `paint: SolidFill`
   (legacy), `paint_entry: uint32 = uint32::MAX` (the document-level
@@ -116,7 +140,9 @@ All types are generated from `crates/dashbuf/schema/dashbuf.fbs`:
   uint32::MAX` (index into `Document.strings`, or the sentinel for a
   node without text), `text_style: uint32 = uint32::MAX` (index into
   `Document.text_styles`, or the sentinel for unstyled text — a
-  diagnostic once text validation exists, never a silent default).
+  diagnostic once text validation exists, never a silent default),
+  `flex: FlexContainer`, `constraints: LayoutConstraints` (both
+  optional; absent = mode `None` / fully default constraints).
 - `Document` (table, `root_type`) — `nodes: [Node]`, `images: [Image]`,
   `paints: [Paint]`, `strings: [string]`, `text_styles: [TextStyle]`.
 
@@ -125,7 +151,10 @@ All types are generated from `crates/dashbuf/schema/dashbuf.fbs`:
 `crates/dashbuf/tests/roundtrip.rs` covers the v0.1 baseline (exit
 criterion E6, `specs/DESIGN_1.md` §11): a document built in memory
 survives a flatbuffer round trip byte-for-byte-equivalent in its decoded
-fields, including the root-node parent sentinel.
+fields, including the root-node parent sentinel. It also covers the
+v0.2 flex vocabulary (story #8): a node carrying every `FlexContainer`
+and `LayoutConstraints` field round-trips field-for-field, and a node
+without either table reads back absent.
 
 `crates/dashbuf/tests/paint_roundtrip.rs` covers the v0.3 vocabulary
 through the paint pool, one focused test per construct: every gradient
@@ -175,13 +204,16 @@ lands with the painter work in #14 (see also
 
 - Satisfies: `specs/DESIGN_1.md` §5 document format (including the
   dedup style pool and the text row — strings + style refs), §11 v0.1,
-  v0.3, and v0.5 (text I) slices (vocabulary drawn from the §10.1 NOW
-  list), R7 additive schema evolution; issue #13 and issue #26
-  acceptance criteria.
+  v0.2, v0.3, and v0.5 (text I) slices (v0.2 vocabulary is R2; v0.3
+  vocabulary drawn from the §10.1 NOW list), R7 additive schema
+  evolution; issue #8, issue #13, and issue #26 acceptance criteria.
 - Blocks: `dashscene-core` lowering, `dashc`'s importer consumption
   (out of scope until later slices); #28's typeset consumption of the
-  string and style pools.
-- Related decisions: `docs/decisions/document-paint-pool-and-legacy-paint-field.md`,
+  string and style pools. The story #9 Taffy solve consumes
+  `dashscene-core`'s mirrored intent (`Arena::layout`), not these
+  tables directly.
+- Related decisions: `docs/decisions/flex-vocabulary-shape.md`,
+  `docs/decisions/document-paint-pool-and-legacy-paint-field.md`,
   `docs/decisions/paint-entry-composition.md`,
   `docs/decisions/text-track-early-start.md` (plan sequencing for
   issue #26).

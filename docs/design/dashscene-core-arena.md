@@ -54,10 +54,14 @@ resolves and publishes. Dropping a `Txn` without committing leaves the
 staged changes pending — they publish with the next commit. `Prop`
 (v0.1 vocabulary): `X`, `Y`, `Width`, `Height`, `Fill(Color)`; v0.5
 (story #26) added `Text(String)` and `TextStyle(TextStyle)` (see "Text
-intent" below). Node names are set at `add_node`, not a mutable prop.
-Adding a `String`-carrying variant means `Prop` can no longer derive
-`Copy` — it derives `Clone, Debug, PartialEq` as of v0.5; nothing in
-`dashscene-core` or its `dashlang` consumer depended on `Prop: Copy`.
+intent" below); since v0.2 (story #8) the flex vocabulary: `Mode`,
+`Gap`, `Padding`, `MainAlign`, `CrossAlign`, `SizingH`, `SizingV`,
+`MinWidth`, `MaxWidth`, `MinHeight`, `MaxHeight`
+(`docs/decisions/flex-vocabulary-shape.md`). Node names are set at
+`add_node`, not a mutable prop. Adding a `String`-carrying variant
+means `Prop` can no longer derive `Copy` — it derives `Clone, Debug,
+PartialEq` as of v0.5; nothing in `dashscene-core` or its `dashlang`
+consumer depended on `Prop: Copy`.
 
 Contract misuse (an out-of-range `NodeId`) panics with a message
 naming the id and the arena. A `NodeId` from _another_ arena whose
@@ -216,4 +220,9 @@ Full schema rationale: `docs/design/dashbuf.md`.
                                             staged visibility, replace
                                             semantics, no-text default,
                                             no dirty entry from a
-                                            text-only change
+                                            text-only change; plus
+                                            (story #8) flex-prop
+                                            set/read-back, layout
+                                            defaults, and flex props
+                                            leaving committed output
+                                            unchanged
