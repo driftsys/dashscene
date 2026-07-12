@@ -1,14 +1,17 @@
-// The .dsb document schema (DESIGN_1.md §5, §11 v0.1 + v0.3 paint).
+// The .dsb document schema (DESIGN_1.md §5, §11 v0.1 + v0.2 flex +
+// v0.3 paint).
 //
 // Scope: a flattened node tree (doc index = rect-table index, DESIGN
-// §5), one layout mode (fixed-size, no Taffy yet), and the v0.3 paint
-// vocabulary (DESIGN §11 v0.3, drawn from the §10.1 NOW list): solid
-// fills, the four gradient kinds, image fills with scale modes, stroke
-// with align, rounded corners, axis-aligned + rounded clip. Paint sits
-// in a document-level dedup pool (DESIGN §5) that nodes reference by
-// index — the same index model as the runtime paint table. Additional
-// layout modes land when v0.2 adds them — FlatBuffers' append-only
-// field ids make every extension additive, not a rewrite (R7).
+// §5); the v0.2 flex layout vocabulary (mode NONE/H/V, hug/fill/fixed
+// sizing per axis, gap, padding, alignment, min/max — wrap and grid
+// land at v0.8 as appended enum values); and the v0.3 paint vocabulary
+// (DESIGN §11 v0.3, drawn from the §10.1 NOW list): solid fills, the
+// four gradient kinds, image fills with scale modes, stroke with
+// align, rounded corners, axis-aligned + rounded clip. Paint sits in a
+// document-level dedup pool (DESIGN §5) that nodes reference by index
+// — the same index model as the runtime paint table. FlatBuffers'
+// append-only field ids make every extension additive, not a rewrite
+// (R7).
 
 namespace dashbuf;
 
@@ -155,6 +158,69 @@ table TextStyle {
   color: Color;
 }
 
+// v0.2 flex layout vocabulary (DESIGN §5, R2). Wrap and Grid append to
+// LayoutMode at v0.8; Baseline appends to CrossAxisAlign (Q-4) — enum
+// value appends are additive.
+enum LayoutMode : uint8 {
+  None = 0,
+  Horizontal,
+  Vertical,
+}
+
+// How a node sizes itself along one axis. Fixed uses the
+// FixedSizeLayout width/height as the datum; Hug wraps content; Fill
+// stretches into the parent's free space.
+enum AxisSizing : uint8 {
+  Fixed = 0,
+  Hug,
+  Fill,
+}
+
+enum MainAxisAlign : uint8 {
+  Start = 0,
+  Center,
+  End,
+  SpaceBetween,
+}
+
+enum CrossAxisAlign : uint8 {
+  Start = 0,
+  Center,
+  End,
+}
+
+struct EdgeInsets {
+  left: float32;
+  top: float32;
+  right: float32;
+  bottom: float32;
+}
+
+// Container-side flex properties — meaningful when mode != None.
+// Under H/V the container places its children; the children's
+// authored FixedSizeLayout x/y offsets are ignored (the solver owns
+// placement, P1/P2) — an authored offset applies only under a
+// mode=None parent.
+table FlexContainer {
+  mode: LayoutMode;
+  gap: float32;
+  padding: EdgeInsets;
+  main_align: MainAxisAlign;
+  cross_align: CrossAxisAlign;
+}
+
+// Child-side layout constraints, valid on any node. Absent min/max
+// scalars mean unconstrained — absence of intent is not a value of
+// intent (P1), so no sentinel values.
+table LayoutConstraints {
+  sizing_h: AxisSizing;
+  sizing_v: AxisSizing;
+  min_width: float32 = null;
+  max_width: float32 = null;
+  min_height: float32 = null;
+  max_height: float32 = null;
+}
+
 table Node {
   name: string;
   // Index into Document.nodes of this node's parent, or NO_PARENT
@@ -179,6 +245,11 @@ table Node {
   // for unstyled text (a diagnostic once text validation exists;
   // never a silent default).
   text_style: uint32 = 4294967295;
+  // v0.2 flex vocabulary. Absent tables mean: not a flex container
+  // (mode None) / fully default constraints (Fixed sizing,
+  // unconstrained min/max).
+  flex: FlexContainer;
+  constraints: LayoutConstraints;
 }
 
 table Document {

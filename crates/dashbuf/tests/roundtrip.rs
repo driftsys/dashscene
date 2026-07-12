@@ -95,3 +95,135 @@ fn a_root_node_reads_back_the_default_parent_sentinel() {
     let decoded = root_as_document(builder.finished_data()).expect("valid dashbuf document");
     assert_eq!(decoded.nodes().unwrap().get(0).parent(), u32::MAX);
 }
+
+#[test]
+fn flex_and_constraint_fields_round_trip() {
+    use dashbuf::{
+        AxisSizing, CrossAxisAlign, EdgeInsets, FlexContainer, FlexContainerArgs,
+        LayoutConstraints, LayoutConstraintsArgs, LayoutMode, MainAxisAlign,
+    };
+
+    let mut builder = FlatBufferBuilder::new();
+
+    let padding = EdgeInsets::new(1.0, 2.0, 3.0, 4.0);
+    let flex = FlexContainer::create(
+        &mut builder,
+        &FlexContainerArgs {
+            mode: LayoutMode::Horizontal,
+            gap: 8.0,
+            padding: Some(&padding),
+            main_align: MainAxisAlign::Center,
+            cross_align: CrossAxisAlign::End,
+        },
+    );
+    let constraints = LayoutConstraints::create(
+        &mut builder,
+        &LayoutConstraintsArgs {
+            sizing_h: AxisSizing::Hug,
+            sizing_v: AxisSizing::Fill,
+            min_width: Some(10.0),
+            max_width: Some(100.0),
+            min_height: Some(5.0),
+            max_height: Some(50.0),
+        },
+    );
+    let layout = FixedSizeLayout::new(0.0, 0.0, 20.0, 30.0);
+    let node = Node::create(
+        &mut builder,
+        &NodeArgs {
+            name: None,
+            parent: u32::MAX,
+            layout: Some(&layout),
+            paint: None,
+            paint_entry: u32::MAX,
+            flex: Some(flex),
+            constraints: Some(constraints),
+        },
+    );
+    let nodes = builder.create_vector(&[node]);
+    let document = Document::create(
+        &mut builder,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            images: None,
+            paints: None,
+        },
+    );
+    builder.finish(document, None);
+
+    let decoded = root_as_document(builder.finished_data()).expect("valid dashbuf document");
+    let decoded_node = decoded.nodes().unwrap().get(0);
+
+    let flex = decoded_node.flex().expect("flex container present");
+    assert_eq!(flex.mode(), LayoutMode::Horizontal);
+    assert_eq!(flex.gap(), 8.0);
+    let padding = flex.padding().expect("padding present");
+    assert_eq!(
+        (
+            padding.left(),
+            padding.top(),
+            padding.right(),
+            padding.bottom()
+        ),
+        (1.0, 2.0, 3.0, 4.0)
+    );
+    assert_eq!(flex.main_align(), MainAxisAlign::Center);
+    assert_eq!(flex.cross_align(), CrossAxisAlign::End);
+
+    let constraints = decoded_node.constraints().expect("constraints present");
+    assert_eq!(constraints.sizing_h(), AxisSizing::Hug);
+    assert_eq!(constraints.sizing_v(), AxisSizing::Fill);
+    assert_eq!(constraints.min_width(), Some(10.0));
+    assert_eq!(constraints.max_width(), Some(100.0));
+    assert_eq!(constraints.min_height(), Some(5.0));
+    assert_eq!(constraints.max_height(), Some(50.0));
+}
+
+#[test]
+fn a_node_without_flex_tables_reads_back_absent() {
+    let mut builder = FlatBufferBuilder::new();
+
+    let layout = FixedSizeLayout::new(0.0, 0.0, 1.0, 1.0);
+    let node = Node::create(
+        &mut builder,
+        &NodeArgs {
+            name: None,
+            parent: u32::MAX,
+            layout: Some(&layout),
+            paint: None,
+            paint_entry: u32::MAX,
+            flex: None,
+            constraints: None,
+        },
+    );
+    let nodes = builder.create_vector(&[node]);
+    let document = Document::create(
+        &mut builder,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            images: None,
+            paints: None,
+        },
+    );
+    builder.finish(document, None);
+
+    let decoded = root_as_document(builder.finished_data()).expect("valid dashbuf document");
+    let decoded_node = decoded.nodes().unwrap().get(0);
+    assert!(decoded_node.flex().is_none());
+    assert!(decoded_node.constraints().is_none());
+
+    // A constraints table with nothing set reads back unconstrained.
+    let mut builder = FlatBufferBuilder::new();
+    let empty = dashbuf::LayoutConstraints::create(
+        &mut builder,
+        &dashbuf::LayoutConstraintsArgs::default(),
+    );
+    builder.finish(empty, None);
+    let empty = flatbuffers::root::<dashbuf::LayoutConstraints>(builder.finished_data()).unwrap();
+    assert_eq!(empty.sizing_h(), dashbuf::AxisSizing::Fixed);
+    assert_eq!(empty.sizing_v(), dashbuf::AxisSizing::Fixed);
+    assert_eq!(empty.min_width(), None);
+    assert_eq!(empty.max_width(), None);
+    assert_eq!(empty.min_height(), None);
+    assert_eq!(empty.max_height(), None);
+}
