@@ -139,6 +139,22 @@ table Paint {
   clip: bool = false;
 }
 
+// One entry of the document's text style pool (DESIGN §5's "dedup
+// style pool" applied to text): how a text node renders. Never glyph
+// data (P1) — family/size/weight/color are intent; shaping and
+// placement happen in the runtime (DESIGN §7.2).
+table TextStyle {
+  // Font family name. Required: a family-less style has no meaning,
+  // and the verifier rejects it at the load gate (P4) — the same
+  // mechanism as Gradient's required fields.
+  family: string (required);
+  // Em size in document units.
+  size_px: float32;
+  // CSS-scale weight, 100..900.
+  weight: ushort = 400;
+  color: Color;
+}
+
 table Node {
   name: string;
   // Index into Document.nodes of this node's parent, or NO_PARENT
@@ -155,6 +171,14 @@ table Node {
   // every rect resolves to a pool entry
   // (docs/decisions/boundary-b-unification.md).
   paint_entry: uint32 = 4294967295;
+  // Index into Document.strings, or uint32::MAX (the same sentinel
+  // convention as `parent`/`paint_entry`) for a node without text
+  // content.
+  text: uint32 = 4294967295;
+  // Index into Document.text_styles, or uint32::MAX for unstyled text
+  // (a diagnostic once text validation exists; never a silent
+  // default).
+  text_style: uint32 = 4294967295;
 }
 
 table Document {
@@ -165,6 +189,11 @@ table Document {
   images: [Image];
   // The paint pool referenced by Node.paint_entry.
   paints: [Paint];
+  // Interned string pool (DESIGN §5) referenced by Node.text. Dedup is
+  // the producer's job; the pool makes it representable.
+  strings: [string];
+  // The text style pool referenced by Node.text_style.
+  text_styles: [TextStyle];
 }
 
 root_type Document;

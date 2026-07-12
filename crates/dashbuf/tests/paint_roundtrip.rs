@@ -38,6 +38,7 @@ fn finish_document(
             nodes: Some(nodes),
             images,
             paints,
+            ..Default::default()
         },
     );
     builder.finish(document, None);
@@ -291,8 +292,8 @@ fn two_nodes_share_one_paint_pool_entry() {
         &mut builder,
         &DocumentArgs {
             nodes: Some(nodes),
-            images: None,
             paints: Some(paints),
+            ..Default::default()
         },
     );
     builder.finish(document, None);
