@@ -13,6 +13,12 @@ it in. Per-story decisions land here directly:
 - [q1-msdf-below-14px.md](q1-msdf-below-14px.md) — MSDF-only text rendering
   in v0; resolves DESIGN_1.md Q-1; binds #27/#28/#30 and the validator's
   future text checks.
+- [ci-green-before-story-merge.md](ci-green-before-story-merge.md) — story
+  PRs merge only on green CI.
+- [dashpaint-owns-boundary-b-types.md](dashpaint-owns-boundary-b-types.md) —
+  `dashpaint` owns the painter-side boundary-B types (story #3).
+- [painter-trait-infallible-slice-input.md](painter-trait-infallible-slice-input.md)
+  — the `Painter` trait is infallible over validated slice input (story #3).
 - [fixed-position-authoring.md](fixed-position-authoring.md) — authored
   parent-relative x/y on `FixedSizeLayout` (story #2); binds the `dashbuf`
   schema and the arena's resolution semantics.
