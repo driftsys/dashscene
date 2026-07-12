@@ -41,32 +41,45 @@ stories (#8, #13, #20, #26) immediately:
 
 ## Why
 
-- Content alignment inside a flatbuffer is capped at 32 bytes across
-  the whole toolchain (`flatc` rejects `force_align` above 32;
-  `FLATBUFFERS_MAX_ALIGNMENT` is 32 in the C++ runtime). Page
-  alignment for cold sections is not expressible.
-- The Rust builder exposes no alignment API at all, and vector-level
-  `force_align` is silently ignored by Rust codegen (upstream
-  documents it as C++-only). The producer side is Rust (`dashc`), so
-  the C++ escape hatches do not apply.
-- Vtable deduplication is automatic, global, and cannot be disabled: a
-  hot table's vtable can physically live among cold bytes when shapes
-  collide, which no schema discipline can prevent. A clean hot/cold
-  page partition inside one buffer is therefore not guaranteeable even
-  with perfect write ordering.
-- The stock verifier walks everything reachable from the root and has
-  no subtree scoping, so a hot-only load gate on a single buffer would
-  need a custom partial verifier.
+- Page alignment for cold sections is not expressible through any
+  supported route for a Rust producer. `flatc` caps struct
+  `force_align` at 32; vector `force_align` above 32 parses, but only
+  C++ codegen honors it (upstream documents the attribute as
+  C++-only, and the C++ runtime asserts `alignment <=
+  FLATBUFFERS_MAX_ALIGNMENT` (32) in debug builds). Rust codegen
+  silently ignores vector `force_align`, and `FlatBufferBuilder` in
+  the Rust crate has no direct alignment method (no
+  `ForceVectorAlignment`/`PreAlign` equivalent). The public
+  `Push`/`PushAlignment` traits are uncapped, but the vector
+  constructors do not take a custom alignment, so page alignment is
+  reachable only through unsupported custom-`Push` workarounds. The
+  producer side is Rust (`dashc`), so the C++-only routes do not
+  apply.
+- In the Rust builder, vtable deduplication is unconditional: a hot
+  table's vtable can physically live among cold bytes when shapes
+  collide, which no schema discipline can prevent. C++ exposes
+  `DedupVtables(bool)`; the Rust crate has no equivalent. A clean
+  hot/cold page partition inside one Rust-built buffer is therefore
+  not guaranteeable even with perfect write ordering.
+- The verifier's supported entry points walk everything reachable
+  from the root, and `VerifierOptions` has no scoping option. A
+  hot-only load gate on a single buffer would have to be hand-composed
+  from the crate's lower-level verifier primitives
+  (`Verifiable::run_verifier`), which upstream documents as not meant
+  to be called directly.
 - FlatBuffers has no integrity layer; in a single buffer, sections
   have no stable byte ranges to hash. In the container, each hash
   covers a contiguous range any external signing tool can compute.
-- Option 3 fails on the same grounds: `nested_flatbuffer` is a
-  `[ubyte]` field inside the outer buffer (same alignment cap, Rust
-  ignores its `force_align`), and size-prefixed concatenation gives no
-  random access, alignment, or integrity.
+- Option 3 fails for the same reasons: `nested_flatbuffer` is a
+  `[ubyte]` field inside the outer buffer (same alignment situation,
+  Rust ignores its `force_align`), and size-prefixed concatenation
+  gives no random access, alignment, or integrity.
 - The container preserves `SCOPE_DECISIONS.md` §3 ("one schema for
   file and wire"): both roles frame the same per-section flatbuffers —
   the wire keeps length-prefixed framing, the file role uses the
-  envelope. Cross-section references as indices cost nothing: the
-  schema already uses indices (flattened DFS tree, doc index =
-  rect-table index, paint indices per the boundary-B contract).
+  envelope. Cross-section references as indices cost little: the
+  design already prescribes indices (flattened DFS tree, doc index =
+  rect-table index, a u32 paint index in the boundary-B rect entry).
+  The one v0.1 deviation is `Node.paint`, an inline table today; story
+  #13 lifts it into a `Document`-level paint table plus index, per
+  rule 1 above.
