@@ -148,6 +148,14 @@ fn style_for(layout: &Layout, parent: Option<&Layout>) -> Style {
         width: bound(layout.max_width),
         height: bound(layout.max_height),
     };
+    // Outer margin (negative allowed — expresses overlap, the target
+    // of the negative-gap lowering).
+    style.margin = Rect {
+        left: LengthPercentageAuto::length(layout.margin.left),
+        top: LengthPercentageAuto::length(layout.margin.top),
+        right: LengthPercentageAuto::length(layout.margin.right),
+        bottom: LengthPercentageAuto::length(layout.margin.bottom),
+    };
 
     match parent.map(|p| p.mode) {
         // Root: nothing more to map (location handled at readback).

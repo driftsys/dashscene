@@ -285,3 +285,97 @@ fn multiple_roots_keep_their_authored_origins() {
     assert_eq!(rect(&arena, 0), (0.0, 0.0, 50.0, 50.0));
     assert_eq!(rect(&arena, 1), (400.0, 300.0, 60.0, 60.0));
 }
+
+/// Build a horizontal row of three fixed 30x20 children, letting
+/// `configure` set the container gap / margins. Returns the solved
+/// child x-positions.
+fn row_child_xs(
+    configure: impl FnOnce(&mut dashscene_core::Txn<'_>, NodeId, [NodeId; 3]),
+) -> Vec<f32> {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let row = txn.add_node(None, None);
+    txn.set_prop(row, Prop::Width(200.0));
+    txn.set_prop(row, Prop::Height(20.0));
+    txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
+    let a = fixed(&mut txn, row, 30.0, 20.0);
+    let b = fixed(&mut txn, row, 30.0, 20.0);
+    let c = fixed(&mut txn, row, 30.0, 20.0);
+    configure(&mut txn, row, [a, b, c]);
+    txn.commit_with(&mut TaffySolver::new());
+    (1..4).map(|i| rect(&arena, i).0).collect()
+}
+
+#[test]
+fn a_negative_gap_scene_lowers_to_the_same_rects_as_the_margin_scene() {
+    // Scene A: negative gap, then lowered.
+    let scene_a = row_child_xs(|txn, row, _| {
+        txn.set_prop(row, Prop::Gap(-8.0));
+        txn.lower_negative_gaps();
+    });
+    // Scene B: the equivalent margin-based scene, authored directly.
+    let scene_b = row_child_xs(|txn, _row, [_a, b, c]| {
+        for child in [b, c] {
+            txn.set_prop(
+                child,
+                Prop::Margin {
+                    left: -8.0,
+                    top: 0.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                },
+            );
+        }
+    });
+
+    assert_eq!(scene_a, scene_b, "lowered negative gap == authored margins");
+    // Each child overlaps its predecessor by 8: 0, 30-8=22, 52-8=44.
+    assert_eq!(scene_a, [0.0, 22.0, 44.0]);
+}
+
+#[test]
+fn a_vertical_negative_gap_column_overlaps_on_the_main_axis() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let col = txn.add_node(None, None);
+    txn.set_prop(col, Prop::Width(30.0));
+    txn.set_prop(col, Prop::Height(200.0));
+    txn.set_prop(col, Prop::Mode(LayoutMode::Vertical));
+    txn.set_prop(col, Prop::Gap(-5.0));
+    fixed(&mut txn, col, 30.0, 20.0);
+    fixed(&mut txn, col, 30.0, 20.0);
+    txn.lower_negative_gaps();
+    txn.commit_with(&mut TaffySolver::new());
+
+    // y: 0, then 20-5=15.
+    assert_eq!(rect(&arena, 1).1, 0.0);
+    assert_eq!(rect(&arena, 2).1, 15.0);
+}
+
+#[test]
+fn authored_margins_solve_without_any_lowering() {
+    // Margin is real standalone vocabulary, not only a lowering
+    // artifact: a positive margin pushes a child along the main axis.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let row = txn.add_node(None, None);
+    txn.set_prop(row, Prop::Width(200.0));
+    txn.set_prop(row, Prop::Height(20.0));
+    txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
+    fixed(&mut txn, row, 30.0, 20.0);
+    let b = fixed(&mut txn, row, 30.0, 20.0);
+    txn.set_prop(
+        b,
+        Prop::Margin {
+            left: 10.0,
+            top: 0.0,
+            right: 0.0,
+            bottom: 0.0,
+        },
+    );
+    txn.commit_with(&mut TaffySolver::new());
+
+    // a at 0..30; b pushed by margin-left 10 to x=40.
+    assert_eq!(rect(&arena, 1).0, 0.0);
+    assert_eq!(rect(&arena, 2).0, 40.0);
+}
