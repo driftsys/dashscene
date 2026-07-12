@@ -803,3 +803,40 @@ issue.
   lifting it to a section root later is mechanical. The v0.1 schema's
   inline `Node.paint` is the one deviation; story #13 lifts it into a
   `Document`-level paint table plus index.
+
+## 17. v0.1 retrospective: plan revision at the v0.1 epic close
+
+Epic #1 (v0.1 — walking skeleton) closed 2026-07-12 with all six
+stories merged (#2, #3, #4, #5, #6, #56). Per §10, the remaining epics
+and stories were revised against what v0.1 taught. This section records
+the scope-level outcomes; story-level changes were applied to the
+issues directly.
+
+- **Boundary-B unification landed early.** Story #4 moved the shared
+  paint types into `dashpaint` and made `dashscene-core` depend on it,
+  ahead of the ownership revisit the original breakdown deferred to #4
+  (`docs/decisions/boundary-b-unification.md`, §15). The `NO_PAINT`
+  sentinel is gone; downstream stories build on the unified model.
+- **Two v0.2 debt items are folded into story #9 (Taffy solve)**
+  instead of standing alone: #58 (the redundant absolute-position
+  scratch vec) and #59 (the `node_ids`/`rect_index` inverse-permutation
+  pair and its `u32::MAX` placeholder). Both live in the commit walk #9
+  rewrites, and #59's `Some(u32::MAX)` → panic path becomes reachable
+  once a solver can leave a node unsolved. Debt #55 (paint-less node
+  representation) is anchored to #9: v0.2 flex containers are the first
+  layout-only, paint-less nodes.
+- **v0.3 keeps inline `Document.images`.** The content-addressed asset
+  model (`docs/decisions/asset-model-content-addressed-blobs.md`)
+  supersedes the inline field, but v0.3 (#13, #16, #17) shipped inline
+  images to keep that slice small. The migration is deferred to v0.7 as
+  a new story (#107) under epic #36 (importer catch-up); #16 and #17
+  are noted not to target the new model.
+- **The schema-design decisions gardened during v0.1 now bind future
+  stories:** sectioned-container (§16) binds #20 and #26;
+  `id-model-strings-compile-to-indices.md` binds #26; the asset model
+  binds #107. These bindings are stamped on the respective issue
+  bodies.
+- **AGENTS.md "Where to start" was reconciled to as-built** (debt #83):
+  the section now records the v0.1 skeleton as complete and points at
+  `docs/design/` and `docs/decisions/`, rather than framing the
+  skeleton as the next work.

@@ -81,22 +81,16 @@ driftsys/git-std, driftsys/upskill, driftsys/markspec.
 
 ## Where to start
 
-The v0.1 walking skeleton (`DESIGN_1.md` §11) is the entry point, in
-this order (dependency order per `SCOPE_DECISIONS.md` §15 — `dashpaint`
-owns the boundary-B types and `dashscene-core` depends on it):
+The v0.1 walking skeleton (`DESIGN_1.md` §11) is complete and on
+`main`: the `dashbuf` schema, `dashscene-core`'s arena +
+staged-mutation API, `dashpaint`'s painter trait + paint-table types,
+the `dashscene-skia` CPU-raster painter, the `dashlang` builder DSL,
+and the golden harness in `goldens/`. For as-built component status see
+`docs/design/`; for the decisions behind it see `docs/decisions/`.
 
-1. `dashbuf` — minimal schema: node tree, a fixed-size layout mode (no
-   Taffy yet), a solid-fill paint kind.
-2. `dashpaint` — the painter trait (boundary B) and the paint-table
-   entry types.
-3. `dashscene-core` — the in-memory arena mirroring the schema, plus
-   enough of a mutation API to build a scene by hand.
-4. `dashscene-skia` — first `Painter` impl, CPU raster only (this is
-   what makes goldens deterministic).
-5. `dashlang` — minimal builder DSL to construct a test scene without
-   hand-writing flatbuffer bytes.
-6. Golden harness in `goldens/` — renders the DSL-built scene through
-   the Skia painter, diffs against a checked-in PNG.
+Work now proceeds through the GitHub issues (see "Plan tracking"). The
+current slice is v0.2 — flex core (epic #7): Taffy as the sole solver,
+then negative-gap lowering and flex goldens.
 
 Everything else — `dashscene-engine` (Taffy, v0.2), `dashscene-typeset`
 (text, v0.5/v0.6), `dashc`'s real Figma-importing behavior (v0.3
