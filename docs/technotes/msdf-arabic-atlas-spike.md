@@ -10,7 +10,7 @@ This note records how the spike was run and what it found, so the
 result can be reproduced or re-checked later (for example on target
 hardware in v1). The normative outcome lives in
 `docs/decisions/q1-msdf-below-14px.md` and
-`specs/SCOPE_DECISIONS.md` §11.
+`specs/SCOPE_DECISIONS.md` §14.
 
 ## Questions
 

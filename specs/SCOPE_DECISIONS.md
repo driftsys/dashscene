@@ -681,7 +681,7 @@ version it was exported from; a version mismatch against the capture
 is a diagnostic. For fixtures, the table is committed as
 `corpus/figma-fixtures/<file>.vartable.json`.
 
-## 11. Arabic atlas spike (#25): msdf-atlas-gen confirmed; Q-1 resolved for v0
+## 14. Arabic atlas spike (#25): msdf-atlas-gen confirmed; Q-1 resolved for v0
 
 The v0.5 spike (issue #25, worked ahead of epic #1 per
 `docs/decisions/text-track-early-start.md`) validated the pinned
