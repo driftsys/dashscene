@@ -25,6 +25,12 @@ contract left open.
 
 ## Choice
 
+**Superseded by story #4 (`docs/decisions/boundary-b-unification.md`):**
+`dashscene-core` no longer defines these types or the `NO_PAINT` sentinel; it
+depends on `dashpaint`, and every committed rect resolves to a pool entry. The
+details below record the story #2 decision as it stood before that
+reconciliation.
+
 Option 1, with these pinned details:
 
 - `RectEntry { x, y, w, h: f32, paint: u32 }` and
