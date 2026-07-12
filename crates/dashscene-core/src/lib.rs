@@ -35,7 +35,10 @@
 mod arena;
 mod committed;
 
-pub use arena::{Arena, NodeId, Prop, TextStyle, Txn};
+pub use arena::{
+    Arena, AxisSizing, CrossAxisAlign, Layout, LayoutMode, MainAxisAlign, NodeId, Prop, TextStyle,
+    Txn,
+};
 pub use committed::{
     Color, CommittedScene, PaintEntry, PaintIndex, PaintKind, PaintTable, RectEntry,
 };

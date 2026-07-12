@@ -442,3 +442,103 @@ fn a_text_only_change_does_not_touch_the_rect_table() {
     txn.commit();
     assert!(arena.committed().dirty().is_empty());
 }
+
+#[test]
+fn layout_defaults_match_the_schema_defaults() {
+    use dashscene_core::{AxisSizing, CrossAxisAlign, LayoutMode, MainAxisAlign};
+
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let node = txn.add_node(None, None);
+    txn.commit();
+
+    let layout = arena.layout(node);
+    assert_eq!(layout.mode, LayoutMode::None);
+    assert_eq!(layout.gap, 0.0);
+    assert_eq!(layout.padding, [0.0; 4]);
+    assert_eq!(layout.main_align, MainAxisAlign::Start);
+    assert_eq!(layout.cross_align, CrossAxisAlign::Start);
+    assert_eq!(layout.sizing_h, AxisSizing::Fixed);
+    assert_eq!(layout.sizing_v, AxisSizing::Fixed);
+    assert_eq!(layout.min_width, None);
+    assert_eq!(layout.max_width, None);
+    assert_eq!(layout.min_height, None);
+    assert_eq!(layout.max_height, None);
+}
+
+#[test]
+fn every_flex_prop_sets_its_layout_field() {
+    use dashscene_core::{AxisSizing, CrossAxisAlign, LayoutMode, MainAxisAlign};
+
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let node = txn.add_node(None, None);
+    txn.set_prop(node, Prop::X(1.0));
+    txn.set_prop(node, Prop::Y(2.0));
+    txn.set_prop(node, Prop::Width(30.0));
+    txn.set_prop(node, Prop::Height(40.0));
+    txn.set_prop(node, Prop::Mode(LayoutMode::Horizontal));
+    txn.set_prop(node, Prop::Gap(8.0));
+    txn.set_prop(
+        node,
+        Prop::Padding {
+            left: 1.0,
+            top: 2.0,
+            right: 3.0,
+            bottom: 4.0,
+        },
+    );
+    txn.set_prop(node, Prop::MainAlign(MainAxisAlign::SpaceBetween));
+    txn.set_prop(node, Prop::CrossAlign(CrossAxisAlign::Center));
+    txn.set_prop(node, Prop::SizingH(AxisSizing::Hug));
+    txn.set_prop(node, Prop::SizingV(AxisSizing::Fill));
+    txn.set_prop(node, Prop::MinWidth(10.0));
+    txn.set_prop(node, Prop::MaxWidth(100.0));
+    txn.set_prop(node, Prop::MinHeight(5.0));
+    txn.set_prop(node, Prop::MaxHeight(50.0));
+    txn.commit();
+
+    let layout = arena.layout(node);
+    assert_eq!((layout.x, layout.y), (1.0, 2.0));
+    assert_eq!((layout.width, layout.height), (30.0, 40.0));
+    assert_eq!(layout.mode, LayoutMode::Horizontal);
+    assert_eq!(layout.gap, 8.0);
+    assert_eq!(layout.padding, [1.0, 2.0, 3.0, 4.0]);
+    assert_eq!(layout.main_align, MainAxisAlign::SpaceBetween);
+    assert_eq!(layout.cross_align, CrossAxisAlign::Center);
+    assert_eq!(layout.sizing_h, AxisSizing::Hug);
+    assert_eq!(layout.sizing_v, AxisSizing::Fill);
+    assert_eq!(layout.min_width, Some(10.0));
+    assert_eq!(layout.max_width, Some(100.0));
+    assert_eq!(layout.min_height, Some(5.0));
+    assert_eq!(layout.max_height, Some(50.0));
+}
+
+#[test]
+fn flex_props_do_not_change_committed_output_yet() {
+    use dashscene_core::{AxisSizing, LayoutMode, MainAxisAlign};
+
+    // Until story #9's Taffy solve, commit resolves fixed geometry
+    // only: flex intent is stored, not solved.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let root = txn.add_node(None, None);
+    txn.set_prop(root, Prop::Width(100.0));
+    txn.set_prop(root, Prop::Height(50.0));
+    let child = txn.add_node(Some(root), None);
+    txn.set_prop(child, Prop::X(10.0));
+    txn.set_prop(child, Prop::Width(20.0));
+    txn.commit();
+    let before: Vec<RectEntry> = arena.committed().rects().to_vec();
+
+    let mut txn = arena.open();
+    txn.set_prop(root, Prop::Mode(LayoutMode::Horizontal));
+    txn.set_prop(root, Prop::Gap(4.0));
+    txn.set_prop(root, Prop::MainAlign(MainAxisAlign::Center));
+    txn.set_prop(child, Prop::SizingH(AxisSizing::Fill));
+    txn.set_prop(child, Prop::MinWidth(1.0));
+    txn.commit();
+
+    assert_eq!(arena.committed().rects(), before.as_slice());
+    assert!(arena.committed().dirty().is_empty());
+}

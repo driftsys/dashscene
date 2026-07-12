@@ -27,14 +27,84 @@ impl NodeId {
     }
 }
 
+/// Layout mode of a container node. `None` = passthrough (children
+/// place by their authored offsets); `Horizontal`/`Vertical` = flex
+/// (the solver owns placement — story #9). Wrap and Grid append at
+/// v0.8.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LayoutMode {
+    #[default]
+    None,
+    Horizontal,
+    Vertical,
+}
+
+/// How a node sizes itself along one axis: `Fixed` uses the authored
+/// width/height as the datum, `Hug` wraps content, `Fill` stretches
+/// into the parent's free space.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AxisSizing {
+    #[default]
+    Fixed,
+    Hug,
+    Fill,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MainAxisAlign {
+    #[default]
+    Start,
+    Center,
+    End,
+    SpaceBetween,
+}
+
+/// `Baseline` appends at v0.8 (DESIGN_1.md Q-4).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CrossAxisAlign {
+    #[default]
+    Start,
+    Center,
+    End,
+}
+
+/// One node's layout intent — the authored fixed geometry plus the
+/// v0.2 flex vocabulary. Mirrors the `dashbuf` schema shapes
+/// (`FixedSizeLayout`, `LayoutContainer`, `LayoutConstraints`) without
+/// linking the generated code. Stored intent: until story #9's Taffy
+/// solve, `commit` resolves the fixed geometry only.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Layout {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub mode: LayoutMode,
+    pub gap: f32,
+    /// Left, top, right, bottom.
+    pub padding: [f32; 4],
+    pub main_align: MainAxisAlign,
+    pub cross_align: CrossAxisAlign,
+    pub sizing_h: AxisSizing,
+    pub sizing_v: AxisSizing,
+    /// `None` = unconstrained (absence of intent, not a sentinel).
+    pub min_width: Option<f32>,
+    pub max_width: Option<f32>,
+    pub min_height: Option<f32>,
+    pub max_height: Option<f32>,
+}
+
 /// One settable node property: the authored parent-relative offset
-/// and fixed size, the solid fill (v0.1), and the text content and
-/// style (v0.5).
+/// and fixed size, the solid fill (v0.1), the v0.2 flex vocabulary,
+/// and the text content and style (v0.5).
 ///
 /// `Fill`, `Text`, and `TextStyle` set a value but cannot clear one
 /// back to absent — the same deliberate gap `Fill` opened at v0.1
 /// (`docs/decisions/staged-mutation-v01-scope.md`); a clear operation
-/// lands with the first producer that needs one.
+/// lands with the first producer that needs one. The min/max
+/// constraint props share the gap: they set a bound but cannot clear
+/// one back to unconstrained
+/// (`docs/decisions/flex-vocabulary-shape.md`).
 #[derive(Clone, Debug, PartialEq)]
 pub enum Prop {
     X(f32),
@@ -48,6 +118,22 @@ pub enum Prop {
     Text(String),
     /// Set/replace the node's text style.
     TextStyle(TextStyle),
+    Mode(LayoutMode),
+    Gap(f32),
+    Padding {
+        left: f32,
+        top: f32,
+        right: f32,
+        bottom: f32,
+    },
+    MainAlign(MainAxisAlign),
+    CrossAlign(CrossAxisAlign),
+    SizingH(AxisSizing),
+    SizingV(AxisSizing),
+    MinWidth(f32),
+    MaxWidth(f32),
+    MinHeight(f32),
+    MaxHeight(f32),
 }
 
 /// Text style intent — mirrors the `dashbuf` `TextStyle` table
@@ -63,18 +149,15 @@ pub struct TextStyle {
     pub color: Color,
 }
 
-/// Intent for one node — mirrors the `dashbuf` schema shapes
-/// (`FixedSizeLayout`, `SolidFill`) without linking the generated code.
+/// Intent for one node — layout intent plus paint and text intent and
+/// tree links.
 #[derive(Debug)]
 struct NodeData {
     name: Option<String>,
     parent: Option<NodeId>,
     /// Creation order; DFS child order at commit.
     children: Vec<NodeId>,
-    x: f32,
-    y: f32,
-    width: f32,
-    height: f32,
+    layout: Layout,
     fill: Option<Color>,
     text: Option<String>,
     text_style: Option<TextStyle>,
@@ -144,6 +227,18 @@ impl Arena {
         self.node_data(node).text_style.as_ref()
     }
 
+    /// The node's layout intent (authored fixed geometry + flex
+    /// vocabulary), by value.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `node` is out of range for this arena. A `NodeId` from
+    /// another arena whose index happens to be in range is not detected
+    /// — ids are only meaningful for the arena that produced them.
+    pub fn layout(&self, node: NodeId) -> Layout {
+        self.node_data(node).layout
+    }
+
     fn node_data(&self, node: NodeId) -> &NodeData {
         self.nodes
             .get(node.index())
@@ -190,10 +285,7 @@ impl Txn<'_> {
             name: name.map(String::from),
             parent,
             children: Vec::new(),
-            x: 0.0,
-            y: 0.0,
-            width: 0.0,
-            height: 0.0,
+            layout: Layout::default(),
             fill: None,
             text: None,
             text_style: None,
@@ -219,13 +311,29 @@ impl Txn<'_> {
             .get_mut(node.index())
             .unwrap_or_else(|| panic!("{node:?} is not a node of this arena"));
         match prop {
-            Prop::X(v) => data.x = v,
-            Prop::Y(v) => data.y = v,
-            Prop::Width(v) => data.width = v,
-            Prop::Height(v) => data.height = v,
+            Prop::X(v) => data.layout.x = v,
+            Prop::Y(v) => data.layout.y = v,
+            Prop::Width(v) => data.layout.width = v,
+            Prop::Height(v) => data.layout.height = v,
             Prop::Fill(c) => data.fill = Some(c),
             Prop::Text(s) => data.text = Some(s),
             Prop::TextStyle(ts) => data.text_style = Some(ts),
+            Prop::Mode(m) => data.layout.mode = m,
+            Prop::Gap(v) => data.layout.gap = v,
+            Prop::Padding {
+                left,
+                top,
+                right,
+                bottom,
+            } => data.layout.padding = [left, top, right, bottom],
+            Prop::MainAlign(a) => data.layout.main_align = a,
+            Prop::CrossAlign(a) => data.layout.cross_align = a,
+            Prop::SizingH(v) => data.layout.sizing_h = v,
+            Prop::SizingV(v) => data.layout.sizing_v = v,
+            Prop::MinWidth(v) => data.layout.min_width = Some(v),
+            Prop::MaxWidth(v) => data.layout.max_width = Some(v),
+            Prop::MinHeight(v) => data.layout.min_height = Some(v),
+            Prop::MaxHeight(v) => data.layout.max_height = Some(v),
         }
     }
 
@@ -266,7 +374,7 @@ impl Txn<'_> {
         for (i, &id) in order.iter().enumerate() {
             let node = &arena.nodes[id.index()];
             let (parent_x, parent_y) = node.parent.map_or((0.0, 0.0), |p| absolute[p.index()]);
-            let (x, y) = (parent_x + node.x, parent_y + node.y);
+            let (x, y) = (parent_x + node.layout.x, parent_y + node.layout.y);
             absolute[id.index()] = (x, y);
             let paint =
                 *interned
@@ -281,8 +389,8 @@ impl Txn<'_> {
             rects.push(RectEntry {
                 x,
                 y,
-                w: node.width,
-                h: node.height,
+                w: node.layout.width,
+                h: node.layout.height,
                 paint,
             });
             // In range for u32 by the add_node guard.
