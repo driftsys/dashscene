@@ -12,3 +12,5 @@ name = "dashscene_typeset"
 
 [dependencies]
 ttf-parser.workspace = true
+serde.workspace = true
+postcard.workspace = true
