@@ -36,12 +36,17 @@ Re-running a command deletes and rebuilds its frame — safe to iterate.
 
 ## Manual steps (the plugin will remind you)
 
-- **effects-2025**: the 2025 effect types (noise / texture / progressive
-  blur) are _beta_ in the Plugin API — if any write fails, the plugin
-  lists it in a `_manual-checklist` text node in the file; apply those
-  via the UI effects panel. **Variable-width stroke has no plugin API at
+- **effects-2025**: noise, texture, and progressive blur are written by
+  the plugin with the shapes the Plugin API documents. These 2025 effect
+  types are still _beta_, so if a write is rejected the plugin lists that
+  cell in a `_manual-checklist` text node; apply the missing effect via
+  the UI effects panel. **Variable-width stroke has no plugin API at
   all**: draw a short line and give it a variable-width profile with the
-  Draw tools, always manually.
+  Draw tools, always manually. Re-running is safe to iterate: effects
+  applied through the panel are re-applied to any cell whose fresh write
+  fails, and any node you drew by hand (for example the variable-width
+  line) is moved into the rebuilt frame — a construct stays on the
+  checklist only while it is actually missing.
 - **lowering-baseline**: if `Noto Sans Arabic` isn't available the
   Arabic run is skipped — add any Arabic text node manually (keep the
   Arabic-Indic numerals, e.g. `السرعة ١٢٠ كم/س`).
@@ -49,5 +54,8 @@ Re-running a command deletes and rebuilds its frame — safe to iterate.
 ## After authoring
 
 Capture each file's `GET /file` JSON (with `?plugin_data=shared`, §12)
-into `corpus/figma-fixtures/` once the capture tooling lands. PAT setup
-and rate-limit rules: SCOPE_DECISIONS §11.
+into `corpus/figma-fixtures/` with `deno task capture`, run from
+`importers/figma/`. It needs `FIGMA_TOKEN` set to a personal access
+token with the `file_content:read`, `file_metadata:read`, and
+`library_content:read` scopes. PAT setup and rate-limit rules:
+SCOPE_DECISIONS §11.

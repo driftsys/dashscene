@@ -53,25 +53,29 @@ function cell(name, color) {
 }
 
 // ---------------------------------------------------------------- grid-basic
-// GRID mode: row/column spans, FIXED + FLEX tracks, hug/fill children,
-// min/max constraints (§8 grid-basic).
+// GRID mode: row/column spans, FIXED + FLEX + HUG tracks, hug/fill
+// children, min/max constraints (§8 grid-basic).
 async function gridBasic() {
   await figma.loadFontAsync(INTER);
   const grid = baseFrame("grid-basic", 720, 480);
   grid.layoutMode = "GRID";
+  // GRID roots do not honor primaryAxisSizingMode/counterAxisSizingMode
+  // (those apply only to HORIZONTAL/VERTICAL). Fix the size through the
+  // general sizing dropdowns and re-resize, so the FLEX tracks distribute a
+  // fixed 720x480 instead of the frame hugging its content.
+  grid.layoutSizingHorizontal = "FIXED";
+  grid.layoutSizingVertical = "FIXED";
+  grid.resize(720, 480);
   grid.gridRowCount = 3;
   grid.gridColumnCount = 3;
-  try {
-    grid.gridItemsPositioning = "FIXED"; // explicit placement, not auto-flow
-  } catch (e) {
-    console.warn("gridItemsPositioning not settable:", e);
-  }
+  grid.gridItemsPositioning = "MANUAL"; // MANUAL = explicit placement
   grid.gridColumnGap = 12; // GRID mode uses gridColumnGap/gridRowGap,
   grid.gridRowGap = 12; //     not itemSpacing/counterAxisSpacing
   grid.paddingLeft = grid.paddingRight = 16;
   grid.paddingTop = grid.paddingBottom = 16;
 
-  // Track sizing: col 0 fixed, cols 1-2 flex; row 0 fixed, rows 1-2 flex.
+  // Track sizing: col 0 fixed, cols 1-2 flex; row 0 fixed, row 1 flex,
+  // row 2 hug (sizes to fit the 60px fixed-size cell it holds).
   grid.gridColumnSizes[0].type = "FIXED";
   grid.gridColumnSizes[0].value = 160;
   grid.gridColumnSizes[1].type = "FLEX";
@@ -79,7 +83,7 @@ async function gridBasic() {
   grid.gridRowSizes[0].type = "FIXED";
   grid.gridRowSizes[0].value = 96;
   grid.gridRowSizes[1].type = "FLEX";
-  grid.gridRowSizes[2].type = "FLEX";
+  grid.gridRowSizes[2].type = "HUG";
 
   // header: spans all 3 columns
   const header = cell("span-3-cols", { r: 0.55, g: 0.65, b: 0.95 });
@@ -130,7 +134,7 @@ async function gridBasic() {
   br.layoutSizingHorizontal = "FILL";
   br.layoutSizingVertical = "FILL";
 
-  return "grid-basic built: 3x3 GRID, fixed+flex tracks, col/row spans, hug/fill/fixed/minmax children";
+  return "grid-basic built: 3x3 GRID, fixed+flex+hug tracks, col/row spans, hug/fill/fixed/minmax children";
 }
 
 // ----------------------------------------------------------- variables-bound
@@ -172,6 +176,10 @@ async function variablesBound() {
 
   const root = baseFrame("variables-bound", 640, 360);
   root.layoutMode = "HORIZONTAL";
+  // Fix both axes before adding cards: the cards use layoutSizingHorizontal
+  // "FILL", which is invalid on a hugging primary axis.
+  root.primaryAxisSizingMode = "FIXED";
+  root.counterAxisSizingMode = "FIXED";
   root.paddingLeft = root.paddingRight = 24;
   root.paddingTop = root.paddingBottom = 24;
   root.itemSpacing = 24;
@@ -229,10 +237,45 @@ async function variablesBound() {
 // plus variable-width stroke, which has NO plugin API and stays manual.
 // The 2025 effect types are beta in the plugin API; each write is attempted
 // independently and failures land on the manual checklist.
+//
+// Re-run is safe to iterate. Before rebuilding, a previous run's cells are
+// mined for two things: the effects already on each cell (so effects a human
+// applied through the Effects panel survive), and any child the plugin did
+// not create (e.g. a manually drawn variable-width-stroke line). A cell whose
+// fresh write fails falls back to its harvested effects; a cell that still
+// has nothing goes on the checklist. Foreign children move into the new
+// frame. Effect objects read from a node are plain data, so re-applying them
+// is a straight assignment.
 async function effects2025() {
   await figma.loadFontAsync(INTER);
+
+  // The cells the plugin owns; every other child of the old frame is manual.
+  const PLUGIN_CELLS = ["noise", "texture", "progressive-blur"];
+  const oldRoot = figma.currentPage.findChild(
+    (n) => n.type === "FRAME" && n.name === "effects-2025",
+  );
+  const harvestedEffects = {}; // cell name -> effects array from the old run
+  const foreignChildren = []; // nodes the plugin did not create
+  if (oldRoot) {
+    for (const child of [...oldRoot.children]) {
+      if (PLUGIN_CELLS.includes(child.name)) {
+        harvestedEffects[child.name] = child.effects;
+      } else {
+        foreignChildren.push(child);
+      }
+    }
+    // Detach foreign children before removePrevious deletes the old frame,
+    // so the manual work is not destroyed with it.
+    for (const child of foreignChildren) {
+      figma.currentPage.appendChild(child);
+    }
+  }
+
   const root = baseFrame("effects-2025", 640, 300);
   root.layoutMode = "HORIZONTAL";
+  // Fix both axes so the frame stays 640x300 instead of hugging the cells.
+  root.primaryAxisSizingMode = "FIXED";
+  root.counterAxisSizingMode = "FIXED";
   root.itemSpacing = 24;
   root.paddingLeft = root.paddingRight = 24;
   root.paddingTop = root.paddingBottom = 24;
@@ -244,11 +287,17 @@ async function effects2025() {
     r.resize(160, 160);
     try {
       r.effects = [effect];
-      return true;
+      return;
     } catch (e) {
       console.warn(name + " effect write failed:", e);
+    }
+    // Fresh write failed: fall back to the previous run's effects if any,
+    // otherwise ask for the effect to be applied by hand.
+    const salvaged = harvestedEffects[name];
+    if (salvaged && salvaged.length > 0) {
+      r.effects = salvaged;
+    } else {
       manual.push(name);
-      return false;
     }
   };
 
@@ -270,8 +319,11 @@ async function effects2025() {
     clipToShape: true,
   });
 
+  // Progressive blur is a LAYER_BLUR with blurType PROGRESSIVE; radius is the
+  // end radius, startRadius/startOffset/endOffset drive the gradient.
   tryEffect("progressive-blur", { r: 0.6, g: 0.65, b: 0.9 }, {
-    type: "PROGRESSIVE_BLUR",
+    type: "LAYER_BLUR",
+    blurType: "PROGRESSIVE",
     visible: true,
     radius: 20,
     startRadius: 0,
@@ -280,11 +332,18 @@ async function effects2025() {
   });
 
   // Variable-width stroke: Figma Draw feature, not scriptable — always manual.
-  manual.push(
-    "variable-width stroke (draw a line, Draw tools > variable width)",
-  );
+  // Carry any preserved manual node into the new frame; only ask for it again
+  // if nothing was carried over from a previous run.
+  if (foreignChildren.length > 0) {
+    for (const child of foreignChildren) root.appendChild(child);
+  } else {
+    manual.push(
+      "variable-width stroke (draw a line, Draw tools > variable width)",
+    );
+  }
 
   // Leave the checklist inside the file; `_` prefix = trimmed by convention.
+  removePrevious("_manual-checklist");
   const note = await label(
     "_manual-steps:\n" + manual.map((m) => "  - " + m).join("\n"),
     INTER,
@@ -330,6 +389,10 @@ async function loweringHugInFill() {
   await figma.loadFontAsync(INTER);
   const root = baseFrame("lowering-hug-in-fill", 480, 200);
   root.layoutMode = "VERTICAL";
+  // Fix both axes before adding the fill-container: FILL needs a fixed-width
+  // (counter-axis) parent to fill into.
+  root.primaryAxisSizingMode = "FIXED";
+  root.counterAxisSizingMode = "FIXED";
   root.paddingLeft = root.paddingRight = 16;
   root.paddingTop = root.paddingBottom = 16;
   root.itemSpacing = 12;
@@ -358,6 +421,9 @@ async function loweringHugInFill() {
 function loweringNegativeGap() {
   const root = baseFrame("lowering-negative-gap", 360, 120);
   root.layoutMode = "HORIZONTAL";
+  // Fix both axes so the frame stays 360x120 instead of hugging the dots.
+  root.primaryAxisSizingMode = "FIXED";
+  root.counterAxisSizingMode = "FIXED";
   root.itemSpacing = -16; // the construct under test (lowers to margins)
   root.paddingLeft = root.paddingRight = 24;
   root.paddingTop = root.paddingBottom = 24;
@@ -387,6 +453,9 @@ async function loweringBaseline() {
 
   const root = baseFrame("lowering-baseline", 640, 160);
   root.layoutMode = "HORIZONTAL";
+  // Fix both axes so the frame stays 640x160 instead of hugging the row.
+  root.primaryAxisSizingMode = "FIXED";
+  root.counterAxisSizingMode = "FIXED";
   root.counterAxisAlignItems = "BASELINE"; // the construct under test
   root.itemSpacing = 16;
   root.paddingLeft = root.paddingRight = 24;
@@ -420,6 +489,7 @@ async function loweringBaseline() {
 async function loweringVariantTopology() {
   await figma.loadFontAsync(INTER);
   removePrevious("lowering-variant-topology");
+  removePrevious("instance-collapsed"); // the instance is a separate page child
 
   const mkVariant = async (stateName, childCount) => {
     const comp = figma.createComponent();
