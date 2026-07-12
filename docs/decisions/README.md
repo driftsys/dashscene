@@ -83,5 +83,8 @@ it in. Per-story decisions land here directly:
 - [reference-painter-antialiasing.md](reference-painter-antialiasing.md) —
   the reference painter anti-aliases every draw (story #14; resolves
   debt #85).
+- [subtree-clip-resolution-deferred.md](subtree-clip-resolution-deferred.md)
+  — subtree clipsContent resolves in `dashscene-core`, not the painter
+  (story #14); files issue #97.
 
 See the `sdd-working-memory-lifecycle` rule.

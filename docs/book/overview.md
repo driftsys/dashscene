@@ -13,9 +13,11 @@ the reference implementation, test oracle, and 2D path.
 This project is in early development. No end-user functionality exists
 yet. The `v0.1` "walking skeleton" milestone (schema, minimal DSL, fixed
 rects, solid fills, `.dsb` round-trip, painter trait, golden harness) is
-complete; work is proceeding through the later `v0` slices, with the
-`v0.3` paint-vocabulary schema (gradients, images, strokes, corners,
-clip) and parts of the `v0.5` text/atlas groundwork landed early.
+complete; work is proceeding through the later `v0` slices. Landed
+early: the `v0.3` paint vocabulary — its schema and its rendering in
+the reference painter (the four gradient kinds, stroke align, rounded
+corners, image fills; subtree clipping across the tree is still
+pending) — and parts of the `v0.5` text/atlas groundwork.
 
 ## Where things live
 
