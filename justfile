@@ -37,12 +37,35 @@ check: test lint audit
 build: assemble check
 
 # Run before opening a PR (and as the pre-push hook): commit-message
-# lint over commits not yet on origin/main, then build. Compares against
-# origin/main rather than local main so this doesn't break when working
-# directly on main (main..HEAD is empty in that case) or when local main
-# is stale relative to the remote.
+# lint over commits not yet on origin/main, then build. The range is taken
+# against origin/main rather than local main, because local main goes stale
+# relative to the remote and would lint commits that are already upstream.
+# The range can legitimately be empty (see the recipe) — that is issue
+# #110, and it is handled rather than avoided by the choice of ref.
 verify:
-    git std lint --range origin/main..HEAD
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # An unresolvable range and an empty range are different, and only the
+    # second is benign — so check for origin/main before asking about the
+    # range. `git rev-list missing/ref..HEAD` exits non-zero but prints
+    # nothing, and `set -e` does not fire inside an `if` condition, so
+    # testing the output alone would read a missing ref as "no commits" and
+    # skip the lint silently. This gate must fail closed.
+    if ! git rev-parse --verify --quiet origin/main >/dev/null; then
+        echo "verify: origin/main is missing — run 'git fetch origin'." >&2
+        echo "verify: refusing to skip the commit-message lint." >&2
+        exit 1
+    fi
+    # An empty range IS benign: it is what a branch-deletion push, a re-push
+    # of an already-pushed branch, and a push from an up-to-date main all
+    # look like. `git std lint` exits non-zero on one, which blocked those
+    # pushes outright (issue #110). `-n 1` because the question is only
+    # whether any commit exists, not what they are.
+    if [ -z "$(git rev-list -n 1 origin/main..HEAD)" ]; then
+        echo "verify: no commits in origin/main..HEAD — nothing to lint"
+    else
+        git std lint --range origin/main..HEAD
+    fi
     just build
 
 # Reformat everything in place (Rust + markdown).
