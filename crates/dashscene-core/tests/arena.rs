@@ -4,7 +4,7 @@
 
 use std::mem::{align_of, size_of};
 
-use dashscene_core::{Arena, Color, NO_PAINT, Paint, Prop, RectEntry};
+use dashscene_core::{Arena, Color, PaintEntry, PaintIndex, Prop, RectEntry};
 
 const RED: Color = Color {
     r: 1.0,
@@ -22,14 +22,13 @@ fn committed_entries_are_blittable_plain_data() {
     assert_eq!(align_of::<RectEntry>(), 4);
     assert_eq!(size_of::<Color>(), 16);
     assert_eq!(align_of::<Color>(), 4);
-    assert_eq!(NO_PAINT, u32::MAX);
 
     let entry = RectEntry {
         x: 1.0,
         y: 2.0,
         w: 3.0,
         h: 4.0,
-        paint: 0,
+        paint: PaintIndex(0),
     };
     let copy = entry; // Copy, not a move
     assert_eq!(entry, copy);
@@ -71,10 +70,14 @@ fn a_single_filled_root_resolves_to_one_rect_and_one_paint() {
             y: 7.0,
             w: 320.0,
             h: 240.0,
-            paint: 0,
+            paint: PaintIndex(0),
         }]
     );
-    assert_eq!(scene.paints(), &[Paint { color: RED }]);
+    assert_eq!(scene.paints().len(), 1);
+    assert_eq!(
+        scene.paints().resolve(scene.rects()[0].paint),
+        &PaintEntry::solid(RED)
+    );
     assert_eq!(arena.name(root), Some("bg"));
 }
 
@@ -167,26 +170,38 @@ fn identical_fills_share_one_paint_entry_in_first_use_order() {
     txn.commit();
 
     let scene = arena.committed();
+    assert_eq!(scene.paints().len(), 2);
     assert_eq!(
-        scene.paints(),
-        &[Paint { color: RED }, Paint { color: BLUE }]
+        scene.paints().resolve(PaintIndex(0)),
+        &PaintEntry::solid(RED)
     );
-    let indices: Vec<u32> = scene.rects().iter().map(|r| r.paint).collect();
-    assert_eq!(indices, [0, 1, 0]);
+    assert_eq!(
+        scene.paints().resolve(PaintIndex(1)),
+        &PaintEntry::solid(BLUE)
+    );
+    let indices: Vec<PaintIndex> = scene.rects().iter().map(|r| r.paint).collect();
+    assert_eq!(indices, [PaintIndex(0), PaintIndex(1), PaintIndex(0)]);
 }
 
 #[test]
-fn an_unfilled_node_paints_as_no_paint() {
+fn unfilled_nodes_resolve_to_one_shared_empty_paint_entry() {
     let mut arena = Arena::new();
     let mut txn = arena.open();
     let container = txn.add_node(None, Some("container"));
     txn.set_prop(container, Prop::Width(100.0));
     txn.set_prop(container, Prop::Height(100.0));
+    let second = txn.add_node(None, Some("spacer"));
+    txn.set_prop(second, Prop::Width(10.0));
     txn.commit();
 
+    // Every rect resolves — an unfilled node references the shared
+    // draws-nothing entry instead of a sentinel index.
     let scene = arena.committed();
-    assert_eq!(scene.rects()[0].paint, NO_PAINT);
-    assert!(scene.paints().is_empty());
+    assert_eq!(scene.rects()[0].paint, scene.rects()[1].paint);
+    let entry = scene.paints().resolve(scene.rects()[0].paint);
+    assert_eq!(entry, &PaintEntry::default());
+    assert_eq!(entry.fill, None);
+    assert_eq!(scene.paints().len(), 1);
 }
 
 #[test]
@@ -293,7 +308,7 @@ fn a_fill_change_marks_the_rect_dirty_even_when_its_paint_index_is_stable() {
     txn.set_prop(node, Prop::Fill(BLUE));
     txn.commit();
 
-    assert_eq!(arena.committed().rects()[0].paint, 0);
+    assert_eq!(arena.committed().rects()[0].paint, PaintIndex(0));
     assert_eq!(arena.committed().dirty(), [0]);
 }
 

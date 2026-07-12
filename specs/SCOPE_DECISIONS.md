@@ -332,10 +332,11 @@ true`, `strip = true`, `codegen-units = 1`.
 lint --range main..HEAD` + `just build` — run before opening a PR),
 `fmt`, `doc` (`cargo doc --open`), `book` (`mdbook serve`), `release`
 (`git std bump`), `publish` (ordered `cargo publish` per crate,
-dependency order — for dashscene this means dashbuf → dashscene-core →
-dashscene-typeset → dashscene-engine → dashscene-validator → dashpaint →
-dashscene-skia → dashcue → dashlang → dashc → dashscene-unity →
-dashscene-web → dashscene), `install`, `clean`. Add two dashscene-
+dependency order — for dashscene this means dashbuf → dashpaint →
+dashscene-core → dashscene-typeset → dashscene-engine →
+dashscene-validator → dashscene-skia → dashcue → dashlang → dashc →
+dashscene-unity → dashscene-web → dashscene, since story #4 made
+dashscene-core depend on dashpaint, see §14), `install`, `clean`. Add two dashscene-
 specific recipes: `wasm` (build `dashc` for `wasm32-unknown-unknown`,
 needed by the Deno importer, §4) and `deno-check`/`deno-test`/`deno-fmt`
 scoped to `importers/figma/`.
@@ -712,3 +713,33 @@ text-stack tooling against Arabic. Full methodology and evidence:
   charset unions (#34, #28); glyph runs must carry per-glyph x/y
   offsets, not just advances (#26, #28); bidi run splitting must
   precede shaping (as DESIGN §7.2 already requires).
+
+## 14. Boundary B unified in dashpaint: core depends on it; publish order updated
+
+Story #4 (dashscene-skia, the first `Painter` implementation) resolved
+the boundary-B reconciliation that stories #2 and #3 each deferred to
+it (their crates were built in parallel against a pinned contract, each
+holding its own copy of the shared shapes):
+
+- **`dashpaint` owns the boundary-B types** (`Color`, `RectEntry`,
+  `PaintIndex`, `PaintEntry`, `PaintKind`, `PaintTable`);
+  `dashscene-core` depends on `dashpaint`, deletes its mirror types,
+  and re-exports what it consumes. Dependency direction follows the
+  DESIGN §4 pipeline (producers → runtime → painters): the reverse
+  would make every painter build the runtime (and, from v0.2, Taffy).
+  §7's publish order above moved `dashpaint` before `dashscene-core`
+  accordingly (also updated in the workspace `Cargo.toml` comment and
+  the `justfile` publish recipe).
+- **Every committed rect resolves.** The `NO_PAINT = u32::MAX`
+  sentinel is gone from the committed output: an unfilled node interns
+  the shared draws-nothing entry (`PaintEntry::default()`). Painters
+  have no sentinel special case; `PaintTable::resolve` stays the single
+  failure mechanism. `dashbuf`'s `Node.paint_entry` keeps its
+  `uint32::MAX` sentinel — that is the document format's "references no
+  pool entry", a different level.
+- **Paint indices are typed**: `RectEntry.paint` is
+  `PaintIndex(u32)`, `#[repr(transparent)]` (layout unchanged,
+  entries stay blittable) — closes the cross-index-confusion debt
+  (#54).
+
+Details and alternatives: `docs/decisions/boundary-b-unification.md`.

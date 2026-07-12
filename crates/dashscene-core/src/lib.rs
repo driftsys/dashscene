@@ -5,8 +5,10 @@
 //! Producers stage mutations through a [`Txn`] and publish them with
 //! `commit`; painters read the resulting [`CommittedScene`] — a flat
 //! rect table indexed by document DFS node index, a deduplicated
-//! solid-fill paint table, a generation stamp, and a dirty set
-//! (boundary B, DESIGN_1.md §7.3). v0.1 scope: fixed-size layout, no
+//! paint table (`dashpaint`'s, per the story #4 boundary-B
+//! unification), a generation stamp, and a dirty set (boundary B,
+//! DESIGN_1.md §7.3). Every rect resolves; an unfilled node references
+//! the shared draws-nothing entry. v0.1 scope: fixed-size layout, no
 //! Taffy, no variants.
 //!
 //! ```
@@ -25,11 +27,15 @@
 //!
 //! let scene = arena.committed();
 //! assert_eq!(scene.rects().len(), 2);
-//! assert_eq!(scene.paints().len(), 1);
+//! // Two pool entries: the root's solid fill, and the shared
+//! // draws-nothing entry the unfilled badge references.
+//! assert_eq!(scene.paints().len(), 2);
 //! ```
 
 mod arena;
 mod committed;
 
 pub use arena::{Arena, NodeId, Prop, Txn};
-pub use committed::{Color, CommittedScene, NO_PAINT, Paint, RectEntry};
+pub use committed::{
+    Color, CommittedScene, PaintEntry, PaintIndex, PaintKind, PaintTable, RectEntry,
+};

@@ -65,11 +65,11 @@ release:
 # Publish every crate to crates.io in dependency order.
 publish:
     cargo publish -p dashbuf
+    cargo publish -p dashpaint
     cargo publish -p dashscene-core
     cargo publish -p dashscene-typeset
     cargo publish -p dashscene-engine
     cargo publish -p dashscene-validator
-    cargo publish -p dashpaint
     cargo publish -p dashscene-skia
     cargo publish -p dashcue
     cargo publish -p dashlang

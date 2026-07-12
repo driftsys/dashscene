@@ -24,8 +24,8 @@ rust-version = "1.85"
 
 # path + version for every internal crate, per house style (SCOPE_DECISIONS.md §7).
 # Publish order (see justfile `publish` recipe):
-#   dashbuf -> dashscene-core -> dashscene-typeset -> dashscene-engine ->
-#   dashscene-validator -> dashpaint -> dashscene-skia -> dashcue -> dashlang ->
+#   dashbuf -> dashpaint -> dashscene-core -> dashscene-typeset ->
+#   dashscene-engine -> dashscene-validator -> dashscene-skia -> dashcue -> dashlang ->
 #   dashc -> dashscene-unity -> dashscene-web -> dashscene
 [workspace.dependencies]
 dashscene = { path = "crates/dashscene", version = "0.0.0" }
