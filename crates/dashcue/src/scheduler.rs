@@ -175,18 +175,32 @@ impl Track {
                 stiffness,
                 damping_ratio,
             } => {
-                // Semi-implicit Euler at the caller's step: IEEE basic
-                // ops + sqrt only, so a fixed step replays bit-identically
-                // on every machine (no libm transcendentals).
-                let damping = 2.0 * damping_ratio * stiffness.sqrt();
-                let acceleration = -stiffness * (self.position - self.to) - damping * self.velocity;
-                self.velocity += acceleration * dt;
-                self.position += self.velocity * dt;
-                if (self.position - self.to).abs() < REST_DELTA
-                    && self.velocity.abs() < REST_VELOCITY
-                {
-                    self.position = self.to;
-                    self.finished = true;
+                // Semi-implicit Euler: IEEE basic ops + sqrt only, so a
+                // fixed step replays bit-identically on every machine
+                // (no libm transcendentals). The caller's step is split
+                // into equal substeps below the stability bound
+                // h < 1 / ((2ζ + 1)·ω) — that keeps c·h < 1 and
+                // ω·h ≤ 1, so a frame hitch (one large dt) cannot make
+                // the integration diverge. For frame-scale steps within
+                // the bound this is a single substep, i.e. the plain
+                // Euler step.
+                let omega = stiffness.sqrt();
+                let damping = 2.0 * damping_ratio * omega;
+                let h_max = 1.0 / ((2.0 * damping_ratio + 1.0) * omega);
+                let substeps = ((dt / h_max).ceil() as u64).max(1);
+                let h = dt / substeps as f32;
+                for _ in 0..substeps {
+                    let acceleration =
+                        -stiffness * (self.position - self.to) - damping * self.velocity;
+                    self.velocity += acceleration * h;
+                    self.position += self.velocity * h;
+                    if (self.position - self.to).abs() < REST_DELTA
+                        && self.velocity.abs() < REST_VELOCITY
+                    {
+                        self.position = self.to;
+                        self.finished = true;
+                        break;
+                    }
                 }
             }
         }

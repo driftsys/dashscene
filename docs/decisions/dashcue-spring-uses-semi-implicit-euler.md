@@ -20,7 +20,10 @@ visible jump.
    oscillator equation (involves `exp`/`cos`) at the track's elapsed
    time.
 2. Semi-implicit (symplectic) Euler integration of the spring's
-   equation of motion, one step per `advance(dt)` call.
+   equation of motion, stepped inside each `advance(dt)` call in equal
+   substeps below the stability bound `h < 1 / ((2ζ + 1)·ω)` (a
+   frame-scale `dt` within the bound is a single step; a frame hitch
+   splits into several, so the integration cannot diverge).
 
 ## Choice
 
