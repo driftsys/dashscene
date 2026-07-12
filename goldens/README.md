@@ -40,11 +40,13 @@ a clean checkout fails loudly if a golden was not committed.
 ## Determinism
 
 Goldens are bit-exact because the reference painter is CPU raster
-(deterministic by construction, `DESIGN_1.md` §8) with anti-aliasing
-off and an exactly pinned skia-safe version (`=0.81.0` in the workspace
-`Cargo.toml`; bumping it is a deliberate, re-goldened change). GPU
-painters (v1+) will use tolerance-based perceptual diffs instead — that
-tooling will be added here.
+(deterministic by construction, `DESIGN_1.md` §8) at an exactly pinned
+skia-safe version (`=0.81.0` in the workspace `Cargo.toml`; bumping it
+is a deliberate, re-goldened change). Anti-aliasing is on
+(`docs/decisions/reference-painter-antialiasing.md`); CPU-raster AA is
+itself deterministic for the pinned version, so it does not weaken the
+bit-exactness. GPU painters (v1+) will use tolerance-based perceptual
+diffs instead — that tooling will be added here.
 
 ## Comparison space
 

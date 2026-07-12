@@ -2,6 +2,7 @@
 
     crate    goldens/tooling (package `goldens`)
     covers   v0.1 golden harness — the v0.1 slice's exit gate (story #6)
+             + the v0.3 paint-vocabulary golden (story #14)
 
 ## Purpose
 
@@ -42,6 +43,14 @@ home. Three direct pixel assertions — derived from the fixture colors
 by the painter's own quantization — pin stacking, nesting, and dedup
 independently of the image file.
 
+`goldens/tooling/tests/v03.rs` (story #14) adds a 96×96 scene built
+directly at boundary B (no producer stages the v0.3 vocabulary yet)
+covering every paint kind on one canvas — all four gradient kinds,
+stroke align, rounded corners, and every image scale mode against a
+hand-rendered checker asset. Per-kind pixel semantics live in
+`crates/dashscene-skia/tests/painter.rs`; this golden pins the full
+rendering (`v03-paint.png`).
+
 ## Testing
 
 Unit tests in `src/lib.rs` cover the tooling's edge behavior against a
@@ -63,9 +72,11 @@ against that image is the exit criterion itself.
 
 - Satisfies: issue #6 acceptance criteria; `specs/DESIGN_1.md` §11 v0.1
   slice exit ("golden harness"), §8 (CPU painters generate their own
-  goldens).
+  goldens); issue #14's v0.3 golden.
 - Closes epic #1's story list (v0.1 walking skeleton, milestone 1).
 - Related decisions: `docs/decisions/golden-comparison-space.md`
-  (comparison space; resolves debt #86).
-- Leaves open: debt #85 (sub-pixel geometry policy — fixtures stay
-  integer-aligned).
+  (comparison space; resolves debt #86);
+  `docs/decisions/reference-painter-antialiasing.md` (sub-pixel
+  geometry policy; resolves debt #85, story #14 — anti-aliasing is on
+  for every draw, and the v0.1 golden's unchanged pass is that
+  decision's regression proof).
