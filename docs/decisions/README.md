@@ -68,6 +68,9 @@ it in. Per-story decisions land here directly:
 - [layout-solver-seam.md](layout-solver-seam.md) — commit takes its geometry
   from a `LayoutSolver` trait defined in core; the engine implements it with
   Taffy (story #9); binds #22 (FLIP) and #29 (measure callback).
+- [negative-gap-lowering.md](negative-gap-lowering.md) — negative flex gap
+  lowers to child margins in a shared core `Txn` pass; adds the margin
+  vocabulary (story #10); binds #46 (stress corpus) and the `dashc` importer.
 
 - [golden-comparison-space.md](golden-comparison-space.md) — goldens compare
   decoded pixels in unpremultiplied RGBA8888, never encoded bytes (story #6;

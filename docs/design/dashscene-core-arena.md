@@ -22,7 +22,8 @@ order, an optional fill color, (v0.5, story #26) an optional text
 string and an optional text style, and a `Layout` — the authored
 `x`/`y`/`width`/`height` fixed geometry plus, since v0.2 (story #8),
 the flex vocabulary: mode NONE/H/V, gap, padding, alignment, per-axis
-hug/fill/fixed sizing, optional min/max. All of it is a direct mirror
+hug/fill/fixed sizing, optional min/max, and child margin (story #10).
+All of it is a direct mirror
 of the `dashbuf` schema shapes (`FixedSizeLayout`, `LayoutContainer`,
 `LayoutConstraints`, `SolidFill`, `TextStyle`) without linking the
 generated code
@@ -62,7 +63,10 @@ staged changes pending — they publish with the next commit. `Prop`
 intent" below); since v0.2 (story #8) the flex vocabulary: `Mode`,
 `Gap`, `Padding`, `MainAlign`, `CrossAlign`, `SizingH`, `SizingV`,
 `MinWidth`, `MaxWidth`, `MinHeight`, `MaxHeight`
-(`docs/decisions/flex-vocabulary-shape.md`). Node names are set at
+(`docs/decisions/flex-vocabulary-shape.md`), and `Margin` (story #10).
+`Txn::lower_negative_gaps` is a shared producer pass that rewrites a
+negative container `gap` into child margins — the Figma≠CSS lowering
+(`docs/decisions/negative-gap-lowering.md`). Node names are set at
 `add_node`, not a mutable prop. Adding a `String`-carrying variant
 means `Prop` can no longer derive `Copy` — it derives `Clone, Debug,
 PartialEq` as of v0.5; nothing in `dashscene-core` or its `dashlang`

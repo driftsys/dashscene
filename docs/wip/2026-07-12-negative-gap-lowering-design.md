@@ -96,7 +96,7 @@ depends on D3's deferred `dashlang` flex vocabulary. The negative-gap
 construct therefore lands now as (a) the executable acceptance test in
 `dashscene-engine`'s tests, and (b) a documented corpus entry under
 `corpus/dsl-generated/` describing the scene and expected overlap, so
-#46's generator has the case captured. No orphan runner is created.
+the #46 generator has the case captured. No orphan runner is created.
 
 ## File impact
 

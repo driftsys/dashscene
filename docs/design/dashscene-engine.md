@@ -60,7 +60,10 @@ authored axis is main):
 |         |                                     | Stretch`, size auto |
 
 `min_width`/`max_width`/`min_height`/`max_height` map to
-`min_size`/`max_size` (absent = auto).
+`min_size`/`max_size` (absent = auto). `margin` maps to
+`taffy::Style::margin` (a `Rect` of `LengthPercentageAuto`); negative
+margins are legal and express overlap — the target the negative-gap
+lowering rewrites to (`docs/decisions/negative-gap-lowering.md`).
 
 Degenerate constructs, all pinned by test and named here for the
 validator slice to diagnose (P4):
