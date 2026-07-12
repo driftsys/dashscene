@@ -10,9 +10,9 @@
 //! `dashscene-core`, with identical committed output.
 //!
 //! ```
-//! use dashlang::{node, rgba, scene};
+//! use dashlang::{Arena, node, rgba, scene};
 //!
-//! let mut arena = dashscene_core::Arena::new();
+//! let mut arena = Arena::new();
 //! let generation = scene([
 //!     node("bg")
 //!         .size(320.0, 240.0)
@@ -31,7 +31,12 @@
 //! assert_eq!(arena.committed().paints().len(), 2);
 //! ```
 
-use dashscene_core::{Arena, Color, NodeId, Prop, Txn};
+use dashscene_core::{NodeId, Prop, Txn};
+
+// A DSL consumer needs an `Arena` to build into and a `Color` to fill
+// with; re-exporting both keeps `dashlang` a one-import-path surface
+// (no direct `dashscene-core` dependency required downstream).
+pub use dashscene_core::{Arena, Color};
 
 /// A named node description. See [`anon`] for unnamed nodes.
 pub fn node(name: &str) -> Node {
@@ -65,7 +70,7 @@ pub fn scene(roots: impl IntoIterator<Item = Node>) -> Scene {
 ///
 /// Unset values keep `dashscene-core`'s defaults: zero offset and
 /// size, no fill.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Debug, Default)]
 pub struct Node {
     name: Option<String>,
     x: f32,
@@ -111,7 +116,7 @@ impl Node {
 }
 
 /// A scene description, built from [`scene`].
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Debug)]
 pub struct Scene {
     roots: Vec<Node>,
 }
@@ -121,6 +126,10 @@ impl Scene {
     /// the arena already holds — the DSL is a producer, not an owner)
     /// and publishes them in exactly one commit. Returns the commit's
     /// generation.
+    ///
+    /// An empty scene still commits: the generation increments, and
+    /// changes staged by a previously dropped `Txn` publish (core's
+    /// batched-publish staging).
     pub fn build(&self, arena: &mut Arena) -> u64 {
         let mut txn = arena.open();
         for root in &self.roots {

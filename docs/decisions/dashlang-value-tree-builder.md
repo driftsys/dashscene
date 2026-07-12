@@ -46,6 +46,6 @@ Option 1:
   transaction lifetimes, and a panic mid-closure leaves half-staged
   intent that core's no-rollback staging publishes with the next
   commit; the inert tree stages nothing until `build`.
-- A macro (option 3) buys surface syntax at real implementation and
-  diagnostics cost; nothing in v0.1 needs it, and a macro can wrap the
-  value tree later without breaking any caller.
+- A macro (option 3) adds surface syntax but requires implementation
+  and diagnostics work; nothing in v0.1 needs it, and a macro can wrap
+  the value tree later without breaking any caller.

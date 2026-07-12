@@ -20,8 +20,9 @@ All types and functions live in `crates/dashlang/src/lib.rs`:
 - `node(name: &str) -> Node` — a named node description; `anon() ->
   Node` for an unnamed one.
 - `rgba(r, g, b, a: f32) -> Color` — a plain constructor for
-  `dashscene_core::Color`, re-exported so DSL users need one import
-  path.
+  `dashscene_core::Color`. Both `Color` and `Arena` are re-exported
+  (`pub use dashscene_core::{Arena, Color}`) so a DSL consumer needs
+  one import path and no direct `dashscene-core` dependency.
 - `Node` — consuming, chainable setters: `at(x, y)` (authored offset,
   parent-relative), `size(w, h)`, `fill(Color)`, `child(Node)` (append
   one), `children(impl IntoIterator<Item = Node>)` (append from an
