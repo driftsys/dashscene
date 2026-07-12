@@ -3,7 +3,7 @@
 //! the scheduler never reads a clock (P3), so a fixed step replays
 //! bit-identically (E5 goldens at t = 0 / 0.5 / 1, E6).
 
-use crate::vocabulary::{Keyframe, PropKey, TransitionSpec};
+use crate::vocabulary::{Keyframe, PropKey, TransitionSpec, VariantTransition};
 
 /// Spring rest thresholds (crate constants at v0.4 — track values are
 /// pixel-scaled there; promoting them to spec data is deferred).
@@ -82,6 +82,28 @@ impl Scheduler {
             velocity,
             finished: false,
         });
+    }
+
+    /// Binds a declared variant transition at commit time: one
+    /// [`Scheduler::start`] per track, in declaration order, with
+    /// `delay = stagger * index`. `bind` supplies each prop's resolved
+    /// `(from, to)` — resolved values never live in the vocabulary
+    /// (P1); the engine binds them from the variant switch (issue #22,
+    /// SCOPE_DECISIONS.md §9).
+    pub fn start_transition(
+        &mut self,
+        transition: &VariantTransition,
+        mut bind: impl FnMut(PropKey) -> (f32, f32),
+    ) {
+        assert!(
+            transition.stagger.is_finite() && transition.stagger >= 0.0,
+            "stagger must be finite and >= 0"
+        );
+        for (index, track) in transition.tracks.iter().enumerate() {
+            let (from, to) = bind(track.prop);
+            let delay = transition.stagger * index as f32;
+            self.start(track.prop, from, to, track.spec.clone(), delay);
+        }
     }
 
     /// Advances every track by `dt` seconds. Tracks that finished
