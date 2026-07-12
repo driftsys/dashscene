@@ -11,3 +11,5 @@ description = "Skia reference painter — v0 native painter, reference forever (
 name = "dashscene_skia"
 
 [dependencies]
+dashpaint.workspace = true
+skia-safe.workspace = true
