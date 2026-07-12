@@ -240,6 +240,10 @@ table LayoutConstraints {
   max_width: float32 = null;
   min_height: float32 = null;
   max_height: float32 = null;
+  // Outer margin around the node in its parent's flow. Absent means
+  // zero insets. Negative values are legal and express overlap — the
+  // target the negative-gap Figma≠CSS lowering rewrites to (DESIGN §5).
+  margin: EdgeInsets;
 }
 
 table Node {
