@@ -29,8 +29,10 @@ off to `git std bootstrap`, which wires up repo-local git hooks.
    --range main..HEAD` followed by the full `just build` (assemble, test,
    lint, audit).
 5. Open a PR. CI runs the same gates (`fmt`, `dprint`, `clippy`, `test`,
-   `convco`) plus the path-filtered `deno` and `wasm-build` jobs where
-   relevant, aggregated into a single required `ci` check.
+   `convco`) plus the path-filtered `deno` job, the `wasm-build` job,
+   and the `atlas-repro` job (byte-reproducibility of the glyph-atlas
+   pipeline, with a cached `msdf-atlas-gen` build), aggregated into a
+   single required `ci` check.
 
 ## Recipes
 
