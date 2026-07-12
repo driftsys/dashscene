@@ -154,5 +154,9 @@ fn the_v03_paint_vocabulary_matches_its_golden() {
     let mut painter = SkiaPainter::new(96, 96);
     painter.paint(&rects, &paints, &images);
 
-    goldens::assert_matches_golden("v03-paint", &painter.png_bytes());
+    // Anti-aliased gradients and curves are not bit-identical across CPU
+    // architectures; a small fraction absorbs cross-machine edge jitter
+    // (docs/decisions/golden-comparison-space.md). The v0.1 golden stays
+    // exact (integer-aligned solids, AA is a no-op there).
+    goldens::assert_matches_golden_within("v03-paint", &painter.png_bytes(), 0.01);
 }
