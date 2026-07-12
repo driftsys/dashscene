@@ -1,11 +1,12 @@
-// The .dsb document schema (DESIGN_1.md §5, §11 v0.1).
+// The .dsb document schema (DESIGN_1.md §5, §11 v0.1 + v0.3 paint).
 //
-// v0.1 walking-skeleton scope only: a flattened node tree (doc index =
-// rect-table index, DESIGN §5), one layout mode (fixed-size, no Taffy
-// yet), one paint kind (solid fill). Additional layout modes and paint
-// kinds land as unions/enums when v0.2/v0.3 actually add them —
-// FlatBuffers' append-only field ids make that an additive change, not
-// a rewrite (R7).
+// Scope: a flattened node tree (doc index = rect-table index, DESIGN
+// §5), one layout mode (fixed-size, no Taffy yet), and the v0.3 paint
+// vocabulary (DESIGN §10.1 NOW): solid fills, the four gradient kinds,
+// image fills with scale modes, stroke with align, rounded corners,
+// axis-aligned + rounded clip. Additional layout modes land when v0.2
+// adds them — FlatBuffers' append-only field ids make every extension
+// additive, not a rewrite (R7).
 
 namespace dashbuf;
 
@@ -30,19 +31,119 @@ table SolidFill {
   color: Color;
 }
 
+struct Vec2 {
+  x: float32;
+  y: float32;
+}
+
+// One gradient color stop; offset is normalized 0..1 along the
+// gradient's primary axis.
+struct GradientStop {
+  offset: float32;
+  color: Color;
+}
+
+// Per-corner radii in document units; all zero = sharp corners.
+struct CornerRadii {
+  top_left: float32;
+  top_right: float32;
+  bottom_right: float32;
+  bottom_left: float32;
+}
+
+enum GradientKind : uint8 {
+  Linear = 0,
+  Radial,
+  Angular,
+  Diamond,
+}
+
+// Stroke placement relative to the node's outline. Painters that only
+// stroke on center lower Inside/Outside by path expansion
+// (DESIGN §8.1).
+enum StrokeAlign : uint8 {
+  Inside = 0,
+  Center,
+  Outside,
+}
+
+// Figma image-fill scale modes.
+enum ScaleMode : uint8 {
+  Fill = 0,
+  Fit,
+  Crop,
+  Tile,
+}
+
+enum ImageFormat : uint8 {
+  Png = 0,
+}
+
+// One geometry model serves all four gradient kinds: three normalized
+// handle positions in the node's box — the gradient origin, the
+// primary-axis end, and the secondary-axis end (Figma's
+// gradientHandlePositions). Handles are intent; resolved geometry is
+// per-painter math (P1).
+table Gradient {
+  kind: GradientKind;
+  handle_origin: Vec2;
+  handle_primary: Vec2;
+  handle_secondary: Vec2;
+  stops: [GradientStop];
+}
+
+table ImageFill {
+  // Index into Document.images.
+  image: uint32;
+  scale_mode: ScaleMode;
+}
+
+union Fill {
+  SolidFill,
+  Gradient,
+  ImageFill,
+}
+
+// v0.3 strokes are solid-only (see
+// docs/decisions/paint-entry-composition.md); the color widens to a
+// fill additively if a real file ever needs gradient strokes (R6
+// diagnoses them until then).
+table Stroke {
+  width: float32;
+  align: StrokeAlign;
+  color: Color;
+}
+
+// Embedded encoded image bytes — the simplest storage form; KTX2/Basis
+// packaging is v1 scope (DESIGN §9).
+table Image {
+  format: ImageFormat;
+  bytes: [ubyte];
+}
+
 table Node {
   name: string;
   // Index into Document.nodes of this node's parent, or NO_PARENT
   // (uint32::MAX) for a root node.
   parent: uint32 = 4294967295;
   layout: FixedSizeLayout;
+  // v0.1 walking-skeleton solid shorthand. Superseded by `fill` when
+  // both are present; kept (append-only ids, R7) until the v0.1
+  // producers stop writing it, then removed in a coordinated cleanup.
   paint: SolidFill;
+  fill: Fill;
+  stroke: Stroke;
+  corners: CornerRadii;
+  // Clips children to the node's box, rounded by `corners`.
+  clip: bool = false;
 }
 
 table Document {
   // Flattened DFS node tree: array order is DFS order, so array index
   // doubles as rect-table index (DESIGN §5).
   nodes: [Node];
+  // Image assets referenced by ImageFill.image.
+  images: [Image];
 }
 
 root_type Document;
