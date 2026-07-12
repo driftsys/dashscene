@@ -98,6 +98,13 @@ producer surface `dashlang` is a thin skin over) and solves them with
 deciding how a `dashlang` scene reaches the engine solver — is a
 separate concern, deliberately out of scope here.
 
+Story #11 (the v0.2 flex goldens) hit the same gap and authored its
+four scenes the same way — directly against `Txn`, solved with
+`TaffySolver` — rather than through `dashlang`. It filed #118 to
+build the deferred `dashlang` flex vocabulary and a
+`Scene::build_with(arena, solver)` entry point; #46 (the
+DSL-generated stress corpus) depends on #118.
+
 ## D4 — Corpus case
 
 No DSL-generated corpus harness exists yet — the stress-corpus

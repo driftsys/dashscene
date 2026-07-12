@@ -31,6 +31,7 @@ here, as future work gardens it in. Per-component records land here directly:
   painter, the first `Painter` implementation (story #4).
 - [goldens.md](goldens.md) — the golden-image diff tooling and the v0.1
   walking-skeleton golden scene, the v0.1 slice's closing component
-  (story #6).
+  (story #6); the v0.2 flex-vocabulary goldens, closing epic #7
+  (story #11).
 
 See the `sdd-working-memory-lifecycle` rule.

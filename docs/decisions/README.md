@@ -71,6 +71,10 @@ it in. Per-story decisions land here directly:
 - [negative-gap-lowering.md](negative-gap-lowering.md) — negative flex gap
   lowers to child margins in a shared core `Txn` pass; adds the margin
   vocabulary (story #10); binds #46 (stress corpus) and the `dashc` importer.
+- [v02-flex-goldens-per-construct.md](v02-flex-goldens-per-construct.md) —
+  the v0.2 flex vocabulary is goldened one construct per scene, exact-match,
+  closing epic #7 (story #11); fill weights (#117) and dashlang's flex
+  vocabulary (#118) stay out of scope.
 
 - [golden-comparison-space.md](golden-comparison-space.md) — goldens compare
   decoded pixels in unpremultiplied RGBA8888, never encoded bytes (story #6;
