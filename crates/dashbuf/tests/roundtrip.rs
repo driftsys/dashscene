@@ -36,7 +36,7 @@ fn node_round_trips_through_a_document_buffer() {
         &mut builder,
         &DocumentArgs {
             nodes: Some(nodes),
-            images: None,
+            ..Default::default()
         },
     );
     builder.finish(document, None);
@@ -87,7 +87,7 @@ fn a_root_node_reads_back_the_default_parent_sentinel() {
         &mut builder,
         &DocumentArgs {
             nodes: Some(nodes),
-            images: None,
+            ..Default::default()
         },
     );
     builder.finish(document, None);

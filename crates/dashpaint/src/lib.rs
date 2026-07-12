@@ -1,6 +1,7 @@
 //! Paint table (fill/stroke/effect params, token refs, material class) + the painter trait — boundary B (DESIGN_1.md §8).
 //!
-//! Vocabulary scope: the v0.3 NOW set (DESIGN_1.md §10.1) — solid fills,
+//! Vocabulary scope: the v0.3 slice (DESIGN_1.md §11, drawn from the
+//! §10.1 NOW list) — solid fills,
 //! the four gradient kinds, image fills with scale modes, stroke with
 //! align, rounded corners, and clip. The rect-table index is the document
 //! DFS node index (DESIGN_1.md §5); `RectEntry.paint` indexes the
@@ -71,7 +72,9 @@ pub enum GradientKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Gradient {
     pub kind: GradientKind,
-    pub handles: [Vec2; 3],
+    pub handle_origin: Vec2,
+    pub handle_primary: Vec2,
+    pub handle_secondary: Vec2,
     pub stops: Vec<GradientStop>,
 }
 

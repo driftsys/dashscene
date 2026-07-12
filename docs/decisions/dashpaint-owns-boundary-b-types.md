@@ -7,8 +7,9 @@
 ## Context
 
 Story #3 defines boundary B (`DESIGN_1.md` §4, §7.3, §8): the types a
-painter consumes (`Color`, `RectEntry`, `PaintKind`, `PaintTable`) and the
-`Painter` trait. Solid-fill color is pinned to "4×f32 RGBA exactly as
+painter consumes (`Color`, `RectEntry`, `PaintKind`, `PaintTable` —
+joined at story #13 by `PaintEntry` and the v0.3 vocabulary types) and
+the `Painter` trait. Solid-fill color is pinned to "4×f32 RGBA exactly as
 `dashbuf`'s `Color` struct". The question was whether `dashpaint` should
 depend on another workspace crate to obtain these types.
 

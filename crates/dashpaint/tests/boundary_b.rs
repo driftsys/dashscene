@@ -82,11 +82,9 @@ fn a_paint_less_entry_pushes_and_resolves() {
 fn a_full_entry_round_trips_through_the_table() {
     let gradient = Gradient {
         kind: GradientKind::Radial,
-        handles: [
-            Vec2 { x: 0.5, y: 0.5 },
-            Vec2 { x: 1.0, y: 0.5 },
-            Vec2 { x: 0.5, y: 1.0 },
-        ],
+        handle_origin: Vec2 { x: 0.5, y: 0.5 },
+        handle_primary: Vec2 { x: 1.0, y: 0.5 },
+        handle_secondary: Vec2 { x: 0.5, y: 1.0 },
         stops: vec![
             GradientStop {
                 offset: 0.0,
@@ -120,7 +118,7 @@ fn a_full_entry_round_trips_through_the_table() {
 }
 
 #[test]
-fn an_image_fill_names_its_asset_and_scale_mode() {
+fn an_image_fill_round_trips_through_the_table() {
     let entry = PaintEntry {
         fill: Some(PaintKind::Image {
             image: 7,
@@ -128,14 +126,10 @@ fn an_image_fill_names_its_asset_and_scale_mode() {
         }),
         ..PaintEntry::default()
     };
+    let mut table = PaintTable::new();
+    let index = table.push(entry.clone());
 
-    assert_eq!(
-        entry.fill,
-        Some(PaintKind::Image {
-            image: 7,
-            scale_mode: ScaleMode::Crop
-        })
-    );
+    assert_eq!(table.resolve(index), &entry);
 }
 
 /// Test double: resolves each rect's paint index and records what a real

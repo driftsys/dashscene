@@ -24,21 +24,25 @@ against an older schema version keeps working unchanged.
 
 ## Schema shape
 
-- `Document` is the `root_type`: `nodes: [Node]` plus `images: [Image]`
-  (v0.3).
+- `Document` is the `root_type`: `nodes: [Node]` plus the v0.3
+  `paints: [Paint]` pool and `images: [Image]` assets.
 - `Node`s are stored as a flattened DFS array — array index doubles as
   the rect-table index consumed at boundary B (`specs/DESIGN_1.md` §5).
   `Node.parent` is an index into that same array, or the `uint32::MAX`
   sentinel for a root node.
-- `Node.layout: FixedSizeLayout` is the v0.1 layout mode (width/height
-  only; no Taffy yet — `dashscene-engine`'s solve lands at v0.2).
-- Paint is split across two generations on `Node`, both present at once
-  by design: `paint: SolidFill` is the v0.1 walking-skeleton shorthand;
-  `fill: Fill` (the v0.3 union), `stroke: Stroke`, `corners: CornerRadii`,
-  and `clip: bool` are the v0.3 vocabulary. When `fill` is present it
-  supersedes `paint`. See
-  `docs/decisions/fill-union-keeps-legacy-paint-field.md` for why both
-  fields exist and the condition under which `paint` is removed.
+- `Node.layout: FixedSizeLayout` is the v0.1 layout mode (authored
+  x/y offset plus width/height; no Taffy yet — `dashscene-engine`'s
+  solve lands at v0.2).
+- Paint is split across two generations, both present at once by
+  design: `Node.paint: SolidFill` is the v0.1 walking-skeleton inline
+  shorthand; the v0.3 vocabulary lives in the document-level dedup pool
+  `Document.paints: [Paint]` (DESIGN §5's "dedup style pool"),
+  referenced by `Node.paint_entry: uint32` — `uint32::MAX` (NO_PAINT)
+  means the node draws nothing, the same sentinel convention as
+  `Node.parent` and as `dashscene-core`'s committed output. When
+  `paint_entry` is set it supersedes `paint`. See
+  `docs/decisions/document-paint-pool-and-legacy-paint-field.md` for
+  why both exist and the condition under which `paint` is removed.
 - `Document.images: [Image]` holds embedded encoded image bytes;
   `ImageFill.image` indexes into it. Decoded pixel data crossing boundary
   B is out of scope here — see "Open for story #14" below.
@@ -47,7 +51,8 @@ against an older schema version keeps working unchanged.
 
 All types are generated from `crates/dashbuf/schema/dashbuf.fbs`:
 
-- `FixedSizeLayout` — `width`, `height: float32` (v0.1 layout mode).
+- `FixedSizeLayout` — `x`, `y`, `width`, `height: float32` (v0.1
+  layout mode; x/y are the authored offset relative to the parent).
 - `Color` — `r`, `g`, `b`, `a: float32`; the same shape `dashpaint`
   reproduces as a plain Rust type (`docs/decisions/dashpaint-owns-boundary-b-types.md`).
 - `SolidFill` — `color: Color`; the legacy `Node.paint` shorthand.
@@ -62,21 +67,26 @@ All types are generated from `crates/dashbuf/schema/dashbuf.fbs`:
   image-fill scale modes).
 - `ImageFormat` (`uint8` enum) — `Png` (only format for now).
 - `Gradient` (table) — `kind: GradientKind`, `handle_origin`,
-  `handle_primary`, `handle_secondary: Vec2`, `stops: [GradientStop]`.
-  One geometry model (three normalized handle positions) serves all four
+  `handle_primary`, `handle_secondary: Vec2`, `stops: [GradientStop]`;
+  handles and stops are `(required)`, so the flatbuffer verifier itself
+  rejects a geometry-less gradient at the load gate (P4). One geometry
+  model (three named normalized handle positions) serves all four
   gradient kinds — Figma's own `gradientHandlePositions` model; see
   `docs/decisions/paint-entry-composition.md`'s sub-decisions.
 - `ImageFill` (table) — `image: uint32` (index into `Document.images`),
   `scale_mode: ScaleMode`.
 - `Fill` (union) — `SolidFill | Gradient | ImageFill`.
 - `Stroke` (table) — `width: float32`, `align: StrokeAlign`,
-  `color: Color`; solid-only at v0.3.
+  `color: Color (required)`; solid-only at v0.3.
 - `Image` (table) — `format: ImageFormat`, `bytes: [ubyte]`.
+- `Paint` (table) — one pool entry: `fill: Fill`, `stroke: Stroke`,
+  `corners: CornerRadii`, `clip: bool = false`.
 - `Node` (table) — `name: string`, `parent: uint32` (`uint32::MAX`
   sentinel for roots), `layout: FixedSizeLayout`, `paint: SolidFill`
-  (legacy), `fill: Fill`, `stroke: Stroke`, `corners: CornerRadii`,
-  `clip: bool = false`.
-- `Document` (table, `root_type`) — `nodes: [Node]`, `images: [Image]`.
+  (legacy), `paint_entry: uint32 = uint32::MAX` (NO_PAINT sentinel;
+  index into `Document.paints`).
+- `Document` (table, `root_type`) — `nodes: [Node]`, `images: [Image]`,
+  `paints: [Paint]`.
 
 ## Testing
 
@@ -85,14 +95,15 @@ criterion E6, `specs/DESIGN_1.md` §11): a document built in memory
 survives a flatbuffer round trip byte-for-byte-equivalent in its decoded
 fields, including the root-node parent sentinel.
 
-`crates/dashbuf/tests/paint_roundtrip.rs` covers the v0.3 vocabulary, one
-focused test per construct: every gradient kind's discriminant, handles,
-and stops; every image scale mode plus `Document.images`; every stroke
-align; corner radii and clip (present and absent-defaults); and the
-`Fill` union's discrimination alongside the legacy `paint` field reading
-back unchanged. The test file is the executable statement of the
-schema's v0.3 contract; this section deliberately does not restate its
-cases.
+`crates/dashbuf/tests/paint_roundtrip.rs` covers the v0.3 vocabulary
+through the paint pool, one focused test per construct: every gradient
+kind (iterating the generated `ENUM_VALUES`, so a future kind cannot be
+silently missed), every image scale mode against a non-default asset
+index, every stroke align, corner radii and clip, absent-field
+defaults including the `NO_PAINT` sentinel, two nodes sharing one pool
+entry, and the pooled fill coexisting with the legacy `paint` field.
+The test file is the executable statement of the schema's v0.3
+contract; this section deliberately does not restate its cases.
 
 ## Open for story #14
 
@@ -104,10 +115,11 @@ lands with the painter work in #14 (see also
 
 ## Trace
 
-- Satisfies: `specs/DESIGN_1.md` §5 document format, §10.1 NOW paint
-  vocabulary, §11 v0.1 and v0.3 slices, R7 additive schema evolution;
-  issue #13 acceptance criteria.
+- Satisfies: `specs/DESIGN_1.md` §5 document format (including the
+  dedup style pool), §11 v0.1 and v0.3 slices (vocabulary drawn from
+  the §10.1 NOW list), R7 additive schema evolution; issue #13
+  acceptance criteria.
 - Blocks: `dashscene-core` lowering, `dashc`'s importer consumption
   (out of scope until later slices).
-- Related decisions: `docs/decisions/fill-union-keeps-legacy-paint-field.md`,
+- Related decisions: `docs/decisions/document-paint-pool-and-legacy-paint-field.md`,
   `docs/decisions/paint-entry-composition.md`.

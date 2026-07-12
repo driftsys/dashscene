@@ -12,7 +12,8 @@ Principle P2 (`AGENTS.md`) holds throughout — a painter only colors; it
 never measures, wraps, kerns, or moves anything.
 
 Boundary B is a rect table plus a paint table. The paint vocabulary is
-the v0.3 NOW set (`specs/DESIGN_1.md` §10.1): solid fills, the four
+the v0.3 slice's set (`specs/DESIGN_1.md` §11 v0.3, drawn from the
+§10.1 NOW list): solid fills, the four
 gradient kinds, image fills with scale modes, stroke with align,
 per-corner radii, and clip. The crate has no dependencies, including no
 `dashscene-core` and no `dashbuf` — see
@@ -96,11 +97,12 @@ and lands with the painter work in #14.
 ## Trace
 
 - Satisfies: `specs/DESIGN_1.md` §8 painter trait (boundary B), §7.3
-  output shape, §10.1 NOW paint vocabulary; issue #3 and #13 acceptance
+  output shape, §11 v0.3 paint vocabulary (from the §10.1 NOW list);
+  issue #3 and #13 acceptance
   criteria.
 - Blocks: #4 (`dashscene-skia`, first `Painter` implementation), #6
   (golden harness), #14 (v0.3 painting).
 - Related decisions: `docs/decisions/dashpaint-owns-boundary-b-types.md`,
   `docs/decisions/painter-trait-infallible-slice-input.md`,
   `docs/decisions/paint-entry-composition.md`,
-  `docs/decisions/fill-union-keeps-legacy-paint-field.md`.
+  `docs/decisions/document-paint-pool-and-legacy-paint-field.md`.

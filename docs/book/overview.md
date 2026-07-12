@@ -13,7 +13,8 @@ the reference implementation, test oracle, and 2D path.
 This project is in early development. No end-user functionality exists
 yet; work is proceeding through the `v0.1` "walking skeleton" milestone
 (schema, minimal DSL, fixed rects, solid fills, `.dsb` round-trip, painter
-trait, golden harness).
+trait, golden harness), with the `v0.3` paint-vocabulary schema (gradients,
+images, strokes, corners, clip) landed early.
 
 ## Where things live
 
