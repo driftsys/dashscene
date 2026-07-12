@@ -94,4 +94,17 @@ it in. Per-story decisions land here directly:
   the v0.3 paint goldens are per-family isolation scenes complementing
   story #14's combined golden; subtree clips deferred to #97 (story #18).
 
+- [asset-model-content-addressed-blobs.md](asset-model-content-addressed-blobs.md)
+  — assets are content-addressed raw blobs referenced from a hot
+  `AssetTable`; the ui document carries identity and metadata, never
+  bytes (design session, 2026-07-12).
+- [id-model-strings-compile-to-indices.md](id-model-strings-compile-to-indices.md)
+  — source strings compile to dense indices; content hashes for
+  assets, session handles for mutation; opt-in exports table (design
+  session, 2026-07-12); binds #8/#20.
+- [remoting-two-transports.md](remoting-two-transports.md) — remoting
+  rides UI snapshots + commit deltas plus content-addressed asset
+  fetch; snapshots speak indices, deltas speak handles (design
+  session, 2026-07-12); binds the producer-API shape now.
+
 See the `sdd-working-memory-lifecycle` rule.
