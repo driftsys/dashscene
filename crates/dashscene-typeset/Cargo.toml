@@ -11,3 +11,4 @@ description = "One typesetter: bidi split, rustybuzz shaping, glyph atlas pipeli
 name = "dashscene_typeset"
 
 [dependencies]
+ttf-parser.workspace = true
