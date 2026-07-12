@@ -52,6 +52,24 @@ Rejected — automatic lowering inside `commit`/`commit_with`: makes
 every commit pay for a tree scan and hides a semantic transform inside
 a mechanical operation. Lowering is an explicit producer pass.
 
+**Known property (CSS margin semantics).** The lowered margins behave
+as CSS/Taffy margins: a negative margin on a `Fill` child returns its
+absolute value to the container's free space, so `Fill` siblings grow.
+The acceptance criterion (a negative-gap scene equals the equivalent
+margin-based scene) holds by construction — both sides use the same
+margins — but whether this matches Figma's own negative-gap behavior
+for `Fill` children is a fidelity question with no real Figma file to
+check against at v0.2. Verifying it against a captured fixture is
+deferred to the importer slice (tracked as a `debt` issue). For fixed
+and hug children the overlap is exactly the authored gap.
+
+**Margin is flex-flow vocabulary.** It applies only to a child in a
+flex (`Horizontal`/`Vertical`) parent's flow. A margin authored on a
+root, or on a child of a mode-`None` (passthrough) parent, is inert —
+placement there is the authored offset — so the `TaffySolver` agrees
+with `commit()`'s fixed resolution (which ignores margin), preserving
+the mode-`None` equivalence guarantee (story #9).
+
 ## D3 — "DSL scene" is realized through the core commit path
 
 The acceptance criterion says "a DSL scene with negative gap." Today
