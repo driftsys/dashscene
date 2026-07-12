@@ -905,15 +905,26 @@ directly.
   resolving it, and authored its goldens against `dashscene-core`'s
   `Txn` directly. Filed as #118, which **blocks #46** (the DSL-generated
   stress corpus) — a dependency the original breakdown did not record.
-- **Fill weights do not exist, and may not be wanted.** Epic #7's scope
-  list named them, but core's `AxisSizing::{Fixed, Hug, Fill}` carries
-  no weight and `dashscene-engine` maps every `Fill` to
-  `flex_grow = 1.0`, so `Fill` siblings always split free space
-  equally. Figma auto-layout has no flex weight either, so an authored
-  weight would be a CSS-flexbox construct with no Figma counterpart.
-  Story #11 goldened the equal split rather than inventing one. Whether
-  SCD needs the construct at all is #117, to decide at v0.8 — this is a
-  scope question, not a scheduling one.
+- **SCD does not get authored fill weights** (#117, closed at this
+  revision). Epic #7's scope list named them, but core's
+  `AxisSizing::{Fixed, Hug, Fill}` carries no weight and
+  `dashscene-engine` maps every `Fill` to `flex_grow = 1.0`, so `Fill`
+  siblings always split free space equally — and Figma auto-layout has
+  no flex weight either, so an authored weight would be a CSS-flexbox
+  construct with no Figma counterpart and no producer emitting it.
+  Story #11 goldened the equal split rather than inventing one, and the
+  construct is now declined outright: P4 says vocabulary is validated,
+  never discovered, so a weight would have to be carried by the schema,
+  core's `Prop` set, the engine's mapping, and every validator profile,
+  permanently, for something nothing produces. P5 ("no producer's
+  limitations define the format") is the argument on the other side and
+  is a real one — the code-DSL path could plausibly want a 2:1 split —
+  but P5 says Figma's limits must not _bound_ the format, not that the
+  format should grow constructs nobody has asked for. Reopen when a
+  real consumer appears (the C# declarative DSL, or a stress-corpus
+  case needing an unequal split); it is then a schema change with a
+  stated requirement behind it. "Fill weights" is dropped from the v0.2
+  scope wording.
 - **Flex goldens are exact-match by construction.** Their scenes are
   dimensioned so every solved rect lands on an integer, so the fills
   carry no anti-aliased edges and the goldens compare with zero
