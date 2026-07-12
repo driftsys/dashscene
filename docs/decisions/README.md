@@ -58,4 +58,8 @@ it in. Per-story decisions land here directly:
   vocabulary is two optional `Node` tables, mirrored in core as stored
   intent (story #8); binds the story #9 Taffy solve and v0.8 wrap/grid.
 
+- [golden-comparison-space.md](golden-comparison-space.md) — goldens compare
+  decoded pixels in unpremultiplied RGBA8888, never encoded bytes (story #6;
+  resolves debt #86).
+
 See the `sdd-working-memory-lifecycle` rule.
