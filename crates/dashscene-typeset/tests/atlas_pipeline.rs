@@ -8,10 +8,9 @@ use std::sync::OnceLock;
 
 use dashscene_typeset::atlas::{AtlasBundle, AtlasSpec, REQUIRE_TOOL_ENV, generate};
 
-const FONT: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../corpus/fonts/noto-sans/NotoSans-Regular.ttf"
-);
+mod common;
+
+use common::FONT;
 
 const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ascii");
 

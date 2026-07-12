@@ -54,7 +54,7 @@ sizes produces one miss and two hits.
   text re-rendered at a handful of sizes (for example a resizable
   panel), that multiplies cache entries and cache misses for no
   benefit, since the underlying shaped glyphs never actually changed.
-- Option 3 (holding a constructed `rustybuzz::Face`) buys nothing once
+- Option 3 (holding a constructed `rustybuzz::Face`) provides no benefit once
   option 1 is in place: the cache already sits in front of shaping, so
   `Face` construction is off the hot path for repeated text. Holding a
   `Face` would additionally require a self-referential struct (a
@@ -74,6 +74,8 @@ sizes produces one miss and two hits.
 - `Typesetter::cache_stats() -> CacheStats { hits, misses }` exposes
   hit/miss counters so tests and #29's caller can observe cache
   behavior instead of inferring it indirectly.
-- `ShapedText`/`ShapedGlyph` are public types (not merely an internal
-  cache value) because #29/#30 may need to inspect shaped, unpositioned
-  runs directly.
+- `ShapedText`/`ShapedGlyph` stay crate-private: they are the
+  cache-value representation, and publishing them before a consumer
+  exists would freeze it into the public API. If #29/#30 turn out to
+  need direct access to shaped, unpositioned runs, exporting them
+  then is an additive change.

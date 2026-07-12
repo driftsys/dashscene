@@ -10,10 +10,15 @@ mod layout;
 mod shape;
 
 pub use font::Font;
-pub use shape::{ShapedGlyph, ShapedText};
+
+use shape::ShapedText;
 
 use std::collections::HashMap;
 use std::sync::Arc;
+
+// ShapedText/ShapedGlyph stay crate-private: they are the cache-value
+// representation, and publishing them before a consumer exists (#29/
+// #30) would freeze it into the public API.
 
 /// One glyph placed in document space (y-down, layout origin at the
 /// top-left): the pen position on the line's baseline with the
@@ -103,7 +108,7 @@ impl Typesetter {
     pub fn layout(&mut self, text: &str, size: f32, max_width: Option<f32>) -> TextLayout {
         let scale = size / f32::from(self.font.units_per_em());
         let ascent = f32::from(self.font.ascender()) * scale;
-        let advance = layout::line_advance(&self.font) as f32 * scale;
+        let advance = self.font.line_advance() as f32 * scale;
         let mut lines = Vec::new();
         if !text.is_empty() {
             for paragraph in text.split('\n') {

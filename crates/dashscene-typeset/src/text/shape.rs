@@ -8,7 +8,7 @@
 //! positions and needs no atlas coverage.
 
 use rustybuzz::ttf_parser::Tag;
-use rustybuzz::{Feature, UnicodeBuffer};
+use rustybuzz::{Direction, Feature, UnicodeBuffer};
 
 use super::font::Font;
 
@@ -33,11 +33,16 @@ pub struct ShapedText {
     pub glyphs: Vec<ShapedGlyph>,
 }
 
-/// Shapes `text` as one LTR run (bidi splitting is the v0.6 story).
+/// Shapes `text` as one forced-LTR run: guessing direction would
+/// silently shape RTL input into visual order and corrupt greedy
+/// wrapping, so until bidi itemization replaces this entry point (the
+/// v0.6 story), every run is LTR by construction — deterministic, and
+/// visibly wrong for RTL text rather than quietly reordered.
 pub(crate) fn shape(font: &Font, text: &str) -> ShapedText {
     let mut buffer = UnicodeBuffer::new();
     buffer.push_str(text);
     buffer.guess_segment_properties();
+    buffer.set_direction(Direction::LeftToRight);
     let features = [
         Feature::new(Tag::from_bytes(b"liga"), 0, ..),
         Feature::new(Tag::from_bytes(b"clig"), 0, ..),

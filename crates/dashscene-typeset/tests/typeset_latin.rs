@@ -4,10 +4,9 @@
 
 use dashscene_typeset::text::{Font, Typesetter};
 
-const FONT: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../corpus/fonts/noto-sans/NotoSans-Regular.ttf"
-);
+mod common;
+
+use common::FONT;
 
 fn font_data() -> Vec<u8> {
     std::fs::read(FONT).expect("fixture font present")
@@ -143,4 +142,33 @@ fn offsets_reach_positioned_glyphs() {
     for g in &l.lines[0].glyphs {
         assert_eq!(g.y, l.lines[0].baseline_y);
     }
+}
+
+#[test]
+fn trailing_spaces_trim_identically_with_and_without_max_width() {
+    // A measure pass (None) and a constrained pass must agree on the
+    // glyph set and width, or measure-then-layout flows (#29) drift.
+    let mut ts = typesetter();
+    let unconstrained = ts.layout("a ", 16.0, None);
+    let constrained = ts.layout("a ", 16.0, Some(1000.0));
+    assert_eq!(unconstrained.lines[0].glyphs.len(), 1);
+    assert_eq!(
+        unconstrained.lines[0].glyphs.len(),
+        constrained.lines[0].glyphs.len()
+    );
+    assert_eq!(unconstrained.width, constrained.width);
+}
+
+#[test]
+fn shaping_is_forced_ltr() {
+    // Until bidi itemization (v0.6, #32), every run shapes LTR by
+    // construction — deterministic and visibly wrong for RTL input,
+    // never silently reordered. Hebrew clusters therefore ascend.
+    let mut ts = typesetter();
+    let l = ts.layout("שלום", 16.0, None);
+    assert_eq!(l.lines.len(), 1);
+    let xs: Vec<f32> = l.lines[0].glyphs.iter().map(|g| g.x).collect();
+    let mut sorted = xs.clone();
+    sorted.sort_by(f32::total_cmp);
+    assert_eq!(xs, sorted, "glyphs advance left to right");
 }

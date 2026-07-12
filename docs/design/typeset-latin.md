@@ -62,18 +62,21 @@ running line count from the previous paragraph.
     pub struct TextLayout { pub lines: Vec<Line>, pub width: f32, pub height: f32, pub size: f32 }
     pub struct Line { pub glyphs: Vec<PositionedGlyph>, pub width: f32, pub baseline_y: f32 }
     pub struct PositionedGlyph { pub glyph_id: u16, pub x: f32, pub y: f32 }
-    pub struct Font { /* Arc<Vec<u8>>, face index, cached hhea metrics */ }
-    pub struct ShapedText { pub glyphs: Vec<ShapedGlyph> }
-    pub struct ShapedGlyph { pub glyph_id: u16, pub cluster: u32,
-        pub x_advance: i32, pub x_offset: i32, pub y_offset: i32 }
+    pub struct Font { /* Arc<Vec<u8>>, face index,
+                          atlas::FontMetrics (shared with the blob) */ }
     pub enum TypesetError { FontParse(String) }
 
-`ShapedText`/`ShapedGlyph` and `Font` are public (re-exported from
-`text::mod`) because the shaped-run cache and the font handle are
-part of the #29/#30 surface — the measure callback and the painter
-both need font metrics, and tests exercise shaping directly.
-`shape()` itself and `Font::face()` stay crate-private; nothing
-outside `dashscene-typeset` constructs a `rustybuzz::Face`.
+`Font` is public — the measure callback (#29) and the painter (#30)
+both need the font handle and its metrics, including
+`Font::line_advance()` (the baseline-to-baseline distance layout
+uses). `Font::metrics()` returns the same `atlas::FontMetrics` type
+the blob records, extracted through the same shared function, so the
+runtime and the build-time artifacts cannot disagree. `ShapedText`/
+`ShapedGlyph` stay crate-private: they are the cache-value
+representation, and publishing them before a consumer exists would
+freeze it into the public API. `shape()` and `Font::face()` are also
+crate-private; nothing outside `dashscene-typeset` constructs a
+`rustybuzz::Face`.
 
 ## Coordinate conventions
 
@@ -134,13 +137,13 @@ regardless of width.
   line's glyph range then covers the space along with the words
   around it.
 - Leading space glyphs before the first word of a paragraph are
-  preserved: the first word always lands on a line unconditionally
+  preserved: the first word is always placed on its line
   (there is no previous content to overflow), and the line's start
   index is never advanced past a leading space, so those glyphs stay
   in the emitted range.
 - A word wider than `max_width` overflows its line rather than
   breaking mid-word. Mid-word breaking and UAX #14 line breaking are
-  not v0.5 problems.
+  out of scope for v0.5.
 - An empty string lays out to zero lines and zero size.
 
 ## Cache semantics
@@ -201,8 +204,7 @@ not look the glyph id up in an atlas at all.
                                                   Line, PositionedGlyph,
                                                   CacheStats,
                                                   TypesetError; re-exports
-                                                  Font, ShapedText,
-                                                  ShapedGlyph
+                                                  Font
     crates/dashscene-typeset/src/text/font.rs    Font (bytes, face
                                                   index, hhea metrics);
                                                   builds the on-demand
@@ -225,7 +227,7 @@ validates with both `ttf-parser::Face::parse` (metrics) and
 itself is constructed on demand inside `shape()` rather than stored on
 `Font` — the shaped-run cache sits in front of shaping, so `Face`
 construction is off the hot path. A self-referential holder or a
-re-parsing wrapper crate would buy nothing here; revisit only with
+re-parsing wrapper crate would provide no benefit here; revisit only with
 profiling evidence.
 
 ## Testing (with the committed corpus Noto Sans)

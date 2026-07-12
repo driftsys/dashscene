@@ -2,74 +2,77 @@
 //! Latin subset). Break opportunities: after runs of ASCII space, and
 //! at `'\n'` (the caller splits paragraphs). A word wider than the
 //! maximum width overflows its line — mid-word breaking and UAX #14
-//! line breaking are not v0.5 problems.
+//! line breaking are out of scope for v0.5.
 
 use std::ops::Range;
 
-use super::font::Font;
 use super::shape::ShapedText;
 use super::{Line, PositionedGlyph};
 
-/// Splits one shaped paragraph into lines of glyph ranges. Spaces
-/// that a wrap consumes appear on neither line and count toward
-/// neither width; spaces inside a line keep their glyphs and advance.
+/// Splits one shaped paragraph into lines of glyph ranges.
+///
+/// Space handling: leading authored spaces stay on their line;
+/// mid-line spaces separate words and keep their glyphs; trailing
+/// spaces (before a wrap or at the paragraph end) are on no line and
+/// count toward no width — identically with and without a maximum
+/// width, so a measure pass (`None`) and a constrained layout pass
+/// agree on the glyph set.
+///
+/// Width bookkeeping extends one left-to-right fold, one multiply-add
+/// per glyph — the same operation order [`position_line`] uses — so a
+/// line accepted by the fit check can never measure wider than the
+/// maximum through float re-association.
 pub(crate) fn break_lines(
     text: &str,
     shaped: &ShapedText,
     scale: f32,
     max_width: Option<f32>,
 ) -> Vec<Range<usize>> {
-    let glyph_count = shaped.glyphs.len();
-    let Some(max_width) = max_width else {
-        // One line spanning every glyph (the lint-suggested
-        // `(0..n).collect()` would build n ranges, not one).
-        #[allow(clippy::single_range_in_vec_init)]
-        return vec![0..glyph_count];
-    };
-
-    // Tokenize into alternating space/word glyph runs. Clusters are
-    // byte indices into `text` (LTR, one run), so a glyph is a space
-    // glyph exactly when its source byte is one.
+    let max_width = max_width.unwrap_or(f32::INFINITY);
+    let glyphs = &shaped.glyphs;
+    // Clusters are byte indices of char starts (LTR, forced in
+    // shaping), so a glyph is a space glyph exactly when its source
+    // byte is one.
     let bytes = text.as_bytes();
-    let is_space = |gi: usize| bytes[shaped.glyphs[gi].cluster as usize] == b' ';
-    let mut tokens: Vec<(bool, Range<usize>, f32)> = Vec::new();
-    let mut i = 0;
-    while i < glyph_count {
-        let space = is_space(i);
-        let start = i;
-        let mut advance = 0f32;
-        while i < glyph_count && is_space(i) == space {
-            advance += shaped.glyphs[i].x_advance as f32 * scale;
-            i += 1;
-        }
-        tokens.push((space, start..i, advance));
-    }
+    let is_space = |gi: usize| bytes[glyphs[gi].cluster as usize] == b' ';
 
     let mut lines: Vec<Range<usize>> = Vec::new();
     let mut start = 0usize; // current line's first glyph
     let mut end = 0usize; // current line's end, trailing spaces trimmed
-    let mut full_width = 0f32; // width including any trailing spaces
-
-    for (space, range, advance) in tokens {
-        if space {
-            // Space runs extend the width (they separate words on the
-            // line) but never the trimmed end — a run that turns out
-            // to be trailing (before a wrap or at paragraph end) is
-            // dropped with zero width by construction.
-            full_width += advance;
-            continue;
+    let mut width = 0f32; // fold over glyphs[start..cursor]
+    let mut i = 0usize;
+    while i < glyphs.len() {
+        let run_start = i;
+        let space = is_space(i);
+        while i < glyphs.len() && is_space(i) == space {
+            i += 1;
         }
-        if end == start || full_width + advance <= max_width {
-            // First word on a line always lands (overflow allowed —
-            // leading authored spaces are part of that first landing
-            // since `start` never moves past them).
-            end = range.end;
-            full_width += advance;
+        if space {
+            // Spaces extend the width fold but never `end`: a run that
+            // turns out to be trailing is dropped by construction.
+            for g in &glyphs[run_start..i] {
+                width += g.x_advance as f32 * scale;
+            }
         } else {
-            lines.push(start..end);
-            start = range.start;
-            end = range.end;
-            full_width = advance;
+            let mut prospective = width;
+            for g in &glyphs[run_start..i] {
+                prospective += g.x_advance as f32 * scale;
+            }
+            if end == start || prospective <= max_width {
+                // The first word of a line is always placed, overflow
+                // included; leading authored spaces are part of that
+                // first placement since `start` never moves past them.
+                end = i;
+                width = prospective;
+            } else {
+                lines.push(start..end);
+                start = run_start;
+                end = i;
+                width = 0.0;
+                for g in &glyphs[run_start..i] {
+                    width += g.x_advance as f32 * scale;
+                }
+            }
         }
     }
     lines.push(start..end);
@@ -99,10 +102,4 @@ pub(crate) fn position_line(
         width: pen_x,
         baseline_y,
     }
-}
-
-/// Baseline-to-baseline distance in font units (hhea; descender is
-/// negative).
-pub(crate) fn line_advance(font: &Font) -> i32 {
-    i32::from(font.ascender()) - i32::from(font.descender()) + i32::from(font.line_gap())
 }
