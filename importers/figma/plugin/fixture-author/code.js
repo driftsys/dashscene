@@ -35,7 +35,7 @@ function baseFrame(name, w, h) {
   return f;
 }
 
-async function label(text, font, size) {
+function label(text, font, size) {
   const t = figma.createText();
   t.fontName = font || INTER;
   t.fontSize = size || 14;
@@ -155,10 +155,18 @@ async function variablesBound() {
     v.setValueForMode(dark, darkVal);
     return v;
   };
-  const vBg = mk("color/bg", "COLOR",
-    { r: 1, g: 1, b: 1, a: 1 }, { r: 0.08, g: 0.09, b: 0.11, a: 1 });
-  const vAccent = mk("color/accent", "COLOR",
-    { r: 0.13, g: 0.45, b: 0.9, a: 1 }, { r: 0.4, g: 0.65, b: 1, a: 1 });
+  const vBg = mk("color/bg", "COLOR", { r: 1, g: 1, b: 1, a: 1 }, {
+    r: 0.08,
+    g: 0.09,
+    b: 0.11,
+    a: 1,
+  });
+  const vAccent = mk("color/accent", "COLOR", {
+    r: 0.13,
+    g: 0.45,
+    b: 0.9,
+    a: 1,
+  }, { r: 0.4, g: 0.65, b: 1, a: 1 });
   const vGap = mk("size/gap", "FLOAT", 16, 24);
   const vRadius = mk("size/radius", "FLOAT", 8, 2);
 
@@ -192,7 +200,11 @@ async function variablesBound() {
     chip.name = "accent-chip";
     chip.resize(120, 32);
     chip.fills = [
-      figma.variables.setBoundVariableForPaint(solid(GRAY(0.5)), "color", vAccent),
+      figma.variables.setBoundVariableForPaint(
+        solid(GRAY(0.5)),
+        "color",
+        vAccent,
+      ),
     ];
     card.appendChild(chip);
     card.appendChild(await label(name));
@@ -268,12 +280,16 @@ async function effects2025() {
   });
 
   // Variable-width stroke: Figma Draw feature, not scriptable — always manual.
-  manual.push("variable-width stroke (draw a line, Draw tools > variable width)");
+  manual.push(
+    "variable-width stroke (draw a line, Draw tools > variable width)",
+  );
 
   // Leave the checklist inside the file; `_` prefix = trimmed by convention.
   const note = await label(
     "_manual-steps:\n" + manual.map((m) => "  - " + m).join("\n"),
-    INTER, 12);
+    INTER,
+    12,
+  );
   note.name = "_manual-checklist";
   figma.currentPage.appendChild(note);
   note.x = root.x;
@@ -299,7 +315,9 @@ async function loweringWrap() {
   const widths = [120, 80, 160, 100, 140, 90, 110];
   for (let i = 0; i < widths.length; i++) {
     const chip = cell("chip-" + (i + 1), {
-      r: 0.55 + (i % 3) * 0.12, g: 0.65, b: 0.9 - (i % 4) * 0.1,
+      r: 0.55 + (i % 3) * 0.12,
+      g: 0.65,
+      b: 0.9 - (i % 4) * 0.1,
     });
     root.appendChild(chip);
     chip.resize(widths[i], 40);
@@ -337,7 +355,7 @@ async function loweringHugInFill() {
 }
 
 // ----------------------------------------------------- lowering-negative-gap
-async function loweringNegativeGap() {
+function loweringNegativeGap() {
   const root = baseFrame("lowering-negative-gap", 360, 120);
   root.layoutMode = "HORIZONTAL";
   root.itemSpacing = -16; // the construct under test (lowers to margins)
@@ -391,7 +409,9 @@ async function loweringBaseline() {
     root.appendChild(ar);
   }
   return "lowering-baseline built: mixed-size baseline row" +
-    (arabicFont ? " incl. Arabic RTL run" : " (Arabic font unavailable — add manually)");
+    (arabicFont
+      ? " incl. Arabic RTL run"
+      : " (Arabic font unavailable — add manually)");
 }
 
 // ------------------------------------------------- lowering-variant-topology
