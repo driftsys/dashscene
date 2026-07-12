@@ -36,8 +36,8 @@ mod arena;
 mod committed;
 
 pub use arena::{
-    Arena, AxisSizing, CrossAxisAlign, EdgeInsets, Layout, LayoutMode, MainAxisAlign, NodeId, Prop,
-    TextStyle, Txn,
+    Arena, AxisSizing, CrossAxisAlign, EdgeInsets, Layout, LayoutMode, LayoutSolver, MainAxisAlign,
+    NodeId, Prop, SolvedRect, TextStyle, Txn,
 };
 pub use committed::{
     Color, CommittedScene, PaintEntry, PaintIndex, PaintKind, PaintTable, RectEntry,

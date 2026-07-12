@@ -27,6 +27,29 @@ impl NodeId {
     }
 }
 
+/// One node's resolved rectangle in absolute coordinates — the
+/// geometry a [`LayoutSolver`] returns per node and the committed rect
+/// table carries.
+#[derive(Clone, Copy, Debug)]
+pub struct SolvedRect {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+/// The geometry seam (P2 — one solver, DESIGN_1.md §7.1): commit asks
+/// exactly one solver for every node's rect and computes no geometry
+/// of its own. `dashscene-engine`'s `TaffySolver` is the product
+/// implementation; [`Txn::commit`] uses core's internal fixed-geometry
+/// resolution (mode-`None` passthrough semantics).
+pub trait LayoutSolver {
+    /// Resolve every node of `arena` to an absolute rect. Omitting a
+    /// node is a broken contract: [`Txn::commit_with`] panics rather
+    /// than skipping the node silently (P4).
+    fn solve(&mut self, arena: &Arena) -> Vec<(NodeId, SolvedRect)>;
+}
+
 /// Layout mode of a container node. `None` = passthrough (children
 /// place by their authored offsets); `Horizontal`/`Vertical` = flex
 /// (the solver owns placement — story #9). Wrap and Grid append at
@@ -273,6 +296,37 @@ impl Arena {
     }
 }
 
+/// The v0.1 fixed-geometry resolution as a [`LayoutSolver`]: absolute
+/// position = parent absolute + authored offset, size = authored
+/// width/height. Flex intent is ignored — this is the mode-`None`
+/// passthrough, and what [`Txn::commit`] uses.
+struct FixedSolver;
+
+impl LayoutSolver for FixedSolver {
+    fn solve(&mut self, arena: &Arena) -> Vec<(NodeId, SolvedRect)> {
+        let mut out = Vec::with_capacity(arena.nodes.len());
+        let mut absolute = vec![(0.0f32, 0.0f32); arena.nodes.len()];
+        let mut stack: Vec<NodeId> = arena.roots.iter().rev().copied().collect();
+        while let Some(id) = stack.pop() {
+            let node = &arena.nodes[id.index()];
+            let (parent_x, parent_y) = node.parent.map_or((0.0, 0.0), |p| absolute[p.index()]);
+            let (x, y) = (parent_x + node.layout.x, parent_y + node.layout.y);
+            absolute[id.index()] = (x, y);
+            out.push((
+                id,
+                SolvedRect {
+                    x,
+                    y,
+                    w: node.layout.width,
+                    h: node.layout.height,
+                },
+            ));
+            stack.extend(node.children.iter().rev());
+        }
+        out
+    }
+}
+
 /// A staged mutation. Obtained from [`Arena::open`]; publishes via
 /// [`commit`](Txn::commit).
 #[derive(Debug)]
@@ -372,13 +426,23 @@ impl Txn<'_> {
     }
 
     /// Resolve the intent model into the back buffer, flip the double
-    /// buffer, and return the new generation.
+    /// buffer, and return the new generation — using core's internal
+    /// fixed-geometry resolution (authored offset + fixed size; flex
+    /// intent ignored). Product code with flex layout commits through
+    /// [`commit_with`](Txn::commit_with) and a real solver.
+    pub fn commit(self) -> u64 {
+        self.commit_with(&mut FixedSolver)
+    }
+
+    /// Resolve the intent model into the back buffer using `solver`
+    /// for every node's geometry, flip the double buffer, and return
+    /// the new generation.
     ///
     /// Resolution: DFS walk (roots in creation order, children in
-    /// creation order), absolute position = parent absolute + own
-    /// authored offset, paints interned by exact color bit pattern in
-    /// first-use order, dirty set diffed against the previous commit.
-    /// Fully deterministic (R7).
+    /// creation order) fixes the rect-table order; geometry comes from
+    /// the solver; paints intern by exact color bit pattern in
+    /// first-use order; the dirty set diffs against the previous
+    /// commit. Fully deterministic given a deterministic solver (R7).
     ///
     /// A rect is dirty when its entry bits changed (the bits a painter
     /// uploads, R-T4) or when its resolved fill color changed — the
@@ -386,7 +450,12 @@ impl Txn<'_> {
     /// *index* can reference a different color and an index shift can
     /// leave the color unchanged; both cases count as dirty, and only
     /// a rect equal on both counts is clean.
-    pub fn commit(self) -> u64 {
+    ///
+    /// # Panics
+    ///
+    /// Panics if the solver omits a node (P4 — a missing rect is a
+    /// broken contract, never a silent skip).
+    pub fn commit_with(self, solver: &mut dyn LayoutSolver) -> u64 {
         let arena = self.arena;
 
         // DFS document order (rect-table index order).
@@ -397,19 +466,23 @@ impl Txn<'_> {
             stack.extend(arena.nodes[id.index()].children.iter().rev());
         }
 
-        // Resolve rects + intern paints. Every rect resolves: an
+        // Geometry from the solver, keyed by arena slot.
+        let mut solved: Vec<Option<SolvedRect>> = vec![None; arena.nodes.len()];
+        for (id, rect) in solver.solve(arena) {
+            solved[id.index()] = Some(rect);
+        }
+
+        // Build rects + intern paints. Every rect resolves: an
         // unfilled node interns the shared draws-nothing entry
         // (`PaintEntry::default()`) keyed as `None`.
-        let mut absolute = vec![(0.0f32, 0.0f32); arena.nodes.len()];
         let mut rects = Vec::with_capacity(order.len());
         let mut paints = PaintTable::new();
         let mut interned: HashMap<Option<[u32; 4]>, PaintIndex> = HashMap::new();
         let mut rect_index = vec![u32::MAX; arena.nodes.len()];
         for (i, &id) in order.iter().enumerate() {
             let node = &arena.nodes[id.index()];
-            let (parent_x, parent_y) = node.parent.map_or((0.0, 0.0), |p| absolute[p.index()]);
-            let (x, y) = (parent_x + node.layout.x, parent_y + node.layout.y);
-            absolute[id.index()] = (x, y);
+            let geometry =
+                solved[id.index()].unwrap_or_else(|| panic!("solver returned no rect for {id:?}"));
             let paint =
                 *interned
                     .entry(node.fill.map(color_key))
@@ -421,10 +494,10 @@ impl Txn<'_> {
                         Some(color) => paints.push(PaintEntry::solid(color)),
                     });
             rects.push(RectEntry {
-                x,
-                y,
-                w: node.layout.width,
-                h: node.layout.height,
+                x: geometry.x,
+                y: geometry.y,
+                w: geometry.w,
+                h: geometry.h,
                 paint,
             });
             // In range for u32 by the add_node guard.
