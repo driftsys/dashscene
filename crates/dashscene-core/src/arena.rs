@@ -11,10 +11,11 @@
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::committed::{
-    ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CommittedScene, CornerRadii, PaintEntry,
-    PaintIndex, PaintKind, PaintTable, RectEntry,
+    ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CommittedScene, CornerRadii, ImageAsset,
+    ImageTable, PaintEntry, PaintIndex, PaintKind, PaintTable, RectEntry, Stroke, Vec2,
 };
 
 /// Stable handle to a node in one [`Arena`]. Returned by
@@ -150,7 +151,16 @@ pub enum Prop {
     Y(f32),
     Width(f32),
     Height(f32),
+    /// The v0.1 solid-fill shorthand. Equivalent to
+    /// `FillWith(PaintKind::Solid { color })` — one field, two setters, so
+    /// unlike the document's `paint`/`paint_entry` pair (issue #63) the two
+    /// cannot disagree.
     Fill(Color),
+    /// The node's fill in the full v0.3 vocabulary: a gradient, or an image
+    /// fill referencing an asset staged with [`Txn::add_image`].
+    FillWith(PaintKind),
+    /// The node's outline stroke: width, align, and solid color.
+    Stroke(Stroke),
     /// Per-corner radii, in document units. They round the node's own
     /// fill and stroke, and — when the node clips — the clip box its
     /// descendants are clipped against.
@@ -220,7 +230,11 @@ struct NodeData {
     /// Creation order; DFS child order at commit.
     children: Vec<NodeId>,
     layout: Layout,
-    fill: Option<Color>,
+    /// The node's fill, in the full boundary-B vocabulary. `Prop::Fill`
+    /// stays as the solid shorthand v0.1 producers use; `Prop::FillWith`
+    /// stages a gradient or an image fill.
+    fill: Option<PaintKind>,
+    stroke: Option<Stroke>,
     corners: CornerRadii,
     /// "This node clips its children to its own box" — intent, resolved
     /// at commit (issue #97).
@@ -234,6 +248,21 @@ struct NodeData {
 #[derive(Debug, Default)]
 pub struct Arena {
     nodes: Vec<NodeData>,
+    /// The image assets `PaintKind::Image` fills reference by index.
+    ///
+    /// The arena owns them because a `.dsb` carries them (`Document.images`),
+    /// so a loaded scene must be self-contained — a painter is handed
+    /// `scene.images()` alongside `scene.paints()` and `scene.clips()`, and
+    /// there is nowhere else for a loaded document's assets to live.
+    ///
+    /// Behind an `Arc` because every commit hands the table to the committed
+    /// buffer, and the buffer is double-buffered: cloning it would memcpy
+    /// every asset's encoded bytes twice per frame, on the path R-T4 budgets
+    /// at "dirty-range upload + submit, nothing else". Assets are immutable
+    /// once staged, so the commit takes a refcount rather than a copy;
+    /// `add_image` pays the copy instead, and only when the table is actually
+    /// shared.
+    images: Arc<ImageTable>,
     /// Creation order; DFS root order at commit.
     roots: Vec<NodeId>,
     buffers: [CommittedScene; 2],
@@ -415,6 +444,7 @@ impl Txn<'_> {
             children: Vec::new(),
             layout: Layout::default(),
             fill: None,
+            stroke: None,
             corners: CornerRadii::default(),
             clip: false,
             text: None,
@@ -434,6 +464,16 @@ impl Txn<'_> {
     /// Panics if `node` is out of range for this arena. A `NodeId` from
     /// another arena whose index happens to be in range is not detected
     /// — ids are only meaningful for the arena that produced them.
+    /// Stages an image asset and returns its index — the value a
+    /// [`PaintKind::Image`] fill references.
+    ///
+    /// Assets are append-only within an arena and are not deduplicated here:
+    /// a document's asset table arrives already deduplicated by its producer
+    /// (the content-addressed asset model is v0.7, issue #107).
+    pub fn add_image(&mut self, asset: ImageAsset) -> u32 {
+        Arc::make_mut(&mut self.arena.images).push(asset)
+    }
+
     pub fn set_prop(&mut self, node: NodeId, prop: Prop) {
         let data = self
             .arena
@@ -445,7 +485,9 @@ impl Txn<'_> {
             Prop::Y(v) => data.layout.y = v,
             Prop::Width(v) => data.layout.width = v,
             Prop::Height(v) => data.layout.height = v,
-            Prop::Fill(c) => data.fill = Some(c),
+            Prop::Fill(c) => data.fill = Some(PaintKind::Solid { color: c }),
+            Prop::FillWith(kind) => data.fill = Some(kind),
+            Prop::Stroke(s) => data.stroke = Some(s),
             Prop::Corners {
                 top_left,
                 top_right,
@@ -630,18 +672,17 @@ impl Txn<'_> {
             let node = &arena.nodes[id.index()];
             let geometry =
                 solved[id.index()].unwrap_or_else(|| panic!("solver returned no rect for {id:?}"));
-            let paint = *interned
-                .entry(paint_key(node.fill, node.corners))
-                .or_insert_with(|| {
-                    // Cannot truncate: the paint table never exceeds the
-                    // node count (kept below u32::MAX by add_node) plus
-                    // this one shared entry.
-                    paints.push(PaintEntry {
-                        fill: node.fill.map(|color| PaintKind::Solid { color }),
-                        stroke: None,
-                        corners: node.corners,
-                    })
-                });
+            let entry = PaintEntry {
+                fill: node.fill.clone(),
+                stroke: node.stroke,
+                corners: node.corners,
+            };
+            let paint = *interned.entry(paint_key(&entry)).or_insert_with(|| {
+                // Cannot truncate: the paint table never exceeds the
+                // node count (kept below u32::MAX by add_node) plus
+                // this one shared entry.
+                paints.push(entry.clone())
+            });
 
             // The clip that applies to this node is its parent's, plus
             // the parent's own box when the parent clips. A clipping
@@ -711,6 +752,7 @@ impl Txn<'_> {
         arena.buffers[back] = CommittedScene {
             rects,
             paints,
+            images: Arc::clone(&arena.images),
             clips,
             generation,
             dirty,
@@ -746,15 +788,87 @@ fn intern_region(
     index
 }
 
-/// The interning key of one node's paint entry: its fill color (`None`
-/// for an unfilled node) and its corner radii, both by exact bit
-/// pattern. Widen this whenever a producer can stage more of the paint
-/// vocabulary — two nodes may share a key only if they resolve to the
-/// same `PaintEntry`.
-type PaintKey = (Option<[u32; 4]>, [u32; 4]);
+/// The interning key of one paint entry: a canonical bit encoding of the
+/// entry in full.
+///
+/// It encodes the *whole* entry rather than a per-field tuple, because a
+/// key that names each field has to grow an arm for every vocabulary
+/// widening — and the previous one did not. It carried only
+/// `(fill color, corners)` and answered a non-solid fill with
+/// `unreachable!`, which would have panicked in the dirty-set diff, one
+/// commit away from the producer that staged the gradient (issue #131).
+/// Encoding the entry means the next fill kind costs one match arm here
+/// and nothing anywhere else.
+///
+/// `f32`s go in by bit pattern, like the rest of the commit path: `f32`
+/// equality is not reflexive for NaN, which would make a rect permanently
+/// dirty and its paint entry never dedup.
+type PaintKey = Vec<u32>;
 
-fn paint_key(fill: Option<Color>, corners: CornerRadii) -> PaintKey {
-    (fill.map(color_key), corner_key(corners))
+fn paint_key(entry: &PaintEntry) -> PaintKey {
+    let mut key = Vec::new();
+
+    match &entry.fill {
+        None => key.push(0),
+        Some(PaintKind::Solid { color }) => {
+            key.push(1);
+            key.extend(color_key(*color));
+        }
+        Some(PaintKind::Gradient(gradient)) => {
+            key.push(2);
+            key.push(gradient.kind as u32);
+            key.extend(vec2_key(gradient.handle_origin));
+            key.extend(vec2_key(gradient.handle_primary));
+            key.extend(vec2_key(gradient.handle_secondary));
+            key.push(gradient.stops.len() as u32);
+            for stop in &gradient.stops {
+                key.push(stop.offset.to_bits());
+                key.extend(color_key(stop.color));
+            }
+        }
+        Some(PaintKind::Image {
+            image,
+            scale_mode,
+            transform,
+            tile_scale,
+        }) => {
+            key.push(3);
+            key.push(*image);
+            key.push(*scale_mode as u32);
+            key.push(tile_scale.to_bits());
+            match transform {
+                None => key.push(0),
+                Some(m) => {
+                    key.push(1);
+                    key.extend([
+                        m.a.to_bits(),
+                        m.b.to_bits(),
+                        m.c.to_bits(),
+                        m.d.to_bits(),
+                        m.tx.to_bits(),
+                        m.ty.to_bits(),
+                    ]);
+                }
+            }
+        }
+    }
+
+    match &entry.stroke {
+        None => key.push(0),
+        Some(stroke) => {
+            key.push(1);
+            key.push(stroke.width.to_bits());
+            key.push(stroke.align as u32);
+            key.extend(color_key(stroke.color));
+        }
+    }
+
+    key.extend(corner_key(entry.corners));
+    key
+}
+
+fn vec2_key(v: Vec2) -> [u32; 2] {
+    [v.x.to_bits(), v.y.to_bits()]
 }
 
 fn color_key(color: Color) -> [u32; 4] {
@@ -789,19 +903,11 @@ fn entry_bits(entry: &RectEntry) -> [u32; 6] {
     ]
 }
 
-/// The paint an entry resolves to in its own commit's paint table,
-/// compared by bit pattern like the interner. Both tables are re-interned
-/// every commit, so an unchanged index can resolve to a different entry.
+/// The paint an entry resolves to in its own commit's paint table. Both
+/// tables are re-interned every commit, so an unchanged index can resolve
+/// to a different entry.
 fn resolved_paint_key(entry: &RectEntry, paints: &PaintTable) -> PaintKey {
-    let resolved = paints.resolve(entry.paint);
-    let fill = match resolved.fill {
-        Some(PaintKind::Solid { color }) => Some(color),
-        Some(_) => unreachable!(
-            "widen resolved_paint_key when producers can stage non-solid fills (v0.3+ vocabulary)"
-        ),
-        None => None,
-    };
-    paint_key(fill, resolved.corners)
+    paint_key(paints.resolve(entry.paint))
 }
 
 fn clip_box_bits(clip: &ClipBox) -> [u32; 8] {

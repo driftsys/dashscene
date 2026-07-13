@@ -135,6 +135,14 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
+      # dashc now depends on dashbuf (story #16: it emits .dsb), and
+      # dashbuf's build.rs shells out to flatc — so the wasm target needs
+      # it too, not just the native jobs.
+      - name: install flatc
+        run: |
+          curl -fsSL -o flatc.zip https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip
+          unzip -o flatc.zip flatc -d /usr/local/bin
+          chmod +x /usr/local/bin/flatc
       - run: cargo build -p dashc --release --target wasm32-unknown-unknown
 
   atlas-repro:

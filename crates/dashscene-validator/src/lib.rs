@@ -76,6 +76,11 @@ pub mod rule {
     pub const CONFLICTING_PAINT_REPRESENTATION: &str = "paint.conflicting-representation";
     pub const TEXT_STRING_OUT_OF_RANGE: &str = "text.string-out-of-range";
     pub const TEXT_STYLE_OUT_OF_RANGE: &str = "text.style-out-of-range";
+    /// A text style whose `color` is absent. The schema makes it optional (a
+    /// struct field in a table always is), so a producer can omit it — and a
+    /// consumer that invents a default has silently discovered vocabulary,
+    /// which is what P4 forbids.
+    pub const TEXT_STYLE_NO_COLOR: &str = "text.style-no-color";
 
     // Load gate — the append-only enum range check. The schema's own
     // contract: "a reader built before an append receives the unknown

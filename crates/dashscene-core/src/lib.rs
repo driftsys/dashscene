@@ -35,6 +35,7 @@
 
 mod arena;
 mod committed;
+mod load;
 
 pub use arena::{
     Arena, AxisSizing, CrossAxisAlign, EdgeInsets, Layout, LayoutMode, LayoutSolver, MainAxisAlign,
@@ -44,3 +45,4 @@ pub use committed::{
     ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CommittedScene, CornerRadii, PaintEntry,
     PaintIndex, PaintKind, PaintTable, RectEntry,
 };
+pub use load::load_document;

@@ -11,4 +11,5 @@ description = "Semantic model: arena, node tree, layout and paint tables, and th
 name = "dashscene_core"
 
 [dependencies]
+dashbuf.workspace = true
 dashpaint.workspace = true

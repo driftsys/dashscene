@@ -112,6 +112,22 @@ pub fn validate_document(doc: &Document<'_>) -> Report {
         check_image_asset(&mut report, &image, &Location::ImageAsset(i as u32));
     }
 
+    // A text style's color is optional in the schema, so a producer can omit
+    // it. Nothing downstream may invent one: the loader would have to pick a
+    // default, and a silently-defaulted color is discovered vocabulary (P4).
+    for (i, style) in doc.text_styles().unwrap_or_default().iter().enumerate() {
+        if style.color().is_none() {
+            let at = Location::Node(NodePath::new(i as u32, format!("<text style #{i}>")));
+            report.push(error(
+                rule::TEXT_STYLE_NO_COLOR,
+                &at,
+                "text style carries no color; the schema makes it optional, but a consumer \
+                 that defaults it has silently invented vocabulary (P4)"
+                    .to_owned(),
+            ));
+        }
+    }
+
     report
 }
 
