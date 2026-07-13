@@ -22,7 +22,10 @@ out to flatc at build time and generates the Rust bindings, which
 Evolution is append-only: existing field ids keep their positions, and new
 fields are appended (R7). Every extension — v0.2's layout modes, v0.3's
 paint vocabulary below — is additive, not a rewrite; a reader built
-against an older schema version keeps working unchanged.
+against an older schema version keeps working unchanged. That discipline
+is enforced by a frozen byte fixture, not by convention alone — see
+"Testing" below and
+`docs/decisions/dsb-frozen-fixture-r7-guard.md`.
 
 ## Schema shape
 
@@ -182,6 +185,28 @@ a required field — so the verifier-rejection property is enforced at
 build time for Rust producers and by the flatbuffer verifier for
 foreign bytes; no test constructs invalid bytes by hand.
 
+`crates/dashbuf/tests/schema_evolution.rs` is the R7 guard (debt #64).
+The three suites above build and decode with the same freshly generated
+bindings, so a schema edit that shifts a field id or a union
+discriminant — which breaks every `.dsb` already written to disk —
+leaves them green. This suite instead decodes
+`crates/dashbuf/tests/fixtures/v0_5_document.dsb`, a binary document
+checked into the repo and frozen: one document exercising the four
+sentinel-defaulted `Node` fields, all three `Fill` union members,
+`Paint.clip`, the legacy inline `Node.paint`, both flex tables, and both
+text pools, every field written to a value distinguishable from its
+default. The assertions are on those values — a shifted field id
+usually still decodes, and quietly returns another field's value or a
+default, which is the failure worth catching.
+
+The fixture is rewritten only under `UPDATE_DSB_FIXTURE=1 cargo test -p
+dashbuf --test schema_evolution` (the same environment-gate posture as
+`goldens/`' `UPDATE_GOLDENS=1`), and only on a deliberate, reviewed
+format-generation bump — never to make the suite go green. A slice that
+adds schema fields adds them to the fixture in the same commit, which is
+an append and therefore legitimate.
+`docs/decisions/dsb-frozen-fixture-r7-guard.md` has the rationale.
+
 ## Seams to later stories
 
 - **#28** (Latin shaping) and **#29** (measure callback / hug sizing)
@@ -215,7 +240,8 @@ receive the encoded, format-tagged assets as a `dashpaint::ImageTable`
   tables directly — nothing outside `dashbuf` links the generated
   code until a `.dsb` load path exists (v0.3+); see
   `docs/decisions/flex-vocabulary-shape.md`.
-- Related decisions: `docs/decisions/flex-vocabulary-shape.md`,
+- Related decisions: `docs/decisions/dsb-frozen-fixture-r7-guard.md`,
+  `docs/decisions/flex-vocabulary-shape.md`,
   `docs/decisions/document-paint-pool-and-legacy-paint-field.md`,
   `docs/decisions/paint-entry-composition.md`,
   `docs/decisions/text-track-early-start.md` (plan sequencing for
