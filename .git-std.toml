@@ -6,6 +6,20 @@ scheme = "semver"
 # Explicit rather than "auto" (which only discovers crates/*): "auto"
 # leaves no valid scope for repo-wide commits (docs, CI, hooks, deps).
 # Keep in sync with crates/ when adding/removing a crate.
+#
+# A scope earns its place by making the changelog or a `git log --grep`
+# more useful. One scope per top-level directory would dilute them, so
+# the non-crate scopes are deliberate rather than exhaustive:
+#
+#   goldens     goldens/     the golden images and their diff tooling
+#   corpus      corpus/      the Figma fixture corpus and its capture
+#                            tooling (fixture data, not product code)
+#   importers   importers/   the Deno/TypeScript Figma importer, which
+#                            has its own toolchain and its own CI job
+#
+# specs/ has no scope of its own: it is documentation, so it takes
+# `docs`, the same as docs/. Splitting prose across two scopes buys a
+# changelog reader nothing.
 scopes = [
     "dashscene",
     "dashscene-core",
@@ -21,6 +35,8 @@ scopes = [
     "dashscene-unity",
     "dashscene-web",
     "goldens",
+    "corpus",
+    "importers",
     "repo",
     "docs",
     "ci",

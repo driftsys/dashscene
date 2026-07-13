@@ -347,13 +347,27 @@ fmt`, both of which run as their own separate lint/fmt steps for their
 respective languages.
 
 **`.git-std.toml`**: `scheme = "semver"`, `strict = true`, `scopes` as
-an explicit list — the 13 crate names plus repo-wide scopes (`repo`,
-`docs`, `ci`, `hooks`, `deps`, `release`) — rather than `"auto"`, which
-only discovers `crates/*` and leaves no valid scope for commits that
-aren't crate-specific, `[versioning] tag_prefix = "v"`, one
-`[[version_files]]` entry per crate pointing at its version string in
-`Cargo.toml` (git-std dogfoods itself this way — every crate version
-bump and changelog entry
+an explicit list rather than `"auto"`, which only discovers `crates/*`
+and leaves no valid scope for commits that aren't crate-specific. The
+list is the 13 crate names, plus a scope for each non-crate component
+that has its own artifacts and tooling — `goldens` (the golden images
+and their diff tooling), `corpus` (the Figma fixture corpus and its
+capture tooling), `importers` (the Deno/TypeScript Figma importer, which
+has its own toolchain and its own CI job) — plus the repo-wide scopes
+`repo`, `docs`, `ci`, `hooks`, `deps`, `release`.
+
+The list is deliberate, not exhaustive: a scope earns its place by
+making the changelog or a `git log --grep` more useful, and one scope per
+top-level directory would dilute them. **`specs/` therefore has no scope
+of its own — it is documentation, so it takes `docs`, the same as
+`docs/`.** (`corpus` and `importers` were added on 2026-07-13, after
+`repo` had absorbed both for want of anywhere better; `specs/` commits
+had landed under `repo`, `docs`, and `dashbuf` alike, and `docs` is the
+ruling.)
+
+Also `[versioning] tag_prefix = "v"`, and one `[[version_files]]` entry
+per crate pointing at its version string in `Cargo.toml` (git-std
+dogfoods itself this way — every crate version bump and changelog entry
 goes through `git std bump`, not manual edits).
 
 **CI** (`.github/workflows/ci.yml`, git-std's shape): separate jobs for
