@@ -15,6 +15,9 @@ it in. Per-story decisions land here directly:
   future text checks.
 - [ci-green-before-story-merge.md](ci-green-before-story-merge.md) — story
   PRs merge only on green CI.
+- [review-before-ready-not-before-open.md](review-before-ready-not-before-open.md)
+  — the review gate is "ready for review", not "PR opened": open a draft,
+  review it, then mark it ready.
 - [dashpaint-owns-boundary-b-types.md](dashpaint-owns-boundary-b-types.md) —
   `dashpaint` owns the painter-side boundary-B types (story #3).
 - [painter-trait-infallible-slice-input.md](painter-trait-infallible-slice-input.md)
