@@ -536,6 +536,41 @@ manually; capture the 8 files' GET /file JSON into
 rules; pick the tier-2 design-system kit; wire the three tier-2
 targets into the nightly smoke test config when it exists.
 
+**Status update (2026-07-13): the corpus is captured, and the
+`effects-2025` entry above states the wrong reason.** Two of that
+list's open actions are discharged, and one claim in the fixture table
+is refuted by the capture itself — recorded here rather than by
+rewriting the table, so the correction is traceable.
+
+- **The capture is done** (#139's blocker, PR #142). All **nine**
+  tier-1 fixtures — the eight above plus `v03-paint`, added with the
+  paint slice (PR #136) — are committed as `GET /file` JSON under
+  `corpus/figma-fixtures/`. The "capture the 8 files" open action is
+  discharged; only the variable-width stroke remains pending, as a
+  manual step.
+- **`effects-2025` can never emit a `.dsb`, but not for the reason the
+  table gives.** The table says everything in it is REJECT-list, so R6
+  blocks it. As built, the compile stops earlier and for a different
+  reason: the file's root frame carries `layoutMode: HORIZONTAL`, and
+  `dashc` refuses auto-layout outright (`CompileError::Unsupported`)
+  **before** the triage gate ever runs. The fixture therefore does not
+  reach the diagnostic path at all on its own, and its acceptance test
+  strips the `layoutMode` key — and only that key — to reach the three
+  effects it was authored to carry.
+- **Auto-layout is refused on two grounds, and the second is the
+  load-bearing one.** The in-memory document model has no flex
+  vocabulary (#140), _and_ Figma's `absoluteBoundingBox` for a node
+  inside an auto-layout frame is the **solver's output**. Lowering it
+  as a fixed box would write a result into a document that P1 says may
+  carry only intent. This is why the refusal is correct rather than a
+  temporary gap: it would still be correct even if the box happened to
+  be right.
+- Consequence for future fixtures: **a diagnostic fixture must not be
+  authored inside an auto-layout frame**, or the auto-layout refusal
+  masks the constructs it exists to exercise. `layoutMode: NONE` is a
+  precondition of any fixture whose purpose is to reach the triage
+  gate.
+
 ## 9. Staged-mutation API lives in dashscene-core, not dashcue — resolved
 
 Resolves the contradiction AGENTS.md flagged: DESIGN §4/§6.2 describe
