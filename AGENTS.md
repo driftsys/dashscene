@@ -2,8 +2,9 @@
 
 dashscene turns UI designed in Figma — or authored programmatically in
 code — into pixels on screen, through one intermediate representation
-(SCD, `.dsb`), one shared layout+text runtime, and interchangeable paint
-backends (Skia reference, Unity product, a lean native painter later).
+(DSB, the `.dsb` document), one shared layout+text runtime, and
+interchangeable paint backends (Skia reference, Unity product, a lean
+native painter later).
 
 **Read these two files before doing anything else in this repo:**
 
@@ -179,7 +180,7 @@ re-order the issues, and record scope-level changes in
   producer-side executes inside the frame loop.
 - **P4** — vocabulary is validated, never discovered. Every
   out-of-profile construct is a named diagnostic, never a silent drop.
-- **P5** — Figma compatibility is a property of one producer. SCD is a
+- **P5** — Figma compatibility is a property of one producer. DSB is a
   schema-first IR with its own spec; no producer's limitations define
   the format.
 

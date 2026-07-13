@@ -347,13 +347,29 @@ fmt`, both of which run as their own separate lint/fmt steps for their
 respective languages.
 
 **`.git-std.toml`**: `scheme = "semver"`, `strict = true`, `scopes` as
-an explicit list — the 13 crate names plus repo-wide scopes (`repo`,
-`docs`, `ci`, `hooks`, `deps`, `release`) — rather than `"auto"`, which
-only discovers `crates/*` and leaves no valid scope for commits that
-aren't crate-specific, `[versioning] tag_prefix = "v"`, one
-`[[version_files]]` entry per crate pointing at its version string in
-`Cargo.toml` (git-std dogfoods itself this way — every crate version
-bump and changelog entry
+an explicit list rather than `"auto"`, which only discovers `crates/*`
+and leaves no valid scope for commits that aren't crate-specific. The
+list is the 13 crate names, plus a scope for each non-crate component
+that has its own artifacts and tooling — `goldens` (the golden images
+and their diff tooling), `corpus` (the fixture corpus itself: captured
+Figma JSON, fonts, generated stress scenes — **data only**, since the
+capture tool is code and lives under `importers/`), `importers` (the
+Deno/TypeScript Figma importer and its capture tool, which have their
+own toolchain and their own CI job) — plus the repo-wide scopes `repo`,
+`docs`, `ci`, `hooks`, `deps`, `release`.
+
+The list is deliberate, not exhaustive: a scope earns its place by
+making the changelog or a `git log --grep` more useful, and one scope per
+top-level directory would dilute them. **`specs/` therefore has no scope
+of its own — it is documentation, so it takes `docs`, the same as
+`docs/`.** (`corpus` and `importers` were added on 2026-07-13, after
+`repo` had absorbed both for want of anywhere better; `specs/` commits
+had landed under `repo`, `docs`, and `dashbuf` alike, and `docs` is the
+ruling.)
+
+Also `[versioning] tag_prefix = "v"`, and one `[[version_files]]` entry
+per crate pointing at its version string in `Cargo.toml` (git-std
+dogfoods itself this way — every crate version bump and changelog entry
 goes through `git std bump`, not manual edits).
 
 **CI** (`.github/workflows/ci.yml`, git-std's shape): separate jobs for
@@ -535,6 +551,44 @@ manually; capture the 8 files' GET /file JSON into
 `corpus/figma-fixtures/` with the capture tooling under the §11 access
 rules; pick the tier-2 design-system kit; wire the three tier-2
 targets into the nightly smoke test config when it exists.
+
+**Status update (2026-07-13): the corpus is captured, and the
+`effects-2025` entry above states the wrong reason.** One of the four
+open actions listed above is discharged, and one claim in the fixture
+table is refuted by the capture itself — recorded here rather than by
+rewriting the table, so the correction is traceable.
+
+- **The capture is done** (#139's blocker, PR #142). All **nine**
+  tier-1 fixtures — the eight above plus `v03-paint`, added with the
+  paint slice (PR #136) — are committed as `GET /file` JSON under
+  `corpus/figma-fixtures/`. That discharges the second open action
+  ("capture the 8 files"), and only that one. **Three remain open:**
+  applying `effects-2025`'s variable-width stroke manually (every node
+  in the captured file is `strokeType: "BASIC"`, so it is genuinely
+  still absent), picking the tier-2 design-system kit, and wiring the
+  three tier-2 targets into the nightly smoke test.
+- **`effects-2025` can never emit a `.dsb`, but not for the reason the
+  table gives.** The table says everything in it is REJECT-list, so R6
+  blocks it. As built, the compile stops earlier and for a different
+  reason: the file's root frame carries `layoutMode: HORIZONTAL`, and
+  `dashc` refuses auto-layout outright (`CompileError::Unsupported`)
+  **before** the triage gate ever runs. The fixture therefore does not
+  reach the diagnostic path at all on its own, and its acceptance test
+  strips the `layoutMode` key — and only that key — to reach the three
+  effects it was authored to carry.
+- **Auto-layout is refused on two grounds, and the second is the
+  load-bearing one.** The in-memory document model has no flex
+  vocabulary (#140), _and_ Figma's `absoluteBoundingBox` for a node
+  inside an auto-layout frame is the **solver's output**. Lowering it
+  as a fixed box would write a result into a document that P1 says may
+  carry only intent. This is why the refusal is correct rather than a
+  temporary gap: it would still be correct even if the box happened to
+  be right.
+- Consequence for future fixtures: **a diagnostic fixture must not be
+  authored inside an auto-layout frame**, or the auto-layout refusal
+  masks the constructs it exists to exercise. `layoutMode: NONE` is a
+  precondition of any fixture whose purpose is to reach the triage
+  gate.
 
 ## 9. Staged-mutation API lives in dashscene-core, not dashcue — resolved
 
@@ -905,7 +959,7 @@ directly.
   resolving it, and authored its goldens against `dashscene-core`'s
   `Txn` directly. Filed as #118, which **blocks #46** (the DSL-generated
   stress corpus) — a dependency the original breakdown did not record.
-- **SCD does not get authored fill weights** (#117, closed at this
+- **DSB does not get authored fill weights** (#117, closed at this
   revision). Epic #7's scope list named them, but core's
   `AxisSizing::{Fixed, Hug, Fill}` carries no weight and
   `dashscene-engine` maps every `Fill` to `flex_grow = 1.0`, so `Fill`
@@ -957,3 +1011,50 @@ directly.
   clips) was anchored to v0.3, because the reference painter panics on
   any node with `entry.clip` and story #18 had to defer its clips
   golden for that reason.
+
+## 20. The IR is named DSB; SCD is retired
+
+`DESIGN_1.md` §0 named the intermediate representation **SCD** ("scene
+document") and the compiler **scdc**, and said in the same breath that
+both were working names — "rename freely, the architecture doesn't
+care". This records that the invitation was taken up.
+
+**Decision (2026-07-13): the IR is DSB, and SCD is retired.** The name
+follows the artifact that actually shipped: the format is `.dsb`, its
+schema lives in `dashbuf`, and the compiler is `dashc`. Nothing was
+ever published under the name SCD, so nothing external breaks.
+
+Two names for one thing is the cost this removes. Before the rename the
+document was an `Scd` in memory, serialized as a `.dsb` on disk, and
+described as "SCD" in prose — three spellings of one concept, and a
+reader had to learn that they were the same. They are now one.
+
+Scope of the change:
+
+- Rust: `Scd` → `Dsb`, `ScdNode` → `DsbNode`, `crates/dashc/src/scd.rs`
+  → `dsb.rs`, and `crates/dashc/Cargo.toml`'s `description` (which is
+  published metadata, so the retired name would have reached crates.io).
+  No public API outside `dashc` was affected, and no behavior changed —
+  the rename is mechanical and the whole test suite passed unaltered
+  before and after.
+- Prose: `DESIGN_1.md`, this document, `AGENTS.md`, and the `docs/`
+  records.
+- **The rest of the SCD vocabulary went with it.** Renaming `SCD` alone
+  would have left `DESIGN_1.md` half-converted, so the seed document's
+  body also drops `scdc` (the compiler is `dashc`), and its §13
+  "suggested workspace layout" — which listed a `scd-*` crate family
+  that was never adopted — now shows the layout that exists, per §2's
+  crate map.
+- **`.scb` is the one thing deliberately left alone**, and it is worth
+  saying why, because the reflex is to rename it too. §3 already retired
+  the extension in favour of `.dsb`, and §9 quotes DESIGN §4 **verbatim**
+  — including its `.scb`. Rewriting the extension in the seed document
+  would turn a quotation that claims to be verbatim into one that is not.
+  A superseding record may retire a name; it may not edit the words it
+  quotes. So `DESIGN_1.md`'s body keeps `.scb`, its naming note says so,
+  and §3 remains the ruling.
+- **`docs/archive/` is deliberately untouched.** Archived specs and
+  plans are a historical record of what was decided at the time, and
+  they said SCD. Rewriting them would falsify that record. They keep
+  the old name, and this section explains why a reader will find it
+  there.

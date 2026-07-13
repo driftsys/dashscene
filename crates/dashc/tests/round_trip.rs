@@ -1,11 +1,11 @@
 //! The v0.3 compile pipeline, end to end (story #16):
 //!
-//!     Scd → emit → validate → .dsb → dashscene-core → Skia painter
+//!     Dsb → emit → validate → .dsb → dashscene-core → Skia painter
 //!
 //! The load half of the pipeline. The Figma front end — Figma REST JSON →
-//! lower → Scd — now exists and is exercised separately, in
+//! lower → Dsb — now exists and is exercised separately, in
 //! `tests/figma_lowering.rs` (story #139); this file starts from a hand-built
-//! `Scd` and exercises everything downstream of the lowering: emission, the
+//! `Dsb` and exercises everything downstream of the lowering: emission, the
 //! load gate, `dashscene-core`'s load path, and the Skia painter.
 //!
 //! The claim these tests defend is that **loading adds no semantics**: a
@@ -16,7 +16,7 @@
 // The lib target is `dashc_wasm`, not `dashc`: on wasm32 both the lib and the
 // bin compile to a same-named output file, which cargo flags as a collision
 // (see the crate manifest).
-use dashc_wasm::{Box2D, Paint, Scd, ScdNode, compile, emit};
+use dashc_wasm::{Box2D, Dsb, DsbNode, Paint, compile, emit};
 use dashpaint::{
     Color, Gradient, GradientKind, GradientStop, ImageAsset, ImageFormat, PaintEntry, PaintKind,
     Painter, ScaleMode, Stroke, StrokeAlign, Vec2,
@@ -88,14 +88,14 @@ fn corners() -> dashpaint::CornerRadii {
 /// A document exercising the v0.3 vocabulary: a clipping frame with a
 /// gradient fill, an overflowing solid child, a stroked+rounded child, and
 /// an image-filled child.
-fn v03_document() -> Scd {
-    let mut scd = Scd::new();
-    let image = scd.push_image(ImageAsset {
+fn v03_document() -> Dsb {
+    let mut dsb = Dsb::new();
+    let image = dsb.push_image(ImageAsset {
         format: ImageFormat::Png,
         bytes: png_pixel(),
     });
 
-    let frame = scd.push(ScdNode {
+    let frame = dsb.push(DsbNode {
         name: Some("frame".to_owned()),
         parent: None,
         box2d: Box2D {
@@ -115,7 +115,7 @@ fn v03_document() -> Scd {
     });
 
     // Overflows the frame, so the clip is observable.
-    scd.push(ScdNode {
+    dsb.push(DsbNode {
         name: Some("overflow".to_owned()),
         parent: Some(frame),
         box2d: Box2D {
@@ -130,7 +130,7 @@ fn v03_document() -> Scd {
         }),
     });
 
-    scd.push(ScdNode {
+    dsb.push(DsbNode {
         name: Some("stroked".to_owned()),
         parent: Some(frame),
         box2d: Box2D {
@@ -149,7 +149,7 @@ fn v03_document() -> Scd {
         }),
     });
 
-    scd.push(ScdNode {
+    dsb.push(DsbNode {
         name: Some("photo".to_owned()),
         parent: Some(frame),
         box2d: Box2D {
@@ -173,7 +173,7 @@ fn v03_document() -> Scd {
         }),
     });
 
-    scd
+    dsb
 }
 
 /// The same scene, staged by hand through the producer API. This is the
@@ -241,8 +241,8 @@ fn v03_by_hand(arena: &mut Arena) {
 }
 
 /// Compiles, loads, and returns the arena the document produced.
-fn load(scd: &Scd) -> Arena {
-    let bytes = compile(scd).expect("the v0.3 document validates");
+fn load(dsb: &Dsb) -> Arena {
+    let bytes = compile(dsb).expect("the v0.3 document validates");
     let document = dashbuf::root_as_document(&bytes).expect("valid buffer");
     let mut arena = Arena::new();
     load_document(&document, &mut arena);
@@ -303,13 +303,13 @@ fn emission_is_byte_reproducible() {
 
 #[test]
 fn nodes_sharing_a_style_share_one_pool_entry() {
-    let mut scd = Scd::new();
+    let mut dsb = Dsb::new();
     let paint = Paint {
         entry: PaintEntry::solid(RED),
         clip: false,
     };
     for i in 0..3 {
-        scd.push(ScdNode {
+        dsb.push(DsbNode {
             name: Some(format!("box{i}")),
             parent: None,
             box2d: Box2D {
@@ -322,7 +322,7 @@ fn nodes_sharing_a_style_share_one_pool_entry() {
         });
     }
 
-    let bytes = compile(&scd).expect("validates");
+    let bytes = compile(&dsb).expect("validates");
     let document = dashbuf::root_as_document(&bytes).expect("valid buffer");
     assert_eq!(
         document.paints().expect("a paint pool").len(),
@@ -337,9 +337,9 @@ fn two_nodes_that_differ_only_in_clip_do_not_share_a_pool_entry() {
     // arena carries clip as node intent (issue #97). So a style and a clip
     // flag together key the pool — sharing an entry here would silently make
     // one of the two nodes clip when it should not.
-    let mut scd = Scd::new();
+    let mut dsb = Dsb::new();
     for clip in [false, true] {
-        scd.push(ScdNode {
+        dsb.push(DsbNode {
             name: Some(format!("box-{clip}")),
             parent: None,
             box2d: Box2D {
@@ -355,7 +355,7 @@ fn two_nodes_that_differ_only_in_clip_do_not_share_a_pool_entry() {
         });
     }
 
-    let bytes = compile(&scd).expect("validates");
+    let bytes = compile(&dsb).expect("validates");
     let document = dashbuf::root_as_document(&bytes).expect("valid buffer");
     assert_eq!(document.paints().expect("a paint pool").len(), 2);
 }
@@ -364,8 +364,8 @@ fn two_nodes_that_differ_only_in_clip_do_not_share_a_pool_entry() {
 fn an_invalid_document_is_refused_rather_than_emitted() {
     // R6/P4: an error blocks the document, never a silent drop. A gradient
     // with no stops is exactly the case the painter would panic on.
-    let mut scd = Scd::new();
-    scd.push(ScdNode {
+    let mut dsb = Dsb::new();
+    dsb.push(DsbNode {
         name: Some("broken".to_owned()),
         parent: None,
         box2d: Box2D {
@@ -390,7 +390,7 @@ fn an_invalid_document_is_refused_rather_than_emitted() {
         }),
     });
 
-    let report = compile(&scd).expect_err("an empty gradient must block emission");
+    let report = compile(&dsb).expect_err("an empty gradient must block emission");
     assert!(
         report.has(dashscene_validator::rule::GRADIENT_NO_STOPS),
         "{report}"
