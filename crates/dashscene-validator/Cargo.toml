@@ -10,4 +10,13 @@ description = "Shared validation crate: paint-vocabulary profiles, diagnostics, 
 [lib]
 name = "dashscene_validator"
 
+# The validator sits beside the semantic model, not inside it: it reads the
+# document (dashbuf) and boundary B (dashpaint), and producers call it. It
+# deliberately does not depend on dashscene-core — core is published earlier
+# (see the workspace publish order), so core cannot call the validator, and
+# it does not need to: `CommittedScene`'s accessors already hand out
+# dashpaint types.
 [dependencies]
+dashbuf.workspace = true
+dashpaint.workspace = true
+flatbuffers.workspace = true

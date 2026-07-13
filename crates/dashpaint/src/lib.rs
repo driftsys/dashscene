@@ -88,11 +88,25 @@ pub enum GradientKind {
     Diamond,
 }
 
+/// The most stops one gradient may carry.
+///
+/// A property of the paint vocabulary, not of any one backend: the lean
+/// painter pays for stops in uniform slots, so the ceiling is what every
+/// painter can be held to. It lives here, on boundary B, because the
+/// painter that panics above it (`dashscene-skia`) and the validator that
+/// rejects it upstream (`dashscene-validator`, P4) have to agree on the
+/// number — two copies of an `8` that silently disagree would make the
+/// validator's guarantee false.
+pub const MAX_GRADIENT_STOPS: usize = 8;
+
 /// A gradient fill. One geometry model serves all four kinds: three
 /// normalized handle positions in the node's box — the gradient origin,
 /// the primary-axis end, and the secondary-axis end (Figma's
 /// gradientHandlePositions). Handles are intent; resolved geometry is
 /// per-painter math (P1).
+///
+/// `stops` carries at least one and at most [`MAX_GRADIENT_STOPS`] entries
+/// — validated upstream (P4), and painters may assume it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Gradient {
     pub kind: GradientKind,
