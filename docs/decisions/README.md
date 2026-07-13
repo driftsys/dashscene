@@ -125,19 +125,19 @@ it in. Per-story decisions land here directly:
   three gates (import / load / paint), not one `validate()`; out-of-profile
   constructs never reach the document, so the triage runs on the producer's
   source vocabulary (story #15); binds #16 and #41.
-- [dashc-scd-model-and-load-path.md](dashc-scd-model-and-load-path.md) — dashc
-  emits from an in-memory SCD whose paint types are boundary B's; the
+- [dashc-dsb-model-and-load-path.md](dashc-dsb-model-and-load-path.md) — dashc
+  emits from an in-memory DSB whose paint types are boundary B's; the
   `.dsb`→arena loader lives in `dashscene-core` and adds no semantics; the
   Figma lowering is deferred until a fixture is captured (story #16); binds
   #17. The deferral was discharged by story #139.
 
 - [unsupported-figma-constructs-refuse-the-compile.md](unsupported-figma-constructs-refuse-the-compile.md)
-  — a construct the v0.3 `Scd` cannot express is refused loudly with
+  — a construct the v0.3 `Dsb` cannot express is refused loudly with
   `CompileError::Unsupported`, never lowered approximately and never dropped
   silently (story #139); the branch's central pattern, and the reason each
   gap is a filed debt rather than a papered-over branch.
 - [figma-auto-layout-refused-on-two-grounds.md](figma-auto-layout-refused-on-two-grounds.md)
-  — auto-layout is refused both because `Scd` has no flex vocabulary (#140)
+  — auto-layout is refused both because `Dsb` has no flex vocabulary (#140)
   and because `absoluteBoundingBox` inside an auto-layout frame is Figma's
   solver output, which P1 forbids lowering as intent (story #139); the second
   ground outlives the first.

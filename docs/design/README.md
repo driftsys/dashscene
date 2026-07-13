@@ -38,7 +38,7 @@ here, as future work gardens it in. Per-component records land here directly:
 - [dashscene-validator.md](dashscene-validator.md) — the three validation
   gates, the diagnostic shape, and the v0.1–v0.3 rule set (story #15);
   producer-assembled reports (story #139).
-- [dashc.md](dashc.md) — the SCD compile pipeline: the in-memory `Scd`
+- [dashc.md](dashc.md) — the DSB compile pipeline: the in-memory `Dsb`
   model, the deterministic `.dsb` emitter, the emission gate, and the
   `dashscene-core` load path (story #16); the Figma REST front end — the
   lowering walk, the import gate, and `compile_figma` (story #139).

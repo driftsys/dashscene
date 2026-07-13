@@ -16,11 +16,11 @@ producer. Each is verified by a test in
 `dashc` shall compile a Figma REST `GET /files` response into a `.dsb`
 document, through the pipeline
 
-    Figma REST JSON  ->  lower  ->  Scd  ->  emit  ->  validate  ->  .dsb
+    Figma REST JSON  ->  lower  ->  Dsb  ->  emit  ->  validate  ->  .dsb
 
 and nothing downstream of the `figma` module shall be Figma-aware (P5).
 
-The vocabulary compiled at v0.3 is DESIGN §10.1's NOW band as the v0.3 `Scd`
+The vocabulary compiled at v0.3 is DESIGN §10.1's NOW band as the v0.3 `Dsb`
 can express it: fixed-position frames, solid fills, the four gradient kinds,
 image fills with their scale mode, solid strokes in all three alignments,
 uniform and per-corner radii, and axis-aligned clip. Text, flex layout, and
@@ -63,7 +63,7 @@ effects are out of scope until their slices.
    a field of the REST subset in `figma::rest`.)
 
 2. **Geometry shall be parent-relative.** Figma's boxes are page-absolute and
-   `Scd`'s `Box2D` is parent-relative, so the lowering shall subtract the
+   `Dsb`'s `Box2D` is parent-relative, so the lowering shall subtract the
    parent's absolute origin. The root frame shall drop its page position and
    lower to `(0, 0, w, h)`. (`the_root_frame_drops_its_page_position`,
    `a_childs_box_is_relative_to_its_parent`)
@@ -114,7 +114,7 @@ effects are out of scope until their slices.
 
 ## Refusal
 
-1. **A construct the v0.3 `Scd` cannot express shall refuse the compile**, and
+1. **A construct the v0.3 `Dsb` cannot express shall refuse the compile**, and
    shall never be lowered approximately and never dropped in silence (P4). It
    has no `Construct` variant, so it cannot become a diagnostic, and an
    approximate lowering would render a picture the designer never authored.
@@ -129,7 +129,7 @@ effects are out of scope until their slices.
    `a_non_basic_stroke_fails_loudly_rather_than_lowering_as_a_solid_one`,
    `a_stroke_dash_pattern_fails_loudly_rather_than_lowering_as_a_continuous_stroke`)
 
-2. **An auto-layout frame shall be refused on two independent grounds**: `Scd`
+2. **An auto-layout frame shall be refused on two independent grounds**: `Dsb`
    has no flex vocabulary, and inside an auto-layout frame
    `absoluteBoundingBox` is Figma's own solver output, so lowering it as a
    fixed box would write a result into a document that carries only intent

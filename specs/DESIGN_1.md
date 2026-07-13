@@ -5,9 +5,13 @@
              self-contained: goals, requirements, stack, format,
              producers, painters, features, plan)
     date     2026-07-11
-    naming   SCD ("scene document") and scdc (compiler) are working
-             names; crate names are placeholders — rename freely
-             (e.g. dash-* prefix), the architecture doesn't care.
+    naming   DSB ("dash scene binary") is the intermediate
+             representation, and `dashc` is the compiler. This document
+             originally called them SCD and scdc, and said both were
+             working names to be renamed freely. That invitation was
+             taken up on 2026-07-13: the format that shipped is `.dsb`
+             (schema in `dashbuf`), so the name follows the artifact.
+             SCD and scdc are retired and appear nowhere in the code.
 
 dash turns UI designed in Figma — or authored programmatically in
 code — into pixels on screen, through one intermediate
@@ -119,7 +123,7 @@ P4 — Vocabulary is validated, never discovered. Paint profiles are
 checked at import/commit; every out-of-profile construct is a named
 diagnostic, never a runtime surprise.
 
-P5 — Figma compatibility is a property of one producer. SCD is a
+P5 — Figma compatibility is a property of one producer. DSB is a
 schema-first IR with its own spec and validator. The Figma exporter
 is one client; the code DSLs are others. No producer's limitations
 define the format.
@@ -195,7 +199,7 @@ with contribution_id / fragment_ref / declared_size / interim_fill
 (§10). Flatbuffer fields are optional and ids append-only, so this
 costs nothing and keeps old loaders reading new documents.
 
-## 6. Producers — the paths into SCD
+## 6. Producers — the paths into DSB
 
 ### 6.1 Path 1: Figma
 
@@ -281,7 +285,7 @@ the screen, like a profile. DSLs mostly instantiate document-
 compiled components and bind data into slots; raw node construction
 is available when needed.
 
-Ownership: both paths are strictly one-way (no SCD→Figma
+Ownership: both paths are strictly one-way (no DSB→Figma
 round-trip, ever). Each component has exactly one authoring home,
 declared in a manifest; a shared symbol namespace (component ids,
 token names) lets either side instantiate the other's components.

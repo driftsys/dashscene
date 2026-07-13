@@ -940,7 +940,7 @@ directly.
   resolving it, and authored its goldens against `dashscene-core`'s
   `Txn` directly. Filed as #118, which **blocks #46** (the DSL-generated
   stress corpus) — a dependency the original breakdown did not record.
-- **SCD does not get authored fill weights** (#117, closed at this
+- **DSB does not get authored fill weights** (#117, closed at this
   revision). Epic #7's scope list named them, but core's
   `AxisSizing::{Fixed, Hug, Fill}` carries no weight and
   `dashscene-engine` maps every `Fill` to `flex_grow = 1.0`, so `Fill`
@@ -992,3 +992,34 @@ directly.
   clips) was anchored to v0.3, because the reference painter panics on
   any node with `entry.clip` and story #18 had to defer its clips
   golden for that reason.
+
+## 20. The IR is named DSB; SCD is retired
+
+`DESIGN_1.md` §0 named the intermediate representation **SCD** ("scene
+document") and the compiler **scdc**, and said in the same breath that
+both were working names — "rename freely, the architecture doesn't
+care". This records that the invitation was taken up.
+
+**Decision (2026-07-13): the IR is DSB, and SCD is retired.** The name
+follows the artifact that actually shipped: the format is `.dsb`, its
+schema lives in `dashbuf`, and the compiler is `dashc`. Nothing was
+ever published under the name SCD, so nothing external breaks.
+
+Two names for one thing is the cost this removes. Before the rename the
+document was an `Scd` in memory, serialized as a `.dsb` on disk, and
+described as "SCD" in prose — three spellings of one concept, and a
+reader had to learn that they were the same. They are now one.
+
+Scope of the change:
+
+- Rust: `Scd` → `Dsb`, `ScdNode` → `DsbNode`, `crates/dashc/src/scd.rs`
+  → `dsb.rs`. No public API outside `dashc` was affected, and no
+  behavior changed — the rename is mechanical and the whole test suite
+  passed unaltered before and after.
+- Prose: `DESIGN_1.md`, this document, `AGENTS.md`, and the `docs/`
+  records.
+- **`docs/archive/` is deliberately untouched.** Archived specs and
+  plans are a historical record of what was decided at the time, and
+  they said SCD. Rewriting them would falsify that record. They keep
+  the old name, and this section explains why a reader will find it
+  there.

@@ -1,4 +1,4 @@
-//! Emitting an [`Scd`] as `.dsb` bytes.
+//! Emitting a [`Dsb`] as `.dsb` bytes.
 //!
 //! R7: same input → byte-identical document. Hashing, signing, and CI all
 //! depend on it, so nothing here may depend on iteration order of a hash
@@ -17,12 +17,12 @@ use dashbuf::{
 use dashpaint::{ImageAsset, PaintEntry, PaintKind};
 use flatbuffers::{FlatBufferBuilder, WIPOffset};
 
-use crate::scd::{Paint, Scd, ScdNode};
+use crate::dsb::{Dsb, DsbNode, Paint};
 
 /// Serializes a document to `.dsb` bytes.
 ///
-/// Deterministic: the same [`Scd`] always produces the same bytes (R7).
-pub fn emit(scd: &Scd) -> Vec<u8> {
+/// Deterministic: the same [`Dsb`] always produces the same bytes (R7).
+pub fn emit(dsb: &Dsb) -> Vec<u8> {
     let mut b = FlatBufferBuilder::new();
 
     // The paint pool, interned in first-use DFS order. A `Vec` of keys, not
@@ -30,8 +30,8 @@ pub fn emit(scd: &Scd) -> Vec<u8> {
     // unspecified and would make the bytes vary between runs, breaking R7.
     let mut pool: Vec<&Paint> = Vec::new();
     let mut pool_of: HashMap<PaintKey, u32> = HashMap::new();
-    let mut entry_of: Vec<Option<u32>> = Vec::with_capacity(scd.nodes.len());
-    for node in &scd.nodes {
+    let mut entry_of: Vec<Option<u32>> = Vec::with_capacity(dsb.nodes.len());
+    for node in &dsb.nodes {
         entry_of.push(node.paint.as_ref().map(|paint| {
             let key = paint_key(paint);
             *pool_of.entry(key).or_insert_with(|| {
@@ -42,9 +42,9 @@ pub fn emit(scd: &Scd) -> Vec<u8> {
         }));
     }
 
-    let images: Vec<WIPOffset<Image>> = scd.images.iter().map(|a| build_image(&mut b, a)).collect();
+    let images: Vec<WIPOffset<Image>> = dsb.images.iter().map(|a| build_image(&mut b, a)).collect();
     let paints: Vec<WIPOffset<BufPaint>> = pool.iter().map(|p| build_paint(&mut b, p)).collect();
-    let nodes: Vec<WIPOffset<Node>> = scd
+    let nodes: Vec<WIPOffset<Node>> = dsb
         .nodes
         .iter()
         .zip(&entry_of)
@@ -70,7 +70,7 @@ pub fn emit(scd: &Scd) -> Vec<u8> {
 
 fn build_node<'a>(
     b: &mut FlatBufferBuilder<'a>,
-    node: &ScdNode,
+    node: &DsbNode,
     paint_entry: Option<u32>,
 ) -> WIPOffset<Node<'a>> {
     let name = node.name.as_deref().map(|n| b.create_string(n));

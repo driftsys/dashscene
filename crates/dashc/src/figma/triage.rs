@@ -14,7 +14,7 @@ use crate::figma::rest::{Effect, Node};
 
 /// The out-of-profile constructs `node` carries.
 ///
-/// `Err(what)` names a construct the v0.3 `Scd` cannot express at all. It has
+/// `Err(what)` names a construct the v0.3 `Dsb` cannot express at all. It has
 /// no `Construct` variant, so it cannot become a `Diagnostic` — and P4
 /// forbids dropping it in silence, so the caller fails the compile loudly.
 pub(crate) fn constructs_of(node: &Node) -> Result<Vec<Construct>, String> {
@@ -58,7 +58,7 @@ fn effect_construct(effect: &Effect) -> Result<Construct, String> {
             _ => Construct::LayerBlur,
         }),
         "BACKGROUND_BLUR" => Ok(Construct::BackdropBlur),
-        // Shadows are NOW-band, but Scd cannot express them yet. No Construct
+        // Shadows are NOW-band, but Dsb cannot express them yet. No Construct
         // fits, so it fails loudly rather than vanishing (debt #144).
         other => Err(format!("effect {other}")),
     }
@@ -140,7 +140,7 @@ mod tests {
 
     #[test]
     fn a_shadow_is_unsupported_rather_than_silently_dropped() {
-        // Baked shadows are NOW-band per DESIGN §10.1, but Scd cannot express
+        // Baked shadows are NOW-band per DESIGN §10.1, but Dsb cannot express
         // them, so there is no Construct to triage. P4 forbids dropping it in
         // silence, so it fails loudly instead.
         let node: Node = serde_json::from_value(serde_json::json!({
