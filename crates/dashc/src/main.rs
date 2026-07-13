@@ -1,11 +1,12 @@
 //! dashc — compiler CLI entry point (native target only; the wasm32
 //! target exposes the library surface directly, see `src/lib.rs`).
 //!
-//! The Figma front end is not wired yet: lowering Figma REST JSON into
-//! `Scd` needs a captured fixture to build against, and the v0.3 fixture has
-//! not been captured (`corpus/figma-fixtures/` holds only its manifest).
-//! Until then the CLI's job is to *check* an existing `.dsb` — which is the
-//! same load gate the runtime runs, so it earns its place on its own.
+//! `compile_figma` lowers Figma REST JSON into a `.dsb`, but this binary does
+//! not expose it as a subcommand: the acceptance path for that entry point is
+//! a library call, and #17's Deno importer consumes it through the wasm32
+//! target, not this native CLI. Until a native subcommand earns its place,
+//! the CLI's job is to *check* an existing `.dsb` — which is the same load
+//! gate the runtime runs, so it earns its place on its own.
 
 use std::process::ExitCode;
 
@@ -24,9 +25,9 @@ fn main() -> ExitCode {
             eprintln!();
             eprintln!("  dashc check <file.dsb>   validate a document; exit 1 if it is blocked");
             eprintln!();
-            eprintln!("Compiling Figma REST JSON is not wired yet: story #16 ships the SCD");
-            eprintln!("model, the deterministic emitter, and the load path, while the Figma");
-            eprintln!("lowering waits on a captured fixture.");
+            eprintln!("Compiling Figma REST JSON has no CLI subcommand: `compile_figma` is a");
+            eprintln!("library entry point, consumed by the Deno importer (#17) through the");
+            eprintln!("wasm32 target, not by this native binary.");
             ExitCode::from(2)
         }
     }

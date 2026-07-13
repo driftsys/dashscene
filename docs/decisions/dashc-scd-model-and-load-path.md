@@ -1,9 +1,10 @@
 # dashc emits from an in-memory SCD; the loader lives in dashscene-core
 
-    status   accepted (story #16, 2026-07-13)
+    status   accepted (story #16, 2026-07-13); the deferral in §1 was
+             discharged by story #139
     scope    crates/dashc, crates/dashscene-core, crates/dashpaint
     binds    #17 (the Deno importer calls this pipeline through wasm),
-             the Figma lowering (deferred — see below), #41, #107
+             #41, #107
 
 ## Context
 
@@ -18,7 +19,16 @@ manifest, and capturing needs a Figma account and PAT (SCOPE §11).
 
 ## Choice
 
-### 1. The Figma front end is deferred, deliberately
+### 1. The Figma front end is deferred, deliberately (discharged at #139)
+
+**Discharged.** PR #142 captured the tier-1 corpus, and story #139 built the
+lowering against it. The reasoning below is why it waited, and it held: every
+field shape the lowering reads was pinned by the capture, and several of them
+(the mutually exclusive corner-radius fields, `strokeWeight` present with an
+empty `strokes` array, a dashed stroke that still reports
+`strokeType: "BASIC"`) contradict what a careful reading of the documentation
+would have produced. See
+`docs/technotes/figma-rest-shapes-the-capture-pinned.md`.
 
 The lowering is **not** built in this slice. Guessing the REST JSON shape —
 `absoluteBoundingBox` vs `absoluteRenderBounds`, when `cornerRadius` collapses
@@ -104,8 +114,14 @@ nothing else.
 
 ## Consequences
 
-- **The Figma lowering is the remaining half of #16.** It needs the `v03-paint`
-  capture. Tracked separately.
+- **The Figma lowering was the remaining half of #16**, and story #139 built it
+  against the `v03-paint` capture. `Scd`, `emit`, and `compile` were unchanged
+  by it, which is the claim §1 made: the lowering slotted in as a pure function
+  into `Scd`. Its own decisions are in
+  `docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`,
+  `figma-auto-layout-refused-on-two-grounds.md`,
+  `figma-image-refs-resolved-by-the-caller.md`, and
+  `producer-assembles-its-own-diagnostics.md`.
 - **#17 (the Deno importer)** calls this pipeline through `dashc.wasm`. Its
   "byte-identical to dashc-native output" criterion rests on the emitter's
   determinism (R7), which is tested here.

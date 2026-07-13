@@ -1,11 +1,12 @@
 //! The v0.3 compile pipeline, end to end (story #16):
 //!
-//!     Scd → validate → emit → .dsb → dashscene-core → Skia painter
+//!     Scd → emit → validate → .dsb → dashscene-core → Skia painter
 //!
-//! The load half of the story's acceptance criterion. The Figma front end is
-//! not here — the v0.3 fixture has not been captured, and guessing the REST
-//! shape would build the lowering against a fiction (see `dashc`'s crate
-//! docs). Everything downstream of the lowering is exercised.
+//! The load half of the pipeline. The Figma front end — Figma REST JSON →
+//! lower → Scd — now exists and is exercised separately, in
+//! `tests/figma_lowering.rs` (story #139); this file starts from a hand-built
+//! `Scd` and exercises everything downstream of the lowering: emission, the
+//! load gate, `dashscene-core`'s load path, and the Skia painter.
 //!
 //! The claim these tests defend is that **loading adds no semantics**: a
 //! scene loaded from a `.dsb` is indistinguishable from the same scene

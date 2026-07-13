@@ -8,7 +8,7 @@
 //! # The pipeline
 //!
 //! ```text
-//!   source             →  lower  →  Scd  →  validate  →  emit  →  .dsb
+//!   source             →  lower  →  Scd  →  emit  →  validate  →  .dsb
 //!   (Figma REST JSON)                (in-memory document)
 //! ```
 //!
@@ -17,45 +17,52 @@
 //! paint vocabulary spans the document, the runtime, and the painter, and a
 //! lowering cannot invent a construct no painter can draw.
 //!
-//! # The Figma front end is not here yet
+//! # The `figma` module
 //!
-//! Lowering Figma REST JSON into [`Scd`] needs a captured fixture to build
-//! against, and the v0.3 fixture has not been captured —
-//! `corpus/figma-fixtures/` holds only its manifest. Guessing at the REST
-//! shape would build the lowering against a fiction, and P5 makes Figma
-//! fidelity this producer's whole purpose. So this slice ships the half that
-//! does not depend on the fixture: the SCD model, the deterministic emitter,
-//! the emission gate, and the validated round trip through `dashscene-core`
-//! and the reference painter.
+//! The [`figma`] module parses the Figma REST subset, pinned to the v0.3
+//! fixture at `corpus/figma-fixtures/v03-paint.json`. Every field shape is
+//! real, not guessed (P5). [`figma::lower`] lowers it into [`Scd`], and
+//! [`compile_figma`] wraps the lowering, emission, and validation into one
+//! call.
 //!
 //! # Emission is gated (P4, R6)
 //!
-//! [`compile`] validates before it emits, and an **error blocks the
-//! document** — never a silent drop. A warning does not block; a strict
-//! build refuses it (waivers are v0.7, issue #41).
+//! [`compile`] emits before it validates — see its own doc comment for why
+//! that order, not the reverse — and an **error blocks the document**, never
+//! a silent drop. A warning does not block; a strict build refuses it
+//! (waivers are v0.7, issue #41).
+//!
+//! [`compile_figma`] is the headline entry point: it is the only function
+//! that merges both gates — the **import gate** (`triage`, over constructs
+//! with no `.dsb` representation) and the **load gate** (`validate_document`,
+//! over the emitted document) — into one report before deciding whether to
+//! emit.
 
 mod emit;
 mod scd;
 
+pub mod figma;
+
 pub use emit::emit;
+// `CompileError` only: it is `compile_figma`'s error type, so it belongs at the
+// root beside it. The lowering and its REST types stay behind `figma::` —
+// re-exporting them here would give one item two public names.
+pub use figma::CompileError;
 pub use scd::{Box2D, Paint, Scd, ScdNode};
 
-use dashscene_validator::Report;
+use std::collections::BTreeMap;
 
-/// Emits an [`Scd`] as `.dsb` bytes, or refuses with the diagnostics that
-/// block it.
+use dashpaint::ImageAsset;
+use dashscene_validator::{Profile, Report};
+
+use crate::figma::rest::FigmaFile;
+
+/// Emits `scd`, then runs the load gate over the emitted document.
 ///
-/// This is the gate DESIGN §5 describes: "error blocks .scb".
-///
-/// The document is emitted first and validated **as a document**, not as an
-/// `Scd`: the load gate's rules are about the serialized index model — a
-/// dangling `paint_entry`, an unknown enum value — so validating a shape the
-/// emitter has not produced yet would check something other than what ships.
-/// The bytes are discarded if the report has errors, so nothing invalid ever
-/// escapes.
-///
-/// The returned bytes are byte-reproducible for a given `Scd` (R7).
-pub fn compile(scd: &Scd) -> Result<Vec<u8>, Report> {
+/// Shared by [`compile`] and [`compile_figma`]: both need "emit, then
+/// validate what was actually emitted" (see `compile`'s doc comment for why
+/// the order is emit-then-validate, not the reverse).
+fn emit_and_validate(scd: &Scd) -> (Vec<u8>, Report) {
     let bytes = emit(scd);
 
     // The flatbuffer verifier runs over the emitter's own output. That is
@@ -73,9 +80,56 @@ pub fn compile(scd: &Scd) -> Result<Vec<u8>, Report> {
         .expect("the emitter always produces a structurally valid buffer");
 
     let report = dashscene_validator::validate_document(&document);
+    (bytes, report)
+}
+
+/// Emits an [`Scd`] as `.dsb` bytes, or refuses with the diagnostics that
+/// block it.
+///
+/// This is the gate DESIGN §5 describes: "error blocks .scb".
+///
+/// The document is emitted first and validated **as a document**, not as an
+/// `Scd`: the load gate's rules are about the serialized index model — a
+/// dangling `paint_entry`, an unknown enum value — so validating a shape the
+/// emitter has not produced yet would check something other than what ships.
+/// The bytes are discarded if the report has errors, so nothing invalid ever
+/// escapes.
+///
+/// The returned bytes are byte-reproducible for a given `Scd` (R7).
+pub fn compile(scd: &Scd) -> Result<Vec<u8>, Report> {
+    let (bytes, report) = emit_and_validate(scd);
 
     if report.has_errors() {
         return Err(report);
     }
     Ok(bytes)
+}
+
+/// Compiles Figma REST JSON to a `.dsb`.
+///
+/// Two gates, one report. The **import gate** (`triage`) runs while lowering,
+/// on constructs that have no representation in the `.dsb` schema at all; the
+/// **load gate** (`validate_document`) runs on the emitted document. An error
+/// from either blocks emission (R6). Warnings do not block, so they come back
+/// with the bytes — dropping them on the success path would be the silent drop
+/// P4 forbids.
+///
+/// `images` resolves the `imageRef` of every image fill; see `figma::lower`.
+pub fn compile_figma(
+    json: &str,
+    profile: Profile,
+    images: &BTreeMap<String, ImageAsset>,
+) -> Result<(Vec<u8>, Report), CompileError> {
+    let file: FigmaFile = serde_json::from_str(json).map_err(CompileError::Parse)?;
+    let (scd, found) = figma::lower(&file, profile, images)?;
+
+    let mut report: Report = found.into_iter().collect();
+
+    let (bytes, load_report) = emit_and_validate(&scd);
+    report.extend(load_report.diagnostics().iter().cloned());
+
+    if report.has_errors() {
+        return Err(CompileError::Diagnostics(report));
+    }
+    Ok((bytes, report))
 }

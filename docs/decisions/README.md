@@ -129,6 +129,24 @@ it in. Per-story decisions land here directly:
   emits from an in-memory SCD whose paint types are boundary B's; the
   `.dsb`→arena loader lives in `dashscene-core` and adds no semantics; the
   Figma lowering is deferred until a fixture is captured (story #16); binds
-  #17.
+  #17. The deferral was discharged by story #139.
+
+- [unsupported-figma-constructs-refuse-the-compile.md](unsupported-figma-constructs-refuse-the-compile.md)
+  — a construct the v0.3 `Scd` cannot express is refused loudly with
+  `CompileError::Unsupported`, never lowered approximately and never dropped
+  silently (story #139); the branch's central pattern, and the reason each
+  gap is a filed debt rather than a papered-over branch.
+- [figma-auto-layout-refused-on-two-grounds.md](figma-auto-layout-refused-on-two-grounds.md)
+  — auto-layout is refused both because `Scd` has no flex vocabulary (#140)
+  and because `absoluteBoundingBox` inside an auto-layout frame is Figma's
+  solver output, which P1 forbids lowering as intent (story #139); the second
+  ground outlives the first.
+- [figma-image-refs-resolved-by-the-caller.md](figma-image-refs-resolved-by-the-caller.md)
+  — image bytes arrive as a caller-supplied `imageRef` map, because `dashc`
+  compiles to wasm and cannot fetch (story #139); binds #17.
+- [producer-assembles-its-own-diagnostics.md](producer-assembles-its-own-diagnostics.md)
+  — `Report` gains `FromIterator` + `Extend` so a producer can report what the
+  import gate hands it (story #139); closes a gap
+  `validator-three-gates.md` opened.
 
 See the `sdd-working-memory-lifecycle` rule.

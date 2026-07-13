@@ -1,17 +1,35 @@
 # dashc — the SCD compile pipeline
 
-As-built after story #16 (v0.3). The rationale is in
-`docs/decisions/dashc-scd-model-and-load-path.md`.
+As-built after stories #16 and #139 (v0.3). The requirements are in
+`docs/specification/dashc-figma-lowering.md`. The rationale is in
+`docs/decisions/`:
+
+- [dashc-scd-model-and-load-path.md](../decisions/dashc-scd-model-and-load-path.md)
+  — the `Scd` model, the load path, and why the Figma front end waited.
+- [unsupported-figma-constructs-refuse-the-compile.md](../decisions/unsupported-figma-constructs-refuse-the-compile.md)
+  — a construct `Scd` cannot express is refused loudly, never approximated.
+- [figma-auto-layout-refused-on-two-grounds.md](../decisions/figma-auto-layout-refused-on-two-grounds.md)
+  — and why one of those grounds outlives debt #140.
+- [figma-image-refs-resolved-by-the-caller.md](../decisions/figma-image-refs-resolved-by-the-caller.md)
+  — image bytes arrive as a caller-supplied map.
+- [producer-assembles-its-own-diagnostics.md](../decisions/producer-assembles-its-own-diagnostics.md)
+  — `Report` gains public assembly.
+
+The Figma REST field shapes the capture pinned — several of which contradict
+what the documentation suggests — are in
+`docs/technotes/figma-rest-shapes-the-capture-pinned.md`.
 
 ## The pipeline
 
-    source              →  lower  →  Scd  →  validate  →  emit  →  .dsb
+    source              →  lower  →  Scd  →  emit  →  validate  →  .dsb
     (Figma REST JSON)                (in-memory document)
 
                                             ↓ (runtime)
     .dsb  →  root_as_document  →  validate_document  →  load_document  →  Arena  →  Painter
 
-The `lower` step is **not built yet** — see "What is deferred" below.
+`lower` is the `figma` module (below). `compile_figma` runs the whole top
+row — source through `.dsb` — in one call; `compile` runs everything from
+`Scd` onward, for a document built by hand or by any other producer.
 
 ## `Scd` — the in-memory document
 
@@ -55,6 +73,63 @@ something other than what ships. An **error blocks the document**: the bytes are
 discarded, never returned. A warning does not block (a strict build refuses it;
 waivers are v0.7, #41).
 
+## The `figma` module
+
+The only Figma-aware code in the Rust tree (P5): nothing downstream of it
+knows what a `FRAME` or an `imageRef` is. It is pinned to the v0.3 fixture at
+`corpus/figma-fixtures/v03-paint.json` — every field shape is real, not
+guessed.
+
+    figma::rest     the Figma REST JSON shape (serde types)
+    figma::triage   maps Figma constructs onto dashscene_validator::Construct
+    figma::lower    the Figma REST JSON → Scd walk
+
+`lower` does no I/O: `dashc` compiles to `wasm32-unknown-unknown`, so it
+cannot fetch, and Figma serializes an image fill as a bare `imageRef` with no
+bytes. The caller — the Deno importer — resolves refs and passes them in as
+`images: &BTreeMap<String, ImageAsset>`.
+
+The walk is depth-first, parent before child, from the first `FRAME` under
+the first `CANVAS` (`root_frame`). Every other sibling and every later
+canvas is currently dropped without a diagnostic (debt #147); a declared-roots
+plus reachability-closure rule (DESIGN §6.1) is the v0.7 story.
+
+### `CompileError`
+
+Why a Figma file could not be compiled at all — distinct from a
+`Diagnostic`, which is a verdict about a document the lowering understood:
+
+    Parse(serde_json::Error)             not the Figma REST JSON it claimed to be
+    Unsupported { path, what }           a construct the v0.3 Scd cannot express at all
+    UnresolvedImage { path, image_ref }  an imageRef the caller did not resolve
+    Diagnostics(Report)                  an error-severity diagnostic blocked emission (R6)
+
+`Unsupported` is the loud-refusal side of P4: a construct with no
+`Construct` variant cannot become a `Diagnostic`, so dropping it in silence
+is the only alternative to stopping the compile. The named gaps behind it are
+tracked as debt — see "Scope boundaries" below.
+
+## `compile_figma` — two gates, one report
+
+    pub fn compile_figma(json: &str, profile: Profile, images: &BTreeMap<String, ImageAsset>)
+        -> Result<(Vec<u8>, Report), CompileError>
+
+The headline entry point: it runs the whole pipeline, source through `.dsb`,
+and merges both gates into one report before deciding whether to emit.
+
+- The **import gate** (`triage`) runs while lowering, on constructs `Scd` can
+  express but that DESIGN §10.1 puts outside the NOW band.
+- The **load gate** (`validate_document`) runs on the emitted document, same
+  as `compile`.
+
+An error from either gate blocks emission (R6): `compile_figma` returns
+`Err(CompileError::Diagnostics(report))`, and the bytes are discarded. A
+warning does not block, so on success it comes back **with** the bytes —
+discarding it would be the silent drop P4 forbids. This is also why
+`compile_figma` does not simply call `compile` and forward its `Result`:
+`compile` discards the load-gate report on success, which is exactly that
+silent drop.
+
 ## The load path
 
 `dashscene_core::load_document` replays a document through the ordinary producer
@@ -76,12 +151,73 @@ would repaint one document's nodes with another document's assets.
 
     dashc check <file.dsb>    run the load gate; exit 1 if the document is blocked
 
-## What is deferred
+`compile_figma` has no CLI subcommand: the acceptance path for that entry
+point is a library call, consumed by the Deno importer (#17) through the
+`wasm32` target, not by this native binary.
 
-**The Figma lowering.** It needs a captured fixture, and none exists —
-`corpus/figma-fixtures/` holds only its manifest, and capturing needs a Figma
-account and PAT (SCOPE §11). Guessing the REST shape would build the lowering
-against a fiction, and P5 makes Figma fidelity this producer's entire purpose.
-The `v03-paint` fixture-author plugin command exists to produce the capture; the
-lowering is a pure function into `Scd` and slots in without disturbing anything
-downstream of it.
+## Scope boundaries (v0.3)
+
+Out of scope by design: widening `Scd` to a wider vocabulary (flex layout,
+text — debt #140), moving the negative-gap lowering out of core's `Txn`, and
+a native `dashc compile` CLI subcommand (see "The CLI" above).
+
+Known gaps in the Figma lowering, each a loud `CompileError::Unsupported`
+rather than a silent drop (P4), filed as debt because a real Figma file will
+hit them even though the v0.3 fixture does not:
+
+- **Stacked fills or strokes** — `PaintEntry.fill`/`.stroke` are each one
+  `Option`; Figma's `fills`/`strokes` are arrays (debt #146).
+- **Node opacity, rotation, mask nodes, and hidden nodes** — `Scd` has no
+  field for any of them, and no way to represent a hidden node without
+  shifting the DFS indices every later node depends on. Hidden layers are
+  routine in real Figma files, so this is likely to be the first one hit
+  (debt #143).
+- **Baked shadows** — DESIGN §10.1 puts them in the NOW band, but `Scd` has
+  no effects vocabulary, so there is no `Construct` to triage onto and no
+  field to lower into. Effects enter the schema at v0.8 (debt #144).
+- **Auto-layout frames** — a `layoutMode` other than `NONE` (`HORIZONTAL`,
+  `VERTICAL`, `GRID`). Two reasons, each sufficient on its own. `Scd` has no
+  flex vocabulary, so the intent — mode, gap, padding, sizing — has no field
+  to lower into and no `Construct` to triage onto (debt #140). And inside an
+  auto-layout frame, `absoluteBoundingBox` is what Figma's own flex solver
+  computed, so lowering a child as a fixed rect would write a layout result
+  into a document that carries only intent (P1). This one is not
+  hypothetical: the root frame of `effects-2025.json` is auto-layout.
+- **Dashed and non-`BASIC` strokes** — `dashpaint::Stroke` is solid and
+  uniform: one color, one width, one align. A
+  `complexStrokeProperties.strokeType` other than `BASIC`, or a non-empty
+  `strokeDashes`, has nothing to lower into, so it is refused rather than
+  repainted as a plain solid stroke of the same color (debt #145).
+- **Root selection drops canvas siblings silently** — `root_frame` takes the
+  first `FRAME` under the first `CANVAS`; every other sibling and every
+  later canvas vanishes with no diagnostic. A declared-roots plus
+  reachability-closure rule (DESIGN §6.1) is the v0.7 story (debt #147).
+
+One gap sits half outside the lowering: **variable-width stroke** is on
+SCOPE_DECISIONS §8's REJECT list, but `dashscene_validator::Construct` has no
+variant for it, so a producer cannot triage it into a named diagnostic. The
+lowering refuses it as a non-`BASIC` `strokeType` (above), so it is no longer
+a silent drop; what remains missing is the diagnostic (debt #145). It is
+`pendingManual` in the fixture manifest and absent from `effects-2025.json`,
+so no captured fixture exercises it.
+
+## Known limits of the as-built front end
+
+Not expressiveness gaps — the lowering handles these inputs, but handles them
+less well than it should. Each is filed as debt rather than fixed here:
+
+- **The diagnostics found before a refusal are lost** (debt #149). `lower`
+  returns `Err(CompileError::Unsupported)`, and the warnings it had already
+  collected go with it, so a file carrying both a warning and an unsupported
+  construct reports only the second. A designer fixing the refusal then meets
+  the warning on the next run rather than both at once.
+- **Nesting is capped at roughly 61 frames** (debt #148). `serde_json`'s
+  default recursion limit bounds how deep the Figma tree may nest before the
+  parse fails. Deeper than that is a parse error, not a lowering error, so the
+  message does not explain itself.
+- **A `NodePath` cannot distinguish duplicate sibling names** (debt #150). The
+  path is the slash-joined ancestor-name chain, which is what a designer sees —
+  but two siblings sharing a name produce the same path. The DFS index in the
+  `NodePath` still differs, so the diagnostic is unambiguous to a machine, and
+  ambiguous only to a human reading the name chain.
+- **Root selection drops canvas siblings** (debt #147, also listed above).

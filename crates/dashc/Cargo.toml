@@ -26,6 +26,8 @@ dashbuf.workspace = true
 dashpaint.workspace = true
 dashscene-validator.workspace = true
 flatbuffers.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 dashscene-core.workspace = true

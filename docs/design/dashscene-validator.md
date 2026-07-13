@@ -1,6 +1,6 @@
 # dashscene-validator — the three gates, diagnostics, and the v0.3 rule set
 
-As-built after story #15 (v0.3). The rationale is in
+As-built after stories #15 and #139 (v0.3). The rationale is in
 `docs/decisions/validator-three-gates.md`; this record is the component's
 shape and its rule table.
 
@@ -43,6 +43,20 @@ DESIGN §5's tuple, minus the workaround hint (v0.7, #41):
 `Report` collects them in document order: `has_errors()` answers "is the
 document blocked", `is_empty()` answers "does a strict build pass",
 `has(rule)` / `find(rule)` are what tests and callers pin.
+
+### A producer assembles its own `Report`
+
+The import gate returns one bare `Diagnostic` per construct, and the producer
+that owns the mapping (P5) is the only code that knows when it has found them
+all. `Report` therefore implements `FromIterator<Diagnostic>` and
+`Extend<Diagnostic>` (story #139): a producer collects its findings and
+assembles them, and `Extend` is what lets `dashc::compile_figma` fold the load
+gate's report into the import gate's so both gates decide emission from one
+merged report. `push` stays `pub(crate)`.
+
+Without this a producer could triage a construct and then have no way to report
+it — a silent drop by construction. See
+`docs/decisions/producer-assembles-its-own-diagnostics.md`.
 
 ### `Location` — not everything reported is a node
 
