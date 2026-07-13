@@ -111,5 +111,9 @@ it in. Per-story decisions land here directly:
   rides UI snapshots + commit deltas plus content-addressed asset
   fetch; snapshots speak indices, deltas speak handles (design
   session, 2026-07-12); binds the producer-API shape now.
+- [validator-three-gates.md](validator-three-gates.md) — the validator is
+  three gates (import / load / paint), not one `validate()`; out-of-profile
+  constructs never reach the document, so the triage runs on the producer's
+  source vocabulary (story #15); binds #16 and #41.
 
 See the `sdd-working-memory-lifecycle` rule.

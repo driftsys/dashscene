@@ -12,20 +12,14 @@
 //! core-side resolution and panics by name — never a silent drop (P4).
 
 use dashpaint::{
-    CornerRadii, Gradient, GradientKind, ImageAsset, ImageTable, PaintKind, PaintTable, Painter,
-    RectEntry, ScaleMode, Stroke, StrokeAlign,
+    CornerRadii, Gradient, GradientKind, ImageAsset, ImageTable, MAX_GRADIENT_STOPS, PaintKind,
+    PaintTable, Painter, RectEntry, ScaleMode, Stroke, StrokeAlign,
 };
 use skia_safe::{
     AlphaType, Canvas, ClipOp, Color4f, ColorType, Data, EncodedImageFormat, ImageInfo, Matrix,
     Point, RRect, Rect, RuntimeEffect, SamplingOptions, Shader, TileMode, gradient_shader, images,
     surfaces,
 };
-
-/// The most stops one gradient may carry through this painter. A
-/// budget, not a Skia limit — the validator enforces it upstream once
-/// profiles land; until then the painter panics on an over-budget
-/// gradient (P4).
-const MAX_GRADIENT_STOPS: usize = 8;
 
 /// The reference painter: draws boundary-B input onto a CPU raster
 /// surface (N32 premultiplied).

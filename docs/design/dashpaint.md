@@ -50,6 +50,11 @@ All types and the trait live in `crates/dashpaint/src/lib.rs`:
   handle positions + stops), `ScaleMode` (Fill/Fit/Crop/Tile),
   `StrokeAlign` (Inside/Center/Outside), `Stroke` (width + align +
   solid color), `CornerRadii` (per-corner, `Default` = sharp).
+- `MAX_GRADIENT_STOPS` — the gradient stop budget (story #15). It lives
+  here, on boundary B, because it is a property of the paint vocabulary
+  rather than of one backend: `dashscene-skia` asserts against it and
+  `dashscene-validator` rejects it upstream (P4), and two hard-coded
+  copies that drifted would make the validator's guarantee false.
 - `PaintEntry` — the paint-table entry: `fill: Option<PaintKind>`
   (`None` = a paint-less, layout-only node), `stroke: Option<Stroke>`,
   `corners: CornerRadii`, `clip: bool`; `PaintEntry::solid(Color)` is

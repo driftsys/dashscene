@@ -33,5 +33,7 @@ here, as future work gardens it in. Per-component records land here directly:
   walking-skeleton golden scene, the v0.1 slice's closing component
   (story #6); the v0.2 flex-vocabulary goldens, closing epic #7
   (story #11).
+- [dashscene-validator.md](dashscene-validator.md) — the three validation
+  gates, the diagnostic shape, and the v0.1–v0.3 rule set (story #15).
 
 See the `sdd-working-memory-lifecycle` rule.

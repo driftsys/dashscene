@@ -4,7 +4,8 @@
 //! boundary B.
 
 use dashpaint::{
-    Color, Gradient, GradientKind, ImageTable, PaintEntry, PaintKind, Painter, RectEntry, Vec2,
+    Color, Gradient, GradientKind, ImageTable, MAX_GRADIENT_STOPS, PaintEntry, PaintKind, Painter,
+    RectEntry, Vec2,
 };
 use dashscene_core::{Arena, Prop};
 use dashscene_skia::SkiaPainter;
@@ -508,9 +509,13 @@ fn subtree_clip_panics_naming_the_follow_up_issue() {
 #[test]
 #[should_panic(expected = "gradient stop budget")]
 fn a_diamond_gradient_with_too_many_stops_panics_by_name() {
-    let stops = (0..9)
+    // One over the shared budget. Reading `MAX_GRADIENT_STOPS` rather than
+    // spelling `9` keeps this test, the painter's assertion, and the
+    // validator's rule (which rejects exactly this input upstream) pinned
+    // to one number.
+    let stops = (0..=MAX_GRADIENT_STOPS)
         .map(|i| GradientStop {
-            offset: i as f32 / 8.0,
+            offset: i as f32 / MAX_GRADIENT_STOPS as f32,
             color: RED,
         })
         .collect();
