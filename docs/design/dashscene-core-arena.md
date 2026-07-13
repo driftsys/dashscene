@@ -1,4 +1,4 @@
-# dashscene-core: arena + staged-mutation API (v0.1, v0.5 text intent)
+# dashscene-core: arena + staged-mutation API (v0.1, v0.5 text intent, clip resolution)
 
 `dashscene-core` is the semantic model: an arena holding a node tree
 with layout and paint intent (DESIGN_1.md §5), mutated through the
@@ -8,7 +8,9 @@ staged producer API (`open`/`set_prop`/`commit`, SCOPE_DECISIONS.md
 fill, no Taffy, no variants — the walking skeleton
 (DESIGN_1.md §11). v0.5 (story #26) added text content and style as
 intent, held on the node but not resolved into any committed output —
-see "Text intent" below.
+see "Text intent" below. Story #97 added clip and corner intent, and the
+commit-time resolution of subtree clips into the clip regions boundary B
+carries — see "Clip resolution" below.
 
 Source: `crates/dashscene-core/src/lib.rs`, `src/arena.rs`,
 `src/committed.rs`. Acceptance path: `crates/dashscene-core/tests/arena.rs`.
@@ -18,7 +20,8 @@ Source: `crates/dashscene-core/src/lib.rs`, `src/arena.rs`,
 `Arena` holds `Vec<NodeData>` (one entry per node, indexed by arena
 slot) plus a `roots: Vec<NodeId>` in creation order. Each `NodeData`
 carries an optional name, an optional parent, its children in creation
-order, an optional fill color, (v0.5, story #26) an optional text
+order, an optional fill color, (story #97) per-corner radii and a
+"clips its children" flag, (v0.5, story #26) an optional text
 string and an optional text style, and a `Layout` — the authored
 `x`/`y`/`width`/`height` fixed geometry plus, since v0.2 (story #8),
 the flex vocabulary: mode NONE/H/V, gap, padding, alignment, per-axis
@@ -58,7 +61,9 @@ enforces the contract. `Txn::add_node(parent, name)` and
 nothing is visible to `Arena::committed()` until `Txn::commit(self)`
 resolves and publishes. Dropping a `Txn` without committing leaves the
 staged changes pending — they publish with the next commit. `Prop`
-(v0.1 vocabulary): `X`, `Y`, `Width`, `Height`, `Fill(Color)`; v0.5
+(v0.1 vocabulary): `X`, `Y`, `Width`, `Height`, `Fill(Color)`; story #97
+added `Corners { .. }` and `Clip(bool)` (see "Clip resolution" below);
+v0.5
 (story #26) added `Text(String)` and `TextStyle(TextStyle)` (see "Text
 intent" below); since v0.2 (story #8) the flex vocabulary: `Mode`,
 `Gap`, `Padding`, `MainAlign`, `CrossAlign`, `SizingH`, `SizingV`,
@@ -78,7 +83,8 @@ index happens to be in range is not detected — ids carry no arena
 identity. These are programmer-error panics, not part of the P4
 named-diagnostics vocabulary. `Prop::Fill` can set a fill but never
 clear one back to unfilled — a deliberate v0.1 gap
-(`docs/decisions/staged-mutation-v01-scope.md`).
+(`docs/decisions/staged-mutation-v01-scope.md`). `Prop::Clip(bool)` does
+clear, because a bool has no absent state to lose.
 
 Full rationale and the rejected alternative (op-log with
 rollback-on-drop): `docs/decisions/staged-mutation-v01-scope.md`.
@@ -116,6 +122,30 @@ documented here so that whichever of #28/#29 lands first has a stated
 contract to build against, and paint's committed-table shape is the
 precedent to follow when a committed text/style table is finally
 warranted.
+
+## Clip resolution (story #97)
+
+`Prop::Clip(bool)` marks a node as clipping its children to its own
+(rounded) box (`Paint.clip`, DESIGN_1.md §8.1); `Prop::Corners { .. }`
+sets the per-corner radii that round both the node's own fill/stroke and
+that clip box. Both are intent; commit resolves the clip into the
+per-rect regions boundary B carries, because a flat rect table gives a
+painter no ancestors to walk and P2 forbids it re-deriving them. The
+contract and the rejected alternatives are
+`docs/decisions/resolved-clip-regions-at-commit.md`; the shape is
+`dashpaint`'s `ClipTable` / `ClipRegion` / `ClipBox`
+(`docs/design/dashpaint.md`).
+
+Resolution rides the DFS walk commit already does (parent before child):
+a node's region is its parent's region, plus the parent's own box when
+the parent clips. A clipping node therefore does not clip itself — only
+its descendants. Regions intern on
+`(parent's region index, parent's clip-box bits)`: equal ancestor chains
+take equal keys by induction, so the whole subtree under one clipping
+ancestor shares one region entry, at O(1) per node and with no
+chain-shaped hash key. A node no ancestor clips references
+`ClipIndex::UNCLIPPED`, the region `ClipTable::new()` reserves at index
+0 — every rect resolves, as with paints.
 
 ## Commit resolution pipeline
 
@@ -165,8 +195,9 @@ not re-derived here:
 `CommittedScene` (in `committed.rs`) is the double-buffered painter
 input, built from `dashpaint`'s types since the story #4 unification:
 `rects() -> &[RectEntry]` (DFS-indexed, blittable
-`{ x, y, w, h: f32, paint: PaintIndex }`), `paints() -> &PaintTable`
-(deduplicated `PaintEntry` pool),
+`{ x, y, w, h: f32, paint: PaintIndex, clip: ClipIndex }`),
+`paints() -> &PaintTable` (deduplicated `PaintEntry` pool),
+`clips() -> &ClipTable` (deduplicated `ClipRegion` pool, story #97),
 `generation() -> u64`, `dirty() -> &[u32]`, plus the
 NodeId↔rect-index correspondence for the commit that produced it
 (`node_of(rect_index) -> NodeId`,
@@ -208,6 +239,10 @@ Full schema rationale: `docs/design/dashbuf.md`.
 - No node removal, no reparenting, no fill clearing, no value
   validation (NaN, negative sizes). The validator crate enters at its
   own slice.
+- Paint intent is solid fill + corner radii only: strokes, gradients and
+  image fills exist at boundary B but no producer stages them yet (the
+  goldens hand-build them). Clip boxes are axis-aligned — clip-on-rotated
+  is a v0.8 construct (DESIGN_1.md §11).
 
 ## Module layout
 
@@ -227,7 +262,14 @@ Full schema rationale: `docs/design/dashbuf.md`.
                                             generation stamping,
                                             dirty-set diffing,
                                             NodeId↔rect-index
-                                            round-trip; text intent
+                                            round-trip; clip resolution
+                                            (issue #97): corner intent
+                                            reaching the paint entry,
+                                            the ancestor chain, region
+                                            dedup and pass-through, and
+                                            the dirty-set clause for a
+                                            resized or toggled clip
+                                            ancestor; text intent
                                             (issue #26): set/read
                                             through the accessors,
                                             staged visibility, replace

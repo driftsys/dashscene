@@ -5,8 +5,9 @@
 //! rendering.
 
 use dashpaint::{
-    Color, CornerRadii, Gradient, GradientKind, GradientStop, ImageAsset, ImageFormat, ImageTable,
-    PaintEntry, PaintKind, PaintTable, Painter, RectEntry, ScaleMode, Stroke, StrokeAlign, Vec2,
+    ClipIndex, ClipTable, Color, CornerRadii, Gradient, GradientKind, GradientStop, ImageAsset,
+    ImageFormat, ImageTable, PaintEntry, PaintKind, PaintTable, Painter, RectEntry, ScaleMode,
+    Stroke, StrokeAlign, Vec2,
 };
 use dashscene_skia::SkiaPainter;
 
@@ -52,10 +53,11 @@ fn checker_asset() -> ImageAsset {
                 w: 1.0,
                 h: 1.0,
                 paint: if (x + y) % 2 == 0 { dark } else { light },
+                clip: ClipIndex::UNCLIPPED,
             });
         }
     }
-    painter.paint(&rects, &paints, &ImageTable::new());
+    painter.paint(&rects, &paints, &ImageTable::new(), &ClipTable::new());
     ImageAsset {
         format: ImageFormat::Png,
         bytes: painter.png_bytes(),
@@ -103,7 +105,6 @@ fn the_v03_paint_vocabulary_matches_its_golden() {
             bottom_right: 6.0,
             bottom_left: 6.0,
         },
-        ..PaintEntry::default()
     });
     let outside_stroke_only = paints.push(PaintEntry {
         stroke: Some(Stroke {
@@ -138,7 +139,14 @@ fn the_v03_paint_vocabulary_matches_its_golden() {
         ..PaintEntry::default()
     });
 
-    let entry = |x: f32, y: f32, w: f32, h: f32, paint| RectEntry { x, y, w, h, paint };
+    let entry = |x: f32, y: f32, w: f32, h: f32, paint| RectEntry {
+        x,
+        y,
+        w,
+        h,
+        paint,
+        clip: ClipIndex::UNCLIPPED,
+    };
     let rects = [
         entry(0.0, 0.0, 96.0, 96.0, background),
         entry(8.0, 8.0, 24.0, 24.0, linear),
@@ -152,7 +160,7 @@ fn the_v03_paint_vocabulary_matches_its_golden() {
     ];
 
     let mut painter = SkiaPainter::new(96, 96);
-    painter.paint(&rects, &paints, &images);
+    painter.paint(&rects, &paints, &images, &ClipTable::new());
 
     // Anti-aliased gradients and curves are not bit-identical across CPU
     // architectures; a small fraction absorbs cross-machine edge jitter

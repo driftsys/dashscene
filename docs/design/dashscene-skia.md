@@ -1,7 +1,8 @@
 # dashscene-skia — the Skia CPU-raster reference painter
 
     crate    crates/dashscene-skia
-    covers   v0.1 first Painter implementation (story #4)
+    covers   v0.1 first Painter implementation (story #4); v0.3 paint
+             vocabulary (story #14); resolved subtree clips (story #97)
 
 ## Purpose
 
@@ -31,7 +32,7 @@ All in `crates/dashscene-skia/src/lib.rs`:
 
     impl Painter for SkiaPainter {
         fn paint(&mut self, rects: &[RectEntry], paints: &PaintTable,
-                 images: &ImageTable);
+                 images: &ImageTable, clips: &ClipTable);
     }
 
 - `new(width, height)` allocates a CPU raster surface (N32
@@ -44,7 +45,7 @@ All in `crates/dashscene-skia/src/lib.rs`:
 
 ## Paint semantics (v0.3 vocabulary, story #14)
 
-`paint(rects, paints, images)` runs in one pass over `rects`:
+`paint(rects, paints, images, clips)` runs in one pass over `rects`:
 
 - Clears the surface to transparent, then draws every rect in slice
   order. Slice order is stacking order — dashpaint's contract is that
@@ -75,9 +76,13 @@ All in `crates/dashscene-skia/src/lib.rs`:
   draw clipped to the entry's (rounded) box: Fill covers, Fit
   contains, Tile repeats at `tile_scale`, Crop maps the normalized
   transform. Nearest sampling, for determinism.
-- `entry.clip` (subtree clipping) panics naming issue #97: ancestor
-  clips must be resolved by `dashscene-core` at commit — a painter
-  cannot re-derive the tree from a flat rect table (P2).
+- Subtree clipping arrives resolved (story #97): the rect's
+  `ClipRegion` is intersected before it draws — `save`, one
+  anti-aliased `clip_rrect(Intersect)` per box (outermost first), draw
+  fill and stroke, `restore`. The painter never asks which node a box
+  came from (P2), and a region with no boxes costs no save/restore. The
+  clip applies to the rect's own fill and stroke, not to the rects after
+  it in slice order.
 
 ## Testing
 
@@ -95,17 +100,20 @@ boundary-b-unification crossing); the PNG signature on encoded output
 boundary-B input: hard-stop gradients probed at exact bytes for all
 four kinds, the degenerate-frame fallback, stroke-align band placement,
 rounded-corner coverage, the four image scale modes (plus tile scaling,
-crop transform, and rounded clipping of image overflow), and the named
-panics for subtree clip (issue #97) and the gradient stop budget.
+crop transform, and rounded clipping of image overflow), the named panic
+for the gradient stop budget, and — since story #97 — resolved subtree
+clips: a sharp region confining a rect to its ancestor's box, a rounded
+region rounding it, a two-box region intersecting, and a clipped rect
+leaving the rect painted after it untouched.
 
 ## Trace
 
 - Satisfies: `specs/DESIGN_1.md` §8.1 (CPU raster reference painter,
-  v0.3 lowerings); issues #4 and #14 acceptance criteria.
-- Blocks: #44/#45 (v0.8 masks/shadows build on this surface); issue
-  #97 unblocks subtree clipping.
+  v0.3 lowerings); issues #4, #14 and #97 acceptance criteria.
+- Blocks: #44/#45 (v0.8 masks/shadows build on this surface).
 - Related decisions: `docs/decisions/boundary-b-unification.md`,
   `docs/decisions/painter-trait-infallible-slice-input.md`,
   `docs/decisions/paint-entry-composition.md`,
   `docs/decisions/image-assets-cross-boundary-b.md`,
-  `docs/decisions/reference-painter-antialiasing.md`.
+  `docs/decisions/reference-painter-antialiasing.md`,
+  `docs/decisions/resolved-clip-regions-at-commit.md`.

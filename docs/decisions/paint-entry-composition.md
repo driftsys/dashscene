@@ -83,6 +83,12 @@ not a boundary-B one). Debt #55 closed with story #4.
   paint-side shape parameters and share the paint table's dedup pool.
   Dedup itself is the producer's job — the table is append-only by
   design (core already interns by color bits, see its record above).
+  Superseded for `clip` at story #97
+  (`docs/decisions/resolved-clip-regions-at-commit.md`): the bool was
+  intent no painter could act on, and boundary B now carries the
+  resolved clip region a rect is clipped against —
+  `RectEntry.clip: ClipIndex`, resolved in the `ClipTable`. Corners are
+  unaffected and stay in the paint entry.
 - **Image assets stay out of boundary B for now.** Resolved at
   story #14: encoded assets cross as a `dashpaint::ImageTable` parameter
   on `Painter::paint` (`docs/decisions/image-assets-cross-boundary-b.md`).

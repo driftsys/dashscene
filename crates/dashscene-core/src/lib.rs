@@ -6,10 +6,11 @@
 //! `commit`; painters read the resulting [`CommittedScene`] — a flat
 //! rect table indexed by document DFS node index, a deduplicated
 //! paint table (`dashpaint`'s, per the story #4 boundary-B
-//! unification), a generation stamp, and a dirty set (boundary B,
-//! DESIGN_1.md §7.3). Every rect resolves; an unfilled node references
-//! the shared draws-nothing entry. v0.1 scope: fixed-size layout, no
-//! Taffy, no variants.
+//! unification), the resolved clip table, a generation stamp, and a
+//! dirty set (boundary B, DESIGN_1.md §7.3). Every rect resolves; an
+//! unfilled node references the shared draws-nothing entry, and a node
+//! no ancestor clips references the unclipped region. v0.1 scope:
+//! fixed-size layout, no Taffy, no variants.
 //!
 //! ```
 //! use dashscene_core::{Arena, Color, Prop};
@@ -40,5 +41,6 @@ pub use arena::{
     NodeId, Prop, SolvedRect, TextStyle, Txn,
 };
 pub use committed::{
-    Color, CommittedScene, PaintEntry, PaintIndex, PaintKind, PaintTable, RectEntry,
+    ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CommittedScene, CornerRadii, PaintEntry,
+    PaintIndex, PaintKind, PaintTable, RectEntry,
 };

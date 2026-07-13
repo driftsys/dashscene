@@ -1,7 +1,8 @@
 # Subtree clipsContent resolves in dashscene-core, not the painter (issue #97)
 
-    status   accepted (story #14, 2026-07-12); follow-up filed as issue #97
-    scope    dashpaint (PaintEntry.clip), dashscene-skia; dashscene-core (future)
+    status   accepted (story #14, 2026-07-12); resolved by story #97,
+             2026-07-13 — see docs/decisions/resolved-clip-regions-at-commit.md
+    scope    dashpaint (PaintEntry.clip), dashscene-skia; dashscene-core
 
 ## Context
 
@@ -59,11 +60,25 @@ Option 1.
   the entry's own geometry, not a subtree relationship, and both ship
   with story #14 (`docs/design/dashscene-skia.md`).
 
+## Resolution (story #97, 2026-07-13)
+
+The deferred contract now exists:
+`docs/decisions/resolved-clip-regions-at-commit.md`. Commit resolves
+each rect's clipping ancestors into a `dashpaint::ClipRegion` — the
+(rounded) boxes to intersect — and `RectEntry.clip` indexes the
+`ClipTable` that holds them. `PaintEntry::clip: bool` is gone from
+boundary B (the intent stays in `dashbuf`'s `Paint.clip` and the arena's
+`Prop::Clip`), and with it the `unimplemented!` this record put in the
+reference painter. Option 2 above stayed rejected on exactly the grounds
+recorded here; the shape chosen expresses rounded and nested clips,
+which option 2 cannot.
+
 ## Trace
 
 - Satisfies: `specs/DESIGN_1.md` §8.1 (`Paint.clip`); issue #14
   acceptance criteria.
 - Files: issue #97 (`dashscene-core`: resolve clipsContent into
-  painter-consumable clips at commit).
-- Related: `docs/design/dashpaint.md` "Subtree clipping (open)";
-  `docs/design/dashscene-skia.md`; `docs/decisions/paint-entry-composition.md`.
+  painter-consumable clips at commit) — closed by
+  `docs/decisions/resolved-clip-regions-at-commit.md`.
+- Related: `docs/design/dashpaint.md`; `docs/design/dashscene-skia.md`;
+  `docs/decisions/paint-entry-composition.md`.

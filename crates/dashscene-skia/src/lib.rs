@@ -8,12 +8,14 @@
 //! center-only), rounded corners. Anti-aliasing is on for every draw
 //! (`docs/decisions/reference-painter-antialiasing.md`): deterministic
 //! for the pinned skia version, and a no-op on integer-aligned
-//! axis-aligned edges. Subtree clipping (`PaintEntry::clip`) awaits
-//! core-side resolution and panics by name — never a silent drop (P4).
+//! axis-aligned edges. Subtree clipping arrives already resolved — each
+//! rect carries the clip region `dashscene-core` computed from its
+//! clipping ancestors at commit (issue #97), and the painter only
+//! intersects it.
 
 use dashpaint::{
-    CornerRadii, Gradient, GradientKind, ImageAsset, ImageTable, MAX_GRADIENT_STOPS, PaintKind,
-    PaintTable, Painter, RectEntry, ScaleMode, Stroke, StrokeAlign,
+    ClipTable, CornerRadii, Gradient, GradientKind, ImageAsset, ImageTable, MAX_GRADIENT_STOPS,
+    PaintKind, PaintTable, Painter, RectEntry, ScaleMode, Stroke, StrokeAlign,
 };
 use skia_safe::{
     AlphaType, Canvas, ClipOp, Color4f, ColorType, Data, EncodedImageFormat, ImageInfo, Matrix,
@@ -81,16 +83,34 @@ impl SkiaPainter {
 }
 
 impl Painter for SkiaPainter {
-    fn paint(&mut self, rects: &[RectEntry], paints: &PaintTable, images: &ImageTable) {
+    fn paint(
+        &mut self,
+        rects: &[RectEntry],
+        paints: &PaintTable,
+        images: &ImageTable,
+        clips: &ClipTable,
+    ) {
         let canvas = self.surface.canvas();
         canvas.clear(skia_safe::colors::TRANSPARENT);
         for rect in rects {
             let entry = paints.resolve(rect.paint);
-            if entry.clip {
-                unimplemented!(
-                    "subtree clipping needs core-side clip resolution — issue #97 \
-                     (a painter cannot re-derive the tree from a flat rect table, P2)"
-                );
+            let region = clips.resolve(rect.clip);
+            // The region is already ancestor-resolved (core, at commit —
+            // issue #97): intersect its boxes and draw. Which node each
+            // box came from is not the painter's business (P2).
+            let clipped = !region.is_unclipped();
+            if clipped {
+                canvas.save();
+                for clip_box in region.boxes() {
+                    let rrect = rrect_of(
+                        clip_box.x,
+                        clip_box.y,
+                        clip_box.w,
+                        clip_box.h,
+                        &clip_box.corners,
+                    );
+                    canvas.clip_rrect(rrect, ClipOp::Intersect, true);
+                }
             }
             let rrect = rounded_box(rect, &entry.corners);
             match &entry.fill {
@@ -126,6 +146,9 @@ impl Painter for SkiaPainter {
             if let Some(stroke) = &entry.stroke {
                 draw_stroke(canvas, &rrect, stroke);
             }
+            if clipped {
+                canvas.restore();
+            }
         }
     }
 }
@@ -141,7 +164,13 @@ fn to_color4f(color: dashpaint::Color) -> Color4f {
 /// The entry's box as a rounded rect (sharp when all radii are zero —
 /// `CornerRadii::default()`); skia clamps oversized radii.
 fn rounded_box(rect: &RectEntry, corners: &CornerRadii) -> RRect {
-    let bounds = Rect::from_xywh(rect.x, rect.y, rect.w, rect.h);
+    rrect_of(rect.x, rect.y, rect.w, rect.h, corners)
+}
+
+/// A box with per-corner radii as a skia rounded rect — the entry's own
+/// box (`rounded_box`) and a resolved clip box share this shaping.
+fn rrect_of(x: f32, y: f32, w: f32, h: f32, corners: &CornerRadii) -> RRect {
+    let bounds = Rect::from_xywh(x, y, w, h);
     if *corners == CornerRadii::default() {
         return RRect::new_rect(bounds);
     }

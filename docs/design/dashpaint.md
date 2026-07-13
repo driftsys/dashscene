@@ -2,7 +2,7 @@
 
     crate    crates/dashpaint
     covers   v0.1 walking skeleton (story #3) + v0.3 paint vocabulary
-             (story #13)
+             (story #13) + resolved subtree clips (story #97)
 
 ## Purpose
 
@@ -11,7 +11,7 @@ complete input a painter consumes, and the trait every painter implements.
 Principle P2 (`AGENTS.md`) holds throughout — a painter only colors; it
 never measures, wraps, kerns, or moves anything.
 
-Boundary B is a rect table plus a paint table. The paint vocabulary is
+Boundary B is a rect table plus a paint table plus a clip table. The paint vocabulary is
 the v0.3 slice's set (`specs/DESIGN_1.md` §11 v0.3, drawn from the
 §10.1 NOW list): solid fills, the four
 gradient kinds, image fills with scale modes, stroke with align,
@@ -24,6 +24,10 @@ per-corner radii, and clip. The crate has no dependencies, including no
 - The rect-table index is the document DFS node index
   (`specs/DESIGN_1.md` §5); a `RectEntry` carries no id field of its own.
 - `RectEntry.paint` is an index into the `PaintTable`.
+- `RectEntry.clip` is an index into the `ClipTable`. Clipping crosses
+  this boundary already resolved: `dashscene-core` walks the clipping
+  ancestors at commit, because a flat rect table carries none for a
+  painter to walk (P2, story #97).
 - Solid-fill color is 4×f32 RGBA — the same shape as `dashbuf`'s `Color`
   struct (`crates/dashbuf/schema/dashbuf.fbs`), reproduced here as a
   plain type rather than shared by dependency.
@@ -57,8 +61,11 @@ All types and the trait live in `crates/dashpaint/src/lib.rs`:
   copies that drifted would make the validator's guarantee false.
 - `PaintEntry` — the paint-table entry: `fill: Option<PaintKind>`
   (`None` = a paint-less, layout-only node), `stroke: Option<Stroke>`,
-  `corners: CornerRadii`, `clip: bool`; `PaintEntry::solid(Color)` is
-  the v0.1 shorthand. See `docs/decisions/paint-entry-composition.md`.
+  `corners: CornerRadii`; `PaintEntry::solid(Color)` is the v0.1
+  shorthand. See `docs/decisions/paint-entry-composition.md`. It carries
+  no clip flag — whether a node clips its children is intent, and lives
+  in the document and the arena, not in resolved painter input
+  (`docs/decisions/resolved-clip-regions-at-commit.md`).
 - `PaintTable` — a dense entry list behind a private field, indexed by
   `RectEntry.paint`: `new`, `push(&mut self, PaintEntry) -> PaintIndex`
   (returns the sequential index just assigned), `get(&self, PaintIndex)
@@ -71,15 +78,30 @@ All types and the trait live in `crates/dashpaint/src/lib.rs`:
   `PaintTable`. See
   `docs/decisions/image-assets-cross-boundary-b.md` (story #14).
 - `Mat23` — row-major 2×3 affine; the image crop transform's shape.
+- `ClipBox` — `#[repr(C)]`, one clipping ancestor's resolved box:
+  `x`, `y`, `w`, `h: f32` plus `corners: CornerRadii` (all-zero radii =
+  a sharp box).
+- `ClipRegion` — the clip that applies to one rect: the boxes to
+  **intersect**, outermost ancestor first (`boxes()`), behind a private
+  field. No boxes = unclipped (`unclipped()`, `is_unclipped()`). The
+  list is not pre-intersected into one box because the intersection of
+  two rounded rects is not a rounded rect.
+- `ClipTable` / `ClipIndex` — the region pool, same push/get/resolve
+  contract as `PaintTable`, with one addition: `ClipTable::new()`
+  reserves index 0 (`ClipIndex::UNCLIPPED`) for the unclipped region, so
+  every rect resolves without a sentinel. `len()` counts it; a clip
+  table is never empty, so there is no `is_empty`.
 - `Painter` — the one trait every paint backend implements:
   `fn paint(&mut self, rects: &[RectEntry], paints: &PaintTable,
-  images: &ImageTable)` (an empty table is valid input for image-less
-  scenes).
+  images: &ImageTable, clips: &ClipTable)` (an empty image table is
+  valid input for image-less scenes; a fresh `ClipTable` is valid input
+  for a scene that clips nothing).
 
-`Color` and `RectEntry` are `#[repr(C)]` because `specs/DESIGN_1.md`
-§7.3 calls rect entries blittable and R-T4 plans dirty-range
-instance-buffer uploads of per-frame painter input; fixing the layout
-now costs nothing.
+`Color`, `RectEntry` and `ClipBox` are `#[repr(C)]` because
+`specs/DESIGN_1.md` §7.3 calls rect entries blittable and R-T4 plans
+dirty-range instance-buffer uploads of per-frame painter input; fixing
+the layout now costs nothing. A `RectEntry` is 24 bytes — four
+coordinates plus the paint and clip indices — pinned by test.
 
 `Painter::paint` is infallible and the trait is object-safe (`Box<dyn
 Painter>` must work — backend selection is whole-scene, R3). Slice order
@@ -97,30 +119,39 @@ for the alternatives considered on the trait's signature.
 
 `crates/dashpaint/tests/boundary_b.rs` exercises the public API only,
 against hand-built fixtures, with no `dashscene-core` dependency. It
-covers the `PaintTable` indexing contract (including the `resolve`
-panic), the `PaintEntry` composition (solid shorthand, paint-less
-entry, full gradient+stroke+corners+clip entry, image fill), the
-recorded output of a `RecordingPainter` test double over a two-rect
-fixture, and dyn-dispatch through `&mut dyn Painter`. The test file is
+covers the `PaintTable` and `ClipTable` indexing contracts (including
+both `resolve` panics and the reserved unclipped region), the
+`PaintEntry` composition (solid shorthand, paint-less entry, full
+gradient+stroke+corners entry, image fill), the recorded output of a
+`RecordingPainter` test double over a two-rect fixture — including the
+clip region it resolves per rect — and dyn-dispatch through
+`&mut dyn Painter`. The test file is
 the executable statement of the boundary-B contract; this section
 deliberately does not restate its cases.
 
-## Subtree clipping (open)
+## Subtree clipping
 
-`PaintEntry::clip` is representable but not yet paintable: a painter
-cannot re-derive the tree from the flat rect table, so ancestor-clip
-resolution belongs to `dashscene-core`'s commit — issue #97. The
-reference painter panics by name on it until then.
+`Paint.clip` ("clips its children to its box", `specs/DESIGN_1.md` §8.1)
+is a relation between a node and its descendants — the one construct a
+painter cannot be handed directly, since the flat rect table has no
+ancestors and P2 forbids re-deriving them. `dashscene-core` resolves it
+at commit (issue #97): every rect carries the `ClipRegion` its clipping
+ancestors add up to, and a painter intersects the boxes it is given
+without asking which node each came from. A clipping node does not clip
+itself — only its descendants; its own corner radii still shape its own
+fill and stroke. The full contract and the rejected alternatives are
+`docs/decisions/resolved-clip-regions-at-commit.md`.
 
 ## Trace
 
 - Satisfies: `specs/DESIGN_1.md` §8 painter trait (boundary B), §7.3
   output shape, §11 v0.3 paint vocabulary (from the §10.1 NOW list);
-  issue #3 and #13 acceptance
+  issue #3, #13 and #97 acceptance
   criteria.
 - Blocks: #4 (`dashscene-skia`, first `Painter` implementation), #6
   (golden harness), #14 (v0.3 painting).
 - Related decisions: `docs/decisions/dashpaint-owns-boundary-b-types.md`,
   `docs/decisions/painter-trait-infallible-slice-input.md`,
   `docs/decisions/paint-entry-composition.md`,
-  `docs/decisions/document-paint-pool-and-legacy-paint-field.md`.
+  `docs/decisions/document-paint-pool-and-legacy-paint-field.md`,
+  `docs/decisions/resolved-clip-regions-at-commit.md`.

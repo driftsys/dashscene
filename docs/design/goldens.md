@@ -4,6 +4,8 @@
     covers   v0.1 golden harness — the v0.1 slice's exit gate (story #6)
              + the v0.2 flex-vocabulary goldens (story #11)
              + the v0.3 paint-vocabulary golden (story #14)
+             + the per-family paint goldens (story #18)
+             + the subtree-clip golden (story #97)
 
 ## Purpose
 
@@ -79,6 +81,18 @@ and images (`v03-gradients.png`, `v03-strokes.png`, `v03-images.png`) —
 so a regression fails only the affected family's golden; scope and
 tolerance are `docs/decisions/v03-paint-goldens-per-family.md`.
 
+`goldens/tooling/tests/v03_clips.rs` (story #97) adds the clip golden
+`v03-clips.png` — the one v0.3 scene authored through
+`dashscene-core`'s producer API rather than hand-built at boundary B,
+because clipping is the one construct a painter cannot be handed
+directly: the ancestor relation exists only producer-side, and commit is
+what resolves it (`docs/decisions/resolved-clip-regions-at-commit.md`).
+Its four 64×64 panels cover a rounded clipping frame, a sharp clipping
+frame that draws nothing itself, a nested sharp∩rounded chain, and an
+unclipped control. Rounded clips are anti-aliased, so it compares at the
+same 2% tolerance as the family goldens, with flat-interior probes
+pinning each panel bit-stably.
+
 ## Testing
 
 Unit tests in `src/lib.rs` cover the tooling's edge behavior against a
@@ -100,7 +114,8 @@ against that image is the exit criterion itself.
 
 - Satisfies: issue #6 acceptance criteria; `specs/DESIGN_1.md` §11 v0.1
   slice exit ("golden harness"), §8 (CPU painters generate their own
-  goldens); issue #11's v0.2 flex goldens; issue #14's v0.3 golden.
+  goldens); issue #11's v0.2 flex goldens; issue #14's v0.3 golden;
+  issue #97's clip golden.
 - Closes epic #1's story list (v0.1 walking skeleton, milestone 1).
 - Closes epic #7's story list (v0.2 flex core) — issue #11 was its last
   open story.

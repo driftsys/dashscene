@@ -7,17 +7,22 @@
 //! table. Every rect resolves; an unfilled node references the shared
 //! draws-nothing entry (`PaintEntry::default()`), not a sentinel.
 
-pub use dashpaint::{Color, PaintEntry, PaintIndex, PaintKind, PaintTable, RectEntry};
+pub use dashpaint::{
+    ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CornerRadii, PaintEntry, PaintIndex,
+    PaintKind, PaintTable, RectEntry,
+};
 
 use crate::arena::NodeId;
 
 /// One committed buffer: the resolved rect table, the deduplicated
-/// paint table, the generation stamp, the dirty set, and the
-/// NodeId↔rect-index correspondence for the commit that produced it.
+/// paint table, the resolved clip table, the generation stamp, the
+/// dirty set, and the NodeId↔rect-index correspondence for the commit
+/// that produced it.
 #[derive(Debug, Default)]
 pub struct CommittedScene {
     pub(crate) rects: Vec<RectEntry>,
     pub(crate) paints: PaintTable,
+    pub(crate) clips: ClipTable,
     pub(crate) generation: u64,
     pub(crate) dirty: Vec<u32>,
     /// Rect index → NodeId (DFS order of the commit).
@@ -35,6 +40,14 @@ impl CommittedScene {
     /// Deduplicated paint table, in first-use DFS order.
     pub fn paints(&self) -> &PaintTable {
         &self.paints
+    }
+
+    /// Resolved clip table: the region each [`RectEntry::clip`]
+    /// references, with the ancestor clips already walked (issue #97).
+    /// Index 0 is the unclipped region; regions are deduplicated, so one
+    /// clipping ancestor's whole subtree shares one entry.
+    pub fn clips(&self) -> &ClipTable {
+        &self.clips
     }
 
     /// Commit counter: 0 before the first commit, +1 per commit —

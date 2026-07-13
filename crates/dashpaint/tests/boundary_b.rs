@@ -2,9 +2,9 @@
 //! no dashscene-core, no dashbuf — dashpaint's public API only.
 
 use dashpaint::{
-    Color, CornerRadii, Gradient, GradientKind, GradientStop, ImageAsset, ImageFormat, ImageTable,
-    PaintEntry, PaintIndex, PaintKind, PaintTable, Painter, RectEntry, ScaleMode, Stroke,
-    StrokeAlign, Vec2,
+    ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CornerRadii, Gradient, GradientKind,
+    GradientStop, ImageAsset, ImageFormat, ImageTable, PaintEntry, PaintIndex, PaintKind,
+    PaintTable, Painter, RectEntry, ScaleMode, Stroke, StrokeAlign, Vec2,
 };
 
 const RED: Color = Color {
@@ -68,7 +68,6 @@ fn paint_entry_solid_is_fill_only() {
     assert_eq!(entry.fill, Some(PaintKind::Solid { color: RED }));
     assert_eq!(entry.stroke, None);
     assert_eq!(entry.corners, CornerRadii::default());
-    assert!(!entry.clip);
 }
 
 #[test]
@@ -110,7 +109,6 @@ fn a_full_entry_round_trips_through_the_table() {
             bottom_right: 3.0,
             bottom_left: 4.0,
         },
-        clip: true,
     };
     let mut table = PaintTable::new();
     let index = table.push(entry.clone());
@@ -158,29 +156,100 @@ fn image_table_resolve_panics_on_an_out_of_range_index() {
     ImageTable::new().resolve(3);
 }
 
-/// Test double: resolves each rect's paint index and records what a real
-/// painter would color. A painter only colors (P2) — so recording
-/// (rect, resolved color) pairs is a complete observation of the contract.
+const SHARP: ClipBox = ClipBox {
+    x: 0.0,
+    y: 0.0,
+    w: 10.0,
+    h: 10.0,
+    corners: CornerRadii {
+        top_left: 0.0,
+        top_right: 0.0,
+        bottom_right: 0.0,
+        bottom_left: 0.0,
+    },
+};
+
+#[test]
+fn a_new_clip_table_reserves_the_unclipped_region_at_index_zero() {
+    let clips = ClipTable::new();
+
+    assert_eq!(clips.len(), 1);
+    assert_eq!(ClipIndex::UNCLIPPED, ClipIndex(0));
+    assert!(clips.resolve(ClipIndex::UNCLIPPED).is_unclipped());
+    assert!(clips.resolve(ClipIndex::UNCLIPPED).boxes().is_empty());
+}
+
+#[test]
+fn clip_table_push_returns_sequential_indices_and_get_resolves_them() {
+    let mut clips = ClipTable::new();
+
+    let one = clips.push(ClipRegion::new(vec![SHARP]));
+    let two = clips.push(ClipRegion::new(vec![SHARP, SHARP]));
+
+    assert_eq!(one, ClipIndex(1));
+    assert_eq!(two, ClipIndex(2));
+    assert_eq!(clips.len(), 3);
+    assert_eq!(clips.resolve(one).boxes(), &[SHARP]);
+    assert_eq!(
+        clips.get(two).map(ClipRegion::boxes),
+        Some(&[SHARP, SHARP][..])
+    );
+    assert_eq!(clips.get(ClipIndex(3)), None);
+}
+
+#[test]
+fn a_region_with_boxes_is_not_unclipped() {
+    assert!(ClipRegion::unclipped().is_unclipped());
+    assert!(!ClipRegion::new(vec![SHARP]).is_unclipped());
+}
+
+#[test]
+#[should_panic(expected = "clip index 4 out of range")]
+fn clip_table_resolve_panics_on_an_out_of_range_index() {
+    ClipTable::new().resolve(ClipIndex(4));
+}
+
+/// Test double: resolves each rect's paint index and clip index, and
+/// records what a real painter would color and clip against. A painter
+/// only colors (P2) — so recording (rect, resolved color) pairs plus the
+/// resolved region is a complete observation of the contract.
 #[derive(Default)]
 struct RecordingPainter {
     painted: Vec<(RectEntry, Color)>,
+    clipped: Vec<ClipRegion>,
 }
 
 impl Painter for RecordingPainter {
-    fn paint(&mut self, rects: &[RectEntry], paints: &PaintTable, _images: &ImageTable) {
+    fn paint(
+        &mut self,
+        rects: &[RectEntry],
+        paints: &PaintTable,
+        _images: &ImageTable,
+        clips: &ClipTable,
+    ) {
         for rect in rects {
             match &paints.resolve(rect.paint).fill {
                 Some(PaintKind::Solid { color }) => self.painted.push((*rect, *color)),
                 other => panic!("fixture only paints solids, got {other:?}"),
             }
+            self.clipped.push(clips.resolve(rect.clip).clone());
         }
     }
 }
 
-fn two_rect_fixture() -> (Vec<RectEntry>, PaintTable) {
+fn two_rect_fixture() -> (Vec<RectEntry>, PaintTable, ClipTable) {
     let mut paints = PaintTable::new();
     let red = paints.push(PaintEntry::solid(RED));
     let blue = paints.push(PaintEntry::solid(HALF_BLUE));
+    let mut clips = ClipTable::new();
+    // The second rect sits inside the first, which clips it.
+    let inside_first = clips.push(ClipRegion::new(vec![ClipBox {
+        x: 0.0,
+        y: 0.0,
+        w: 100.0,
+        h: 50.0,
+        corners: CornerRadii::default(),
+    }]));
     let rects = vec![
         RectEntry {
             x: 0.0,
@@ -188,6 +257,7 @@ fn two_rect_fixture() -> (Vec<RectEntry>, PaintTable) {
             w: 100.0,
             h: 50.0,
             paint: red,
+            clip: ClipIndex::UNCLIPPED,
         },
         RectEntry {
             x: 10.0,
@@ -195,17 +265,18 @@ fn two_rect_fixture() -> (Vec<RectEntry>, PaintTable) {
             w: 30.0,
             h: 40.0,
             paint: blue,
+            clip: inside_first,
         },
     ];
-    (rects, paints)
+    (rects, paints, clips)
 }
 
 #[test]
 fn painter_receives_rects_in_slice_order_with_resolved_colors() {
-    let (rects, paints) = two_rect_fixture();
+    let (rects, paints, clips) = two_rect_fixture();
     let mut painter = RecordingPainter::default();
 
-    painter.paint(&rects, &paints, &ImageTable::new());
+    painter.paint(&rects, &paints, &ImageTable::new(), &clips);
 
     assert_eq!(
         painter.painted,
@@ -214,12 +285,32 @@ fn painter_receives_rects_in_slice_order_with_resolved_colors() {
 }
 
 #[test]
+fn painter_resolves_each_rects_clip_region() {
+    let (rects, paints, clips) = two_rect_fixture();
+    let mut painter = RecordingPainter::default();
+
+    painter.paint(&rects, &paints, &ImageTable::new(), &clips);
+
+    assert!(painter.clipped[0].is_unclipped());
+    assert_eq!(
+        painter.clipped[1].boxes(),
+        &[ClipBox {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 50.0,
+            corners: CornerRadii::default(),
+        }]
+    );
+}
+
+#[test]
 fn painter_trait_is_object_safe() {
-    let (rects, paints) = two_rect_fixture();
+    let (rects, paints, clips) = two_rect_fixture();
     let mut painter = RecordingPainter::default();
 
     let dyn_painter: &mut dyn Painter = &mut painter;
-    dyn_painter.paint(&rects, &paints, &ImageTable::new());
+    dyn_painter.paint(&rects, &paints, &ImageTable::new(), &clips);
 
     assert_eq!(
         painter.painted,
@@ -230,8 +321,11 @@ fn painter_trait_is_object_safe() {
 #[test]
 fn paint_index_is_transparent_over_u32() {
     assert_eq!(std::mem::size_of::<PaintIndex>(), 4);
-    assert_eq!(std::mem::size_of::<RectEntry>(), 20);
+    assert_eq!(std::mem::size_of::<ClipIndex>(), 4);
+    assert_eq!(std::mem::size_of::<RectEntry>(), 24);
     assert_eq!(std::mem::align_of::<RectEntry>(), 4);
     assert_eq!(std::mem::size_of::<Color>(), 16);
     assert_eq!(std::mem::align_of::<Color>(), 4);
+    assert_eq!(std::mem::size_of::<ClipBox>(), 32);
+    assert_eq!(std::mem::align_of::<ClipBox>(), 4);
 }

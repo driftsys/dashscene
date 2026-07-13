@@ -8,15 +8,21 @@
 //! `Hug` or `Fill` node has no authored size at all. So this rule is
 //! unreachable at the load gate and belongs on the solved scene.
 //!
-//! **Index resolution against the runtime tables.** `PaintTable::resolve`
-//! and `ImageTable::resolve` both panic on a miss, each documented as
-//! "validated upstream (P4)". This gate is that upstream: it turns the
-//! panic into a named diagnostic for a producer that builds boundary-B
-//! input by hand (which is how the painter tests and, until the
+//! **Index resolution against the runtime tables.** `PaintTable::resolve`,
+//! `ImageTable::resolve` and `ClipTable::resolve` all panic on a miss, each
+//! documented as "validated upstream (P4)". This gate is that upstream: it
+//! turns the panic into a named diagnostic for a producer that builds
+//! boundary-B input by hand (which is how the painter tests and, until the
 //! document→arena loader lands, every non-`.dsb` producer builds a scene).
+//!
+//! The resolved clip regions (issue #97) exist *only* here. A document
+//! carries clip **intent** — `Paint.clip`, a bool — while the region a
+//! painter consumes is the ancestor-intersected result `dashscene-core`
+//! computes at commit. By P1 a result never appears in a document, so the
+//! load gate has nothing to check and this gate has to.
 
 use dashpaint::{
-    ImageTable, PaintEntry, PaintIndex, PaintKind, PaintTable, RectEntry, StrokeAlign,
+    ClipTable, ImageTable, PaintEntry, PaintIndex, PaintKind, PaintTable, RectEntry, StrokeAlign,
 };
 
 use crate::paint::{
@@ -25,8 +31,14 @@ use crate::paint::{
 use crate::{Location, Report, rule};
 
 /// Validates boundary-B input: the paint pool's vocabulary, the image
-/// assets, and the geometry budgets that need each rect's solved box.
-pub fn validate_scene(rects: &[RectEntry], paints: &PaintTable, images: &ImageTable) -> Report {
+/// assets, the resolved clip regions, and the geometry budgets that need
+/// each rect's solved box.
+pub fn validate_scene(
+    rects: &[RectEntry],
+    paints: &PaintTable,
+    images: &ImageTable,
+    clips: &ClipTable,
+) -> Report {
     let mut report = Report::default();
 
     // A pool entry and an image asset are each shared by every rect that
@@ -51,9 +63,23 @@ pub fn validate_scene(rects: &[RectEntry], paints: &PaintTable, images: &ImageTa
         check_image_bytes(&mut report, &Location::ImageAsset(index), asset.bytes.len());
     }
 
-    // The geometry rules, and the rect→pool link the painter would panic on.
+    // The geometry rules, and the two per-rect table links the painter would
+    // panic on.
     for (i, rect) in rects.iter().enumerate() {
         let at = Location::Node(crate::NodePath::unnamed(i as u32));
+
+        if clips.get(rect.clip).is_none() {
+            report.push(error(
+                rule::CLIP_INDEX_OUT_OF_RANGE,
+                &at,
+                format!(
+                    "rect references clip region {}, but the clip table holds {} regions",
+                    rect.clip.0,
+                    clips.len()
+                ),
+            ));
+        }
+
         let Some(entry) = paints.get(rect.paint) else {
             report.push(error(
                 rule::PAINT_ENTRY_OUT_OF_RANGE,
