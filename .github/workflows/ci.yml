@@ -29,6 +29,11 @@ jobs:
           filters: |
             figma:
               - 'importers/figma/**'
+              # The committed fixture manifest is validated by the deno job
+              # (manifest_test.ts), so editing it must trigger that job —
+              # otherwise a malformed manifest merges with a green CI run
+              # (issue #90).
+              - 'corpus/figma-fixtures/**'
 
   fmt:
     name: fmt

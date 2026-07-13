@@ -13,7 +13,7 @@
 
   "tasks": {
     "check": "deno check src/mod.ts src/capture.ts plugin/code.ts",
-    "test": "deno test --allow-net=api.figma.com --allow-read=. --allow-env=FIGMA_TOKEN",
+    "test": "deno test --allow-net=api.figma.com --allow-read=.,../../corpus/figma-fixtures --allow-env=FIGMA_TOKEN",
     "lint": "deno lint",
     "fmt": "deno fmt",
     "capture": "deno run --allow-env=FIGMA_TOKEN --allow-net=api.figma.com --allow-read=../../corpus/figma-fixtures --allow-write=../../corpus/figma-fixtures src/capture.ts"
