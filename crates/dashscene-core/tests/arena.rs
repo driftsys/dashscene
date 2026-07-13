@@ -850,6 +850,53 @@ fn lower_negative_gaps_is_idempotent() {
 }
 
 #[test]
+fn lower_negative_gaps_reaches_containers_at_every_depth() {
+    // The pass scans the whole arena, so a negative-gap container nested
+    // under another negative-gap container is lowered too. An inner row
+    // takes both roles at once: its own gap is zeroed (as a container),
+    // and it gains a leading margin (as a non-first child of the outer
+    // row). The two roles touch different fields, so neither clobbers
+    // the other regardless of arena order.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let outer = txn.add_node(None, None);
+    txn.set_prop(outer, Prop::Mode(LayoutMode::Horizontal));
+    txn.set_prop(outer, Prop::Gap(-10.0));
+
+    let inner0 = txn.add_node(Some(outer), None);
+    txn.set_prop(inner0, Prop::Mode(LayoutMode::Horizontal));
+    txn.set_prop(inner0, Prop::Gap(-4.0));
+    let a0 = txn.add_node(Some(inner0), None);
+    let b0 = txn.add_node(Some(inner0), None);
+
+    let inner1 = txn.add_node(Some(outer), None);
+    txn.set_prop(inner1, Prop::Mode(LayoutMode::Horizontal));
+    txn.set_prop(inner1, Prop::Gap(-4.0));
+    let a1 = txn.add_node(Some(inner1), None);
+    let b1 = txn.add_node(Some(inner1), None);
+
+    txn.lower_negative_gaps();
+    txn.commit();
+
+    // Every container's gap is zeroed, at both depths.
+    assert_eq!(arena.layout(outer).gap, 0.0);
+    assert_eq!(arena.layout(inner0).gap, 0.0, "nested container lowered");
+    assert_eq!(arena.layout(inner1).gap, 0.0, "nested container lowered");
+    // The outer gap lands on the second inner row only.
+    assert_eq!(arena.layout(inner0).margin.left, 0.0, "first child");
+    assert_eq!(
+        arena.layout(inner1).margin.left,
+        -10.0,
+        "container and child"
+    );
+    // Each inner row's own gap lands on that row's second child.
+    assert_eq!(arena.layout(a0).margin.left, 0.0);
+    assert_eq!(arena.layout(b0).margin.left, -4.0);
+    assert_eq!(arena.layout(a1).margin.left, 0.0);
+    assert_eq!(arena.layout(b1).margin.left, -4.0);
+}
+
+#[test]
 fn lower_negative_gaps_leaves_a_nan_gap_untouched() {
     // A NaN gap is not genuinely negative; the lowering must not treat
     // it as such and spray NaN into child margins.

@@ -7,10 +7,26 @@
 ## Context
 
 Figma auto-layout allows a negative item spacing so children overlap;
-CSS and Taffy `gap` cannot go negative (DESIGN_1.md §5 lists "negative
-gap → margins" as a Figma≠CSS lowering). Story #10 implements that
-lowering as a step both producer paths share — the DSL/commit path
-now, `dashc` when the importer enters (v0.3).
+CSS `gap` cannot go negative (DESIGN_1.md §5 lists "negative gap →
+margins" as a Figma≠CSS lowering). Story #10 implements that lowering
+as a step both producer paths share — the DSL/commit path now, `dashc`
+when the importer enters (v0.3).
+
+The lowering exists to keep the **document** CSS-representable, not to
+make the scene solvable. Taffy is not the constraint: it takes `gap` as
+a raw length and applies a negative one arithmetically, so an un-lowered
+negative-gap scene solves to the same rects as the lowered one. Measured
+2026-07-12 across a horizontal row of fixed children, a vertical column
+of fixed children, and a horizontal row of `Fill` children — in the
+`Fill` case the negative gap returns its absolute value to free space,
+the same behavior as the lowered margins (see "Known property" below).
+
+Nothing may depend on that. It is outside CSS `gap` semantics, which
+forbid a negative value; Taffy simply does not validate it. `dashc`
+emits a `.dsb` that never reaches Taffy, and P5 makes SCD a schema-first
+IR whose vocabulary is the lowering target — so the negative gap must be
+gone by the time the document is written, whatever any one solver
+happens to tolerate.
 
 ## D1 — Margin vocabulary is the lowering target
 
@@ -45,8 +61,9 @@ a direct `Arena` mutation) so it stays in the staged-mutation contract
 Rejected — lowering inside `TaffySolver`'s style mapping: `dashc`
 emits a `.dsb` and never runs the solver, so a solver-internal
 lowering could not be shared with it, and the document would carry an
-un-lowered negative gap Taffy cannot solve. DESIGN §5 places these
-lowerings before the CSS-shaped representation.
+un-lowered negative gap that no CSS-shaped consumer may be asked to
+read. DESIGN §5 places these lowerings before the CSS-shaped
+representation.
 
 Rejected — automatic lowering inside `commit`/`commit_with`: makes
 every commit pay for a tree scan and hides a semantic transform inside
@@ -76,6 +93,17 @@ for `Fill` children is a fidelity question with no real Figma file to
 check against at v0.2. Verifying it against a captured fixture is
 deferred to the importer slice (tracked as a `debt` issue). For fixed
 and hug children the overlap is exactly the authored gap.
+
+**Where the lowering is verified.** At the intent level, in
+`dashscene-core`'s arena tests — the rewrite (gap zeroed, leading
+margins added, at every depth), idempotence, NaN, and additivity. It
+cannot be verified through solved rects: because Taffy applies a raw
+negative gap (see Context), a rect-level test passes whether or not the
+pass ran. `dashscene-engine`'s `lowered_margins_compose_through_nesting`
+therefore pins the other half — that the lowering's _output_ (nested
+negative margins) is faithfully solved — and says so in its own comment.
+Any future rect-level assertion about this lowering must not be read as
+evidence that the lowering ran.
 
 **Margin is flex-flow vocabulary.** It applies only to a child in a
 flex (`Horizontal`/`Vertical`) parent's flow. A margin authored on a
