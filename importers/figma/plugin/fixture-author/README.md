@@ -18,6 +18,11 @@ One Figma file per fixture (§8: failures must bisect to one construct).
 For each name below: create a blank design file with that exact name,
 then run Plugins → Development → dashscene fixture author → _(name)_.
 
+    v03-paint                    v0.3 paint vocabulary under fixed layout:
+                                 solid fill, 4 gradient kinds, image fill
+                                 (scaleMode FIT), 3 stroke aligns, uniform
+                                 + per-corner radii, clipsContent frame
+                                 with an overflowing child
     grid-basic                   3x3 GRID, fixed+flex+hug tracks, spans,
                                  hug/fill/fixed/minmax children
     variables-bound              fixture-tokens collection (light/dark),
@@ -50,6 +55,12 @@ Re-running a command deletes and rebuilds its frame — safe to iterate.
 - **lowering-baseline**: if `Noto Sans Arabic` isn't available the
   Arabic run is skipped — add any Arabic text node manually (keep the
   Arabic-Indic numerals, e.g. `السرعة ١٢٠ كم/س`).
+- **v03-paint**: none. The image fill needs no asset from you — a 16x16
+  PNG checkerboard is inlined in `code.js` as hex and handed to
+  `figma.createImage`, which returns the hash the `IMAGE` paint refers
+  to. Do not place an image through the UI: a second asset would put two
+  images in the captured file and stop an image failure from bisecting
+  to one construct.
 
 ## After authoring
 
@@ -59,3 +70,43 @@ into `corpus/figma-fixtures/` with `deno task capture`, run from
 token with the `file_content:read`, `file_metadata:read`, and
 `library_content:read` scopes. PAT setup and rate-limit rules:
 SCOPE_DECISIONS §11.
+
+### Capturing a fixture, step by step
+
+The worked example is `v03-paint`, the fixture the manifest currently
+carries a placeholder key for. Any other fixture follows the same steps.
+
+1. **Create the Figma file.** In the `dashscene-corpus` Figma project,
+   create a blank design file and name it exactly `v03-paint`. One file
+   per fixture (§8).
+
+2. **Run the plugin command.** With that file open in the Figma desktop
+   app: Plugins → Development → **dashscene fixture author** →
+   **v03-paint**. The plugin builds the frame and closes with a summary
+   of what it built. Re-running rebuilds the frame, so iterating is safe.
+
+3. **Take the file key.** It is the path segment after `/design/` in the
+   file's URL:
+
+       https://www.figma.com/design/<fileKey>/v03-paint
+                                    ^^^^^^^^^
+
+   Put that value in `corpus/figma-fixtures/manifest.json`, replacing the
+   `v03-paint` entry's placeholder `PASTE_THE_FIGMA_FILE_KEY_HERE`. Until
+   it is replaced, the capture tool skips the entry and says so — it
+   never sends the placeholder to the API.
+
+4. **Capture.** From the repo root:
+
+       export FIGMA_TOKEN=<your Figma personal access token>
+       cd importers/figma
+       deno task capture
+
+   `deno task capture` walks **every** fixture in the manifest, not just
+   the one you authored: it checks each file's version against the
+   committed capture and re-fetches only what changed (`GET /file` is
+   rate-limited to 10 requests/minute, §11). It writes
+   `corpus/figma-fixtures/v03-paint.json`. Commit that file.
+
+There is no `just` recipe for capture — it is a `deno task`, and the
+token must never be committed or passed on a shared command line.

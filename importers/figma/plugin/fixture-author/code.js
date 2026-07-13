@@ -52,6 +52,170 @@ function cell(name, color) {
   return c;
 }
 
+// ----------------------------------------------------------------- v03-paint
+// The v0.3 paint vocabulary — and nothing outside it (§8: a failure must
+// bisect to one construct). Covers: solid fill; all four gradient kinds;
+// an image fill with a scale mode; the three stroke aligns; uniform and
+// per-corner radii; a clipping frame with an overflowing child. The frame
+// stays layoutMode NONE, because v0.3 is the paint slice, not the flex
+// slice, and it holds no text node, because text is v0.5/v0.6.
+//
+// Every swatch turns OFF the constructs it does not own — a Figma frame
+// clips its content by default, so leaving that default in place would put
+// `clipsContent: true` on all twelve cells and stop the clip case from
+// bisecting to the one cell that is about to test it.
+
+// A 16x16 RGB PNG checkerboard, 93 bytes, inlined as hex: the plugin sandbox
+// has no network (manifest networkAccess "none") and no filesystem, so an
+// image fill's bytes must come from the plugin source itself. Hex plus a
+// two-line decode rather than base64, so nothing depends on a global the
+// sandbox may not expose. figma.createImage takes exactly this Uint8Array and
+// returns the Image whose `hash` an IMAGE paint refers to. A checkerboard
+// rather than a flat color, so the scale mode is observable in the render.
+const CHECKER_PNG_HEX =
+  "89504e470d0a1a0a0000000d4948445200000010000000100802000000909168" +
+  "36000000244944415478da637816600347721a6e70844b9c61106a204611b2f8" +
+  "60d4301a0f83420300d2eaff01d0b08f690000000049454e44ae426082";
+const CHECKER_PNG = new Uint8Array(
+  CHECKER_PNG_HEX.match(/../g).map((byte) => parseInt(byte, 16)),
+);
+
+// Gradient geometry: Figma's plugin API takes a 2x3 gradientTransform (the
+// REST capture reports the same geometry as gradientHandlePositions, which
+// is what dashbuf's Gradient.handle_* fields mirror). The identity matrix
+// runs the gradient left to right across the node's box.
+const GRADIENT_TRANSFORM = [[1, 0, 0], [0, 1, 0]];
+
+const stop = (position, color) => ({ position, color });
+
+function gradient(kind, stops) {
+  return {
+    type: "GRADIENT_" + kind,
+    gradientTransform: GRADIENT_TRANSFORM,
+    gradientStops: stops,
+    visible: true,
+    opacity: 1,
+    blendMode: "NORMAL",
+  };
+}
+
+function v03Paint() {
+  const root = baseFrame("v03-paint", 960, 680);
+  root.layoutMode = "NONE"; // fixed layout: v0.3 is not the flex slice
+
+  const CELL_W = 200;
+  const CELL_H = 140;
+  const place = (node, col, row) => {
+    root.appendChild(node);
+    node.x = 32 + col * (CELL_W + 24);
+    node.y = 32 + row * (CELL_H + 24);
+  };
+
+  // A paint swatch that carries ONE construct: no radius, no stroke, no
+  // clip, unless the cell under construction adds it back.
+  const swatch = (name) => {
+    const s = figma.createFrame();
+    s.name = name;
+    s.resize(CELL_W, CELL_H);
+    s.cornerRadius = 0;
+    s.strokes = [];
+    s.clipsContent = false;
+    return s;
+  };
+
+  // --- solid fill
+  const solidCell = swatch("fill-solid");
+  solidCell.fills = [solid({ r: 0.2, g: 0.5, b: 0.85 })];
+  place(solidCell, 0, 0);
+
+  // --- the four gradient kinds, one cell each
+  const ramp = [
+    stop(0, { r: 1, g: 0.85, b: 0.2, a: 1 }),
+    stop(0.5, { r: 0.9, g: 0.3, b: 0.45, a: 1 }),
+    stop(1, { r: 0.2, g: 0.25, b: 0.7, a: 1 }),
+  ];
+  // name -> [column, row] on the 4-column grid of swatches.
+  const SLOT = {
+    LINEAR: [1, 0],
+    RADIAL: [2, 0],
+    ANGULAR: [3, 0],
+    DIAMOND: [0, 1],
+    INSIDE: [2, 1],
+    CENTER: [3, 1],
+    OUTSIDE: [0, 2],
+  };
+  for (const kind of ["LINEAR", "RADIAL", "ANGULAR", "DIAMOND"]) {
+    const g = swatch("gradient-" + kind.toLowerCase());
+    g.fills = [gradient(kind, ramp)];
+    place(g, SLOT[kind][0], SLOT[kind][1]);
+  }
+
+  // --- image fill with a scale mode. FIT rather than the FILL default, so
+  // the captured JSON proves the scale mode round-trips rather than
+  // matching whatever a reader would default to.
+  const image = figma.createImage(CHECKER_PNG);
+  const img = swatch("image-fit");
+  img.fills = [{
+    type: "IMAGE",
+    scaleMode: "FIT",
+    imageHash: image.hash,
+    visible: true,
+    opacity: 1,
+    blendMode: "NORMAL",
+  }];
+  place(img, 1, 1);
+
+  // --- the three stroke aligns, one cell each
+  for (const align of ["INSIDE", "CENTER", "OUTSIDE"]) {
+    const s = swatch("stroke-" + align.toLowerCase());
+    s.fills = [solid(GRAY(0.93))];
+    s.strokes = [solid({ r: 0.85, g: 0.25, b: 0.35 })];
+    s.strokeWeight = 8;
+    s.strokeAlign = align;
+    place(s, SLOT[align][0], SLOT[align][1]);
+  }
+
+  // --- corner radii: uniform, then per-corner (non-uniform)
+  const uniform = swatch("corners-uniform");
+  uniform.fills = [solid({ r: 0.45, g: 0.75, b: 0.55 })];
+  uniform.cornerRadius = 16;
+  place(uniform, 1, 2);
+
+  const perCorner = swatch("corners-per-corner");
+  perCorner.fills = [solid({ r: 0.75, g: 0.6, b: 0.9 })];
+  perCorner.topLeftRadius = 0;
+  perCorner.topRightRadius = 24;
+  perCorner.bottomRightRadius = 4;
+  perCorner.bottomLeftRadius = 48;
+  place(perCorner, 2, 2);
+
+  // --- clipsContent with a child that overflows the frame, so the clip is
+  // observable: the child is wider and taller than its parent and starts
+  // outside it on both axes.
+  const clip = swatch("clip-frame");
+  clip.fills = [solid(GRAY(0.88))];
+  clip.resize(440, 120);
+  clip.clipsContent = true;
+  root.appendChild(clip);
+  clip.x = 32;
+  clip.y = 32 + 3 * (CELL_H + 24);
+
+  const overflow = figma.createFrame();
+  overflow.name = "overflow-child";
+  overflow.resize(520, 180);
+  overflow.cornerRadius = 0;
+  overflow.strokes = [];
+  overflow.clipsContent = false;
+  overflow.fills = [solid({ r: 0.95, g: 0.55, b: 0.2 })];
+  clip.appendChild(overflow);
+  overflow.x = -60; // left edge outside the parent
+  overflow.y = -30; // top edge outside the parent
+
+  return "v03-paint built: solid fill, 4 gradient kinds, image fill (FIT), " +
+    "3 stroke aligns, uniform + per-corner radii, clipsContent frame with " +
+    "an overflowing child; layoutMode NONE";
+}
+
 // ---------------------------------------------------------------- grid-basic
 // GRID mode: row/column spans, FIXED + FLEX + HUG tracks, hug/fill
 // children, min/max constraints (§8 grid-basic).
@@ -527,6 +691,7 @@ async function loweringVariantTopology() {
 
 // ------------------------------------------------------------------ dispatch
 const COMMANDS = {
+  "v03-paint": v03Paint,
   "grid-basic": gridBasic,
   "variables-bound": variablesBound,
   "effects-2025": effects2025,
