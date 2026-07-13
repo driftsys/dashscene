@@ -12,6 +12,16 @@
 // — the same index model as the runtime paint table. FlatBuffers'
 // append-only field ids make every extension additive, not a rewrite
 // (R7).
+//
+// R7 is guarded by bytes, not by convention: append new fields at the
+// tail of a table, and append new enum and union members at the tail
+// with the existing members untouched. Any edit that shifts a field id
+// or a union discriminant breaks every .dsb already written to disk,
+// and `tests/fixtures/v0_5_document.dsb` — a frozen document that
+// `tests/schema_evolution.rs` decodes with the current bindings — is
+// what turns that into a failing test. Regenerate that fixture only on
+// a deliberate, reviewed format-generation bump, never to make the
+// suite go green (docs/decisions/dsb-frozen-fixture-r7-guard.md).
 
 namespace dashbuf;
 

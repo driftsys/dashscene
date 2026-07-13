@@ -84,6 +84,9 @@ it in. Per-story decisions land here directly:
   `.dsb` becomes a thin sectioned container at v1 (fixed envelope +
   section table, one flatbuffer per section); binds the schema stories
   to integer-index cross-references.
+- [dsb-frozen-fixture-r7-guard.md](dsb-frozen-fixture-r7-guard.md) — a
+  frozen, checked-in `.dsb` byte fixture guards R7's append-only schema
+  evolution (debt #64); binds every edit to `dashbuf.fbs`.
 - [image-assets-cross-boundary-b.md](image-assets-cross-boundary-b.md) —
   encoded, format-tagged image assets are part of the painter input
   (`Painter::paint` gains an `ImageTable`; story #14).
