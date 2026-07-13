@@ -119,5 +119,10 @@ it in. Per-story decisions land here directly:
   three gates (import / load / paint), not one `validate()`; out-of-profile
   constructs never reach the document, so the triage runs on the producer's
   source vocabulary (story #15); binds #16 and #41.
+- [dashc-scd-model-and-load-path.md](dashc-scd-model-and-load-path.md) — dashc
+  emits from an in-memory SCD whose paint types are boundary B's; the
+  `.dsb`→arena loader lives in `dashscene-core` and adds no semantics; the
+  Figma lowering is deferred until a fixture is captured (story #16); binds
+  #17.
 
 See the `sdd-working-memory-lifecycle` rule.

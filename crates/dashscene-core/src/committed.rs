@@ -8,9 +8,12 @@
 //! draws-nothing entry (`PaintEntry::default()`), not a sentinel.
 
 pub use dashpaint::{
-    ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CornerRadii, PaintEntry, PaintIndex,
-    PaintKind, PaintTable, RectEntry,
+    ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CornerRadii, Gradient, GradientKind,
+    GradientStop, ImageAsset, ImageFormat, ImageTable, Mat23, PaintEntry, PaintIndex, PaintKind,
+    PaintTable, RectEntry, ScaleMode, Stroke, StrokeAlign, Vec2,
 };
+
+use std::sync::Arc;
 
 use crate::arena::NodeId;
 
@@ -22,6 +25,7 @@ use crate::arena::NodeId;
 pub struct CommittedScene {
     pub(crate) rects: Vec<RectEntry>,
     pub(crate) paints: PaintTable,
+    pub(crate) images: Arc<ImageTable>,
     pub(crate) clips: ClipTable,
     pub(crate) generation: u64,
     pub(crate) dirty: Vec<u32>,
@@ -40,6 +44,13 @@ impl CommittedScene {
     /// Deduplicated paint table, in first-use DFS order.
     pub fn paints(&self) -> &PaintTable {
         &self.paints
+    }
+
+    /// The image assets an image fill resolves against — the fourth table a
+    /// painter is handed. Owned by the scene so a document loaded from a
+    /// `.dsb` is self-contained.
+    pub fn images(&self) -> &ImageTable {
+        &self.images
     }
 
     /// Resolved clip table: the region each [`RectEntry::clip`]

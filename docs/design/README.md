@@ -37,5 +37,8 @@ here, as future work gardens it in. Per-component records land here directly:
   (story #11); the v0.3 paint and clip goldens (stories #14, #18, #97).
 - [dashscene-validator.md](dashscene-validator.md) — the three validation
   gates, the diagnostic shape, and the v0.1–v0.3 rule set (story #15).
+- [dashc.md](dashc.md) — the SCD compile pipeline: the in-memory `Scd`
+  model, the deterministic `.dsb` emitter, the emission gate, and the
+  `dashscene-core` load path (story #16).
 
 See the `sdd-working-memory-lifecycle` rule.

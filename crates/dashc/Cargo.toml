@@ -22,3 +22,11 @@ name = "dashc"
 path = "src/main.rs"
 
 [dependencies]
+dashbuf.workspace = true
+dashpaint.workspace = true
+dashscene-validator.workspace = true
+flatbuffers.workspace = true
+
+[dev-dependencies]
+dashscene-core.workspace = true
+dashscene-skia.workspace = true
