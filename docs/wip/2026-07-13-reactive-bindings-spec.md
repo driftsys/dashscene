@@ -247,16 +247,36 @@ repaint part of it is the flush-and-resolve that R-T1 forbids. The GPU
 redraws every quad in one pass; what must not be repeated is the CPU
 work and the upload (R-T4).
 
-`SkiaPainter` gains a second, retained-canvas incremental mode. **Its
-purpose is not speed — it is a test oracle for the dirty set.** A
+`SkiaPainter` gains a second mode that models the **instance buffer**,
+not the canvas: it keeps a persistent copy of the rect table, refreshes
+only the entries the dirty set names, and then redraws every quad from
+that copy. That is R-T4's data flow exactly, and it is _not_ a
+damage-region redraw — no pixels are selectively preserved.
+
+**Its purpose is not speed — it is a test oracle for the dirty set.** A
 missing entry in the dirty set shows up on the GPU as a stale
 instance-buffer entry (a frozen gauge, a telltale that will not clear),
 which is intermittent and hard to diagnose on target hardware. The same
 bug shows up in the CPU painter as a stale pixel, which CI can diff
-deterministically without a GPU. The golden harness runs each golden in
-both modes and asserts pixel equality, over a _sequence_ of
-mutate-commit-paint steps — staleness only exists across frames, so
-single-frame goldens cannot catch it.
+deterministically without a GPU.
+
+The oracle is a dedicated test over a _sequence_ of mutate-commit-paint
+steps, not a second rendering of the existing goldens: staleness only
+exists across frames, and the goldens are single-frame renders of
+hand-built tables with no dirty set behind them, so running them in both
+modes would pass vacuously.
+
+What the oracle catches is bounded, and the bound is worth stating. The
+retained buffer holds `RectEntry` values, which carry paint and clip
+_indices_; the paint and clip tables themselves are handed to the painter
+fresh each frame. So a stale entry renders wrong pixels only when the
+entry's **bits** changed — geometry, the paint index, or the clip index.
+This is not a gap in the simulation: R-T4 names the rect table as the
+thing that delta-uploads, and the small paint and clip tables must
+re-upload wholesale today anyway, because both are re-interned every
+commit and their indices are unstable. When D5 retains the interner and
+those indices become stable, the oracle must be extended to retain the
+paint table too.
 
 ## The authoring surface
 
