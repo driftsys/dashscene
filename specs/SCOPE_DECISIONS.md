@@ -887,3 +887,73 @@ issues directly.
   the section now records the v0.1 skeleton as complete and points at
   `docs/design/` and `docs/decisions/`, rather than framing the
   skeleton as the next work.
+
+## 19. v0.2 retrospective: plan revision at the v0.2 epic close
+
+Epic #7 (v0.2 — flex core) closed 2026-07-13 with all four stories
+merged (#8, #9, #10, #11). Per §10, the remaining epics and stories
+were revised against what v0.2 taught. This section records the
+scope-level outcomes; story-level changes were applied to the issues
+directly.
+
+- **`dashlang` cannot author a flex scene, and that is now a scheduled
+  dependency.** Its builder exposes `at`/`size`/`fill`/`child` only,
+  and `Scene::build` commits through the fixed solver, which ignores
+  flex. `docs/decisions/negative-gap-lowering.md` D3 deferred both the
+  flex vocabulary and the question of how a `dashlang` scene reaches
+  the engine solver; story #11 confirmed the deferral rather than
+  resolving it, and authored its goldens against `dashscene-core`'s
+  `Txn` directly. Filed as #118, which **blocks #46** (the DSL-generated
+  stress corpus) — a dependency the original breakdown did not record.
+- **SCD does not get authored fill weights** (#117, closed at this
+  revision). Epic #7's scope list named them, but core's
+  `AxisSizing::{Fixed, Hug, Fill}` carries no weight and
+  `dashscene-engine` maps every `Fill` to `flex_grow = 1.0`, so `Fill`
+  siblings always split free space equally — and Figma auto-layout has
+  no flex weight either, so an authored weight would be a CSS-flexbox
+  construct with no Figma counterpart and no producer emitting it.
+  Story #11 goldened the equal split rather than inventing one, and the
+  construct is now declined outright: P4 says vocabulary is validated,
+  never discovered, so a weight would have to be carried by the schema,
+  core's `Prop` set, the engine's mapping, and every validator profile,
+  permanently, for something nothing produces. P5 ("no producer's
+  limitations define the format") is the argument on the other side and
+  is a real one — the code-DSL path could plausibly want a 2:1 split —
+  but P5 says Figma's limits must not _bound_ the format, not that the
+  format should grow constructs nobody has asked for. Reopen when a
+  real consumer appears (the C# declarative DSL, or a stress-corpus
+  case needing an unequal split); it is then a schema change with a
+  stated requirement behind it. "Fill weights" is dropped from the v0.2
+  scope wording.
+- **Flex goldens are exact-match by construction.** Their scenes are
+  dimensioned so every solved rect lands on an integer, so the fills
+  carry no anti-aliased edges and the goldens compare with zero
+  tolerance — unlike the v0.3 paint goldens, which need 1–2 % for
+  cross-machine anti-aliasing jitter. This binds future flex goldens: a
+  construct that cannot be made integral changes the scene's
+  dimensions, not the comparison function
+  (`docs/decisions/v02-flex-goldens-per-construct.md`, extending
+  `golden-comparison-space.md`).
+- **The lowering-suite revisit trigger is now due, at #16.** Negative-gap
+  is the first of the four Figma≠CSS lowerings and landed as a single
+  `dashscene-core` `Txn` method rather than a lowering module, because
+  abstracting a suite around one member would have been premature. Its
+  decision record says to revisit when the second lowering lands — and
+  the remaining three (canvas stacking, strokes-in-layout,
+  scale-to-inset) are #16's scope in v0.3. Stamped on the issue so the
+  choice is made deliberately.
+- **§18's fold-in of #58 and #59 into story #9 did not happen.** Both
+  remained open through the v0.2 close. Correcting the record here
+  rather than leaving §18 to imply otherwise: they are re-anchored to
+  v0.4 alongside the other core and `dashbuf` cleanups (#61, #65, #114,
+  #115).
+- **Debt is now anchored to the slice that owns it.** Every previously
+  unanchored debt and bug issue carries a milestone. Two were moved
+  deliberately rather than mechanically: #64 (the `dashbuf`
+  schema-evolution guard) was pulled **forward** to v0.3, because v0.3
+  gives the `.dsb` format its first real producer in `dashc` (#16) and
+  a silent schema break gets expensive once the format has an external
+  producer; and #97 (resolving `clipsContent` into painter-consumable
+  clips) was anchored to v0.3, because the reference painter panics on
+  any node with `entry.clip` and story #18 had to defer its clips
+  golden for that reason.
