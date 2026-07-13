@@ -281,6 +281,29 @@ impl Report {
     }
 }
 
+/// A producer assembles its own findings into a `Report`.
+///
+/// The import gate (`triage`) hands back one `Diagnostic` at a time, and the
+/// producer that owns the Figma mapping (`dashc`, P5) is the only code that
+/// knows when it is done finding them. Without this, a producer could triage
+/// a construct and then have no way to report it — a silent drop by
+/// construction, which P4 forbids.
+impl FromIterator<Diagnostic> for Report {
+    fn from_iter<I: IntoIterator<Item = Diagnostic>>(iter: I) -> Self {
+        Self {
+            diagnostics: iter.into_iter().collect(),
+        }
+    }
+}
+
+/// Merges one gate's diagnostics into another's — `dashc` folds the load
+/// gate's `Report` into the import gate's before deciding whether to emit.
+impl Extend<Diagnostic> for Report {
+    fn extend<I: IntoIterator<Item = Diagnostic>>(&mut self, iter: I) {
+        self.diagnostics.extend(iter);
+    }
+}
+
 impl fmt::Display for Report {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for diagnostic in &self.diagnostics {

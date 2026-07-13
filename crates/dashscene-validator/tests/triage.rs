@@ -3,7 +3,7 @@
 //! P4 — every out-of-profile construct is a named diagnostic, never a
 //! silent drop.
 
-use dashscene_validator::{Construct, Location, NodePath, Profile, Severity, rule, triage};
+use dashscene_validator::{Construct, Location, NodePath, Profile, Report, Severity, rule, triage};
 
 /// Every construct DESIGN §10.1 lists, so the exhaustiveness assertions
 /// below cannot rot when a variant is added.
@@ -142,4 +142,50 @@ fn diagnostic_display_names_severity_rule_and_path() {
         rendered.starts_with("error[profile.backdrop-blur] at /screen/card (#3): "),
         "{rendered}"
     );
+}
+
+#[test]
+fn a_producer_assembles_a_report_from_its_own_diagnostics() {
+    // The import gate hands back bare Diagnostics. A producer (dashc) must be
+    // able to turn its own findings into the one Report type both gates use,
+    // or P4's "never a silent drop" has no channel to speak on.
+    let found = vec![
+        triage(Construct::LayerBlur, Profile::Core, NodePath::new(1, "/a")),
+        triage(
+            Construct::NoiseOrTextureEffect,
+            Profile::Core,
+            NodePath::new(2, "/b"),
+        ),
+    ];
+
+    let report: Report = found.into_iter().collect();
+
+    assert_eq!(report.diagnostics().len(), 2);
+    assert!(report.has_errors(), "the noise effect is an error");
+    assert!(report.has(rule::LAYER_BLUR));
+    assert!(report.has(rule::NOISE_OR_TEXTURE_EFFECT));
+}
+
+#[test]
+fn a_report_merges_a_second_gates_diagnostics() {
+    // compile_figma merges the import gate's findings with the load gate's
+    // Report before deciding whether to emit.
+    let mut report: Report = vec![triage(
+        Construct::CornerSmoothing,
+        Profile::Core,
+        NodePath::new(0, "/a"),
+    )]
+    .into_iter()
+    .collect();
+
+    assert!(!report.has_errors(), "corner smoothing only warns");
+
+    report.extend([triage(
+        Construct::ProgressiveBlur,
+        Profile::Core,
+        NodePath::new(1, "/b"),
+    )]);
+
+    assert_eq!(report.diagnostics().len(), 2);
+    assert!(report.has_errors(), "progressive blur is an error");
 }

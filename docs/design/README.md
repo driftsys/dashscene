@@ -36,9 +36,11 @@ here, as future work gardens it in. Per-component records land here directly:
   (story #6); the v0.2 flex-vocabulary goldens, closing epic #7
   (story #11); the v0.3 paint and clip goldens (stories #14, #18, #97).
 - [dashscene-validator.md](dashscene-validator.md) — the three validation
-  gates, the diagnostic shape, and the v0.1–v0.3 rule set (story #15).
+  gates, the diagnostic shape, and the v0.1–v0.3 rule set (story #15);
+  producer-assembled reports (story #139).
 - [dashc.md](dashc.md) — the SCD compile pipeline: the in-memory `Scd`
   model, the deterministic `.dsb` emitter, the emission gate, and the
-  `dashscene-core` load path (story #16).
+  `dashscene-core` load path (story #16); the Figma REST front end — the
+  lowering walk, the import gate, and `compile_figma` (story #139).
 
 See the `sdd-working-memory-lifecycle` rule.

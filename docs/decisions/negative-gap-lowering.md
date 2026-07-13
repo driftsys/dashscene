@@ -83,6 +83,16 @@ a `dashc`-side pass that reuses these primitives) so the runtime
 arena's staged-mutation API does not accrete a compiler pass suite.
 Recorded here so that revisit is deliberate, not forgotten.
 
+**Trigger checked at story #139; it did not fire.** The Figma lowering
+asked whether `lower_negative_gaps` should move into a `dashc` lowering
+module, and it stays in core's `Txn`. The trigger fires on auto-layout,
+and the v0.3 lowering refuses auto-layout outright — `Scd` cannot
+express flex in the first place (debt #140), so there is no second
+lowering yet and no negative gap to lower. Moving the pass now would be
+speculative: it operates on the arena, while a document-side pass would
+have to operate on `Scd`. Revisit again when the flex lowering lands.
+See `docs/decisions/figma-auto-layout-refused-on-two-grounds.md`.
+
 **Known property (CSS margin semantics).** The lowered margins behave
 as CSS/Taffy margins: a negative margin on a `Fill` child returns its
 absolute value to the container's free space, so `Fill` siblings grow.
