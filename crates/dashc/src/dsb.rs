@@ -1,4 +1,4 @@
-//! The in-memory SCD document — what a producer lowers *into*, and what the
+//! The in-memory DSB document — what a producer lowers *into*, and what the
 //! emitter writes *out of*.
 //!
 //! It is deliberately not a second vocabulary. The paint types are
@@ -22,11 +22,11 @@ pub struct Box2D {
     pub height: f32,
 }
 
-/// One node of the document. `parent` is an index into [`Scd::nodes`], and
+/// One node of the document. `parent` is an index into [`Dsb::nodes`], and
 /// the array is in DFS order, so a parent's index is always lower than its
 /// children's.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct ScdNode {
+pub struct DsbNode {
     pub name: Option<String>,
     pub parent: Option<u32>,
     pub box2d: Box2D,
@@ -48,23 +48,23 @@ pub struct Paint {
     pub clip: bool,
 }
 
-/// One SCD document, ready to emit.
+/// One DSB document, ready to emit.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct Scd {
+pub struct Dsb {
     /// Flattened DFS node tree: array index = rect-table index (DESIGN §5).
-    pub nodes: Vec<ScdNode>,
+    pub nodes: Vec<DsbNode>,
     /// The image assets an image fill references by index.
     pub images: Vec<ImageAsset>,
 }
 
-impl Scd {
+impl Dsb {
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Appends a node and returns its index. The caller appends in DFS
     /// order; `emit` does not reorder.
-    pub fn push(&mut self, node: ScdNode) -> u32 {
+    pub fn push(&mut self, node: DsbNode) -> u32 {
         let index = u32::try_from(self.nodes.len()).expect("document exceeds u32::MAX nodes");
         self.nodes.push(node);
         index

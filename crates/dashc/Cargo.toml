@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Compiler CLI: Figma importer orchestration target, Figma-to-SCD lowering, diagnostics, .dsb emission. Also builds to wasm32-unknown-unknown for the Deno importer (DESIGN_1.md §4, §6.1)."
+description = "Compiler CLI: Figma importer orchestration target, Figma-to-DSB lowering, diagnostics, .dsb emission. Also builds to wasm32-unknown-unknown for the Deno importer (DESIGN_1.md §4, §6.1)."
 
 [lib]
 # Named distinctly from the `dashc` bin target below: both compile to a

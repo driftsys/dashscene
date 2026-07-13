@@ -22,7 +22,7 @@ as-built code shaped the choice:
   `dashscene-engine` maps every `Fill` to `flex_grow = 1.0`, so `Fill`
   siblings always split free space equally. The epic's scope list
   names "fill weights", but no such vocabulary exists anywhere to
-  golden. Filed #117 to decide whether SCD needs one at all — Figma's
+  golden. Filed #117 to decide whether DSB needs one at all — Figma's
   own auto-layout has no flex weight either.
 
 ## Options

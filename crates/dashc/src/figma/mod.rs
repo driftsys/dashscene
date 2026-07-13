@@ -2,7 +2,7 @@
 //!
 //! Figma compatibility is a property of one producer (P5), so nothing
 //! downstream of this module knows what a `FRAME` or an `imageRef` is: the
-//! walk lowers Figma's vocabulary into `Scd`, and `Scd` is Figma-agnostic.
+//! walk lowers Figma's vocabulary into `Dsb`, and `Dsb` is Figma-agnostic.
 //!
 //! The lowering does no I/O. `dashc` compiles to `wasm32-unknown-unknown`, so
 //! it cannot fetch — and Figma serializes an image fill as a bare `imageRef`
@@ -20,8 +20,8 @@ use dashpaint::{
 };
 use dashscene_validator::{Diagnostic, NodePath, Profile, Report};
 
+use crate::dsb::{Box2D, Dsb, DsbNode, Paint as DsbPaint};
 use crate::figma::rest::{FigmaFile, Node, Paint, PaintTag};
-use crate::scd::{Box2D, Paint as ScdPaint, Scd, ScdNode};
 
 /// Why a Figma file could not be compiled at all.
 ///
@@ -31,7 +31,7 @@ use crate::scd::{Box2D, Paint as ScdPaint, Scd, ScdNode};
 pub enum CompileError {
     /// The input was not the Figma REST JSON it claimed to be.
     Parse(serde_json::Error),
-    /// A construct the v0.3 `Scd` cannot express. It has no `Construct`
+    /// A construct the v0.3 `Dsb` cannot express. It has no `Construct`
     /// variant, so it cannot be a diagnostic — and P4 forbids dropping it in
     /// silence, so it stops the compile instead. The named gaps this covers
     /// are tracked as debt: stacked fills/strokes (#146), node opacity/
@@ -64,7 +64,7 @@ impl fmt::Display for CompileError {
 
 impl std::error::Error for CompileError {}
 
-/// Lowers a parsed Figma file into an `Scd` plus the diagnostics its
+/// Lowers a parsed Figma file into a `Dsb` plus the diagnostics its
 /// out-of-profile constructs earned.
 ///
 /// `images` maps an `imageRef` to its bytes. Figma's `GET /file` carries no
@@ -74,11 +74,11 @@ pub fn lower(
     file: &FigmaFile,
     profile: Profile,
     images: &BTreeMap<String, ImageAsset>,
-) -> Result<(Scd, Vec<Diagnostic>), CompileError> {
+) -> Result<(Dsb, Vec<Diagnostic>), CompileError> {
     let root = root_frame(&file.document)?;
 
     let mut walk = Walk {
-        scd: Scd::new(),
+        dsb: Dsb::new(),
         diagnostics: Vec::new(),
         image_of: BTreeMap::new(),
         profile,
@@ -88,7 +88,7 @@ pub fn lower(
     // page position and lowers to (0, 0, w, h).
     walk.visit(root, None, None, "")?;
 
-    Ok((walk.scd, walk.diagnostics))
+    Ok((walk.dsb, walk.diagnostics))
 }
 
 /// The first `FRAME` under the first `CANVAS`.
@@ -118,7 +118,7 @@ fn box_of(node: &Node, path: &str) -> Result<rest::Rect, CompileError> {
 }
 
 struct Walk<'a> {
-    scd: Scd,
+    dsb: Dsb,
     diagnostics: Vec<Diagnostic>,
     /// Interns `imageRef` → image-table index, so two nodes sharing one image
     /// share one asset.
@@ -128,11 +128,11 @@ struct Walk<'a> {
 }
 
 impl Walk<'_> {
-    /// Depth-first, parent before child: `Scd::push` order is the rect-table
+    /// Depth-first, parent before child: `Dsb::push` order is the rect-table
     /// index, and `emit` does not reorder.
     ///
     /// `parent_origin` is the parent's *absolute* origin — what turns Figma's
-    /// page-absolute box into the parent-relative intent `Scd` wants. `None`
+    /// page-absolute box into the parent-relative intent `Dsb` wants. `None`
     /// at the root, which has no parent and so is relative to itself.
     fn visit(
         &mut self,
@@ -149,7 +149,7 @@ impl Walk<'_> {
                 what: format!("node type {}", node.kind),
             });
         }
-        // Scd has no field for a hidden node, and no way to represent one
+        // Dsb has no field for a hidden node, and no way to represent one
         // without shifting the DFS indices every later node depends on — so
         // it fails loudly rather than lowering as though it were visible
         // (P4). Hidden layers are routine in real Figma files (debt #143).
@@ -159,7 +159,7 @@ impl Walk<'_> {
                 what: "a hidden node".to_string(),
             });
         }
-        // Scd carries no opacity vocabulary — no Construct fits, so opacity
+        // Dsb carries no opacity vocabulary — no Construct fits, so opacity
         // fails loudly rather than lowering as though it were opaque (P4,
         // debt #143).
         if node.opacity.is_some_and(|o| o < 1.0) {
@@ -168,7 +168,7 @@ impl Walk<'_> {
                 what: "node opacity".to_string(),
             });
         }
-        // Scd carries no rotation vocabulary — no Construct fits, so a
+        // Dsb carries no rotation vocabulary — no Construct fits, so a
         // rotated node fails loudly rather than lowering as though it were
         // axis-aligned (P4, debt #143). Figma omits `rotation` entirely when
         // it is zero, so `None` and `Some(0.0)` both mean unrotated.
@@ -178,7 +178,7 @@ impl Walk<'_> {
                 what: "node rotation".to_string(),
             });
         }
-        // Scd carries no mask vocabulary — no Construct fits, so a mask node
+        // Dsb carries no mask vocabulary — no Construct fits, so a mask node
         // fails loudly rather than being painted as an ordinary frame (P4,
         // debt #143).
         if node.is_mask == Some(true) {
@@ -190,7 +190,7 @@ impl Walk<'_> {
         // An auto-layout frame is refused for two reasons, and each one holds
         // on its own.
         //
-        // Scd has no flex vocabulary — no mode, no gap, no padding, no sizing
+        // Dsb has no flex vocabulary — no mode, no gap, no padding, no sizing
         // — so there is no field to lower the intent into and no Construct to
         // triage it onto. Dropping it would be the silent drop P4 forbids
         // (debt #140).
@@ -220,7 +220,7 @@ impl Walk<'_> {
         // Built before the push: `paint_of` borrows `self` mutably (it interns
         // image assets), so it cannot run inside the `push` argument.
         let paint = self.paint_of(node, &path)?;
-        let index = self.scd.push(ScdNode {
+        let index = self.dsb.push(DsbNode {
             name: Some(node.name.clone()),
             parent,
             box2d: Box2D {
@@ -251,7 +251,7 @@ impl Walk<'_> {
         Ok(())
     }
 
-    fn paint_of(&mut self, node: &Node, path: &str) -> Result<Option<ScdPaint>, CompileError> {
+    fn paint_of(&mut self, node: &Node, path: &str) -> Result<Option<DsbPaint>, CompileError> {
         let entry = PaintEntry {
             fill: self.fill_of(node, path)?,
             stroke: self.stroke_of(node, path)?,
@@ -263,7 +263,7 @@ impl Walk<'_> {
         if entry == PaintEntry::default() && !node.clips_content {
             return Ok(None);
         }
-        Ok(Some(ScdPaint {
+        Ok(Some(DsbPaint {
             entry,
             clip: node.clips_content,
         }))
@@ -276,7 +276,7 @@ impl Walk<'_> {
         };
         if visible.next().is_some() {
             // PaintEntry.fill is one Option<PaintKind>; Figma's fills is an
-            // array. Stacking is an Scd expressiveness gap (debt #146), not
+            // array. Stacking is a Dsb expressiveness gap (debt #146), not
             // a triage gap — and a silent drop would violate P4.
             return Err(CompileError::Unsupported {
                 path: path.to_string(),
@@ -355,7 +355,7 @@ impl Walk<'_> {
                                 image_ref: image_ref.to_string(),
                             }
                         })?;
-                        let index = self.scd.push_image(asset.clone());
+                        let index = self.dsb.push_image(asset.clone());
                         self.image_of.insert(image_ref.to_string(), index);
                         index
                     }
@@ -402,7 +402,7 @@ impl Walk<'_> {
         };
         if visible.next().is_some() {
             // PaintEntry.stroke is one Option<Stroke>; Figma's strokes is an
-            // array. Stacking is an Scd expressiveness gap (debt #146), not
+            // array. Stacking is a Dsb expressiveness gap (debt #146), not
             // a triage gap — and a silent drop would violate P4. Same rule
             // as `fill_of`.
             return Err(CompileError::Unsupported {

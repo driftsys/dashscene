@@ -2,7 +2,7 @@
 
     status   accepted (story #139, 2026-07-13)
     scope    crates/dashc (the figma module)
-    binds    #140 (Scd cannot express flex), the v0.7 flex lowering, and any
+    binds    #140 (Dsb cannot express flex), the v0.7 flex lowering, and any
              future reader of absoluteBoundingBox
 
 ## Context
@@ -13,7 +13,7 @@ its children.
 
 This is a specific case of
 `docs/decisions/unsupported-figma-constructs-refuse-the-compile.md` — it
-lowers to `CompileError::Unsupported`, like every other construct `Scd` cannot
+lowers to `CompileError::Unsupported`, like every other construct `Dsb` cannot
 carry. It gets its own record because it is refused for **two independent
 reasons**, and only one of them is an expressiveness gap. Conflating them
 would let the second reason disappear the day the first is fixed.
@@ -33,12 +33,12 @@ The walk refuses any `layoutMode` other than `NONE`:
 
 ## Why — reason one: there is no field to lower the intent into
 
-`Scd` has no flex vocabulary — no mode, no gap, no padding, no sizing
+`Dsb` has no flex vocabulary — no mode, no gap, no padding, no sizing
 (debt #140). The intent has nowhere to go, and there is no `Construct`
 variant to triage it onto either, so dropping it would be the silent drop
 P4 forbids.
 
-This reason expires. When `Scd` gains the flex vocabulary, the fields appear
+This reason expires. When `Dsb` gains the flex vocabulary, the fields appear
 and the intent lowers.
 
 ## Why — reason two: inside an auto-layout frame, the boxes are results (P1)
@@ -74,4 +74,4 @@ the same bug in place.
 - **Closing #140 does not by itself license reading the boxes.** The flex
   lowering must satisfy reason two on its own terms.
 - **`v03-paint.json` is `layoutMode: NONE` throughout**, which is why the v0.3
-  paint vocabulary lowers with no `Scd` change at all.
+  paint vocabulary lowers with no `Dsb` change at all.

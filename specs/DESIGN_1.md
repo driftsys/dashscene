@@ -5,9 +5,21 @@
              self-contained: goals, requirements, stack, format,
              producers, painters, features, plan)
     date     2026-07-11
-    naming   SCD ("scene document") and scdc (compiler) are working
-             names; crate names are placeholders — rename freely
-             (e.g. dash-* prefix), the architecture doesn't care.
+    naming   DSB ("dash scene binary") is the intermediate
+             representation, and `dashc` is the compiler. This document
+             originally called them SCD and scdc, and said both were
+             working names to be renamed freely. That invitation was
+             taken up on 2026-07-13: the format that shipped is `.dsb`
+             (schema in `dashbuf`), so the name follows the artifact.
+             SCD and scdc are retired and appear nowhere in the code.
+
+             The file extension is the one exception: the body below
+             still says `.scb`. SCOPE_DECISIONS §3 already retired it in
+             favour of `.dsb`, and other records quote this document's
+             wording verbatim (§9 cites DESIGN §4's ".scb is one way to
+             populate it"). Rewriting the extension here would make
+             those quotations false, so the seed text keeps it and §3
+             remains the ruling.
 
 dash turns UI designed in Figma — or authored programmatically in
 code — into pixels on screen, through one intermediate
@@ -119,15 +131,15 @@ P4 — Vocabulary is validated, never discovered. Paint profiles are
 checked at import/commit; every out-of-profile construct is a named
 diagnostic, never a runtime surprise.
 
-P5 — Figma compatibility is a property of one producer. SCD is a
+P5 — Figma compatibility is a property of one producer. DSB is a
 schema-first IR with its own spec and validator. The Figma exporter
 is one client; the code DSLs are others. No producer's limitations
 define the format.
 
 ## 4. Pipeline
 
-    STAGE 1 — build time (scdc, offline)
-      Figma REST JSON --> scdc --> .scb (flatbuffer) + assets
+    STAGE 1 — build time (dashc, offline)
+      Figma REST JSON --> dashc --> .scb (flatbuffer) + assets
 
     STAGE 2 — common runtime (Rust, one instance)
       arena + variants + text stack + Taffy + FLIP
@@ -166,7 +178,7 @@ interned strings, dedup style pool.
     variant table  sparse per-variant overrides     duplicate trees
     text           strings + style refs             glyph positions
 
-Figma≠CSS lowerings happen in scdc: negative gap → margins, canvas
+Figma≠CSS lowerings happen in dashc: negative gap → margins, canvas
 stacking → explicit order, strokes-in-layout → size adjustment,
 scale constraints → insets.
 
@@ -195,7 +207,7 @@ with contribution_id / fragment_ref / declared_size / interim_fill
 (§10). Flatbuffer fields are optional and ids append-only, so this
 costs nothing and keeps old loaders reading new documents.
 
-## 6. Producers — the paths into SCD
+## 6. Producers — the paths into DSB
 
 ### 6.1 Path 1: Figma
 
@@ -271,7 +283,7 @@ producers would use). No second runtime scene API.
                                  untrusted fragments pass an
                                  admission policy
 
-The validator is one shared crate called at every entry: scdc at
+The validator is one shared crate called at every entry: dashc at
 compile time, builder commit at runtime, fragment admission on the
 wire. The Rust DSL doubles as the stress-corpus generator
 (wrap/hug-in-fill/grid-span/bidi/variant-topology edge cases are
@@ -281,7 +293,7 @@ the screen, like a profile. DSLs mostly instantiate document-
 compiled components and bind data into slots; raw node construction
 is available when needed.
 
-Ownership: both paths are strictly one-way (no SCD→Figma
+Ownership: both paths are strictly one-way (no DSB→Figma
 round-trip, ever). Each component has exactly one authoring home,
 declared in a manifest; a shared symbol namespace (component ids,
 token names) lets either side instantiate the other's components.
@@ -423,7 +435,7 @@ the vocabulary has collapsed to quads (SDF parametric + atlas +
 baked), a custom instanced-quad renderer is bandwidth-optimal — no
 intermediate RTs, no saveLayer round-trips, ~5–10 KLOC because the
 hard 90 % of a 2D renderer (typesetting, layout, paths, effects)
-lives upstream in scdc and the runtime. The SDF shader source is
+lives upstream in dashc and the runtime. The SDF shader source is
 single-sourced with the engine painter, so it is debugged on real
 hardware before this painter exists. Resource profile vs an engine:
 no managed heap, no GC, no scene graph duplication; CPU per frame ≈
@@ -570,7 +582,7 @@ performance (mmap sections measured, prefetch choreography,
 placeholder activation, KTX2 pipeline), rendering performance
 (tiler rules measured on target; whether the lean painter lands
 here or later is decided on measurements, not in advance),
-production toolchain (scdc as a product: stable CLI, versioned
+production toolchain (dashc as a product: stable CLI, versioned
 diagnostics, waiver workflow, linter rule packs, golden/report
 tooling for design review).
 
@@ -598,20 +610,35 @@ latency budgets, admission policy for untrusted producers.
     Q-6  Group-opacity RT budget value on target hardware
          (measure, then fix the number in profile:core).
 
-## 13. Suggested workspace layout
+## 13. Workspace layout
 
-    scd-schema/       flatbuffer schema + generated code + format
-                      doc (section table, hashes, reserved fields)
-    scd-validator/    shared validation crate (profiles,
-                      diagnostics, waivers)
-    scd-dsl/          Rust typed builder + corpus generator
-    scd-layout/       arena, Taffy solve, variants, FLIP, measure
-    scd-text/         metrics blob, bidi/shape/break, atlas
-                      pipeline, glyph runs
-    scd-paint/        painter trait
-    scd-paint-skia/   Skia CPU/GPU painter
-    scdc/             Figma importer + compiler CLI (roots,
-                      closure, lowering, diagnostics)
-    corpus/           DSL-generated stress corpus + Figma fixture
-                      captures (record-and-replay)
-    goldens/          CI golden images + diff tooling
+This section originally suggested a `scd-*` crate family. Those names
+were never adopted: SCOPE_DECISIONS §2 mapped the roles onto the crate
+names actually reserved on crates.io, and that map is authoritative.
+The layout below is the one that exists.
+
+    dashbuf/              flatbuffer schema + generated code + format
+                          doc (section table, hashes, reserved fields)
+    dashscene-validator/  shared validation crate (profiles,
+                          diagnostics, waivers)
+    dashlang/             Rust typed builder + corpus generator
+    dashscene-core/       arena, node tree, layout + paint tables, and
+                          the staged-mutation producer API
+    dashscene-engine/     Taffy solve, variants, FLIP, measure callback
+    dashscene-typeset/    metrics blob, bidi/shape/break, atlas
+                          pipeline, glyph runs
+    dashpaint/            painter trait + the paint table (boundary B)
+    dashscene-skia/       Skia CPU/GPU painter
+    dashc/                Figma importer + compiler CLI (roots,
+                          closure, lowering, diagnostics)
+    importers/figma/      the Deno/TypeScript Figma importer, which
+                          calls dashc compiled to wasm
+    corpus/               DSL-generated stress corpus + Figma fixture
+                          captures (record-and-replay)
+    goldens/              CI golden images + diff tooling
+
+One role split in two on contact with the code: the original
+`scd-layout/` is now `dashscene-core` (the model a producer mutates) and
+`dashscene-engine` (the runtime that solves it) — see SCOPE_DECISIONS §9.
+`dashcue` (the animation vocabulary) has no counterpart in the original
+suggestion at all.

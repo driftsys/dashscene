@@ -82,7 +82,7 @@ pub struct Node {
     /// newer `GRID`. The walk rejects everything but `NONE` loudly, for two
     /// reasons that each hold on their own.
     ///
-    /// `Scd` has no flex vocabulary — no mode, no gap, no padding, no sizing —
+    /// `Dsb` has no flex vocabulary — no mode, no gap, no padding, no sizing —
     /// so there is nothing to lower the intent into (debt #140). And inside an
     /// auto-layout frame, `absolute_bounding_box` is what Figma's own flex
     /// solver *computed*, so lowering a child as a fixed box would write a
@@ -94,16 +94,16 @@ pub struct Node {
     #[serde(default)]
     pub layout_mode: Option<String>,
     /// Page-absolute. The lowering subtracts the parent's origin to get the
-    /// parent-relative intent `Scd` wants. Never `absoluteRenderBounds`,
+    /// parent-relative intent `Dsb` wants. Never `absoluteRenderBounds`,
     /// which is a *result* (P1).
     #[serde(default)]
     pub absolute_bounding_box: Option<Rect>,
-    /// Degrees. Figma omits the field entirely when it is zero. `Scd` has no
+    /// Degrees. Figma omits the field entirely when it is zero. `Dsb` has no
     /// rotation vocabulary, so the walk rejects a non-zero value loudly
     /// rather than lowering it as though the node were axis-aligned (P4).
     #[serde(default)]
     pub rotation: Option<f32>,
-    /// Whether this node masks its following siblings. `Scd` has no mask
+    /// Whether this node masks its following siblings. `Dsb` has no mask
     /// vocabulary, so the walk rejects a mask node loudly rather than
     /// painting it as an ordinary frame (P4).
     #[serde(default)]
