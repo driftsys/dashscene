@@ -7,6 +7,13 @@
   },
   "fixtures": [
     {
+      "name": "v03-paint",
+      "fileKey": "PASTE_THE_FIGMA_FILE_KEY_HERE",
+      "covers": "v0.3 paint vocabulary under fixed layout (layoutMode NONE): solid fill, all four gradient kinds (linear/radial/angular/diamond), an image fill with a scale mode, the three stroke aligns (inside/center/outside), uniform and per-corner corner radii, and a clipsContent frame with an overflowing child",
+      "emits": true,
+      "note": "NOT YET AUTHORED — the fileKey is the placeholder PASTE_THE_FIGMA_FILE_KEY_HERE. Create the Figma file with the fixture-author plugin's v03-paint command, then replace the placeholder with the real key (importers/figma/plugin/fixture-author/README.md). `deno task capture` recognizes the placeholder and skips this entry with a named message instead of requesting a file key that does not exist. Designated input for the dashc compile pipeline (#16)."
+    },
+    {
       "name": "grid-basic",
       "fileKey": "BJ1sPobsTmNLQLWqtgjwJU",
       "covers": "GRID mode: row/column spans, fixed+flex tracks, hug/fill/fixed children, min/max constraints",

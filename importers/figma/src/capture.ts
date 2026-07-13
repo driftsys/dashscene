@@ -34,7 +34,7 @@ export interface FixtureManifest {
 export interface CaptureResult {
   readonly name: string;
   readonly fileKey: string;
-  readonly action: "captured" | "unchanged" | "failed";
+  readonly action: "captured" | "unchanged" | "skipped" | "failed";
   /** Absent when action is "failed" — no version was captured. */
   readonly version?: string;
   /** Present only when action is "failed"; the caught error's message. */
@@ -54,6 +54,16 @@ export interface CaptureFixturesOptions {
 const VALID_FIXTURE_TOKEN = /^[A-Za-z0-9_-]+$/;
 /** Reserved: would make the CLI overwrite the manifest file itself. */
 const RESERVED_FIXTURE_NAME = "manifest";
+/**
+ * The `fileKey` a manifest entry carries between the moment the fixture is
+ * declared and the moment its Figma file exists. A real key is a 22-character
+ * mixed-case token, so this one cannot be mistaken for one — but it does match
+ * `VALID_FIXTURE_TOKEN`, which is deliberate: the manifest stays parseable, so
+ * one unauthored fixture does not stop the others from being captured. The
+ * capture loop recognizes it and skips the entry instead of requesting a file
+ * key that does not exist.
+ */
+export const PLACEHOLDER_FILE_KEY = "PASTE_THE_FIGMA_FILE_KEY_HERE";
 
 export function parseManifest(text: string): FixtureManifest {
   const parsed = JSON.parse(text) as { fixtures?: unknown } | null;
@@ -102,6 +112,16 @@ export async function captureFixtures(
   const log = options.log ?? (() => {});
   const results: CaptureResult[] = [];
   for (const { name, fileKey } of manifest.fixtures) {
+    if (fileKey === PLACEHOLDER_FILE_KEY) {
+      log(
+        `${name}: skipped — fileKey is still the placeholder ` +
+          `${PLACEHOLDER_FILE_KEY}. Author the Figma file with the ` +
+          `fixture-author plugin, then put its real file key in ` +
+          `corpus/figma-fixtures/manifest.json.`,
+      );
+      results.push({ name, fileKey, action: "skipped" });
+      continue;
+    }
     try {
       const captured = await readCapturedVersion(name);
       if (captured !== null) {
@@ -163,9 +183,11 @@ if (import.meta.main) {
   });
   const captured = results.filter((r) => r.action === "captured").length;
   const failed = results.filter((r) => r.action === "failed").length;
-  const unchanged = results.length - captured - failed;
+  const skipped = results.filter((r) => r.action === "skipped").length;
+  const unchanged = results.length - captured - failed - skipped;
   console.log(
-    `done: ${captured} captured, ${unchanged} unchanged, ${failed} failed`,
+    `done: ${captured} captured, ${unchanged} unchanged, ` +
+      `${skipped} skipped (placeholder file key), ${failed} failed`,
   );
   if (failed > 0) {
     Deno.exit(1);

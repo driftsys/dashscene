@@ -9,7 +9,11 @@
  */
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
-import { captureFixtures, parseManifest } from "./capture.ts";
+import {
+  captureFixtures,
+  parseManifest,
+  PLACEHOLDER_FILE_KEY,
+} from "./capture.ts";
 import { createFigmaClient } from "./fetch.ts";
 
 const MANIFEST_TEXT = JSON.stringify({
@@ -142,6 +146,54 @@ Deno.test("captureFixtures captures when no previous capture exists", async () =
     "https://api.figma.com/v1/files/KEYA?plugin_data=shared",
     "https://api.figma.com/v1/files/KEYB?plugin_data=shared",
   ]);
+});
+
+Deno.test("captureFixtures skips a fixture whose fileKey is the placeholder", async () => {
+  // A fixture is registered in the manifest before its Figma file exists, so
+  // its key is the placeholder. The placeholder is a valid fixture token, so
+  // parseManifest accepts it — the capture loop is what must refuse to send
+  // it to the API, and it must not stop the fixtures that are authored.
+  const text = JSON.stringify({
+    fixtures: [
+      { name: "v03-paint", fileKey: PLACEHOLDER_FILE_KEY, emits: true },
+      { name: "grid-basic", fileKey: "KEYA", emits: true },
+    ],
+  });
+  const { client, requests } = scriptedClient([
+    () => jsonResponse({ version: "9", document: {} }),
+  ]);
+  const writes: string[] = [];
+  const logs: string[] = [];
+  const results = await captureFixtures({
+    manifest: parseManifest(text),
+    client,
+    readCapturedVersion: () => Promise.resolve(null),
+    writeCapture: (name) => {
+      writes.push(name);
+      return Promise.resolve();
+    },
+    log: (line) => logs.push(line),
+  });
+  assertEquals(results, [
+    {
+      name: "v03-paint",
+      fileKey: PLACEHOLDER_FILE_KEY,
+      action: "skipped",
+    },
+    { name: "grid-basic", fileKey: "KEYA", action: "captured", version: "9" },
+  ]);
+  // no request carries the placeholder, and no capture file is written for it.
+  assertEquals(requests, [
+    "https://api.figma.com/v1/files/KEYA?plugin_data=shared",
+  ]);
+  assertEquals(writes, ["grid-basic"]);
+  assert(
+    logs.some((line) =>
+      line.startsWith("v03-paint: skipped") &&
+      line.includes(PLACEHOLDER_FILE_KEY)
+    ),
+    logs.join(" | "),
+  );
 });
 
 Deno.test("captureFixtures records a failing fixture without blocking the rest", async () => {
