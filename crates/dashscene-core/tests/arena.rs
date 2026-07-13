@@ -5,7 +5,8 @@
 use std::mem::{align_of, size_of};
 
 use dashscene_core::{
-    Arena, Color, LayoutMode, PaintEntry, PaintIndex, Prop, RectEntry, TextStyle,
+    Arena, ClipBox, ClipIndex, Color, CornerRadii, LayoutMode, PaintEntry, PaintIndex, Prop,
+    RectEntry, TextStyle,
 };
 
 const RED: Color = Color {
@@ -18,9 +19,9 @@ const RED: Color = Color {
 #[test]
 fn committed_entries_are_blittable_plain_data() {
     // Boundary B pins the rect entry as blittable plain data:
-    // x, y, w, h (f32) + paint index (u32), and the solid-fill color
-    // as 4xf32 RGBA (dashbuf's Color shape).
-    assert_eq!(size_of::<RectEntry>(), 20);
+    // x, y, w, h (f32) + paint index (u32) + clip index (u32), and the
+    // solid-fill color as 4xf32 RGBA (dashbuf's Color shape).
+    assert_eq!(size_of::<RectEntry>(), 24);
     assert_eq!(align_of::<RectEntry>(), 4);
     assert_eq!(size_of::<Color>(), 16);
     assert_eq!(align_of::<Color>(), 4);
@@ -31,6 +32,7 @@ fn committed_entries_are_blittable_plain_data() {
         w: 3.0,
         h: 4.0,
         paint: PaintIndex(0),
+        clip: ClipIndex::UNCLIPPED,
     };
     let copy = entry; // Copy, not a move
     assert_eq!(entry, copy);
@@ -73,6 +75,7 @@ fn a_single_filled_root_resolves_to_one_rect_and_one_paint() {
             w: 320.0,
             h: 240.0,
             paint: PaintIndex(0),
+            clip: ClipIndex::UNCLIPPED,
         }]
     );
     assert_eq!(scene.paints().len(), 1);
@@ -912,4 +915,306 @@ fn lower_negative_gaps_leaves_a_nan_gap_untouched() {
 
     assert!(arena.layout(row).gap.is_nan(), "NaN gap left as-is");
     assert_eq!(arena.layout(b).margin.left, 0.0, "no NaN in child margin");
+}
+
+// ---------------------------------------------------------------------
+// Subtree clip resolution (story #97): `Prop::Clip` is intent — commit
+// resolves it into the per-rect clip regions boundary B carries, so no
+// painter re-derives the tree (P2).
+// ---------------------------------------------------------------------
+
+const ROUND_4: CornerRadii = CornerRadii {
+    top_left: 4.0,
+    top_right: 4.0,
+    bottom_right: 4.0,
+    bottom_left: 4.0,
+};
+
+/// `size(w, h)` at `(x, y)`, filled red — the fixture body every clip
+/// test below shares.
+fn boxed(
+    txn: &mut dashscene_core::Txn<'_>,
+    parent: Option<dashscene_core::NodeId>,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+) -> dashscene_core::NodeId {
+    let node = txn.add_node(parent, None);
+    txn.set_prop(node, Prop::X(x));
+    txn.set_prop(node, Prop::Y(y));
+    txn.set_prop(node, Prop::Width(w));
+    txn.set_prop(node, Prop::Height(h));
+    node
+}
+
+#[test]
+fn corner_radii_intent_reaches_the_committed_paint_entry() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let node = boxed(&mut txn, None, 0.0, 0.0, 10.0, 10.0);
+    txn.set_prop(node, Prop::Fill(RED));
+    txn.set_prop(
+        node,
+        Prop::Corners {
+            top_left: 1.0,
+            top_right: 2.0,
+            bottom_right: 3.0,
+            bottom_left: 4.0,
+        },
+    );
+    txn.commit();
+
+    let scene = arena.committed();
+    assert_eq!(
+        scene.paints().resolve(scene.rects()[0].paint).corners,
+        CornerRadii {
+            top_left: 1.0,
+            top_right: 2.0,
+            bottom_right: 3.0,
+            bottom_left: 4.0,
+        }
+    );
+}
+
+#[test]
+fn same_fill_different_corners_are_different_paint_entries() {
+    // The paint interner keys on the whole entry, not the fill color
+    // alone: two nodes that share a color but round differently must not
+    // collapse into one pool entry.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let sharp = boxed(&mut txn, None, 0.0, 0.0, 10.0, 10.0);
+    txn.set_prop(sharp, Prop::Fill(RED));
+    let round = boxed(&mut txn, None, 0.0, 0.0, 10.0, 10.0);
+    txn.set_prop(round, Prop::Fill(RED));
+    txn.set_prop(
+        round,
+        Prop::Corners {
+            top_left: 4.0,
+            top_right: 4.0,
+            bottom_right: 4.0,
+            bottom_left: 4.0,
+        },
+    );
+    txn.commit();
+
+    let scene = arena.committed();
+    assert_eq!(scene.paints().len(), 2);
+    assert_ne!(scene.rects()[0].paint, scene.rects()[1].paint);
+}
+
+#[test]
+fn a_scene_without_clips_shares_the_reserved_unclipped_region() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let root = boxed(&mut txn, None, 0.0, 0.0, 10.0, 10.0);
+    boxed(&mut txn, Some(root), 1.0, 1.0, 2.0, 2.0);
+    txn.commit();
+
+    let scene = arena.committed();
+    assert_eq!(scene.clips().len(), 1, "only the reserved region");
+    for rect in scene.rects() {
+        assert_eq!(rect.clip, ClipIndex::UNCLIPPED);
+        assert!(scene.clips().resolve(rect.clip).is_unclipped());
+    }
+}
+
+#[test]
+fn a_clipping_node_clips_its_descendants_but_not_itself() {
+    // frame(clip, rounded) ── child ── grandchild
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let frame = boxed(&mut txn, None, 10.0, 20.0, 30.0, 40.0);
+    txn.set_prop(frame, Prop::Clip(true));
+    txn.set_prop(
+        frame,
+        Prop::Corners {
+            top_left: 4.0,
+            top_right: 4.0,
+            bottom_right: 4.0,
+            bottom_left: 4.0,
+        },
+    );
+    let child = boxed(&mut txn, Some(frame), 0.0, 0.0, 100.0, 100.0);
+    boxed(&mut txn, Some(child), 0.0, 0.0, 100.0, 100.0);
+    txn.commit();
+
+    let scene = arena.committed();
+    let region = |i: usize| scene.clips().resolve(scene.rects()[i].clip);
+
+    // The clipping node is not clipped by its own clip.
+    assert!(region(0).is_unclipped());
+    // Its descendants — child and grandchild alike — carry its box, in
+    // absolute coordinates, with its corner radii.
+    let expected = ClipBox {
+        x: 10.0,
+        y: 20.0,
+        w: 30.0,
+        h: 40.0,
+        corners: ROUND_4,
+    };
+    assert_eq!(region(1).boxes(), &[expected]);
+    assert_eq!(region(2).boxes(), &[expected]);
+    // And they share one interned region entry.
+    assert_eq!(scene.rects()[1].clip, scene.rects()[2].clip);
+    assert_eq!(scene.clips().len(), 2, "unclipped + the frame's region");
+}
+
+#[test]
+fn nested_clips_intersect_as_an_ancestor_chain_outermost_first() {
+    // outer(clip) ── middle(clip, rounded) ── leaf
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let outer = boxed(&mut txn, None, 0.0, 0.0, 100.0, 100.0);
+    txn.set_prop(outer, Prop::Clip(true));
+    let middle = boxed(&mut txn, Some(outer), 10.0, 10.0, 50.0, 50.0);
+    txn.set_prop(middle, Prop::Clip(true));
+    txn.set_prop(
+        middle,
+        Prop::Corners {
+            top_left: 4.0,
+            top_right: 4.0,
+            bottom_right: 4.0,
+            bottom_left: 4.0,
+        },
+    );
+    boxed(&mut txn, Some(middle), 0.0, 0.0, 80.0, 80.0);
+    txn.commit();
+
+    let scene = arena.committed();
+    let region = |i: usize| scene.clips().resolve(scene.rects()[i].clip);
+
+    assert!(region(0).is_unclipped());
+    assert_eq!(
+        region(1).boxes(),
+        &[ClipBox {
+            x: 0.0,
+            y: 0.0,
+            w: 100.0,
+            h: 100.0,
+            corners: CornerRadii::default(),
+        }]
+    );
+    assert_eq!(
+        region(2).boxes(),
+        &[
+            ClipBox {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 100.0,
+                corners: CornerRadii::default(),
+            },
+            ClipBox {
+                x: 10.0,
+                y: 10.0,
+                w: 50.0,
+                h: 50.0,
+                corners: ROUND_4,
+            },
+        ],
+        "outermost ancestor first"
+    );
+}
+
+#[test]
+fn a_non_clipping_node_passes_its_ancestors_region_through() {
+    // frame(clip) ── pass ── leaf: `pass` clips nothing, so `leaf`
+    // carries exactly the frame's region — the same interned entry.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let frame = boxed(&mut txn, None, 0.0, 0.0, 20.0, 20.0);
+    txn.set_prop(frame, Prop::Clip(true));
+    let pass = boxed(&mut txn, Some(frame), 0.0, 0.0, 5.0, 5.0);
+    boxed(&mut txn, Some(pass), 0.0, 0.0, 5.0, 5.0);
+    txn.commit();
+
+    let scene = arena.committed();
+    assert_eq!(scene.rects()[1].clip, scene.rects()[2].clip);
+    assert_eq!(scene.clips().len(), 2);
+}
+
+#[test]
+fn sibling_subtrees_under_one_clip_share_one_region_entry() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let frame = boxed(&mut txn, None, 0.0, 0.0, 20.0, 20.0);
+    txn.set_prop(frame, Prop::Clip(true));
+    boxed(&mut txn, Some(frame), 0.0, 0.0, 5.0, 5.0);
+    boxed(&mut txn, Some(frame), 6.0, 0.0, 5.0, 5.0);
+    boxed(&mut txn, Some(frame), 12.0, 0.0, 5.0, 5.0);
+    txn.commit();
+
+    let scene = arena.committed();
+    assert_eq!(scene.clips().len(), 2, "unclipped + one shared region");
+    assert_eq!(scene.rects()[1].clip, scene.rects()[2].clip);
+    assert_eq!(scene.rects()[2].clip, scene.rects()[3].clip);
+}
+
+#[test]
+fn resizing_a_clipping_ancestor_dirties_the_descendants_it_clips() {
+    // The load-bearing dirty-set case: the child's own rect entry is
+    // bit-identical across the two commits (same geometry, same paint
+    // index, same clip index) — only the region that index resolves to
+    // changed. Without the resolved-clip clause the repaint is missed.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let frame = boxed(&mut txn, None, 0.0, 0.0, 20.0, 20.0);
+    txn.set_prop(frame, Prop::Clip(true));
+    let child = boxed(&mut txn, Some(frame), 0.0, 0.0, 50.0, 50.0);
+    txn.set_prop(child, Prop::Fill(RED));
+    txn.commit();
+
+    let before = arena.committed().rects()[1];
+
+    let mut txn = arena.open();
+    txn.set_prop(frame, Prop::Width(10.0));
+    txn.commit();
+
+    let scene = arena.committed();
+    assert_eq!(
+        scene.rects()[1],
+        before,
+        "the child's own entry bits did not change"
+    );
+    assert_eq!(scene.dirty(), [0, 1], "the frame and the rect it clips");
+}
+
+#[test]
+fn toggling_a_clip_off_dirties_the_descendants_it_clipped() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let frame = boxed(&mut txn, None, 0.0, 0.0, 20.0, 20.0);
+    txn.set_prop(frame, Prop::Clip(true));
+    let child = boxed(&mut txn, Some(frame), 0.0, 0.0, 50.0, 50.0);
+    txn.set_prop(child, Prop::Fill(RED));
+    txn.commit();
+
+    let mut txn = arena.open();
+    txn.set_prop(frame, Prop::Clip(false));
+    txn.commit();
+
+    let scene = arena.committed();
+    assert!(scene.clips().resolve(scene.rects()[1].clip).is_unclipped());
+    assert_eq!(
+        scene.dirty(),
+        [1],
+        "only the rect that stopped being clipped"
+    );
+}
+
+#[test]
+fn a_no_op_commit_of_a_clipped_scene_stays_clean() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let frame = boxed(&mut txn, None, 0.0, 0.0, 20.0, 20.0);
+    txn.set_prop(frame, Prop::Clip(true));
+    let child = boxed(&mut txn, Some(frame), 0.0, 0.0, 50.0, 50.0);
+    txn.set_prop(child, Prop::Fill(RED));
+    txn.commit();
+
+    arena.open().commit();
+
+    assert!(arena.committed().dirty().is_empty());
 }

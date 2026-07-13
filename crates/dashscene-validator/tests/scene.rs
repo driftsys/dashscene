@@ -6,8 +6,9 @@
 //! stroke width to be measured against (issue #100).
 
 use dashpaint::{
-    Color, Gradient, GradientKind, GradientStop, ImageAsset, ImageFormat, ImageTable, PaintEntry,
-    PaintIndex, PaintKind, PaintTable, RectEntry, ScaleMode, Stroke, StrokeAlign, Vec2,
+    ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CornerRadii, Gradient, GradientKind,
+    GradientStop, ImageAsset, ImageFormat, ImageTable, PaintEntry, PaintIndex, PaintKind,
+    PaintTable, RectEntry, ScaleMode, Stroke, StrokeAlign, Vec2,
 };
 use dashscene_validator::{Location, Report, rule, validate_scene};
 
@@ -43,6 +44,7 @@ fn rect(w: f32, h: f32, paint: u32) -> RectEntry {
         w,
         h,
         paint: PaintIndex(paint),
+        clip: ClipIndex::UNCLIPPED,
     }
 }
 
@@ -50,7 +52,12 @@ fn rect(w: f32, h: f32, paint: u32) -> RectEntry {
 fn check_one(w: f32, h: f32, entry: PaintEntry) -> Report {
     let mut paints = PaintTable::new();
     let index = paints.push(entry);
-    validate_scene(&[rect(w, h, index.0)], &paints, &ImageTable::new())
+    validate_scene(
+        &[rect(w, h, index.0)],
+        &paints,
+        &ImageTable::new(),
+        &ClipTable::new(),
+    )
 }
 
 #[test]
@@ -191,7 +198,12 @@ fn an_image_fill_past_the_image_table_is_named() {
         bytes: vec![0],
     });
 
-    let report = validate_scene(&[rect(10.0, 10.0, index.0)], &paints, &images);
+    let report = validate_scene(
+        &[rect(10.0, 10.0, index.0)],
+        &paints,
+        &images,
+        &ClipTable::new(),
+    );
     assert!(report.has(rule::IMAGE_OUT_OF_RANGE), "{report}");
 }
 
@@ -202,7 +214,12 @@ fn a_rect_pointing_past_the_paint_table_is_named() {
     let mut paints = PaintTable::new();
     paints.push(PaintEntry::solid(red()));
 
-    let report = validate_scene(&[rect(10.0, 10.0, 5)], &paints, &ImageTable::new());
+    let report = validate_scene(
+        &[rect(10.0, 10.0, 5)],
+        &paints,
+        &ImageTable::new(),
+        &ClipTable::new(),
+    );
     assert!(report.has(rule::PAINT_ENTRY_OUT_OF_RANGE), "{report}");
     assert!(report.has_errors());
 }
@@ -219,7 +236,7 @@ fn a_shared_paint_entry_is_reported_once_not_once_per_rect() {
     });
     let rects: Vec<RectEntry> = (0..5).map(|_| rect(10.0, 10.0, index.0)).collect();
 
-    let report = validate_scene(&rects, &paints, &ImageTable::new());
+    let report = validate_scene(&rects, &paints, &ImageTable::new(), &ClipTable::new());
     let count = report
         .diagnostics()
         .iter()
@@ -240,7 +257,12 @@ fn a_pool_diagnostic_points_at_the_pool_entry_not_a_rect() {
         ..PaintEntry::default()
     });
 
-    let report = validate_scene(&[rect(10.0, 10.0, broken.0)], &paints, &ImageTable::new());
+    let report = validate_scene(
+        &[rect(10.0, 10.0, broken.0)],
+        &paints,
+        &ImageTable::new(),
+        &ClipTable::new(),
+    );
     let diagnostic = report
         .find(rule::GRADIENT_NO_STOPS)
         .expect("the empty gradient is reported");
@@ -267,7 +289,12 @@ fn an_image_asset_with_no_bytes_is_named() {
         bytes: Vec::new(),
     });
 
-    let report = validate_scene(&[rect(10.0, 10.0, index.0)], &paints, &images);
+    let report = validate_scene(
+        &[rect(10.0, 10.0, index.0)],
+        &paints,
+        &images,
+        &ClipTable::new(),
+    );
     assert!(report.has(rule::IMAGE_NO_BYTES), "{report}");
     assert_eq!(
         report.find(rule::IMAGE_NO_BYTES).unwrap().at,
@@ -306,4 +333,59 @@ fn a_non_finite_box_does_not_silently_pass_the_stroke_rule() {
         },
     );
     assert!(!report.has(rule::STROKE_EXCEEDS_BOX), "{report}");
+}
+
+#[test]
+fn a_rect_pointing_past_the_clip_table_is_named() {
+    // Story #97 gave every rect a resolved clip region, and
+    // `ClipTable::resolve` panics on a miss with the same "validated
+    // upstream (P4)" note as the paint and image tables. This gate is that
+    // upstream — without it, #97 would ship a panic with nothing standing in
+    // front of it.
+    let mut paints = PaintTable::new();
+    let paint = paints.push(PaintEntry::solid(red()));
+
+    let mut broken = rect(10.0, 10.0, paint.0);
+    broken.clip = ClipIndex(7);
+
+    let report = validate_scene(&[broken], &paints, &ImageTable::new(), &ClipTable::new());
+    assert!(report.has(rule::CLIP_INDEX_OUT_OF_RANGE), "{report}");
+    assert!(report.has_errors());
+}
+
+#[test]
+fn a_rect_carrying_a_real_clip_region_is_clean() {
+    let mut paints = PaintTable::new();
+    let paint = paints.push(PaintEntry::solid(red()));
+
+    let mut clips = ClipTable::new();
+    let region = clips.push(ClipRegion::new(vec![ClipBox {
+        x: 0.0,
+        y: 0.0,
+        w: 100.0,
+        h: 100.0,
+        corners: CornerRadii::default(),
+    }]));
+
+    let mut clipped = rect(10.0, 10.0, paint.0);
+    clipped.clip = region;
+
+    let report = validate_scene(&[clipped], &paints, &ImageTable::new(), &clips);
+    assert!(report.is_empty(), "unexpected diagnostics:\n{report}");
+}
+
+#[test]
+fn the_reserved_unclipped_region_always_resolves() {
+    // ClipTable::new() reserves index 0 as the unclipped region, so a rect
+    // that clips nothing needs no sentinel and must never trip the rule.
+    let mut paints = PaintTable::new();
+    let paint = paints.push(PaintEntry::solid(red()));
+
+    let report = validate_scene(
+        &[rect(10.0, 10.0, paint.0)],
+        &paints,
+        &ImageTable::new(),
+        &ClipTable::new(),
+    );
+    assert!(!report.has(rule::CLIP_INDEX_OUT_OF_RANGE), "{report}");
 }

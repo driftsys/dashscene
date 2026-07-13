@@ -92,7 +92,11 @@ it in. Per-story decisions land here directly:
   debt #85).
 - [subtree-clip-resolution-deferred.md](subtree-clip-resolution-deferred.md)
   — subtree clipsContent resolves in `dashscene-core`, not the painter
-  (story #14); files issue #97.
+  (story #14); files issue #97, resolved by story #97.
+- [resolved-clip-regions-at-commit.md](resolved-clip-regions-at-commit.md)
+  — commit resolves subtree clips into a per-rect clip-region table;
+  `RectEntry.clip` indexes it and `PaintEntry.clip` is gone (story #97);
+  binds every painter and the dirty set.
 
 - [v03-paint-goldens-per-family.md](v03-paint-goldens-per-family.md) —
   the v0.3 paint goldens are per-family isolation scenes complementing

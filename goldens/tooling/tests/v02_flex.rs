@@ -65,7 +65,12 @@ fn render_and_compare(arena: &Arena, name: &str) {
     let (_, _, w, h) = rect(arena, 0);
     let scene = arena.committed();
     let mut painter = SkiaPainter::new(exact_dim(w), exact_dim(h));
-    painter.paint(scene.rects(), scene.paints(), &ImageTable::new());
+    painter.paint(
+        scene.rects(),
+        scene.paints(),
+        &ImageTable::new(),
+        scene.clips(),
+    );
     goldens::assert_matches_golden(name, &painter.png_bytes());
 }
 

@@ -5,7 +5,12 @@
 //! the four gradient kinds, image fills with scale modes, stroke with
 //! align, rounded corners, and clip. The rect-table index is the document
 //! DFS node index (DESIGN_1.md §5); `RectEntry.paint` indexes the
-//! [`PaintTable`].
+//! [`PaintTable`] and `RectEntry.clip` indexes the [`ClipTable`].
+//!
+//! Clipping crosses this boundary already resolved: `dashscene-core`
+//! turns "this node clips its children" into a per-rect [`ClipRegion`]
+//! at commit (issue #97), because a flat rect table carries no ancestors
+//! for a painter to walk (P2).
 
 /// An RGBA color, 4×f32 — the same shape as `dashbuf`'s `Color` struct.
 ///
@@ -32,10 +37,29 @@ pub struct Color {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PaintIndex(pub u32);
 
+/// An index into the [`ClipTable`] — the type of [`RectEntry::clip`]
+/// and the return of [`ClipTable::push`].
+///
+/// `#[repr(transparent)]` over `u32`, for the same reason as
+/// [`PaintIndex`]: [`RectEntry`] stays blittable, and no bare `u32` can
+/// pass for a clip index without an explicit wrap.
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ClipIndex(pub u32);
+
+impl ClipIndex {
+    /// The region every unclipped rect references. [`ClipTable::new`]
+    /// reserves index 0 for it, so an unclipped rect still resolves —
+    /// this is a real entry, not a sentinel
+    /// (`docs/decisions/boundary-b-unification.md`).
+    pub const UNCLIPPED: ClipIndex = ClipIndex(0);
+}
+
 /// One resolved rectangle — boundary B's per-node unit (DESIGN_1.md §7.3).
 ///
 /// The rect-table index of this entry is the document DFS node index, so
-/// there is no id field. `paint` resolves in the [`PaintTable`].
+/// there is no id field. `paint` resolves in the [`PaintTable`], `clip`
+/// in the [`ClipTable`].
 ///
 /// `#[repr(C)]`: DESIGN_1.md §7.3 calls rect entries blittable, and R-T4
 /// plans dirty-range instance-buffer uploads straight from the rect table.
@@ -47,6 +71,11 @@ pub struct RectEntry {
     pub w: f32,
     pub h: f32,
     pub paint: PaintIndex,
+    /// The clip that applies to this rect, resolved from its clipping
+    /// ancestors by `dashscene-core` at commit — a painter never
+    /// re-derives the tree (P2). [`ClipIndex::UNCLIPPED`] when no
+    /// ancestor clips.
+    pub clip: ClipIndex,
 }
 
 /// A 2D point or vector, in the coordinate space its context names.
@@ -219,6 +248,119 @@ pub struct CornerRadii {
     pub bottom_left: f32,
 }
 
+/// One clipping box of a resolved [`ClipRegion`]: an axis-aligned box in
+/// the same absolute space as [`RectEntry`], rounded by `corners` (all
+/// zero = a sharp rect).
+///
+/// This is a clipping *ancestor*'s box, already resolved — not the
+/// clipped rect's own geometry.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ClipBox {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    pub corners: CornerRadii,
+}
+
+/// The clip that applies to one rect: the **intersection** of its boxes,
+/// which are the boxes of its clipping ancestors, outermost first. No
+/// boxes = unclipped.
+///
+/// `dashscene-core` resolves this at commit (DESIGN_1.md §8.1
+/// `Paint.clip` — "clips its children to its box"): boundary B is a flat
+/// rect table, so a painter has no ancestors to walk and P2 forbids it
+/// re-deriving them. The box list is kept rather than pre-intersected
+/// because the intersection of two rounded rects is not a rounded rect.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ClipRegion {
+    boxes: Vec<ClipBox>,
+}
+
+impl ClipRegion {
+    /// The region of a rect no ancestor clips — the one [`ClipTable`]
+    /// reserves at [`ClipIndex::UNCLIPPED`].
+    pub fn unclipped() -> Self {
+        Self::default()
+    }
+
+    /// A region clipped by every box, outermost ancestor first.
+    pub fn new(boxes: Vec<ClipBox>) -> Self {
+        Self { boxes }
+    }
+
+    /// The boxes to intersect, outermost ancestor first.
+    pub fn boxes(&self) -> &[ClipBox] {
+        &self.boxes
+    }
+
+    /// True when no ancestor clips this rect (no boxes).
+    pub fn is_unclipped(&self) -> bool {
+        self.boxes.is_empty()
+    }
+}
+
+/// The clip table: dense, indexed by [`RectEntry::clip`]. Index 0 is
+/// always the unclipped region ([`ClipIndex::UNCLIPPED`]), so every rect
+/// resolves; regions are deduplicated by `dashscene-core`, so the
+/// subtree under one clipping ancestor shares one entry.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClipTable {
+    entries: Vec<ClipRegion>,
+}
+
+impl Default for ClipTable {
+    fn default() -> Self {
+        Self {
+            entries: vec![ClipRegion::unclipped()],
+        }
+    }
+}
+
+// A `ClipTable` is never empty — index 0 is the reserved unclipped
+// region — so an `is_empty` that always answers false would be a trap.
+#[allow(clippy::len_without_is_empty)]
+impl ClipTable {
+    /// A table holding only the reserved unclipped region.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Appends a region and returns its index — the value a
+    /// [`RectEntry::clip`] field holds to reference it.
+    pub fn push(&mut self, region: ClipRegion) -> ClipIndex {
+        let index = u32::try_from(self.entries.len()).expect("clip table exceeds u32::MAX entries");
+        self.entries.push(region);
+        ClipIndex(index)
+    }
+
+    pub fn get(&self, index: ClipIndex) -> Option<&ClipRegion> {
+        self.entries.get(index.0 as usize)
+    }
+
+    /// Resolves a rect's clip index. This is the lookup painters use.
+    ///
+    /// Panics on an out-of-range index, for the same reason as
+    /// [`PaintTable::resolve`]: a miss is a broken contract between
+    /// crates, and a painter must never skip a rect's clip silently
+    /// (P4).
+    pub fn resolve(&self, index: ClipIndex) -> &ClipRegion {
+        self.get(index).unwrap_or_else(|| {
+            panic!(
+                "clip index {} out of range ({} regions): clip indices are validated upstream (P4)",
+                index.0,
+                self.entries.len()
+            )
+        })
+    }
+
+    /// Region count, including the reserved unclipped region at index 0.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+}
+
 /// One way to fill a rect. Effects (shadows, masks) land at v0.8 as new
 /// variants.
 #[derive(Debug, Clone, PartialEq)]
@@ -241,18 +383,22 @@ pub enum PaintKind {
 
 /// One paint-table entry (DESIGN_1.md §5's paint-table row: paint-kind
 /// enum plus fill/stroke params): what a rect is filled with, how its
-/// outline is stroked, how its corners round, and whether it clips its
-/// children.
+/// outline is stroked, and how its corners round.
 ///
 /// `fill: None` is the paint-less node — a layout-only container draws
 /// nothing but still occupies its rect-table slot (index = DFS node
 /// index).
+///
+/// Whether a node clips its children (`Paint.clip`, DESIGN_1.md §8.1)
+/// is *intent*, and does not appear here: `dashscene-core` resolves it
+/// at commit into the [`ClipTable`] each [`RectEntry::clip`] references
+/// (issue #97). The intent itself lives in the document (`dashbuf`'s
+/// `Paint.clip`) and in the arena (`Prop::Clip`).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PaintEntry {
     pub fill: Option<PaintKind>,
     pub stroke: Option<Stroke>,
     pub corners: CornerRadii,
-    pub clip: bool,
 }
 
 impl PaintEntry {
@@ -319,9 +465,15 @@ impl PaintTable {
 /// or moves anything (P2).
 pub trait Painter {
     /// Paints every rect, resolving each [`RectEntry::paint`] index
-    /// against `paints` (use [`PaintTable::resolve`]); image fills
-    /// resolve their asset in `images` (an empty table is valid input
-    /// for image-less scenes).
+    /// against `paints` (use [`PaintTable::resolve`]) and each
+    /// [`RectEntry::clip`] index against `clips` (use
+    /// [`ClipTable::resolve`]); image fills resolve their asset in
+    /// `images` (an empty table is valid input for image-less scenes).
+    ///
+    /// A rect draws only inside its resolved [`ClipRegion`] — the
+    /// intersection of the region's boxes. The region is already
+    /// ancestor-resolved: a painter clips against the boxes it is given
+    /// and never asks which node they came from (P2).
     ///
     /// Slice order defines stacking: a later entry composites over an
     /// earlier one (DFS order encodes document stacking). The composited
@@ -331,7 +483,14 @@ pub trait Painter {
     ///
     /// Infallible by design: vocabulary and indices are validated upstream
     /// (P4), so there is no legitimate runtime failure. An out-of-range
-    /// `paint` index is a broken contract between crates;
-    /// [`PaintTable::resolve`] centralizes the panic for that case.
-    fn paint(&mut self, rects: &[RectEntry], paints: &PaintTable, images: &ImageTable);
+    /// `paint` or `clip` index is a broken contract between crates;
+    /// [`PaintTable::resolve`] and [`ClipTable::resolve`] centralize the
+    /// panic for that case.
+    fn paint(
+        &mut self,
+        rects: &[RectEntry],
+        paints: &PaintTable,
+        images: &ImageTable,
+        clips: &ClipTable,
+    );
 }

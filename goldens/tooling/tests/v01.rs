@@ -44,7 +44,12 @@ fn the_walking_skeleton_scene_matches_its_golden() {
     let scene = arena.committed();
 
     let mut painter = SkiaPainter::new(64, 64);
-    painter.paint(scene.rects(), scene.paints(), &ImageTable::new());
+    painter.paint(
+        scene.rects(),
+        scene.paints(),
+        &ImageTable::new(),
+        scene.clips(),
+    );
 
     // Key properties pinned independently of the image file: the
     // stacking order in the overlap region and the dedup'd gold fill.

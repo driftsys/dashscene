@@ -8,12 +8,13 @@ The project's system-wide architecture still lives in `specs/DESIGN_1.md`
 target-hardware rules). It'll move here, or be superseded by records written
 here, as future work gardens it in. Per-component records land here directly:
 
-- [dashpaint.md](dashpaint.md) — boundary B: the paint table + painter
-  trait (v0.1 walking skeleton, story #3; v0.3 paint vocabulary,
-  story #13).
+- [dashpaint.md](dashpaint.md) — boundary B: the paint table + clip
+  table + painter trait (v0.1 walking skeleton, story #3; v0.3 paint
+  vocabulary, story #13; resolved subtree clips, story #97).
 - [dashscene-core-arena.md](dashscene-core-arena.md) — the arena's intent
   model, staged mutation, commit resolution pipeline, and committed output
-  (story #2); text content and style as intent, v0.5 (story #26).
+  (story #2); text content and style as intent, v0.5 (story #26); clip and
+  corner intent, and commit-time clip resolution (story #97).
 - [dashscene-engine.md](dashscene-engine.md) — the Taffy solve behind the
   `LayoutSolver` seam: per-root trees, the axis-relative style mapping
   (story #9).
@@ -28,11 +29,12 @@ here, as future work gardens it in. Per-component records land here directly:
   shape → greedy break → baseline positioning, with a font-unit
   shaped-run cache (v0.5, story #28).
 - [dashscene-skia.md](dashscene-skia.md) — the Skia CPU-raster reference
-  painter, the first `Painter` implementation (story #4).
+  painter, the first `Painter` implementation (story #4); the v0.3 paint
+  vocabulary (story #14) and resolved subtree clips (story #97).
 - [goldens.md](goldens.md) — the golden-image diff tooling and the v0.1
   walking-skeleton golden scene, the v0.1 slice's closing component
   (story #6); the v0.2 flex-vocabulary goldens, closing epic #7
-  (story #11).
+  (story #11); the v0.3 paint and clip goldens (stories #14, #18, #97).
 - [dashscene-validator.md](dashscene-validator.md) — the three validation
   gates, the diagnostic shape, and the v0.1–v0.3 rule set (story #15).
 

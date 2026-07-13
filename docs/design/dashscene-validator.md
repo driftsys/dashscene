@@ -20,11 +20,11 @@ published earlier, and `CommittedScene`'s accessors already hand out
 
 ## The three gates
 
-| gate   | entry point                                                        | input                         | catches                                                               |
-| ------ | ------------------------------------------------------------------ | ----------------------------- | --------------------------------------------------------------------- |
-| import | `triage(Construct, Profile, NodePath) -> Diagnostic`               | the producer's own vocabulary | out-of-profile constructs (DESIGN §10.1)                              |
-| load   | `validate_document(&Document) -> Report`                           | a `.dsb`                      | referential integrity, unknown enum values, geometry-free paint rules |
-| paint  | `validate_scene(&[RectEntry], &PaintTable, &ImageTable) -> Report` | boundary B                    | geometry budgets, runtime index resolution                            |
+| gate   | entry point                                                                    | input                         | catches                                                               |
+| ------ | ------------------------------------------------------------------------------ | ----------------------------- | --------------------------------------------------------------------- |
+| import | `triage(Construct, Profile, NodePath) -> Diagnostic`                           | the producer's own vocabulary | out-of-profile constructs (DESIGN §10.1)                              |
+| load   | `validate_document(&Document) -> Report`                                       | a `.dsb`                      | referential integrity, unknown enum values, geometry-free paint rules |
+| paint  | `validate_scene(&[RectEntry], &PaintTable, &ImageTable, &ClipTable) -> Report` | boundary B                    | geometry budgets, runtime index resolution                            |
 
 They are not interchangeable — each of the three failure classes is
 invisible to the other two gates. See the decision record.
@@ -106,6 +106,7 @@ Paint gate only — needs the solved box:
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `paint.stroke.exceeds-box` | an `Inside` stroke wider than `min(w, h)`. The painter insets by half the width per side, so the stroked box is `w - width` by `h - width`; above the smaller extent it inverts and the stroke collapses instead of drawing (#100). The threshold is strict: exactly at `min(w, h)` the stroke covers the box, which is correct |
 | `paint.entry-out-of-range` | `PaintTable::resolve`'s panic, for a rect whose index misses                                                                                                                                                                                                                                                                    |
+| `clip.index-out-of-range`  | `ClipTable::resolve`'s panic, for a rect whose resolved clip region misses (#97). Clip regions exist only on a scene: a document carries clip _intent_ (`Paint.clip`, a bool), while the region a painter consumes is the ancestor-intersected result core computes at commit — and by P1 a result never appears in a document  |
 
 A pool entry is validated **once, at its own index** — it is shared by every
 rect referencing it, so reporting per referencing rect would repeat one
@@ -135,5 +136,6 @@ moved from a private constant in the painter to `dashpaint` (boundary B) so
 the painter's assertion, its test, and the validator's rule read one number
 and cannot drift.
 
-The one exception is `PaintEntry::clip`, which still panics by name — that
-is story #97's subtree-clip resolution, not a validation gap.
+Story #97 closed the last of them: `PaintEntry::clip` no longer exists, the
+painter's `unimplemented!` on it is gone, and the `ClipTable::resolve` panic
+that replaced it has `clip.index-out-of-range` standing in front of it.

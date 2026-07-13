@@ -10,9 +10,9 @@
 //! interior-probe asserts pin the key property bit-stably.
 
 use dashpaint::{
-    Color, CornerRadii, Gradient, GradientKind, GradientStop, ImageAsset, ImageFormat, ImageTable,
-    Mat23, PaintEntry, PaintKind, PaintTable, Painter, RectEntry, ScaleMode, Stroke, StrokeAlign,
-    Vec2,
+    ClipIndex, ClipTable, Color, CornerRadii, Gradient, GradientKind, GradientStop, ImageAsset,
+    ImageFormat, ImageTable, Mat23, PaintEntry, PaintKind, PaintTable, Painter, RectEntry,
+    ScaleMode, Stroke, StrokeAlign, Vec2,
 };
 use dashscene_skia::SkiaPainter;
 
@@ -41,6 +41,7 @@ fn full_box(paint: dashpaint::PaintIndex, w: f32, h: f32) -> RectEntry {
         w,
         h,
         paint,
+        clip: ClipIndex::UNCLIPPED,
     }
 }
 
@@ -82,10 +83,11 @@ fn checker_asset() -> ImageAsset {
                 w: 1.0,
                 h: 1.0,
                 paint: if (x + y) % 2 == 0 { dark } else { light },
+                clip: ClipIndex::UNCLIPPED,
             });
         }
     }
-    painter.paint(&rects, &paints, &ImageTable::new());
+    painter.paint(&rects, &paints, &ImageTable::new(), &ClipTable::new());
     ImageAsset {
         format: ImageFormat::Png,
         bytes: painter.png_bytes(),
@@ -143,6 +145,7 @@ fn the_gradient_family_matches_its_golden() {
         w: 32.0,
         h: 32.0,
         paint: p,
+        clip: ClipIndex::UNCLIPPED,
     };
     let rects = [
         cell(0.0, 0.0, linear),
@@ -152,7 +155,7 @@ fn the_gradient_family_matches_its_golden() {
     ];
 
     let mut painter = SkiaPainter::new(64, 64);
-    painter.paint(&rects, &paints, &ImageTable::new());
+    painter.paint(&rects, &paints, &ImageTable::new(), &ClipTable::new());
     let bytes = painter.rgba_bytes();
 
     // Interior probes in clamped regions, where the color is exactly a
@@ -191,7 +194,6 @@ fn the_stroke_family_matches_its_golden() {
             color: red,
         }),
         corners,
-        ..PaintEntry::default()
     };
     let inside = paints.push(stroke_entry(StrokeAlign::Inside, CornerRadii::default()));
     let center = paints.push(stroke_entry(StrokeAlign::Center, CornerRadii::default()));
@@ -212,6 +214,7 @@ fn the_stroke_family_matches_its_golden() {
         w: 20.0,
         h: 20.0,
         paint: p,
+        clip: ClipIndex::UNCLIPPED,
     };
     let rects = [
         full_box(background, 64.0, 64.0),
@@ -222,7 +225,7 @@ fn the_stroke_family_matches_its_golden() {
     ];
 
     let mut painter = SkiaPainter::new(64, 64);
-    painter.paint(&rects, &paints, &ImageTable::new());
+    painter.paint(&rects, &paints, &ImageTable::new(), &ClipTable::new());
     let bytes = painter.rgba_bytes();
 
     // Each cell's centre is the gold fill; a rounded-cell square corner
@@ -293,6 +296,7 @@ fn the_image_family_matches_its_golden() {
         w: 28.0,
         h: 20.0,
         paint: p,
+        clip: ClipIndex::UNCLIPPED,
     };
     let rects = [
         full_box(background, 64.0, 64.0),
@@ -303,7 +307,7 @@ fn the_image_family_matches_its_golden() {
     ];
 
     let mut painter = SkiaPainter::new(64, 64);
-    painter.paint(&rects, &paints, &images);
+    painter.paint(&rects, &paints, &images, &ClipTable::new());
     let bytes = painter.rgba_bytes();
 
     // The crop transform selects texel (1,0), the light checker square,

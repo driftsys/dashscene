@@ -4,8 +4,8 @@
 //! boundary B.
 
 use dashpaint::{
-    Color, Gradient, GradientKind, ImageTable, MAX_GRADIENT_STOPS, PaintEntry, PaintKind, Painter,
-    RectEntry, Vec2,
+    ClipIndex, ClipTable, Color, Gradient, GradientKind, ImageTable, MAX_GRADIENT_STOPS,
+    PaintEntry, PaintKind, Painter, RectEntry, Vec2,
 };
 use dashscene_core::{Arena, Prop};
 use dashscene_skia::SkiaPainter;
@@ -50,7 +50,12 @@ fn paints_a_core_committed_scene_with_exact_pixels() {
 
     let scene = arena.committed();
     let mut painter = SkiaPainter::new(4, 4);
-    painter.paint(scene.rects(), scene.paints(), &ImageTable::new());
+    painter.paint(
+        scene.rects(),
+        scene.paints(),
+        &ImageTable::new(),
+        scene.clips(),
+    );
 
     let rgba = painter.rgba_bytes();
     assert_eq!(rgba.len(), 4 * 4 * 4);
@@ -82,7 +87,12 @@ fn an_unfilled_node_draws_nothing() {
 
     let scene = arena.committed();
     let mut painter = SkiaPainter::new(4, 4);
-    painter.paint(scene.rects(), scene.paints(), &ImageTable::new());
+    painter.paint(
+        scene.rects(),
+        scene.paints(),
+        &ImageTable::new(),
+        scene.clips(),
+    );
 
     let rgba = painter.rgba_bytes();
     assert_eq!(pixel(&rgba, 4, 0, 0), RED_RGBA, "the filled child paints");
@@ -105,7 +115,12 @@ fn encodes_png() {
 
     let scene = arena.committed();
     let mut painter = SkiaPainter::new(2, 2);
-    painter.paint(scene.rects(), scene.paints(), &ImageTable::new());
+    painter.paint(
+        scene.rects(),
+        scene.paints(),
+        &ImageTable::new(),
+        scene.clips(),
+    );
 
     let png = painter.png_bytes();
     assert_eq!(
@@ -125,8 +140,8 @@ fn encodes_png() {
 // with anti-aliasing on.
 
 use dashpaint::{
-    CornerRadii, GradientStop, ImageAsset, ImageFormat, Mat23, PaintTable, ScaleMode, Stroke,
-    StrokeAlign,
+    ClipBox, ClipRegion, CornerRadii, GradientStop, ImageAsset, ImageFormat, Mat23, PaintTable,
+    ScaleMode, Stroke, StrokeAlign,
 };
 
 const GREEN: Color = Color {
@@ -176,6 +191,7 @@ fn single_entry_scene(entry: PaintEntry, w: f32, h: f32) -> (Vec<RectEntry>, Pai
             w,
             h,
             paint,
+            clip: ClipIndex::UNCLIPPED,
         }],
         paints,
     )
@@ -196,7 +212,7 @@ fn gradient_entry(kind: GradientKind, stops: Vec<GradientStop>) -> PaintEntry {
 
 fn render(rects: &[RectEntry], paints: &PaintTable, images: &ImageTable, size: i32) -> Vec<u8> {
     let mut painter = SkiaPainter::new(size, size);
-    painter.paint(rects, paints, images);
+    painter.paint(rects, paints, images, &ClipTable::new());
     painter.rgba_bytes()
 }
 
@@ -304,9 +320,10 @@ fn stroked_square(align: StrokeAlign) -> Vec<u8> {
         w: 8.0,
         h: 8.0,
         paint,
+        clip: ClipIndex::UNCLIPPED,
     }];
     let mut painter = SkiaPainter::new(16, 16);
-    painter.paint(&rects, &paints, &ImageTable::new());
+    painter.paint(&rects, &paints, &ImageTable::new(), &ClipTable::new());
     painter.rgba_bytes()
 }
 
@@ -370,9 +387,10 @@ fn quadrant_asset() -> ImageAsset {
         w: 1.0,
         h: 1.0,
         paint: paints.push(PaintEntry::solid(color)),
+        clip: ClipIndex::UNCLIPPED,
     })
     .collect();
-    painter.paint(&rects, &paints, &ImageTable::new());
+    painter.paint(&rects, &paints, &ImageTable::new(), &ClipTable::new());
     ImageAsset {
         format: ImageFormat::Png,
         bytes: painter.png_bytes(),
@@ -396,7 +414,7 @@ fn image_scene(entry: PaintEntry, w: f32, h: f32, size: i32) -> Vec<u8> {
     images.push(quadrant_asset());
     let (rects, paints) = single_entry_scene(entry, w, h);
     let mut painter = SkiaPainter::new(size, size);
-    painter.paint(&rects, &paints, &images);
+    painter.paint(&rects, &paints, &images, &ClipTable::new());
     painter.rgba_bytes()
 }
 
@@ -495,15 +513,153 @@ fn image_overflow_clips_to_rounded_corners() {
     );
 }
 
-#[test]
-#[should_panic(expected = "issue #97")]
-fn subtree_clip_panics_naming_the_follow_up_issue() {
-    let mut entry = PaintEntry::solid(RED);
-    entry.clip = true;
-    let (rects, paints) = single_entry_scene(entry, 4.0, 4.0);
+// ---- resolved subtree clips (issue #97) ------------------------------
+//
+// The painter consumes the clip regions `dashscene-core` resolves at
+// commit; it never asks which node a box came from (P2). These fixtures
+// are hand-built at boundary B, like the rest of the v0.3 vocabulary.
 
-    let mut painter = SkiaPainter::new(4, 4);
-    painter.paint(&rects, &paints, &ImageTable::new());
+/// One filled 16x16 rect, clipped by `region`, rendered on a 16x16
+/// surface.
+fn clipped_square(region: ClipRegion) -> Vec<u8> {
+    let mut paints = PaintTable::new();
+    let paint = paints.push(PaintEntry::solid(RED));
+    let mut clips = ClipTable::new();
+    let clip = clips.push(region);
+    let rects = [RectEntry {
+        x: 0.0,
+        y: 0.0,
+        w: 16.0,
+        h: 16.0,
+        paint,
+        clip,
+    }];
+
+    let mut painter = SkiaPainter::new(16, 16);
+    painter.paint(&rects, &paints, &ImageTable::new(), &clips);
+    painter.rgba_bytes()
+}
+
+#[test]
+fn a_clip_region_confines_a_rect_to_its_ancestors_box() {
+    let rgba = clipped_square(ClipRegion::new(vec![ClipBox {
+        x: 4.0,
+        y: 4.0,
+        w: 8.0,
+        h: 8.0,
+        corners: CornerRadii::default(),
+    }]));
+
+    assert_eq!(px(&rgba, 16, 8, 8), RED_RGBA, "inside the clip box");
+    assert_eq!(
+        px(&rgba, 16, 2, 8),
+        TRANSPARENT_RGBA,
+        "left of the clip box: the rect covers it, the clip removes it"
+    );
+    assert_eq!(px(&rgba, 16, 8, 14), TRANSPARENT_RGBA, "below the clip box");
+}
+
+#[test]
+fn a_rounded_clip_region_rounds_the_clipped_rect() {
+    let rgba = clipped_square(ClipRegion::new(vec![ClipBox {
+        x: 0.0,
+        y: 0.0,
+        w: 16.0,
+        h: 16.0,
+        corners: CornerRadii {
+            top_left: 8.0,
+            top_right: 8.0,
+            bottom_right: 8.0,
+            bottom_left: 8.0,
+        },
+    }]));
+
+    assert_eq!(px(&rgba, 16, 8, 8), RED_RGBA, "the middle still paints");
+    assert_eq!(
+        px(&rgba, 16, 0, 0),
+        TRANSPARENT_RGBA,
+        "the rounded corner clips the fill — a rounding no rect-intersection can express"
+    );
+}
+
+#[test]
+fn nested_clip_boxes_intersect() {
+    // Two ancestor boxes overlapping in x in [8,12), y in [4,12).
+    let rgba = clipped_square(ClipRegion::new(vec![
+        ClipBox {
+            x: 0.0,
+            y: 4.0,
+            w: 12.0,
+            h: 8.0,
+            corners: CornerRadii::default(),
+        },
+        ClipBox {
+            x: 8.0,
+            y: 0.0,
+            w: 8.0,
+            h: 16.0,
+            corners: CornerRadii::default(),
+        },
+    ]));
+
+    assert_eq!(px(&rgba, 16, 10, 8), RED_RGBA, "inside both boxes");
+    assert_eq!(
+        px(&rgba, 16, 4, 8),
+        TRANSPARENT_RGBA,
+        "inside the first box only"
+    );
+    assert_eq!(
+        px(&rgba, 16, 10, 1),
+        TRANSPARENT_RGBA,
+        "inside the second box only"
+    );
+}
+
+#[test]
+fn a_clip_region_does_not_leak_into_the_next_rect() {
+    // Slice order is stacking order; a clipped rect must not clip the
+    // rects painted after it.
+    let mut paints = PaintTable::new();
+    let red = paints.push(PaintEntry::solid(RED));
+    let blue = paints.push(PaintEntry::solid(BLUE));
+    let mut clips = ClipTable::new();
+    let corner = clips.push(ClipRegion::new(vec![ClipBox {
+        x: 0.0,
+        y: 0.0,
+        w: 4.0,
+        h: 4.0,
+        corners: CornerRadii::default(),
+    }]));
+    let rects = [
+        RectEntry {
+            x: 0.0,
+            y: 0.0,
+            w: 16.0,
+            h: 16.0,
+            paint: red,
+            clip: corner,
+        },
+        RectEntry {
+            x: 8.0,
+            y: 8.0,
+            w: 8.0,
+            h: 8.0,
+            paint: blue,
+            clip: ClipIndex::UNCLIPPED,
+        },
+    ];
+
+    let mut painter = SkiaPainter::new(16, 16);
+    painter.paint(&rects, &paints, &ImageTable::new(), &clips);
+    let rgba = painter.rgba_bytes();
+
+    assert_eq!(px(&rgba, 16, 2, 2), RED_RGBA, "the clipped red rect");
+    assert_eq!(px(&rgba, 16, 6, 6), TRANSPARENT_RGBA, "clipped away");
+    assert_eq!(
+        px(&rgba, 16, 12, 12),
+        BLUE_RGBA,
+        "the unclipped rect after it paints in full"
+    );
 }
 
 #[test]
@@ -523,5 +679,5 @@ fn a_diamond_gradient_with_too_many_stops_panics_by_name() {
         single_entry_scene(gradient_entry(GradientKind::Diamond, stops), 4.0, 4.0);
 
     let mut painter = SkiaPainter::new(4, 4);
-    painter.paint(&rects, &paints, &ImageTable::new());
+    painter.paint(&rects, &paints, &ImageTable::new(), &ClipTable::new());
 }

@@ -98,6 +98,12 @@ pub mod rule {
 
     // Paint gate — needs the solved box, so it exists only on a scene.
     pub const STROKE_EXCEEDS_BOX: &str = "paint.stroke.exceeds-box";
+
+    // Paint gate — the resolved clip regions core computes at commit
+    // (issue #97). They exist only on a scene: the document carries clip
+    // *intent* (`Paint.clip`), never the resolved ancestor-intersected
+    // region (P1).
+    pub const CLIP_INDEX_OUT_OF_RANGE: &str = "clip.index-out-of-range";
 }
 
 /// The gradient stop budget this validator enforces, re-exported so a

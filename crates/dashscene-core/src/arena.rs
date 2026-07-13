@@ -13,7 +13,8 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use crate::committed::{
-    Color, CommittedScene, PaintEntry, PaintIndex, PaintKind, PaintTable, RectEntry,
+    ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CommittedScene, CornerRadii, PaintEntry,
+    PaintIndex, PaintKind, PaintTable, RectEntry,
 };
 
 /// Stable handle to a node in one [`Arena`]. Returned by
@@ -150,6 +151,23 @@ pub enum Prop {
     Width(f32),
     Height(f32),
     Fill(Color),
+    /// Per-corner radii, in document units. They round the node's own
+    /// fill and stroke, and — when the node clips — the clip box its
+    /// descendants are clipped against.
+    Corners {
+        top_left: f32,
+        top_right: f32,
+        bottom_right: f32,
+        bottom_left: f32,
+    },
+    /// Whether the node clips its children to its own (rounded) box
+    /// (`Paint.clip`, DESIGN_1.md §8.1). Intent only: commit resolves it
+    /// into the per-rect clip regions boundary B carries, because a flat
+    /// rect table gives a painter no ancestors to walk (P2, issue #97).
+    ///
+    /// Unlike `Fill`, this prop clears: `Clip(false)` turns clipping
+    /// back off (a bool has no absent state to lose).
+    Clip(bool),
     /// Set/replace the node's text content (DESIGN §5: strings, never
     /// glyph positions — P1). v0.5: no effect on committed output;
     /// text-driven hug sizing arrives with the measure-callback story.
@@ -203,6 +221,10 @@ struct NodeData {
     children: Vec<NodeId>,
     layout: Layout,
     fill: Option<Color>,
+    corners: CornerRadii,
+    /// "This node clips its children to its own box" — intent, resolved
+    /// at commit (issue #97).
+    clip: bool,
     text: Option<String>,
     text_style: Option<TextStyle>,
 }
@@ -393,6 +415,8 @@ impl Txn<'_> {
             children: Vec::new(),
             layout: Layout::default(),
             fill: None,
+            corners: CornerRadii::default(),
+            clip: false,
             text: None,
             text_style: None,
         });
@@ -422,6 +446,20 @@ impl Txn<'_> {
             Prop::Width(v) => data.layout.width = v,
             Prop::Height(v) => data.layout.height = v,
             Prop::Fill(c) => data.fill = Some(c),
+            Prop::Corners {
+                top_left,
+                top_right,
+                bottom_right,
+                bottom_left,
+            } => {
+                data.corners = CornerRadii {
+                    top_left,
+                    top_right,
+                    bottom_right,
+                    bottom_left,
+                }
+            }
+            Prop::Clip(v) => data.clip = v,
             Prop::Text(s) => data.text = Some(s),
             Prop::TextStyle(ts) => data.text_style = Some(ts),
             Prop::Mode(m) => data.layout.mode = m,
@@ -530,16 +568,20 @@ impl Txn<'_> {
     ///
     /// Resolution: DFS walk (roots in creation order, children in
     /// creation order) fixes the rect-table order; geometry comes from
-    /// the solver; paints intern by exact color bit pattern in
-    /// first-use order; the dirty set diffs against the previous
-    /// commit. Fully deterministic given a deterministic solver (R7).
+    /// the solver; paints intern by exact bit pattern in first-use
+    /// order; clip intent resolves into the per-rect clip regions
+    /// boundary B carries (issue #97); the dirty set diffs against the
+    /// previous commit. Fully deterministic given a deterministic solver
+    /// (R7).
     ///
     /// A rect is dirty when its entry bits changed (the bits a painter
-    /// uploads, R-T4) or when its resolved fill color changed — the
-    /// paint table is re-interned every commit, so an unchanged paint
-    /// *index* can reference a different color and an index shift can
-    /// leave the color unchanged; both cases count as dirty, and only
-    /// a rect equal on both counts is clean.
+    /// uploads, R-T4), when its resolved paint changed, or when its
+    /// resolved clip region changed. The paint and clip tables are both
+    /// re-interned every commit, so an unchanged *index* can reference a
+    /// different entry (a fill change on the only filled node keeps
+    /// index 0; resizing a clipping frame leaves its subtree's clip
+    /// index alone), and an index shift can leave the resolved value
+    /// unchanged. Only a rect equal on all three counts is clean.
     ///
     /// # Panics
     ///
@@ -565,40 +607,87 @@ impl Txn<'_> {
             );
         }
 
-        // Build rects + intern paints. Every rect resolves: an
-        // unfilled node interns the shared draws-nothing entry
-        // (`PaintEntry::default()`) keyed as `None`.
+        // Build rects + intern paints and clip regions. Every rect
+        // resolves: an unfilled node interns the shared draws-nothing
+        // entry (`PaintEntry::default()`) keyed as `None`, and a node no
+        // ancestor clips references the reserved unclipped region.
+        //
+        // The DFS order is parent-before-child, so a node's clip region
+        // is known by the time its children are visited.
         let mut rects = Vec::with_capacity(order.len());
         let mut paints = PaintTable::new();
-        let mut interned: HashMap<Option<[u32; 4]>, PaintIndex> = HashMap::new();
+        let mut interned: HashMap<PaintKey, PaintIndex> = HashMap::new();
+        let mut clips = ClipTable::new();
+        let mut clip_interned: HashMap<ClipKey, ClipIndex> = HashMap::new();
+        // `None` until the node is visited, not UNCLIPPED: the clip walk's
+        // correctness rests on the DFS order being parent-before-child, and a
+        // default of UNCLIPPED would turn a violation of that into a silently
+        // unclipped subtree instead of a panic. The parent geometry lookup
+        // below already fails loudly for the same reason.
+        let mut region_of: Vec<Option<ClipIndex>> = vec![None; arena.nodes.len()];
         let mut rect_index = vec![u32::MAX; arena.nodes.len()];
         for (i, &id) in order.iter().enumerate() {
             let node = &arena.nodes[id.index()];
             let geometry =
                 solved[id.index()].unwrap_or_else(|| panic!("solver returned no rect for {id:?}"));
-            let paint =
-                *interned
-                    .entry(node.fill.map(color_key))
-                    .or_insert_with(|| match node.fill {
-                        // Cannot truncate: the paint table never exceeds
-                        // the node count (kept below u32::MAX by add_node)
-                        // plus this one shared entry.
-                        None => paints.push(PaintEntry::default()),
-                        Some(color) => paints.push(PaintEntry::solid(color)),
-                    });
+            let paint = *interned
+                .entry(paint_key(node.fill, node.corners))
+                .or_insert_with(|| {
+                    // Cannot truncate: the paint table never exceeds the
+                    // node count (kept below u32::MAX by add_node) plus
+                    // this one shared entry.
+                    paints.push(PaintEntry {
+                        fill: node.fill.map(|color| PaintKind::Solid { color }),
+                        stroke: None,
+                        corners: node.corners,
+                    })
+                });
+
+            // The clip that applies to this node is its parent's, plus
+            // the parent's own box when the parent clips. A clipping
+            // node does not clip itself — only its descendants.
+            let clip = match node.parent {
+                Some(parent) if arena.nodes[parent.index()].clip => {
+                    let parent_data = &arena.nodes[parent.index()];
+                    let parent_geometry = solved[parent.index()]
+                        .expect("the parent's rect resolved earlier in the DFS walk");
+                    let parent_box = ClipBox {
+                        x: parent_geometry.x,
+                        y: parent_geometry.y,
+                        w: parent_geometry.w,
+                        h: parent_geometry.h,
+                        corners: parent_data.corners,
+                    };
+                    intern_region(
+                        &mut clips,
+                        &mut clip_interned,
+                        region_of[parent.index()]
+                            .expect("the parent's clip region resolved earlier in the DFS walk"),
+                        parent_box,
+                    )
+                }
+                // A non-clipping parent passes its own region through.
+                Some(parent) => region_of[parent.index()]
+                    .expect("the parent's clip region resolved earlier in the DFS walk"),
+                None => ClipIndex::UNCLIPPED,
+            };
+            region_of[id.index()] = Some(clip);
+
             rects.push(RectEntry {
                 x: geometry.x,
                 y: geometry.y,
                 w: geometry.w,
                 h: geometry.h,
                 paint,
+                clip,
             });
             // In range for u32 by the add_node guard.
             rect_index[id.index()] = i as u32;
         }
 
         // Dirty = diff against the previous commit, by index: entry
-        // bits or resolved fill color changed (see the method docs).
+        // bits, resolved paint, or resolved clip region changed (see the
+        // method docs).
         let previous = &arena.buffers[arena.front];
         let dirty = rects
             .iter()
@@ -606,8 +695,12 @@ impl Txn<'_> {
             .filter(|&(i, rect)| {
                 previous.rects.get(i).is_none_or(|old| {
                     entry_bits(old) != entry_bits(rect)
-                        || resolved_color_bits(old, &previous.paints)
-                            != resolved_color_bits(rect, &paints)
+                        || resolved_paint_key(old, &previous.paints)
+                            != resolved_paint_key(rect, &paints)
+                        || !same_region_bits(
+                            previous.clips.resolve(old.clip),
+                            clips.resolve(rect.clip),
+                        )
                 })
             })
             .map(|(i, _)| i as u32)
@@ -618,6 +711,7 @@ impl Txn<'_> {
         arena.buffers[back] = CommittedScene {
             rects,
             paints,
+            clips,
             generation,
             dirty,
             node_ids: order,
@@ -626,6 +720,41 @@ impl Txn<'_> {
         arena.front = back;
         generation
     }
+}
+
+/// The interning key of one node's clip region: the region its parent
+/// resolved to, plus the parent's clip box. Equal ancestor chains take
+/// equal keys by induction (the parent's index already stands for its
+/// whole chain), so this dedups regions by value at O(1) per node —
+/// without hashing a chain-shaped key.
+type ClipKey = (u32, [u32; 8]);
+
+fn intern_region(
+    clips: &mut ClipTable,
+    interned: &mut HashMap<ClipKey, ClipIndex>,
+    parent_region: ClipIndex,
+    parent_box: ClipBox,
+) -> ClipIndex {
+    let key = (parent_region.0, clip_box_bits(&parent_box));
+    if let Some(&index) = interned.get(&key) {
+        return index;
+    }
+    let mut boxes = clips.resolve(parent_region).boxes().to_vec();
+    boxes.push(parent_box);
+    let index = clips.push(ClipRegion::new(boxes));
+    interned.insert(key, index);
+    index
+}
+
+/// The interning key of one node's paint entry: its fill color (`None`
+/// for an unfilled node) and its corner radii, both by exact bit
+/// pattern. Widen this whenever a producer can stage more of the paint
+/// vocabulary — two nodes may share a key only if they resolve to the
+/// same `PaintEntry`.
+type PaintKey = (Option<[u32; 4]>, [u32; 4]);
+
+fn paint_key(fill: Option<Color>, corners: CornerRadii) -> PaintKey {
+    (fill.map(color_key), corner_key(corners))
 }
 
 fn color_key(color: Color) -> [u32; 4] {
@@ -637,28 +766,66 @@ fn color_key(color: Color) -> [u32; 4] {
     ]
 }
 
+fn corner_key(corners: CornerRadii) -> [u32; 4] {
+    [
+        corners.top_left.to_bits(),
+        corners.top_right.to_bits(),
+        corners.bottom_right.to_bits(),
+        corners.bottom_left.to_bits(),
+    ]
+}
+
 /// The bits a painter uploads for an entry (R-T4). Bit comparison keeps
 /// the diff deterministic where `f32` equality is not (NaN never equals
 /// itself and would mark a rect permanently dirty).
-fn entry_bits(entry: &RectEntry) -> [u32; 5] {
+fn entry_bits(entry: &RectEntry) -> [u32; 6] {
     [
         entry.x.to_bits(),
         entry.y.to_bits(),
         entry.w.to_bits(),
         entry.h.to_bits(),
         entry.paint.0,
+        entry.clip.0,
     ]
 }
 
-/// The fill color an entry resolves to in its own commit's paint table
-/// (`None` for a fill-less entry), compared by bit pattern like the
-/// interner.
-fn resolved_color_bits(entry: &RectEntry, paints: &PaintTable) -> Option<[u32; 4]> {
-    match paints.resolve(entry.paint).fill {
-        Some(PaintKind::Solid { color }) => Some(color_key(color)),
+/// The paint an entry resolves to in its own commit's paint table,
+/// compared by bit pattern like the interner. Both tables are re-interned
+/// every commit, so an unchanged index can resolve to a different entry.
+fn resolved_paint_key(entry: &RectEntry, paints: &PaintTable) -> PaintKey {
+    let resolved = paints.resolve(entry.paint);
+    let fill = match resolved.fill {
+        Some(PaintKind::Solid { color }) => Some(color),
         Some(_) => unreachable!(
-            "widen resolved_color_bits when producers can stage non-solid fills (v0.3+ vocabulary)"
+            "widen resolved_paint_key when producers can stage non-solid fills (v0.3+ vocabulary)"
         ),
         None => None,
-    }
+    };
+    paint_key(fill, resolved.corners)
+}
+
+fn clip_box_bits(clip: &ClipBox) -> [u32; 8] {
+    let corners = corner_key(clip.corners);
+    [
+        clip.x.to_bits(),
+        clip.y.to_bits(),
+        clip.w.to_bits(),
+        clip.h.to_bits(),
+        corners[0],
+        corners[1],
+        corners[2],
+        corners[3],
+    ]
+}
+
+/// Whether two resolved clip regions are the same box-for-box, by bit
+/// pattern. The clip table is re-interned every commit, so a stable clip
+/// index can reference a moved or resized ancestor box — the case a rect
+/// whose own entry bits did not change still has to repaint.
+fn same_region_bits(a: &ClipRegion, b: &ClipRegion) -> bool {
+    a.boxes().len() == b.boxes().len()
+        && a.boxes()
+            .iter()
+            .zip(b.boxes())
+            .all(|(x, y)| clip_box_bits(x) == clip_box_bits(y))
 }
