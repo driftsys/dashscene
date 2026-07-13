@@ -127,14 +127,19 @@ lists what it depends on and what it blocks.
 Story workflow — the definition of done for every story:
 
 - `just build` green.
-- Run `/code-review` on the story's diff before opening the PR, and
-  capture every finding as a checklist in the PR description — never
-  drop a finding silently.
-- Fix all critical findings before merging. For minor findings, file
-  one `debt`-labeled issue each (linked to the story) instead of
-  fixing them inline.
-- Merge only when CI is green, the review pass is complete, and all
-  critical findings are resolved.
+- Open the PR as a **draft**, then run `/code-review` on it (`--comment`
+  posts the findings as inline PR comments). Capture every finding as a
+  checklist in the PR description — never drop a finding silently.
+- Fix all critical findings before marking the PR ready. For minor
+  findings, file one `debt`-labeled issue each (linked to the story)
+  instead of fixing them inline.
+- Mark the PR ready for review only once CI is green, the review pass is
+  complete, and all critical findings are resolved. A non-draft PR is a
+  request to merge, so it must never carry an unreviewed diff
+  (`docs/decisions/review-before-ready-not-before-open.md`).
+- Merge only when the PR is out of draft and CI is green on the commit
+  being merged. Marking a PR ready is a gate, not a promise: a later
+  push, or a rebase onto a moved `main`, can turn it red again.
 
 Merging a PR — how the branch lands on `main`:
 
