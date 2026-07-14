@@ -1174,3 +1174,95 @@ the next slice starts. This is that revision.
   test touches the network. v0.7 depends on captures far more heavily than v0.3
   did. §11 already says "rotate at ~75 days"; it is now worth a check that makes
   the state visible rather than a rule that relies on someone remembering.
+
+## 23. Reactive bindings and the incremental commit enter the plan (design session, 2026-07-13)
+
+A design session asked how a producer updates a live scene at 60 Hz, and found
+that neither existing path holds: `dashlang` cannot update a scene at all
+(`Scene::build` returns only a generation, so no `NodeId` survives the build),
+and hand-written `set_prop` costs `O(total nodes)` per commit regardless of how
+few props changed. The full design is
+`docs/wip/2026-07-13-reactive-bindings-spec.md` (decisions D1–D9); the first
+implementation plan is `docs/wip/2026-07-13-dirty-set-boundary-b-plan.md`. This
+section records only what changes at scope level.
+
+### What is added
+
+- **A fine-grained reactive layer in `dashlang`** — signals, bindings, and
+  transforms, declared on the `Node` builder, flushed once per frame into one
+  `Txn`. Bindings are explicit and declarative, never implicitly tracked: a
+  discovered dependency graph could not be statically classified as
+  layout-affecting or paint-only, which would forfeit P4 and make R4's frame
+  budget unprovable.
+- **An incremental commit** — a retained Taffy tree (the `LayoutSolver` seam
+  already takes `&mut self` for this), a pruned relative-to-absolute readback,
+  and retained paint and clip interners. Commit cost then scales with the change
+  rather than with the scene.
+- **The dirty set crossing boundary B** — `CommittedScene::dirty()` is computed
+  on every commit and consumed by nobody, so R-T4 ("CPU frame cost = dirty-range
+  instance-buffer upload from the rect table + submission. Nothing else.") is not
+  implementable by any painter today.
+- **`Prop::Visible` and `Prop::Opacity`** — `Prop` has neither.
+
+### Where it lands
+
+- **v0.4 (epic #19)** takes the reactive layer, the incremental commit, the
+  dirty set across boundary B, and `Prop::Visible`. This is the slice where the
+  scene stops being static and starts mutating per frame, so it is where the
+  update path has to become cheap. The retained solver also serves #22 directly:
+  FLIP needs it regardless.
+- **v0.7 (epic #36)** takes bindings authored in Figma. It cannot move earlier —
+  it needs the annotator plugin's token-export command that §13 already requires
+  for the token pipeline.
+- **v0.8 (epic #42)** already owns group opacity, so `Prop::Opacity` is scope it
+  already has. `Visible` (v0.4) and `Opacity` (v0.8) split across two slices.
+- **#118** (`dashlang` flex builder vocabulary) is re-scoped to add the binding
+  vocabulary in the same pass, rather than reshaping the `Node` builder twice.
+
+### The decisions worth carrying at scope level
+
+- **No new crate, and no core change for the reactive layer.** A crate here
+  exists to make a boundary mechanical — `dashpaint` is boundary B, so a painter
+  physically cannot reach the arena (P2); `dashcue` depends on nothing, so the
+  scheduler physically cannot reach producer state (P3). A reactive layer sits on
+  no such boundary. It lives in `dashlang`, which already depends on core and can
+  depend on `dashcue`, so core never comes near the animation crate and §9 holds
+  by construction.
+- **A binding is intent; a signal's value is a result.** P1 keeps values out of
+  the document permanently. The _binding table_ becomes a document construct at
+  v0.7, when the importer starts emitting bindings — which is why the transform
+  must be a bounded declarative vocabulary (scale, clamp, map-range, format) from
+  the start, with a `Custom(ClosureId)` escape hatch that is `dashlang`-only and
+  a named diagnostic if compiled to `.dsb` (P4). Closure-only transforms would
+  foreclose Figma-authored bindings and surface as a redesign at v0.7.
+- **The binding graph never relates two nodes.** "When the list grows, the panel
+  below it moves" is layout, resolved by the solver. Modelling it as a signal
+  edge would re-implement layout inside the binding table and violate P2.
+- **The scene tree is static; dynamic lists are bounded pools.** Node ids are DFS
+  positions and the dirty diff compares rects by index, so an insertion shifts
+  every later index and reports the whole tail dirty. A tree that can grow at
+  runtime also makes R4 unprovable by construction. Genuinely dynamic surfaces
+  (map, settings) are `role=placeholder` handoffs per DESIGN §10.2, not scene
+  nodes.
+- **`Visible` is a layout prop, `Opacity` is a paint prop, and there is no third
+  state.** Taffy has exactly one lever (`Display::None`) and no visibility
+  concept at all; CSS's `visibility: hidden` exists for inheritance, hit-testing,
+  and stacking contexts, and dashscene has none of the three (input is the
+  host's). Without them it is a synonym for `Opacity(0.0)`. Figma, Unity, and
+  Android all have exactly these two concepts; CSS is the outlier. Figma's
+  `visible: false` therefore imports 1:1 with no lowering.
+- **The importer's trim rules are a performance contract, not tidiness.** Only the
+  live node count is charged to the frame budget. The §6.1 trim layers, heavy-decor
+  baking, and §10.2 placeholder stubs are what keep a ~5000-node design file inside
+  a ~1000-node budget.
+
+### Sequencing
+
+The dirty set across boundary B lands **before** the incremental commit. It
+builds a differential oracle — the reference painter gains a second mode that
+models R-T4's instance buffer, and a mutation sequence rendered through both
+modes must be pixel-identical — and the incremental commit is precisely the
+change that makes the dirty set _derived_ rather than _discovered_. The oracle is
+the test that catches a derived dirty set which misses an entry, and that bug
+class (a stale instance-buffer entry: a frozen gauge, an indicator that will not
+clear) is otherwise intermittent and diagnosed on target hardware.
