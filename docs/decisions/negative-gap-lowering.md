@@ -23,9 +23,9 @@ the same behavior as the lowered margins (see "Known property" below).
 
 Nothing may depend on that. It is outside CSS `gap` semantics, which
 forbid a negative value; Taffy simply does not validate it. `dashc`
-emits a `.dsb` that never reaches Taffy, and P5 makes DSB a schema-first
-IR whose vocabulary is the lowering target — so the negative gap must be
-gone by the time the document is written, whatever any one solver
+emits a `.dsb` that never reaches Taffy, and P5 makes the dashscene document a
+schema-first IR whose vocabulary is the lowering target — so the negative gap
+must be gone by the time the document is written, whatever any one solver
 happens to tolerate.
 
 ## D1 — Margin vocabulary is the lowering target
@@ -86,11 +86,11 @@ Recorded here so that revisit is deliberate, not forgotten.
 **Trigger checked at story #139; it did not fire.** The Figma lowering
 asked whether `lower_negative_gaps` should move into a `dashc` lowering
 module, and it stays in core's `Txn`. The trigger fires on auto-layout,
-and the v0.3 lowering refuses auto-layout outright — `Dsb` cannot
+and the v0.3 lowering refuses auto-layout outright — `Document` cannot
 express flex in the first place (debt #140), so there is no second
 lowering yet and no negative gap to lower. Moving the pass now would be
 speculative: it operates on the arena, while a document-side pass would
-have to operate on `Dsb`. Revisit again when the flex lowering lands.
+have to operate on `Document`. Revisit again when the flex lowering lands.
 See `docs/decisions/figma-auto-layout-refused-on-two-grounds.md`.
 
 **Known property (CSS margin semantics).** The lowered margins behave

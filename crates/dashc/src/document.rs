@@ -1,5 +1,5 @@
-//! The in-memory DSB document — what a producer lowers *into*, and what the
-//! emitter writes *out of*.
+//! The in-memory dashscene document — what a producer lowers *into*, and
+//! what the emitter writes *out of*.
 //!
 //! It is deliberately not a second vocabulary. The paint types are
 //! `dashpaint`'s (boundary B), so the one paint vocabulary spans the
@@ -22,11 +22,11 @@ pub struct Box2D {
     pub height: f32,
 }
 
-/// One node of the document. `parent` is an index into [`Dsb::nodes`], and
+/// One node of the document. `parent` is an index into [`Document::nodes`], and
 /// the array is in DFS order, so a parent's index is always lower than its
 /// children's.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct DsbNode {
+pub struct Node {
     pub name: Option<String>,
     pub parent: Option<u32>,
     pub box2d: Box2D,
@@ -48,23 +48,23 @@ pub struct Paint {
     pub clip: bool,
 }
 
-/// One DSB document, ready to emit.
+/// One dashscene document, ready to emit.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct Dsb {
+pub struct Document {
     /// Flattened DFS node tree: array index = rect-table index (DESIGN §5).
-    pub nodes: Vec<DsbNode>,
+    pub nodes: Vec<Node>,
     /// The image assets an image fill references by index.
     pub images: Vec<ImageAsset>,
 }
 
-impl Dsb {
+impl Document {
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Appends a node and returns its index. The caller appends in DFS
     /// order; `emit` does not reorder.
-    pub fn push(&mut self, node: DsbNode) -> u32 {
+    pub fn push(&mut self, node: Node) -> u32 {
         let index = u32::try_from(self.nodes.len()).expect("document exceeds u32::MAX nodes");
         self.nodes.push(node);
         index

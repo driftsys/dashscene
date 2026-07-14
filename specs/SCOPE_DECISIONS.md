@@ -1014,6 +1014,11 @@ directly.
 
 ## 20. The IR is named DSB; SCD is retired
 
+> **Superseded 2026-07-14** by
+> `docs/decisions/dashscene-document-is-the-ir.md`. The IR is the dashscene
+> document; `.dsb` is its file extension. The retirement of `SCD` recorded below
+> stands; the naming of the IR as "DSB" does not.
+
 `DESIGN_1.md` §0 named the intermediate representation **SCD** ("scene
 document") and the compiler **scdc**, and said in the same breath that
 both were working names — "rename freely, the architecture doesn't

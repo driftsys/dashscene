@@ -21,6 +21,11 @@
              those quotations false, so the seed text keeps it and §3
              remains the ruling.
 
+> **Superseded 2026-07-14** by
+> `docs/decisions/dashscene-document-is-the-ir.md`. The IR is the dashscene
+> document; `.dsb` is its file extension. The retirement of `SCD` recorded
+> above stands; the naming of the IR as "DSB" does not.
+
 dash turns UI designed in Figma — or authored programmatically in
 code — into pixels on screen, through one intermediate
 representation, one shared layout+text runtime, and interchangeable

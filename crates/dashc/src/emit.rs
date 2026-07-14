@@ -1,4 +1,4 @@
-//! Emitting a [`Dsb`] as `.dsb` bytes.
+//! Emitting a [`Document`] as `.dsb` bytes.
 //!
 //! R7: same input → byte-identical document. Hashing, signing, and CI all
 //! depend on it, so nothing here may depend on iteration order of a hash
@@ -10,19 +10,20 @@
 use std::collections::HashMap;
 
 use dashbuf::{
-    Color, CornerRadii, Document, DocumentArgs, FixedSizeLayout, Gradient, GradientArgs,
-    GradientStop, Image, ImageArgs, ImageFill, ImageFillArgs, Mat23, NO_PAINT, NO_PARENT, Node,
-    NodeArgs, Paint as BufPaint, PaintArgs, SolidFill, SolidFillArgs, Stroke, StrokeArgs, Vec2,
+    Color, CornerRadii, Document as FbDocument, DocumentArgs as FbDocumentArgs, FixedSizeLayout,
+    Gradient, GradientArgs, GradientStop, Image, ImageArgs, ImageFill, ImageFillArgs, Mat23,
+    NO_PAINT, NO_PARENT, Node as FbNode, NodeArgs as FbNodeArgs, Paint as BufPaint, PaintArgs,
+    SolidFill, SolidFillArgs, Stroke, StrokeArgs, Vec2,
 };
 use dashpaint::{ImageAsset, PaintEntry, PaintKind};
 use flatbuffers::{FlatBufferBuilder, WIPOffset};
 
-use crate::dsb::{Dsb, DsbNode, Paint};
+use crate::document::{Document, Node, Paint};
 
 /// Serializes a document to `.dsb` bytes.
 ///
-/// Deterministic: the same [`Dsb`] always produces the same bytes (R7).
-pub fn emit(dsb: &Dsb) -> Vec<u8> {
+/// Deterministic: the same [`Document`] always produces the same bytes (R7).
+pub fn emit(doc: &Document) -> Vec<u8> {
     let mut b = FlatBufferBuilder::new();
 
     // The paint pool, interned in first-use DFS order. A `Vec` of keys, not
@@ -30,8 +31,8 @@ pub fn emit(dsb: &Dsb) -> Vec<u8> {
     // unspecified and would make the bytes vary between runs, breaking R7.
     let mut pool: Vec<&Paint> = Vec::new();
     let mut pool_of: HashMap<PaintKey, u32> = HashMap::new();
-    let mut entry_of: Vec<Option<u32>> = Vec::with_capacity(dsb.nodes.len());
-    for node in &dsb.nodes {
+    let mut entry_of: Vec<Option<u32>> = Vec::with_capacity(doc.nodes.len());
+    for node in &doc.nodes {
         entry_of.push(node.paint.as_ref().map(|paint| {
             let key = paint_key(paint);
             *pool_of.entry(key).or_insert_with(|| {
@@ -42,9 +43,9 @@ pub fn emit(dsb: &Dsb) -> Vec<u8> {
         }));
     }
 
-    let images: Vec<WIPOffset<Image>> = dsb.images.iter().map(|a| build_image(&mut b, a)).collect();
+    let images: Vec<WIPOffset<Image>> = doc.images.iter().map(|a| build_image(&mut b, a)).collect();
     let paints: Vec<WIPOffset<BufPaint>> = pool.iter().map(|p| build_paint(&mut b, p)).collect();
-    let nodes: Vec<WIPOffset<Node>> = dsb
+    let nodes: Vec<WIPOffset<FbNode>> = doc
         .nodes
         .iter()
         .zip(&entry_of)
@@ -55,9 +56,9 @@ pub fn emit(dsb: &Dsb) -> Vec<u8> {
     let images = (!images.is_empty()).then(|| b.create_vector(&images));
     let paints = (!paints.is_empty()).then(|| b.create_vector(&paints));
 
-    let document = Document::create(
+    let document = FbDocument::create(
         &mut b,
-        &DocumentArgs {
+        &FbDocumentArgs {
             nodes: Some(nodes),
             images,
             paints,
@@ -70,13 +71,13 @@ pub fn emit(dsb: &Dsb) -> Vec<u8> {
 
 fn build_node<'a>(
     b: &mut FlatBufferBuilder<'a>,
-    node: &DsbNode,
+    node: &Node,
     paint_entry: Option<u32>,
-) -> WIPOffset<Node<'a>> {
+) -> WIPOffset<FbNode<'a>> {
     let name = node.name.as_deref().map(|n| b.create_string(n));
-    Node::create(
+    FbNode::create(
         b,
-        &NodeArgs {
+        &FbNodeArgs {
             name,
             parent: node.parent.unwrap_or(NO_PARENT),
             layout: Some(&FixedSizeLayout::new(

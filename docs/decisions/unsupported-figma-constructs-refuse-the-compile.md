@@ -1,4 +1,4 @@
-# A construct the v0.3 `Dsb` cannot express refuses the compile
+# A construct the v0.3 `Document` cannot express refuses the compile
 
     status   accepted (story #139, 2026-07-13)
     scope    crates/dashc (the figma module)
@@ -17,7 +17,7 @@ one way to report a construct it will not lower: map it onto a
 That covers every construct DESIGN §10.1 puts in the LATER or REJECT band —
 layer blur, backdrop blur, advanced blend modes, corner smoothing, noise.
 
-It does not cover a construct the v0.3 `Dsb` has **no field for**. Such a
+It does not cover a construct the v0.3 `Document` has **no field for**. Such a
 construct is in neither band. It is not out-of-profile vocabulary the
 validator holds a verdict about; it is vocabulary the document model cannot
 carry at all. `Construct` has no variant for it, and adding one would turn
@@ -34,7 +34,7 @@ three options.
 
 ## Choice
 
-Option 3. A construct `Dsb` cannot express is `CompileError::Unsupported`,
+Option 3. A construct `Document` cannot express is `CompileError::Unsupported`,
 which names the node path and the construct and stops the compile.
 
     pub enum CompileError {
@@ -46,7 +46,7 @@ which names the node path and the construct and stops the compile.
 
 As-built, `Unsupported` covers:
 
-| construct                                        | why `Dsb` cannot carry it                                            | debt                                                     |
+| construct                                        | why `Document` cannot carry it                                       | debt                                                     |
 | ------------------------------------------------ | -------------------------------------------------------------------- | -------------------------------------------------------- |
 | a stacked fill or stroke (more than one visible) | `PaintEntry.fill`/`.stroke` are each one `Option`                    | #146                                                     |
 | node opacity, rotation, mask, hidden node        | no field, and no way to hide a node without shifting the DFS indices | #143                                                     |
@@ -91,6 +91,6 @@ intended trade — correct or refused, never approximately right.
   `Unsupported`. The `path` field carries the slash-joined ancestor-name chain
   precisely so the message can name a layer rather than an index; note that
   the path cannot distinguish two siblings that share a name (debt #150).
-- **`Dsb` widening changes the refusal set, nothing else.** When `Dsb` gains
+- **`Document` widening changes the refusal set, nothing else.** When `Document` gains
   flex (#140) or effects (v0.8), the corresponding guard is deleted and a real
   lowering replaces it. The pattern here does not change.
