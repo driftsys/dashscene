@@ -1124,3 +1124,53 @@ that fixed it, because #37 and the whole v0.7 importer build on it.
   emits `goldens/dsb/v03-paint.dsb`, and `importers/figma/src/wasm_test.ts`
   asserts the wasm ABI emits the same bytes. Each half runs in the job
   that already exists for its toolchain, and identity is transitive.
+
+## 22. v0.3 retrospective: plan revision at the v0.3 epic close
+
+Epic #12 closed on 2026-07-14 with all eight stories merged. AGENTS.md requires
+the remaining epics and stories to be revised against what was learned before
+the next slice starts. This is that revision.
+
+- **The v0.7 breakdown was plumbing around a compiler that cannot import a real
+  file.** Its stories — closure (#37), cross-file resolution (#38), trim (#39),
+  deterministic emission (#40), validator (#41), content-addressed blobs (#107)
+  — all build _around_ the import. Not one of them widened what the lowering can
+  express. `dashc` produces exactly one kind of document (fixed-layout,
+  paint-only, text-less) and **refuses an auto-layout frame outright**, and most
+  real Figma frames are auto-layout. Building #37 to #40 first would have stacked
+  five stories on a compiler that cannot import a normal frame.
+
+- **Seven of the nine tier-1 fixtures were captured for work no story
+  scheduled.** `lowering-wrap`, `lowering-hug-in-fill`, `lowering-negative-gap`,
+  `lowering-baseline`, `grid-basic` (layout), `variables-bound` (tokens), and the
+  text in `lowering-baseline` all had a designated input and no owner. The
+  corpus was ahead of the plan.
+
+- **Three stories added to v0.7, and the slice re-ordered.** #140 is promoted
+  from debt to a story — widening the lowering to auto-layout and grid — and it
+  gates the rest of the slice. #159 (token resolution, phase 1 sidecar and phase
+  2 join, §13) and #160 (text lowering, Figma `TEXT` into `Dsb`) are new: both
+  had a stub, a captured fixture, and a written design, and neither had a story.
+
+- **The wasm ABI is settled, so v0.7 does not have to settle it.** Story #17
+  designed and pinned it (§21, `docs/decisions/dashc-wasm-abi.md`). It widens by
+  carrying more, not by changing the contract — a v0.7 story that needs to send
+  something new across the boundary extends the framing at wire version 1, or
+  bumps the version deliberately.
+
+- **v0.4 is unaffected.** Variants, staged mutation, and FLIP are `dashscene-core`
+  and `dashcue` work; they touch neither the importer nor the ABI. Nothing blocks
+  starting the slice.
+
+- **Debt was routed to the slice that does the work**, rather than left in a
+  closed milestone: the capture tool and lowering-robustness items to v0.7, the
+  vocabulary gaps whose constructs v0.8 is named after (masks, group opacity,
+  shadows, stacked paint) to v0.8, and the release-tooling item to v0.9. This
+  follows the v0.2 precedent, whose debt moved forward at its epic close rather
+  than being stranded.
+
+- **The Figma PAT is an unmonitored dependency.** It expired unnoticed and only
+  surfaced mid-story, because nothing in the repo exercises the credential — no
+  test touches the network. v0.7 depends on captures far more heavily than v0.3
+  did. §11 already says "rotate at ~75 days"; it is now worth a check that makes
+  the state visible rather than a rule that relies on someone remembering.
