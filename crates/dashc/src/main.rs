@@ -21,7 +21,7 @@ fn main() -> ExitCode {
             }
         },
         _ => {
-            eprintln!("dashc — the DSB compiler");
+            eprintln!("dashc — the dashscene compiler");
             eprintln!();
             eprintln!("  dashc check <file.dsb>   validate a document; exit 1 if it is blocked");
             eprintln!();

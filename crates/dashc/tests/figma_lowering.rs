@@ -1,12 +1,12 @@
 //! The Figma REST front end, end to end (story #139):
 //!
-//!     Figma REST JSON → lower → Dsb → emit → validate → .dsb
-//!                                                         ↓
+//!     Figma REST JSON → lower → Document → emit → validate → .dsb
+//!                                                              ↓
 //!                                     dashscene-core → Skia painter
 //!
 //! Emission precedes validation because the load gate's rules are about the
 //! index model, so they are checked against the serialized document rather
-//! than against `Dsb`. An error from either gate withholds the bytes (R6).
+//! than against `Document`. An error from either gate withholds the bytes (R6).
 //!
 //! Every assertion here is pinned by the captured corpus, not by a reading of
 //! Figma's documentation: `v03-paint.json` is the emission fixture and
@@ -208,19 +208,19 @@ fn images() -> BTreeMap<String, ImageAsset> {
     )])
 }
 
-fn lowered() -> dashc_wasm::Dsb {
-    let (dsb, diagnostics) = lower(&parse(V03_PAINT), Profile::Core, &images())
+fn lowered() -> dashc_wasm::Document {
+    let (doc, diagnostics) = lower(&parse(V03_PAINT), Profile::Core, &images())
         .expect("the paint fixture is entirely NOW-band");
     assert!(
         diagnostics.is_empty(),
         "v03-paint must triage clean, or it could never emit",
     );
-    dsb
+    doc
 }
 
 /// The node named `name`, and its index in the rect table.
-fn node<'a>(dsb: &'a dashc_wasm::Dsb, name: &str) -> (u32, &'a dashc_wasm::DsbNode) {
-    dsb.nodes
+fn node<'a>(doc: &'a dashc_wasm::Document, name: &str) -> (u32, &'a dashc_wasm::Node) {
+    doc.nodes
         .iter()
         .enumerate()
         .find(|(_, n)| n.name.as_deref() == Some(name))
@@ -230,8 +230,8 @@ fn node<'a>(dsb: &'a dashc_wasm::Dsb, name: &str) -> (u32, &'a dashc_wasm::DsbNo
 
 #[test]
 fn the_fixture_root_is_the_first_rect_table_entry() {
-    let dsb = lowered();
-    let (index, root) = node(&dsb, "v03-paint");
+    let doc = lowered();
+    let (index, root) = node(&doc, "v03-paint");
 
     assert_eq!(index, 0, "the root is the first rect-table entry");
     assert_eq!(root.parent, None);
@@ -259,26 +259,26 @@ fn the_root_frame_drops_its_page_position() {
         }],
     }));
 
-    let (dsb, _) = lower(&file, Profile::Core, &BTreeMap::new()).expect("the document lowers");
+    let (doc, _) = lower(&file, Profile::Core, &BTreeMap::new()).expect("the document lowers");
 
-    let (index, root) = node(&dsb, "root");
+    let (index, root) = node(&doc, "root");
     assert_eq!(index, 0, "the root is the first rect-table entry");
     assert_eq!(root.parent, None);
     assert_eq!((root.box2d.x, root.box2d.y), (0.0, 0.0));
     assert_eq!((root.box2d.width, root.box2d.height), (300.0, 400.0));
 
-    let (_, child) = node(&dsb, "child");
+    let (_, child) = node(&doc, "child");
     assert_eq!(child.parent, Some(index));
     assert_eq!((child.box2d.x, child.box2d.y), (40.0, 60.0));
 }
 
 #[test]
 fn a_childs_box_is_relative_to_its_parent() {
-    // Figma's absoluteBoundingBox is page-absolute; Dsb's Box2D is
+    // Figma's absoluteBoundingBox is page-absolute; Document's Box2D is
     // parent-relative intent. The overflow child is the sharpest case: it sits
     // at an absolute x of -28 inside a parent at 32, so it must land at -60.
-    let dsb = lowered();
-    let (_, child) = node(&dsb, "overflow-child");
+    let doc = lowered();
+    let (_, child) = node(&doc, "overflow-child");
 
     assert_eq!((child.box2d.x, child.box2d.y), (-60.0, -30.0));
     assert_eq!((child.box2d.width, child.box2d.height), (520.0, 180.0));
@@ -286,9 +286,9 @@ fn a_childs_box_is_relative_to_its_parent() {
 
 #[test]
 fn a_clipping_frame_carries_the_clip_intent() {
-    let dsb = lowered();
-    let (clip_index, clip_frame) = node(&dsb, "clip-frame");
-    let (_, child) = node(&dsb, "overflow-child");
+    let doc = lowered();
+    let (clip_index, clip_frame) = node(&doc, "clip-frame");
+    let (_, child) = node(&doc, "overflow-child");
 
     assert!(clip_frame.paint.as_ref().expect("has paint").clip);
     assert_eq!(child.parent, Some(clip_index));
@@ -299,14 +299,14 @@ fn all_three_stroke_aligns_lower() {
     // absoluteRenderBounds differs from absoluteBoundingBox for CENTER and
     // OUTSIDE by exactly the stroke expansion. It is a *result*, so P1 says
     // the lowering must never read it — the box plus the align is the intent.
-    let dsb = lowered();
+    let doc = lowered();
 
     for (name, align) in [
         ("stroke-inside", StrokeAlign::Inside),
         ("stroke-center", StrokeAlign::Center),
         ("stroke-outside", StrokeAlign::Outside),
     ] {
-        let (_, n) = node(&dsb, name);
+        let (_, n) = node(&doc, name);
         let stroke = n
             .paint
             .as_ref()
@@ -325,17 +325,17 @@ fn all_three_stroke_aligns_lower() {
 #[test]
 fn an_unstroked_frame_gets_no_stroke() {
     // strokeWeight is 1 on every node in the fixture, stroked or not.
-    let dsb = lowered();
-    let (_, n) = node(&dsb, "fill-solid");
+    let doc = lowered();
+    let (_, n) = node(&doc, "fill-solid");
 
     assert!(n.paint.as_ref().unwrap().entry.stroke.is_none());
 }
 
 #[test]
 fn both_corner_forms_lower() {
-    let dsb = lowered();
+    let doc = lowered();
 
-    let (_, uniform) = node(&dsb, "corners-uniform");
+    let (_, uniform) = node(&doc, "corners-uniform");
     assert_eq!(
         uniform.paint.as_ref().unwrap().entry.corners,
         CornerRadii {
@@ -346,7 +346,7 @@ fn both_corner_forms_lower() {
         },
     );
 
-    let (_, per_corner) = node(&dsb, "corners-per-corner");
+    let (_, per_corner) = node(&doc, "corners-per-corner");
     assert_eq!(
         per_corner.paint.as_ref().unwrap().entry.corners,
         CornerRadii {
@@ -360,7 +360,7 @@ fn both_corner_forms_lower() {
 
 #[test]
 fn all_four_gradient_kinds_lower() {
-    let dsb = lowered();
+    let doc = lowered();
 
     for (name, kind) in [
         ("gradient-linear", GradientKind::Linear),
@@ -368,7 +368,7 @@ fn all_four_gradient_kinds_lower() {
         ("gradient-angular", GradientKind::Angular),
         ("gradient-diamond", GradientKind::Diamond),
     ] {
-        let (_, n) = node(&dsb, name);
+        let (_, n) = node(&doc, name);
         let Some(PaintKind::Gradient(g)) = &n.paint.as_ref().unwrap().entry.fill else {
             panic!("{name} did not lower to a gradient");
         };
@@ -386,8 +386,8 @@ fn the_gradient_handles_lower_in_figma_order() {
     // stores Figma's convention verbatim, so the three must not be permuted.
     // The fixture's linear gradient has three distinct handles, so any swap
     // is visible.
-    let dsb = lowered();
-    let (_, n) = node(&dsb, "gradient-linear");
+    let doc = lowered();
+    let (_, n) = node(&doc, "gradient-linear");
 
     let Some(PaintKind::Gradient(g)) = &n.paint.as_ref().unwrap().entry.fill else {
         panic!("gradient-linear did not lower to a gradient");
@@ -403,9 +403,9 @@ fn the_lowered_colors_are_the_fixture_colors() {
     // Channel order is the kind of mistake that survives every structural
     // assertion: a fill still lowers, a gradient still has three stops, and
     // the picture is simply the wrong color. So the numbers get pinned.
-    let dsb = lowered();
+    let doc = lowered();
 
-    let (_, solid) = node(&dsb, "fill-solid");
+    let (_, solid) = node(&doc, "fill-solid");
     let Some(PaintKind::Solid { color }) = &solid.paint.as_ref().unwrap().entry.fill else {
         panic!("fill-solid did not lower to a solid fill");
     };
@@ -419,7 +419,7 @@ fn the_lowered_colors_are_the_fixture_colors() {
         },
     );
 
-    let (_, gradient) = node(&dsb, "gradient-linear");
+    let (_, gradient) = node(&doc, "gradient-linear");
     let Some(PaintKind::Gradient(g)) = &gradient.paint.as_ref().unwrap().entry.fill else {
         panic!("gradient-linear did not lower to a gradient");
     };
@@ -442,7 +442,7 @@ fn the_lowered_colors_are_the_fixture_colors() {
         },
     );
 
-    let (_, stroked) = node(&dsb, "stroke-inside");
+    let (_, stroked) = node(&doc, "stroke-inside");
     let stroke = stroked
         .paint
         .as_ref()
@@ -477,8 +477,8 @@ fn a_paint_opacity_multiplies_the_lowered_alpha() {
         }],
     }));
 
-    let (dsb, _) = lower(&file, Profile::Core, &BTreeMap::new()).expect("the document lowers");
-    let (_, n) = node(&dsb, "translucent");
+    let (doc, _) = lower(&file, Profile::Core, &BTreeMap::new()).expect("the document lowers");
+    let (_, n) = node(&doc, "translucent");
 
     let Some(PaintKind::Solid { color }) = &n.paint.as_ref().unwrap().entry.fill else {
         panic!("translucent did not lower to a solid fill");
@@ -496,8 +496,8 @@ fn a_paint_opacity_multiplies_the_lowered_alpha() {
 
 #[test]
 fn an_image_fill_resolves_through_the_caller_supplied_map() {
-    let dsb = lowered();
-    let (_, n) = node(&dsb, "image-fit");
+    let doc = lowered();
+    let (_, n) = node(&doc, "image-fit");
 
     let Some(PaintKind::Image {
         image,
@@ -510,7 +510,7 @@ fn an_image_fill_resolves_through_the_caller_supplied_map() {
     };
 
     assert_eq!(*scale_mode, ScaleMode::Fit);
-    assert_eq!(dsb.images[*image as usize].bytes, IMAGE_PNG);
+    assert_eq!(doc.images[*image as usize].bytes, IMAGE_PNG);
     // FIT carries neither a crop transform nor a tile scale.
     assert_eq!(*transform, None, "identity when Figma sends no transform");
     assert_eq!(*tile_scale, 1.0);
@@ -537,8 +537,8 @@ fn a_cropped_image_fill_lowers_its_crop_transform() {
         }],
     }));
 
-    let (dsb, _) = lower(&file, Profile::Core, &images()).expect("the document lowers");
-    let (_, n) = node(&dsb, "image-crop");
+    let (doc, _) = lower(&file, Profile::Core, &images()).expect("the document lowers");
+    let (_, n) = node(&doc, "image-crop");
 
     let Some(PaintKind::Image {
         scale_mode,
@@ -581,8 +581,8 @@ fn a_tiled_image_fill_lowers_its_tile_scale() {
         }],
     }));
 
-    let (dsb, _) = lower(&file, Profile::Core, &images()).expect("the document lowers");
-    let (_, n) = node(&dsb, "image-tile");
+    let (doc, _) = lower(&file, Profile::Core, &images()).expect("the document lowers");
+    let (_, n) = node(&doc, "image-tile");
 
     let Some(PaintKind::Image {
         scale_mode,
@@ -623,20 +623,20 @@ fn two_nodes_sharing_an_image_ref_share_one_asset() {
         ],
     }));
 
-    let (dsb, _) = lower(&file, Profile::Core, &images()).expect("the document lowers");
+    let (doc, _) = lower(&file, Profile::Core, &images()).expect("the document lowers");
 
-    assert_eq!(dsb.images.len(), 1, "one imageRef is one asset");
-    assert_eq!(image_index(&dsb, "left"), 0);
+    assert_eq!(doc.images.len(), 1, "one imageRef is one asset");
+    assert_eq!(image_index(&doc, "left"), 0);
     assert_eq!(
-        image_index(&dsb, "right"),
-        image_index(&dsb, "left"),
+        image_index(&doc, "right"),
+        image_index(&doc, "left"),
         "both nodes point at the same asset",
     );
 }
 
 /// The image-table index of the node's image fill.
-fn image_index(dsb: &dashc_wasm::Dsb, name: &str) -> u32 {
-    let (_, n) = node(dsb, name);
+fn image_index(doc: &dashc_wasm::Document, name: &str) -> u32 {
+    let (_, n) = node(doc, name);
     let Some(PaintKind::Image { image, .. }) = &n.paint.as_ref().unwrap().entry.fill else {
         panic!("{name} did not lower to an image fill");
     };
@@ -693,7 +693,7 @@ fn each_diagnostic_points_at_its_own_node() {
     // A diagnostic's `at` is what an editor jumps to and what a waiver keys
     // on (issue #41). An off-by-one index sends both to the wrong layer, and
     // every other assertion in this file would still pass.
-    let (dsb, diagnostics) = lower(&effects_2025(), Profile::Core, &images())
+    let (doc, diagnostics) = lower(&effects_2025(), Profile::Core, &images())
         .expect("the effects fixture lowers; its constructs are diagnosed, not fatal");
 
     assert_eq!(diagnostics.len(), EFFECTS_2025_DIAGNOSTICS.len());
@@ -705,7 +705,7 @@ fn each_diagnostic_points_at_its_own_node() {
             panic!("{name}: a triaged construct is located at a node");
         };
         // The node's own DFS index — which is its rect-table index (DESIGN §5).
-        let (index, _) = node(&dsb, name);
+        let (index, _) = node(&doc, name);
         assert_eq!(at.index, index, "{name}");
         assert_eq!(at.path, format!("/effects-2025/{name}"), "{name}");
     }
@@ -723,8 +723,8 @@ fn a_clipping_frame_with_no_paint_keeps_its_clip_intent() {
         "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
     }));
 
-    let (dsb, _) = lower(&file, Profile::Core, &BTreeMap::new()).expect("the document lowers");
-    let (_, n) = node(&dsb, "clip-only");
+    let (doc, _) = lower(&file, Profile::Core, &BTreeMap::new()).expect("the document lowers");
+    let (_, n) = node(&doc, "clip-only");
 
     let paint = n
         .paint
@@ -748,8 +748,8 @@ fn a_frame_with_nothing_at_all_lowers_to_no_paint() {
         "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
     }));
 
-    let (dsb, _) = lower(&file, Profile::Core, &BTreeMap::new()).expect("the document lowers");
-    let (_, n) = node(&dsb, "layout-only");
+    let (doc, _) = lower(&file, Profile::Core, &BTreeMap::new()).expect("the document lowers");
+    let (_, n) = node(&doc, "layout-only");
 
     assert_eq!(n.paint, None);
 }
@@ -757,7 +757,7 @@ fn a_frame_with_nothing_at_all_lowers_to_no_paint() {
 #[test]
 fn a_second_visible_stroke_fails_loudly_rather_than_being_silently_dropped() {
     // `PaintEntry.stroke` is one `Option<Stroke>`; Figma's `strokes` is an
-    // array. Stacking is a Dsb expressiveness gap, and taking the first
+    // array. Stacking is a Document expressiveness gap, and taking the first
     // stroke and discarding the rest is the silent drop P4 forbids — the
     // sibling case of `more than one visible fill`.
     let file = document(serde_json::json!({
@@ -797,8 +797,8 @@ fn a_hidden_second_stroke_is_not_a_second_visible_stroke() {
         ],
     }));
 
-    let (dsb, _) = lower(&file, Profile::Core, &BTreeMap::new()).expect("the document lowers");
-    let (_, n) = node(&dsb, "one-visible-stroke");
+    let (doc, _) = lower(&file, Profile::Core, &BTreeMap::new()).expect("the document lowers");
+    let (_, n) = node(&doc, "one-visible-stroke");
 
     let stroke = n
         .paint
@@ -847,7 +847,7 @@ fn a_second_visible_fill_fails_loudly_rather_than_being_silently_dropped() {
 
 #[test]
 fn a_rotated_node_fails_loudly_rather_than_silently_dropping_the_rotation() {
-    // Dsb has no rotation vocabulary and no Construct variant for it, so a
+    // Document has no rotation vocabulary and no Construct variant for it, so a
     // rotated node cannot become a diagnostic — P4 forbids lowering it as
     // though it were axis-aligned. Neither fixture carries a rotated node
     // (Figma omits `rotation` when it is zero), so this is synthetic.
@@ -868,7 +868,7 @@ fn a_rotated_node_fails_loudly_rather_than_silently_dropping_the_rotation() {
 
 #[test]
 fn a_mask_node_fails_loudly_rather_than_silently_dropping_the_mask() {
-    // Dsb has no mask vocabulary and no Construct variant for it, so a mask
+    // Document has no mask vocabulary and no Construct variant for it, so a mask
     // node cannot become a diagnostic — P4 forbids silently painting it as an
     // ordinary frame. Neither fixture carries a mask node, so this is
     // synthetic.
@@ -891,7 +891,7 @@ fn a_mask_node_fails_loudly_rather_than_silently_dropping_the_mask() {
 fn an_auto_layout_frame_fails_loudly_rather_than_baking_the_solver_result() {
     // Two violations at once, and either one alone would be enough to refuse.
     //
-    // P4: Dsb has no flex vocabulary, so the mode, the itemSpacing and the
+    // P4: Document has no flex vocabulary, so the mode, the itemSpacing and the
     // padding below have no field to lower into and no Construct to triage
     // onto — passing the frame through drops all four in silence.
     //
@@ -952,8 +952,8 @@ fn a_layout_mode_of_none_is_not_auto_layout() {
         "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
     }));
 
-    let (dsb, _) = lower(&file, Profile::Core, &BTreeMap::new()).expect("the document lowers");
-    let (index, _) = node(&dsb, "fixed");
+    let (doc, _) = lower(&file, Profile::Core, &BTreeMap::new()).expect("the document lowers");
+    let (index, _) = node(&doc, "fixed");
 
     assert_eq!(index, 0);
 }
@@ -1035,8 +1035,8 @@ fn a_basic_stroke_with_an_empty_dash_pattern_lowers_normally() {
         "strokes": [{ "type": "SOLID", "color": { "r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0 } }],
     }));
 
-    let (dsb, _) = lower(&file, Profile::Core, &BTreeMap::new()).expect("the document lowers");
-    let (_, n) = node(&dsb, "plain-border");
+    let (doc, _) = lower(&file, Profile::Core, &BTreeMap::new()).expect("the document lowers");
+    let (_, n) = node(&doc, "plain-border");
 
     let stroke = n
         .paint

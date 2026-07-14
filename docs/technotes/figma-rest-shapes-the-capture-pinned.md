@@ -8,7 +8,7 @@
 
 Story #16 deliberately deferred the Figma lowering until a fixture existed,
 because guessing the REST shape would have built the lowering against a
-fiction (`docs/decisions/dashc-dsb-model-and-load-path.md`). This note records
+fiction (`docs/decisions/dashc-document-model-and-load-path.md`). This note records
 what the capture actually showed — the field shapes that a careful reading of
 Figma's documentation would plausibly have got wrong, and what each one would
 have cost.
@@ -49,9 +49,9 @@ result into a document that carries only intent (P1), so the lowering reads
 `absoluteBoundingBox` and never the render bounds. The field is not even
 present in `rest.rs`, so it cannot be read by accident.
 
-## Figma's boxes are page-absolute; `Dsb`'s are parent-relative
+## Figma's boxes are page-absolute; `Document`'s are parent-relative
 
-`absoluteBoundingBox` is in page coordinates. `Dsb`'s `Box2D` is
+`absoluteBoundingBox` is in page coordinates. `Document`'s `Box2D` is
 parent-relative intent. The lowering owns the subtraction: a child's box is
 its absolute box minus its parent's absolute origin.
 

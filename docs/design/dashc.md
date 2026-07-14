@@ -1,13 +1,13 @@
-# dashc — the DSB compile pipeline
+# dashc — the dashscene compile pipeline
 
 As-built after stories #16, #139, and #17 (v0.3). The requirements are in
 `docs/specification/dashc-figma-lowering.md`. The rationale is in
 `docs/decisions/`:
 
-- [dashc-dsb-model-and-load-path.md](../decisions/dashc-dsb-model-and-load-path.md)
-  — the `Dsb` model, the load path, and why the Figma front end waited.
+- [dashc-document-model-and-load-path.md](../decisions/dashc-document-model-and-load-path.md)
+  — the `Document` model, the load path, and why the Figma front end waited.
 - [unsupported-figma-constructs-refuse-the-compile.md](../decisions/unsupported-figma-constructs-refuse-the-compile.md)
-  — a construct `Dsb` cannot express is refused loudly, never approximated.
+  — a construct `Document` cannot express is refused loudly, never approximated.
 - [figma-auto-layout-refused-on-two-grounds.md](../decisions/figma-auto-layout-refused-on-two-grounds.md)
   — and why one of those grounds outlives debt #140.
 - [figma-image-refs-resolved-by-the-caller.md](../decisions/figma-image-refs-resolved-by-the-caller.md)
@@ -25,28 +25,28 @@ what the documentation suggests — are in
 
 ## The pipeline
 
-    source              →  lower  →  Dsb  →  emit  →  validate  →  .dsb
-    (Figma REST JSON)                (in-memory document)
+    source              →  lower  →  Document  →  emit  →  validate  →  .dsb
+    (Figma REST JSON)                     (in-memory document)
 
                                             ↓ (runtime)
     .dsb  →  root_as_document  →  validate_document  →  load_document  →  Arena  →  Painter
 
 `lower` is the `figma` module (below). `compile_figma` runs the whole top
 row — source through `.dsb` — in one call; `compile` runs everything from
-`Dsb` onward, for a document built by hand or by any other producer.
+`Document` onward, for a document built by hand or by any other producer.
 
-## `Dsb` — the in-memory document
+## `Document` — the in-memory document
 
 What a producer lowers _into_, and what `emit` writes _out of_.
 
-    Dsb     { nodes: Vec<DsbNode>, images: Vec<ImageAsset> }
-    DsbNode { name, parent: Option<u32>, box2d: Box2D, paint: Option<Paint> }
-    Paint   { entry: dashpaint::PaintEntry, clip: bool }
+    Document { nodes: Vec<Node>, images: Vec<ImageAsset> }
+    Node     { name: Option<String>, parent: Option<u32>, box2d: Box2D, paint: Option<Paint> }
+    Paint    { entry: dashpaint::PaintEntry, clip: bool }
 
 Its paint types are **`dashpaint`'s** — boundary B's — not a third vocabulary.
 One paint vocabulary spans the document, the runtime, and the painter, so a
-lowering cannot invent a construct no painter can draw. What `Dsb` adds is the
-document's own shape: a flattened DFS node list whose array index is the
+lowering cannot invent a construct no painter can draw. What `Document` adds is
+the document's own shape: a flattened DFS node list whose array index is the
 rect-table index (DESIGN §5), and layout intent — never results (P1).
 
 `clip` travels beside the paint entry because the _schema_ pools it there
@@ -56,7 +56,7 @@ differing in clip are two document entries.
 
 ## `emit` — deterministic (R7)
 
-Same `Dsb` → byte-identical `.dsb`. Hashing, signing, and CI depend on it, so
+Same `Document` → byte-identical `.dsb`. Hashing, signing, and CI depend on it, so
 nothing may depend on hash-map iteration order. The paint pool is the one place
 that could, and it interns in **first-use DFS order** — the same rule
 `dashscene-core`'s commit uses, so a document and the scene it loads into agree
@@ -68,14 +68,14 @@ a value-keyed pool would emit a fresh entry per NaN and break reproducibility.
 
 ## `compile` — the emission gate (P4, R6)
 
-    pub fn compile(dsb: &Dsb) -> Result<Vec<u8>, Report>
+    pub fn compile(doc: &Document) -> Result<Vec<u8>, Report>
 
-Emits, then validates the **document** — not the `Dsb`. The load gate's rules
-are about the serialized index model (a dangling `paint_entry`, an unknown
-enum), so validating a shape the emitter has not produced yet would check
-something other than what ships. An **error blocks the document**: the bytes are
-discarded, never returned. A warning does not block (a strict build refuses it;
-waivers are v0.7, #41).
+Emits, then validates **as a document** — not as a `Document`. The load gate's
+rules are about the serialized index model (a dangling `paint_entry`, an
+unknown enum), so validating a shape the emitter has not produced yet would
+check something other than what ships. An **error blocks the document**: the
+bytes are discarded, never returned. A warning does not block (a strict build
+refuses it; waivers are v0.7, #41).
 
 ## The `figma` module
 
@@ -86,7 +86,7 @@ guessed.
 
     figma::rest         the Figma REST JSON shape (serde types)
     figma::triage       maps Figma constructs onto dashscene_validator::Construct
-    figma::lower        the Figma REST JSON → Dsb walk
+    figma::lower        the Figma REST JSON → Document walk
     figma::image_refs   the imageRefs a lowering of a file will demand
 
 `lower` does no I/O: `dashc` compiles to `wasm32-unknown-unknown`, so it
@@ -115,7 +115,7 @@ Why a Figma file could not be compiled at all — distinct from a
 `Diagnostic`, which is a verdict about a document the lowering understood:
 
     Parse(serde_json::Error)             not the Figma REST JSON it claimed to be
-    Unsupported { path, what }           a construct the v0.3 Dsb cannot express at all
+    Unsupported { path, what }           a construct the v0.3 Document cannot express at all
     UnresolvedImage { path, image_ref }  an imageRef the caller did not resolve
     Diagnostics(Report)                  an error-severity diagnostic blocked emission (R6)
 
@@ -132,8 +132,8 @@ tracked as debt — see "Scope boundaries" below.
 The headline entry point: it runs the whole pipeline, source through `.dsb`,
 and merges both gates into one report before deciding whether to emit.
 
-- The **import gate** (`triage`) runs while lowering, on constructs `Dsb` can
-  express but that DESIGN §10.1 puts outside the NOW band.
+- The **import gate** (`triage`) runs while lowering, on constructs `Document`
+  can express but that DESIGN §10.1 puts outside the NOW band.
 - The **load gate** (`validate_document`) runs on the emitted document, same
   as `compile`.
 
@@ -201,7 +201,7 @@ point is a library call, consumed by the Deno importer (#17) through the
 
 ## Scope boundaries (v0.3)
 
-Out of scope by design: widening `Dsb` to a wider vocabulary (flex layout,
+Out of scope by design: widening `Document` to a wider vocabulary (flex layout,
 text — debt #140), moving the negative-gap lowering out of core's `Txn`, and
 a native `dashc compile` CLI subcommand (see "The CLI" above).
 
@@ -211,17 +211,17 @@ hit them even though the v0.3 fixture does not:
 
 - **Stacked fills or strokes** — `PaintEntry.fill`/`.stroke` are each one
   `Option`; Figma's `fills`/`strokes` are arrays (debt #146).
-- **Node opacity, rotation, mask nodes, and hidden nodes** — `Dsb` has no
+- **Node opacity, rotation, mask nodes, and hidden nodes** — `Document` has no
   field for any of them, and no way to represent a hidden node without
   shifting the DFS indices every later node depends on. Hidden layers are
   routine in real Figma files, so this is likely to be the first one hit
   (debt #143).
-- **Baked shadows** — DESIGN §10.1 puts them in the NOW band, but `Dsb` has
-  no effects vocabulary, so there is no `Construct` to triage onto and no
+- **Baked shadows** — DESIGN §10.1 puts them in the NOW band, but `Document`
+  has no effects vocabulary, so there is no `Construct` to triage onto and no
   field to lower into. Effects enter the schema at v0.8 (debt #144).
 - **Auto-layout frames** — a `layoutMode` other than `NONE` (`HORIZONTAL`,
-  `VERTICAL`, `GRID`). Two reasons, each sufficient on its own. `Dsb` has no
-  flex vocabulary, so the intent — mode, gap, padding, sizing — has no field
+  `VERTICAL`, `GRID`). Two reasons, each sufficient on its own. `Document` has
+  no flex vocabulary, so the intent — mode, gap, padding, sizing — has no field
   to lower into and no `Construct` to triage onto (debt #140). And inside an
   auto-layout frame, `absoluteBoundingBox` is what Figma's own flex solver
   computed, so lowering a child as a fixed rect would write a layout result

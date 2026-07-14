@@ -125,19 +125,19 @@ it in. Per-story decisions land here directly:
   three gates (import / load / paint), not one `validate()`; out-of-profile
   constructs never reach the document, so the triage runs on the producer's
   source vocabulary (story #15); binds #16 and #41.
-- [dashc-dsb-model-and-load-path.md](dashc-dsb-model-and-load-path.md) — dashc
-  emits from an in-memory DSB whose paint types are boundary B's; the
-  `.dsb`→arena loader lives in `dashscene-core` and adds no semantics; the
+- [dashc-document-model-and-load-path.md](dashc-document-model-and-load-path.md)
+  — dashc emits from an in-memory document whose paint types are boundary B's;
+  the `.dsb`→arena loader lives in `dashscene-core` and adds no semantics; the
   Figma lowering is deferred until a fixture is captured (story #16); binds
   #17. The deferral was discharged by story #139.
 
 - [unsupported-figma-constructs-refuse-the-compile.md](unsupported-figma-constructs-refuse-the-compile.md)
-  — a construct the v0.3 `Dsb` cannot express is refused loudly with
+  — a construct the v0.3 `Document` cannot express is refused loudly with
   `CompileError::Unsupported`, never lowered approximately and never dropped
   silently (story #139); the branch's central pattern, and the reason each
   gap is a filed debt rather than a papered-over branch.
 - [figma-auto-layout-refused-on-two-grounds.md](figma-auto-layout-refused-on-two-grounds.md)
-  — auto-layout is refused both because `Dsb` has no flex vocabulary (#140)
+  — auto-layout is refused both because `Document` has no flex vocabulary (#140)
   and because `absoluteBoundingBox` inside an auto-layout frame is Figma's
   solver output, which P1 forbids lowering as intent (story #139); the second
   ground outlives the first.
@@ -154,5 +154,9 @@ it in. Per-story decisions land here directly:
   hand-written `extern "C"` exports over a length-prefixed wire format, not
   wasm-bindgen or a flatbuffers envelope (story #17); binds story #37 and
   the whole v0.7 importer.
+
+- [dashscene-document-is-the-ir.md](dashscene-document-is-the-ir.md) — the IR is
+  the dashscene document; `.dsb` is its file extension. Supersedes
+  `SCOPE_DECISIONS.md` §20; binds `crates/dashc`'s type names.
 
 See the `sdd-working-memory-lifecycle` rule.

@@ -1,4 +1,4 @@
-# dashc emits from an in-memory DSB; the loader lives in dashscene-core
+# dashc emits from an in-memory document; the loader lives in dashscene-core
 
     status   accepted (story #16, 2026-07-13); the deferral in §1 was
              discharged by story #139
@@ -39,21 +39,22 @@ P5 makes Figma fidelity this producer's entire purpose. A lowering verified
 against invented input is worth less than no lowering.
 
 So this slice ships everything _downstream_ of the lowering, which is most of
-the engineering and all of the shared machinery: the DSB model, the
+the engineering and all of the shared machinery: the document model, the
 deterministic emitter, the emission gate, and the validated round trip through
 `dashscene-core` and the reference painter. The lowering is a pure function
-into `Dsb` and slots in against a real fixture without disturbing any of it.
+into `Document` and slots in against a real fixture without disturbing any of
+it.
 
 The `v03-paint` fixture-author plugin command exists to produce that capture.
 
-### 2. `Dsb` — the in-memory document — uses `dashpaint`'s paint types
+### 2. `Document` — the in-memory document — uses `dashpaint`'s paint types
 
-A producer lowers into `Dsb`, and `emit` writes `.dsb` out of it. Its paint
-types are **boundary B's**, not a third set: one paint vocabulary spans the
-document, the runtime, and the painter, so a lowering cannot invent a construct
-no painter can draw. What `Dsb` adds is the _document's_ shape — the flattened
-DFS node list whose index is the rect-table index, layout intent (never
-results, P1), and the pools.
+A producer lowers into `Document`, and `emit` writes `.dsb` out of it. Its
+paint types are **boundary B's**, not a third set: one paint vocabulary spans
+the document, the runtime, and the painter, so a lowering cannot invent a
+construct no painter can draw. What `Document` adds is the _document's_
+shape — the flattened DFS node list whose index is the rect-table index,
+layout intent (never results, P1), and the pools.
 
 ### 3. The loader lives in `dashscene-core`, and loading adds no semantics
 
@@ -115,9 +116,9 @@ nothing else.
 ## Consequences
 
 - **The Figma lowering was the remaining half of #16**, and story #139 built it
-  against the `v03-paint` capture. `Dsb`, `emit`, and `compile` were unchanged
-  by it, which is the claim §1 made: the lowering slotted in as a pure function
-  into `Dsb`. Its own decisions are in
+  against the `v03-paint` capture. `Document`, `emit`, and `compile` were
+  unchanged by it, which is the claim §1 made: the lowering slotted in as a
+  pure function into `Document`. Its own decisions are in
   `docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`,
   `figma-auto-layout-refused-on-two-grounds.md`,
   `figma-image-refs-resolved-by-the-caller.md`, and

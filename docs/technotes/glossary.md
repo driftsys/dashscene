@@ -6,7 +6,8 @@
              to how the terms are used in this project.
     note     working names retired: the document/IR is **dashscene** (serialized
              as **`.dsb`**), the compiler is **`dashc`**. Older drafts said "SCD"
-             and "scdc"; those are not used here.
+             and "scdc"; those are not used here. Ruling:
+             `docs/decisions/dashscene-document-is-the-ir.md`.
 
 ## Project terms
 

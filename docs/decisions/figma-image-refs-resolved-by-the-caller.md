@@ -16,7 +16,7 @@ plus a download.
 `dashc` cannot make that call. It compiles to `wasm32-unknown-unknown` (`just
 wasm` is a required CI job), so it has no network and no filesystem.
 
-Nor can the bytes arrive later. `Dsb.images` holds real encoded bytes, and the
+Nor can the bytes arrive later. `Document.images` holds real encoded bytes, and the
 load gate rejects a zero-byte asset (`asset.image-no-bytes`), so a two-phase
 "lower now, attach bytes afterwards" contract would fail its own gate.
 
@@ -37,7 +37,7 @@ Option 3. The canonical JSON keeps Figma's shape — the `imageRef` stays a ref
         file: &FigmaFile,
         profile: Profile,
         images: &BTreeMap<String, ImageAsset>,
-    ) -> Result<(Dsb, Vec<Diagnostic>), CompileError>;
+    ) -> Result<(Document, Vec<Diagnostic>), CompileError>;
 
 An `imageRef` the map does not resolve is `CompileError::UnresolvedImage`, not
 a placeholder: the load gate would reject an invented zero-byte asset anyway.
@@ -45,7 +45,7 @@ Two nodes sharing one ref intern to one asset.
 
 The `imageRef` key is a Figma concept and `lower` is the Figma front end, so
 the Figma-shaped key stays inside the Figma producer (P5). It never reaches
-`Dsb` or `compile`.
+`Document` or `compile`.
 
 ## Why
 
