@@ -187,20 +187,14 @@ fn find<'a>(file: &'a FigmaFile, name: &str) -> &'a dashc_wasm::figma::rest::Nod
     walk(&file.document, name).unwrap_or_else(|| panic!("fixture has no node named {name}"))
 }
 
-/// A 1x1 red PNG — the smallest asset that actually decodes. The fixture's
-/// image fill is an `imageRef` with no bytes anywhere in the JSON, so the
-/// caller supplies them (design D1). In production that is the Deno importer
-/// resolving `GET /images`; here it is this constant.
-fn png_pixel() -> Vec<u8> {
-    const PNG: &[u8] = &[
-        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
-        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90,
-        0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08, 0xD7, 0x63, 0xF8,
-        0xCF, 0xC0, 0x00, 0x00, 0x03, 0x01, 0x01, 0x00, 0x18, 0xDD, 0x8D, 0xB0, 0x00, 0x00, 0x00,
-        0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
-    ];
-    PNG.to_vec()
-}
+/// The fixture's image fill is an `imageRef` with no bytes anywhere in the JSON,
+/// so the caller supplies them (design D1). In production that is the Deno
+/// importer resolving `GET /images`; here it is the same corpus file the
+/// importer's own tests read — which is what makes the golden below a
+/// cross-language contract rather than two unrelated assertions.
+const IMAGE_PNG: &[u8] = include_bytes!(
+    "../../../corpus/figma-fixtures/v03-paint.images/390616a0e7321eddb464388366d9a2a1bcb7f4c3.png"
+);
 
 const IMAGE_REF: &str = "390616a0e7321eddb464388366d9a2a1bcb7f4c3";
 
@@ -209,7 +203,7 @@ fn images() -> BTreeMap<String, ImageAsset> {
         IMAGE_REF.to_string(),
         ImageAsset {
             format: ImageFormat::Png,
-            bytes: png_pixel(),
+            bytes: IMAGE_PNG.to_vec(),
         },
     )])
 }
@@ -516,7 +510,7 @@ fn an_image_fill_resolves_through_the_caller_supplied_map() {
     };
 
     assert_eq!(*scale_mode, ScaleMode::Fit);
-    assert_eq!(dsb.images[*image as usize].bytes, png_pixel());
+    assert_eq!(dsb.images[*image as usize].bytes, IMAGE_PNG);
     // FIT carries neither a crop transform nor a tile scale.
     assert_eq!(*transform, None, "identity when Figma sends no transform");
     assert_eq!(*tile_scale, 1.0);
@@ -1182,4 +1176,73 @@ fn a_load_gate_only_error_still_blocks_emission() {
         panic!("expected diagnostics, got {err:?}");
     };
     assert!(report.has("asset.image-no-bytes"));
+}
+
+/// The Deno importer does not scan the file for `imageRef`s — it asks. This is
+/// why: the answer comes from the same module that consumes it, so the resolver
+/// and the lowering cannot disagree about where an `imageRef` lives.
+#[test]
+fn image_refs_names_every_ref_the_lowering_demands() {
+    let refs =
+        dashc_wasm::figma::image_refs(&parse(V03_PAINT)).expect("the fixture has a root frame");
+
+    assert_eq!(refs, vec![IMAGE_REF.to_string()]);
+}
+
+#[test]
+fn image_refs_refuses_a_file_with_no_root_frame() {
+    let file: FigmaFile = serde_json::from_value(serde_json::json!({
+        "document": { "id": "0:0", "name": "Document", "type": "DOCUMENT", "children": [] }
+    }))
+    .expect("the synthetic document parses");
+
+    assert!(matches!(
+        dashc_wasm::figma::image_refs(&file),
+        Err(CompileError::Unsupported { .. })
+    ));
+}
+
+/// The `.dsb` the Deno importer must reproduce byte for byte.
+///
+/// This is one half of story #17's acceptance criterion. The other half is
+/// `importers/figma/src/wasm_test.ts`, which asserts the same bytes come back
+/// through the wasm ABI. Neither test can see the other's toolchain, so the
+/// golden is what makes "byte-identical to dashc-native output" checkable in
+/// two CI jobs that never meet.
+///
+/// Regenerate with `UPDATE_GOLDENS=1` after a deliberate change to emission or
+/// to the captured fixture, review the diff, and commit. A missing golden is a
+/// failure, never an auto-create: CI on a clean checkout must fail loudly
+/// rather than mint its own truth (`goldens/README.md`).
+#[test]
+fn the_fixture_emits_the_golden_dsb() {
+    let (bytes, report) =
+        compile_figma(V03_PAINT, Profile::Core, &images()).expect("the paint fixture compiles");
+    assert!(report.is_empty(), "v03-paint emits clean");
+
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../goldens/dsb/v03-paint.dsb");
+
+    if std::env::var_os("UPDATE_GOLDENS").is_some() {
+        std::fs::create_dir_all(path.parent().expect("the golden has a parent"))
+            .expect("the goldens directory is writable");
+        std::fs::write(&path, &bytes).expect("the golden is writable");
+        return;
+    }
+
+    let golden = std::fs::read(&path).unwrap_or_else(|e| {
+        panic!(
+            "cannot read {}: {e}\nrun `UPDATE_GOLDENS=1 cargo test -p dashc --test figma_lowering` to create it",
+            path.display(),
+        )
+    });
+
+    assert_eq!(
+        bytes,
+        golden,
+        "emission drifted from the golden ({} bytes vs {}). If this is intended, \
+         regenerate with UPDATE_GOLDENS=1, review the diff, and commit.",
+        bytes.len(),
+        golden.len(),
+    );
 }

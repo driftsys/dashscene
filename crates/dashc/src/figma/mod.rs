@@ -11,7 +11,7 @@
 pub mod rest;
 pub(crate) mod triage;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use dashpaint::{
@@ -89,6 +89,37 @@ pub fn lower(
     walk.visit(root, None, None, "")?;
 
     Ok((walk.dsb, walk.diagnostics))
+}
+
+/// The `imageRef`s the lowering will demand, sorted and deduplicated.
+///
+/// The Deno importer cannot fetch what it cannot name, and Figma's `GET /file`
+/// carries no image bytes — only refs. Rather than have the importer walk the
+/// JSON looking for them (a second copy of "where an imageRef lives", free to
+/// drift from the walk that actually consumes them), it asks here. The scan
+/// covers the same subtree [`lower`] walks, and both fills and strokes, so a
+/// ref this returns is a ref the lowering can resolve.
+///
+/// Deliberately a superset: a paint this returns may still be refused by the
+/// lowering (a stacked fill, an invisible one). Fetching an image that turns
+/// out to be unused costs one download; missing one is a failed compile.
+pub fn image_refs(file: &FigmaFile) -> Result<Vec<String>, CompileError> {
+    fn walk(node: &Node, found: &mut BTreeSet<String>) {
+        for paint in node.fills.iter().chain(node.strokes.iter()) {
+            if paint.kind == PaintTag::Image
+                && let Some(image_ref) = &paint.image_ref
+            {
+                found.insert(image_ref.clone());
+            }
+        }
+        for child in &node.children {
+            walk(child, found);
+        }
+    }
+
+    let mut found = BTreeSet::new();
+    walk(root_frame(&file.document)?, &mut found);
+    Ok(found.into_iter().collect())
 }
 
 /// The first `FRAME` under the first `CANVAS`.
