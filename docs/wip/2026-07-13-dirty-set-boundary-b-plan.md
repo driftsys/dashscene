@@ -68,25 +68,37 @@ and it makes D5 safe.
 | `goldens/tooling/tests/dirty_oracle.rs`                  | The differential oracle: a mutation sequence through core, both painter modes, pixel equality at every step.                            |
 | `docs/decisions/dirty-set-advisory-across-boundary-b.md` | The decision record.                                                                                                                    |
 
-Existing `paint` call sites that must pass `None` (they hand the painter
-hand-built tables and have no `CommittedScene`, so they have no dirty
-set):
+**All 21 existing `paint` call sites** (verified against `main` at
+`7903ebe`). Every one of them hands the painter hand-built tables with no
+`CommittedScene` behind it and therefore passes `None` — **except**
+`v03_clips.rs:123`, which authors through the producer API and has a real
+`CommittedScene`, so it passes `Some(scene.dirty())`:
 
-- `goldens/tooling/tests/v01.rs:47`
-- `goldens/tooling/tests/v02_flex.rs:68`
-- `goldens/tooling/tests/v03.rs:60`, `:163`
-- `goldens/tooling/tests/v03_clips.rs:123`
-- `goldens/tooling/tests/v03_families.rs:90`, `:158`, `:228`, `:310`
-- `crates/dashpaint/tests/boundary_b.rs:279`
+```text
+crates/dashscene-skia/tests/painter.rs   53, 90, 118, 326, 393,
+                                         417, 539, 653, 682   (9)
+crates/dashpaint/tests/boundary_b.rs     279, 292, 313        (3)
+goldens/tooling/tests/v03_families.rs    90, 158, 228, 310    (4)
+goldens/tooling/tests/v03.rs             60, 163              (2)
+goldens/tooling/tests/v01.rs             47                   (1)
+goldens/tooling/tests/v02_flex.rs        68                   (1)
+goldens/tooling/tests/v03_clips.rs       123  <- Some(dirty)  (1)
+```
+
+Re-run `grep -rn "\.paint(" --include=*.rs crates goldens` before
+starting and reconcile against this list; do **not** pipe it through
+`head`. An earlier draft of this plan claimed ten call sites because a
+truncated grep was mistaken for a complete one, which would have left an
+implementer with nine unexplained compile errors.
 
 ---
 
 ## Task 1: The dirty set crosses boundary B
 
 `Painter::paint` gains a sixth parameter. `Option<&[u32]>` rather than
-`&[u32]`: eight of the ten existing call sites build their tables by hand
-and genuinely have no dirty set, so `None` states "the caller has no
-dirty information" instead of forcing them to fabricate a full one.
+`&[u32]`: 20 of the 21 existing call sites build their tables by hand and
+genuinely have no dirty set, so `None` states "the caller has no dirty
+information" instead of forcing them to fabricate a full one.
 
 **Files:**
 

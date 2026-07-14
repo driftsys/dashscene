@@ -455,18 +455,27 @@ dashscene concept.
   variable to a node's `visible` field is not documented and is not
   assumed here.
 
-**The Enterprise gate is on REST, not on the plugin.** The Variables REST
-API (`GET /v1/files/:key/variables/local`) requires "a Full seat in an
-Enterprise org" with scope `file_variables:read`, which is the gate
-DESIGN §6.1 already records. `GET /file` returns `boundVariables` **IDs**
-on any paid plan, but not variable names. The Plugin API, however, runs
-_inside the file_ — so the existing annotator plugin
-(`importers/figma/plugin/code.ts`, namespace `dashscene`, key `role`) can
-export the variable ID → name map into `sharedPluginData`, which the
-importer already fetches via `?plugin_data=shared`. The Enterprise
-endpoint is never touched. This is the same sidecar shape DESIGN §6.1
-describes for design tokens, with the plugin supplying the sidecar
-instead of the gated endpoint.
+**The join table already has a decided source, and it is not the gated
+endpoint.** The Variables REST API (`GET /v1/files/:key/variables/local`)
+requires "a Full seat in an Enterprise org" with scope
+`file_variables:read`. `GET /file` returns `boundVariables` **IDs** on any
+paid plan, but not variable names. The way around this is not a new idea
+here — `importers/figma/src/tokens.ts` already states the resolution, and
+SCOPE §13 records it:
+
+> On the Professional plan there is no naming-convention fallback: the
+> join table must come from the Figma Plugin API (the §12 annotator
+> plugin's token-export command); the Enterprise-gated Variables REST
+> endpoint is a drop-in replacement producer for the same table if it
+> ever becomes available.
+
+Bindings therefore reuse the **same** ID → name join table the token
+pipeline already needs. The Plugin API runs _inside the file_, so the
+existing annotator plugin (`importers/figma/plugin/code.ts`, namespace
+`dashscene`) exports the map into `sharedPluginData`, which the importer
+already fetches via `?plugin_data=shared`. The Enterprise endpoint is
+never on the critical path. This is one mechanism serving two consumers,
+not a second mechanism invented for bindings.
 
 **Typing is ours, not Figma's.** `setSharedPluginData` accepts **string
 values only** ("encode it as a JSON string first via JSON.stringify"). So
@@ -475,12 +484,20 @@ validates, emitting a named diagnostic on a mismatch (P4). This is
 already exactly how `role` works: a string constrained to four values,
 validated in `importers/figma/src/trim.ts`.
 
-**To verify before building on this**: whether the Plugin API's
-`figma.variables.getLocalVariablesAsync()` is itself plan-gated. Figma
-limits variable _modes_ by tier and the docs do not say whether reading
-local variables from a plugin is restricted on lower plans. That single
-fact decides whether the Variables path works outside Enterprise. It is
-cheap to test against the fixture files in `corpus/figma-fixtures/`.
+**Current state of the code** (verified against `main` at `7903ebe`):
+`dashc` has a `figma/` lowering module, but nothing in `dashc` or the
+importer reads `boundVariables`, variables, or `sharedPluginData` yet,
+and the annotator plugin still writes only `role` (its `_setRole` is a
+`never` stub). The token-export command that SCOPE §13 depends on does
+not exist. So bindings-from-Figma is unblocked in design and unbuilt in
+code — nothing here has to be undone, and the plugin work is shared with
+the token pipeline.
+
+**Still to verify**: whether the Plugin API's variable access is itself
+plan-gated. SCOPE §13 already bets that it is not (it makes the plugin
+the _only_ source of the join table on Professional), so this design adds
+no new exposure — but the bet has not been tested. It is cheap to check
+against the captured files in `corpus/figma-fixtures/`.
 
 ## Acceptance cases
 
@@ -709,8 +726,11 @@ discovered. Build the net before the fall.
 - Does `Channel` become the canonical prop id, superseding the ad-hoc
   `Prop` enum, or sit alongside it? The `id-model` record already reserves
   "property (`set_prop`) — field name — u16 wire id — the schema (future)".
-- Is the Plugin API's variable access plan-gated (D9)? This decides
-  whether the Variables path works outside Enterprise.
+- Is the Plugin API's variable access plan-gated (D9)? SCOPE §13 already
+  bets that it is not — it makes the annotator plugin the _only_ source of
+  the ID → name join table on the Professional plan — so bindings inherit
+  an existing bet rather than taking a new one. The bet is still untested,
+  and the token pipeline fails with it if it is wrong.
 - Do the retained interners need refcounting, or is monotonic growth with
   an occasional compaction sufficient for a bounded scene?
 - Q-6 (DESIGN §11) — the group-opacity render-target budget on target
