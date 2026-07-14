@@ -108,5 +108,7 @@ carries a placeholder key for. Any other fixture follows the same steps.
    rate-limited to 10 requests/minute, §11). It writes
    `corpus/figma-fixtures/v03-paint.json`. Commit that file.
 
-There is no `just` recipe for capture — it is a `deno task`, and the
-token must never be committed or passed on a shared command line.
+`just deno-capture` runs the same task, and builds the wasm module first —
+the capture asks `dashc` which `imageRef`s each fixture needs, then writes
+the downloaded bytes to `corpus/figma-fixtures/<name>.images/`. The token
+must never be committed or passed on a shared command line.

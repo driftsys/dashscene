@@ -1,6 +1,6 @@
 # dashc — the DSB compile pipeline
 
-As-built after stories #16 and #139 (v0.3). The requirements are in
+As-built after stories #16, #139, and #17 (v0.3). The requirements are in
 `docs/specification/dashc-figma-lowering.md`. The rationale is in
 `docs/decisions/`:
 
@@ -14,6 +14,10 @@ As-built after stories #16 and #139 (v0.3). The requirements are in
   — image bytes arrive as a caller-supplied map.
 - [producer-assembles-its-own-diagnostics.md](../decisions/producer-assembles-its-own-diagnostics.md)
   — `Report` gains public assembly.
+- [dashc-wasm-abi.md](../decisions/dashc-wasm-abi.md) — the wasm boundary
+  the Deno importer calls this pipeline through is five hand-written
+  exports over a length-prefixed wire format, not wasm-bindgen or a
+  flatbuffers envelope.
 
 The Figma REST field shapes the capture pinned — several of which contradict
 what the documentation suggests — are in
@@ -80,14 +84,25 @@ knows what a `FRAME` or an `imageRef` is. It is pinned to the v0.3 fixture at
 `corpus/figma-fixtures/v03-paint.json` — every field shape is real, not
 guessed.
 
-    figma::rest     the Figma REST JSON shape (serde types)
-    figma::triage   maps Figma constructs onto dashscene_validator::Construct
-    figma::lower    the Figma REST JSON → Dsb walk
+    figma::rest         the Figma REST JSON shape (serde types)
+    figma::triage       maps Figma constructs onto dashscene_validator::Construct
+    figma::lower        the Figma REST JSON → Dsb walk
+    figma::image_refs   the imageRefs a lowering of a file will demand
 
 `lower` does no I/O: `dashc` compiles to `wasm32-unknown-unknown`, so it
 cannot fetch, and Figma serializes an image fill as a bare `imageRef` with no
 bytes. The caller — the Deno importer — resolves refs and passes them in as
 `images: &BTreeMap<String, ImageAsset>`.
+
+`image_refs` walks the same subtree `lower` does — both fills and strokes,
+from `root_frame` down — and returns the sorted, deduplicated set of
+`imageRef`s a lowering of the file will need. The Deno importer calls it,
+across the wasm ABI, rather than walking the JSON itself, so there is
+exactly one place that knows where an `imageRef` lives in Figma's shape (P5;
+`docs/decisions/figma-image-refs-resolved-by-the-caller.md`). It is
+deliberately a superset: a paint it names may still be refused by the
+lowering (a stacked fill, an invisible one), so fetching an unused image
+costs a download, while missing one costs a failed compile.
 
 The walk is depth-first, parent before child, from the first `FRAME` under
 the first `CANVAS` (`root_frame`). Every other sibling and every later
@@ -129,6 +144,35 @@ discarding it would be the silent drop P4 forbids. This is also why
 `compile_figma` does not simply call `compile` and forward its `Result`:
 `compile` discards the load-gate report on success, which is exactly that
 silent drop.
+
+## The wasm ABI
+
+Five hand-written `extern "C"` exports on the `dashc_wasm.wasm` cdylib
+(`crates/dashc/src/abi/`) are what let the Deno importer run this pipeline —
+not reimplement it (P5; SCOPE_DECISIONS.md §4):
+
+    dashc_abi_version() -> u32
+    dashc_alloc(len: u32) -> *mut u8
+    dashc_free(ptr: *mut u8, len: u32)
+    dashc_compile_figma(ptr: *const u8, len: u32) -> *mut u8
+    dashc_figma_image_refs(ptr: *const u8, len: u32) -> *mut u8
+
+`dashc_compile_figma` frames `compile_figma` above: the request carries the
+profile, the Figma JSON, and the caller-supplied image map; the response
+carries the `.dsb` bytes and the report on success, or the tagged
+`CompileError` on failure. `dashc_figma_image_refs` frames `figma::image_refs`
+the same way, with no blob in the response. Why the ABI is hand-written
+rather than wasm-bindgen or a flatbuffers envelope, the wire format, the
+allocation ownership rules, and why the response is a length prefix rather
+than a `(ptr, len)` pair packed into a `u64`, are recorded in
+`docs/decisions/dashc-wasm-abi.md`.
+
+`crates/dashc/tests/abi.rs` drives the five exports natively — allocate,
+write, call, decode, free — exactly as `importers/figma/src/wasm.ts` does, so
+the wire format is pinned by a native `cargo test` with no wasm runtime in the
+loop. Nothing behind the exports may panic: a malformed request decodes to a
+`status: 2` response, never a trap, because a panic on
+`wasm32-unknown-unknown` traps and kills the whole module instance.
 
 ## The load path
 

@@ -12,11 +12,12 @@
   },
 
   "tasks": {
-    "check": "deno check src/mod.ts src/capture.ts plugin/code.ts",
-    "test": "deno test --allow-net=api.figma.com --allow-read=.,../../corpus/figma-fixtures --allow-env=FIGMA_TOKEN",
+    "check": "deno check src/mod.ts src/capture.ts src/import.ts plugin/code.ts",
+    "test": "deno test --allow-net=api.figma.com --allow-read=.,../../corpus/figma-fixtures,../../goldens/dsb,../../target/wasm32-unknown-unknown/release --allow-env=FIGMA_TOKEN",
     "lint": "deno lint",
     "fmt": "deno fmt",
-    "capture": "deno run --allow-env=FIGMA_TOKEN --allow-net=api.figma.com --allow-read=../../corpus/figma-fixtures --allow-write=../../corpus/figma-fixtures src/capture.ts"
+    "capture": "deno run --allow-env=FIGMA_TOKEN --allow-net=api.figma.com,s3-alpha-sig.figma.com --allow-read=../../corpus/figma-fixtures,../../target/wasm32-unknown-unknown/release --allow-write=../../corpus/figma-fixtures src/capture.ts",
+    "import": "deno run --allow-env=FIGMA_TOKEN --allow-net=api.figma.com,s3-alpha-sig.figma.com --allow-read=../../target/wasm32-unknown-unknown/release --allow-write=. src/import.ts"
   },
 
   "fmt": {

@@ -41,6 +41,7 @@ here, as future work gardens it in. Per-component records land here directly:
 - [dashc.md](dashc.md) — the DSB compile pipeline: the in-memory `Dsb`
   model, the deterministic `.dsb` emitter, the emission gate, and the
   `dashscene-core` load path (story #16); the Figma REST front end — the
-  lowering walk, the import gate, and `compile_figma` (story #139).
+  lowering walk, the import gate, and `compile_figma` (story #139); the
+  wasm ABI the Deno importer calls it through (story #17).
 
 See the `sdd-working-memory-lifecycle` rule.

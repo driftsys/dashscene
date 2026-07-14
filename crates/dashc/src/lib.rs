@@ -41,6 +41,9 @@
 mod dsb;
 mod emit;
 
+// Public because `tests/abi.rs` calls the exports directly: that native test is
+// what pins the wire format, so the module cannot be private.
+pub mod abi;
 pub mod figma;
 
 pub use dsb::{Box2D, Dsb, DsbNode, Paint};

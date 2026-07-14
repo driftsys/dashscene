@@ -8,6 +8,9 @@ raster) and compared pixel-for-pixel against checked-in PNGs.
       images/     the checked-in goldens ({name}.png) and, on failure,
                   the rendered actual images ({name}.actual.png —
                   gitignored, never committed)
+      dsb/        golden .dsb documents ({name}.dsb): what the compiler
+                  emits, compared exactly rather than with a pixel
+                  tolerance (see goldens/dsb/README.md)
       tooling/    the `goldens` crate: diff tooling (src/lib.rs) and
                   the golden tests (tests/)
 

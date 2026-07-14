@@ -1,9 +1,10 @@
 # Image bytes arrive as a caller-supplied `imageRef` map
 
-    status   accepted (story #139, 2026-07-13)
+    status   accepted (story #139, 2026-07-13); the caller side was built by
+             story #17, 2026-07-14 — see docs/decisions/dashc-wasm-abi.md
     scope    crates/dashc (the figma module)
-    binds    #17 (the Deno importer resolves the refs and passes the bytes),
-             the v0.7 wasm ABI
+    binds    importers/figma/src/images.ts (the Deno importer resolves the
+             refs and passes the bytes, story #17)
 
 ## Context
 
@@ -62,10 +63,20 @@ the Figma-shaped key stays inside the Figma producer (P5). It never reaches
 
 ## Consequences
 
-- **#17 (the Deno importer)** owns ref resolution: it can fetch, so it makes the
-  `GET /images` call, downloads the bytes, and passes the map in. That is the
-  only place in the system that both knows Figma and can do I/O.
-- **In this story nobody fetches.** The test supplies one synthetic PNG for the
-  fixture's single `imageRef`. Real resolution lands with #17.
+- **The Deno importer (story #17) owns ref resolution.** It can fetch, so it
+  makes the `GET /v1/files/:key/images` call, downloads the bytes, and passes
+  the map in (`importers/figma/src/images.ts`). That is the only place in the
+  system that both knows Figma and can do I/O.
+- **Story #17 also decided how the importer learns _which_ refs to resolve:
+  it asks, rather than scans.** `dashc` gained a fifth wasm export,
+  `dashc_figma_image_refs`, backed by `figma::image_refs`, that returns the
+  refs a lowering of a given file will demand. A TypeScript walk collecting
+  `imageRef` strings would put a second copy of "where an imageRef lives in
+  Figma's shape" inside `importers/figma`, free to drift from the walk that
+  actually consumes it (P5); asking keeps that knowledge in the one module
+  that owns the Figma mapping. See `docs/decisions/dashc-wasm-abi.md` for the
+  export itself and the wasm ABI it crosses.
+- **This story supplied one synthetic PNG for the fixture's single
+  `imageRef`.** Real resolution landed with story #17.
 - **`dashc` stays free of network and filesystem code**, which is what keeps the
   wasm target buildable.

@@ -14,6 +14,7 @@
 import type {
   GetFileMetaResponse,
   GetFileResponse,
+  GetImageFillsResponse,
 } from "@figma/rest-api-spec";
 
 export interface FigmaClientOptions {
@@ -89,6 +90,20 @@ export class FigmaClient {
     return this.#request(`/v1/files/${fileKey}?plugin_data=shared`) as Promise<
       GetFileResponse
     >;
+  }
+
+  /**
+   * The `imageRef` → presigned-URL map for every image fill in the file.
+   *
+   * `GET /file` carries no image bytes, only refs; the bytes live behind these
+   * URLs. They are presigned and short-lived, which is why the capture tool
+   * commits the downloaded *bytes* and never the URL (issue #141).
+   */
+  imageFills(fileKey: string): Promise<Readonly<Record<string, string>>> {
+    return this.#request(`/v1/files/${fileKey}/images`).then((body) => {
+      const images = (body as GetImageFillsResponse | null)?.meta?.images;
+      return images ?? {};
+    });
   }
 
   #request(path: string): Promise<unknown> {

@@ -34,6 +34,15 @@ jobs:
               # otherwise a malformed manifest merges with a green CI run
               # (issue #90).
               - 'corpus/figma-fixtures/**'
+              # The deno suite calls dashc's wasm ABI and pins its output
+              # against the golden .dsb. Both live on the Rust side, so a
+              # Rust-only change can break the importer with no edit under
+              # importers/ — without these, that change skips this job and
+              # merges green against a boundary nothing checked (story #17).
+              - 'crates/**'
+              - 'goldens/dsb/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
 
   fmt:
     name: fmt
@@ -109,16 +118,23 @@ jobs:
 
   deno:
     name: deno
-    needs: changes
+    needs: [changes, wasm-build]
     runs-on: ubuntu-latest
-    # Path-filtered: only runs when the Deno importer changes, so Rust-only
-    # changes don't pay for it and vice versa (SCOPE_DECISIONS.md §4/§7).
+    # Path-filtered: runs when the importer, the fixture corpus, or the Rust
+    # side it calls across the wasm ABI changes (SCOPE_DECISIONS.md §4/§7).
     if: needs.changes.outputs.figma == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+      # The suite loads this module and asserts its output against the golden
+      # .dsb. Taking it as an artifact keeps the Rust toolchain — and flatc —
+      # out of this job; it is built once, in wasm-build.
+      - uses: actions/download-artifact@v4
+        with:
+          name: dashc-wasm
+          path: target/wasm32-unknown-unknown/release
       - working-directory: importers/figma
         run: |
           deno task check
@@ -143,7 +159,14 @@ jobs:
           curl -fsSL -o flatc.zip https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip
           unzip -o flatc.zip flatc -d /usr/local/bin
           chmod +x /usr/local/bin/flatc
-      - run: cargo build -p dashc --release --target wasm32-unknown-unknown
+      # --lib: the bin target compiles to a second .wasm that is the CLI, exports
+      # none of the ABI, and would sit next to the real module as a decoy.
+      - run: cargo build -p dashc --lib --release --target wasm32-unknown-unknown
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dashc-wasm
+          path: target/wasm32-unknown-unknown/release/dashc_wasm.wasm
+          if-no-files-found: error
 
   atlas-repro:
     name: atlas-repro

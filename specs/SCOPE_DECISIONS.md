@@ -1058,3 +1058,69 @@ Scope of the change:
   they said SCD. Rewriting them would falsify that record. They keep
   the old name, and this section explains why a reader will find it
   there.
+
+## 21. The dashc wasm ABI is hand-written and pinned (story #17)
+
+`dashc` builds to `wasm32-unknown-unknown` so the Deno importer can call
+the same Rust code path the native library call runs (§4). Until story #17
+that was aspiration, not fact: the crate was a bare `cdylib` with no
+`#[unsafe(no_mangle)]` exports and no bindgen, so `just wasm` produced a
+module that exported nothing callable. This section records the boundary
+that fixed it, because #37 and the whole v0.7 importer build on it.
+
+- **The ABI is hand-written, not wasm-bindgen.** Core WebAssembly has
+  four value types and one linear memory — no string, array, or object
+  type — so _every_ Rust-to-JS boundary reduces to "the guest reserves
+  bytes, the host copies data in, the host passes an offset and a length".
+  wasm-bindgen generates that; it does not avoid it. And it would not
+  save the expensive half: `dashscene-validator` and `dashpaint` carry no
+  `serde` by design, so `dashc` must own serializable mirrors of `Report`,
+  `Diagnostic`, `Location`, and `CompileError` under any option. What
+  wasm-bindgen buys is ~150 lines of framing; what it charges is a
+  `wasm-bindgen-cli` pinned to the exact crate version in `bootstrap` and
+  in CI, plus a post-`cargo` step in `just wasm`. For a two-function
+  boundary consumed by one caller this repo also writes, that is a bad
+  trade. Full reasoning, including the rejected flatbuffers-envelope
+  option: `docs/decisions/dashc-wasm-abi.md`.
+
+- **Five exports, wire version 1.** `dashc_abi_version`, `dashc_alloc`,
+  `dashc_free`, `dashc_compile_figma`, `dashc_figma_image_refs`. The
+  request framing and the response envelope are little-endian and
+  length-prefixed (`crates/dashc/src/abi/wire.rs`, mirrored in
+  `importers/figma/src/wasm.ts`). The Deno side checks
+  `dashc_abi_version` at load, so a stale `.wasm` fails with a sentence
+  rather than a misdecode. A version bump is how the contract evolves.
+
+- **The module is `dashc_wasm.wasm`, not `dashc.wasm`.** The `[lib]`
+  target is named `dashc_wasm` to avoid colliding with the `dashc` bin,
+  which compiles to `dashc.wasm` — the CLI, which reads files and reads
+  the environment and exports none of the ABI. `just wasm` therefore
+  builds `--lib`, so that decoy is not produced at all.
+
+- **#17 owns `imageRef` resolution, and asks rather than scans.** Figma
+  serializes an image fill as a bare `imageRef` with no bytes anywhere in
+  the file JSON, and `dashc` does no I/O. So the Deno side resolves refs
+  (`GET /v1/files/:key/images`, then the presigned download) and passes
+  the bytes in. _Which_ refs is `dashc`'s answer — `dashc_figma_image_refs`
+  — not a walk written in TypeScript: a second copy of "where an imageRef
+  lives in Figma's shape" is free to drift from the lowering that consumes
+  it (P5). The capture tool commits the image **bytes**, never the
+  presigned URL, which is regenerated per fetch (issue #141).
+
+- **The `deno` CI job now runs on Rust changes.** It is what checks the
+  ABI: it loads `dashc_wasm.wasm` and pins its output against
+  `goldens/dsb/v03-paint.dsb`. Before #17 the job was path-filtered to
+  `importers/figma/**`, so a `dashc` change that broke the ABI with no
+  importer edit would skip it and merge green against a boundary nothing
+  checked. The filter now includes `crates/**`, `Cargo.toml`,
+  `Cargo.lock`, and `goldens/dsb/**`; the module is built once, in
+  `wasm-build`, and handed over as an artifact so no Rust toolchain enters
+  the deno job.
+
+- **Byte-identity is checked through a shared golden.** The story's
+  acceptance criterion — "fixture → `.dsb` byte-identical to dashc-native
+  output" — is checked in two CI jobs that never meet:
+  `crates/dashc/tests/figma_lowering.rs` asserts the native library call
+  emits `goldens/dsb/v03-paint.dsb`, and `importers/figma/src/wasm_test.ts`
+  asserts the wasm ABI emits the same bytes. Each half runs in the job
+  that already exists for its toolchain, and identity is transitive.

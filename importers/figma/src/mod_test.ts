@@ -4,16 +4,12 @@
  * that the remaining importer stubs throw their documented "not yet
  * implemented" error (real implementation begins alongside v0.7,
  * DESIGN_1.md §11).
+ *
+ * The wasm boundary is no longer a stub — see wasm_test.ts.
  */
 
-import { assertEquals, assertRejects, assertThrows } from "@std/assert";
-import {
-  compileViaWasm,
-  computeClosure,
-  createFigmaClient,
-  joinTokens,
-  trim,
-} from "./mod.ts";
+import { assertEquals, assertThrows } from "@std/assert";
+import { computeClosure, createFigmaClient, joinTokens, trim } from "./mod.ts";
 
 Deno.test("createFigmaClient returns a client exposing file and fileMeta", () => {
   const client = createFigmaClient({ token: "x" });
@@ -35,8 +31,4 @@ Deno.test("trim stub throws not-yet-implemented", () => {
 
 Deno.test("joinTokens stub throws not-yet-implemented", () => {
   assertThrows(() => joinTokens([]), Error, "not yet implemented");
-});
-
-Deno.test("compileViaWasm stub rejects with not-yet-implemented", async () => {
-  await assertRejects(() => compileViaWasm({}), Error, "not yet implemented");
 });

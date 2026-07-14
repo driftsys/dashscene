@@ -71,7 +71,8 @@ captures), `goldens/` (CI golden images + diff tooling).
     just check        test + lint + audit
     just verify       commit-message lint over the branch range, then build — run before opening a PR
     just wasm         build dashc for wasm32-unknown-unknown
-    just deno-check   just deno-test   just deno-fmt   — scoped to importers/figma/
+    just deno-check   just deno-test   just deno-fmt   just deno-capture
+                      — scoped to importers/figma/
     just book         serve the mdBook docs locally
     just install      ./bootstrap — installs git hooks, git-std, dprint, markdownlint-cli
 

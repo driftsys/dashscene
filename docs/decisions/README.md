@@ -143,10 +143,16 @@ it in. Per-story decisions land here directly:
   ground outlives the first.
 - [figma-image-refs-resolved-by-the-caller.md](figma-image-refs-resolved-by-the-caller.md)
   — image bytes arrive as a caller-supplied `imageRef` map, because `dashc`
-  compiles to wasm and cannot fetch (story #139); binds #17.
+  compiles to wasm and cannot fetch (story #139); the Deno importer built the
+  caller side in story #17.
 - [producer-assembles-its-own-diagnostics.md](producer-assembles-its-own-diagnostics.md)
   — `Report` gains `FromIterator` + `Extend` so a producer can report what the
   import gate hands it (story #139); closes a gap
   `validator-three-gates.md` opened.
+
+- [dashc-wasm-abi.md](dashc-wasm-abi.md) — `dashc`'s wasm boundary is five
+  hand-written `extern "C"` exports over a length-prefixed wire format, not
+  wasm-bindgen or a flatbuffers envelope (story #17); binds story #37 and
+  the whole v0.7 importer.
 
 See the `sdd-working-memory-lifecycle` rule.
