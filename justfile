@@ -109,18 +109,29 @@ install:
 clean:
     cargo clean
 
-# Build dashc for wasm32-unknown-unknown, the target the Deno importer loads.
+# Build dashc's cdylib for wasm32 — the module the Deno importer loads.
+#
+# --lib on purpose. Without it, cargo also builds the `dashc` bin for wasm,
+# producing a second artifact (dashc.wasm) that is the CLI: it reads files and
+# reads the environment, and it exports none of the ABI. Two .wasm files where
+# one is a decoy is a trap — the importer loads dashc_wasm.wasm.
 wasm:
-    cargo build -p dashc --release --target wasm32-unknown-unknown
+    cargo build -p dashc --lib --release --target wasm32-unknown-unknown
 
 # Type-check the Deno importer's entry points.
 deno-check:
     cd importers/figma && deno task check
 
-# Run the Deno importer's test suite.
-deno-test:
+# Run the Deno importer's test suite. Depends on `wasm`: the suite loads
+# dashc_wasm.wasm and asserts its output against the golden .dsb.
+deno-test: wasm
     cd importers/figma && deno task test
 
 # Format the Deno importer sources.
 deno-fmt:
     cd importers/figma && deno task fmt
+
+# Capture the Figma fixture corpus, image-fill bytes included. Needs
+# FIGMA_TOKEN (SCOPE_DECISIONS.md §11). Never commit the token.
+deno-capture: wasm
+    cd importers/figma && deno task capture
