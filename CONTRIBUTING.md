@@ -57,8 +57,11 @@ call that out explicitly in the PR description.
 
 Changes under `importers/figma/` follow `deno.json`'s own `fmt`/`lint`/`test`
 tasks (`just deno-fmt`, `just deno-test`, `just deno-check`) rather than the
-Rust toolchain. CI only runs the `deno` job when files under that path
-change.
+Rust toolchain. CI runs the `deno` job when the importer, the fixture corpus,
+or the Rust side it calls across the wasm ABI changes — the suite loads
+`dashc_wasm.wasm` and pins its output against a golden `.dsb`, so a Rust-only
+change can break it with no edit under `importers/`
+(`docs/decisions/dashc-wasm-abi.md`).
 
 ## Reporting issues
 

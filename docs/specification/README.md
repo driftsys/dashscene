@@ -11,6 +11,7 @@ R-numbers rather than minting new ones:
 
 - [dashc-figma-lowering.md](dashc-figma-lowering.md) — the Figma REST front
   end: the compile contract, the lowering and import-gate rules, and the
-  refusal set (story #139, v0.3).
+  refusal set (story #139, v0.3); the imageRef query the wasm ABI exposes
+  (story #17).
 
 See the `sdd-working-memory-lifecycle` rule.

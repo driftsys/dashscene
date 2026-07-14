@@ -1,8 +1,8 @@
 # dashc — the Figma REST front end (requirements)
 
-As-built after story #139 (epic #12, v0.3 — basic paint + importer). The
-architecture is in `docs/design/dashc.md`; the rationale is in the four
-decision records this document links.
+As-built after stories #139 and #17 (epic #12, v0.3 — basic paint +
+importer). The architecture is in `docs/design/dashc.md`; the rationale is
+in the decision records this document links.
 
 These requirements are gardened from the story's acceptance criteria and its
 lowering and triage tables. They introduce no new project-level requirement:
@@ -88,6 +88,16 @@ effects are out of scope until their slices.
    would be a silent drop (P4). (`a_paint_opacity_multiplies_the_lowered_alpha`,
    `a_cropped_image_fill_lowers_its_crop_transform`,
    `a_tiled_image_fill_lowers_its_tile_scale`)
+
+6. **The `imageRef`s a lowering will need shall be queryable independent of
+   compiling.** `image_refs(file) -> Result<Vec<String>, CompileError>` shall
+   return every `imageRef` the lowering will demand, sorted and deduplicated,
+   so a caller can resolve exactly those refs before supplying them to
+   `compile_figma`. It shall walk the same subtree the lowering does, and may
+   return a ref the lowering later refuses to use. See
+   `docs/decisions/figma-image-refs-resolved-by-the-caller.md`.
+   (`image_refs_names_every_ref_the_lowering_demands`,
+   `image_refs_refuses_a_file_with_no_root_frame`)
 
 ## The import gate
 
