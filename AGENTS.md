@@ -86,29 +86,22 @@ driftsys/git-std, driftsys/upskill, driftsys/markspec.
 
 ## Where to start
 
-The v0.1 walking skeleton (`docs/roadmap.md`) is complete and on
-`main`: the `dashbuf` schema, `dashscene-core`'s arena +
-staged-mutation API, `dashpaint`'s painter trait + paint-table types,
-the `dashscene-skia` CPU-raster painter, the `dashlang` builder DSL,
-and the golden harness in `goldens/`. For as-built component status see
-`docs/design/`; for the decisions behind it see `docs/decisions/`.
+v0 is built one slice at a time, v0.1 through v0.9. **`docs/roadmap.md`
+holds the slice map** — which slices are done and which remain, what
+each delivers, and how they depend on each other — and marks each slice
+closed or open. The current slice is the first one still open; the epics
+under "Plan tracking" track the live work inside it. The roadmap is
+revised at each phase-end epic close, so read it for slice status rather
+than trusting a slice named in prose here, which goes stale the moment
+an epic closes.
 
-v0.2 — flex core (epic #7) is also complete and on `main`:
-`dashscene-engine` solves every scene with Taffy as the sole solver,
-core carries the flex vocabulary (H/V modes, hug/fill/fixed sizing,
-gap/padding/alignment, min/max clamps) and the negative-gap lowering,
-and four exact-match goldens pin the result.
+For the parts already on `main`: as-built component status is in
+`docs/design/` (start at `docs/design/architecture.md`), the decisions
+behind it are in `docs/decisions/`, and the requirements they satisfy
+are in `docs/specification/`.
 
-Work now proceeds through the GitHub issues (see "Plan tracking"). The
-current slice is v0.3 — basic paint + importer (epic #12): the
-validator's named diagnostics, `dashc`'s minimal compile pipeline, and
-the fixture-driven Deno importer.
-
-Everything else — `dashscene-typeset` (text, v0.5/v0.6), `dashc`'s full
-Figma-importing behavior (v0.7), `dashcue`'s animation vocabulary
-(v0.4), `dashscene-validator`'s full profile enforcement (v0.7),
-`dashscene-unity` / `dashscene-web` (v1+) — is out of scope until its
-slice.
+A crate is out of scope until the slice that reaches it — the roadmap
+says which slice that is. Do not build ahead of the plan.
 
 **Resolved (`docs/decisions/staged-mutation-v01-scope.md`):** the
 staged-mutation contract
