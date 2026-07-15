@@ -1,6 +1,6 @@
 # Overview
 
-dash turns UI designed in Figma — or authored programmatically in code —
+dashscene turns UI designed in Figma — or authored programmatically in code —
 into pixels on screen, through one intermediate representation, one shared
 layout+text runtime, and interchangeable paint backends.
 
@@ -21,12 +21,12 @@ pending) — and parts of the `v0.5` text/atlas groundwork.
 
 ## Where things live
 
-- The full architecture — goals, requirements, stack, document format,
-  producers, painters, target-hardware rules, and the release plan — is in
-  `specs/DESIGN_1.md`.
-- Everything decided since, in the order it was decided, is in
-  `specs/SCOPE_DECISIONS.md`, which supersedes `DESIGN_1.md` wherever the
-  two disagree.
+- Goals and requirements: `docs/specification/`.
+- Architecture — stack, document format, producers, painters: the
+  per-component records in `docs/design/`, starting from
+  `docs/design/architecture.md`.
+- Decisions made since, each traced to what it affects: `docs/decisions/`.
+- The release plan: `docs/roadmap.md`.
 - Contributor-facing entry point (crate map, commands, current start
   order): `AGENTS.md` at the repository root.
 

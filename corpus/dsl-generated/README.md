@@ -1,8 +1,8 @@
 # DSL-generated stress corpus
 
 Edge-case scenes the runtime must handle, authored as code against the
-producer surface rather than hand-built in Figma (DESIGN_1.md §6.2,
-§11 E3): wrap, hug-in-fill, grid spans, baseline, variant topology
+producer surface rather than hand-built in Figma (docs/design/architecture.md,
+docs/specification/05-qualification.md E3): wrap, hug-in-fill, grid spans, baseline, variant topology
 change, negative gap.
 
 **Status:** the executable generator is story #46 (v0.8). It will be

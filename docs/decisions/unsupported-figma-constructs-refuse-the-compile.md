@@ -14,7 +14,9 @@ construct is a named diagnostic, never a silent drop.
 The import gate (`docs/decisions/validator-three-gates.md`) gives a producer
 one way to report a construct it will not lower: map it onto a
 `dashscene_validator::Construct` and let the validator return a `Diagnostic`.
-That covers every construct DESIGN §10.1 puts in the LATER or REJECT band —
+That covers every construct
+`docs/specification/04-figma-vocabulary-profile.md` puts in the LATER or
+REJECT band —
 layer blur, backdrop blur, advanced blend modes, corner smoothing, noise.
 
 It does not cover a construct the v0.3 `Document` has **no field for**. Such a

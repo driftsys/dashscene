@@ -1,12 +1,13 @@
 # dashscene-core: arena + staged-mutation API (v0.1, v0.5 text intent, clip resolution)
 
 `dashscene-core` is the semantic model: an arena holding a node tree
-with layout and paint intent (DESIGN_1.md §5), mutated through the
-staged producer API (`open`/`set_prop`/`commit`, SCOPE_DECISIONS.md
-§9), resolving on commit into the committed output a painter consumes
-(boundary B, DESIGN_1.md §7.3). v0.1 scope: fixed-size layout, solid
+with layout and paint intent (`docs/design/dashbuf.md`), mutated
+through the staged producer API (`open`/`set_prop`/`commit`,
+`docs/decisions/staged-mutation-v01-scope.md`), resolving on commit
+into the committed output a painter consumes (boundary B,
+`docs/design/architecture.md`). v0.1 scope: fixed-size layout, solid
 fill, no Taffy, no variants — the walking skeleton
-(DESIGN_1.md §11). v0.5 (story #26) added text content and style as
+(`docs/roadmap.md`). v0.5 (story #26) added text content and style as
 intent, held on the node but not resolved into any committed output —
 see "Text intent" below. Story #97 added clip and corner intent, and the
 commit-time resolution of subtree clips into the clip regions boundary B
@@ -44,7 +45,8 @@ engine's `TaffySolver`.
 `NodeId` is a stable arena slot index (`u32`), returned by `add_node`
 and never invalidated — v0.1 has no node removal. It is deliberately
 distinct from document DFS order: DFS order (which doubles as the
-rect-table index, matching `dashbuf`'s flattened tree, DESIGN_1.md §5)
+rect-table index, matching `dashbuf`'s flattened tree,
+`docs/design/dashbuf.md`)
 is recomputed at every commit, not maintained as the arena's storage
 order. Keeping the arena `Vec` itself in DFS order was considered and
 rejected — insertion splicing to keep siblings contiguous is O(n) per
@@ -126,7 +128,7 @@ warranted.
 ## Clip resolution (story #97)
 
 `Prop::Clip(bool)` marks a node as clipping its children to its own
-(rounded) box (`Paint.clip`, DESIGN_1.md §8.1); `Prop::Corners { .. }`
+(rounded) box (`Paint.clip`, `docs/design/architecture.md`); `Prop::Corners { .. }`
 sets the per-corner radii that round both the node's own fill/stroke and
 that clip box. Both are intent; commit resolves the clip into the
 per-rect regions boundary B carries, because a flat rect table gives a
@@ -233,7 +235,7 @@ Full schema rationale: `docs/design/dashbuf.md`.
   resolve to the shared draws-nothing entry instead of a sentinel.
 - No `dashbuf` dependency — the arena mirrors the schema's field
   shapes; nothing links the generated flatbuffer code.
-- No `set_variant` — `SCOPE_DECISIONS.md` §9 scopes v0.1 to
+- No `set_variant` — `docs/decisions/staged-mutation-v01-scope.md` scopes v0.1 to
   `open`/`set_prop`/`commit`. Variants land at v0.4 with the variant
   table.
 - No node removal, no reparenting, no fill clearing, no value
@@ -242,7 +244,7 @@ Full schema rationale: `docs/design/dashbuf.md`.
 - Paint intent is solid fill + corner radii only: strokes, gradients and
   image fills exist at boundary B but no producer stages them yet (the
   goldens hand-build them). Clip boxes are axis-aligned — clip-on-rotated
-  is a v0.8 construct (DESIGN_1.md §11).
+  is a v0.8 construct (`docs/roadmap.md`).
 
 ## Module layout
 

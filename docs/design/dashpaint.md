@@ -6,14 +6,14 @@
 
 ## Purpose
 
-`dashpaint` defines boundary B (`specs/DESIGN_1.md` §4, §7.3, §8): the
+`dashpaint` defines boundary B (`docs/design/architecture.md`): the
 complete input a painter consumes, and the trait every painter implements.
 Principle P2 (`AGENTS.md`) holds throughout — a painter only colors; it
 never measures, wraps, kerns, or moves anything.
 
 Boundary B is a rect table plus a paint table plus a clip table. The paint vocabulary is
-the v0.3 slice's set (`specs/DESIGN_1.md` §11 v0.3, drawn from the
-§10.1 NOW list): solid fills, the four
+the v0.3 slice's set (`docs/roadmap.md`'s v0.3, drawn from
+`docs/specification/04-figma-vocabulary-profile.md`'s NOW list): solid fills, the four
 gradient kinds, image fills with scale modes, stroke with align,
 per-corner radii, and clip. The crate has no dependencies, including no
 `dashscene-core` and no `dashbuf` — see
@@ -22,7 +22,7 @@ per-corner radii, and clip. The crate has no dependencies, including no
 ## The boundary-B contract
 
 - The rect-table index is the document DFS node index
-  (`specs/DESIGN_1.md` §5); a `RectEntry` carries no id field of its own.
+  (`docs/design/dashbuf.md`); a `RectEntry` carries no id field of its own.
 - `RectEntry.paint` is an index into the `PaintTable`.
 - `RectEntry.clip` is an index into the `ClipTable`. Clipping crosses
   this boundary already resolved: `dashscene-core` walks the clipping
@@ -31,7 +31,7 @@ per-corner radii, and clip. The crate has no dependencies, including no
 - Solid-fill color is 4×f32 RGBA — the same shape as `dashbuf`'s `Color`
   struct (`crates/dashbuf/schema/dashbuf.fbs`), reproduced here as a
   plain type rather than shared by dependency.
-- The generation stamp (`specs/DESIGN_1.md` §7.3) belongs to the double
+- The generation stamp (`docs/design/architecture.md`) belongs to the double
   buffer `dashscene-core` owns, not to individual rect entries; it is out
   of scope for this crate.
 
@@ -98,7 +98,7 @@ All types and the trait live in `crates/dashpaint/src/lib.rs`:
   for a scene that clips nothing).
 
 `Color`, `RectEntry` and `ClipBox` are `#[repr(C)]` because
-`specs/DESIGN_1.md` §7.3 calls rect entries blittable and R-T4 plans
+`docs/design/architecture.md` calls rect entries blittable and R-T4 plans
 dirty-range instance-buffer uploads of per-frame painter input; fixing
 the layout now costs nothing. A `RectEntry` is 24 bytes — four
 coordinates plus the paint and clip indices — pinned by test.
@@ -108,7 +108,8 @@ Painter>` must work — backend selection is whole-scene, R3). Slice order
 defines stacking — a later entry composites over an earlier one, since
 DFS order encodes document stacking. The composited result is the
 contract; iteration order is the implementation's choice (the lean
-painter draws opaque cores front-to-back, `specs/DESIGN_1.md` §9 R-T2).
+painter draws opaque cores front-to-back,
+`docs/specification/03-target-hardware-rules.md`'s R-T2).
 An out-of-range paint index is a broken contract between crates;
 `PaintTable::resolve` centralizes the panic for that case, so no painter
 invents its own failure path (a silent skip would be the silent drop P4
@@ -131,7 +132,7 @@ deliberately does not restate its cases.
 
 ## Subtree clipping
 
-`Paint.clip` ("clips its children to its box", `specs/DESIGN_1.md` §8.1)
+`Paint.clip` ("clips its children to its box", `docs/design/architecture.md`)
 is a relation between a node and its descendants — the one construct a
 painter cannot be handed directly, since the flat rect table has no
 ancestors and P2 forbids re-deriving them. `dashscene-core` resolves it
@@ -144,8 +145,9 @@ fill and stroke. The full contract and the rejected alternatives are
 
 ## Trace
 
-- Satisfies: `specs/DESIGN_1.md` §8 painter trait (boundary B), §7.3
-  output shape, §11 v0.3 paint vocabulary (from the §10.1 NOW list);
+- Satisfies: `docs/design/architecture.md` painter trait (boundary B)
+  and output shape, `docs/roadmap.md`'s v0.3 paint vocabulary (from
+  `docs/specification/04-figma-vocabulary-profile.md`'s NOW list);
   issue #3, #13 and #97 acceptance
   criteria.
 - Blocks: #4 (`dashscene-skia`, first `Painter` implementation), #6

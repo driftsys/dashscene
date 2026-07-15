@@ -1,4 +1,4 @@
-//! Skia reference painter — v0 native painter, reference forever (DESIGN_1.md §8.1).
+//! Skia reference painter — v0 native painter, reference forever (docs/design/architecture.md).
 //!
 //! CPU raster only: deterministic, bit-exact output — the golden
 //! generator (§8). One [`Painter`] implementation over `skia-safe`,
@@ -260,7 +260,7 @@ fn gradient_paint(gradient: &Gradient, rect: &RectEntry) -> skia_safe::Paint {
     }
 }
 
-/// Diamond gradient: not a Skia primitive (DESIGN_1.md §8.1). An SkSL
+/// Diamond gradient: not a Skia primitive (docs/technotes/rendering-and-painters.md). An SkSL
 /// shader computes t = |x| + |y| in gradient unit space and samples a
 /// 1D ramp child — a linear gradient along x — so the stop machinery
 /// stays Skia's.
@@ -285,7 +285,7 @@ fn diamond_shader(colors: &[Color4f], positions: &[f32], frame: &Matrix) -> Opti
     effect.make_shader(Data::new_empty(), &[ramp.into()], Some(frame))
 }
 
-/// Stroke align by geometry expansion (DESIGN_1.md §8.1): Skia strokes
+/// Stroke align by geometry expansion (docs/technotes/rendering-and-painters.md): Skia strokes
 /// are center-only, so inside/outside strokes offset the stroked
 /// geometry by half the width (corner radii adjust with it) and
 /// center-stroke that.

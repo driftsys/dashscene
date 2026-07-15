@@ -23,7 +23,7 @@ license = "MIT"
 repository = "https://github.com/driftsys/dashscene-staging"
 rust-version = "1.85"
 
-# path + version for every internal crate, per house style (SCOPE_DECISIONS.md §7).
+# path + version for every internal crate, per house style (docs/decisions/house-style.md).
 # Publish order (see justfile `publish` recipe):
 #   dashbuf -> dashpaint -> dashscene-core -> dashscene-typeset ->
 #   dashscene-engine -> dashscene-validator -> dashscene-skia -> dashcue -> dashlang ->
@@ -43,7 +43,7 @@ dashc = { path = "crates/dashc", version = "0.0.0" }
 dashscene-unity = { path = "crates/dashscene-unity", version = "0.0.0" }
 dashscene-web = { path = "crates/dashscene-web", version = "0.0.0" }
 
-# Stack per DESIGN_1.md §2 — reserved here for crates to opt into as
+# Stack per docs/design/architecture.md — reserved here for crates to opt into as
 # implementation lands; not every crate depends on every entry.
 taffy = { version = "0.12", default-features = false, features = [
     "std",

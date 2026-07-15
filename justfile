@@ -1,7 +1,7 @@
 # dashscene-staging — task runner
 #
 # Recipe set mirrors driftsys/git-std's own justfile (house style, see
-# SCOPE_DECISIONS.md §7), plus two dashscene-specific additions: `wasm`
+# docs/decisions/house-style.md), plus two dashscene-specific additions: `wasm`
 # (dashc -> wasm32-unknown-unknown, needed by the Deno importer) and the
 # `deno-*` recipes scoped to importers/figma/.
 
@@ -132,6 +132,6 @@ deno-fmt:
     cd importers/figma && deno task fmt
 
 # Capture the Figma fixture corpus, image-fill bytes included. Needs
-# FIGMA_TOKEN (SCOPE_DECISIONS.md §11). Never commit the token.
+# FIGMA_TOKEN (docs/decisions/figma-access-plan-and-pat-policy.md). Never commit the token.
 deno-capture: wasm
     cd importers/figma && deno task capture

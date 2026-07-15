@@ -1,7 +1,7 @@
 //! Font handle for the runtime pipeline: owns the font bytes and the
 //! hhea vertical metrics — the same [`FontMetrics`](crate::atlas::FontMetrics)
-//! numbers the atlas metrics blob records (DESIGN_1.md §2: ttf-parser
-//! is the metrics source), extracted through one shared function so
+//! numbers the atlas metrics blob records (docs/design/architecture.md:
+//! ttf-parser is the metrics source), extracted through one shared function so
 //! the runtime and the build-time blob cannot disagree.
 
 use std::sync::Arc;

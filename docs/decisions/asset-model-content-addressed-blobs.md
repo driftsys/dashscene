@@ -9,8 +9,8 @@
 
 ## Context
 
-DESIGN §5 places heavy decor payloads (images, baked shadows, atlas
-textures) in cold sections, and the sectioned-container decision
+`docs/design/architecture.md` places heavy decor payloads (images, baked
+shadows, atlas textures) in cold sections, and the sectioned-container decision
 (`dsb-sectioned-container.md`) gives them a physical home: blob
 sections. Remoting (see `remoting-two-transports.md`) needs the same
 payloads fetched lazily over a pull channel. The question was what an
@@ -43,7 +43,8 @@ asset _bytes_ — P1 ("intent, never results") applied to assets:
   asset's identity), a **kind** enum, the **intrinsic metadata** the
   runtime needs before the payload exists (intrinsic size, pixel
   format, placeholder color), and a **flavor/locator** bit
-  (resident-raw / resident-compressed / external, per DESIGN §5).
+  (resident-raw / resident-compressed / external, per
+  `docs/design/architecture.md`).
 - The payload is **exactly the well-known format's bytes** — a KTX2, a
   PNG, a raw compressed-texture slab — with no dashscene framing
   inside. Interpretation lives in the `AssetEntry`, which is hot,

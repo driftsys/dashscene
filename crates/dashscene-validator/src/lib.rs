@@ -1,4 +1,4 @@
-//! Shared validation crate: paint-vocabulary profiles, diagnostics, waivers (DESIGN_1.md §3 P4, §5).
+//! Shared validation crate: paint-vocabulary profiles, diagnostics, waivers (docs/specification/02-principles.md P4, docs/design/architecture.md).
 //!
 //! P4 — "vocabulary is validated, never discovered" — needs three gates,
 //! because the three producer surfaces carry genuinely different
@@ -6,7 +6,7 @@
 //!
 //! | gate | entry point | answers |
 //! |---|---|---|
-//! | import | [`triage`] | is this source construct in the target's profile? (DESIGN §10.1) |
+//! | import | [`triage`] | is this source construct in the target's profile? (docs/specification/04-figma-vocabulary-profile.md) |
 //! | load | [`validate_document`] | is this `.dsb` internally consistent? |
 //! | paint | [`validate_scene`] | does this solved scene stay inside painter budgets? |
 //!
@@ -28,7 +28,7 @@
 //!
 //! let scrim = NodePath::new(7, "/card/scrim");
 //!
-//! // Backdrop blur is profile:full-only (DESIGN §10.1): a lean painter
+//! // Backdrop blur is profile:full-only (docs/specification/04-figma-vocabulary-profile.md): a lean painter
 //! // never gets it, so under profile:core it blocks the document.
 //! let d = triage(Construct::BackdropBlur, Profile::Core, scrim.clone());
 //! assert_eq!(d.rule, rule::BACKDROP_BLUR);
@@ -54,7 +54,7 @@ use std::fmt;
 /// The stable, greppable diagnostic ids. A diagnostic a designer sees has
 /// to be searchable, so rule ids are strings, not numbers.
 pub mod rule {
-    // Import gate — DESIGN §10.1's LATER (warn) band.
+    // Import gate — docs/specification/04-figma-vocabulary-profile.md's LATER (warn) band.
     pub const LAYER_BLUR: &str = "profile.layer-blur";
     pub const BACKDROP_BLUR: &str = "profile.backdrop-blur";
     pub const ADVANCED_BLEND_MODE: &str = "profile.advanced-blend-mode";
@@ -63,7 +63,7 @@ pub mod rule {
     pub const CLIP_ON_ROTATED: &str = "profile.clip-on-rotated";
     pub const KASHIDA_JUSTIFICATION: &str = "profile.kashida-justification";
 
-    // Import gate — DESIGN §10.1's REJECT (error) band.
+    // Import gate — docs/specification/04-figma-vocabulary-profile.md's REJECT (error) band.
     pub const NOISE_OR_TEXTURE_EFFECT: &str = "profile.noise-or-texture-effect";
     pub const PROGRESSIVE_BLUR: &str = "profile.progressive-blur";
     pub const ANIMATED_BOOLEAN_OP: &str = "profile.animated-boolean-op";
@@ -120,18 +120,18 @@ pub mod rule {
 /// assertion" is only true while both read the same constant.
 pub use dashpaint::MAX_GRADIENT_STOPS;
 
-/// A named paint-vocabulary subset a target honors (DESIGN §5, R6).
+/// A named paint-vocabulary subset a target honors (docs/design/architecture.md, R6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Profile {
     /// Lean / native painters: the subset a fixed-vocabulary painter can
     /// honor without a render-target round-trip.
     Core,
-    /// Unity-class: everything `Core` honors, plus the constructs DESIGN
-    /// §10.1 annotates `(profile:full)`.
+    /// Unity-class: everything `Core` honors, plus the constructs
+    /// docs/specification/04-figma-vocabulary-profile.md annotates `(profile:full)`.
     Full,
 }
 
-/// DESIGN §5: an `Error` blocks the document; a `Warning` is deferred
+/// docs/design/architecture.md: an `Error` blocks the document; a `Warning` is deferred
 /// vocabulary with a declared degrade. Release builds run strict — zero
 /// warnings, or an explicit waiver entry (waivers are v0.7, issue #41).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -141,7 +141,7 @@ pub enum Severity {
 }
 
 /// A node's identity: the document DFS index — which is the rect-table
-/// index too (DESIGN §5) — and its name path.
+/// index too (docs/design/dashbuf.md) — and its name path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodePath {
     pub index: u32,
@@ -208,9 +208,9 @@ impl fmt::Display for Location {
     }
 }
 
-/// One named diagnostic (DESIGN §5: `{rule id, node path, severity}`).
+/// One named diagnostic (docs/design/architecture.md: `{rule id, node path, severity}`).
 ///
-/// The workaround hint DESIGN also names is v0.7 scope (issue #41),
+/// The workaround hint docs/design/architecture.md also names is v0.7 scope (issue #41),
 /// alongside waivers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
@@ -245,7 +245,7 @@ impl Report {
         &self.diagnostics
     }
 
-    /// Whether the document is blocked — DESIGN §5: an error blocks
+    /// Whether the document is blocked — docs/design/architecture.md: an error blocks
     /// emission, a warning does not.
     pub fn has_errors(&self) -> bool {
         self.diagnostics

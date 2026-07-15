@@ -1,6 +1,6 @@
 //! Story #4 acceptance path: a scene committed by dashscene-core paints
 //! through the Skia CPU raster painter with exact, deterministic pixels
-//! (issue #4; DESIGN_1.md §8.1) — the first end-to-end crossing of
+//! (issue #4; docs/design/architecture.md) — the first end-to-end crossing of
 //! boundary B.
 
 use dashpaint::{

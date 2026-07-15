@@ -1,8 +1,9 @@
 # Technote — the rendering model & the painters
 
     status   design note, 2026-07-13. Captures conclusions from a design
-             discussion; extends specs/DESIGN_1.md and specs/SCOPE_DECISIONS.md
-             without superseding them. DECISION = settled; CANDIDATE / OPEN =
+             discussion; extends docs/archive/2026-07-14-design-1-seed.md
+             and docs/archive/2026-07-14-scope-decisions.md without
+             superseding them. DECISION = settled; CANDIDATE / OPEN =
              not.
     scope    what the SDF-quad painting model is and why it is fast; how the
              product backends are tiered (Unity / Skia / lean); and the internals
@@ -82,7 +83,8 @@ The individual techniques are well-known and shipped, not novel:
 - Analytic SDF shapes: Inigo Quilez's 2D distance functions are the canonical
   reference.
 - In our domain: Unity's TextMeshPro renders SDF text ("TMP-style rendering
-  without TMP typesetting", DESIGN §7.2); Qt Quick renders glyphs via distance
+  without TMP typesetting", `docs/archive/2026-07-14-design-1-seed.md`
+  §7.2); Qt Quick renders glyphs via distance
   fields by default on GL, and Qt is a dominant automotive HMI stack; Godot,
   Unreal, Kanzi use SDF fonts. Crisp SDF text in a cockpit is industry-standard.
 
@@ -95,7 +97,7 @@ the only asterisk is small text, and it is bounded and scheduled.
 
 ## 5. Backend tiering — Unity high-end, trimmed Skia entry, lean painter gated
 
-DECISION (resolves the product-tier question).
+DECISION → [`backend-tiering-unity-skia-lean.md`](../decisions/backend-tiering-unity-skia-lean.md)
 
 Lit / 3D / world-space UI is a **firm requirement for high-end products** and
 **not needed on entry products**. That is a whole-scene, per-product backend split
@@ -250,8 +252,9 @@ managed heap. Boehm is non-compacting → fragments over long runs, so zero-allo
 steady state matters double for a long-running cockpit. This zeroes _dash's_ delta;
 it cannot remove Unity's own engine floor.
 
-DECISION direction: **BatchRendererGroup (BRG) over GameObject-per-node** for the
-bulk SDF-quad UI. GameObject-per-node maintains a full scene-graph mirror (Transform
+DECISION direction → [`unity-painter-uses-brg.md`](../decisions/unity-painter-uses-brg.md):
+**BatchRendererGroup (BRG) over GameObject-per-node** for the bulk SDF-quad UI.
+GameObject-per-node maintains a full scene-graph mirror (Transform
 hierarchy, per-renderer culling, a managed object per node) — the "scene-graph
 duplication" §8.3 avoids. BRG draws N instances of a quad+material from a
 `GraphicsBuffer` filled from a NativeArray (ideally a Burst job): no GameObjects,

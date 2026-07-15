@@ -1,9 +1,9 @@
-//! Compiler CLI: Figma importer orchestration target, Figma-to-dashscene lowering, diagnostics, .dsb emission. Also builds to wasm32-unknown-unknown for the Deno importer (DESIGN_1.md §4, §6.1).
+//! Compiler CLI: Figma importer orchestration target, Figma-to-dashscene lowering, diagnostics, .dsb emission. Also builds to wasm32-unknown-unknown for the Deno importer (docs/design/architecture.md, docs/design/dashc.md).
 //!
 //! Same Rust code path whether invoked natively (CI, the `dashc` CLI) or
 //! compiled to wasm32-unknown-unknown and called from the Deno Figma
 //! importer (`importers/figma/`) — no reimplementation, see
-//! SCOPE_DECISIONS.md §4.
+//! docs/decisions/figma-importer-deno-plus-dashc-wasm.md.
 //!
 //! # The pipeline
 //!
@@ -92,9 +92,9 @@ fn emit_and_validate(doc: &Document) -> (Vec<u8>, Report) {
 /// Emits a [`Document`] as `.dsb` bytes, or refuses with the diagnostics that
 /// block it.
 ///
-/// This is the gate DESIGN §5 describes: an error blocks the document.
-/// (§5 spells the extension `.scb`, the working name the seed document
-/// used; SCOPE_DECISIONS §3 retired it in favour of `.dsb`.)
+/// This is the gate docs/design/architecture.md describes: an error blocks the document.
+/// (The seed design spelled the extension `.scb`, the working name the seed document
+/// used; docs/decisions/dsb-format-and-one-schema.md retired it in favour of `.dsb`.)
 ///
 /// The document is emitted first and validated **as a document**, not as a
 /// `Document`: the load gate's rules are about the serialized index model — a

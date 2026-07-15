@@ -5,7 +5,7 @@
 # does the repo-specific setup (git hooks, etc.) from there. Run this
 # right after cloning or creating a worktree.
 #
-# House style: SCOPE_DECISIONS.md §7. Adapted from driftsys/git-std's own
+# House style: docs/decisions/house-style.md. Adapted from driftsys/git-std's own
 # bootstrap script.
 
 set -euo pipefail

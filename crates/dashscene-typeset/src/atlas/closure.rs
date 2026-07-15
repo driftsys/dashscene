@@ -1,4 +1,4 @@
-//! Charset → glyph-id closure via cmap (DESIGN_1.md §7.2).
+//! Charset → glyph-id closure via cmap (docs/design/architecture.md).
 //!
 //! v0.5 scope: nominal cmap lookups only. Contextual/ligature glyphs
 //! that only shaping can discover are supplied via `extra_glyph_ids`

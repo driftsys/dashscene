@@ -6,7 +6,7 @@
 
 ## Context
 
-DESIGN_1.md §7.2 describes the shaped-run cache as keyed by
+`docs/design/typeset-latin.md` describes the shaped-run cache as keyed by
 "string + style". Story #28 had to decide what the cache stores
 (positioned pixels or unpositioned font-unit data) and what exactly
 the key covers, given that `Typesetter` in v0.5 holds exactly one
@@ -33,7 +33,7 @@ Option 1. `Typesetter::cache: HashMap<Box<str>, Arc<ShapedText>>`
 paragraph's text; `Typesetter::shaped` looks up or inserts, then every
 `layout()` call scales and positions the (possibly shared) cached
 `ShapedText` against the requested `size`/`max_width`. This is a
-refinement of DESIGN §7.2's "string + style" key: while the font is
+refinement of `docs/design/typeset-latin.md`'s "string + style" key: while the font is
 fixed per `Typesetter`, the only shaping-relevant style component is
 already pinned, so the key reduces to the string alone — a `(text,
 size)` pair is not needed because shaping output (glyph ids, advances,

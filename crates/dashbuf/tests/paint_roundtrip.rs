@@ -343,7 +343,7 @@ fn two_nodes_share_one_paint_pool_entry() {
     let nodes = decoded.nodes().expect("nodes present");
     let paints = decoded.paints().expect("paints present");
     // Both nodes reference the one pooled entry — the dedup-style-pool
-    // shape of DESIGN §5.
+    // shape of docs/design/dashbuf.md.
     assert_eq!(paints.len(), 1);
     for index in 0..nodes.len() {
         let entry = paints.get(nodes.get(index).paint_entry() as usize);

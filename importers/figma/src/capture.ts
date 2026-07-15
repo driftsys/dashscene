@@ -1,6 +1,6 @@
 /**
  * Fixture capture tool: record-and-replay for the tier-1 corpus
- * (DESIGN_1.md §6.1, SCOPE_DECISIONS.md §8).
+ * (docs/design/dashc.md, corpus/figma-fixtures/README.md).
  *
  * Reads `corpus/figma-fixtures/manifest.json`, fetches each fixture's
  * `GET /v1/files/:key?plugin_data=shared` JSON, and writes it to
@@ -13,7 +13,7 @@
  * committing it would rewrite the fixture on every capture (issue #141).
  *
  * HTTP, auth, and rate limiting are delegated to the REST client in
- * `fetch.ts`, which enforces the SCOPE_DECISIONS.md §11 access rules. This
+ * `fetch.ts`, which enforces the docs/decisions/figma-access-plan-and-pat-policy.md access rules. This
  * tool adds the capture policy on top: a metadata version check runs first,
  * so the full `GET /file` is skipped when the file is unchanged.
  *
@@ -289,7 +289,8 @@ if (import.meta.main) {
   if (!token) {
     console.error(
       "FIGMA_TOKEN is not set. Create a Figma PAT with the scopes " +
-        REQUIRED_SCOPES + " (SCOPE_DECISIONS.md §11) and export it. " +
+        REQUIRED_SCOPES +
+        " (docs/decisions/figma-access-plan-and-pat-policy.md) and export it. " +
         "Never commit it.",
     );
     Deno.exit(1);

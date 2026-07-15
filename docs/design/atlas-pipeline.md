@@ -2,7 +2,8 @@
 
     crate    crates/dashscene-typeset (module `atlas`)
     covers   v0.5 — text I: Latin (story #27, epic #24)
-    traces   DESIGN_1.md §7.2 (build-time half), §2 (stack: msdf-atlas-gen,
+    traces   docs/archive/2026-07-14-design-1-seed.md §7.2 (build-time
+             half), docs/design/architecture.md (stack: msdf-atlas-gen,
              ttf-parser), R1 (text quality), R7 (byte-reproducible
              builds), P4 (validated vocabulary, named diagnostics),
              docs/decisions/q1-msdf-below-14px.md (32 px/em, pxrange 4),
@@ -10,7 +11,7 @@
 
 ## Purpose
 
-The build-time half of DESIGN §7.2: given a font file and a charset,
+The build-time half of `docs/archive/2026-07-14-design-1-seed.md` §7.2: given a font file and a charset,
 produce the two artifacts every painter consumes at runtime —
 
     font.ttf ──► glyph atlas image (MSDF, keyed by GLYPH ID)
@@ -22,7 +23,8 @@ charset is an input parameter; per-locale charsets arrive with #34.
 ## Contract pins
 
 - The atlas is keyed by **glyph id**, never by codepoint — contextual
-  forms are just glyphs via GSUB (DESIGN §7.2, confirmed by spike #25:
+  forms are just glyphs via GSUB (`docs/archive/2026-07-14-design-1-seed.md`
+  §7.2, confirmed by spike #25:
   Noto Sans Arabic is unrepresentable under codepoint keying).
 - Generator: `msdf-atlas-gen`, `-type msdf -size 32 -pxrange 4`, pinned
   tool version and seed (spike #25 +
@@ -36,8 +38,8 @@ charset is an input parameter; per-locale charsets arrive with #34.
 
 ## Home
 
-`dashscene-typeset` (DESIGN §13 maps the atlas pipeline to the text
-crate). Module `atlas` under `crates/dashscene-typeset/src/atlas/`,
+`dashscene-typeset` (`docs/design/architecture.md` maps the atlas pipeline
+to the text crate). Module `atlas` under `crates/dashscene-typeset/src/atlas/`,
 public API re-exported from the crate root as `dashscene_typeset::atlas`.
 No CLI in this story — `dashc` owns command-line surfaces; a cargo
 example regenerates the committed test fixture.
@@ -136,8 +138,8 @@ is MSDF, and the atlas texel-bounds origin is bottom-left
 `yOrigin` the tool reports, so a drifted invocation fails loudly rather
 than silently changing the stored convention.
 
-Advances come from `ttf-parser` (hmtx), not the tool JSON — DESIGN §2
-names ttf-parser as the metrics source; `build_glyph_entries` rejects
+Advances come from `ttf-parser` (hmtx), not the tool JSON —
+`docs/design/architecture.md` names ttf-parser as the metrics source; `build_glyph_entries` rejects
 the pipeline (`AtlasError::ToolOutput`) if the tool's advance disagrees
 with hmtx by more than 1e-3 em, catching parameter drift such as an
 accidental `-fontscale`. Plane/atlas bounds come from the tool JSON
@@ -238,8 +240,9 @@ per-size bitmap fallback (parked by
 
 ## Trace
 
-- Satisfies: DESIGN_1.md §7.2 (build-time atlas pipeline), §2 (stack),
-  R1, R7, P4; issue #27 acceptance criteria.
+- Satisfies: `docs/archive/2026-07-14-design-1-seed.md` §7.2 (build-time
+  atlas pipeline), `docs/design/architecture.md` (stack), R1, R7, P4;
+  issue #27 acceptance criteria.
 - Blocks: #30 (Skia glyph quads), #34 (per-locale charsets).
 - Related decisions:
   `docs/decisions/atlas-gen-external-pinned-binary.md`,

@@ -9,18 +9,19 @@
 ## Context
 
 P4 — "vocabulary is validated, never discovered; every out-of-profile
-construct is a named diagnostic, never a silent drop" — and DESIGN §5's
-requirement that the validator run from day one, while the permissive Skia
-painter can still draw everything.
+construct is a named diagnostic, never a silent drop" — and
+`docs/design/architecture.md`'s requirement that the validator run from
+day one, while the permissive Skia painter can still draw everything.
 
 Story #15 assumed one validation entry point wired at "both producer
-entries (DSL commit, dashc compile)". Reading the code and DESIGN §10.1
-against each other showed that a single entry point cannot express the
-rules, because the three things the validator must catch live on three
-different surfaces:
+entries (DSL commit, dashc compile)". Reading the code and
+`docs/specification/04-figma-vocabulary-profile.md` against each other
+showed that a single entry point cannot express the rules, because the
+three things the validator must catch live on three different surfaces:
 
-1. **Out-of-profile constructs never reach the document.** DESIGN §10.1's
-   triage table puts the entire v0.3 vocabulary — all four gradient kinds,
+1. **Out-of-profile constructs never reach the document.**
+   `docs/specification/04-figma-vocabulary-profile.md`'s triage table
+   puts the entire v0.3 vocabulary — all four gradient kinds,
    image fills and scale modes, axis-aligned + rounded clip, full
    auto-layout — in the **NOW** band. The constructs that are out of profile
    (layer blur, backdrop blur, advanced blend modes, corner smoothing,
@@ -71,7 +72,8 @@ Option 3.
 
 P5: "Figma compatibility is a property of one producer." The validator owns
 the **verdict**; the producer owns the **mapping**. So the gate is keyed by
-a source-agnostic `Construct` enum naming DESIGN §10.1's LATER and REJECT
+a source-agnostic `Construct` enum naming
+`docs/specification/04-figma-vocabulary-profile.md`'s LATER and REJECT
 vocabulary, and `dashc` (#16) maps Figma REST JSON onto it. A `figma`
 module inside the validator was rejected on P5 grounds: it would make every
 future producer's vocabulary the validator's problem.
@@ -87,7 +89,9 @@ a check that does not happen. The parameter returns at v0.8, when effects
 enter the schema and give it a rule to select.
 
 At v0.3 the profiles therefore differ in exactly one place — the import
-gate, on the two constructs DESIGN §10.1 annotates `(profile:full)`:
+gate, on the two constructs
+`docs/specification/04-figma-vocabulary-profile.md` annotates
+`(profile:full)`:
 
 | construct                   | `profile:core`                                                          | `profile:full`                       |
 | --------------------------- | ----------------------------------------------------------------------- | ------------------------------------ |
@@ -96,12 +100,13 @@ gate, on the two constructs DESIGN §10.1 annotates `(profile:full)`:
 | every other LATER construct | Warning                                                                 | Warning                              |
 | every REJECT construct      | Error                                                                   | Error                                |
 
-### Severity means what DESIGN §5 says it means
+### Severity means what the original design doc said
 
 `Error` blocks the document; `Warning` is deferred vocabulary with a
 declared degrade. A release build runs strict — zero warnings, or an
-explicit waiver entry. Waivers and the workaround hint DESIGN §5 also names
-in the diagnostic tuple are v0.7 (#41); v0.3 ships
+explicit waiver entry. Waivers and the workaround hint
+`docs/archive/2026-07-14-design-1-seed.md` §6.1 also names in the
+diagnostic tuple are v0.7 (#41); v0.3 ships
 `{rule, severity, node path, message}`.
 
 Rule ids are stable, greppable strings (`paint.gradient.no-stops`), not

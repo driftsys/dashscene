@@ -35,7 +35,7 @@ fn main() -> ExitCode {
 
 /// Runs the load gate over a `.dsb` and reports.
 ///
-/// An error blocks the document (DESIGN §5, R6); a warning does not, but a
+/// An error blocks the document (docs/design/architecture.md, R6); a warning does not, but a
 /// strict build refuses it (waivers are v0.7, issue #41).
 fn check(path: &str) -> ExitCode {
     let bytes = match std::fs::read(path) {

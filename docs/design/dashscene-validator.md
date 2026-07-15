@@ -20,18 +20,19 @@ published earlier, and `CommittedScene`'s accessors already hand out
 
 ## The three gates
 
-| gate   | entry point                                                                    | input                         | catches                                                               |
-| ------ | ------------------------------------------------------------------------------ | ----------------------------- | --------------------------------------------------------------------- |
-| import | `triage(Construct, Profile, NodePath) -> Diagnostic`                           | the producer's own vocabulary | out-of-profile constructs (DESIGN §10.1)                              |
-| load   | `validate_document(&Document) -> Report`                                       | a `.dsb`                      | referential integrity, unknown enum values, geometry-free paint rules |
-| paint  | `validate_scene(&[RectEntry], &PaintTable, &ImageTable, &ClipTable) -> Report` | boundary B                    | geometry budgets, runtime index resolution                            |
+| gate   | entry point                                                                    | input                         | catches                                                                         |
+| ------ | ------------------------------------------------------------------------------ | ----------------------------- | ------------------------------------------------------------------------------- |
+| import | `triage(Construct, Profile, NodePath) -> Diagnostic`                           | the producer's own vocabulary | out-of-profile constructs (`docs/specification/04-figma-vocabulary-profile.md`) |
+| load   | `validate_document(&Document) -> Report`                                       | a `.dsb`                      | referential integrity, unknown enum values, geometry-free paint rules           |
+| paint  | `validate_scene(&[RectEntry], &PaintTable, &ImageTable, &ClipTable) -> Report` | boundary B                    | geometry budgets, runtime index resolution                                      |
 
 They are not interchangeable — each of the three failure classes is
 invisible to the other two gates. See the decision record.
 
 ## Diagnostic
 
-DESIGN §5's tuple, minus the workaround hint (v0.7, #41):
+`docs/archive/2026-07-14-design-1-seed.md` §6.1's tuple, minus the workaround
+hint (v0.7, #41):
 
     pub struct Diagnostic {
         pub rule: &'static str,  // stable, greppable: "paint.gradient.no-stops"
@@ -79,8 +80,9 @@ Boundary B has none, so a scene node diagnostic renders as `#3`.
 ## Profiles
 
 `Profile::Core` (lean/native painters) and `Profile::Full` (Unity-class).
-At v0.3 they diverge only at the import gate, on the two constructs DESIGN
-§10.1 annotates `(profile:full)` — backdrop blur and advanced blend modes,
+At v0.3 they diverge only at the import gate, on the two constructs
+`docs/specification/04-figma-vocabulary-profile.md` annotates
+`(profile:full)` — backdrop blur and advanced blend modes,
 which a `Core` target can never honor and so cannot degrade to anything.
 
 `validate_document` takes no profile: every construct the v0.3 schema can
@@ -128,7 +130,8 @@ authoring mistake N times and bury the rest of the report.
 
 ## Import-gate vocabulary
 
-`Construct` names DESIGN §10.1's LATER and REJECT bands, and nothing else —
+`Construct` names `docs/specification/04-figma-vocabulary-profile.md`'s
+LATER and REJECT bands, and nothing else —
 the NOW band is simply the schema.
 
     LATER (warn)    LayerBlur, BackdropBlur*, AdvancedBlendMode*,

@@ -5,8 +5,9 @@
 
 ## Purpose
 
-`dashcue` is the descriptive animation vocabulary of `DESIGN_1.md` §6.3
-and the runtime scheduling that advances it. Producers declare _how_ a
+`dashcue` is the descriptive animation vocabulary of
+`docs/archive/2026-07-14-design-1-seed.md` §6.3 and the runtime
+scheduling that advances it. Producers declare _how_ a
 change animates as data; the runtime owns time and advances the
 animation (P3 — nothing producer-side executes inside the frame loop).
 
@@ -17,11 +18,12 @@ and tested mid-flight retarget semantics (R4), and a scheduler that
 advances active tracks from a caller-supplied time step and exposes the
 current sampled values.
 
-Out of scope for this slice (later vocabulary rows of §6.3): per-prop
+Out of scope for this slice (later vocabulary rows of
+`docs/archive/2026-07-14-design-1-seed.md` §6.3): per-prop
 smoothing, loop tracks, standalone keyframe tracks, enter/exit specs.
 FLIP capture and wiring is story #22 (`dashscene-engine`).
 
-## The seam (SCOPE_DECISIONS.md §9)
+## The seam (`docs/decisions/staged-mutation-v01-scope.md`)
 
 - `set_variant` — the structural switch — is `dashscene-core`'s.
 - The transition spec describing how that switch animates is `dashcue`
@@ -200,9 +202,9 @@ goldens in this story (E5 goldens are #23).
 
 ## Trace
 
-- Satisfies: `DESIGN_1.md` §6.3 (descriptive animation vocabulary,
-  variant-transition row); R4 (interruptibility, bounded cost); issue
-  #21 acceptance criteria.
+- Satisfies: `docs/archive/2026-07-14-design-1-seed.md` §6.3
+  (descriptive animation vocabulary, variant-transition row); R4
+  (interruptibility, bounded cost); issue #21 acceptance criteria.
 - Blocks: #22 (`dashscene-engine`, FLIP capture/wiring and commit-time
   binding of `(from, to)`); #23 (E5 goldens); future `dashbuf` schema
   work for persisting transition specs.

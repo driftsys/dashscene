@@ -1,4 +1,4 @@
-//! The import gate: DESIGN §10.1's vocabulary triage.
+//! The import gate: docs/specification/04-figma-vocabulary-profile.md's vocabulary triage.
 //!
 //! A producer maps its own source vocabulary onto [`Construct`] and asks
 //! for the verdict. The validator never parses a source format — P5,
@@ -6,14 +6,14 @@
 //! the policy, and `dashc` (issue #16) owns the Figma-JSON mapping onto
 //! it.
 //!
-//! Only out-of-profile vocabulary is named here. DESIGN §10.1's NOW band
+//! Only out-of-profile vocabulary is named here. docs/specification/04-figma-vocabulary-profile.md's NOW band
 //! — all four gradient kinds, image fills and scale modes, axis-aligned +
 //! rounded clip, full auto-layout — is simply the schema, and needs no
 //! verdict.
 
 use crate::{Diagnostic, Location, NodePath, Profile, Severity, rule};
 
-/// A design-vocabulary construct outside the NOW band (DESIGN §10.1).
+/// A design-vocabulary construct outside the NOW band (docs/specification/04-figma-vocabulary-profile.md).
 ///
 /// Constructing one means the producer *found* the construct; the verdict
 /// says what happens next. Every variant is at least a warning — that is
@@ -65,7 +65,7 @@ impl Construct {
     /// The verdict for this construct under `profile`.
     ///
     /// The REJECT band is an error in every profile. The LATER band is a
-    /// warning — except for the two constructs DESIGN §10.1 annotates
+    /// warning — except for the two constructs docs/specification/04-figma-vocabulary-profile.md annotates
     /// `(profile:full)`, which a `Core` target can never honor at all, so
     /// there they are an error rather than a degrade.
     pub fn verdict(self, profile: Profile) -> Severity {
@@ -106,11 +106,11 @@ impl Construct {
         match self.verdict(profile) {
             Severity::Error => format!(
                 "{name} is not in profile:{}; it is out of the supported vocabulary \
-                 (DESIGN §10.1) and blocks the document",
+                 (docs/specification/04-figma-vocabulary-profile.md) and blocks the document",
                 profile_name(profile)
             ),
             Severity::Warning => format!(
-                "{name} is deferred vocabulary in profile:{} (DESIGN §10.1); it degrades \
+                "{name} is deferred vocabulary in profile:{} (docs/specification/04-figma-vocabulary-profile.md); it degrades \
                  as declared, and a strict build refuses it without a waiver",
                 profile_name(profile)
             ),

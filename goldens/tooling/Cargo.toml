@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Golden-image harness: renders scenes through the reference painter and compares them against checked-in PNGs (DESIGN_1.md §8, §11 v0.1)."
+description = "Golden-image harness: renders scenes through the reference painter and compares them against checked-in PNGs (docs/design/architecture.md, docs/roadmap.md v0.1)."
 
 [dependencies]
 skia-safe.workspace = true

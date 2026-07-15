@@ -1,6 +1,6 @@
 #:schema https://driftsys.github.io/git-std/schemas/v1/git-std.schema.json
 # git-std configuration for dashscene-staging.
-# See SCOPE_DECISIONS.md §7 — dogfoods git-std's own conventions.
+# See docs/decisions/house-style.md — dogfoods git-std's own conventions.
 
 scheme = "semver"
 # Explicit rather than "auto" (which only discovers crates/*): "auto"
@@ -20,9 +20,6 @@ scheme = "semver"
 #                            capture tool, which have their own
 #                            toolchain and their own CI job
 #
-# specs/ has no scope of its own: it is documentation, so it takes
-# `docs`, the same as docs/. Splitting prose across two scopes buys a
-# changelog reader nothing.
 scopes = [
     "dashscene",
     "dashscene-core",

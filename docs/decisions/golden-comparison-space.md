@@ -64,8 +64,8 @@ identically across machines — integer-aligned, un-antialiased geometry
 (solid fills). For anti-aliased content the harness offers a
 differing-pixel **tolerance**: `assert_matches_golden_within(name, png,
 max_fraction)` fails only when more than `max_fraction` of pixels
-differ. This is DESIGN_1.md §8's "tolerance-based perceptual diff",
-which the design placed at GPU painters, brought forward to CPU-raster
+differ. This is `docs/technotes/rendering-and-painters.md`'s
+"tolerance-based perceptual diff", which the design placed at GPU painters, brought forward to CPU-raster
 AA because the same cross-architecture coverage jitter applies.
 
 - `assert_matches_golden` stays exact (fraction 0) — v0.1's

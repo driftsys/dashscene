@@ -10,7 +10,7 @@
 //!
 //! Every assertion here is pinned by the captured corpus, not by a reading of
 //! Figma's documentation: `v03-paint.json` is the emission fixture and
-//! `effects-2025.json` is the diagnostic fixture (SCOPE_DECISIONS §8).
+//! `effects-2025.json` is the diagnostic fixture (corpus/figma-fixtures/README.md).
 
 use std::collections::BTreeMap;
 
@@ -704,7 +704,7 @@ fn each_diagnostic_points_at_its_own_node() {
         let Location::Node(at) = &diagnostic.at else {
             panic!("{name}: a triaged construct is located at a node");
         };
-        // The node's own DFS index — which is its rect-table index (DESIGN §5).
+        // The node's own DFS index — which is its rect-table index (docs/design/dashbuf.md).
         let (index, _) = node(&doc, name);
         assert_eq!(at.index, index, "{name}");
         assert_eq!(at.path, format!("/effects-2025/{name}"), "{name}");
@@ -1100,7 +1100,7 @@ fn emission_from_the_fixture_is_byte_reproducible() {
 
 #[test]
 fn the_reject_fixture_is_refused_rather_than_emitted() {
-    // effects-2025 is a DIAGNOSTIC fixture (SCOPE §8): everything in it is
+    // effects-2025 is a DIAGNOSTIC fixture (corpus/figma-fixtures/README.md): everything in it is
     // REJECT-band, so under R6 it can never emit a .dsb. The report must name
     // each construct — never a silent drop (P4).
     let json = effects_2025_without_auto_layout().to_string();

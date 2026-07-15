@@ -1,10 +1,10 @@
-//! Paint table (fill/stroke/effect params, token refs, material class) + the painter trait — boundary B (DESIGN_1.md §8).
+//! Paint table (fill/stroke/effect params, token refs, material class) + the painter trait — boundary B (docs/design/architecture.md).
 //!
-//! Vocabulary scope: the v0.3 slice (DESIGN_1.md §11, drawn from the
-//! §10.1 NOW list) — solid fills,
+//! Vocabulary scope: the v0.3 slice (docs/roadmap.md, drawn from the
+//! docs/specification/04-figma-vocabulary-profile.md NOW list) — solid fills,
 //! the four gradient kinds, image fills with scale modes, stroke with
 //! align, rounded corners, and clip. The rect-table index is the document
-//! DFS node index (DESIGN_1.md §5); `RectEntry.paint` indexes the
+//! DFS node index (docs/design/dashbuf.md); `RectEntry.paint` indexes the
 //! [`PaintTable`] and `RectEntry.clip` indexes the [`ClipTable`].
 //!
 //! Clipping crosses this boundary already resolved: `dashscene-core`
@@ -15,7 +15,7 @@
 /// An RGBA color, 4×f32 — the same shape as `dashbuf`'s `Color` struct.
 ///
 /// `#[repr(C)]` fixes the layout now: solid-fill colors are per-frame
-/// painter input, and DESIGN_1.md §9 (R-T4) plans instance-buffer uploads
+/// painter input, and docs/specification/03-target-hardware-rules.md (R-T4) plans instance-buffer uploads
 /// of that input, even though nothing uploads it yet.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -55,13 +55,13 @@ impl ClipIndex {
     pub const UNCLIPPED: ClipIndex = ClipIndex(0);
 }
 
-/// One resolved rectangle — boundary B's per-node unit (DESIGN_1.md §7.3).
+/// One resolved rectangle — boundary B's per-node unit (docs/design/architecture.md).
 ///
 /// The rect-table index of this entry is the document DFS node index, so
 /// there is no id field. `paint` resolves in the [`PaintTable`], `clip`
 /// in the [`ClipTable`].
 ///
-/// `#[repr(C)]`: DESIGN_1.md §7.3 calls rect entries blittable, and R-T4
+/// `#[repr(C)]`: docs/design/architecture.md calls rect entries blittable, and R-T4
 /// plans dirty-range instance-buffer uploads straight from the rect table.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -108,7 +108,7 @@ pub struct GradientStop {
     pub color: Color,
 }
 
-/// The four gradient kinds of DESIGN_1.md §10.1 (angular serves gauges).
+/// The four gradient kinds of docs/specification/04-figma-vocabulary-profile.md (angular serves gauges).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GradientKind {
     Linear,
@@ -155,8 +155,8 @@ pub enum ScaleMode {
 }
 
 /// Encoded image container formats a painter can decode. Mirrors
-/// `dashbuf`'s `ImageFormat`; GPU-native containers (KTX2, DESIGN_1.md
-/// §9) arrive as new variants.
+/// `dashbuf`'s `ImageFormat`; GPU-native containers (KTX2,
+/// docs/specification/03-target-hardware-rules.md) arrive as new variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageFormat {
     Png,
@@ -220,7 +220,7 @@ impl ImageTable {
 
 /// Stroke placement relative to the node's outline. Painters that only
 /// stroke on center lower Inside/Outside by path expansion
-/// (DESIGN_1.md §8.1).
+/// (docs/technotes/rendering-and-painters.md).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StrokeAlign {
     Inside,
@@ -268,7 +268,7 @@ pub struct ClipBox {
 /// which are the boxes of its clipping ancestors, outermost first. No
 /// boxes = unclipped.
 ///
-/// `dashscene-core` resolves this at commit (DESIGN_1.md §8.1
+/// `dashscene-core` resolves this at commit (docs/design/architecture.md
 /// `Paint.clip` — "clips its children to its box"): boundary B is a flat
 /// rect table, so a painter has no ancestors to walk and P2 forbids it
 /// re-deriving them. The box list is kept rather than pre-intersected
@@ -381,7 +381,7 @@ pub enum PaintKind {
     },
 }
 
-/// One paint-table entry (DESIGN_1.md §5's paint-table row: paint-kind
+/// One paint-table entry (docs/design/dashbuf.md's paint-table row: paint-kind
 /// enum plus fill/stroke params): what a rect is filled with, how its
 /// outline is stroked, and how its corners round.
 ///
@@ -389,7 +389,7 @@ pub enum PaintKind {
 /// nothing but still occupies its rect-table slot (index = DFS node
 /// index).
 ///
-/// Whether a node clips its children (`Paint.clip`, DESIGN_1.md §8.1)
+/// Whether a node clips its children (`Paint.clip`, docs/design/architecture.md)
 /// is *intent*, and does not appear here: `dashscene-core` resolves it
 /// at commit into the [`ClipTable`] each [`RectEntry::clip`] references
 /// (issue #97). The intent itself lives in the document (`dashbuf`'s
@@ -411,7 +411,7 @@ impl PaintEntry {
     }
 }
 
-/// The paint table (DESIGN_1.md §5): dense, indexed by `RectEntry.paint`.
+/// The paint table (docs/design/dashbuf.md): dense, indexed by `RectEntry.paint`.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PaintTable {
     entries: Vec<PaintEntry>,
@@ -460,7 +460,7 @@ impl PaintTable {
     }
 }
 
-/// Boundary B (DESIGN_1.md §4, §8): the one trait every paint backend
+/// Boundary B (docs/design/architecture.md): the one trait every paint backend
 /// implements. A painter only colors — it never measures, wraps, kerns,
 /// or moves anything (P2).
 pub trait Painter {
@@ -479,7 +479,7 @@ pub trait Painter {
     /// earlier one (DFS order encodes document stacking). The composited
     /// result is the contract; iteration order is the implementation's
     /// choice (the lean painter draws opaque cores front-to-back,
-    /// DESIGN_1.md §9 R-T2).
+    /// docs/specification/03-target-hardware-rules.md R-T2).
     ///
     /// Infallible by design: vocabulary and indices are validated upstream
     /// (P4), so there is no legitimate runtime failure. An out-of-range

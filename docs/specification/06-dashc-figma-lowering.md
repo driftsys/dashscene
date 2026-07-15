@@ -6,8 +6,9 @@ in the decision records this document links.
 
 These requirements are gardened from the story's acceptance criteria and its
 lowering and triage tables. They introduce no new project-level requirement:
-they refine how DESIGN_1.md's R6 (an error blocks the document) and R7
-(byte-reproducible emission) and principles P1, P4, and P5 apply to this
+they refine how `docs/specification/01-goals-and-requirements.md`'s R6
+(an error blocks the document) and R7 (byte-reproducible emission) and
+principles P1, P4, and P5 apply to this
 producer. Each is verified by a test in
 `crates/dashc/tests/figma_lowering.rs` unless stated otherwise.
 
@@ -20,7 +21,9 @@ document, through the pipeline
 
 and nothing downstream of the `figma` module shall be Figma-aware (P5).
 
-The vocabulary compiled at v0.3 is DESIGN §10.1's NOW band as the v0.3 `Document`
+The vocabulary compiled at v0.3 is
+`docs/specification/04-figma-vocabulary-profile.md`'s NOW band as the v0.3
+`Document`
 can express it: fixed-position frames, solid fills, the four gradient kinds,
 image fills with their scale mode, solid strokes in all three alignments,
 uniform and per-corner radii, and axis-aligned clip. Text, flex layout, and

@@ -9,7 +9,8 @@
 
 `dashc` builds to `wasm32-unknown-unknown` so the Deno importer can run the
 same Rust code path the native library call runs
-(`docs/decisions/dashc-document-model-and-load-path.md`; SCOPE_DECISIONS.md §4).
+(`docs/decisions/dashc-document-model-and-load-path.md`;
+`docs/decisions/figma-importer-deno-plus-dashc-wasm.md`).
 Before story #17 that was aspiration, not fact: the crate was a bare
 `cdylib` with no `#[unsafe(no_mangle)]` exports and no bindgen, so `just
 wasm` produced an 86-byte module that exported nothing callable. The

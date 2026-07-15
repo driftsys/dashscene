@@ -3,16 +3,56 @@
 Decision records: normative, binding on downstream work, traced to what they
 affect. Gardened from `docs/wip/` sessions into durable, as-built records.
 
-The project's scope-level decision log still lives in
-`specs/SCOPE_DECISIONS.md`, a living addendum to `specs/DESIGN_1.md`. It'll
-move here, or be superseded by records written here, as future work gardens
-it in. Per-story decisions land here directly:
+The project's scope-level decision log lived in
+`docs/archive/2026-07-14-scope-decisions.md`, a living addendum to
+`docs/archive/2026-07-14-design-1-seed.md`; its sections are gardened
+into the records below. Per-story decisions land here directly:
+
+- [repo-staging-and-public-facade.md](repo-staging-and-public-facade.md) —
+  `dashscene` stays the public facade; `dashscene-staging` is the private
+  working repo (`docs/archive/2026-07-14-scope-decisions.md` §1).
+- [crate-name-map.md](crate-name-map.md) — the 13-crate workspace reuses
+  the 12 already-reserved crates.io names, mapped onto
+  `docs/design/architecture.md`'s architecture
+  (`docs/archive/2026-07-14-scope-decisions.md` §2).
+- [dsb-format-and-one-schema.md](dsb-format-and-one-schema.md) — `.dsb`
+  is the file extension; one flatbuffer schema serves both the file and
+  wire roles (`docs/archive/2026-07-14-scope-decisions.md` §3).
+- [figma-importer-deno-plus-dashc-wasm.md](figma-importer-deno-plus-dashc-wasm.md)
+  — the Figma importer is Deno/TypeScript calling `dashc.wasm`, in the
+  same repo as the Rust core
+  (`docs/archive/2026-07-14-scope-decisions.md` §4).
+- [unity-separate-repo-deferred.md](unity-separate-repo-deferred.md) —
+  Unity gets its own repo, C#, deferred until v0 exits
+  (`docs/archive/2026-07-14-scope-decisions.md` §5).
+- [house-style.md](house-style.md) — repo tooling follows
+  driftsys/git-std, driftsys/upskill, driftsys/markspec conventions
+  (`docs/archive/2026-07-14-scope-decisions.md` §7).
+- [figma-corpus-self-authored-only.md](figma-corpus-self-authored-only.md)
+  — nothing enters `corpus/` that the project did not author
+  (`docs/archive/2026-07-14-scope-decisions.md` §8's licensing ruling).
+- [figma-access-plan-and-pat-policy.md](figma-access-plan-and-pat-policy.md)
+  — Figma Professional with a Full seat, PAT rotation policy, granular
+  scopes, rate-limit handling
+  (`docs/archive/2026-07-14-scope-decisions.md` §11).
+- [annotator-plugin-contract-frozen.md](annotator-plugin-contract-frozen.md)
+  — the sharedPluginData annotator plugin is deferred to v1; its data
+  contract is frozen now (`docs/archive/2026-07-14-scope-decisions.md`
+  §12).
+- [token-resolution-phase-split.md](token-resolution-phase-split.md) —
+  token resolution is phase 1 (resolved literals + sidecar) then phase 2
+  (id → name join sourced from the Plugin API, not REST)
+  (`docs/archive/2026-07-14-scope-decisions.md` §13).
+- [no-authored-fill-weights.md](no-authored-fill-weights.md) — authored
+  fill weights are declined outright; Figma has no counterpart and no
+  producer emits one (#117, v0.2-close revision;
+  `docs/archive/2026-07-14-scope-decisions.md` §19).
 
 - [text-track-early-start.md](text-track-early-start.md) — start the v0.5
   text/atlas track before v0.1 completes (plan sequencing, session C).
 - [q1-msdf-below-14px.md](q1-msdf-below-14px.md) — MSDF-only text rendering
-  in v0; resolves DESIGN_1.md Q-1; binds #27/#28/#30 and the validator's
-  future text checks.
+  in v0; resolves `docs/technotes/open-questions.md`'s Q-1; binds
+  #27/#28/#30 and the validator's future text checks.
 - [ci-green-before-story-merge.md](ci-green-before-story-merge.md) — story
   PRs merge only on green CI.
 - [review-before-ready-not-before-open.md](review-before-ready-not-before-open.md)
@@ -26,8 +66,10 @@ it in. Per-story decisions land here directly:
   parent-relative x/y on `FixedSizeLayout` (story #2); binds the `dashbuf`
   schema and the arena's resolution semantics.
 - [staged-mutation-v01-scope.md](staged-mutation-v01-scope.md) — v0.1
-  producer API is `open`/`set_prop`/`commit` with batched-publish staging
-  (story #2); binds `dashlang` (#5) and the v0.4 variants work.
+  producer API is `open`/`set_prop`/`commit` with batched-publish staging,
+  and the API lives in `dashscene-core`, not `dashcue` (story #2;
+  `docs/archive/2026-07-14-scope-decisions.md` §9); binds `dashlang` (#5)
+  and the v0.4 variants work.
 - [core-committed-output-shape.md](core-committed-output-shape.md) —
   `dashscene-core` owns its boundary-B output types; `NO_PAINT` sentinel and
   dirty-set semantics (story #2). Reconciled at story #4 (types now
@@ -42,6 +84,12 @@ it in. Per-story decisions land here directly:
 - [dashlang-value-tree-builder.md](dashlang-value-tree-builder.md) — the DSL
   is an inert value tree published by one `build` commit (story #5); binds
   the golden harness (#6) and later DSL slices.
+- [dashcue-keyframe-values-are-progress-fractions.md](dashcue-keyframe-values-are-progress-fractions.md)
+  — dashcue keyframe values are progress fractions, not absolute values
+  (story #21).
+- [dashcue-spring-uses-semi-implicit-euler.md](dashcue-spring-uses-semi-implicit-euler.md)
+  — dashcue springs integrate with semi-implicit Euler, not a closed form
+  (story #21).
 - [atlas-gen-external-pinned-binary.md](atlas-gen-external-pinned-binary.md)
   — atlas generation shells out to an external, version-pinned
   `msdf-atlas-gen` binary rather than a pure-Rust crate or a vendored
@@ -157,6 +205,47 @@ it in. Per-story decisions land here directly:
 
 - [dashscene-document-is-the-ir.md](dashscene-document-is-the-ir.md) — the IR is
   the dashscene document; `.dsb` is its file extension. Supersedes
-  `SCOPE_DECISIONS.md` §20; binds `crates/dashc`'s type names.
+  `docs/archive/2026-07-14-scope-decisions.md` §20; binds
+  `crates/dashc`'s type names.
+
+Gardened out of `docs/technotes/`'s `DECISION` / `DECISION direction` tags,
+so each technote stops being the authority for the conclusion it reached:
+
+- [dashc-lowers-figma-it-does-not-export.md](dashc-lowers-figma-it-does-not-export.md)
+  — cross-references `figma-importer-deno-plus-dashc-wasm.md`; re-affirms it
+  rather than deciding anything new (`docs/technotes/producers-and-ir.md` §1).
+- [no-neutral-ir-above-dashscene.md](no-neutral-ir-above-dashscene.md) —
+  `dashbuf` and the core arena are the two producer-neutral formats; no third,
+  neutral interchange layer above dashscene (`docs/technotes/producers-and-ir.md`
+  §2).
+- [two-producer-entry-paths.md](two-producer-entry-paths.md) — every producer
+  enters via the offline compile path or the in-memory arena path, never a
+  third format (`docs/technotes/producers-and-ir.md` §3).
+- [slint-reference-only-do-not-adopt.md](slint-reference-only-do-not-adopt.md)
+  — Slint is reference for ideas only; never adopted or borrowed as code, on
+  both capability and licensing grounds (`docs/technotes/producers-and-ir.md`
+  §5).
+- [backend-tiering-unity-skia-lean.md](backend-tiering-unity-skia-lean.md) —
+  Unity for high-end, trimmed Skia for entry, the lean painter gated on
+  measurement (`docs/technotes/rendering-and-painters.md` §5).
+- [unity-painter-uses-brg.md](unity-painter-uses-brg.md) — **proposed**:
+  BatchRendererGroup over GameObject-per-node for the Unity painter, pending a
+  lit-BRG shader spike and a GLES 3.2 platform check
+  (`docs/technotes/rendering-and-painters.md` §10).
+- [downloaded-raster-needs-no-vector-engine.md](downloaded-raster-needs-no-vector-engine.md)
+  — downloaded PNG/WebP is decode → upload → bind through the existing image-fill
+  vocabulary, no vector engine involved (`docs/technotes/runtime-content.md` §2).
+- [streamed-content-is-a-cross-process-producer.md](streamed-content-is-a-cross-process-producer.md)
+  — **proposed**: streamed Glance-like content is an ordinary producer (in-process
+  or cross-process), pending the remote/untrusted admission policy (Q-5)
+  (`docs/technotes/runtime-content.md` §3).
+- [lottie-bake-when-possible.md](lottie-bake-when-possible.md) — **proposed**:
+  `dashc` triages each Lottie and bakes it when faithful, falling back to ThorVG
+  only when it cannot, pending the triage/VRAM-budget mechanism
+  (`docs/technotes/runtime-content.md` §4).
+- [runtime-vector-via-thorvg-to-texture.md](runtime-vector-via-thorvg-to-texture.md)
+  — genuinely non-bakeable runtime vector content (arbitrary SVG, morphing
+  Lottie) renders to a texture via ThorVG, a bounded escape hatch
+  (`docs/technotes/runtime-content.md` §5).
 
 See the `sdd-working-memory-lifecycle` rule.

@@ -6,11 +6,13 @@
 ## Purpose
 
 `dashlang` is the Rust DSL skin over `dashscene-core`'s staged-mutation
-API (`DESIGN_1.md` §6.2, `SCOPE_DECISIONS.md` §9): it lets a scene be
+API (`docs/archive/2026-07-14-design-1-seed.md` §6.2,
+`docs/decisions/staged-mutation-v01-scope.md`): it lets a scene be
 written as a declaration — an inert value tree — instead of direct
 `Arena`/`Txn` calls, then publishes that declaration in one commit.
-Components are plain functions returning `Node` values (DESIGN §6.2:
-"components are fns"); repetition is an iterator feeding
+Components are plain functions returning `Node` values
+(`docs/archive/2026-07-14-design-1-seed.md` §6.2: "components are fns");
+repetition is an iterator feeding
 `Node::children` ("loops are repeaters").
 
 ## Value-tree surface
@@ -70,8 +72,8 @@ would be structure without content.
 
 ## Trace
 
-- Satisfies: `specs/DESIGN_1.md` §6.2 (Rust DSL skin); issue #5
-  acceptance criteria.
+- Satisfies: `docs/archive/2026-07-14-design-1-seed.md` §6.2 (Rust DSL
+  skin); issue #5 acceptance criteria.
 - Blocks: #6 (golden harness); later DSL slices (the stress-corpus
   generator; v0.4 variants, once `dashcue` enters the graph).
 - Related decisions: `docs/decisions/dashlang-value-tree-builder.md`

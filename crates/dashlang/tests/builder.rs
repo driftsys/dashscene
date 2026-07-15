@@ -1,6 +1,6 @@
 //! Story #5 acceptance: a scene built via the DSL matches the same
 //! scene built by hand through `dashscene-core` directly (issue #5;
-//! DESIGN_1.md §6.2).
+//! docs/design/architecture.md).
 
 // Arena and Color come through dashlang's re-export: a DSL consumer
 // needs no direct dashscene-core dependency. Prop/PaintEntry are the

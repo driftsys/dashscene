@@ -5,7 +5,7 @@
 
 ## Context
 
-R7 (`specs/DESIGN_1.md`) requires additive schema evolution: existing
+R7 (`docs/specification/01-goals-and-requirements.md`) requires additive schema evolution: existing
 field ids keep their positions, new fields append at the tail. An edit
 that violates it — inserting a field mid-table, reordering a union's
 members, renumbering an enum — breaks every `.dsb` already written to
@@ -77,7 +77,7 @@ maintained by the same edit that breaks it.
 
 ## Trace
 
-- Satisfies: `specs/DESIGN_1.md` R7 (additive schema evolution); issue
+- Satisfies: `docs/specification/01-goals-and-requirements.md` R7 (additive schema evolution); issue
   #64.
 - Binds: every future edit to `crates/dashbuf/schema/dashbuf.fbs`.
 - Related: `docs/design/dashbuf.md` ("Testing"),

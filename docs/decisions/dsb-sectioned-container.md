@@ -9,7 +9,7 @@
 
 ## Context
 
-`DESIGN_1.md` §5 (R5) requires hot sections (tree, tables, strings)
+`docs/design/dashbuf.md` (R5) requires hot sections (tree, tables, strings)
 packed at the file head, cold sections (heavy decor) page-aligned at
 the tail, and per-section hashes so the load gate verifies hot
 sections without touching cold pages. Spike #56 measured how much of
@@ -77,7 +77,7 @@ stories (#8, #13, #20, #26) immediately:
   `[ubyte]` field inside the outer buffer (same alignment situation,
   Rust ignores its `force_align`), and size-prefixed concatenation
   gives no random access, alignment, or integrity.
-- The container preserves `SCOPE_DECISIONS.md` §3 ("one schema for
+- The container preserves `docs/decisions/dsb-format-and-one-schema.md` ("one schema for
   file and wire"): both roles frame the same per-section flatbuffers —
   the wire keeps length-prefixed framing, the file role uses the
   envelope. Cross-section references as indices cost little: the

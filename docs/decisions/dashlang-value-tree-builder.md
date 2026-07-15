@@ -7,7 +7,7 @@
 ## Context
 
 Story #5 needed the minimal Rust DSL skin over `dashscene-core`'s
-staged-mutation API (DESIGN_1.md §6.2). The shape of the v0.1 surface
+staged-mutation API (`docs/design/dashlang.md`). The shape of the v0.1 surface
 fixes how components, repetition, and commit boundaries look for every
 later DSL slice.
 
@@ -36,7 +36,7 @@ Option 1:
 
 ## Why
 
-- DESIGN §6.2 describes the DSL family this way: "components are fns"
+- `docs/design/dashlang.md` describes the DSL family this way: "components are fns"
   (plain functions returning `Node` values compose without lifetimes),
   "loops are repeaters" (iterators feeding `children`), and the C#
   skin later builds a describe buffer with one commit across the FFI

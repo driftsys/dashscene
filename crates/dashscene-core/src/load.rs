@@ -1,5 +1,5 @@
 //! Loading a `.dsb` document into the arena — the document→runtime path
-//! (DESIGN_1.md §5, §6.1).
+//! (docs/design/dashbuf.md, docs/design/dashc.md).
 //!
 //! A `.dsb` is the serialized *intent* (P1), and the arena is the runtime's
 //! intent model, so loading is a straight replay of the document's nodes

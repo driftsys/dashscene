@@ -1,4 +1,4 @@
-//! The descriptive animation vocabulary (DESIGN_1.md §6.3): data a
+//! The descriptive animation vocabulary (docs/design/architecture.md): data a
 //! producer declares; the runtime advances it (P3). No resolved values
 //! live here (P1) — endpoints bind at commit time.
 
@@ -8,7 +8,7 @@
 pub struct PropKey(pub u64);
 
 /// Fixed cubic easing curves. Exotic shapes are data — use
-/// [`TransitionSpec::Keyframes`] (DESIGN_1.md §6.3 "keyframe track").
+/// [`TransitionSpec::Keyframes`] (docs/design/architecture.md, "keyframe track").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Easing {
     Linear,
@@ -57,7 +57,7 @@ pub struct Keyframe {
 /// How one prop travels from its old to its new resolved value.
 /// Durations are seconds; spring parameters follow Compose's
 /// `SpringSpec` (stiffness + damping ratio) so Compose specs map onto
-/// this as data (DESIGN_1.md §6.3 "Compose calibration").
+/// this as data (docs/design/architecture.md, "Compose calibration").
 #[derive(Debug, Clone, PartialEq)]
 pub enum TransitionSpec {
     Tween {
@@ -81,10 +81,10 @@ pub struct PropTransition {
     pub spec: TransitionSpec,
 }
 
-/// A variant transition (DESIGN_1.md §6.3): per-prop specs plus a
+/// A variant transition (docs/design/architecture.md): per-prop specs plus a
 /// stagger. Track `i` starts `stagger * i` seconds after the commit.
 /// The `set_variant` switch itself is `dashscene-core`'s; this is the
-/// data describing how the switch animates (SCOPE_DECISIONS.md §9).
+/// data describing how the switch animates (docs/decisions/staged-mutation-v01-scope.md).
 #[derive(Debug, Clone, PartialEq)]
 pub struct VariantTransition {
     pub tracks: Vec<PropTransition>,

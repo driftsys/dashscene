@@ -1,14 +1,15 @@
-// The .dsb document schema (DESIGN_1.md §5, §11 v0.1 + v0.2 flex +
-// v0.3 paint).
+// The .dsb document schema (docs/design/dashbuf.md, docs/roadmap.md
+// v0.1 + v0.2 flex + v0.3 paint).
 //
-// Scope: a flattened node tree (doc index = rect-table index, DESIGN
-// §5); the v0.2 flex layout vocabulary (mode NONE/H/V, hug/fill/fixed
+// Scope: a flattened node tree (doc index = rect-table index,
+// docs/design/dashbuf.md); the v0.2 flex layout vocabulary (mode NONE/H/V, hug/fill/fixed
 // sizing per axis, gap, padding, alignment, min/max — wrap and grid
 // land at v0.8 as appended enum values); and the v0.3 paint vocabulary
-// (DESIGN §11 v0.3, drawn from the §10.1 NOW list): solid fills, the
+// (docs/roadmap.md v0.3, drawn from the docs/specification/04-figma-vocabulary-profile.md
+// NOW list): solid fills, the
 // four gradient kinds, image fills with scale modes, stroke with
 // align, rounded corners, axis-aligned + rounded clip. Paint sits in a
-// document-level dedup pool (DESIGN §5) that nodes reference by index
+// document-level dedup pool (docs/design/dashbuf.md) that nodes reference by index
 // — the same index model as the runtime paint table. FlatBuffers'
 // append-only field ids make every extension additive, not a rewrite
 // (R7).
@@ -86,7 +87,7 @@ enum GradientKind : uint8 {
 
 // Stroke placement relative to the node's outline. Painters that only
 // stroke on center lower Inside/Outside by path expansion
-// (DESIGN §8.1).
+// (docs/technotes/rendering-and-painters.md).
 enum StrokeAlign : uint8 {
   Inside = 0,
   Center,
@@ -150,13 +151,13 @@ table Stroke {
 }
 
 // Embedded encoded image bytes — the simplest storage form; KTX2/Basis
-// packaging is v1 scope (DESIGN §9).
+// packaging is v1 scope (docs/specification/03-target-hardware-rules.md).
 table Image {
   format: ImageFormat;
   bytes: [ubyte];
 }
 
-// One entry of the document's paint pool (DESIGN §5's "dedup style
+// One entry of the document's paint pool (docs/design/dashbuf.md's "dedup style
 // pool"): what a node is filled with, how its outline is stroked, how
 // its corners round, and whether it clips its children to the (rounded)
 // box. Nodes reference entries by index; distinct nodes sharing a style
@@ -168,10 +169,10 @@ table Paint {
   clip: bool = false;
 }
 
-// One entry of the document's text style pool (DESIGN §5's "dedup
+// One entry of the document's text style pool (docs/design/dashbuf.md's "dedup
 // style pool" applied to text): how a text node renders. Never glyph
 // data (P1) — family/size/weight/color are intent; shaping and
-// placement happen in the runtime (DESIGN §7.2).
+// placement happen in the runtime (docs/design/architecture.md).
 table TextStyle {
   // Font family name. Required: a family-less style has no meaning,
   // and the verifier rejects it at the load gate (P4) — the same
@@ -184,7 +185,7 @@ table TextStyle {
   color: Color;
 }
 
-// v0.2 flex layout vocabulary (DESIGN §5, R2). New members append at
+// v0.2 flex layout vocabulary (docs/design/dashbuf.md, R2). New members append at
 // the tail with explicit values (Wrap/Grid on LayoutMode at v0.8,
 // Baseline on CrossAxisAlign, Q-4): appending keeps old documents
 // decoding unchanged, but a reader built before an append receives the
@@ -252,7 +253,7 @@ table LayoutConstraints {
   max_height: float32 = null;
   // Outer margin around the node in its parent's flow. Absent means
   // zero insets. Negative values are legal and express overlap — the
-  // target the negative-gap Figma≠CSS lowering rewrites to (DESIGN §5).
+  // target the negative-gap Figma≠CSS lowering rewrites to (docs/design/dashbuf.md).
   margin: EdgeInsets;
 }
 
@@ -289,13 +290,13 @@ table Node {
 
 table Document {
   // Flattened DFS node tree: array order is DFS order, so array index
-  // doubles as rect-table index (DESIGN §5).
+  // doubles as rect-table index (docs/design/dashbuf.md).
   nodes: [Node];
   // Image assets referenced by ImageFill.image.
   images: [Image];
   // The paint pool referenced by Node.paint_entry.
   paints: [Paint];
-  // Interned string pool (DESIGN §5) referenced by Node.text. Dedup is
+  // Interned string pool (docs/design/dashbuf.md) referenced by Node.text. Dedup is
   // the producer's job; the pool makes it representable.
   strings: [string];
   // The text style pool referenced by Node.text_style.

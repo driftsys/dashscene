@@ -5,8 +5,8 @@
 
 ## Context
 
-Boundary B needs a trait signature for v0.1. `DESIGN_1.md` §7.3 defines
-the eventual painter input as a triple (rect entries, glyph runs, dirty
+Boundary B needs a trait signature for v0.1. `docs/design/architecture.md`
+defines the eventual painter input as a triple (rect entries, glyph runs, dirty
 set) plus paint-table indices, but v0.1 has no text and no incremental
 painting. Three shape questions had to be settled: parameter packaging,
 error handling, and dispatch.
@@ -14,7 +14,8 @@ error handling, and dispatch.
 One input shape was settled outside this record: issue #3 sketched the
 rect entry as "(id, x, y, w, h)", but the pinned cross-session contract
 has no id field — the rect-table index is the document DFS node index
-(`DESIGN_1.md` §5) — and the generation stamp of §7.3 belongs to the
+(`docs/design/dashbuf.md`) — and the generation stamp of
+`docs/design/architecture.md` belongs to the
 double buffer `dashscene-core` owns, not to each entry. The pinned
 contract wins; both stories build to it. The as-built shape is recorded
 in `docs/design/dashpaint.md`.

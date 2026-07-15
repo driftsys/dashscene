@@ -8,9 +8,10 @@
 
 ## Context
 
-DESIGN §4 states the real producer contract is the arena's staged
-mutation API; `.dsb` is one way to populate it. SCOPE_DECISIONS §3
-pins one schema for the file and wire roles, with framing as the only
+`docs/archive/2026-07-14-design-1-seed.md` §4 states the real producer
+contract is the arena's staged mutation API; `.dsb` is one way to
+populate it. `docs/decisions/dsb-format-and-one-schema.md` pins one
+schema for the file and wire roles, with framing as the only
 difference. The question was how remote UI streams progressively:
 what a snapshot is, what a delta is, how they address nodes, and how
 asset bytes travel.
@@ -46,7 +47,8 @@ Option 1 — two transports, two message kinds on the first:
     ops are batched struct-of-arrays. A subtree-creating op carries
     its new nodes in the same slice vocabulary — "a remote update is
     structurally a small document" made literal. A commit may
-    reference `dashcue` transition specs (SCOPE §9); scheduling stays
+    reference `dashcue` transition specs
+    (`docs/decisions/staged-mutation-v01-scope.md`); scheduling stays
     runtime-side (P3).
   - **Snapshots speak doc indices; deltas speak producer handles**
     (see the id-model record). The receiving arena owns handle→index
@@ -83,7 +85,7 @@ cold sections. The envelope itself never crosses the wire.
 - Left open until the wire schema story exists: whether a
   `SnapshotSlice` can reuse the exact generated table types of the
   file's hot sections, or only the same vocabulary — either answer
-  preserves SCOPE §3.
+  preserves `docs/decisions/dsb-format-and-one-schema.md`.
 
 ## Receiving-side semantics
 

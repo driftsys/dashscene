@@ -7,7 +7,7 @@
 
 ## Context
 
-Story #3 defines boundary B (`DESIGN_1.md` §4, §7.3, §8): the types a
+Story #3 defines boundary B (`docs/design/architecture.md`): the types a
 painter consumes (`Color`, `RectEntry`, `PaintKind`, `PaintTable` —
 joined at story #13 by `PaintEntry` and the v0.3 vocabulary types) and
 the `Painter` trait. Solid-fill color is pinned to "4×f32 RGBA exactly as
@@ -28,7 +28,7 @@ Option 1: `dashpaint` defines its own plain types and has no dependencies.
 ## Why
 
 - Painters sit downstream of the runtime, not of the document format
-  (`DESIGN_1.md` §4 pipeline). A `dashbuf` dependency couples boundary B
+  (`docs/design/architecture.md` pipeline). A `dashbuf` dependency couples boundary B
   to the file format and leaks the flatbuffers crate into every painter.
 - The pinned contract says "same shape", not "same Rust type" — a plain
   `Color { r, g, b, a: f32 }` satisfies it without the coupling.
@@ -38,4 +38,4 @@ Option 1: `dashpaint` defines its own plain types and has no dependencies.
 - Single ownership of the shared shapes (whether `dashscene-core` ends up
   depending on `dashpaint` or the reverse) is deliberately deferred to
   story #4, where both crates exist and the better direction is visible.
-  `SCOPE_DECISIONS.md` §7's publish order is updated then if needed.
+  `docs/decisions/house-style.md`'s publish order is updated then if needed.

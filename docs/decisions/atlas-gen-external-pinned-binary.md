@@ -61,7 +61,8 @@ Two further packaging ideas were raised. Neither changes the decision.
   submodule) and package it inside the final binary.** The second half
   does not apply: `msdf-atlas-gen` runs at asset-build time, not in the
   product (`docs/design/atlas-pipeline.md` — the build-time half of
-  DESIGN §7.2). Its outputs — the atlas image and the metrics blob —
+  `docs/archive/2026-07-14-design-1-seed.md` §7.2). Its outputs — the
+  atlas image and the metrics blob —
   ship; the tool never runs on a target device, so there is no product
   binary to package it into. The first half is a narrower idea that
   addresses only the availability gap named above: distributing a

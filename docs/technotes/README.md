@@ -4,6 +4,10 @@ Explanatory notes: informative, not binding — nothing downstream depends on
 a technote the way it depends on a decision. Gardened from `docs/wip/`
 sessions into durable, as-built records.
 
+If a note reaches a conclusion that binds downstream work, that conclusion
+belongs in `docs/decisions/`, not here — the note links to the record that
+now holds it instead of restating the ruling.
+
 Notes:
 
 - [msdf-arabic-atlas-spike.md](msdf-arabic-atlas-spike.md) — methodology and
@@ -24,10 +28,18 @@ Notes:
   runtime-provided content: downloaded images, streamed Glance-like producers,
   Lottie triage, and the ThorVG-to-texture escape hatch.
 - [glossary.md](glossary.md) — project, graphics, and tooling terms used across
-  the notes, plus a DESIGN_1 P / R / Q shorthand.
+  the notes, plus a principle / requirement / target-hardware-rule /
+  open-question shorthand.
+- [figma-plugin-api-findings.md](figma-plugin-api-findings.md) — three Figma
+  Plugin API shapes found while authoring the tier-1 corpus fixtures
+  programmatically (`docs/archive/2026-07-14-scope-decisions.md` §8).
+- [open-questions.md](open-questions.md) — status index for
+  `docs/archive/2026-07-14-design-1-seed.md` §12's `Q-1`..`Q-6`, so a
+  `Q-N` citation still resolves once `specs/` is gone.
 
 The four notes above were captured from a 2026-07-13 design discussion and
-carry DECISION / CANDIDATE / OPEN tags; promote the settled items into
-`docs/decisions/` or `specs/SCOPE_DECISIONS.md` as they harden.
+carry DECISION / CANDIDATE / OPEN tags. Every `DECISION` and `DECISION
+direction` item now links to the `docs/decisions/` record that holds it;
+`CANDIDATE` and `OPEN` items stay here until they harden into one.
 
 See the `sdd-working-memory-lifecycle` rule.

@@ -1,4 +1,4 @@
-//! Descriptive animation vocabulary + its runtime scheduling (DESIGN_1.md §6.3).
+//! Descriptive animation vocabulary + its runtime scheduling (docs/design/architecture.md).
 //!
 //! Producers declare *how* a change animates as data (the vocabulary);
 //! the runtime owns time and advances it (P3). v0.4 scope: variant

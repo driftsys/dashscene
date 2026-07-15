@@ -133,7 +133,7 @@ pub fn image_refs(file: &FigmaFile) -> Result<Vec<String>, CompileError> {
 /// The first `FRAME` under the first `CANVAS`.
 ///
 /// v0.3 exports one root frame. Declared roots plus a reachability closure
-/// (DESIGN §6.1) is the v0.7 story; until then the rule is positional and
+/// (docs/design/dashc.md) is the v0.7 story; until then the rule is positional and
 /// stated rather than inferred — every other sibling and every later canvas
 /// is silently dropped (debt #147).
 fn root_frame(document: &Node) -> Result<&Node, CompileError> {

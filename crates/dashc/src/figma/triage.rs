@@ -4,7 +4,7 @@
 //! `figma` module inside the validator was rejected on exactly those grounds
 //! (`docs/decisions/validator-three-gates.md`).
 //!
-//! Only vocabulary *outside* the NOW band appears here. DESIGN §10.1's NOW
+//! Only vocabulary *outside* the NOW band appears here. docs/specification/04-figma-vocabulary-profile.md's NOW
 //! band — the four gradient kinds, image fills and scale modes, axis-aligned
 //! and rounded clip — is simply the schema, and needs no verdict.
 
@@ -140,7 +140,7 @@ mod tests {
 
     #[test]
     fn a_shadow_is_unsupported_rather_than_silently_dropped() {
-        // Baked shadows are NOW-band per DESIGN §10.1, but Document cannot express
+        // Baked shadows are NOW-band per docs/specification/04-figma-vocabulary-profile.md, but Document cannot express
         // them, so there is no Construct to triage. P4 forbids dropping it in
         // silence, so it fails loudly instead.
         let node: Node = serde_json::from_value(serde_json::json!({

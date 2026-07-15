@@ -1,6 +1,7 @@
 //! Story #2 acceptance path: a scene built by hand through the staged
 //! mutation API reads back as a resolved rect table + paint table
-//! (issue #2; DESIGN_1.md §5, §7.3; SCOPE_DECISIONS.md §9).
+//! (issue #2; docs/design/architecture.md;
+//! docs/decisions/staged-mutation-v01-scope.md).
 
 use std::mem::{align_of, size_of};
 

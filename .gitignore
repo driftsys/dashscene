@@ -15,7 +15,7 @@ importers/figma/.deno
 .DS_Store
 *.swp
 
-# Claude Code worktrees (see markspec's deno.json precedent, SCOPE_DECISIONS §7)
+# Claude Code worktrees (see markspec's deno.json precedent, docs/decisions/house-style.md)
 .claude/worktrees/
 
 # Golden-harness failure artifacts (goldens/README.md)

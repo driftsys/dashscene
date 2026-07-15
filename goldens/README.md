@@ -1,6 +1,6 @@
 # goldens
 
-CI golden images and the diff tooling (`DESIGN_1.md` §8, §11 v0.1):
+CI golden images and the diff tooling (`docs/design/architecture.md`, `docs/roadmap.md` v0.1):
 scenes rendered through the reference painter (`dashscene-skia`, CPU
 raster) and compared pixel-for-pixel against checked-in PNGs.
 
@@ -43,7 +43,7 @@ a clean checkout fails loudly if a golden was not committed.
 ## Determinism
 
 The reference painter is CPU raster (deterministic by construction,
-`DESIGN_1.md` §8) at an exactly pinned skia-safe version (`=0.81.0` in
+`docs/design/architecture.md`) at an exactly pinned skia-safe version (`=0.81.0` in
 the workspace `Cargo.toml`; bumping it is a deliberate, re-goldened
 change). On one machine every render is bit-identical.
 
@@ -62,7 +62,7 @@ pixels between machines. Two comparison functions handle this:
   to `max_fraction` of pixels to differ; use it for anti-aliased
   content. The combined v0.3 golden uses 1%; the smaller per-family
   v0.3 goldens use 2% (edge jitter is a larger fraction of a smaller
-  canvas). This is `DESIGN_1.md` §8's tolerance-based perceptual diff.
+  canvas). This is `docs/technotes/rendering-and-painters.md`'s tolerance-based perceptual diff.
   Per-kind correctness is pinned separately by the painter's
   interior-probe unit tests, which are bit-stable across machines. See
   `docs/decisions/golden-comparison-space.md`.

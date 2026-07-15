@@ -65,7 +65,7 @@ macro_rules! check_enum {
 /// Two things this deliberately does *not* do.
 ///
 /// It takes no [`Profile`](crate::Profile). Every construct the v0.3
-/// schema can express sits in DESIGN §10.1's NOW band — the schema has no
+/// schema can express sits in docs/specification/04-figma-vocabulary-profile.md's NOW band — the schema has no
 /// blur, no blend mode, no mask — so there is nothing here for a profile
 /// to differentiate. Out-of-profile constructs are caught at the import
 /// gate ([`crate::triage`]), which is the only place they exist: by the

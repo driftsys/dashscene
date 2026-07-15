@@ -1,4 +1,4 @@
-//! One typesetter: bidi split, rustybuzz shaping, glyph atlas pipeline (DESIGN_1.md §7.2).
+//! One typesetter: bidi split, rustybuzz shaping, glyph atlas pipeline (docs/design/architecture.md).
 //!
 //! v0.5 scope: the build-time atlas pipeline ([`atlas`]) and the
 //! runtime Latin pipeline ([`text`]: shaping, line breaking, the

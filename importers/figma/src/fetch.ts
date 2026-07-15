@@ -3,9 +3,9 @@
  *
  * Owns: personal-access-token rotation (tokens expire at 90 days — CI
  * rotation required), granular scopes (file_content:read), and seat-gated
- * rate limits (SCOPE_DECISIONS.md §11, DESIGN_1.md §6.1).
+ * rate limits (docs/decisions/figma-access-plan-and-pat-policy.md, docs/design/dashc.md).
  *
- * Implements the SCOPE_DECISIONS.md §11 access rules: at most one request
+ * Implements the docs/decisions/figma-access-plan-and-pat-policy.md access rules: at most one request
  * is in flight at a time (serialized limiter), `Retry-After` is honored on
  * 429 with a cap and a log line, retries are bounded, and 401/403 map to a
  * named `figma-auth` diagnostic instead of a bare HTTP error.
@@ -20,7 +20,7 @@ import type {
 export interface FigmaClientOptions {
   /** Personal access token. Expires at 90 days; CI must rotate it. */
   readonly token: string;
-  /** Base URL, overridable for fixture record-and-replay (DESIGN_1.md §6.1). */
+  /** Base URL, overridable for fixture record-and-replay (docs/design/dashc.md). */
   readonly baseUrl?: string;
   /** Injectable for tests; defaults to the global fetch. */
   readonly fetchFn?: typeof fetch;
@@ -39,7 +39,7 @@ export interface FigmaClientOptions {
  */
 export type FileMeta = Readonly<Pick<GetFileMetaResponse["file"], "version">>;
 
-/** Scopes the PAT must carry (SCOPE_DECISIONS.md §11). */
+/** Scopes the PAT must carry (docs/decisions/figma-access-plan-and-pat-policy.md). */
 export const REQUIRED_SCOPES =
   "file_content:read, file_metadata:read, library_content:read";
 
@@ -51,7 +51,7 @@ const MAX_RETRY_AFTER_SECONDS = 300;
 
 const AUTH_HINT = "the FIGMA_TOKEN PAT is expired (90-day cap, rotate at " +
   "~75 days), revoked, or missing a required scope (" + REQUIRED_SCOPES +
-  ") — see SCOPE_DECISIONS.md §11";
+  ") — see docs/decisions/figma-access-plan-and-pat-policy.md";
 
 function retryAfterSeconds(header: string | null): number {
   const seconds = Number(header);

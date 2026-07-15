@@ -1,5 +1,5 @@
 //! The metrics blob: everything a painter or the typesetter needs to
-//! consume an atlas (DESIGN_1.md §7.2). Serialized with postcard;
+//! consume an atlas (docs/design/architecture.md). Serialized with postcard;
 //! vectors are pre-sorted so the encoding is canonical (R7).
 //!
 //! Fixed by `FORMAT_VERSION` 1 (not stored per-field): atlas kind is
@@ -42,14 +42,14 @@ pub struct AtlasInfo {
     pub distance_range_px: f32,
 }
 
-/// One atlas entry, keyed by glyph id (DESIGN_1.md §7.2 — contextual
+/// One atlas entry, keyed by glyph id (docs/design/architecture.md — contextual
 /// forms are just glyphs). `None` bounds ⇔ empty outline (e.g. space):
 /// the glyph advances but paints nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct GlyphEntry {
     pub glyph_id: u16,
     /// Horizontal advance in raw font units (hmtx, authoritative —
-    /// DESIGN_1.md §2 names ttf-parser as the metrics source).
+    /// docs/design/architecture.md names ttf-parser as the metrics source).
     pub advance_units: u16,
     /// Quad bounds in ems: `[left, bottom, right, top]`, y-up,
     /// baseline origin.

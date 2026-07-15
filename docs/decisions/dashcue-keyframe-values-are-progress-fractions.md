@@ -7,7 +7,7 @@
 
 ## Context
 
-`DESIGN_1.md` §6.3 calibrates the vocabulary against Jetpack Compose's
+`docs/design/dashcue.md` calibrates the vocabulary against Jetpack Compose's
 API, where `keyframes {}` declares absolute values at each timestamp
 (for example, `100f at 300`). But principle P1 (`AGENTS.md`) forbids a
 document from carrying resolved values, and a variant transition's
@@ -35,7 +35,8 @@ Option 2.
   itself never sees `from`/`to` until `Scheduler::start` /
   `start_transition` is called at commit time. An absolute-valued
   frame would need the endpoints to be known when the transition is
-  authored, which contradicts the seam (`SCOPE_DECISIONS.md` §9): the
+  authored, which contradicts the seam
+  (`docs/decisions/staged-mutation-v01-scope.md`): the
   transition spec is declared independently of any particular
   `set_variant`'s resolved values.
 - Fractions keep retarget (R4) defined the same way tweens are: rebind

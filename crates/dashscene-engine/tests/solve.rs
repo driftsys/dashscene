@@ -1,6 +1,6 @@
 //! Story #9 acceptance: representative H/V, hug-in-fill, fill-weight,
 //! and min/max cases against hand-computed rects (issue #9;
-//! DESIGN_1.md §7.1).
+//! docs/design/architecture.md).
 
 use dashscene_core::{Arena, AxisSizing, CrossAxisAlign, LayoutMode, MainAxisAlign, NodeId, Prop};
 use dashscene_engine::TaffySolver;

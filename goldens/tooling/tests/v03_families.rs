@@ -1,6 +1,6 @@
 //! Per-family v0.3 paint goldens (issue #18): one focused scene per
 //! construct family, so a visual regression implicates one family
-//! (DESIGN_1.md §8 bisect-by-construction) rather than the combined
+//! (docs/design/architecture.md, bisect-by-construction) rather than the combined
 //! `v03-paint.png`. Hand-built at boundary B (no producer stages this
 //! vocabulary); exact per-kind bytes live in the painter's unit tests.
 //!

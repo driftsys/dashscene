@@ -29,7 +29,7 @@ Option 1.
 
 - Option 2 duplicates stroke/corner/clip fields across every fill
   variant and still cannot express "stroke but no fill" or "no paint at
-  all". `DESIGN_1.md` §5's paint-table row lists "fill/stroke/effect
+  all". `docs/design/dashbuf.md`'s paint-table row lists "fill/stroke/effect
   params" as siblings of the kind enum — a composition, not a variant
   payload.
 - Option 3 makes "no fill" a member of the fill vocabulary; an `Option`
@@ -68,9 +68,10 @@ not a boundary-B one). Debt #55 closed with story #4.
 
 - **Strokes are solid-only at v0.3.** Figma allows gradient/image
   strokes; the v0 corpus does not need them, the v0.3 slice
-  (`DESIGN_1.md` §11) scopes "rrect + stroke align" — not stroke
+  (`docs/roadmap.md`) scopes "rrect + stroke align" — not stroke
   fills — and the field widens additively later. Until then the
   importer diagnoses them by name (R6) rather than dropping them.
+
 - **Gradient geometry is three named normalized handle positions**
   (`handle_origin`, `handle_primary`, `handle_secondary` — Figma's
   gradientHandlePositions) for all four kinds, rather than per-kind

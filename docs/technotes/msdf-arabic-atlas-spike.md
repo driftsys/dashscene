@@ -4,13 +4,13 @@
     story    #25 (epic #24, v0.5 — text I: Latin)
     date     2026-07-12
     informs  #27 (atlas pipeline), #34 (charsets), epic #31 (v0.6),
-             DESIGN_1.md Q-1
+             docs/technotes/open-questions.md's Q-1
 
 This note records how the spike was run and what it found, so the
 result can be reproduced or re-checked later (for example on target
 hardware in v1). The normative outcome lives in
 `docs/decisions/q1-msdf-below-14px.md` and
-`specs/SCOPE_DECISIONS.md` §14.
+`docs/archive/2026-07-14-scope-decisions.md` §14.
 
 ## Questions
 
@@ -113,7 +113,7 @@ machine only).
   must carry per-glyph offsets, not only advances (#26, #28).
 - Shaping a mixed-direction string as a single run mis-orders
   embedded digits; the bidi split (unicode-bidi) must run before
-  shaping, exactly as DESIGN_1.md §7.2 already specifies.
+  shaping, exactly as `docs/design/typeset-latin.md` already specifies.
 - Practical defaults for #27 confirmed by use: `-type msdf -size 32
   -pxrange 4`, glyph-id input, JSON output; the JSON `distanceRange`
   and `size` must travel with the atlas into the metrics blob, since

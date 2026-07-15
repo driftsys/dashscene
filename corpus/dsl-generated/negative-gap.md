@@ -1,7 +1,7 @@
 # Corpus case: negative gap
 
     construct  negative flex gap (Figma auto-layout item spacing < 0)
-    lowering   Figma≠CSS → child margins (DESIGN_1.md §5, story #10)
+    lowering   Figma≠CSS → child margins (docs/design/dashbuf.md, story #10)
     exercised  crates/dashscene-engine/tests/solve.rs
 
 ## The scene

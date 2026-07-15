@@ -1,13 +1,13 @@
 //! Semantic model: arena, node tree, layout tables, paint tables
-//! (DESIGN_1.md §5), plus the staged-mutation producer API
-//! (`open` / `set_prop` / `commit` — SCOPE_DECISIONS.md §9).
+//! (docs/design/architecture.md), plus the staged-mutation producer API
+//! (`open` / `set_prop` / `commit` — docs/decisions/staged-mutation-v01-scope.md).
 //!
 //! Producers stage mutations through a [`Txn`] and publish them with
 //! `commit`; painters read the resulting [`CommittedScene`] — a flat
 //! rect table indexed by document DFS node index, a deduplicated
 //! paint table (`dashpaint`'s, per the story #4 boundary-B
 //! unification), the resolved clip table, a generation stamp, and a
-//! dirty set (boundary B, DESIGN_1.md §7.3). Every rect resolves; an
+//! dirty set (boundary B, docs/design/architecture.md). Every rect resolves; an
 //! unfilled node references the shared draws-nothing entry, and a node
 //! no ancestor clips references the unclipped region. v0.1 scope:
 //! fixed-size layout, no Taffy, no variants.

@@ -7,8 +7,9 @@
 
 Story #11 is epic #7's last open story: pin the v0.2 flex vocabulary —
 H/V nesting, per-axis sizing (hug/fill), min/max clamps, main/cross
-alignment — with golden images, plus `DESIGN_1.md` §11 E3's one
-v0.2-reachable stress-corpus case (hug-in-fill). Two facts about the
+alignment — with golden images, plus
+`docs/specification/05-qualification.md`'s E3, one v0.2-reachable
+stress-corpus case (hug-in-fill). Two facts about the
 as-built code shaped the choice:
 
 - `dashlang` has no flex vocabulary
@@ -47,7 +48,7 @@ same `SkiaPainter` path every existing golden uses.
 
 - A combined scene (option 2) fails one opaque image without saying
   which construct broke, and adding a construct later rewrites the
-  whole golden — against `DESIGN_1.md` §8's bisect-by-construction.
+  whole golden — against `docs/technotes/rendering-and-painters.md`'s bisect-by-construction.
 - Combined-plus-per-construct (option 3) is the shape v0.3 landed
   (story #14's combined golden, then story #18's per-family set), and
   the two overlapped heavily enough that #18 needed a mid-story
@@ -69,7 +70,7 @@ same `SkiaPainter` path every existing golden uses.
 
 ## Corpus case
 
-`DESIGN_1.md` §11 E3 names wrap, hug-in-fill, grid spans, bidi, and
+`docs/specification/05-qualification.md`'s E3 names wrap, hug-in-fill, grid spans, bidi, and
 variant topology as the stress-corpus edge cases; of those, only
 hug-in-fill is reachable at v0.2 (wrap and grid spans are v0.8, bidi
 is v0.6, variant topology is v0.4). It lands as
