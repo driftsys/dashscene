@@ -180,6 +180,32 @@ fn spring_survives_a_frame_hitch_without_diverging() {
 }
 
 #[test]
+fn large_magnitude_spring_settles_and_finishes() {
+    // A FLIP-scale layout delta (0 -> 1e5) must settle in bounded time.
+    // Absolute rest thresholds never trip at this magnitude — the f32
+    // ulp of `to` exceeds REST_DELTA — so the pre-#68 spring froze an
+    // ulp short of `to` and advanced forever. The magnitude-scaled
+    // thresholds settle it and snap it to exactly `to`.
+    let to = 1e5;
+    let mut s = Scheduler::new();
+    s.start(K, 0.0, to, critical_spring(), 0.0);
+
+    let mut steps = 0;
+    while !s.is_empty() {
+        s.advance(STEP);
+        steps += 1;
+        assert!(steps < 10_000, "large-magnitude spring never reached rest");
+    }
+    // Rerun and stop on the finishing frame: it sampled exactly `to`.
+    let mut s = Scheduler::new();
+    s.start(K, 0.0, to, critical_spring(), 0.0);
+    for _ in 0..steps - 1 {
+        s.advance(STEP);
+    }
+    assert_eq!(s.sample(K), Some(to));
+}
+
+#[test]
 fn keyframes_interpolate_through_declared_frames_including_overshoot() {
     let mut s = Scheduler::new();
     s.start(
@@ -252,4 +278,22 @@ fn advance_panics_on_a_negative_dt() {
 fn start_panics_on_a_non_positive_tween_duration() {
     let mut s = Scheduler::new();
     s.start(K, 0.0, 1.0, linear_tween(0.0), 0.0);
+}
+
+#[test]
+#[should_panic(expected = "damping_ratio")]
+fn start_panics_on_a_zero_damping_ratio() {
+    // An undamped spring oscillates forever and never finishes (#72):
+    // validation rejects damping_ratio == 0.
+    let mut s = Scheduler::new();
+    s.start(
+        K,
+        0.0,
+        1.0,
+        TransitionSpec::Spring {
+            stiffness: 100.0,
+            damping_ratio: 0.0,
+        },
+        0.0,
+    );
 }

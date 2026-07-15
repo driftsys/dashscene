@@ -7,8 +7,22 @@ use crate::vocabulary::{Keyframe, PropKey, TransitionSpec, VariantTransition};
 
 /// Spring rest thresholds (crate constants at v0.4 — track values are
 /// pixel-scaled there; promoting them to spec data is deferred).
+///
+/// The absolute constants are floors; the effective thresholds scale
+/// with the animation's magnitude (see the Spring arm of
+/// [`Track::advance`], issue #68). Absolute-only thresholds never trip
+/// for large-magnitude targets: at |to| >= ~1.6e4 the f32 ulp exceeds
+/// `REST_DELTA`, so `position` freezes an ulp short of `to` and the
+/// joint rest test is never satisfied.
 const REST_DELTA: f32 = 1e-3;
 const REST_VELOCITY: f32 = 1e-3;
+/// Relative rest tolerance, applied to the animation's characteristic
+/// magnitude. Chosen to exceed the f32 relative precision (2^-23 ≈
+/// 1.2e-7) with a safety margin, so the delta test always trips at any
+/// scale, and to place the crossover with the absolute floors at
+/// magnitude 100 (pixel scale) — below that, the absolute floors govern,
+/// so pixel-scale springs keep their existing behavior.
+const REST_REL: f32 = 1e-5;
 
 struct Track {
     key: PropKey,
@@ -189,13 +203,27 @@ impl Track {
                 let h_max = 1.0 / ((2.0 * damping_ratio + 1.0) * omega);
                 let substeps = ((dt / h_max).ceil() as u64).max(1);
                 let h = dt / substeps as f32;
+                // Rest thresholds scale with the animation's characteristic
+                // magnitude (#68), so a spring settles in bounded time at any
+                // scale. `max(|to - from|, |to|)` covers both a large span and
+                // a large target reached from near it; taking the max of the
+                // absolute floor and the relative term keeps small/normal
+                // springs on their existing absolute thresholds. The velocity
+                // threshold reuses the same magnitude scale — a relative
+                // rest-velocity heuristic, matching how spring runtimes size
+                // rest velocity against the animation distance (dashcue has no
+                // per-prop visibility threshold yet; that is deferred spec
+                // data).
+                let scale = (self.to - self.from).abs().max(self.to.abs());
+                let rest_delta = REST_DELTA.max(REST_REL * scale);
+                let rest_velocity = REST_VELOCITY.max(REST_REL * scale);
                 for _ in 0..substeps {
                     let acceleration =
                         -stiffness * (self.position - self.to) - damping * self.velocity;
                     self.velocity += acceleration * h;
                     self.position += self.velocity * h;
-                    if (self.position - self.to).abs() < REST_DELTA
-                        && self.velocity.abs() < REST_VELOCITY
+                    if (self.position - self.to).abs() < rest_delta
+                        && self.velocity.abs() < rest_velocity
                     {
                         self.position = self.to;
                         self.finished = true;
@@ -236,9 +264,13 @@ fn validate_spec(spec: &TransitionSpec) {
                 stiffness.is_finite() && *stiffness > 0.0,
                 "spring stiffness must be finite and > 0"
             );
+            // An undamped spring (damping_ratio == 0) conserves its
+            // oscillation and never reaches rest, so it is rejected here
+            // — Compose, which the parameters are calibrated against,
+            // also requires dampingRatio > 0 (#72).
             assert!(
-                damping_ratio.is_finite() && *damping_ratio >= 0.0,
-                "spring damping_ratio must be finite and >= 0"
+                damping_ratio.is_finite() && *damping_ratio > 0.0,
+                "spring damping_ratio must be finite and > 0"
             );
         }
         TransitionSpec::Keyframes { duration, frames } => {
