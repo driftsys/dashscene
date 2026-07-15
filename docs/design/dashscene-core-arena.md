@@ -1,4 +1,4 @@
-# dashscene-core: arena + staged-mutation API (v0.1, v0.4 variant resolution, v0.5 text intent, clip resolution)
+# dashscene-core: arena + staged-mutation API (v0.1, v0.4 variant resolution + incremental commit, v0.5 text intent, clip resolution)
 
 `dashscene-core` is the semantic model: an arena holding a node tree
 with layout and paint intent (`docs/design/dashbuf.md`), mutated
@@ -13,7 +13,10 @@ below. v0.5 (story #26) added text content and style as
 intent, held on the node but not resolved into any committed output —
 see "Text intent" below. Story #97 added clip and corner intent, and the
 commit-time resolution of subtree clips into the clip regions boundary B
-carries — see "Clip resolution" below.
+carries — see "Clip resolution" below. v0.4 (story #164) made the commit
+**incremental** — retained interners, carry-forward of unchanged rects,
+and a partial-solve contract, so per-frame update cost scales with the
+change rather than the scene — see "Incremental commit" below.
 
 Source: `crates/dashscene-core/src/lib.rs`, `src/arena.rs`,
 `src/committed.rs`. Acceptance path: `crates/dashscene-core/tests/arena.rs`.
@@ -211,7 +214,9 @@ never shift. This is the invariant the bounded-pool work depends on
 
 ## Commit resolution pipeline
 
-`Txn::commit` (in `arena.rs`) runs in one pass:
+`Txn::commit` (in `arena.rs`) runs in one pass, and since story #164 it
+scales with the change rather than the scene ("Incremental commit"
+below):
 
 1. **DFS order** — an explicit stack seeded with `roots` (reversed, so
    pop order is creation order), pushing each node's children reversed
@@ -223,27 +228,70 @@ never shift. This is the invariant the bounded-pool work depends on
    delegates to the internal `FixedSolver` (absolute position =
    parent's absolute + the node's authored offset, size = authored
    width/height), while `commit_with` takes any solver — the engine's
-   `TaffySolver` for flex scenes. A solver that omits a node panics
-   (P4). Paint = the fill color interned by exact bit pattern
-   (`f32::to_bits` on each channel) in first-use order — an unfilled
-   node interns the shared draws-nothing entry
-   (`PaintEntry::default()`), so every rect resolves (story #4,
-   `docs/decisions/boundary-b-unification.md`).
-3. **Dirty diff** — after building the new rect table, each index is
-   compared against the same index in the previous front buffer; an
-   entry is dirty when its bits changed (compared via `f32::to_bits`,
-   so NaN does not self-compare unequal forever) **or** when its
-   resolved fill color changed. The second clause exists because the
-   paint table is re-interned every commit: a stable paint index can
-   reference a different color (a fill change on the only filled node
-   keeps index 0), and an index shift can leave the color unchanged —
-   entry-bit equality alone would miss real repaints. This is a
-   per-index diff, not an op-touched set — a node whose _ancestor_
-   moved gets its own absolute recomputed and so shows up as changed
-   even though no `set_prop` touched it directly.
+   `TaffySolver` for flex scenes. Since #164 a solver may return **only
+   the rects that changed**; a node it omits keeps the rect the previous
+   commit gave it (carry-forward). The "every node has a rect" invariant
+   is re-expressed, not dropped: a node that is neither solved now nor
+   present in the previous commit panics (P4 — never a silent skip).
+   Paint = the fill color interned by exact bit pattern (`f32::to_bits`
+   on each channel) — an unfilled node interns the shared draws-nothing
+   entry (`PaintEntry::default()`), so every rect resolves (story #4,
+   `docs/decisions/boundary-b-unification.md`). The paint interner
+   (`paint_map`) and the clip interner (`clip_map`) — both
+   `rustc_hash::FxHashMap` — are **retained on the `Arena` across
+   commits** since #164, so an index means the same entry from one
+   commit to the next.
+3. **Dirty diff** — the published `dirty()` array is a per-index compare
+   of the new rect table against the previous front buffer at the same
+   index, dirty when the entry's bits differ (`entry_bits` =
+   `[x, y, w, h, paint index, clip index]` as raw `u32`, so `f32::to_bits`
+   makes NaN behave). Since #164 this is a plain bit compare with no
+   resolved-color or resolved-region clause: because the interners are
+   retained, a changed fill earns a _new_ paint index and a resized or
+   toggled clip ancestor earns a _new_ clip region index, so the change
+   is already in the entry bits (the old `resolved_paint_key` /
+   `same_region_bits` helpers, needed only while the tables were
+   re-interned every commit, are gone). This is still a per-index diff,
+   not an op-touched set — a node whose _ancestor_ moved gets its own
+   absolute recomputed and shows up as changed even though no `set_prop`
+   touched it. _Which_ nodes are re-solved and re-interned, by contrast,
+   is derived from what was written: `set_prop`/`set_variant` classify
+   each write through `prop_class` into retained `layout_dirty` /
+   `paint_dirty` / `clip_toggled` sets that drive the incremental work.
 4. **Publish** — generation = previous generation + 1 (every commit
    increments, including a no-op commit); the new `CommittedScene` is
    written into the back buffer and `front` flips.
+
+### Incremental commit (story #164)
+
+Before #164 the commit cost `O(total nodes)` every frame — a full solve,
+two fresh interner `HashMap`s, and a rect table rebuilt from scratch —
+regardless of how few props changed. #164 makes each of those scale with
+the change, so the per-frame update path (`dashlang`'s reactive layer,
+FLIP) is affordable at ~1000 live nodes:
+
+- **Retained interners.** `paint_map` and `clip_map` persist on the
+  `Arena` (taken with `mem::take` for the commit, restored after), so
+  paint and clip indices are stable across commits. This is what
+  collapses the dirty check to a bit compare (step 3).
+- **Copy-on-write tables.** The back buffer's paint and clip tables, and
+  the `node_of`/`rect_index` maps, start as `Arc` clones of the previous
+  commit's and are `make_mut`-copied only when a genuinely new entry is
+  pushed or the tree structure changed. Unchanged rect entries and the
+  geometry of solver-omitted nodes are carried forward by `NodeId`.
+- **Partial solve.** The `LayoutSolver::solve` contract now blesses
+  returning only the movers (`docs/decisions/layout-solver-seam.md`); the
+  engine's retained `TaffySolver` does exactly that
+  (`docs/design/dashscene-engine.md`).
+
+`rustc-hash` (`FxHashMap`) is the one crate #164 adds: an internal
+interner keyed by color/geometry bits needs neither SipHash's DoS
+resistance nor its cost. Acceptance is in
+`crates/dashscene-core/tests/arena.rs` (first-commit dirties all;
+move-parent dirties it and its descendants only; no-op commit is clean;
+a fill change earns a new stable paint index; swapped fills dirty both;
+carry-forward of an omitted node's rect; the panic when a node has no
+rect this solve or last) and `crates/dashscene-engine/tests/incremental.rs`.
 
 Fixed-position authoring (why `x`/`y` exist as an offset on the
 document's `FixedSizeLayout` rather than only in the arena) and the

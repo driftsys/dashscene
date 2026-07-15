@@ -217,6 +217,31 @@ into the records below. Per-story decisions land here directly:
   `Painter::paint`; `SkiaPainter`'s `Full`/`Retained` modes make it a
   differential oracle (story #163); binds the incremental-commit work (#164).
 
+- [reactive-layer-home-and-staging.md](reactive-layer-home-and-staging.md)
+  — the reactive layer (signals, bindings, transforms, flush loop) lives in
+  `dashlang` with core unchanged; the binding table moves into `dashbuf` +
+  core at v0.7, so the transform vocabulary is declarative-with-`Custom` now
+  (story #166; `docs/archive/2026-07-14-scope-decisions.md` §23 D1, D8).
+
+- [bindings-are-explicit-and-flat.md](bindings-are-explicit-and-flat.md)
+  — bindings are explicitly declared in a flat table, not implicitly tracked;
+  a binding connects data to one prop on one node, never two nodes — node
+  consequences propagate through the solver (story #166; §23 D2).
+
+- [scene-tree-is-static-lists-are-bounded-pools.md](scene-tree-is-static-lists-are-bounded-pools.md)
+  — the scene tree is static after build; a variable-length list is a bounded
+  pool toggled with `Visible`, because a mid-tree insert shifts every DFS
+  index and defeats the dirty diff (story #166; §23 D3).
+
+- [visible-is-layout-opacity-is-paint.md](visible-is-layout-opacity-is-paint.md)
+  — `Visible` is a layout prop (Taffy `Display::None`), `Opacity` is a paint
+  prop, and there is no third `visibility: hidden` state; `Visible` built at
+  v0.4, `Opacity` scope for v0.8 (story #165; §23 D7).
+- [flip-engine-binds-resolved-values.md](flip-engine-binds-resolved-values.md)
+  — `dashcue` carries only the transition spec (P1); the engine captures the
+  before/after solve and binds the resolved `(from, to)` and `(node, channel)`
+  keys at commit, delegating timing and retarget to the scheduler (story #22).
+
 Gardened out of `docs/technotes/`'s `DECISION` / `DECISION direction` tags,
 so each technote stops being the authority for the conclusion it reached:
 
