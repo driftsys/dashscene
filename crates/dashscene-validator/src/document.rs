@@ -15,7 +15,9 @@
 //! The schema's own comment makes this the load gate's job: "range-check
 //! and emit a named diagnostic (P4/R6), never default silently."
 
-use dashbuf::{Document, Fill, Image, NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE, Node, Paint};
+use dashbuf::{
+    Document, Fill, Image, NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE, Node, Paint, VariantSet,
+};
 
 use crate::paint::{
     check_gradient_stops, check_image_bytes, check_image_index, check_stroke_width, error,
@@ -110,6 +112,10 @@ pub fn validate_document(doc: &Document<'_>) -> Report {
 
     for (i, image) in images.iter().enumerate() {
         check_image_asset(&mut report, &image, &Location::ImageAsset(i as u32));
+    }
+
+    for (i, set) in doc.variant_sets().unwrap_or_default().iter().enumerate() {
+        check_variant_set(&mut report, &set, i as u32, &sizes);
     }
 
     // A text style's color is optional in the schema, so a producer can omit
@@ -278,6 +284,61 @@ fn check_paint_entry(report: &mut Report, paint: &Paint<'_>, at: &Location, size
 fn check_image_asset(report: &mut Report, image: &Image<'_>, at: &Location) {
     check_enum!(report, at, "Image.format", image.format());
     check_image_bytes(report, at, image.bytes().map_or(0, |bytes| bytes.len()));
+}
+
+/// One variant set (v0.4, issue #20): the active-member index, and every
+/// member's overrides.
+///
+/// `VariantOverride.value` is `(required)` in the schema, so the union
+/// cannot be absent by construction — a producer that omits it never
+/// reaches this function, and foreign bytes that try are already rejected
+/// by the flatbuffer verifier, before `validate_document` runs. `check_enum!`
+/// still runs on `value_type()` for the same reason it runs on every other
+/// union/enum here: presence is not the same guarantee as "a member this
+/// build recognizes."
+fn check_variant_set(report: &mut Report, set: &VariantSet<'_>, index: u32, sizes: &PoolSizes) {
+    let at = Location::VariantSet(index);
+    let members = set.members().unwrap_or_default();
+
+    if members.is_empty() {
+        report.push(error(
+            rule::VARIANT_SET_NO_MEMBERS,
+            &at,
+            "variant set has no members; there is nothing for set_variant to select".to_owned(),
+        ));
+        return;
+    }
+
+    let active_member = set.active_member();
+    if active_member as usize >= members.len() {
+        report.push(error(
+            rule::VARIANT_ACTIVE_MEMBER_OUT_OF_RANGE,
+            &at,
+            format!(
+                "variant set's active_member is {active_member}, but it carries {} members",
+                members.len()
+            ),
+        ));
+    }
+
+    for member in members.iter() {
+        for override_ in member.overrides().unwrap_or_default().iter() {
+            check_enum!(report, &at, "VariantOverride.value", override_.value_type());
+
+            let node = override_.node();
+            if node as usize >= sizes.nodes {
+                report.push(error(
+                    rule::VARIANT_OVERRIDE_NODE_OUT_OF_RANGE,
+                    &at,
+                    format!(
+                        "variant override references node {node}, but the document carries {} \
+                         nodes",
+                        sizes.nodes
+                    ),
+                ));
+            }
+        }
+    }
 }
 
 /// Every node's slash-joined name path, memoized in one forward pass.

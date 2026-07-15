@@ -1,0 +1,133 @@
+//! `load_document`'s variant-table replay (story #20): "loading is a
+//! straight replay of the document's nodes through the ordinary
+//! producer API" (`docs/design/dashscene-core-arena.md`) extends to
+//! `Document.variant_sets` — a loaded scene resolves the same rect/paint
+//! tables a hand-staged `add_variant_set`/`set_variant` call would.
+
+use dashbuf::{
+    Document, DocumentArgs, FixedSizeLayout, Node, NodeArgs, VariantMember, VariantMemberArgs,
+    VariantOverride, VariantOverrideArgs, VariantPropValue, VariantSet, VariantSetArgs,
+    VariantWidth, VariantWidthArgs, root_as_document,
+};
+use dashscene_core::{Arena, load_document};
+use flatbuffers::FlatBufferBuilder;
+
+/// Two 10x10 nodes and one variant set whose only member overrides node
+/// 1's width, plus `active_member` — parameterized so the same fixture
+/// proves both "not yet switched" and "switched at load time."
+fn document_bytes(active_member: u32) -> Vec<u8> {
+    let mut b = FlatBufferBuilder::new();
+    let layout = FixedSizeLayout::new(0.0, 0.0, 10.0, 10.0);
+    let a = Node::create(
+        &mut b,
+        &NodeArgs {
+            layout: Some(&layout),
+            ..Default::default()
+        },
+    );
+    let node_b = Node::create(
+        &mut b,
+        &NodeArgs {
+            layout: Some(&layout),
+            ..Default::default()
+        },
+    );
+    let nodes = b.create_vector(&[a, node_b]);
+
+    let default_member = VariantMember::create(&mut b, &VariantMemberArgs::default());
+    let width = VariantWidth::create(&mut b, &VariantWidthArgs { value: 99.0 });
+    let width_override = VariantOverride::create(
+        &mut b,
+        &VariantOverrideArgs {
+            node: 1,
+            value_type: VariantPropValue::VariantWidth,
+            value: Some(width.as_union_value()),
+        },
+    );
+    let overrides = b.create_vector(&[width_override]);
+    let wide_member = VariantMember::create(
+        &mut b,
+        &VariantMemberArgs {
+            overrides: Some(overrides),
+            ..Default::default()
+        },
+    );
+    let members = b.create_vector(&[default_member, wide_member]);
+    let set = VariantSet::create(
+        &mut b,
+        &VariantSetArgs {
+            members: Some(members),
+            active_member,
+        },
+    );
+    let variant_sets = b.create_vector(&[set]);
+
+    let document = Document::create(
+        &mut b,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            variant_sets: Some(variant_sets),
+            ..Default::default()
+        },
+    );
+    b.finish(document, None);
+    b.finished_data().to_vec()
+}
+
+#[test]
+fn a_loaded_document_resolves_with_its_default_active_member() {
+    let bytes = document_bytes(0);
+    let doc = root_as_document(&bytes).expect("valid dashbuf document");
+    let mut arena = Arena::new();
+    load_document(&doc, &mut arena);
+
+    assert_eq!(
+        arena.committed().rects()[1].w,
+        10.0,
+        "base width, unswitched"
+    );
+}
+
+#[test]
+fn a_loaded_document_resolves_with_a_non_default_active_member() {
+    let bytes = document_bytes(1);
+    let doc = root_as_document(&bytes).expect("valid dashbuf document");
+    let mut arena = Arena::new();
+    load_document(&doc, &mut arena);
+
+    assert_eq!(
+        arena.committed().rects()[1].w,
+        99.0,
+        "the document's own active_member selects the override at load time"
+    );
+}
+
+#[test]
+fn a_document_without_variant_sets_still_loads() {
+    let mut b = FlatBufferBuilder::new();
+    let layout = FixedSizeLayout::new(0.0, 0.0, 5.0, 5.0);
+    let node = Node::create(
+        &mut b,
+        &NodeArgs {
+            layout: Some(&layout),
+            ..Default::default()
+        },
+    );
+    let nodes = b.create_vector(&[node]);
+    let document = Document::create(
+        &mut b,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            ..Default::default()
+        },
+    );
+    b.finish(document, None);
+    let bytes = b.finished_data().to_vec();
+
+    let doc = root_as_document(&bytes).expect("valid dashbuf document");
+    let mut arena = Arena::new();
+    load_document(&doc, &mut arena);
+
+    assert_eq!(arena.committed().rects().len(), 1);
+    assert_eq!(arena.committed().rects()[0].w, 5.0);
+}

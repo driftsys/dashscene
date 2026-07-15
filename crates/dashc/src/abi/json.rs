@@ -18,6 +18,7 @@ enum WireLocation<'a> {
     Node { index: u32, path: &'a str },
     PaintEntry { index: u32 },
     ImageAsset { index: u32 },
+    VariantSet { index: u32 },
 }
 
 impl<'a> From<&'a Location> for WireLocation<'a> {
@@ -29,6 +30,7 @@ impl<'a> From<&'a Location> for WireLocation<'a> {
             },
             Location::PaintEntry(index) => Self::PaintEntry { index: *index },
             Location::ImageAsset(index) => Self::ImageAsset { index: *index },
+            Location::VariantSet(index) => Self::VariantSet { index: *index },
         }
     }
 }

@@ -1275,3 +1275,315 @@ fn a_no_op_commit_of_a_clipped_scene_stays_clean() {
 
     assert!(arena.committed().dirty().is_empty());
 }
+
+// ---------------------------------------------------------------------
+// Variant table + set_variant (story #20): a variant set's members carry
+// sparse overrides against the arena's base node values
+// (docs/decisions/variant-set-flat-index.md); set_variant switches which
+// member is active, and commit resolves the active member's overrides
+// into the rect/paint tables through the same resolve-then-diff pipeline
+// every other prop uses.
+// ---------------------------------------------------------------------
+
+#[test]
+fn switching_a_variant_changes_the_resolved_rect() {
+    use dashscene_core::VariantValue;
+
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let node = boxed(&mut txn, None, 0.0, 0.0, 10.0, 10.0);
+    let set = txn.add_variant_set(vec![
+        dashscene_core::VariantMember {
+            name: Some("Default".to_string()),
+            overrides: vec![],
+        },
+        dashscene_core::VariantMember {
+            name: Some("Wide".to_string()),
+            overrides: vec![(node, VariantValue::Width(100.0))],
+        },
+    ]);
+    txn.commit();
+    assert_eq!(arena.committed().rects()[0].w, 10.0, "default member");
+
+    let mut txn = arena.open();
+    txn.set_variant(set, 1);
+    txn.commit();
+
+    assert_eq!(arena.committed().rects()[0].w, 100.0);
+}
+
+#[test]
+fn switching_a_variant_changes_the_resolved_paint() {
+    use dashscene_core::VariantValue;
+
+    const BLUE: Color = Color {
+        r: 0.0,
+        g: 0.0,
+        b: 1.0,
+        a: 1.0,
+    };
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let node = boxed(&mut txn, None, 0.0, 0.0, 10.0, 10.0);
+    txn.set_prop(node, Prop::Fill(RED));
+    let set = txn.add_variant_set(vec![
+        dashscene_core::VariantMember {
+            name: None,
+            overrides: vec![],
+        },
+        dashscene_core::VariantMember {
+            name: None,
+            overrides: vec![(node, VariantValue::Fill(BLUE))],
+        },
+    ]);
+    txn.commit();
+    let scene = arena.committed();
+    assert_eq!(
+        scene.paints().resolve(scene.rects()[0].paint),
+        &PaintEntry::solid(RED)
+    );
+
+    let mut txn = arena.open();
+    txn.set_variant(set, 1);
+    txn.commit();
+
+    let scene = arena.committed();
+    assert_eq!(
+        scene.paints().resolve(scene.rects()[0].paint),
+        &PaintEntry::solid(BLUE)
+    );
+}
+
+#[test]
+fn a_variant_switch_dirties_only_the_overridden_rect() {
+    use dashscene_core::VariantValue;
+
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let untouched = boxed(&mut txn, None, 0.0, 0.0, 5.0, 5.0);
+    txn.set_prop(untouched, Prop::Fill(RED));
+    let node = boxed(&mut txn, None, 20.0, 20.0, 10.0, 10.0);
+    let set = txn.add_variant_set(vec![
+        dashscene_core::VariantMember {
+            name: None,
+            overrides: vec![],
+        },
+        dashscene_core::VariantMember {
+            name: None,
+            overrides: vec![(node, VariantValue::X(50.0))],
+        },
+    ]);
+    txn.commit();
+
+    let mut txn = arena.open();
+    txn.set_variant(set, 1);
+    txn.commit();
+
+    assert_eq!(arena.committed().dirty(), [1]);
+}
+
+#[test]
+fn a_variant_switch_moves_descendants_of_the_overridden_node() {
+    use dashscene_core::VariantValue;
+
+    // root ── child, child's absolute x tracks root's resolved x.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let root = boxed(&mut txn, None, 0.0, 0.0, 10.0, 10.0);
+    let child = boxed(&mut txn, Some(root), 1.0, 1.0, 2.0, 2.0);
+    let set = txn.add_variant_set(vec![
+        dashscene_core::VariantMember {
+            name: None,
+            overrides: vec![],
+        },
+        dashscene_core::VariantMember {
+            name: None,
+            overrides: vec![(root, VariantValue::X(100.0))],
+        },
+    ]);
+    txn.commit();
+    let _ = child;
+
+    let mut txn = arena.open();
+    txn.set_variant(set, 1);
+    txn.commit();
+
+    let scene = arena.committed();
+    assert_eq!(scene.rects()[0].x, 100.0, "root moved by the override");
+    assert_eq!(
+        scene.rects()[1].x,
+        101.0,
+        "child's absolute tracks root's resolved x, even though no \
+         override named the child directly"
+    );
+    assert_eq!(
+        scene.dirty(),
+        [0, 1],
+        "both the overridden node and its descendant"
+    );
+}
+
+#[test]
+fn set_variant_is_staged_and_visible_before_commit() {
+    use dashscene_core::VariantValue;
+
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let node = boxed(&mut txn, None, 0.0, 0.0, 10.0, 10.0);
+    let set = txn.add_variant_set(vec![
+        dashscene_core::VariantMember {
+            name: None,
+            overrides: vec![],
+        },
+        dashscene_core::VariantMember {
+            name: None,
+            overrides: vec![(node, VariantValue::Width(42.0))],
+        },
+    ]);
+    txn.commit();
+
+    {
+        let mut txn = arena.open();
+        txn.set_variant(set, 1);
+    } // txn dropped here — staged, never committed
+
+    // Staged, not yet committed: the intent-side accessor sees it
+    // immediately (the same contract as `Arena::text`), the committed
+    // buffer does not.
+    assert_eq!(arena.layout(node).width, 42.0);
+    assert_eq!(
+        arena.committed().rects()[0].w,
+        10.0,
+        "dropping the txn without committing must not publish the switch"
+    );
+}
+
+#[test]
+fn a_second_variant_set_overriding_the_same_prop_wins_in_creation_order() {
+    use dashscene_core::VariantValue;
+
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let node = boxed(&mut txn, None, 0.0, 0.0, 10.0, 10.0);
+    let first = txn.add_variant_set(vec![
+        dashscene_core::VariantMember {
+            name: None,
+            overrides: vec![],
+        },
+        dashscene_core::VariantMember {
+            name: None,
+            overrides: vec![(node, VariantValue::Width(20.0))],
+        },
+    ]);
+    let second = txn.add_variant_set(vec![
+        dashscene_core::VariantMember {
+            name: None,
+            overrides: vec![],
+        },
+        dashscene_core::VariantMember {
+            name: None,
+            overrides: vec![(node, VariantValue::Width(30.0))],
+        },
+    ]);
+    txn.set_variant(first, 1);
+    txn.set_variant(second, 1);
+    txn.commit();
+
+    assert_eq!(
+        arena.committed().rects()[0].w,
+        30.0,
+        "the later-created set's override wins"
+    );
+}
+
+#[test]
+fn a_later_override_within_one_members_list_wins_over_an_earlier_one() {
+    use dashscene_core::VariantValue;
+
+    // Two overrides of the same (node, prop) inside ONE member's overrides
+    // Vec — distinct from creation-order precedence across sets, which
+    // the tests above cover.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let node = boxed(&mut txn, None, 0.0, 0.0, 10.0, 10.0);
+    let set = txn.add_variant_set(vec![
+        dashscene_core::VariantMember {
+            name: None,
+            overrides: vec![],
+        },
+        dashscene_core::VariantMember {
+            name: None,
+            overrides: vec![
+                (node, VariantValue::Width(20.0)),
+                (node, VariantValue::Width(30.0)),
+            ],
+        },
+    ]);
+    txn.set_variant(set, 1);
+    txn.commit();
+
+    assert_eq!(
+        arena.committed().rects()[0].w,
+        30.0,
+        "the last override in the member's list wins"
+    );
+}
+
+#[test]
+fn active_variant_defaults_to_the_first_member() {
+    let mut arena = Arena::new();
+    let set = {
+        let mut txn = arena.open();
+        boxed(&mut txn, None, 0.0, 0.0, 10.0, 10.0);
+        txn.add_variant_set(vec![
+            dashscene_core::VariantMember {
+                name: Some("Default".to_string()),
+                overrides: vec![],
+            },
+            dashscene_core::VariantMember {
+                name: Some("Alt".to_string()),
+                overrides: vec![],
+            },
+        ])
+    }; // txn dropped here — staged, never committed
+
+    assert_eq!(arena.active_variant(set), 0);
+}
+
+#[test]
+#[should_panic(expected = "a variant set needs at least one member")]
+fn add_variant_set_panics_on_an_empty_member_list() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    txn.add_variant_set(vec![]);
+}
+
+#[test]
+#[should_panic(expected = "is not a node of this arena")]
+fn add_variant_set_panics_on_an_out_of_range_override_node() {
+    use dashscene_core::VariantValue;
+
+    let mut arena_a = Arena::new();
+    let mut txn = arena_a.open();
+    let foreign = txn.add_node(None, None);
+    txn.commit();
+
+    let mut arena_b = Arena::new();
+    let mut txn = arena_b.open();
+    txn.add_variant_set(vec![dashscene_core::VariantMember {
+        name: None,
+        overrides: vec![(foreign, VariantValue::Width(1.0))],
+    }]);
+}
+
+#[test]
+#[should_panic(expected = "is out of range")]
+fn set_variant_panics_on_an_out_of_range_member() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let set = txn.add_variant_set(vec![dashscene_core::VariantMember {
+        name: None,
+        overrides: vec![],
+    }]);
+    txn.set_variant(set, 1);
+}

@@ -255,6 +255,56 @@ pub struct TextStyle {
     pub color: Color,
 }
 
+/// One prop value a variant member can override — the narrow slice of
+/// `Prop`'s vocabulary the dashbuf variant table carries (X, Y, Width,
+/// Height, the solid-fill shorthand): the props needed to prove
+/// resolved rect/paint correctness. Widening to the rest of `Prop` is
+/// additive future work (`docs/decisions/variant-set-flat-index.md`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum VariantValue {
+    X(f32),
+    Y(f32),
+    Width(f32),
+    Height(f32),
+    Fill(Color),
+}
+
+/// One selectable state of a [`VariantSetId`]: an optional name and its
+/// sparse overrides against the arena's base node values. Overrides
+/// that name the same node's same prop more than once are legal; the
+/// last one in the list wins (`Vec` order, not a map), the same
+/// last-write convention `Txn::set_prop` already carries.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct VariantMember {
+    pub name: Option<String>,
+    pub overrides: Vec<(NodeId, VariantValue)>,
+}
+
+/// Stable handle to a variant set in one [`Arena`], returned by
+/// [`Txn::add_variant_set`]. Only meaningful for the arena that
+/// produced it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct VariantSetId(u32);
+
+/// A staged variant set: its fixed member list and which one is active.
+#[derive(Debug)]
+struct VariantSetData {
+    members: Vec<VariantMember>,
+    active: usize,
+}
+
+/// The variant overrides active for one node, gathered across every
+/// variant set in creation order (a later set's override for the same
+/// prop wins — see [`Arena::overlay`]).
+#[derive(Clone, Debug, Default)]
+struct NodeOverlay {
+    x: Option<f32>,
+    y: Option<f32>,
+    width: Option<f32>,
+    height: Option<f32>,
+    fill: Option<PaintKind>,
+}
+
 /// Intent for one node — layout intent plus paint and text intent and
 /// tree links.
 #[derive(Debug)]
@@ -299,6 +349,10 @@ pub struct Arena {
     images: Arc<ImageTable>,
     /// Creation order; DFS root order at commit.
     roots: Vec<NodeId>,
+    /// Declared by [`Txn::add_variant_set`], in creation order — the
+    /// order a later set's override wins ties in
+    /// (`docs/decisions/variant-set-flat-index.md`).
+    variant_sets: Vec<VariantSetData>,
     buffers: [CommittedScene; 2],
     front: usize,
 }
@@ -357,7 +411,12 @@ impl Arena {
     }
 
     /// The node's layout intent (authored fixed geometry + flex
-    /// vocabulary), by value.
+    /// vocabulary), by value — with any active variant override
+    /// (`X`/`Y`/`Width`/`Height`) applied on top of the base value. This
+    /// is the read seam every [`LayoutSolver`] resolves geometry
+    /// through (the internal [`FixedSolver`] included), so a variant
+    /// switch reaches committed geometry without either solver knowing
+    /// variants exist (`docs/decisions/variant-set-flat-index.md`).
     ///
     /// # Panics
     ///
@@ -365,7 +424,67 @@ impl Arena {
     /// another arena whose index happens to be in range is not detected
     /// — ids are only meaningful for the arena that produced them.
     pub fn layout(&self, node: NodeId) -> Layout {
-        self.node_data(node).layout
+        let mut layout = self.node_data(node).layout;
+        let overlay = self.overlay(node);
+        if let Some(x) = overlay.x {
+            layout.x = x;
+        }
+        if let Some(y) = overlay.y {
+            layout.y = y;
+        }
+        if let Some(width) = overlay.width {
+            layout.width = width;
+        }
+        if let Some(height) = overlay.height {
+            layout.height = height;
+        }
+        layout
+    }
+
+    /// The currently active member index of `set` — staged intent, like
+    /// [`Arena::text`]: a member switched by [`Txn::set_variant`] but
+    /// not yet committed still reads back here.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `set` is out of range for this arena.
+    pub fn active_variant(&self, set: VariantSetId) -> usize {
+        self.variant_sets
+            .get(set.0 as usize)
+            .unwrap_or_else(|| panic!("{set:?} is not a variant set of this arena"))
+            .active
+    }
+
+    /// The variant overrides active for `node`, gathered across every
+    /// variant set's active member, in set-creation order — a later
+    /// set's override of the same prop on the same node wins. Empty for
+    /// a node no variant set touches.
+    ///
+    /// O(total override entries across all sets): the "walking
+    /// skeleton" scale this story targets has no need for a
+    /// per-node index, and building one on every read would trade a
+    /// simple scan for cache invalidation this API's staged-visibility
+    /// contract (immediate, on every read) does not otherwise need.
+    fn overlay(&self, node: NodeId) -> NodeOverlay {
+        let mut overlay = NodeOverlay::default();
+        for set in &self.variant_sets {
+            let member = &set.members[set.active];
+            for (target, value) in &member.overrides {
+                if *target != node {
+                    continue;
+                }
+                match *value {
+                    VariantValue::X(v) => overlay.x = Some(v),
+                    VariantValue::Y(v) => overlay.y = Some(v),
+                    VariantValue::Width(v) => overlay.width = Some(v),
+                    VariantValue::Height(v) => overlay.height = Some(v),
+                    VariantValue::Fill(color) => {
+                        overlay.fill = Some(PaintKind::Solid { color });
+                    }
+                }
+            }
+        }
+        overlay
     }
 
     /// Root nodes in creation order (document DFS root order).
@@ -415,21 +534,25 @@ struct FixedSolver;
 impl LayoutSolver for FixedSolver {
     fn solve(&mut self, arena: &Arena) -> Vec<(NodeId, SolvedRect)> {
         // dfs_order is parent-before-child, so every parent's absolute
-        // is resolved before its children read it.
+        // is resolved before its children read it. Reading through
+        // `arena.layout(id)` rather than the node's raw field means a
+        // variant-overridden X/Y/Width/Height reaches this solve the
+        // same way a `set_prop` one does (`docs/decisions/variant-set-flat-index.md`).
         let mut out = Vec::with_capacity(arena.nodes.len());
         let mut absolute = vec![(0.0f32, 0.0f32); arena.nodes.len()];
         for id in arena.dfs_order() {
-            let node = &arena.nodes[id.index()];
-            let (parent_x, parent_y) = node.parent.map_or((0.0, 0.0), |p| absolute[p.index()]);
-            let (x, y) = (parent_x + node.layout.x, parent_y + node.layout.y);
+            let parent = arena.nodes[id.index()].parent;
+            let layout = arena.layout(id);
+            let (parent_x, parent_y) = parent.map_or((0.0, 0.0), |p| absolute[p.index()]);
+            let (x, y) = (parent_x + layout.x, parent_y + layout.y);
             absolute[id.index()] = (x, y);
             out.push((
                 id,
                 SolvedRect {
                     x,
                     y,
-                    w: node.layout.width,
-                    h: node.layout.height,
+                    w: layout.width,
+                    h: layout.height,
                 },
             ));
         }
@@ -506,6 +629,61 @@ impl Txn<'_> {
     /// (the content-addressed asset model is v0.7, issue #107).
     pub fn add_image(&mut self, asset: ImageAsset) -> u32 {
         Arc::make_mut(&mut self.arena.images).push(asset)
+    }
+
+    /// Declare a variant set: a fixed list of named, sparsely-overriding
+    /// members (`docs/decisions/variant-set-flat-index.md`). The first
+    /// member (index 0) is active until [`Txn::set_variant`] switches
+    /// it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `members` is empty (there is nothing to select), or if
+    /// any override names a `NodeId` out of range for this arena.
+    pub fn add_variant_set(&mut self, members: Vec<VariantMember>) -> VariantSetId {
+        assert!(
+            !members.is_empty(),
+            "a variant set needs at least one member"
+        );
+        for member in &members {
+            for (node, _) in &member.overrides {
+                assert!(
+                    node.index() < self.arena.nodes.len(),
+                    "{node:?} is not a node of this arena"
+                );
+            }
+        }
+        // Cannot truncate: add_node's guard already keeps the arena
+        // below u32::MAX nodes, and a variant set needs at least one
+        // node to be useful, so variant sets never outnumber nodes.
+        let id = VariantSetId(self.arena.variant_sets.len() as u32);
+        self.arena
+            .variant_sets
+            .push(VariantSetData { members, active: 0 });
+        id
+    }
+
+    /// Switch `set`'s active member. Staged like any other mutation
+    /// (P3): visible immediately through [`Arena::layout`] and
+    /// [`Arena::active_variant`], published to painters at the next
+    /// commit.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `set` is out of range for this arena, or `member` is
+    /// out of range for `set`'s member list.
+    pub fn set_variant(&mut self, set: VariantSetId, member: usize) {
+        let data = self
+            .arena
+            .variant_sets
+            .get_mut(set.0 as usize)
+            .unwrap_or_else(|| panic!("{set:?} is not a variant set of this arena"));
+        assert!(
+            member < data.members.len(),
+            "member {member} is out of range for {set:?} ({} members)",
+            data.members.len()
+        );
+        data.active = member;
     }
 
     pub fn set_prop(&mut self, node: NodeId, prop: Prop) {
@@ -707,8 +885,12 @@ impl Txn<'_> {
             let node = &arena.nodes[id.index()];
             let geometry =
                 solved[id.index()].unwrap_or_else(|| panic!("solver returned no rect for {id:?}"));
+            // A variant override's fill takes precedence over the
+            // node's base fill, the same "active member wins" rule
+            // `Arena::layout` applies to geometry.
+            let fill = arena.overlay(id).fill.or_else(|| node.fill.clone());
             let entry = PaintEntry {
-                fill: node.fill.clone(),
+                fill,
                 stroke: node.stroke,
                 corners: node.corners,
             };

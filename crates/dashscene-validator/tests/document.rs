@@ -11,7 +11,8 @@ use dashbuf::{
     Color, Document, DocumentArgs, Fill, Gradient, GradientArgs, GradientKind, GradientStop, Image,
     ImageArgs, ImageFill, ImageFillArgs, ImageFormat, NO_PAINT, Node, NodeArgs, Paint, PaintArgs,
     ScaleMode, SolidFill, SolidFillArgs, Stroke, StrokeAlign, StrokeArgs, TextStyle, TextStyleArgs,
-    Vec2, root_as_document,
+    VariantMember, VariantMemberArgs, VariantOverride, VariantOverrideArgs, VariantPropValue,
+    VariantSet, VariantSetArgs, VariantX, VariantXArgs, Vec2, root_as_document,
 };
 use dashscene_validator::{Location, NodePath, rule, validate_document};
 use flatbuffers::{FlatBufferBuilder, WIPOffset};
@@ -187,6 +188,7 @@ impl Doc {
                 paints,
                 strings,
                 text_styles,
+                variant_sets: None,
             },
         );
         b.finish(doc, None);
@@ -670,4 +672,110 @@ fn gradient_stops_that_repeat_an_offset_are_allowed() {
     );
     assert!(!report.has(rule::GRADIENT_STOP_ORDER), "{report}");
     assert!(report.is_empty(), "{report}");
+}
+
+// ---------------------------------------------------------------------
+// The v0.4 variant table (issue #20). `Doc`'s builder DSL is v0.1-v0.3
+// vocabulary only; these build the flatbuffer directly rather than widen
+// it for one feature's tests.
+// ---------------------------------------------------------------------
+
+/// One node, one `VariantSet` whose one member overrides `node`'s `X` —
+/// the well-formed shape every malformed-input test below perturbs.
+fn document_with_one_variant_override(node: u32, active_member: u32) -> Vec<u8> {
+    let mut b = FlatBufferBuilder::new();
+    let a = Node::create(&mut b, &NodeArgs::default());
+    let nodes = b.create_vector(&[a]);
+
+    let x = VariantX::create(&mut b, &VariantXArgs { value: 1.0 });
+    let override_ = VariantOverride::create(
+        &mut b,
+        &VariantOverrideArgs {
+            node,
+            value_type: VariantPropValue::VariantX,
+            value: Some(x.as_union_value()),
+        },
+    );
+    let overrides = b.create_vector(&[override_]);
+    let member = VariantMember::create(
+        &mut b,
+        &VariantMemberArgs {
+            overrides: Some(overrides),
+            ..Default::default()
+        },
+    );
+    let members = b.create_vector(&[member]);
+    let set = VariantSet::create(
+        &mut b,
+        &VariantSetArgs {
+            members: Some(members),
+            active_member,
+        },
+    );
+    let variant_sets = b.create_vector(&[set]);
+
+    let document = Document::create(
+        &mut b,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            variant_sets: Some(variant_sets),
+            ..Default::default()
+        },
+    );
+    b.finish(document, None);
+    b.finished_data().to_vec()
+}
+
+fn validate(bytes: &[u8]) -> dashscene_validator::Report {
+    let document = root_as_document(bytes).expect("the flatbuffer verifier accepts this buffer");
+    validate_document(&document)
+}
+
+#[test]
+fn a_well_formed_variant_set_produces_no_diagnostics() {
+    let report = validate(&document_with_one_variant_override(0, 0));
+    assert!(report.is_empty(), "unexpected diagnostics:\n{report}");
+}
+
+#[test]
+fn a_variant_override_node_past_the_node_array_is_named() {
+    let report = validate(&document_with_one_variant_override(99, 0));
+    assert!(
+        report.has(rule::VARIANT_OVERRIDE_NODE_OUT_OF_RANGE),
+        "{report}"
+    );
+    assert!(report.has_errors());
+}
+
+#[test]
+fn an_active_member_past_the_member_list_is_named() {
+    let report = validate(&document_with_one_variant_override(0, 7));
+    assert!(
+        report.has(rule::VARIANT_ACTIVE_MEMBER_OUT_OF_RANGE),
+        "{report}"
+    );
+    assert!(report.has_errors());
+}
+
+#[test]
+fn a_variant_set_with_no_members_is_named() {
+    let mut b = FlatBufferBuilder::new();
+    let node = Node::create(&mut b, &NodeArgs::default());
+    let nodes = b.create_vector(&[node]);
+    let set = VariantSet::create(&mut b, &VariantSetArgs::default());
+    let variant_sets = b.create_vector(&[set]);
+    let document = Document::create(
+        &mut b,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            variant_sets: Some(variant_sets),
+            ..Default::default()
+        },
+    );
+    b.finish(document, None);
+    let bytes = b.finished_data().to_vec();
+
+    let report = validate(&bytes);
+    assert!(report.has(rule::VARIANT_SET_NO_MEMBERS), "{report}");
+    assert!(report.has_errors());
 }

@@ -82,6 +82,11 @@ pub mod rule {
     /// which is what P4 forbids.
     pub const TEXT_STYLE_NO_COLOR: &str = "text.style-no-color";
 
+    // Load gate — the v0.4 variant table (issue #20).
+    pub const VARIANT_OVERRIDE_NODE_OUT_OF_RANGE: &str = "variant.override-node-out-of-range";
+    pub const VARIANT_SET_NO_MEMBERS: &str = "variant.set-no-members";
+    pub const VARIANT_ACTIVE_MEMBER_OUT_OF_RANGE: &str = "variant.active-member-out-of-range";
+
     // Load gate — the append-only enum range check. The schema's own
     // contract: "a reader built before an append receives the unknown
     // value as a raw integer — the load gate must range-check and emit a
@@ -196,6 +201,9 @@ pub enum Location {
     PaintEntry(u32),
     /// An image asset, by its index in `Document.images` / `ImageTable`.
     ImageAsset(u32),
+    /// A variant set, by its index in `Document.variant_sets` — not a node,
+    /// the same reasoning as `PaintEntry`/`ImageAsset` (issue #20).
+    VariantSet(u32),
 }
 
 impl fmt::Display for Location {
@@ -204,6 +212,7 @@ impl fmt::Display for Location {
             Self::Node(path) => write!(f, "{path}"),
             Self::PaintEntry(index) => write!(f, "<paint pool #{index}>"),
             Self::ImageAsset(index) => write!(f, "<image asset #{index}>"),
+            Self::VariantSet(index) => write!(f, "<variant set #{index}>"),
         }
     }
 }

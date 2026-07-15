@@ -153,6 +153,7 @@ fn flex_and_constraint_fields_round_trip() {
             paints: None,
             strings: None,
             text_styles: None,
+            variant_sets: None,
         },
     );
     builder.finish(document, None);
@@ -219,6 +220,7 @@ fn a_node_without_flex_tables_reads_back_absent() {
             paints: None,
             strings: None,
             text_styles: None,
+            variant_sets: None,
         },
     );
     builder.finish(document, None);
@@ -266,6 +268,7 @@ fn empty_flex_tables_read_back_the_schema_defaults() {
             paints: None,
             strings: None,
             text_styles: None,
+            variant_sets: None,
         },
     );
     builder.finish(document, None);

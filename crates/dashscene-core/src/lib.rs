@@ -39,7 +39,7 @@ mod load;
 
 pub use arena::{
     Arena, AxisSizing, CrossAxisAlign, EdgeInsets, Layout, LayoutMode, LayoutSolver, MainAxisAlign,
-    NodeId, Prop, SolvedRect, TextStyle, Txn,
+    NodeId, Prop, SolvedRect, TextStyle, Txn, VariantMember, VariantSetId, VariantValue,
 };
 pub use committed::{
     ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CommittedScene, CornerRadii, PaintEntry,
