@@ -102,11 +102,16 @@ frame contract is: `advance(dt)`, then read `sample`/`samples`.
 
 **Finishing.** A tween or keyframes track finishes when its elapsed
 time reaches `duration`. A spring finishes when both `|value − to|`
-and `|velocity|` are below rest thresholds (`REST_DELTA`,
-`REST_VELOCITY`); it then snaps to exactly `to`. The thresholds are
-crate constants at v0.4 (track values are pixel-scaled there — FLIP
-rects); promoting them to spec data is deferred until non-pixel props
-animate.
+and `|velocity|` are below rest thresholds; it then snaps to exactly
+`to`. Each threshold is `max(REST_*, REST_REL · scale)`, where `scale`
+is the animation's characteristic magnitude `max(|to − from|, |to|)`:
+an absolute floor for small/normal springs, scaling up relative to
+magnitude for large ones so the joint rest test still trips at any
+scale (an absolute-only threshold never reaches rest for a
+large-magnitude target, because the f32 ulp of `to` exceeds the floor —
+issue #68). The constants are crate-level at v0.4 (pixel-scaled for
+FLIP rects); promoting them to per-prop spec data is deferred until
+non-pixel props animate.
 
 **Retarget (R4).** Calling `start` for a key that already has a live
 track retargets it. One uniform rule: the new track's `from` is the old
