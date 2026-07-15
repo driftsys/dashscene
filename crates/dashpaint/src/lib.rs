@@ -481,6 +481,17 @@ pub trait Painter {
     /// choice (the lean painter draws opaque cores front-to-back,
     /// docs/specification/03-target-hardware-rules.md R-T2).
     ///
+    /// `dirty` is the rect indices whose entry changed since the commit
+    /// that produced the previous `rects` — **advisory**. `None` means
+    /// the caller has no dirty information (hand-built tables, or a first
+    /// frame). Ignoring it and redrawing everything is always correct,
+    /// and a painter that honors it MUST produce output identical to one
+    /// that does not. It exists so a painter can meet R-T4
+    /// (docs/specification/03-target-hardware-rules.md): per-frame CPU
+    /// cost is the dirty-range instance-buffer upload from the rect table
+    /// plus submission, and nothing else. It is not a license for
+    /// damage-region partial redraw, which R-T1 forbids on a tiling GPU.
+    ///
     /// Infallible by design: vocabulary and indices are validated upstream
     /// (P4), so there is no legitimate runtime failure. An out-of-range
     /// `paint` or `clip` index is a broken contract between crates;
@@ -492,5 +503,6 @@ pub trait Painter {
         paints: &PaintTable,
         images: &ImageTable,
         clips: &ClipTable,
+        dirty: Option<&[u32]>,
     );
 }

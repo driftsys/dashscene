@@ -226,6 +226,7 @@ impl Painter for RecordingPainter {
         paints: &PaintTable,
         _images: &ImageTable,
         clips: &ClipTable,
+        _dirty: Option<&[u32]>,
     ) {
         for rect in rects {
             match &paints.resolve(rect.paint).fill {
@@ -276,7 +277,7 @@ fn painter_receives_rects_in_slice_order_with_resolved_colors() {
     let (rects, paints, clips) = two_rect_fixture();
     let mut painter = RecordingPainter::default();
 
-    painter.paint(&rects, &paints, &ImageTable::new(), &clips);
+    painter.paint(&rects, &paints, &ImageTable::new(), &clips, None);
 
     assert_eq!(
         painter.painted,
@@ -289,7 +290,7 @@ fn painter_resolves_each_rects_clip_region() {
     let (rects, paints, clips) = two_rect_fixture();
     let mut painter = RecordingPainter::default();
 
-    painter.paint(&rects, &paints, &ImageTable::new(), &clips);
+    painter.paint(&rects, &paints, &ImageTable::new(), &clips, None);
 
     assert!(painter.clipped[0].is_unclipped());
     assert_eq!(
@@ -310,7 +311,7 @@ fn painter_trait_is_object_safe() {
     let mut painter = RecordingPainter::default();
 
     let dyn_painter: &mut dyn Painter = &mut painter;
-    dyn_painter.paint(&rects, &paints, &ImageTable::new(), &clips);
+    dyn_painter.paint(&rects, &paints, &ImageTable::new(), &clips, None);
 
     assert_eq!(
         painter.painted,
@@ -328,4 +329,58 @@ fn paint_index_is_transparent_over_u32() {
     assert_eq!(std::mem::align_of::<Color>(), 4);
     assert_eq!(std::mem::size_of::<ClipBox>(), 32);
     assert_eq!(std::mem::align_of::<ClipBox>(), 4);
+}
+
+/// The dirty set is advisory, but it must reach the painter. A painter
+/// that wants to honour R-T4 cannot do so if boundary B does not carry
+/// the set (`docs/decisions/dirty-set-advisory-across-boundary-b.md`).
+#[derive(Default)]
+struct DirtyRecordingPainter {
+    seen_dirty: Option<Vec<u32>>,
+    seen_rects: usize,
+}
+
+impl Painter for DirtyRecordingPainter {
+    fn paint(
+        &mut self,
+        rects: &[RectEntry],
+        _paints: &PaintTable,
+        _images: &ImageTable,
+        _clips: &ClipTable,
+        dirty: Option<&[u32]>,
+    ) {
+        self.seen_dirty = dirty.map(<[u32]>::to_vec);
+        self.seen_rects = rects.len();
+    }
+}
+
+#[test]
+fn the_dirty_set_crosses_boundary_b() {
+    let mut paints = PaintTable::new();
+    let paint = paints.push(PaintEntry::solid(RED));
+    let rects = vec![RectEntry {
+        x: 0.0,
+        y: 0.0,
+        w: 4.0,
+        h: 4.0,
+        paint,
+        clip: ClipIndex::UNCLIPPED,
+    }];
+
+    let mut painter = DirtyRecordingPainter::default();
+
+    // A caller with a committed scene passes the set it produced.
+    painter.paint(
+        &rects,
+        &paints,
+        &ImageTable::new(),
+        &ClipTable::new(),
+        Some(&[0]),
+    );
+    assert_eq!(painter.seen_dirty.as_deref(), Some(&[0u32][..]));
+    assert_eq!(painter.seen_rects, 1);
+
+    // A caller with hand-built tables has no dirty information.
+    painter.paint(&rects, &paints, &ImageTable::new(), &ClipTable::new(), None);
+    assert_eq!(painter.seen_dirty, None);
 }

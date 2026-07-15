@@ -49,6 +49,7 @@ fn the_walking_skeleton_scene_matches_its_golden() {
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        None,
     );
 
     // Key properties pinned independently of the image file: the

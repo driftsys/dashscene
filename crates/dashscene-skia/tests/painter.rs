@@ -8,7 +8,7 @@ use dashpaint::{
     PaintEntry, PaintKind, Painter, RectEntry, Vec2,
 };
 use dashscene_core::{Arena, Prop};
-use dashscene_skia::SkiaPainter;
+use dashscene_skia::{DirtyMode, SkiaPainter};
 
 const RED: Color = Color {
     r: 1.0,
@@ -55,6 +55,7 @@ fn paints_a_core_committed_scene_with_exact_pixels() {
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        None,
     );
 
     let rgba = painter.rgba_bytes();
@@ -92,6 +93,7 @@ fn an_unfilled_node_draws_nothing() {
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        None,
     );
 
     let rgba = painter.rgba_bytes();
@@ -120,6 +122,7 @@ fn encodes_png() {
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        None,
     );
 
     let png = painter.png_bytes();
@@ -212,7 +215,7 @@ fn gradient_entry(kind: GradientKind, stops: Vec<GradientStop>) -> PaintEntry {
 
 fn render(rects: &[RectEntry], paints: &PaintTable, images: &ImageTable, size: i32) -> Vec<u8> {
     let mut painter = SkiaPainter::new(size, size);
-    painter.paint(rects, paints, images, &ClipTable::new());
+    painter.paint(rects, paints, images, &ClipTable::new(), None);
     painter.rgba_bytes()
 }
 
@@ -323,7 +326,7 @@ fn stroked_square(align: StrokeAlign) -> Vec<u8> {
         clip: ClipIndex::UNCLIPPED,
     }];
     let mut painter = SkiaPainter::new(16, 16);
-    painter.paint(&rects, &paints, &ImageTable::new(), &ClipTable::new());
+    painter.paint(&rects, &paints, &ImageTable::new(), &ClipTable::new(), None);
     painter.rgba_bytes()
 }
 
@@ -390,7 +393,7 @@ fn quadrant_asset() -> ImageAsset {
         clip: ClipIndex::UNCLIPPED,
     })
     .collect();
-    painter.paint(&rects, &paints, &ImageTable::new(), &ClipTable::new());
+    painter.paint(&rects, &paints, &ImageTable::new(), &ClipTable::new(), None);
     ImageAsset {
         format: ImageFormat::Png,
         bytes: painter.png_bytes(),
@@ -414,7 +417,7 @@ fn image_scene(entry: PaintEntry, w: f32, h: f32, size: i32) -> Vec<u8> {
     images.push(quadrant_asset());
     let (rects, paints) = single_entry_scene(entry, w, h);
     let mut painter = SkiaPainter::new(size, size);
-    painter.paint(&rects, &paints, &images, &ClipTable::new());
+    painter.paint(&rects, &paints, &images, &ClipTable::new(), None);
     painter.rgba_bytes()
 }
 
@@ -536,7 +539,7 @@ fn clipped_square(region: ClipRegion) -> Vec<u8> {
     }];
 
     let mut painter = SkiaPainter::new(16, 16);
-    painter.paint(&rects, &paints, &ImageTable::new(), &clips);
+    painter.paint(&rects, &paints, &ImageTable::new(), &clips, None);
     painter.rgba_bytes()
 }
 
@@ -650,7 +653,7 @@ fn a_clip_region_does_not_leak_into_the_next_rect() {
     ];
 
     let mut painter = SkiaPainter::new(16, 16);
-    painter.paint(&rects, &paints, &ImageTable::new(), &clips);
+    painter.paint(&rects, &paints, &ImageTable::new(), &clips, None);
     let rgba = painter.rgba_bytes();
 
     assert_eq!(px(&rgba, 16, 2, 2), RED_RGBA, "the clipped red rect");
@@ -679,5 +682,96 @@ fn a_diamond_gradient_with_too_many_stops_panics_by_name() {
         single_entry_scene(gradient_entry(GradientKind::Diamond, stops), 4.0, 4.0);
 
     let mut painter = SkiaPainter::new(4, 4);
-    painter.paint(&rects, &paints, &ImageTable::new(), &ClipTable::new());
+    painter.paint(&rects, &paints, &ImageTable::new(), &ClipTable::new(), None);
+}
+
+/// Two side-by-side rects, so an incomplete dirty set can starve one.
+fn two_rects(left_w: f32) -> (Vec<RectEntry>, PaintTable) {
+    let mut paints = PaintTable::new();
+    let l = paints.push(PaintEntry::solid(RED));
+    let r = paints.push(PaintEntry::solid(GREEN));
+    let rects = vec![
+        RectEntry {
+            x: 0.0,
+            y: 0.0,
+            w: left_w,
+            h: 16.0,
+            paint: l,
+            clip: ClipIndex::UNCLIPPED,
+        },
+        RectEntry {
+            x: 8.0,
+            y: 0.0,
+            w: 8.0,
+            h: 16.0,
+            paint: r,
+            clip: ClipIndex::UNCLIPPED,
+        },
+    ];
+    (rects, paints)
+}
+
+/// One recorded frame for the retained-mode tests: the rect table, its
+/// paint table, and the advisory dirty set for that commit.
+type Frame = (Vec<RectEntry>, PaintTable, Option<Vec<u32>>);
+
+/// Renders a sequence of (rects, paints, dirty) frames through one painter
+/// in `mode`, returning the final surface. Named `render_frames` to avoid
+/// the single-frame `render` helper above.
+fn render_frames(mode: DirtyMode, frames: &[Frame]) -> Vec<u8> {
+    let mut painter = SkiaPainter::with_mode(16, 16, mode);
+    for (rects, paints, dirty) in frames {
+        painter.paint(
+            rects,
+            paints,
+            &ImageTable::new(),
+            &ClipTable::new(),
+            dirty.as_deref(),
+        );
+    }
+    painter.rgba_bytes()
+}
+
+/// With a complete dirty set, the retained buffer always equals the input
+/// table, so the retained mode is pixel-identical to a full redraw. This is
+/// the advisory contract.
+#[test]
+fn retained_mode_with_a_complete_dirty_set_matches_a_full_redraw() {
+    let (r0, p0) = two_rects(8.0);
+    let (r1, p1) = two_rects(4.0); // rect 0's width changed: its bits differ
+
+    let frames = vec![
+        (r0, p0, None),          // first frame: no dirty information
+        (r1, p1, Some(vec![0])), // rect 0 is dirty, rect 1 is not
+    ];
+
+    let full = render_frames(DirtyMode::Full, &frames);
+    let retained = render_frames(DirtyMode::Retained, &frames);
+    assert_eq!(
+        full, retained,
+        "a complete dirty set must not change the pixels"
+    );
+}
+
+/// The mode must actually read `dirty`. If it does, withholding a changed
+/// index leaves a stale entry in the retained buffer and the pixels
+/// diverge. If this test passes trivially, `Retained` is not honoring the
+/// set and the oracle in `goldens/tooling/tests/dirty_oracle.rs` would
+/// prove nothing.
+#[test]
+fn retained_mode_starves_on_an_incomplete_dirty_set() {
+    let (r0, p0) = two_rects(8.0);
+    let (r1, p1) = two_rects(4.0); // rect 0 shrank...
+
+    let frames = vec![
+        (r0, p0, None),
+        (r1, p1, Some(vec![])), // ...but the dirty set does not say so
+    ];
+
+    let full = render_frames(DirtyMode::Full, &frames);
+    let retained = render_frames(DirtyMode::Retained, &frames);
+    assert_ne!(
+        full, retained,
+        "an incomplete dirty set must leave the retained buffer stale"
+    );
 }

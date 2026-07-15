@@ -23,26 +23,59 @@ use skia_safe::{
     surfaces,
 };
 
+/// How a painter treats the advisory dirty set.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DirtyMode {
+    /// Redraw every rect from the caller's table. Ignores `dirty`, and is
+    /// always correct — the reference behavior, and what the golden images
+    /// are rendered with.
+    #[default]
+    Full,
+    /// Model R-T4: keep a persistent copy of the rect table, refresh only
+    /// the entries `dirty` names, and redraw every quad from that copy.
+    /// This simulates a product painter's instance buffer, so a dirty set
+    /// that omits a changed rect leaves a stale entry and renders a stale
+    /// pixel — which is what makes the two modes a differential test of the
+    /// dirty set (`goldens/tooling/tests/dirty_oracle.rs`).
+    Retained,
+}
+
 /// The reference painter: draws boundary-B input onto a CPU raster
 /// surface (N32 premultiplied).
 pub struct SkiaPainter {
     surface: skia_safe::Surface,
+    mode: DirtyMode,
+    /// The simulated instance buffer. Empty in `Full` mode.
+    retained: Vec<RectEntry>,
 }
 
 impl SkiaPainter {
-    /// A CPU raster surface of the given pixel size.
+    /// A CPU raster surface of the given pixel size, in [`DirtyMode::Full`].
     ///
     /// # Panics
     ///
     /// Panics if `width` or `height` is not positive.
     pub fn new(width: i32, height: i32) -> Self {
+        Self::with_mode(width, height, DirtyMode::Full)
+    }
+
+    /// A CPU raster surface of the given pixel size, in `mode`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `width` or `height` is not positive.
+    pub fn with_mode(width: i32, height: i32, mode: DirtyMode) -> Self {
         assert!(
             width > 0 && height > 0,
             "surface dimensions must be positive, got {width}x{height}"
         );
         let surface =
             surfaces::raster_n32_premul((width, height)).expect("raster surface allocation");
-        Self { surface }
+        Self {
+            surface,
+            mode,
+            retained: Vec::new(),
+        }
     }
 
     /// The current surface contents, PNG-encoded.
@@ -89,10 +122,37 @@ impl Painter for SkiaPainter {
         paints: &PaintTable,
         images: &ImageTable,
         clips: &ClipTable,
+        dirty: Option<&[u32]>,
     ) {
+        // Refresh the simulated instance buffer, then draw from it. A full
+        // refresh when the caller has no dirty set, or when the node count
+        // changed (every index is new, so the whole buffer re-uploads —
+        // the first-frame and structural-change path).
+        if self.mode == DirtyMode::Retained {
+            match dirty {
+                Some(indices) if self.retained.len() == rects.len() => {
+                    for &i in indices {
+                        let i = i as usize;
+                        self.retained[i] = rects[i];
+                    }
+                }
+                _ => {
+                    self.retained.clear();
+                    self.retained.extend_from_slice(rects);
+                }
+            }
+        }
+
+        // Disjoint field borrows: `retained` is read while `surface` is
+        // borrowed mutably.
+        let source: &[RectEntry] = match self.mode {
+            DirtyMode::Full => rects,
+            DirtyMode::Retained => &self.retained,
+        };
+
         let canvas = self.surface.canvas();
         canvas.clear(skia_safe::colors::TRANSPARENT);
-        for rect in rects {
+        for rect in source {
             let entry = paints.resolve(rect.paint);
             let region = clips.resolve(rect.clip);
             // The region is already ancestor-resolved (core, at commit —
