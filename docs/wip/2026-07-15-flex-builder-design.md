@@ -95,21 +95,27 @@ Blast radius: `crates/dashlang/tests/builder.rs` (five call sites) and
 the crate-doc example in `lib.rs`, each changing `generation == N` to
 `generation.generation() == N`.
 
-### D4 — Ported goldens live in `goldens/tooling/tests/`, not `crates/dashlang/tests/`
+### D4 — Ported goldens are added in place, in `goldens/tooling/tests/v02_flex.rs`
 
 The acceptance criterion requires `cargo tree -p dashlang` to show core,
 not engine. `goldens/tooling` (package name `goldens`) is the only
 package in the workspace that already dev-depends on both `dashlang`
 and `dashscene-engine` — `crates/dashlang/Cargo.toml` gains no new
-dependency, dev or otherwise. A new file,
-`goldens/tooling/tests/v02_flex_dsl.rs`, builds each of `v02_flex.rs`'s
-four scenes twice — once via the DSL through `build_with`, once by hand
-against `Txn` as `v02_flex.rs` already does — and asserts identical
-rects, the same DSL-equals-hand-built pattern
-`crates/dashlang/tests/builder.rs` already established for v0.1. It
-does not re-compare golden PNGs: the goal is proving DSL output matches
+dependency, dev or otherwise.
+
+Each of `v02_flex.rs`'s four existing tests gains a second, DSL-built
+`Arena` right after its hand-built one, plus one
+`assert_eq!(dsl.committed().rects(), arena.committed().rects())` —
+reusing the hand-built scene's own already-asserted rects as the DSL
+side's expected values, rather than duplicating either the hand-built
+`Txn` code or its numeric expectations in a parallel file. This is the
+same DSL-equals-hand-built pattern `crates/dashlang/tests/builder.rs`
+already established for v0.1, inlined where each construct's full
+verification (hand-built and DSL-built) can live together. It does not
+re-compare golden PNGs: the goal is proving DSL output matches
 hand-built output, which the existing golden image already covers once
-for the hand-built side.
+for the hand-built side. The module doc comment's "dashlang is not
+used" line is corrected in the same file.
 
 The issue body says "port `v02_flex.rs`'s four scenes"; all four are
 ported (nesting, sizing, clamping, alignment).
