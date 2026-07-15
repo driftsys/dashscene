@@ -18,6 +18,10 @@
 //! no solve at all. A structural change — the node count grew — rebuilds
 //! the tree, since the arena's DFS indices have shifted underneath it.
 
+pub mod flip;
+
+pub use flip::{Channel, VariantFlip, prop_key};
+
 use dashscene_core::{Arena, AxisSizing, Layout, LayoutMode, LayoutSolver, NodeId, SolvedRect};
 use dashscene_typeset::text::Typesetter;
 use rustc_hash::FxHashSet;

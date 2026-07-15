@@ -91,10 +91,10 @@ publish:
     cargo publish -p dashpaint
     cargo publish -p dashscene-core
     cargo publish -p dashscene-typeset
+    cargo publish -p dashcue
     cargo publish -p dashscene-engine
     cargo publish -p dashscene-validator
     cargo publish -p dashscene-skia
-    cargo publish -p dashcue
     cargo publish -p dashlang
     cargo publish -p dashc
     cargo publish -p dashscene-unity
