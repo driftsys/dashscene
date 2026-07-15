@@ -3,7 +3,11 @@
     status   accepted (story #2, 2026-07-12); reconciled by story #4 —
              see docs/decisions/boundary-b-unification.md (core now uses
              dashpaint's types; NO_PAINT is gone from the committed
-             output — every rect resolves to a pool entry)
+             output — every rect resolves to a pool entry); reconciled
+             again by story #164 — the paint/clip interners are now
+             retained across commits, so the dirty diff is a plain
+             entry-bit compare with no resolved-color clause (as-built
+             definition in docs/design/dashscene-core-arena.md)
     scope    dashscene-core committed output; reconciliation due in story #4
 
 ## Context
@@ -51,7 +55,8 @@ Option 1, with these pinned details:
   ever equal its sentinel (`NO_PARENT` / `NO_PAINT`).
 - Paint table deduplicates by exact color bit pattern
   (`f32::to_bits`), ordered by first use in DFS order, rebuilt per
-  commit — deterministic output (R7).
+  commit (until story #164 retained the interner) — deterministic
+  output (R7).
 - Dirty set = per-index diff of consecutive committed rect tables: an
   entry is dirty when its bits changed (`f32::to_bits` comparison, so
   NaN does not self-compare unequal forever) or when its resolved fill
@@ -59,7 +64,12 @@ Option 1, with these pinned details:
   the paint table is re-interned every commit — a stable index can
   reference a different color and an index shift can leave the color
   unchanged. Op-touched tracking was rejected: it misses descendants
-  whose absolute position changes via a parent move.
+  whose absolute position changes via a parent move. **Story #164
+  retained the interners**, which stabilizes the indices and removes
+  the resolved-color clause: an entry-bit compare is now sufficient
+  because a changed fill earns a new paint index. The op-touched
+  rejection still holds for the _published_ dirty array, which stays a
+  per-index diff.
 - Generation increments on every commit, including no-change commits —
   the stamp says a commit happened, the dirty set says what changed.
 

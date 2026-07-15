@@ -1,9 +1,11 @@
 # dashscene-engine — the Taffy layout solve
 
     crate    crates/dashscene-engine
-    covers   v0.2 flex core (story #9) and the v0.5 measure callback
-             (story #29 — text drives hug sizing); variants/FLIP (v0.4)
-             land at their own slice
+    covers   v0.2 flex core (story #9), the v0.5 measure callback
+             (story #29 — text drives hug sizing), the v0.4 retained
+             Taffy tree + pruned readback (story #164), the v0.4 Visible
+             lowering (story #165), and the v0.4 variant-switch FLIP
+             (story #22)
 
 ## Purpose
 
@@ -23,16 +25,42 @@ islands, translated by their authored offsets at readback. The tree
 builds from the arena's read seam (`roots`/`children`/`layout`),
 solves with max-content available space, and reads back absolute
 rects by accumulating parent origins (Taffy reports parent-relative
-locations; readback advances a cursor over the build-order pairing,
-O(n)). f32 passthrough: Taffy's default whole-pixel rounding is
+locations). f32 passthrough: Taffy's default whole-pixel rounding is
 disabled (`disable_rounding`), asserted by test on fractional
 geometry (R7; deterministic given the same intent — exact bits follow
 Taffy's evaluation order).
 
-The tree is rebuilt from scratch every solve — deliberate at v0.2
-scale. `LayoutSolver` takes `&mut self` exactly so this solver can
-hold retained trees (Taffy supports style updates + dirty marking)
-when per-frame animated commits arrive (v0.4, #22); revisit then.
+### Retained tree + pruned readback (v0.4, story #164)
+
+`LayoutSolver` takes `&mut self` so the solver can retain state across
+solves; #164 realizes it. The first solve builds the tree; every later
+solve reuses it. `TaffySolver` holds a `TreeState` — the persistent
+`TaffyTree`, a `taffy_of: Vec<taffy::NodeId>` map keyed by arena `NodeId`
+slot (so a `NodeId` maps to a stable Taffy node across solves),
+`parent_of`, the roots, and the previous relative layouts and root
+origins for the readback prune. A `solves` counter is exposed
+(`solves()`) so a test can assert that a paint-only commit performed no
+solve.
+
+`solve` dispatches on whether the tree is structurally current — a
+**grown** arena node count forces a full `rebuild` returning every node;
+otherwise `incremental` runs. Incremental invalidates only the nodes
+`arena.layout_dirty()` names, through Taffy's `set_style` (which marks a
+node and its ancestor chain dirty) plus `set_node_context` for their
+measure inputs; a clean subtree returns from Taffy's cache without
+re-descent. An empty dirty set is the paint-only fast path — `solve`
+returns no rects and never calls Taffy.
+
+**Pruned readback** (`read_back_pruned`) is the only genuinely new layout
+logic. Taffy stores layouts relative to the parent; converting to
+absolute naively is an `O(n)` walk that would consume the win. Instead a
+node is emitted only when its relative layout changed **or** its parent's
+absolute origin moved, and the walk descends into a subtree only when the
+node moved or it lies on the path to a dirty descendant (`on_path` = the
+dirty set plus its ancestors). A subtree that neither moved nor guards a
+dirty descendant is skipped whole, so the readback — like the solve —
+scales with the change. This is what lets `commit_with` accept a
+partial solve (`docs/decisions/layout-solver-seam.md`).
 
 ## Style mapping (Layout → taffy::Style)
 
@@ -135,31 +163,65 @@ every render size and re-measuring unchanged text costs a lookup, not a
 re-shape.
 
 The `TextContext` owns its text so the Taffy tree can outlive the arena
-borrow. The tree is still rebuilt from scratch every solve, as the rest
-of the solve is at this scale; shaping itself is not repeated, because
-the cache sits in front of it. The v0.4 retained Taffy tree (#164) will
-keep the tree across commits and must then invalidate a node's cached
-measurement when its text or style changes — it rebases onto this
-measure seam and the `with_typesetter` signature, which is why the
-contract is recorded here and in
+borrow. Shaping itself is not repeated across solves, because the cache
+sits in front of it. The v0.4 retained tree (#164, "Retained tree +
+pruned readback" above) rebased onto this measure seam and the
+`with_typesetter` signature: the incremental solve refreshes a node's
+`TextContext` through `set_node_context` for the nodes it re-styles, so a
+dirtied text/style node re-measures while a clean one keeps Taffy's
+cached measurement — which is why the contract is recorded here and in
 `docs/decisions/measure-callback-typesetter-seam.md` rather than left as
 wiring.
+
+## Variant-switch FLIP (v0.4, story #22)
+
+`crates/dashscene-engine/src/flip.rs` animates the layout delta a variant
+switch (or any re-solve) produces. It is a thin engine-side binder onto
+`dashcue`, not standalone geometry math and not a `dashcue` producer:
+
+- `Channel { X, Y, W, H }` and `prop_key(node, channel) -> dashcue::PropKey`
+  pack `(node index << 2) | channel` into `dashcue`'s opaque key; the
+  engine owns this packing, the way `dashlang`'s reactive layer owns its
+  own `PropKey` packing.
+- `VariantFlip::start(before, after, &dashcue::VariantTransition)` takes the
+  two solved layouts as `&[(NodeId, SolvedRect)]` slices and binds a
+  caller-declared transition: it resolves each track's `from`/`to` from the
+  before/after rects and hands them to `dashcue`'s `Scheduler`. `dashcue`
+  carries no resolved values (P1), so the engine binds them at commit time.
+- `advance(dt)`, then `sample(node)` / `sampled_rects()` reassemble a full
+  `SolvedRect` per node by overlaying the live per-channel scheduler samples
+  on the `after` target.
+
+The two snapshots need no new bookkeeping: `commit` writes the back buffer
+while the previous generation's rects are still live in the front buffer,
+so the caller reads `before` and `after` straight from `arena.committed()`
+across the switch (this is the previous-commit-geometry accessor
+`docs/decisions/layout-solver-seam.md` anticipated for #22). A mid-flight
+retarget resumes from the current sample, because `start` delegates
+interruption to the scheduler's retarget rule. Acceptance is in
+`crates/dashscene-engine/tests/flip.rs` (a linear tween between two
+layouts; a second switch mid-flight that retargets without snapping; a
+spring FLIP that replays bit-identically, E5).
 
 ## Trace
 
 - Satisfies: `docs/archive/2026-07-14-design-1-seed.md` §7.1 (Taffy as
-  sole solver, R2 vocabulary) and §7.2 (the common runtime's measure
-  callback — text drives hug sizing), `docs/roadmap.md`'s v0.2 and
-  v0.5; issue #9, issue #29, and issue #165 acceptance criteria (v0.4).
-- Blocks: #10 (negative-gap lowering), #11 (flex goldens), #22 (FLIP),
-  #43 (v0.8 layout fidelity). The measure seam blocks #30 (the
-  hug-sizing text golden) and #164 (the v0.4 retained Taffy tree, which
-  invalidates a cached measurement when text changes). Issue #165
-  blocks #166 (reactive bindings' bounded pools) and the
-  stacking-container acceptance case.
-- Related decisions: `docs/decisions/layout-solver-seam.md`,
+  sole solver, R2 vocabulary), §7.2 (the common runtime's measure
+  callback — text drives hug sizing), and §6.3 (FLIP);
+  `docs/roadmap.md`'s v0.2, v0.4, and v0.5; issue #9, issue #29, issue
+  #165, issue #164, and issue #22 acceptance criteria.
+- Blocks: #10 (negative-gap lowering), #11 (flex goldens), #43 (v0.8
+  layout fidelity). The measure seam blocks #30 (the hug-sizing text
+  golden). The retained tree (#164) and Visible lowering (#165) serve
+  #166 (the reactive layer's contained-write skip and bounded pools);
+  FLIP (#22) serves #23 (the FLIP golden sampling).
+- Related decisions: `docs/decisions/layout-solver-seam.md` (the
+  partial-solve contract #164 extended, and the FLIP hook),
   `docs/decisions/flex-vocabulary-shape.md`,
   `docs/decisions/measure-callback-typesetter-seam.md`,
-  `docs/decisions/shaped-run-cache-font-units.md`.
+  `docs/decisions/shaped-run-cache-font-units.md`,
+  `docs/decisions/visible-is-layout-opacity-is-paint.md`.
 - Related design: `docs/design/typeset-latin.md` (the shaped-run cache
-  the measure callback consumes).
+  the measure callback consumes); `docs/design/dashscene-core-arena.md`
+  ("Incremental commit"); `docs/design/dashcue.md` (the scheduler and
+  `VariantTransition` FLIP binds).

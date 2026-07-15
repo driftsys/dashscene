@@ -1,9 +1,11 @@
 # Commit takes its geometry from a LayoutSolver trait defined in core
 
-    status   accepted (story #9, 2026-07-12)
+    status   accepted (story #9, 2026-07-12); extended by story #164
+             (2026-07-15) — the solver may now return only the changed
+             rects; see "The partial-solve extension" below
     scope    dashscene-core commit pipeline, dashscene-engine;
-             binds the v0.4 FLIP work (#22) and the v0.5 measure
-             callback (#29)
+             binds the v0.4 FLIP work (#22), the v0.4 incremental commit
+             (#164), and the v0.5 measure callback (#29)
 
 ## Context
 
@@ -52,3 +54,19 @@ Option 1:
   the same commit path, noting that FLIP needs to read the previous
   commit's geometry, which core does not expose yet (only the front
   buffer is public), so #22 adds a small core accessor for it.
+
+## The partial-solve extension (story #164)
+
+The original contract required `solve` to resolve **every** node, and
+`commit_with` panicked if a node was omitted. The incremental commit
+(`docs/design/dashscene-engine.md`, `docs/design/dashscene-core-arena.md`)
+relaxes this: a solver may return **only the rects that changed since the
+previous solve**, and `commit_with` carries an omitted node's rect forward
+from the previous commit. The "every node has a rect" invariant is
+re-expressed, not deleted — a node that is neither solved now nor present
+in the previous commit still panics with a named message (P4). The
+internal `FixedSolver` keeps returning every node; the engine's retained
+`TaffySolver` returns only the movers, via its pruned readback. The trait
+signature (`solve(&mut self, &Arena) -> Vec<(NodeId, SolvedRect)>`) is
+unchanged — the return type always permitted a subset; #164 blesses it and
+adds the carry-forward on the commit side.
