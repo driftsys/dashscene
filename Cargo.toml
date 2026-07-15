@@ -52,6 +52,11 @@ taffy = { version = "0.12", default-features = false, features = [
     "block_layout",
 ] }
 rustybuzz = "0.20"
+# Retained paint/clip interners and the solver's per-node caches key on
+# colour/geometry bits, which need neither SipHash's DoS resistance nor its
+# cost (docs/decisions/ ... incremental commit). FxHashMap is the fast,
+# deterministic replacement.
+rustc-hash = "2"
 unicode-bidi = "0.3"
 ttf-parser = "0.25"
 # Pinned to the exact flatc release (installed via `brew install

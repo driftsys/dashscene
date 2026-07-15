@@ -21,18 +21,28 @@ use crate::arena::NodeId;
 /// paint table, the resolved clip table, the generation stamp, the
 /// dirty set, and the NodeId↔rect-index correspondence for the commit
 /// that produced it.
+///
+/// The paint and clip tables, and the two NodeId↔index maps, are behind
+/// `Arc`. An incremental commit builds the back buffer as a copy of the
+/// front one patched at the changed indices (issue #164): the rect table
+/// is cloned and patched, but the paint and clip tables are shared by
+/// reference and grown only when a genuinely new entry appears (their
+/// indices are stable across commits, so an unchanged entry keeps its
+/// slot), and the two index maps are shared outright unless the tree
+/// structure changed. A geometry-only or no-op commit therefore touches
+/// no table allocation at all.
 #[derive(Debug, Default)]
 pub struct CommittedScene {
     pub(crate) rects: Vec<RectEntry>,
-    pub(crate) paints: PaintTable,
+    pub(crate) paints: Arc<PaintTable>,
     pub(crate) images: Arc<ImageTable>,
-    pub(crate) clips: ClipTable,
+    pub(crate) clips: Arc<ClipTable>,
     pub(crate) generation: u64,
     pub(crate) dirty: Vec<u32>,
     /// Rect index → NodeId (DFS order of the commit).
-    pub(crate) node_ids: Vec<NodeId>,
+    pub(crate) node_ids: Arc<Vec<NodeId>>,
     /// NodeId slot → rect index.
-    pub(crate) rect_index: Vec<u32>,
+    pub(crate) rect_index: Arc<Vec<u32>>,
 }
 
 impl CommittedScene {
@@ -43,7 +53,7 @@ impl CommittedScene {
 
     /// Deduplicated paint table, in first-use DFS order.
     pub fn paints(&self) -> &PaintTable {
-        &self.paints
+        self.paints.as_ref()
     }
 
     /// The image assets an image fill resolves against — the fourth table a
@@ -58,7 +68,7 @@ impl CommittedScene {
     /// Index 0 is the unclipped region; regions are deduplicated, so one
     /// clipping ancestor's whole subtree shares one entry.
     pub fn clips(&self) -> &ClipTable {
-        &self.clips
+        self.clips.as_ref()
     }
 
     /// Commit counter: 0 before the first commit, +1 per commit —

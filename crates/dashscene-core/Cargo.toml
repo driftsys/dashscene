@@ -13,6 +13,7 @@ name = "dashscene_core"
 [dependencies]
 dashbuf.workspace = true
 dashpaint.workspace = true
+rustc-hash.workspace = true
 
 [dev-dependencies]
 flatbuffers.workspace = true
