@@ -3,7 +3,8 @@
     crate    crates/dashbuf
     covers   v0.1 walking skeleton + v0.2 flex layout vocabulary
              (story #8) + v0.3 paint vocabulary (story #13)
-             + v0.5 text vocabulary (story #26)
+             + v0.5 text vocabulary (story #26) + v0.4 variant table
+             (story #20)
 
 ## Purpose
 
@@ -80,6 +81,25 @@ is enforced by a frozen byte fixture, not by convention alone — see
   node-kind union was also rejected — it would restructure `Node` for
   no v0.5 gain, and §5 already models text as node content (strings +
   style refs), not a parallel node array.
+- The variant table (v0.4, story #20) mirrors §5's row for it verbatim:
+  "sparse per-variant overrides, never duplicate trees." `Document.variant_sets:
+  [VariantSet]` is a flat pool of independently-switchable groups —
+  Figma's "component SET" (`docs/technotes/glossary.md`) — each holding
+  a `members: [VariantMember]` list and an `active_member: uint32 = 0`
+  selecting which one applies before any runtime `set_variant` call. A
+  member carries `name: string` plus `overrides: [VariantOverride]`,
+  sparse by construction: only the props that differ from the
+  document's base `Node` values need an entry. One override is `node:
+  uint32` (an index into `Document.nodes`, the same convention as
+  `Node.parent`) plus a `VariantPropValue` union naming which prop and
+  its value — `VariantX`/`VariantY`/`VariantWidth`/`VariantHeight`
+  (each one `{ value: float32 }`) or `VariantFill` (`{ color: Color
+  (required) }`, required for the same reason `Stroke.color` is). This
+  is the narrowest slice of `dashscene-core`'s `Prop` vocabulary that
+  proves resolved rect/paint correctness, not the full vocabulary —
+  widening it is additive future work
+  (`docs/decisions/variant-set-flat-index.md`, which also records why
+  selection is a flat member index rather than axis-keyed).
 
 ## Public interface
 
@@ -155,8 +175,20 @@ All types are generated from `crates/dashbuf/schema/dashbuf.fbs`:
   diagnostic once text validation exists, never a silent default),
   `flex: LayoutContainer`, `constraints: LayoutConstraints` (both
   optional; absent = mode `None` / fully default constraints).
+- `VariantX`, `VariantY`, `VariantWidth`, `VariantHeight` (tables) —
+  each `{ value: float32 }`; `VariantFill` (table) — `{ color: Color
+  (required) }`. The five `VariantPropValue` union members (v0.4).
+- `VariantOverride` (table) — `node: uint32` (index into
+  `Document.nodes`), `value: VariantPropValue`.
+- `VariantMember` (table) — `name: string`, `overrides:
+  [VariantOverride]` (sparse: absent means no change from the base
+  `Node` values).
+- `VariantSet` (table) — `members: [VariantMember]`, `active_member:
+  uint32 = 0` (flat index into `members`;
+  `docs/decisions/variant-set-flat-index.md`).
 - `Document` (table, `root_type`) — `nodes: [Node]`, `images: [Image]`,
-  `paints: [Paint]`, `strings: [string]`, `text_styles: [TextStyle]`.
+  `paints: [Paint]`, `strings: [string]`, `text_styles: [TextStyle]`,
+  `variant_sets: [VariantSet]`.
 
 ## Testing
 
@@ -189,16 +221,26 @@ a required field — so the verifier-rejection property is enforced at
 build time for Rust producers and by the flatbuffer verifier for
 foreign bytes; no test constructs invalid bytes by hand.
 
+`crates/dashbuf/tests/variant_roundtrip.rs` covers the v0.4 variant
+table (story #20), matching `paint_roundtrip.rs`'s style: every
+`VariantPropValue` union member round-tripping through one override
+each targeting a distinct node index, a member's `overrides` reading
+back empty when absent, `active_member` reading back both its default
+and a set value, and independent round-tripping across multiple
+`VariantSet`s in one document.
+
 `crates/dashbuf/tests/schema_evolution.rs` is the R7 guard (debt #64).
-The three suites above build and decode with the same freshly generated
+The suites above build and decode with the same freshly generated
 bindings, so a schema edit that shifts a field id or a union
 discriminant — which breaks every `.dsb` already written to disk —
 leaves them green. This suite instead decodes
 `crates/dashbuf/tests/fixtures/v0_5_document.dsb`, a binary document
 checked into the repo and frozen: one document exercising the four
 sentinel-defaulted `Node` fields, all three `Fill` union members,
-`Paint.clip`, the legacy inline `Node.paint`, both flex tables, and both
-text pools, every field written to a value distinguishable from its
+`Paint.clip`, the legacy inline `Node.paint`, both flex tables, both
+text pools, and (v0.4) one `VariantSet` with a non-default
+`active_member` and one override of each of two `VariantPropValue`
+kinds, every field written to a value distinguishable from its
 default. The assertions are on those values — a shifted field id
 usually still decodes, and quietly returns another field's value or a
 default, which is the failure worth catching.
@@ -233,12 +275,13 @@ receive the encoded, format-tagged assets as a `dashpaint::ImageTable`
 ## Trace
 
 - Satisfies: `docs/archive/2026-07-14-design-1-seed.md` §5 document
-  format (including the dedup style pool and the text row — strings +
-  style refs), `docs/roadmap.md`'s v0.1, v0.2, v0.3, and v0.5 (text I)
-  slices (v0.2 vocabulary is R2; v0.3 vocabulary drawn from
+  format (including the dedup style pool, the text row — strings +
+  style refs, and the variant row — sparse per-variant overrides, never
+  duplicate trees), `docs/roadmap.md`'s v0.1, v0.2, v0.3, v0.4, and v0.5
+  (text I) slices (v0.2 vocabulary is R2; v0.3 vocabulary drawn from
   `docs/specification/04-figma-vocabulary-profile.md`'s NOW list), R7
-  additive schema evolution; issue #8, issue #13, and issue #26
-  acceptance criteria.
+  additive schema evolution; issue #8, issue #13, issue #20, and
+  issue #26 acceptance criteria.
 - Blocks: `dashscene-core` lowering, `dashc`'s importer consumption
   (out of scope until later slices); #28's typeset consumption of the
   string and style pools. The story #9 Taffy solve consumes
@@ -251,4 +294,5 @@ receive the encoded, format-tagged assets as a `dashpaint::ImageTable`
   `docs/decisions/document-paint-pool-and-legacy-paint-field.md`,
   `docs/decisions/paint-entry-composition.md`,
   `docs/decisions/text-track-early-start.md` (plan sequencing for
-  issue #26).
+  issue #26), `docs/decisions/variant-set-flat-index.md` (issue #20's
+  selection shape and overridable-prop vocabulary).

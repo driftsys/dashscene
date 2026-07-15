@@ -41,7 +41,9 @@ use dashbuf::{
     ImageFill, ImageFillArgs, ImageFormat, LayoutConstraints, LayoutConstraintsArgs,
     LayoutContainer, LayoutContainerArgs, LayoutMode, MainAxisAlign, Mat23, NO_PAINT, NO_PARENT,
     NO_TEXT, NO_TEXT_STYLE, Node, NodeArgs, Paint, PaintArgs, ScaleMode, SolidFill, SolidFillArgs,
-    Stroke, StrokeAlign, StrokeArgs, TextStyle, TextStyleArgs, Vec2, root_as_document,
+    Stroke, StrokeAlign, StrokeArgs, TextStyle, TextStyleArgs, VariantFill, VariantFillArgs,
+    VariantMember, VariantMemberArgs, VariantOverride, VariantOverrideArgs, VariantPropValue,
+    VariantSet, VariantSetArgs, VariantX, VariantXArgs, Vec2, root_as_document,
 };
 use flatbuffers::FlatBufferBuilder;
 
@@ -356,6 +358,48 @@ fn frozen_text_pools_read_back() {
     );
 }
 
+/// The v0.4 variant table (story #20): one set, two members, one
+/// override of each of two `VariantPropValue` kinds. `active_member` is
+/// written non-zero against the schema default of 0 — the same
+/// non-default-value discipline as `Paint.clip` above.
+#[test]
+fn frozen_variant_set_reads_back() {
+    let sets = document().variant_sets().expect("variant_sets present");
+    assert_eq!(sets.len(), 1);
+    let set = sets.get(0);
+    assert_eq!(set.active_member(), 1);
+
+    let members = set.members().expect("members present");
+    assert_eq!(members.len(), 2);
+    assert_eq!(members.get(0).name(), Some("Default"));
+    assert!(members.get(0).overrides().is_none_or(|o| o.is_empty()));
+
+    let hover = members.get(1);
+    assert_eq!(hover.name(), Some("Hover"));
+    let overrides = hover.overrides().expect("overrides present");
+    assert_eq!(overrides.len(), 2);
+
+    let x = overrides.get(0);
+    assert_eq!(x.node(), 1);
+    assert_eq!(x.value_type(), VariantPropValue::VariantX);
+    assert_eq!(
+        x.value_as_variant_x().expect("VariantX present").value(),
+        99.0
+    );
+
+    let fill = overrides.get(1);
+    assert_eq!(fill.node(), 0);
+    assert_eq!(fill.value_type(), VariantPropValue::VariantFill);
+    let color = fill
+        .value_as_variant_fill()
+        .expect("VariantFill present")
+        .color();
+    assert_eq!(
+        (color.r(), color.g(), color.b(), color.a()),
+        (0.2, 0.4, 0.6, 1.0)
+    );
+}
+
 // ---------------------------------------------------------------------
 // The writer. Runs only under UPDATE_DSB_FIXTURE=1 — see the module
 // docs. Editing it changes nothing until the fixture is regenerated,
@@ -558,6 +602,63 @@ fn build_fixture() -> Vec<u8> {
     );
 
     let nodes = b.create_vector(&[root, gradient_child, text_child, bare_child]);
+
+    // v0.4 variant table (story #20): one set, two members, one override
+    // of each of two `VariantPropValue` kinds — enough to catch a
+    // shifted field id or reordered union discriminant the same way the
+    // suites above do.
+    let variant_x = VariantX::create(&mut b, &VariantXArgs { value: 99.0 });
+    let variant_fill = VariantFill::create(
+        &mut b,
+        &VariantFillArgs {
+            color: Some(&Color::new(0.2, 0.4, 0.6, 1.0)),
+        },
+    );
+    let override_x = VariantOverride::create(
+        &mut b,
+        &VariantOverrideArgs {
+            node: 1,
+            value_type: VariantPropValue::VariantX,
+            value: Some(variant_x.as_union_value()),
+        },
+    );
+    let override_fill = VariantOverride::create(
+        &mut b,
+        &VariantOverrideArgs {
+            node: 0,
+            value_type: VariantPropValue::VariantFill,
+            value: Some(variant_fill.as_union_value()),
+        },
+    );
+    let overrides = b.create_vector(&[override_x, override_fill]);
+    let hover_name = b.create_string("Hover");
+    let hover_member = VariantMember::create(
+        &mut b,
+        &VariantMemberArgs {
+            name: Some(hover_name),
+            overrides: Some(overrides),
+        },
+    );
+    let default_name = b.create_string("Default");
+    let default_member = VariantMember::create(
+        &mut b,
+        &VariantMemberArgs {
+            name: Some(default_name),
+            overrides: None,
+        },
+    );
+    let members = b.create_vector(&[default_member, hover_member]);
+    let variant_set = VariantSet::create(
+        &mut b,
+        &VariantSetArgs {
+            members: Some(members),
+            // Written non-zero against the schema default of 0: a
+            // shifted id reads the default and this is what notices.
+            active_member: 1,
+        },
+    );
+    let variant_sets = b.create_vector(&[variant_set]);
+
     let document = Document::create(
         &mut b,
         &DocumentArgs {
@@ -566,6 +667,7 @@ fn build_fixture() -> Vec<u8> {
             paints: Some(paints),
             strings: Some(strings),
             text_styles: Some(text_styles),
+            variant_sets: Some(variant_sets),
         },
     );
     b.finish(document, None);

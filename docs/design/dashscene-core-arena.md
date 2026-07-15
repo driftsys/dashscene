@@ -1,13 +1,15 @@
-# dashscene-core: arena + staged-mutation API (v0.1, v0.5 text intent, clip resolution)
+# dashscene-core: arena + staged-mutation API (v0.1, v0.4 variant resolution, v0.5 text intent, clip resolution)
 
 `dashscene-core` is the semantic model: an arena holding a node tree
 with layout and paint intent (`docs/design/dashbuf.md`), mutated
-through the staged producer API (`open`/`set_prop`/`commit`,
+through the staged producer API (`open`/`set_prop`/`set_variant`/`commit`,
 `docs/decisions/staged-mutation-v01-scope.md`), resolving on commit
 into the committed output a painter consumes (boundary B,
 `docs/design/architecture.md`). v0.1 scope: fixed-size layout, solid
 fill, no Taffy, no variants — the walking skeleton
-(`docs/roadmap.md`). v0.5 (story #26) added text content and style as
+(`docs/roadmap.md`). v0.4 (story #20) added the variant table and
+`set_variant`'s commit-time resolution — see "Variant resolution"
+below. v0.5 (story #26) added text content and style as
 intent, held on the node but not resolved into any committed output —
 see "Text intent" below. Story #97 added clip and corner intent, and the
 commit-time resolution of subtree clips into the clip regions boundary B
@@ -91,6 +93,45 @@ clear, because a bool has no absent state to lose.
 
 Full rationale and the rejected alternative (op-log with
 rollback-on-drop): `docs/decisions/staged-mutation-v01-scope.md`.
+
+## Variant resolution (v0.4, story #20)
+
+`Txn::add_variant_set(members: Vec<VariantMember>) -> VariantSetId`
+declares a fixed, ordered list of members — Figma's "component SET"
+(`docs/technotes/glossary.md`) — each an optional name plus sparse
+`overrides: Vec<(NodeId, VariantValue)>` against the arena's base node
+values; the first member (index 0) is active until
+`Txn::set_variant(set, member)` switches it. `VariantValue` is the
+narrow slice of `Prop`'s vocabulary the dashbuf variant table carries —
+`X`, `Y`, `Width`, `Height`, `Fill(Color)` — not the full vocabulary;
+`docs/decisions/variant-set-flat-index.md` records why selection is a
+flat member index (not axis-keyed) and why the overridable-prop
+vocabulary is this narrow slice rather than all of `Prop`.
+
+`set_variant` is staged like `set_prop` (P3): it writes the active
+member index immediately, and `Arena::active_variant(set)` reads it
+back staged, the same immediate-visibility contract `Arena::text`
+carries. `Arena::layout(node)` — the read seam every `LayoutSolver`
+resolves geometry through, the internal `FixedSolver` included —
+applies the active member's `X`/`Y`/`Width`/`Height` overrides on top
+of the node's base layout before returning it, so a variant switch
+reaches committed geometry through the _existing_ solver seam, with
+neither `FixedSolver` nor `dashscene-engine`'s `TaffySolver` needing to
+know variants exist. Commit's paint-interning step applies a `Fill`
+override the same way, on top of the node's base fill. When two
+variant sets both override the same node's same prop, the later-created
+set wins (creation order, not commit order).
+
+Because both application points feed the commit resolution pipeline's
+existing rect/paint construction, the dirty-set diff (below) needs no
+variant-specific logic: a variant-driven geometry or fill change is
+indistinguishable, at the diff step, from the same change made through
+`set_prop`.
+
+`Arena::layout(node)` reaches through `arena.layout(id)` in
+`FixedSolver::solve` (in place of the earlier raw field read), which is
+the one change to a v0.1 code path this story makes — everywhere else,
+variant resolution is additive.
 
 ## Text intent (v0.5, story #26)
 
@@ -254,9 +295,10 @@ Full schema rationale: `docs/design/dashbuf.md`.
   resolve to the shared draws-nothing entry instead of a sentinel.
 - No `dashbuf` dependency — the arena mirrors the schema's field
   shapes; nothing links the generated flatbuffer code.
-- No `set_variant` — `docs/decisions/staged-mutation-v01-scope.md` scopes v0.1 to
-  `open`/`set_prop`/`commit`. Variants land at v0.4 with the variant
-  table.
+- `set_variant` landed at v0.4 (story #20, "Variant resolution" above)
+  — `docs/decisions/staged-mutation-v01-scope.md` scoped v0.1 to
+  `open`/`set_prop`/`commit` only, deferring it until the variant table
+  existed.
 - No node removal, no reparenting, no fill clearing, no value
   validation (NaN, negative sizes). The validator crate enters at its
   own slice.
@@ -269,10 +311,21 @@ Full schema rationale: `docs/design/dashbuf.md`.
 
     crates/dashscene-core/src/lib.rs        crate docs + re-exports
     crates/dashscene-core/src/arena.rs      Arena, NodeId, Prop,
-                                            TextStyle, Txn, commit
-                                            resolution
+                                            TextStyle, VariantValue,
+                                            VariantMember, VariantSetId,
+                                            Txn, commit resolution
     crates/dashscene-core/src/committed.rs  CommittedScene + re-exported
                                             dashpaint types
+    crates/dashscene-core/src/load.rs       load_document: replays a
+                                            validated .dsb document
+                                            through the producer API,
+                                            variant sets included
+    crates/dashscene-core/tests/load.rs     load_document's variant-set
+                                            replay (issue #20): default
+                                            and non-default
+                                            active_member at load time,
+                                            a document with no variant
+                                            sets
     crates/dashscene-core/tests/arena.rs    acceptance path (issue #2):
                                             empty-commit, single-root
                                             resolve, DFS nesting and
@@ -305,4 +358,16 @@ Full schema rationale: `docs/design/dashbuf.md`.
                                             a hidden node keeping its
                                             rect-table index with no
                                             shift to nodes committed
-                                            after it
+                                            after it; variant
+                                            resolution (issue #20): a
+                                            switch changing the
+                                            resolved rect and paint,
+                                            dirtying only the
+                                            overridden rect and its
+                                            descendants, staged
+                                            visibility before commit,
+                                            creation-order precedence
+                                            across sets, the default
+                                            active member, and the
+                                            add_variant_set/set_variant
+                                            panic contracts

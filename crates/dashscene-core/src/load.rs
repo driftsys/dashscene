@@ -25,10 +25,11 @@
 //! crate cannot call it — which is exactly why the contract is stated here
 //! rather than enforced here.
 
-use dashbuf::{Document, Fill, NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE};
+use dashbuf::{Document, Fill, NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE, VariantPropValue};
 
 use crate::arena::{
     Arena, AxisSizing, CrossAxisAlign, LayoutMode, MainAxisAlign, NodeId, Prop, TextStyle,
+    VariantMember, VariantValue,
 };
 use crate::committed::{
     Color, Gradient, GradientKind, GradientStop, ImageAsset, ImageFormat, Mat23, PaintKind,
@@ -181,7 +182,63 @@ pub fn load_document(doc: &Document<'_>, arena: &mut Arena) -> u64 {
         }
     }
 
+    // The variant table (v0.4, story #20) replays the same way: each
+    // VariantSet becomes an add_variant_set call, and a document that
+    // was authored (or last committed) mid-switch replays that switch
+    // through set_variant rather than staying pinned to member 0.
+    for set in doc.variant_sets().unwrap_or_default().iter() {
+        let members = set
+            .members()
+            .unwrap_or_default()
+            .iter()
+            .map(|member| VariantMember {
+                name: member.name().map(str::to_owned),
+                overrides: member
+                    .overrides()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|o| (ids[o.node() as usize], variant_value(&o)))
+                    .collect(),
+            })
+            .collect();
+        let id = txn.add_variant_set(members);
+        let active = set.active_member() as usize;
+        if active != 0 {
+            txn.set_variant(id, active);
+        }
+    }
+
     txn.commit()
+}
+
+/// One `VariantOverride`'s value, converted from the `VariantPropValue`
+/// union to the arena's narrow `VariantValue` (the same five-prop slice
+/// — docs/decisions/variant-set-flat-index.md).
+fn variant_value(o: &dashbuf::VariantOverride<'_>) -> VariantValue {
+    match o.value_type() {
+        VariantPropValue::VariantX => {
+            VariantValue::X(o.value_as_variant_x().expect("VariantX present").value())
+        }
+        VariantPropValue::VariantY => {
+            VariantValue::Y(o.value_as_variant_y().expect("VariantY present").value())
+        }
+        VariantPropValue::VariantWidth => VariantValue::Width(
+            o.value_as_variant_width()
+                .expect("VariantWidth present")
+                .value(),
+        ),
+        VariantPropValue::VariantHeight => VariantValue::Height(
+            o.value_as_variant_height()
+                .expect("VariantHeight present")
+                .value(),
+        ),
+        VariantPropValue::VariantFill => VariantValue::Fill(color_of(
+            o.value_as_variant_fill()
+                .expect("VariantFill present")
+                .color(),
+        )),
+        other => unreachable!("unknown VariantPropValue {other:?}: rejected by the load gate (P4)"),
+    }
 }
 
 /// One pool entry's fill, stroke, corners, and clip, staged onto `id`.

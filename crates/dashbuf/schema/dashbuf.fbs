@@ -288,6 +288,61 @@ table Node {
   constraints: LayoutConstraints;
 }
 
+// v0.4 variant table (docs/decisions/variant-set-flat-index.md,
+// docs/archive/2026-07-14-design-1-seed.md §5: "sparse per-variant
+// overrides, never duplicate trees"). One overridden prop's value,
+// mirroring the narrowest slice of dashscene-core's `Prop` vocabulary
+// needed to prove resolved rect/paint correctness — X, Y, Width,
+// Height, and the solid-fill shorthand. Widening to the rest of `Prop`
+// is additive future work.
+table VariantX { value: float32; }
+table VariantY { value: float32; }
+table VariantWidth { value: float32; }
+table VariantHeight { value: float32; }
+// The color is required: an override with no color has no meaning, and
+// the verifier rejects it at the load gate (P4) — the same mechanism as
+// Stroke's required color.
+table VariantFill { color: Color (required); }
+
+union VariantPropValue {
+  VariantX,
+  VariantY,
+  VariantWidth,
+  VariantHeight,
+  VariantFill,
+}
+
+// One overridden prop on one node, active when the owning member is
+// selected. `node` is an index into Document.nodes — the same
+// cross-reference convention as Node.parent
+// (docs/decisions/dsb-sectioned-container.md). `value` is required: an
+// override naming no prop has no meaning, and the verifier rejects it
+// at the load gate (P4) — the same mechanism as `VariantFill.color`.
+table VariantOverride {
+  node: uint32;
+  value: VariantPropValue (required);
+}
+
+// One selectable state of a VariantSet — Figma's "variant" (a member of
+// a component set, docs/technotes/glossary.md). `overrides` is sparse:
+// only the props that differ from the document's base Node values need
+// an entry.
+table VariantMember {
+  name: string;
+  overrides: [VariantOverride];
+}
+
+// One switchable group of node/prop overrides — Figma's "component SET"
+// (docs/technotes/glossary.md: "variant closure is per component SET").
+// Selection is a flat index into `members`; axis-keyed selection is
+// deferred (docs/decisions/variant-set-flat-index.md).
+table VariantSet {
+  members: [VariantMember];
+  // Index into `members` selected when a loaded document first commits,
+  // before any set_variant call.
+  active_member: uint32 = 0;
+}
+
 table Document {
   // Flattened DFS node tree: array order is DFS order, so array index
   // doubles as rect-table index (docs/design/dashbuf.md).
@@ -301,6 +356,8 @@ table Document {
   strings: [string];
   // The text style pool referenced by Node.text_style.
   text_styles: [TextStyle];
+  // The variant sets a set_variant call selects among (v0.4, story #20).
+  variant_sets: [VariantSet];
 }
 
 root_type Document;
