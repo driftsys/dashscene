@@ -1,8 +1,9 @@
 # dashscene-engine — the Taffy layout solve
 
     crate    crates/dashscene-engine
-    covers   v0.2 flex core (story #9); variants/FLIP (v0.4) and the
-             measure callback (v0.5) land at their own slices
+    covers   v0.2 flex core (story #9) and the v0.5 measure callback
+             (story #29 — text drives hug sizing); variants/FLIP (v0.4)
+             land at their own slice
 
 ## Purpose
 
@@ -83,12 +84,66 @@ The single authored `gap` maps to both taffy gap axes; the cross-axis
 half is inert until wrap (v0.8), which decides whether row and column
 gaps become separate authored properties.
 
+## Measure callback — text drives hug sizing
+
+Text enters the solve through Taffy's per-node measure callback
+(`compute_layout_with_measure`), added at v0.5 (story #29). A node that
+carries both text content and a text style
+(`Arena::text`/`Arena::text_style`, story #26) becomes a Taffy leaf
+with a `TextContext` — the paragraph text and the render size (px per
+em in document units). Every other node is a context-free leaf whose
+measure is a no-op, so a text-free scene solves exactly as before.
+
+Taffy calls the measure function for each text leaf during the solve.
+`measure_text` lays the text out through the typesetter and returns its
+box. The wrap width is the width Taffy has already fixed for the node
+if there is one, else a definite available width, else none: a
+min/max-content probe imposes no wrap, so an unconstrained hug node
+lays its paragraph on one line and hugs that natural width. A hug-sized
+text node therefore solves to its shaped width and height; a
+width-constrained one keeps its width and grows taller as the text
+wraps. A known axis is returned unchanged, so measurement never
+overrides a dimension Taffy has already fixed.
+
+### One cache, borrowed not owned
+
+The typesetter is passed in, never constructed here.
+`TaffySolver::with_typesetter(&mut Typesetter)` borrows the caller's
+single `Typesetter` for the solve; `TaffySolver::new()` carries none —
+the text-free path, and what every non-text solve and the fixed-commit
+equivalence tests use. The borrow is the single-source discipline:
+layout measures text against the same shaped-run cache the painter
+reads at paint time (#30), so the two cannot disagree about a glyph's
+size (P2 — one typesetter). The shaped-run cache stores font-unit,
+unpositioned runs keyed by paragraph text alone
+(`docs/decisions/shaped-run-cache-font-units.md`), so one entry serves
+every render size and re-measuring unchanged text costs a lookup, not a
+re-shape.
+
+The `TextContext` owns its text so the Taffy tree can outlive the arena
+borrow. The tree is still rebuilt from scratch every solve, as the rest
+of the solve is at this scale; shaping itself is not repeated, because
+the cache sits in front of it. The v0.4 retained Taffy tree (#164) will
+keep the tree across commits and must then invalidate a node's cached
+measurement when its text or style changes — it rebases onto this
+measure seam and the `with_typesetter` signature, which is why the
+contract is recorded here and in
+`docs/decisions/measure-callback-typesetter-seam.md` rather than left as
+wiring.
+
 ## Trace
 
 - Satisfies: `docs/archive/2026-07-14-design-1-seed.md` §7.1 (Taffy as
-  sole solver, R2 vocabulary), `docs/roadmap.md`'s v0.2; issue #9
-  acceptance criteria.
+  sole solver, R2 vocabulary) and §7.2 (the common runtime's measure
+  callback — text drives hug sizing), `docs/roadmap.md`'s v0.2 and
+  v0.5; issue #9 and issue #29 acceptance criteria.
 - Blocks: #10 (negative-gap lowering), #11 (flex goldens), #22 (FLIP),
-  #29 (measure callback), #43 (v0.8 layout fidelity).
+  #43 (v0.8 layout fidelity). The measure seam blocks #30 (the
+  hug-sizing text golden) and #164 (the v0.4 retained Taffy tree, which
+  invalidates a cached measurement when text changes).
 - Related decisions: `docs/decisions/layout-solver-seam.md`,
-  `docs/decisions/flex-vocabulary-shape.md`.
+  `docs/decisions/flex-vocabulary-shape.md`,
+  `docs/decisions/measure-callback-typesetter-seam.md`,
+  `docs/decisions/shaped-run-cache-font-units.md`.
+- Related design: `docs/design/typeset-latin.md` (the shaped-run cache
+  the measure callback consumes).

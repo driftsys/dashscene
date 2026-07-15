@@ -12,4 +12,5 @@ name = "dashscene_engine"
 
 [dependencies]
 dashscene-core.workspace = true
+dashscene-typeset.workspace = true
 taffy.workspace = true
