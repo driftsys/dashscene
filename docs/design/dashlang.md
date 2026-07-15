@@ -60,9 +60,8 @@ the future C# describe-buffer skin will use across its FFI seam.
 `Built` wraps the commit's generation (`Built::generation() -> u64`).
 It is deliberately a named type rather than a bare `u64`: issue #166's
 reactive layer extends it into a live, bindable scene handle without a
-second change to `build`'s signature
-(`docs/wip/2026-07-15-flex-builder-design.md` D3, or its gardened
-decision-record home once archived).
+second change to `build`'s signature (`docs/decisions/
+dashlang-value-tree-builder.md`, "Extension (issue #118)").
 
 ## Vocabulary, not semantics
 
