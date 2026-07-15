@@ -162,7 +162,7 @@ Revised at close (`docs/archive/2026-07-14-scope-decisions.md` §22, plus one co
 - v0.4 is unaffected: variants, staged mutation, and FLIP touch neither the
   importer nor the wasm ABI.
 
-### v0.4 — variants + staged mutation + minimal FLIP — open
+### v0.4 — variants + staged mutation + minimal FLIP — closed
 
 **Epic #19.** Closes [`E5`](specification/05-qualification.md).
 
@@ -201,6 +201,17 @@ changed. Added to this slice:
 - **The `dashlang` flex-authoring vocabulary deferred from v0.2**, added in
   the same builder pass as the binding vocabulary above rather than
   reshaping the `Node` builder twice.
+
+Closed 2026-07-16. All eight stories landed and `E5` is met
+([`specification/05-qualification.md`](specification/05-qualification.md)). The
+reactive layer, incremental commit, dirty-set-across-boundary-B, and
+`Prop::Visible` are recorded as-built in `docs/design/` and `docs/decisions/`
+(the reactive design decisions D1–D8, the FLIP binding seam, the
+incremental-commit contract). Phase-end debt triage: three correctness items
+were fixed in-slice — the `dashcue` spring rest threshold (#68) and
+undamped-spring rejection (#72), and the vacuous negative-gap assertion (#114) —
+and the remaining debt was re-anchored to the slice where it next matters (v0.7,
+v0.8, v0.9). The v0.5 provisional breakdown is revised next, before v0.5 starts.
 
 ### v0.5 — text I: Latin — open
 
