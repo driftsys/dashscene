@@ -14,13 +14,14 @@
 //! intersects it.
 
 use dashpaint::{
-    ClipTable, CornerRadii, Gradient, GradientKind, ImageAsset, ImageTable, MAX_GRADIENT_STOPS,
-    PaintKind, PaintTable, Painter, RectEntry, ScaleMode, Stroke, StrokeAlign,
+    Atlas, ClipTable, CornerRadii, GlyphRun, GlyphRunTable, Gradient, GradientKind, ImageAsset,
+    ImageTable, MAX_GRADIENT_STOPS, PaintKind, PaintTable, Painter, RectEntry, ScaleMode, Stroke,
+    StrokeAlign,
 };
 use skia_safe::{
-    AlphaType, Canvas, ClipOp, Color4f, ColorType, Data, EncodedImageFormat, ImageInfo, Matrix,
-    Point, RRect, Rect, RuntimeEffect, SamplingOptions, Shader, TileMode, gradient_shader, images,
-    surfaces,
+    AlphaType, Canvas, ClipOp, Color4f, ColorType, Data, EncodedImageFormat, FilterMode, Image,
+    ImageInfo, Matrix, MipmapMode, Point, RRect, Rect, RuntimeEffect, SamplingOptions, Shader,
+    TileMode, gradient_shader, images, surfaces,
 };
 
 /// How a painter treats the advisory dirty set.
@@ -122,6 +123,7 @@ impl Painter for SkiaPainter {
         paints: &PaintTable,
         images: &ImageTable,
         clips: &ClipTable,
+        glyphs: &GlyphRunTable,
         dirty: Option<&[u32]>,
     ) {
         // Refresh the simulated instance buffer, then draw from it. A full
@@ -210,7 +212,157 @@ impl Painter for SkiaPainter {
                 canvas.restore();
             }
         }
+
+        // Text is drawn after every rect: the v0.5 Latin subset composites
+        // glyph runs over the rect table as foreground (boundary B's
+        // paint contract). Runs arrive already shaped and positioned (P2),
+        // and each glyph is one textured MSDF atlas quad.
+        draw_glyph_runs(canvas, glyphs);
     }
+}
+
+/// The MSDF resolve shader. Samples the atlas (RGB distance channels),
+/// takes the median as the signed distance, and turns it into coverage
+/// over a screen-pixel range — the standard multi-channel SDF text
+/// resolve (docs/technotes/rendering-and-painters.md: the SDF quad
+/// renderer, driven from our own atlas). The child `msdf` maps device
+/// coordinates back to the glyph's atlas texels via its local matrix, so
+/// `main` samples at the point it is drawing.
+const MSDF_SKSL: &str = r"
+    uniform shader msdf;
+    uniform float4 color;
+    uniform float px_range;
+    half4 main(float2 p) {
+        float3 s = float3(msdf.eval(p).rgb);
+        float sd = max(min(s.r, s.g), min(max(s.r, s.g), s.b));
+        float coverage = clamp(px_range * (sd - 0.5) + 0.5, 0.0, 1.0);
+        float alpha = color.a * coverage;
+        return half4(half3(color.rgb * alpha), half(alpha));
+    }
+";
+
+/// Draws every glyph run's quads. Each atlas image is decoded once (not
+/// once per run that samples it); the resolve effect compiles once.
+fn draw_glyph_runs(canvas: &Canvas, glyphs: &GlyphRunTable) {
+    if glyphs.is_empty() {
+        return;
+    }
+    let effect =
+        RuntimeEffect::make_for_shader(MSDF_SKSL, None).expect("MSDF resolve SkSL compiles");
+    let decoded: Vec<Image> = glyphs
+        .atlases()
+        .iter()
+        .map(|atlas| {
+            images::deferred_from_encoded_data(Data::new_copy(&atlas.image.bytes), None)
+                .expect("atlas image decodes (a build artifact, validated upstream P4)")
+        })
+        .collect();
+    for run in glyphs.runs() {
+        let atlas = glyphs.atlas(run.atlas);
+        let image = &decoded[run.atlas.0 as usize];
+        // The MSDF field is a distance, not a color: linear filtering
+        // interpolates the field (the point of MSDF's crisp edges);
+        // nearest would step it. The surface carries no color space
+        // (raster_n32_premul), so the channels sample raw — no sRGB
+        // conversion mangling the distances.
+        let sampling = SamplingOptions::new(FilterMode::Linear, MipmapMode::None);
+        // The screen-pixel range scales the atlas distance range by the
+        // ratio of render size to the size the atlas was baked at
+        // (docs/design/atlas-pipeline.md).
+        let px_range = atlas.distance_range_px * run.size / f32::from(atlas.px_per_em);
+        let uniforms = msdf_uniforms(&effect, run.color, px_range);
+        for quad in &run.glyphs {
+            let Some(g) = atlas.glyph(quad.glyph_id) else {
+                // No quad for this glyph id — an empty outline (space) or
+                // a glyph outside the atlas charset. Painting nothing is
+                // correct for the former; the latter is a coverage gap the
+                // build-time closure owns (P4), not a per-frame decision.
+                continue;
+            };
+            draw_glyph_quad(
+                canvas, image, atlas, g, quad, run, &effect, &uniforms, sampling,
+            );
+        }
+    }
+}
+
+/// Draws one glyph as a textured MSDF quad: maps the atlas texels to the
+/// device quad, wraps the atlas sample in the resolve effect, and fills
+/// the quad.
+#[allow(clippy::too_many_arguments)]
+fn draw_glyph_quad(
+    canvas: &Canvas,
+    image: &Image,
+    atlas: &Atlas,
+    glyph: &dashpaint::AtlasGlyph,
+    quad: &dashpaint::GlyphQuad,
+    run: &GlyphRun,
+    effect: &RuntimeEffect,
+    uniforms: &Data,
+    sampling: SamplingOptions,
+) {
+    let size = run.size;
+    let [pl, pb, pr, pt] = glyph.plane_em;
+    // plane_em is y-up (baseline origin); document space is y-down, so
+    // the top edge subtracts and the bottom edge subtracts a smaller (or
+    // negative, for descenders) value.
+    let dest = Rect::from_ltrb(
+        quad.x + pl * size,
+        quad.y - pt * size,
+        quad.x + pr * size,
+        quad.y - pb * size,
+    );
+    let [al, ab, ar, at] = glyph.atlas_px;
+    // atlas_px is bottom-left origin; skia images are top-left, so flip y.
+    let height = atlas.height as f32;
+    let (src_left, src_top, src_right, src_bottom) = (al, height - at, ar, height - ab);
+
+    let (src_w, src_h) = (src_right - src_left, src_bottom - src_top);
+    if src_w <= 0.0 || src_h <= 0.0 {
+        return;
+    }
+    let sx = dest.width() / src_w;
+    let sy = dest.height() / src_h;
+    // texel -> device: src maps onto dest.
+    let mut local = Matrix::translate((-src_left, -src_top));
+    local.post_scale((sx, sy), None);
+    local.post_translate((dest.left, dest.top));
+
+    let atlas_shader = image
+        .to_shader((TileMode::Clamp, TileMode::Clamp), sampling, Some(&local))
+        .expect("atlas image shader");
+    let shader = effect
+        .make_shader(uniforms.clone(), &[atlas_shader.into()], None)
+        .expect("MSDF resolve shader");
+    let mut paint = skia_safe::Paint::default();
+    paint.set_shader(shader);
+    // Coverage lives entirely in the shader; the quad itself is an opaque
+    // carrier, so rect-edge anti-aliasing would only double up on the
+    // transparent MSDF margin.
+    paint.set_anti_alias(false);
+    canvas.draw_rect(dest, &paint);
+}
+
+/// Packs the resolve effect's uniforms (`color` as float4, `px_range` as
+/// float) by the offsets the compiled effect reports, so the byte layout
+/// cannot drift from the SkSL declaration.
+fn msdf_uniforms(effect: &RuntimeEffect, color: dashpaint::Color, px_range: f32) -> Data {
+    let mut buf = vec![0u8; effect.uniform_size()];
+    for uniform in effect.uniforms() {
+        let offset = uniform.offset();
+        match uniform.name() {
+            "color" => {
+                for (i, v) in [color.r, color.g, color.b, color.a].into_iter().enumerate() {
+                    buf[offset + i * 4..offset + i * 4 + 4].copy_from_slice(&v.to_le_bytes());
+                }
+            }
+            "px_range" => {
+                buf[offset..offset + 4].copy_from_slice(&px_range.to_le_bytes());
+            }
+            other => panic!("unexpected MSDF uniform {other}"),
+        }
+    }
+    Data::new_copy(&buf)
 }
 
 fn solid_paint(color: dashpaint::Color) -> skia_safe::Paint {

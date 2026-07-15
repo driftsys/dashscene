@@ -2,7 +2,8 @@
 
     crate    crates/dashpaint
     covers   v0.1 walking skeleton (story #3) + v0.3 paint vocabulary
-             (story #13) + resolved subtree clips (story #97)
+             (story #13) + resolved subtree clips (story #97) + v0.5
+             glyph-run table (story #30)
 
 ## Purpose
 
@@ -28,6 +29,14 @@ per-corner radii, and clip. The crate has no dependencies, including no
   this boundary already resolved: `dashscene-core` walks the clipping
   ancestors at commit, because a flat rect table carries none for a
   painter to walk (P2, story #97).
+- Text crosses as a `GlyphRunTable` — positioned glyph runs plus the
+  MSDF atlases they sample (story #30,
+  `docs/decisions/glyph-runs-cross-boundary-b.md`). Runs arrive already
+  shaped, wrapped, and positioned in absolute document space by the one
+  typesetter; the painter draws each glyph as a textured atlas quad and
+  never moves anything (P2). The atlas is a plain mirror of the
+  `dashscene-typeset` metrics blob, so `dashpaint` still depends on no
+  crate.
 - Solid-fill color is 4×f32 RGBA — the same shape as `dashbuf`'s `Color`
   struct (`crates/dashbuf/schema/dashbuf.fbs`), reproduced here as a
   plain type rather than shared by dependency.

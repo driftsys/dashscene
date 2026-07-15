@@ -17,7 +17,7 @@
 //! (`docs/decisions/golden-comparison-space.md`).
 
 use dashlang::{Node, anon, node, scene};
-use dashpaint::{ImageTable, Painter};
+use dashpaint::{GlyphRunTable, ImageTable, Painter};
 use dashscene_core::{
     Arena, AxisSizing, Color, CrossAxisAlign, LayoutMode, MainAxisAlign, NodeId, Prop, Txn,
 };
@@ -72,6 +72,7 @@ fn render_and_compare(arena: &Arena, name: &str) {
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        &GlyphRunTable::new(),
         None,
     );
     goldens::assert_matches_golden(name, &painter.png_bytes());
