@@ -269,6 +269,82 @@ fn hug_under_a_none_parent_wraps_content_not_the_authored_size() {
 }
 
 #[test]
+fn hiding_a_child_collapses_a_hug_container_and_reflows_its_siblings() {
+    // Hug row: three fixed 30x20 children, no gap. Hiding the middle
+    // child (issue #165) lowers to Taffy Display::None: the row's hug
+    // width drops by 30, the hidden child resolves to a degenerate
+    // rect, and its sibling closes into its place.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let row = txn.add_node(None, None);
+    txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
+    txn.set_prop(row, Prop::SizingH(AxisSizing::Hug));
+    txn.set_prop(row, Prop::Height(20.0));
+    let a = fixed(&mut txn, row, 30.0, 20.0);
+    let b = fixed(&mut txn, row, 30.0, 20.0);
+    let c = fixed(&mut txn, row, 30.0, 20.0);
+    txn.set_prop(b, Prop::Visible(false));
+    txn.commit_with(&mut TaffySolver::new());
+
+    let _ = (a, b, c);
+    assert_eq!(
+        rect(&arena, 0).2,
+        60.0,
+        "container collapses by the hidden child's width"
+    );
+    assert_eq!(rect(&arena, 1), (0.0, 0.0, 30.0, 20.0), "a unaffected");
+    assert_eq!(
+        rect(&arena, 2),
+        (0.0, 0.0, 0.0, 0.0),
+        "hidden child resolves to a degenerate rect"
+    );
+    assert_eq!(
+        rect(&arena, 3),
+        (30.0, 0.0, 30.0, 20.0),
+        "c reflows into b's place"
+    );
+}
+
+#[test]
+fn hiding_a_container_hides_its_whole_subtree_regardless_of_a_descendants_own_visible() {
+    // Taffy's Display::None hides descendants during layout regardless
+    // of their own style (issue #165) — a grandchild with no Visible
+    // prop of its own (default true) still resolves degenerate under a
+    // hidden ancestor.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let row = txn.add_node(None, None);
+    txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
+    txn.set_prop(row, Prop::SizingH(AxisSizing::Hug));
+    txn.set_prop(row, Prop::Height(20.0));
+    let a = fixed(&mut txn, row, 30.0, 20.0);
+    let hidden = txn.add_node(Some(row), None);
+    txn.set_prop(hidden, Prop::Mode(LayoutMode::Horizontal));
+    txn.set_prop(hidden, Prop::Width(30.0));
+    txn.set_prop(hidden, Prop::Height(20.0));
+    txn.set_prop(hidden, Prop::Visible(false));
+    let grandchild = fixed(&mut txn, hidden, 10.0, 10.0);
+    txn.commit_with(&mut TaffySolver::new());
+
+    let _ = (a, grandchild);
+    assert_eq!(
+        rect(&arena, 0).2,
+        30.0,
+        "container collapses; the hidden subtree contributes nothing"
+    );
+    assert_eq!(
+        rect(&arena, 2),
+        (0.0, 0.0, 0.0, 0.0),
+        "hidden container resolves to a degenerate rect"
+    );
+    assert_eq!(
+        rect(&arena, 3),
+        (0.0, 0.0, 0.0, 0.0),
+        "grandchild is hidden by its ancestor despite its own Visible defaulting to true"
+    );
+}
+
+#[test]
 fn multiple_roots_keep_their_authored_origins() {
     let mut arena = Arena::new();
     let mut txn = arena.open();

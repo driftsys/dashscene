@@ -70,7 +70,8 @@ v0.5
 intent" below); since v0.2 (story #8) the flex vocabulary: `Mode`,
 `Gap`, `Padding`, `MainAlign`, `CrossAlign`, `SizingH`, `SizingV`,
 `MinWidth`, `MaxWidth`, `MinHeight`, `MaxHeight`
-(`docs/decisions/flex-vocabulary-shape.md`), and `Margin` (story #10).
+(`docs/decisions/flex-vocabulary-shape.md`), and `Margin` (story #10);
+v0.4 (story #165) added `Visible(bool)` (see "Visibility" below).
 `Txn::lower_negative_gaps` is a shared producer pass that rewrites a
 negative container `gap` into child margins — the Figma≠CSS lowering
 (`docs/decisions/negative-gap-lowering.md`). Node names are set at
@@ -148,6 +149,24 @@ ancestor shares one region entry, at O(1) per node and with no
 chain-shaped hash key. A node no ancestor clips references
 `ClipIndex::UNCLIPPED`, the region `ClipTable::new()` reserves at index
 0 — every rect resolves, as with paints.
+
+## Visibility (story #165)
+
+`Prop::Visible(bool)` (stored on `Layout`, default `true`) is layout-
+affecting vocabulary the flex-aware solver seam consumes, like `Mode`
+or `Gap`: `dashscene-engine`'s `TaffySolver` lowers `false` to Taffy
+`Display::None` (`docs/design/dashscene-engine.md`), which hides the
+node and every descendant from the flex flow so siblings reflow into
+its space. `commit()`'s internal `FixedSolver` ignores it — the same
+gap it already leaves for the rest of the flex vocabulary
+(`docs/decisions/layout-solver-seam.md`).
+
+A hidden node still resolves to a rect every commit (P4 — a solver
+never omits a node) and keeps its rect-table index: the DFS walk and
+index assignment in `Txn::commit_with` run unconditionally over every
+node regardless of visibility, so nodes committed after a hidden one
+never shift. This is the invariant the bounded-pool work depends on
+(issue #166).
 
 ## Commit resolution pipeline
 
@@ -282,4 +301,8 @@ Full schema rationale: `docs/design/dashbuf.md`.
                                             set/read-back, layout
                                             defaults, and flex props
                                             leaving committed output
-                                            unchanged
+                                            unchanged; plus (issue #165)
+                                            a hidden node keeping its
+                                            rect-table index with no
+                                            shift to nodes committed
+                                            after it

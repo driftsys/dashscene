@@ -300,6 +300,13 @@ fn style_for(layout: &Layout, parent: Option<&Layout>) -> Style {
         }
     }
 
+    // Overrides both sides above: Taffy's Display::None hides the node
+    // from its parent's flow and hides its whole subtree regardless of
+    // any descendant's own style (issue #165).
+    if !layout.visible {
+        style.display = Display::None;
+    }
+
     style
 }
 
