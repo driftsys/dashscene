@@ -109,6 +109,10 @@ into the records below. Per-story decisions land here directly:
   the shaped-run cache stores font-unit, unpositioned runs keyed by
   paragraph text alone, serving every render size from one entry
   (#28).
+- [measure-callback-typesetter-seam.md](measure-callback-typesetter-seam.md)
+  — the Taffy measure callback borrows one `Typesetter`
+  (`TaffySolver::with_typesetter`) so layout and paint read one
+  shaped-run cache; text drives hug sizing (#29); binds #30 and #164.
 - [boundary-b-unification.md](boundary-b-unification.md) — story #4:
   `dashpaint` owns the boundary-B types (`dashscene-core` depends on it,
   publish order updated), every committed rect resolves (no `NO_PAINT`

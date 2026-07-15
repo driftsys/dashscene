@@ -10,35 +10,72 @@
 //! not a second engine.
 
 use dashscene_core::{Arena, AxisSizing, Layout, LayoutMode, LayoutSolver, NodeId, SolvedRect};
+use dashscene_typeset::text::Typesetter;
 use taffy::prelude::*;
 use taffy::{AlignItems, AlignSelf, JustifyContent, Position};
 
 /// The Taffy implementation of `dashscene-core`'s `LayoutSolver`.
 ///
-/// Stateless today; `LayoutSolver` takes `&mut self` so this can hold
-/// retained trees and measure-callback state at later slices.
+/// The typesetter is borrowed, never owned: the caller keeps one
+/// [`Typesetter`] for the whole runtime and lends it here for the
+/// solve, so the measure callback and the painter (#30) read one
+/// shaped-run cache and cannot disagree about a glyph's size. A solver
+/// built with [`new`](TaffySolver::new) carries no typesetter and
+/// solves a text-free scene exactly as before; text nodes in such a
+/// scene are simply not measured.
 #[derive(Debug, Default)]
 #[non_exhaustive]
-pub struct TaffySolver;
+pub struct TaffySolver<'a> {
+    typesetter: Option<&'a mut Typesetter>,
+}
 
-impl TaffySolver {
+impl<'a> TaffySolver<'a> {
+    /// A solver with no typesetter — for scenes without text-driven
+    /// sizing. A hug-sized text node solved this way is not measured
+    /// (it has no font to shape with) and sizes as an empty leaf.
     pub fn new() -> Self {
-        Self::default()
+        Self { typesetter: None }
+    }
+
+    /// A solver that measures text nodes against `typesetter`'s
+    /// shaped-run cache. The borrow keeps the cache single-sourced: the
+    /// same `Typesetter` the caller lends here is the one the painter
+    /// reads at paint time (#30).
+    pub fn with_typesetter(typesetter: &'a mut Typesetter) -> Self {
+        Self {
+            typesetter: Some(typesetter),
+        }
     }
 }
 
-impl LayoutSolver for TaffySolver {
+impl LayoutSolver for TaffySolver<'_> {
     fn solve(&mut self, arena: &Arena) -> Vec<(NodeId, SolvedRect)> {
         let mut out = Vec::new();
         for &root in arena.roots() {
-            let mut tree: TaffyTree<()> = TaffyTree::new();
+            let mut tree: TaffyTree<TextContext> = TaffyTree::new();
             // R7: the committed table is an f32 passthrough of the
             // solve — Taffy's default whole-pixel rounding is off.
             tree.disable_rounding();
             let mut pairs = Vec::new();
             let taffy_root = build(&mut tree, &mut pairs, arena, root, None);
-            tree.compute_layout(taffy_root, Size::MAX_CONTENT)
-                .expect("taffy tree built from the arena is always valid");
+            // Text nodes size to their shaped runs. The typesetter is
+            // reborrowed per root so its one shaped-run cache serves
+            // every root (and, at #30, the painter). A solver with no
+            // typesetter measures every text node to zero — the same
+            // result Taffy's default (no-op) measure gives.
+            let mut typesetter = self.typesetter.as_deref_mut();
+            tree.compute_layout_with_measure(
+                taffy_root,
+                Size::MAX_CONTENT,
+                |known, available, _node, context, _style| match (
+                    context,
+                    typesetter.as_deref_mut(),
+                ) {
+                    (Some(text), Some(ts)) => measure_text(known, available, text, ts),
+                    _ => Size::ZERO,
+                },
+            )
+            .expect("taffy tree built from the arena is always valid");
             // Roots are their own coordinate islands: the subtree
             // translates by the root's authored offset.
             let origin = arena.layout(root);
@@ -57,9 +94,58 @@ impl LayoutSolver for TaffySolver {
     }
 }
 
+/// A text node's measure input, attached to its Taffy leaf: the
+/// paragraph text and the render size (px per em in document units).
+/// The text is owned so the tree outlives the arena borrow; shaping
+/// itself is not repeated, because `measure_text` reads the
+/// typesetter's shaped-run cache
+/// (`docs/decisions/shaped-run-cache-font-units.md`).
+#[derive(Debug)]
+struct TextContext {
+    text: String,
+    size: f32,
+}
+
+/// The measure context for a node, present only when the node carries
+/// both text content and a text style — the well-formed text node. A
+/// node missing either is a plain leaf, not a measured text node (a
+/// text node with no style has no size to shape at).
+fn text_context(arena: &Arena, node: NodeId) -> Option<TextContext> {
+    let text = arena.text(node)?;
+    let style = arena.text_style(node)?;
+    Some(TextContext {
+        text: text.to_string(),
+        size: style.size,
+    })
+}
+
+/// Measure a text node against the shaped-run cache. `known` is what
+/// Taffy has already fixed for the node; `available` is the space it
+/// offers. The wrap width is the fixed width if Taffy set one, else a
+/// definite available width, else none — a min/max-content probe
+/// imposes no wrap, so the paragraph lays out on one line and the node
+/// hugs its natural width. A known axis is returned unchanged; only an
+/// unfixed axis takes the shaped measurement.
+fn measure_text(
+    known: Size<Option<f32>>,
+    available: Size<AvailableSpace>,
+    context: &TextContext,
+    typesetter: &mut Typesetter,
+) -> Size<f32> {
+    let max_width = known.width.or(match available.width {
+        AvailableSpace::Definite(width) => Some(width),
+        AvailableSpace::MinContent | AvailableSpace::MaxContent => None,
+    });
+    let laid = typesetter.layout(&context.text, context.size, max_width);
+    Size {
+        width: known.width.unwrap_or(laid.width),
+        height: known.height.unwrap_or(laid.height),
+    }
+}
+
 /// Build the Taffy subtree for `node`; record the NodeId pairing.
 fn build(
-    tree: &mut TaffyTree<()>,
+    tree: &mut TaffyTree<TextContext>,
     pairs: &mut Vec<(NodeId, taffy::NodeId)>,
     arena: &Arena,
     node: NodeId,
@@ -67,9 +153,14 @@ fn build(
 ) -> taffy::NodeId {
     let layout = arena.layout(node);
     let style = style_for(&layout, parent);
-    let taffy_node = tree
-        .new_leaf(style)
-        .expect("taffy node allocation cannot fail");
+    // A text node carries a measure context so Taffy sizes it from its
+    // shaped runs; every other node is a plain leaf whose measure is a
+    // no-op.
+    let taffy_node = match text_context(arena, node) {
+        Some(context) => tree.new_leaf_with_context(style, context),
+        None => tree.new_leaf(style),
+    }
+    .expect("taffy node allocation cannot fail");
     pairs.push((node, taffy_node));
     for &child in arena.children(node) {
         let taffy_child = build(tree, pairs, arena, child, Some(&layout));
@@ -215,7 +306,7 @@ fn style_for(layout: &Layout, parent: Option<&Layout>) -> Style {
 /// Accumulate parent origins to produce the absolute rects core's
 /// table carries (Taffy reports parent-relative locations).
 fn read_back(
-    tree: &TaffyTree<()>,
+    tree: &TaffyTree<TextContext>,
     pairs: &[(NodeId, taffy::NodeId)],
     cursor: &mut usize,
     arena: &Arena,

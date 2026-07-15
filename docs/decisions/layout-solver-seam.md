@@ -46,8 +46,9 @@ Option 1:
 - Option 4 inverts the recorded crate direction (`engine → core`) and
   adds Taffy to every producer's dependency graph.
 - The trait is also where the next slices attach: the measure
-  callback (#29) is solver-side state behind this seam, and FLIP
-  (#22) hooks the same commit path — noting that FLIP needs to read
-  the previous commit's geometry, which core does not expose yet
-  (only the front buffer is public), so #22 adds a small core
-  accessor for it.
+  callback (#29) is solver-side state behind this seam — realized in
+  `docs/decisions/measure-callback-typesetter-seam.md`, where the
+  solver borrows a `Typesetter` for the solve — and FLIP (#22) hooks
+  the same commit path, noting that FLIP needs to read the previous
+  commit's geometry, which core does not expose yet (only the front
+  buffer is public), so #22 adds a small core accessor for it.
