@@ -104,9 +104,11 @@ section carries the as-built description of both methods.
   behavior #118 does not deliver. `Built` is honest about what exists
   today and is #166's to rename or wrap.
 
-Blast radius at the time: `crates/dashlang/tests/builder.rs` (five call
-sites) and the crate-doc example in `lib.rs`, each changing
-`generation == N` to `generation.generation() == N`.
+Blast radius at the time: `crates/dashlang/tests/builder.rs` has five
+`.build()` call sites, but only one of them pattern-matches on the
+return value; that one and the crate-doc example in `lib.rs` were the
+only places changing `generation == N` to `generation.generation() ==
+N`. The other four discard the return value and needed no change.
 
 Related: `docs/decisions/dashlang-flex-vocabulary.md` (the flex
 vocabulary #118 also added, decided separately from this return-type

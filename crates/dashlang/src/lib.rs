@@ -34,9 +34,15 @@
 use dashscene_core::{EdgeInsets, Layout, LayoutSolver, NodeId, Prop, Txn};
 
 // A DSL consumer needs an `Arena` to build into, a `Color` to fill
-// with, and the v0.2 flex vocabulary's enums; re-exporting all of
-// them keeps `dashlang` a one-import-path surface (no direct
-// `dashscene-core` dependency required downstream).
+// with, and the v0.2 flex vocabulary's enums; re-exporting all of them
+// keeps authoring and solving a scene (via `build`/`build_with` with an
+// existing solver, e.g. `dashscene-engine`'s `TaffySolver`) a
+// one-import-path surface, with no direct `dashscene-core` dependency
+// required downstream. Implementing a *custom* `LayoutSolver` still
+// needs `dashscene_core::{LayoutSolver, NodeId, SolvedRect}` directly —
+// deliberately not re-exported, so `NodeId` stays a type no `dashlang`
+// producer ever names (see `crates/dashlang/tests/builder.rs`'s
+// `DoubleWidthSolver` for exactly this case).
 pub use dashscene_core::{Arena, AxisSizing, Color, CrossAxisAlign, LayoutMode, MainAxisAlign};
 
 /// A named node description. See [`anon`] for unnamed nodes.
@@ -206,9 +212,10 @@ pub struct Scene {
 
 /// The result of one [`Scene::build`]/[`Scene::build_with`] commit. A
 /// thin wrapper around the commit generation today — the seam issue
-/// #166's reactive layer extends into a live, bindable scene handle
-/// without a second change to `build`'s return type
-/// (`docs/wip/2026-07-15-flex-builder-design.md` D3).
+/// #166's reactive layer is designed to extend into a live, bindable
+/// scene handle by wrapping a `Built` value, without a second change to
+/// `build`'s return type itself
+/// (`docs/decisions/dashlang-flex-vocabulary.md` D3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Built {
     generation: u64,

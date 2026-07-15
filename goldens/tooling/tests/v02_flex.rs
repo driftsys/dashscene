@@ -76,6 +76,16 @@ fn render_and_compare(arena: &Arena, name: &str) {
     goldens::assert_matches_golden(name, &painter.png_bytes());
 }
 
+/// Asserts a DSL-built scene commits to the same rects and paints as
+/// its hand-built equivalent — the DSL-equals-hand-built pattern
+/// `crates/dashlang/tests/builder.rs`'s `assert_same_output` already
+/// established for v0.1, applied here to the four ported v0.2 flex
+/// scenes.
+fn assert_dsl_matches_hand_built(dsl: &Arena, hand: &Arena) {
+    assert_eq!(dsl.committed().rects(), hand.committed().rects());
+    assert_eq!(dsl.committed().paints(), hand.committed().paints());
+}
+
 #[test]
 fn nesting_matches_its_golden() {
     // A 120×80 row of two 50×70 columns, gap 10, padding 5 — the
@@ -161,8 +171,7 @@ fn nesting_matches_its_golden() {
         .child(dsl_column(BLUE, [GREEN, GOLD]))])
     .build_with(&mut dsl, &mut TaffySolver::new());
 
-    assert_eq!(dsl.committed().rects(), arena.committed().rects());
-    assert_eq!(dsl.committed().paints(), arena.committed().paints());
+    assert_dsl_matches_hand_built(&dsl, &arena);
 
     render_and_compare(&arena, "v02-nesting");
 }
@@ -245,8 +254,7 @@ fn sizing_matches_its_golden() {
         }))])
     .build_with(&mut dsl, &mut TaffySolver::new());
 
-    assert_eq!(dsl.committed().rects(), arena.committed().rects());
-    assert_eq!(dsl.committed().paints(), arena.committed().paints());
+    assert_dsl_matches_hand_built(&dsl, &arena);
 
     render_and_compare(&arena, "v02-sizing");
 }
@@ -343,8 +351,7 @@ fn clamping_matches_its_golden() {
         .child(dsl_clamped_row(|n| n.min_width(100.0), GOLD, BLUE))])
     .build_with(&mut dsl, &mut TaffySolver::new());
 
-    assert_eq!(dsl.committed().rects(), arena.committed().rects());
-    assert_eq!(dsl.committed().paints(), arena.committed().paints());
+    assert_dsl_matches_hand_built(&dsl, &arena);
 
     render_and_compare(&arena, "v02-clamping");
 }
@@ -527,8 +534,7 @@ fn alignment_matches_its_golden() {
         ))])
     .build_with(&mut dsl, &mut TaffySolver::new());
 
-    assert_eq!(dsl.committed().rects(), arena.committed().rects());
-    assert_eq!(dsl.committed().paints(), arena.committed().paints());
+    assert_dsl_matches_hand_built(&dsl, &arena);
 
     render_and_compare(&arena, "v02-alignment");
 }
