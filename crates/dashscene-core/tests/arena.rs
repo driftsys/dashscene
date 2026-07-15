@@ -350,7 +350,7 @@ fn a_no_op_commit_has_an_empty_dirty_set() {
 }
 
 #[test]
-fn a_fill_change_marks_the_rect_dirty_even_when_its_paint_index_is_stable() {
+fn a_fill_change_earns_a_new_stable_paint_index_and_marks_the_rect_dirty() {
     const BLUE: Color = Color {
         r: 0.0,
         g: 0.0,
@@ -362,14 +362,25 @@ fn a_fill_change_marks_the_rect_dirty_even_when_its_paint_index_is_stable() {
     let node = txn.add_node(None, None);
     txn.set_prop(node, Prop::Fill(RED));
     txn.commit();
+    assert_eq!(
+        arena.committed().rects()[0].paint,
+        PaintIndex(0),
+        "RED at 0"
+    );
 
-    // The re-interned paint table assigns BLUE index 0 again, so the
-    // rect entry's bits are unchanged — but its resolved color is not.
+    // The interner is retained across commits (issue #164), so RED keeps
+    // index 0 and BLUE — a colour not seen before — earns the next index.
+    // The rect's paint index therefore changes, and the dirty check is a
+    // plain bit compare rather than a resolved-colour diff.
     let mut txn = arena.open();
     txn.set_prop(node, Prop::Fill(BLUE));
     txn.commit();
 
-    assert_eq!(arena.committed().rects()[0].paint, PaintIndex(0));
+    assert_eq!(
+        arena.committed().rects()[0].paint,
+        PaintIndex(1),
+        "BLUE at 1"
+    );
     assert_eq!(arena.committed().dirty(), [0]);
 }
 
@@ -389,9 +400,10 @@ fn swapped_fills_mark_both_rects_dirty() {
     txn.set_prop(b, Prop::Fill(BLUE));
     txn.commit();
 
-    // Swapping the fills keeps both paint indices bit-identical
-    // (first-use interning assigns 0 and 1 again) while both resolved
-    // colors change.
+    // Both colours already exist in the retained interner (RED at 0, BLUE
+    // at 1), so swapping the fills swaps the two paint indices: `a` moves
+    // 0→1 and `b` moves 1→0. Each rect's entry bits change, so the bit
+    // compare marks both dirty (issue #164).
     let mut txn = arena.open();
     txn.set_prop(a, Prop::Fill(BLUE));
     txn.set_prop(b, Prop::Fill(RED));
@@ -769,10 +781,14 @@ fn commit_with_panics_on_a_foreign_solver_rect() {
 }
 
 #[test]
-#[should_panic(expected = "solver returned no rect")]
-fn commit_with_panics_when_the_solver_omits_a_node() {
+#[should_panic(expected = "no rect for")]
+fn commit_with_panics_when_a_node_has_no_rect_this_solve_or_last() {
     use dashscene_core::{LayoutSolver, SolvedRect};
 
+    // The re-expressed invariant (issue #164): a solver may omit a node
+    // whose rect is unchanged, but only when a previous commit resolved
+    // it. On the first commit there is no previous rect, so an omitted
+    // node has no rect at all — a broken contract, named loudly (P4).
     struct ForgetfulSolver;
     impl LayoutSolver for ForgetfulSolver {
         fn solve(&mut self, _arena: &Arena) -> Vec<(dashscene_core::NodeId, SolvedRect)> {
@@ -784,6 +800,74 @@ fn commit_with_panics_when_the_solver_omits_a_node() {
     let mut txn = arena.open();
     txn.add_node(None, None);
     txn.commit_with(&mut ForgetfulSolver);
+}
+
+#[test]
+fn commit_with_carries_an_omitted_nodes_rect_forward_from_the_previous_commit() {
+    use dashscene_core::{LayoutSolver, NodeId, SolvedRect};
+
+    // The partial-solve happy path (issue #164): an incremental solver
+    // reports only the nodes that changed and omits the rest; commit keeps
+    // each omitted node's previous rect verbatim.
+    struct OnlyNode(NodeId, SolvedRect);
+    impl LayoutSolver for OnlyNode {
+        fn solve(&mut self, _arena: &Arena) -> Vec<(NodeId, SolvedRect)> {
+            vec![(self.0, self.1)]
+        }
+    }
+    // A solver that resolves every node, for the initial full commit.
+    struct AllFixed;
+    impl LayoutSolver for AllFixed {
+        fn solve(&mut self, arena: &Arena) -> Vec<(NodeId, SolvedRect)> {
+            let mut out = Vec::new();
+            let mut stack: Vec<_> = arena.roots().to_vec();
+            let mut i = 0.0f32;
+            while let Some(id) = stack.pop() {
+                out.push((
+                    id,
+                    SolvedRect {
+                        x: i,
+                        y: 0.0,
+                        w: 5.0,
+                        h: 5.0,
+                    },
+                ));
+                stack.extend(arena.children(id).iter().copied());
+                i += 10.0;
+            }
+            out
+        }
+    }
+
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let a = txn.add_node(None, None);
+    let b = txn.add_node(None, None);
+    txn.commit_with(&mut AllFixed);
+    let b_before = arena.committed().rects()[1];
+    let _ = b;
+
+    // Second commit: report only `a`'s new rect; `b` is omitted.
+    let mut txn = arena.open();
+    txn.set_prop(a, Prop::X(0.0));
+    txn.commit_with(&mut OnlyNode(
+        a,
+        SolvedRect {
+            x: 42.0,
+            y: 0.0,
+            w: 5.0,
+            h: 5.0,
+        },
+    ));
+
+    let scene = arena.committed();
+    assert_eq!(scene.rects()[0].x, 42.0, "reported node takes the new rect");
+    assert_eq!(
+        scene.rects()[1],
+        b_before,
+        "omitted node keeps its previous rect verbatim"
+    );
+    assert_eq!(scene.dirty(), [0], "only the node that actually changed");
 }
 
 #[test]
@@ -1211,10 +1295,12 @@ fn sibling_subtrees_under_one_clip_share_one_region_entry() {
 
 #[test]
 fn resizing_a_clipping_ancestor_dirties_the_descendants_it_clips() {
-    // The load-bearing dirty-set case: the child's own rect entry is
-    // bit-identical across the two commits (same geometry, same paint
-    // index, same clip index) — only the region that index resolves to
-    // changed. Without the resolved-clip clause the repaint is missed.
+    // The load-bearing dirty-set case: resizing the clipping frame changes
+    // the child's resolved clip region without touching the child's own
+    // geometry or fill. With retained interners (issue #164) the resized
+    // frame mints a *new* clip region, so the child's clip index changes
+    // and the plain bit compare catches the repaint — no resolved-clip
+    // diff needed.
     let mut arena = Arena::new();
     let mut txn = arena.open();
     let frame = boxed(&mut txn, None, 0.0, 0.0, 20.0, 20.0);
@@ -1230,10 +1316,15 @@ fn resizing_a_clipping_ancestor_dirties_the_descendants_it_clips() {
     txn.commit();
 
     let scene = arena.committed();
+    let after = scene.rects()[1];
     assert_eq!(
-        scene.rects()[1],
-        before,
-        "the child's own entry bits did not change"
+        (after.x, after.y, after.w, after.h, after.paint),
+        (before.x, before.y, before.w, before.h, before.paint),
+        "the child's own geometry and fill did not change"
+    );
+    assert_ne!(
+        after.clip, before.clip,
+        "the child's clip index moved to the newly interned region"
     );
     assert_eq!(scene.dirty(), [0, 1], "the frame and the rect it clips");
 }

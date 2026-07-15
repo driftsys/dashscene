@@ -13,4 +13,5 @@ name = "dashscene_engine"
 [dependencies]
 dashscene-core.workspace = true
 dashscene-typeset.workspace = true
+rustc-hash.workspace = true
 taffy.workspace = true

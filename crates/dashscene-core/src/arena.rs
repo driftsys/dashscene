@@ -10,8 +10,9 @@
 //! batched visibility, not rollback).
 
 use std::cmp::Ordering;
-use std::collections::HashMap;
 use std::sync::Arc;
+
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::committed::{
     ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CommittedScene, CornerRadii, ImageAsset,
@@ -25,7 +26,12 @@ use crate::committed::{
 pub struct NodeId(u32);
 
 impl NodeId {
-    pub(crate) fn index(self) -> usize {
+    /// The node's dense slot — its position in the arena's node array,
+    /// assigned at [`Txn::add_node`] and stable for the node's life. A
+    /// retained [`LayoutSolver`] keys its per-node state (Taffy nodes,
+    /// parents, previous layouts) by this slot; `0..arena.node_count()`
+    /// covers every node (issue #164).
+    pub fn index(self) -> usize {
         self.0 as usize
     }
 }
@@ -47,9 +53,21 @@ pub struct SolvedRect {
 /// implementation; [`Txn::commit`] uses core's internal fixed-geometry
 /// resolution (mode-`None` passthrough semantics).
 pub trait LayoutSolver {
-    /// Resolve every node of `arena` to an absolute rect. Omitting a
-    /// node is a broken contract: [`Txn::commit_with`] panics rather
-    /// than skipping the node silently (P4).
+    /// Resolve the nodes of `arena` whose absolute rect changed since the
+    /// previous solve to their new rects. A solver may return every node
+    /// (the internal [`FixedSolver`] always does), or only the ones that
+    /// moved or resized — an incremental solver reports just those and
+    /// leaves the rest for [`Txn::commit_with`] to carry forward from the
+    /// previous commit (issue #164). The one hard rule is index integrity
+    /// (P4): every returned id must be a node of this arena, and no id may
+    /// appear twice. A node that is neither returned here nor present in
+    /// the previous commit has no rect at all, which
+    /// [`Txn::commit_with`] rejects loudly rather than resolving to a
+    /// degenerate default.
+    ///
+    /// The `&mut self` receiver lets a solver retain state across solves —
+    /// `dashscene-engine`'s `TaffySolver` keeps its Taffy tree so an
+    /// unchanged frame costs no re-solve.
     fn solve(&mut self, arena: &Arena) -> Vec<(NodeId, SolvedRect)>;
 }
 
@@ -355,6 +373,29 @@ pub struct Arena {
     variant_sets: Vec<VariantSetData>,
     buffers: [CommittedScene; 2],
     front: usize,
+    /// Retained paint interner: a paint entry's canonical bits → the
+    /// stable table index it was first assigned. Kept across commits
+    /// (issue #164) so an unchanged entry keeps its index and the dirty
+    /// check is a bit compare. The table lives in the committed buffers;
+    /// this records only the key→index assignment, which never changes
+    /// once made. A changed entry earns a new index and the old one stays
+    /// (the table grows with the distinct entries seen, not per frame).
+    paint_map: FxHashMap<PaintKey, PaintIndex>,
+    /// Retained clip interner, the clip-region analogue of `paint_map`.
+    clip_map: FxHashMap<ClipKey, ClipIndex>,
+    /// Nodes whose layout-affecting intent changed since the last commit.
+    /// The retained solver reads this (via [`Arena::layout_dirty`]) to
+    /// mark exactly those nodes dirty in its tree; drained each commit.
+    /// May carry duplicates — consumers dedup.
+    layout_dirty: Vec<NodeId>,
+    /// Nodes whose paint intent (fill, stroke, corners) or clip flag
+    /// changed since the last commit — what commit re-interns. Drained
+    /// each commit; may carry duplicates.
+    paint_dirty: Vec<NodeId>,
+    /// Nodes whose clip flag toggled since the last commit. A toggle
+    /// changes whether the node contributes a clip box to its subtree
+    /// even when its own geometry did not move. Drained each commit.
+    clip_toggled: Vec<NodeId>,
 }
 
 impl Arena {
@@ -490,6 +531,26 @@ impl Arena {
     /// Root nodes in creation order (document DFS root order).
     pub fn roots(&self) -> &[NodeId] {
         &self.roots
+    }
+
+    /// Total node count, roots and descendants alike. A [`LayoutSolver`]
+    /// compares this to the node count of its retained tree to detect a
+    /// structural change (v0.4 grows the tree by appending; it never
+    /// removes), which forces a rebuild rather than an incremental solve
+    /// (issue #164).
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Nodes whose layout-affecting intent changed since the last commit,
+    /// in the order the changes were staged (with possible duplicates).
+    /// This is the seam a retained [`LayoutSolver`] reads to mark exactly
+    /// those nodes dirty in its tree instead of re-solving the whole scene
+    /// (issue #164). Empty right after a commit; a `set_prop` of a
+    /// paint-only property adds nothing here, which is what lets a
+    /// paint-only frame skip the solve entirely.
+    pub fn layout_dirty(&self) -> &[NodeId] {
+        &self.layout_dirty
     }
 
     /// A node's children in creation order (document DFS child
@@ -684,9 +745,34 @@ impl Txn<'_> {
             data.members.len()
         );
         data.active = member;
+        // Switching the active member changes the effective value of every
+        // node this set overrides — both the ones the old member touched
+        // (reverting) and the ones the new member touches (applying). Mark
+        // them all layout- and paint-dirty (a variant override carries
+        // geometry and fill, docs/decisions/variant-set-flat-index.md), so
+        // the next commit re-solves and re-interns exactly those nodes
+        // (issue #164). Bounded by the set's override count.
+        let targets: Vec<NodeId> = self.arena.variant_sets[set.0 as usize]
+            .members
+            .iter()
+            .flat_map(|m| m.overrides.iter().map(|(node, _)| *node))
+            .collect();
+        for node in targets {
+            self.arena.layout_dirty.push(node);
+            self.arena.paint_dirty.push(node);
+        }
     }
 
     pub fn set_prop(&mut self, node: NodeId, prop: Prop) {
+        // Classify the change before consuming `prop`, so the next commit
+        // re-does only the affected work (issue #164): a layout-affecting
+        // prop feeds the retained solver's dirty set, a paint prop feeds
+        // commit's paint re-intern, and a clip-flag change feeds the
+        // clip-region cascade. A prop that changes neither geometry nor
+        // paint is not recorded, which is what lets a paint-only frame
+        // skip the layout solve. Recorded after the node is validated
+        // below, never on the panic path.
+        let class = prop_class(&prop);
         let data = self
             .arena
             .nodes
@@ -754,6 +840,12 @@ impl Txn<'_> {
             Prop::MaxHeight(v) => data.layout.max_height = Some(v),
             Prop::Visible(v) => data.layout.visible = v,
         }
+        // `data`'s borrow ends with the match above.
+        match class {
+            PropClass::Layout => self.arena.layout_dirty.push(node),
+            PropClass::Paint => self.arena.paint_dirty.push(node),
+            PropClass::ClipFlag => self.arena.clip_toggled.push(node),
+        }
     }
 
     /// Lower every negative flex gap to child margins (the Figma≠CSS
@@ -775,6 +867,7 @@ impl Txn<'_> {
     /// stages like any other mutation — the rewrite publishes with the
     /// next commit (P3).
     pub fn lower_negative_gaps(&mut self) {
+        let mut dirtied: Vec<NodeId> = Vec::new();
         let nodes = &mut self.arena.nodes;
         for i in 0..nodes.len() {
             // Only genuinely-negative gaps lower. `partial_cmp` returns
@@ -792,6 +885,7 @@ impl Txn<'_> {
             };
             let gap = nodes[i].layout.gap;
             nodes[i].layout.gap = 0.0;
+            dirtied.push(NodeId(i as u32));
             // Every child after the first (in main-axis order) gains
             // the negative gap as a leading margin. `NodeId` is `Copy`,
             // so indexing by position ends the read borrow before the
@@ -804,8 +898,13 @@ impl Txn<'_> {
                 } else {
                     margin.top += gap;
                 }
+                dirtied.push(child);
             }
         }
+        // The rewrite changes gap and child margins — both layout intent,
+        // so the next commit re-solves these nodes (issue #164). Pushed
+        // after the `nodes` borrow above ends.
+        self.arena.layout_dirty.extend(dirtied);
     }
 
     /// Resolve the intent model into the back buffer, flip the double
@@ -817,31 +916,44 @@ impl Txn<'_> {
         self.commit_with(&mut FixedSolver)
     }
 
-    /// Resolve the intent model into the back buffer using `solver`
-    /// for every node's geometry, flip the double buffer, and return
-    /// the new generation.
+    /// Resolve the intent model into the back buffer using `solver`,
+    /// flip the double buffer, and return the new generation.
     ///
-    /// Resolution: DFS walk (roots in creation order, children in
-    /// creation order) fixes the rect-table order; geometry comes from
-    /// the solver; paints intern by exact bit pattern in first-use
-    /// order; clip intent resolves into the per-rect clip regions
-    /// boundary B carries (issue #97); the dirty set diffs against the
-    /// previous commit. Fully deterministic given a deterministic solver
-    /// (R7).
+    /// The commit is incremental: it carries the previous buffer forward
+    /// and re-does only the work the change forced (issue #164).
     ///
-    /// A rect is dirty when its entry bits changed (the bits a painter
-    /// uploads, R-T4), when its resolved paint changed, or when its
-    /// resolved clip region changed. The paint and clip tables are both
-    /// re-interned every commit, so an unchanged *index* can reference a
-    /// different entry (a fill change on the only filled node keeps
-    /// index 0; resizing a clipping frame leaves its subtree's clip
-    /// index alone), and an index shift can leave the resolved value
-    /// unchanged. Only a rect equal on all three counts is clean.
+    /// - Geometry comes from the solver. A solver may report only the
+    ///   nodes that moved or resized; every other node keeps the rect it
+    ///   resolved to last commit, found by [`NodeId`] so a structural
+    ///   shift still finds it.
+    /// - Paints and clip regions intern through the arena's *retained*
+    ///   interners, so an unchanged entry keeps its index across commits
+    ///   and only a changed entry earns a new one. A node whose paint
+    ///   intent did not change reuses its previous index outright; a node
+    ///   whose clip context (an ancestor's box or clip flag) did not
+    ///   change reuses its previous clip index.
+    /// - The back buffer starts as the front buffer patched at the
+    ///   changed indices: the rect table is rebuilt entry by entry, but
+    ///   an unchanged node's entry is copied from the previous commit, and
+    ///   the paint/clip tables and the two index maps are shared by
+    ///   reference until a genuinely new entry (or a structural change)
+    ///   forces a copy.
+    ///
+    /// Because interned indices are stable, a rect is dirty exactly when
+    /// its entry bits (the bits a painter uploads, R-T4) differ from the
+    /// previous commit at the same index — a fill change earns a new paint
+    /// index, a clip-box change earns a new clip index, and either shows
+    /// up in the bit compare. Fully deterministic given a deterministic
+    /// solver (R7).
     ///
     /// # Panics
     ///
-    /// Panics if the solver omits a node (P4 — a missing rect is a
-    /// broken contract, never a silent skip).
+    /// Panics if the solver returns a rect for a node that is not this
+    /// arena's, or two rects for one node (P4). Panics if a node has no
+    /// rect at all — neither returned by this solve nor resolved by a
+    /// previous commit (the re-expressed "every node has a rect"
+    /// invariant: a missing rect is a broken contract, never a silent
+    /// default).
     pub fn commit_with(self, solver: &mut dyn LayoutSolver) -> u64 {
         let arena = self.arena;
 
@@ -861,124 +973,266 @@ impl Txn<'_> {
                 "solver returned two rects for {id:?}"
             );
         }
+        // Carry forward the previous commit's rect for every node the
+        // solver did not report — by NodeId, so a structural change that
+        // shifted the DFS index still finds the right previous rect. A
+        // node that is neither solved now nor present in a previous commit
+        // stays `None` and trips the invariant below.
+        {
+            let previous = &arena.buffers[arena.front];
+            for (slot, geom) in solved.iter_mut().enumerate() {
+                if geom.is_none()
+                    && let Some(&ri) = previous.rect_index.get(slot)
+                {
+                    let r = previous.rects[ri as usize];
+                    *geom = Some(SolvedRect {
+                        x: r.x,
+                        y: r.y,
+                        w: r.w,
+                        h: r.h,
+                    });
+                }
+            }
+        }
 
-        // Build rects + intern paints and clip regions. Every rect
-        // resolves: an unfilled node interns the shared draws-nothing
-        // entry (`PaintEntry::default()`) keyed as `None`, and a node no
-        // ancestor clips references the reserved unclipped region.
-        //
-        // The DFS order is parent-before-child, so a node's clip region
-        // is known by the time its children are visited.
-        let mut rects = Vec::with_capacity(order.len());
-        let mut paints = PaintTable::new();
-        let mut interned: HashMap<PaintKey, PaintIndex> = HashMap::new();
-        let mut clips = ClipTable::new();
-        let mut clip_interned: HashMap<ClipKey, ClipIndex> = HashMap::new();
-        // `None` until the node is visited, not UNCLIPPED: the clip walk's
-        // correctness rests on the DFS order being parent-before-child, and a
-        // default of UNCLIPPED would turn a violation of that into a silently
-        // unclipped subtree instead of a panic. The parent geometry lookup
-        // below already fails loudly for the same reason.
-        let mut region_of: Vec<Option<ClipIndex>> = vec![None; arena.nodes.len()];
-        let mut rect_index = vec![u32::MAX; arena.nodes.len()];
+        // Which nodes changed paint intent / toggled their clip flag this
+        // commit — O(1) lookup for the walk below.
+        let paint_dirty_set: FxHashSet<usize> =
+            arena.paint_dirty.iter().map(|n| n.index()).collect();
+        let clip_toggled_set: FxHashSet<usize> =
+            arena.clip_toggled.iter().map(|n| n.index()).collect();
+
+        // Borrow the retained interners for the walk. Taken out so the
+        // arena stays immutably borrowable (for `overlay`) while the maps
+        // are mutated; restored below.
+        let mut paint_map = std::mem::take(&mut arena.paint_map);
+        let mut clip_map = std::mem::take(&mut arena.clip_map);
+
+        let previous = &arena.buffers[arena.front];
+        // A node was added since the previous commit iff the node count
+        // grew (v0.4 never removes). A structural change re-indexes the
+        // rect table, so the previous index maps cannot be reused.
+        let structural = order.len() != previous.node_ids.len();
+
+        // The paint and clip tables start shared with the previous
+        // commit; `intern_*` copies-on-write only when a new entry is
+        // pushed. `region_out_index`/`region_out_changed` carry, per node,
+        // the clip region it hands its children and whether that region
+        // changed — the parent-before-child DFS lets a child read them.
+        let mut back_paints = Arc::clone(&previous.paints);
+        let mut back_clips = Arc::clone(&previous.clips);
+        let mut rects: Vec<RectEntry> = Vec::with_capacity(order.len());
+        let mut dirty: Vec<u32> = Vec::new();
+        let n = arena.nodes.len();
+        let mut region_out_index: Vec<ClipIndex> = vec![ClipIndex::UNCLIPPED; n];
+        let mut region_out_changed: Vec<bool> = vec![false; n];
+
         for (i, &id) in order.iter().enumerate() {
             let node = &arena.nodes[id.index()];
-            let geometry =
-                solved[id.index()].unwrap_or_else(|| panic!("solver returned no rect for {id:?}"));
-            // A variant override's fill takes precedence over the
-            // node's base fill, the same "active member wins" rule
-            // `Arena::layout` applies to geometry.
-            let fill = arena.overlay(id).fill.or_else(|| node.fill.clone());
-            let entry = PaintEntry {
-                fill,
-                stroke: node.stroke,
-                corners: node.corners,
+            let geometry = solved[id.index()].unwrap_or_else(|| {
+                panic!(
+                    "no rect for {id:?}: the solver did not resolve it and no previous commit did \
+                     either (P4)"
+                )
+            });
+            // The node's entry from the previous commit, by NodeId. `None`
+            // for a node added since (it has no previous rect).
+            let prev_entry: Option<RectEntry> = previous
+                .rect_index
+                .get(id.index())
+                .map(|&ri| previous.rects[ri as usize]);
+
+            // The clip region that applies to this node is its parent's
+            // output region; a root is unclipped. (A clipping node does
+            // not clip itself, only its descendants.)
+            let (region_in_index, region_in_changed) = match node.parent {
+                Some(parent) => (
+                    region_out_index[parent.index()],
+                    region_out_changed[parent.index()],
+                ),
+                None => (ClipIndex::UNCLIPPED, false),
             };
-            let paint = *interned.entry(paint_key(&entry)).or_insert_with(|| {
-                // Cannot truncate: the paint table never exceeds the
-                // node count (kept below u32::MAX by add_node) plus
-                // this one shared entry.
-                paints.push(entry.clone())
+
+            let geo_changed = prev_entry.is_none_or(|p| {
+                p.x.to_bits() != geometry.x.to_bits()
+                    || p.y.to_bits() != geometry.y.to_bits()
+                    || p.w.to_bits() != geometry.w.to_bits()
+                    || p.h.to_bits() != geometry.h.to_bits()
             });
 
-            // The clip that applies to this node is its parent's, plus
-            // the parent's own box when the parent clips. A clipping
-            // node does not clip itself — only its descendants.
-            let clip = match node.parent {
-                Some(parent) if arena.nodes[parent.index()].clip => {
-                    let parent_data = &arena.nodes[parent.index()];
-                    let parent_geometry = solved[parent.index()]
-                        .expect("the parent's rect resolved earlier in the DFS walk");
-                    let parent_box = ClipBox {
-                        x: parent_geometry.x,
-                        y: parent_geometry.y,
-                        w: parent_geometry.w,
-                        h: parent_geometry.h,
-                        corners: parent_data.corners,
+            // Paint: reuse the stable previous index unless the node's
+            // paint intent changed (or it is new). A variant override's
+            // fill wins over the base fill, the same "active member wins"
+            // rule `Arena::layout` applies to geometry.
+            let paint = match prev_entry.filter(|_| !paint_dirty_set.contains(&id.index())) {
+                Some(prev) => prev.paint,
+                None => {
+                    let fill = arena.overlay(id).fill.or_else(|| node.fill.clone());
+                    let entry = PaintEntry {
+                        fill,
+                        stroke: node.stroke,
+                        corners: node.corners,
                     };
-                    intern_region(
-                        &mut clips,
-                        &mut clip_interned,
-                        region_of[parent.index()]
-                            .expect("the parent's clip region resolved earlier in the DFS walk"),
-                        parent_box,
-                    )
+                    intern_paint(&mut back_paints, &mut paint_map, entry)
                 }
-                // A non-clipping parent passes its own region through.
-                Some(parent) => region_of[parent.index()]
-                    .expect("the parent's clip region resolved earlier in the DFS walk"),
-                None => ClipIndex::UNCLIPPED,
             };
-            region_of[id.index()] = Some(clip);
 
-            rects.push(RectEntry {
+            // Clip: reuse the previous index unless the region reaching
+            // this node changed (or it is new).
+            let clip = match prev_entry {
+                Some(prev) if !region_in_changed => prev.clip,
+                _ => region_in_index,
+            };
+
+            let entry = RectEntry {
                 x: geometry.x,
                 y: geometry.y,
                 w: geometry.w,
                 h: geometry.h,
                 paint,
                 clip,
-            });
-            // In range for u32 by the add_node guard.
-            rect_index[id.index()] = i as u32;
+            };
+
+            // The region this node hands its children: its own region plus
+            // its box when it clips. `paint_dirty` stands in for a
+            // corners/box change (corners are paint intent); over-marking
+            // only re-resolves a descendant to the same index, never a
+            // wrong one.
+            let box_changed = geo_changed || paint_dirty_set.contains(&id.index());
+            if node.clip {
+                let node_box = ClipBox {
+                    x: geometry.x,
+                    y: geometry.y,
+                    w: geometry.w,
+                    h: geometry.h,
+                    corners: node.corners,
+                };
+                region_out_index[id.index()] =
+                    intern_region(&mut back_clips, &mut clip_map, region_in_index, node_box);
+                region_out_changed[id.index()] =
+                    region_in_changed || clip_toggled_set.contains(&id.index()) || box_changed;
+            } else {
+                region_out_index[id.index()] = region_in_index;
+                region_out_changed[id.index()] =
+                    region_in_changed || clip_toggled_set.contains(&id.index());
+            }
+
+            // Dirty is a bit compare against the previous commit at this
+            // index (what a painter refreshes). A shifted tail after a
+            // structural change reports dirty, as intended.
+            if previous
+                .rects
+                .get(i)
+                .is_none_or(|old| entry_bits(old) != entry_bits(&entry))
+            {
+                dirty.push(i as u32);
+            }
+            rects.push(entry);
         }
 
-        // Dirty = diff against the previous commit, by index: entry
-        // bits, resolved paint, or resolved clip region changed (see the
-        // method docs).
-        let previous = &arena.buffers[arena.front];
-        let dirty = rects
-            .iter()
-            .enumerate()
-            .filter(|&(i, rect)| {
-                previous.rects.get(i).is_none_or(|old| {
-                    entry_bits(old) != entry_bits(rect)
-                        || resolved_paint_key(old, &previous.paints)
-                            != resolved_paint_key(rect, &paints)
-                        || !same_region_bits(
-                            previous.clips.resolve(old.clip),
-                            clips.resolve(rect.clip),
-                        )
-                })
-            })
-            .map(|(i, _)| i as u32)
-            .collect();
-
         let generation = previous.generation + 1;
-        let back = 1 - arena.front;
-        arena.buffers[back] = CommittedScene {
+        // The index maps change only on a structural change; otherwise the
+        // previous commit's maps still describe this DFS order, so share
+        // them by reference.
+        let (node_ids, rect_index) = if structural {
+            let mut rect_index = vec![0u32; n];
+            for (i, &id) in order.iter().enumerate() {
+                // In range for u32 by the add_node guard.
+                rect_index[id.index()] = i as u32;
+            }
+            (Arc::new(order), Arc::new(rect_index))
+        } else {
+            (
+                Arc::clone(&previous.node_ids),
+                Arc::clone(&previous.rect_index),
+            )
+        };
+        let images = Arc::clone(&arena.images);
+        let back_scene = CommittedScene {
             rects,
-            paints,
-            images: Arc::clone(&arena.images),
-            clips,
+            paints: back_paints,
+            images,
+            clips: back_clips,
             generation,
             dirty,
-            node_ids: order,
+            node_ids,
             rect_index,
         };
+
+        // Restore the retained interners and drain the change log.
+        arena.paint_map = paint_map;
+        arena.clip_map = clip_map;
+        let back = 1 - arena.front;
+        arena.buffers[back] = back_scene;
         arena.front = back;
+        arena.layout_dirty.clear();
+        arena.paint_dirty.clear();
+        arena.clip_toggled.clear();
         generation
     }
+}
+
+/// How a `Prop` change reaches the committed output — the classification
+/// that lets a commit re-do only the affected work (issue #164).
+enum PropClass {
+    /// Geometry / measured size: feeds the solver's dirty set.
+    Layout,
+    /// Fill, stroke, or corners: feeds commit's paint re-intern.
+    Paint,
+    /// The clip flag: feeds the clip-region cascade.
+    ClipFlag,
+}
+
+fn prop_class(prop: &Prop) -> PropClass {
+    match prop {
+        Prop::Fill(_) | Prop::FillWith(_) | Prop::Stroke(_) | Prop::Corners { .. } => {
+            PropClass::Paint
+        }
+        Prop::Clip(_) => PropClass::ClipFlag,
+        // Everything else is layout or measured-size intent. Text and
+        // TextStyle change the shaped run a measuring solver sizes to, so
+        // they are layout-affecting even though they touch no rect field
+        // directly.
+        Prop::X(_)
+        | Prop::Y(_)
+        | Prop::Width(_)
+        | Prop::Height(_)
+        | Prop::Text(_)
+        | Prop::TextStyle(_)
+        | Prop::Mode(_)
+        | Prop::Gap(_)
+        | Prop::Padding { .. }
+        | Prop::Margin { .. }
+        | Prop::MainAlign(_)
+        | Prop::CrossAlign(_)
+        | Prop::SizingH(_)
+        | Prop::SizingV(_)
+        | Prop::MinWidth(_)
+        | Prop::MaxWidth(_)
+        | Prop::MinHeight(_)
+        | Prop::MaxHeight(_)
+        | Prop::Visible(_) => PropClass::Layout,
+    }
+}
+
+/// Intern a paint entry through the retained interner: reuse the stable
+/// index if the entry was seen before, else push it (copying the table on
+/// write) and record the new index (issue #164).
+fn intern_paint(
+    paints: &mut Arc<PaintTable>,
+    interned: &mut FxHashMap<PaintKey, PaintIndex>,
+    entry: PaintEntry,
+) -> PaintIndex {
+    let key = paint_key(&entry);
+    if let Some(&index) = interned.get(&key) {
+        return index;
+    }
+    // Cannot truncate: the paint table stays below u32::MAX (add_node's
+    // guard bounds the node count, and interned entries never outnumber
+    // the distinct entries ever staged).
+    let index = Arc::make_mut(paints).push(entry);
+    interned.insert(key, index);
+    index
 }
 
 /// The interning key of one node's clip region: the region its parent
@@ -989,8 +1243,8 @@ impl Txn<'_> {
 type ClipKey = (u32, [u32; 8]);
 
 fn intern_region(
-    clips: &mut ClipTable,
-    interned: &mut HashMap<ClipKey, ClipIndex>,
+    clips: &mut Arc<ClipTable>,
+    interned: &mut FxHashMap<ClipKey, ClipIndex>,
     parent_region: ClipIndex,
     parent_box: ClipBox,
 ) -> ClipIndex {
@@ -998,9 +1252,12 @@ fn intern_region(
     if let Some(&index) = interned.get(&key) {
         return index;
     }
-    let mut boxes = clips.resolve(parent_region).boxes().to_vec();
+    // Copy-on-write: the table is shared with the previous commit until a
+    // genuinely new region forces a copy (issue #164).
+    let table = Arc::make_mut(clips);
+    let mut boxes = table.resolve(parent_region).boxes().to_vec();
     boxes.push(parent_box);
-    let index = clips.push(ClipRegion::new(boxes));
+    let index = table.push(ClipRegion::new(boxes));
     interned.insert(key, index);
     index
 }
@@ -1120,13 +1377,6 @@ fn entry_bits(entry: &RectEntry) -> [u32; 6] {
     ]
 }
 
-/// The paint an entry resolves to in its own commit's paint table. Both
-/// tables are re-interned every commit, so an unchanged index can resolve
-/// to a different entry.
-fn resolved_paint_key(entry: &RectEntry, paints: &PaintTable) -> PaintKey {
-    paint_key(paints.resolve(entry.paint))
-}
-
 fn clip_box_bits(clip: &ClipBox) -> [u32; 8] {
     let corners = corner_key(clip.corners);
     [
@@ -1139,16 +1389,4 @@ fn clip_box_bits(clip: &ClipBox) -> [u32; 8] {
         corners[2],
         corners[3],
     ]
-}
-
-/// Whether two resolved clip regions are the same box-for-box, by bit
-/// pattern. The clip table is re-interned every commit, so a stable clip
-/// index can reference a moved or resized ancestor box — the case a rect
-/// whose own entry bits did not change still has to repaint.
-fn same_region_bits(a: &ClipRegion, b: &ClipRegion) -> bool {
-    a.boxes().len() == b.boxes().len()
-        && a.boxes()
-            .iter()
-            .zip(b.boxes())
-            .all(|(x, y)| clip_box_bits(x) == clip_box_bits(y))
 }
