@@ -162,6 +162,7 @@ fn nesting_matches_its_golden() {
     .build_with(&mut dsl, &mut TaffySolver::new());
 
     assert_eq!(dsl.committed().rects(), arena.committed().rects());
+    assert_eq!(dsl.committed().paints(), arena.committed().paints());
 
     render_and_compare(&arena, "v02-nesting");
 }
@@ -245,6 +246,7 @@ fn sizing_matches_its_golden() {
     .build_with(&mut dsl, &mut TaffySolver::new());
 
     assert_eq!(dsl.committed().rects(), arena.committed().rects());
+    assert_eq!(dsl.committed().paints(), arena.committed().paints());
 
     render_and_compare(&arena, "v02-sizing");
 }
@@ -342,6 +344,7 @@ fn clamping_matches_its_golden() {
     .build_with(&mut dsl, &mut TaffySolver::new());
 
     assert_eq!(dsl.committed().rects(), arena.committed().rects());
+    assert_eq!(dsl.committed().paints(), arena.committed().paints());
 
     render_and_compare(&arena, "v02-clamping");
 }
@@ -525,6 +528,7 @@ fn alignment_matches_its_golden() {
     .build_with(&mut dsl, &mut TaffySolver::new());
 
     assert_eq!(dsl.committed().rects(), arena.committed().rects());
+    assert_eq!(dsl.committed().paints(), arena.committed().paints());
 
     render_and_compare(&arena, "v02-alignment");
 }
