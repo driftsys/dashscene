@@ -57,7 +57,7 @@ fn checker_asset() -> ImageAsset {
             });
         }
     }
-    painter.paint(&rects, &paints, &ImageTable::new(), &ClipTable::new());
+    painter.paint(&rects, &paints, &ImageTable::new(), &ClipTable::new(), None);
     ImageAsset {
         format: ImageFormat::Png,
         bytes: painter.png_bytes(),
@@ -160,7 +160,7 @@ fn the_v03_paint_vocabulary_matches_its_golden() {
     ];
 
     let mut painter = SkiaPainter::new(96, 96);
-    painter.paint(&rects, &paints, &images, &ClipTable::new());
+    painter.paint(&rects, &paints, &images, &ClipTable::new(), None);
 
     // Anti-aliased gradients and curves are not bit-identical across CPU
     // architectures; a small fraction absorbs cross-machine edge jitter

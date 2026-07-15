@@ -125,6 +125,7 @@ fn the_clip_scene_matches_its_golden() {
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        Some(scene.dirty()),
     );
     let bytes = painter.rgba_bytes();
     let probe = |x: usize, y: usize| goldens::pixel(&bytes, SIZE, x, y);

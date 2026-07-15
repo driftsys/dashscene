@@ -252,7 +252,13 @@ fn load(doc: &Document) -> Arena {
 fn render(arena: &Arena) -> Vec<u8> {
     let scene = arena.committed();
     let mut painter = SkiaPainter::new(40, 40);
-    painter.paint(scene.rects(), scene.paints(), scene.images(), scene.clips());
+    painter.paint(
+        scene.rects(),
+        scene.paints(),
+        scene.images(),
+        scene.clips(),
+        None,
+    );
     painter.png_bytes()
 }
 

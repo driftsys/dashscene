@@ -70,6 +70,7 @@ fn render_and_compare(arena: &Arena, name: &str) {
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        None,
     );
     goldens::assert_matches_golden(name, &painter.png_bytes());
 }

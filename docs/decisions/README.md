@@ -208,6 +208,11 @@ into the records below. Per-story decisions land here directly:
   `docs/archive/2026-07-14-scope-decisions.md` §20; binds
   `crates/dashc`'s type names.
 
+- [dirty-set-advisory-across-boundary-b.md](dirty-set-advisory-across-boundary-b.md)
+  — the dirty set crosses boundary B as an advisory `Option<&[u32]>` on
+  `Painter::paint`; `SkiaPainter`'s `Full`/`Retained` modes make it a
+  differential oracle (story #163); binds the incremental-commit work (#164).
+
 Gardened out of `docs/technotes/`'s `DECISION` / `DECISION direction` tags,
 so each technote stops being the authority for the conclusion it reached:
 

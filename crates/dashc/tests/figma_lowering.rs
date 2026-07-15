@@ -1082,7 +1082,13 @@ fn the_fixture_compiles_loads_and_renders() {
     assert_eq!(scene.rects().len(), 14, "13 frames plus the root");
 
     let mut painter = SkiaPainter::new(960, 680);
-    painter.paint(scene.rects(), scene.paints(), scene.images(), scene.clips());
+    painter.paint(
+        scene.rects(),
+        scene.paints(),
+        scene.images(),
+        scene.clips(),
+        None,
+    );
     let png = painter.png_bytes();
 
     assert!(!png.is_empty(), "the fixture rasterizes");
