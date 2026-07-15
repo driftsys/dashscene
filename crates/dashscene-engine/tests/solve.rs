@@ -404,9 +404,19 @@ fn a_negative_gap_scene_lowers_to_the_same_rects_as_the_margin_scene() {
         }
     });
 
-    assert_eq!(scene_a, scene_b, "lowered negative gap == authored margins");
     // Each child overlaps its predecessor by 8: 0, 30-8=22, 52-8=44.
-    assert_eq!(scene_a, [0.0, 22.0, 44.0]);
+    //
+    // Pin both sides independently instead of comparing scene_a to
+    // scene_b: lower_negative_gaps() sets exactly the margin the
+    // closure above sets by hand, so by the time either scene reaches
+    // the solver both hold bit-identical margins. `scene_a == scene_b`
+    // would then hold no matter what the solver did with a negative
+    // margin — it only proves the solver is deterministic, not correct
+    // (issue #114). Pinning each side against the hand-computed
+    // expectation makes a wrong lowering or a wrong solve fail here.
+    let expected = [0.0, 22.0, 44.0];
+    assert_eq!(scene_a, expected, "negative-gap scene, lowered");
+    assert_eq!(scene_b, expected, "equivalent hand-authored margins");
 }
 
 #[test]
@@ -544,6 +554,14 @@ fn lowered_margins_compose_through_nesting() {
     // test pins is the engine half: nested negative margins compose
     // correctly through the Taffy style mapping, so the lowering's
     // output is faithfully solved.
+    //
+    // `lowered` and `authored` are pinned independently below rather
+    // than compared to each other: lower_negative_gaps() sets exactly
+    // the margins the closure below sets by hand, so both scenes reach
+    // the solver holding bit-identical margins. `lowered == authored`
+    // would then hold no matter what the solver did with those margins
+    // — it only proves the solver is deterministic, not correct (issue
+    // #114).
     let lowered = nested_row_xs(|txn, outer, inners| {
         txn.set_prop(outer, Prop::Gap(-10.0));
         for (inner, _) in inners {
@@ -572,9 +590,10 @@ fn lowered_margins_compose_through_nesting() {
         }
     });
 
-    assert_eq!(lowered, authored, "nested lowering == authored margins");
     // DFS: outer, inner0, inner0.a, inner0.b, inner1, inner1.a, inner1.b.
     // inner0 at 0, its children at 0 and 30-4=26.
     // inner1 at 100-10=90, its children at 90 and 90+30-4=116.
-    assert_eq!(lowered, [0.0, 0.0, 0.0, 26.0, 90.0, 90.0, 116.0]);
+    let expected = [0.0, 0.0, 0.0, 26.0, 90.0, 90.0, 116.0];
+    assert_eq!(lowered, expected, "nested negative gap, lowered");
+    assert_eq!(authored, expected, "equivalent hand-authored margins");
 }
