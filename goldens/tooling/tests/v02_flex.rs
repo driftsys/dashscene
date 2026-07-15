@@ -4,10 +4,11 @@
 //! opaque combined image.
 //!
 //! Scenes are authored against dashscene-core's `Txn` and solved by
-//! dashscene-engine's `TaffySolver`. dashlang is not used: its builder
-//! has no flex vocabulary and `Scene::build` commits through the fixed
-//! solver, which ignores flex (`docs/decisions/negative-gap-lowering.md`
-//! D3).
+//! dashscene-engine's `TaffySolver`. Each test also builds the same
+//! scene through `dashlang`'s flex vocabulary and `Scene::build_with`,
+//! and asserts the two commits produce identical rects (issue #118;
+//! `docs/decisions/negative-gap-lowering.md` D3 recorded the original
+//! deferral).
 //!
 //! Every scene is dimensioned so that each solved rect lands on an
 //! integer. Integer-aligned solid fills produce no anti-aliased edges,
@@ -15,6 +16,7 @@
 //! whose gradients and curves need a tolerance
 //! (`docs/decisions/golden-comparison-space.md`).
 
+use dashlang::{Node, anon, node, scene};
 use dashpaint::{ImageTable, Painter};
 use dashscene_core::{
     Arena, AxisSizing, Color, CrossAxisAlign, LayoutMode, MainAxisAlign, NodeId, Prop, Txn,
@@ -73,6 +75,16 @@ fn render_and_compare(arena: &Arena, name: &str) {
         None,
     );
     goldens::assert_matches_golden(name, &painter.png_bytes());
+}
+
+/// Asserts a DSL-built scene commits to the same rects and paints as
+/// its hand-built equivalent — the DSL-equals-hand-built pattern
+/// `crates/dashlang/tests/builder.rs`'s `assert_same_output` already
+/// established for v0.1, applied here to the four ported v0.2 flex
+/// scenes.
+fn assert_dsl_matches_hand_built(dsl: &Arena, hand: &Arena) {
+    assert_eq!(dsl.committed().rects(), hand.committed().rects());
+    assert_eq!(dsl.committed().paints(), hand.committed().paints());
 }
 
 #[test]
@@ -137,6 +149,31 @@ fn nesting_matches_its_golden() {
     assert_eq!(rect(&arena, 5), (65.0, 5.0, 50.0, 30.0), "its first cell");
     assert_eq!(rect(&arena, 6), (65.0, 45.0, 50.0, 30.0), "its second cell");
 
+    let mut dsl = Arena::new();
+    let dsl_column = |fill: Color, cells: [Color; 2]| {
+        node("column")
+            .size(50.0, 70.0)
+            .mode(LayoutMode::Vertical)
+            .gap(10.0)
+            .fill(fill)
+            .children(
+                cells
+                    .into_iter()
+                    .map(|cell| anon().size(50.0, 30.0).fill(cell)),
+            )
+    };
+    scene([node("root")
+        .size(120.0, 80.0)
+        .mode(LayoutMode::Horizontal)
+        .gap(10.0)
+        .padding(5.0, 5.0, 5.0, 5.0)
+        .fill(NAVY)
+        .child(dsl_column(RED, [GOLD, GREEN]))
+        .child(dsl_column(BLUE, [GREEN, GOLD]))])
+    .build_with(&mut dsl, &mut TaffySolver::new());
+
+    assert_dsl_matches_hand_built(&dsl, &arena);
+
     render_and_compare(&arena, "v02-nesting");
 }
 
@@ -197,6 +234,29 @@ fn sizing_matches_its_golden() {
         "second Fill: the equal split"
     );
 
+    let mut dsl = Arena::new();
+    scene([node("root")
+        .size(120.0, 60.0)
+        .mode(LayoutMode::Horizontal)
+        .fill(NAVY)
+        .child(
+            node("hug")
+                .mode(LayoutMode::Horizontal)
+                .sizing_h(AxisSizing::Hug)
+                .size(0.0, 60.0)
+                .fill(RED)
+                .child(anon().size(30.0, 40.0).fill(GOLD)),
+        )
+        .children([GREEN, BLUE].into_iter().map(|color| {
+            anon()
+                .sizing_h(AxisSizing::Fill)
+                .size(0.0, 60.0)
+                .fill(color)
+        }))])
+    .build_with(&mut dsl, &mut TaffySolver::new());
+
+    assert_dsl_matches_hand_built(&dsl, &arena);
+
     render_and_compare(&arena, "v02-sizing");
 }
 
@@ -219,6 +279,24 @@ fn clamped_row(txn: &mut Txn<'_>, root: NodeId, clamp: Prop, first: Color, secon
     txn.set_prop(rest, Prop::SizingH(AxisSizing::Fill));
     txn.set_prop(rest, Prop::Height(30.0));
     txn.set_prop(rest, Prop::Fill(second));
+}
+
+fn dsl_clamped_row(clamp: impl FnOnce(Node) -> Node, first: Color, second: Color) -> Node {
+    node("row")
+        .size(120.0, 30.0)
+        .mode(LayoutMode::Horizontal)
+        .child(clamp(
+            anon()
+                .sizing_h(AxisSizing::Fill)
+                .size(0.0, 30.0)
+                .fill(first),
+        ))
+        .child(
+            anon()
+                .sizing_h(AxisSizing::Fill)
+                .size(0.0, 30.0)
+                .fill(second),
+        )
 }
 
 #[test]
@@ -265,6 +343,17 @@ fn clamping_matches_its_golden() {
         "its sibling keeps only 20"
     );
 
+    let mut dsl = Arena::new();
+    scene([node("root")
+        .size(120.0, 60.0)
+        .mode(LayoutMode::Vertical)
+        .fill(NAVY)
+        .child(dsl_clamped_row(|n| n.max_width(40.0), RED, GREEN))
+        .child(dsl_clamped_row(|n| n.min_width(100.0), GOLD, BLUE))])
+    .build_with(&mut dsl, &mut TaffySolver::new());
+
+    assert_dsl_matches_hand_built(&dsl, &arena);
+
     render_and_compare(&arena, "v02-clamping");
 }
 
@@ -298,6 +387,25 @@ fn align_row(
     txn.set_prop(row, Prop::CrossAlign(cross));
     for color in colors {
         boxed(txn, row, 30.0, 10.0, color);
+    }
+}
+
+fn dsl_align_row(
+    main: MainAxisAlign,
+    cross: CrossAxisAlign,
+    padding: Option<(f32, f32, f32, f32)>,
+    colors: [Color; 2],
+) -> Node {
+    let row = node("row")
+        .size(160.0, 20.0)
+        .mode(LayoutMode::Horizontal)
+        .gap(10.0)
+        .main_align(main)
+        .cross_align(cross)
+        .children(colors.into_iter().map(|c| anon().size(30.0, 10.0).fill(c)));
+    match padding {
+        Some((left, top, right, bottom)) => row.padding(left, top, right, bottom),
+        None => row,
     }
 }
 
@@ -395,6 +503,39 @@ fn alignment_matches_its_golden() {
     assert_eq!(rect(&arena, 10), (0.0, 60.0, 160.0, 20.0), "row 3");
     assert_eq!(rect(&arena, 11), (0.0, 65.0, 30.0, 10.0), "flush left");
     assert_eq!(rect(&arena, 12), (130.0, 65.0, 30.0, 10.0), "flush right");
+
+    let mut dsl = Arena::new();
+    scene([node("root")
+        .size(160.0, 80.0)
+        .mode(LayoutMode::Vertical)
+        .fill(NAVY)
+        .child(dsl_align_row(
+            MainAxisAlign::Start,
+            CrossAxisAlign::Start,
+            Some((10.0, 2.0, 10.0, 2.0)),
+            [RED, GOLD],
+        ))
+        .child(dsl_align_row(
+            MainAxisAlign::Center,
+            CrossAxisAlign::Center,
+            None,
+            [GREEN, BLUE],
+        ))
+        .child(dsl_align_row(
+            MainAxisAlign::End,
+            CrossAxisAlign::End,
+            None,
+            [GOLD, RED],
+        ))
+        .child(dsl_align_row(
+            MainAxisAlign::SpaceBetween,
+            CrossAxisAlign::Center,
+            None,
+            [BLUE, GREEN],
+        ))])
+    .build_with(&mut dsl, &mut TaffySolver::new());
+
+    assert_dsl_matches_hand_built(&dsl, &arena);
 
     render_and_compare(&arena, "v02-alignment");
 }

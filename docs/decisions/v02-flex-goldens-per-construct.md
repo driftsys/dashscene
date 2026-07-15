@@ -18,7 +18,11 @@ as-built code shaped the choice:
   the fixed solver, which ignores flex. Story #11 confirmed the
   deferral still holds and filed #118 (dashlang flex builder
   vocabulary + `Scene::build_with`) against it; #46 (the DSL-generated
-  corpus generator) depends on #118.
+  corpus generator) depends on #118. **Resolved 2026-07-15**: #118
+  added the vocabulary and `Scene::build_with`, and each of this
+  story's four tests gained a DSL-built assertion alongside its
+  hand-built one (`docs/decisions/dashlang-flex-vocabulary.md`) —
+  the per-construct golden split this record chose is unchanged.
 - Core's `AxisSizing::{Fixed, Hug, Fill}` carries no fill weight, and
   `dashscene-engine` maps every `Fill` to `flex_grow = 1.0`, so `Fill`
   siblings always split free space equally. The epic's scope list

@@ -29,7 +29,14 @@ All types and functions live in `crates/dashlang/src/lib.rs`:
   parent-relative), `size(w, h)`, `fill(Color)`, `child(Node)` (append
   one), `children(impl IntoIterator<Item = Node>)` (append from an
   iterator). Declaration order is document (DFS) order — core pins
-  sibling order to creation order.
+  sibling order to creation order. The v0.2 flex vocabulary (issue
+  #118): `mode(LayoutMode)`, `gap(f32)`, `padding(left, top, right,
+  bottom: f32)`, `margin(left, top, right, bottom: f32)`,
+  `main_align(MainAxisAlign)`, `cross_align(CrossAxisAlign)`,
+  `sizing_h(AxisSizing)`, `sizing_v(AxisSizing)`, `min_width(f32)`,
+  `max_width(f32)`, `min_height(f32)`, `max_height(f32)` — one method
+  per `Prop` variant, mirroring `dashscene_core::Layout`, which `Node`
+  embeds directly rather than duplicating its fields.
 - `scene(roots: impl IntoIterator<Item = Node>) -> Scene` — collects a
   scene description from one or more root `Node`s, in order.
 
@@ -38,14 +45,23 @@ stages nothing against an arena.
 
 ## Build/commit mapping
 
-`Scene::build(&mut Arena) -> u64` is the DSL's only point of contact
-with `dashscene-core`: it opens one `Txn`, walks the value tree
-depth-first (a private recursive `add` — `add_node` then `set_prop`
-for `X`/`Y`/`Width`/`Height` and, if set, `Fill`, then recurse into
-children), and commits exactly once, returning the commit's
-generation. `build` _adds_ its roots to whatever the arena already
-holds — the DSL is a producer, not an owner — matching the one-commit
-model the future C# describe-buffer skin will use across its FFI seam.
+`Scene::build(&mut Arena) -> Built` and `Scene::build_with(&mut Arena,
+&mut dyn LayoutSolver) -> Built` are the DSL's points of contact with
+`dashscene-core`: both open one `Txn`, walk the value tree depth-first
+(a private recursive `add` — `add_node` then `set_prop` for every
+`Layout` field and, if set, `Fill`, then recurse into children), and
+commit exactly once — `build` via `Txn::commit()` (the fixed solver,
+flex intent ignored), `build_with` via `Txn::commit_with(solver)` (a
+real solver, `dashscene-engine`'s `TaffySolver` being the product
+case). Both _add_ their roots to whatever the arena already holds —
+the DSL is a producer, not an owner — matching the one-commit model
+the future C# describe-buffer skin will use across its FFI seam.
+
+`Built` wraps the commit's generation (`Built::generation() -> u64`).
+It is deliberately a named type rather than a bare `u64`: issue #166's
+reactive layer is designed to extend it into a live, bindable scene
+handle, when it lands, without a second change to `build`'s signature
+(`docs/decisions/dashlang-value-tree-builder.md`, "Extension (issue #118)").
 
 ## Vocabulary, not semantics
 
@@ -61,11 +77,14 @@ and rejected alternatives (a closure/callback builder over a live
 
     crates/dashlang/src/lib.rs        crate docs + the whole DSL
                                        (node/anon/rgba/Node/scene/Scene)
-    crates/dashlang/tests/builder.rs  acceptance (issue #5): DSL output
-                                       == hand-built output; repeater
-                                       children; multi-root; append to
-                                       an existing arena; unset-value
-                                       defaults
+    crates/dashlang/tests/builder.rs  acceptance (issues #5, #118): DSL
+                                       output == hand-built output;
+                                       repeater children; multi-root;
+                                       append to an existing arena;
+                                       unset-value defaults; the flex
+                                       vocabulary reaches the arena;
+                                       build_with routes through an
+                                       injected solver
 
 One file: the v0.1 surface is small enough that splitting modules
 would be structure without content.
@@ -73,9 +92,14 @@ would be structure without content.
 ## Trace
 
 - Satisfies: `docs/archive/2026-07-14-design-1-seed.md` §6.2 (Rust DSL
-  skin); issue #5 acceptance criteria.
-- Blocks: #6 (golden harness); later DSL slices (the stress-corpus
-  generator; v0.4 variants, once `dashcue` enters the graph).
+  skin); issue #5 acceptance criteria; issue #118 acceptance criteria
+  (flex vocabulary, `build_with`, the SCOPE §23 return-type seam).
+- Blocks: #6 (golden harness, done); #46 (the DSL-generated stress
+  corpus, unblocked by the flex vocabulary); #166 (reactive bindings,
+  which extends `Built` rather than reshaping `build`'s signature).
 - Related decisions: `docs/decisions/dashlang-value-tree-builder.md`
   (this crate's surface shape); `docs/decisions/staged-mutation-v01-scope.md`
-  (the `open`/`set_prop`/`commit` API this crate consumes).
+  (the `open`/`set_prop`/`commit` API this crate consumes);
+  `docs/decisions/flex-vocabulary-shape.md` (the core vocabulary this
+  mirrors); `docs/decisions/negative-gap-lowering.md` D3 (the
+  deferral #118 resolves).

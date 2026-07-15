@@ -6,8 +6,10 @@
 // needs no direct dashscene-core dependency. Prop/PaintEntry are the
 // raw core surface, imported directly for the hand-built comparison
 // side.
-use dashlang::{Arena, Color, anon, node, rgba, scene};
-use dashscene_core::{PaintEntry, Prop};
+use dashlang::{
+    Arena, AxisSizing, Color, CrossAxisAlign, LayoutMode, MainAxisAlign, anon, node, rgba, scene,
+};
+use dashscene_core::{LayoutSolver, NodeId, PaintEntry, Prop, SolvedRect};
 
 /// The two arenas must have committed to identical painter input, and
 /// the DSL's names must have reached the arena (observable through the
@@ -106,9 +108,9 @@ fn build_appends_to_a_non_empty_arena_and_commits_exactly_once() {
     scene([node("first").size(1.0, 1.0)]).build(&mut arena);
     assert_eq!(arena.committed().generation(), 1);
 
-    let generation = scene([node("second").size(2.0, 2.0)]).build(&mut arena);
+    let built = scene([node("second").size(2.0, 2.0)]).build(&mut arena);
 
-    assert_eq!(generation, 2);
+    assert_eq!(built.generation(), 2);
     assert_eq!(arena.committed().generation(), 2);
     assert_eq!(arena.committed().rects().len(), 2);
     assert_eq!(arena.committed().rects()[1].w, 2.0);
@@ -133,4 +135,78 @@ fn unset_fill_and_geometry_keep_core_defaults() {
         &PaintEntry::default()
     );
     assert_eq!(scene.rects()[0].w, 0.0);
+}
+
+#[test]
+fn flex_vocabulary_reaches_the_arena_layout() {
+    let mut dsl = Arena::new();
+    scene([node("row")
+        .mode(LayoutMode::Horizontal)
+        .gap(8.0)
+        .padding(1.0, 2.0, 3.0, 4.0)
+        .margin(5.0, 6.0, 7.0, 8.0)
+        .main_align(MainAxisAlign::Center)
+        .cross_align(CrossAxisAlign::End)
+        .sizing_h(AxisSizing::Hug)
+        .sizing_v(AxisSizing::Fill)
+        .min_width(10.0)
+        .max_width(100.0)
+        .min_height(20.0)
+        .max_height(200.0)])
+    .build(&mut dsl);
+
+    let root = dsl.roots()[0];
+    let layout = dsl.layout(root);
+    assert_eq!(layout.mode, LayoutMode::Horizontal);
+    assert_eq!(layout.gap, 8.0);
+    assert_eq!(layout.padding.left, 1.0);
+    assert_eq!(layout.padding.top, 2.0);
+    assert_eq!(layout.padding.right, 3.0);
+    assert_eq!(layout.padding.bottom, 4.0);
+    assert_eq!(layout.margin.left, 5.0);
+    assert_eq!(layout.margin.top, 6.0);
+    assert_eq!(layout.margin.right, 7.0);
+    assert_eq!(layout.margin.bottom, 8.0);
+    assert_eq!(layout.main_align, MainAxisAlign::Center);
+    assert_eq!(layout.cross_align, CrossAxisAlign::End);
+    assert_eq!(layout.sizing_h, AxisSizing::Hug);
+    assert_eq!(layout.sizing_v, AxisSizing::Fill);
+    assert_eq!(layout.min_width, Some(10.0));
+    assert_eq!(layout.max_width, Some(100.0));
+    assert_eq!(layout.min_height, Some(20.0));
+    assert_eq!(layout.max_height, Some(200.0));
+}
+
+struct DoubleWidthSolver;
+
+impl LayoutSolver for DoubleWidthSolver {
+    fn solve(&mut self, arena: &Arena) -> Vec<(NodeId, SolvedRect)> {
+        arena
+            .roots()
+            .iter()
+            .copied()
+            .map(|id| {
+                let layout = arena.layout(id);
+                (
+                    id,
+                    SolvedRect {
+                        x: layout.x,
+                        y: layout.y,
+                        w: layout.width * 2.0,
+                        h: layout.height,
+                    },
+                )
+            })
+            .collect()
+    }
+}
+
+#[test]
+fn build_with_routes_through_the_injected_solver() {
+    let mut arena = Arena::new();
+    let built =
+        scene([node("only").size(10.0, 20.0)]).build_with(&mut arena, &mut DoubleWidthSolver);
+
+    assert_eq!(built.generation(), 1);
+    assert_eq!(arena.committed().rects()[0].w, 20.0);
 }

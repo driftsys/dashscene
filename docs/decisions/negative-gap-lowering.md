@@ -144,6 +144,11 @@ build the deferred `dashlang` flex vocabulary and a
 `Scene::build_with(arena, solver)` entry point; #46 (the
 DSL-generated stress corpus) depends on #118.
 
+**Resolved by #118 (2026-07-15).** `dashlang` now has the v0.2 flex
+vocabulary and `Scene::build_with`; the four `v02_flex.rs` goldens
+gained a DSL-built assertion alongside their existing hand-built one.
+See `docs/decisions/dashlang-flex-vocabulary.md`.
+
 ## D4 — Corpus case
 
 No DSL-generated corpus harness exists yet — the stress-corpus
