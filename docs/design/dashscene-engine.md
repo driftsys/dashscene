@@ -7,7 +7,7 @@
 ## Purpose
 
 `dashscene-engine` is the runtime that resolves the model
-(DESIGN_1.md §7.1): the one Taffy solve every backend shares (P2).
+(`docs/archive/2026-07-14-design-1-seed.md` §7.1): the one Taffy solve every backend shares (P2).
 It implements `dashscene-core`'s `LayoutSolver` seam
 (`docs/decisions/layout-solver-seam.md`); producers commit flex
 scenes through `txn.commit_with(&mut TaffySolver::new())`.
@@ -85,8 +85,9 @@ gaps become separate authored properties.
 
 ## Trace
 
-- Satisfies: DESIGN_1.md §7.1 (Taffy as sole solver, R2 vocabulary),
-  §11 v0.2; issue #9 acceptance criteria.
+- Satisfies: `docs/archive/2026-07-14-design-1-seed.md` §7.1 (Taffy as
+  sole solver, R2 vocabulary), `docs/roadmap.md`'s v0.2; issue #9
+  acceptance criteria.
 - Blocks: #10 (negative-gap lowering), #11 (flex goldens), #22 (FLIP),
   #29 (measure callback), #43 (v0.8 layout fidelity).
 - Related decisions: `docs/decisions/layout-solver-seam.md`,

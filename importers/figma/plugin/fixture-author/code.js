@@ -1,5 +1,5 @@
 // dashscene fixture author — development plugin, never published.
-// Builds one tier-1 corpus fixture (SCOPE_DECISIONS §8) into the CURRENT
+// Builds one tier-1 corpus fixture (corpus/figma-fixtures/README.md) into the CURRENT
 // file. Run the menu command matching the file you have open:
 //   blank file "grid-basic"  ->  Plugins > Development > ... > grid-basic
 // Re-running a command replaces the previously generated frame, so
@@ -602,8 +602,8 @@ function loweringNegativeGap() {
 }
 
 // --------------------------------------------------------- lowering-baseline
-// Mixed-size baseline row (DESIGN Q-4: Taffy's least-exercised corner) +
-// the RTL/Arabic locale variant with Arabic-Indic numerals (§8, E2).
+// Mixed-size baseline row (docs/technotes/open-questions.md, Q-4: Taffy's least-exercised corner) +
+// the RTL/Arabic locale variant with Arabic-Indic numerals (corpus/figma-fixtures/README.md, E2).
 async function loweringBaseline() {
   await figma.loadFontAsync(INTER);
   await figma.loadFontAsync(INTER_BOLD);

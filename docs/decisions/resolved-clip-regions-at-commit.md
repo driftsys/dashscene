@@ -6,7 +6,7 @@
 
 ## Context
 
-`Paint.clip` (DESIGN_1.md §8.1) means "this node clips its children to
+`Paint.clip` (`docs/design/architecture.md`) means "this node clips its children to
 its own (rounded) box". Boundary B is a flat rect table: a painter has
 no parent/child structure, and P2 forbids it re-deriving one, so no
 painter could act on the `PaintEntry::clip` bool. Story #14 shipped it
@@ -102,13 +102,13 @@ and gains the intent to resolve: `Prop::Clip(bool)` and
 - `dashlang` does not expose clip or corners; scenes needing them are
   authored directly against `dashscene-core`, as the v0.2 flex goldens
   already are (the DSL's vocabulary gap, #118).
-- Rotated clips stay out of scope (DESIGN_1.md §11 lists clip-on-rotated
+- Rotated clips stay out of scope (`docs/roadmap.md` lists clip-on-rotated
   at v0.8): a `ClipBox` is axis-aligned, and gains a transform when that
   slice needs one.
 
 ## Trace
 
-- Satisfies: `specs/DESIGN_1.md` §8.1 (`Paint.clip`); issue #97
+- Satisfies: `docs/design/architecture.md` (`Paint.clip`); issue #97
   acceptance criteria; unblocks the clip half of issue #18's scope.
 - Supersedes the "corner radii and clip live in the paint entry"
   sub-decision of `docs/decisions/paint-entry-composition.md` for clip

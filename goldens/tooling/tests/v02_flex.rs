@@ -1,6 +1,6 @@
 //! v0.2 flex goldens (issue #11): one focused scene per construct —
 //! nesting, sizing, clamping, alignment — so a regression implicates one
-//! construct (DESIGN_1.md §8 bisect-by-construction) rather than one
+//! construct (docs/design/architecture.md, bisect-by-construction) rather than one
 //! opaque combined image.
 //!
 //! Scenes are authored against dashscene-core's `Txn` and solved by

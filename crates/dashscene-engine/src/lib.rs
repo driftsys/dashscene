@@ -1,5 +1,5 @@
 //! Runtime that resolves the model — the Taffy layout solve
-//! (DESIGN_1.md §7.1; variants, FLIP, and the measure callback land at
+//! (docs/design/architecture.md; variants, FLIP, and the measure callback land at
 //! their own slices).
 //!
 //! [`TaffySolver`] implements `dashscene-core`'s `LayoutSolver` seam:

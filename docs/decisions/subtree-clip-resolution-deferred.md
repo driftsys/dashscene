@@ -7,7 +7,7 @@
 ## Context
 
 `PaintEntry.clip` marks a node whose box clips its descendants
-(`Paint.clip`, `specs/DESIGN_1.md` §8.1). Boundary B is a flat rect
+(`Paint.clip`, `docs/design/architecture.md`). Boundary B is a flat rect
 table (`dashpaint::RectEntry` slice): a painter has no parent/child
 structure to walk, and P2 forbids a painter re-deriving the tree from
 it. Painting `entry.clip` correctly therefore needs the ancestor-clip
@@ -75,7 +75,7 @@ which option 2 cannot.
 
 ## Trace
 
-- Satisfies: `specs/DESIGN_1.md` §8.1 (`Paint.clip`); issue #14
+- Satisfies: `docs/design/architecture.md` (`Paint.clip`); issue #14
   acceptance criteria.
 - Files: issue #97 (`dashscene-core`: resolve clipsContent into
   painter-consumable clips at commit) — closed by

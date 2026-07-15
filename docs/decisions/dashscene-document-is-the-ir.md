@@ -1,6 +1,7 @@
 # The dashscene document is the IR; `.dsb` is its file extension
 
-    status   accepted (2026-07-14) — supersedes SCOPE_DECISIONS.md §20 ("The
+    status   accepted (2026-07-14) — supersedes
+             docs/archive/2026-07-14-scope-decisions.md §20 ("The
              IR is named DSB; SCD is retired")
     scope    crates/dashc; every prose reference to the IR
     binds    crates/dashc's type names
@@ -30,11 +31,11 @@ format has a validator. What is validated is the document.
 The drift was already visible within a day of §20 landing. Three documents
 described the same name and no two agreed:
 
-| Source                                   | The IR is called | `DSB` expands to    |
-| ---------------------------------------- | ---------------- | ------------------- |
-| `SCOPE_DECISIONS.md` §20, `crates/dashc` | DSB              | —                   |
-| `specs/DESIGN_1.md` naming note          | DSB              | "dash scene binary" |
-| `docs/technotes/glossary.md`             | dashscene        | "dashscene buffer"  |
+| Source                                                           | The IR is called | `DSB` expands to    |
+| ---------------------------------------------------------------- | ---------------- | ------------------- |
+| `docs/archive/2026-07-14-scope-decisions.md` §20, `crates/dashc` | DSB              | —                   |
+| `docs/archive/2026-07-14-design-1-seed.md` naming note           | DSB              | "dash scene binary" |
+| `docs/technotes/glossary.md`                                     | dashscene        | "dashscene buffer"  |
 
 ## What this binds
 

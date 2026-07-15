@@ -1,6 +1,6 @@
 //! v0.1 exit criterion E6 in miniature: a document built in memory
 //! survives a flatbuffer round trip byte-for-byte-equivalent in its
-//! decoded fields (DESIGN_1.md §11).
+//! decoded fields (docs/specification/05-qualification.md).
 
 use dashbuf::{
     Color, Document, DocumentArgs, FixedSizeLayout, Node, NodeArgs, SolidFill, SolidFillArgs,

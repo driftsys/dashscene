@@ -1,7 +1,7 @@
 # dashscene fixture author
 
 Development-only Figma plugin that generates the tier-1 corpus fixtures
-(SCOPE_DECISIONS §8) programmatically, so fixtures are **regenerable**
+(corpus/figma-fixtures/README.md) programmatically, so fixtures are **regenerable**
 rather than hand-built. Never published; the repo is the distribution
 channel (§12).
 
@@ -69,7 +69,7 @@ into `corpus/figma-fixtures/` with `deno task capture`, run from
 `importers/figma/`. It needs `FIGMA_TOKEN` set to a personal access
 token with the `file_content:read`, `file_metadata:read`, and
 `library_content:read` scopes. PAT setup and rate-limit rules:
-SCOPE_DECISIONS §11.
+docs/decisions/figma-access-plan-and-pat-policy.md.
 
 ### Capturing a fixture, step by step
 

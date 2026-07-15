@@ -7,7 +7,7 @@
 //! construct no painter can draw.
 //!
 //! What it adds over `dashpaint` is the *document's* shape: a flattened DFS
-//! node list whose array index is the rect-table index (DESIGN §5), layout
+//! node list whose array index is the rect-table index (docs/design/dashbuf.md), layout
 //! intent (never results — P1), and the pools nodes reference by index.
 
 use dashpaint::{ImageAsset, PaintEntry};
@@ -51,7 +51,7 @@ pub struct Paint {
 /// One dashscene document, ready to emit.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Document {
-    /// Flattened DFS node tree: array index = rect-table index (DESIGN §5).
+    /// Flattened DFS node tree: array index = rect-table index (docs/design/dashbuf.md).
     pub nodes: Vec<Node>,
     /// The image assets an image fill references by index.
     pub images: Vec<ImageAsset>,

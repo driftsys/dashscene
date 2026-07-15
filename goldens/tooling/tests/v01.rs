@@ -1,4 +1,4 @@
-//! The v0.1 exit gate (issue #6; DESIGN_1.md §11): a scene authored in
+//! The v0.1 exit gate (issue #6; docs/specification/05-qualification.md): a scene authored in
 //! the Rust DSL, committed through dashscene-core, painted by the Skia
 //! reference painter, compared against the checked-in golden.
 //!

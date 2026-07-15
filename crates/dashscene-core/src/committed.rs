@@ -1,5 +1,5 @@
 //! Committed output — what a painter consumes (boundary B,
-//! DESIGN_1.md §7.3).
+//! docs/design/architecture.md).
 //!
 //! The types are `dashpaint`'s — the boundary-B unification of story #4
 //! (`docs/decisions/boundary-b-unification.md`): a flat rect table

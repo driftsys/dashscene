@@ -15,7 +15,8 @@ dashscene-core → renders via the Skia painter".
 Three things had to be settled: what a producer lowers _into_, where the
 `.dsb`→runtime loader lives, and what to do about the fact that **no Figma
 fixture has ever been captured** — `corpus/figma-fixtures/` holds only its
-manifest, and capturing needs a Figma account and PAT (SCOPE §11).
+manifest, and capturing needs a Figma account and PAT
+(`docs/decisions/figma-access-plan-and-pat-policy.md`).
 
 ## Choice
 
@@ -66,7 +67,7 @@ clip table, same image table, same pixels.
 
 `dashscene-core` gains a `dashbuf` dependency for it. The publish order already
 allows this (`dashbuf → dashpaint → dashscene-core`), and it is the right home:
-DESIGN §5 makes `.dsb` the format the _runtime_ mmaps, so reading it is a core
+`docs/design/architecture.md` makes `.dsb` the format the _runtime_ mmaps, so reading it is a core
 runtime capability, not a compiler-only one. Putting the loader in `dashc`
 would force every runtime that wants to load a document to depend on the
 compiler CLI.

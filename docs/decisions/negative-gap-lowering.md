@@ -7,7 +7,7 @@
 ## Context
 
 Figma auto-layout allows a negative item spacing so children overlap;
-CSS `gap` cannot go negative (DESIGN_1.md §5 lists "negative gap →
+CSS `gap` cannot go negative (`docs/design/dashbuf.md` lists "negative gap →
 margins" as a Figma≠CSS lowering). Story #10 implements that lowering
 as a step both producer paths share — the DSL/commit path now, `dashc`
 when the importer enters (v0.3).
@@ -62,17 +62,18 @@ Rejected — lowering inside `TaffySolver`'s style mapping: `dashc`
 emits a `.dsb` and never runs the solver, so a solver-internal
 lowering could not be shared with it, and the document would carry an
 un-lowered negative gap that no CSS-shaped consumer may be asked to
-read. DESIGN §5 places these lowerings before the CSS-shaped
-representation.
+read. `docs/design/architecture.md` places these lowerings before the
+CSS-shaped representation.
 
 Rejected — automatic lowering inside `commit`/`commit_with`: makes
 every commit pay for a tree scan and hides a semantic transform inside
 a mechanical operation. Lowering is an explicit producer pass.
 
-**Where the lowering suite lives (revisit trigger).** DESIGN_1.md §5
-and SCOPE_DECISIONS.md §4 place all four Figma≠CSS lowerings (negative
-gap, canvas stacking, strokes-in-layout, scale-to-inset) in the
-compiler (`dashc`/`scdc`). Negative gap is the first to be
+**Where the lowering suite lives (revisit trigger).**
+`docs/design/dashbuf.md` and
+`docs/decisions/figma-importer-deno-plus-dashc-wasm.md` place all four
+Figma≠CSS lowerings (negative gap, canvas stacking, strokes-in-layout,
+scale-to-inset) in the compiler (`dashc`). Negative gap is the first to be
 implemented; the others are importer scope (v0.3+). It lands as a
 single `dashscene-core` `Txn` method — the shared building block
 `dashc` calls — rather than a dedicated lowering module, because

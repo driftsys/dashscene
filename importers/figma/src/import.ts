@@ -4,7 +4,7 @@
  * The Deno half owns HTTP, auth, and resolving an `imageRef` into bytes. Every
  * decision about what the document *means* — lowering, validation, emission —
  * belongs to `dashc`, reached across the wasm ABI, so the importer and the
- * native compiler cannot disagree (SCOPE_DECISIONS.md §4).
+ * native compiler cannot disagree (docs/decisions/figma-importer-deno-plus-dashc-wasm.md).
  *
  *   1. GET /files/:key         the file JSON
  *   2. figmaImageRefs          the refs the lowering demands
@@ -67,7 +67,8 @@ if (import.meta.main) {
   if (!token) {
     console.error(
       "FIGMA_TOKEN is not set. Create a Figma PAT with the scopes " +
-        REQUIRED_SCOPES + " (SCOPE_DECISIONS.md §11) and export it. " +
+        REQUIRED_SCOPES +
+        " (docs/decisions/figma-access-plan-and-pat-policy.md) and export it. " +
         "Never commit it.",
     );
     Deno.exit(1);

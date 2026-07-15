@@ -1,7 +1,7 @@
 # dashc — the dashscene compile pipeline
 
 As-built after stories #16, #139, and #17 (v0.3). The requirements are in
-`docs/specification/dashc-figma-lowering.md`. The rationale is in
+`docs/specification/06-dashc-figma-lowering.md`. The rationale is in
 `docs/decisions/`:
 
 - [dashc-document-model-and-load-path.md](../decisions/dashc-document-model-and-load-path.md)
@@ -47,7 +47,8 @@ Its paint types are **`dashpaint`'s** — boundary B's — not a third vocabular
 One paint vocabulary spans the document, the runtime, and the painter, so a
 lowering cannot invent a construct no painter can draw. What `Document` adds is
 the document's own shape: a flattened DFS node list whose array index is the
-rect-table index (DESIGN §5), and layout intent — never results (P1).
+rect-table index (`docs/design/dashbuf.md`), and layout intent — never
+results (P1).
 
 `clip` travels beside the paint entry because the _schema_ pools it there
 (`Paint.clip`), while the _arena_ carries it as node intent (`Prop::Clip`,
@@ -107,7 +108,7 @@ costs a download, while missing one costs a failed compile.
 The walk is depth-first, parent before child, from the first `FRAME` under
 the first `CANVAS` (`root_frame`). Every other sibling and every later
 canvas is currently dropped without a diagnostic (debt #147); a declared-roots
-plus reachability-closure rule (DESIGN §6.1) is the v0.7 story.
+plus reachability-closure rule is the v0.7 story.
 
 ### `CompileError`
 
@@ -133,7 +134,8 @@ The headline entry point: it runs the whole pipeline, source through `.dsb`,
 and merges both gates into one report before deciding whether to emit.
 
 - The **import gate** (`triage`) runs while lowering, on constructs `Document`
-  can express but that DESIGN §10.1 puts outside the NOW band.
+  can express but that `docs/specification/04-figma-vocabulary-profile.md`
+  puts outside the NOW band.
 - The **load gate** (`validate_document`) runs on the emitted document, same
   as `compile`.
 
@@ -149,7 +151,8 @@ silent drop.
 
 Five hand-written `extern "C"` exports on the `dashc_wasm.wasm` cdylib
 (`crates/dashc/src/abi/`) are what let the Deno importer run this pipeline —
-not reimplement it (P5; SCOPE_DECISIONS.md §4):
+not reimplement it (P5;
+`docs/decisions/figma-importer-deno-plus-dashc-wasm.md`):
 
     dashc_abi_version() -> u32
     dashc_alloc(len: u32) -> *mut u8
@@ -216,7 +219,8 @@ hit them even though the v0.3 fixture does not:
   shifting the DFS indices every later node depends on. Hidden layers are
   routine in real Figma files, so this is likely to be the first one hit
   (debt #143).
-- **Baked shadows** — DESIGN §10.1 puts them in the NOW band, but `Document`
+- **Baked shadows** — `docs/specification/04-figma-vocabulary-profile.md`
+  puts them in the NOW band, but `Document`
   has no effects vocabulary, so there is no `Construct` to triage onto and no
   field to lower into. Effects enter the schema at v0.8 (debt #144).
 - **Auto-layout frames** — a `layoutMode` other than `NONE` (`HORIZONTAL`,
@@ -235,10 +239,10 @@ hit them even though the v0.3 fixture does not:
 - **Root selection drops canvas siblings silently** — `root_frame` takes the
   first `FRAME` under the first `CANVAS`; every other sibling and every
   later canvas vanishes with no diagnostic. A declared-roots plus
-  reachability-closure rule (DESIGN §6.1) is the v0.7 story (debt #147).
+  reachability-closure rule is the v0.7 story (debt #147).
 
 One gap sits half outside the lowering: **variable-width stroke** is on
-SCOPE_DECISIONS §8's REJECT list, but `dashscene_validator::Construct` has no
+`docs/specification/04-figma-vocabulary-profile.md`'s REJECT list, but `dashscene_validator::Construct` has no
 variant for it, so a producer cannot triage it into a named diagnostic. The
 lowering refuses it as a non-`BASIC` `strokeType` (above), so it is no longer
 a silent drop; what remains missing is the diagnostic (debt #145). It is

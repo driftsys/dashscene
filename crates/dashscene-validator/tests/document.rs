@@ -517,7 +517,7 @@ fn a_negative_stroke_width_is_named() {
 
 #[test]
 fn a_node_diagnostic_carries_the_nodes_name_path() {
-    // "{rule id, node path, severity}" (DESIGN §5) — the path is what
+    // "{rule id, node path, severity}" (docs/design/architecture.md) — the path is what
     // sends a designer to the right layer, so it has to be the name chain,
     // not just an index.
     let report = check(

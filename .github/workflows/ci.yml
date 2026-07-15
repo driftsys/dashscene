@@ -70,7 +70,7 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      # dashbuf's build.rs shells out to flatc (SCOPE_DECISIONS.md §2 —
+      # dashbuf's build.rs shells out to flatc (docs/decisions/crate-name-map.md —
       # pinned to match the flatbuffers Rust crate's exact version).
       - name: install flatc
         run: |
@@ -121,7 +121,9 @@ jobs:
     needs: [changes, wasm-build]
     runs-on: ubuntu-latest
     # Path-filtered: runs when the importer, the fixture corpus, or the Rust
-    # side it calls across the wasm ABI changes (SCOPE_DECISIONS.md §4/§7).
+    # side it calls across the wasm ABI changes
+    # (docs/decisions/figma-importer-deno-plus-dashc-wasm.md /
+    # docs/decisions/house-style.md).
     if: needs.changes.outputs.figma == 'true'
     steps:
       - uses: actions/checkout@v4
@@ -223,7 +225,7 @@ jobs:
     name: ci
     if: always()
     # Every job in the workflow, so a red anywhere fails the aggregate
-    # (SCOPE_DECISIONS.md §7). "skipped" is accepted: convco only runs on
+    # (docs/decisions/house-style.md). "skipped" is accepted: convco only runs on
     # pull requests, and deno only when importers/figma/ changed.
     needs:
       [changes, fmt, dprint, clippy, test, wasm-build, convco, deno, atlas-repro]

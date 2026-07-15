@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Rust-side FFI bindings consumed by the Unity painter's C# projection layer; the Unity project itself lives in a separate repo, later (SCOPE_DECISIONS.md §5)."
+description = "Rust-side FFI bindings consumed by the Unity painter's C# projection layer; the Unity project itself lives in a separate repo, later (docs/decisions/unity-separate-repo-deferred.md)."
 
 [lib]
 name = "dashscene_unity"

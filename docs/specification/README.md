@@ -1,17 +1,18 @@
 # specification
 
-Requirements: what the system must do, gardened from `docs/wip/` sessions
-into durable, as-built records.
+Requirements: what the system must do.
 
-The project's top-level requirements still live in `specs/DESIGN_1.md`
-(goals G1-G3, hard requirements R1-R7). They'll move here, or be
-superseded by records written here, as future work gardens them in.
-Per-component requirement records land here directly, and refine the
-R-numbers rather than minting new ones:
+Read in order. A new topic takes the next free number; nothing is renumbered to
+make room, so gaps and out-of-sequence arrivals are expected and cost nothing.
 
-- [dashc-figma-lowering.md](dashc-figma-lowering.md) — the Figma REST front
-  end: the compile contract, the lowering and import-gate rules, and the
-  refusal set (story #139, v0.3); the imageRef query the wasm ABI exposes
-  (story #17).
+- [01-goals-and-requirements.md](01-goals-and-requirements.md) — G1-G3, R1-R7
+- [02-principles.md](02-principles.md) — P1-P5, binding on all downstream work
+- [03-target-hardware-rules.md](03-target-hardware-rules.md) — R-T1..R-T5
+- [04-figma-vocabulary-profile.md](04-figma-vocabulary-profile.md) — the
+  NOW/LATER/REJECT triage the validator enforces
+- [05-qualification.md](05-qualification.md) — E1-E6; requirement → criterion →
+  case → proof
+- [06-dashc-figma-lowering.md](06-dashc-figma-lowering.md) — the Figma lowering
+  spec (stories #139 and #17)
 
 See the `sdd-working-memory-lifecycle` rule.

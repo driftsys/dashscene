@@ -2,7 +2,7 @@
 
 Thanks for your interest in contributing. This document covers the mechanics
 of getting a change in; for the architecture and rationale behind the crate
-layout, start with `specs/DESIGN_1.md` and `specs/SCOPE_DECISIONS.md`.
+layout, start with `docs/design/architecture.md` and `docs/decisions/`.
 
 ## Getting set up
 
@@ -48,7 +48,7 @@ Run `just --list` for the full recipe set. The common ones:
 
 ## Crate ownership and scope
 
-See `specs/SCOPE_DECISIONS.md` §2 for the full crate map and the reasoning
+See `docs/decisions/crate-name-map.md` for the full crate map and the reasoning
 behind each name. If your change spans a boundary described there (e.g.
 boundary A — the `.dsb` load gate, or boundary B — the painter contract),
 call that out explicitly in the PR description.

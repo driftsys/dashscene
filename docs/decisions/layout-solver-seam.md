@@ -8,9 +8,9 @@
 ## Context
 
 Story #9 had to connect the Taffy solve (owned by `dashscene-engine`,
-DESIGN_1.md §7.1) to `dashscene-core`'s commit, while the double
+`docs/design/dashscene-engine.md`) to `dashscene-core`'s commit, while the double
 buffer, generation stamp, and dirty set stay core's
-(SCOPE_DECISIONS.md §9). `docs/decisions/flex-vocabulary-shape.md`
+(`docs/decisions/staged-mutation-v01-scope.md`). `docs/decisions/flex-vocabulary-shape.md`
 recorded the injection point as this story's design.
 
 ## Options
@@ -40,7 +40,7 @@ Option 1:
 
 ## Why
 
-- Option 2 moves state SCOPE_DECISIONS §9 assigns to core.
+- Option 2 moves state `docs/decisions/staged-mutation-v01-scope.md` assigns to core.
 - Option 3 creates two observable states per commit, breaking commit
   atomicity (P3) and the dirty-set contract.
 - Option 4 inverts the recorded crate direction (`engine → core`) and

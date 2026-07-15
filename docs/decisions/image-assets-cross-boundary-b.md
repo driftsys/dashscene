@@ -7,7 +7,7 @@
 
 The v0.3 vocabulary has image fills; stories #13 and #4 both recorded
 "how decoded pixels reach a painter" as an open item for this story.
-Boundary B is "the entire painter input" (`DESIGN_1.md` §7.3), so the
+Boundary B is "the entire painter input" (`docs/design/architecture.md`), so the
 asset path had to be part of the trait, not a side channel.
 
 ## Options
@@ -28,7 +28,7 @@ Option 1.
 
 - One decoded format (option 2) fits nobody: Skia decodes PNG natively,
   and the lean painter wants GPU-native compressed containers
-  (`DESIGN_1.md` §9 — KTX2/Basis, transcoded, never re-decoded RGBA);
+  (`docs/specification/03-target-hardware-rules.md` — KTX2/Basis, transcoded, never re-decoded RGBA);
   format-tagged encoded bytes let each backend take its optimal path,
   and new `ImageFormat` variants arrive additively.
 - Out-of-band registration (option 3) breaks §8's

@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Shared validation crate: paint-vocabulary profiles, diagnostics, waivers (DESIGN_1.md §3 P4, §5)."
+description = "Shared validation crate: paint-vocabulary profiles, diagnostics, waivers (docs/specification/02-principles.md P4, docs/design/architecture.md)."
 
 [lib]
 name = "dashscene_validator"

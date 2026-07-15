@@ -1,11 +1,11 @@
-//! The import gate (story #15): DESIGN §10.1's vocabulary triage.
+//! The import gate (story #15): docs/specification/04-figma-vocabulary-profile.md's vocabulary triage.
 //!
 //! P4 — every out-of-profile construct is a named diagnostic, never a
 //! silent drop.
 
 use dashscene_validator::{Construct, Location, NodePath, Profile, Report, Severity, rule, triage};
 
-/// Every construct DESIGN §10.1 lists, so the exhaustiveness assertions
+/// Every construct docs/specification/04-figma-vocabulary-profile.md lists, so the exhaustiveness assertions
 /// below cannot rot when a variant is added.
 const ALL: &[Construct] = &[
     Construct::LayerBlur,
@@ -52,7 +52,7 @@ fn every_construct_produces_a_named_diagnostic_in_every_profile() {
 
 #[test]
 fn reject_band_is_an_error_in_both_profiles() {
-    // DESIGN §10.1 REJECT: "each with a documented workaround (bake it,
+    // docs/specification/04-figma-vocabulary-profile.md REJECT: "each with a documented workaround (bake it,
     // slot it, design without it)". No profile buys these back.
     let rejected = [
         (
@@ -81,7 +81,7 @@ fn reject_band_is_an_error_in_both_profiles() {
 
 #[test]
 fn later_band_is_a_warning_in_both_profiles() {
-    // DESIGN §5: a warning is deferred vocabulary with a declared degrade.
+    // docs/design/architecture.md: a warning is deferred vocabulary with a declared degrade.
     // These four are not profile-annotated, so both profiles degrade them.
     let deferred = [
         (Construct::LayerBlur, rule::LAYER_BLUR),

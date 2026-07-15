@@ -1,4 +1,4 @@
-//! rustybuzz shaping into font-unit glyph runs (DESIGN_1.md §7.2).
+//! rustybuzz shaping into font-unit glyph runs (docs/design/architecture.md).
 //!
 //! Ligatures (`liga`, `clig`) are disabled: the atlas closure is
 //! cmap-only in v0.5 (`docs/decisions/atlas-closure-cmap-plus-extras.md`),

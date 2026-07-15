@@ -1,0 +1,110 @@
+# House style: follow driftsys/git-std, driftsys/upskill, driftsys/markspec conventions
+
+    status   accepted
+    date     2026-07-11 — git-std dogfooding and the docs/ taxonomy confirmed
+             2026-07-12
+    scope    repo-wide: Cargo workspace shape, justfile, CI, docs/ taxonomy,
+             governance files
+
+## Context
+
+`dashscene-staging` needed a set of repo-tooling conventions — workspace
+shape, task runner, formatting, versioning, CI — rather than inventing
+its own. `driftsys/git-std`, `driftsys/upskill`, and `driftsys/markspec`
+were read directly as the house-style reference.
+
+## Decision
+
+Follow those three repos' conventions:
+
+**Cargo workspace shape** (git-std): `resolver = "3"`;
+`[workspace.package]` with `edition = "2024"` (not 2021), `license =
+"MIT"`, shared `repository`; `[workspace.dependencies]` with `path +
+version` for every internal crate; `[profile.release]` — `lto = true`,
+`strip = true`, `codegen-units = 1`.
+
+**`justfile`** (git-std's is the template): `assemble` (cargo build),
+`test`, `lint` (`cargo clippy -- -D warnings` + `cargo fmt -- --check` +
+`dprint check` + `markdownlint-cli`), `audit` (`cargo audit`), `check`
+(test + lint + audit), `build` (assemble + check), `verify` (`git std
+lint --range main..HEAD` + `just build` — run before opening a PR),
+`fmt`, `doc` (`cargo doc --open`), `book` (`mdbook serve`), `release`
+(`git std bump`), `publish` (ordered `cargo publish` per crate,
+dependency order), `install`, `clean`. Add two dashscene-specific
+recipes: `wasm` (build `dashc` for `wasm32-unknown-unknown`, needed by
+the Deno importer) and `deno-check`/`deno-test`/`deno-fmt` scoped to
+`importers/figma/`.
+
+**`dprint.json`**: markdown only (`includes: ["**/*.md"]`, the
+`dprint/markdown` plugin) — it does not replace `cargo fmt` or `deno
+fmt`, both of which run as their own separate lint/fmt steps for their
+respective languages.
+
+**`.git-std.toml`**: `scheme = "semver"`, `strict = true`, `scopes` as
+an explicit list rather than `"auto"`, which only discovers `crates/*`
+and leaves no valid scope for commits that aren't crate-specific. The
+list is the 13 crate names, plus a scope for each non-crate component
+that has its own artifacts and tooling — `goldens` (the golden images
+and their diff tooling), `corpus` (the fixture corpus itself: captured
+Figma JSON, fonts, generated stress scenes — data only, since the
+capture tool is code and lives under `importers/`), `importers` (the
+Deno/TypeScript Figma importer and its capture tool, which have their
+own toolchain and their own CI job) — plus the repo-wide scopes `repo`,
+`docs`, `ci`, `hooks`, `deps`, `release`. `specs/` and `docs/` share the
+`docs` scope: `specs/` is documentation and earns no scope of its own.
+Also `[versioning] tag_prefix = "v"`, and one `[[version_files]]` entry
+per crate pointing at its version string in `Cargo.toml`.
+
+**CI** (`.github/workflows/ci.yml`, git-std's shape): separate jobs for
+`fmt` (`cargo fmt -- --check`), `dprint` (`dprint/check@v2.3` action),
+`clippy` (`cargo clippy -- -D warnings`, `Swatinem/rust-cache`), `test`
+(`cargo test`, `Swatinem/rust-cache`), `convco` (PR-only conventional-
+commit-message validation), aggregated by a final `ci` job that fails if
+any of the above failed. For dashscene, add a `deno` job (check/lint/
+test/fmt, scoped to `importers/figma/` via a `dorny/paths-filter` gate so
+Rust-only changes don't trigger it) and a `wasm-build` job (`dashc` →
+`wasm32-unknown-unknown`, verifies the Deno importer's dependency
+actually builds). No cross-platform `build-release` matrix yet — that's
+git-std's own binary-distribution concern, not relevant until dashscene
+ships a distributable binary of its own.
+
+**`bootstrap` script**: ensures `git-std` itself is installed (detects
+platform, downloads the matching release, verifies the sha256, installs
+to `~/.local/bin`), then `exec git-std bootstrap` — git-std's own
+subcommand handles the repo-specific setup (git hooks, etc.) from there.
+Run after cloning or creating a worktree.
+
+**Deno side** (markspec's `deno.json` is the template, applies to
+`importers/figma/`): a `workspace` array pointing at the package
+directory (Deno's native workspace feature, same idea as the Cargo
+workspace); imports preferring JSR (`jsr:@std/...`) over npm where a JSR
+package exists, `npm:` specifier otherwise (e.g. `@figma/rest-api-spec`
+is npm-only); `tasks` for `check` (`deno check` on entry points), `test`
+(`deno test` with the narrowest `--allow-*` set that works), `lint`
+(`deno lint`), `fmt` (`deno fmt`); `fmt.include` scoped to
+`ts/tsx/js/jsx/mts/cts/mjs/cjs`; `test.exclude`/`lint.exclude` covering
+`editors/`, `.worktrees/`, `.claude/worktrees/`.
+
+**Governance/docs files**, present in all three reference repos and
+expected here too: `LICENSE` (MIT), `CODE_OF_CONDUCT.md`,
+`CONTRIBUTING.md`, `SECURITY.md`, `.editorconfig`, `.markdownlint.json`,
+`book.toml` + `docs/book/` (mdBook source — an overview and a usage
+guide, the online guide's actual content).
+
+**`docs/` follows the `sdd-working-memory-lifecycle` rule's taxonomy**
+(separate from `docs/book/`, the online guide): `docs/wip/` (Superpowers
+spec+plan working memory, transient, tracked), `docs/archive/` (raw wip
+content once gardened), `docs/specification/` (requirements),
+`docs/design/` (architecture), `docs/decisions/` (decision records),
+`docs/technotes/` (explanatory notes).
+
+**Dogfooding**: `dashscene-staging` dogfoods `git-std` from day one. The
+`justfile` (`release`/`verify` recipes), `.git-std.toml`, `bootstrap`
+script, and CI `convco` job all wire it in for real rather than as
+stubs/placeholders.
+
+## Why
+
+Copying conventions already proven across three sibling repos avoids
+re-deriving repo tooling from scratch and keeps `dashscene-staging`
+consistent with the rest of the driftsys house style.

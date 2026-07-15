@@ -1,5 +1,5 @@
 /**
- * Design tokens, two phases (DESIGN_1.md §6.1):
+ * Design tokens, two phases (docs/design/dashc.md):
  *
  * Phase 1 emits resolved literals from `GET /file` (available on any paid
  * plan) and preserves `boundVariables` IDs in a sidecar. Phase 2 joins
@@ -8,11 +8,11 @@
  * join table must come from the Figma Plugin API (the §12 annotator
  * plugin's token-export command); the Enterprise-gated Variables REST
  * endpoint is a drop-in replacement producer for the same table if it
- * ever becomes available (SCOPE_DECISIONS.md §13). Token refs are in
+ * ever becomes available (docs/decisions/token-resolution-phase-split.md). Token refs are in
  * the `.dsb` schema from day one (crates/dashbuf) regardless of which
  * phase produced a given document.
  *
- * Stub — implementation begins alongside v0.7 (DESIGN_1.md §11).
+ * Stub — implementation begins alongside v0.7 (docs/roadmap.md).
  */
 
 export interface TokenJoinResult {
@@ -20,5 +20,5 @@ export interface TokenJoinResult {
 }
 
 export function joinTokens(_boundVariableIds: readonly string[]): never {
-  throw new Error("not yet implemented (v0.7, DESIGN_1.md §11)");
+  throw new Error("not yet implemented (v0.7, docs/roadmap.md)");
 }

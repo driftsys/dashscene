@@ -9,7 +9,7 @@
 ## Context
 
 The atlas must cover every glyph id a shaped run can produce, but a
-declared charset (DESIGN_1.md §6.1) is a set of codepoints, not glyph
+declared charset (`docs/design/dashc.md`) is a set of codepoints, not glyph
 ids. Story #27 had to decide how much of that codepoint→glyph closure it
 computes now, given that full closure (following GSUB substitution
 rules) requires real design work and #34 (per-locale charsets, v0.6) is

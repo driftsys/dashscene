@@ -1,3 +1,3 @@
-//! Rust-side FFI bindings consumed by the Unity painter's C# projection layer; the Unity project itself lives in a separate repo, later (SCOPE_DECISIONS.md §5).
+//! Rust-side FFI bindings consumed by the Unity painter's C# projection layer; the Unity project itself lives in a separate repo, later (docs/decisions/unity-separate-repo-deferred.md).
 //!
-//! Stub — implementation begins at v0.1 (DESIGN_1.md §11).
+//! Stub — implementation begins at v0.1 (docs/roadmap.md).

@@ -3,11 +3,12 @@
 Architecture: interfaces and components, gardened from `docs/wip/` sessions
 into durable, as-built records.
 
-The project's system-wide architecture still lives in `specs/DESIGN_1.md`
-(stack, pipeline, document format, producers, common runtime, painters,
-target-hardware rules). It'll move here, or be superseded by records written
-here, as future work gardens it in. Per-component records land here directly:
+The system-wide record comes first below; per-component records follow it
+directly:
 
+- [architecture.md](architecture.md) — the system-wide record: stack,
+  pipeline, boundaries A and B, the component map, and the planned-but-unbuilt
+  components.
 - [dashpaint.md](dashpaint.md) — boundary B: the paint table + clip
   table + painter trait (v0.1 walking skeleton, story #3; v0.3 paint
   vocabulary, story #13; resolved subtree clips, story #97).
@@ -23,6 +24,8 @@ here, as future work gardens it in. Per-component records land here directly:
   vocabulary, story #26).
 - [dashlang.md](dashlang.md) — the value-tree builder surface and its
   one-commit mapping onto `dashscene-core` (story #5).
+- [dashcue.md](dashcue.md) — the descriptive animation vocabulary and its
+  runtime scheduling: transitions, springs, keyframes (v0.4, story #21).
 - [atlas-pipeline.md](atlas-pipeline.md) — the build-time font → MSDF glyph
   atlas + metrics blob pipeline (v0.5, story #27).
 - [typeset-latin.md](typeset-latin.md) — the runtime Latin text pipeline:

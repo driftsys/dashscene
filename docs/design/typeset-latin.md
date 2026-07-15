@@ -2,10 +2,10 @@
 
     crate    crates/dashscene-typeset (module `text`)
     covers   v0.5 — text I: Latin (story #28, epic #24)
-    traces   DESIGN_1.md §7.2 (runtime half: shape → line break →
-             positioned glyph runs; shaped-run cache), §2 (rustybuzz,
-             ttf-parser), P1/P2 (one typesetter; painters only color),
-             R1 (text quality),
+    traces   docs/archive/2026-07-14-design-1-seed.md §7.2 (runtime
+             half: shape → line break → positioned glyph runs;
+             shaped-run cache), §2 (rustybuzz, ttf-parser), P1/P2 (one
+             typesetter; painters only color), R1 (text quality),
              docs/design/atlas-pipeline.md (build-time half, seam
              notes),
              docs/decisions/atlas-closure-cmap-plus-extras.md (the
@@ -15,7 +15,7 @@
 
 ## Purpose
 
-The runtime half of DESIGN §7.2, Latin subset: text and size in,
+The runtime half of `docs/archive/2026-07-14-design-1-seed.md` §7.2, Latin subset: text and size in,
 positioned glyph runs out — shaped once by rustybuzz, broken into
 lines, positioned on baselines, cached so re-layout of unchanged text
 costs a lookup. Bidi splitting is v0.6 (#32); this pipeline is
@@ -97,7 +97,8 @@ model) — that conversion from `PositionedGlyph`'s document-space,
 y-down pen position to a painted quad is the painter's, not this
 crate's.
 
-DESIGN §7.2's run tuple names `(glyph id, x, y, size, atlas page)`:
+`docs/archive/2026-07-14-design-1-seed.md` §7.2's run tuple names
+`(glyph id, x, y, size, atlas page)`:
 `size` lives once on `TextLayout` (uniform per layout in v0.5 — one
 style per text node), and the atlas page field waits until multi-page
 atlases exist; both are additive later without a `PositionedGlyph`
@@ -155,7 +156,8 @@ small to warrant its own module.
 - Stores font-unit, unpositioned `ShapedText` — shaping output (glyph
   ids, advances, offsets in font units) is size-independent, so the
   px scale is applied only at positioning time.
-- Keyed by paragraph text alone. DESIGN §7.2 describes the key as
+- Keyed by paragraph text alone. `docs/archive/2026-07-14-design-1-seed.md`
+  §7.2 describes the key as
   "string + style"; while the font is fixed per `Typesetter` (v0.5:
   one font, no fallback), the shaping-relevant style component is
   fixed too, so the key reduces to the string. Different `size` and
@@ -220,7 +222,7 @@ not look the glyph id up in an atlas at all.
                                                   line_advance
 
 `atlas` (build-time, story #27) and `text` (runtime, this story) stay
-sibling modules of the one typesetter crate (DESIGN §13,
+sibling modules of the one typesetter crate (`docs/design/architecture.md`,
 `docs/design/atlas-pipeline.md`'s Home section). `Font::from_bytes`
 validates with both `ttf-parser::Face::parse` (metrics) and
 `rustybuzz::Face::from_slice` (shaping) up front; `rustybuzz::Face`
@@ -258,9 +260,9 @@ style axes, cache eviction.
 
 ## Trace
 
-- Satisfies: DESIGN_1.md §7.2 (runtime shape → break → position,
-  shaped-run cache), §2 (rustybuzz), P1, P2, R1; issue #28 acceptance
-  criteria.
+- Satisfies: `docs/archive/2026-07-14-design-1-seed.md` §7.2 (runtime
+  shape → break → position, shaped-run cache), §2 (rustybuzz), P1, P2,
+  R1; issue #28 acceptance criteria.
 - Resolves: the #27 seam note in
   `docs/decisions/atlas-closure-cmap-plus-extras.md` (ligatures off
   until GSUB closure).

@@ -7,9 +7,10 @@
 ## Purpose
 
 `dashscene-skia` is the first implementation of the `Painter` trait
-`dashpaint` defines (boundary B, `specs/DESIGN_1.md` §8.1): a CPU-raster
+`dashpaint` defines (boundary B,
+`docs/archive/2026-07-14-design-1-seed.md` §8.1): a CPU-raster
 reference painter over `skia-safe`, deterministic and bit-exact. It is
-the golden generator (§8), not a throwaway — it stays the reference
+the golden generator (`docs/technotes/rendering-and-painters.md`), not a throwaway — it stays the reference
 painter as later backends (Unity, the lean native painter) land.
 
 Its `[dependencies]` are `dashpaint` and `skia-safe` only;
@@ -108,8 +109,9 @@ leaving the rect painted after it untouched.
 
 ## Trace
 
-- Satisfies: `specs/DESIGN_1.md` §8.1 (CPU raster reference painter,
-  v0.3 lowerings); issues #4, #14 and #97 acceptance criteria.
+- Satisfies: `docs/archive/2026-07-14-design-1-seed.md` §8.1 (CPU
+  raster reference painter, v0.3 lowerings); issues #4, #14 and #97
+  acceptance criteria.
 - Blocks: #44/#45 (v0.8 masks/shadows build on this surface).
 - Related decisions: `docs/decisions/boundary-b-unification.md`,
   `docs/decisions/painter-trait-infallible-slice-input.md`,

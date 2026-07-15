@@ -1,5 +1,5 @@
 //! The in-memory arena and its staged mutation API
-//! (DESIGN_1.md §4/§5, SCOPE_DECISIONS.md §9).
+//! (docs/design/architecture.md, docs/decisions/staged-mutation-v01-scope.md).
 //!
 //! Producers mutate through a [`Txn`] obtained from [`Arena::open`];
 //! nothing becomes visible to painters until [`Txn::commit`] resolves
@@ -41,7 +41,7 @@ pub struct SolvedRect {
     pub h: f32,
 }
 
-/// The geometry seam (P2 — one solver, DESIGN_1.md §7.1): commit asks
+/// The geometry seam (P2 — one solver, docs/design/architecture.md): commit asks
 /// exactly one solver for every node's rect and computes no geometry
 /// of its own. `dashscene-engine`'s `TaffySolver` is the product
 /// implementation; [`Txn::commit`] uses core's internal fixed-geometry
@@ -85,7 +85,7 @@ pub enum MainAxisAlign {
     SpaceBetween,
 }
 
-/// `Baseline` appends at v0.8 (DESIGN_1.md Q-4).
+/// `Baseline` appends at v0.8 (docs/technotes/open-questions.md, Q-4).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CrossAxisAlign {
     #[default]
@@ -171,14 +171,14 @@ pub enum Prop {
         bottom_left: f32,
     },
     /// Whether the node clips its children to its own (rounded) box
-    /// (`Paint.clip`, DESIGN_1.md §8.1). Intent only: commit resolves it
+    /// (`Paint.clip`, docs/design/architecture.md). Intent only: commit resolves it
     /// into the per-rect clip regions boundary B carries, because a flat
     /// rect table gives a painter no ancestors to walk (P2, issue #97).
     ///
     /// Unlike `Fill`, this prop clears: `Clip(false)` turns clipping
     /// back off (a bool has no absent state to lose).
     Clip(bool),
-    /// Set/replace the node's text content (DESIGN §5: strings, never
+    /// Set/replace the node's text content (docs/design/dashbuf.md: strings, never
     /// glyph positions — P1). v0.5: no effect on committed output;
     /// text-driven hug sizing arrives with the measure-callback story.
     Text(String),
@@ -544,7 +544,7 @@ impl Txn<'_> {
     }
 
     /// Lower every negative flex gap to child margins (the Figma≠CSS
-    /// lowering, DESIGN_1.md §5).
+    /// lowering, docs/design/dashbuf.md).
     ///
     /// Figma auto-layout allows a negative item spacing so children
     /// overlap; CSS/Taffy `gap` cannot go negative. For each container

@@ -7,7 +7,7 @@
 
 ## Context
 
-The v0 plan (`specs/SCOPE_DECISIONS.md` §10) nominally orders slices
+The v0 plan (`docs/roadmap.md`) nominally orders slices
 v0.1 → v0.9, and the v0.5 story bodies carry a "depends on: epic #1"
 line. Three sessions execute the plan in parallel; session C owns the
 text/atlas track.
@@ -27,8 +27,8 @@ Option 2 — start the text track immediately.
 ## Why
 
 - Text (R1: Arabic shaping, ligatures, bidi, identical quality on
-  every backend) is the project's highest-risk requirement. DESIGN_1.md
-  §11 itself schedules the Arabic-atlas spike "at the start of v0.5 at
+  every backend) is the project's highest-risk requirement.
+  `docs/roadmap.md` itself schedules the Arabic-atlas spike "at the start of v0.5 at
   the latest" and the epic list marks the v0.5 atlas work as a
   cross-epic early start that depends only on the v0.1 crate scaffold.
 - The crate scaffold (13 crates, workspace, CI wiring) is already on

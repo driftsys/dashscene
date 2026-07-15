@@ -1,9 +1,9 @@
 {
-  "description": "Tier-1 self-authored Figma fixtures for the dashscene importer (see specs/SCOPE_DECISIONS.md §8). Each entry maps a fixture name to the Figma file key of a file authored in the project's own account. The capture tooling fetches GET /files/:fileKey?plugin_data=shared (§11, §12) and commits the returned JSON into corpus/figma-fixtures/<name>.json for offline record-and-replay (DESIGN §6.1).",
-  "provenance": "self-authored via the fixture-author dev plugin (importers/figma/plugin/fixture-author); Community-license-safe because nothing captured here is a third-party file (§8).",
+  "description": "Tier-1 self-authored Figma fixtures for the dashscene importer (see docs/decisions/figma-corpus-self-authored-only.md). Each entry maps a fixture name to the Figma file key of a file authored in the project's own account. The capture tooling fetches GET /files/:fileKey?plugin_data=shared (docs/decisions/figma-access-plan-and-pat-policy.md, docs/decisions/annotator-plugin-contract-frozen.md) and commits the returned JSON into corpus/figma-fixtures/<name>.json for offline record-and-replay (docs/design/dashc.md).",
+  "provenance": "self-authored via the fixture-author dev plugin (importers/figma/plugin/fixture-author); Community-license-safe because nothing captured here is a third-party file (docs/decisions/figma-corpus-self-authored-only.md).",
   "captureParams": {
     "plugin_data": "shared",
-    "note": "?plugin_data=shared is always passed so sharedPluginData roles (§12) round-trip even though no fixture carries them yet."
+    "note": "?plugin_data=shared is always passed so sharedPluginData roles (docs/decisions/annotator-plugin-contract-frozen.md) round-trip even though no fixture carries them yet."
   },
   "fixtures": [
     {
@@ -24,14 +24,14 @@
       "fileKey": "VtbiQejcN6gYMmeWaaEy1b",
       "covers": "boundVariables on color + number props across light/dark modes; one subtree pinned to dark",
       "emits": true,
-      "note": "designated input for token-resolution phase 1 (sidecar) and phase 2 (id->name join), §13"
+      "note": "designated input for token-resolution phase 1 (sidecar) and phase 2 (id->name join), docs/decisions/token-resolution-phase-split.md"
     },
     {
       "name": "effects-2025",
       "fileKey": "43LWWEUuYJuK8iCUP9EXqU",
       "covers": "REJECT-list constructs: noise, texture, progressive blur",
       "emits": false,
-      "note": "DIAGNOSTIC fixture (§8): under R6 emits no .dsb; the test asserts the diagnostic report names each construct as an error. Variable-width stroke (4th REJECT construct) pending manual application — no plugin API.",
+      "note": "DIAGNOSTIC fixture (corpus/figma-fixtures/README.md): under R6 emits no .dsb; the test asserts the diagnostic report names each construct as an error. Variable-width stroke (4th REJECT construct) pending manual application — no plugin API.",
       "pendingManual": ["variable-width-stroke"]
     },
     {
@@ -49,13 +49,13 @@
     {
       "name": "lowering-negative-gap",
       "fileKey": "w8JdmcqdvZhD1qIB8GVK2u",
-      "covers": "negative itemSpacing (-16) overlap row, lowered to margins (DESIGN §5)",
+      "covers": "negative itemSpacing (-16) overlap row, lowered to margins (docs/design/dashbuf.md)",
       "emits": true
     },
     {
       "name": "lowering-baseline",
       "fileKey": "R1S4QqZtT54WVcYcFFuQoD",
-      "covers": "mixed-size BASELINE alignment row (DESIGN Q-4) + Arabic RTL run with Arabic-Indic numerals (E2)",
+      "covers": "mixed-size BASELINE alignment row (docs/technotes/open-questions.md, Q-4) + Arabic RTL run with Arabic-Indic numerals (E2)",
       "emits": true
     },
     {

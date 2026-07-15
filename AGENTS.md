@@ -6,20 +6,22 @@ code — into pixels on screen, through one intermediate representation
 layout+text runtime, and interchangeable paint backends (Skia
 reference, Unity product, a lean native painter later).
 
-**Read these two files before doing anything else in this repo:**
+**Read these before doing anything else in this repo:**
 
-- `specs/DESIGN_1.md` — the seed architecture doc: goals, requirements,
-  stack, document format, producers, painters, target-hardware rules,
-  the v0/v1/v2 plan.
-- `specs/SCOPE_DECISIONS.md` — everything decided since, in the order it
-  was decided: repo strategy, the full crate-name map, the `.dsb`
-  format decision, the Deno/wasm Figma importer split, Unity's deferred
+- `docs/specification/` — goals, requirements, principles, target-hardware
+  rules, and the Figma vocabulary profile.
+- `docs/design/architecture.md` — the stack, the pipeline, its two
+  boundaries, and the crate-to-purpose map; links to each crate's own
+  as-built design record under `docs/design/`.
+- `docs/decisions/` — everything decided since, each traced to what it
+  affects: repo strategy, the full crate-name map, the `.dsb` format
+  decision, the Deno/wasm Figma importer split, Unity's deferred
   separate repo, and the driftsys house-style conventions this repo
-  follows (§7).
+  follows (`docs/decisions/house-style.md`).
+- `docs/roadmap.md` — the v0/v1/v2 plan.
 
-Both are living documents. `SCOPE_DECISIONS.md` supersedes
-`DESIGN_1.md` wherever the two disagree — update it, don't silently
-diverge from it.
+These are living records. A decision that changes one is recorded there
+directly — don't silently diverge from it.
 
 ## Repo status
 
@@ -29,12 +31,13 @@ as the project's future facade (docs, book, site) and holds the 12
 originally-squatted crate names. Nothing here is public yet. When
 there's a real version running, staging's content gets promoted into
 `dashscene` — the exact mechanism (fresh push vs. history merge) is
-intentionally undecided until that point (`SCOPE_DECISIONS.md` §1).
+intentionally undecided until that point
+(`docs/decisions/repo-staging-and-public-facade.md`).
 
 ## Crates
 
 13 crates in one Cargo workspace (`resolver = "3"`, `edition = "2024"`,
-`license = "MIT"`). Full role-by-role mapping: `SCOPE_DECISIONS.md` §2.
+`license = "MIT"`). Full role-by-role mapping: `docs/decisions/crate-name-map.md`.
 
     dashscene            umbrella / facade
     dashscene-core        semantic model — arena, node tree, layout+paint
@@ -59,7 +62,7 @@ intentionally undecided until that point (`SCOPE_DECISIONS.md` §1).
 Plus `importers/figma/` (Deno/TypeScript — the Figma REST importer and
 the `sharedPluginData` annotator plugin; calls `dashc.wasm` directly
 rather than reimplementing lowering/validation, see
-`SCOPE_DECISIONS.md` §4), `corpus/` (stress corpus + Figma fixture
+`docs/decisions/figma-importer-deno-plus-dashc-wasm.md`), `corpus/` (stress corpus + Figma fixture
 captures), `goldens/` (CI golden images + diff tooling).
 
 ## Commands
@@ -78,12 +81,12 @@ captures), `goldens/` (CI golden images + diff tooling).
 
 Full recipe set: `justfile`. Conventions behind all of it — publish
 order, `.git-std.toml` versioning, CI job breakdown, why dprint is
-markdown-only — are in `SCOPE_DECISIONS.md` §7, sourced from
+markdown-only — are in `docs/decisions/house-style.md`, sourced from
 driftsys/git-std, driftsys/upskill, driftsys/markspec.
 
 ## Where to start
 
-The v0.1 walking skeleton (`DESIGN_1.md` §11) is complete and on
+The v0.1 walking skeleton (`docs/roadmap.md`) is complete and on
 `main`: the `dashbuf` schema, `dashscene-core`'s arena +
 staged-mutation API, `dashpaint`'s painter trait + paint-table types,
 the `dashscene-skia` CPU-raster painter, the `dashlang` builder DSL,
@@ -107,9 +110,10 @@ Figma-importing behavior (v0.7), `dashcue`'s animation vocabulary
 `dashscene-unity` / `dashscene-web` (v1+) — is out of scope until its
 slice.
 
-**Resolved (`SCOPE_DECISIONS.md` §9):** the staged-mutation contract
+**Resolved (`docs/decisions/staged-mutation-v01-scope.md`):** the
+staged-mutation contract
 (`open`/`set_prop`/`set_variant`/`commit`) lives on the arena in
-`dashscene-core` — DESIGN §4 defines it as a property of the arena, and
+`dashscene-core` — `docs/design/architecture.md` defines it as a property of the arena, and
 `commit` mechanically operates on state core owns (double buffer,
 generation stamp, dirty set). `dashcue` is the descriptive animation
 vocabulary and its scheduling only; the transition spec describing how
@@ -120,7 +124,7 @@ while the switch itself is core's. `dashlang` builds directly on
 ## Plan tracking
 
 The v0 plan lives as GitHub issues on this repo: one `epic`-labeled
-issue and one milestone per `DESIGN_1.md` §11 slice (v0.1 … v0.9),
+issue and one milestone per `docs/roadmap.md` slice (v0.1 … v0.9),
 broken into `story`-labeled issues. Stories are split so that
 independent stories can run in parallel; each story is worked in its
 own git worktree, on the branch named in the story issue, and its body
@@ -168,10 +172,10 @@ Plan revision at the end of each phase: story breakdowns for future
 slices are provisional by design. When a slice's epic closes (v0.1,
 v0.2, …), revise the remaining epics and stories against what was
 learned before starting the next slice — update, split, merge, or
-re-order the issues, and record scope-level changes in
-`specs/SCOPE_DECISIONS.md`.
+re-order the issues, and record scope-level changes as new or updated
+records in `docs/decisions/`.
 
-## Principles (DESIGN_1.md §3 — don't violate these)
+## Principles (`docs/specification/02-principles.md` — don't violate these)
 
 - **P1** — the document carries intent, never results. No resolved
   x/y/w/h, no rasterized pixels, no glyph positions.

@@ -9,14 +9,15 @@
 
 ## Purpose
 
-`goldens` is the harness `DESIGN_1.md` §11 names as the v0.1 exit gate
-and §8 as how CPU painters generate their own goldens: a scene
+`goldens` is the harness `docs/specification/05-qualification.md` names
+as the v0.1 exit gate and `docs/technotes/rendering-and-painters.md` as
+how CPU painters generate their own goldens: a scene
 authored in the Rust DSL (`dashlang`), committed through
 `dashscene-core`, painted by the Skia reference painter
 (`dashscene-skia`), and compared pixel by pixel against a checked-in PNG — on
 every `cargo test --workspace` run, with no recipe or CI wiring beyond
 the workspace member. It is the harness every later slice re-goldens
-against on a painter swap (§8).
+against on a painter swap (`docs/technotes/rendering-and-painters.md`).
 
 An unpublished workspace member at `goldens/tooling`; the checked-in
 images live in `goldens/images/`.
@@ -112,10 +113,11 @@ against that image is the exit criterion itself.
 
 ## Trace
 
-- Satisfies: issue #6 acceptance criteria; `specs/DESIGN_1.md` §11 v0.1
-  slice exit ("golden harness"), §8 (CPU painters generate their own
-  goldens); issue #11's v0.2 flex goldens; issue #14's v0.3 golden;
-  issue #97's clip golden.
+- Satisfies: issue #6 acceptance criteria;
+  `docs/specification/05-qualification.md`'s v0.1 slice exit ("golden
+  harness"), `docs/technotes/rendering-and-painters.md` (CPU painters
+  generate their own goldens); issue #11's v0.2 flex goldens; issue
+  #14's v0.3 golden; issue #97's clip golden.
 - Closes epic #1's story list (v0.1 walking skeleton, milestone 1).
 - Closes epic #7's story list (v0.2 flex core) — issue #11 was its last
   open story.

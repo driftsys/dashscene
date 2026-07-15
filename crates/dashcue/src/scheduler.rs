@@ -89,7 +89,7 @@ impl Scheduler {
     /// `delay = stagger * index`. `bind` supplies each prop's resolved
     /// `(from, to)` — resolved values never live in the vocabulary
     /// (P1); the engine binds them from the variant switch (issue #22,
-    /// SCOPE_DECISIONS.md §9).
+    /// docs/decisions/staged-mutation-v01-scope.md).
     pub fn start_transition(
         &mut self,
         transition: &VariantTransition,

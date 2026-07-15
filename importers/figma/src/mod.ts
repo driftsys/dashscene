@@ -1,7 +1,7 @@
 /**
  * @driftsys/dashscene-figma — public entry point.
  *
- * Deno-side half of the Figma importer (SCOPE_DECISIONS.md §4). Owns HTTP,
+ * Deno-side half of the Figma importer (docs/decisions/figma-importer-deno-plus-dashc-wasm.md). Owns HTTP,
  * auth, and resolving an `imageRef` into bytes; hands the file JSON and those
  * bytes to `dashc_wasm.wasm` for lowering, validation, and `.dsb` emission —
  * the same Rust code path as the native `dashc` library call (crates/dashc).
@@ -9,7 +9,7 @@
  * The REST client (fetch.ts), the fixture capture tool (capture.ts), the wasm
  * boundary (wasm.ts), image resolution (images.ts), and the import flow
  * (import.ts) are implemented. Closure, trim, and tokens remain stubs whose
- * implementation begins alongside v0.7 ("importer catch-up", DESIGN_1.md §11).
+ * implementation begins alongside v0.7 ("importer catch-up", docs/roadmap.md).
  */
 
 export * from "./fetch.ts";

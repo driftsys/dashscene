@@ -29,7 +29,7 @@ Option 1.
 
 - The combined `v03-paint.png` (option 3) is one image; a construct
   regression there requires reading which pixels moved. Per-family
-  goldens give the DESIGN_1.md §8 bisect-by-construction the slice asks
+  goldens give the `docs/technotes/rendering-and-painters.md` bisect-by-construction the slice asks
   for — a regression fails only the affected family's golden — without
   claiming #18 was a no-op.
 - One golden per construct (option 2) is redundant with the per-kind

@@ -1,6 +1,6 @@
 //! Rust DSL skin over the `dashscene-core` producer surface, and the
-//! future stress-corpus generator (DESIGN_1.md §6.2,
-//! SCOPE_DECISIONS.md §9).
+//! future stress-corpus generator (docs/design/architecture.md,
+//! docs/decisions/staged-mutation-v01-scope.md).
 //!
 //! The DSL builds an inert value tree ([`Node`]) and publishes it in
 //! one staged commit via [`Scene::build`] — components are plain

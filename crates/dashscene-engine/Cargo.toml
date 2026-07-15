@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Runtime that resolves the model: Taffy solve, variants, FLIP, measure callback (DESIGN_1.md §7.1)."
+description = "Runtime that resolves the model: Taffy solve, variants, FLIP, measure callback (docs/design/architecture.md)."
 
 [lib]
 name = "dashscene_engine"

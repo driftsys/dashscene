@@ -1,8 +1,9 @@
 # Technote — producers & the intermediate representation
 
     status   design note, 2026-07-13. Captures conclusions from a design
-             discussion; extends specs/DESIGN_1.md and specs/SCOPE_DECISIONS.md
-             without superseding them. Items marked DECISION are settled; items
+             discussion; extends docs/archive/2026-07-14-design-1-seed.md
+             and docs/archive/2026-07-14-scope-decisions.md without
+             superseding them. Items marked DECISION are settled; items
              marked CANDIDATE / OPEN are not.
     scope    where producer-specific knowledge lives, what owns the neutral
              representation, and which external design tools we take as sources.
@@ -15,7 +16,7 @@ and what owns the neutral form_ — so the answers are recorded together.
 
 ## 1. The Figma export boundary — `dashc` lowers, it does not export
 
-DECISION (re-affirms SCOPE_DECISIONS §4; already reflected in the code).
+DECISION → [`dashc-lowers-figma-it-does-not-export.md`](../decisions/dashc-lowers-figma-it-does-not-export.md)
 
 "Figma export" is two different jobs and they live on opposite sides of a seam:
 
@@ -49,7 +50,7 @@ box out a future producer (see §4).
 
 ## 2. No neutral IR above dashscene — the two driftsys-owned formats
 
-DECISION.
+DECISION → [`no-neutral-ir-above-dashscene.md`](../decisions/no-neutral-ir-above-dashscene.md)
 
 We already own two producer-neutral representations, and they are the right two:
 
@@ -57,8 +58,8 @@ We already own two producer-neutral representations, and they are the right two:
   reason to exist (P5) is that it is producer-neutral: Figma is one client, the
   DSLs are others.
 - **The `dashscene-core` arena + staged-mutation API** (`open`/`set_prop`/
-  `set_variant`/`commit`) — DESIGN §4 calls it "the real contract; `.dsb` is one
-  way to populate it."
+  `set_variant`/`commit`) — `docs/design/architecture.md` calls it "the real
+  contract; `.dsb` is one way to populate it."
 
 The tempting third format — a neutral "design interchange" layer _above_ dashscene that
 Figma and Penpot both translate into — must **not** be built. It would carry the
@@ -66,7 +67,8 @@ same design intent dashscene's layout/variant/paint tables already carry, i.e. ~
 schema overlap with dashscene, two schemas to evolve in lockstep, two validators, a
 translation at every seam, and the classic interchange-format failure (lossy or
 bloated). It would also dilute the "one schema, file and wire" discipline
-(SCOPE §3). The tell that a neutral-IR-above-dashscene is redundant is that it would
+(`docs/decisions/dsb-format-and-one-schema.md`). The tell that a
+neutral-IR-above-dashscene is redundant is that it would
 look almost exactly like dashscene.
 
 What _is_ worth formalising is smaller: the **seam contract** — name and version
@@ -75,7 +77,7 @@ the lowering step_, not a second IR. Thin, not a tar pit.
 
 ## 3. Two entry paths — producers choose compile-path or arena-path
 
-DECISION (frames how every future producer is added).
+DECISION → [`two-producer-entry-paths.md`](../decisions/two-producer-entry-paths.md)
 
 There are two ways into dashscene, and picking the right one per producer is what makes
 "no new format" workable:
@@ -84,7 +86,7 @@ There are two ways into dashscene, and picking the right one per producer is wha
   Figma uses this because Figma is far from CSS and needs real lowering.
 - **In-memory arena path** — producer code → `dashscene-core` API → dashscene, with no
   serialised intermediate. The Rust DSL uses this ("direct arena calls, no
-  serialization", DESIGN §6.2).
+  serialization", `docs/archive/2026-07-14-design-1-seed.md` §6.2).
 
 The question for any new producer is which path it uses — never "do we need a new
 format."
@@ -112,12 +114,15 @@ Why it is genuinely interesting beyond "OSS":
   vocabulary differs from Figma's but lands in the same tables either proves dashscene
   is producer-neutral or exposes where it is secretly Figma-shaped.
 - **It sidesteps documented pains.** Self-hostable and open-format → no
-  90-day-PAT treadmill (SCOPE §10), no seat-gated rate limits, and no Enterprise
-  wall in front of variables (the reason the token phase-1/phase-2 split exists,
-  SCOPE §12). Penpot's tokens/variables are open.
+  90-day-PAT treadmill (`docs/decisions/figma-access-plan-and-pat-policy.md`),
+  no seat-gated rate limits, and no Enterprise wall in front of variables (the
+  reason the token phase-1/phase-2 split exists,
+  `docs/decisions/token-resolution-phase-split.md`). Penpot's tokens/variables
+  are open.
 - **License-clean fixtures.** Penpot is AGPL/self-hostable, so self-authored
   Penpot files have none of the Figma Community licensing ambiguity that shapes
-  SCOPE §8 — potentially a cleaner fixture source for pure layout-mechanics cases.
+  `docs/decisions/figma-corpus-self-authored-only.md` — potentially a cleaner
+  fixture source for pure layout-mechanics cases.
 
 Not now: v0/v1 requirements (Arabic text, full Figma auto-layout, 2025 Draw-effect
 triage) are Figma-shaped, and adding Penpot before the Figma path and the DSL both
@@ -131,7 +136,7 @@ corner (Taffy baseline + grid spans) already flagged as least-exercised (Q-4).
 
 ## 5. Slint — build-vs-adopt: reference for ideas only
 
-DECISION: do not adopt or borrow code from Slint.
+DECISION → [`slint-reference-only-do-not-adopt.md`](../decisions/slint-reference-only-do-not-adopt.md)
 
 Slint is the closest thing in the Rust world to "the stack you'd reach for instead
 of building this," and DESIGN already credits the Taffy/Servo/Bevy/Slint/Zed
@@ -163,7 +168,7 @@ licence for proprietary **embedded**. Our target is embedded/automotive, so the
 royalty-free tier does not apply; the doors are GPLv3 (a non-starter for a
 proprietary automotive product) or a commercial contract with SixtyFPS (recurring
 cost + single-vendor dependency on the critical path). And because our repo is MIT
-(SCOPE §7), GPLv3 code cannot be lifted into it — so Slint is not even a _code_
+(`docs/decisions/house-style.md`), GPLv3 code cannot be lifted into it — so Slint is not even a _code_
 borrow source; the Figma-to-Slint plugin is under the same terms. **Reference for
 ideas only** (its software-renderer design, its MCU/GLES work), clean-room, never
 source.

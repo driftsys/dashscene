@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "The .dsb flatbuffer schema — document format shared by file and wire roles (DESIGN_1.md §5, §11 v2)."
+description = "The .dsb flatbuffer schema — document format shared by file and wire roles (docs/design/dashbuf.md, docs/roadmap.md v2)."
 
 [lib]
 name = "dashbuf"

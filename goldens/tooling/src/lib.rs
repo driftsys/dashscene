@@ -1,4 +1,4 @@
-//! Golden-image diff tooling (DESIGN_1.md §8, §11 v0.1): compares a
+//! Golden-image diff tooling (docs/design/architecture.md, docs/roadmap.md v0.1): compares a
 //! freshly rendered PNG against the checked-in golden under
 //! `goldens/images/`, pixel by pixel in unpremultiplied RGBA8888 (the
 //! comparison-space decision is
@@ -42,7 +42,7 @@ pub fn assert_matches_golden(name: &str, png_bytes: &[u8]) {
 /// fractional edge can flip a handful of boundary pixels. A small
 /// fraction absorbs that cross-machine edge jitter while still catching
 /// any real rendering change, which moves far more than a thin edge
-/// (DESIGN_1.md §8's tolerance-based diff, applied to CPU-raster AA).
+/// (docs/technotes/rendering-and-painters.md's tolerance-based diff, applied to CPU-raster AA).
 /// See `docs/decisions/golden-comparison-space.md`.
 ///
 /// # Panics

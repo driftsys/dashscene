@@ -1,9 +1,10 @@
 # Technote — glossary
 
     status   reference, 2026-07-13. Accompanies producers-and-ir.md,
-             rendering-and-painters.md, runtime-content.md and the specs in
-             specs/DESIGN_1.md / specs/SCOPE_DECISIONS.md. Definitions are scoped
-             to how the terms are used in this project.
+             rendering-and-painters.md, runtime-content.md and the specs
+             now archived at docs/archive/2026-07-14-design-1-seed.md /
+             docs/archive/2026-07-14-scope-decisions.md. Definitions are
+             scoped to how the terms are used in this project.
     note     working names retired: the document/IR is **dashscene** (serialized
              as **`.dsb`**), the compiler is **`dashc`**. Older drafts said "SCD"
              and "scdc"; those are not used here. Ruling:
@@ -13,7 +14,7 @@
 
 **arena** — the in-memory node tree owned by `dashscene-core`; the live document
 a producer mutates through the staged-mutation API. `.dsb` is one way to populate
-it; the arena is "the real contract" (DESIGN §4).
+it; the arena is "the real contract" (`docs/design/architecture.md`).
 
 **atlas** — a texture holding baked distance fields (MSDF glyphs, icons). Quads
 sample it. See _SDF_, _MSDF_, _baked_.
@@ -24,7 +25,7 @@ assets, so the runtime only draws quads. The alternative to a runtime vector
 engine.
 
 **boundary A** — the `.dsb` load gate: version check + per-section hashes before a
-document is trusted (DESIGN §4).
+document is trusted (`docs/design/architecture.md`).
 
 **boundary B** — the painter contract: rect table + positioned glyph runs + paint
 indices. A painter never measures, wraps, kerns, or moves anything (P2).
@@ -40,13 +41,15 @@ model of a scene (layout tables, paint tables, variant tables, text), carried by
 
 **`.dsb`** — the flatbuffer document format ("dashscene buffer"), owned by the
 `dashbuf` crate. One schema serves both the on-disk _file role_ (mmap sections +
-hashes) and the _wire role_ (length-prefixed messages for streaming) — SCOPE §3.
+hashes) and the _wire role_ (length-prefixed messages for streaming) —
+`docs/decisions/dsb-format-and-one-schema.md`.
 
 **`dashc`** — the compiler: lowers a producer's input into `dashscene`, validates
 it, and emits `.dsb` (or a diagnostics report). Runs native (CLI/CI) and compiled
 to wasm (called from the Deno Figma importer). The build-time stage.
 
-**crates (roles, SCOPE §2)** — `dashscene` (umbrella/facade), `dashscene-core`
+**crates (roles, `docs/decisions/crate-name-map.md`)** — `dashscene`
+(umbrella/facade), `dashscene-core`
 (arena + semantic model + staged-mutation API), `dashscene-engine` (Taffy solve,
 variants, FLIP, measure), `dashscene-typeset` (bidi/shaping/atlas), `dashbuf`
 (the `.dsb` schema), `dashpaint` (paint table + painter trait = boundary B),
@@ -73,7 +76,8 @@ lean native painter (later), tiny-skia (wasm). A painter swap is a re-golden, no
 a redesign.
 
 **placeholder** — a node that reserves a declared-size box and is filled at bind
-time by a registered producer/implementation (DESIGN §10.2). Fillable by a
+time by a registered producer/implementation (`docs/design/architecture.md`'s
+planned section). Fillable by a
 streamed subtree, a decoded image, or a ThorVG texture (see runtime-content).
 
 **producer** — any source that populates `dashscene`: the Figma importer, the code
@@ -90,7 +94,7 @@ index equals the document node index. Carries geometry, never pixels (P1).
 
 **staged-mutation API** — `open` / `set_prop` / `set_variant` / `commit` on the
 `dashscene-core` arena — the producer contract (lives in core, not `dashcue`;
-SCOPE §9).
+`docs/decisions/staged-mutation-v01-scope.md`).
 
 **typesetter** — the one shared text pipeline (bidi split → rustybuzz shape → line
 break → positioned glyph runs). Runs once in Rust; painters never typeset (P2,
@@ -150,7 +154,8 @@ classes below.
 
 **material class (Unity)** — `unlit-overlay` (HUD-style, excluded from lighting),
 `lit-opaque` (full lighting, casts/receives shadows), `lit-cutout` (SDF alpha-clip,
-shadow-caster with clip). The per-node lighting-participation choice (DESIGN §8.2).
+shadow-caster with clip). The per-node lighting-participation choice
+(`docs/technotes/rendering-and-painters.md`).
 
 **MSDF (multi-channel signed distance field)** — an SDF variant using R/G/B
 channels to preserve sharp corners that single-channel SDF rounds off; produced by
@@ -193,7 +198,7 @@ painter avoids.
 **tiling GPU** — the mobile/embedded GPU architecture (the target) that renders the
 screen in small on-chip tiles. It rewards one render pass per frame and punishes
 mid-frame RT switches and bandwidth — the cost model the whole painter design is
-shaped around (DESIGN §9).
+shaped around (`docs/specification/03-target-hardware-rules.md`).
 
 **tone mapping** — mapping HDR scene colours to the display range (ACES, Neutral);
 it shifts colours, so authored UI colours only survive it if unlit-overlay UI
@@ -236,7 +241,7 @@ CSS Flexbox/Grid. Candidate second producer via the arena path, deferred post-v0
 
 **resvg / usvg / tiny-skia** — the pure-Rust SVG parse / simplify / raster stack
 (same author as `ttf-parser` / `rustybuzz`); preferred over ThorVG for offline SVG
-baking. `tiny-skia` is also the parked wasm painter (DESIGN §8.4).
+baking. `tiny-skia` is also the parked wasm painter (`docs/design/architecture.md`).
 
 **Skia** — Google's 2D graphics library (BSD), via `skia-safe`. The reference
 painter (CPU raster = bit-exact goldens; GPU on GLES = the entry-tier bridge). Its
@@ -267,7 +272,12 @@ hardware affords it.
 **unicode-bidi** — the pure-Rust implementation of the Unicode bidirectional
 algorithm; splits mixed RTL/LTR text into runs before shaping.
 
-## DESIGN_1 shorthand
+## Principle, requirement, and target-hardware-rule shorthand
+
+Defined in full in `docs/specification/02-principles.md` (P),
+`docs/specification/01-goals-and-requirements.md` (R),
+`docs/specification/03-target-hardware-rules.md` (R-T), and
+`docs/technotes/open-questions.md` (Q).
 
 **Principles (P).** P1 the document carries intent, never results. P2 one solver,
 one typesetter; painters only colour. P3 producers mutate, the runtime owns time.

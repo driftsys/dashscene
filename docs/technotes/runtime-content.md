@@ -1,8 +1,9 @@
 # Technote — runtime-provided content & placeholders
 
     status   design note, 2026-07-13. Captures conclusions from a design
-             discussion; extends specs/DESIGN_1.md and specs/SCOPE_DECISIONS.md
-             without superseding them. DECISION = settled; CANDIDATE / OPEN = not.
+             discussion; extends docs/archive/2026-07-14-design-1-seed.md
+             and docs/archive/2026-07-14-scope-decisions.md without
+             superseding them. DECISION = settled; CANDIDATE / OPEN = not.
     scope    how content supplied at runtime (downloaded images, streamed UI,
              Lottie, arbitrary SVG) enters a scene and fills a placeholder,
              without pre-rendering.
@@ -31,8 +32,10 @@ escape hatch.
 
 ## 2. Downloaded raster (PNG / WebP) — the easy case
 
-DECISION. A PNG/WebP is already a bitmap, so no vector engine, no per-frame RT.
-An **image fill is already NOW vocabulary** (DESIGN §10.1: "image fills + scale
+DECISION → [`downloaded-raster-needs-no-vector-engine.md`](../decisions/downloaded-raster-needs-no-vector-engine.md).
+A PNG/WebP is already a bitmap, so no vector engine, no per-frame RT.
+An **image fill is already NOW vocabulary**
+(`docs/specification/04-figma-vocabulary-profile.md`: "image fills + scale
 modes"); a downloaded image is just an image fill whose _source_ is bound at
 runtime. Path: **decode → upload → bind.** Decode to RGBA with a small pure-Rust
 decoder (`png`, `image-webp`/`image`) — _not_ by re-enabling Skia's codecs, so the
@@ -51,13 +54,15 @@ and consistent across tiers because it is static. Fits P1: the document carries
 
 ## 3. Streamed vocabulary content — a Glance-like cross-process producer
 
-DECISION direction (this is the provisioned "Kotlin/remote" skin + v2 streaming,
-pulled forward to one node). You can compute a scene in realtime from a Compose/
+DECISION direction → [`streamed-content-is-a-cross-process-producer.md`](../decisions/streamed-content-is-a-cross-process-producer.md)
+(this is the provisioned "Kotlin/remote" skin + v2 streaming, pulled forward to
+one node). You can compute a scene in realtime from a Compose/
 Glance-like DSL and stream it into a placeholder **without pre-rendering** — but you
 stream _intent_, and via the **wire role of the schema, not the `.dsb` file role**.
-The file role's mmap/section/hashing packaging (DESIGN §5) is for fast cold-load of
-a whole document; streaming uses plain length-prefixed flatbuffer messages
-(SCOPE §3: one schema, two roles).
+The file role's mmap/section/hashing packaging (`docs/design/architecture.md`)
+is for fast cold-load of a whole document; streaming uses plain
+length-prefixed flatbuffer messages
+(`docs/decisions/dsb-format-and-one-schema.md`: one schema, two roles).
 
 Two placements:
 
@@ -93,7 +98,8 @@ the streamed fragment clears the admission policy (Q-5), still undecided.
 
 ## 4. Lottie — bake if you can, ThorVG only when you must
 
-DECISION direction. Lottie is not one thing; where a given animation sits decides
+DECISION direction → [`lottie-bake-when-possible.md`](../decisions/lottie-bake-when-possible.md).
+Lottie is not one thing; where a given animation sits decides
 whether it bakes. dashc should **triage each Lottie and emit a named diagnostic** for
 the path taken (P4/P5 — validated, never discovered), including a VRAM-budget check
 for the sprite-sheet case and a reject-or-flag on profile:core for the VG case.
@@ -112,7 +118,8 @@ for the sprite-sheet case and a reject-or-flag on profile:core for the VG case.
 
 ## 5. Arbitrary runtime vector (SVG/Lottie) — ThorVG-to-texture
 
-DECISION. For genuinely runtime-provided, non-bakeable vector (arbitrary SVG,
+DECISION → [`runtime-vector-via-thorvg-to-texture.md`](../decisions/runtime-vector-via-thorvg-to-texture.md).
+For genuinely runtime-provided, non-bakeable vector (arbitrary SVG,
 morphing/masked Lottie), render it to a texture with **ThorVG** and fill the
 placeholder with that texture as an image fill (every painter can draw an image).
 ThorVG fits: lightweight (~150KB), MIT, SW+GL backends, native SVG _and_ Lottie,

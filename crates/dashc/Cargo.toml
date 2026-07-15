@@ -5,14 +5,14 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Compiler CLI: Figma importer orchestration target, Figma-to-dashscene lowering, diagnostics, .dsb emission. Also builds to wasm32-unknown-unknown for the Deno importer (DESIGN_1.md §4, §6.1)."
+description = "Compiler CLI: Figma importer orchestration target, Figma-to-dashscene lowering, diagnostics, .dsb emission. Also builds to wasm32-unknown-unknown for the Deno importer (docs/design/architecture.md, docs/design/dashc.md)."
 
 [lib]
 # Named distinctly from the `dashc` bin target below: both compile to a
 # same-named output file (dashc.wasm) on wasm32-unknown-unknown, which
 # cargo flags as a filename collision. rlib for native use, cdylib so this
 # crate can be built for wasm32-unknown-unknown and loaded directly by the
-# Deno importer (SCOPE_DECISIONS.md §4).
+# Deno importer (docs/decisions/figma-importer-deno-plus-dashc-wasm.md).
 name = "dashc_wasm"
 path = "src/lib.rs"
 crate-type = ["rlib", "cdylib"]

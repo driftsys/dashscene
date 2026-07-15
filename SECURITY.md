@@ -19,7 +19,7 @@ remediation timeline within 14 days of confirming the report.
 
 ## Scope notes specific to dashscene
 
-- The `.dsb` format loader (boundary A, see `specs/DESIGN_1.md` §5) is a
+- The `.dsb` format loader (boundary A, see `docs/design/dashbuf.md`) is a
   trust boundary: it parses untrusted input (documents produced outside this
   repo's own compiler, or received over the wire per the v2 remote-streaming
   plan). Parsing bugs here — out-of-bounds reads against mmap'd sections,

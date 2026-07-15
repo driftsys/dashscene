@@ -7,7 +7,7 @@
 
 Story #13 grows the schema's paint vocabulary from one solid fill to
 solids, gradients, image fills, strokes, corner radii, and clip.
-`DESIGN_1.md` §5 describes the document as a flattened DFS node tree
+`docs/design/dashbuf.md` describes the document as a flattened DFS node tree
 with interned strings and a **dedup style pool**, and boundary B's
 runtime paint table is already index-based (`RectEntry.paint: u32`).
 `Node.paint: SolidFill` (the v0.1 walking-skeleton shorthand, inline on
@@ -28,12 +28,12 @@ documents; FlatBuffers' evolution rule is append-only field ids.
 Option 1: the pooled shape, keeping the legacy `paint` field.
 
 An earlier draft of this story shipped option 2; the story's review
-pass flagged the divergence from §5's dedup style pool and it was
-reworked to option 1 before merge.
+pass flagged the divergence from `docs/design/dashbuf.md`'s dedup style
+pool and it was reworked to option 1 before merge.
 
 ## Why
 
-- §5's document shape is a dedup style pool: distinct nodes sharing a
+- `docs/design/dashbuf.md`'s document shape is a dedup style pool: distinct nodes sharing a
   style share one pooled entry instead of repeating inline paint tables
   per node (real documents have thousands of nodes over tens of
   styles).

@@ -9,7 +9,8 @@
 
 `dashbuf` owns the `.dsb` document format: the FlatBuffers schema that is
 the one intermediate representation between producers (Figma import,
-`dashlang`) and the runtime (`specs/DESIGN_1.md` §5). It is boundary A —
+`dashlang`) and the runtime (`docs/archive/2026-07-14-design-1-seed.md`
+§5). It is boundary A —
 the `.dsb` load gate (`CONTRIBUTING.md` "Crate ownership and scope").
 Principle P1 (`AGENTS.md`) holds throughout: the document carries intent,
 never results — no resolved x/y/w/h, no rasterized pixels, no glyph
@@ -32,7 +33,8 @@ is enforced by a frozen byte fixture, not by convention alone — see
 - `Document` is the `root_type`: `nodes: [Node]` plus the v0.3
   `paints: [Paint]` pool and `images: [Image]` assets.
 - `Node`s are stored as a flattened DFS array — array index doubles as
-  the rect-table index consumed at boundary B (`specs/DESIGN_1.md` §5).
+  the rect-table index consumed at boundary B
+  (`docs/archive/2026-07-14-design-1-seed.md` §5).
   `Node.parent` is an index into that same array, or the `uint32::MAX`
   sentinel for a root node.
 - `Node.layout: FixedSizeLayout` carries the authored x/y offset plus
@@ -47,7 +49,8 @@ is enforced by a frozen byte fixture, not by convention alone — see
 - Paint is split across two generations, both present at once by
   design: `Node.paint: SolidFill` is the v0.1 walking-skeleton inline
   shorthand; the v0.3 vocabulary lives in the document-level dedup pool
-  `Document.paints: [Paint]` (DESIGN §5's "dedup style pool"),
+  `Document.paints: [Paint]` (`docs/archive/2026-07-14-design-1-seed.md`
+  §5's "dedup style pool"),
   referenced by `Node.paint_entry: uint32` — `uint32::MAX` (NO_PAINT)
   means the node draws nothing, the same sentinel convention as
   `Node.parent`. The sentinel is document-level only: the committed
@@ -60,7 +63,8 @@ is enforced by a frozen byte fixture, not by convention alone — see
   `ImageFill.image` indexes into it. Decoded pixel data crossing boundary
   B is out of scope here — see "Open for story #14" below.
 - Text (v0.5, story #26) mirrors the same dedup-pool pattern as paint —
-  DESIGN §5's document table lists a `text` row: "strings + style
+  `docs/archive/2026-07-14-design-1-seed.md` §5's document table lists
+  a `text` row: "strings + style
   refs", never glyph positions. `Document.strings: [string]` is an
   interned string pool; `Document.text_styles: [TextStyle]` is a dedup
   style pool. `Node.text` and `Node.text_style: uint32 = uint32::MAX`
@@ -157,7 +161,7 @@ All types are generated from `crates/dashbuf/schema/dashbuf.fbs`:
 ## Testing
 
 `crates/dashbuf/tests/roundtrip.rs` covers the v0.1 baseline (exit
-criterion E6, `specs/DESIGN_1.md` §11): a document built in memory
+criterion E6, `docs/specification/05-qualification.md`): a document built in memory
 survives a flatbuffer round trip byte-for-byte-equivalent in its decoded
 fields, including the root-node parent sentinel. It also covers the
 v0.2 flex vocabulary (story #8): a node carrying every `LayoutContainer`
@@ -228,11 +232,13 @@ receive the encoded, format-tagged assets as a `dashpaint::ImageTable`
 
 ## Trace
 
-- Satisfies: `specs/DESIGN_1.md` §5 document format (including the
-  dedup style pool and the text row — strings + style refs), §11 v0.1,
-  v0.2, v0.3, and v0.5 (text I) slices (v0.2 vocabulary is R2; v0.3
-  vocabulary drawn from the §10.1 NOW list), R7 additive schema
-  evolution; issue #8, issue #13, and issue #26 acceptance criteria.
+- Satisfies: `docs/archive/2026-07-14-design-1-seed.md` §5 document
+  format (including the dedup style pool and the text row — strings +
+  style refs), `docs/roadmap.md`'s v0.1, v0.2, v0.3, and v0.5 (text I)
+  slices (v0.2 vocabulary is R2; v0.3 vocabulary drawn from
+  `docs/specification/04-figma-vocabulary-profile.md`'s NOW list), R7
+  additive schema evolution; issue #8, issue #13, and issue #26
+  acceptance criteria.
 - Blocks: `dashscene-core` lowering, `dashc`'s importer consumption
   (out of scope until later slices); #28's typeset consumption of the
   string and style pools. The story #9 Taffy solve consumes

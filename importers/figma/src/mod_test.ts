@@ -3,7 +3,7 @@
  * `createFigmaClient` is reachable through the public entry point, and
  * that the remaining importer stubs throw their documented "not yet
  * implemented" error (real implementation begins alongside v0.7,
- * DESIGN_1.md §11).
+ * docs/roadmap.md).
  *
  * The wasm boundary is no longer a stub — see wasm_test.ts.
  */

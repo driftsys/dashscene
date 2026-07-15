@@ -1,7 +1,8 @@
 # Boundary B unified: dashpaint owns the types, every rect resolves, indices are typed
 
     status   accepted (story #4, 2026-07-12)
-    scope    dashpaint, dashscene-core, dashscene-skia; SCOPE_DECISIONS §7/§15
+    scope    dashpaint, dashscene-core, dashscene-skia;
+             docs/archive/2026-07-14-scope-decisions.md §7/§15
 
 ## Context
 
@@ -33,7 +34,7 @@ Option 1, with every rect resolving and typed indices:
   so `Arena::committed()` yields exactly the two values
   `Painter::paint` consumes. Core re-exports what it consumes.
 - Publish order becomes dashbuf → dashpaint → dashscene-core → …
-  (`SCOPE_DECISIONS.md` §7/§15, workspace `Cargo.toml`, `justfile`).
+  (`docs/decisions/house-style.md`, workspace `Cargo.toml`, `justfile`).
 - An unfilled node interns `PaintEntry::default()` — the shared
   draws-nothing entry. `NO_PAINT` is deleted from core's public API;
   `dashbuf`'s `Node.paint_entry` keeps its document-level `uint32::MAX`

@@ -1,4 +1,4 @@
-//! Build-time atlas pipeline (DESIGN_1.md §7.2, build-time half):
+//! Build-time atlas pipeline (docs/design/architecture.md, build-time half):
 //! font + charset → MSDF glyph atlas keyed by GLYPH ID + metrics blob.
 //!
 //! The charset is an input parameter (per-locale charsets arrive with
@@ -35,7 +35,7 @@ pub const ATLAS_METRICS_FILE: &str = "atlas.metrics";
 #[derive(Debug, Clone)]
 pub struct AtlasSpec {
     pub font_path: PathBuf,
-    /// The declared charset (DESIGN_1.md §6.1: coverage comes from
+    /// The declared charset (docs/design/dashc.md: coverage comes from
     /// declared charsets, never from document text).
     pub charset: BTreeSet<char>,
     /// Glyphs only shaping can discover (ligatures, contextual forms)

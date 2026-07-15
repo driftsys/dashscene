@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "wasm/tiny-skia painter — parked until pushed (DESIGN_1.md §8.4)."
+description = "wasm/tiny-skia painter — parked until pushed (docs/design/architecture.md)."
 
 [lib]
 name = "dashscene_web"

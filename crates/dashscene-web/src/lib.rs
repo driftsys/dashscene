@@ -1,3 +1,3 @@
-//! wasm/tiny-skia painter — parked until pushed (DESIGN_1.md §8.4).
+//! wasm/tiny-skia painter — parked until pushed (docs/design/architecture.md).
 //!
-//! Stub — implementation begins at v0.1 (DESIGN_1.md §11).
+//! Stub — implementation begins at v0.1 (docs/roadmap.md).

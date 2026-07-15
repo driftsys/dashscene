@@ -1,4 +1,4 @@
-//! Greedy line breaking + baseline positioning (DESIGN_1.md §7.2,
+//! Greedy line breaking + baseline positioning (docs/design/architecture.md,
 //! Latin subset). Break opportunities: after runs of ASCII space, and
 //! at `'\n'` (the caller splits paragraphs). A word wider than the
 //! maximum width overflows its line — mid-word breaking and UAX #14

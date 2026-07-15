@@ -1,4 +1,4 @@
-//! Runtime text pipeline, Latin subset (DESIGN_1.md §7.2): shape
+//! Runtime text pipeline, Latin subset (docs/design/architecture.md): shape
 //! (rustybuzz, ligatures off) → greedy line break → positioned glyph
 //! runs, with a font-unit shaped-run cache in front of shaping.
 //!
@@ -42,7 +42,7 @@ pub struct Line {
     pub baseline_y: f32,
 }
 
-/// A laid-out text block — DESIGN §7.2's positioned glyph runs. The
+/// A laid-out text block — docs/design/architecture.md's positioned glyph runs. The
 /// render size lives here once (one style per text node in v0.5);
 /// the atlas page field arrives when multi-page atlases exist.
 #[derive(Debug, Clone, PartialEq)]
