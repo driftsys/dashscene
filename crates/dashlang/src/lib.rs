@@ -13,7 +13,7 @@
 //! use dashlang::{Arena, node, rgba, scene};
 //!
 //! let mut arena = Arena::new();
-//! let generation = scene([
+//! let built = scene([
 //!     node("bg")
 //!         .size(320.0, 240.0)
 //!         .fill(rgba(0.1, 0.2, 0.3, 1.0))
@@ -26,12 +26,12 @@
 //! ])
 //! .build(&mut arena);
 //!
-//! assert_eq!(arena.committed().generation(), generation);
+//! assert_eq!(arena.committed().generation(), built.generation());
 //! assert_eq!(arena.committed().rects().len(), 4);
 //! assert_eq!(arena.committed().paints().len(), 2);
 //! ```
 
-use dashscene_core::{EdgeInsets, Layout, NodeId, Prop, Txn};
+use dashscene_core::{EdgeInsets, Layout, LayoutSolver, NodeId, Prop, Txn};
 
 // A DSL consumer needs an `Arena` to build into, a `Color` to fill
 // with, and the v0.2 flex vocabulary's enums; re-exporting all of
@@ -204,21 +204,57 @@ pub struct Scene {
     roots: Vec<Node>,
 }
 
+/// The result of one [`Scene::build`]/[`Scene::build_with`] commit. A
+/// thin wrapper around the commit generation today — the seam issue
+/// #166's reactive layer extends into a live, bindable scene handle
+/// without a second change to `build`'s return type
+/// (`docs/wip/2026-07-15-flex-builder-design.md` D3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Built {
+    generation: u64,
+}
+
+impl Built {
+    /// The commit's generation (`CommittedScene::generation`).
+    pub fn generation(self) -> u64 {
+        self.generation
+    }
+}
+
 impl Scene {
     /// Adds this description's roots to `arena` (appending to whatever
     /// the arena already holds — the DSL is a producer, not an owner)
-    /// and publishes them in exactly one commit. Returns the commit's
-    /// generation.
+    /// and publishes them in exactly one commit, using core's internal
+    /// fixed-geometry resolution (flex intent ignored). A scene with
+    /// flex intent commits through [`Scene::build_with`] and a real
+    /// solver.
     ///
     /// An empty scene still commits: the generation increments, and
     /// changes staged by a previously dropped `Txn` publish (core's
     /// batched-publish staging).
-    pub fn build(&self, arena: &mut Arena) -> u64 {
+    pub fn build(&self, arena: &mut Arena) -> Built {
+        Built {
+            generation: self.stage(arena).commit(),
+        }
+    }
+
+    /// Adds this description's roots to `arena` and publishes them in
+    /// exactly one commit, using `solver` for every node's geometry —
+    /// the entry point a flex scene needs (`dashscene-engine`'s
+    /// `TaffySolver`, injected by the caller so `dashlang` itself never
+    /// depends on the engine).
+    pub fn build_with(&self, arena: &mut Arena, solver: &mut dyn LayoutSolver) -> Built {
+        Built {
+            generation: self.stage(arena).commit_with(solver),
+        }
+    }
+
+    fn stage<'a>(&self, arena: &'a mut Arena) -> Txn<'a> {
         let mut txn = arena.open();
         for root in &self.roots {
             add(&mut txn, None, root);
         }
-        txn.commit()
+        txn
     }
 }
 

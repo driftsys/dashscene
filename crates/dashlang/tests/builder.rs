@@ -9,7 +9,7 @@
 use dashlang::{
     Arena, AxisSizing, Color, CrossAxisAlign, LayoutMode, MainAxisAlign, anon, node, rgba, scene,
 };
-use dashscene_core::{PaintEntry, Prop};
+use dashscene_core::{LayoutSolver, NodeId, PaintEntry, Prop, SolvedRect};
 
 /// The two arenas must have committed to identical painter input, and
 /// the DSL's names must have reached the arena (observable through the
@@ -108,9 +108,9 @@ fn build_appends_to_a_non_empty_arena_and_commits_exactly_once() {
     scene([node("first").size(1.0, 1.0)]).build(&mut arena);
     assert_eq!(arena.committed().generation(), 1);
 
-    let generation = scene([node("second").size(2.0, 2.0)]).build(&mut arena);
+    let built = scene([node("second").size(2.0, 2.0)]).build(&mut arena);
 
-    assert_eq!(generation, 2);
+    assert_eq!(built.generation(), 2);
     assert_eq!(arena.committed().generation(), 2);
     assert_eq!(arena.committed().rects().len(), 2);
     assert_eq!(arena.committed().rects()[1].w, 2.0);
@@ -175,4 +175,38 @@ fn flex_vocabulary_reaches_the_arena_layout() {
     assert_eq!(layout.max_width, Some(100.0));
     assert_eq!(layout.min_height, Some(20.0));
     assert_eq!(layout.max_height, Some(200.0));
+}
+
+struct DoubleWidthSolver;
+
+impl LayoutSolver for DoubleWidthSolver {
+    fn solve(&mut self, arena: &Arena) -> Vec<(NodeId, SolvedRect)> {
+        arena
+            .roots()
+            .iter()
+            .copied()
+            .map(|id| {
+                let layout = arena.layout(id);
+                (
+                    id,
+                    SolvedRect {
+                        x: layout.x,
+                        y: layout.y,
+                        w: layout.width * 2.0,
+                        h: layout.height,
+                    },
+                )
+            })
+            .collect()
+    }
+}
+
+#[test]
+fn build_with_routes_through_the_injected_solver() {
+    let mut arena = Arena::new();
+    let built =
+        scene([node("only").size(10.0, 20.0)]).build_with(&mut arena, &mut DoubleWidthSolver);
+
+    assert_eq!(built.generation(), 1);
+    assert_eq!(arena.committed().rects()[0].w, 20.0);
 }
