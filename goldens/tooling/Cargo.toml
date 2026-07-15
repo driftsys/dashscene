@@ -14,6 +14,7 @@ skia-safe.workspace = true
 [dev-dependencies]
 dashlang.workspace = true
 tempfile.workspace = true
+dashcue.workspace = true
 dashpaint.workspace = true
 dashscene-core.workspace = true
 dashscene-engine.workspace = true

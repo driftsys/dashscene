@@ -22,7 +22,7 @@ missing proof must be visible.
 | E2 Arabic golden-stable           | R1       | open — v0.6 (epic #31)                    |
 | E3 stress corpus green            | R2       | partial — v0.8 (epic #42, issue #46 open) |
 | E4 dirty Figma file → report      | R6       | open — v0.7 (epic #36)                    |
-| E5 variant switch via FLIP        | R4       | open — v0.4 (epic #19)                    |
+| E5 variant switch via FLIP        | R4       | **met**                                   |
 | E6 byte-identical `.dsb`          | R7       | **met**                                   |
 
 The file carries no version in its name. "v0 exit criteria" is a heading
@@ -40,6 +40,28 @@ case plus an executable test in the crate that owns the construct:
 
 `wrap`, `grid spans`, `baseline`, and `variant topology change` have no test
 yet. See `corpus/dsl-generated/README.md` for the case-by-case status.
+
+### E5 — met
+
+R4 requires animation to be reproducible in tests. `goldens/tooling/tests/v04_flip.rs`
+(`variant_transition_goldens_at_t_0_half_and_1`) proves it end to end: a
+`set_variant` switch that moves and grows one node is solved before and after by
+the retained `TaffySolver` (issue #164), a `VariantFlip` binds the declared
+`VariantTransition` onto `dashcue`'s scheduler (issue #22), and a fixed-step
+`advance` then `sample` reads the animated geometry at t = 0, t = 0.5, and t = 1.
+Each sample is composed into a full rect set and committed through a fixed-rect
+`LayoutSolver` (the `CachedSolver` pattern of `crates/dashlang/src/reactive.rs`),
+then rendered through the Skia reference painter and compared against the
+checked-in goldens `goldens/images/v04-flip-t000.png`, `v04-flip-t050.png`, and
+`v04-flip-t100.png`.
+
+Determinism: the 1-second linear tween lands t = 0.5 on the exact midpoint, and
+every authored coordinate and every midpoint is an integer, so the solid fills
+are integer-aligned and the three goldens compare exactly — no anti-aliasing
+tolerance, the same bit-stable comparison the v0.2 flex goldens use
+(`docs/decisions/golden-comparison-space.md`). `dashcue`'s IEEE-754 fixed-step
+advance is bit-identical on re-run (`crates/dashscene-engine/tests/flip.rs`
+proves a spring FLIP replays bit-for-bit).
 
 ### E6 — met
 
