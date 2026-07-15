@@ -33,6 +33,16 @@
 
 use dashscene_core::{EdgeInsets, Layout, LayoutSolver, NodeId, Prop, Txn};
 
+mod reactive;
+
+// The reactive layer (issue #166): signals, bindings, transforms, and
+// the per-frame flush. Declared on this crate's `Node`/`Scene`, so the
+// authoring surface is one import path.
+pub use reactive::{
+    Channel, ClosureId, FormatSpec, LiveScene, Mapped, ScalarExpr, Signal, SignalValue, Spring,
+    TextExpr, Transform,
+};
+
 // A DSL consumer needs an `Arena` to build into, a `Color` to fill
 // with, and the v0.2 flex vocabulary's enums; re-exporting all of them
 // keeps authoring and solving a scene (via `build`/`build_with` with an
@@ -67,6 +77,7 @@ pub fn rgba(r: f32, g: f32, b: f32, a: f32) -> Color {
 pub fn scene(roots: impl IntoIterator<Item = Node>) -> Scene {
     Scene {
         roots: roots.into_iter().collect(),
+        ..Scene::default()
     }
 }
 
@@ -83,6 +94,12 @@ pub struct Node {
     layout: Layout,
     fill: Option<Color>,
     children: Vec<Node>,
+    // Reactive declarations (issue #166), resolved to targets at build.
+    // Inert for the non-live `build`/`build_with` paths.
+    scalar_bindings: Vec<(Channel, ScalarExpr)>,
+    smoothing: Vec<(Channel, Spring)>,
+    text_binding: Option<TextExpr>,
+    visible_binding: Option<u32>,
 }
 
 impl Node {
@@ -204,10 +221,25 @@ impl Node {
     }
 }
 
-/// A scene description, built from [`scene`].
-#[derive(Debug)]
+/// A scene description, built from [`scene`] or the [`Scene::new`]
+/// builder. Carries the signal declarations the reactive layer (issue
+/// #166) resolves at [`Scene::build_live`]; empty for the non-live
+/// paths.
+#[derive(Debug, Default)]
 pub struct Scene {
     roots: Vec<Node>,
+    // Signal initial values, in declaration order. `SignalValue::declare`
+    // pushes here; `build_live` moves them into the `LiveScene`.
+    scalar_inits: Vec<f32>,
+    bool_inits: Vec<bool>,
+}
+
+impl Scene {
+    /// An empty scene builder — declare signals with [`Scene::signal`],
+    /// then set roots with [`Scene::roots`].
+    pub fn new() -> Self {
+        Self::default()
+    }
 }
 
 /// The result of one [`Scene::build`]/[`Scene::build_with`] commit. A
@@ -267,6 +299,17 @@ impl Scene {
 
 fn add(txn: &mut Txn<'_>, parent: Option<NodeId>, node: &Node) {
     let id = txn.add_node(parent, node.name.as_deref());
+    set_base_props(txn, id, node);
+    for child in &node.children {
+        add(txn, Some(id), child);
+    }
+}
+
+/// Stage the base (non-reactive) props for one already-added node — the
+/// authored geometry, flex vocabulary, and fill. Shared by the non-live
+/// [`Scene::build`] path ([`add`]) and the reactive `build_live` path,
+/// so a node's base props are set one way only.
+pub(crate) fn set_base_props(txn: &mut Txn<'_>, id: NodeId, node: &Node) {
     txn.set_prop(id, Prop::X(node.layout.x));
     txn.set_prop(id, Prop::Y(node.layout.y));
     txn.set_prop(id, Prop::Width(node.layout.width));
@@ -309,8 +352,5 @@ fn add(txn: &mut Txn<'_>, parent: Option<NodeId>, node: &Node) {
     }
     if let Some(color) = node.fill {
         txn.set_prop(id, Prop::Fill(color));
-    }
-    for child in &node.children {
-        add(txn, Some(id), child);
     }
 }

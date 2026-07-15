@@ -12,3 +12,14 @@ name = "dashlang"
 
 [dependencies]
 dashscene-core.workspace = true
+# The reactive layer smooths bound props through dashcue's scheduler and
+# reuses its opaque `PropKey` as the binding address (docs/archive/
+# 2026-07-14-scope-decisions.md §23 D1). dashlang depending on both core
+# and dashcue is what keeps core clear of the animation crate (SCOPE §9).
+dashcue.workspace = true
+
+[dev-dependencies]
+# The reflow acceptance cases (A3/A4) need the real flex/`Display::None`
+# solve, which lives in the engine. A dev-dependency only: dashlang's
+# library never depends on the engine (the solver is injected).
+dashscene-engine.workspace = true

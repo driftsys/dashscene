@@ -1,0 +1,941 @@
+//! The reactive layer: signals, bindings, transforms, and the
+//! per-frame flush (issue #166; docs/wip/2026-07-13-reactive-bindings-spec.md,
+//! decisions D1–D4 and D8; docs/archive/2026-07-14-scope-decisions.md §23).
+//!
+//! A producer declares **signals** on a [`Scene`], **binds** signal
+//! values to node props through a declarative **transform** vocabulary,
+//! and then drives a live scene at 60 Hz through one commit per
+//! [`LiveScene::tick`]. `dashscene-core` is unchanged: the whole layer
+//! lives here, because a signal's value is a *result* (P1 keeps results
+//! out of the document) and the reactive graph sits on no crate boundary
+//! (D1). `dashlang` depending on both `dashscene-core` and `dashcue` is
+//! what keeps core clear of the animation crate (SCOPE §9), by
+//! construction.
+//!
+//! The design's load-bearing simplifications, honoured here:
+//!
+//! - **A binding connects data to one prop on one node — never two
+//!   nodes** (the Non-goals section). "When the list grows, the panel
+//!   below it moves" is layout, resolved by the solver, not a signal
+//!   edge (P2).
+//! - **Bindings are explicit and declarative, never implicitly tracked**
+//!   (D2). Each binding names its source signal, its target
+//!   [`Channel`], and a [`Transform`]. The graph is a flat table known
+//!   before anything runs, so a write is statically classifiable as
+//!   layout-affecting or paint-only — which is what lets a contained
+//!   scalar write skip the solve (A1).
+//! - **Signals are push-on-flush, never pull-on-paint** (P3). A signal's
+//!   value is read only during [`LiveScene::tick`]'s flush, never by the
+//!   renderer.
+//! - **Bindings resolve to a target at build**, so a producer never
+//!   handles a [`dashscene_core::NodeId`] and cannot hold a stale one.
+
+use std::collections::HashMap;
+use std::marker::PhantomData;
+
+use dashcue::{PropKey, Scheduler, TransitionSpec};
+use dashscene_core::{
+    Arena, AxisSizing, Layout, LayoutMode, LayoutSolver, NodeId, Prop, SolvedRect,
+};
+
+use crate::{Node, Scene};
+
+mod private {
+    pub trait Sealed {}
+    impl Sealed for f32 {}
+    impl Sealed for bool {}
+}
+
+/// One scalar prop slot a binding can target — the address the design's
+/// `PropKey` names as `node index ++ channel`. Every channel here is
+/// layout-affecting; the paint channels (`Fill.r`, …) and `Gap` the
+/// design also lists are deliberate follow-ups, not needed by the v0.4
+/// acceptance cases (text covers the paint-only path, A2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Channel {
+    X,
+    Y,
+    Width,
+    Height,
+}
+
+impl Channel {
+    fn code(self) -> u32 {
+        match self {
+            Channel::X => 0,
+            Channel::Y => 1,
+            Channel::Width => 2,
+            Channel::Height => 3,
+        }
+    }
+}
+
+fn prop_for(channel: Channel, v: f32) -> Prop {
+    match channel {
+        Channel::X => Prop::X(v),
+        Channel::Y => Prop::Y(v),
+        Channel::Width => Prop::Width(v),
+        Channel::Height => Prop::Height(v),
+    }
+}
+
+/// The initial authored value of `channel`, read from a node's builder
+/// layout — the datum a spring smooths *from* before any signal changes.
+fn initial_channel_value(layout: &Layout, channel: Channel) -> f32 {
+    match channel {
+        Channel::X => layout.x,
+        Channel::Y => layout.y,
+        Channel::Width => layout.width,
+        Channel::Height => layout.height,
+    }
+}
+
+/// A stable index into a [`ClosureId`]-keyed table. A `Custom` transform
+/// stores only this id, not the closure, so the [`Transform`] enum stays
+/// plain data that a future `.dsb` schema could serialise — the closure
+/// itself lives in a `dashlang`-only side table and a compiled `Custom`
+/// binding is a named diagnostic rather than a silent drop (D8).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClosureId(u32);
+
+/// A declarative numeric-to-text format — the one text transform that is
+/// not a closure, so it survives into a serialised binding table (D8).
+/// Renders `prefix` + the value at `decimals` fixed places + `suffix`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FormatSpec {
+    pub prefix: String,
+    pub decimals: u8,
+    pub suffix: String,
+}
+
+impl FormatSpec {
+    pub fn new(prefix: impl Into<String>, decimals: u8, suffix: impl Into<String>) -> Self {
+        Self {
+            prefix: prefix.into(),
+            decimals,
+            suffix: suffix.into(),
+        }
+    }
+
+    fn apply(&self, v: f32) -> String {
+        format!(
+            "{}{:.*}{}",
+            self.prefix, self.decimals as usize, v, self.suffix
+        )
+    }
+}
+
+/// The bounded, declarative transform vocabulary (D8). Everything a
+/// designer can express in Figma lives in the non-`Custom` subset, so
+/// the validator can reason about it and it can serialise to `.dsb` at
+/// v0.7. `Custom` is the `dashlang`-only escape hatch: an arbitrary Rust
+/// closure, referenced by [`ClosureId`] because closures do not
+/// serialise.
+///
+/// A scalar-channel binding uses `Identity` / `Scale` / `MapRange` /
+/// `Clamp` / `Custom`; a text binding uses `Format` / `Custom`. The
+/// binding's target kind selects which closure table a `Custom` id
+/// indexes.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Transform {
+    Identity,
+    Scale(f32),
+    MapRange {
+        in_lo: f32,
+        in_hi: f32,
+        out_lo: f32,
+        out_hi: f32,
+    },
+    Clamp {
+        lo: f32,
+        hi: f32,
+    },
+    Format(FormatSpec),
+    Custom(ClosureId),
+}
+
+fn eval_scalar(transform: &Transform, closures: &[Box<dyn Fn(f32) -> f32>], v: f32) -> f32 {
+    match transform {
+        Transform::Identity => v,
+        Transform::Scale(factor) => v * factor,
+        Transform::MapRange {
+            in_lo,
+            in_hi,
+            out_lo,
+            out_hi,
+        } => {
+            let span = in_hi - in_lo;
+            let t = if span == 0.0 { 0.0 } else { (v - in_lo) / span };
+            out_lo + t * (out_hi - out_lo)
+        }
+        Transform::Clamp { lo, hi } => v.clamp(*lo, *hi),
+        Transform::Custom(id) => closures[id.0 as usize](v),
+        // A scalar binding never carries a Format transform (the builder
+        // only produces Format through the text path); return the input
+        // unchanged rather than panicking inside the frame loop.
+        Transform::Format(_) => v,
+    }
+}
+
+fn eval_text(transform: &Transform, closures: &[Box<dyn Fn(f32) -> String>], v: f32) -> String {
+    match transform {
+        Transform::Format(spec) => spec.apply(v),
+        Transform::Custom(id) => closures[id.0 as usize](v),
+        // A text binding never carries a scalar transform.
+        _ => String::new(),
+    }
+}
+
+/// A per-prop spring, following `dashcue`'s stiffness + damping-ratio
+/// model so a Compose `SpringSpec` maps onto it as data. `smooth` binds
+/// one to a channel: the signal sets the spring's target, and the
+/// scheduler drives the actual value (D4).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Spring {
+    pub stiffness: f32,
+    pub damping_ratio: f32,
+}
+
+impl Spring {
+    pub fn new(stiffness: f32, damping_ratio: f32) -> Self {
+        Self {
+            stiffness,
+            damping_ratio,
+        }
+    }
+
+    /// A critically-damped spring (`damping_ratio = 1`) whose natural
+    /// period is `response` seconds — the fastest approach with no
+    /// overshoot. Stiffness follows from the period: `ω = 2π / response`,
+    /// `stiffness = ω²`.
+    pub fn critically_damped(response: f32) -> Self {
+        let omega = std::f32::consts::TAU / response;
+        Self {
+            stiffness: omega * omega,
+            damping_ratio: 1.0,
+        }
+    }
+
+    fn spec(self) -> TransitionSpec {
+        TransitionSpec::Spring {
+            stiffness: self.stiffness,
+            damping_ratio: self.damping_ratio,
+        }
+    }
+}
+
+/// A typed handle to a signal owned by a [`Scene`] / [`LiveScene`].
+/// Signals cannot be free-standing values: two nodes must be able to
+/// bind the same one, and identity needs an owner, which is the builder
+/// (D2, "The authoring surface"). `T` is `f32` or `bool`.
+pub struct Signal<T> {
+    id: u32,
+    marker: PhantomData<fn() -> T>,
+}
+
+impl<T> Clone for Signal<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for Signal<T> {}
+
+impl<T> std::fmt::Debug for Signal<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Signal").field("id", &self.id).finish()
+    }
+}
+
+/// The value type of a signal — `f32` or `bool`. Sealed: the reactive
+/// layer stores exactly these two scalar spaces.
+pub trait SignalValue: private::Sealed + Copy {
+    #[doc(hidden)]
+    fn declare(scene: &mut Scene, initial: Self) -> u32;
+    #[doc(hidden)]
+    fn store(live: &mut LiveScene, id: u32, value: Self);
+}
+
+impl SignalValue for f32 {
+    fn declare(scene: &mut Scene, initial: Self) -> u32 {
+        let id = scene.scalar_inits.len() as u32;
+        scene.scalar_inits.push(initial);
+        id
+    }
+
+    fn store(live: &mut LiveScene, id: u32, value: Self) {
+        live.scalars[id as usize] = value;
+        live.scalar_dirty[id as usize] = true;
+    }
+}
+
+impl SignalValue for bool {
+    fn declare(scene: &mut Scene, initial: Self) -> u32 {
+        let id = scene.bool_inits.len() as u32;
+        scene.bool_inits.push(initial);
+        id
+    }
+
+    fn store(live: &mut LiveScene, id: u32, value: Self) {
+        live.bools[id as usize] = value;
+        live.bool_dirty[id as usize] = true;
+    }
+}
+
+/// A closure applied to a scalar signal, produced by [`Signal::map`].
+/// `U` is `f32` for a scalar-channel binding or `String` for a text
+/// binding; `From` lowers it to a [`ScalarExpr`] or [`TextExpr`] at the
+/// `bind` / `bind_text` call.
+pub struct Mapped<U> {
+    signal: u32,
+    f: Box<dyn Fn(f32) -> U>,
+}
+
+impl<U> std::fmt::Debug for Mapped<U> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Mapped")
+            .field("signal", &self.signal)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Signal<f32> {
+    /// The `Custom` escape hatch: an arbitrary closure over the signal's
+    /// value. The return type picks the binding kind — `f32` binds to a
+    /// scalar channel, `String` to text.
+    pub fn map<U, F: Fn(f32) -> U + 'static>(self, f: F) -> Mapped<U> {
+        Mapped {
+            signal: self.id,
+            f: Box::new(f),
+        }
+    }
+
+    /// A declarative scale: the channel takes `value * factor`.
+    pub fn scale(self, factor: f32) -> ScalarExpr {
+        ScalarExpr {
+            signal: self.id,
+            kind: ScalarKind::Data(Transform::Scale(factor)),
+        }
+    }
+
+    /// A declarative linear remap from `[in_lo, in_hi]` to
+    /// `[out_lo, out_hi]` (unclamped — compose with [`Signal::clamp`]).
+    pub fn map_range(self, in_lo: f32, in_hi: f32, out_lo: f32, out_hi: f32) -> ScalarExpr {
+        ScalarExpr {
+            signal: self.id,
+            kind: ScalarKind::Data(Transform::MapRange {
+                in_lo,
+                in_hi,
+                out_lo,
+                out_hi,
+            }),
+        }
+    }
+
+    /// A declarative clamp to `[lo, hi]`.
+    pub fn clamp(self, lo: f32, hi: f32) -> ScalarExpr {
+        ScalarExpr {
+            signal: self.id,
+            kind: ScalarKind::Data(Transform::Clamp { lo, hi }),
+        }
+    }
+
+    /// A declarative numeric-to-text format for [`Node::bind_text`].
+    pub fn format(self, spec: FormatSpec) -> TextExpr {
+        TextExpr {
+            signal: self.id,
+            kind: TextKind::Format(spec),
+        }
+    }
+}
+
+/// A scalar-channel binding expression: a source signal plus a transform
+/// to `f32`. Built via [`Signal::scale`] / [`Signal::map_range`] /
+/// [`Signal::clamp`] / [`Signal::map`], or `From<Signal<f32>>` for the
+/// identity transform.
+pub struct ScalarExpr {
+    signal: u32,
+    kind: ScalarKind,
+}
+
+enum ScalarKind {
+    Data(Transform),
+    Custom(Box<dyn Fn(f32) -> f32>),
+}
+
+impl std::fmt::Debug for ScalarExpr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ScalarExpr")
+            .field("signal", &self.signal)
+            .finish_non_exhaustive()
+    }
+}
+
+impl From<Signal<f32>> for ScalarExpr {
+    fn from(signal: Signal<f32>) -> Self {
+        ScalarExpr {
+            signal: signal.id,
+            kind: ScalarKind::Data(Transform::Identity),
+        }
+    }
+}
+
+impl From<Mapped<f32>> for ScalarExpr {
+    fn from(mapped: Mapped<f32>) -> Self {
+        ScalarExpr {
+            signal: mapped.signal,
+            kind: ScalarKind::Custom(mapped.f),
+        }
+    }
+}
+
+/// A text binding expression: a source signal plus a transform to
+/// `String`. Built via [`Signal::format`] or [`Signal::map`].
+pub struct TextExpr {
+    signal: u32,
+    kind: TextKind,
+}
+
+enum TextKind {
+    Format(FormatSpec),
+    Custom(Box<dyn Fn(f32) -> String>),
+}
+
+impl std::fmt::Debug for TextExpr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TextExpr")
+            .field("signal", &self.signal)
+            .finish_non_exhaustive()
+    }
+}
+
+impl From<Mapped<String>> for TextExpr {
+    fn from(mapped: Mapped<String>) -> Self {
+        TextExpr {
+            signal: mapped.signal,
+            kind: TextKind::Custom(mapped.f),
+        }
+    }
+}
+
+impl Node {
+    /// Bind a scalar channel to a signal expression. Resolved to a
+    /// target at build, so the producer never names a `NodeId`.
+    pub fn bind(mut self, channel: Channel, expr: impl Into<ScalarExpr>) -> Self {
+        self.scalar_bindings.push((channel, expr.into()));
+        self
+    }
+
+    /// Smooth a bound channel through a spring: the bound signal sets the
+    /// spring's target, and the scheduler drives the value (D4). Inert
+    /// unless the same channel also carries a [`Node::bind`].
+    pub fn smooth(mut self, channel: Channel, spring: Spring) -> Self {
+        self.smoothing.push((channel, spring));
+        self
+    }
+
+    /// Bind the node's text content to a signal expression.
+    pub fn bind_text(mut self, expr: impl Into<TextExpr>) -> Self {
+        self.text_binding = Some(expr.into());
+        self
+    }
+
+    /// Bind the node's visibility to a boolean signal. `Visible` is
+    /// layout-affecting: a flip reflows siblings (D7).
+    pub fn visible_when(mut self, signal: Signal<bool>) -> Self {
+        self.visible_binding = Some(signal.id);
+        self
+    }
+}
+
+/// A binding resolved to its target at build. `node` is the write
+/// target; `key` addresses the scheduler track when `smoothing` is set.
+struct ScalarBinding {
+    node: NodeId,
+    parent: Option<NodeId>,
+    channel: Channel,
+    signal: u32,
+    transform: Transform,
+    /// Whether a write to this binding's channel changes only this node's
+    /// own rect, so the commit can patch one cached rect and skip the
+    /// solve (A1). Requires both an ancestor-contained node (no upward
+    /// escape) and a write that moves no descendant — see
+    /// [`write_is_single_rect`].
+    patchable: bool,
+    smoothing: Option<TransitionSpec>,
+    key: PropKey,
+    /// The last value driven to the channel — the spring's `from` when a
+    /// fresh track starts.
+    last_applied: f32,
+}
+
+struct TextBinding {
+    node: NodeId,
+    signal: u32,
+    transform: Transform,
+}
+
+struct VisibleBinding {
+    node: NodeId,
+    signal: u32,
+}
+
+/// One cached solved rect patched in place for a contained write.
+#[derive(Clone, Copy)]
+enum Patch {
+    X(f32),
+    Y(f32),
+    W(f32),
+    H(f32),
+}
+
+/// Whether a write to `channel` changes only the node's own rect (the
+/// node is already known to be ancestor-contained), so the commit can
+/// patch one cached rect instead of solving. A size change never moves a
+/// passthrough (mode-`None`) node's absolutely-placed children, but it
+/// redistributes a flex node's children; a position change moves every
+/// child. So a non-leaf X/Y write, or a non-leaf non-passthrough size
+/// write, is not single-rect and must re-solve.
+fn write_is_single_rect(channel: Channel, has_children: bool, passthrough: bool) -> bool {
+    match channel {
+        Channel::X | Channel::Y => !has_children,
+        Channel::Width | Channel::Height => !has_children || passthrough,
+    }
+}
+
+fn resolve_patch(
+    channel: Channel,
+    v: f32,
+    parent: Option<NodeId>,
+    cached: &[(NodeId, SolvedRect)],
+    index: &HashMap<NodeId, usize>,
+) -> Patch {
+    // A contained write moves no ancestor, so the parent's absolute
+    // origin is still whatever the last solve put in the cache.
+    let parent_origin = |axis: fn(&SolvedRect) -> f32| -> f32 {
+        parent.map_or(0.0, |p| axis(&cached[index[&p]].1))
+    };
+    match channel {
+        Channel::Width => Patch::W(v),
+        Channel::Height => Patch::H(v),
+        Channel::X => Patch::X(parent_origin(|r| r.x) + v),
+        Channel::Y => Patch::Y(parent_origin(|r| r.y) + v),
+    }
+}
+
+fn apply_patch(rect: &mut SolvedRect, patch: Patch) {
+    match patch {
+        Patch::X(x) => rect.x = x,
+        Patch::Y(y) => rect.y = y,
+        Patch::W(w) => rect.w = w,
+        Patch::H(h) => rect.h = h,
+    }
+}
+
+/// A [`LayoutSolver`] that replays a fixed set of rects — the retained
+/// geometry the reactive layer keeps between solves. Feeding it to
+/// `commit_with` publishes a paint-only or contained-scalar change
+/// without invoking the real solver, which is how a contained write
+/// performs no layout solve (A1). Core is unchanged: the "no solve"
+/// decision lives entirely in `dashlang`.
+struct CachedSolver {
+    rects: Vec<(NodeId, SolvedRect)>,
+}
+
+impl LayoutSolver for CachedSolver {
+    fn solve(&mut self, _arena: &Arena) -> Vec<(NodeId, SolvedRect)> {
+        self.rects.clone()
+    }
+}
+
+/// Accumulates resolved bindings while the node tree is staged.
+#[derive(Default)]
+struct BuildCtx {
+    /// The dense node index packed into a scheduler `PropKey` — assigned
+    /// in DFS order so a node's key is unique across the scene.
+    dense: u32,
+    scalar: Vec<ScalarBinding>,
+    text: Vec<TextBinding>,
+    visible: Vec<VisibleBinding>,
+    scalar_closures: Vec<Box<dyn Fn(f32) -> f32>>,
+    text_closures: Vec<Box<dyn Fn(f32) -> String>>,
+}
+
+/// A live, bindable scene: signal state, the resolved binding tables,
+/// the `dashcue` scheduler, and the retained geometry that lets a
+/// contained write skip the solve. Produced by [`Scene::build_live`],
+/// advanced by [`LiveScene::tick`].
+pub struct LiveScene {
+    solver: Box<dyn LayoutSolver>,
+    scheduler: Scheduler,
+    scalars: Vec<f32>,
+    bools: Vec<bool>,
+    scalar_dirty: Vec<bool>,
+    bool_dirty: Vec<bool>,
+    scalar_bindings: Vec<ScalarBinding>,
+    text_bindings: Vec<TextBinding>,
+    visible_bindings: Vec<VisibleBinding>,
+    scalar_closures: Vec<Box<dyn Fn(f32) -> f32>>,
+    text_closures: Vec<Box<dyn Fn(f32) -> String>>,
+    /// Scheduler key (`PropKey.0`) → index into `scalar_bindings`, for
+    /// the smoothed bindings only.
+    key_index: HashMap<u64, usize>,
+    /// The last solved geometry, in DFS/committed order.
+    cached_solve: Vec<(NodeId, SolvedRect)>,
+    cached_index: HashMap<NodeId, usize>,
+    generation: u64,
+}
+
+impl LiveScene {
+    /// Push a new value into a signal. Marks the signal's bindings for
+    /// the next flush; nothing is recomputed until [`LiveScene::tick`]
+    /// (push-on-flush, P3).
+    pub fn set<T: SignalValue>(&mut self, signal: Signal<T>, value: T) {
+        T::store(self, signal.id, value);
+    }
+
+    /// The generation of the most recent commit.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Advance one frame: open one `Txn`, flush every dirty binding,
+    /// advance the scheduler and write each live track, then commit (D4).
+    /// A frame that changed only paint props or only contained scalars
+    /// commits through the retained geometry and never calls the real
+    /// solver; a frame that reflowed re-solves and refreshes the cache.
+    pub fn tick(&mut self, dt: f32, arena: &mut Arena) -> u64 {
+        let mut layout_dirty = false;
+        let mut patches: Vec<(usize, Patch)> = Vec::new();
+
+        let mut txn = arena.open();
+
+        // 1. Scalar bindings whose source signal changed. A smoothed
+        //    binding sets the spring's target; the scheduler drains
+        //    below. A direct binding writes now, and is patched (if
+        //    contained) or forces a solve.
+        for b in &mut self.scalar_bindings {
+            if !self.scalar_dirty[b.signal as usize] {
+                continue;
+            }
+            let raw = self.scalars[b.signal as usize];
+            let v = eval_scalar(&b.transform, &self.scalar_closures, raw);
+            if let Some(spec) = &b.smoothing {
+                let from = self.scheduler.sample(b.key).unwrap_or(b.last_applied);
+                self.scheduler.start(b.key, from, v, spec.clone(), 0.0);
+            } else {
+                txn.set_prop(b.node, prop_for(b.channel, v));
+                b.last_applied = v;
+                if b.patchable {
+                    let idx = self.cached_index[&b.node];
+                    let patch = resolve_patch(
+                        b.channel,
+                        v,
+                        b.parent,
+                        &self.cached_solve,
+                        &self.cached_index,
+                    );
+                    patches.push((idx, patch));
+                } else {
+                    layout_dirty = true;
+                }
+            }
+        }
+
+        // 2. Text bindings. Text inside a fixed box is paint-only: it
+        //    never forces a solve (A2). A hug text node that reflows on
+        //    text change needs the measure callback and is future work.
+        for b in &self.text_bindings {
+            if !self.scalar_dirty[b.signal as usize] {
+                continue;
+            }
+            let raw = self.scalars[b.signal as usize];
+            let s = eval_text(&b.transform, &self.text_closures, raw);
+            txn.set_prop(b.node, Prop::Text(s));
+        }
+
+        // 3. Visibility bindings. `Visible` is layout-affecting (D7): a
+        //    flip reflows siblings, so it always forces a solve (A3, A4).
+        for b in &self.visible_bindings {
+            if !self.bool_dirty[b.signal as usize] {
+                continue;
+            }
+            txn.set_prop(b.node, Prop::Visible(self.bools[b.signal as usize]));
+            layout_dirty = true;
+        }
+
+        // 4. Advance the scheduler and write every live track. In-flight
+        //    springs keep producing values after their signal stopped
+        //    changing, so this drains every frame, independent of the
+        //    dirty set.
+        self.scheduler.advance(dt);
+        let samples: Vec<(PropKey, f32)> = self.scheduler.samples().collect();
+        for (key, value) in samples {
+            let bi = self.key_index[&key.0];
+            let (node, channel, patchable, parent) = {
+                let b = &self.scalar_bindings[bi];
+                (b.node, b.channel, b.patchable, b.parent)
+            };
+            txn.set_prop(node, prop_for(channel, value));
+            self.scalar_bindings[bi].last_applied = value;
+            if patchable {
+                let idx = self.cached_index[&node];
+                let patch = resolve_patch(
+                    channel,
+                    value,
+                    parent,
+                    &self.cached_solve,
+                    &self.cached_index,
+                );
+                patches.push((idx, patch));
+            } else {
+                layout_dirty = true;
+            }
+        }
+
+        // 5. One commit. A reflow re-solves and refreshes the cache; a
+        //    contained/paint-only frame patches the cache and replays it,
+        //    so the real solver is never called.
+        let generation = if layout_dirty {
+            txn.commit_with(&mut *self.solver)
+        } else {
+            for (i, patch) in &patches {
+                apply_patch(&mut self.cached_solve[*i].1, *patch);
+            }
+            let mut cached = CachedSolver {
+                rects: self.cached_solve.clone(),
+            };
+            txn.commit_with(&mut cached)
+        };
+
+        if layout_dirty {
+            refresh_cache(arena, &mut self.cached_solve);
+        }
+
+        for d in &mut self.scalar_dirty {
+            *d = false;
+        }
+        for d in &mut self.bool_dirty {
+            *d = false;
+        }
+
+        self.generation = generation;
+        generation
+    }
+}
+
+/// Rebuild the retained geometry from the committed buffer after a real
+/// solve. The DFS order is invariant for a static tree, so the
+/// node→index map does not change.
+fn refresh_cache(arena: &Arena, cached: &mut Vec<(NodeId, SolvedRect)>) {
+    let committed = arena.committed();
+    *cached = committed
+        .rects()
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            (
+                committed.node_of(i as u32),
+                SolvedRect {
+                    x: r.x,
+                    y: r.y,
+                    w: r.w,
+                    h: r.h,
+                },
+            )
+        })
+        .collect();
+}
+
+impl Scene {
+    /// Declare a signal with an initial value, returning a handle two or
+    /// more nodes can bind. `T` is `f32` or `bool`.
+    pub fn signal<T: SignalValue>(&mut self, initial: T) -> Signal<T> {
+        let id = T::declare(self, initial);
+        Signal {
+            id,
+            marker: PhantomData,
+        }
+    }
+
+    /// Set (replacing) the scene's roots. The builder form the reactive
+    /// authoring surface uses: declare signals, then set the roots that
+    /// bind them.
+    pub fn roots(&mut self, roots: impl IntoIterator<Item = Node>) -> &mut Self {
+        self.roots = roots.into_iter().collect();
+        self
+    }
+
+    /// Build into `arena` and return a [`LiveScene`] the producer drives
+    /// per frame. Assigns `NodeId`s, resolves every declared binding to
+    /// its target, seeds each bound prop from its signal's initial value,
+    /// and commits once through `solver` — which the live scene then owns
+    /// and reuses for every reflow.
+    ///
+    /// Distinct from [`Scene::build`], which returns only a
+    /// [`crate::Built`] generation: a live scene needs to retain the
+    /// solver, the scheduler, and the binding tables, so it is its own
+    /// entry point rather than a change to `build`'s return type
+    /// (docs/decisions/dashlang-flex-vocabulary.md D3).
+    pub fn build_live(self, arena: &mut Arena, mut solver: Box<dyn LayoutSolver>) -> LiveScene {
+        let mut ctx = BuildCtx::default();
+
+        let generation = {
+            let mut txn = arena.open();
+            for root in self.roots {
+                stage_live(&mut txn, None, root, true, &mut ctx);
+            }
+
+            // Seed each bound prop from its signal's initial value, so
+            // the first committed scene is consistent with the signals.
+            for b in &mut ctx.scalar {
+                let raw = self.scalar_inits[b.signal as usize];
+                let v = eval_scalar(&b.transform, &ctx.scalar_closures, raw);
+                txn.set_prop(b.node, prop_for(b.channel, v));
+                b.last_applied = v;
+            }
+            for b in &ctx.text {
+                let raw = self.scalar_inits[b.signal as usize];
+                let s = eval_text(&b.transform, &ctx.text_closures, raw);
+                txn.set_prop(b.node, Prop::Text(s));
+            }
+            for b in &ctx.visible {
+                txn.set_prop(b.node, Prop::Visible(self.bool_inits[b.signal as usize]));
+            }
+
+            txn.commit_with(&mut *solver)
+        };
+
+        let mut cached_solve = Vec::new();
+        refresh_cache(arena, &mut cached_solve);
+        let cached_index = cached_solve
+            .iter()
+            .enumerate()
+            .map(|(i, (id, _))| (*id, i))
+            .collect();
+
+        let mut key_index = HashMap::new();
+        for (i, b) in ctx.scalar.iter().enumerate() {
+            if b.smoothing.is_some() {
+                key_index.insert(b.key.0, i);
+            }
+        }
+
+        let scalars = self.scalar_inits;
+        let bools = self.bool_inits;
+        let scalar_dirty = vec![false; scalars.len()];
+        let bool_dirty = vec![false; bools.len()];
+
+        LiveScene {
+            solver,
+            scheduler: Scheduler::new(),
+            scalars,
+            bools,
+            scalar_dirty,
+            bool_dirty,
+            scalar_bindings: ctx.scalar,
+            text_bindings: ctx.text,
+            visible_bindings: ctx.visible,
+            scalar_closures: ctx.scalar_closures,
+            text_closures: ctx.text_closures,
+            key_index,
+            cached_solve,
+            cached_index,
+            generation,
+        }
+    }
+}
+
+/// Stage one node and its subtree, resolving its bindings to `NodeId`
+/// targets. Consumes the node so a `Custom` transform's closure moves
+/// into the closure table (closures are not `Clone`).
+///
+/// `contained` is whether a size change on this node stays in its own
+/// subtree: true for a root (roots are independent islands), and
+/// propagated to children only through a passthrough, non-hug parent
+/// (the design's containment rule — every ancestor to the root is fixed
+/// or fill).
+fn stage_live(
+    txn: &mut dashscene_core::Txn<'_>,
+    parent: Option<NodeId>,
+    node: Node,
+    contained: bool,
+    ctx: &mut BuildCtx,
+) {
+    let id = txn.add_node(parent, node.name.as_deref());
+    crate::set_base_props(txn, id, &node);
+
+    let Node {
+        layout,
+        scalar_bindings,
+        smoothing,
+        text_binding,
+        visible_binding,
+        children,
+        ..
+    } = node;
+
+    let dense = ctx.dense;
+    ctx.dense += 1;
+
+    let has_children = !children.is_empty();
+    let passthrough = layout.mode == LayoutMode::None;
+
+    for (channel, expr) in scalar_bindings {
+        let ScalarExpr { signal, kind } = expr;
+        let transform = match kind {
+            ScalarKind::Data(t) => t,
+            ScalarKind::Custom(f) => {
+                let closure_id = ClosureId(ctx.scalar_closures.len() as u32);
+                ctx.scalar_closures.push(f);
+                Transform::Custom(closure_id)
+            }
+        };
+        let smoothing_spec = smoothing
+            .iter()
+            .find(|(c, _)| *c == channel)
+            .map(|(_, spring)| spring.spec());
+        let key = PropKey(((dense as u64) << 32) | channel.code() as u64);
+        // Patchable only when the whole write stays in this one rect:
+        // ancestor-contained, and the channel moves no descendant.
+        let patchable = contained && write_is_single_rect(channel, has_children, passthrough);
+        ctx.scalar.push(ScalarBinding {
+            node: id,
+            parent,
+            channel,
+            signal,
+            transform,
+            patchable,
+            smoothing: smoothing_spec,
+            key,
+            last_applied: initial_channel_value(&layout, channel),
+        });
+    }
+
+    if let Some(expr) = text_binding {
+        let TextExpr { signal, kind } = expr;
+        let transform = match kind {
+            TextKind::Format(spec) => Transform::Format(spec),
+            TextKind::Custom(f) => {
+                let closure_id = ClosureId(ctx.text_closures.len() as u32);
+                ctx.text_closures.push(f);
+                Transform::Custom(closure_id)
+            }
+        };
+        ctx.text.push(TextBinding {
+            node: id,
+            signal,
+            transform,
+        });
+    }
+
+    if let Some(signal) = visible_binding {
+        ctx.visible.push(VisibleBinding { node: id, signal });
+    }
+
+    let hug = layout.sizing_h == AxisSizing::Hug || layout.sizing_v == AxisSizing::Hug;
+    let child_contained = contained && layout.mode == LayoutMode::None && !hug;
+    for child in children {
+        stage_live(txn, Some(id), child, child_contained, ctx);
+    }
+}
