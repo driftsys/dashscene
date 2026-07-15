@@ -84,6 +84,20 @@ The single authored `gap` maps to both taffy gap axes; the cross-axis
 half is inert until wrap (v0.8), which decides whether row and column
 gaps become separate authored properties.
 
+## Visibility (v0.4, issue #165)
+
+`Prop::Visible(false)` overrides both sides of the style mapping above:
+`style_for` sets `Display::None` on the node's own style regardless of
+its layout mode. Taffy's `Display::None` hides the node from its
+parent's flow — the container's flex sizing (Hug, Fill splits) no
+longer accounts for it, so a hidden child's share collapses and its
+siblings reflow — and recursively hides every descendant during layout
+regardless of the descendant's own style, computing a zeroed-out
+(degenerate) layout for the whole hidden subtree. `commit()`'s
+`FixedSolver` (`dashscene-core`) ignores `Visible`, like the rest of
+the flex vocabulary; the fixed-commit equivalence guarantee does not
+extend to it.
+
 ## Measure callback — text drives hug sizing
 
 Text enters the solve through Taffy's per-node measure callback
@@ -136,11 +150,13 @@ wiring.
 - Satisfies: `docs/archive/2026-07-14-design-1-seed.md` §7.1 (Taffy as
   sole solver, R2 vocabulary) and §7.2 (the common runtime's measure
   callback — text drives hug sizing), `docs/roadmap.md`'s v0.2 and
-  v0.5; issue #9 and issue #29 acceptance criteria.
+  v0.5; issue #9, issue #29, and issue #165 acceptance criteria (v0.4).
 - Blocks: #10 (negative-gap lowering), #11 (flex goldens), #22 (FLIP),
   #43 (v0.8 layout fidelity). The measure seam blocks #30 (the
   hug-sizing text golden) and #164 (the v0.4 retained Taffy tree, which
-  invalidates a cached measurement when text changes).
+  invalidates a cached measurement when text changes). Issue #165
+  blocks #166 (reactive bindings' bounded pools) and the
+  stacking-container acceptance case.
 - Related decisions: `docs/decisions/layout-solver-seam.md`,
   `docs/decisions/flex-vocabulary-shape.md`,
   `docs/decisions/measure-callback-typesetter-seam.md`,

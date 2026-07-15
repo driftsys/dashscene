@@ -158,6 +158,62 @@ fn node_ids_and_rect_indices_correspond() {
 }
 
 #[test]
+fn a_hidden_node_keeps_its_rect_table_index() {
+    // Prop::Visible(false) still resolves to a rect (P4) and keeps its
+    // rect-table index — no DFS index shifts for nodes committed after
+    // it. This is the invariant the bounded-pool work depends on
+    // (issue #166, issue #165).
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let root = txn.add_node(None, None);
+    let hidden = txn.add_node(Some(root), None);
+    txn.set_prop(hidden, Prop::Visible(false));
+    let after = txn.add_node(Some(root), None);
+    txn.commit();
+
+    let scene = arena.committed();
+    assert_eq!(scene.rects().len(), 3, "hidden node still resolves");
+    assert_eq!(scene.rect_index_of(hidden), Some(1));
+    assert_eq!(scene.rect_index_of(after), Some(2));
+    assert_eq!(scene.node_of(1), hidden);
+    assert_eq!(scene.node_of(2), after);
+}
+
+#[test]
+fn commits_fixed_resolution_ignores_visible_like_the_rest_of_the_flex_vocabulary() {
+    // commit()'s FixedSolver ignores Visible, the same gap it already
+    // leaves for the rest of the flex vocabulary (docs/design/dashscene-engine.md) —
+    // only dashscene-engine's TaffySolver lowers it to Taffy Display::None.
+    // Authoring real geometry on the hidden node (rather than leaving it
+    // at its all-zero default) is what actually distinguishes "ignored"
+    // from "coincidentally already degenerate".
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let root = txn.add_node(None, None);
+    let hidden = txn.add_node(Some(root), None);
+    txn.set_prop(hidden, Prop::X(5.0));
+    txn.set_prop(hidden, Prop::Y(6.0));
+    txn.set_prop(hidden, Prop::Width(30.0));
+    txn.set_prop(hidden, Prop::Height(20.0));
+    txn.set_prop(hidden, Prop::Visible(false));
+    txn.commit();
+
+    let scene = arena.committed();
+    assert_eq!(
+        scene.rects()[1],
+        RectEntry {
+            x: 5.0,
+            y: 6.0,
+            w: 30.0,
+            h: 20.0,
+            paint: PaintIndex(0),
+            clip: ClipIndex::UNCLIPPED,
+        },
+        "commit()'s fixed resolution resolves the hidden node's authored geometry, unhidden"
+    );
+}
+
+#[test]
 fn identical_fills_share_one_paint_entry_in_first_use_order() {
     const BLUE: Color = Color {
         r: 0.0,

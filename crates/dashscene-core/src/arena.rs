@@ -110,7 +110,7 @@ pub struct EdgeInsets {
 /// (`FixedSizeLayout`, `LayoutContainer`, `LayoutConstraints`) without
 /// linking the generated code. Stored intent: until story #9's Taffy
 /// solve, `commit` resolves the fixed geometry only.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub struct Layout {
     pub x: f32,
     pub y: f32,
@@ -132,6 +132,33 @@ pub struct Layout {
     pub max_width: Option<f32>,
     pub min_height: Option<f32>,
     pub max_height: Option<f32>,
+    /// `false` lowers to Taffy `Display::None` (issue #165): not drawn
+    /// and out of layout, siblings reflow. Defaults to `true`.
+    pub visible: bool,
+}
+
+impl Default for Layout {
+    fn default() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            width: 0.0,
+            height: 0.0,
+            mode: LayoutMode::default(),
+            gap: 0.0,
+            padding: EdgeInsets::default(),
+            margin: EdgeInsets::default(),
+            main_align: MainAxisAlign::default(),
+            cross_align: CrossAxisAlign::default(),
+            sizing_h: AxisSizing::default(),
+            sizing_v: AxisSizing::default(),
+            min_width: None,
+            max_width: None,
+            min_height: None,
+            max_height: None,
+            visible: true,
+        }
+    }
 }
 
 /// One settable node property: the authored parent-relative offset
@@ -206,6 +233,13 @@ pub enum Prop {
     MaxWidth(f32),
     MinHeight(f32),
     MaxHeight(f32),
+    /// Whether the node is drawn and takes part in layout. `false`
+    /// lowers to Taffy `Display::None` (`docs/design/dashscene-engine.md`,
+    /// issue #165): the node and its descendants are not drawn and take
+    /// no space, so siblings reflow. Layout-affecting, like the rest of
+    /// the flex vocabulary — ignored by `commit()`'s fixed resolution.
+    /// Defaults to `true`.
+    Visible(bool),
 }
 
 /// Text style intent — mirrors the `dashbuf` `TextStyle` table
@@ -540,6 +574,7 @@ impl Txn<'_> {
             Prop::MaxWidth(v) => data.layout.max_width = Some(v),
             Prop::MinHeight(v) => data.layout.min_height = Some(v),
             Prop::MaxHeight(v) => data.layout.max_height = Some(v),
+            Prop::Visible(v) => data.layout.visible = v,
         }
     }
 
