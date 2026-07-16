@@ -51,3 +51,81 @@ table from the Plugin API instead of guessing from names keeps
 resolution correct rather than convention-dependent, and it stays
 correct if Enterprise access is added later, since the table format
 does not change.
+
+## Phase 1, as-built (#159)
+
+The sidecar is `<out>.vars.json`, written beside the `.dsb` by the Deno
+importer (`importers/figma/src/tokens.ts`). Its shape:
+
+    { "sidecarContract": 1,
+      "version": "<figma file version>",
+      "bindings": [ { "nodeId", "property", "variableId" }, ... ] }
+
+`deriveVarsSidecar` walks the closure-pruned nodes (not the raw capture),
+so the sidecar and the `.dsb` agree on which nodes ship. Its coverage
+tracks what the lowering emits, so every preserved id has a resolved
+literal in the `.dsb` to pair with:
+
+- **Node-level** `boundVariables` (`itemSpacing`, `rectangleCornerRadii`,
+  `opacity`, ...) — path `itemSpacing`,
+  `rectangleCornerRadii.RECTANGLE_TOP_LEFT_CORNER_RADIUS`.
+- **Each visible paint** in `fills`/`strokes`: the paint's own binding
+  (path `fills[0].color`) and each of its **gradient stops**
+  (`fills[0].gradientStops[2].color`), which `dashc` lowers today.
+- **Each effect** (`effects[0].color`), preserved ahead of effect
+  lowering.
+
+Three coverage choices are pinned here so the join in #167 reads them
+right:
+
+- **Hidden paints are not recorded (C5).** The lowering resolves only the
+  single visible fill, so a `visible: false` paint has no literal in the
+  `.dsb`; recording its binding would leave a sidecar entry with nothing to
+  join. Paint indices are the raw Figma positions, so a kept paint keeps its
+  index (a visible `fills[1]` stays `fills[1]`); #167 joins by that index
+  against the visible paints the document carries.
+- **The node-level `fills`/`strokes` array mirror is not recorded.** Figma
+  stores a fill-colour binding both in `node.boundVariables.fills[i]` and in
+  the paint's own `boundVariables`; the array mirror carries no `visible`
+  flag to filter on, so recording the paint-level site instead drops no id
+  and yields one entry per fill. The deprecated `background`/`backgroundColor`
+  mirror, which the lowering ignores, is likewise excluded.
+- **Effect bindings are extracted, not excluded (C1).** Effect params are
+  triaged, not yet lowered into the `.dsb` (debt #144), so an effect binding
+  has no literal to pair with yet. It is kept rather than dropped — one
+  preserved id awaiting effect lowering — so nothing goes silently unscanned.
+
+Iteration follows document order and source key order, so the same capture
+re-derives byte-for-byte (R7).
+
+The `.dsb` itself is unchanged: the lowering already emits the resolved
+literals (they are plain node properties; it never reads `boundVariables`),
+so **phase 1 is layout-independent** — the sidecar derives with no lowering
+and does not depend on #140. The `#140 -> #159` epic edge exists only
+because the acceptance fixture needs a lowering that emits a document, not
+because the sidecar needs one.
+
+P4: a `boundVariables` value from which no id can be read — a bare literal
+where an alias was expected, an alias with no `id`, or an object/array that
+holds no alias anywhere inside it (e.g. `{ opacity: {} }`) — is the named
+error `figma.tokens.unresolvable-binding` and blocks the export
+(`TokensBlocked`), never a silent literal-or-drop.
+
+**Pairing.** The `.dsb` and its `<out>.vars.json` are paired by two things
+only: the filename convention (`out.dsb` -> `out.vars.json`) and the
+`version` stamp, which is the file version the sidecar was derived from and
+the staleness guard #167 checks against its vartable. Because they are two
+separate writes, the importer writes the sidecar first and the document
+last, and removes the sidecar if the document write fails: a torn run leaves
+a missing `.dsb`, never a fresh `.dsb` beside a stale sidecar. A response
+with no string `version` is a named error, not a blank stamp.
+
+**Phase 2 stays deferred at #159's close.** It needs two things this story
+does not build: the annotator plugin's token-export command that produces
+the `id -> name/collection/mode` table (the plugin is #39; the vartable
+cannot be hand-authored because `GET /file` carries no variable names), and
+the `.dsb` switching to token refs, which is a `dashc` lowering/ABI change
+outside the importer. `#167` reuses this sidecar as-is — the id-to-site map
+is the join input, one mechanism, two consumers. The dark-mode pin
+(`explicitVariableModes`) each subtree carries is phase-2 provenance, not a
+`boundVariables` binding, so phase 1 does not record it.

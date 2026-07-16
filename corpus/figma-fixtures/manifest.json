@@ -25,7 +25,7 @@
       "fileKey": "VtbiQejcN6gYMmeWaaEy1b",
       "covers": "boundVariables on color + number props across light/dark modes; one subtree pinned to dark",
       "emits": false,
-      "note": "designated input for token-resolution phase 1 (sidecar) and phase 2 (id->name join), docs/decisions/token-resolution-phase-split.md; raw compile is still refused: the Fill cards sit on the hug root's axis (a Figma-vs-CSS sizing divergence, docs/decisions/figma-flex-lowering.md D5). The TEXT children lower since #160; the Fill-in-hug divergence is the one remaining refusal."
+      "note": "token phase 1 is implemented (#159): the boundVariables IDs are preserved in the <out>.vars.json sidecar (importers/figma/src/tokens.ts, docs/decisions/token-resolution-phase-split.md) while the resolved literals emit as ordinary properties, so tokens no longer gate this fixture. Phase 2 (id->name/collection/mode join) is deferred to the annotator plugin's token-export command (#39/§13). The TEXT children lower since #160; emits stays false on the one remaining layout blocker: the Fill cards sit on the hug root's axis (a Figma-vs-CSS sizing divergence, docs/decisions/figma-flex-lowering.md D5)."
     },
     {
       "name": "effects-2025",
