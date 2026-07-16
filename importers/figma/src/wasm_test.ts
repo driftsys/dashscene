@@ -8,7 +8,7 @@
  * is what makes byte-identity checkable.
  */
 
-import { assertEquals, assertRejects, assertThrows } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 
 import { CompileFailed, type ImageAsset, loadDashc } from "./wasm.ts";
 
@@ -156,4 +156,47 @@ Deno.test("a module that is not dashc is refused by name", async () => {
     Error,
     "just wasm",
   );
+});
+
+/**
+ * A Figma file whose frame chain nests `frames` deep: document → canvas →
+ * frame → frame → …, the shape MAX_JSON_DEPTH exists for. Counting `{` and
+ * `[`: 5 levels reach the canvas's children array, each non-leaf frame adds
+ * 2 (its object plus its children array), the leaf frame adds 1 — so the
+ * JSON depth is `2 * frames + 4`.
+ */
+function nestedFile(frames: number): string {
+  const open = '{"id":"1:1","name":"f","type":"FRAME","children":[';
+  return '{"document":{"id":"0:0","name":"d","type":"DOCUMENT","children":[' +
+    '{"id":"0:1","name":"p","type":"CANVAS","children":[' +
+    open.repeat(frames - 1) +
+    '{"id":"1:2","name":"leaf","type":"FRAME"}' +
+    "]}".repeat(frames - 1) +
+    "]}]}}";
+}
+
+Deno.test("the depth cap holds inside the wasm stack budget (#238)", () => {
+  // MAX_JSON_DEPTH (crates/dashc/src/figma/mod.rs) is 256, calibrated from a
+  // manual native probe against the 1 MiB wasm32 stack. Every story that adds
+  // fields to rest::Node raises the per-level deserialization stack cost, and
+  // nothing else re-measures the margin. This is the automated guard: it
+  // parses a document at exactly the cap through the real wasm module — the
+  // real target, the real release build, the real stack — so margin erosion
+  // fails here as a trap instead of trapping later on a deep-but-legal file.
+  const atCap = nestedFile(126); // 2 * 126 + 4 = 256 = MAX_JSON_DEPTH
+  assertEquals(dashc.figmaImageRefs(atCap), []);
+});
+
+Deno.test("one level past the depth cap is refused by name, never a trap", () => {
+  const error = assertThrows(
+    () => dashc.figmaImageRefs(nestedFile(127)), // 2 * 127 + 4 = 258 > 256
+    CompileFailed,
+  ) as CompileFailed;
+
+  assertEquals(error.detail.kind, "parse");
+  // The message names both depths — and the measured "258" is also what
+  // pins nestedFile's depth arithmetic, which the at-cap test above relies
+  // on to sit exactly at the limit.
+  assert(error.message.includes("258"), error.message);
+  assert(error.message.includes("256"), error.message);
 });

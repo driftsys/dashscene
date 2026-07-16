@@ -76,6 +76,24 @@ the Figma-shaped key stays inside the Figma producer (P5). It never reaches
   actually consumes it (P5); asking keeps that knowledge in the one module
   that owns the Figma mapping. See `docs/decisions/dashc-wasm-abi.md` for the
   export itself and the wasm ABI it crosses.
+- **Revised at story #37 for the import flow only.** The reachability
+  closure (`importers/figma/src/closure.ts`) is Deno-owned by
+  `docs/decisions/figma-importer-deno-plus-dashc-wasm.md`, and it must walk
+  fills and strokes anyway — an out-of-closure image must not be fetched. So
+  the import flow takes its refs from the closure, which is what lets the
+  file JSON cross the wasm ABI exactly once instead of twice (debt #155).
+  The v0.3 drift concern is held by two mechanisms instead of by asking:
+  a ref the closure misses still fails the compile loudly
+  (`CompileError::UnresolvedImage`, R6 — never a silent drop), and
+  `closure_test.ts` pins the closure's answer equal to
+  `dashc_figma_image_refs` over a frame-rooted captured fixture. That pin
+  reaches only as far as `dashc` can parse a root: a component-carrying
+  pruned file is refused by `root_frame` (no top-level `FRAME` under the
+  first canvas), so for those fixtures the loud compile failure is the only
+  guard until the walk lowers `COMPONENT_SET`/`INSTANCE` roots, at which
+  point the oracle test must widen with it. The capture tool still asks the
+  export — it runs no closure, and `dashc`'s answer is the one that decides
+  which bytes enter the corpus.
 - **This story supplied one synthetic PNG for the fixture's single
   `imageRef`.** Real resolution landed with story #17.
 - **`dashc` stays free of network and filesystem code**, which is what keeps the

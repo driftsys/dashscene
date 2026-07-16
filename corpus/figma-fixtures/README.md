@@ -31,8 +31,32 @@ fixture, so a fixture is regenerable rather than hand-built — and
 captured as its `GET /file` JSON (`?plugin_data=shared`) via `deno task
 capture` in `importers/figma/`.
 
-All nine tier-1 fixtures are authored and captured, committed under
-this directory:
+A capture is the raw response minus its non-deterministic fields: the
+top-level `thumbnailUrl` is a presigned URL that Figma regenerates on
+every fetch, so the capture tool strips it before writing (issue #141).
+Beside each capture sits `<name>.receipt.json` — the captured `version`,
+the `refsContract` it was derived under, and the image refs that capture
+resolved — which is what the capture tool's unchanged-fixture pre-check
+reads instead of parsing the whole capture (issue #91). The receipt
+caches `dashc`'s ref answer, keyed on the `REFS_CONTRACT` constant in
+`importers/figma/src/capture.ts`: when the lowering widens what it can
+name, that constant is bumped, every committed receipt stops matching,
+and the next capture run re-derives them from the committed captures
+without any `GET /file` spend.
+
+After a full capture of a fixture, its `<name>.images/` directory is
+pruned to exactly the image refs that capture resolved, so a re-authored
+image fill does not leave its old asset committed (issue #156). A
+skipped, unchanged, or failed fixture never has its images pruned — the
+directory is only authoritative when the fixture was actually captured.
+
+Nine tier-1 fixtures are authored and captured, committed under
+this directory. A tenth, `real-file`, is registered in the manifest for
+the v0.7 real-file import spike (story #37) and awaits its manual
+authoring step — it is production-shaped (two pages, undeclared frames
+beside the export root, a component set with an instance, a hidden
+layer, an image fill) rather than single-construct, so the export
+closure replays against a realistic response shape.
 
 | fixture                     | covers                                                                                                                                                                                                                                                                                |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

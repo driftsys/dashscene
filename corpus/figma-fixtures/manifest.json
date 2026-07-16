@@ -71,6 +71,13 @@
       "covers": "component set whose variants have different child counts (topology change) + one instance",
       "emits": false,
       "note": "Raw compile is refused today: COMPONENT_SET/COMPONENT/INSTANCE node types have no lowering yet, and the root pins the dashed-stroke shape (debt #145). Captured for the variant-topology work."
+    },
+    {
+      "name": "real-file",
+      "fileKey": "PASTE_THE_FIGMA_FILE_KEY_HERE",
+      "covers": "production-shaped file for the v0.7 real-file import spike (story #37): two pages, extra top-level frames beside the export root, a component set with an instance, a hidden layer, an image fill",
+      "emits": false,
+      "note": "Awaiting manual authoring: run the fixture-author plugin's real-file command in a blank Figma file, paste the file key here, and run `just deno-capture` (importers/figma/plugin/fixture-author/README.md). Raw compile will be refused until INSTANCE lowers; the fixture exists so the export closure (declared roots, per-set variant closure, exclusion naming) replays against a real multi-page response."
     }
   ]
 }
