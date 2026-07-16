@@ -8,9 +8,10 @@
  *
  * The REST client (fetch.ts), the fixture capture tool (capture.ts), the wasm
  * boundary (wasm.ts), image resolution (images.ts), the export closure
- * (closure.ts — declared roots, reachability, per-set variant closure), and
- * the import flow (import.ts) are implemented. Trim (#39) and tokens (#159)
- * remain stubs of the v0.7 "importer catch-up" slice (docs/roadmap.md).
+ * (closure.ts — declared roots, reachability, per-set variant closure), the
+ * import flow (import.ts), and token phase 1 (tokens.ts — the resolved-literal
+ * sidecar, #159) are implemented. Trim (#39) remains a stub of the v0.7
+ * "importer catch-up" slice (docs/roadmap.md).
  */
 
 export * from "./fetch.ts";

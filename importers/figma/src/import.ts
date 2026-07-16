@@ -40,6 +40,12 @@ import {
   REQUIRED_SCOPES,
 } from "./fetch.ts";
 import { resolveImages } from "./images.ts";
+import {
+  deriveVarsSidecar,
+  formatSidecar,
+  type ResolvedVarsSidecar,
+  TokensBlocked,
+} from "./tokens.ts";
 import { type CompileOk, type Dashc, loadDashc, type Profile } from "./wasm.ts";
 
 export interface ImportFigmaFileOptions {
@@ -57,11 +63,19 @@ export interface ImportFigmaFileOptions {
 export interface ImportOk extends CompileOk {
   /** Top-level nodes the manifest did not declare — named, never silent. */
   readonly excluded: readonly ExcludedNode[];
+  /**
+   * The phase-1 token sidecar: the `boundVariables` ids the shipped nodes
+   * carry, preserved beside the resolved literals in the `.dsb`
+   * (docs/decisions/token-resolution-phase-split.md).
+   */
+  readonly sidecar: ResolvedVarsSidecar;
 }
 
 /**
  * @throws {ExportBlocked} when the closure refuses the export — an unknown
  * root, an unresolvable component — before anything is fetched or compiled.
+ * @throws {TokensBlocked} when a `boundVariables` id cannot be preserved (P4)
+ * — before any image is fetched or the document is compiled.
  * @throws {CompileFailed} when the document is blocked (R6) — no `.dsb` is
  * emitted, and the diagnostics say why.
  */
@@ -87,6 +101,29 @@ export async function importFigmaFile(
     throw new ExportBlocked(closure.diagnostics);
   }
 
+  // The file version stamps the sidecar as the staleness guard #167 joins on,
+  // so a response that carries none is an error, not an undefined that would
+  // vanish through `JSON.stringify`. `client.file` casts the wire body without
+  // checking, exactly as `fileMeta` guards against ("the wire body lies about
+  // the type"), so the guard sits here on the path that feeds the sidecar.
+  if (typeof file.version !== "string" || file.version.length === 0) {
+    throw new Error(
+      "figma-file-version-missing: GET /file returned no string version — " +
+        "the sidecar staleness stamp cannot be written",
+    );
+  }
+
+  // The sidecar is derived from the pruned file and gated before any image is
+  // fetched: a binding whose id cannot be preserved blocks the export the same
+  // way an unknown root does (P4), and no `.dsb` is worth emitting without it.
+  const { sidecar, diagnostics: tokenDiagnostics } = deriveVarsSidecar(
+    closure.file,
+    file.version,
+  );
+  if (tokenDiagnostics.some((d) => d.severity === "error")) {
+    throw new TokensBlocked(tokenDiagnostics);
+  }
+
   const images = await resolveImages({
     client,
     fileKey,
@@ -99,7 +136,17 @@ export async function importFigmaFile(
     profile,
     images,
   );
-  return { ...compiled, excluded: closure.excluded };
+  return { ...compiled, excluded: closure.excluded, sidecar };
+}
+
+/**
+ * The sidecar path beside an output `.dsb`: `out.dsb` -> `out.vars.json`
+ * (docs/decisions/token-resolution-phase-split.md). An output without the
+ * `.dsb` extension keeps its whole name and gains `.vars.json`.
+ */
+export function sidecarPath(output: string): string {
+  return (output.endsWith(".dsb") ? output.slice(0, -".dsb".length) : output) +
+    ".vars.json";
 }
 
 /** What the CLI touches beyond its arguments, injected so tests drive it. */
@@ -108,6 +155,8 @@ export interface ImportCliDeps {
   readonly loadDashc: () => Promise<Dashc>;
   readonly readTextFile: (path: string) => Promise<string>;
   readonly writeFile: (path: string, bytes: Uint8Array) => Promise<void>;
+  /** Removes a written file — used to unwind a torn document/sidecar pair. */
+  readonly removeFile: (path: string) => Promise<void>;
   /** One stdout line. */
   readonly log: (line: string) => void;
   /** One stderr line. */
@@ -184,7 +233,23 @@ export async function runImportCli(
     fetchFn: deps.fetchFn,
   });
 
-  await deps.writeFile(output, result.bytes);
+  // The `.dsb` and its `<out>.vars.json` sidecar are paired by filename
+  // convention and by the version stamp #167 checks. The two are separate
+  // writes, so the sidecar is written first and the document last: a torn run
+  // then leaves a missing `.dsb`, never a fresh `.dsb` beside a stale sidecar.
+  // If the `.dsb` write fails, the sidecar just written is removed so the pair
+  // does not tear the other way either.
+  const varsPath = sidecarPath(output);
+  await deps.writeFile(
+    varsPath,
+    new TextEncoder().encode(formatSidecar(result.sidecar)),
+  );
+  try {
+    await deps.writeFile(output, result.bytes);
+  } catch (error) {
+    await deps.removeFile(varsPath).catch(() => {});
+    throw error;
+  }
   // Neither an exclusion nor a warning blocks, so both would otherwise leave
   // with the bytes and never be seen. P4: never a silent drop.
   for (const node of result.excluded) {
@@ -199,6 +264,9 @@ export async function runImportCli(
     );
   }
   deps.log(`wrote ${output} (${result.bytes.length} bytes)`);
+  deps.log(
+    `wrote ${varsPath} (${result.sidecar.bindings.length} bound variable(s))`,
+  );
   return 0;
 }
 
@@ -220,6 +288,7 @@ if (import.meta.main) {
       loadDashc,
       readTextFile: (path) => Deno.readTextFile(path),
       writeFile: (path, bytes) => Deno.writeFile(path, bytes),
+      removeFile: (path) => Deno.remove(path),
       log: (line) => console.log(line),
       error: (line) => console.error(line),
     }),
