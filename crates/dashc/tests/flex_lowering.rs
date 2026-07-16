@@ -11,18 +11,22 @@
 //! the solved boxes are never written into the document, only asserted
 //! against in these tests.
 //!
-//! Two fixtures carry constructs other stories own (`TEXT` is #160; the
-//! `ELLIPSE` shape has no story yet), so the solve tests run on *derived*
-//! documents — the captured JSON with exactly the out-of-scope node kind
-//! swapped for a fixed-size `FRAME`, sized to the box Figma gave the
-//! original, and nothing else changed. The raw captures are pinned
-//! separately: each out-of-scope construct is a named diagnostic.
+//! The `hug-in-fill` solve test runs on a *derived* document — its `TEXT`
+//! leaf swapped for a fixed-size `FRAME` — because solving text needs the
+//! typesetter this binary does not wire, and a fixed frame of the shaped size
+//! gives the hug chain the same content extent. The `negative-gap` derived
+//! document (its five `ELLIPSE`s retyped to frames) predates #239 and is kept
+//! only because the Deno suite byte-compares the same derived bytes for
+//! cross-language ABI parity (`goldens/dsb/README.md`), and a frame and a
+//! circle solve to one box. Since #239 the raw `negative-gap` capture also
+//! emits — its ellipses lower to circles (corner radius = half the extent,
+//! `docs/decisions/figma-ellipse-as-circle.md`) — and is pinned directly.
 
 use std::collections::BTreeMap;
 
 use dashc_wasm::figma::{CompileError, lower, rule};
 use dashc_wasm::{AxisSizing, LayoutMode, MainAxisAlign, compile_figma};
-use dashpaint::{GlyphRunTable, Painter};
+use dashpaint::{CornerRadii, GlyphRunTable, Painter};
 use dashscene_core::{Arena, load_document};
 use dashscene_engine::TaffySolver;
 use dashscene_skia::SkiaPainter;
@@ -44,9 +48,11 @@ fn lowered(json: &str) -> (dashc_wasm::Document, Vec<Diagnostic>) {
 }
 
 /// `lowering-negative-gap.json` with its five `ELLIPSE` children retyped as
-/// `FRAME`s. Shape nodes are out of this story's scope, and a frame with the
-/// same fixed size solves identically, so Figma's captured boxes stay the
-/// oracle.
+/// `FRAME`s. Since #239 the ellipses lower directly (as circles), so this
+/// derivation is no longer needed to make the fixture emit; it is kept because
+/// a frame and a circle of the same fixed size solve to one box, and the Deno
+/// suite byte-compares the same derived bytes for cross-language ABI parity
+/// (`goldens/dsb/README.md`). Figma's captured boxes stay the oracle.
 fn negative_gap_derived() -> String {
     derive(
         NEGATIVE_GAP,
@@ -185,21 +191,251 @@ fn a_negative_gap_lowers_to_leading_margins_before_emission() {
 }
 
 #[test]
-fn the_negative_gap_fixtures_ellipses_are_diagnosed_not_dropped() {
-    // The raw capture: shape nodes have no story yet, so each is a named
-    // diagnostic (P4) and the fixture cannot emit until a story lowers them.
-    let (_, diagnostics) = lowered(NEGATIVE_GAP);
+fn the_negative_gap_fixtures_ellipses_lower_to_circles() {
+    // A full ELLIPSE with equal, fixed extents lowers to a rounded rect with
+    // corner radius = half the extent — a circle, the only ellipse the
+    // rounded-rect vocabulary expresses exactly
+    // (docs/decisions/figma-ellipse-as-circle.md). The five 56x56 circles
+    // lower clean, so the raw capture now emits (no derivation needed).
+    let (doc, diagnostics) = lowered(NEGATIVE_GAP);
+    assert!(
+        unsupported(&diagnostics).is_empty(),
+        "{:?}",
+        unsupported(&diagnostics),
+    );
 
-    let found = unsupported(&diagnostics);
-    assert_eq!(found.len(), 5, "{found:?}");
-    for (i, (path, what)) in found.iter().enumerate() {
-        assert_eq!(what, "node type ELLIPSE");
+    for name in [
+        "overlap-1",
+        "overlap-2",
+        "overlap-3",
+        "overlap-4",
+        "overlap-5",
+    ] {
+        let (_, ellipse) = node(&doc, name);
         assert_eq!(
-            path,
-            &format!("/lowering-negative-gap/overlap-{}", i + 1),
-            "diagnostics come in document order",
+            ellipse
+                .paint
+                .as_ref()
+                .expect("a filled circle")
+                .entry
+                .corners,
+            CornerRadii {
+                top_left: 28.0,
+                top_right: 28.0,
+                bottom_right: 28.0,
+                bottom_left: 28.0,
+            },
+            "{name}: corner radius is half the 56px extent",
+        );
+        // A leaf: no container. The fixed 56x56 box stands (P1 permits a
+        // Fixed axis's authored extent).
+        assert!(
+            ellipse.container.is_none(),
+            "{name} is a leaf, not a container"
+        );
+        assert_eq!(
+            (ellipse.box2d.width, ellipse.box2d.height),
+            (56.0, 56.0),
+            "{name}",
         );
     }
+
+    // And under R6 the whole raw capture emits.
+    let (bytes, report) = compile_figma(NEGATIVE_GAP, Profile::Core, &BTreeMap::new())
+        .expect("the raw capture compiles now that its ellipses lower");
+    assert!(report.is_empty(), "{report}");
+    assert!(!bytes.is_empty());
+}
+
+/// A one-page document: a horizontal root frame holding one `ELLIPSE` named
+/// `circle`, built from the shapes `lowering-negative-gap.json` pins. The
+/// arc, extents, and per-axis sizing are the test's variables.
+fn ellipse_doc(
+    arc: serde_json::Value,
+    width: f32,
+    height: f32,
+    sizing_h: &str,
+    sizing_v: &str,
+) -> String {
+    serde_json::json!({
+        "document": { "name": "Document", "type": "DOCUMENT", "children": [{
+            "name": "Page 1", "type": "CANVAS", "children": [{
+                "name": "root", "type": "FRAME", "layoutMode": "HORIZONTAL",
+                "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 200.0, "height": 100.0 },
+                "children": [{
+                    "name": "circle", "type": "ELLIPSE",
+                    "layoutSizingHorizontal": sizing_h,
+                    "layoutSizingVertical": sizing_v,
+                    "fills": [{ "type": "SOLID", "color": { "r": 0.3, "g": 0.5, "b": 0.9, "a": 1.0 } }],
+                    "arcData": arc,
+                    "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": width, "height": height },
+                }],
+            }],
+        }]},
+    })
+    .to_string()
+}
+
+/// A full ellipse's `arcData`: a `2π` sweep from `0`, no inner radius.
+fn full_arc() -> serde_json::Value {
+    serde_json::json!({
+        "startingAngle": 0.0, "endingAngle": std::f64::consts::TAU, "innerRadius": 0.0,
+    })
+}
+
+fn diagnosed(json: &str) -> Vec<(String, String)> {
+    let (_, diagnostics) = lower(
+        &serde_json::from_str(json).unwrap(),
+        Profile::Core,
+        &BTreeMap::new(),
+    )
+    .expect("the ellipse findings are diagnosed, not fatal");
+    unsupported(&diagnostics)
+}
+
+#[test]
+fn an_elliptical_arc_and_ring_are_diagnosed_not_lowered() {
+    // A partial sweep is a pie and a non-zero inner radius is a ring; neither
+    // has a rounded-rect lowering (docs/decisions/figma-ellipse-as-circle.md).
+    // One node, two findings, both in one pass (debt #149).
+    let json = ellipse_doc(
+        // A half sweep (π) and a 0.5 inner radius: a pie that is also a ring.
+        serde_json::json!({
+            "startingAngle": 0.0, "endingAngle": std::f64::consts::PI, "innerRadius": 0.5,
+        }),
+        56.0,
+        56.0,
+        "FIXED",
+        "FIXED",
+    );
+    assert_eq!(
+        diagnosed(&json),
+        vec![
+            (
+                "/root/circle".to_string(),
+                "an elliptical arc (partial arcData sweep)".to_string(),
+            ),
+            (
+                "/root/circle".to_string(),
+                "a ring (arcData innerRadius)".to_string(),
+            ),
+        ],
+    );
+}
+
+#[test]
+fn the_circle_gate_tolerates_capture_noise_but_still_refuses_a_real_ellipse() {
+    // Both sides of the tolerance boundary. A real capture composes transforms
+    // up the tree and reports decimal extents, a sweep of 2π minus a rounding
+    // bit, and float noise on innerRadius — the real-file shape #37 targets —
+    // so an exact gate would refuse genuine full circles. The toleranced gate
+    // lowers a 56.0 × 55.99998 circle whose sweep and inner radius carry noise,
+    // and still refuses a 56 × 50 ellipse
+    // (docs/decisions/figma-ellipse-as-circle.md).
+    let noisy_circle = ellipse_doc(
+        serde_json::json!({
+            "startingAngle": 0.0,
+            "endingAngle": std::f64::consts::TAU - 1e-5,
+            "innerRadius": 1.2e-6,
+        }),
+        56.0,
+        55.99998,
+        "FIXED",
+        "FIXED",
+    );
+    assert!(
+        diagnosed(&noisy_circle).is_empty(),
+        "a noisy circle lowers clean: {:?}",
+        diagnosed(&noisy_circle),
+    );
+    let (doc, _) = lower(
+        &serde_json::from_str(&noisy_circle).unwrap(),
+        Profile::Core,
+        &BTreeMap::new(),
+    )
+    .unwrap();
+    let (_, circle) = node(&doc, "circle");
+    assert_eq!(
+        circle
+            .paint
+            .as_ref()
+            .expect("a filled circle")
+            .entry
+            .corners
+            .top_left,
+        28.0,
+        "half the larger 56px extent",
+    );
+
+    // 56 × 50 is a genuine ellipse — an 11% relative difference, far past the
+    // 0.1% tolerance — so it is refused, not lowered to a stadium.
+    let real_ellipse = ellipse_doc(full_arc(), 56.0, 50.0, "FIXED", "FIXED");
+    assert_eq!(
+        diagnosed(&real_ellipse),
+        vec![(
+            "/root/circle".to_string(),
+            "a non-circular ellipse (unequal extents)".to_string(),
+        )],
+    );
+}
+
+#[test]
+fn a_non_fixed_size_ellipse_is_diagnosed() {
+    // A FILL/HUG extent is solver output; a static corner radius could not
+    // track it (P1), so a non-fixed ellipse is refused. The parent does not
+    // hug, so the fill-in-hug refusal does not also fire — the non-fixed
+    // finding is the only one.
+    let json = ellipse_doc(full_arc(), 56.0, 56.0, "FILL", "FIXED");
+    assert_eq!(
+        diagnosed(&json),
+        vec![(
+            "/root/circle".to_string(),
+            "a non-fixed-size ellipse".to_string(),
+        )],
+    );
+}
+
+#[test]
+fn other_shape_kinds_are_each_diagnosed_by_name() {
+    // LINE/VECTOR/STAR/POLYGON/REGULAR_POLYGON have no lowering; each is its
+    // own named node-type diagnostic (P4), none silently dropped. Lowering
+    // them stays out of scope (docs/decisions/figma-ellipse-as-circle.md).
+    let children: Vec<serde_json::Value> = ["LINE", "VECTOR", "STAR", "POLYGON", "REGULAR_POLYGON"]
+        .iter()
+        .map(|kind| {
+            serde_json::json!({
+                "name": kind, "type": kind,
+                "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+            })
+        })
+        .collect();
+    let json = serde_json::json!({
+        "document": { "name": "Document", "type": "DOCUMENT", "children": [{
+            "name": "Page 1", "type": "CANVAS", "children": [{
+                "name": "shapes", "type": "FRAME",
+                "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0 },
+                "children": children,
+            }],
+        }]},
+    })
+    .to_string();
+
+    assert_eq!(
+        diagnosed(&json),
+        vec![
+            ("/shapes/LINE".to_string(), "node type LINE".to_string()),
+            ("/shapes/VECTOR".to_string(), "node type VECTOR".to_string()),
+            ("/shapes/STAR".to_string(), "node type STAR".to_string()),
+            (
+                "/shapes/POLYGON".to_string(),
+                "node type POLYGON".to_string()
+            ),
+            (
+                "/shapes/REGULAR_POLYGON".to_string(),
+                "node type REGULAR_POLYGON".to_string(),
+            ),
+        ],
+    );
 }
 
 #[test]
@@ -756,4 +992,36 @@ fn the_derived_flex_fixtures_emit_their_golden_dsbs() {
             "{name} drifted. If this is intended, regenerate with UPDATE_GOLDENS=1, review the diff, and commit.",
         );
     }
+}
+
+#[test]
+fn the_negative_gap_fixture_emits_its_golden_dsb() {
+    // Since #239 the raw capture emits — its five ellipses lower to circles
+    // (corners = 28) — so it is pinned directly, distinct from the derived
+    // (frames) golden the Deno suite byte-compares. Same golden contract:
+    // regenerate with UPDATE_GOLDENS=1, review, commit (goldens/README.md).
+    let (bytes, report) = compile_figma(NEGATIVE_GAP, Profile::Core, &BTreeMap::new())
+        .expect("the raw capture compiles");
+    assert!(report.is_empty(), "{report}");
+
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../goldens/dsb/v07-negative-gap.dsb");
+
+    if std::env::var_os("UPDATE_GOLDENS").is_some() {
+        std::fs::create_dir_all(path.parent().expect("the golden has a parent"))
+            .expect("the goldens directory is writable");
+        std::fs::write(&path, &bytes).expect("the golden is writable");
+        return;
+    }
+
+    let golden = std::fs::read(&path).unwrap_or_else(|e| {
+        panic!(
+            "cannot read {}: {e}\nrun `UPDATE_GOLDENS=1 cargo test -p dashc --test flex_lowering` to create it",
+            path.display(),
+        )
+    });
+    assert_eq!(
+        bytes, golden,
+        "v07-negative-gap.dsb drifted. If this is intended, regenerate with UPDATE_GOLDENS=1, review the diff, and commit.",
+    );
 }

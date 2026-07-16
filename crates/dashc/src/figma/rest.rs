@@ -76,6 +76,15 @@ pub struct Node {
     pub rectangle_corner_radii: Option<[f32; 4]>,
     #[serde(default)]
     pub corner_smoothing: Option<f32>,
+    /// An `ELLIPSE` node's arc parameters
+    /// (`docs/decisions/figma-ellipse-as-circle.md`). A full ellipse sweeps
+    /// `2π` from angle `0` with `innerRadius 0`; a partial sweep is an arc
+    /// (pie) and a non-zero inner radius is a ring (donut), neither of which
+    /// the rounded-rect lowering can express, so each is a named diagnostic
+    /// (P4). Absent means a full ellipse — Figma's default. Pinned by
+    /// `lowering-negative-gap.json`.
+    #[serde(default)]
+    pub arc_data: Option<ArcData>,
     #[serde(default)]
     pub clips_content: bool,
     #[serde(default)]
@@ -196,6 +205,19 @@ pub struct Node {
     /// Pinned empty by both text captures.
     #[serde(default)]
     pub style_override_table: serde_json::Map<String, serde_json::Value>,
+}
+
+/// An `ELLIPSE` node's `arcData` — its pie/ring parameters.
+///
+/// Angles are in radians. A full ellipse is `startingAngle 0`,
+/// `endingAngle 2π`, `innerRadius 0` (a fraction of the radius, `0.0`–`1.0`).
+/// Pinned by `lowering-negative-gap.json`, whose ellipses are all full.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArcData {
+    pub starting_angle: f32,
+    pub ending_angle: f32,
+    pub inner_radius: f32,
 }
 
 /// The stroke's shape family.

@@ -83,6 +83,26 @@ pub mod rule {
 /// needs a stack of a few MiB — the depth tests spawn one explicitly.
 pub const MAX_JSON_DEPTH: usize = 256;
 
+/// The one fractional tolerance the three `ELLIPSE` geometry gates share —
+/// extents equality, arc sweep, and inner radius
+/// (`docs/decisions/figma-ellipse-as-circle.md`).
+///
+/// A real capture carries float noise: Figma composes transforms up the tree
+/// and reports decimal extents, so an authored circle arrives as `56.0 ×
+/// 55.99998` (relative difference ~4e-7), a full sweep as `2π` minus a
+/// rounding bit, and a solid ellipse's `innerRadius` as a hair above zero
+/// rather than exactly zero. An exact `==`/`!= 0.0` gate would refuse those
+/// genuine full circles — the exact real-file shape #37 targets.
+///
+/// `1e-3` sits two-plus orders of magnitude above that noise and far below any
+/// ellipse the painter would render visibly non-circular. As a fraction of the
+/// full-scale quantity it admits at most: `0.1 %` of the larger extent (`0.056
+/// px` on a `56 px` circle — sub-pixel), `0.1 %` of a full turn (`0.36°` of
+/// sweep), and `0.1 %` of the outer radius of inner hole. So it cannot admit a
+/// genuine non-circular ellipse, arc, or ring — a `56 × 50` ellipse differs by
+/// `11 %`, over a hundred times the tolerance.
+const ELLIPSE_GEOMETRY_TOLERANCE: f32 = 1e-3;
+
 /// Why a Figma file could not be compiled at all.
 ///
 /// Distinct from a `Diagnostic`, which is a verdict *about* a document that
@@ -338,12 +358,13 @@ impl Walk<'_> {
         let node = visit.node;
         let path = &visit.path;
 
-        // `FRAME` and `TEXT` are the two node kinds with a lowering (story
-        // #140 and #160). Any other kind reports its type and nothing else:
-        // its other properties belong to whatever story lowers that type
-        // (`ELLIPSE` is #239; `COMPONENT`/`INSTANCE` later), so diagnosing
-        // them here would be noise around the verdict that matters.
-        if node.kind != "FRAME" && node.kind != "TEXT" {
+        // `FRAME`, `TEXT`, and `ELLIPSE` are the node kinds with a lowering
+        // (stories #140, #160, #239). Any other kind reports its type and
+        // nothing else: its other properties belong to whatever story lowers
+        // that type (`COMPONENT`/`INSTANCE` later, the other shape kinds when
+        // a shape construct lands), so diagnosing them here would be noise
+        // around the verdict that matters.
+        if node.kind != "FRAME" && node.kind != "TEXT" && node.kind != "ELLIPSE" {
             self.unsupported(path, format!("node type {}", node.kind));
             return Ok(());
         }
@@ -401,10 +422,12 @@ impl Walk<'_> {
         }
 
         // Type-specific lowering: a frame carries its container intent and
-        // paint; a text node its characters and style. A text node's fill is
-        // the glyph color (it lowers into the style, not a paint entry), so
-        // `paint` stays `None` and the node's `paint_entry` is the "draws
-        // nothing" sentinel.
+        // paint; a text node its characters and style; an ellipse its fill and
+        // stroke as a circle (a rounded rect with corner radius = half the
+        // extent, `docs/decisions/figma-ellipse-as-circle.md`). A text node's
+        // fill is the glyph color (it lowers into the style, not a paint
+        // entry), so `paint` stays `None` and the node's `paint_entry` is the
+        // "draws nothing" sentinel.
         let mut container: Option<DocContainer> = None;
         let mut paint: Option<DocPaint> = None;
         let mut text: Option<String> = None;
@@ -417,6 +440,19 @@ impl Walk<'_> {
             // `textAutoResize` is the sizing source (a free-standing label
             // must hug, not fix-size from its resolved box).
             constraints = text_sizing(node, constraints);
+        } else if node.kind == "ELLIPSE" {
+            // A leaf: no container. The paint lowering keeps its own refusals
+            // (a stacked fill, a dashed stroke), and the ellipse gate adds its
+            // own (an arc, a ring, a non-circular or non-fixed ellipse); each
+            // blocks the node like any other finding. `UnresolvedImage` aborts.
+            paint = match self.ellipse_paint_of(node, path, constraints, &mut blockers) {
+                Ok(paint) => paint,
+                Err(CompileError::Unsupported { what, .. }) => {
+                    blockers.push(what);
+                    None
+                }
+                Err(other) => return Err(other),
+            };
         } else {
             container = container_of(node, &mut blockers);
             // The paint lowering keeps its own refusals; an unsupported paint
@@ -606,6 +642,94 @@ impl Walk<'_> {
             entry,
             clip: node.clips_content,
         }))
+    }
+
+    /// Lowers a full-circle `ELLIPSE` into the rounded-rect paint vocabulary,
+    /// or collects the reasons it cannot be lowered.
+    ///
+    /// Only a circle lowers exactly. The paint entry's per-corner radius is
+    /// one scalar, so a rounded rect with radius = half the extent is a circle
+    /// when the two extents are equal and a stadium when they are not
+    /// (`docs/decisions/figma-ellipse-as-circle.md`). So a non-circular,
+    /// non-fixed-size, arced, or ringed ellipse is refused by name (P4), each
+    /// finding collected before the verdict. The returned paint carries the
+    /// circle's corners and the frame fill/stroke; the caller skips the node
+    /// whenever `blockers` is non-empty, discarding the paint.
+    fn ellipse_paint_of(
+        &mut self,
+        node: &Node,
+        path: &str,
+        constraints: Option<LayoutConstraints>,
+        blockers: &mut Vec<String>,
+    ) -> Result<Option<DocPaint>, CompileError> {
+        // `arcData`: a full ellipse sweeps 2π with no inner radius. A partial
+        // sweep is a pie; a non-zero inner radius is a ring. Neither has a
+        // rounded-rect lowering. Both gates are toleranced against real-capture
+        // float noise (see `ELLIPSE_GEOMETRY_TOLERANCE`): the sweep against a
+        // full turn, the inner radius (already a 0–1 fraction of the outer
+        // radius) against zero. Absent `arcData` is Figma's full-ellipse
+        // default.
+        if let Some(arc) = &node.arc_data {
+            let sweep = (arc.ending_angle - arc.starting_angle).abs();
+            let full_turn = std::f32::consts::TAU;
+            if (sweep - full_turn).abs() > ELLIPSE_GEOMETRY_TOLERANCE * full_turn {
+                blockers.push("an elliptical arc (partial arcData sweep)".to_string());
+            }
+            if arc.inner_radius.abs() > ELLIPSE_GEOMETRY_TOLERANCE {
+                blockers.push("a ring (arcData innerRadius)".to_string());
+            }
+        }
+
+        // The corner radius that turns a rounded rect into a circle is half
+        // the extent — a static paint parameter. It is exact only when the two
+        // extents are equal (unequal extents need a per-axis radius the
+        // vocabulary lacks) and both axes are Fixed (a Hug/Fill extent is
+        // solver output P1 forbids baking, so a static radius could not track
+        // it). Equality is toleranced relative to the larger extent, against
+        // the same real-capture noise (`ELLIPSE_GEOMETRY_TOLERANCE`).
+        let sizing = constraints.unwrap_or_default();
+        if sizing.sizing_h != AxisSizing::Fixed || sizing.sizing_v != AxisSizing::Fixed {
+            blockers.push("a non-fixed-size ellipse".to_string());
+        }
+        let radius = match node.absolute_bounding_box {
+            Some(bbox)
+                if (bbox.width - bbox.height).abs()
+                    <= ELLIPSE_GEOMETRY_TOLERANCE * bbox.width.max(bbox.height) =>
+            {
+                // Half the larger extent: on the larger axis this leaves no
+                // straight edge, and skia clamps it on the smaller axis, so the
+                // sub-pixel difference the tolerance admits cannot overshoot.
+                bbox.width.max(bbox.height) / 2.0
+            }
+            Some(_) => {
+                blockers.push("a non-circular ellipse (unequal extents)".to_string());
+                0.0
+            }
+            // An absent box is already a blocker in `visit`; the node is
+            // skipped, so this radius is never emitted.
+            None => 0.0,
+        };
+
+        // The fill and stroke lower exactly as a frame's — only the corners
+        // differ (a frame reads `cornerRadius`; an ellipse has none, so the
+        // circle radius stands in). A refused fill or stroke propagates as
+        // `Unsupported`, which the caller turns into a blocker.
+        let entry = PaintEntry {
+            fill: self.fill_of(node, path)?,
+            stroke: self.stroke_of(node, path)?,
+            corners: CornerRadii {
+                top_left: radius,
+                top_right: radius,
+                bottom_right: radius,
+                bottom_left: radius,
+            },
+        };
+        // A circle with neither fill nor stroke draws nothing — the corners
+        // alone shape no ink. An ellipse is a leaf, so it never clips.
+        if entry.fill.is_none() && entry.stroke.is_none() {
+            return Ok(None);
+        }
+        Ok(Some(DocPaint { entry, clip: false }))
     }
 
     fn fill_of(&mut self, node: &Node, path: &str) -> Result<Option<PaintKind>, CompileError> {

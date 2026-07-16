@@ -27,3 +27,7 @@ dashscene-typeset.workspace = true
 dashbuf.workspace = true
 dashc.workspace = true
 dashscene-validator.workspace = true
+# The v0.7 ellipse golden (#239) derives the captured negative-gap fixture in
+# place (lifting the root's HUG width, retyping ellipses to frames for the
+# sensitivity guard).
+serde_json.workspace = true
