@@ -251,6 +251,10 @@ into the records below. Per-story decisions land here directly:
   — image bytes arrive as a caller-supplied `imageRef` map, because `dashc`
   compiles to wasm and cannot fetch (story #139); the Deno importer built the
   caller side in story #17.
+- [importer-trim-layers.md](importer-trim-layers.md) — the trim pass runs
+  before the export closure and names every removed subtree (sharedPluginData
+  roles, `_`-prefix sugar, slot-child auto-replacement; hidden is not trimmed);
+  P4 records, R7-deterministic (story #39).
 - [producer-assembles-its-own-diagnostics.md](producer-assembles-its-own-diagnostics.md)
   — `Report` gains `FromIterator` + `Extend` so a producer can report what the
   import gate hands it (story #139); closes a gap

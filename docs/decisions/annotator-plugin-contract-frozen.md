@@ -64,3 +64,19 @@ before any externally authored file needs it.
 - `docs/decisions/token-resolution-phase-split.md`'s phase-2 join table
   is the annotator plugin's first mandatory job, ahead of the rest of
   the plugin, per trigger (b) above.
+
+## As-built (#39)
+
+Trigger (b) fired: story #39 built the plugin (`importers/figma/plugin/`).
+It honors this contract unchanged — the `dashscene` namespace, the
+`role` = `placeholder | sample-content | redline | spec` values, and the
+`v = "1"` stamp are exactly what the annotate commands write, and the
+importer's trim pass (`importers/figma/src/trim.ts`) reads. Nothing pinned
+here is amended.
+
+The plugin delivers the token-export command (trigger (b)'s minimum) plus
+the role-writing commands. The reserved keys (`contribution-id`,
+`material-class`) are still defined-but-unwritten, as this contract states.
+The vartable shape token export produces is recorded in
+`docs/decisions/token-resolution-phase-split.md`, not here, since it is the
+token-resolution decision's concern.

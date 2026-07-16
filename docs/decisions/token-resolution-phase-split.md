@@ -129,3 +129,49 @@ outside the importer. `#167` reuses this sidecar as-is — the id-to-site map
 is the join input, one mechanism, two consumers. The dark-mode pin
 (`explicitVariableModes`) each subtree carries is phase-2 provenance, not a
 `boundVariables` binding, so phase 1 does not record it.
+
+## Phase 2, token export as-built (#39)
+
+The annotator plugin (`importers/figma/plugin/`) now ships the token-export
+command — the first of phase 2's two pieces. It reads every local variable
+through the Plugin API and emits the vartable. The **`.dsb`-to-token-ref
+switch stays with #167**; this half only produces the join table.
+
+The vartable shape (`corpus/figma-fixtures/<file>.vartable.json`):
+
+    { "vartableContract": 1,
+      "version": "<figma file version>",
+      "fileKey": "<figma file key>",
+      "collections": {
+        "<collectionId>": {
+          "id", "name", "defaultModeId",
+          "modes": [ { "modeId", "name" }, ... ] } },
+      "variables": {
+        "<variableId>": {
+          "id", "name", "variableCollectionId", "resolvedType",
+          "valuesByMode": { "<modeId>": <value>, ... } } } }
+
+The shape mirrors the Enterprise Variables REST endpoint (collections carry
+their modes, variables carry `valuesByMode`), so that endpoint is a drop-in
+replacement producer if it ever becomes available — the join side does not
+change. `valuesByMode` carries **every** mode's value, which only the Plugin
+API exposes (a single REST capture resolves one mode), so the vartable is
+what makes runtime theme switching possible.
+
+**The version stamp is operator-supplied.** The Plugin API exposes no REST
+file version, so the token-export UI takes it from the operator — it is the
+`version` field of the paired `GET /file` capture, the staleness stamp #167
+checks the sidecar against. A mismatch against the capture is a diagnostic. The
+stamp is guarded at both ends: the plugin UI refuses to copy a table with a
+blank version, and the importer-side loader (`importers/figma/src/vartable.ts`)
+refuses to parse one (`parseVartable`) and names a version mismatch against the
+capture (`vartableStaleness`) — so a blank or stale table cannot join
+unnoticed.
+
+**The join #167 performs:** sidecar `{ nodeId, property, variableId }` ->
+`variables[variableId]` gives the name, collection, and per-mode values; the
+resolved mode comes from the capture (`explicitVariableModes`, or the
+collection's `defaultModeId` when a subtree inherits). The `variables-bound`
+fixture's committed vartable (`variables-bound.vartable.json`) is the pinned
+example; `importers/figma/src/vartable_test.ts` asserts the join is total and
+version-consistent against the capture.
