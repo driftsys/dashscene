@@ -90,6 +90,9 @@ into the records below. Per-story decisions land here directly:
 - [dashcue-spring-uses-semi-implicit-euler.md](dashcue-spring-uses-semi-implicit-euler.md)
   — dashcue springs integrate with semi-implicit Euler, not a closed form
   (story #21).
+- [variant-set-flat-index.md](variant-set-flat-index.md) — the variant
+  table is a flat member index with a narrow overridable-prop vocabulary
+  (story #20).
 - [atlas-gen-external-pinned-binary.md](atlas-gen-external-pinned-binary.md)
   — atlas generation shells out to an external, version-pinned
   `msdf-atlas-gen` binary rather than a pure-Rust crate or a vendored
@@ -113,6 +116,13 @@ into the records below. Per-story decisions land here directly:
   — the Taffy measure callback borrows one `Typesetter`
   (`TaffySolver::with_typesetter`) so layout and paint read one
   shaped-run cache; text drives hug sizing (#29); binds #30 and #164.
+- [glyph-runs-cross-boundary-b.md](glyph-runs-cross-boundary-b.md) — glyph
+  runs cross boundary B as a run table plus a plain-data atlas; painters
+  blit positioned quads and never shape (story #30).
+- [font-fallback-deferred-past-v06.md](font-fallback-deferred-past-v06.md)
+  — multi-font fallback (per-style font lists, per-font charset unions) is
+  deferred past v0.6; one font per declared charset until then; tracking
+  issue #219 (v0.5-close revision).
 - [boundary-b-unification.md](boundary-b-unification.md) — story #4:
   `dashpaint` owns the boundary-B types (`dashscene-core` depends on it,
   publish order updated), every committed rect resolves (no `NO_PAINT`
@@ -120,6 +130,9 @@ into the records below. Per-story decisions land here directly:
 - [flex-vocabulary-shape.md](flex-vocabulary-shape.md) — the v0.2 flex
   vocabulary is two optional `Node` tables, mirrored in core as stored
   intent (story #8); binds the story #9 Taffy solve and v0.8 wrap/grid.
+- [dashlang-flex-vocabulary.md](dashlang-flex-vocabulary.md) — `dashlang`
+  mirrors the v0.2 flex vocabulary by embedding core's own `Layout` on the
+  `Node` builder (#118).
 - [layout-solver-seam.md](layout-solver-seam.md) — commit takes its geometry
   from a `LayoutSolver` trait defined in core; the engine implements it with
   Taffy (story #9); binds #22 (FLIP) and #29 (measure callback).

@@ -232,9 +232,11 @@ the atlas pipeline, the Latin typeset pipeline, the measure callback (text
 drives hug sizing), and glyph-run painting through boundary B (the boundary-B
 addition is recorded in
 [`decisions/glyph-runs-cross-boundary-b.md`](decisions/glyph-runs-cross-boundary-b.md)).
-The formal epic/milestone close, the one open debt (validator weight
-range-check), and the v0.6 provisional revision remain the v0.5 track's
-phase-end steps.
+The phase-end steps are complete: epic #24 and its milestone are closed, the
+one open debt (the validator weight range-check, #129) is re-anchored to
+v0.7 — #160's text lowering is the first producer that can emit an
+out-of-range weight — and the v0.6 breakdown is revised at this close (see
+v0.6 below).
 
 ### v0.6 — text II: bidi/Arabic + charsets — open
 
@@ -247,7 +249,24 @@ golden.
 Depends on: v0.5 (the Latin typeset pipeline and its atlas) and the v0.5
 Arabic-atlas spike's findings.
 
-**Provisional** — not yet revised; stands until v0.5 closes.
+Revised at the v0.5 close, against as-built v0.5 and spike #25:
+
+- #32 (bidi) and #33 (Arabic shaping) are no longer parallel: both change the
+  one forced-LTR shaping entry point
+  (`crates/dashscene-typeset/src/text/shape.rs`) and the `Typesetter::layout`
+  itemization, so #32 lands the direction-aware seam and #33 builds on it.
+  #34 (the GSUB-closure atlas) stays parallel with #32 but now also gates
+  #33: Arabic contextual forms must be in the atlas, and the `liga`/`clig`
+  re-enable must land together with GSUB closure
+  ([`decisions/liga-clig-off-until-gsub-closure.md`](decisions/liga-clig-off-until-gsub-closure.md)).
+  #35 (the `E2` golden) needs #33, #34, and #30.
+- The spike's per-glyph-offset requirement is already met — v0.5's
+  `ShapedGlyph` carries GPOS x/y offsets — so #33 verifies rather than adds
+  it.
+- Multi-font fallback, which the spike surfaced for mixed-script text, is
+  deferred past v0.6
+  ([`decisions/font-fallback-deferred-past-v06.md`](decisions/font-fallback-deferred-past-v06.md));
+  the `E2` screen is single-script and does not need it.
 
 ### v0.7 — importer catch-up — open
 
