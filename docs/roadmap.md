@@ -213,7 +213,7 @@ undamped-spring rejection (#72), and the vacuous negative-gap assertion (#114) �
 and the remaining debt was re-anchored to the slice where it next matters (v0.7,
 v0.8, v0.9). The v0.5 provisional breakdown is revised next, before v0.5 starts.
 
-### v0.5 — text I: Latin — open
+### v0.5 — text I: Latin — closed
 
 **Epic #24.** Closes no `E` criterion directly — its pipeline feeds `E2`
 (v0.6).
@@ -227,7 +227,14 @@ coverage in `msdf-atlas-gen`, run at the slice's start per the original plan
 Depends on: v0.1. The measure callback additionally needs v0.2 (Taffy
 solve).
 
-**Provisional** — not yet revised; stands until v0.4 closes.
+Closed 2026-07-16 — all six stories landed, delivered in parallel with v0.4:
+the atlas pipeline, the Latin typeset pipeline, the measure callback (text
+drives hug sizing), and glyph-run painting through boundary B (the boundary-B
+addition is recorded in
+[`decisions/glyph-runs-cross-boundary-b.md`](decisions/glyph-runs-cross-boundary-b.md)).
+The formal epic/milestone close, the one open debt (validator weight
+range-check), and the v0.6 provisional revision remain the v0.5 track's
+phase-end steps.
 
 ### v0.6 — text II: bidi/Arabic + charsets — open
 
