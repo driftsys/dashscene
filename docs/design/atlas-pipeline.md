@@ -118,10 +118,10 @@ example regenerates the committed test fixture.
                        (ttf-parser), postcard write/load
     tests/atlas_pipeline.rs
                        tool-gated integration tests; also owns the
-                       ignored `regenerate_committed_fixture` test that
-                       rewrites the committed ASCII fixture, so the
-                       fixture writer and the fixture checker share one
-                       spec definition
+                       ignored `regenerate_committed_ascii_fixture` and
+                       `regenerate_committed_arabic_fixture` tests that
+                       rewrite the committed fixtures, so each fixture's
+                       writer and checker share one spec definition
     corpus/fonts/noto-sans/
                        NotoSans-Regular.ttf v2.015, unhinted/ttf build
                        (OFL, license file committed alongside) — shared
@@ -131,6 +131,17 @@ example regenerates the committed test fixture.
                        build (OFL, license file committed alongside) —
                        the Arabic fixture the GSUB closure tests shape
                        against (#33, #34, #35)
+    corpus/atlas/ascii/
+                       the committed ASCII atlas fixture (atlas.png +
+                       atlas.metrics). The shared home — beside the fonts,
+                       not under a crate's private tests/ — so a golden in
+                       another crate loads it without reaching across
+                       (debt #217; the v0.5 Latin golden and the
+                       reproducibility check both read it here)
+    corpus/atlas/arabic/
+                       the committed Arabic atlas fixture (#35), source of
+                       the E2 golden's glyphs, generated from the Arabic
+                       charset and byte-reproduced in CI like the ASCII one
 
 ## Public API
 
@@ -231,11 +242,15 @@ conversion is the painter's job (#30), documented on the type.
 - Same-machine repro: `double_run_is_byte_identical` generates twice and
   byte-compares both artifacts.
 - Cross-machine repro: the CI `atlas-repro` job (Linux) regenerates the
-  committed ASCII fixture (`crates/dashscene-typeset/tests/fixtures/ascii/`,
-  produced on macOS by the ignored `regenerate_committed_fixture` test)
-  and byte-compares (`committed_fixture_is_reproducible`) — this
-  empirically answers the spike's open cross-machine question on every
-  CI run. If a toolchain change breaks it, that is a finding to record
+  committed ASCII and Arabic fixtures (`corpus/atlas/ascii/` and
+  `corpus/atlas/arabic/`, produced on macOS by the ignored
+  `regenerate_committed_ascii_fixture` and
+  `regenerate_committed_arabic_fixture` tests) and byte-compares
+  (`committed_ascii_fixture_is_reproducible`,
+  `committed_arabic_fixture_is_reproducible`) — this empirically answers
+  the spike's open cross-machine question on every CI run, over both a
+  Latin ASCII charset and an Arabic charset whose closure runs the full
+  GSUB sweep. If a toolchain change breaks it, that is a finding to record
   (per-platform fixtures or a pinned generation platform), not to hide.
 
 ## Error handling

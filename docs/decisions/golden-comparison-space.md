@@ -3,9 +3,11 @@
     status   accepted (story #6, 2026-07-12); resolves debt #86.
              Extended by story #14 (a differing-pixel tolerance for
              anti-aliased content — see "Cross-machine anti-aliasing"
-             below) and story #11 (the exact-match constraint on v0.2
+             below), story #11 (the exact-match constraint on v0.2
              flex goldens — see "Flex goldens are exact-match by
-             construction" below).
+             construction" below), and story #35 (an absolute-pixel
+             budget for sparse text goldens — see "Text goldens use an
+             absolute-pixel budget" below).
     scope    goldens/ tooling; binds golden authoring for every painter
 
 ## Context
@@ -96,3 +98,48 @@ made integral, the scene's dimensions are what change, not the
 comparison function. `assert_matches_golden_within` only enters for a
 construct that is genuinely impossible to make integral, with the
 reason recorded at the call site — no v0.2 flex golden needed it.
+
+## Text goldens use an absolute-pixel budget (story #35 extension)
+
+The `assert_matches_golden_within` tolerance is a fraction of the whole
+canvas. That is the right model when the inked content is a large share
+of the canvas — a v0.3 paint family, where a real regression moves
+several percent of the canvas and the cross-machine edge jitter is a
+small fraction of it. It is the wrong model for sparse content.
+
+Text is sparse. The v0.6 Arabic screen (story #35) inks about 2,820 of
+its 71,400 canvas pixels — 3.95 %. A canvas fraction wide enough to
+absorb the anti-aliasing jitter (the v0.5 Latin text golden used 5 %,
+3,570 px) is then wider than the entire inked footprint, so a paint
+regression that draws no text at all — a 2,818-px difference — passes the
+compare. Every shaping regression E2 names fits under it too. Measured
+empirically on the story #35 review.
+
+The cause is a model mismatch: cross-machine coverage jitter scales with
+the scene's anti-aliased **edge count**, an absolute number, not with the
+canvas area. So text goldens use `assert_matches_golden_max_pixels(name,
+png, max_pixels)` — an absolute differing-pixel budget — sized to the
+edge count rather than the canvas:
+
+- The budget is set a few times the scene's anti-aliased edge
+  population, so it clears cross-machine jitter, while staying well below
+  the scene's inked footprint, so a text-erasing regression exceeds it.
+  For the v0.6 Arabic golden the budget is 1,000 px: ~2.5x the ~400-px
+  edge population (measured as the pixels that shift by one code point on
+  a premultiply round-trip), and well under the 2,818-px text-erase and
+  4,633-px form-isolation breaks it must catch (both demonstrated failing
+  in the story #35 review).
+- The pixel golden stays a coarse full-frame check. A text golden pairs
+  it with a glyph-id-level guard test (shaped output compared to expected
+  forms, machine-independent and exact), which pins the shaping features
+  the coarse budget cannot resolve — the same division of labor the v0.3
+  goldens use between the tolerance golden and the painter's
+  interior-probe unit tests.
+
+`Budget` (the `Fraction`/`Pixels` choice) is the one comparison model;
+`assert_matches_golden` (exact), `assert_matches_golden_within`
+(fraction), and `assert_matches_golden_max_pixels` (absolute) select it.
+The v0.5 Latin text golden keeps its 5 % fraction: at 8.95 % ink it is
+above its own budget, so a text-erasing regression already fails it; a
+tighter budget for its partial-regression sensitivity is deferred debt,
+not blocked here.

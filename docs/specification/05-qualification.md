@@ -19,7 +19,7 @@ missing proof must be visible.
 | Criterion                         | Verifies | Status                                    |
 | --------------------------------- | -------- | ----------------------------------------- |
 | E1 same screen authored both ways | G1       | open — v0.9 (epic #47)                    |
-| E2 Arabic golden-stable           | R1       | open — v0.6 (epic #31)                    |
+| E2 Arabic golden-stable           | R1       | **met**                                   |
 | E3 stress corpus green            | R2       | partial — v0.8 (epic #42, issue #46 open) |
 | E4 dirty Figma file → report      | R6       | open — v0.7 (epic #36)                    |
 | E5 variant switch via FLIP        | R4       | **met**                                   |
@@ -27,6 +27,61 @@ missing proof must be visible.
 
 The file carries no version in its name. "v0 exit criteria" is a heading
 inside it; v1's criteria will be a second heading, not a second file.
+
+### E2 — met
+
+R1 requires the runtime to render Arabic text correctly. The golden
+`goldens/tooling/tests/v06_arabic.rs` (`arabic_screen_matches_its_golden`)
+proves it end to end: a pure Arabic-plus-numerals screen — no Latin, so
+one Arabic font suffices (font fallback is out of v0.6,
+`docs/decisions/font-fallback-deferred-past-v06.md`) — is authored in
+`dashscene-core`, measured and solved by `dashscene-engine` against the
+one `Typesetter`, staged as positioned glyph runs at boundary B, and
+rendered through the Skia reference painter as MSDF atlas quads, then
+compared against the checked-in `goldens/images/v06-text-arabic.png`.
+
+The screen exercises what E2 names, one node per feature:
+
+- a fixed-width banner whose right-to-left greeting (`السلام عليكم`) sits
+  flush-right in a box wider than the text, carrying a lam-alef ligature
+  and joining-context forms (#32 bidi/RTL, #33 shaping);
+- a hug-sized word (`مَرْحَبًا`) whose harakat are GPOS-stacked above the
+  letters, its box sized to the shaped extent by the measure callback
+  (#29);
+- a hug-sized speed chip whose authored European digits (`120`) render as
+  Arabic-Indic shapes because their context is Arabic (#33 mixed
+  numerals).
+
+The pixel golden is a coarse full-frame check; the text ink is only
+3.95 % of the canvas, too sparse for a pixel budget to resolve a shaping
+change. A companion test,
+`the_arabic_screen_is_laid_out_and_shaped_as_the_golden_expects`, pins
+each E2 feature at glyph-id level, machine-independent and exact, so a
+regression fails with a specific message: the banner carries the
+seen-joined lam-alef ligature and no isolated lam (a lam-alef splitting
+to isolated forms fails); the speed word shapes to contextual, not
+isolated, forms; the harakat word's four marks carry nonzero GPOS
+y-offsets (marks dropping to the baseline fails); the banner is
+flush-right in its box; and the authored European digits shape to the
+Arabic-Indic glyphs. A third test,
+`every_scene_glyph_is_covered_by_the_committed_atlas`, asserts every
+glyph the scene's strings shape to is in the committed atlas, catching a
+missed post-GSUB form before it reaches the golden.
+
+Golden-stable across machines: the reference painter is CPU raster at a
+pinned skia version, and the atlas is the committed, R7-reproducible
+Arabic fixture (`corpus/atlas/arabic`) — no `msdf-atlas-gen` at render
+time; the fixture is byte-reproduced on the CI atlas-repro runner
+(`committed_arabic_fixture_is_reproducible`). MSDF resolve is
+anti-aliased at every glyph edge, so the pixel comparison is
+tolerance-based, not bit-exact. Because the inked text is sparse, the
+golden uses an absolute 1,000-px differing-pixel budget rather than a
+canvas fraction (a fraction wide enough to clear the anti-aliasing
+jitter would exceed the whole inked footprint, so a text-erasing
+regression would pass): the budget is a few times the scene's
+anti-aliased edge count, well below the 2,818-px text-erase and 4,633-px
+form-isolation breaks it must catch
+(`docs/decisions/golden-comparison-space.md`, "Text goldens").
 
 ### E3 — partial
 
