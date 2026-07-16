@@ -71,7 +71,7 @@ closure replays against a realistic response shape.
 | `lowering-hug-in-fill`      | a HUG child inside a FILL container (Figma≠CSS sizing lowering).                                                                                                                                                                                                                      |
 | `lowering-negative-gap`     | negative `itemSpacing` overlap row of full ellipses, lowered to margins. Also the designated input for the `ELLIPSE`→circle shape lowering (`docs/decisions/figma-ellipse-as-circle.md`, #239).                                                                                       |
 | `lowering-baseline`         | mixed-size BASELINE alignment row, plus an Arabic RTL run with Arabic-Indic numerals.                                                                                                                                                                                                 |
-| `lowering-variant-topology` | a component set whose variants have different child counts (topology change), plus one instance.                                                                                                                                                                                      |
+| `lowering-variant-topology` | a component set whose variants have different child counts (topology change), plus one instance. Also the designated input for local component/instance lowering (`docs/decisions/figma-component-lowering.md`, #242).                                                                |
 
 ### Diagnostic fixture: `effects-2025`
 
