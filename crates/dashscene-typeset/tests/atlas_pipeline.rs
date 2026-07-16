@@ -6,7 +6,10 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use dashscene_typeset::atlas::{AtlasBundle, AtlasSpec, REQUIRE_TOOL_ENV, generate};
+use dashscene_typeset::atlas::{
+    AtlasBundle, AtlasSpec, REQUIRE_TOOL_ENV, charset_closure, generate,
+};
+use dashscene_typeset::text::{Font, Typesetter};
 
 mod common;
 
@@ -206,6 +209,80 @@ fn arabic_atlas_covers_shaped_contextual_forms() {
                 covered.contains(&gid),
                 "word {word:?} shapes to gid {gid}, absent from the atlas"
             );
+        }
+    }
+}
+
+/// The full-charset production↔coverage pin for the E2 screen: every
+/// glyph id the runtime pipeline lays out for text composed from the
+/// declared Arabic charset — every letter through the four joining
+/// contexts, every haraka on an isolated and a joined base, and
+/// realistic strings with both digit systems — is inside
+/// `charset_closure`'s coverage. A failure means the text and atlas
+/// modules drifted on direction, feature set, or digit selection.
+///
+/// The full pairwise sweep costs seconds, so this pin runs where CI
+/// already demands thoroughness — the atlas-repro job's env gate —
+/// and self-skips on a plain `cargo test`. No tool binary is
+/// involved; the env var is reused purely as that job's marker. The
+/// corpus-charset variant in `tests/typeset_arabic.rs` runs
+/// everywhere.
+#[test]
+fn production_layout_stays_within_full_charset_coverage() {
+    if std::env::var_os(REQUIRE_TOOL_ENV).is_none() {
+        eprintln!("skipping full-charset coverage pin: {REQUIRE_TOOL_ENV} unset");
+        return;
+    }
+    let mut charset = arabic_charset();
+    charset.extend('0'..='9');
+    let data = std::fs::read(FONT_ARABIC).unwrap();
+    let face = rustybuzz::Face::from_slice(&data, 0).unwrap();
+    let closure = charset_closure(&face, &charset, &BTreeSet::new());
+    assert!(closure.missing_codepoints.is_empty());
+    let covered: BTreeSet<u16> = closure.glyph_ids.iter().copied().collect();
+
+    // Every letter through the four joining contexts (beh as the
+    // dual-joining connector, mirroring the closure's own sweep),
+    // every haraka on an isolated and a joined base, and realistic
+    // strings.
+    let beh = '\u{0628}';
+    let mut corpus: Vec<String> = Vec::new();
+    for c in dashscene_typeset::atlas::ARABIC_LETTERS.filter_map(char::from_u32) {
+        corpus.push(c.to_string());
+        corpus.push(format!("{beh}{c}"));
+        corpus.push(format!("{c}{beh}"));
+        corpus.push(format!("{beh}{c}{beh}"));
+    }
+    for c in dashscene_typeset::atlas::ARABIC_HARAKAT.filter_map(char::from_u32) {
+        corpus.push(format!("{beh}{c}"));
+        corpus.push(format!("{beh}{beh}{c}"));
+    }
+    for s in [
+        "كتاب",
+        "مدرسة",
+        "مرحبا بالعالم",
+        "الله",
+        "سَلَامٌ",
+        "سرعة ١٢٣",
+        "سرعة 123",
+        "123 سرعة",
+        "١٢ ٣٤",
+    ] {
+        corpus.push(s.to_string());
+    }
+
+    let mut ts = Typesetter::new(Font::from_bytes(data.clone(), 0).expect("loads"));
+    for text in &corpus {
+        let l = ts.layout(text, 16.0, None);
+        for line in &l.lines {
+            for g in &line.glyphs {
+                assert!(
+                    covered.contains(&g.glyph_id),
+                    "{text:?} lays out glyph id {} outside the declared \
+                     charset's coverage",
+                    g.glyph_id
+                );
+            }
         }
     }
 }

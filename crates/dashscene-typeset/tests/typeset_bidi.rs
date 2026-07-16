@@ -6,27 +6,18 @@
 //! assertions read run structure and positions, never non-Latin
 //! glyph ids.
 
-use dashscene_typeset::text::{Font, Line, Typesetter};
+use dashscene_typeset::text::{Line, Typesetter};
 
 mod common;
 
 use common::FONT;
 
-fn font_data() -> Vec<u8> {
-    std::fs::read(FONT).expect("fixture font present")
-}
-
 fn typesetter() -> Typesetter {
-    Typesetter::new(Font::from_bytes(font_data(), 0).expect("loads"))
+    common::typesetter(FONT)
 }
 
 fn cmap(c: char) -> u16 {
-    let data = font_data();
-    ttf_parser::Face::parse(&data, 0)
-        .unwrap()
-        .glyph_index(c)
-        .unwrap()
-        .0
+    common::cmap(FONT, c)
 }
 
 /// The x position of the line's one glyph with the given id.

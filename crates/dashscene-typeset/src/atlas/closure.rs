@@ -16,27 +16,23 @@
 //!   and the Latin `fi`).
 //!
 //! The closure shapes with the default OpenType feature set, so
-//! ligatures are on and their glyphs are covered before shaping
-//! re-enables `liga`/`clig`
-//! (docs/decisions/liga-clig-off-until-gsub-closure.md). Ligatures
-//! longer than two characters (for example `ffi`, or the Allah
-//! ligature) are outside the pairwise sweep; a shaped run that reaches
-//! one is the painter's named missing-glyph diagnostic (#30), never a
-//! silent drop.
+//! ligatures are on — the same configuration production shaping uses
+//! for Arabic-context runs, while other runs keep `liga`/`clig`
+//! disabled (docs/decisions/liga-clig-off-until-gsub-closure.md).
+//! Ligatures longer than two characters (for example `ffi`, or the
+//! Allah ligature) are outside the pairwise sweep; a shaped run that
+//! reaches one is the painter's named missing-glyph diagnostic (#30),
+//! never a silent drop.
 //!
 //! Direction coupling: the closure shapes each run in its natural
 //! direction (guessed from the text), so Arabic shapes right-to-left.
 //! Coverage therefore assumes the production shaper also shapes Arabic
-//! in its natural direction — true once #32's direction-parameterised
-//! `shape()` lands. The v0.5 production shaper still forces
-//! left-to-right, which produces a disjoint Arabic glyph set (lam
-//! followed by alef shapes to glyph ids [10, 73] right-to-left, but to
-//! the nominal [68, 8] forced left-to-right), so this coverage does not
-//! match forced-left-to-right Arabic output. No runtime gap opens from
-//! this: Arabic is not production-shaped until #33, and #32's
-//! direction-aware shaping seam lands first. The #33 join should assert
-//! that production-shaped output is a subset of this coverage for the
-//! declared charset.
+//! in its natural direction, which holds as-built: #32's seam shapes
+//! each UAX #9 level run with its resolved direction, and #33 shapes
+//! Arabic-context runs with the same default feature set this closure
+//! uses. The #33 acceptance test pins that coupling — production-shaped
+//! output is a subset of this coverage for the declared charset
+//! (tests/typeset_arabic.rs).
 //!
 //! Codepoints the font's cmap cannot represent are reported in
 //! `missing_codepoints` (a named diagnostic, R6), never dropped.
@@ -83,6 +79,27 @@ pub fn charset_closure(
     charset: &BTreeSet<char>,
     extra_glyph_ids: &BTreeSet<u16>,
 ) -> Closure {
+    // Production shaping displays a European digit with its
+    // Arabic-Indic counterpart when the digit sits in Arabic context
+    // (the `text` module's digit-shape rule, story #33), so a charset
+    // that declares strong Arabic characters next to European digits
+    // must cover the Arabic-Indic digit glyphs too. Trigger and
+    // mapping are the text module's own functions — one definition,
+    // so this derivation cannot drift from the production rule. The
+    // derived digits join the charset for both cmap and GSUB, so a
+    // font without them reports the gap in `missing_codepoints` like
+    // any declared codepoint.
+    let mut charset = charset.clone();
+    if charset.iter().copied().any(crate::text::is_arabic_strong) {
+        let derived: Vec<char> = charset
+            .iter()
+            .filter(|c| c.is_ascii_digit())
+            .map(|&c| crate::text::arabic_indic_digit(c))
+            .collect();
+        charset.extend(derived);
+    }
+    let charset = &charset;
+
     let mut gids: BTreeSet<u16> = BTreeSet::new();
     gids.insert(0);
     let mut missing = Vec::new();
@@ -340,6 +357,57 @@ mod tests {
                 covered.contains(&gid),
                 "lam-alef shapes to gid {gid}, absent from the closure"
             );
+        }
+    }
+
+    /// Production shaping displays European digits with Arabic-Indic
+    /// glyphs in Arabic context, so an Arabic charset declaring
+    /// European digits must cover the counterpart glyphs.
+    #[test]
+    fn arabic_charset_with_european_digits_covers_arabic_indic_glyphs() {
+        let data = std::fs::read(FONT_ARABIC).expect("arabic fixture present");
+        let face = face(&data);
+        let charset: BTreeSet<char> = ['\u{0628}', '1', '2'].into_iter().collect(); // beh, 1, 2
+        let c = charset_closure(&face, &charset, &BTreeSet::new());
+        for d in ['\u{0661}', '\u{0662}'] {
+            let gid = face.glyph_index(d).unwrap().0;
+            assert!(
+                c.glyph_ids.contains(&gid),
+                "derived Arabic-Indic digit {d:?} (gid {gid}) must be covered"
+            );
+        }
+    }
+
+    /// The derivation trigger is production's own predicate — any
+    /// strong Arabic (AL-classed) character — not the standard-letter
+    /// sweep range: extended Arabic (peh, U+067E) anchors a digit run
+    /// exactly like a standard letter, so the coverage must follow.
+    #[test]
+    fn extended_arabic_with_european_digits_covers_arabic_indic_glyphs() {
+        let data = std::fs::read(FONT_ARABIC).expect("arabic fixture present");
+        let face = face(&data);
+        let charset: BTreeSet<char> = ['\u{067E}', '1', '2', '3', ' '].into_iter().collect();
+        let c = charset_closure(&face, &charset, &BTreeSet::new());
+        for d in ['\u{0661}', '\u{0662}', '\u{0663}'] {
+            let gid = face.glyph_index(d).unwrap().0;
+            assert!(
+                c.glyph_ids.contains(&gid),
+                "derived Arabic-Indic digit {d:?} (gid {gid}) must be covered"
+            );
+        }
+    }
+
+    /// Without an Arabic letter in the charset, no digit context can
+    /// resolve Arabic, so no counterpart glyphs are derived.
+    #[test]
+    fn digits_without_arabic_letters_derive_no_arabic_indic_glyphs() {
+        let data = std::fs::read(FONT_ARABIC).expect("arabic fixture present");
+        let face = face(&data);
+        let charset: BTreeSet<char> = ['1', '2'].into_iter().collect();
+        let c = charset_closure(&face, &charset, &BTreeSet::new());
+        for d in ['\u{0661}', '\u{0662}'] {
+            let gid = face.glyph_index(d).unwrap().0;
+            assert!(!c.glyph_ids.contains(&gid), "{d:?} must not be derived");
         }
     }
 

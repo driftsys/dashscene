@@ -1,16 +1,19 @@
 //! Runtime text pipeline (docs/design/architecture.md): bidi split
-//! (UAX #9 level runs) → shape (rustybuzz, ligatures off) → greedy
-//! line break → positioned glyph runs, reordered per line for
+//! (UAX #9 level runs) → shape per run (rustybuzz, features and digit
+//! shapes resolved from the run's context — `shape::RunContext`) →
+//! greedy line break → positioned glyph runs, reordered per line for
 //! display, with a font-unit shaped-run cache in front of shaping.
-//!
-//! Arabic-specific shaping (script features, mixed numerals) is the
-//! v0.6 Arabic story (#33); it extends the per-run `shape()` seam.
 
 mod font;
 mod layout;
 mod shape;
 
 pub use font::Font;
+
+// The digit-shape mapping and the Arabic-strong predicate are the one
+// definition the atlas closure shares (atlas/closure.rs), so coverage
+// derivation cannot drift from production shaping.
+pub(crate) use shape::{arabic_indic_digit, is_arabic_strong};
 
 use shape::ShapedText;
 

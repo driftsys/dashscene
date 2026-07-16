@@ -1,6 +1,12 @@
-//! Shared fixtures for this crate's integration tests.
+//! Shared fixtures for this crate's integration tests. Each test
+//! binary compiles its own copy of this module, so helpers unused by
+//! one binary are still used by another — hence the `dead_code`
+//! allowances.
+
+use dashscene_typeset::text::{Font, Typesetter};
 
 /// The committed corpus fixture font (see corpus/fonts/noto-sans/).
+#[allow(dead_code)]
 pub const FONT: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../corpus/fonts/noto-sans/NotoSans-Regular.ttf"
@@ -13,3 +19,26 @@ pub const FONT_ARABIC: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../corpus/fonts/noto-sans-arabic/NotoSansArabic-Regular.ttf"
 );
+
+/// A fixture font's bytes.
+#[allow(dead_code)]
+pub fn font_data(path: &str) -> Vec<u8> {
+    std::fs::read(path).expect("fixture font present")
+}
+
+/// A typesetter over a fixture font.
+#[allow(dead_code)]
+pub fn typesetter(path: &str) -> Typesetter {
+    Typesetter::new(Font::from_bytes(font_data(path), 0).expect("loads"))
+}
+
+/// The nominal cmap glyph id of `c` in a fixture font.
+#[allow(dead_code)]
+pub fn cmap(path: &str, c: char) -> u16 {
+    let data = font_data(path);
+    ttf_parser::Face::parse(&data, 0)
+        .unwrap()
+        .glyph_index(c)
+        .unwrap()
+        .0
+}
