@@ -1,9 +1,27 @@
 # Auto-layout is refused on two grounds, and each one holds alone
 
-    status   accepted (story #139, 2026-07-13)
+    status   superseded for H/V by story #140 (2026-07-16) — see "Status
+             after #140" below; reason two still binds
     scope    crates/dashc (the figma module)
     binds    #140 (Document cannot express flex), the v0.7 flex lowering, and any
              future reader of absoluteBoundingBox
+
+## Status after #140
+
+Story #140 discharged reason one for `HORIZONTAL` and `VERTICAL`: the
+document model carries the flex vocabulary and the walk lowers the authored
+intent (`docs/decisions/figma-flex-lowering.md`). Reason two now binds that
+lowering's shape rather than a refusal: a flex child's solved position, and
+its extent on any non-`Fixed` axis, lower as zeros — never as the values
+Figma's solver computed (pinned by
+`an_auto_layout_child_never_bakes_the_solved_position`).
+
+`GRID`, `layoutWrap: WRAP`, and `counterAxisAlignItems: BASELINE` stay
+refused — as named diagnostics now, not compile aborts
+(`docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`) — on
+both original grounds: the schema's enums gain those members at v0.8
+(`docs/roadmap.md`, layout fidelity), and inside such a frame the boxes are
+still solver output.
 
 ## Context
 
@@ -71,8 +89,11 @@ the same bug in place.
   point of that fixture, so the test exercises them through a derived document
   with `layoutMode` stripped from the root and nothing else changed, and pins
   the refusal of the captured root separately. The effects that reach the triage
-  table are still the captured ones (P5).
+  table are still the captured ones (P5). _(Discharged by #140: the raw
+  capture now lowers past its root and reaches the effects directly; the
+  derivation is gone from the tests.)_
 - **Closing #140 does not by itself license reading the boxes.** The flex
-  lowering must satisfy reason two on its own terms.
+  lowering must satisfy reason two on its own terms. _(It does — see "Status
+  after #140" above and `docs/decisions/figma-flex-lowering.md`.)_
 - **`v03-paint.json` is `layoutMode: NONE` throughout**, which is why the v0.3
   paint vocabulary lowers with no `Document` change at all.

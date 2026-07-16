@@ -12,16 +12,23 @@ use dashscene_validator::Construct;
 
 use crate::figma::rest::{Effect, Node};
 
-/// The out-of-profile constructs `node` carries.
+/// The out-of-profile constructs `node` carries, and the constructs the
+/// document cannot express at all.
 ///
-/// `Err(what)` names a construct the v0.3 `Document` cannot express at all. It has
-/// no `Construct` variant, so it cannot become a `Diagnostic` — and P4
-/// forbids dropping it in silence, so the caller fails the compile loudly.
-pub(crate) fn constructs_of(node: &Node) -> Result<Vec<Construct>, String> {
+/// The first list triages through the validator. The second names constructs
+/// with no `Construct` variant — an unmapped effect such as a baked shadow
+/// (debt #144) — which the walk reports under its own `figma.unsupported`
+/// rule; P4 forbids dropping them in silence. Both lists come back from one
+/// pass, so a node carrying one of each reports both (debt #149).
+pub(crate) fn constructs_of(node: &Node) -> (Vec<Construct>, Vec<String>) {
     let mut found = Vec::new();
+    let mut unsupported = Vec::new();
 
     for effect in node.effects.iter().filter(|e| e.visible != Some(false)) {
-        found.push(effect_construct(effect)?);
+        match effect_construct(effect) {
+            Ok(construct) => found.push(construct),
+            Err(what) => unsupported.push(what),
+        }
     }
 
     // Figma carries a blendMode on the node and on every paint. Both are
@@ -44,7 +51,7 @@ pub(crate) fn constructs_of(node: &Node) -> Result<Vec<Construct>, String> {
         found.push(Construct::CornerSmoothing);
     }
 
-    Ok(found)
+    (found, unsupported)
 }
 
 fn effect_construct(effect: &Effect) -> Result<Construct, String> {
@@ -96,11 +103,11 @@ mod tests {
     fn noise_and_texture_are_the_reject_band() {
         let f = file(EFFECTS_2025);
         assert_eq!(
-            constructs_of(find(&f, "noise")).unwrap(),
+            constructs_of(find(&f, "noise")).0,
             vec![Construct::NoiseOrTextureEffect],
         );
         assert_eq!(
-            constructs_of(find(&f, "texture")).unwrap(),
+            constructs_of(find(&f, "texture")).0,
             vec![Construct::NoiseOrTextureEffect],
         );
     }
@@ -111,7 +118,7 @@ mod tests {
         // decide the band.
         let f = file(EFFECTS_2025);
         assert_eq!(
-            constructs_of(find(&f, "progressive-blur")).unwrap(),
+            constructs_of(find(&f, "progressive-blur")).0,
             vec![Construct::ProgressiveBlur],
         );
     }
@@ -131,7 +138,7 @@ mod tests {
             "clip-frame",
         ] {
             assert_eq!(
-                constructs_of(find(&f, name)).unwrap(),
+                constructs_of(find(&f, name)).0,
                 vec![],
                 "{name} must be in the NOW band",
             );
@@ -150,7 +157,10 @@ mod tests {
         }))
         .unwrap();
 
-        assert_eq!(constructs_of(&node), Err("effect DROP_SHADOW".to_string()));
+        assert_eq!(
+            constructs_of(&node),
+            (vec![], vec!["effect DROP_SHADOW".to_string()]),
+        );
     }
 
     #[test]
@@ -171,7 +181,7 @@ mod tests {
         }))
         .unwrap();
 
-        assert_eq!(constructs_of(&node).unwrap(), vec![]);
+        assert_eq!(constructs_of(&node), (vec![], vec![]));
     }
 
     #[test]
@@ -183,10 +193,7 @@ mod tests {
         }))
         .unwrap();
 
-        assert_eq!(
-            constructs_of(&node).unwrap(),
-            vec![Construct::AdvancedBlendMode],
-        );
+        assert_eq!(constructs_of(&node).0, vec![Construct::AdvancedBlendMode],);
     }
 
     #[test]
@@ -200,7 +207,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            constructs_of(&node).unwrap(),
+            constructs_of(&node).0,
             vec![Construct::AdvancedBlendMode, Construct::AdvancedBlendMode],
         );
     }
@@ -214,10 +221,7 @@ mod tests {
         }))
         .unwrap();
 
-        assert_eq!(
-            constructs_of(&node).unwrap(),
-            vec![Construct::CornerSmoothing],
-        );
+        assert_eq!(constructs_of(&node).0, vec![Construct::CornerSmoothing],);
     }
 
     #[test]
@@ -230,10 +234,7 @@ mod tests {
             "effects": [{ "type": "LAYER_BLUR", "visible": true }],
         }))
         .unwrap();
-        assert_eq!(
-            constructs_of(&no_blur_type).unwrap(),
-            vec![Construct::LayerBlur],
-        );
+        assert_eq!(constructs_of(&no_blur_type).0, vec![Construct::LayerBlur],);
 
         let non_progressive: Node = serde_json::from_value(serde_json::json!({
             "name": "layer-blur-normal",
@@ -242,7 +243,7 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(
-            constructs_of(&non_progressive).unwrap(),
+            constructs_of(&non_progressive).0,
             vec![Construct::LayerBlur],
         );
     }
@@ -256,6 +257,6 @@ mod tests {
         }))
         .unwrap();
 
-        assert_eq!(constructs_of(&node).unwrap(), vec![Construct::BackdropBlur],);
+        assert_eq!(constructs_of(&node).0, vec![Construct::BackdropBlur],);
     }
 }

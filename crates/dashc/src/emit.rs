@@ -10,15 +10,19 @@
 use std::collections::HashMap;
 
 use dashbuf::{
-    Color, CornerRadii, Document as FbDocument, DocumentArgs as FbDocumentArgs, FixedSizeLayout,
-    Gradient, GradientArgs, GradientStop, Image, ImageArgs, ImageFill, ImageFillArgs, Mat23,
+    Color, CornerRadii, Document as FbDocument, DocumentArgs as FbDocumentArgs,
+    EdgeInsets as FbEdgeInsets, FixedSizeLayout, Gradient, GradientArgs, GradientStop, Image,
+    ImageArgs, ImageFill, ImageFillArgs, LayoutConstraints as FbLayoutConstraints,
+    LayoutConstraintsArgs, LayoutContainer as FbLayoutContainer, LayoutContainerArgs, Mat23,
     NO_PAINT, NO_PARENT, Node as FbNode, NodeArgs as FbNodeArgs, Paint as BufPaint, PaintArgs,
     SolidFill, SolidFillArgs, Stroke, StrokeArgs, Vec2,
 };
 use dashpaint::{ImageAsset, PaintEntry, PaintKind};
 use flatbuffers::{FlatBufferBuilder, WIPOffset};
 
-use crate::document::{Document, Node, Paint};
+use crate::document::{
+    AxisSizing, CrossAxisAlign, Document, EdgeInsets, LayoutMode, MainAxisAlign, Node, Paint,
+};
 
 /// Serializes a document to `.dsb` bytes.
 ///
@@ -75,6 +79,53 @@ fn build_node<'a>(
     paint_entry: Option<u32>,
 ) -> WIPOffset<FbNode<'a>> {
     let name = node.name.as_deref().map(|n| b.create_string(n));
+
+    // The two v0.2 flex tables. Absent stays absent — `container: None`
+    // is the schema's mode-`None` state and `constraints: None` its
+    // fully-default state — so a fixed-layout document emits the same
+    // bytes it did before the flex vocabulary was carried (R7: the frozen
+    // goldens hold).
+    let flex = node.container.map(|c| {
+        let padding = insets(c.padding);
+        FbLayoutContainer::create(
+            b,
+            &LayoutContainerArgs {
+                mode: match c.mode {
+                    LayoutMode::Horizontal => dashbuf::LayoutMode::Horizontal,
+                    LayoutMode::Vertical => dashbuf::LayoutMode::Vertical,
+                },
+                gap: c.gap,
+                padding: (c.padding != EdgeInsets::default()).then_some(&padding),
+                main_align: match c.main_align {
+                    MainAxisAlign::Start => dashbuf::MainAxisAlign::Start,
+                    MainAxisAlign::Center => dashbuf::MainAxisAlign::Center,
+                    MainAxisAlign::End => dashbuf::MainAxisAlign::End,
+                    MainAxisAlign::SpaceBetween => dashbuf::MainAxisAlign::SpaceBetween,
+                },
+                cross_align: match c.cross_align {
+                    CrossAxisAlign::Start => dashbuf::CrossAxisAlign::Start,
+                    CrossAxisAlign::Center => dashbuf::CrossAxisAlign::Center,
+                    CrossAxisAlign::End => dashbuf::CrossAxisAlign::End,
+                },
+            },
+        )
+    });
+    let constraints = node.constraints.map(|c| {
+        let margin = insets(c.margin);
+        FbLayoutConstraints::create(
+            b,
+            &LayoutConstraintsArgs {
+                sizing_h: axis_sizing(c.sizing_h),
+                sizing_v: axis_sizing(c.sizing_v),
+                min_width: c.min_width,
+                max_width: c.max_width,
+                min_height: c.min_height,
+                max_height: c.max_height,
+                margin: (c.margin != EdgeInsets::default()).then_some(&margin),
+            },
+        )
+    });
+
     FbNode::create(
         b,
         &FbNodeArgs {
@@ -90,9 +141,23 @@ fn build_node<'a>(
             // supersedes it, and writing both is a producer error the load
             // gate names (`paint.conflicting-representation`).
             paint_entry: paint_entry.unwrap_or(NO_PAINT),
+            flex,
+            constraints,
             ..Default::default()
         },
     )
+}
+
+fn axis_sizing(sizing: AxisSizing) -> dashbuf::AxisSizing {
+    match sizing {
+        AxisSizing::Fixed => dashbuf::AxisSizing::Fixed,
+        AxisSizing::Hug => dashbuf::AxisSizing::Hug,
+        AxisSizing::Fill => dashbuf::AxisSizing::Fill,
+    }
+}
+
+fn insets(e: EdgeInsets) -> FbEdgeInsets {
+    FbEdgeInsets::new(e.left, e.top, e.right, e.bottom)
 }
 
 fn build_image<'a>(b: &mut FlatBufferBuilder<'a>, asset: &ImageAsset) -> WIPOffset<Image<'a>> {

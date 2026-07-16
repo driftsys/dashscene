@@ -1,6 +1,7 @@
 # dashc — the dashscene compile pipeline
 
-As-built after stories #16, #139, and #17 (v0.3). The requirements are in
+As-built after stories #16, #139, #17 (v0.3), and #140 (v0.7 — the flex
+lowering). The requirements are in
 `docs/specification/06-dashc-figma-lowering.md`. The rationale is in
 `docs/decisions/`:
 
@@ -9,7 +10,10 @@ As-built after stories #16, #139, and #17 (v0.3). The requirements are in
 - [unsupported-figma-constructs-refuse-the-compile.md](../decisions/unsupported-figma-constructs-refuse-the-compile.md)
   — a construct `Document` cannot express is refused loudly, never approximated.
 - [figma-auto-layout-refused-on-two-grounds.md](../decisions/figma-auto-layout-refused-on-two-grounds.md)
-  — and why one of those grounds outlives debt #140.
+  — the v0.3 refusal #140 lifted, and the P1 ground that outlives it.
+- [figma-flex-lowering.md](../decisions/figma-flex-lowering.md) — the #140
+  lowering's shape: per-axis intent, the walk-side negative-gap rewrite,
+  and what stays refused until v0.8.
 - [figma-image-refs-resolved-by-the-caller.md](../decisions/figma-image-refs-resolved-by-the-caller.md)
   — image bytes arrive as a caller-supplied map.
 - [producer-assembles-its-own-diagnostics.md](../decisions/producer-assembles-its-own-diagnostics.md)
@@ -40,8 +44,18 @@ row — source through `.dsb` — in one call; `compile` runs everything from
 What a producer lowers _into_, and what `emit` writes _out of_.
 
     Document { nodes: Vec<Node>, images: Vec<ImageAsset> }
-    Node     { name: Option<String>, parent: Option<u32>, box2d: Box2D, paint: Option<Paint> }
+    Node     { name: Option<String>, parent: Option<u32>, box2d: Box2D, paint: Option<Paint>,
+               container: Option<LayoutContainer>, constraints: Option<LayoutConstraints> }
     Paint    { entry: dashpaint::PaintEntry, clip: bool }
+
+`container` and `constraints` (story #140) mirror the schema's two v0.2
+flex tables (`docs/decisions/flex-vocabulary-shape.md`) as plain types, the
+way `dashscene-core`'s arena mirrors them: `None` is the schema's absent
+table, so a fixed-layout document emits byte-identically to before the
+vocabulary was carried (R7 — the frozen goldens pin it). `Box2D` is
+per-axis intent: under a flex parent the offsets are solver-owned and lower
+as zeros, and the extents are the datum only a `Fixed` axis reads
+(`docs/decisions/figma-flex-lowering.md`).
 
 Its paint types are **`dashpaint`'s** — boundary B's — not a third vocabulary.
 One paint vocabulary spans the document, the runtime, and the painter, so a
@@ -106,24 +120,36 @@ lowering (a stacked fill, an invisible one), so fetching an unused image
 costs a download, while missing one costs a failed compile.
 
 The walk is depth-first, parent before child, from the first `FRAME` under
-the first `CANVAS` (`root_frame`). Every other sibling and every later
+the first `CANVAS` (`root_frame`). It is iterative — an explicit stack, not
+recursion — so tree depth costs heap, never call stack (debt #148); the
+matching parse-side bound is `MAX_JSON_DEPTH`, a documented 256-level limit
+enforced by a linear pre-scan whose refusal names both depths, in place of
+serde_json's opaque default. Every other sibling and every later
 canvas is currently dropped without a diagnostic (debt #147); a declared-roots
 plus reachability-closure rule is the v0.7 story.
+
+A construct the document vocabulary cannot express is an error-severity
+diagnostic under `dashc`'s own rule id `figma.unsupported`, and the walk
+continues — the node's subtree is skipped, never lowered approximately, and
+one pass reports every finding (debt #149; the mechanism revision is in
+`docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`). A
+diagnostic's path disambiguates duplicate sibling names with the node's
+Figma id — `Frame 1 (1:23)` — or its child position when a synthetic node
+has no id (debt #150).
 
 ### `CompileError`
 
 Why a Figma file could not be compiled at all — distinct from a
 `Diagnostic`, which is a verdict about a document the lowering understood:
 
-    Parse(serde_json::Error)             not the Figma REST JSON it claimed to be
-    Unsupported { path, what }           a construct the v0.3 Document cannot express at all
+    Parse(serde_json::Error)             not the Figma REST JSON it claimed to be, or past MAX_JSON_DEPTH
+    Unsupported { path, what }           a file shape the walk cannot start on (no root FRAME)
     UnresolvedImage { path, image_ref }  an imageRef the caller did not resolve
     Diagnostics(Report)                  an error-severity diagnostic blocked emission (R6)
 
-`Unsupported` is the loud-refusal side of P4: a construct with no
-`Construct` variant cannot become a `Diagnostic`, so dropping it in silence
-is the only alternative to stopping the compile. The named gaps behind it are
-tracked as debt — see "Scope boundaries" below.
+Since #140 an unsupported _construct_ is a `figma.unsupported` diagnostic,
+not a `CompileError` — see the walk description above. The named gaps are
+tracked as debt; see "Scope boundaries" below.
 
 ## `compile_figma` — two gates, one report
 
@@ -202,15 +228,16 @@ would repaint one document's nodes with another document's assets.
 point is a library call, consumed by the Deno importer (#17) through the
 `wasm32` target, not by this native binary.
 
-## Scope boundaries (v0.3)
+## Scope boundaries (v0.7, after #140)
 
-Out of scope by design: widening `Document` to a wider vocabulary (flex layout,
-text — debt #140), moving the negative-gap lowering out of core's `Txn`, and
-a native `dashc compile` CLI subcommand (see "The CLI" above).
+Out of scope by design: text lowering (story #160), moving the negative-gap
+lowering out of core's `Txn` (re-checked at #140 —
+`docs/decisions/negative-gap-lowering.md`), and a native `dashc compile` CLI
+subcommand (see "The CLI" above).
 
-Known gaps in the Figma lowering, each a loud `CompileError::Unsupported`
-rather than a silent drop (P4), filed as debt because a real Figma file will
-hit them even though the v0.3 fixture does not:
+Known gaps in the Figma lowering, each a named `figma.unsupported` error
+diagnostic rather than a silent drop (P4), filed as debt or scheduled where
+noted, because a real Figma file will hit them:
 
 - **Stacked fills or strokes** — `PaintEntry.fill`/`.stroke` are each one
   `Option`; Figma's `fills`/`strokes` are arrays (debt #146).
@@ -223,19 +250,27 @@ hit them even though the v0.3 fixture does not:
   puts them in the NOW band, but `Document`
   has no effects vocabulary, so there is no `Construct` to triage onto and no
   field to lower into. Effects enter the schema at v0.8 (debt #144).
-- **Auto-layout frames** — a `layoutMode` other than `NONE` (`HORIZONTAL`,
-  `VERTICAL`, `GRID`). Two reasons, each sufficient on its own. `Document` has
-  no flex vocabulary, so the intent — mode, gap, padding, sizing — has no field
-  to lower into and no `Construct` to triage onto (debt #140). And inside an
-  auto-layout frame, `absoluteBoundingBox` is what Figma's own flex solver
-  computed, so lowering a child as a fixed rect would write a layout result
-  into a document that carries only intent (P1). This one is not
-  hypothetical: the root frame of `effects-2025.json` is auto-layout.
+- **Grid, wrap, and baseline auto-layout** — `layoutMode: GRID`,
+  `layoutWrap: WRAP`, and `counterAxisAlignItems: BASELINE`. The runtime
+  solves none of them until the v0.8 layout-fidelity slice, where the
+  schema's enum members append; lowering them onto plain H/V flex would
+  move every child (`docs/decisions/figma-flex-lowering.md` D5).
+- **A `Fill` child on an axis its parent hugs** — Figma and CSS resolve the
+  sizing cycle differently, so it is refused rather than solved to a
+  picture Figma never rendered (`docs/decisions/figma-flex-lowering.md`
+  D5; pinned by `variables-bound.json`).
+- **Absolutely-positioned flex children, layout-consuming strokes, and
+  reversed paint order** — `layoutPositioning: ABSOLUTE`,
+  `strokesIncludedInLayout: true`, `itemReverseZIndex: true` have no
+  vocabulary; each would silently reflow or repaint siblings if defaulted.
 - **Dashed and non-`BASIC` strokes** — `dashpaint::Stroke` is solid and
   uniform: one color, one width, one align. A
   `complexStrokeProperties.strokeType` other than `BASIC`, or a non-empty
   `strokeDashes`, has nothing to lower into, so it is refused rather than
   repainted as a plain solid stroke of the same color (debt #145).
+- **Non-`FRAME` nodes** — `TEXT` is story #160; shape nodes (`ELLIPSE`,
+  `RECTANGLE`, vectors) have no story yet, which the captured
+  `lowering-negative-gap.json` (`ELLIPSE` children) makes concrete.
 - **Root selection drops canvas siblings silently** — `root_frame` takes the
   first `FRAME` under the first `CANVAS`; every other sibling and every
   later canvas vanishes with no diagnostic. A declared-roots plus
@@ -252,20 +287,15 @@ so no captured fixture exercises it.
 ## Known limits of the as-built front end
 
 Not expressiveness gaps — the lowering handles these inputs, but handles them
-less well than it should. Each is filed as debt rather than fixed here:
+less well than it should:
 
-- **The diagnostics found before a refusal are lost** (debt #149). `lower`
-  returns `Err(CompileError::Unsupported)`, and the warnings it had already
-  collected go with it, so a file carrying both a warning and an unsupported
-  construct reports only the second. A designer fixing the refusal then meets
-  the warning on the next run rather than both at once.
-- **Nesting is capped at roughly 61 frames** (debt #148). `serde_json`'s
-  default recursion limit bounds how deep the Figma tree may nest before the
-  parse fails. Deeper than that is a parse error, not a lowering error, so the
-  message does not explain itself.
-- **A `NodePath` cannot distinguish duplicate sibling names** (debt #150). The
-  path is the slash-joined ancestor-name chain, which is what a designer sees —
-  but two siblings sharing a name produce the same path. The DFS index in the
-  `NodePath` still differs, so the diagnostic is unambiguous to a machine, and
-  ambiguous only to a human reading the name chain.
 - **Root selection drops canvas siblings** (debt #147, also listed above).
+- **A hug container over a lowered negative gap solves collapsed** (engine
+  debt #236). The lowering's output is correct; Taffy 0.12's intrinsic
+  sizing mis-sums negative margins. Found verifying #105 at story #140.
+
+Resolved at story #140, folded in from the v0.3 debt list: the
+diagnostics-lost-on-refusal limit (#149 — one pass now reports every
+finding), the 61-frame nesting cap (#148 — iterative walk plus the
+documented `MAX_JSON_DEPTH` pre-scan), and the ambiguous duplicate-sibling
+path (#150 — the Figma id disambiguates).

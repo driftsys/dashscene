@@ -26,6 +26,12 @@ pub struct FigmaFile {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Node {
+    /// Figma's stable node id (`"1:23"`), unique across the file and
+    /// pinned by every capture. A diagnostic path uses it to tell two
+    /// same-named siblings apart (debt #150). Optional so a synthetic
+    /// test document does not have to invent one.
+    #[serde(default)]
+    pub id: Option<String>,
     pub name: String,
     #[serde(rename = "type")]
     pub kind: String,
@@ -79,20 +85,86 @@ pub struct Node {
     #[serde(default)]
     pub visible: Option<bool>,
     /// Figma's auto-layout mode: `NONE`, `HORIZONTAL`, `VERTICAL`, or the
-    /// newer `GRID`. The walk rejects everything but `NONE` loudly, for two
-    /// reasons that each hold on their own.
-    ///
-    /// `Document` has no flex vocabulary — no mode, no gap, no padding, no sizing —
-    /// so there is nothing to lower the intent into (debt #140). And inside an
-    /// auto-layout frame, `absolute_bounding_box` is what Figma's own flex
-    /// solver *computed*, so lowering a child as a fixed box would write a
-    /// layout result into a document that carries only intent (P1).
+    /// newer `GRID`. `HORIZONTAL`/`VERTICAL` lower into the document's flex
+    /// vocabulary (story #140). `GRID` is refused: the document and the
+    /// runtime gain grid at v0.8 (#43), so there is nothing to lower it
+    /// into — and inside a grid frame every `absolute_bounding_box` is
+    /// Figma's own solver output, which P1 forbids writing as intent.
     ///
     /// A `String` for the same reason `kind` is: the vocabulary is open —
     /// `GRID` is recent — and a mode this lowering has not seen must be a loud
     /// error, not a parse failure of the whole file.
     #[serde(default)]
     pub layout_mode: Option<String>,
+    /// `NO_WRAP` or `WRAP`, present on every captured auto-layout frame.
+    /// Wrap is v0.8 layout-fidelity vocabulary (`docs/roadmap.md`), so
+    /// `WRAP` is refused rather than flattened onto a single line.
+    #[serde(default)]
+    pub layout_wrap: Option<String>,
+    /// Main-axis gap between children, in pixels. Negative values are
+    /// legal Figma vocabulary (overlap) and lower to child margins
+    /// (`docs/decisions/negative-gap-lowering.md`). Pinned by
+    /// `lowering-negative-gap.json` (`itemSpacing: -16`).
+    #[serde(default)]
+    pub item_spacing: Option<f32>,
+    // The four padding edges. Figma omits an edge that is zero.
+    #[serde(default)]
+    pub padding_left: Option<f32>,
+    #[serde(default)]
+    pub padding_right: Option<f32>,
+    #[serde(default)]
+    pub padding_top: Option<f32>,
+    #[serde(default)]
+    pub padding_bottom: Option<f32>,
+    /// Main-axis alignment: absent (= `MIN`), `CENTER`, `MAX`, or
+    /// `SPACE_BETWEEN`. Open vocabulary, same posture as `layout_mode`.
+    #[serde(default)]
+    pub primary_axis_align_items: Option<String>,
+    /// Cross-axis alignment: absent (= `MIN`), `CENTER`, `MAX`, or
+    /// `BASELINE`. `BASELINE` is v0.8 vocabulary (Q-4) and is refused;
+    /// pinned by `lowering-baseline.json`.
+    #[serde(default)]
+    pub counter_axis_align_items: Option<String>,
+    /// Per-axis sizing: `FIXED`, `HUG`, or `FILL` — the modern encoding,
+    /// present on every node the captures place in an auto-layout context.
+    /// Absent means fixed (a node outside auto-layout). The older
+    /// container-side encoding (`primaryAxisSizingMode`/
+    /// `counterAxisSizingMode`) carries no information these two do not,
+    /// so it is not read.
+    #[serde(default)]
+    pub layout_sizing_horizontal: Option<String>,
+    #[serde(default)]
+    pub layout_sizing_vertical: Option<String>,
+    // Authored min/max clamps. Absent = unconstrained. Pinned by
+    // `grid-basic.json` (`fill-minmax` carries minWidth/maxWidth).
+    #[serde(default)]
+    pub min_width: Option<f32>,
+    #[serde(default)]
+    pub max_width: Option<f32>,
+    #[serde(default)]
+    pub min_height: Option<f32>,
+    #[serde(default)]
+    pub max_height: Option<f32>,
+    /// `ABSOLUTE` takes a child out of its auto-layout parent's flow and
+    /// places it by its box. The document has no vocabulary for an
+    /// absolutely-placed flex child, and treating one as in-flow would
+    /// reflow everything after it — so it is refused (P4). Absent means
+    /// `AUTO` (in flow). No capture carries it; the shape is Figma's
+    /// documented enum, flagged as capture-unpinned in
+    /// `docs/technotes/figma-rest-shapes-the-capture-pinned.md`.
+    #[serde(default)]
+    pub layout_positioning: Option<String>,
+    /// `true` makes strokes consume layout space (CSS border-like) — the
+    /// strokes-in-layout Figma≠CSS difference. The lowering keeps strokes
+    /// out of layout (the schema has no border vocabulary), so `true` is
+    /// refused rather than solved to a different size. Absent = `false`.
+    #[serde(default)]
+    pub strokes_included_in_layout: Option<bool>,
+    /// `true` reverses the paint order of an auto-layout frame's children.
+    /// Document order is paint order, so a reversed stack has no lowering
+    /// short of reordering nodes — refused (P4). Absent = `false`.
+    #[serde(default)]
+    pub item_reverse_z_index: Option<bool>,
     /// Page-absolute. The lowering subtracts the parent's origin to get the
     /// parent-relative intent `Document` wants. Never `absoluteRenderBounds`,
     /// which is a *result* (P1).

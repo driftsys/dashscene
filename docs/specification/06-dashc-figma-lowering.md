@@ -1,16 +1,18 @@
 # dashc — the Figma REST front end (requirements)
 
 As-built after stories #139 and #17 (epic #12, v0.3 — basic paint +
-importer). The architecture is in `docs/design/dashc.md`; the rationale is
-in the decision records this document links.
+importer) and #140 (epic #36, v0.7 — the flex lowering). The architecture
+is in `docs/design/dashc.md`; the rationale is in the decision records this
+document links.
 
-These requirements are gardened from the story's acceptance criteria and its
-lowering and triage tables. They introduce no new project-level requirement:
-they refine how `docs/specification/01-goals-and-requirements.md`'s R6
-(an error blocks the document) and R7 (byte-reproducible emission) and
-principles P1, P4, and P5 apply to this
-producer. Each is verified by a test in
-`crates/dashc/tests/figma_lowering.rs` unless stated otherwise.
+These requirements are gardened from the stories' acceptance criteria and
+their lowering and triage tables. They introduce no new project-level
+requirement: they refine how
+`docs/specification/01-goals-and-requirements.md`'s R2 (the flex
+vocabulary), R6 (an error blocks the document), and R7 (byte-reproducible
+emission) and principles P1, P4, and P5 apply to this producer. Each is
+verified by a test in `crates/dashc/tests/figma_lowering.rs` or
+`crates/dashc/tests/flex_lowering.rs` unless stated otherwise.
 
 ## Scope
 
@@ -21,13 +23,15 @@ document, through the pipeline
 
 and nothing downstream of the `figma` module shall be Figma-aware (P5).
 
-The vocabulary compiled at v0.3 is
-`docs/specification/04-figma-vocabulary-profile.md`'s NOW band as the v0.3
-`Document`
-can express it: fixed-position frames, solid fills, the four gradient kinds,
-image fills with their scale mode, solid strokes in all three alignments,
-uniform and per-corner radii, and axis-aligned clip. Text, flex layout, and
-effects are out of scope until their slices.
+The vocabulary compiled since v0.7 (#140) is
+`docs/specification/04-figma-vocabulary-profile.md`'s NOW band as the
+`Document` can express it: fixed-position frames, solid fills, the four
+gradient kinds, image fills with their scale mode, solid strokes in all
+three alignments, uniform and per-corner radii, axis-aligned clip, and
+`HORIZONTAL`/`VERTICAL` auto-layout — mode, gap (negative included),
+padding, per-axis hug/fill/fixed sizing, main- and cross-axis alignment,
+and min/max clamps. Text, effects, and the v0.8 layout-fidelity vocabulary
+(grid, wrap, baseline) are out of scope until their slices.
 
 ## Compilation
 
@@ -57,6 +61,14 @@ effects are out of scope until their slices.
 6. **The output shall load and render.** The compiled `.dsb` shall load into
    `dashscene-core` and render through `SkiaPainter`.
    (`the_fixture_compiles_loads_and_renders`)
+
+7. **Nesting depth shall be a stated limit, never an opaque failure** (story
+   #140, debt #148). A file nesting deeper than 256 JSON levels shall return
+   `CompileError::Parse` with a message naming the file's depth and the
+   limit; a file within the limit shall compile regardless of the platform
+   parser's default recursion cap.
+   (`nesting_beyond_the_documented_limit_is_a_named_refusal`,
+   `nesting_beyond_the_old_serde_limit_compiles`)
 
 ## Lowering
 
@@ -102,6 +114,40 @@ effects are out of scope until their slices.
    (`image_refs_names_every_ref_the_lowering_demands`,
    `image_refs_refuses_a_file_with_no_root_frame`)
 
+## The flex lowering (story #140)
+
+1. **Auto-layout intent shall lower, and only intent** (P1, R2). A
+   `HORIZONTAL`/`VERTICAL` frame's mode, item spacing, padding, alignment,
+   per-axis sizing, and min/max clamps shall lower into the schema's
+   `LayoutContainer`/`LayoutConstraints` tables. A flex child's solved
+   position, and its extent on any non-`FIXED` axis, shall lower as zero —
+   never as the captured `absoluteBoundingBox` values, which are Figma's
+   solver output. (`the_hug_in_fill_fixture_lowers_its_authored_flex_intent`,
+   `an_auto_layout_child_never_bakes_the_solved_position`,
+   `min_max_clamps_lower_onto_the_constraints`)
+
+2. **The emitted document shall never carry a negative gap**
+   (`docs/decisions/negative-gap-lowering.md`). A negative `itemSpacing`
+   shall lower to a zero gap plus the gap as the leading main-axis margin of
+   every in-flow child after the first.
+   (`a_negative_gap_lowers_to_leading_margins_before_emission`)
+
+3. **The lowered intent, solved by the runtime, shall land on the boxes
+   Figma's own solver produced** for the constructs the runtime supports —
+   the captured fixtures are the oracle.
+   (`the_negative_gap_fixture_solves_to_figmas_captured_rects`,
+   `the_hug_in_fill_fixture_solves_to_figmas_captured_rects`; the one known
+   runtime exception is engine debt #236, pinned in the first test)
+
+4. **`SPACE_BETWEEN` shall zero the authored gap**, because Figma ignores
+   `itemSpacing` under it while CSS would add the two.
+   (`space_between_zeroes_the_authored_gap`)
+
+5. **A fixed-layout document shall emit byte-identically to before the flex
+   vocabulary existed** (R7): absent flex intent writes no table.
+   (`the_fixture_emits_the_golden_dsb` against the unchanged
+   `goldens/dsb/v03-paint.dsb`)
+
 ## The import gate
 
 1. **The producer maps, the validator decides** (P5). `dashc` shall map a
@@ -127,29 +173,39 @@ effects are out of scope until their slices.
 
 ## Refusal
 
-1. **A construct the v0.3 `Document` cannot express shall refuse the compile**, and
-   shall never be lowered approximately and never dropped in silence (P4). It
-   has no `Construct` variant, so it cannot become a diagnostic, and an
-   approximate lowering would render a picture the designer never authored.
-   See `docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`.
-   The refused set as-built: stacked fills or strokes, node opacity, rotation,
-   mask nodes, hidden nodes, unmapped effects (including baked shadows),
-   auto-layout frames, dashed and non-`BASIC` strokes, and non-`FRAME` nodes.
+1. **A construct the `Document` cannot express shall be a named
+   error-severity diagnostic** under the producer's `figma.unsupported`
+   rule, shall never be lowered approximately and never dropped in silence
+   (P4), and shall block emission (R6). The unsupported node's subtree
+   shall be skipped, and the walk shall continue, so one pass reports every
+   finding. See
+   `docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`
+   ("Revised at #140"). The refused set as-built is listed in
+   `docs/design/dashc.md` ("Scope boundaries").
    (`a_second_visible_fill_fails_loudly_rather_than_being_silently_dropped`,
    `a_second_visible_stroke_fails_loudly_rather_than_being_silently_dropped`,
    `a_rotated_node_fails_loudly_rather_than_silently_dropping_the_rotation`,
    `a_mask_node_fails_loudly_rather_than_silently_dropping_the_mask`,
    `a_non_basic_stroke_fails_loudly_rather_than_lowering_as_a_solid_one`,
-   `a_stroke_dash_pattern_fails_loudly_rather_than_lowering_as_a_continuous_stroke`)
+   `a_stroke_dash_pattern_fails_loudly_rather_than_lowering_as_a_continuous_stroke`,
+   `the_wrap_fixture_is_diagnosed_not_flattened_onto_one_line`,
+   `the_grid_fixture_is_diagnosed_not_flattened`,
+   `the_baseline_fixture_is_diagnosed_not_realigned`,
+   `a_fill_child_on_its_parents_hug_axis_is_diagnosed`,
+   `an_absolutely_positioned_child_is_diagnosed`)
 
-2. **An auto-layout frame shall be refused on two independent grounds**:
-   `Document` has no flex vocabulary, and inside an auto-layout frame
-   `absoluteBoundingBox` is Figma's own solver output, so lowering it as a
-   fixed box would write a result into a document that carries only intent
-   (P1). See `docs/decisions/figma-auto-layout-refused-on-two-grounds.md`.
-   (`an_auto_layout_frame_fails_loudly_rather_than_baking_the_solver_result`,
-   `the_reject_fixtures_auto_layout_root_is_refused`,
-   `a_layout_mode_of_none_is_not_auto_layout`)
+2. **Every finding shall survive one pass** (debt #149). A diagnostic
+   collected before an unsupported construct shall appear in the same
+   report as the construct itself, in document order.
+   (`diagnostics_survive_an_unsupported_sibling`,
+   `a_node_carrying_two_gaps_reports_both`)
+
+3. **A diagnostic path shall distinguish duplicate sibling names** (debt
+   #150), using the node's Figma id, or its child position when a synthetic
+   node carries none. (`duplicate_sibling_names_get_distinct_paths`)
+
+4. **A `layoutMode` of `NONE` shall not be treated as auto-layout.**
+   (`a_layout_mode_of_none_is_not_auto_layout`)
 
 ## Verification corpus
 
@@ -157,4 +213,14 @@ Every lowering and triage rule shall be pinned by a captured Figma fixture,
 never by a reading of Figma's documentation (P5).
 `corpus/figma-fixtures/v03-paint.json` is the emission fixture,
 `effects-2025.json` the diagnostic fixture, and
-`lowering-variant-topology.json` pins the dashed-stroke shape.
+`lowering-variant-topology.json` pins the dashed-stroke shape. Story #140
+adds `lowering-hug-in-fill.json` and `lowering-negative-gap.json` as the
+flex lowering's fixtures (their solve oracles are Figma's own captured
+boxes), `lowering-wrap.json`, `grid-basic.json`, and
+`lowering-baseline.json` as the v0.8-vocabulary refusal fixtures, and
+`variables-bound.json` as the fill-on-hug refusal fixture. The exceptions
+to fixture pinning — `SPACE_BETWEEN`, `layoutPositioning`,
+`strokesIncludedInLayout`, `itemReverseZIndex`, the `MIN`/`CENTER`/`MAX`
+alignment values — are synthetic from Figma's documented enums and say so
+at their tests
+(`docs/technotes/figma-rest-shapes-the-capture-pinned.md`).

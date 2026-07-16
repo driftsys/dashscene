@@ -199,15 +199,22 @@ into the records below. Per-story decisions land here directly:
   #17. The deferral was discharged by story #139.
 
 - [unsupported-figma-constructs-refuse-the-compile.md](unsupported-figma-constructs-refuse-the-compile.md)
-  — a construct the v0.3 `Document` cannot express is refused loudly with
-  `CompileError::Unsupported`, never lowered approximately and never dropped
-  silently (story #139); the branch's central pattern, and the reason each
-  gap is a filed debt rather than a papered-over branch.
+  — a construct the `Document` cannot express is refused loudly, never lowered
+  approximately and never dropped silently (story #139); since story #140 the
+  refusal is a named `figma.unsupported` error diagnostic and the walk
+  continues, so one pass reports every finding. Each gap is a filed debt
+  rather than a papered-over branch.
 - [figma-auto-layout-refused-on-two-grounds.md](figma-auto-layout-refused-on-two-grounds.md)
   — auto-layout is refused both because `Document` has no flex vocabulary (#140)
   and because `absoluteBoundingBox` inside an auto-layout frame is Figma's
-  solver output, which P1 forbids lowering as intent (story #139); the second
-  ground outlives the first.
+  solver output, which P1 forbids lowering as intent (story #139); story
+  #140 discharged the first ground for `HORIZONTAL`/`VERTICAL`, the second
+  binds the lowering's shape.
+- [figma-flex-lowering.md](figma-flex-lowering.md) — the #140 auto-layout
+  lowering: `layoutSizingHorizontal`/`Vertical` are the sizing source,
+  non-intent lowers as zeros per axis (P1), the negative-gap rewrite runs in
+  the walk, and grid/wrap/baseline plus fill-on-hug stay refused by name
+  until v0.8.
 - [figma-image-refs-resolved-by-the-caller.md](figma-image-refs-resolved-by-the-caller.md)
   — image bytes arrive as a caller-supplied `imageRef` map, because `dashc`
   compiles to wasm and cannot fetch (story #139); the Deno importer built the

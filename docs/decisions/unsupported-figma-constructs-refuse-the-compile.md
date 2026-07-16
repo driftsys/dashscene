@@ -1,10 +1,33 @@
 # A construct the v0.3 `Document` cannot express refuses the compile
 
-    status   accepted (story #139, 2026-07-13)
+    status   accepted (story #139, 2026-07-13); mechanism revised by story
+             #140 (2026-07-16) — see "Revised at #140" below
     scope    crates/dashc (the figma module)
     binds    #17 (the Deno importer is where a designer meets this error),
              #140, #143, #144, #145, #146, #147 (each gap it refuses), and
              every future widening of the Figma front end
+
+## Revised at #140: the refusal is a diagnostic, and the walk keeps going
+
+The verdict is unchanged — a construct the document cannot express is never
+lowered approximately and never dropped in silence, and a file carrying one
+never emits (R6). What changed is the mechanism. `CompileError::Unsupported`
+stopped the compile at the first finding, which discarded every diagnostic
+already collected (debt #149): a designer fixed one construct per compile.
+Since #140, an unsupported construct is an **error-severity diagnostic**
+under `dashc`'s own rule id `figma.unsupported` — producer-assembled, which
+`docs/decisions/producer-assembles-its-own-diagnostics.md` made possible
+after this record was written, and which does not add the `Construct`
+variant P5 forbids. The offending node's subtree is skipped, the walk
+continues, and one pass reports every finding. The error severity is what
+keeps R6 holding: `compile_figma` returns `CompileError::Diagnostics` and
+the bytes are discarded.
+
+`CompileError::Unsupported` remains for the one refusal with no node to
+diagnose at: a file with no root `FRAME` under its first `CANVAS`.
+
+The as-built refused set is `docs/design/dashc.md`'s; the table below is
+the v0.3 set this record originally froze.
 
 ## Context
 
@@ -88,11 +111,16 @@ intended trade — correct or refused, never approximately right.
 - **The diagnostics found before the first refusal are lost.** `lower` returns
   `Err(CompileError::Unsupported)`, and the warnings it had already collected
   go with it, so a file with both a warning and an unsupported construct
-  reports only the second. Filed as debt #149.
+  reports only the second. Filed as debt #149. _(Resolved by the #140
+  revision above: every finding survives one pass.)_
 - **#17 (the Deno importer)** is the surface where a designer meets
   `Unsupported`. The `path` field carries the slash-joined ancestor-name chain
   precisely so the message can name a layer rather than an index; note that
   the path cannot distinguish two siblings that share a name (debt #150).
+  _(Resolved at #140: a duplicated sibling name is suffixed with the node's
+  Figma id.)_
 - **`Document` widening changes the refusal set, nothing else.** When `Document` gains
   flex (#140) or effects (v0.8), the corresponding guard is deleted and a real
-  lowering replaces it. The pattern here does not change.
+  lowering replaces it. The pattern here does not change. _(#140 did both:
+  it deleted the auto-layout guard and revised the pattern's mechanism —
+  see "Revised at #140" above.)_

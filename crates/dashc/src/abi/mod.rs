@@ -19,7 +19,7 @@ pub mod wire;
 use std::alloc::{Layout, alloc, dealloc};
 
 use crate::abi::wire::Status;
-use crate::figma::{self, CompileError};
+use crate::figma;
 
 /// The version of the wire format this module speaks.
 #[unsafe(no_mangle)]
@@ -149,13 +149,15 @@ fn image_refs_response(request: &[u8]) -> Vec<u8> {
         }
     };
 
-    let file = match serde_json::from_str(json_text) {
+    // The same depth-guarded parse `compile_figma` runs — a file too deep to
+    // compile must be refused here the same way, not trap the module.
+    let file = match figma::parse_file(json_text) {
         Ok(file) => file,
-        Err(e) => {
+        Err(error) => {
             return wire::encode_response(
                 Status::CompileError as u32,
                 &[],
-                &json::compile_error_json(&CompileError::Parse(e)),
+                &json::compile_error_json(&error),
             );
         }
     };

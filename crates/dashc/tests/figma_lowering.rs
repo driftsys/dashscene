@@ -25,48 +25,18 @@ use dashscene_core::{Arena, load_document};
 use dashscene_skia::SkiaPainter;
 use dashscene_validator::{Location, Profile};
 
+mod common;
+use common::{node, parse};
+
 /// The designated input for this story (corpus/figma-fixtures/manifest.json).
 const V03_PAINT: &str = include_str!("../../../corpus/figma-fixtures/v03-paint.json");
 
-/// The diagnostic fixture. It can never emit a `.dsb`, but not because its
-/// constructs are REJECT-band — the compile stops earlier than that: the root
-/// frame carries `layoutMode: HORIZONTAL`, and auto-layout is refused before
-/// the triage gate runs. Reaching the three effects it was authored to carry
-/// therefore needs [`effects_2025_without_auto_layout`].
+/// The diagnostic fixture. It can never emit a `.dsb`: everything it was
+/// authored to carry is REJECT-band. Its root frame is auto-layout
+/// (`layoutMode: HORIZONTAL`), which the v0.3 walk refused before reaching
+/// the effects; since story #140 lowers auto-layout, the raw capture reaches
+/// its three effects with no derivation.
 const EFFECTS_2025: &str = include_str!("../../../corpus/figma-fixtures/effects-2025.json");
-
-fn parse(json: &str) -> FigmaFile {
-    serde_json::from_str(json).expect("the captured fixture parses")
-}
-
-/// `effects-2025.json` with the root frame's auto-layout removed, and nothing
-/// else touched.
-///
-/// The captured root is a `layoutMode: HORIZONTAL` frame, which the walk now
-/// refuses outright — see
-/// `the_reject_fixtures_auto_layout_root_is_refused`. Its three REJECT-band
-/// effects are the point of the fixture, though, so they are exercised through
-/// this derived document rather than being hand-written: the effects that
-/// reach the triage table are still the captured ones (P5), and only the
-/// construct that blocks the walk is dropped.
-fn effects_2025_without_auto_layout() -> serde_json::Value {
-    let mut file: serde_json::Value =
-        serde_json::from_str(EFFECTS_2025).expect("the captured fixture parses");
-
-    file["document"]["children"][0]["children"][0]
-        .as_object_mut()
-        .expect("the fixture's first canvas has a root frame")
-        .remove("layoutMode")
-        .expect("the fixture's root frame is auto-layout, which is what this strips");
-
-    file
-}
-
-/// [`effects_2025_without_auto_layout`], parsed.
-fn effects_2025() -> FigmaFile {
-    serde_json::from_value(effects_2025_without_auto_layout())
-        .expect("the derived fixture still parses")
-}
 
 /// A one-page document whose root `FRAME` is `root`.
 ///
@@ -218,14 +188,43 @@ fn lowered() -> dashc_wasm::Document {
     doc
 }
 
-/// The node named `name`, and its index in the rect table.
-fn node<'a>(doc: &'a dashc_wasm::Document, name: &str) -> (u32, &'a dashc_wasm::Node) {
-    doc.nodes
+/// Asserts `diagnostics` carries exactly one `figma.unsupported` error, that
+/// its path contains `at`, and that the construct it names is `what` — the
+/// shape every refusal test in this file pins. The unsupported node itself
+/// must not have lowered: its subtree is skipped, never approximated.
+fn assert_sole_unsupported(
+    doc: &dashc_wasm::Document,
+    diagnostics: &[dashscene_validator::Diagnostic],
+    at: &str,
+    what: &str,
+) {
+    let found: Vec<_> = diagnostics
         .iter()
-        .enumerate()
-        .find(|(_, n)| n.name.as_deref() == Some(name))
-        .map(|(i, n)| (i as u32, n))
-        .unwrap_or_else(|| panic!("no lowered node named {name}"))
+        .filter(|d| d.rule == "figma.unsupported")
+        .collect();
+    let [diagnostic] = found[..] else {
+        panic!("expected exactly one unsupported diagnostic, got {found:?}");
+    };
+
+    assert_eq!(diagnostic.severity, dashscene_validator::Severity::Error);
+    assert_eq!(
+        diagnostic.message,
+        format!("{what} is not in the document vocabulary yet"),
+    );
+    let Location::Node(path) = &diagnostic.at else {
+        panic!("an unsupported construct is located at a node");
+    };
+    assert!(
+        path.path.contains(at),
+        "the diagnostic names the node: {}",
+        path.path,
+    );
+    assert!(
+        !doc.nodes
+            .iter()
+            .any(|n| n.name.as_deref().is_some_and(|name| at.contains(name))),
+        "the unsupported node must be skipped, not lowered",
+    );
 }
 
 #[test]
@@ -670,7 +669,10 @@ const EFFECTS_2025_DIAGNOSTICS: [(&str, &str); 3] = [
 
 #[test]
 fn the_reject_fixture_triages_every_construct_as_an_error() {
-    let (_, diagnostics) = lower(&effects_2025(), Profile::Core, &images())
+    // The raw capture, auto-layout root included: since #140 the walk
+    // lowers the root's flex intent and reaches the three effects the
+    // fixture was authored to carry.
+    let (_, diagnostics) = lower(&parse(EFFECTS_2025), Profile::Core, &images())
         .expect("the effects fixture lowers; its constructs are diagnosed, not fatal");
 
     // The count, not just the membership: a construct that stopped being
@@ -693,7 +695,7 @@ fn each_diagnostic_points_at_its_own_node() {
     // A diagnostic's `at` is what an editor jumps to and what a waiver keys
     // on (issue #41). An off-by-one index sends both to the wrong layer, and
     // every other assertion in this file would still pass.
-    let (doc, diagnostics) = lower(&effects_2025(), Profile::Core, &images())
+    let (doc, diagnostics) = lower(&parse(EFFECTS_2025), Profile::Core, &images())
         .expect("the effects fixture lowers; its constructs are diagnosed, not fatal");
 
     assert_eq!(diagnostics.len(), EFFECTS_2025_DIAGNOSTICS.len());
@@ -770,15 +772,14 @@ fn a_second_visible_stroke_fails_loudly_rather_than_being_silently_dropped() {
         ],
     }));
 
-    let err = lower(&file, Profile::Core, &BTreeMap::new()).unwrap_err();
-    let CompileError::Unsupported { path, what } = err else {
-        panic!("expected Unsupported, got {err:?}");
-    };
-    assert!(
-        path.contains("two-strokes"),
-        "the error names the node: {path}"
+    let (doc, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
+        .expect("an unsupported construct is diagnosed, not fatal");
+    assert_sole_unsupported(
+        &doc,
+        &diagnostics,
+        "two-strokes",
+        "more than one visible stroke",
     );
-    assert_eq!(what, "more than one visible stroke");
 }
 
 #[test]
@@ -834,15 +835,14 @@ fn a_second_visible_fill_fails_loudly_rather_than_being_silently_dropped() {
         ],
     }));
 
-    let err = lower(&file, Profile::Core, &BTreeMap::new()).unwrap_err();
-    let CompileError::Unsupported { path, what } = err else {
-        panic!("expected Unsupported, got {err:?}");
-    };
-    assert!(
-        path.contains("two-fills"),
-        "the error names the node: {path}"
+    let (doc, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
+        .expect("an unsupported construct is diagnosed, not fatal");
+    assert_sole_unsupported(
+        &doc,
+        &diagnostics,
+        "two-fills",
+        "more than one visible fill",
     );
-    assert_eq!(what, "more than one visible fill");
 }
 
 #[test]
@@ -858,12 +858,9 @@ fn a_rotated_node_fails_loudly_rather_than_silently_dropping_the_rotation() {
         "rotation": 0.25,
     }));
 
-    let err = lower(&file, Profile::Core, &BTreeMap::new()).unwrap_err();
-    let CompileError::Unsupported { path, what } = err else {
-        panic!("expected Unsupported, got {err:?}");
-    };
-    assert!(path.contains("rotated"), "the error names the node: {path}");
-    assert_eq!(what, "node rotation");
+    let (doc, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
+        .expect("an unsupported construct is diagnosed, not fatal");
+    assert_sole_unsupported(&doc, &diagnostics, "rotated", "node rotation");
 }
 
 #[test]
@@ -879,27 +876,19 @@ fn a_mask_node_fails_loudly_rather_than_silently_dropping_the_mask() {
         "isMask": true,
     }));
 
-    let err = lower(&file, Profile::Core, &BTreeMap::new()).unwrap_err();
-    let CompileError::Unsupported { path, what } = err else {
-        panic!("expected Unsupported, got {err:?}");
-    };
-    assert!(path.contains("masked"), "the error names the node: {path}");
-    assert_eq!(what, "a mask node");
+    let (doc, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
+        .expect("an unsupported construct is diagnosed, not fatal");
+    assert_sole_unsupported(&doc, &diagnostics, "masked", "a mask node");
 }
 
 #[test]
-fn an_auto_layout_frame_fails_loudly_rather_than_baking_the_solver_result() {
-    // Two violations at once, and either one alone would be enough to refuse.
-    //
-    // P4: Document has no flex vocabulary, so the mode, the itemSpacing and the
-    // padding below have no field to lower into and no Construct to triage
-    // onto — passing the frame through drops all four in silence.
-    //
-    // P1: worse, the drop is not visible in the output. Figma's flex solver is
-    // what computed the child's absoluteBoundingBox, so a walk that ignored
-    // layoutMode would lower that box as a fixed rect and produce a document
-    // that renders correctly at exactly one size — a solver result written in
-    // as though it were authored intent.
+fn an_auto_layout_child_never_bakes_the_solved_position() {
+    // The surviving ground of
+    // docs/decisions/figma-auto-layout-refused-on-two-grounds.md: inside an
+    // auto-layout frame, absoluteBoundingBox is what Figma's flex solver
+    // computed. The lowering carries the *intent* — mode, gap, padding — and
+    // the child's solved position lowers as zeros, never as a fixed offset
+    // that would look right at exactly one size (P1).
     let file = document(serde_json::json!({
         "name": "column",
         "type": "FRAME",
@@ -911,33 +900,40 @@ fn an_auto_layout_frame_fails_loudly_rather_than_baking_the_solver_result() {
         "children": [{
             "name": "row-item",
             "type": "FRAME",
-            // Not authored: 16 and 40 are where Figma's solver put it.
+            // Not authored: 16 and 40 are where Figma's solver put it. The
+            // 68×30 extent is authored — the child's sizing is fixed.
             "absoluteBoundingBox": { "x": 16.0, "y": 40.0, "width": 68.0, "height": 30.0 },
         }],
     }));
 
-    let err = lower(&file, Profile::Core, &BTreeMap::new()).unwrap_err();
-    let CompileError::Unsupported { path, what } = err else {
-        panic!("expected Unsupported, got {err:?}");
-    };
-    assert!(path.contains("column"), "the error names the node: {path}");
-    assert_eq!(what, "auto-layout (VERTICAL)");
-}
+    let (doc, diagnostics) =
+        lower(&file, Profile::Core, &BTreeMap::new()).expect("auto-layout lowers since #140");
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
 
-#[test]
-fn the_reject_fixtures_auto_layout_root_is_refused() {
-    // The captured root frame of effects-2025 is `layoutMode: HORIZONTAL`, so
-    // the gate is not hypothetical — a fixture already in the corpus reaches
-    // it. Before the gate existed this file lowered clean, with its flex
-    // intent gone and its children's solver-computed boxes written in as
-    // fixed rects.
-    let err = lower(&parse(EFFECTS_2025), Profile::Core, &images()).unwrap_err();
+    let (_, column) = node(&doc, "column");
+    let container = column.container.expect("the column is a flex container");
+    assert_eq!(container.gap, 24.0);
+    assert_eq!(
+        (container.padding.left, container.padding.top),
+        (16.0, 16.0)
+    );
+    assert_eq!(
+        (container.padding.right, container.padding.bottom),
+        (0.0, 0.0),
+        "Figma omits a zero padding edge",
+    );
 
-    let CompileError::Unsupported { path, what } = err else {
-        panic!("expected Unsupported, got {err:?}");
-    };
-    assert_eq!(path, "/effects-2025");
-    assert_eq!(what, "auto-layout (HORIZONTAL)");
+    let (_, item) = node(&doc, "row-item");
+    assert_eq!(
+        (item.box2d.x, item.box2d.y),
+        (0.0, 0.0),
+        "the solved position must not be written in as intent (P1)",
+    );
+    assert_eq!(
+        (item.box2d.width, item.box2d.height),
+        (68.0, 30.0),
+        "the fixed extent is authored intent, and it lowers",
+    );
 }
 
 #[test]
@@ -953,9 +949,13 @@ fn a_layout_mode_of_none_is_not_auto_layout() {
     }));
 
     let (doc, _) = lower(&file, Profile::Core, &BTreeMap::new()).expect("the document lowers");
-    let (index, _) = node(&doc, "fixed");
+    let (index, fixed) = node(&doc, "fixed");
 
     assert_eq!(index, 0);
+    assert_eq!(
+        fixed.container, None,
+        "NONE is a passthrough, not a flex container"
+    );
 }
 
 #[test]
@@ -976,15 +976,9 @@ fn a_non_basic_stroke_fails_loudly_rather_than_lowering_as_a_solid_one() {
         "strokes": [{ "type": "SOLID", "color": { "r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0 } }],
     }));
 
-    let err = lower(&file, Profile::Core, &BTreeMap::new()).unwrap_err();
-    let CompileError::Unsupported { path, what } = err else {
-        panic!("expected Unsupported, got {err:?}");
-    };
-    assert!(
-        path.contains("dashed-border"),
-        "the error names the node: {path}"
-    );
-    assert_eq!(what, "a DASHED stroke");
+    let (doc, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
+        .expect("an unsupported construct is diagnosed, not fatal");
+    assert_sole_unsupported(&doc, &diagnostics, "dashed-border", "a DASHED stroke");
 }
 
 #[test]
@@ -1006,15 +1000,9 @@ fn a_stroke_dash_pattern_fails_loudly_rather_than_lowering_as_a_continuous_strok
         "strokes": [{ "type": "SOLID", "color": { "r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0 } }],
     }));
 
-    let err = lower(&file, Profile::Core, &BTreeMap::new()).unwrap_err();
-    let CompileError::Unsupported { path, what } = err else {
-        panic!("expected Unsupported, got {err:?}");
-    };
-    assert!(
-        path.contains("dotted-border"),
-        "the error names the node: {path}"
-    );
-    assert_eq!(what, "a dashed stroke");
+    let (doc, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
+        .expect("an unsupported construct is diagnosed, not fatal");
+    assert_sole_unsupported(&doc, &diagnostics, "dotted-border", "a dashed stroke");
 }
 
 #[test]
@@ -1058,12 +1046,14 @@ fn a_node_with_no_box_is_named_in_the_error() {
         "type": "FRAME",
     }));
 
-    let err = lower(&file, Profile::Core, &BTreeMap::new()).unwrap_err();
-    let CompileError::Unsupported { path, what } = err else {
-        panic!("expected Unsupported, got {err:?}");
-    };
-    assert_eq!(path, "/boxless-root");
-    assert_eq!(what, "node boxless-root has no absoluteBoundingBox");
+    let (doc, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
+        .expect("an unsupported construct is diagnosed, not fatal");
+    assert_sole_unsupported(
+        &doc,
+        &diagnostics,
+        "/boxless-root",
+        "node boxless-root has no absoluteBoundingBox",
+    );
 }
 
 #[test]
@@ -1110,8 +1100,7 @@ fn the_reject_fixture_is_refused_rather_than_emitted() {
     // effects-2025 is a DIAGNOSTIC fixture (corpus/figma-fixtures/README.md): everything in it is
     // REJECT-band, so under R6 it can never emit a .dsb. The report must name
     // each construct — never a silent drop (P4).
-    let json = effects_2025_without_auto_layout().to_string();
-    let err = compile_figma(&json, Profile::Core, &images())
+    let err = compile_figma(EFFECTS_2025, Profile::Core, &images())
         .expect_err("a REJECT-band document must never emit");
 
     let CompileError::Diagnostics(report) = err else {

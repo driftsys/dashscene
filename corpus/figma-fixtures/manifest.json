@@ -17,14 +17,15 @@
       "name": "grid-basic",
       "fileKey": "BJ1sPobsTmNLQLWqtgjwJU",
       "covers": "GRID mode: row/column spans, fixed+flex tracks, hug/fill/fixed children, min/max constraints",
-      "emits": true
+      "emits": false,
+      "note": "Refused by name until the v0.8 layout-fidelity slice: the walk diagnoses grid auto-layout (GRID) and skips the subtree (docs/decisions/figma-flex-lowering.md D5). Captured now so the v0.8 grid lowering starts from pinned shapes."
     },
     {
       "name": "variables-bound",
       "fileKey": "VtbiQejcN6gYMmeWaaEy1b",
       "covers": "boundVariables on color + number props across light/dark modes; one subtree pinned to dark",
-      "emits": true,
-      "note": "designated input for token-resolution phase 1 (sidecar) and phase 2 (id->name join), docs/decisions/token-resolution-phase-split.md"
+      "emits": false,
+      "note": "designated input for token-resolution phase 1 (sidecar) and phase 2 (id->name join), docs/decisions/token-resolution-phase-split.md; raw compile is refused today: the Fill cards sit on the hug root's axis (a Figma-vs-CSS sizing divergence, docs/decisions/figma-flex-lowering.md D5) and the TEXT children wait on #160"
     },
     {
       "name": "effects-2025",
@@ -38,31 +39,38 @@
       "name": "lowering-wrap",
       "fileKey": "bInPIUfkcxNKAzBOxOOpDZ",
       "covers": "WRAP auto-layout: fixed-width children wrapping at a fixed container width",
-      "emits": true
+      "emits": false,
+      "note": "Refused by name until the v0.8 layout-fidelity slice: the walk diagnoses wrapping auto-layout (WRAP) and skips the subtree (docs/decisions/figma-flex-lowering.md D5)."
     },
     {
       "name": "lowering-hug-in-fill",
       "fileKey": "48AJL2nXxEYAPC423aM124",
       "covers": "HUG child inside a FILL container (Figma->CSS sizing lowering)",
-      "emits": true
+      "emits": false,
+      "derivedEmits": "the TEXT leaf swapped for a FRAME fixed at its captured box (crates/dashc/tests/flex_lowering.rs) emits goldens/dsb/v07-hug-in-fill-derived.dsb and solves to the captured rects",
+      "note": "Raw compile is refused only by the TEXT leaf (#160, text lowering); the auto-layout chain itself lowers since #140."
     },
     {
       "name": "lowering-negative-gap",
       "fileKey": "w8JdmcqdvZhD1qIB8GVK2u",
       "covers": "negative itemSpacing (-16) overlap row, lowered to margins (docs/design/dashbuf.md)",
-      "emits": true
+      "emits": false,
+      "derivedEmits": "the ELLIPSE children retyped as FRAMEs (crates/dashc/tests/flex_lowering.rs) emit goldens/dsb/v07-negative-gap-derived.dsb and solve to the captured rects",
+      "note": "Raw compile is refused only by the ELLIPSE children (shape nodes have no lowering story yet); the negative-gap lowering itself lands since #140. Root hug width solve is engine debt #236."
     },
     {
       "name": "lowering-baseline",
       "fileKey": "R1S4QqZtT54WVcYcFFuQoD",
       "covers": "mixed-size BASELINE alignment row (docs/technotes/open-questions.md, Q-4) + Arabic RTL run with Arabic-Indic numerals (E2)",
-      "emits": true
+      "emits": false,
+      "note": "Refused by name until the v0.8 layout-fidelity slice: the walk diagnoses cross-axis alignment BASELINE at the root and skips the subtree (Q-4); the TEXT children additionally wait on #160, which names this file as its designated input."
     },
     {
       "name": "lowering-variant-topology",
       "fileKey": "CAWMOi1aDE7gTpNb6zKnxv",
       "covers": "component set whose variants have different child counts (topology change) + one instance",
-      "emits": true
+      "emits": false,
+      "note": "Raw compile is refused today: COMPONENT_SET/COMPONENT/INSTANCE node types have no lowering yet, and the root pins the dashed-stroke shape (debt #145). Captured for the variant-topology work."
     }
   ]
 }
