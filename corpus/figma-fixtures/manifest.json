@@ -25,7 +25,8 @@
       "fileKey": "VtbiQejcN6gYMmeWaaEy1b",
       "covers": "boundVariables on color + number props across light/dark modes; one subtree pinned to dark",
       "emits": false,
-      "note": "token phase 1 is implemented (#159): the boundVariables IDs are preserved in the <out>.vars.json sidecar (importers/figma/src/tokens.ts, docs/decisions/token-resolution-phase-split.md) while the resolved literals emit as ordinary properties, so tokens no longer gate this fixture. Phase 2 (id->name/collection/mode join) is deferred to the annotator plugin's token-export command (#39/§13). The TEXT children lower since #160; emits stays false on the one remaining layout blocker: the Fill cards sit on the hug root's axis (a Figma-vs-CSS sizing divergence, docs/decisions/figma-flex-lowering.md D5)."
+      "vartable": "variables-bound.vartable.json",
+      "note": "token phase 1 is implemented (#159): the boundVariables IDs are preserved in the <out>.vars.json sidecar (importers/figma/src/tokens.ts, docs/decisions/token-resolution-phase-split.md) while the resolved literals emit as ordinary properties, so tokens no longer gate this fixture. Phase 2 (id->name/collection/mode join) join table is committed as variables-bound.vartable.json — the annotator plugin's token-export output (#39), which #167 joins the sidecar against. The TEXT children lower since #160; emits stays false on the one remaining layout blocker: the Fill cards sit on the hug root's axis (a Figma-vs-CSS sizing divergence, docs/decisions/figma-flex-lowering.md D5)."
     },
     {
       "name": "effects-2025",
@@ -79,6 +80,13 @@
       "covers": "production-shaped file for the v0.7 real-file import spike (story #37): two pages, extra top-level frames beside the export root, a component set with an instance, a hidden layer, an image fill",
       "emits": false,
       "note": "Awaiting manual authoring: run the fixture-author plugin's real-file command in a blank Figma file, paste the file key here, and run `just deno-capture` (importers/figma/plugin/fixture-author/README.md). Raw compile will be refused until INSTANCE lowers; the fixture exists so the export closure (declared roots, per-set variant closure, exclusion naming) replays against a real multi-page response."
+    },
+    {
+      "name": "trim-demo",
+      "fileKey": "PASTE_THE_FIGMA_FILE_KEY_HERE",
+      "covers": "trim-path exercise (story #39): one declared root holding a placeholder slot (with sample children), a redline overlay, a spec note, a `_`-prefixed scratch layer, and a hidden layer (hidden != trimmed)",
+      "emits": false,
+      "note": "Awaiting manual authoring: run the fixture-author plugin's trim-demo command, then write the roles with the SEPARATE dashscene annotator plugin (importers/figma/plugin/README.md — the fixture author never writes roles), paste the file key here, and run `just deno-capture`. The trim rules themselves are covered offline by importers/figma/src/trim_test.ts and the import-level test; this fixture replays annotate -> trim -> named record against a real ?plugin_data=shared response."
     }
   ]
 }

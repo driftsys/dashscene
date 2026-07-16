@@ -12,7 +12,7 @@
   },
 
   "tasks": {
-    "check": "deno check src/mod.ts src/capture.ts src/import.ts plugin/code.ts",
+    "check": "deno check src/mod.ts src/capture.ts src/import.ts plugin/code.js",
     "test": "deno test --allow-net=api.figma.com --allow-read=.,../../corpus/figma-fixtures,../../goldens/dsb,../../target/wasm32-unknown-unknown/release --allow-env=FIGMA_TOKEN",
     "lint": "deno lint",
     "fmt": "deno fmt",

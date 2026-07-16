@@ -776,6 +776,73 @@ async function realFile() {
     "scratch on page 1, chip variants on real-file-components";
 }
 
+// --------------------------------------------------------------------- trim-demo
+// The trim-path exercise (story #39): one declared root frame holding a node
+// for each trim case, so a capture replays annotate -> trim -> named record
+// against a real response. This command builds the SCENE only; the roles are
+// written by the SEPARATE annotator plugin (importers/figma/plugin/), which is
+// the only tool that writes sharedPluginData roles
+// (docs/decisions/annotator-plugin-contract-frozen.md). After building, follow
+// the annotate step in this folder's README, then capture.
+//
+// Cases: real content (kept); a placeholder slot whose sample children are
+// auto-replaced; a redline overlay; a spec note; a `_`-prefixed scratch layer
+// (trimmed by name alone, no annotation); and a hidden layer (visible:false is
+// NOT trimmed — it may be a variant state).
+async function trimDemo() {
+  await figma.loadFontAsync(INTER);
+  await figma.loadFontAsync(INTER_BOLD);
+
+  const root = baseFrame("trim-demo", 420, 640);
+  root.layoutMode = "VERTICAL";
+  root.itemSpacing = 16;
+  root.paddingLeft = root.paddingRight = 24;
+  root.paddingTop = root.paddingBottom = 24;
+  root.appendChild(await label("trim-demo", INTER_BOLD, 24));
+
+  // Real content — kept.
+  const content = cell("real-content", { r: 0.85, g: 0.9, b: 0.95 });
+  root.appendChild(content);
+  content.resize(372, 80);
+
+  // A slot: annotate this frame `placeholder`. Its children are sample content
+  // by definition and are auto-replaced (trimmed) at import.
+  const slot = cell("slot", { r: 0.9, g: 0.92, b: 0.85 });
+  root.appendChild(slot);
+  slot.layoutMode = "VERTICAL";
+  slot.paddingLeft = slot.paddingRight = 12;
+  slot.paddingTop = slot.paddingBottom = 12;
+  slot.itemSpacing = 8;
+  slot.appendChild(await label("sample-a", INTER, 12));
+  slot.appendChild(await label("sample-b", INTER, 12));
+
+  // A redline overlay: annotate `redline`.
+  const redline = cell("redline-overlay", { r: 0.95, g: 0.6, b: 0.6 });
+  root.appendChild(redline);
+  redline.resize(372, 40);
+
+  // A spec note: annotate `spec`.
+  const spec = await label("spec: gap = 16, radius = 8", INTER, 12);
+  spec.name = "spec-note";
+  root.appendChild(spec);
+
+  // `_`-prefixed scratch — trimmed by name alone, no annotation needed.
+  const scratch = cell("_scratch", { r: 0.8, g: 0.8, b: 0.8 });
+  root.appendChild(scratch);
+  scratch.resize(372, 32);
+
+  // Hidden layer — visible:false is NOT trimmed (it may be a variant state).
+  const hidden = cell("hidden-state", { r: 0.8, g: 0.75, b: 0.95 });
+  root.appendChild(hidden);
+  hidden.resize(372, 32);
+  hidden.visible = false;
+
+  return "trim-demo built: real content, a placeholder slot (2 sample kids), " +
+    "a redline overlay, a spec note, a _scratch layer, and a hidden layer. " +
+    "Now annotate the roles with the dashscene annotator (see README), then " +
+    "capture.";
+}
+
 // ------------------------------------------------------------------ dispatch
 const COMMANDS = {
   "v03-paint": v03Paint,
@@ -788,6 +855,7 @@ const COMMANDS = {
   "lowering-baseline": loweringBaseline,
   "lowering-variant-topology": loweringVariantTopology,
   "real-file": realFile,
+  "trim-demo": trimDemo,
 };
 
 (async () => {

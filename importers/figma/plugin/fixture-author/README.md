@@ -41,8 +41,31 @@ then run Plugins → Development → dashscene fixture author → _(name)_.
                                  top-level frames beside the export root,
                                  a component set + instance, a hidden
                                  layer, an image fill
+    trim-demo                    trim-path exercise (story #39): one root
+                                 with a placeholder slot, a redline
+                                 overlay, a spec note, a `_`-prefixed
+                                 scratch layer, and a hidden layer — then
+                                 annotate the roles (see below)
 
 Re-running a command deletes and rebuilds its frame — safe to iterate.
+
+## Annotating roles (a separate plugin)
+
+`trim-demo` builds the scene but writes **no** roles — the fixture author
+never writes `sharedPluginData` roles
+(docs/decisions/annotator-plugin-contract-frozen.md). The roles are
+written by the **dashscene annotator** plugin
+(`importers/figma/plugin/`, its own `README.md`). After running
+`trim-demo`:
+
+1. Import and run the annotator (see its README).
+2. Select the `slot` frame → **Mark placeholder**.
+3. Select `redline-overlay` → **Mark redline**.
+4. Select `spec-note` → **Mark spec**.
+
+The `_scratch` layer needs no annotation (the `_` name prefix trims it),
+and `hidden-state` must stay unannotated (hidden is not trimmed). Then
+capture as below.
 
 ## Manual steps (the plugin will remind you)
 
