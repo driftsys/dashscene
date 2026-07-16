@@ -109,24 +109,30 @@ cannot fetch, and Figma serializes an image fill as a bare `imageRef` with no
 bytes. The caller — the Deno importer — resolves refs and passes them in as
 `images: &BTreeMap<String, ImageAsset>`.
 
-`image_refs` walks the same subtree `lower` does — both fills and strokes,
-from `root_frame` down — and returns the sorted, deduplicated set of
-`imageRef`s a lowering of the file will need. The Deno importer calls it,
-across the wasm ABI, rather than walking the JSON itself, so there is
-exactly one place that knows where an `imageRef` lives in Figma's shape (P5;
-`docs/decisions/figma-image-refs-resolved-by-the-caller.md`). It is
-deliberately a superset: a paint it names may still be refused by the
-lowering (a stacked fill, an invisible one), so fetching an unused image
-costs a download, while missing one costs a failed compile.
+`image_refs` walks the same subtrees `lower` does — both fills and strokes,
+every top-level node's subtree with component definitions included — and
+returns the sorted, deduplicated set of `imageRef`s a lowering of the file will
+need. The Deno importer calls it, across the wasm ABI, rather than walking the
+JSON itself, so there is exactly one place that knows where an `imageRef` lives
+in Figma's shape (P5; `docs/decisions/figma-image-refs-resolved-by-the-caller.md`).
+It is deliberately a superset: a paint it names may still be refused by the
+lowering (a stacked fill, an invisible one) or sit in a definition the lowering
+resolves but does not paint, so fetching an unused image costs a download, while
+missing one costs a failed compile.
 
-The walk is depth-first, parent before child, from the first `FRAME` under
-the first `CANVAS` (`root_frame`). It is iterative — an explicit stack, not
-recursion — so tree depth costs heap, never call stack (debt #148); the
-matching parse-side bound is `MAX_JSON_DEPTH`, a documented 256-level limit
-enforced by a linear pre-scan whose refusal names both depths, in place of
-serde_json's opaque default. Every other sibling and every later
-canvas is currently dropped without a diagnostic (debt #147); a declared-roots
-plus reachability-closure rule is the v0.7 story.
+The walk is depth-first, parent before child. Every top-level node under every
+`CANVAS` is a document root (`top_level_nodes`): a declared-roots export
+computes exactly the set to pass, so the walk no longer selects one
+positionally, and a component definition among the roots resolves but does not
+paint (`docs/decisions/figma-component-lowering.md`, #242). This deleted the
+v0.3 first-`FRAME`-under-the-first-`CANVAS` selection (debt #147) that dropped
+every sibling and every later canvas without a diagnostic; declared roots plus
+the reachability closure (`importers/figma/src/closure.ts`) are the
+importer-side half of that debt. The walk is
+iterative — an explicit stack, not recursion — so tree depth costs heap, never
+call stack (debt #148); the matching parse-side bound is `MAX_JSON_DEPTH`, a
+documented 256-level limit enforced by a linear pre-scan whose refusal names
+both depths, in place of serde_json's opaque default.
 
 A construct the document vocabulary cannot express is an error-severity
 diagnostic under `dashc`'s own rule id `figma.unsupported`, and the walk
@@ -268,13 +274,9 @@ noted, because a real Figma file will hit them:
   `complexStrokeProperties.strokeType` other than `BASIC`, or a non-empty
   `strokeDashes`, has nothing to lower into, so it is refused rather than
   repainted as a plain solid stroke of the same color (debt #145).
-- **Non-`FRAME` nodes** — `TEXT` is story #160; shape nodes (`ELLIPSE`,
-  `RECTANGLE`, vectors) have no story yet, which the captured
-  `lowering-negative-gap.json` (`ELLIPSE` children) makes concrete.
-- **Root selection drops canvas siblings silently** — `root_frame` takes the
-  first `FRAME` under the first `CANVAS`; every other sibling and every
-  later canvas vanishes with no diagnostic. A declared-roots plus
-  reachability-closure rule is the v0.7 story (debt #147).
+- **Non-`FRAME` nodes** — `TEXT` is story #160, `ELLIPSE`→circle is #239, and
+  `INSTANCE` is #242; the remaining shape nodes (`RECTANGLE`, vectors) have no
+  story yet.
 
 One gap sits half outside the lowering: **variable-width stroke** is on
 `docs/specification/04-figma-vocabulary-profile.md`'s REJECT list, but `dashscene_validator::Construct` has no
@@ -289,7 +291,6 @@ so no captured fixture exercises it.
 Not expressiveness gaps — the lowering handles these inputs, but handles them
 less well than it should:
 
-- **Root selection drops canvas siblings** (debt #147, also listed above).
 - **A hug container over a lowered negative gap solves collapsed** (engine
   debt #236). The lowering's output is correct; Taffy 0.12's intrinsic
   sizing mis-sums negative margins. Found verifying #105 at story #140.

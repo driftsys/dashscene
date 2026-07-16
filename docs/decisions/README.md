@@ -227,6 +227,15 @@ into the records below. Per-story decisions land here directly:
   be expressed and is refused by name, along with arcs, rings, non-fixed
   ellipses, and the other shape kinds). No schema change — a dedicated shape
   construct is the deferred v1 path.
+- [figma-component-lowering.md](figma-component-lowering.md) — the #242
+  component lowering: a local `INSTANCE` lowers like a frame (Figma bakes the
+  referenced component's content, overrides applied, into the instance's own
+  children, so an out-of-vocabulary override is a named diagnostic like any
+  other), `COMPONENT`/`COMPONENT_SET` definitions resolve but do not paint (the
+  v0.4 variant table is consumer-side), and the walk lowers every top-level node
+  as a document root — deleting the positional first-frame selection (debt #147)
+  and lifting multi-root, which the `.dsb` model, the load gate, and the core
+  loader all carry. No schema or ABI change.
 - [rtl-text-width-is-the-placed-extent.md](rtl-text-width-is-the-placed-extent.md)
   — the #224 width-vs-bounds decision #160 settled: `TextLayout::width` is the
   content advance and the hug-sizing datum (the placed advance extent); a
