@@ -17,9 +17,12 @@ as-built compiler:
   reconciled when the compiler widens, so a `true` here is a live claim,
   not a design intent.
 - `derivedEmits` — present when the raw capture is blocked by exactly one
-  out-of-scope construct and a **declared derivation** (a single node-kind
-  swap, stated in the named test file) emits and is pinned by a committed
-  golden. The raw blocker and the story that lifts it are in `note`.
+  out-of-scope construct and a **declared derivation** — a single minimal
+  edit, stated in the named test file, either a node-kind swap (a `TEXT` or
+  `ELLIPSE` leaf retyped to a `FRAME`) or a property-value swap (a refused
+  attribute value replaced by a lowering one, e.g. `counterAxisAlignItems`
+  `BASELINE` → `MIN`) — emits and is pinned by a committed golden. The raw
+  blocker and the story that lifts it are in `note`.
 
 ## Tier 1 — committed static corpus
 

@@ -14,14 +14,16 @@ use dashbuf::{
     EdgeInsets as FbEdgeInsets, FixedSizeLayout, Gradient, GradientArgs, GradientStop, Image,
     ImageArgs, ImageFill, ImageFillArgs, LayoutConstraints as FbLayoutConstraints,
     LayoutConstraintsArgs, LayoutContainer as FbLayoutContainer, LayoutContainerArgs, Mat23,
-    NO_PAINT, NO_PARENT, Node as FbNode, NodeArgs as FbNodeArgs, Paint as BufPaint, PaintArgs,
-    SolidFill, SolidFillArgs, Stroke, StrokeArgs, Vec2,
+    NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE, Node as FbNode, NodeArgs as FbNodeArgs,
+    Paint as BufPaint, PaintArgs, SolidFill, SolidFillArgs, Stroke, StrokeArgs,
+    TextStyle as FbTextStyle, TextStyleArgs, Vec2,
 };
 use dashpaint::{ImageAsset, PaintEntry, PaintKind};
 use flatbuffers::{FlatBufferBuilder, WIPOffset};
 
 use crate::document::{
     AxisSizing, CrossAxisAlign, Document, EdgeInsets, LayoutMode, MainAxisAlign, Node, Paint,
+    TextStyle,
 };
 
 /// Serializes a document to `.dsb` bytes.
@@ -36,6 +38,19 @@ pub fn emit(doc: &Document) -> Vec<u8> {
     let mut pool: Vec<&Paint> = Vec::new();
     let mut pool_of: HashMap<PaintKey, u32> = HashMap::new();
     let mut entry_of: Vec<Option<u32>> = Vec::with_capacity(doc.nodes.len());
+
+    // The string and text-style pools intern in the same first-use DFS order,
+    // for the same R7 reason: two text nodes sharing a string or a style
+    // share one pool entry, and the order is the node walk's, never a hash
+    // map's. `docs/design/dashbuf.md`: "Dedup is the producer's job; the pool
+    // makes it representable."
+    let mut strings: Vec<&str> = Vec::new();
+    let mut string_of_pool: HashMap<&str, u32> = HashMap::new();
+    let mut string_of: Vec<Option<u32>> = Vec::with_capacity(doc.nodes.len());
+    let mut styles: Vec<&TextStyle> = Vec::new();
+    let mut style_of_pool: HashMap<TextStyleKey, u32> = HashMap::new();
+    let mut style_of: Vec<Option<u32>> = Vec::with_capacity(doc.nodes.len());
+
     for node in &doc.nodes {
         entry_of.push(node.paint.as_ref().map(|paint| {
             let key = paint_key(paint);
@@ -45,20 +60,41 @@ pub fn emit(doc: &Document) -> Vec<u8> {
                 index
             })
         }));
+        string_of.push(node.text.as_deref().map(|text| {
+            *string_of_pool.entry(text).or_insert_with(|| {
+                let index = u32::try_from(strings.len()).expect("string pool exceeds u32::MAX");
+                strings.push(text);
+                index
+            })
+        }));
+        style_of.push(node.text_style.as_ref().map(|style| {
+            let key = text_style_key(style);
+            *style_of_pool.entry(key).or_insert_with(|| {
+                let index = u32::try_from(styles.len()).expect("text-style pool exceeds u32::MAX");
+                styles.push(style);
+                index
+            })
+        }));
     }
 
     let images: Vec<WIPOffset<Image>> = doc.images.iter().map(|a| build_image(&mut b, a)).collect();
     let paints: Vec<WIPOffset<BufPaint>> = pool.iter().map(|p| build_paint(&mut b, p)).collect();
+    let string_offsets: Vec<WIPOffset<&str>> = strings.iter().map(|s| b.create_string(s)).collect();
+    let style_offsets: Vec<WIPOffset<FbTextStyle>> =
+        styles.iter().map(|s| build_text_style(&mut b, s)).collect();
     let nodes: Vec<WIPOffset<FbNode>> = doc
         .nodes
         .iter()
         .zip(&entry_of)
-        .map(|(node, entry)| build_node(&mut b, node, *entry))
+        .zip(string_of.iter().zip(&style_of))
+        .map(|((node, entry), (text, style))| build_node(&mut b, node, *entry, *text, *style))
         .collect();
 
     let nodes = b.create_vector(&nodes);
     let images = (!images.is_empty()).then(|| b.create_vector(&images));
     let paints = (!paints.is_empty()).then(|| b.create_vector(&paints));
+    let strings = (!string_offsets.is_empty()).then(|| b.create_vector(&string_offsets));
+    let text_styles = (!style_offsets.is_empty()).then(|| b.create_vector(&style_offsets));
 
     let document = FbDocument::create(
         &mut b,
@@ -66,6 +102,8 @@ pub fn emit(doc: &Document) -> Vec<u8> {
             nodes: Some(nodes),
             images,
             paints,
+            strings,
+            text_styles,
             ..Default::default()
         },
     );
@@ -77,6 +115,8 @@ fn build_node<'a>(
     b: &mut FlatBufferBuilder<'a>,
     node: &Node,
     paint_entry: Option<u32>,
+    text: Option<u32>,
+    text_style: Option<u32>,
 ) -> WIPOffset<FbNode<'a>> {
     let name = node.name.as_deref().map(|n| b.create_string(n));
 
@@ -141,9 +181,34 @@ fn build_node<'a>(
             // supersedes it, and writing both is a producer error the load
             // gate names (`paint.conflicting-representation`).
             paint_entry: paint_entry.unwrap_or(NO_PAINT),
+            // A non-text node leaves both at the sentinel — the schema
+            // default, so it is omitted from the buffer and a text-free
+            // document emits the bytes it did before this vocabulary (R7).
+            text: text.unwrap_or(NO_TEXT),
+            text_style: text_style.unwrap_or(NO_TEXT_STYLE),
             flex,
             constraints,
             ..Default::default()
+        },
+    )
+}
+
+/// Builds one `TextStyle` pool entry. The color is always written: the
+/// lowering never emits a color-less style (a text node with no solid fill is
+/// refused at the walk), and the loader treats an absent color as a producer
+/// error (`text.style-no-color`, P4).
+fn build_text_style<'a>(
+    b: &mut FlatBufferBuilder<'a>,
+    style: &TextStyle,
+) -> WIPOffset<FbTextStyle<'a>> {
+    let family = b.create_string(&style.family);
+    FbTextStyle::create(
+        b,
+        &TextStyleArgs {
+            family: Some(family),
+            size: style.size,
+            weight: style.weight,
+            color: Some(&color_of(style.color)),
         },
     )
 }
@@ -301,6 +366,21 @@ type PaintKey = (Vec<u32>, bool);
 
 fn paint_key(paint: &Paint) -> PaintKey {
     (entry_bits(&paint.entry), paint.clip)
+}
+
+/// The text-style pool's interning key. The `f32` size and the color go in by
+/// bit pattern for the same reason the paint key's do (`f32` is not
+/// `Eq`/`Hash`, and a value key would mint a fresh entry per NaN, breaking
+/// R7's byte-reproducibility).
+type TextStyleKey = (String, u32, u16, [u32; 4]);
+
+fn text_style_key(style: &TextStyle) -> TextStyleKey {
+    (
+        style.family.clone(),
+        style.size.to_bits(),
+        style.weight,
+        color_bits(style.color),
+    )
 }
 
 fn entry_bits(entry: &PaintEntry) -> Vec<u32> {

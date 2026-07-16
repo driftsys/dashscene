@@ -133,6 +133,12 @@ fn unconstrained_rtl_right_aligns_to_the_widest_line() {
     assert!(min_x(lat).abs() < 1e-4);
 }
 
+// The RTL width-vs-bounds contract (issue #224) is exercised against real
+// Arabic marks in `typeset_arabic.rs` — this file's Latin fixture font shapes
+// RTL to `.notdef` with zero GPOS offsets, so it cannot exercise the mark-ink
+// overhang the contract turns on
+// (`docs/decisions/rtl-text-width-is-the-placed-extent.md`).
+
 #[test]
 fn class_b_separators_split_paragraphs_within_a_chunk() {
     // A lone CR (like NEL and U+2029) is a UAX #9 block separator: it

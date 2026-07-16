@@ -20,3 +20,10 @@ dashscene-core.workspace = true
 dashscene-engine.workspace = true
 dashscene-skia.workspace = true
 dashscene-typeset.workspace = true
+# The v0.7 text-lowering golden (#160) drives the whole importer chain:
+# `dashc` lowers a captured Figma fixture (under a `dashscene-validator`
+# profile) and `dashbuf` parses the emitted `.dsb` before `dashscene-core`
+# loads it.
+dashbuf.workspace = true
+dashc.workspace = true
+dashscene-validator.workspace = true

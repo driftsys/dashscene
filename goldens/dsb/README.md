@@ -41,10 +41,30 @@ the boundary byte-identically. The Deno side mirrors the derivations; both
 sides asserting the same committed bytes is what makes a derivation drift a
 failure rather than two unrelated truths.
 
+## v07-text-hug-in-fill.dsb and v07-text-baseline-derived.dsb
+
+The story #160 text goldens, pinned by `crates/dashc/tests/text_lowering.rs`.
+
+- `v07-text-hug-in-fill.dsb` — `lowering-hug-in-fill.json` compiled **raw**
+  (no derivation): since #160 its HUG `TEXT` leaf lowers, so the whole capture
+  emits. This is the byte record of the string and text-style pools; the
+  matching end-to-end picture is `goldens/images/v07-text-lowering.png`.
+- `v07-text-baseline-derived.dsb` — `lowering-baseline.json` compiled after
+  one **property-value derivation**: its root's `counterAxisAlignItems` is
+  lifted from `BASELINE` (v0.8, refused) to `MIN`, so the mixed-size Latin
+  rows and the Arabic RTL run under it lower. Text is #160's scope; the
+  `BASELINE` alignment is not, so the derivation lifts only that one refusal.
+
+Both are native-only pins today (the Deno byte-identity suite covers the raw
+and derived flex fixtures, not text); adding the raw hug-in-fill to
+`importers/figma/src/wasm_test.ts` is a follow-up for the #37/#40 deterministic
+emission work.
+
 ## Regenerating
 
     UPDATE_GOLDENS=1 cargo test -p dashc --test figma_lowering
     UPDATE_GOLDENS=1 cargo test -p dashc --test flex_lowering
+    UPDATE_GOLDENS=1 cargo test -p dashc --test text_lowering
 
 A golden is reviewed truth: inspect the change before committing it. A missing
 golden never auto-creates on a normal run, so CI on a clean checkout fails

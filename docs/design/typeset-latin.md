@@ -79,7 +79,13 @@ in logical order, each baseline continuing the running line count.
   the widest line when `None`); LTR lines stay flush-left at x = 0.
   `TextLayout::width` stays the widest line's pen advance — the
   measure contract — so an RTL line's glyph positions can reach up to
-  `max_width`, past `width`.
+  `max_width`, past `width`. Story #160 (the first importer consumer
+  sizing text boxes from `width`) settled what that means for a consumer
+  (`docs/decisions/rtl-text-width-is-the-placed-extent.md`, closing #224):
+  `width` is the content advance and, for a hugged box (`max_width =
+  None`), the placed extent — every glyph then lies within `[0, width]`;
+  a fixed-width box is bounded by its authored width, not by `width`. No
+  bounds field is added.
 
 ## Arabic shaping (story #33)
 

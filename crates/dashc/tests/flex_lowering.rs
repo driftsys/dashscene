@@ -26,10 +26,10 @@ use dashpaint::{GlyphRunTable, Painter};
 use dashscene_core::{Arena, load_document};
 use dashscene_engine::TaffySolver;
 use dashscene_skia::SkiaPainter;
-use dashscene_validator::{Diagnostic, Location, Profile, Severity};
+use dashscene_validator::{Diagnostic, Location, Profile};
 
 mod common;
-use common::{node, parse};
+use common::{derive, kind_is, node, parse, unsupported};
 
 const HUG_IN_FILL: &str = include_str!("../../../corpus/figma-fixtures/lowering-hug-in-fill.json");
 const NEGATIVE_GAP: &str =
@@ -41,63 +41,6 @@ const VARIABLES_BOUND: &str = include_str!("../../../corpus/figma-fixtures/varia
 
 fn lowered(json: &str) -> (dashc_wasm::Document, Vec<Diagnostic>) {
     lower(&parse(json), Profile::Core, &BTreeMap::new()).expect("the fixture lowers")
-}
-
-/// Every `figma.unsupported` diagnostic, as `(path, construct)` pairs with
-/// the message's fixed suffix stripped — what the tests actually pin.
-fn unsupported(diagnostics: &[Diagnostic]) -> Vec<(String, String)> {
-    diagnostics
-        .iter()
-        .filter(|d| d.rule == rule::UNSUPPORTED)
-        .map(|d| {
-            assert_eq!(
-                d.severity,
-                Severity::Error,
-                "unsupported is always an error"
-            );
-            let Location::Node(at) = &d.at else {
-                panic!("an unsupported construct is located at a node");
-            };
-            let what = d
-                .message
-                .strip_suffix(" is not in the document vocabulary yet")
-                .unwrap_or_else(|| panic!("unexpected message shape: {}", d.message));
-            (at.path.clone(), what.to_string())
-        })
-        .collect()
-}
-
-/// The captured JSON with every node `predicate` matches rewritten by
-/// `patch`, and nothing else changed.
-fn derive(
-    json: &str,
-    predicate: impl Fn(&serde_json::Map<String, serde_json::Value>) -> bool + Copy,
-    patch: impl Fn(&mut serde_json::Map<String, serde_json::Value>) + Copy,
-) -> String {
-    fn walk(
-        value: &mut serde_json::Value,
-        predicate: impl Fn(&serde_json::Map<String, serde_json::Value>) -> bool + Copy,
-        patch: impl Fn(&mut serde_json::Map<String, serde_json::Value>) + Copy,
-    ) {
-        if let Some(object) = value.as_object_mut() {
-            if predicate(object) {
-                patch(object);
-            }
-            if let Some(children) = object.get_mut("children").and_then(|c| c.as_array_mut()) {
-                for child in children {
-                    walk(child, predicate, patch);
-                }
-            }
-        }
-    }
-
-    let mut file: serde_json::Value = serde_json::from_str(json).expect("the capture parses");
-    walk(&mut file["document"], predicate, patch);
-    file.to_string()
-}
-
-fn kind_is(object: &serde_json::Map<String, serde_json::Value>, kind: &str) -> bool {
-    object.get("type").and_then(|t| t.as_str()) == Some(kind)
 }
 
 /// `lowering-negative-gap.json` with its five `ELLIPSE` children retyped as
@@ -193,16 +136,16 @@ fn the_hug_in_fill_fixture_lowers_its_authored_flex_intent() {
     let padding = hug.container.expect("hug-inside is a row").padding;
     assert_eq!((padding.left, padding.top), (10.0, 6.0));
 
-    // The TEXT leaf is #160's scope: a named diagnostic, never a silent
-    // drop (P4), and its subtree is skipped rather than approximated.
-    assert_eq!(
+    // Since story #160 the TEXT leaf lowers too, so the whole fixture is
+    // clean — no unsupported construct remains. Its characters and style are
+    // pinned in tests/text_lowering.rs; here it is enough that the leaf is
+    // present and the flex chain around it lowered.
+    assert!(
+        unsupported(&diagnostics).is_empty(),
+        "{:?}",
         unsupported(&diagnostics),
-        vec![(
-            "/lowering-hug-in-fill/fill-container/hug-inside/hug inside fill".to_string(),
-            "node type TEXT".to_string(),
-        )],
     );
-    assert!(node_missing(&doc, "hug inside fill"));
+    assert!(!node_missing(&doc, "hug inside fill"));
 }
 
 fn node_missing(doc: &dashc_wasm::Document, name: &str) -> bool {
@@ -676,17 +619,19 @@ fn a_node_carrying_two_gaps_reports_both() {
 fn duplicate_sibling_names_get_distinct_paths() {
     // Figma permits duplicate sibling names (debt #150). The path suffixes
     // the Figma node id — the stable, URL-pastable one — or the child
-    // position when a synthetic node carries no id.
+    // position when a synthetic node carries no id. `VECTOR` is a node kind
+    // with no lowering, so each child is one "node type" diagnostic — the
+    // path is what the test pins (a `TEXT` node would lower since #160).
     let json = serde_json::json!({
         "document": { "name": "Document", "type": "DOCUMENT", "children": [{
             "name": "Page 1", "type": "CANVAS", "children": [{
                 "name": "root", "type": "FRAME",
                 "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0 },
                 "children": [
-                    { "id": "1:2", "name": "Frame 1", "type": "TEXT" },
-                    { "id": "1:3", "name": "Frame 1", "type": "TEXT" },
-                    { "name": "Frame 1", "type": "TEXT" },
-                    { "id": "1:5", "name": "unique", "type": "TEXT" },
+                    { "id": "1:2", "name": "Frame 1", "type": "VECTOR" },
+                    { "id": "1:3", "name": "Frame 1", "type": "VECTOR" },
+                    { "name": "Frame 1", "type": "VECTOR" },
+                    { "id": "1:5", "name": "unique", "type": "VECTOR" },
                 ],
             }],
         }]},
@@ -698,7 +643,7 @@ fn duplicate_sibling_names_get_distinct_paths() {
         Profile::Core,
         &BTreeMap::new(),
     )
-    .expect("the TEXT nodes are diagnosed, not fatal");
+    .expect("the unsupported nodes are diagnosed, not fatal");
 
     let paths: Vec<String> = unsupported(&diagnostics)
         .into_iter()
