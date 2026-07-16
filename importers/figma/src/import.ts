@@ -84,14 +84,17 @@ export async function importFigmaFile(
 ): Promise<ImportOk> {
   const { client, dashc, fileKey, profile, manifest, fetchFn } = options;
 
-  // The walk in dashc lowers one root frame. Refusing here is what keeps the
-  // extra roots from being dropped in silence by the positional selection
-  // (P4); the closure itself already computes multi-root exports, so this
-  // guard is the only thing to delete when the walk widens.
+  // dashc lowers multiple roots since #242
+  // (docs/decisions/figma-component-lowering.md), so this is importer policy
+  // now, not a walk limit: a multi-declared-root export end-to-end is a
+  // follow-up for the importer track. The closure already computes multi-root
+  // exports and the walk already lifts them, so this guard is a one-line
+  // deletion when that follow-up lands.
   if (manifest.roots.length > 1) {
     throw new Error(
-      "figma-export-multi-root: the lowering walks one root frame today, " +
-        `so an export declares exactly one root (got ${manifest.roots.length})`,
+      "figma-export-multi-root: an export declares exactly one root today " +
+        `(got ${manifest.roots.length}); multi-declared-root exports are a ` +
+        "follow-up for the importer track",
     );
   }
 

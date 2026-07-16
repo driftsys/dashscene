@@ -62,6 +62,15 @@ pub mod rule {
     /// never authored, and dropping it in silence is what P4 forbids. The
     /// message names the construct; the node path names the layer.
     pub const UNSUPPORTED: &str = "figma.unsupported";
+
+    /// The walk resolved every top-level node to no paintable content — the
+    /// definitions-only case: a canvas holding only `COMPONENT`/`COMPONENT_SET`
+    /// resolves but paints nothing
+    /// (`docs/decisions/figma-component-lowering.md`), so the document would
+    /// emit as zero nodes. Always an error: a zero-node `.dsb` is a picture with
+    /// no roots, which a downstream consumer panics loading, and emitting it in
+    /// silence is what P4 forbids. The message names what was skipped and why.
+    pub const NO_CONTENT: &str = "figma.no-content";
 }
 
 /// The JSON nesting depth [`parse_file`] accepts.
@@ -116,7 +125,7 @@ pub enum CompileError {
     /// deeper than [`MAX_JSON_DEPTH`] JSON levels.
     Parse(serde_json::Error),
     /// A file shape the walk cannot start on — today, a document with no
-    /// root `FRAME` under its first `CANVAS`.
+    /// top-level node under any `CANVAS`.
     Unsupported { path: String, what: String },
     /// An image fill whose `imageRef` the caller did not resolve. The load
     /// gate rejects a zero-byte asset, so no placeholder can be invented.
@@ -220,7 +229,7 @@ pub fn lower(
     profile: Profile,
     images: &BTreeMap<String, ImageAsset>,
 ) -> Result<(Document, Vec<Diagnostic>), CompileError> {
-    let root = root_frame(&file.document)?;
+    let roots = top_level_nodes(&file.document)?;
 
     let mut walk = Walk {
         doc: Document::new(),
@@ -235,17 +244,66 @@ pub fn lower(
     // pushed in reverse, so popping yields document (DFS preorder) order —
     // which is both the rect-table order and the diagnostics order.
     //
-    // The root has no parent origin: it is relative to itself, so it drops
-    // its page position and lowers to (0, 0, w, h).
-    let mut stack = vec![Visit {
-        node: root,
-        parent: None,
-        parent_origin: None,
-        path: format!("/{}", root.name),
-        flow: None,
-    }];
+    // Every top-level node is a document root: a declared-roots export computes
+    // exactly the set to lower, so the walk no longer selects one positionally
+    // (debt #147, `docs/decisions/figma-component-lowering.md`). Roots are
+    // seeded in reverse for the same LIFO reason, so the first canvas child
+    // lowers first and each root's subtree completes before the next root
+    // begins. A root has no parent origin: it is relative to itself, so it drops
+    // its page position and lowers to (0, 0, w, h) — each root independently.
+    // Component definitions among the roots resolve but do not paint;
+    // `Walk::visit` skips them.
+    let root_segments = disambiguated_segments(&roots);
+    // The top-level definitions, named for the no-content diagnostic below —
+    // captured before `roots` is consumed by the seed loop.
+    let definitions: Vec<String> = roots
+        .iter()
+        .filter(|n| n.kind == "COMPONENT" || n.kind == "COMPONENT_SET")
+        .map(|n| format!("{} ({})", n.name, n.kind))
+        .collect();
+    let mut stack: Vec<Visit> = Vec::with_capacity(roots.len());
+    for (root, segment) in roots.into_iter().zip(root_segments).rev() {
+        stack.push(Visit {
+            node: root,
+            parent: None,
+            parent_origin: None,
+            path: format!("/{segment}"),
+            flow: None,
+        });
+    }
     while let Some(visit) = stack.pop() {
         walk.visit(visit, &mut stack)?;
+    }
+
+    // A document that lowered to no content is refused by name (P4). The
+    // definitions-only case reaches here silently — every top-level node was a
+    // `COMPONENT`/`COMPONENT_SET` the walk skipped, leaving zero nodes and no
+    // diagnostic — so a zero-node `.dsb` would emit, and a consumer that expects
+    // at least one root panics loading it. When some other finding already
+    // blocks the document (an unsupported top-level node), that error explains
+    // the emptiness and R6 already blocks, so this diagnostic is not added on
+    // top of it.
+    if walk.doc.nodes.is_empty()
+        && !walk
+            .diagnostics
+            .iter()
+            .any(|d| d.severity == Severity::Error)
+    {
+        let what = if definitions.is_empty() {
+            "the document lowered to no content".to_string()
+        } else {
+            format!(
+                "the document lowered to no content: its only top-level nodes \
+                 are component definitions ({}), which resolve but do not paint",
+                definitions.join(", "),
+            )
+        };
+        walk.diagnostics.push(Diagnostic {
+            rule: rule::NO_CONTENT,
+            severity: Severity::Error,
+            at: Location::Node(NodePath::new(0, "/")),
+            message: what,
+        });
     }
 
     Ok((walk.doc, walk.diagnostics))
@@ -257,16 +315,20 @@ pub fn lower(
 /// carries no image bytes — only refs. Rather than have the importer walk the
 /// JSON looking for them (a second copy of "where an imageRef lives", free to
 /// drift from the walk that actually consumes them), it asks here. The scan
-/// covers the same subtree [`lower`] walks, and both fills and strokes, so a
-/// ref this returns is a ref the lowering can resolve.
+/// covers every top-level node's subtree — component definitions included — and
+/// both fills and strokes, so it names exactly the refs a declared-roots export
+/// ships (`importers/figma/src/closure.ts` counts a pulled component set's fills
+/// too), which is what keeps the closure↔dashc drift oracle exact.
 ///
-/// Deliberately a superset: a paint this returns may still be refused by the
-/// lowering (a stacked fill, an invisible one). Fetching an image that turns
-/// out to be unused costs one download; missing one is a failed compile.
+/// Deliberately a superset of what [`lower`] embeds: a paint this returns may
+/// still be refused by the lowering (a stacked fill, an invisible one) or sit in
+/// a definition the lowering resolves but does not paint this slice. Fetching an
+/// image that turns out to be unused costs one download; missing one is a failed
+/// compile.
 pub fn image_refs(file: &FigmaFile) -> Result<Vec<String>, CompileError> {
     let mut found = BTreeSet::new();
     // Iterative for the same reason the lowering walk is (debt #148).
-    let mut stack = vec![root_frame(&file.document)?];
+    let mut stack = top_level_nodes(&file.document)?;
     while let Some(node) = stack.pop() {
         for paint in node.fills.iter().chain(node.strokes.iter()) {
             if paint.kind == PaintTag::Image
@@ -280,22 +342,58 @@ pub fn image_refs(file: &FigmaFile) -> Result<Vec<String>, CompileError> {
     Ok(found.into_iter().collect())
 }
 
-/// The first `FRAME` under the first `CANVAS`.
+/// Every top-level node under every `CANVAS` — the roots the walk lowers.
 ///
-/// v0.3 exports one root frame. Declared roots plus a reachability closure
-/// (docs/design/dashc.md) is the v0.7 story; until then the rule is positional and
-/// stated rather than inferred — every other sibling and every later canvas
-/// is silently dropped (debt #147).
-fn root_frame(document: &Node) -> Result<&Node, CompileError> {
-    document
+/// v0.3 selected the first `FRAME` under the first `CANVAS` and dropped every
+/// sibling and every later canvas in silence (debt #147). The walk now lowers
+/// every top-level node as a document root: a declared-roots export
+/// (`importers/figma/src/closure.ts`) computes exactly the set to pass, so the
+/// walk no longer selects one positionally, and a component-carrying export —
+/// whose pruned file carries the export root beside the component definitions it
+/// requires — lowers whole (`docs/decisions/figma-component-lowering.md`).
+/// Component definitions among the roots resolve but do not paint; `Walk::visit`
+/// skips them. A document with no top-level node under any canvas has nothing to
+/// lower and is refused.
+fn top_level_nodes(document: &Node) -> Result<Vec<&Node>, CompileError> {
+    let roots: Vec<&Node> = document
         .children
         .iter()
-        .find(|n| n.kind == "CANVAS")
-        .and_then(|canvas| canvas.children.iter().find(|n| n.kind == "FRAME"))
-        .ok_or_else(|| CompileError::Unsupported {
+        .filter(|n| n.kind == "CANVAS")
+        .flat_map(|canvas| canvas.children.iter())
+        .collect();
+    if roots.is_empty() {
+        return Err(CompileError::Unsupported {
             path: "/".to_string(),
-            what: "a document with no root FRAME under its first CANVAS".to_string(),
+            what: "a document with no top-level node under any CANVAS".to_string(),
+        });
+    }
+    Ok(roots)
+}
+
+/// The slash-path segment for each node in `nodes`, disambiguating duplicate
+/// sibling names with the Figma id (or the position when a synthetic node has
+/// no id) so two same-named siblings never share one diagnostic path
+/// (debt #150). One rule for both sibling sets the walk builds paths over: the
+/// document's top-level roots and a parent's children.
+fn disambiguated_segments(nodes: &[&Node]) -> Vec<String> {
+    let mut counts: HashMap<&str, u32> = HashMap::new();
+    for node in nodes {
+        *counts.entry(node.name.as_str()).or_default() += 1;
+    }
+    nodes
+        .iter()
+        .enumerate()
+        .map(|(position, node)| {
+            if counts[node.name.as_str()] > 1 {
+                match &node.id {
+                    Some(id) => format!("{} ({id})", node.name),
+                    None => format!("{} (#{position})", node.name),
+                }
+            } else {
+                node.name.clone()
+            }
         })
+        .collect()
 }
 
 /// The flex context a child is visited under — what its parent's container
@@ -358,13 +456,33 @@ impl Walk<'_> {
         let node = visit.node;
         let path = &visit.path;
 
-        // `FRAME`, `TEXT`, and `ELLIPSE` are the node kinds with a lowering
-        // (stories #140, #160, #239). Any other kind reports its type and
-        // nothing else: its other properties belong to whatever story lowers
-        // that type (`COMPONENT`/`INSTANCE` later, the other shape kinds when
-        // a shape construct lands), so diagnosing them here would be noise
-        // around the verdict that matters.
-        if node.kind != "FRAME" && node.kind != "TEXT" && node.kind != "ELLIPSE" {
+        // A `COMPONENT` or `COMPONENT_SET` is a definition (story #242): it
+        // resolves — the walk accepts it and its subtree — but does not paint as
+        // document content, so it is skipped whole, never diagnosed. This story
+        // lowers the authored state; the v0.4 variant table that would carry the
+        // alternative members is consumer-side and out of scope
+        // (`docs/decisions/figma-component-lowering.md`). Skipping the subtree
+        // also means a definition's own findings — its dashed stroke, a member's
+        // unsupported construct — never fire: nothing in it paints.
+        if node.kind == "COMPONENT" || node.kind == "COMPONENT_SET" {
+            return Ok(());
+        }
+
+        // `FRAME`, `INSTANCE`, `TEXT`, and `ELLIPSE` are the node kinds with a
+        // lowering (stories #140, #242, #160, #239). An `INSTANCE` lowers like a
+        // `FRAME`: Figma bakes the referenced component's content — with the
+        // instance's overrides applied — into the instance's own children, so
+        // the baked subtree goes through the ordinary walk and an
+        // out-of-vocabulary override on it is a named diagnostic like any other
+        // (P4). Any other kind reports its type and nothing else: its other
+        // properties belong to whatever story lowers that type (the remaining
+        // shape kinds when a shape construct lands), so diagnosing them here
+        // would be noise around the verdict that matters.
+        if node.kind != "FRAME"
+            && node.kind != "INSTANCE"
+            && node.kind != "TEXT"
+            && node.kind != "ELLIPSE"
+        {
             self.unsupported(path, format!("node type {}", node.kind));
             return Ok(());
         }
@@ -421,13 +539,14 @@ impl Walk<'_> {
             blockers.push(format!("node {} has no absoluteBoundingBox", node.name));
         }
 
-        // Type-specific lowering: a frame carries its container intent and
-        // paint; a text node its characters and style; an ellipse its fill and
-        // stroke as a circle (a rounded rect with corner radius = half the
-        // extent, `docs/decisions/figma-ellipse-as-circle.md`). A text node's
-        // fill is the glyph color (it lowers into the style, not a paint
-        // entry), so `paint` stays `None` and the node's `paint_entry` is the
-        // "draws nothing" sentinel.
+        // Type-specific lowering: a frame — or an instance, which is frame-like
+        // and carries its resolved content as its own children — carries its
+        // container intent and paint; a text node its characters and style; an
+        // ellipse its fill and stroke as a circle (a rounded rect with corner
+        // radius = half the extent, `docs/decisions/figma-ellipse-as-circle.md`).
+        // A text node's fill is the glyph color (it lowers into the style, not a
+        // paint entry), so `paint` stays `None` and the node's `paint_entry` is
+        // the "draws nothing" sentinel.
         let mut container: Option<DocContainer> = None;
         let mut paint: Option<DocPaint> = None;
         let mut text: Option<String> = None;
@@ -569,14 +688,10 @@ impl Walk<'_> {
         }
 
         // Figma permits duplicate sibling names, and a path built from names
-        // alone would give two siblings one diagnostic path (debt #150). A
-        // duplicated name is suffixed with the node's Figma id — the stable,
-        // URL-pastable one every capture carries — or with its child
-        // position when a synthetic node has no id.
-        let mut name_counts: HashMap<&str, u32> = HashMap::new();
-        for child in &node.children {
-            *name_counts.entry(child.name.as_str()).or_default() += 1;
-        }
+        // alone would give two siblings one diagnostic path (debt #150), so the
+        // segments are disambiguated by the same rule the top-level roots use.
+        let child_refs: Vec<&Node> = node.children.iter().collect();
+        let segments = disambiguated_segments(&child_refs);
 
         let flow = container.map(|c| Flow {
             horizontal: c.mode == LayoutMode::Horizontal,
@@ -587,14 +702,6 @@ impl Walk<'_> {
 
         // Reversed, so the LIFO stack pops them in document order.
         for (position, child) in node.children.iter().enumerate().rev() {
-            let segment = if name_counts[child.name.as_str()] > 1 {
-                match &child.id {
-                    Some(id) => format!("{} ({id})", child.name),
-                    None => format!("{} (#{position})", child.name),
-                }
-            } else {
-                child.name.clone()
-            };
             let flow = flow.map(|f| Flow {
                 leading_margin: if position == 0 { 0.0 } else { f.leading_margin },
                 ..f
@@ -603,7 +710,7 @@ impl Walk<'_> {
                 node: child,
                 parent: Some(index),
                 parent_origin: Some((bbox.x, bbox.y)),
-                path: format!("{path}/{segment}"),
+                path: format!("{path}/{}", segments[position]),
                 flow,
             });
         }

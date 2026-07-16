@@ -70,8 +70,8 @@
       "name": "lowering-variant-topology",
       "fileKey": "CAWMOi1aDE7gTpNb6zKnxv",
       "covers": "component set whose variants have different child counts (topology change) + one instance",
-      "emits": false,
-      "note": "Raw compile is refused today: COMPONENT_SET/COMPONENT/INSTANCE node types have no lowering yet, and the root pins the dashed-stroke shape (debt #145). Captured for the variant-topology work."
+      "emits": true,
+      "note": "Raw compile emits since #242 (docs/decisions/figma-component-lowering.md): the COMPONENT_SET/COMPONENT definitions resolve but do not paint (this story lowers the authored state; the v0.4 variant table that would carry the alternative members is consumer-side and out of scope), so the set's dashed stroke (debt #145) never reaches the paint gate; only the instance's baked (collapsed) subtree lowers to the gray container, the dark 'state: collapsed' label, and the one blue row (goldens/dsb/v07-variant-topology.dsb, rendered goldens/images/v07-variant-topology.png). COMPONENT_SET/COMPONENT/INSTANCE lowering lands with this story."
     },
     {
       "name": "real-file",

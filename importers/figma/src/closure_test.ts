@@ -594,3 +594,92 @@ Deno.test("v03-paint: the closure's refs match dashc's answer", async () => {
     dashc.figmaImageRefs(JSON.stringify(closure.file)),
   );
 });
+
+Deno.test("lowering-variant-topology: the oracle spans a component-carrying file", async () => {
+  // The component seam of the drift oracle, closing the TODOs above and in
+  // closure.ts. Since dashc lowers COMPONENT_SET/INSTANCE roots (story #242,
+  // docs/decisions/figma-component-lowering.md), figmaImageRefs no longer
+  // refuses a component-carrying pruned file — it scans every top-level node's
+  // subtree, definitions included, the same superset the closure counts. This
+  // real capture carries no image fills, so both walks name none; what this
+  // pins is that dashc accepts a file whose first canvas holds a component set
+  // and an instance rather than a top-level FRAME. The non-empty superset — a
+  // ref that lives inside a definition — is driven by the synthetic case below.
+  const dashc = await loadDashc();
+  const closure = computeClosure(fixture("lowering-variant-topology"), {
+    roots: ["1:12"],
+  });
+
+  assertEquals(closure.diagnostics, []);
+  assertEquals(
+    closure.imageRefs,
+    dashc.figmaImageRefs(JSON.stringify(closure.file)),
+  );
+});
+
+Deno.test("the oracle names a definition's image fill, from both walks", async () => {
+  // Drive the superset for real: an image fill on a COMPONENT member ships with
+  // the export (the closure walks the pulled set) and dashc.figmaImageRefs
+  // scans it too (every top-level subtree, definitions included). The two walks
+  // must name the SAME non-empty ref set, or they disagree about where an
+  // imageRef lives in a component-carrying file — which is exactly the drift
+  // this oracle exists to catch.
+  const file = {
+    document: {
+      id: "0:0",
+      name: "Document",
+      type: "DOCUMENT",
+      children: [
+        {
+          id: "0:1",
+          name: "Page 1",
+          type: "CANVAS",
+          children: [
+            {
+              id: "1:11",
+              name: "chip",
+              type: "COMPONENT_SET",
+              children: [
+                {
+                  id: "1:2",
+                  name: "state=collapsed",
+                  type: "COMPONENT",
+                  // The ref lives inside the definition, not the root.
+                  fills: [{ type: "IMAGE", imageRef: "member-image" }],
+                },
+              ],
+            },
+            {
+              id: "1:20",
+              name: "home",
+              type: "FRAME",
+              children: [
+                {
+                  id: "1:21",
+                  name: "chip-instance",
+                  type: "INSTANCE",
+                  componentId: "1:2",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    components: {
+      "1:2": { key: "key-collapsed", remote: false, componentSetId: "1:11" },
+    },
+    componentSets: { "1:11": { key: "key-set" } },
+  };
+
+  const dashc = await loadDashc();
+  const closure = computeClosure(file, { roots: ["1:20"] });
+
+  assertEquals(closure.diagnostics, []);
+  // Non-empty: the definition's fill reached the closure through the pulled set.
+  assertEquals(closure.imageRefs, ["member-image"]);
+  assertEquals(
+    closure.imageRefs,
+    dashc.figmaImageRefs(JSON.stringify(closure.file)),
+  );
+});

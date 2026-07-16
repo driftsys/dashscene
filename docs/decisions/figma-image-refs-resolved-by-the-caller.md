@@ -86,14 +86,15 @@ the Figma-shaped key stays inside the Figma producer (P5). It never reaches
   a ref the closure misses still fails the compile loudly
   (`CompileError::UnresolvedImage`, R6 — never a silent drop), and
   `closure_test.ts` pins the closure's answer equal to
-  `dashc_figma_image_refs` over a frame-rooted captured fixture. That pin
-  reaches only as far as `dashc` can parse a root: a component-carrying
-  pruned file is refused by `root_frame` (no top-level `FRAME` under the
-  first canvas), so for those fixtures the loud compile failure is the only
-  guard until the walk lowers `COMPONENT_SET`/`INSTANCE` roots, at which
-  point the oracle test must widen with it. The capture tool still asks the
-  export — it runs no closure, and `dashc`'s answer is the one that decides
-  which bytes enter the corpus.
+  `dashc_figma_image_refs` over a frame-rooted captured fixture and a
+  component-carrying one. Since the walk lowers `COMPONENT_SET`/`INSTANCE`
+  roots (`docs/decisions/figma-component-lowering.md`, #242),
+  `figma_image_refs` scans every top-level node's subtree — component
+  definitions included — so the oracle now spans a file whose first canvas
+  holds a component set and an instance rather than a top-level `FRAME`, and a
+  synthetic case pins a non-empty ref that lives inside a definition. The
+  capture tool still asks the export — it runs no closure, and `dashc`'s answer
+  is the one that decides which bytes enter the corpus.
 - **This story supplied one synthetic PNG for the fixture's single
   `imageRef`.** Real resolution landed with story #17.
 - **`dashc` stays free of network and filesystem code**, which is what keeps the

@@ -77,11 +77,25 @@ and derived flex fixtures, not text); adding the raw hug-in-fill to
 `importers/figma/src/wasm_test.ts` is a follow-up for the #37/#40 deterministic
 emission work.
 
+## v07-variant-topology.dsb
+
+`lowering-variant-topology.json` compiled **raw**, pinned by
+`crates/dashc/tests/component_lowering.rs` (story #242,
+`docs/decisions/figma-component-lowering.md`). The capture carries a
+`COMPONENT_SET` (with a dashed stroke), two `COMPONENT` members of different
+child counts, and one `INSTANCE`. The definitions resolve but do not paint, so
+the set's dashed stroke never reaches the paint gate; the byte record is the
+instance's authored (collapsed) subtree alone — its root, the `state: collapsed`
+label, and the one row. The matching end-to-end picture is
+`goldens/images/v07-variant-topology.png`. Native-only today, the same as the
+text `.dsb` goldens above.
+
 ## Regenerating
 
     UPDATE_GOLDENS=1 cargo test -p dashc --test figma_lowering
     UPDATE_GOLDENS=1 cargo test -p dashc --test flex_lowering
     UPDATE_GOLDENS=1 cargo test -p dashc --test text_lowering
+    UPDATE_GOLDENS=1 cargo test -p dashc --test component_lowering
 
 A golden is reviewed truth: inspect the change before committing it. A missing
 golden never auto-creates on a normal run, so CI on a clean checkout fails
