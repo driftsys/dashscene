@@ -192,6 +192,12 @@ into the records below. Per-story decisions land here directly:
   three gates (import / load / paint), not one `validate()`; out-of-profile
   constructs never reach the document, so the triage runs on the producer's
   source vocabulary (story #15); binds #16 and #41.
+- [waivers-and-diagnostic-completion.md](waivers-and-diagnostic-completion.md)
+  — a waiver keys on (rule, target) and only converts a warning; the
+  workaround hint is derived from the rule id rather than stored, so the
+  `Diagnostic` shape and its wasm-ABI mirror are untouched; folds the
+  geometry-extent, corner-radius, text-weight, and variable-width-stroke
+  rules into the contract (story #41); closes E4.
 - [dashc-document-model-and-load-path.md](dashc-document-model-and-load-path.md)
   — dashc emits from an in-memory document whose paint types are boundary B's;
   the `.dsb`→arena loader lives in `dashscene-core` and adds no semantics; the
