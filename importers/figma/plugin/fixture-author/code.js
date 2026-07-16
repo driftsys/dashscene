@@ -52,6 +52,21 @@ function cell(name, color) {
   return c;
 }
 
+// Shared by lowering-variant-topology and real-file: the scaffold of one
+// variant COMPONENT, named "state=<name>", with auto-layout, uniform
+// padding, and a solid fill. Each command appends its own children.
+function variantShell(stateName, opts) {
+  const comp = figma.createComponent();
+  comp.name = "state=" + stateName;
+  comp.layoutMode = opts.layoutMode;
+  comp.itemSpacing = opts.itemSpacing;
+  comp.paddingLeft = comp.paddingRight = opts.paddingX;
+  comp.paddingTop = comp.paddingBottom = opts.paddingY;
+  comp.fills = [solid(opts.fill)];
+  if (opts.cornerRadius !== undefined) comp.cornerRadius = opts.cornerRadius;
+  return comp;
+}
+
 // ----------------------------------------------------------------- v03-paint
 // The v0.3 paint vocabulary — and nothing outside it (§8: a failure must
 // bisect to one construct). Covers: solid fill; all four gradient kinds;
@@ -656,13 +671,13 @@ async function loweringVariantTopology() {
   removePrevious("instance-collapsed"); // the instance is a separate page child
 
   const mkVariant = async (stateName, childCount) => {
-    const comp = figma.createComponent();
-    comp.name = "state=" + stateName;
-    comp.layoutMode = "VERTICAL";
-    comp.itemSpacing = 8;
-    comp.paddingLeft = comp.paddingRight = 16;
-    comp.paddingTop = comp.paddingBottom = 16;
-    comp.fills = [solid(GRAY(0.96))];
+    const comp = variantShell(stateName, {
+      layoutMode: "VERTICAL",
+      itemSpacing: 8,
+      paddingX: 16,
+      paddingY: 16,
+      fill: GRAY(0.96),
+    });
     comp.appendChild(await label("state: " + stateName, INTER_BOLD, 14));
     for (let i = 0; i < childCount; i++) {
       const row = cell("row-" + (i + 1), { r: 0.7, g: 0.75, b: 0.9 });
@@ -689,6 +704,78 @@ async function loweringVariantTopology() {
   return "lowering-variant-topology built: 2 variants with different child counts + 1 instance";
 }
 
+// -------------------------------------------------------------------- real-file
+// The v0.7 real-file import spike (story #37): production-shaped, not a
+// single-construct fixture. It deliberately carries the shapes the export
+// closure (importers/figma/src/closure.ts) must prove itself against:
+// two pages; several top-level frames on page 1, of which an export
+// manifest declares only "home"; a component set on the second page with an
+// instance inside the declared root (per-set variant closure); a hidden
+// layer (hidden != trimmed: it exports as visible:false, DESIGN §6.1); and
+// an image fill, so the closure's ref scan meets a real capture.
+async function realFile() {
+  await figma.loadFontAsync(INTER);
+  await figma.loadFontAsync(INTER_BOLD);
+
+  // Page 2 first: the component definitions. Re-running clears the page
+  // rather than deleting it — the current page cannot be removed.
+  let defs = figma.root.children.find((p) => p.name === "real-file-components");
+  if (!defs) {
+    defs = figma.createPage();
+    defs.name = "real-file-components";
+  }
+  for (const n of [...defs.children]) n.remove();
+
+  const mkVariant = async (stateName, fillValue) => {
+    const comp = variantShell(stateName, {
+      layoutMode: "HORIZONTAL",
+      itemSpacing: 8,
+      paddingX: 12,
+      paddingY: 6,
+      fill: GRAY(fillValue),
+      cornerRadius: 12,
+    });
+    comp.appendChild(await label("chip " + stateName, INTER, 12));
+    return comp;
+  };
+  const on = await mkVariant("on", 0.85);
+  const off = await mkVariant("off", 0.95);
+  const set = figma.combineAsVariants([on, off], defs);
+  set.name = "real-file-chip";
+
+  // Page 1: the screens. "home" is the frame an export manifest declares;
+  // "scratch" and the hidden "wip-banner" stay undeclared, so a capture
+  // proves declared-root exclusion against a real response.
+  const home = baseFrame("home", 420, 640);
+  home.layoutMode = "VERTICAL";
+  home.itemSpacing = 16;
+  home.paddingLeft = home.paddingRight = 24;
+  home.paddingTop = home.paddingBottom = 24;
+  home.appendChild(await label("home", INTER_BOLD, 24));
+
+  const hero = cell("hero", GRAY(1));
+  const image = figma.createImage(CHECKER_PNG);
+  hero.fills = [{ type: "IMAGE", scaleMode: "FILL", imageHash: image.hash }];
+  home.appendChild(hero);
+  hero.resize(372, 160);
+
+  const chip = on.createInstance();
+  chip.name = "chip-instance";
+  home.appendChild(chip);
+
+  const hidden = cell("wip-banner", { r: 0.95, g: 0.8, b: 0.8 });
+  home.appendChild(hidden);
+  hidden.resize(372, 40);
+  hidden.visible = false;
+
+  const scratch = baseFrame("scratch", 300, 200);
+  scratch.x = home.x + home.width + 80;
+  scratch.appendChild(await label("not part of any export", INTER, 14));
+
+  return "real-file built: home (image fill, instance, hidden layer) + " +
+    "scratch on page 1, chip variants on real-file-components";
+}
+
 // ------------------------------------------------------------------ dispatch
 const COMMANDS = {
   "v03-paint": v03Paint,
@@ -700,6 +787,7 @@ const COMMANDS = {
   "lowering-negative-gap": loweringNegativeGap,
   "lowering-baseline": loweringBaseline,
   "lowering-variant-topology": loweringVariantTopology,
+  "real-file": realFile,
 };
 
 (async () => {

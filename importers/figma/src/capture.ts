@@ -6,11 +6,24 @@
  * `GET /v1/files/:key?plugin_data=shared` JSON, and writes it to
  * `corpus/figma-fixtures/<name>.json` so importer tests replay offline.
  *
+ * The capture is the raw response minus its non-deterministic fields: the
+ * top-level `thumbnailUrl` is a presigned URL regenerated on every fetch, so
+ * committing it would rewrite every fixture on every capture and land a
+ * credential-shaped string in git (issue #141). Nothing reads it.
+ *
  * An image fill is a bare `imageRef` — the bytes are nowhere in that JSON. So
  * each fixture's image fills are resolved too, and their **bytes** are written
- * to `corpus/figma-fixtures/<name>.images/<imageRef>.png`. The bytes, not the
- * presigned URL that serves them: that URL is regenerated on every fetch, so
- * committing it would rewrite the fixture on every capture (issue #141).
+ * to `corpus/figma-fixtures/<name>.images/<imageRef>.png`. After a capture,
+ * that directory is pruned to exactly the refs the capture resolved, so a
+ * re-authored fill does not leave its old asset behind (issue #156).
+ *
+ * Each capture also writes `corpus/figma-fixtures/<name>.receipt.json`: the
+ * captured `version` plus the image refs it resolved. The unchanged-fixture
+ * pre-check reads that small receipt instead of parsing the whole multi-MB
+ * capture for one field (issue #91). The receipt caches `dashc`'s ref answer,
+ * so after the lowering widens what it can name, delete the receipts and
+ * re-run the capture: they re-derive from the committed captures without any
+ * `GET /file` spend.
  *
  * HTTP, auth, and rate limiting are delegated to the REST client in
  * `fetch.ts`, which enforces the docs/decisions/figma-access-plan-and-pat-policy.md access rules. This
@@ -56,6 +69,11 @@ export interface CaptureFixturesOptions {
   readonly dashc: Dashc;
   /** Returns an existing capture's JSON text, or null if there is none. */
   readonly readCapture: (name: string) => Promise<string | null>;
+  /** Whether a capture exists at all, without reading it. */
+  readonly hasCapture: (name: string) => Promise<boolean>;
+  /** Returns an existing receipt's text, or null if there is none. */
+  readonly readReceipt: (name: string) => Promise<string | null>;
+  readonly writeReceipt: (name: string, text: string) => Promise<void>;
   /** Whether one image fill's bytes are already in the corpus. */
   readonly hasImage: (name: string, imageRef: string) => Promise<boolean>;
   readonly writeCapture: (name: string, text: string) => Promise<void>;
@@ -65,6 +83,10 @@ export interface CaptureFixturesOptions {
     imageRef: string,
     bytes: Uint8Array,
   ) => Promise<void>;
+  /** The image refs currently on disk for one fixture. */
+  readonly listImages: (name: string) => Promise<readonly string[]>;
+  /** Removes one stale image asset from the corpus. */
+  readonly removeImage: (name: string, imageRef: string) => Promise<void>;
   /** Injectable for tests; used for the presigned asset downloads. */
   readonly fetchFn?: typeof fetch;
   readonly log?: (line: string) => void;
@@ -126,6 +148,75 @@ export function parseManifest(text: string): FixtureManifest {
 }
 
 /**
+ * The version of the ref-naming contract a receipt caches.
+ *
+ * A receipt stores dashc's answer to "which imageRefs does this capture
+ * demand". That answer can widen while the Figma file stays put — a node
+ * kind gains a lowering, and refs dashc refused to name before become
+ * nameable — so the file `version` alone cannot invalidate it. The receipt
+ * therefore also records this constant, and a mismatch makes `parseReceipt`
+ * reject the receipt, which sends the pre-check down the re-derive path:
+ * one local parse of the committed capture through the current wasm module,
+ * a fresh receipt, and no `GET /file` spend.
+ *
+ * Bump this in the same change that widens what `figma::image_refs`
+ * (crates/dashc/src/figma/mod.rs) can name — e.g. when a refused node kind
+ * starts lowering, or when refs are collected from a new paint position.
+ */
+export const REFS_CONTRACT = 1;
+
+/**
+ * What the version pre-check reads instead of the whole capture: the
+ * captured `version` plus the image refs that capture resolved (issue #91).
+ */
+export interface CaptureReceipt {
+  readonly version: string;
+  readonly imageRefs: readonly string[];
+}
+
+/**
+ * The receipt, or null when the text is not one this tool trusts — a parse
+ * failure, a wrong shape, or a refs contract other than [`REFS_CONTRACT`].
+ * Null sends the caller down the re-derive path.
+ */
+export function parseReceipt(text: string): CaptureReceipt | null {
+  try {
+    const parsed = JSON.parse(text) as {
+      version?: unknown;
+      refsContract?: unknown;
+      imageRefs?: unknown;
+    } | null;
+    if (
+      parsed === null || typeof parsed !== "object" ||
+      typeof parsed.version !== "string" ||
+      parsed.refsContract !== REFS_CONTRACT ||
+      !Array.isArray(parsed.imageRefs) ||
+      parsed.imageRefs.some((ref) => typeof ref !== "string")
+    ) {
+      return null;
+    }
+    return {
+      version: parsed.version,
+      imageRefs: parsed.imageRefs as string[],
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function formatReceipt(receipt: CaptureReceipt): string {
+  return JSON.stringify(
+    {
+      version: receipt.version,
+      refsContract: REFS_CONTRACT,
+      imageRefs: receipt.imageRefs,
+    },
+    null,
+    2,
+  ) + "\n";
+}
+
+/**
  * The `version` a captured fixture records, or null when it carries none.
  *
  * A capture with no readable version cannot be compared against the file's
@@ -146,7 +237,7 @@ function versionOf(captured: string): string | null {
  * A refusal is tolerated, and is not the same as a capture failure. Capture's
  * job is to record what Figma returned — a diagnostic fixture is captured
  * *because* it does not compile, and a fixture carrying vocabulary outside
- * `dashc`'s v0.3 REST subset must still land in the corpus, or the subset could
+ * `dashc`'s REST subset must still land in the corpus, or the subset could
  * never be widened against a real file. Such a file has no resolvable image
  * fills, which is a fact about it, not an error; the log says so.
  *
@@ -182,9 +273,14 @@ export async function captureFixtures(
     client,
     dashc,
     readCapture,
+    hasCapture,
+    readReceipt,
+    writeReceipt,
     hasImage,
     writeCapture,
     writeImage,
+    listImages,
+    removeImage,
     fetchFn,
   } = options;
   const log = options.log ?? (() => {});
@@ -201,36 +297,49 @@ export async function captureFixtures(
       continue;
     }
     try {
-      const captured = await readCapture(name);
-      const capturedVersion = captured === null ? null : versionOf(captured);
-      if (captured !== null && capturedVersion !== null) {
+      // The receipt is what makes the unchanged path cheap (issue #91): a
+      // few bytes instead of a multi-MB parse. It only speaks for a capture
+      // that exists — a receipt whose capture was deleted is ignored.
+      let receipt = (await hasCapture(name))
+        ? parseReceipt((await readReceipt(name)) ?? "")
+        : null;
+      if (receipt === null) {
+        // No receipt (or a stale-format one): derive it from the committed
+        // capture, spending no GET /file budget, and self-heal for next run.
+        const captured = await readCapture(name);
+        const capturedVersion = captured === null ? null : versionOf(captured);
+        if (captured !== null && capturedVersion !== null) {
+          receipt = {
+            version: capturedVersion,
+            imageRefs: imageRefsOf(dashc, name, captured, log),
+          };
+          await writeReceipt(name, formatReceipt(receipt));
+        }
+      }
+
+      if (receipt !== null) {
         const meta = await client.fileMeta(fileKey);
-        if (meta.version === capturedVersion) {
+        if (meta.version === receipt.version) {
           // The JSON is current. Its image bytes may not be — a fixture
           // captured before image capture existed, or one whose asset file was
           // deleted, has a current JSON and no bytes. Checking the version
           // alone would skip such a fixture on every future run, so the bytes
           // could never be restored. A capture is current when *all* of it is.
           const absent: string[] = [];
-          for (const ref of imageRefsOf(dashc, name, captured, log)) {
+          for (const ref of receipt.imageRefs) {
             if (!(await hasImage(name, ref))) absent.push(ref);
           }
 
           if (absent.length === 0) {
-            log(`${name}: unchanged at version ${capturedVersion}, skipping`);
+            log(`${name}: unchanged at version ${receipt.version}, skipping`);
             results.push(
-              {
-                name,
-                fileKey,
-                action: "unchanged",
-                version: capturedVersion,
-              },
+              { name, fileKey, action: "unchanged", version: receipt.version },
             );
             continue;
           }
 
           log(
-            `${name}: unchanged at version ${capturedVersion}, but ` +
+            `${name}: unchanged at version ${receipt.version}, but ` +
               `${absent.length} image(s) are absent — resolving those`,
           );
           const restored = await resolveImages({
@@ -243,13 +352,19 @@ export async function captureFixtures(
             await writeImage(name, imageRef, asset.bytes);
           }
           results.push(
-            { name, fileKey, action: "captured", version: capturedVersion },
+            { name, fileKey, action: "captured", version: receipt.version },
           );
           continue;
         }
       }
       const file = await client.file(fileKey);
-      const text = JSON.stringify(file, null, 2) + "\n";
+      // The capture is the raw response minus its non-deterministic fields:
+      // the presigned thumbnailUrl is regenerated per fetch, so committing it
+      // would rewrite the fixture on every capture (issue #141).
+      const { thumbnailUrl: _thumbnail, ...stable } = file as {
+        thumbnailUrl?: unknown;
+      } & Record<string, unknown>;
+      const text = JSON.stringify(stable, null, 2) + "\n";
 
       // The fixture's image fills, resolved to bytes. The presigned URL in the
       // ref map is regenerated per fetch, so committing it would rewrite the
@@ -267,6 +382,20 @@ export async function captureFixtures(
       await writeCapture(name, text);
       for (const [imageRef, asset] of images) {
         await writeImage(name, imageRef, asset.bytes);
+      }
+      await writeReceipt(
+        name,
+        formatReceipt({ version: file.version, imageRefs: [...refs] }),
+      );
+
+      // The refs just resolved are the fixture's whole live set, so anything
+      // else in its images directory is a leftover of an earlier authoring
+      // (issue #156). Only a full capture prunes: a skipped or failed fixture
+      // proves nothing about its assets.
+      for (const stale of await listImages(name)) {
+        if (refs.includes(stale)) continue;
+        await removeImage(name, stale);
+        log(`${name}: removed stale image ${stale}`);
       }
 
       log(
@@ -315,6 +444,25 @@ if (import.meta.main) {
         return null;
       }
     },
+    hasCapture: async (name) => {
+      try {
+        await Deno.stat(new URL(`${name}.json`, corpusDir));
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    readReceipt: async (name) => {
+      try {
+        return await Deno.readTextFile(
+          new URL(`${name}.receipt.json`, corpusDir),
+        );
+      } catch {
+        return null;
+      }
+    },
+    writeReceipt: (name, text) =>
+      Deno.writeTextFile(new URL(`${name}.receipt.json`, corpusDir), text),
     hasImage: async (name, imageRef) => {
       try {
         await Deno.stat(new URL(`${name}.images/${imageRef}.png`, corpusDir));
@@ -323,6 +471,23 @@ if (import.meta.main) {
         return false;
       }
     },
+    listImages: async (name) => {
+      const refs: string[] = [];
+      try {
+        for await (
+          const entry of Deno.readDir(new URL(`${name}.images/`, corpusDir))
+        ) {
+          if (entry.isFile && entry.name.endsWith(".png")) {
+            refs.push(entry.name.slice(0, -".png".length));
+          }
+        }
+      } catch {
+        // No images directory: nothing to prune.
+      }
+      return refs;
+    },
+    removeImage: (name, imageRef) =>
+      Deno.remove(new URL(`${name}.images/${imageRef}.png`, corpusDir)),
     writeCapture: (name, text) =>
       Deno.writeTextFile(new URL(`${name}.json`, corpusDir), text),
     log: (line) => console.log(line),

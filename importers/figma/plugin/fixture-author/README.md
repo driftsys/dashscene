@@ -36,6 +36,11 @@ then run Plugins → Development → dashscene fixture author → _(name)_.
     lowering-baseline            mixed-size baseline row + Arabic RTL run
     lowering-variant-topology    variant set with differing child counts
                                  + one instance
+    real-file                    production-shaped, NOT single-construct
+                                 (story #37 spike): two pages, extra
+                                 top-level frames beside the export root,
+                                 a component set + instance, a hidden
+                                 layer, an image fill
 
 Re-running a command deletes and rebuilds its frame — safe to iterate.
 

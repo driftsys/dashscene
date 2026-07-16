@@ -7,9 +7,10 @@
  * the same Rust code path as the native `dashc` library call (crates/dashc).
  *
  * The REST client (fetch.ts), the fixture capture tool (capture.ts), the wasm
- * boundary (wasm.ts), image resolution (images.ts), and the import flow
- * (import.ts) are implemented. Closure, trim, and tokens remain stubs whose
- * implementation begins alongside v0.7 ("importer catch-up", docs/roadmap.md).
+ * boundary (wasm.ts), image resolution (images.ts), the export closure
+ * (closure.ts — declared roots, reachability, per-set variant closure), and
+ * the import flow (import.ts) are implemented. Trim (#39) and tokens (#159)
+ * remain stubs of the v0.7 "importer catch-up" slice (docs/roadmap.md).
  */
 
 export * from "./fetch.ts";
