@@ -61,3 +61,24 @@ grows a font list.
 - #34's charset vocabulary must not bake in a per-document charset
   union: the spike pinned that unions are per font, and that
   constraint holds even while each charset maps to one font.
+
+## Resolution (story #219, 2026-07-16)
+
+Fallback landed in v0.7, runtime-side, with no `.dsb` schema change —
+the design the deferral anticipated. A `Typesetter` now holds an
+ordered font list (`Typesetter::with_fonts`), resolved from the
+runtime's font configuration; the document still carries one font
+reference per style (P1). Each UAX #9 level run splits by coverage
+before shaping — a codepoint goes to the first font in the list that
+covers the glyph it will shape to, and a codepoint no font covers
+stays in the primary as `.notdef` (P4). The charset union stays per
+font: the mixed-script golden uses one committed atlas per font
+(`corpus/atlas/arabic` primary, `corpus/atlas/ascii` fallback), each
+already R7-reproducible. The as-built cascade, the per-glyph font
+index it produces, and the cache-key reasoning are in
+`docs/design/typeset-latin.md` (Font fallback); the boundary-B
+consequence — one glyph run per font, no `dashpaint` type change — is
+in `docs/decisions/glyph-runs-cross-boundary-b.md` (Resolution). #160
+remains free of multi-font work: its named non-scope is discharged by
+this typeset-runtime capability, which it may consume but need not
+build.

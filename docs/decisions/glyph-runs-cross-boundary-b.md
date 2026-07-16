@@ -97,3 +97,40 @@ Option 1. One new parameter on the single `paint` call,
   golden compares with a tolerance (`golden-comparison-space.md`), not
   bit-exact. The painter's per-glyph unit tests stay exact by using a
   synthetic all-inside atlas.
+
+## Resolution (story #219, 2026-07-16) — multi-font fallback
+
+Font fallback widened this contract as-built, and the widening is
+**conceptual, not structural**: no `dashpaint` type changed. Option 1
+already made the table multi-atlas — `GlyphRunTable::push_atlas`
+returns an `AtlasIndex`, and each `GlyphRun` names the `atlas` it
+samples — so a single scene could carry runs against different
+atlases from the start. Through v0.6 every scene used one atlas because
+one text node had one style and one font (the "one style per text node
+in v0.5" note above). Story #219 exercises the latent capability: a
+single mixed-script text node now shapes across an ordered font list
+(`docs/design/typeset-latin.md`, Font fallback), so the stager splits
+its layout into **one glyph run per font**, each referencing that
+font's atlas. The Skia painter already decodes every atlas in
+`GlyphRunTable::atlases()` and samples the run's own atlas
+(`decoded[run.atlas.0]`), so it needed no change either.
+
+What did grow is upstream of boundary B, in the typeset output:
+`dashscene-typeset`'s `PositionedGlyph` gained a `font` index (the
+cascade's result). That index is what a stager groups a line's glyphs
+by — consecutive same-font glyphs become one `GlyphRun` against that
+font's `AtlasIndex`. The boundary-B `GlyphQuad` stays
+`{ glyph_id, x, y }`: the font-to-atlas mapping is resolved on the
+producer side of the boundary, exactly as absolute positions are, so
+the painter still only draws quads (P2). A future commit-time stager
+(#160) reads `PositionedGlyph::font` the same way the goldens'
+staging helpers do now (`goldens/tooling/tests/v07_fallback.rs`).
+
+Per-fallback-font atlases follow the committed-fixture convention
+unchanged: the mixed-script golden reuses the two existing
+R7-reproducible fixtures — `corpus/atlas/arabic` (primary) and
+`corpus/atlas/ascii` (Latin fallback) — each already carrying its own
+regenerator and cross-machine reproducibility test
+(`docs/design/atlas-pipeline.md`, Determinism). One atlas per font is
+the charset-union-per-font posture the spike pinned
+(`docs/decisions/atlas-closure-cmap-plus-extras.md`).
