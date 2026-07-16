@@ -1,19 +1,19 @@
 /**
- * Smoke test: confirms `deno test` is wired up correctly, that
- * `createFigmaClient`, the closure, and the token sidecar are reachable
- * through the public entry point, and that the remaining importer stub throws
- * its documented "not yet implemented" error (trim is #39 — docs/roadmap.md).
+ * Smoke test: confirms `deno test` is wired up correctly, and that
+ * `createFigmaClient`, the closure, the trim pass, and the token sidecar are
+ * reachable through the public entry point.
  *
- * The wasm boundary, the closure, and token phase 1 are no longer stubs — see
- * wasm_test.ts, closure_test.ts, and tokens_test.ts.
+ * The wasm boundary, the closure, the trim pass, and token phase 1 are no
+ * longer stubs — see wasm_test.ts, closure_test.ts, trim_test.ts, and
+ * tokens_test.ts.
  */
 
-import { assert, assertEquals, assertThrows } from "@std/assert";
+import { assert, assertEquals } from "@std/assert";
 import {
   computeClosure,
   createFigmaClient,
   deriveVarsSidecar,
-  trim,
+  trimFile,
 } from "./mod.ts";
 
 Deno.test("createFigmaClient returns a client exposing file and fileMeta", () => {
@@ -30,8 +30,11 @@ Deno.test("computeClosure is reachable through the public entry point", () => {
   assert(closure.diagnostics.length > 0);
 });
 
-Deno.test("trim stub throws not-yet-implemented", () => {
-  assertThrows(() => trim(undefined), Error, "not yet implemented");
+Deno.test("trimFile is reachable through the public entry point", () => {
+  const result = trimFile(
+    { document: { id: "0:0", name: "d", type: "DOCUMENT", children: [] } },
+  );
+  assertEquals(result.trimmed, []);
 });
 
 Deno.test("deriveVarsSidecar is reachable through the public entry point", () => {

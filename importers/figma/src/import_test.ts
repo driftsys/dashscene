@@ -12,6 +12,7 @@ import {
   importFigmaFile,
   runImportCli,
   sidecarPath,
+  trimContextOf,
 } from "./import.ts";
 import { type ResolvedVarsSidecar, TokensBlocked } from "./tokens.ts";
 import { loadDashc } from "./wasm.ts";
@@ -74,6 +75,49 @@ Deno.test("importFigmaFile compiles the declared root into the golden .dsb", asy
     3,
     "one file fetch, one image map, one download",
   );
+});
+
+Deno.test("a trimmed node inside the declared root leaves the export and is never fetched", async () => {
+  // The annotator plugin writes this; the REST API returns it under
+  // ?plugin_data=shared. Tagging the one image cell as sample content trims it,
+  // so the closure never sees its imageRef and no asset is downloaded.
+  const file = JSON.parse(
+    Deno.readTextFileSync(new URL("v03-paint.json", CORPUS)),
+  );
+  const root = file.document.children[0].children.find((n: { id: string }) =>
+    n.id === "1:2"
+  );
+  const imageCell = root.children.find((n: { id: string }) => n.id === "1:8");
+  imageCell.sharedPluginData = {
+    dashscene: { role: "sample-content", v: "1" },
+  };
+
+  const png = Deno.readFileSync(new URL(`v03-paint.images/${REF}.png`, CORPUS));
+  const { requested, fetchFn } = scriptedFetch(JSON.stringify(file), png);
+
+  const result = await importFigmaFile({
+    client: createFigmaClient({ token: "x", fetchFn }),
+    dashc,
+    fileKey: FILE_KEY,
+    profile: "core",
+    manifest: { roots: ["1:2"] },
+    fetchFn,
+  });
+
+  // The image cell is named as trimmed (P4)...
+  assertEquals(
+    result.trimmed.map((r) => [r.id, r.reason]),
+    [["1:8", "role:sample-content"]],
+  );
+  assertEquals(result.trimDiagnostics, []);
+  // ...so its imageRef is never resolved: only the file itself is fetched, with
+  // no image-map request and no asset download.
+  assertEquals(requested, [
+    `https://api.figma.com/v1/files/${FILE_KEY}?plugin_data=shared`,
+  ]);
+  // The document still compiles — the trimmed cell simply is not in it.
+  assert(result.bytes.length > 0);
+  assertEquals(result.excluded, []);
 });
 
 /** A one-frame file with a `boundVariables` shape the sidecar cannot preserve. */
@@ -281,6 +325,178 @@ Deno.test("a failed .dsb write removes the sidecar so the pair does not tear", a
 
   assertEquals(written.has(sidecarPath("out.dsb")), false);
   assertEquals(written.has("out.dsb"), false);
+});
+
+Deno.test("a blocked export carries the trim context (trimmed declared root)", async () => {
+  const file = JSON.stringify({
+    document: {
+      id: "0:0",
+      name: "Document",
+      type: "DOCUMENT",
+      children: [{
+        id: "0:1",
+        name: "Page 1",
+        type: "CANVAS",
+        children: [{
+          id: "1:2",
+          name: "_scratch",
+          type: "FRAME",
+          children: [],
+        }],
+      }],
+    },
+    version: "v1",
+  });
+  const { fetchFn } = scriptedFetch(file, new Uint8Array());
+
+  const error = await assertRejects(
+    () =>
+      importFigmaFile({
+        client: createFigmaClient({ token: "x", fetchFn }),
+        dashc,
+        fileKey: FILE_KEY,
+        profile: "core",
+        manifest: { roots: ["1:2"] },
+        fetchFn,
+      }),
+    ExportBlocked,
+    "unknown-root",
+  ) as ExportBlocked;
+
+  const context = trimContextOf(error);
+  assert(context !== undefined, "the block carries the trim context");
+  assertEquals(
+    context.trimmed.map((r) => [r.id, r.reason]),
+    [["1:2", "name-prefix"]],
+  );
+});
+
+Deno.test("a blocked export carries the trim context (trimmed component definition)", async () => {
+  // The declared root keeps an instance; the instance's component definition is
+  // tagged sample-content, so trim removes it and the closure cannot resolve
+  // the instance. The trimmed definition is still named alongside the block.
+  const file = JSON.stringify({
+    document: {
+      id: "0:0",
+      name: "Document",
+      type: "DOCUMENT",
+      children: [{
+        id: "0:1",
+        name: "Page 1",
+        type: "CANVAS",
+        children: [
+          {
+            id: "1:1",
+            name: "home",
+            type: "FRAME",
+            children: [
+              { id: "1:2", name: "chip", type: "INSTANCE", componentId: "C:1" },
+            ],
+          },
+          {
+            id: "C:1",
+            name: "chip-def",
+            type: "COMPONENT",
+            sharedPluginData: { dashscene: { role: "sample-content", v: "1" } },
+            children: [],
+          },
+        ],
+      }],
+    },
+    components: { "C:1": { key: "chipkey" } },
+    version: "v1",
+  });
+  const { fetchFn } = scriptedFetch(file, new Uint8Array());
+
+  const error = await assertRejects(
+    () =>
+      importFigmaFile({
+        client: createFigmaClient({ token: "x", fetchFn }),
+        dashc,
+        fileKey: FILE_KEY,
+        profile: "core",
+        manifest: { roots: ["1:1"] },
+        fetchFn,
+      }),
+    ExportBlocked,
+    "unresolved-component",
+  ) as ExportBlocked;
+
+  const context = trimContextOf(error);
+  assert(context !== undefined, "the block carries the trim context");
+  assertEquals(
+    context.trimmed.map((r) => [r.id, r.reason]),
+    [["C:1", "role:sample-content"]],
+  );
+});
+
+Deno.test("the CLI names trimmed nodes on stderr (success path)", async () => {
+  const file = JSON.parse(
+    Deno.readTextFileSync(new URL("v03-paint.json", CORPUS)),
+  );
+  const root = file.document.children[0].children.find((n: { id: string }) =>
+    n.id === "1:2"
+  );
+  root.children.find((n: { id: string }) => n.id === "1:8").sharedPluginData = {
+    dashscene: { role: "sample-content", v: "1" },
+  };
+  const png = Deno.readFileSync(new URL(`v03-paint.images/${REF}.png`, CORPUS));
+  const { fetchFn } = scriptedFetch(JSON.stringify(file), png);
+  const { deps, err } = cliDeps(fetchFn);
+
+  const code = await runImportCli(
+    [FILE_KEY, "--root", "1:2", "-o", "out.dsb"],
+    deps,
+  );
+
+  assertEquals(code, 0);
+  assert(
+    err.some((line) =>
+      line === 'trimmed: FRAME "image-fit" (1:8) — role:sample-content'
+    ),
+    err.join(" | "),
+  );
+});
+
+Deno.test("the CLI names a trimmed node even when the export is then blocked", async () => {
+  // A `_`-prefixed frame declared as the export root: trim removes it, so the
+  // closure reports an unknown root. The operator must see BOTH the trim reason
+  // and the closure verdict (importer-trim-layers.md's "named twice"), never
+  // just "unknown-root … declarable roots: (empty)" for a node they can see.
+  const file = JSON.stringify({
+    document: {
+      id: "0:0",
+      name: "Document",
+      type: "DOCUMENT",
+      children: [{
+        id: "0:1",
+        name: "Page 1",
+        type: "CANVAS",
+        children: [{
+          id: "1:2",
+          name: "_scratch",
+          type: "FRAME",
+          children: [],
+        }],
+      }],
+    },
+    version: "v1",
+  });
+  const { fetchFn } = scriptedFetch(file, new Uint8Array());
+  const { deps, err } = cliDeps(fetchFn);
+
+  await assertRejects(
+    () => runImportCli([FILE_KEY, "--root", "1:2", "-o", "out.dsb"], deps),
+    ExportBlocked,
+    "unknown-root",
+  );
+
+  assert(
+    err.some((line) =>
+      line === 'trimmed: FRAME "_scratch" (1:2) — name-prefix'
+    ),
+    err.join(" | "),
+  );
 });
 
 Deno.test("more than one declared root is refused by name", async () => {

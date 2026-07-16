@@ -30,6 +30,8 @@
  * the library key, never silently skipped.
  */
 
+import { rebuildChildren } from "./tree.ts";
+
 /** One fill or stroke, as far as the closure needs to read it. */
 export interface ClosurePaint {
   readonly type: string;
@@ -553,24 +555,21 @@ export function computeClosure(
   /**
    * Applies the frozen narrowing to the serialized tree, so the pruned file
    * agrees with `nodeIds` wherever the set lives — nested included. A
-   * subtree with nothing to narrow is returned by reference, so everything
-   * outside a narrowed set serializes verbatim. Recursive: the input is a
-   * Figma REST response, whose nesting is bounded in practice (and capped
-   * again by dashc's depth guard before it is compiled).
+   * subtree with nothing to narrow is returned by reference (via
+   * `rebuildChildren`), so everything outside a narrowed set serializes
+   * verbatim. Recursive: the input is a Figma REST response, whose nesting is
+   * bounded in practice (and capped again by dashc's depth guard before it is
+   * compiled).
    */
   const narrowTree = (node: ClosureNode): ClosureNode => {
-    const kids = node.children;
-    if (kids === undefined || kids.length === 0) return node;
-    const kept = node.type === "COMPONENT_SET" && narrowedSets.has(node.id)
-      ? kids.filter((child) =>
-        child.type !== "COMPONENT" || nodeIds.has(child.id)
-      )
-      : kids;
-    const rebuilt = kept.map(narrowTree);
-    if (kept === kids && rebuilt.every((child, at) => child === kids[at])) {
-      return node;
-    }
-    return { ...node, children: rebuilt };
+    const narrowed = node.type === "COMPONENT_SET" && narrowedSets.has(node.id);
+    return rebuildChildren(
+      node,
+      (child) =>
+        narrowed && child.type === "COMPONENT" && !nodeIds.has(child.id)
+          ? null
+          : narrowTree(child),
+    );
   };
 
   const firstRootCanvas = manifest.roots
