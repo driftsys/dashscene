@@ -1,51 +1,161 @@
-# typeset-latin — the runtime text pipeline (Latin subset)
+# typeset — the runtime text pipeline
 
     crate    crates/dashscene-typeset (module `text`)
-    covers   v0.5 — text I: Latin (story #28, epic #24)
+    covers   v0.5 — text I: Latin (story #28, epic #24);
+             v0.6 — text II: bidi (story #32) and Arabic shaping +
+             digit shapes (story #33), epic #31
     traces   docs/archive/2026-07-14-design-1-seed.md §7.2 (runtime
              half: shape → line break → positioned glyph runs;
-             shaped-run cache), §2 (rustybuzz, ttf-parser), P1/P2 (one
-             typesetter; painters only color), R1 (text quality),
-             docs/design/atlas-pipeline.md (build-time half, seam
-             notes),
-             docs/decisions/atlas-closure-cmap-plus-extras.md (the
-             #27 seam this story resolves),
-             docs/technotes/msdf-arabic-atlas-spike.md (offsets
-             finding, spike #25)
+             shaped-run cache), §2 (rustybuzz, ttf-parser,
+             unicode-bidi), P1/P2 (one typesetter; painters only
+             color), R1 (text quality),
+             docs/design/atlas-pipeline.md (build-time half, the #33
+             coverage coupling),
+             docs/decisions/liga-clig-off-until-gsub-closure.md (the
+             per-run feature posture),
+             docs/technotes/msdf-arabic-atlas-spike.md (offsets and
+             mis-ordered-digits findings, spike #25)
 
 ## Purpose
 
-The runtime half of `docs/archive/2026-07-14-design-1-seed.md` §7.2, Latin subset: text and size in,
-positioned glyph runs out — shaped once by rustybuzz, broken into
-lines, positioned on baselines, cached so re-layout of unchanged text
-costs a lookup. Bidi splitting is v0.6 (#32); this pipeline is
-single-direction LTR by construction.
+The runtime half of `docs/archive/2026-07-14-design-1-seed.md` §7.2:
+text and size in, positioned glyph runs out — split into UAX #9 level
+runs, shaped per run by rustybuzz, broken into lines, reordered per
+line for display, positioned on baselines, cached so re-layout of
+unchanged text costs a lookup. v0.5 built the pipeline single-direction
+LTR; #32 added the bidi itemization and RTL placement, #33 the
+Arabic-context shaping and digit-shape selection on top of the same
+seam.
 
 `Typesetter::layout` is a standalone entry point: it takes `text` and
 `size` as plain parameters, not a `NodeId`. It does not read
 `dashscene-core`'s arena. The seam that lets a producer's authored
 text and style (`Arena::text`, `Arena::text_style` —
 `docs/design/dashscene-core-arena.md`, story #26) reach this pipeline
-is wired up at #29 (the measure callback), which is expected to read
-those accessors and call `Typesetter::layout` with the result.
+is the measure callback (#29), which reads those accessors and calls
+`Typesetter::layout` with the result.
 
 ## Pipeline shape
 
-    Typesetter::new(Font)                       one font in v0.5;
-                                                 fallback lists are the
-                                                 v0.6 charset story's
+    Typesetter::new(Font)                       one font (fallback lists
+                                                 deferred past v0.6 —
+                                                 docs/decisions/font-fallback-deferred-past-v06.md)
     Typesetter::layout(text, size, max_width)   → TextLayout
-      split text on '\n'                        → paragraphs
-      per-paragraph cache lookup (key: text)     → ShapedText (font
-        miss: rustybuzz shape, liga/clig off       units, unpositioned)
-      greedy line break (space runs / '\n')      → lines of glyph
-                                                    ranges
-      position (scale by size/upem, baselines)   → TextLayout
+      split text on '\n'                        → chunks
+      per-chunk cache lookup (key: text)         → ShapedText (font
+        miss: bidi-resolve (UAX #9), then per      units, unpositioned,
+        level run: resolve direction + context,    logical order)
+        rustybuzz-shape, rebase clusters
+      per bidi paragraph: greedy line break      → lines of glyph
+        (space runs / '\n', logical order)         ranges
+      position (visual reorder per line — UAX    → TextLayout
+        #9 L2 — scale by size/upem, baselines,
+        flush-right shift for RTL paragraphs)
 
-Each `'\n'`-delimited paragraph is shaped (or cache-hit) and broken
-into lines independently; lines from every paragraph stack in the
-final `TextLayout` in paragraph order, each baseline continuing the
-running line count from the previous paragraph.
+Each `'\n'`-delimited chunk is shaped (or cache-hit) as a whole; a
+UAX #9 block separator inside a chunk (CR, NEL, U+2029, …) ends a bidi
+paragraph exactly as `'\n'` ends a chunk, so no line ever spans two
+paragraphs and each paragraph reorders and aligns under its own base
+direction. Lines from every paragraph stack in the final `TextLayout`
+in logical order, each baseline continuing the running line count.
+
+## Bidi (story #32)
+
+- `BidiInfo::new(chunk, None)` resolves levels; the base direction per
+  paragraph comes from the first strong character (UAX #9 P2/P3).
+- `level_runs` cuts a paragraph into maximal byte ranges of one
+  resolved level; each run shapes with its level's direction. Shaping
+  a mixed-direction string as a single run mis-orders embedded digits
+  (spike #25), so the split comes first.
+- Shaped glyphs are stored in logical order (clusters non-decreasing
+  across the paragraph): rustybuzz emits an RTL run in visual order,
+  so `shape()` reverses it back. Line breaking walks logical order, as
+  UAX #9 prescribes.
+- `position_line` reorders each line's level runs for display
+  (`BidiInfo::visual_runs`, L1+L2) and re-reverses RTL runs' glyphs to
+  visual order; the pen then advances left-to-right over the result.
+- RTL-base paragraphs sit flush-right within `max_width` (or within
+  the widest line when `None`); LTR lines stay flush-left at x = 0.
+  `TextLayout::width` stays the widest line's pen advance — the
+  measure contract — so an RTL line's glyph positions can reach up to
+  `max_width`, past `width`.
+
+## Arabic shaping (story #33)
+
+Every level run shapes under a `RunContext` derived from its paragraph
+— never authored (P1: the document carries the authored codepoints;
+digit shapes and feature sets are resolved results that live only in
+the layout output):
+
+- **Arabic** — the run contains a strong Arabic character (UAX #9
+  bidi class AL, the shared `is_arabic_strong` predicate: the Arabic
+  letters of every block, but not Arabic-block neutrals such as
+  U+060C ARABIC COMMA), or it is a digit run whose digit-shape
+  context resolves Arabic (below). The run shapes with rustybuzz's
+  full default feature set, `liga`/`clig` included — the exact
+  configuration `atlas::charset_closure` shapes with, so production
+  output and atlas coverage move together
+  (`docs/decisions/liga-clig-off-until-gsub-closure.md`, Resolution).
+  Contextual forms (`isol`/`init`/`medi`/`fina`), lam-alef (`rlig`),
+  and mark composition (`ccmp`) are default-on complex-shaper
+  features; the flip to defaults adds `liga`/`clig` parity on top.
+- **Plain** — every other run keeps `liga`/`clig` disabled: the
+  closure's ligature sweep is pairwise, so a three-character Latin
+  ligature (`ffi`) would shape to a glyph id the atlas cannot cover.
+
+Harakat arrive from shaping as separate glyphs with zero advance and
+nonzero GPOS x/y offsets (mark-to-base, mark-to-mark stacking); the
+offsets flow through `ShapedGlyph` into positioning, where the y-up →
+y-down negation places a fatha above its shadda above its base — and
+a dot-below glyph below the baseline (both offset signs occur in the
+fixture font).
+
+The coupling with the build-time half is pinned by an acceptance test
+in two sizes: every glyph id production lays out for text composed
+from the declared charset is inside `charset_closure`'s coverage — a
+failure means the two modules drifted on direction, feature set, or
+digit selection. The corpus-charset variant runs on every `cargo
+test` (`tests/typeset_arabic.rs`); the full-charset E2 pin costs
+seconds of pairwise sweep and runs in CI's atlas-repro job behind its
+env gate (`tests/atlas_pipeline.rs`,
+`production_layout_stays_within_full_charset_coverage`).
+
+## Digit-shape selection (story #33)
+
+A European digit (U+0030..=U+0039) displays with its Arabic-Indic
+counterpart's glyph (U+0660..=U+0669) when its context is Arabic; the
+authored codepoints never change, and clusters keep indexing the
+authored bytes (the substitution happens at buffer-fill time, per
+char, with the authored byte index as the cluster).
+
+The context rule (`run_context`): strong characters inside the run
+decide directly — any AL makes the run Arabic, otherwise any L or R
+makes it Plain (UAX #9 W7 folds Latin-anchored digits into their L
+run, so those digits resolve here). For a strong-free digit run the
+nearest strong character before the run's first digit decides — AL
+selects Arabic-Indic, L or R keeps European; when no strong character
+precedes, the nearest one after it decides (a number opening an
+Arabic sentence); with no reachable strong character at all, the
+authored European shapes stay. Both scans are isolate-aware (UAX #9
+P2): an isolate's interior is sealed, so the scans jump over
+initiator..PDI pairs and stop at the enclosing isolate's boundary.
+Authored Arabic-Indic digits are never substituted; anchored to
+Arabic text they take the Arabic posture (closure-parity features),
+and unanchored they shape Plain to the same cmap glyphs.
+
+This is a context-derived default, deliberately not an authored
+property: the document carries which digits were authored, and a
+producer that wants a specific digit system authors those codepoints.
+A locale-style authored preference (for example European digits inside
+Arabic text, the Maghreb convention) would override this default; no
+v0 story carries it, and the E2 screen does not need it.
+
+The atlas side mirrors the rule structurally: a charset declaring
+strong Arabic characters next to European digits also covers the
+Arabic-Indic counterpart glyphs, derived through the text module's
+own `is_arabic_strong` predicate and `arabic_indic_digit` mapping —
+one definition, so the coverage rule cannot drift from the production
+rule (`docs/design/atlas-pipeline.md`, Charset closure).
 
 ## Public surface
 
@@ -66,15 +176,17 @@ running line count from the previous paragraph.
                           atlas::FontMetrics (shared with the blob) */ }
     pub enum TypesetError { FontParse(String) }
 
-`Font` is public — the measure callback (#29) and the painter (#30)
-both need the font handle and its metrics, including
-`Font::line_advance()` (the baseline-to-baseline distance layout
-uses). `Font::metrics()` returns the same `atlas::FontMetrics` type
-the blob records, extracted through the same shared function, so the
-runtime and the build-time artifacts cannot disagree. `ShapedText`/
-`ShapedGlyph` stay crate-private: they are the cache-value
-representation, and publishing them before a consumer exists would
-freeze it into the public API. `shape()` and `Font::face()` are also
+The surface is unchanged since v0.5 — #32 and #33 changed how glyphs
+are produced and placed, not what a consumer sees. `Font` is public —
+the measure callback (#29) and the painter (#30) both need the font
+handle and its metrics, including `Font::line_advance()` (the
+baseline-to-baseline distance layout uses). `Font::metrics()` returns
+the same `atlas::FontMetrics` type the blob records, extracted through
+the same shared function, so the runtime and the build-time artifacts
+cannot disagree. `ShapedText`/`ShapedGlyph`/`RunContext` stay
+crate-private: they are the cache-value and shaping-posture
+representations, and publishing them before a consumer exists would
+freeze them into the public API. `shape()` and `Font::face()` are also
 crate-private; nothing outside `dashscene-typeset` constructs a
 `rustybuzz::Face`.
 
@@ -87,9 +199,9 @@ HarfBuzz/rustybuzz offsets are y-up, so `y = baseline_y - y_offset *
 scale`. Per-glyph offsets are carried through, not dropped — GPOS
 positions marks through offsets (spike #25 finding,
 `docs/technotes/msdf-arabic-atlas-spike.md`). For offset-less Latin
-glyphs the negation is a no-op (`g.y == baseline_y`); real coverage of
-the negation direction arrives with the v0.6 Arabic story's GPOS mark
-offsets.
+glyphs the negation is a no-op (`g.y == baseline_y`); Arabic marks
+exercise both directions (harakat above the baseline, Noto Sans
+Arabic's composed dot glyphs below).
 
 The painter (#30) combines these pen positions with the atlas blob's
 y-up `plane_em` quad (`docs/design/atlas-pipeline.md`'s metrics
@@ -99,10 +211,10 @@ crate's.
 
 `docs/archive/2026-07-14-design-1-seed.md` §7.2's run tuple names
 `(glyph id, x, y, size, atlas page)`:
-`size` lives once on `TextLayout` (uniform per layout in v0.5 — one
-style per text node), and the atlas page field waits until multi-page
-atlases exist; both are additive later without a `PositionedGlyph`
-shape change.
+`size` lives once on `TextLayout` (uniform per layout — one style per
+text node), and the atlas page field waits until multi-page atlases
+exist; both are additive later without a `PositionedGlyph` shape
+change.
 
 ## Line metrics
 
@@ -124,8 +236,9 @@ callback need.
 
 Break opportunities: after a run of ASCII space glyphs, and at
 `'\n'` (handled by paragraph splitting, not by the breaker itself).
-`max_width: Option<f32>`: `None` means one line per paragraph
-regardless of width.
+Breaking walks the logical glyph order; the display reorder is
+`position_line`'s. `max_width: Option<f32>`: `None` means one line per
+paragraph regardless of width.
 
 - A run of space glyphs contributes its scaled advance to the current
   line's running width, but never to the line's _trimmed_ end index.
@@ -143,8 +256,9 @@ regardless of width.
   index is never advanced past a leading space, so those glyphs stay
   in the emitted range.
 - A word wider than `max_width` overflows its line rather than
-  breaking mid-word. Mid-word breaking and UAX #14 line breaking are
-  out of scope for v0.5.
+  breaking mid-word (an RTL line overflows leftward past x = 0,
+  mirroring LTR overflow). Mid-word breaking and UAX #14 line
+  breaking are out of scope for v0.5/v0.6.
 - An empty string lays out to zero lines and zero size.
 
 ## Cache semantics
@@ -156,16 +270,19 @@ small to warrant its own module.
 - Stores font-unit, unpositioned `ShapedText` — shaping output (glyph
   ids, advances, offsets in font units) is size-independent, so the
   px scale is applied only at positioning time.
-- Keyed by paragraph text alone. `docs/archive/2026-07-14-design-1-seed.md`
+- Keyed by chunk text alone. Resolved bidi levels, run directions,
+  and digit-shape contexts are all pure functions of that text, so one
+  entry serves every layout of the chunk. `docs/archive/2026-07-14-design-1-seed.md`
   §7.2 describes the key as
-  "string + style"; while the font is fixed per `Typesetter` (v0.5:
-  one font, no fallback), the shaping-relevant style component is
-  fixed too, so the key reduces to the string. Different `size` and
-  `max_width` values reuse the same cache entry. When style grows a
-  shaping-relevant axis (font selection by weight/family), the key
-  grows with it — see `docs/decisions/shaped-run-cache-font-units.md`.
-- Unbounded in v0.5: cockpit UI text is a bounded set; an eviction
-  policy is speculative until a real producer shows growth.
+  "string + style"; while the font is fixed per `Typesetter` (one
+  font, no fallback through v0.6), the shaping-relevant style
+  component is fixed too, so the key reduces to the string. Different
+  `size` and `max_width` values reuse the same cache entry. When style
+  grows a shaping-relevant axis (font selection by weight/family), the
+  key grows with it — see
+  `docs/decisions/shaped-run-cache-font-units.md`.
+- Unbounded: cockpit UI text is a bounded set; an eviction policy is
+  speculative until a real producer shows growth.
 - `Typesetter::cache_stats() -> CacheStats { hits, misses }` makes hit
   and miss counts observable for tests and for #29's caller.
 
@@ -183,21 +300,29 @@ not look the glyph id up in an atlas at all.
 
 ## What is deliberately absent
 
-- **Bidi and RTL.** This pipeline is single-direction LTR by
-  construction; bidi splitting and Arabic shaping are #32/#33 (v0.6).
 - **UAX #14 line breaking.** Break points are ASCII space runs and
-  `'\n'` only; the Unicode line-breaking algorithm arrives when
-  non-Latin scripts and real content demand it — no issue number
-  assigned yet, tracked alongside #32/#33.
+  `'\n'` only; the Unicode line-breaking algorithm arrives when real
+  content demands it — no issue number assigned yet.
 - **Font fallback / charset unions.** One `Font` per `Typesetter`;
-  fallback lists and per-locale charset coverage are #34.
-- **Cache eviction.** The cache never shrinks in v0.5 (see Cache
-  semantics above).
+  deferred past v0.6
+  (`docs/decisions/font-fallback-deferred-past-v06.md`, tracking
+  issue #219) — a codepoint outside the font shapes to `.notdef` and
+  hits the painter's missing-glyph diagnostic.
+- **Latin ligatures.** `liga`/`clig` stay disabled for non-Arabic
+  runs; see `docs/decisions/liga-clig-off-until-gsub-closure.md`
+  (Resolution) for what unblocks them.
+- **An authored digit-system preference.** Digit shapes are
+  context-derived only (see Digit-shape selection); an authored
+  override is a producer-side property no v0 story carries.
+- **Pre-shaped-numerals fast path.** Frequently-changing numeric
+  values miss the shaped-run cache each frame; the optimisation
+  couples to the v0.4 incremental-commit path and is tracked as debt
+  from story #33, not built speculatively.
+- **Cache eviction.** The cache never shrinks (see Cache semantics
+  above).
 - **Arena wiring.** No dependency on `dashscene-core`; `Arena::text`/
   `Arena::text_style` reach this pipeline through #29, not through
   this crate.
-- **Ligatures.** `liga`/`clig` are shaped off; see
-  `docs/decisions/liga-clig-off-until-gsub-closure.md`.
 
 ## Components
 
@@ -206,23 +331,28 @@ not look the glyph id up in an atlas at all.
                                                   Line, PositionedGlyph,
                                                   CacheStats,
                                                   TypesetError; re-exports
-                                                  Font
+                                                  Font; the per-paragraph
+                                                  layout loop and the
+                                                  RTL flush-right shift
     crates/dashscene-typeset/src/text/font.rs    Font (bytes, face
                                                   index, hhea metrics);
                                                   builds the on-demand
                                                   rustybuzz::Face
     crates/dashscene-typeset/src/text/shape.rs   ShapedText/ShapedGlyph
-                                                  (font units); the
+                                                  (font units); level_runs
+                                                  (UAX #9 itemization);
+                                                  RunContext + run_context
+                                                  (per-run features and
+                                                  digit shapes); the
                                                   rustybuzz shaping call
-                                                  and its liga/clig
-                                                  feature config
     crates/dashscene-typeset/src/text/layout.rs  break_lines (greedy
-                                                  breaker), position_line
-                                                  (baseline positioning),
-                                                  line_advance
+                                                  breaker, logical order),
+                                                  position_line (visual
+                                                  reorder + baseline
+                                                  positioning)
 
-`atlas` (build-time, story #27) and `text` (runtime, this story) stay
-sibling modules of the one typesetter crate (`docs/design/architecture.md`,
+`atlas` (build-time) and `text` (runtime) stay sibling modules of the
+one typesetter crate (`docs/design/architecture.md`,
 `docs/design/atlas-pipeline.md`'s Home section). `Font::from_bytes`
 validates with both `ttf-parser::Face::parse` (metrics) and
 `rustybuzz::Face::from_slice` (shaping) up front; `rustybuzz::Face`
@@ -232,48 +362,72 @@ construction is off the hot path. A self-referential holder or a
 re-parsing wrapper crate would provide no benefit here; revisit only with
 profiling evidence.
 
-## Testing (with the committed corpus Noto Sans)
+## Testing (with the committed corpus Noto Sans + Noto Sans Arabic)
 
 - `font.rs`: metrics match `ttf-parser` directly (upem, ascender,
   descender, line gap); garbage bytes are rejected.
 - `shape.rs`: "AV" shapes to two non-`.notdef` glyphs with cmap-
   matching ids and kerning that tightens the A→V advance below the
-  plain hmtx sum; "fi" shapes to two glyphs (liga off proven);
-  clusters are byte indices; empty text shapes to nothing.
-- `tests/typeset_latin.rs` (integration, no external tool): `'\n'`
-  forces a break; greedy wrap at a width that fits only "Hello" breaks
-  "Hello world" into two lines with the broken-at space on neither
-  line; a mid-line space keeps its glyph and widens the line; a
-  single line's width equals the scaled hmtx advance sum; baselines
-  advance by the line metric across two lines; a word wider than
-  `max_width` overflows onto one line; empty text lays out to zero
-  lines and zero size; the cache hits across different sizes/widths
-  for the same text and misses on new text; offset-less Latin glyphs
-  sit exactly on the baseline (documenting the negation convention).
+  plain hmtx sum; "fi" shapes to two glyphs (liga off for Plain runs
+  proven); clusters are byte indices; empty text shapes to nothing;
+  RTL runs come back in logical cluster order; level runs and visual
+  run order match hand-derived UAX #9 references; paragraph shaping
+  rebases clusters across run boundaries. Arabic (fixture-pinned glyph
+  ids, cross-checked against spike #25): beh takes distinct
+  skeleton+dot forms per joining context and never its nominal cmap
+  glyph; lam-alef ligates through `rlig` to its contextual forms;
+  a fatha carries the font's exact GPOS offsets with zero advance;
+  European digits display as Arabic-Indic in Arabic context with
+  authored-byte clusters, and stay European in Plain context; digit
+  runs resolve their context from the nearest strong character
+  (before, after, none, Hebrew, Latin-embedded, extended-Arabic,
+  isolate-sealed, and Arabic-comma cases).
+- `tests/typeset_latin.rs`: the v0.5 pipeline pins — breaks, wraps,
+  widths, baselines, cache hits, offset-less glyphs on the baseline.
+- `tests/typeset_bidi.rs` (issue #32): embedded digits keep LTR order
+  in RTL text; an RTL-base paragraph places an LTR segment leftmost;
+  RTL paragraphs sit flush-right (wrapped, unconstrained, and around
+  empty paragraphs); class-B separators split paragraphs within a
+  chunk and align independently.
+- `tests/typeset_arabic.rs` (issue #33): a real word lays out with its
+  contextual forms in visual order; marks position through GPOS
+  offsets in document space (stacked harakat above, dot below the
+  baseline, exact scaled offset); Arabic-Indic and substituted
+  European digits keep LTR order left of the word; digit substitution
+  on/off per context through the public API, including the
+  isolate-sealed and Arabic-comma cases; and the corpus-charset
+  coupling pin — production-shaped output stays within the declared
+  charset's closure coverage. The full-charset variant (a
+  joining-context sweep of every letter and haraka plus realistic
+  strings) lives in `tests/atlas_pipeline.rs` behind the atlas-repro
+  env gate. The fixture-path and helper trio (`font_data`,
+  `typesetter`, `cmap`) is shared by all three typeset test files
+  through `tests/common/mod.rs`.
 
-## Out of scope (this story)
+## Out of scope (this record)
 
-Bidi/RTL and Arabic shaping (#32/#33), font fallback and charset
-unions (#34), the measure callback (#29), painting and atlas lookup
+Font fallback and charset unions (#219, v0.7+), the measure callback
+(#29 — `docs/design/dashscene-engine.md`), painting and atlas lookup
 (#30), hyphenation/UAX #14, vertical text, letter-spacing and other
-style axes, cache eviction.
+style axes, cache eviction, the pre-shaped-numerals fast path (debt
+from #33).
 
 ## Trace
 
 - Satisfies: `docs/archive/2026-07-14-design-1-seed.md` §7.2 (runtime
-  shape → break → position, shaped-run cache), §2 (rustybuzz), P1, P2,
-  R1; issue #28 acceptance criteria.
+  shape → break → position, shaped-run cache), §2 (rustybuzz,
+  unicode-bidi), P1, P2, R1; issue #28, #32, #33 acceptance criteria.
 - Resolves: the #27 seam note in
   `docs/decisions/atlas-closure-cmap-plus-extras.md` (ligatures off
-  until GSUB closure).
-- Blocks: #29 (measure callback), #30 (glyph painting); v0.6 #32/#33
-  build on this pipeline; #34 re-enables ligatures as one coordinated
-  change with GSUB closure.
+  until GSUB closure; re-enabled per-run at #33), and spike #25's
+  per-glyph-offset and bidi-before-shaping requirements.
+- Blocks: #35 (the `E2` golden) consumes this pipeline through #29/#30.
 - Related design: `docs/design/atlas-pipeline.md` (build-time half,
-  y-up `plane_em` convention), `docs/design/dashbuf.md` and
-  `docs/design/dashscene-core-arena.md` (the #26 text intent this
-  pipeline will be fed through at #29).
+  y-up `plane_em` convention, the charset-closure digit rule),
+  `docs/design/dashbuf.md` and `docs/design/dashscene-core-arena.md`
+  (the #26 text intent this pipeline is fed through at #29).
 - Related decisions:
   `docs/decisions/liga-clig-off-until-gsub-closure.md`,
-  `docs/decisions/shaped-run-cache-font-units.md`.
+  `docs/decisions/shaped-run-cache-font-units.md`,
+  `docs/decisions/font-fallback-deferred-past-v06.md`.
 - Related technote: `docs/technotes/msdf-arabic-atlas-spike.md`.

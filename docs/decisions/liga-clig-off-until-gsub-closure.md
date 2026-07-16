@@ -1,7 +1,8 @@
 # Decision: ligature shaping features (liga/clig) stay off until GSUB closure lands
 
     status   accepted (story #28, 2026-07-12) — resolves the #27 seam
-             note; re-enable together with GSUB closure at #34
+             note; the re-enable landed per-run at #33, 2026-07-16
+             (see Resolution)
     scope    crates/dashscene-typeset text module — shape.rs feature
              list passed to rustybuzz::shape
     evidence docs/decisions/atlas-closure-cmap-plus-extras.md (the #27
@@ -77,3 +78,44 @@ committed Noto Sans fixture yields two glyphs whose ids equal
 - #34 re-enabling `liga`/`clig` must land together with GSUB closure
   in the same change; enabling one without the other reopens the
   coverage gap this decision closes.
+
+## Resolution (story #33, 2026-07-16)
+
+The two halves of the planned coordinated change landed in sequence,
+not in one change: #34 delivered the GSUB closure, and #33 delivered
+the feature flip. The flip is also narrower than this record planned —
+per level run, not global:
+
+- An Arabic-context run (a run holding strong Arabic characters —
+  UAX #9 bidi class AL — or a digit run whose isolate-aware nearest
+  strong character is AL; `text::shape`'s `RunContext`) shapes with
+  rustybuzz's full default feature set, `liga`/`clig` included. This
+  is the exact feature configuration `atlas::charset_closure` shapes
+  with, so production output and atlas coverage move together by
+  construction. The #33 acceptance test pins the coupling in two
+  sizes: production-shaped output is a subset of the closure's
+  coverage for the declared charset
+  (`crates/dashscene-typeset/tests/typeset_arabic.rs` for the
+  corpus-charset variant on every test run;
+  `tests/atlas_pipeline.rs` for the full-charset pin in CI's
+  atlas-repro job).
+- Every other run keeps `liga`/`clig` disabled. #34's ligature sweep
+  is pairwise: a three-character Latin ligature (Noto Sans carries
+  `ffi`/`ffl`) is reachable by shaping but not covered, so a global
+  flip would send words like "office" into the painter's
+  missing-glyph diagnostic (#30). Latin text keeps rendering exactly
+  as v0.5 rendered it.
+
+Measured against the committed fixture font (Noto Sans Arabic
+v2.013), the Arabic-side flip changes no output glyph: lam-alef is an
+`rlig` ligature, and the contextual forms come from
+`ccmp`/`isol`/`init`/`medi`/`fina`, all default-on in rustybuzz and
+never disabled here. The flip's value is feature-set parity with the
+closure, not a rendering change — a future Arabic font that does
+carry `liga`-gated forms shapes and covers them consistently.
+
+Re-enabling `liga`/`clig` for non-Arabic runs stays blocked on
+closure coverage of ligature chains longer than two characters (a
+sweep extension or real GSUB-table walking). No v0 story carries that
+work, and E2 — the v0.6 gate — contains no Latin text; the gap is
+cosmetic for Latin exactly as the Consequences above accepted it.

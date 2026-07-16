@@ -56,10 +56,21 @@ sources:
   carries lam-alef with its contextual variants and the Latin `fi`.
 - **extra_glyph_ids** — the caller's manual additions.
 
-Shaping runs with the default OpenType feature set (ligatures on), so
-the ligature glyphs are covered before shaping re-enables `liga`/`clig`
-at the #33 join (`docs/decisions/liga-clig-off-until-gsub-closure.md`);
-the closure changes no shaping feature itself.
+Shaping runs with the default OpenType feature set (ligatures on) —
+the same configuration production shaping uses for Arabic-context runs
+since the #33 join (`docs/decisions/liga-clig-off-until-gsub-closure.md`,
+Resolution); the closure changes no shaping feature itself.
+
+A charset that declares strong Arabic characters (UAX #9 bidi class
+AL, any Arabic block) next to European digits also covers the
+Arabic-Indic digit glyphs (U+0660..=U+0669 counterparts of the
+declared digits): production shaping substitutes those display shapes
+in Arabic context (`docs/design/typeset-latin.md`, digit-shape
+selection). Trigger and mapping are the text module's own
+`is_arabic_strong` and `arabic_indic_digit` functions — one
+definition, so this derivation cannot drift from the production rule
+— and the derived digits join the charset for both cmap and GSUB, so
+a font without them reports the gap in `missing_codepoints`.
 
 Two scope boundaries hold at v0.6:
 
@@ -76,10 +87,12 @@ Two scope boundaries hold at v0.6:
 
 Coverage is computed from the run's natural direction (Arabic
 right-to-left), so it assumes the production shaper also shapes Arabic
-in its natural direction — true once #32's direction-parameterised
-`shape()` lands. Until then the production shaper forces left-to-right,
-which produces a disjoint Arabic glyph set; no runtime gap opens,
-because Arabic is not production-shaped until #33.
+in its natural direction — which holds as-built: #32's seam shapes each
+UAX #9 level run with its resolved direction, and #33 shapes
+Arabic-context runs with the closure's default feature set. The #33
+acceptance test pins the coupling: production-shaped output is a subset
+of the closure's coverage for the declared charset
+(`crates/dashscene-typeset/tests/typeset_arabic.rs`).
 
 ## Home
 
@@ -264,7 +277,12 @@ actionable (P4 spirit); nothing panics on user input.
   uncovered codepoints reported, not dropped; the committed-fixture
   reproducibility check; and, over the Arabic fixture, that a generated
   atlas covers every glyph real Arabic words shape to and is
-  byte-identical across a double run.
+  byte-identical across a double run. The same file carries the
+  full-charset production↔coverage pin
+  (`production_layout_stays_within_full_charset_coverage`, no tool
+  needed): it self-skips on a plain `cargo test` because its pairwise
+  sweep costs seconds, and runs under the `atlas-repro` job's env gate
+  where CI already demands thoroughness.
 - Tool-dependent tests self-skip when the binary is absent, but fail
   loudly when `DASHSCENE_REQUIRE_ATLAS_TOOL=1` (the library-owned
   `REQUIRE_TOOL_ENV` constant) — CI's `atlas-repro` job sets it, so a
@@ -290,11 +308,13 @@ actionable (P4 spirit); nothing panics on user input.
   (see Charset closure above); `extra_glyph_ids` kept `AtlasSpec`'s
   contract stable across the change, as
   `docs/decisions/atlas-closure-cmap-plus-extras.md` planned.
-- **#33** (Arabic shaping) re-enables `liga`/`clig` and shapes Arabic in
-  its natural direction. The closure already covers the ligature and
-  contextual-form glyphs that flip will produce, so the join opens no
-  coverage gap; #33 should assert production-shaped output is a subset
-  of the charset's coverage (see the Charset closure direction note).
+- **#33** (Arabic shaping) delivered its side of the join: Arabic-context
+  runs shape in their natural direction with the closure's default
+  feature set (`liga`/`clig` stay off for other runs —
+  `docs/decisions/liga-clig-off-until-gsub-closure.md`, Resolution), and
+  the subset assertion this seam asked for is
+  `production_shaped_output_stays_within_declared_charset_coverage`
+  (see the Charset closure direction note).
 
 ## Out of scope (this story)
 
