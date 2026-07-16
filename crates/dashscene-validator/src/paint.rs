@@ -21,6 +21,15 @@ pub(crate) fn error(rule: &'static str, at: &Location, message: String) -> Diagn
     }
 }
 
+pub(crate) fn warning(rule: &'static str, at: &Location, message: String) -> Diagnostic {
+    Diagnostic {
+        rule,
+        severity: Severity::Warning,
+        at: at.clone(),
+        message,
+    }
+}
+
 /// Gradient stop rules. `offsets` is the stop offsets in declaration order.
 ///
 /// The painter takes `stops.first().expect(..)`, asserts the count against
@@ -83,6 +92,28 @@ pub(crate) fn check_gradient_stops(report: &mut Report, at: &Location, offsets: 
                 offsets[i]
             ),
         ));
+    }
+}
+
+/// Corner radii must each be a finite, non-negative number. Geometry-free,
+/// so — like a stroke width — it holds on a document (`Paint.corners`) as
+/// much as on a solved scene (`PaintEntry.corners`), and runs on both gates.
+///
+/// The painter rounds with `RRect::new_rect_radii`, which does not treat a
+/// negative radius as zero (issue #128): an out-of-spec radius produces a
+/// malformed rrect, and when the node clips, that same radius is copied into
+/// every `ClipBox` of its subtree, so the whole subtree clips wrongly.
+/// `radii` is `[top_left, top_right, bottom_right, bottom_left]`.
+pub(crate) fn check_corners(report: &mut Report, at: &Location, radii: [f32; 4]) {
+    const NAMES: [&str; 4] = ["top-left", "top-right", "bottom-right", "bottom-left"];
+    for (radius, name) in radii.into_iter().zip(NAMES) {
+        if !radius.is_finite() || radius < 0.0 {
+            report.push(error(
+                rule::CORNER_RADIUS_INVALID,
+                at,
+                format!("{name} corner radius is {radius}; it must be finite and non-negative"),
+            ));
+        }
     }
 }
 

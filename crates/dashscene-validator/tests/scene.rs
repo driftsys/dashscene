@@ -333,6 +333,53 @@ fn a_non_finite_box_does_not_silently_pass_the_stroke_rule() {
         },
     );
     assert!(!report.has(rule::STROKE_EXCEEDS_BOX), "{report}");
+    // The stroke rule declines to judge the NaN box; #128's extent rule is
+    // what names the real fault so it is not discovered downstream (P4).
+    assert!(report.has(rule::RECT_INVALID_EXTENT), "{report}");
+}
+
+#[test]
+fn a_non_finite_rect_extent_is_named() {
+    // Issue #128: rects come from the solver, so a NaN/infinite extent is a
+    // broken inter-crate contract — but the paint gate is the last checkpoint
+    // before a painter rasterizes NaN geometry, so it names it.
+    for (w, h) in [(f32::NAN, 50.0), (f32::INFINITY, 50.0), (100.0, f32::NAN)] {
+        let report = check_one(w, h, PaintEntry::solid(red()));
+        assert!(
+            report.has(rule::RECT_INVALID_EXTENT),
+            "{w}x{h} extent must be named:\n{report}"
+        );
+        assert!(report.has_errors());
+    }
+}
+
+#[test]
+fn a_negative_rect_extent_is_named() {
+    let report = check_one(-10.0, 50.0, PaintEntry::solid(red()));
+    assert!(report.has(rule::RECT_INVALID_EXTENT), "{report}");
+}
+
+#[test]
+fn a_negative_scene_corner_radius_is_named() {
+    // A PaintEntry's corners feed both its own rounding and — when the node
+    // clips — every ClipBox of its subtree (issue #128). A negative radius
+    // is not clamped by the painter, so it is caught at its own pool entry.
+    let report = check_one(
+        100.0,
+        50.0,
+        PaintEntry {
+            corners: CornerRadii {
+                top_left: -1.0,
+                ..CornerRadii::default()
+            },
+            ..PaintEntry::solid(red())
+        },
+    );
+    assert!(report.has(rule::CORNER_RADIUS_INVALID), "{report}");
+    assert_eq!(
+        report.find(rule::CORNER_RADIUS_INVALID).unwrap().at,
+        Location::PaintEntry(0),
+    );
 }
 
 #[test]

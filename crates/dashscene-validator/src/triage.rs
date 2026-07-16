@@ -42,6 +42,10 @@ pub enum Construct {
     ProgressiveBlur,
     AnimatedBooleanOp,
     AnimatedVariableFontAxis,
+    /// A stroke whose width varies along its length (a 2025 Figma Draw
+    /// effect). No paint entry can express a per-length width, so it is
+    /// baked or dropped, never degraded (issue #145).
+    VariableWidthStroke,
 }
 
 impl Construct {
@@ -59,6 +63,7 @@ impl Construct {
             Self::ProgressiveBlur => rule::PROGRESSIVE_BLUR,
             Self::AnimatedBooleanOp => rule::ANIMATED_BOOLEAN_OP,
             Self::AnimatedVariableFontAxis => rule::ANIMATED_VARIABLE_FONT_AXIS,
+            Self::VariableWidthStroke => rule::VARIABLE_WIDTH_STROKE,
         }
     }
 
@@ -73,7 +78,8 @@ impl Construct {
             Self::NoiseOrTextureEffect
             | Self::ProgressiveBlur
             | Self::AnimatedBooleanOp
-            | Self::AnimatedVariableFontAxis => Severity::Error,
+            | Self::AnimatedVariableFontAxis
+            | Self::VariableWidthStroke => Severity::Error,
 
             Self::BackdropBlur | Self::AdvancedBlendMode => match profile {
                 Profile::Core => Severity::Error,
@@ -102,6 +108,7 @@ impl Construct {
             Self::ProgressiveBlur => "progressive blur",
             Self::AnimatedBooleanOp => "an animated boolean operation",
             Self::AnimatedVariableFontAxis => "an animated variable-font axis",
+            Self::VariableWidthStroke => "a variable-width stroke",
         };
         match self.verdict(profile) {
             Severity::Error => format!(

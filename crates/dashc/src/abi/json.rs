@@ -19,6 +19,7 @@ enum WireLocation<'a> {
     PaintEntry { index: u32 },
     ImageAsset { index: u32 },
     VariantSet { index: u32 },
+    TextStyle { index: u32 },
 }
 
 impl<'a> From<&'a Location> for WireLocation<'a> {
@@ -31,6 +32,7 @@ impl<'a> From<&'a Location> for WireLocation<'a> {
             Location::PaintEntry(index) => Self::PaintEntry { index: *index },
             Location::ImageAsset(index) => Self::ImageAsset { index: *index },
             Location::VariantSet(index) => Self::VariantSet { index: *index },
+            Location::TextStyle(index) => Self::TextStyle { index: *index },
         }
     }
 }
@@ -168,6 +170,13 @@ mod tests {
             .into_iter()
             .collect();
         assert!(report_json(&report).contains(r#""at":{"kind":"imageAsset","index":0}"#));
+
+        // A text style is a pooled surface too (issue #41): its index must
+        // tag as `textStyle`, not resolve as a node index.
+        let report: Report = vec![diagnostic(Location::TextStyle(4))]
+            .into_iter()
+            .collect();
+        assert!(report_json(&report).contains(r#""at":{"kind":"textStyle","index":4}"#));
     }
 
     #[test]

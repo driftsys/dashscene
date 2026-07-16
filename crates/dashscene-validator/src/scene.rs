@@ -26,7 +26,8 @@ use dashpaint::{
 };
 
 use crate::paint::{
-    check_gradient_stops, check_image_bytes, check_image_index, check_stroke_width, error,
+    check_corners, check_gradient_stops, check_image_bytes, check_image_index, check_stroke_width,
+    error,
 };
 use crate::{Location, Report, rule};
 
@@ -67,6 +68,8 @@ pub fn validate_scene(
     // panic on.
     for (i, rect) in rects.iter().enumerate() {
         let at = Location::Node(crate::NodePath::unnamed(i as u32));
+
+        check_rect_extent(&mut report, rect, &at);
 
         if clips.get(rect.clip).is_none() {
             report.push(error(
@@ -112,6 +115,34 @@ fn check_paint_entry(report: &mut Report, entry: &PaintEntry, at: &Location, ima
 
     if let Some(stroke) = &entry.stroke {
         check_stroke_width(report, at, stroke.width);
+    }
+
+    let c = entry.corners;
+    check_corners(
+        report,
+        at,
+        [c.top_left, c.top_right, c.bottom_right, c.bottom_left],
+    );
+}
+
+/// A rect's extents must be finite and non-negative (issue #128). Rects come
+/// from the solver, so a non-finite or negative extent is a broken
+/// inter-crate contract rather than authoring — but the paint gate is the
+/// last checkpoint before a painter rasterizes NaN or inverted geometry.
+///
+/// This names what `check_stroke_fits_box` only declines to judge: that
+/// function returns without a verdict on a non-finite box (`f32::min` would
+/// otherwise silently compare against the other axis), leaving the real
+/// fault — the non-finite extent itself — unnamed until now.
+fn check_rect_extent(report: &mut Report, rect: &RectEntry, at: &Location) {
+    for (extent, axis) in [(rect.w, "width"), (rect.h, "height")] {
+        if !extent.is_finite() || extent < 0.0 {
+            report.push(error(
+                rule::RECT_INVALID_EXTENT,
+                at,
+                format!("rect {axis} is {extent}; it must be finite and non-negative"),
+            ));
+        }
     }
 }
 
