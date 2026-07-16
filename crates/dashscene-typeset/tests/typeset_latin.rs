@@ -159,16 +159,5 @@ fn trailing_spaces_trim_identically_with_and_without_max_width() {
     assert_eq!(unconstrained.width, constrained.width);
 }
 
-#[test]
-fn shaping_is_forced_ltr() {
-    // Until bidi itemization (v0.6, #32), every run shapes LTR by
-    // construction — deterministic and visibly wrong for RTL input,
-    // never silently reordered. Hebrew clusters therefore ascend.
-    let mut ts = typesetter();
-    let l = ts.layout("שלום", 16.0, None);
-    assert_eq!(l.lines.len(), 1);
-    let xs: Vec<f32> = l.lines[0].glyphs.iter().map(|g| g.x).collect();
-    let mut sorted = xs.clone();
-    sorted.sort_by(f32::total_cmp);
-    assert_eq!(xs, sorted, "glyphs advance left to right");
-}
+// The v0.5 forced-LTR pin (`shaping_is_forced_ltr`) is superseded by
+// bidi itemization (issue #32) — see `typeset_bidi.rs`.
