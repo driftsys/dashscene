@@ -28,9 +28,11 @@ directly:
   runtime scheduling: transitions, springs, keyframes (v0.4, story #21).
 - [atlas-pipeline.md](atlas-pipeline.md) — the build-time font → MSDF glyph
   atlas + metrics blob pipeline (v0.5, story #27).
-- [typeset-latin.md](typeset-latin.md) — the runtime Latin text pipeline:
-  shape → greedy break → baseline positioning, with a font-unit
-  shaped-run cache (v0.5, story #28).
+- [typeset-latin.md](typeset-latin.md) — the runtime text pipeline:
+  bidi split → per-run shaping → greedy break → per-line display
+  reorder and baseline positioning, with a font-unit shaped-run cache
+  (v0.5, story #28; v0.6 bidi and Arabic + digit shapes, stories
+  #32/#33).
 - [dashscene-skia.md](dashscene-skia.md) — the Skia CPU-raster reference
   painter, the first `Painter` implementation (story #4); the v0.3 paint
   vocabulary (story #14) and resolved subtree clips (story #97).

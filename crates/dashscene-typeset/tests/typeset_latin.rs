@@ -2,31 +2,22 @@
 //! greedy wrapping, baselines, and the shaped-run cache. Needs only
 //! the committed corpus font — no external tool.
 
-use dashscene_typeset::text::{Font, Typesetter};
+use dashscene_typeset::text::Typesetter;
 
 mod common;
 
 use common::FONT;
 
-fn font_data() -> Vec<u8> {
-    std::fs::read(FONT).expect("fixture font present")
-}
-
 fn typesetter() -> Typesetter {
-    Typesetter::new(Font::from_bytes(font_data(), 0).expect("loads"))
+    common::typesetter(FONT)
 }
 
 fn cmap(c: char) -> u16 {
-    let data = font_data();
-    ttf_parser::Face::parse(&data, 0)
-        .unwrap()
-        .glyph_index(c)
-        .unwrap()
-        .0
+    common::cmap(FONT, c)
 }
 
 fn hmtx(c: char) -> u16 {
-    let data = font_data();
+    let data = common::font_data(FONT);
     let face = ttf_parser::Face::parse(&data, 0).unwrap();
     let gid = face.glyph_index(c).unwrap();
     face.glyph_hor_advance(gid).unwrap()
