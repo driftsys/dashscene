@@ -15,7 +15,12 @@ mod common;
 
 use common::{FONT, FONT_ARABIC};
 
-const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ascii");
+// The committed atlas fixtures live under the shared corpus/atlas/ home,
+// beside the fonts they are generated from — not under this crate's
+// tests/, so a golden in another crate can load them without reaching
+// into a crate's private test tree (debt #217).
+const ASCII_FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../corpus/atlas/ascii");
+const ARABIC_FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../corpus/atlas/arabic");
 
 /// Returns false (and prints why) when the pinned tool is unavailable
 /// and the environment tolerates that; panics when CI demands it.
@@ -143,6 +148,13 @@ fn arabic_charset() -> BTreeSet<char> {
     letters.chain(harakat).chain(digits).chain([' ']).collect()
 }
 
+/// The Arabic fixture contract, mirroring `ascii_spec`: the committed
+/// fixture, its regeneration, and every Arabic-atlas assertion build
+/// from this one spec, so the writer and the checker cannot drift.
+fn arabic_spec() -> AtlasSpec {
+    AtlasSpec::new(PathBuf::from(FONT_ARABIC), arabic_charset())
+}
+
 /// Shapes `text` with the default OpenType feature set (ligatures on) —
 /// the independent oracle for what the atlas must cover.
 fn shaped_gids(face: &rustybuzz::Face<'_>, text: &str) -> Vec<u16> {
@@ -165,8 +177,7 @@ fn arabic_atlas_covers_shaped_contextual_forms() {
     if !tool_available() {
         return;
     }
-    let spec = AtlasSpec::new(PathBuf::from(FONT_ARABIC), arabic_charset());
-    let bundle = generate(&spec).expect("pipeline runs over the Arabic fixture");
+    let bundle = generate(&arabic_spec()).expect("pipeline runs over the Arabic fixture");
     let m = &bundle.metrics;
     assert!(
         m.missing_codepoints.is_empty(),
@@ -295,9 +306,8 @@ fn arabic_atlas_double_run_is_byte_identical() {
     if !tool_available() {
         return;
     }
-    let spec = AtlasSpec::new(PathBuf::from(FONT_ARABIC), arabic_charset());
-    let a = generate(&spec).expect("first run");
-    let b = generate(&spec).expect("second run");
+    let a = generate(&arabic_spec()).expect("first run");
+    let b = generate(&arabic_spec()).expect("second run");
     assert_eq!(a.image_png, b.image_png, "atlas.png must be byte-identical");
     assert_eq!(
         a.metrics.to_bytes(),
@@ -307,13 +317,13 @@ fn arabic_atlas_double_run_is_byte_identical() {
 }
 
 #[test]
-fn committed_fixture_is_reproducible() {
+fn committed_ascii_fixture_is_reproducible() {
     if !tool_available() {
         return;
     }
-    let committed = AtlasBundle::load_from_dir(&PathBuf::from(FIXTURE_DIR)).expect(
+    let committed = AtlasBundle::load_from_dir(&PathBuf::from(ASCII_FIXTURE_DIR)).expect(
         "committed fixture loads — regenerate with `cargo test -p dashscene-typeset \
-         --test atlas_pipeline -- --ignored regenerate_committed_fixture`",
+         --test atlas_pipeline -- --ignored regenerate_committed_ascii_fixture`",
     );
     let fresh = shared_ascii_bundle();
     assert_eq!(
@@ -325,18 +335,59 @@ fn committed_fixture_is_reproducible() {
     assert_eq!(committed.metrics.to_bytes(), fresh.metrics.to_bytes());
 }
 
-/// Rewrites the committed fixture from the current pipeline. Ignored:
-/// run it only after a deliberate parameter or toolchain change, then
-/// commit the result with a note recording why.
+/// The Arabic committed fixture is reproducible across machines, the
+/// same guarantee `committed_ascii_fixture_is_reproducible` proves —
+/// over a charset whose closure runs the full GSUB sweep. Generated on
+/// macOS by `regenerate_committed_arabic_fixture`, byte-compared on the
+/// CI atlas-repro runner (Linux).
+#[test]
+fn committed_arabic_fixture_is_reproducible() {
+    if !tool_available() {
+        return;
+    }
+    let committed = AtlasBundle::load_from_dir(&PathBuf::from(ARABIC_FIXTURE_DIR)).expect(
+        "committed Arabic fixture loads — regenerate with `cargo test -p dashscene-typeset \
+         --test atlas_pipeline -- --ignored regenerate_committed_arabic_fixture`",
+    );
+    let fresh = generate(&arabic_spec()).expect("pipeline runs over the Arabic fixture");
+    assert_eq!(
+        committed.image_png, fresh.image_png,
+        "committed Arabic atlas.png no longer reproducible (R7) — if \
+         the toolchain legitimately changed, regenerate the fixture and \
+         record why"
+    );
+    assert_eq!(committed.metrics.to_bytes(), fresh.metrics.to_bytes());
+}
+
+/// Rewrites the committed ASCII fixture from the current pipeline.
+/// Ignored: run it only after a deliberate parameter or toolchain
+/// change, then commit the result with a note recording why.
 #[test]
 #[ignore = "regenerates the committed fixture; run explicitly"]
-fn regenerate_committed_fixture() {
+fn regenerate_committed_ascii_fixture() {
     let bundle = generate(&ascii_spec()).expect("pipeline runs");
     bundle
-        .write_to_dir(&PathBuf::from(FIXTURE_DIR))
+        .write_to_dir(&PathBuf::from(ASCII_FIXTURE_DIR))
         .expect("write fixture");
     println!(
-        "wrote {FIXTURE_DIR} ({} glyphs, {}x{})",
+        "wrote {ASCII_FIXTURE_DIR} ({} glyphs, {}x{})",
+        bundle.metrics.glyphs.len(),
+        bundle.metrics.atlas.width,
+        bundle.metrics.atlas.height
+    );
+}
+
+/// Rewrites the committed Arabic fixture (the E2 golden's atlas) from
+/// the current pipeline. Ignored, like the ASCII regenerator.
+#[test]
+#[ignore = "regenerates the committed fixture; run explicitly"]
+fn regenerate_committed_arabic_fixture() {
+    let bundle = generate(&arabic_spec()).expect("pipeline runs");
+    bundle
+        .write_to_dir(&PathBuf::from(ARABIC_FIXTURE_DIR))
+        .expect("write fixture");
+    println!(
+        "wrote {ARABIC_FIXTURE_DIR} ({} glyphs, {}x{})",
         bundle.metrics.glyphs.len(),
         bundle.metrics.atlas.width,
         bundle.metrics.atlas.height

@@ -31,19 +31,41 @@ use skia_safe::{AlphaType, ColorType, Data, ImageInfo, images};
 /// Encoded-byte drift with identical pixels passes with a note on
 /// stderr: a golden is a picture, not a container format.
 pub fn assert_matches_golden(name: &str, png_bytes: &[u8]) {
-    run_golden(name, png_bytes, 0.0);
+    run_golden(name, png_bytes, Budget::Fraction(0.0));
+}
+
+/// The pass criterion for a tolerance-based golden: how many differing
+/// pixels are still a pass.
+///
+/// The tolerance exists to absorb cross-machine anti-aliasing jitter —
+/// skia's coverage rounding at a fractional edge flips a handful of
+/// boundary pixels across CPU architectures. That jitter scales with the
+/// scene's anti-aliased **edge count**, an absolute number, not with the
+/// canvas area. The two forms make that choice explicit:
+///
+/// - `Fraction` — a fraction of the whole canvas. Right when the inked
+///   content is a large share of the canvas (solid-fill scenes: the v0.3
+///   paint families), where a real regression moves several percent of
+///   the canvas and the edge jitter is a small fraction of it.
+/// - `Pixels` — an absolute differing-pixel count. Right for sparse
+///   content (text), where the inked ink is a small fraction of the
+///   canvas: a canvas fraction wide enough to clear the edge jitter can
+///   exceed the entire inked footprint, so a regression that erases the
+///   text passes. See `docs/decisions/golden-comparison-space.md`.
+pub enum Budget {
+    Fraction(f64),
+    Pixels(usize),
 }
 
 /// Compares `png_bytes` against the checked-in golden, allowing up to
-/// `max_differing_fraction` of pixels to differ (0.0 = exact).
+/// `max_differing_fraction` of the canvas pixels to differ (0.0 = exact).
 ///
-/// Anti-aliased CPU-raster output is deterministic per skia version but
-/// not bit-identical across CPU architectures: coverage rounding at a
-/// fractional edge can flip a handful of boundary pixels. A small
-/// fraction absorbs that cross-machine edge jitter while still catching
-/// any real rendering change, which moves far more than a thin edge
-/// (docs/technotes/rendering-and-painters.md's tolerance-based diff, applied to CPU-raster AA).
-/// See `docs/decisions/golden-comparison-space.md`.
+/// A canvas fraction is the right tolerance when the inked content is a
+/// large share of the canvas. For sparse content (text), prefer
+/// [`assert_matches_golden_max_pixels`]: a fraction wide enough to clear
+/// cross-machine edge jitter can exceed the whole inked footprint, so a
+/// text-erasing regression would pass. See
+/// `docs/decisions/golden-comparison-space.md`.
 ///
 /// # Panics
 ///
@@ -51,13 +73,30 @@ pub fn assert_matches_golden(name: &str, png_bytes: &[u8]) {
 /// tolerance passes with a note on stderr; only dimension mismatches or
 /// a differing fraction above `max_differing_fraction` fail.
 pub fn assert_matches_golden_within(name: &str, png_bytes: &[u8], max_differing_fraction: f64) {
-    run_golden(name, png_bytes, max_differing_fraction);
+    run_golden(name, png_bytes, Budget::Fraction(max_differing_fraction));
 }
 
-fn run_golden(name: &str, png_bytes: &[u8], max_differing_fraction: f64) {
+/// Compares `png_bytes` against the checked-in golden, allowing up to
+/// `max_differing_pixels` pixels to differ.
+///
+/// The absolute form for sparse content (text): the budget is sized to
+/// the scene's anti-aliased edge count, not to the canvas, so it stays
+/// below the inked footprint and a regression that erases or moves the
+/// text exceeds it. See `docs/decisions/golden-comparison-space.md`.
+///
+/// # Panics
+///
+/// As [`assert_matches_golden`], except a difference within the budget
+/// passes with a note on stderr; only dimension mismatches or a differing
+/// count above `max_differing_pixels` fail.
+pub fn assert_matches_golden_max_pixels(name: &str, png_bytes: &[u8], max_differing_pixels: usize) {
+    run_golden(name, png_bytes, Budget::Pixels(max_differing_pixels));
+}
+
+fn run_golden(name: &str, png_bytes: &[u8], budget: Budget) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../images");
     match env::var_os("UPDATE_GOLDENS") {
-        None => compare_against(&root, name, png_bytes, max_differing_fraction),
+        None => compare_against(&root, name, png_bytes, budget),
         Some(value) if value == "1" => {
             // Never commit bytes the comparison path could not read
             // back: a broken render must fail here, not at the next
@@ -88,7 +127,7 @@ pub fn pixel(rgba: &[u8], width: usize, x: usize, y: usize) -> [u8; 4] {
 /// The comparison body, with the images root injected (unit tests use
 /// a temporary root; [`assert_matches_golden`] passes the repository's
 /// `goldens/images/`).
-fn compare_against(root: &Path, name: &str, png_bytes: &[u8], max_differing_fraction: f64) {
+fn compare_against(root: &Path, name: &str, png_bytes: &[u8], budget: Budget) {
     let golden_path = root.join(format!("{name}.png"));
     let golden_bytes = match std::fs::read(&golden_path) {
         Ok(bytes) => bytes,
@@ -143,14 +182,17 @@ fn compare_against(root: &Path, name: &str, png_bytes: &[u8], max_differing_frac
     }
 
     let fraction = differing as f64 / total as f64;
-    if fraction <= max_differing_fraction {
+    let (within_budget, limit) = match budget {
+        Budget::Fraction(max) => (fraction <= max, format!("{:.3}% tolerance", max * 100.0)),
+        Budget::Pixels(max) => (differing <= max, format!("{max} px budget")),
+    };
+    if within_budget {
         // Within tolerance: cross-machine AA edge jitter, not a
         // rendering change. Clear any stale failure artifact.
         eprintln!(
-            "golden {name}: {differing}/{total} pixel(s) differ ({:.3}% <= {:.3}% tolerance) — \
+            "golden {name}: {differing}/{total} pixel(s) differ ({:.3}%, within {limit}) — \
              cross-machine anti-aliasing jitter, accepted",
             fraction * 100.0,
-            max_differing_fraction * 100.0
         );
         remove_stale_actual(root, name);
         return;
@@ -159,10 +201,9 @@ fn compare_against(root: &Path, name: &str, png_bytes: &[u8], max_differing_frac
     let actual_path = write_actual(root, name, png_bytes);
     let (x, y) = first.expect("at least one differing pixel");
     panic!(
-        "golden {name}: {differing}/{total} pixel(s) differ ({:.3}% > {:.3}% tolerance), \
+        "golden {name}: {differing}/{total} pixel(s) differ ({:.3}%, over {limit}), \
          first at ({x}, {y}) — golden: {}, actual: {}",
         fraction * 100.0,
-        max_differing_fraction * 100.0,
         golden_path.display(),
         actual_path.display()
     );
@@ -222,7 +263,7 @@ mod tests {
     use skia_safe::{Color4f, surfaces};
     use tempfile::TempDir;
 
-    use super::compare_against;
+    use super::{Budget, compare_against};
 
     /// A 2×2 PNG: three pixels of `base`, the bottom-right pixel of
     /// `corner`. Encoded directly through skia rather than through
@@ -267,7 +308,7 @@ mod tests {
         std::fs::write(root.path().join("case.png"), &png).unwrap();
         std::fs::write(root.path().join("case.actual.png"), b"stale").unwrap();
 
-        compare_against(root.path(), "case", &png, 0.0);
+        compare_against(root.path(), "case", &png, Budget::Fraction(0.0));
 
         assert!(
             !root.path().join("case.actual.png").exists(),
@@ -282,7 +323,7 @@ mod tests {
         let actual = tiny_png(RED, RED);
 
         let result = catch_unwind(|| {
-            compare_against(root.path(), "case", &actual, 0.0);
+            compare_against(root.path(), "case", &actual, Budget::Fraction(0.0));
         });
 
         let message = *result
@@ -313,7 +354,7 @@ mod tests {
             .to_vec();
 
         let result = catch_unwind(|| {
-            compare_against(root.path(), "case", &actual, 0.0);
+            compare_against(root.path(), "case", &actual, Budget::Fraction(0.0));
         });
 
         let message = *result
@@ -331,7 +372,12 @@ mod tests {
     #[should_panic(expected = "UPDATE_GOLDENS")]
     fn a_missing_golden_names_the_update_workflow() {
         let root = temp_root();
-        compare_against(root.path(), "never-created", &tiny_png(RED, BLUE), 0.0);
+        compare_against(
+            root.path(),
+            "never-created",
+            &tiny_png(RED, BLUE),
+            Budget::Fraction(0.0),
+        );
     }
 
     #[test]
@@ -339,7 +385,12 @@ mod tests {
     fn a_corrupt_golden_names_itself_rather_than_the_render() {
         let root = temp_root();
         std::fs::write(root.path().join("case.png"), b"not a png").unwrap();
-        compare_against(root.path(), "case", &tiny_png(RED, BLUE), 0.0);
+        compare_against(
+            root.path(),
+            "case",
+            &tiny_png(RED, BLUE),
+            Budget::Fraction(0.0),
+        );
     }
 
     #[test]
@@ -350,7 +401,7 @@ mod tests {
         // One of the 2x2 image's four pixels differs = 25%.
         let actual = tiny_png(RED, RED);
 
-        compare_against(root.path(), "case", &actual, 0.30);
+        compare_against(root.path(), "case", &actual, Budget::Fraction(0.30));
 
         assert!(
             !root.path().join("case.actual.png").exists(),
@@ -365,7 +416,7 @@ mod tests {
         let actual = tiny_png(RED, RED); // 25% differ
 
         let result = catch_unwind(|| {
-            compare_against(root.path(), "case", &actual, 0.10);
+            compare_against(root.path(), "case", &actual, Budget::Fraction(0.10));
         });
 
         let message = *result
@@ -373,7 +424,32 @@ mod tests {
             .downcast::<String>()
             .expect("panic message is a String");
         assert!(
-            message.contains("> 10.000% tolerance"),
+            message.contains("over 10.000% tolerance"),
+            "unexpected report: {message}"
+        );
+    }
+
+    #[test]
+    fn an_absolute_pixel_budget_passes_at_or_below_and_fails_above() {
+        let root = temp_root();
+        std::fs::write(root.path().join("case.png"), tiny_png(RED, BLUE)).unwrap();
+        // One of the four pixels differs.
+        let actual = tiny_png(RED, RED);
+
+        // A one-pixel budget accepts the one differing pixel.
+        compare_against(root.path(), "case", &actual, Budget::Pixels(1));
+
+        // A zero-pixel budget rejects it, and the message names the
+        // absolute budget rather than a percentage tolerance.
+        let result = catch_unwind(|| {
+            compare_against(root.path(), "case", &actual, Budget::Pixels(0));
+        });
+        let message = *result
+            .expect_err("over-budget difference must panic")
+            .downcast::<String>()
+            .expect("panic message is a String");
+        assert!(
+            message.contains("over 0 px budget") && message.contains("1/4 pixel(s) differ"),
             "unexpected report: {message}"
         );
     }

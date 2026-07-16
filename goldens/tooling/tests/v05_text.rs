@@ -13,78 +13,34 @@
 //!
 //! Determinism (`docs/decisions/golden-comparison-space.md`): the font is
 //! the committed corpus Noto Sans; the atlas is the committed,
-//! R7-reproducible ASCII fixture (`crates/dashscene-typeset/tests/
-//! fixtures/ascii`) — no `msdf-atlas-gen` at render time; shaping and line
-//! breaking are deterministic. MSDF resolve is anti-aliased, so — like the
-//! gradient goldens — the comparison is tolerance-based, not bit-exact.
+//! R7-reproducible ASCII fixture (`corpus/atlas/ascii`) — no
+//! `msdf-atlas-gen` at render time; shaping and line breaking are
+//! deterministic. MSDF resolve is anti-aliased, so — like the gradient
+//! goldens — the comparison is tolerance-based, not bit-exact.
 //!
 //! Regeneration and diff workflow: goldens/README.md.
 
-use dashpaint::{
-    Atlas, AtlasGlyph, AtlasIndex, Color, GlyphQuad, GlyphRun, GlyphRunTable, ImageAsset,
-    ImageFormat, ImageTable, Painter,
-};
-use dashscene_core::{Arena, AxisSizing, LayoutMode, NodeId, Prop, TextStyle};
+use dashpaint::{AtlasIndex, Color, GlyphQuad, GlyphRun, GlyphRunTable, ImageTable, Painter};
+use dashscene_core::{Arena, AxisSizing, LayoutMode, Prop, TextStyle};
 use dashscene_engine::TaffySolver;
 use dashscene_skia::SkiaPainter;
-use dashscene_typeset::atlas::AtlasBundle;
 use dashscene_typeset::text::{Font, Typesetter};
+
+mod common;
+
+use common::{AMBER, INK, NAVY, NEAR_WHITE, load_atlas, origin_of, size_of};
 
 const FONT: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../corpus/fonts/noto-sans/NotoSans-Regular.ttf"
 );
 
-/// The committed, R7-reproducible ASCII atlas — the same font as `FONT`.
-/// Reused rather than regenerated so the golden needs no build tool, and
-/// so one atlas fixture stays the single reproducible source of truth.
-const ATLAS_DIR: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../crates/dashscene-typeset/tests/fixtures/ascii"
-);
-
-const fn rgb(r: f32, g: f32, b: f32) -> Color {
-    Color { r, g, b, a: 1.0 }
-}
-
-const NAVY: Color = rgb(0.05, 0.07, 0.12);
-const NEAR_WHITE: Color = rgb(0.92, 0.94, 0.98);
-const AMBER: Color = rgb(0.98, 0.78, 0.20);
-const INK: Color = rgb(0.08, 0.09, 0.13);
-
-/// Converts the build-time atlas metrics into the boundary-B [`Atlas`]:
-/// only glyphs that paint (bounded outlines) carry a quad, so an
-/// empty-outline glyph (space) is dropped, and the sorted-by-glyph-id
-/// order the metrics blob guarantees is preserved.
-fn load_atlas() -> Atlas {
-    let bundle = AtlasBundle::load_from_dir(std::path::Path::new(ATLAS_DIR)).expect(
-        "committed ASCII atlas fixture loads (regenerate with `cargo test -p dashscene-typeset \
-         --test atlas_pipeline -- --ignored regenerate_committed_fixture`)",
-    );
-    let m = &bundle.metrics;
-    let glyphs = m
-        .glyphs
-        .iter()
-        .filter_map(|g| {
-            Some(AtlasGlyph {
-                glyph_id: g.glyph_id,
-                plane_em: g.plane_em?,
-                atlas_px: g.atlas_px?,
-            })
-        })
-        .collect();
-    Atlas::new(
-        ImageAsset {
-            format: ImageFormat::Png,
-            bytes: bundle.image_png.clone(),
-        },
-        m.atlas.width,
-        m.atlas.height,
-        m.atlas.px_per_em,
-        m.atlas.distance_range_px,
-        glyphs,
-    )
-}
+/// The committed, R7-reproducible ASCII atlas — the same font as `FONT`,
+/// under the shared `corpus/atlas/` home (not a crate's private test
+/// tree — debt #217). Reused rather than regenerated so the golden needs
+/// no build tool, and so one atlas fixture stays the single reproducible
+/// source of truth.
+const ATLAS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../corpus/atlas/ascii");
 
 /// Shapes `text` at `size` (single line — the labels are hug-sized) and
 /// places every glyph in absolute document space by adding the node's
@@ -115,26 +71,6 @@ fn text_run(
         color,
         glyphs,
     }
-}
-
-/// The resolved box origin of a committed text node.
-fn origin_of(arena: &Arena, node: NodeId) -> (f32, f32) {
-    let scene = arena.committed();
-    let index = scene
-        .rect_index_of(node)
-        .expect("the text node is committed") as usize;
-    let rect = scene.rects()[index];
-    (rect.x, rect.y)
-}
-
-/// The resolved box size of a committed text node.
-fn size_of(arena: &Arena, node: NodeId) -> (f32, f32) {
-    let scene = arena.committed();
-    let index = scene
-        .rect_index_of(node)
-        .expect("the text node is committed") as usize;
-    let rect = scene.rects()[index];
-    (rect.w, rect.h)
 }
 
 #[test]
@@ -232,7 +168,7 @@ fn latin_text_and_a_hug_label_match_their_golden() {
 
     // Stage the positioned glyph runs at boundary B, sampling the atlas.
     let mut glyphs = GlyphRunTable::new();
-    let atlas = glyphs.push_atlas(load_atlas());
+    let atlas = glyphs.push_atlas(load_atlas(ATLAS_DIR));
     glyphs.push_run(text_run(
         &mut ts,
         atlas,
