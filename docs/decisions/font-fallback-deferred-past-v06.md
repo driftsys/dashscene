@@ -49,9 +49,15 @@ grows a font list.
 - Through v0.6, a codepoint outside the style's single font shapes
   to `.notdef` and hits the painter's missing-glyph diagnostic (#30)
   — a named P4 diagnostic, not a silent drop.
-- Tracking issue #219 (anchored to v0.7) carries the requirement;
-  the v0.7 revision at the v0.6 close places it — its own story, or
-  folded into #160.
+- Placed at the v0.6-close revision (2026-07-16): #219 is its own
+  v0.7 `dashscene-typeset` story, not folded into #160. Fallback is
+  a typeset-runtime capability (per-style font lists, per-font
+  charset unions, per-font atlas pages), so it does not belong
+  inside the producer-side text-lowering story; it depends only on
+  the completed v0.6 typeset runtime and runs in parallel with #140.
+  #160 names multi-font fallback as explicit non-scope: through
+  #160, a codepoint outside a style's single font is #30's named
+  missing-glyph diagnostic (P4), never a silent drop.
 - #34's charset vocabulary must not bake in a per-document charset
   union: the spike pinned that unions are per font, and that
   constraint holds even while each charset maps to one font.
