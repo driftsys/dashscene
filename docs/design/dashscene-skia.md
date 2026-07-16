@@ -2,7 +2,8 @@
 
     crate    crates/dashscene-skia
     covers   v0.1 first Painter implementation (story #4); v0.3 paint
-             vocabulary (story #14); resolved subtree clips (story #97)
+             vocabulary (story #14); resolved subtree clips (story #97);
+             v0.5 MSDF glyph-run rendering (story #30)
 
 ## Purpose
 
@@ -84,6 +85,20 @@ All in `crates/dashscene-skia/src/lib.rs`:
   came from (P2), and a region with no boxes costs no save/restore. The
   clip applies to the rect's own fill and stroke, not to the rects after
   it in slice order.
+
+## Text — MSDF glyph runs (v0.5 Latin, story #30)
+
+After the rect pass, the painter draws the `GlyphRunTable` (boundary B's
+text half, `docs/decisions/glyph-runs-cross-boundary-b.md`). Each glyph is
+one textured MSDF atlas quad: the glyph's `plane_em` bounds map to a
+device quad at the run's render size (y-up ems to y-down document space),
+and its `atlas_px` bounds map to the atlas texels. An SkSL runtime effect
+samples the atlas with linear filtering, takes the median of the three
+distance channels, and resolves coverage over the screen-pixel range
+(`distance_range_px * render_size / px_per_em`), modulating the run's
+fill color. The reference painter uses the atlas as the product path;
+Skia's native text (`SkTextBlob`) is a debug overlay only (`DESIGN_1.md`
+§7.2). Runs composite over every rect (text foreground) in v0.5.
 
 ## Testing
 

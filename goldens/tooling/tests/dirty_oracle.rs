@@ -16,7 +16,7 @@
 //! pass trivially, because the retained buffer is fully populated on the
 //! first paint. The sequence is the test.
 
-use dashpaint::{ImageTable, Painter};
+use dashpaint::{GlyphRunTable, ImageTable, Painter};
 use dashscene_core::{Arena, Color, NodeId, Prop};
 use dashscene_skia::{DirtyMode, SkiaPainter};
 
@@ -35,6 +35,7 @@ fn paint(painter: &mut SkiaPainter, arena: &Arena) {
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        &GlyphRunTable::new(),
         Some(scene.dirty()),
     );
 }
@@ -202,6 +203,7 @@ fn the_oracle_can_fail() {
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        &GlyphRunTable::new(),
         Some(scene.dirty()),
     );
     retained.paint(
@@ -209,6 +211,7 @@ fn the_oracle_can_fail() {
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        &GlyphRunTable::new(),
         Some(&[]),
     );
 

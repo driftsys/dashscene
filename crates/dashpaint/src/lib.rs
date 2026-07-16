@@ -460,6 +460,194 @@ impl PaintTable {
     }
 }
 
+/// One glyph placed in absolute document space (y-down, layout origin
+/// at the top-left): the pen position on its line's baseline, with the
+/// shaping offsets already applied.
+///
+/// Plain mirror of `dashscene-typeset`'s `PositionedGlyph` (dashpaint
+/// depends on no crate — the same reason [`Color`] mirrors `dashbuf`'s
+/// `Color`). Whoever stages the run adds the text node's resolved box
+/// origin, so positions reach the painter absolute and the painter never
+/// moves anything (P2). The painter combines each position with the
+/// atlas glyph's y-up `plane_em` quad to place the textured quad.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GlyphQuad {
+    pub glyph_id: u16,
+    pub x: f32,
+    pub y: f32,
+}
+
+/// One atlas glyph's placement geometry, keyed by glyph id. Only glyphs
+/// that paint appear: an empty outline (a space) has no quad and is
+/// omitted, so a `glyph_id` absent from an [`Atlas`] draws nothing.
+///
+/// Plain mirror of `dashscene-typeset`'s `GlyphEntry` bounds. Both
+/// rectangles are `[left, bottom, right, top]`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AtlasGlyph {
+    pub glyph_id: u16,
+    /// Quad bounds in ems, y-up, baseline origin (the metrics blob's
+    /// `plane_em`).
+    pub plane_em: [f32; 4],
+    /// Texel bounds in the atlas image, bottom-left origin (the metrics
+    /// blob's `atlas_px`).
+    pub atlas_px: [f32; 4],
+}
+
+/// An index into a [`GlyphRunTable`]'s atlas list — the type of
+/// [`GlyphRun::atlas`] and the return of [`GlyphRunTable::push_atlas`].
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AtlasIndex(pub u32);
+
+/// The MSDF glyph atlas a painter samples: the image, its parameters,
+/// and per-glyph placement.
+///
+/// Plain mirror of the `dashscene-typeset` atlas metrics blob (dashpaint
+/// depends on no crate). The build-time pipeline produces the metrics; a
+/// stager converts them into this boundary-B shape, the same way an
+/// image fill's bytes reach the painter as an [`ImageAsset`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct Atlas {
+    /// The MSDF atlas image (RGB distance channels), an encoded asset.
+    pub image: ImageAsset,
+    /// Atlas image size in texels.
+    pub width: u32,
+    pub height: u32,
+    /// The size, in texels per em, the atlas was rendered at.
+    pub px_per_em: u16,
+    /// The MSDF distance range in atlas texels. The painter's
+    /// screen-pixel range is `distance_range_px * render_size /
+    /// px_per_em` (`plane_em` and `atlas_px` bake the range into the
+    /// bounds, so this scales the sharpness of the edge, not the size).
+    pub distance_range_px: f32,
+    /// Placement per glyph, sorted and unique by `glyph_id` (the metrics
+    /// blob's own invariant — painters may binary-search it).
+    glyphs: Vec<AtlasGlyph>,
+}
+
+impl Atlas {
+    /// An atlas over `glyphs`, which must be sorted and unique by
+    /// `glyph_id` — the metrics blob guarantees it, so [`glyph`](Self::glyph)
+    /// binary-searches.
+    pub fn new(
+        image: ImageAsset,
+        width: u32,
+        height: u32,
+        px_per_em: u16,
+        distance_range_px: f32,
+        glyphs: Vec<AtlasGlyph>,
+    ) -> Self {
+        debug_assert!(
+            glyphs.windows(2).all(|w| w[0].glyph_id < w[1].glyph_id),
+            "atlas glyphs must be sorted and unique by glyph id"
+        );
+        Self {
+            image,
+            width,
+            height,
+            px_per_em,
+            distance_range_px,
+            glyphs,
+        }
+    }
+
+    /// The placement for `glyph_id`, or `None` when the atlas has no quad
+    /// for it (an empty-outline glyph such as a space, or a glyph outside
+    /// the atlas's charset — which paints nothing).
+    pub fn glyph(&self, glyph_id: u16) -> Option<&AtlasGlyph> {
+        self.glyphs
+            .binary_search_by_key(&glyph_id, |g| g.glyph_id)
+            .ok()
+            .map(|i| &self.glyphs[i])
+    }
+}
+
+/// One positioned glyph run: a sequence of placed glyphs that share a
+/// render size, a fill color, and an atlas (one style per text node in
+/// the v0.5 Latin subset — `docs/design/architecture.md` §7.2).
+#[derive(Debug, Clone, PartialEq)]
+pub struct GlyphRun {
+    /// The atlas the glyphs are sampled from.
+    pub atlas: AtlasIndex,
+    /// Render size in document units (px per em).
+    pub size: f32,
+    /// The text fill; the MSDF coverage modulates this color.
+    pub color: Color,
+    /// The placed glyphs, in draw order.
+    pub glyphs: Vec<GlyphQuad>,
+}
+
+/// The glyph-run table (`docs/design/architecture.md` §7.3): the
+/// positioned glyph runs plus the atlases they reference — the text half
+/// of the painter input, a sibling of the rect table. Empty for a
+/// text-free scene, so every existing caller passes
+/// [`GlyphRunTable::new`].
+///
+/// Runs cross boundary B already shaped, wrapped, and positioned: the
+/// one typesetter did that once, and the painter only draws the quads
+/// (P2). The atlases are carried with the runs because a run's glyph ids
+/// are meaningless without the atlas that places them, the same way an
+/// image fill needs its [`ImageTable`] entry.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct GlyphRunTable {
+    atlases: Vec<Atlas>,
+    runs: Vec<GlyphRun>,
+}
+
+impl GlyphRunTable {
+    /// An empty table — no runs, no atlases.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Appends an atlas and returns its index — the value a
+    /// [`GlyphRun::atlas`] field holds to reference it.
+    pub fn push_atlas(&mut self, atlas: Atlas) -> AtlasIndex {
+        let index =
+            u32::try_from(self.atlases.len()).expect("glyph-run table exceeds u32::MAX atlases");
+        self.atlases.push(atlas);
+        AtlasIndex(index)
+    }
+
+    /// Appends a positioned run.
+    pub fn push_run(&mut self, run: GlyphRun) {
+        self.runs.push(run);
+    }
+
+    /// The runs to draw, in order.
+    pub fn runs(&self) -> &[GlyphRun] {
+        &self.runs
+    }
+
+    /// Resolves a run's atlas index. Panics on an out-of-range index,
+    /// the same contract as [`PaintTable::resolve`]: a miss is a broken
+    /// contract between crates, validated upstream (P4).
+    pub fn atlas(&self, index: AtlasIndex) -> &Atlas {
+        self.atlases.get(index.0 as usize).unwrap_or_else(|| {
+            panic!(
+                "atlas index {} out of range ({} atlases): atlas indices are validated upstream (P4)",
+                index.0,
+                self.atlases.len()
+            )
+        })
+    }
+
+    /// The atlases the runs reference, in [`AtlasIndex`] order — so a
+    /// painter can prepare each atlas (decode, upload) once, rather than
+    /// once per run that samples it.
+    pub fn atlases(&self) -> &[Atlas] {
+        &self.atlases
+    }
+
+    /// True when the table carries no runs.
+    pub fn is_empty(&self) -> bool {
+        self.runs.is_empty()
+    }
+}
+
 /// Boundary B (docs/design/architecture.md): the one trait every paint backend
 /// implements. A painter only colors — it never measures, wraps, kerns,
 /// or moves anything (P2).
@@ -480,6 +668,13 @@ pub trait Painter {
     /// result is the contract; iteration order is the implementation's
     /// choice (the lean painter draws opaque cores front-to-back,
     /// docs/specification/03-target-hardware-rules.md R-T2).
+    ///
+    /// `glyphs` is the glyph-run table: positioned glyph runs and the
+    /// atlases they sample, staged already shaped and placed. The v0.5
+    /// Latin subset composites every run over all rects (text is
+    /// foreground); a full z-interleave of runs with rects is later work.
+    /// An empty table ([`GlyphRunTable::new`]) is valid input for a
+    /// text-free scene.
     ///
     /// `dirty` is the rect indices whose entry changed since the commit
     /// that produced the previous `rects` — **advisory**. `None` means
@@ -503,6 +698,7 @@ pub trait Painter {
         paints: &PaintTable,
         images: &ImageTable,
         clips: &ClipTable,
+        glyphs: &GlyphRunTable,
         dirty: Option<&[u32]>,
     );
 }

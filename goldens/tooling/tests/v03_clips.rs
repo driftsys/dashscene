@@ -11,7 +11,7 @@
 //! (`docs/decisions/golden-comparison-space.md`); the probes below sit
 //! in flat interiors and are bit-stable.
 
-use dashpaint::{Color, ImageTable, Painter};
+use dashpaint::{Color, GlyphRunTable, ImageTable, Painter};
 use dashscene_core::{Arena, NodeId, Prop, Txn};
 use dashscene_skia::SkiaPainter;
 
@@ -125,6 +125,7 @@ fn the_clip_scene_matches_its_golden() {
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        &GlyphRunTable::new(),
         Some(scene.dirty()),
     );
     let bytes = painter.rgba_bytes();

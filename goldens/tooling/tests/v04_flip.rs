@@ -26,7 +26,7 @@
 //! Regeneration and diff workflow: goldens/README.md.
 
 use dashcue::{Easing, PropTransition, TransitionSpec, VariantTransition};
-use dashpaint::{ImageTable, Painter};
+use dashpaint::{GlyphRunTable, ImageTable, Painter};
 use dashscene_core::{
     Arena, Color, LayoutMode, LayoutSolver, NodeId, Prop, SolvedRect, VariantMember, VariantValue,
 };
@@ -126,6 +126,7 @@ fn render_sample(
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        &GlyphRunTable::new(),
         None,
     );
     goldens::assert_matches_golden(name, &painter.png_bytes());

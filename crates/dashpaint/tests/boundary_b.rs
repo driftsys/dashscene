@@ -2,9 +2,9 @@
 //! no dashscene-core, no dashbuf — dashpaint's public API only.
 
 use dashpaint::{
-    ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CornerRadii, Gradient, GradientKind,
-    GradientStop, ImageAsset, ImageFormat, ImageTable, PaintEntry, PaintIndex, PaintKind,
-    PaintTable, Painter, RectEntry, ScaleMode, Stroke, StrokeAlign, Vec2,
+    ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CornerRadii, GlyphRunTable, Gradient,
+    GradientKind, GradientStop, ImageAsset, ImageFormat, ImageTable, PaintEntry, PaintIndex,
+    PaintKind, PaintTable, Painter, RectEntry, ScaleMode, Stroke, StrokeAlign, Vec2,
 };
 
 const RED: Color = Color {
@@ -226,6 +226,7 @@ impl Painter for RecordingPainter {
         paints: &PaintTable,
         _images: &ImageTable,
         clips: &ClipTable,
+        _glyphs: &GlyphRunTable,
         _dirty: Option<&[u32]>,
     ) {
         for rect in rects {
@@ -277,7 +278,14 @@ fn painter_receives_rects_in_slice_order_with_resolved_colors() {
     let (rects, paints, clips) = two_rect_fixture();
     let mut painter = RecordingPainter::default();
 
-    painter.paint(&rects, &paints, &ImageTable::new(), &clips, None);
+    painter.paint(
+        &rects,
+        &paints,
+        &ImageTable::new(),
+        &clips,
+        &GlyphRunTable::new(),
+        None,
+    );
 
     assert_eq!(
         painter.painted,
@@ -290,7 +298,14 @@ fn painter_resolves_each_rects_clip_region() {
     let (rects, paints, clips) = two_rect_fixture();
     let mut painter = RecordingPainter::default();
 
-    painter.paint(&rects, &paints, &ImageTable::new(), &clips, None);
+    painter.paint(
+        &rects,
+        &paints,
+        &ImageTable::new(),
+        &clips,
+        &GlyphRunTable::new(),
+        None,
+    );
 
     assert!(painter.clipped[0].is_unclipped());
     assert_eq!(
@@ -311,7 +326,14 @@ fn painter_trait_is_object_safe() {
     let mut painter = RecordingPainter::default();
 
     let dyn_painter: &mut dyn Painter = &mut painter;
-    dyn_painter.paint(&rects, &paints, &ImageTable::new(), &clips, None);
+    dyn_painter.paint(
+        &rects,
+        &paints,
+        &ImageTable::new(),
+        &clips,
+        &GlyphRunTable::new(),
+        None,
+    );
 
     assert_eq!(
         painter.painted,
@@ -347,6 +369,7 @@ impl Painter for DirtyRecordingPainter {
         _paints: &PaintTable,
         _images: &ImageTable,
         _clips: &ClipTable,
+        _glyphs: &GlyphRunTable,
         dirty: Option<&[u32]>,
     ) {
         self.seen_dirty = dirty.map(<[u32]>::to_vec);
@@ -375,12 +398,20 @@ fn the_dirty_set_crosses_boundary_b() {
         &paints,
         &ImageTable::new(),
         &ClipTable::new(),
+        &GlyphRunTable::new(),
         Some(&[0]),
     );
     assert_eq!(painter.seen_dirty.as_deref(), Some(&[0u32][..]));
     assert_eq!(painter.seen_rects, 1);
 
     // A caller with hand-built tables has no dirty information.
-    painter.paint(&rects, &paints, &ImageTable::new(), &ClipTable::new(), None);
+    painter.paint(
+        &rects,
+        &paints,
+        &ImageTable::new(),
+        &ClipTable::new(),
+        &GlyphRunTable::new(),
+        None,
+    );
     assert_eq!(painter.seen_dirty, None);
 }

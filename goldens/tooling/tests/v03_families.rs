@@ -10,9 +10,9 @@
 //! interior-probe asserts pin the key property bit-stably.
 
 use dashpaint::{
-    ClipIndex, ClipTable, Color, CornerRadii, Gradient, GradientKind, GradientStop, ImageAsset,
-    ImageFormat, ImageTable, Mat23, PaintEntry, PaintKind, PaintTable, Painter, RectEntry,
-    ScaleMode, Stroke, StrokeAlign, Vec2,
+    ClipIndex, ClipTable, Color, CornerRadii, GlyphRunTable, Gradient, GradientKind, GradientStop,
+    ImageAsset, ImageFormat, ImageTable, Mat23, PaintEntry, PaintKind, PaintTable, Painter,
+    RectEntry, ScaleMode, Stroke, StrokeAlign, Vec2,
 };
 use dashscene_skia::SkiaPainter;
 
@@ -87,7 +87,14 @@ fn checker_asset() -> ImageAsset {
             });
         }
     }
-    painter.paint(&rects, &paints, &ImageTable::new(), &ClipTable::new(), None);
+    painter.paint(
+        &rects,
+        &paints,
+        &ImageTable::new(),
+        &ClipTable::new(),
+        &GlyphRunTable::new(),
+        None,
+    );
     ImageAsset {
         format: ImageFormat::Png,
         bytes: painter.png_bytes(),
@@ -155,7 +162,14 @@ fn the_gradient_family_matches_its_golden() {
     ];
 
     let mut painter = SkiaPainter::new(64, 64);
-    painter.paint(&rects, &paints, &ImageTable::new(), &ClipTable::new(), None);
+    painter.paint(
+        &rects,
+        &paints,
+        &ImageTable::new(),
+        &ClipTable::new(),
+        &GlyphRunTable::new(),
+        None,
+    );
     let bytes = painter.rgba_bytes();
 
     // Interior probes in clamped regions, where the color is exactly a
@@ -225,7 +239,14 @@ fn the_stroke_family_matches_its_golden() {
     ];
 
     let mut painter = SkiaPainter::new(64, 64);
-    painter.paint(&rects, &paints, &ImageTable::new(), &ClipTable::new(), None);
+    painter.paint(
+        &rects,
+        &paints,
+        &ImageTable::new(),
+        &ClipTable::new(),
+        &GlyphRunTable::new(),
+        None,
+    );
     let bytes = painter.rgba_bytes();
 
     // Each cell's centre is the gold fill; a rounded-cell square corner
@@ -307,7 +328,14 @@ fn the_image_family_matches_its_golden() {
     ];
 
     let mut painter = SkiaPainter::new(64, 64);
-    painter.paint(&rects, &paints, &images, &ClipTable::new(), None);
+    painter.paint(
+        &rects,
+        &paints,
+        &images,
+        &ClipTable::new(),
+        &GlyphRunTable::new(),
+        None,
+    );
     let bytes = painter.rgba_bytes();
 
     // The crop transform selects texel (1,0), the light checker square,

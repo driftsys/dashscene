@@ -4,8 +4,9 @@
 //! boundary B.
 
 use dashpaint::{
-    ClipIndex, ClipTable, Color, Gradient, GradientKind, ImageTable, MAX_GRADIENT_STOPS,
-    PaintEntry, PaintKind, Painter, RectEntry, Vec2,
+    Atlas, AtlasGlyph, AtlasIndex, ClipIndex, ClipTable, Color, GlyphQuad, GlyphRun, GlyphRunTable,
+    Gradient, GradientKind, ImageTable, MAX_GRADIENT_STOPS, PaintEntry, PaintKind, Painter,
+    RectEntry, Vec2,
 };
 use dashscene_core::{Arena, Prop};
 use dashscene_skia::{DirtyMode, SkiaPainter};
@@ -55,6 +56,7 @@ fn paints_a_core_committed_scene_with_exact_pixels() {
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        &GlyphRunTable::new(),
         None,
     );
 
@@ -93,6 +95,7 @@ fn an_unfilled_node_draws_nothing() {
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        &GlyphRunTable::new(),
         None,
     );
 
@@ -122,6 +125,7 @@ fn encodes_png() {
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        &GlyphRunTable::new(),
         None,
     );
 
@@ -215,7 +219,14 @@ fn gradient_entry(kind: GradientKind, stops: Vec<GradientStop>) -> PaintEntry {
 
 fn render(rects: &[RectEntry], paints: &PaintTable, images: &ImageTable, size: i32) -> Vec<u8> {
     let mut painter = SkiaPainter::new(size, size);
-    painter.paint(rects, paints, images, &ClipTable::new(), None);
+    painter.paint(
+        rects,
+        paints,
+        images,
+        &ClipTable::new(),
+        &GlyphRunTable::new(),
+        None,
+    );
     painter.rgba_bytes()
 }
 
@@ -326,7 +337,14 @@ fn stroked_square(align: StrokeAlign) -> Vec<u8> {
         clip: ClipIndex::UNCLIPPED,
     }];
     let mut painter = SkiaPainter::new(16, 16);
-    painter.paint(&rects, &paints, &ImageTable::new(), &ClipTable::new(), None);
+    painter.paint(
+        &rects,
+        &paints,
+        &ImageTable::new(),
+        &ClipTable::new(),
+        &GlyphRunTable::new(),
+        None,
+    );
     painter.rgba_bytes()
 }
 
@@ -393,7 +411,14 @@ fn quadrant_asset() -> ImageAsset {
         clip: ClipIndex::UNCLIPPED,
     })
     .collect();
-    painter.paint(&rects, &paints, &ImageTable::new(), &ClipTable::new(), None);
+    painter.paint(
+        &rects,
+        &paints,
+        &ImageTable::new(),
+        &ClipTable::new(),
+        &GlyphRunTable::new(),
+        None,
+    );
     ImageAsset {
         format: ImageFormat::Png,
         bytes: painter.png_bytes(),
@@ -417,7 +442,14 @@ fn image_scene(entry: PaintEntry, w: f32, h: f32, size: i32) -> Vec<u8> {
     images.push(quadrant_asset());
     let (rects, paints) = single_entry_scene(entry, w, h);
     let mut painter = SkiaPainter::new(size, size);
-    painter.paint(&rects, &paints, &images, &ClipTable::new(), None);
+    painter.paint(
+        &rects,
+        &paints,
+        &images,
+        &ClipTable::new(),
+        &GlyphRunTable::new(),
+        None,
+    );
     painter.rgba_bytes()
 }
 
@@ -539,7 +571,14 @@ fn clipped_square(region: ClipRegion) -> Vec<u8> {
     }];
 
     let mut painter = SkiaPainter::new(16, 16);
-    painter.paint(&rects, &paints, &ImageTable::new(), &clips, None);
+    painter.paint(
+        &rects,
+        &paints,
+        &ImageTable::new(),
+        &clips,
+        &GlyphRunTable::new(),
+        None,
+    );
     painter.rgba_bytes()
 }
 
@@ -653,7 +692,14 @@ fn a_clip_region_does_not_leak_into_the_next_rect() {
     ];
 
     let mut painter = SkiaPainter::new(16, 16);
-    painter.paint(&rects, &paints, &ImageTable::new(), &clips, None);
+    painter.paint(
+        &rects,
+        &paints,
+        &ImageTable::new(),
+        &clips,
+        &GlyphRunTable::new(),
+        None,
+    );
     let rgba = painter.rgba_bytes();
 
     assert_eq!(px(&rgba, 16, 2, 2), RED_RGBA, "the clipped red rect");
@@ -682,7 +728,14 @@ fn a_diamond_gradient_with_too_many_stops_panics_by_name() {
         single_entry_scene(gradient_entry(GradientKind::Diamond, stops), 4.0, 4.0);
 
     let mut painter = SkiaPainter::new(4, 4);
-    painter.paint(&rects, &paints, &ImageTable::new(), &ClipTable::new(), None);
+    painter.paint(
+        &rects,
+        &paints,
+        &ImageTable::new(),
+        &ClipTable::new(),
+        &GlyphRunTable::new(),
+        None,
+    );
 }
 
 /// Two side-by-side rects, so an incomplete dirty set can starve one.
@@ -726,6 +779,7 @@ fn render_frames(mode: DirtyMode, frames: &[Frame]) -> Vec<u8> {
             paints,
             &ImageTable::new(),
             &ClipTable::new(),
+            &GlyphRunTable::new(),
             dirty.as_deref(),
         );
     }
@@ -773,5 +827,130 @@ fn retained_mode_starves_on_an_incomplete_dirty_set() {
     assert_ne!(
         full, retained,
         "an incomplete dirty set must leave the retained buffer stale"
+    );
+}
+
+/// A solid-white N×N atlas image (PNG bytes): every texel decodes to
+/// distance 1.0, so the MSDF median is 1.0 (fully inside the glyph)
+/// everywhere. A synthetic field that isolates the atlas-quad plumbing
+/// from real MSDF anti-aliasing — the golden covers the real field.
+fn solid_atlas_png(n: i32) -> Vec<u8> {
+    let mut painter = SkiaPainter::new(n, n);
+    let mut paints = PaintTable::new();
+    let white = paints.push(PaintEntry::solid(Color {
+        r: 1.0,
+        g: 1.0,
+        b: 1.0,
+        a: 1.0,
+    }));
+    let rects = [RectEntry {
+        x: 0.0,
+        y: 0.0,
+        w: n as f32,
+        h: n as f32,
+        paint: white,
+        clip: ClipIndex::UNCLIPPED,
+    }];
+    painter.paint(
+        &rects,
+        &paints,
+        &ImageTable::new(),
+        &ClipTable::new(),
+        &GlyphRunTable::new(),
+        None,
+    );
+    painter.png_bytes()
+}
+
+/// A one-glyph atlas placing the whole image over one em, all "inside".
+fn inside_atlas() -> (GlyphRunTable, AtlasIndex) {
+    let mut glyphs = GlyphRunTable::new();
+    let atlas = glyphs.push_atlas(Atlas::new(
+        ImageAsset {
+            format: ImageFormat::Png,
+            bytes: solid_atlas_png(4),
+        },
+        4,
+        4,
+        4,
+        4.0,
+        vec![AtlasGlyph {
+            glyph_id: 1,
+            plane_em: [0.0, 0.0, 1.0, 1.0],
+            atlas_px: [0.0, 0.0, 4.0, 4.0],
+        }],
+    ));
+    (glyphs, atlas)
+}
+
+#[test]
+fn a_glyph_quad_fills_its_box_with_the_text_color() {
+    // The whole atlas reads "inside", so the resolved coverage is 1 across
+    // the quad and it renders at full text color — the quad placement,
+    // atlas sampling, and colour modulation, without AA in the way.
+    let (mut glyphs, atlas) = inside_atlas();
+    glyphs.push_run(GlyphRun {
+        atlas,
+        size: 16.0,
+        color: RED,
+        glyphs: vec![GlyphQuad {
+            glyph_id: 1,
+            x: 8.0,
+            y: 24.0,
+        }],
+    });
+
+    let mut painter = SkiaPainter::new(32, 32);
+    painter.paint(
+        &[],
+        &PaintTable::new(),
+        &ImageTable::new(),
+        &ClipTable::new(),
+        &glyphs,
+        None,
+    );
+    let rgba = painter.rgba_bytes();
+    // plane_em over a 16 px em maps the glyph to the box (8, 8)-(24, 24).
+    assert_eq!(
+        pixel(&rgba, 32, 16, 16),
+        RED_RGBA,
+        "the glyph interior is the text colour"
+    );
+    assert_eq!(
+        pixel(&rgba, 32, 2, 2),
+        TRANSPARENT_RGBA,
+        "outside the quad draws nothing"
+    );
+}
+
+#[test]
+fn a_glyph_absent_from_the_atlas_draws_nothing() {
+    // glyph id 2 has no atlas quad (an empty outline such as a space, or a
+    // glyph outside the charset): it paints nothing rather than panicking.
+    let (mut glyphs, atlas) = inside_atlas();
+    glyphs.push_run(GlyphRun {
+        atlas,
+        size: 16.0,
+        color: RED,
+        glyphs: vec![GlyphQuad {
+            glyph_id: 2,
+            x: 8.0,
+            y: 24.0,
+        }],
+    });
+
+    let mut painter = SkiaPainter::new(32, 32);
+    painter.paint(
+        &[],
+        &PaintTable::new(),
+        &ImageTable::new(),
+        &ClipTable::new(),
+        &glyphs,
+        None,
+    );
+    let rgba = painter.rgba_bytes();
+    assert!(
+        rgba.chunks_exact(4).all(|p| p == TRANSPARENT_RGBA),
+        "an absent glyph leaves the surface clear"
     );
 }

@@ -5,7 +5,7 @@
 //! Regeneration and diff workflow: goldens/README.md.
 
 use dashlang::{anon, node, rgba, scene};
-use dashpaint::{ImageTable, Painter};
+use dashpaint::{GlyphRunTable, ImageTable, Painter};
 use dashscene_core::Arena;
 use dashscene_skia::SkiaPainter;
 
@@ -49,6 +49,7 @@ fn the_walking_skeleton_scene_matches_its_golden() {
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        &GlyphRunTable::new(),
         None,
     );
 

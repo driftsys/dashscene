@@ -18,8 +18,8 @@
 // (see the crate manifest).
 use dashc_wasm::{Box2D, Document, Node, Paint, compile, emit};
 use dashpaint::{
-    Color, Gradient, GradientKind, GradientStop, ImageAsset, ImageFormat, PaintEntry, PaintKind,
-    Painter, ScaleMode, Stroke, StrokeAlign, Vec2,
+    Color, GlyphRunTable, Gradient, GradientKind, GradientStop, ImageAsset, ImageFormat,
+    PaintEntry, PaintKind, Painter, ScaleMode, Stroke, StrokeAlign, Vec2,
 };
 use dashscene_core::{Arena, Prop, load_document};
 use dashscene_skia::SkiaPainter;
@@ -257,6 +257,7 @@ fn render(arena: &Arena) -> Vec<u8> {
         scene.paints(),
         scene.images(),
         scene.clips(),
+        &GlyphRunTable::new(),
         None,
     );
     painter.png_bytes()

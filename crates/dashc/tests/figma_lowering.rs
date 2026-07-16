@@ -18,8 +18,8 @@ use dashc_wasm::compile_figma;
 use dashc_wasm::figma::rest::{FigmaFile, PaintTag};
 use dashc_wasm::figma::{CompileError, lower};
 use dashpaint::{
-    Color, CornerRadii, GradientKind, ImageAsset, ImageFormat, Mat23, PaintEntry, PaintKind,
-    Painter, ScaleMode, StrokeAlign, Vec2,
+    Color, CornerRadii, GlyphRunTable, GradientKind, ImageAsset, ImageFormat, Mat23, PaintEntry,
+    PaintKind, Painter, ScaleMode, StrokeAlign, Vec2,
 };
 use dashscene_core::{Arena, load_document};
 use dashscene_skia::SkiaPainter;
@@ -1087,6 +1087,7 @@ fn the_fixture_compiles_loads_and_renders() {
         scene.paints(),
         scene.images(),
         scene.clips(),
+        &GlyphRunTable::new(),
         None,
     );
     let png = painter.png_bytes();
