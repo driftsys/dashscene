@@ -1,0 +1,78 @@
+//! Shared fixtures for the golden test binaries under this directory
+//! (debt #120): the scene colour palette and the boundary-B staging
+//! helpers the text goldens share. Each test binary that declares
+//! `mod common;` compiles its own copy, so a helper one binary does not
+//! use is still used by another — hence the `dead_code` allowance.
+//!
+//! The cross-crate half of #120 (helpers shared with `dashscene-engine`'s
+//! own tests) stays out: an integration-test crate cannot share code
+//! without a dev-only crate, and `goldens/tooling/src/lib.rs` cannot host
+//! scene helpers without taking `dashscene-core`/`dashscene-skia` as real
+//! dependencies. This module fixes only the within-directory half.
+
+#![allow(dead_code)]
+
+use dashpaint::{Atlas, AtlasGlyph, Color, ImageAsset, ImageFormat};
+use dashscene_core::{Arena, NodeId};
+use dashscene_typeset::atlas::AtlasBundle;
+
+/// An opaque colour from its RGB channels.
+pub const fn rgb(r: f32, g: f32, b: f32) -> Color {
+    Color { r, g, b, a: 1.0 }
+}
+
+pub const NAVY: Color = rgb(0.05, 0.07, 0.12);
+pub const PANEL: Color = rgb(0.12, 0.16, 0.24);
+pub const NEAR_WHITE: Color = rgb(0.92, 0.94, 0.98);
+pub const AMBER: Color = rgb(0.98, 0.78, 0.20);
+pub const INK: Color = rgb(0.08, 0.09, 0.13);
+
+/// Converts a committed build-time atlas fixture at `dir` into the
+/// boundary-B [`Atlas`]: only glyphs that paint (bounded outlines) carry
+/// a quad, so an empty-outline glyph (space) is dropped, and the
+/// sorted-by-glyph-id order the metrics blob guarantees is preserved.
+///
+/// `dir` is a committed `corpus/atlas/<charset>` fixture; regenerate it
+/// with the ignored `regenerate_committed_*_fixture` tests in
+/// `crates/dashscene-typeset/tests/atlas_pipeline.rs`.
+pub fn load_atlas(dir: &str) -> Atlas {
+    let bundle = AtlasBundle::load_from_dir(std::path::Path::new(dir))
+        .unwrap_or_else(|e| panic!("committed atlas fixture at {dir} loads: {e}"));
+    let m = &bundle.metrics;
+    let glyphs = m
+        .glyphs
+        .iter()
+        .filter_map(|g| {
+            Some(AtlasGlyph {
+                glyph_id: g.glyph_id,
+                plane_em: g.plane_em?,
+                atlas_px: g.atlas_px?,
+            })
+        })
+        .collect();
+    Atlas::new(
+        ImageAsset {
+            format: ImageFormat::Png,
+            bytes: bundle.image_png.clone(),
+        },
+        m.atlas.width,
+        m.atlas.height,
+        m.atlas.px_per_em,
+        m.atlas.distance_range_px,
+        glyphs,
+    )
+}
+
+/// The resolved box origin of a committed node.
+pub fn origin_of(arena: &Arena, node: NodeId) -> (f32, f32) {
+    let scene = arena.committed();
+    let rect = scene.rects()[scene.rect_index_of(node).expect("the node is committed") as usize];
+    (rect.x, rect.y)
+}
+
+/// The resolved box size of a committed node.
+pub fn size_of(arena: &Arena, node: NodeId) -> (f32, f32) {
+    let scene = arena.committed();
+    let rect = scene.rects()[scene.rect_index_of(node).expect("the node is committed") as usize];
+    (rect.w, rect.h)
+}

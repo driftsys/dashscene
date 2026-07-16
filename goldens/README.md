@@ -59,13 +59,24 @@ pixels between machines. Two comparison functions handle this:
   goldens, whose scenes are dimensioned so every solved rect lands on
   an integer — see `docs/decisions/v02-flex-goldens-per-construct.md`).
 - `assert_matches_golden_within(name, png, max_fraction)` — allows up
-  to `max_fraction` of pixels to differ; use it for anti-aliased
-  content. The combined v0.3 golden uses 1%; the smaller per-family
-  v0.3 goldens use 2% (edge jitter is a larger fraction of a smaller
-  canvas). This is `docs/technotes/rendering-and-painters.md`'s tolerance-based perceptual diff.
-  Per-kind correctness is pinned separately by the painter's
-  interior-probe unit tests, which are bit-stable across machines. See
-  `docs/decisions/golden-comparison-space.md`.
+  to `max_fraction` of the canvas pixels to differ; use it for
+  anti-aliased content whose ink is a large share of the canvas. The
+  combined v0.3 golden uses 1%; the smaller per-family v0.3 goldens use
+  2% (edge jitter is a larger fraction of a smaller canvas). This is
+  `docs/technotes/rendering-and-painters.md`'s tolerance-based perceptual diff.
+- `assert_matches_golden_max_pixels(name, png, max_pixels)` — allows up
+  to `max_pixels` to differ, an absolute count; use it for sparse
+  content (text). A canvas fraction wide enough to clear the jitter can
+  exceed the whole inked footprint of sparse text, so a text-erasing
+  regression would pass; the absolute budget is sized to the scene's
+  anti-aliased edge count instead. The v0.6 Arabic golden uses 1,000 px
+  and pairs it with a glyph-id-level guard test. See
+  `docs/decisions/golden-comparison-space.md`, "Text goldens".
+
+Per-kind correctness is pinned separately by the painter's
+interior-probe unit tests (and, for text, the golden's companion
+glyph-id guard), which are bit-stable across machines. See
+`docs/decisions/golden-comparison-space.md`.
 
 GPU painters (v1+) will use tolerance-based perceptual diffs throughout
 — that tooling will be added here.
