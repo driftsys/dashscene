@@ -162,8 +162,12 @@ export function parseManifest(text: string): FixtureManifest {
  * Bump this in the same change that widens what `figma::image_refs`
  * (crates/dashc/src/figma/mod.rs) can name — e.g. when a refused node kind
  * starts lowering, or when refs are collected from a new paint position.
+ *
+ * 2 (#242): the walk lowers COMPONENT_SET/INSTANCE roots and `image_refs` now
+ * scans every top-level node's subtree, component definitions included, so it
+ * names refs on files — and in positions — it refused before.
  */
-export const REFS_CONTRACT = 1;
+export const REFS_CONTRACT = 2;
 
 /**
  * What the version pre-check reads instead of the whole capture: the

@@ -137,9 +137,13 @@ Deno.test("a receipt from an older refs contract is ignored and re-derived", asy
   // not change, but dashc may now name refs it refused before. The receipt
   // therefore also records the refs contract, and a mismatch makes the
   // pre-check re-derive from the committed capture — no GET /file spend.
+  //
+  // Contract 1 is the pre-#242 contract, before the walk lowered
+  // COMPONENT_SET/INSTANCE roots and image_refs widened to every top-level
+  // subtree. A receipt stamped with it must no longer be trusted.
   const stale = JSON.stringify({
     version: "5",
-    refsContract: 0,
+    refsContract: 1,
     imageRefs: [],
   });
   assertEquals(parseReceipt(stale), null);

@@ -17,14 +17,12 @@
  * The closure also names the `imageRef`s the export requires, which is what
  * lets the import flow cross the wasm ABI exactly once (debt #155). That
  * walk is a second copy of "where an imageRef lives in Figma's shape", so
- * `Dashc.figmaImageRefs` stays the drift oracle — as far as it can reach:
- * closure_test.ts pins the two answers equal on a frame-rooted captured
- * fixture, but a component-carrying pruned file cannot cross yet, because
- * the walk refuses a document whose first canvas holds no top-level FRAME.
- * TODO(#160/#239 wave): extend the oracle to component-carrying fixtures
- * when the walk lowers COMPONENT_SET/INSTANCE roots. Until then a ref the
- * closure misses still fails the compile loudly (`unresolvedImage`, R6)
- * rather than dropping the fill
+ * `Dashc.figmaImageRefs` stays the drift oracle: closure_test.ts pins the two
+ * answers equal on a frame-rooted captured fixture, on a component-carrying one
+ * (the walk lowers COMPONENT_SET/INSTANCE roots since #242,
+ * docs/decisions/figma-component-lowering.md), and on a synthetic case whose
+ * ref lives inside a component definition. A ref the closure misses still fails
+ * the compile loudly (`unresolvedImage`, R6) rather than dropping the fill
  * (docs/decisions/figma-image-refs-resolved-by-the-caller.md).
  *
  * Cross-file resolution is story #38: a `remote` component is recorded as a
