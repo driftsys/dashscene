@@ -48,6 +48,7 @@ use dashscene_validator::{Diagnostic, Location, NodePath, Profile, Report, Sever
 use crate::document::{
     AxisSizing, Box2D, CrossAxisAlign, Document, EdgeInsets, LayoutConstraints,
     LayoutContainer as DocContainer, LayoutMode, MainAxisAlign, Node as DocNode, Paint as DocPaint,
+    TextStyle as DocTextStyle,
 };
 use crate::figma::rest::{FigmaFile, Node, Paint, PaintTag};
 
@@ -337,11 +338,12 @@ impl Walk<'_> {
         let node = visit.node;
         let path = &visit.path;
 
-        // A non-FRAME node reports its type and nothing else: its other
-        // properties belong to whatever story lowers that type (TEXT is
-        // #160), so diagnosing them here would be noise around the verdict
-        // that matters.
-        if node.kind != "FRAME" {
+        // `FRAME` and `TEXT` are the two node kinds with a lowering (story
+        // #140 and #160). Any other kind reports its type and nothing else:
+        // its other properties belong to whatever story lowers that type
+        // (`ELLIPSE` is #239; `COMPONENT`/`INSTANCE` later), so diagnosing
+        // them here would be noise around the verdict that matters.
+        if node.kind != "FRAME" && node.kind != "TEXT" {
             self.unsupported(path, format!("node type {}", node.kind));
             return Ok(());
         }
@@ -388,24 +390,47 @@ impl Walk<'_> {
             blockers.push("reversed child paint order (itemReverseZIndex)".to_string());
         }
 
-        let container = container_of(node, &mut blockers);
-        let constraints = constraints_of(node, visit.flow.as_ref(), &mut blockers);
+        // The per-axis sizing intent is shared by both kinds: a text node
+        // hugs, fills, or fixes each axis exactly as a frame does when its
+        // `layoutSizing*` is present (D1), and a Hug axis flows through the
+        // engine's measure seam (#29).
+        let mut constraints = constraints_of(node, visit.flow.as_ref(), &mut blockers);
 
         if node.absolute_bounding_box.is_none() {
             blockers.push(format!("node {} has no absoluteBoundingBox", node.name));
         }
 
-        // The paint lowering keeps its own refusals; an unsupported paint
-        // blocks the node like any other finding. `UnresolvedImage` aborts:
-        // it is the caller's contract, not the designer's file.
-        let paint = match self.paint_of(node, path) {
-            Ok(paint) => paint,
-            Err(CompileError::Unsupported { what, .. }) => {
-                blockers.push(what);
-                None
-            }
-            Err(other) => return Err(other),
-        };
+        // Type-specific lowering: a frame carries its container intent and
+        // paint; a text node its characters and style. A text node's fill is
+        // the glyph color (it lowers into the style, not a paint entry), so
+        // `paint` stays `None` and the node's `paint_entry` is the "draws
+        // nothing" sentinel.
+        let mut container: Option<DocContainer> = None;
+        let mut paint: Option<DocPaint> = None;
+        let mut text: Option<String> = None;
+        let mut text_style: Option<DocTextStyle> = None;
+        if node.kind == "TEXT" {
+            let (t, ts) = self.text_of(node, &mut blockers);
+            text = t;
+            text_style = ts;
+            // Outside auto-layout Figma sets no `layoutSizing*`, so
+            // `textAutoResize` is the sizing source (a free-standing label
+            // must hug, not fix-size from its resolved box).
+            constraints = text_sizing(node, constraints);
+        } else {
+            container = container_of(node, &mut blockers);
+            // The paint lowering keeps its own refusals; an unsupported paint
+            // blocks the node like any other finding. `UnresolvedImage`
+            // aborts: it is the caller's contract, not the designer's file.
+            paint = match self.paint_of(node, path) {
+                Ok(paint) => paint,
+                Err(CompileError::Unsupported { what, .. }) => {
+                    blockers.push(what);
+                    None
+                }
+                Err(other) => return Err(other),
+            };
+        }
 
         // The import gate: the producer maps, the validator decides (P5).
         // Unmapped effects (a baked shadow, debt #144) have no Construct and
@@ -495,6 +520,8 @@ impl Walk<'_> {
             paint,
             container,
             constraints,
+            text,
+            text_style,
         });
 
         for construct in constructs {
@@ -582,20 +609,18 @@ impl Walk<'_> {
     }
 
     fn fill_of(&mut self, node: &Node, path: &str) -> Result<Option<PaintKind>, CompileError> {
-        let mut visible = node.fills.iter().filter(|p| p.visible != Some(false));
-        let Some(fill) = visible.next() else {
-            return Ok(None);
-        };
-        if visible.next().is_some() {
+        match single_visible_paint(&node.fills) {
+            // A layout-only frame with no fill draws nothing.
+            OnePaint::None => Ok(None),
+            OnePaint::One(fill) => self.paint_kind(fill, path).map(Some),
             // PaintEntry.fill is one Option<PaintKind>; Figma's fills is an
             // array. Stacking is a Document expressiveness gap (debt #146), not
             // a triage gap — and a silent drop would violate P4.
-            return Err(CompileError::Unsupported {
+            OnePaint::Many => Err(CompileError::Unsupported {
                 path: path.to_string(),
                 what: "more than one visible fill".to_string(),
-            });
+            }),
         }
-        self.paint_kind(fill, path).map(Some)
     }
 
     fn paint_kind(&mut self, paint: &Paint, path: &str) -> Result<PaintKind, CompileError> {
@@ -708,20 +733,20 @@ impl Walk<'_> {
         // strokeWeight and strokeAlign are present even when `strokes` is
         // empty (pinned by the fixture), so the stroke is gated on the array,
         // never on the weight.
-        let mut visible = node.strokes.iter().filter(|p| p.visible != Some(false));
-        let Some(stroke) = visible.next() else {
-            return Ok(None);
-        };
-        if visible.next().is_some() {
+        let stroke = match single_visible_paint(&node.strokes) {
+            OnePaint::None => return Ok(None),
             // PaintEntry.stroke is one Option<Stroke>; Figma's strokes is an
             // array. Stacking is a Document expressiveness gap (debt #146), not
             // a triage gap — and a silent drop would violate P4. Same rule
             // as `fill_of`.
-            return Err(CompileError::Unsupported {
-                path: path.to_string(),
-                what: "more than one visible stroke".to_string(),
-            });
-        }
+            OnePaint::Many => {
+                return Err(CompileError::Unsupported {
+                    path: path.to_string(),
+                    what: "more than one visible stroke".to_string(),
+                });
+            }
+            OnePaint::One(stroke) => stroke,
+        };
 
         // dashpaint::Stroke is solid and uniform: one color, one width, one
         // align. A dashed or variable-width stroke has nothing to lower into,
@@ -774,6 +799,187 @@ impl Walk<'_> {
             },
             color: color_of(color, stroke.opacity),
         }))
+    }
+
+    /// Lowers a `TEXT` node's characters and style, or collects the reasons it
+    /// cannot be lowered.
+    ///
+    /// The document's `TextStyle` carries family, em size, CSS-scale weight,
+    /// and the fill color (story #26) — the axes the runtime shapes and the
+    /// painter fills. Every other authored text feature has no vocabulary, so
+    /// a non-default value on it is a named diagnostic (P4), never lowered as
+    /// though it rendered: lowering centered text flush-left, or dropping a
+    /// letter-spacing, would paint a picture the designer never authored. The
+    /// returned pair is `(Some, Some)` only when nothing blocked; the caller
+    /// discards it and skips the node whenever `blockers` is non-empty.
+    fn text_of(
+        &self,
+        node: &Node,
+        blockers: &mut Vec<String>,
+    ) -> (Option<String>, Option<DocTextStyle>) {
+        let Some(characters) = &node.characters else {
+            // Figma always serializes `characters` on a `TEXT` node (an empty
+            // box carries `""`, which lowers cleanly). Its absence is a
+            // malformed node, not an empty one.
+            blockers.push("a text node with no characters".to_string());
+            return (None, None);
+        };
+        let Some(style) = &node.style else {
+            blockers.push("a text node with no style".to_string());
+            return (None, None);
+        };
+
+        // Multiple style segments: the schema is one style per node.
+        if !node.style_override_table.is_empty() {
+            blockers.push("multiple text style segments (styleOverrideTable)".to_string());
+        }
+        // Horizontal alignment: `LEFT` is the "no explicit alignment" state —
+        // the runtime flushes an LTR paragraph left and an RTL one right by
+        // direction (`docs/design/typeset-latin.md`), so it needs no field.
+        // `CENTER`/`RIGHT`/`JUSTIFIED` have no vocabulary.
+        match style.text_align_horizontal.as_deref() {
+            None | Some("LEFT") => {}
+            Some(other) => blockers.push(format!("text alignment {other}")),
+        }
+        // Vertical alignment within the box: `TOP` is the default the runtime
+        // places from.
+        match style.text_align_vertical.as_deref() {
+            None | Some("TOP") => {}
+            Some(other) => blockers.push(format!("vertical text alignment {other}")),
+        }
+        // Line height: `INTRINSIC_%` is Figma's "Auto" — the font's natural
+        // line advance, which is exactly what the runtime uses. A fixed
+        // percentage or pixel line height has no vocabulary.
+        match style.line_height_unit.as_deref() {
+            None | Some("INTRINSIC_%") => {}
+            Some(other) => blockers.push(format!("a {other} line height")),
+        }
+        // Letter spacing: the runtime tracks none.
+        if style.letter_spacing.is_some_and(|spacing| spacing != 0.0) {
+            blockers.push("letter spacing".to_string());
+        }
+        // Italic / non-upright style: the document font reference is family +
+        // weight only.
+        if style
+            .font_style
+            .as_deref()
+            .is_some_and(|s| s.contains("Italic"))
+        {
+            blockers.push("italic text".to_string());
+        }
+        // Text decoration (underline / strikethrough).
+        if style
+            .text_decoration
+            .as_deref()
+            .is_some_and(|d| d != "NONE")
+        {
+            blockers.push("text decoration".to_string());
+        }
+        // A case transform rewrites the rendered glyphs.
+        if style.text_case.as_deref().is_some_and(|c| c != "ORIGINAL") {
+            blockers.push("a text case transform".to_string());
+        }
+        // Truncation / ellipsis and unknown resize modes: the
+        // `WIDTH_AND_HEIGHT`/`HEIGHT`/`NONE` modes map to sizing (see
+        // `text_sizing`); `TRUNCATE` is the one value that has no equivalent,
+        // and an unrecognised value has no mapping at all — both are refused
+        // rather than fix-sized silently.
+        match style.text_auto_resize.as_deref() {
+            None | Some("WIDTH_AND_HEIGHT") | Some("HEIGHT") | Some("NONE") => {}
+            Some("TRUNCATE") => blockers.push("text truncation".to_string()),
+            Some(other) => blockers.push(format!("text auto-resize {other}")),
+        }
+        // A hyperlink on the run.
+        if style.hyperlink.is_some() {
+            blockers.push("a text hyperlink".to_string());
+        }
+        // OpenType feature flags.
+        if !style.opentype_flags.is_empty() {
+            blockers.push("OpenType features".to_string());
+        }
+
+        // A text outline (stroke) has no vocabulary — the style carries a fill
+        // color only, so an outline is refused rather than dropped (P4). Gate
+        // on the strokes array, never `strokeWeight` (present even with no
+        // stroke) — the same rule `stroke_of` uses for a frame.
+        if node.strokes.iter().any(|s| s.visible != Some(false)) {
+            blockers.push("a text stroke (outline)".to_string());
+        }
+
+        // The fill: a single visible SOLID, lowered into the style's color. A
+        // gradient, image, or stacked text fill has no lowering into one
+        // color.
+        let color = self.text_fill_of(node, blockers);
+
+        // Weight lowers verbatim; the 100–900 range check is the validator's
+        // (#41/#129). A fractional value (Figma serializes integers) rounds.
+        let weight = style.font_weight.unwrap_or(400.0).round() as u16;
+
+        let Some(color) = color else {
+            // `text_fill_of` pushed the blocker; without a color there is no
+            // valid style to build.
+            return (Some(characters.clone()), None);
+        };
+        (
+            Some(characters.clone()),
+            Some(DocTextStyle {
+                family: style.font_family.clone(),
+                size: style.font_size,
+                weight,
+                color,
+            }),
+        )
+    }
+
+    /// A text node's glyph color: its single visible SOLID fill. A text node's
+    /// `fills` array is the glyph color, so the same stacking and non-solid
+    /// refusals `fill_of` applies to a frame apply here — a silent drop of one
+    /// of two fills, or of a gradient, is exactly what P4 forbids.
+    fn text_fill_of(&self, node: &Node, blockers: &mut Vec<String>) -> Option<Color> {
+        let fill = match single_visible_paint(&node.fills) {
+            OnePaint::None => {
+                blockers.push("a text node with no fill".to_string());
+                return None;
+            }
+            OnePaint::Many => {
+                blockers.push("more than one visible text fill".to_string());
+                return None;
+            }
+            OnePaint::One(fill) => fill,
+        };
+        match fill.kind {
+            PaintTag::Solid => {
+                let Some(color) = fill.color else {
+                    blockers.push("a text SOLID fill with no color".to_string());
+                    return None;
+                };
+                Some(color_of(color, fill.opacity))
+            }
+            _ => {
+                blockers.push("a non-solid text fill".to_string());
+                None
+            }
+        }
+    }
+}
+
+/// A three-way selection over a node's `fills` or `strokes`: no visible paint,
+/// exactly one, or a stack. Both a frame's paint entry (`fill_of`/`stroke_of`)
+/// and a text node's glyph color (`text_fill_of`) take a single visible paint
+/// and refuse a stack rather than silently pick one (P4); each caller maps the
+/// three cases to its own verdict.
+enum OnePaint<'a> {
+    None,
+    One(&'a Paint),
+    Many,
+}
+
+fn single_visible_paint(paints: &[Paint]) -> OnePaint<'_> {
+    let mut visible = paints.iter().filter(|p| p.visible != Some(false));
+    match (visible.next(), visible.next()) {
+        (None, _) => OnePaint::None,
+        (Some(paint), None) => OnePaint::One(paint),
+        (Some(_), Some(_)) => OnePaint::Many,
     }
 }
 
@@ -909,6 +1115,50 @@ fn constraints_of(
         min_height: node.min_height,
         max_height: node.max_height,
         margin,
+    };
+    (constraints != LayoutConstraints::default()).then_some(constraints)
+}
+
+/// A `TEXT` node's per-axis sizing, reconciling the two Figma encodings.
+///
+/// The modern `layoutSizingHorizontal`/`layoutSizingVertical` pair is the
+/// sizing source when present (D1) — it is what Figma's layout engine
+/// renders, so it wins over a `textAutoResize` that disagrees (Figma keeps the
+/// two consistent, so a disagreement is stale input). `constraints_of` has
+/// already lowered that pair into `from_layout_sizing`, so when either axis
+/// carries it, that result stands.
+///
+/// Outside auto-layout Figma sets no `layoutSizing*` at all, so
+/// `textAutoResize` is the sizing source. Without this a free-standing label
+/// would lower `Fixed`/`Fixed` from `constraints_of`'s absent-is-fixed
+/// default and carry its resolved box as authored extent — but Figma's
+/// default for a text box is auto (`WIDTH_AND_HEIGHT` — hug both). `HEIGHT`
+/// fixes the width and grows the height; `NONE` fixes the box. For a
+/// free-standing node the `absoluteBoundingBox` is authored (the designer
+/// placed and sized it — it is not an auto-layout solver result, so P1 permits
+/// a Fixed axis to read it). `TRUNCATE` and any unknown value are refused in
+/// [`Walk::text_of`], so the `NONE`-equivalent fixed fallback here is never
+/// emitted for them.
+fn text_sizing(
+    node: &Node,
+    from_layout_sizing: Option<LayoutConstraints>,
+) -> Option<LayoutConstraints> {
+    if node.layout_sizing_horizontal.is_some() || node.layout_sizing_vertical.is_some() {
+        return from_layout_sizing;
+    }
+    let (sizing_h, sizing_v) = match node
+        .style
+        .as_ref()
+        .and_then(|s| s.text_auto_resize.as_deref())
+    {
+        Some("WIDTH_AND_HEIGHT") | None => (AxisSizing::Hug, AxisSizing::Hug),
+        Some("HEIGHT") => (AxisSizing::Fixed, AxisSizing::Hug),
+        _ => (AxisSizing::Fixed, AxisSizing::Fixed),
+    };
+    let constraints = LayoutConstraints {
+        sizing_h,
+        sizing_v,
+        ..from_layout_sizing.unwrap_or_default()
     };
     (constraints != LayoutConstraints::default()).then_some(constraints)
 }

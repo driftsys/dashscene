@@ -34,7 +34,7 @@ use dashscene_typeset::text::{Font, Typesetter};
 
 mod common;
 
-use common::{NAVY, NEAR_WHITE, load_atlas, origin_of};
+use common::{NAVY, NEAR_WHITE, decode_golden, diff_vs, load_atlas, origin_of};
 
 const FONT_ARABIC: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -286,7 +286,7 @@ fn dropping_either_fonts_runs_exceeds_the_budget() {
     let scene = arena.committed();
     let root = scene.rects()[0];
     let (w, h) = (root.w as i32, root.h as i32);
-    let golden = decode_golden_rgba();
+    let golden = decode_golden("v07-text-fallback");
 
     let staged = |ts: &mut Typesetter, keep_fallback: bool| {
         let mut g = GlyphRunTable::new();
@@ -339,35 +339,4 @@ fn render_rgba(
         None,
     );
     painter.rgba_bytes()
-}
-
-/// The committed golden decoded into the same RGBA8888 space.
-fn decode_golden_rgba() -> Vec<u8> {
-    use skia_safe::{AlphaType, ColorType, Data, ImageInfo, images};
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../images/v07-text-fallback.png"
-    );
-    let bytes = std::fs::read(path).expect("committed golden present");
-    let img =
-        images::deferred_from_encoded_data(Data::new_copy(&bytes), None).expect("golden decodes");
-    let (w, h) = (img.width(), img.height());
-    let info = ImageInfo::new((w, h), ColorType::RGBA8888, AlphaType::Unpremul, None);
-    let mut px = vec![0u8; (w * h * 4) as usize];
-    img.read_pixels(
-        &info,
-        &mut px,
-        (w * 4) as usize,
-        (0, 0),
-        skia_safe::image::CachingHint::Disallow,
-    );
-    px
-}
-
-/// The count of differing pixels between two RGBA8888 buffers.
-fn diff_vs(a: &[u8], b: &[u8]) -> usize {
-    a.chunks_exact(4)
-        .zip(b.chunks_exact(4))
-        .filter(|(x, y)| x != y)
-        .count()
 }

@@ -10,7 +10,7 @@
 //! node list whose array index is the rect-table index (docs/design/dashbuf.md), layout
 //! intent (never results — P1), and the pools nodes reference by index.
 
-use dashpaint::{ImageAsset, PaintEntry};
+use dashpaint::{Color, ImageAsset, PaintEntry};
 
 /// A node's authored box. Intent, not a result (P1): under a flex parent the
 /// solver owns placement and these offsets are ignored, and the width/height
@@ -101,6 +101,26 @@ pub struct LayoutConstraints {
     pub margin: EdgeInsets,
 }
 
+/// A text node's authored style — the schema's `TextStyle` table (story
+/// #26). Intent only (P1): family, em size, CSS-scale weight, and fill
+/// color. Never glyph data, line breaks, or resolved metrics — shaping and
+/// placement are the runtime's (`docs/design/typeset-latin.md`). The
+/// vocabulary carries exactly these four axes; a non-default alignment, line
+/// height, or letter spacing has nothing to lower into and is a named
+/// diagnostic at the walk (P4), never carried here as though it rendered.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextStyle {
+    pub family: String,
+    /// Em size in document units.
+    pub size: f32,
+    /// CSS-scale weight, 100 to 900. Lowered verbatim from Figma's
+    /// `fontWeight`; the range check is the validator's (`#41`/`#129`).
+    pub weight: u16,
+    /// The fill color. Always set by the lowering (a text node with no solid
+    /// fill is refused at the walk), so an emitted style always carries one.
+    pub color: Color,
+}
+
 /// One node of the document. `parent` is an index into [`Document::nodes`], and
 /// the array is in DFS order, so a parent's index is always lower than its
 /// children's.
@@ -116,6 +136,14 @@ pub struct Node {
     pub container: Option<LayoutContainer>,
     /// Child-side flex intent. `None` = fully default constraints.
     pub constraints: Option<LayoutConstraints>,
+    /// The node's authored characters. `None` for a non-text node. The
+    /// emitter interns it into `Document.strings` and points `Node.text` at
+    /// it (the same pooling the paint entries get).
+    pub text: Option<String>,
+    /// The node's text style. `None` for a non-text node. Interned into
+    /// `Document.text_styles`. A text node carries both `text` and
+    /// `text_style`, or neither.
+    pub text_style: Option<TextStyle>,
 }
 
 /// A node's style: the boundary-B paint entry, plus the clip intent the

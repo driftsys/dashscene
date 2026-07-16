@@ -215,6 +215,16 @@ into the records below. Per-story decisions land here directly:
   non-intent lowers as zeros per axis (P1), the negative-gap rewrite runs in
   the walk, and grid/wrap/baseline plus fill-on-hug stay refused by name
   until v0.8.
+- [figma-text-lowering.md](figma-text-lowering.md) — the #160 `TEXT`
+  lowering: the document `TextStyle` carries family/size/weight/color only,
+  every other authored text feature is a named diagnostic (P4, not a schema
+  widening), sizing reads `layoutSizing*` with a `textAutoResize` fallback for
+  free-standing text, and a text node's fill lowers into the style's color.
+- [rtl-text-width-is-the-placed-extent.md](rtl-text-width-is-the-placed-extent.md)
+  — the #224 width-vs-bounds decision #160 settled: `TextLayout::width` is the
+  content advance and the hug-sizing datum (the placed advance extent); a
+  fixed-width box is bounded by its authored width; glyph ink may overhang the
+  advance box and the painter does not clip to it. No bounds field is added.
 - [figma-image-refs-resolved-by-the-caller.md](figma-image-refs-resolved-by-the-caller.md)
   — image bytes arrive as a caller-supplied `imageRef` map, because `dashc`
   compiles to wasm and cannot fetch (story #139); the Deno importer built the

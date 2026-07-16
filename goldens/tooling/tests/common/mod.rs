@@ -76,3 +76,46 @@ pub fn size_of(arena: &Arena, node: NodeId) -> (f32, f32) {
     let rect = scene.rects()[scene.rect_index_of(node).expect("the node is committed") as usize];
     (rect.w, rect.h)
 }
+
+/// Decodes a PNG into unpremultiplied RGBA8888 — the golden comparison space
+/// (`docs/decisions/golden-comparison-space.md`, the same space
+/// `SkiaPainter::rgba_bytes` reads back). Shared by the text goldens'
+/// sensitivity guards, which measure a differing-pixel count against a
+/// deliberately broken render (#120: helpers shared across this directory's
+/// binaries live here, not copied per file).
+pub fn decode_rgba(png_bytes: &[u8]) -> Vec<u8> {
+    use skia_safe::{AlphaType, ColorType, Data, ImageInfo, images};
+    let img = images::deferred_from_encoded_data(Data::new_copy(png_bytes), None)
+        .expect("the PNG decodes");
+    let (w, h) = (img.width(), img.height());
+    let info = ImageInfo::new((w, h), ColorType::RGBA8888, AlphaType::Unpremul, None);
+    let mut px = vec![0u8; (w * h * 4) as usize];
+    img.read_pixels(
+        &info,
+        &mut px,
+        (w * 4) as usize,
+        (0, 0),
+        skia_safe::image::CachingHint::Disallow,
+    );
+    px
+}
+
+/// The committed golden `{name}.png` decoded into the RGBA8888 comparison
+/// space.
+pub fn decode_golden(name: &str) -> Vec<u8> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../images")
+        .join(format!("{name}.png"));
+    decode_rgba(
+        &std::fs::read(&path)
+            .unwrap_or_else(|e| panic!("committed golden {} present: {e}", path.display())),
+    )
+}
+
+/// The count of differing pixels between two RGBA8888 buffers.
+pub fn diff_vs(a: &[u8], b: &[u8]) -> usize {
+    a.chunks_exact(4)
+        .zip(b.chunks_exact(4))
+        .filter(|(x, y)| x != y)
+        .count()
+}

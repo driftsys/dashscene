@@ -180,6 +180,22 @@ pub struct Node {
     /// painting it as an ordinary frame (P4).
     #[serde(default)]
     pub is_mask: Option<bool>,
+    /// A `TEXT` node's authored characters (story #160). The runtime shapes
+    /// and breaks them; the document carries the codepoints, never the
+    /// rendered lines (P1). Pinned by `lowering-baseline.json` and
+    /// `lowering-hug-in-fill.json`.
+    #[serde(default)]
+    pub characters: Option<String>,
+    /// A `TEXT` node's base style — Figma's `TypeStyle`.
+    #[serde(default)]
+    pub style: Option<TextStyle>,
+    /// Per-character style overrides, keyed by the ids in
+    /// `character_style_overrides`. A single-style text node carries an empty
+    /// table; a non-empty one means multiple style segments, which the
+    /// single-style `TextStyle` cannot express — a named diagnostic (P4).
+    /// Pinned empty by both text captures.
+    #[serde(default)]
+    pub style_override_table: serde_json::Map<String, serde_json::Value>,
 }
 
 /// The stroke's shape family.
@@ -193,6 +209,76 @@ pub struct Node {
 pub struct ComplexStrokeProperties {
     #[serde(default)]
     pub stroke_type: Option<String>,
+}
+
+/// A `TEXT` node's base style — Figma's `TypeStyle` (story #160).
+///
+/// The document's `TextStyle` carries `fontFamily`, `fontSize`, `fontWeight`,
+/// and the fill color only (the runtime consumes family and size; the painter
+/// the color — `docs/design/typeset-latin.md`). Every other axis here is read
+/// solely to *diagnose* it: a non-default alignment, line height, letter
+/// spacing, decoration, case transform, italic, hyperlink, or OpenType flag
+/// has nothing to lower into, and lowering the text without it would drop the
+/// designer's intent in silence (P4). The default values (`LEFT`/`TOP`,
+/// `INTRINSIC_%` line height, zero letter spacing, upright, no decoration) are
+/// pinned by both text captures, which lower cleanly.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextStyle {
+    pub font_family: String,
+    #[serde(default)]
+    pub font_post_script_name: Option<String>,
+    /// `Regular`, `Bold`, `Italic`, `Bold Italic`, … The document font
+    /// reference is family + weight; an italic style has no vocabulary and is
+    /// diagnosed.
+    #[serde(default)]
+    pub font_style: Option<String>,
+    /// CSS-scale weight (100–900). Lowered verbatim; the range check is the
+    /// validator's (#41/#129). Absent means 400.
+    #[serde(default)]
+    pub font_weight: Option<f32>,
+    /// Em size in document units.
+    pub font_size: f32,
+    /// `LEFT` (the default — the runtime flushes LTR left, RTL right, by
+    /// direction), `CENTER`, `RIGHT`, or `JUSTIFIED`.
+    #[serde(default)]
+    pub text_align_horizontal: Option<String>,
+    /// `TOP` (default), `CENTER`, or `BOTTOM`.
+    #[serde(default)]
+    pub text_align_vertical: Option<String>,
+    /// `WIDTH_AND_HEIGHT`, `HEIGHT`, `NONE`, or `TRUNCATE`. The sizing modes
+    /// map through `layoutSizingHorizontal`/`layoutSizingVertical` (the modern
+    /// per-axis pair, `docs/decisions/figma-flex-lowering.md` D1);
+    /// `TRUNCATE` is the one value that pair cannot express — an ellipsis has
+    /// no vocabulary, so it is diagnosed.
+    #[serde(default)]
+    pub text_auto_resize: Option<String>,
+    /// `NONE` (default), `UNDERLINE`, or `STRIKETHROUGH`.
+    #[serde(default)]
+    pub text_decoration: Option<String>,
+    /// `ORIGINAL` (default), `UPPER`, `LOWER`, `TITLE`, … A case transform
+    /// rewrites the rendered glyphs, so it is diagnosed rather than dropped.
+    #[serde(default)]
+    pub text_case: Option<String>,
+    /// Pixels. Zero (the default) lowers cleanly; the runtime tracks no
+    /// letter spacing, so a non-zero value is diagnosed. Figma's REST flattens
+    /// this to a number (pinned by the captures).
+    #[serde(default)]
+    pub letter_spacing: Option<f32>,
+    /// `INTRINSIC_%` is Figma's "Auto" — the font's natural line advance,
+    /// which is what the runtime uses. `FONT_SIZE_%`, `PERCENT`, or `PIXELS`
+    /// are fixed line heights with no vocabulary.
+    #[serde(default)]
+    pub line_height_unit: Option<String>,
+    /// A hyperlink on the whole text run. No vocabulary, so diagnosed.
+    #[serde(default)]
+    pub hyperlink: Option<serde_json::Value>,
+    /// OpenType feature flags. A non-empty set has no vocabulary
+    /// (`liga`/`clig` posture is the runtime's per-run default, not authored,
+    /// `docs/decisions/liga-clig-off-until-gsub-closure.md`), so it is
+    /// diagnosed.
+    #[serde(default)]
+    pub opentype_flags: serde_json::Map<String, serde_json::Value>,
 }
 
 /// One fill or stroke.

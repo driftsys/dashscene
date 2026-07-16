@@ -25,7 +25,7 @@
       "fileKey": "VtbiQejcN6gYMmeWaaEy1b",
       "covers": "boundVariables on color + number props across light/dark modes; one subtree pinned to dark",
       "emits": false,
-      "note": "designated input for token-resolution phase 1 (sidecar) and phase 2 (id->name join), docs/decisions/token-resolution-phase-split.md; raw compile is refused today: the Fill cards sit on the hug root's axis (a Figma-vs-CSS sizing divergence, docs/decisions/figma-flex-lowering.md D5) and the TEXT children wait on #160"
+      "note": "designated input for token-resolution phase 1 (sidecar) and phase 2 (id->name join), docs/decisions/token-resolution-phase-split.md; raw compile is still refused: the Fill cards sit on the hug root's axis (a Figma-vs-CSS sizing divergence, docs/decisions/figma-flex-lowering.md D5). The TEXT children lower since #160; the Fill-in-hug divergence is the one remaining refusal."
     },
     {
       "name": "effects-2025",
@@ -45,10 +45,10 @@
     {
       "name": "lowering-hug-in-fill",
       "fileKey": "48AJL2nXxEYAPC423aM124",
-      "covers": "HUG child inside a FILL container (Figma->CSS sizing lowering)",
-      "emits": false,
-      "derivedEmits": "the TEXT leaf swapped for a FRAME fixed at its captured box (crates/dashc/tests/flex_lowering.rs) emits goldens/dsb/v07-hug-in-fill-derived.dsb and solves to the captured rects",
-      "note": "Raw compile is refused only by the TEXT leaf (#160, text lowering); the auto-layout chain itself lowers since #140."
+      "covers": "HUG child inside a FILL container (Figma->CSS sizing lowering) with a HUG TEXT leaf",
+      "emits": true,
+      "derivedEmits": "the TEXT leaf swapped for a FRAME fixed at its captured box (crates/dashc/tests/flex_lowering.rs) emits goldens/dsb/v07-hug-in-fill-derived.dsb and solves to the captured rects font-free",
+      "note": "Raw compile emits since #160 (text lowering): the HUG text leaf lowers with its characters and style (goldens/dsb/v07-text-hug-in-fill.dsb), and the scene solves through the measure callback and paints (goldens/images/v07-text-lowering.png). The auto-layout chain lowers since #140. The TEXT->FRAME derivation is kept as a font-free solve-fidelity check."
     },
     {
       "name": "lowering-negative-gap",
@@ -63,7 +63,8 @@
       "fileKey": "R1S4QqZtT54WVcYcFFuQoD",
       "covers": "mixed-size BASELINE alignment row (docs/technotes/open-questions.md, Q-4) + Arabic RTL run with Arabic-Indic numerals (E2)",
       "emits": false,
-      "note": "Refused by name until the v0.8 layout-fidelity slice: the walk diagnoses cross-axis alignment BASELINE at the root and skips the subtree (Q-4); the TEXT children additionally wait on #160, which names this file as its designated input."
+      "derivedEmits": "with the root's BASELINE cross-axis alignment lifted to MIN (crates/dashc/tests/text_lowering.rs), the mixed-size Latin rows and the Arabic RTL run lower and emit goldens/dsb/v07-text-baseline-derived.dsb",
+      "note": "Refused raw until the v0.8 layout-fidelity slice: the walk diagnoses cross-axis alignment BASELINE at the root and skips the subtree (Q-4). The TEXT children lower since #160, which names this file as its designated text input; a declared derivation lifts only the BASELINE refusal to exercise them. The Arabic run is basic Arabic (U+0621-U+064A), so #228 (extended-Arabic joining sweep) does not fire and re-defers."
     },
     {
       "name": "lowering-variant-topology",

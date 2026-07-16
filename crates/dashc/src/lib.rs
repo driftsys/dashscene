@@ -51,7 +51,7 @@ pub mod figma;
 
 pub use document::{
     AxisSizing, Box2D, CrossAxisAlign, Document, EdgeInsets, LayoutConstraints, LayoutContainer,
-    LayoutMode, MainAxisAlign, Node, Paint,
+    LayoutMode, MainAxisAlign, Node, Paint, TextStyle,
 };
 pub use emit::emit;
 // `CompileError` only: it is `compile_figma`'s error type, so it belongs at the

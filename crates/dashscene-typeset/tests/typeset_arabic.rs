@@ -264,3 +264,83 @@ fn production_shaped_output_stays_within_declared_charset_coverage() {
         }
     }
 }
+
+// The RTL width-vs-bounds contract (issue #224,
+// `docs/decisions/rtl-text-width-is-the-placed-extent.md`). `TextLayout::width`
+// is the content advance — the widest line's pen advance — which is the
+// hug-sizing datum the measure seam (#29) reads. The invariant is over
+// ADVANCE boxes: pen positions fit `[0, width]`. Glyph INK (bearings, GPOS
+// mark offsets) may overhang the box; the painter does not clip to it, and a
+// consumer must not either. These run on the Arabic fixture font so real
+// marks with GPOS offsets flow through the assertions.
+
+fn glyph_x_extent(layout: &dashscene_typeset::text::TextLayout) -> (f32, f32) {
+    let xs = layout
+        .lines
+        .iter()
+        .flat_map(|line| &line.glyphs)
+        .map(|g| g.x);
+    xs.fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), x| {
+        (lo.min(x), hi.max(x))
+    })
+}
+
+#[test]
+fn hug_advance_box_holds_and_mark_ink_may_overhang() {
+    // The hug case: the measure seam passes `max_width = None` and takes
+    // `TextLayout::width` as the box. reh + kasra — the reh advances the whole
+    // box (its pen position sits at the origin, inside the box), while the
+    // kasra is a zero-advance mark whose GPOS offset places its ink just left
+    // of the origin, at x ~= -0.08 (measured, size 16). So the advancing base
+    // stays in `[0, width]` and the mark ink overhangs the left edge by a
+    // sub-pixel amount — real, but never a gross escape. This is the ink
+    // posture the decision records: a bounds field would not change it,
+    // because the painter reads per-glyph positions, not `width`.
+    let mut ts = typesetter();
+    let laid = ts.layout("رِ", 16.0, None);
+    assert_eq!(laid.lines.len(), 1);
+    assert!(laid.width > 1.0, "the reh advances the box: {}", laid.width);
+
+    let (min, max) = glyph_x_extent(&laid);
+    assert!(
+        min < 0.0,
+        "the kasra's ink overhangs the box origin (the ink posture): min={min}",
+    );
+    assert!(
+        min > -1.0,
+        "the overhang is sub-pixel, not a gross escape: min={min}",
+    );
+    assert!(
+        max <= laid.width + 1e-3,
+        "advancing glyphs stay within the advance box [0, {}]: max={max}",
+        laid.width,
+    );
+}
+
+#[test]
+fn a_fixed_width_rtl_box_is_bounded_by_its_authored_width_not_by_width() {
+    // The fixed-width case: with a box `w` wider than the line, RTL glyphs
+    // flush right in `(w - line, w]`, reaching past `TextLayout::width` — which
+    // stays the line's own advance, unchanged by the wider box. A consumer
+    // that fixes a box's width must bound it by that authored `w` (the value it
+    // passed as `max_width`), never by `width`. A mark-free word keeps the
+    // advance box clean.
+    let mut ts = typesetter();
+    let natural = ts.layout("كتاب", 16.0, None).width;
+    let w = natural * 2.0;
+    let laid = ts.layout("كتاب", 16.0, Some(w));
+    assert!(
+        (laid.width - natural).abs() < 1e-2,
+        "width stays the content advance ({natural}), not the box ({w})",
+    );
+    let (min, max) = glyph_x_extent(&laid);
+    assert!(
+        max > laid.width,
+        "flush-right glyphs reach past `width` ({}) — a [0,width] bound would clip them: max={max}",
+        laid.width,
+    );
+    assert!(
+        max <= w + 1e-2 && min >= -1e-2,
+        "but every glyph stays within the authored box [0, {w}]: min={min} max={max}",
+    );
+}
