@@ -21,7 +21,7 @@ missing proof must be visible.
 | E1 same screen authored both ways | G1       | open — v0.9 (epic #47)                    |
 | E2 Arabic golden-stable           | R1       | **met**                                   |
 | E3 stress corpus green            | R2       | partial — v0.8 (epic #42, issue #46 open) |
-| E4 dirty Figma file → report      | R6       | open — v0.7 (epic #36)                    |
+| E4 dirty Figma file → report      | R6       | **met**                                   |
 | E5 variant switch via FLIP        | R4       | **met**                                   |
 | E6 byte-identical `.dsb`          | R7       | **met**                                   |
 
@@ -95,6 +95,43 @@ case plus an executable test in the crate that owns the construct:
 
 `wrap`, `grid spans`, `baseline`, and `variant topology change` have no test
 yet. See `corpus/dsl-generated/README.md` for the case-by-case status.
+
+### E4 — met
+
+R6 requires a deliberately dirty Figma file to produce a full diagnostic
+report and no document. `crates/dashc/tests/figma_lowering.rs`
+(`the_reject_fixture_is_refused_rather_than_emitted`) proves it end to end:
+the diagnostic fixture `corpus/figma-fixtures/effects-2025.json` — a frame
+carrying a noise effect, a texture effect, and a progressive blur, every one
+on `docs/specification/04-figma-vocabulary-profile.md`'s REJECT list — is
+compiled through `dashc::compile_figma`, which lowers it, runs the import
+and load gates, and returns `CompileError::Diagnostics` rather than bytes.
+The report names each construct as an error (`profile.noise-or-texture-effect`,
+`profile.progressive-blur`), and `compile_figma` emits no `.dsb`: an error
+from either gate blocks emission (`crates/dashc/src/lib.rs`, R6). Each
+diagnostic points at its own node, pinned separately by
+`each_diagnostic_points_at_its_own_node`. Both tests run in the workspace CI
+job (`just build`).
+
+The report is backed by the complete named-rule set the validator delivers
+at v0.7 (story #41): the import gate's out-of-profile bands (including
+variable-width stroke, #145), the load gate's referential-integrity, enum,
+`TextStyle.weight` (#129), and corner-radius rules, and the paint gate's
+geometry-extent (#128) and budget rules — each independently tested in
+`crates/dashscene-validator/tests/`. P4 holds throughout: every out-of-scope
+construct is a named diagnostic, never a silent drop
+(`docs/decisions/waivers-and-diagnostic-completion.md`).
+
+The validator also delivers the strict-mode release gate as a tested library
+contract: `Report::strict` refuses even a warning unless a declared waiver
+records the exception for one specific target, and an out-of-scope waiver is
+itself diagnosed (`crates/dashscene-validator/tests/waiver.rs`). It is not
+yet wired into any compile or import path — no producer calls it and there is
+no waiver-file format — so it does not tighten E4 today; that wiring is a
+named later importer step (`docs/decisions/waivers-and-diagnostic-completion.md`).
+E4's proof does not depend on it: the literal criterion is the dirty file
+producing a report and no document, which the emit-gate above already
+enforces.
 
 ### E5 — met
 

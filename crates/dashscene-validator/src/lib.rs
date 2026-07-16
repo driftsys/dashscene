@@ -44,10 +44,12 @@ mod document;
 mod paint;
 mod scene;
 mod triage;
+mod waiver;
 
 pub use document::validate_document;
 pub use scene::validate_scene;
 pub use triage::{Construct, triage};
+pub use waiver::{StrictReport, Waiver};
 
 use std::fmt;
 
@@ -68,6 +70,11 @@ pub mod rule {
     pub const PROGRESSIVE_BLUR: &str = "profile.progressive-blur";
     pub const ANIMATED_BOOLEAN_OP: &str = "profile.animated-boolean-op";
     pub const ANIMATED_VARIABLE_FONT_AXIS: &str = "profile.animated-variable-font-axis";
+    /// A stroke whose width varies along its length (a 2025 Figma Draw
+    /// effect). REJECT-band — no paint entry can express a per-length width,
+    /// so it is baked or dropped, never degraded (issue #145;
+    /// `docs/archive/2026-07-14-scope-decisions.md` §8).
+    pub const VARIABLE_WIDTH_STROKE: &str = "profile.variable-width-stroke";
 
     // Load gate — document referential integrity (issue #63).
     pub const PARENT_OUT_OF_RANGE: &str = "node.parent-out-of-range";
@@ -81,6 +88,11 @@ pub mod rule {
     /// consumer that invents a default has silently discovered vocabulary,
     /// which is what P4 forbids.
     pub const TEXT_STYLE_NO_COLOR: &str = "text.style-no-color";
+    /// A text style whose `weight` is outside the CSS scale 100..=900 the
+    /// schema pins (`dashbuf.fbs`, `TextStyle.weight`). Font selection would
+    /// otherwise clamp silently or pick an unintended face — the silent
+    /// vocabulary drop P4 forbids (issue #129).
+    pub const TEXT_STYLE_WEIGHT_OUT_OF_RANGE: &str = "text.style-weight-out-of-range";
 
     // Load gate — the v0.4 variant table (issue #20).
     pub const VARIANT_OVERRIDE_NODE_OUT_OF_RANGE: &str = "variant.override-node-out-of-range";
@@ -114,6 +126,133 @@ pub mod rule {
     // *intent* (`Paint.clip`), never the resolved ancestor-intersected
     // region (P1).
     pub const CLIP_INDEX_OUT_OF_RANGE: &str = "clip.index-out-of-range";
+
+    // Geometry — an extent or radius that cannot rasterize (issue #128).
+    /// A rect whose width or height is non-finite (NaN/infinite) or negative.
+    /// Rects come from the solver, so this is a broken inter-crate contract
+    /// rather than authoring — but the paint gate is the last checkpoint
+    /// before a painter rasterizes NaN geometry. Paint gate only: a document
+    /// carries no resolved extent (P1).
+    pub const RECT_INVALID_EXTENT: &str = "geometry.rect-invalid-extent";
+    /// A corner radius that is negative or non-finite. Geometry-free authored
+    /// intent (like a stroke width), so it is checked on both a document
+    /// (`Paint.corners`) and a solved scene (`PaintEntry.corners`). A
+    /// clipping node's corners are copied verbatim into every `ClipBox` of
+    /// its subtree (`crates/dashscene-core/src/arena.rs`), so checking a
+    /// paint entry's corners catches an out-of-spec clip at its authoring
+    /// source — the painter's `RRect::new_rect_radii` does not clamp a
+    /// negative radius, so the whole subtree would clip wrongly.
+    pub const CORNER_RADIUS_INVALID: &str = "geometry.corner-radius-invalid";
+
+    // Waiver vocabulary — P4 applies to the waiver declarations themselves:
+    // an out-of-scope waiver is a named diagnostic, never a silent no-op
+    // (issue #41). These ids never appear on a document/scene diagnostic, so
+    // they are deliberately absent from [`ALL`] and are not themselves
+    // waivable.
+    /// A waiver names a rule id that is not a real diagnostic rule.
+    pub const WAIVER_UNKNOWN_RULE: &str = "waiver.unknown-rule";
+    /// A waiver matches an `Error`-severity diagnostic. An error blocks the
+    /// document unconditionally; only a warning is ever waivable.
+    pub const WAIVER_COVERS_AN_ERROR: &str = "waiver.covers-an-error";
+    /// A waiver matches no diagnostic in the report — dead, and worth
+    /// surfacing so the waiver set stays honest.
+    pub const WAIVER_UNUSED: &str = "waiver.unused";
+    /// A waiver whose every matched diagnostic an earlier waiver already
+    /// covers — a duplicate. Surfaced so the set does not accrete redundant
+    /// entries that all silently "apply".
+    pub const WAIVER_REDUNDANT: &str = "waiver.redundant";
+
+    /// Every rule id a document or scene diagnostic can carry: the import,
+    /// load, and paint gates. This is the vocabulary a waiver may name; the
+    /// `waiver.*` meta-rules above are not in it.
+    ///
+    /// [`is_known`] answers membership in this slice, so a new rule not added
+    /// here is treated as unknown by the waiver check — never silently
+    /// accepted. `tests/triage.rs::the_rule_registry_is_unique_and_covers_every_construct`
+    /// pins that every construct's rule is present, so the slice cannot rot.
+    pub const ALL: &[&str] = &[
+        LAYER_BLUR,
+        BACKDROP_BLUR,
+        ADVANCED_BLEND_MODE,
+        CORNER_SMOOTHING,
+        LUMINANCE_MASK,
+        CLIP_ON_ROTATED,
+        KASHIDA_JUSTIFICATION,
+        NOISE_OR_TEXTURE_EFFECT,
+        PROGRESSIVE_BLUR,
+        ANIMATED_BOOLEAN_OP,
+        ANIMATED_VARIABLE_FONT_AXIS,
+        VARIABLE_WIDTH_STROKE,
+        PARENT_OUT_OF_RANGE,
+        PARENT_NOT_BEFORE_CHILD,
+        PAINT_ENTRY_OUT_OF_RANGE,
+        CONFLICTING_PAINT_REPRESENTATION,
+        TEXT_STRING_OUT_OF_RANGE,
+        TEXT_STYLE_OUT_OF_RANGE,
+        TEXT_STYLE_NO_COLOR,
+        TEXT_STYLE_WEIGHT_OUT_OF_RANGE,
+        VARIANT_OVERRIDE_NODE_OUT_OF_RANGE,
+        VARIANT_SET_NO_MEMBERS,
+        VARIANT_ACTIVE_MEMBER_OUT_OF_RANGE,
+        UNKNOWN_ENUM,
+        GRADIENT_NO_STOPS,
+        GRADIENT_STOP_BUDGET,
+        GRADIENT_STOP_OFFSET_INVALID,
+        GRADIENT_STOP_ORDER,
+        STROKE_INVALID_WIDTH,
+        IMAGE_OUT_OF_RANGE,
+        IMAGE_NO_BYTES,
+        STROKE_EXCEEDS_BOX,
+        CLIP_INDEX_OUT_OF_RANGE,
+        RECT_INVALID_EXTENT,
+        CORNER_RADIUS_INVALID,
+    ];
+
+    /// Whether `rule` is a real document/scene diagnostic rule id. A waiver
+    /// naming an id this answers `false` for is out of scope (P4).
+    pub fn is_known(rule: &str) -> bool {
+        ALL.contains(&rule)
+    }
+
+    /// The designer-visible workaround for a diagnostic, keyed by rule id.
+    ///
+    /// docs/specification/04-figma-vocabulary-profile.md's REJECT and LATER
+    /// bands each carry a documented workaround ("bake it, slot it, design
+    /// without it"). The import gate is where that guidance belongs — the
+    /// referential-integrity and geometry rules stand in front of producer
+    /// bugs, not designer choices, so they carry no workaround and answer
+    /// `None`.
+    pub fn workaround(rule: &str) -> Option<&'static str> {
+        let hint = match rule {
+            LAYER_BLUR => {
+                "budgeted at v1; until then bake the blur into the layer's raster or omit it"
+            }
+            BACKDROP_BLUR => {
+                "profile:full only; on a lean target remove the backdrop blur or flatten it into \
+                 the layer"
+            }
+            ADVANCED_BLEND_MODE => {
+                "profile:full only; on a lean target bake the blended result into a flat fill"
+            }
+            CORNER_SMOOTHING => "use plain rounded corners; the squircle is not yet supported",
+            LUMINANCE_MASK => "bake the masked result into a raster and import it as an image",
+            CLIP_ON_ROTATED => "keep the clipping node axis-aligned, or bake the clipped content",
+            KASHIDA_JUSTIFICATION => "use standard justification; kashida elongation is deferred",
+            NOISE_OR_TEXTURE_EFFECT => {
+                "bake the noise or texture into a raster fill and import it as an image"
+            }
+            PROGRESSIVE_BLUR => "bake the progressive blur into a raster, or design without it",
+            ANIMATED_BOOLEAN_OP => "bake each keyframe of the boolean operation as a static shape",
+            ANIMATED_VARIABLE_FONT_AXIS => {
+                "slot the text for the runtime to supply, or choose a static font instance"
+            }
+            VARIABLE_WIDTH_STROKE => {
+                "bake the variable-width stroke into a filled shape and import it"
+            }
+            _ => return None,
+        };
+        Some(hint)
+    }
 }
 
 /// The gradient stop budget this validator enforces, re-exported so a
@@ -184,14 +323,16 @@ impl fmt::Display for NodePath {
 
 /// What a diagnostic points at.
 ///
-/// Not everything the validator reports is a node. A pooled paint entry and
-/// an image asset are shared by every node that references them, so each is
-/// reported **once, at its own index** — repeating one authoring mistake per
-/// referencing node would bury the rest of the report. Their indices are
-/// pool indices, not DFS node indices, and this enum is what keeps them from
-/// being mistaken for one: a consumer that resolves a diagnostic to a layer
-/// (an editor jumping to it, issue #41's waiver machinery keying on it) must
-/// not silently land on an unrelated node.
+/// Not everything the validator reports is a node. A pooled paint entry, an
+/// image asset, a variant set, and a text style are each shared by every node
+/// that references them, so each is reported **once, at its own index** —
+/// repeating one authoring mistake per referencing node would bury the rest
+/// of the report. Their indices are pool indices, not DFS node indices, and
+/// this enum is what keeps them from being mistaken for one: a consumer that
+/// resolves a diagnostic to a layer (an editor jumping to it, issue #41's
+/// waiver machinery keying on it) must not silently land on an unrelated
+/// node. Every pooled surface therefore has its own variant — a pool index
+/// must never be wrapped in a `Node`, where it would resolve as a DFS index.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Location {
     /// A node in the document, by DFS index and name path.
@@ -204,6 +345,9 @@ pub enum Location {
     /// A variant set, by its index in `Document.variant_sets` — not a node,
     /// the same reasoning as `PaintEntry`/`ImageAsset` (issue #20).
     VariantSet(u32),
+    /// A text style, by its index in `Document.text_styles` — not a node, the
+    /// same reasoning as `PaintEntry`/`ImageAsset` (issue #41).
+    TextStyle(u32),
 }
 
 impl fmt::Display for Location {
@@ -213,20 +357,36 @@ impl fmt::Display for Location {
             Self::PaintEntry(index) => write!(f, "<paint pool #{index}>"),
             Self::ImageAsset(index) => write!(f, "<image asset #{index}>"),
             Self::VariantSet(index) => write!(f, "<variant set #{index}>"),
+            Self::TextStyle(index) => write!(f, "<text style #{index}>"),
         }
     }
 }
 
 /// One named diagnostic (docs/design/architecture.md: `{rule id, node path, severity}`).
 ///
-/// The workaround hint docs/design/architecture.md also names is v0.7 scope (issue #41),
-/// alongside waivers.
+/// The fourth element of `docs/archive/2026-07-14-design-1-seed.md` §6.1's
+/// tuple — the workaround hint — is [`Diagnostic::workaround`] (issue #41).
+/// It is a rule-keyed derivation rather than a stored field so that
+/// `dashscene-validator` stays free of a fifth `Diagnostic` field: `dashc`
+/// owns serializable mirror types of this struct
+/// (`docs/decisions/dashc-wasm-abi.md`), and a new field would break the
+/// `Diagnostic { .. }` literals it constructs. The hint is a pure function
+/// of the rule id, so nothing is lost by deriving it on demand.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
     pub rule: &'static str,
     pub severity: Severity,
     pub at: Location,
     pub message: String,
+}
+
+impl Diagnostic {
+    /// The designer-visible workaround for this diagnostic, or `None` for a
+    /// rule that stands in front of a producer bug rather than a design
+    /// choice. See [`rule::workaround`].
+    pub fn workaround(&self) -> Option<&'static str> {
+        rule::workaround(self.rule)
+    }
 }
 
 impl fmt::Display for Diagnostic {
@@ -239,7 +399,11 @@ impl fmt::Display for Diagnostic {
             f,
             "{severity}[{}] at {}: {}",
             self.rule, self.at, self.message
-        )
+        )?;
+        if let Some(workaround) = self.workaround() {
+            write!(f, " — workaround: {workaround}")?;
+        }
+        Ok(())
     }
 }
 
@@ -262,7 +426,10 @@ impl Report {
             .any(|d| d.severity == Severity::Error)
     }
 
-    /// Whether a strict build passes: zero diagnostics of any severity.
+    /// Whether the report carries no findings at all — zero diagnostics of
+    /// any severity. The strict release gate is [`Report::strict`], which can
+    /// pass a report that carries waived warnings; this answers the stricter
+    /// "nothing was found".
     pub fn is_empty(&self) -> bool {
         self.diagnostics.is_empty()
     }
@@ -283,6 +450,16 @@ impl Report {
     /// points.
     pub fn find(&self, rule: &str) -> Option<&Diagnostic> {
         self.diagnostics.iter().find(|d| d.rule == rule)
+    }
+
+    /// The strict-mode verdict: whether a release build may proceed past
+    /// this report given `waivers`. A strict build refuses any warning
+    /// (docs/design/architecture.md) unless a declared [`Waiver`] records
+    /// that its degrade is acceptable for that one target. Errors are never
+    /// waivable, and an out-of-scope waiver is itself diagnosed (P4). See
+    /// [`StrictReport`].
+    pub fn strict<'a>(&'a self, waivers: &'a [Waiver]) -> StrictReport<'a> {
+        waiver::strict(self, waivers)
     }
 
     pub(crate) fn push(&mut self, diagnostic: Diagnostic) {

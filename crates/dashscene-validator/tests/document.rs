@@ -8,11 +8,12 @@
 //! from the producing bug, at paint time.
 
 use dashbuf::{
-    Color, Document, DocumentArgs, Fill, Gradient, GradientArgs, GradientKind, GradientStop, Image,
-    ImageArgs, ImageFill, ImageFillArgs, ImageFormat, NO_PAINT, Node, NodeArgs, Paint, PaintArgs,
-    ScaleMode, SolidFill, SolidFillArgs, Stroke, StrokeAlign, StrokeArgs, TextStyle, TextStyleArgs,
-    VariantMember, VariantMemberArgs, VariantOverride, VariantOverrideArgs, VariantPropValue,
-    VariantSet, VariantSetArgs, VariantX, VariantXArgs, Vec2, root_as_document,
+    Color, CornerRadii, Document, DocumentArgs, Fill, Gradient, GradientArgs, GradientKind,
+    GradientStop, Image, ImageArgs, ImageFill, ImageFillArgs, ImageFormat, NO_PAINT, Node,
+    NodeArgs, Paint, PaintArgs, ScaleMode, SolidFill, SolidFillArgs, Stroke, StrokeAlign,
+    StrokeArgs, TextStyle, TextStyleArgs, VariantMember, VariantMemberArgs, VariantOverride,
+    VariantOverrideArgs, VariantPropValue, VariantSet, VariantSetArgs, VariantX, VariantXArgs,
+    Vec2, root_as_document,
 };
 use dashscene_validator::{Location, NodePath, rule, validate_document};
 use flatbuffers::{FlatBufferBuilder, WIPOffset};
@@ -778,4 +779,148 @@ fn a_variant_set_with_no_members_is_named() {
     let report = validate(&bytes);
     assert!(report.has(rule::VARIANT_SET_NO_MEMBERS), "{report}");
     assert!(report.has_errors());
+}
+
+// ---------------------------------------------------------------------
+// Text-style weight range (issue #129) and paint corner radii (issue
+// #128). `Doc`'s DSL always writes weight 400 and sharp corners, so these
+// build the flatbuffer directly to reach one out-of-spec value.
+// ---------------------------------------------------------------------
+
+/// One node and one text style whose weight is `weight`, everything else
+/// well-formed. The load gate iterates the style pool independent of any
+/// reference, so no node need point at the style.
+fn document_with_text_style_weight(weight: u16) -> Vec<u8> {
+    let mut b = FlatBufferBuilder::new();
+    let node = Node::create(&mut b, &NodeArgs::default());
+    let nodes = b.create_vector(&[node]);
+    let family = b.create_string("Inter");
+    let style = TextStyle::create(
+        &mut b,
+        &TextStyleArgs {
+            family: Some(family),
+            size: 16.0,
+            weight,
+            color: Some(&red()),
+        },
+    );
+    let text_styles = b.create_vector(&[style]);
+    let document = Document::create(
+        &mut b,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            text_styles: Some(text_styles),
+            ..Default::default()
+        },
+    );
+    b.finish(document, None);
+    b.finished_data().to_vec()
+}
+
+#[test]
+fn a_text_style_weight_below_100_is_named() {
+    // The schema pins weight to the CSS scale, 100..=900. Font selection
+    // would otherwise clamp it silently or pick an unintended face — the
+    // silent vocabulary drop P4 forbids.
+    let report = validate(&document_with_text_style_weight(50));
+    assert!(report.has(rule::TEXT_STYLE_WEIGHT_OUT_OF_RANGE), "{report}");
+    assert!(report.has_errors());
+    // A text style is a pooled surface: its diagnostic points at
+    // Location::TextStyle (its pool index), never a Node index that would
+    // resolve to an unrelated layer (issue #41 review).
+    assert_eq!(
+        report
+            .find(rule::TEXT_STYLE_WEIGHT_OUT_OF_RANGE)
+            .unwrap()
+            .at,
+        Location::TextStyle(0),
+    );
+}
+
+#[test]
+fn a_text_style_weight_above_900_is_named() {
+    let report = validate(&document_with_text_style_weight(1234));
+    assert!(report.has(rule::TEXT_STYLE_WEIGHT_OUT_OF_RANGE), "{report}");
+}
+
+#[test]
+fn text_style_weights_at_the_boundaries_are_allowed() {
+    // The range is inclusive, so the two endpoints must not be diagnosed.
+    for weight in [100, 900] {
+        let report = validate(&document_with_text_style_weight(weight));
+        assert!(
+            !report.has(rule::TEXT_STYLE_WEIGHT_OUT_OF_RANGE),
+            "weight {weight} is in range:\n{report}"
+        );
+    }
+}
+
+/// One node painted by a paint entry whose corner radii are `radii`
+/// (`[top_left, top_right, bottom_right, bottom_left]`).
+fn document_with_paint_corners(radii: [f32; 4]) -> Vec<u8> {
+    let mut b = FlatBufferBuilder::new();
+    let fill = SolidFill::create(
+        &mut b,
+        &SolidFillArgs {
+            color: Some(&red()),
+        },
+    );
+    let corners = CornerRadii::new(radii[0], radii[1], radii[2], radii[3]);
+    let paint = Paint::create(
+        &mut b,
+        &PaintArgs {
+            fill_type: Fill::SolidFill,
+            fill: Some(fill.as_union_value()),
+            corners: Some(&corners),
+            ..Default::default()
+        },
+    );
+    let paints = b.create_vector(&[paint]);
+    let node = Node::create(
+        &mut b,
+        &NodeArgs {
+            paint_entry: 0,
+            ..Default::default()
+        },
+    );
+    let nodes = b.create_vector(&[node]);
+    let document = Document::create(
+        &mut b,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            paints: Some(paints),
+            ..Default::default()
+        },
+    );
+    b.finish(document, None);
+    b.finished_data().to_vec()
+}
+
+#[test]
+fn a_negative_paint_corner_radius_is_named() {
+    // The painter's `RRect::new_rect_radii` does not clamp a negative radius
+    // to zero, and the same radius is copied into every ClipBox of a clipping
+    // node's subtree — so a negative radius clips the whole subtree wrongly
+    // (issue #128). Corners are geometry-free authored intent, so the load
+    // gate catches it — the only gate compile_figma runs.
+    let report = validate(&document_with_paint_corners([-4.0, 0.0, 0.0, 0.0]));
+    assert!(report.has(rule::CORNER_RADIUS_INVALID), "{report}");
+    assert!(report.has_errors());
+    assert_eq!(
+        report.find(rule::CORNER_RADIUS_INVALID).unwrap().at,
+        Location::PaintEntry(0),
+    );
+}
+
+#[test]
+fn a_non_finite_paint_corner_radius_is_named() {
+    let report = validate(&document_with_paint_corners([0.0, f32::NAN, 0.0, 0.0]));
+    assert!(report.has(rule::CORNER_RADIUS_INVALID), "{report}");
+}
+
+#[test]
+fn well_formed_paint_corners_are_allowed() {
+    // Ordinary rounded corners must not be diagnosed.
+    let report = validate(&document_with_paint_corners([8.0, 8.0, 8.0, 8.0]));
+    assert!(report.is_empty(), "unexpected diagnostics:\n{report}");
 }

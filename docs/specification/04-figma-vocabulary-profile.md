@@ -25,9 +25,9 @@ discovered") checkable. The validator that implements this triage is
                    (squircle), luminance masks, clip-on-rotated,
                    kashida justification.
     REJECT (error) noise/texture/progressive-blur effects, animated
-                   boolean ops, animated variable-font axes — each
-                   with a documented workaround (bake it, slot it,
-                   design without it).
+                   boolean ops, animated variable-font axes,
+                   variable-width strokes — each with a documented
+                   workaround (bake it, slot it, design without it).
 
 Deferred items are a negotiation surface with design, not a
 compatibility debt: every LATER item has a designer-visible

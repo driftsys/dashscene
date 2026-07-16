@@ -19,6 +19,7 @@ const ALL: &[Construct] = &[
     Construct::ProgressiveBlur,
     Construct::AnimatedBooleanOp,
     Construct::AnimatedVariableFontAxis,
+    Construct::VariableWidthStroke,
 ];
 
 fn at(index: u32) -> NodePath {
@@ -65,6 +66,10 @@ fn reject_band_is_an_error_in_both_profiles() {
             Construct::AnimatedVariableFontAxis,
             rule::ANIMATED_VARIABLE_FONT_AXIS,
         ),
+        // Issue #145: variable-width stroke sits on the REJECT list
+        // (`docs/archive/2026-07-14-scope-decisions.md` §8) — no paint entry
+        // can express a per-length width, so no profile buys it back.
+        (Construct::VariableWidthStroke, rule::VARIABLE_WIDTH_STROKE),
     ];
     for (construct, expected_rule) in rejected {
         for profile in [Profile::Core, Profile::Full] {
@@ -136,12 +141,70 @@ fn rule_ids_are_stable_and_unique() {
 }
 
 #[test]
+fn the_rule_registry_is_unique_and_covers_every_construct() {
+    // `rule::ALL` is the vocabulary a waiver may name; a duplicate would let
+    // one waiver silently cover two rules, and a gap would make a real rule
+    // look unknown to the waiver check.
+    let mut ids = rule::ALL.to_vec();
+    let len = ids.len();
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(ids.len(), len, "duplicate id in rule::ALL");
+
+    for id in rule::ALL {
+        assert!(rule::is_known(id), "{id} is in ALL but is_known says no");
+    }
+    for &construct in ALL {
+        assert!(
+            rule::is_known(construct.rule()),
+            "{construct:?}'s rule is missing from rule::ALL",
+        );
+    }
+
+    // The waiver meta-rules are not document/scene diagnostics, so they are
+    // deliberately absent from ALL and are not themselves waivable.
+    assert!(!rule::is_known(rule::WAIVER_UNKNOWN_RULE));
+    assert!(!rule::is_known(rule::WAIVER_COVERS_AN_ERROR));
+    assert!(!rule::is_known(rule::WAIVER_UNUSED));
+}
+
+#[test]
 fn diagnostic_display_names_severity_rule_and_path() {
     let rendered = triage(Construct::BackdropBlur, Profile::Core, at(3)).to_string();
     assert!(
         rendered.starts_with("error[profile.backdrop-blur] at /screen/card (#3): "),
         "{rendered}"
     );
+}
+
+#[test]
+fn every_out_of_profile_construct_carries_a_workaround_hint() {
+    // The fourth element of docs/archive/2026-07-14-design-1-seed.md §6.1's
+    // diagnostic tuple: every out-of-profile construct names a
+    // designer-visible workaround (§04 "bake it, slot it, design without
+    // it"). It is a rule-keyed derivation, not a struct field — so the ABI
+    // mirror dashc owns is untouched (docs/decisions/dashc-wasm-abi.md).
+    for &construct in ALL {
+        let diagnostic = triage(construct, Profile::Core, at(0));
+        let workaround = diagnostic
+            .workaround()
+            .unwrap_or_else(|| panic!("{construct:?} carries no workaround hint"));
+        assert!(!workaround.is_empty(), "{construct:?} workaround is empty");
+        // The hint reaches a reader through Display, appended after the message.
+        assert!(
+            diagnostic.to_string().contains("workaround: "),
+            "{construct:?} Display drops its workaround",
+        );
+    }
+}
+
+#[test]
+fn a_referential_integrity_rule_carries_no_workaround() {
+    // The workaround hint is for design vocabulary the designer can rework.
+    // A dangling paint index is a producer bug, not a design choice — there
+    // is nothing to bake or slot — so it deliberately answers None.
+    assert_eq!(rule::workaround(rule::PAINT_ENTRY_OUT_OF_RANGE), None);
+    assert_eq!(rule::workaround(rule::UNKNOWN_ENUM), None);
 }
 
 #[test]
