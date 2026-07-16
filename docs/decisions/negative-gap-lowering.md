@@ -94,6 +94,16 @@ speculative: it operates on the arena, while a document-side pass would
 have to operate on `Document`. Revisit again when the flex lowering lands.
 See `docs/decisions/figma-auto-layout-refused-on-two-grounds.md`.
 
+**Trigger re-checked at story #140 (2026-07-16); the second site exists
+and the pass still does not move.** The flex lowering applies the same
+rewrite inside `dashc`'s walk — the walk builds a `Document`, not an
+arena, so core's `Txn` method cannot serve it, and the rewrite needs only
+the sibling order the walk already has (a dedicated lowering module would
+add a second tree pass for one rule). The two sites share the rule by
+statement, not by code: gap to zero, the gap onto the leading main-axis
+margin of each in-flow child after the first. Extract a shared module only
+if a third site appears. See `docs/decisions/figma-flex-lowering.md` D3.
+
 **Known property (CSS margin semantics).** The lowered margins behave
 as CSS/Taffy margins: a negative margin on a `Fill` child returns its
 absolute value to the container's free space, so `Fill` siblings grow.
@@ -104,6 +114,20 @@ for `Fill` children is a fidelity question with no real Figma file to
 check against at v0.2. Verifying it against a captured fixture is
 deferred to the importer slice (tracked as a `debt` issue). For fixed
 and hug children the overlap is exactly the authored gap.
+
+**Fidelity verified at story #140 (debt #105), with two findings.**
+For fixed-size children the lowering is exact: the captured
+`lowering-negative-gap.json` (five 56-wide children, `itemSpacing: -16`),
+lowered and solved through the engine, lands every child on Figma's own
+`absoluteBoundingBox`
+(`crates/dashc/tests/flex_lowering.rs::the_negative_gap_fixture_solves_to_figmas_captured_rects`).
+The `Fill`-children variant stays unverifiable: capturing it needs a
+manual authoring step in the fixture-author plugin, and no captured
+fixture carries `Fill` under a negative gap — the question above stays
+open. The verification also surfaced a runtime gap this lowering's
+output exposes: Taffy 0.12's intrinsic (hug) sizing mis-sums children
+with negative margins, so a hug-sized container over a lowered negative
+gap solves to a collapsed main-axis size (engine debt #236).
 
 **Where the lowering is verified.** At the intent level, in
 `dashscene-core`'s arena tests — the rewrite (gap zeroed, leading

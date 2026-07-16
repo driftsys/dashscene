@@ -36,15 +36,85 @@ Deno.test("compileFigma emits the golden .dsb, byte for byte", () => {
   assertEquals(result.bytes, Deno.readFileSync(GOLDEN));
 });
 
+/**
+ * The captured fixture with every node `patch` matches rewritten, and
+ * nothing else changed.
+ *
+ * Mirrors the derivations in `crates/dashc/tests/flex_lowering.rs` (see
+ * `goldens/dsb/README.md` for why each fixture needs one): both sides
+ * assert the same committed golden bytes, so a drift between the two
+ * derivations — or between native and wasm emission — fails here rather
+ * than passing as two unrelated truths. JSON key order does not need to
+ * match the Rust side's: the compiler's output depends on the parsed
+ * content, not on the text.
+ */
+function derived(
+  name: string,
+  patch: (node: Record<string, unknown>) => void,
+): string {
+  const file = JSON.parse(fixture(name));
+  const walk = (node: Record<string, unknown>) => {
+    patch(node);
+    const children = node.children;
+    if (Array.isArray(children)) {
+      for (const child of children) walk(child as Record<string, unknown>);
+    }
+  };
+  walk(file.document as Record<string, unknown>);
+  return JSON.stringify(file);
+}
+
+Deno.test("flex documents emit their golden .dsb through the ABI", () => {
+  // v03-paint carries no LayoutContainer/LayoutConstraints, so on its own
+  // it proves nothing about the story #140 vocabulary crossing the wasm
+  // boundary. These two do: the same derived flex fixtures the native
+  // suite pins, byte-compared against the same committed goldens.
+  const cases: ReadonlyArray<[string, string]> = [
+    [
+      "v07-negative-gap-derived.dsb",
+      derived("lowering-negative-gap", (node) => {
+        if (node.type === "ELLIPSE") node.type = "FRAME";
+      }),
+    ],
+    [
+      "v07-hug-in-fill-derived.dsb",
+      derived("lowering-hug-in-fill", (node) => {
+        if (node.type === "TEXT") {
+          node.type = "FRAME";
+          node.layoutSizingHorizontal = "FIXED";
+          node.layoutSizingVertical = "FIXED";
+        }
+      }),
+    ],
+  ];
+
+  for (const [golden, json] of cases) {
+    const result = dashc.compileFigma(json, "core", new Map());
+    assertEquals(result.diagnostics, [], golden);
+    assertEquals(
+      result.bytes,
+      Deno.readFileSync(
+        new URL(`../../../goldens/dsb/${golden}`, import.meta.url),
+      ),
+      golden,
+    );
+  }
+});
+
 Deno.test("figmaImageRefs names the refs the lowering demands", () => {
   assertEquals(dashc.figmaImageRefs(fixture("v03-paint")), [IMAGE_REF]);
 });
 
-Deno.test("an unsupported construct throws a tagged failure", () => {
-  // effects-2025's root frame is auto-layout, which the lowering refuses before
-  // it ever reaches the three REJECT-band effects the fixture carries.
+Deno.test("a file the walk cannot start on throws a tagged failure", () => {
+  // Since story #140 an unsupported construct is a diagnostic, not an abort,
+  // so the `unsupported` wire tag is left with the structural refusals — a
+  // document with no root FRAME under its first CANVAS.
+  const file = JSON.stringify({
+    document: { name: "Document", type: "DOCUMENT", children: [] },
+  });
+
   const error = assertThrows(
-    () => dashc.compileFigma(fixture("effects-2025"), "core", new Map()),
+    () => dashc.compileFigma(file, "core", new Map()),
     CompileFailed,
   ) as CompileFailed;
 
@@ -52,20 +122,19 @@ Deno.test("an unsupported construct throws a tagged failure", () => {
 });
 
 Deno.test("REJECT-band constructs come back as diagnostics, not bytes", () => {
-  // Drop the auto-layout that stops the compile earlier, so the effects are
-  // reached: what comes back must name each one, never silently drop it (P4).
-  const file = JSON.parse(fixture("effects-2025"));
-  delete file.document.children[0].children[0].layoutMode;
-
+  // The raw capture: its auto-layout root lowers since story #140, so the
+  // compile reaches the three REJECT-band effects the fixture was authored
+  // to carry. What comes back must name each one, never silently drop it
+  // (P4).
   const error = assertThrows(
-    () => dashc.compileFigma(JSON.stringify(file), "core", new Map()),
+    () => dashc.compileFigma(fixture("effects-2025"), "core", new Map()),
     CompileFailed,
   ) as CompileFailed;
 
   const detail = error.detail;
   assertEquals(detail.kind, "diagnostics");
   if (detail.kind !== "diagnostics") throw new Error("unreachable");
-  assertEquals(detail.diagnostics.length > 0, true);
+  assertEquals(detail.diagnostics.length, 3);
   assertEquals(detail.diagnostics.every((d) => d.severity === "error"), true);
 });
 

@@ -112,6 +112,7 @@ fn v03_document() -> Document {
             },
             clip: true,
         }),
+        ..Node::default()
     });
 
     // Overflows the frame, so the clip is observable.
@@ -128,6 +129,7 @@ fn v03_document() -> Document {
             entry: PaintEntry::solid(RED),
             clip: false,
         }),
+        ..Node::default()
     });
 
     doc.push(Node {
@@ -147,6 +149,7 @@ fn v03_document() -> Document {
             },
             clip: false,
         }),
+        ..Node::default()
     });
 
     doc.push(Node {
@@ -171,6 +174,7 @@ fn v03_document() -> Document {
             },
             clip: false,
         }),
+        ..Node::default()
     });
 
     doc
@@ -326,6 +330,7 @@ fn nodes_sharing_a_style_share_one_pool_entry() {
                 height: 4.0,
             },
             paint: Some(paint.clone()),
+            ..Node::default()
         });
     }
 
@@ -359,6 +364,7 @@ fn two_nodes_that_differ_only_in_clip_do_not_share_a_pool_entry() {
                 entry: PaintEntry::solid(RED),
                 clip,
             }),
+            ..Node::default()
         });
     }
 
@@ -395,6 +401,7 @@ fn an_invalid_document_is_refused_rather_than_emitted() {
             },
             clip: false,
         }),
+        ..Node::default()
     });
 
     let report = compile(&doc).expect_err("an empty gradient must block emission");
@@ -444,4 +451,96 @@ fn image_indices_are_remapped_when_loading_into_a_non_empty_arena() {
         vec![0, 1],
         "the second load's image fill must be remapped onto its own asset"
     );
+}
+
+#[test]
+fn flex_intent_round_trips_through_the_document() {
+    // What dashc's emitter writes into the two v0.2 flex tables, core's
+    // loader must read back as the same intent — this is the seam the flex
+    // lowering (story #140) hangs on. Every value is deliberately
+    // non-default, so a field that stopped being written (or started being
+    // read from the wrong table) fails on the value, not on presence.
+    use dashc_wasm::{EdgeInsets, LayoutConstraints, LayoutContainer};
+
+    let mut doc = Document::new();
+    let row = doc.push(Node {
+        name: Some("row".to_owned()),
+        parent: None,
+        box2d: Box2D {
+            x: 0.0,
+            y: 0.0,
+            width: 200.0,
+            height: 50.0,
+        },
+        container: Some(LayoutContainer {
+            mode: dashc_wasm::LayoutMode::Horizontal,
+            gap: 8.0,
+            padding: EdgeInsets {
+                left: 1.0,
+                top: 2.0,
+                right: 3.0,
+                bottom: 4.0,
+            },
+            main_align: dashc_wasm::MainAxisAlign::SpaceBetween,
+            cross_align: dashc_wasm::CrossAxisAlign::Center,
+        }),
+        ..Node::default()
+    });
+    doc.push(Node {
+        name: Some("stretchy".to_owned()),
+        parent: Some(row),
+        box2d: Box2D::default(),
+        constraints: Some(LayoutConstraints {
+            sizing_h: dashc_wasm::AxisSizing::Fill,
+            sizing_v: dashc_wasm::AxisSizing::Hug,
+            min_width: Some(10.0),
+            max_width: Some(100.0),
+            min_height: None,
+            max_height: Some(40.0),
+            margin: EdgeInsets {
+                left: -16.0,
+                top: 0.0,
+                right: 0.0,
+                bottom: 0.0,
+            },
+        }),
+        ..Node::default()
+    });
+
+    let bytes = compile(&doc).expect("validates");
+    let document = dashbuf::root_as_document(&bytes).expect("valid buffer");
+    let mut arena = Arena::new();
+    load_document(&document, &mut arena);
+
+    let root = arena.roots()[0];
+    let row_layout = arena.layout(root);
+    assert_eq!(row_layout.mode, dashscene_core::LayoutMode::Horizontal);
+    assert_eq!(row_layout.gap, 8.0);
+    assert_eq!(
+        (
+            row_layout.padding.left,
+            row_layout.padding.top,
+            row_layout.padding.right,
+            row_layout.padding.bottom,
+        ),
+        (1.0, 2.0, 3.0, 4.0),
+    );
+    assert_eq!(
+        row_layout.main_align,
+        dashscene_core::MainAxisAlign::SpaceBetween
+    );
+    assert_eq!(
+        row_layout.cross_align,
+        dashscene_core::CrossAxisAlign::Center
+    );
+
+    let child = arena.children(root)[0];
+    let child_layout = arena.layout(child);
+    assert_eq!(child_layout.sizing_h, dashscene_core::AxisSizing::Fill);
+    assert_eq!(child_layout.sizing_v, dashscene_core::AxisSizing::Hug);
+    assert_eq!(child_layout.min_width, Some(10.0));
+    assert_eq!(child_layout.max_width, Some(100.0));
+    assert_eq!(child_layout.min_height, None);
+    assert_eq!(child_layout.max_height, Some(40.0));
+    assert_eq!(child_layout.margin.left, -16.0);
 }

@@ -49,7 +49,10 @@ mod emit;
 pub mod abi;
 pub mod figma;
 
-pub use document::{Box2D, Document, Node, Paint};
+pub use document::{
+    AxisSizing, Box2D, CrossAxisAlign, Document, EdgeInsets, LayoutConstraints, LayoutContainer,
+    LayoutMode, MainAxisAlign, Node, Paint,
+};
 pub use emit::emit;
 // `CompileError` only: it is `compile_figma`'s error type, so it belongs at the
 // root beside it. The lowering and its REST types stay behind `figma::` —
@@ -60,8 +63,6 @@ use std::collections::BTreeMap;
 
 use dashpaint::ImageAsset;
 use dashscene_validator::{Profile, Report};
-
-use crate::figma::rest::FigmaFile;
 
 /// Emits `doc`, then runs the load gate over the emitted document.
 ///
@@ -128,7 +129,7 @@ pub fn compile_figma(
     profile: Profile,
     images: &BTreeMap<String, ImageAsset>,
 ) -> Result<(Vec<u8>, Report), CompileError> {
-    let file: FigmaFile = serde_json::from_str(json).map_err(CompileError::Parse)?;
+    let file = figma::parse_file(json)?;
     let (doc, found) = figma::lower(&file, profile, images)?;
 
     let mut report: Report = found.into_iter().collect();

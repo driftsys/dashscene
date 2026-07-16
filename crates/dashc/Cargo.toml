@@ -27,8 +27,12 @@ dashpaint.workspace = true
 dashscene-validator.workspace = true
 flatbuffers.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+# `unbounded_depth` enables `Deserializer::disable_recursion_limit`, which
+# `figma::parse_file` pairs with its own linear depth pre-scan — see
+# `figma::MAX_JSON_DEPTH` (debt #148).
+serde_json = { workspace = true, features = ["unbounded_depth"] }
 
 [dev-dependencies]
 dashscene-core.workspace = true
+dashscene-engine.workspace = true
 dashscene-skia.workspace = true

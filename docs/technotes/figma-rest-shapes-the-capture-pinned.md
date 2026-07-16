@@ -97,3 +97,40 @@ one — a drop the designer cannot see in the output.
   error at the node rather than a parse failure of the whole file. Every
   _closed_ set (`PaintTag`, `ScaleMode`, `StrokeAlign`) is a real enum, so an
   unknown value fails the parse instead of defaulting silently.
+
+## The auto-layout shapes (story #140, the five lowering fixtures)
+
+Pinned by `lowering-hug-in-fill.json`, `lowering-negative-gap.json`,
+`lowering-wrap.json`, `lowering-baseline.json`, `grid-basic.json`, and
+`variables-bound.json`:
+
+- **`layoutSizingHorizontal`/`layoutSizingVertical` are the per-node,
+  per-axis sizing** (`FIXED`/`HUG`/`FILL`), present on every node the
+  captures place in an auto-layout context and absent outside one. The
+  older container-side `primaryAxisSizingMode`/`counterAxisSizingMode` and
+  child-side `layoutGrow`/`layoutAlign` appear alongside them but carry no
+  extra information, so the lowering reads the modern pair only.
+- **A zero padding edge is omitted**, not written as `0` (the synthetic
+  `column` test pins the asymmetric case).
+- **Absent alignment means `MIN`.** No capture carries `MIN` spelled out,
+  `CENTER`, `MAX`, or `SPACE_BETWEEN`; those values are Figma's documented
+  enum and are marked synthetic at their tests. `BASELINE` **is** captured
+  (`lowering-baseline.json`, `counterAxisAlignItems`).
+- **`itemSpacing` goes negative** (`lowering-negative-gap.json`, `-16`) —
+  legal authored overlap, not an error.
+- **`layoutWrap` is written on every auto-layout frame** (`NO_WRAP` or
+  `WRAP`), and `counterAxisSpacing` appears only alongside `WRAP`.
+- **The grid fields** (`grid-basic.json`): `gridRowCount`/`gridColumnCount`,
+  `gridRowsSizing`/`gridColumnsSizing` (a CSS-like track string, e.g.
+  `"96px minmax(0,1fr) minmax(0,1fr)"`), and per-child
+  `gridRowSpan`/`gridColumnSpan`/`gridRowAnchorIndex`/`gridColumnAnchorIndex`.
+  Captured for the v0.8 grid lowering; the v0.7 walk refuses `GRID` before
+  reading them.
+- **`id` is on every node** (`"1:23"`), unique across the file — what a
+  diagnostic path uses to split duplicate sibling names.
+- **Not pinned by any capture:** `layoutPositioning: "ABSOLUTE"`,
+  `strokesIncludedInLayout: true`, and `itemReverseZIndex: true`. The walk
+  refuses each by name anyway — treating them as their defaults would
+  silently reflow or repaint siblings — with the shapes taken from Figma's
+  documentation and flagged as such at the tests. A capture that carries
+  them should be added to a fixture when one is next authored.

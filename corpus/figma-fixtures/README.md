@@ -9,6 +9,18 @@ from a third-party file ever enters this directory
 Figma file key and describes what it covers. This file is the narrative
 companion — read it alongside `manifest.json`, not instead of it.
 
+Manifest fields beyond `name`/`fileKey` (the only two the capture tool
+parses) are documentary, and two of them track compile status against the
+as-built compiler:
+
+- `emits` — whether the **raw capture** compiles to a `.dsb` today. It is
+  reconciled when the compiler widens, so a `true` here is a live claim,
+  not a design intent.
+- `derivedEmits` — present when the raw capture is blocked by exactly one
+  out-of-scope construct and a **declared derivation** (a single node-kind
+  swap, stated in the named test file) emits and is pinned by a committed
+  golden. The raw blocker and the story that lifts it are in `note`.
+
 ## Tier 1 — committed static corpus
 
 Small, focused files rather than one mega-file: a failure should
@@ -38,14 +50,12 @@ this directory:
 
 `effects-2025` is a **diagnostic** fixture, not a rendering fixture:
 under R6 it must never emit a `.dsb`. Its root frame carries
-`layoutMode: HORIZONTAL`, so as built, the compile actually stops on
-auto-layout refusal
-(`docs/decisions/figma-auto-layout-refused-on-two-grounds.md`) before
-reaching the REJECT-list triage the fixture was authored to exercise —
-its acceptance test strips the `layoutMode` key to reach the three
-effects underneath. A future diagnostic fixture must set `layoutMode:
-NONE`, or the auto-layout refusal masks the constructs it exists to
-test.
+`layoutMode: HORIZONTAL`, which the v0.3 walk refused before reaching
+the REJECT-list triage the fixture was authored to exercise — its
+acceptance test stripped the `layoutMode` key to reach the three
+effects underneath. Since story #140 lowers auto-layout, the raw
+capture reaches its effects with no derivation, and the tests use it
+as captured.
 
 ### Manual authoring step still open
 
