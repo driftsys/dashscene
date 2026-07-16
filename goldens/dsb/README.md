@@ -23,23 +23,40 @@ That is what makes story #17's "byte-identical to dashc-native output"
 checkable: each side asserts against the same committed bytes, so identity is
 transitive.
 
-## v07-negative-gap-derived.dsb and v07-hug-in-fill-derived.dsb
+## v07-negative-gap.dsb and v07-negative-gap-derived.dsb
 
-The story #140 flex goldens: `lowering-negative-gap.json` and
-`lowering-hug-in-fill.json`, compiled through `dashc::compile_figma` after
-one declared derivation each — the out-of-scope node kind swapped for a
-fixed-size `FRAME` (`ELLIPSE` in the first, the `TEXT` leaf in the second;
-shape lowering has no story yet, text is #160). The derivations live in
-`crates/dashc/tests/flex_lowering.rs`, next to the solve tests whose oracle
-is Figma's own captured boxes.
+Two goldens for one fixture, `lowering-negative-gap.json`, both compiled
+through `dashc::compile_figma`:
 
-Like `v03-paint.dsb`, each is pinned from both sides of the wasm boundary:
+- `v07-negative-gap.dsb` — the **raw** capture. Since story #239 its five full
+  `ELLIPSE` children lower to circles (a rounded rect with corner radius = half
+  the extent, `docs/decisions/figma-ellipse-as-circle.md`), so the whole
+  capture emits. This is the byte record of the shape lowering: the five nodes
+  carry corner radii a frame stand-in does not.
+- `v07-negative-gap-derived.dsb` — the same capture after one declared
+  derivation, the five `ELLIPSE`s retyped to fixed-size `FRAME`s. It predates
+  #239 and is kept because it is font-free and a frame and a circle solve to
+  one box, so it stays a cross-language solve-fidelity check; the derivation
+  lives in `crates/dashc/tests/flex_lowering.rs`, next to the solve tests whose
+  oracle is Figma's own captured boxes.
+
+Both are pinned from both sides of the wasm boundary:
 `crates/dashc/tests/flex_lowering.rs` natively, and
-`importers/figma/src/wasm_test.ts` through the ABI — `v03-paint.dsb` carries
-no flex table, so these two are what prove the story #140 vocabulary crosses
-the boundary byte-identically. The Deno side mirrors the derivations; both
-sides asserting the same committed bytes is what makes a derivation drift a
-failure rather than two unrelated truths.
+`importers/figma/src/wasm_test.ts` through the ABI. `v03-paint.dsb` carries no
+flex table, so the derived one proves the story #140 flex vocabulary crosses
+the boundary byte-identically; the raw one proves the story #239 shape
+lowering does — the derived cases retype the ellipses away, so only the raw
+case exercises the corner radii across the ABI. Both sides asserting the same
+committed bytes is what makes a drift a failure rather than two unrelated
+truths.
+
+## v07-hug-in-fill-derived.dsb
+
+`lowering-hug-in-fill.json` compiled after one declared derivation — the
+`TEXT` leaf swapped for a fixed-size `FRAME` (text lowering is #160, and
+solving text needs the typesetter the byte suites do not wire). The derivation
+lives in `crates/dashc/tests/flex_lowering.rs`, and the golden is pinned from
+both sides of the wasm boundary, the same as the negative-gap goldens above.
 
 ## v07-text-hug-in-fill.dsb and v07-text-baseline-derived.dsb
 

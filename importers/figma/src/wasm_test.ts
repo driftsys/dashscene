@@ -101,6 +101,29 @@ Deno.test("flex documents emit their golden .dsb through the ABI", () => {
   }
 });
 
+Deno.test("the raw ellipse capture emits its golden .dsb through the ABI", () => {
+  // The #237 lesson: the derived cases above retype the ELLIPSEs to frames,
+  // so the raw shape-lowering path — a full ellipse to a circle, story #239 —
+  // never crossed the wasm boundary. This pins it: the raw capture, compiled
+  // through dashc_wasm.wasm with no derivation, byte-compared against the same
+  // golden the native suite emits (crates/dashc/tests/flex_lowering.rs). Its
+  // five ELLIPSE children carry the corner radii that a frame stand-in does
+  // not, so the derived cases could not have caught a drift in them.
+  const result = dashc.compileFigma(
+    fixture("lowering-negative-gap"),
+    "core",
+    new Map(),
+  );
+
+  assertEquals(result.diagnostics, []);
+  assertEquals(
+    result.bytes,
+    Deno.readFileSync(
+      new URL("../../../goldens/dsb/v07-negative-gap.dsb", import.meta.url),
+    ),
+  );
+});
+
 Deno.test("figmaImageRefs names the refs the lowering demands", () => {
   assertEquals(dashc.figmaImageRefs(fixture("v03-paint")), [IMAGE_REF]);
 });

@@ -220,6 +220,13 @@ into the records below. Per-story decisions land here directly:
   every other authored text feature is a named diagnostic (P4, not a schema
   widening), sizing reads `layoutSizing*` with a `textAutoResize` fallback for
   free-standing text, and a text node's fill lowers into the style's color.
+- [figma-ellipse-as-circle.md](figma-ellipse-as-circle.md) — the #239 shape
+  lowering: a full-sweep `ELLIPSE` with equal, fixed extents lowers to a
+  rounded rect with corner radius = half the extent (a circle is exact; the
+  painter's per-corner radius is one scalar, so a non-circular ellipse cannot
+  be expressed and is refused by name, along with arcs, rings, non-fixed
+  ellipses, and the other shape kinds). No schema change — a dedicated shape
+  construct is the deferred v1 path.
 - [rtl-text-width-is-the-placed-extent.md](rtl-text-width-is-the-placed-extent.md)
   — the #224 width-vs-bounds decision #160 settled: `TextLayout::width` is the
   content advance and the hug-sizing datum (the placed advance extent); a

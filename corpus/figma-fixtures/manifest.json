@@ -53,10 +53,10 @@
     {
       "name": "lowering-negative-gap",
       "fileKey": "w8JdmcqdvZhD1qIB8GVK2u",
-      "covers": "negative itemSpacing (-16) overlap row, lowered to margins (docs/design/dashbuf.md)",
-      "emits": false,
-      "derivedEmits": "the ELLIPSE children retyped as FRAMEs (crates/dashc/tests/flex_lowering.rs) emit goldens/dsb/v07-negative-gap-derived.dsb and solve to the captured rects",
-      "note": "Raw compile is refused only by the ELLIPSE children (shape nodes have no lowering story yet); the negative-gap lowering itself lands since #140. Root hug width solve is engine debt #236."
+      "covers": "negative itemSpacing (-16) overlap row of full ELLIPSE nodes: the gap lowers to margins (docs/design/dashbuf.md) and each ellipse lowers to a circle (docs/decisions/figma-ellipse-as-circle.md)",
+      "emits": true,
+      "derivedEmits": "the ELLIPSE children retyped as FRAMEs (crates/dashc/tests/flex_lowering.rs) emit goldens/dsb/v07-negative-gap-derived.dsb and solve to the captured rects, kept for cross-language ABI parity with the Deno suite (a frame and a circle solve to one box); and, with the root's HUG width lifted to FIXED (goldens/tooling/tests/v07_ellipse.rs), the five circles solve and paint goldens/images/v07-ellipse.png",
+      "note": "Raw compile emits since #239: the five full ELLIPSE children lower to circles (a rounded rect with corner radius = half the 56px extent, goldens/dsb/v07-negative-gap.dsb), and the negative-gap lowering itself lands since #140. Root hug width solve is engine debt #236, so the render golden lifts it to FIXED to avoid clipping the circles."
     },
     {
       "name": "lowering-baseline",
