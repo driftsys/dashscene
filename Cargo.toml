@@ -59,6 +59,13 @@ rustybuzz = "0.20"
 # deterministic replacement.
 rustc-hash = "2"
 unicode-bidi = "0.3"
+# General-category lookup for the font-fallback cascade: combining marks
+# (Mn/Mc/Me) and format controls (Cf, e.g. ZWJ/ZWNJ) must route with the
+# base they attach to, not on their own coverage. Already in the tree via
+# rustybuzz, so no new transitive weight.
+unicode-properties = { version = "0.1", default-features = false, features = [
+    "general-category",
+] }
 ttf-parser = "0.25"
 # Pinned to the exact flatc release (installed via `brew install
 # flatbuffers` / `apt-get install flatbuffers-compiler`, or downloaded

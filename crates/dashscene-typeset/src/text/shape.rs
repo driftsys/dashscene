@@ -4,6 +4,19 @@
 //! `docs/technotes/msdf-arabic-atlas-spike.md`), so the bidi split
 //! comes first.
 //!
+//! Each level run is then split by font coverage before shaping (the
+//! fallback cascade, story #219): a base codepoint goes to the first font
+//! in the typesetter's ordered list that covers the glyph it will shape
+//! to, and a base no font covers stays in the primary font as `.notdef`
+//! (the painter's named missing-glyph diagnostic, #30 — never a silent
+//! drop, P4). A continuation codepoint — a combining mark or a format
+//! control such as ZWJ/ZWNJ — is not routed on its own coverage; it
+//! inherits the font of the base it attaches to, so a mark and its base
+//! (GPOS) and a joiner and its letters (Arabic joining) shape in one
+//! rustybuzz call. Every glyph is tagged with the font it was shaped
+//! with, so the boundary-B stager groups a mixed-script layout into one
+//! glyph run per atlas (`docs/decisions/glyph-runs-cross-boundary-b.md`).
+//!
 //! Each run shapes under a [`RunContext`] derived from its paragraph
 //! (never authored — P1): Arabic-context runs take rustybuzz's full
 //! default feature set — the exact configuration the atlas closure
@@ -22,6 +35,7 @@ use std::ops::Range;
 use rustybuzz::ttf_parser::Tag;
 use rustybuzz::{Direction, Feature, UnicodeBuffer};
 use unicode_bidi::{BidiClass, BidiInfo, ParagraphInfo, bidi_class};
+use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
 
 use super::font::Font;
 
@@ -32,6 +46,11 @@ pub struct ShapedGlyph {
     pub glyph_id: u16,
     /// Byte index of the source character (cluster) in the shaped text.
     pub cluster: u32,
+    /// Index into the typesetter's font list of the font this glyph was
+    /// shaped with — the fallback cascade's result (story #219). Zero for
+    /// a single-font typesetter and for every uncovered codepoint (the
+    /// `.notdef` posture stays in the primary font).
+    pub font: u16,
     pub x_advance: i32,
     pub x_offset: i32,
     /// HarfBuzz convention: y-up. Positioning negates it into document
@@ -88,15 +107,26 @@ pub(crate) fn is_arabic_strong(c: char) -> bool {
     matches!(bidi_class(c), BidiClass::AL)
 }
 
+/// Shapes `text` with `font` — a thin wrapper over [`shape_with_face`]
+/// that constructs the font's shaping face. The paragraph path shapes
+/// against faces it builds once per call ([`shape_paragraph`]), so this
+/// single-run entry point exists only for the shaping unit tests.
+#[cfg(test)]
+fn shape(font: &Font, text: &str, direction: Direction, context: RunContext) -> ShapedText {
+    shape_with_face(&font.face(), text, direction, context)
+}
+
 /// Shapes `text` as one run of the given direction and context — the
 /// caller resolves both per UAX #9 level run ([`shape_paragraph`]),
-/// never per whole mixed-direction string.
+/// never per whole mixed-direction string. Every output glyph is tagged
+/// font 0; [`shape_paragraph`] overwrites the tag with the cascade's
+/// resolved font index.
 ///
 /// Glyphs come back in logical order: rustybuzz emits an RTL run in
 /// visual (left-to-right) order, so it is reversed here. Positioning
 /// re-reverses RTL runs for display (`layout.rs`).
-pub(crate) fn shape(
-    font: &Font,
+pub(crate) fn shape_with_face(
+    face: &rustybuzz::Face<'_>,
     text: &str,
     direction: Direction,
     context: RunContext,
@@ -123,7 +153,7 @@ pub(crate) fn shape(
         RunContext::Arabic => &[],
         RunContext::Plain => &liga_clig_off,
     };
-    let glyphs = rustybuzz::shape(&font.face(), features, buffer);
+    let glyphs = rustybuzz::shape(face, features, buffer);
     let infos = glyphs.glyph_infos();
     let positions = glyphs.glyph_positions();
     let mut glyphs: Vec<ShapedGlyph> = infos
@@ -133,6 +163,8 @@ pub(crate) fn shape(
             // TrueType glyph ids are u16; rustybuzz widens to u32.
             glyph_id: i.glyph_id as u16,
             cluster: i.cluster,
+            // The cascade's caller overwrites this with the real index.
+            font: 0,
             x_advance: p.x_advance,
             x_offset: p.x_offset,
             y_offset: p.y_offset,
@@ -144,11 +176,23 @@ pub(crate) fn shape(
     ShapedText { glyphs }
 }
 
-/// Shapes one paragraph: itemizes it into UAX #9 level runs, shapes
-/// each run with its resolved direction, and rebases clusters from
+/// Shapes one paragraph against an ordered font list: itemizes it into
+/// UAX #9 level runs, splits each level run into font sub-runs by
+/// coverage (the fallback cascade, story #219), shapes each sub-run with
+/// its resolved direction and context, and rebases clusters from
 /// run-relative to paragraph-relative bytes. Output stays in logical
-/// order across the whole paragraph.
-pub(crate) fn shape_paragraph(font: &Font, bidi: &BidiInfo<'_>) -> ShapedText {
+/// order across the whole paragraph, each glyph tagged with the font it
+/// was shaped with.
+///
+/// A single-font list (`&[primary]`) yields one sub-run per level run
+/// spanning the whole run — the pre-#219 path, byte-for-byte, every
+/// glyph tagged font 0.
+pub(crate) fn shape_paragraph(fonts: &[Font], bidi: &BidiInfo<'_>) -> ShapedText {
+    // Build each font's shaping face once for the whole paragraph — the
+    // cascade probes coverage with them and shapes the sub-runs with the
+    // same faces. Off the hot path: the shaped-run cache sits in front of
+    // this, so a paragraph is shaped at most once.
+    let faces: Vec<rustybuzz::Face<'_>> = fonts.iter().map(Font::face).collect();
     let mut glyphs = Vec::new();
     // One '\n'-split paragraph normally holds one bidi paragraph; the
     // other UAX #9 block separators (U+2029, U+0085, …) add more, and
@@ -160,16 +204,126 @@ pub(crate) fn shape_paragraph(font: &Font, bidi: &BidiInfo<'_>) -> ShapedText {
             } else {
                 Direction::LeftToRight
             };
+            // Context is a property of the level run's place in the
+            // paragraph (never authored — P1); the font split is a finer
+            // subdivision that inherits it, so the digit-shape context
+            // scan is decided once per level run and cannot be confused
+            // by a split boundary.
             let context = run_context(bidi, para, &run);
-            let run_start = run.start as u32;
-            let shaped = shape(font, &bidi.text[run], direction, context);
-            glyphs.extend(shaped.glyphs.into_iter().map(|g| ShapedGlyph {
-                cluster: g.cluster + run_start,
-                ..g
-            }));
+            let run_text = &bidi.text[run.clone()];
+            for (font_index, local) in font_split(&faces, run_text, context) {
+                let start = (run.start + local.start) as u32;
+                let shaped =
+                    shape_with_face(&faces[font_index], &run_text[local], direction, context);
+                glyphs.extend(shaped.glyphs.into_iter().map(|g| ShapedGlyph {
+                    cluster: g.cluster + start,
+                    font: font_index as u16,
+                    ..g
+                }));
+            }
         }
     }
     ShapedText { glyphs }
+}
+
+/// Splits a level run's text into contiguous byte ranges, each assigned a
+/// font. A **base** character routes to the first font in `faces` that
+/// covers the glyph it will shape to, falling back to the primary font
+/// (index 0) for a codepoint no font covers — the `.notdef` posture (P4),
+/// never a silent drop. A **continuation** character
+/// ([`is_continuation`] — a combining mark or a format control such as
+/// ZWJ/ZWNJ) has no independent identity to a shaper: it must shape in
+/// the same rustybuzz call as the base it attaches to, or Arabic joining
+/// breaks and GPOS mark-to-base positioning never fires. A continuation
+/// therefore inherits the preceding base's font rather than being routed
+/// on its own coverage; a leading continuation with no preceding base
+/// takes the run's first resolved base font.
+///
+/// Base coverage is probed against the glyph a character actually shapes
+/// to, not merely its authored codepoint: in Arabic context a European
+/// digit is checked against its Arabic-Indic counterpart, so the cascade
+/// keeps the digit with the font that renders its display shape and stays
+/// consistent with production shaping's own substitution (the shared
+/// [`arabic_indic_digit`], one definition).
+///
+/// Ranges are relative to `text`, in logical (byte) order, merged so
+/// consecutive characters sharing a font form one sub-run. A single-font
+/// list yields exactly one range spanning the whole run.
+fn font_split(
+    faces: &[rustybuzz::Face<'_>],
+    text: &str,
+    context: RunContext,
+) -> Vec<(usize, Range<usize>)> {
+    // Resolve a font per character: a base by coverage, a continuation
+    // left open to inherit.
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    let mut font_of: Vec<Option<usize>> = chars
+        .iter()
+        .map(|&(_, c)| (!is_continuation(c)).then(|| font_for(faces, c, context)))
+        .collect();
+    // A continuation inherits the nearest preceding base's font.
+    let mut prev = None;
+    for slot in &mut font_of {
+        match *slot {
+            Some(f) => prev = Some(f),
+            None => *slot = prev,
+        }
+    }
+    // A leading continuation (before any base) inherits the run's first
+    // resolved base font.
+    let mut next = None;
+    for slot in font_of.iter_mut().rev() {
+        match *slot {
+            Some(f) => next = Some(f),
+            None => *slot = next,
+        }
+    }
+    // Merge into byte ranges. A run of only continuations has no base to
+    // inherit; fall back to per-character coverage (the primary for an
+    // uncovered mark — the `.notdef` posture).
+    let mut runs: Vec<(usize, Range<usize>)> = Vec::new();
+    for (&(byte, c), slot) in chars.iter().zip(&font_of) {
+        let font_index = slot.unwrap_or_else(|| font_for(faces, c, context));
+        let end = byte + c.len_utf8();
+        match runs.last_mut() {
+            Some((f, range)) if *f == font_index => range.end = end,
+            _ => runs.push((font_index, byte..end)),
+        }
+    }
+    runs
+}
+
+/// Whether `c` is a **continuation** — a character a shaper must process
+/// together with a neighbouring base, so it must not be routed to its own
+/// font. Two Unicode general-category classes qualify:
+///
+/// - combining marks (Mn/Mc/Me): a mark positions relative to its base
+///   through GPOS, which only fires when both share one shaping call;
+/// - format controls (Cf): joiners and non-joiners (ZWJ/ZWNJ), bidi
+///   controls, and the other invisible format characters — they steer a
+///   base's shaping (Arabic joining) and carry no glyph of their own.
+fn is_continuation(c: char) -> bool {
+    matches!(
+        c.general_category(),
+        GeneralCategory::NonspacingMark
+            | GeneralCategory::SpacingMark
+            | GeneralCategory::EnclosingMark
+            | GeneralCategory::Format
+    )
+}
+
+/// The font index that shapes a base `c` under `context`: the first face
+/// whose cmap covers the glyph `c` will actually shape to, else the
+/// primary font (0).
+fn font_for(faces: &[rustybuzz::Face<'_>], c: char, context: RunContext) -> usize {
+    let effective = match context {
+        RunContext::Arabic => arabic_indic_digit(c),
+        RunContext::Plain => c,
+    };
+    faces
+        .iter()
+        .position(|face| face.glyph_index(effective).is_some())
+        .unwrap_or(0)
 }
 
 /// Resolves one level run's [`RunContext`] from its paragraph.
@@ -312,6 +466,98 @@ mod tests {
     }
 
     #[test]
+    fn font_split_single_font_is_one_sub_run() {
+        // The pre-#219 path: one font, one sub-run spanning the whole run.
+        let arabic = arabic_font();
+        let faces = [arabic.face()];
+        // "سلام" — four Arabic letters, two bytes each.
+        assert_eq!(
+            font_split(&faces, "سلام", RunContext::Plain),
+            vec![(0, 0..8)]
+        );
+    }
+
+    #[test]
+    fn font_split_segments_a_level_run_by_coverage() {
+        // Primary Arabic, fallback Latin. In "aب" the Latin 'a' is absent
+        // from Noto Sans Arabic and cascades to the fallback; the beh
+        // stays in the primary. Sub-runs come back in byte order.
+        let arabic = arabic_font();
+        let latin = font();
+        let faces = [arabic.face(), latin.face()];
+        assert_eq!(
+            font_split(&faces, "aب", RunContext::Plain),
+            vec![(1, 0..1), (0, 1..3)]
+        );
+    }
+
+    #[test]
+    fn font_split_routes_an_arabic_context_digit_by_its_display_shape() {
+        // Latin primary, Arabic fallback. A European '5' in Arabic
+        // context is probed against its Arabic-Indic display shape, which
+        // only the Arabic fallback carries — so it cascades there, not to
+        // the Latin primary that carries the European '5'.
+        let latin = font();
+        let arabic = arabic_font();
+        let faces = [latin.face(), arabic.face()];
+        assert_eq!(font_split(&faces, "5", RunContext::Arabic), vec![(1, 0..1)]);
+        // In Plain context the same '5' is probed as itself and stays in
+        // the Latin primary.
+        assert_eq!(font_split(&faces, "5", RunContext::Plain), vec![(0, 0..1)]);
+    }
+
+    #[test]
+    fn font_split_uncovered_codepoint_stays_in_the_primary() {
+        // A CJK ideograph neither fixture font carries falls to font 0.
+        let arabic = arabic_font();
+        let latin = font();
+        let faces = [arabic.face(), latin.face()];
+        assert_eq!(font_split(&faces, "一", RunContext::Plain), vec![(0, 0..3)]);
+    }
+
+    #[test]
+    fn font_split_a_joining_control_inherits_the_preceding_font() {
+        // Latin primary, Arabic fallback. "ل\u{200D}م": lam (Arabic, f1),
+        // ZWJ (a format control — in both cmaps, but a continuation), meem
+        // (Arabic, f1). The ZWJ must not split the word: one sub-run, all
+        // font 1 (lam 2 bytes, ZWJ 3, meem 2 → 0..7).
+        let latin = font();
+        let arabic = arabic_font();
+        let faces = [latin.face(), arabic.face()];
+        assert_eq!(
+            font_split(&faces, "ل\u{200D}م", RunContext::Arabic),
+            vec![(1, 0..7)]
+        );
+    }
+
+    #[test]
+    fn font_split_a_combining_mark_inherits_its_base_font() {
+        // Latin primary, Arabic fallback. "a\u{064E}": 'a' (Latin base, f0),
+        // fatha (a nonspacing mark). The mark inherits its base's font: one
+        // sub-run, font 0 (a 1 byte, fatha 2 → 0..3).
+        let latin = font();
+        let arabic = arabic_font();
+        let faces = [latin.face(), arabic.face()];
+        assert_eq!(
+            font_split(&faces, "a\u{064E}", RunContext::Plain),
+            vec![(0, 0..3)]
+        );
+    }
+
+    #[test]
+    fn font_split_a_leading_mark_takes_the_first_base_font() {
+        // A mark with no preceding base takes the run's first resolved base
+        // font (forward-fill): fatha then beh, both the Arabic fallback (f1).
+        let latin = font();
+        let arabic = arabic_font();
+        let faces = [latin.face(), arabic.face()];
+        assert_eq!(
+            font_split(&faces, "\u{064E}ب", RunContext::Arabic),
+            vec![(1, 0..4)]
+        );
+    }
+
+    #[test]
     fn shapes_av_with_kerning() {
         let data = std::fs::read(crate::atlas::TEST_FONT).unwrap();
         let shaped = shape(&font(), "AV", Direction::LeftToRight, RunContext::Plain);
@@ -420,7 +666,7 @@ mod tests {
         // paragraph-relative and non-decreasing across run boundaries.
         let text = "אב 123 גד";
         let bidi = BidiInfo::new(text, None);
-        let shaped = shape_paragraph(&font(), &bidi);
+        let shaped = shape_paragraph(&[font()], &bidi);
         let clusters: Vec<u32> = shaped.glyphs.iter().map(|g| g.cluster).collect();
         assert_eq!(clusters, vec![0, 2, 4, 5, 6, 7, 8, 9, 11]);
     }

@@ -35,6 +35,12 @@ use unicode_bidi::{BidiClass, BidiInfo, ParagraphInfo};
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PositionedGlyph {
     pub glyph_id: u16,
+    /// Index into the typesetter's font list of the font this glyph was
+    /// shaped with — the fallback cascade's result (story #219). A
+    /// mixed-script line carries glyphs from more than one font, so the
+    /// boundary-B stager groups consecutive same-font glyphs into one
+    /// glyph run per atlas. Zero for a single-font typesetter.
+    pub font: u16,
     pub x: f32,
     pub y: f32,
 }
@@ -70,36 +76,70 @@ pub struct CacheStats {
     pub misses: u64,
 }
 
-/// The runtime pipeline facade: one font (fallback lists are the v0.6
-/// charset story's), one shaped-run cache in front of shaping.
+/// The runtime pipeline facade: an ordered font list (primary first,
+/// story #219 — the runtime resolves one document font reference to a
+/// fallback list), one shaped-run cache in front of shaping.
 ///
 /// The cache stores font-unit shaped runs keyed by paragraph text —
 /// shaping output is size-independent, so one entry serves every
-/// render size (the design record explains how this refines DESIGN
-/// §7.2's "string+style" key while the font is fixed per typesetter).
-/// It is unbounded in v0.5: cockpit UI text is a bounded set, and an
+/// render size. The font list is fixed per typesetter (runtime
+/// configuration, not a per-call axis), so the cascade — which font
+/// each codepoint resolves to — is a pure function of the text; the
+/// key stays the text alone, exactly as in the single-font case (the
+/// design record explains how this refines DESIGN §7.2's "string+style"
+/// key). It is unbounded: cockpit UI text is a bounded set, and an
 /// eviction policy before a real producer shows growth would be
 /// speculative.
 #[derive(Debug)]
 pub struct Typesetter {
-    font: Font,
+    /// Primary font first, then fallbacks in cascade order. Always at
+    /// least one element.
+    fonts: Vec<Font>,
     cache: HashMap<Box<str>, Arc<ShapedText>>,
     hits: u64,
     misses: u64,
 }
 
 impl Typesetter {
+    /// A single-font typesetter — the pre-#219 constructor. Equivalent
+    /// to [`with_fonts`](Self::with_fonts) with a one-element list; every
+    /// glyph is tagged font 0.
     pub fn new(font: Font) -> Typesetter {
+        Self::with_fonts(vec![font])
+    }
+
+    /// A typesetter over an ordered fallback list, primary font first.
+    /// Each level run splits by coverage: a codepoint goes to the first
+    /// font in `fonts` that covers it, and a codepoint no font covers
+    /// stays in the primary as `.notdef` (P4).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `fonts` is empty — a typesetter has no primary font to
+    /// fall back to.
+    pub fn with_fonts(fonts: Vec<Font>) -> Typesetter {
+        assert!(!fonts.is_empty(), "a typesetter needs at least one font");
         Typesetter {
-            font,
+            fonts,
             cache: HashMap::new(),
             hits: 0,
             misses: 0,
         }
     }
 
+    /// The primary font — the first in the cascade. Its vertical metrics
+    /// (ascent, descent, line gap) set the line box; cross-font metric
+    /// unification is out of scope, so a single-font layout is
+    /// unchanged.
     pub fn font(&self) -> &Font {
-        &self.font
+        &self.fonts[0]
+    }
+
+    /// The ordered font list, primary first — the cascade a
+    /// [`PositionedGlyph::font`] indexes. A boundary-B stager maps each
+    /// font to its atlas in this order.
+    pub fn fonts(&self) -> &[Font] {
+        &self.fonts
     }
 
     pub fn cache_stats(&self) -> CacheStats {
@@ -119,9 +159,20 @@ impl Typesetter {
     /// line's glyph positions can reach up to `max_width`, past
     /// `width`. Empty text produces an empty, zero-size layout.
     pub fn layout(&mut self, text: &str, size: f32, max_width: Option<f32>) -> TextLayout {
-        let scale = size / f32::from(self.font.units_per_em());
-        let ascent = f32::from(self.font.ascender()) * scale;
-        let advance = self.font.line_advance() as f32 * scale;
+        // Line metrics come from the primary font (cross-font
+        // unification is out of scope, so the single-font path is
+        // unchanged).
+        let primary_scale = size / f32::from(self.fonts[0].units_per_em());
+        let ascent = f32::from(self.fonts[0].ascender()) * primary_scale;
+        let advance = self.fonts[0].line_advance() as f32 * primary_scale;
+        // Per-font pixel scale: each glyph's advances and offsets are in
+        // its own font's units, so a different-upem fallback is scaled by
+        // its own upem, not the primary's (story #219).
+        let scales: Vec<f32> = self
+            .fonts
+            .iter()
+            .map(|f| size / f32::from(f.units_per_em()))
+            .collect();
         let mut lines = Vec::new();
         // Parallel to `lines`: the owning paragraph's base direction.
         let mut rtl_lines = Vec::new();
@@ -152,11 +203,12 @@ impl Typesetter {
                     let ge = shaped
                         .glyphs
                         .partition_point(|g| (g.cluster as usize) < content.end);
-                    for range in layout::break_lines(paragraph, &shaped, gs..ge, scale, max_width) {
+                    for range in layout::break_lines(paragraph, &shaped, gs..ge, &scales, max_width)
+                    {
                         let baseline = ascent + lines.len() as f32 * advance;
                         rtl_lines.push(para.level.is_rtl());
                         lines.push(layout::position_line(
-                            &bidi, para, &shaped, range, scale, baseline,
+                            &bidi, para, &shaped, range, &scales, baseline,
                         ));
                     }
                 }
@@ -193,7 +245,7 @@ impl Typesetter {
             return hit.clone();
         }
         self.misses += 1;
-        let shaped = Arc::new(shape::shape_paragraph(&self.font, bidi));
+        let shaped = Arc::new(shape::shape_paragraph(&self.fonts, bidi));
         self.cache.insert(paragraph.into(), shaped.clone());
         shaped
     }
