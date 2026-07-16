@@ -79,3 +79,21 @@ sizes produces one miss and two hits.
   exists would freeze it into the public API. If #29/#30 turn out to
   need direct access to shaped, unpositioned runs, exporting them
   then is an additive change.
+
+## Resolution (story #219, 2026-07-16) — the key stayed the text
+
+Multi-font fallback landed in v0.7 (the "Why" bullet above named it
+as #34; it was deferred to #219,
+`docs/decisions/font-fallback-deferred-past-v06.md`), and the cache key
+did **not** grow. The bullet anticipated a growing key because it
+treated fallback as a per-`layout`-call axis; as built, the ordered
+font list is fixed per `Typesetter` (runtime configuration), so the
+cascade — which font each codepoint resolves to — is a pure function of
+the paragraph text, exactly as bidi levels and digit contexts already
+were. The key stays the text alone. The cached `ShapedText` now records
+the cascade's result, one `font` index per `ShapedGlyph`, so a
+mixed-script paragraph is cascaded and shaped once and reused across
+render sizes — proven by
+`tests/typeset_fallback.rs::cache_key_is_text_across_sizes_for_a_multi_font_typesetter`
+(one miss, two hits). Only a shaping-relevant axis that varies per
+`layout` call — none exists today — would grow the key.

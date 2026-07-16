@@ -19,12 +19,15 @@ across into `dashscene-typeset`'s test directory (debt #217).
 
 - `ascii/` — from `corpus/fonts/noto-sans`, charset printable ASCII
   (0x20..=0x7e) plus the Latin ligatures the GSUB closure adds. Consumed
-  by the v0.5 Latin text golden (`goldens/tooling/tests/v05_text.rs`).
+  by the v0.5 Latin text golden (`goldens/tooling/tests/v05_text.rs`) and,
+  as the Latin fallback atlas, by the v0.7 multi-font golden
+  (`goldens/tooling/tests/v07_fallback.rs`).
 - `arabic/` — from `corpus/fonts/noto-sans-arabic`, charset the standard
   Arabic letters, harakat, Arabic-Indic digits, and space (the GSUB
   closure adds the contextual forms and ligatures those shape to).
   Consumed by the v0.6 Arabic (E2) golden
-  (`goldens/tooling/tests/v06_arabic.rs`).
+  (`goldens/tooling/tests/v06_arabic.rs`) and, as the primary atlas, by
+  the v0.7 multi-font golden (`goldens/tooling/tests/v07_fallback.rs`).
 
 Each atlas is a directory of two files:
 

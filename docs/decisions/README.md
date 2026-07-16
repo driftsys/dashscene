@@ -121,8 +121,10 @@ into the records below. Per-story decisions land here directly:
   blit positioned quads and never shape (story #30).
 - [font-fallback-deferred-past-v06.md](font-fallback-deferred-past-v06.md)
   — multi-font fallback (per-style font lists, per-font charset unions) is
-  deferred past v0.6; one font per declared charset until then; tracking
-  issue #219 (v0.5-close revision).
+  deferred past v0.6; one font per declared charset until then. Resolved
+  in v0.7 (story #219): fallback landed runtime-side, no `.dsb` schema
+  change — see the record's Resolution and `docs/design/typeset-latin.md`
+  (Font fallback).
 - [boundary-b-unification.md](boundary-b-unification.md) — story #4:
   `dashpaint` owns the boundary-B types (`dashscene-core` depends on it,
   publish order updated), every committed rect resolves (no `NO_PAINT`

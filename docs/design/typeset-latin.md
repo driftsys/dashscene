@@ -3,7 +3,8 @@
     crate    crates/dashscene-typeset (module `text`)
     covers   v0.5 — text I: Latin (story #28, epic #24);
              v0.6 — text II: bidi (story #32) and Arabic shaping +
-             digit shapes (story #33), epic #31
+             digit shapes (story #33), epic #31;
+             v0.7 — multi-font fallback (story #219)
     traces   docs/archive/2026-07-14-design-1-seed.md §7.2 (runtime
              half: shape → line break → positioned glyph runs;
              shaped-run cache), §2 (rustybuzz, ttf-parser,
@@ -37,15 +38,15 @@ is the measure callback (#29), which reads those accessors and calls
 
 ## Pipeline shape
 
-    Typesetter::new(Font)                       one font (fallback lists
-                                                 deferred past v0.6 —
-                                                 docs/decisions/font-fallback-deferred-past-v06.md)
+    Typesetter::with_fonts([primary, ..fallbacks])   ordered font list;
+    Typesetter::new(Font)                            new = one-element list
     Typesetter::layout(text, size, max_width)   → TextLayout
       split text on '\n'                        → chunks
       per-chunk cache lookup (key: text)         → ShapedText (font
         miss: bidi-resolve (UAX #9), then per      units, unpositioned,
-        level run: resolve direction + context,    logical order)
-        rustybuzz-shape, rebase clusters
+        level run: resolve direction + context,    logical order, each
+        split by font coverage, shape each         glyph tagged with its
+        sub-run, rebase clusters                    font index)
       per bidi paragraph: greedy line break      → lines of glyph
         (space runs / '\n', logical order)         ranges
       position (visual reorder per line — UAX    → TextLayout
@@ -157,38 +158,115 @@ own `is_arabic_strong` predicate and `arabic_indic_digit` mapping —
 one definition, so the coverage rule cannot drift from the production
 rule (`docs/design/atlas-pipeline.md`, Charset closure).
 
+## Font fallback (story #219)
+
+A `Typesetter` holds an ordered font list — the primary font first,
+then fallbacks (`Typesetter::with_fonts`; `Typesetter::new` is the
+one-element list). The list is the runtime's font configuration
+resolved from the document's single font reference per style: the
+document carries one font reference (P1), and no `.dsb` schema change
+was needed — the fallback list is a runtime-side property of the
+`Typesetter`, not authored (`docs/decisions/font-fallback-deferred-past-v06.md`).
+
+The cascade sits between the bidi level-run split and shaping. Each
+UAX #9 level run is split into contiguous font sub-runs by coverage
+(`shape.rs`, `font_split`). A **base** codepoint goes to the first
+font in the list whose cmap covers the glyph it will actually shape
+to, and a base no font covers stays in the primary font, where it
+shapes to `.notdef` — the painter's named missing-glyph diagnostic
+(#30), never a silent drop (P4). A **continuation** codepoint is not
+routed on its own coverage: a combining mark (general category
+Mn/Mc/Me) and a format control (Cf — the joiners ZWJ/ZWNJ, bidi
+controls, and other invisible format characters) have no independent
+identity to a shaper, so each inherits the font of the base it
+attaches to; a leading continuation with no base takes the run's
+first resolved base font. This keeps a mark and its base in one
+shaping call (so GPOS mark-to-base fires) and a joiner with the
+letters it joins (so Arabic joining is not broken by a font-split
+boundary) — the routing regression the coverage-only split would
+cause. Each sub-run then shapes with its own font, and every glyph is
+tagged with that font's index (`ShapedGlyph::font` →
+`PositionedGlyph::font`). A single-font list yields one sub-run per
+level run spanning the whole run, so the pre-#219 output is
+byte-for-byte unchanged and every glyph is tagged font 0 — the E2
+Arabic golden depends on this.
+
+Four couplings hold the cascade consistent with the rest of the
+pipeline:
+
+- **Continuations follow their base, not their own coverage.** As
+  above: marks and format controls inherit the preceding base's font.
+  Routing them by coverage would strand a ZWJ that both fonts' cmaps
+  carry in the wrong font (splitting an Arabic word into isolated
+  forms), or split a mark from its base (so it shapes alone and its
+  GPOS positioning never fires).
+- **Context is per level run, inherited by the sub-runs.** The
+  Arabic-context rule and the digit-shape context scan
+  (`run_context`, isolate-aware) run once per level run, on the full
+  paragraph, before the font split. A font-split boundary therefore
+  cannot confuse a digit run's context scan — the sub-runs of one
+  level run all share its resolved context.
+- **Coverage is probed against the display shape, not the authored
+  codepoint.** In Arabic context a European digit is probed against
+  its Arabic-Indic counterpart (the same `arabic_indic_digit` the
+  shaper substitutes with), so the digit cascades to the font that
+  can render its display form rather than to one that would shape it
+  to `.notdef`.
+- **Each glyph scales by its own font's upem.** Advances and offsets
+  are in the glyph's own font units, so positioning and line breaking
+  scale each glyph by `size / its_font.units_per_em`
+  (`layout.rs`), not by the primary's — a fallback font of a
+  different upem behind the primary would otherwise mis-size and
+  mis-place all its text. Only the line-box metrics (ascent, descent,
+  line gap, and so the baseline advance) come from the primary font;
+  cross-font metric unification (a line box sized to the tallest font
+  on the line) is deliberately out of scope, which keeps a single-font
+  layout unchanged.
+
+A neutral base character covered by more than one font (an ASCII
+space) goes to the first font that covers it, per the cascade rule,
+rather than staying with its surrounding script's font. For the
+invisible space this is harmless; a script-aware neutral itemization
+is a later refinement, not built speculatively.
+
 ## Public surface
 
     crates/dashscene-typeset/src/text/mod.rs
 
-    pub struct Typesetter { font: Font, cache: HashMap<Box<str>, Arc<ShapedText>>, hits, misses }
+    pub struct Typesetter { fonts: Vec<Font>, cache: HashMap<Box<str>, Arc<ShapedText>>, hits, misses }
     impl Typesetter {
-        pub fn new(font: Font) -> Typesetter;
-        pub fn font(&self) -> &Font;
+        pub fn new(font: Font) -> Typesetter;           // one-element list
+        pub fn with_fonts(fonts: Vec<Font>) -> Typesetter;   // primary first
+        pub fn font(&self) -> &Font;                    // the primary
+        pub fn fonts(&self) -> &[Font];                 // the cascade order
         pub fn layout(&mut self, text: &str, size: f32, max_width: Option<f32>) -> TextLayout;
         pub fn cache_stats(&self) -> CacheStats;
     }
     pub struct CacheStats { pub hits: u64, pub misses: u64 }
     pub struct TextLayout { pub lines: Vec<Line>, pub width: f32, pub height: f32, pub size: f32 }
     pub struct Line { pub glyphs: Vec<PositionedGlyph>, pub width: f32, pub baseline_y: f32 }
-    pub struct PositionedGlyph { pub glyph_id: u16, pub x: f32, pub y: f32 }
+    pub struct PositionedGlyph { pub glyph_id: u16, pub font: u16, pub x: f32, pub y: f32 }
     pub struct Font { /* Arc<Vec<u8>>, face index,
                           atlas::FontMetrics (shared with the blob) */ }
     pub enum TypesetError { FontParse(String) }
 
-The surface is unchanged since v0.5 — #32 and #33 changed how glyphs
-are produced and placed, not what a consumer sees. `Font` is public —
-the measure callback (#29) and the painter (#30) both need the font
-handle and its metrics, including `Font::line_advance()` (the
-baseline-to-baseline distance layout uses). `Font::metrics()` returns
-the same `atlas::FontMetrics` type the blob records, extracted through
-the same shared function, so the runtime and the build-time artifacts
+The surface grew at #219: `Typesetter` holds a font list
+(`with_fonts`, `fonts()`), and `PositionedGlyph` carries the `font`
+index the cascade resolved — the value a boundary-B stager groups runs
+by, one glyph run per atlas. `new`, `font()`, and every other field
+keep their v0.5 meaning; a single-font `Typesetter` and its output are
+byte-identical to before. `Font` is public — the measure callback
+(#29) and the painter (#30) both need the font handle and its metrics,
+including `Font::line_advance()` (the baseline-to-baseline distance
+layout uses, from the primary font). `Font::metrics()` returns the
+same `atlas::FontMetrics` type the blob records, extracted through the
+same shared function, so the runtime and the build-time artifacts
 cannot disagree. `ShapedText`/`ShapedGlyph`/`RunContext` stay
 crate-private: they are the cache-value and shaping-posture
 representations, and publishing them before a consumer exists would
-freeze them into the public API. `shape()` and `Font::face()` are also
-crate-private; nothing outside `dashscene-typeset` constructs a
-`rustybuzz::Face`.
+freeze them into the public API. `shape_with_face()` and
+`Font::face()` are also crate-private; nothing outside
+`dashscene-typeset` constructs a `rustybuzz::Face`.
 
 ## Coordinate conventions
 
@@ -271,16 +349,20 @@ small to warrant its own module.
   ids, advances, offsets in font units) is size-independent, so the
   px scale is applied only at positioning time.
 - Keyed by chunk text alone. Resolved bidi levels, run directions,
-  and digit-shape contexts are all pure functions of that text, so one
-  entry serves every layout of the chunk. `docs/archive/2026-07-14-design-1-seed.md`
+  digit-shape contexts, and the font cascade are all pure functions of
+  that text, so one entry serves every layout of the chunk.
+  `docs/archive/2026-07-14-design-1-seed.md`
   §7.2 describes the key as
-  "string + style"; while the font is fixed per `Typesetter` (one
-  font, no fallback through v0.6), the shaping-relevant style
-  component is fixed too, so the key reduces to the string. Different
-  `size` and `max_width` values reuse the same cache entry. When style
-  grows a shaping-relevant axis (font selection by weight/family), the
-  key grows with it — see
-  `docs/decisions/shaped-run-cache-font-units.md`.
+  "string + style"; the shaping-relevant style component — the ordered
+  font list (story #219) — is fixed per `Typesetter` (runtime
+  configuration, not a per-call axis), so the key reduces to the
+  string. The cached `ShapedText` records the cascade's result (each
+  glyph's font index), so a mixed-script paragraph is cascaded and
+  shaped once and reused across sizes. Different `size` and
+  `max_width` values reuse the same cache entry — see
+  `docs/decisions/shaped-run-cache-font-units.md`. Only a shaping-
+  relevant axis that varies per `layout` call (none today) would grow
+  the key.
 - Unbounded: cockpit UI text is a bounded set; an eviction policy is
   speculative until a real producer shows growth.
 - `Typesetter::cache_stats() -> CacheStats { hits, misses }` makes hit
@@ -303,11 +385,18 @@ not look the glyph id up in an atlas at all.
 - **UAX #14 line breaking.** Break points are ASCII space runs and
   `'\n'` only; the Unicode line-breaking algorithm arrives when real
   content demands it — no issue number assigned yet.
-- **Font fallback / charset unions.** One `Font` per `Typesetter`;
-  deferred past v0.6
-  (`docs/decisions/font-fallback-deferred-past-v06.md`, tracking
-  issue #219) — a codepoint outside the font shapes to `.notdef` and
-  hits the painter's missing-glyph diagnostic.
+- **Cross-font line-metric unification.** Line-box metrics (ascent,
+  descent, line gap) come from the primary font (Font fallback,
+  above); a line box sized to the tallest font on the line is a later
+  refinement. Per-glyph advances and offsets do scale by each glyph's
+  own font upem — only the shared line box is the primary's. A
+  codepoint no font in the list covers still shapes to `.notdef` and
+  hits the painter's missing-glyph diagnostic (#30).
+- **Script-aware neutral itemization.** A neutral base character
+  covered by more than one font follows the plain cascade rule (first
+  font that covers it), not the surrounding script's font. (Combining
+  marks and format controls are not neutrals here — they inherit their
+  base's font; see Font fallback.)
 - **Latin ligatures.** `liga`/`clig` stay disabled for non-Arabic
   runs; see `docs/decisions/liga-clig-off-until-gsub-closure.md`
   (Resolution) for what unblocks them.
@@ -339,17 +428,25 @@ not look the glyph id up in an atlas at all.
                                                   builds the on-demand
                                                   rustybuzz::Face
     crates/dashscene-typeset/src/text/shape.rs   ShapedText/ShapedGlyph
-                                                  (font units); level_runs
+                                                  (font units, per-glyph
+                                                  font index); level_runs
                                                   (UAX #9 itemization);
                                                   RunContext + run_context
                                                   (per-run features and
-                                                  digit shapes); the
-                                                  rustybuzz shaping call
+                                                  digit shapes); font_split
+                                                  + is_continuation (the
+                                                  coverage cascade with
+                                                  mark/control inheritance,
+                                                  #219); the rustybuzz
+                                                  shaping call
+                                                  (shape_with_face)
     crates/dashscene-typeset/src/text/layout.rs  break_lines (greedy
                                                   breaker, logical order),
                                                   position_line (visual
                                                   reorder + baseline
-                                                  positioning)
+                                                  positioning); both scale
+                                                  each glyph by its own
+                                                  font's upem (#219)
 
 `atlas` (build-time) and `text` (runtime) stay sibling modules of the
 one typesetter crate (`docs/design/architecture.md`,
@@ -381,7 +478,11 @@ profiling evidence.
   authored-byte clusters, and stay European in Plain context; digit
   runs resolve their context from the nearest strong character
   (before, after, none, Hebrew, Latin-embedded, extended-Arabic,
-  isolate-sealed, and Arabic-comma cases).
+  isolate-sealed, and Arabic-comma cases). `font_split` (#219) segments
+  a level run by coverage: a single-font list is one sub-run; an
+  Arabic/Latin run splits; an Arabic-context European digit routes to
+  the font that renders its Arabic-Indic display shape; an uncovered
+  codepoint stays in the primary.
 - `tests/typeset_latin.rs`: the v0.5 pipeline pins — breaks, wraps,
   widths, baselines, cache hits, offset-less glyphs on the baseline.
 - `tests/typeset_bidi.rs` (issue #32): embedded digits keep LTR order
@@ -401,15 +502,35 @@ profiling evidence.
   joining-context sweep of every letter and haraka plus realistic
   strings) lives in `tests/atlas_pipeline.rs` behind the atlas-repro
   env gate. The fixture-path and helper trio (`font_data`,
-  `typesetter`, `cmap`) is shared by all three typeset test files
+  `typesetter`, `cmap`) is shared by all four typeset test files
   through `tests/common/mod.rs`.
+- `tests/typeset_fallback.rs` (issue #219): a `with_fonts` typesetter
+  lays out "sur'a km/h" with the Arabic word in the primary font and
+  the Latin unit cascaded to the fallback, tagged by font index and
+  placed as one visual line; an uncovered codepoint is `.notdef` in
+  the primary; a single-font typesetter tags every glyph font 0; the
+  cache key stays the text across sizes; the digit-shape context
+  survives the font split (Arabic-context "120" renders Arabic-Indic
+  in the primary while "km/h" cascades); in the reverse configuration
+  an Arabic-context European digit cascades to the font that renders
+  its Arabic-Indic shape; a joining control (ZWJ) and a non-joiner
+  (ZWNJ) route with the Arabic they steer rather than stranding in the
+  Latin primary (the word shapes identically to the single-font
+  output); a combining mark inherits its base's font instead of
+  splitting off to shape alone; and a font split strictly inside one
+  RTL level run (an ampersand between two Arabic words) keeps the run's
+  visual order. The per-font glyph scaling and the mark/control
+  inheritance also have machine-independent unit tests in
+  `layout.rs` (two-upem positioning and wrapping) and `shape.rs`
+  (`font_split` inheritance and leading-mark cases).
 
 ## Out of scope (this record)
 
-Font fallback and charset unions (#219, v0.7+), the measure callback
-(#29 — `docs/design/dashscene-engine.md`), painting and atlas lookup
-(#30), hyphenation/UAX #14, vertical text, letter-spacing and other
-style axes, cache eviction, the pre-shaped-numerals fast path (debt
+Cross-font line-metric unification and script-aware neutral
+itemization (Font fallback, above), the measure callback (#29 —
+`docs/design/dashscene-engine.md`), painting and atlas lookup (#30),
+hyphenation/UAX #14, vertical text, letter-spacing and other style
+axes, cache eviction, the pre-shaped-numerals fast path (debt
 from #33).
 
 ## Trace

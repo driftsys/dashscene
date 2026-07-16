@@ -32,11 +32,15 @@ pub(crate) fn break_lines(
     text: &str,
     shaped: &ShapedText,
     para_glyphs: Range<usize>,
-    scale: f32,
+    scales: &[f32],
     max_width: Option<f32>,
 ) -> Vec<Range<usize>> {
     let max_width = max_width.unwrap_or(f32::INFINITY);
     let glyphs = &shaped.glyphs;
+    // Each glyph is measured at its own font's scale (story #219): a
+    // fallback font's advances are in that font's units, so measuring them
+    // at the primary's scale would mis-size a different-upem fallback.
+    let advance = |g: &ShapedGlyph| g.x_advance as f32 * scales[g.font as usize];
     // Clusters are byte indices of char starts, non-decreasing (the
     // shaping layer stores glyphs in logical order), so a glyph is a
     // space glyph exactly when its source byte is one. Breaking in
@@ -60,12 +64,12 @@ pub(crate) fn break_lines(
             // Spaces extend the width fold but never `end`: a run that
             // turns out to be trailing is dropped by construction.
             for g in &glyphs[run_start..i] {
-                width += g.x_advance as f32 * scale;
+                width += advance(g);
             }
         } else {
             let mut prospective = width;
             for g in &glyphs[run_start..i] {
-                prospective += g.x_advance as f32 * scale;
+                prospective += advance(g);
             }
             if end == start || prospective <= max_width {
                 // The first word of a line is always placed, overflow
@@ -79,7 +83,7 @@ pub(crate) fn break_lines(
                 end = i;
                 width = 0.0;
                 for g in &glyphs[run_start..i] {
-                    width += g.x_advance as f32 * scale;
+                    width += advance(g);
                 }
             }
         }
@@ -99,7 +103,7 @@ pub(crate) fn position_line(
     para: &ParagraphInfo,
     shaped: &ShapedText,
     range: Range<usize>,
-    scale: f32,
+    scales: &[f32],
     baseline_y: f32,
 ) -> Line {
     if range.is_empty() {
@@ -132,11 +136,11 @@ pub(crate) fn position_line(
         let run_glyphs = &line_glyphs[s..e];
         if levels[run.start].is_rtl() {
             for g in run_glyphs.iter().rev() {
-                pen_x = place(&mut glyphs, g, pen_x, scale, baseline_y);
+                pen_x = place(&mut glyphs, g, pen_x, scales, baseline_y);
             }
         } else {
             for g in run_glyphs {
-                pen_x = place(&mut glyphs, g, pen_x, scale, baseline_y);
+                pen_x = place(&mut glyphs, g, pen_x, scales, baseline_y);
             }
         }
     }
@@ -154,13 +158,93 @@ fn place(
     out: &mut Vec<PositionedGlyph>,
     g: &ShapedGlyph,
     pen_x: f32,
-    scale: f32,
+    scales: &[f32],
     baseline_y: f32,
 ) -> f32 {
+    // Each glyph scales by its own font's upem (story #219): offsets and
+    // the advance are in that glyph's font units, so a different-upem
+    // fallback places correctly beside the primary.
+    let scale = scales[g.font as usize];
     out.push(PositionedGlyph {
         glyph_id: g.glyph_id,
+        font: g.font,
         x: pen_x + g.x_offset as f32 * scale,
         y: baseline_y - g.y_offset as f32 * scale,
     });
     pen_x + g.x_advance as f32 * scale
+}
+
+#[cfg(test)]
+mod tests {
+    use unicode_bidi::BidiInfo;
+
+    use super::super::shape::{ShapedGlyph, ShapedText};
+    use super::{break_lines, position_line};
+
+    fn glyph(glyph_id: u16, cluster: u32, font: u16, x_advance: i32) -> ShapedGlyph {
+        ShapedGlyph {
+            glyph_id,
+            cluster,
+            font,
+            x_advance,
+            x_offset: 0,
+            y_offset: 0,
+        }
+    }
+
+    /// C2: each glyph scales by its own font's upem, not the primary's. Two
+    /// glyphs with the same font-unit advance but from fonts of different
+    /// upem must land at positions and contribute widths that reflect each
+    /// glyph's own scale — otherwise a fallback font behind a different-upem
+    /// primary mis-sizes and mis-places all its text.
+    #[test]
+    fn each_glyph_scales_by_its_own_fonts_upem() {
+        let text = "ab"; // one LTR level run; clusters 0 and 1
+        let bidi = BidiInfo::new(text, None);
+        let para = &bidi.paragraphs[0];
+        let shaped = ShapedText {
+            glyphs: vec![glyph(1, 0, 0, 1000), glyph(2, 1, 1, 1000)],
+        };
+        // size 32: primary upem 1000 → scale 0.032; fallback upem 2000 →
+        // scale 0.016.
+        let scales = [32.0 / 1000.0, 32.0 / 2000.0];
+        let line = position_line(&bidi, para, &shaped, 0..2, &scales, 0.0);
+        assert_eq!(line.glyphs.len(), 2);
+        assert!((line.glyphs[0].x - 0.0).abs() < 1e-4);
+        // Second glyph placed after the FIRST glyph's own-font advance
+        // (0.032 * 1000 = 32).
+        assert!(
+            (line.glyphs[1].x - 32.0).abs() < 1e-4,
+            "second glyph x {}",
+            line.glyphs[1].x
+        );
+        // Line width adds the SECOND glyph's own-font advance
+        // (0.016 * 1000 = 16), for 48 total.
+        assert!(
+            (line.width - 48.0).abs() < 1e-4,
+            "line width {}",
+            line.width
+        );
+    }
+
+    /// Wrapping measures each glyph at its own scale too: a fallback word's
+    /// advance must not be measured at the primary's scale. With correct
+    /// per-glyph scale the half-upem word "b" fits under the width; measured
+    /// at the primary's scale it would overflow and wrap.
+    #[test]
+    fn break_lines_measures_each_glyph_at_its_own_scale() {
+        let text = "a b"; // 'a'=0, ' '=1, 'b'=2
+        let shaped = ShapedText {
+            glyphs: vec![
+                glyph(1, 0, 0, 1000), // 'a', font 0 → 32
+                glyph(2, 1, 0, 1000), // ' ', font 0 → 32
+                glyph(3, 2, 1, 1000), // 'b', font 1 → 16 (correct) / 32 (wrong)
+            ],
+        };
+        let scales = [32.0 / 1000.0, 32.0 / 2000.0];
+        // 32 + 32 + 16 = 80 ≤ 85 fits on one line; at the primary's scale it
+        // would be 32 + 32 + 32 = 96 > 85 and wrap.
+        let lines = break_lines(text, &shaped, 0..3, &scales, Some(85.0));
+        assert_eq!(lines, vec![0..3]);
+    }
 }
