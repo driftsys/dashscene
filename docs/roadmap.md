@@ -238,7 +238,7 @@ v0.7 — #160's text lowering is the first producer that can emit an
 out-of-range weight — and the v0.6 breakdown is revised at this close (see
 v0.6 below).
 
-### v0.6 — text II: bidi/Arabic + charsets — open
+### v0.6 — text II: bidi/Arabic + charsets — closed
 
 **Epic #31.** Closes [`E2`](specification/05-qualification.md).
 
@@ -267,6 +267,29 @@ Revised at the v0.5 close, against as-built v0.5 and spike #25:
   deferred past v0.6
   ([`decisions/font-fallback-deferred-past-v06.md`](decisions/font-fallback-deferred-past-v06.md));
   the `E2` screen is single-script and does not need it.
+
+Closed 2026-07-16 — all four stories landed and `E2` is met
+([`specification/05-qualification.md`](specification/05-qualification.md)).
+Story #32 delivered the direction-aware bidi seam and #33 built Arabic
+shaping on it (contextual forms, AL-based run context, context-derived
+Arabic-Indic digits); #34 delivered the shaping-based GSUB-closure atlas
+(two-character ligature limit), with the `liga`/`clig` re-enable landing
+per-run — on for Arabic-context runs, off for Latin. That is narrower than
+the plan bullet above: the flip and the closure landed as two sequenced
+stories, not one change, and Latin's re-enable stays blocked on
+longer-ligature-chain coverage
+([`decisions/liga-clig-off-until-gsub-closure.md`](decisions/liga-clig-off-until-gsub-closure.md)).
+Story #35 rendered the `E2` Arabic-screen golden against an absolute
+differing-pixel budget
+([`decisions/golden-comparison-space.md`](decisions/golden-comparison-space.md)),
+with the Arabic font committed under `corpus/fonts/` and its reproducible
+atlas fixture under the shared home `corpus/atlas/`. The phase-end steps are complete: epic #31 and
+its milestone are closed; the two open text debt items are placed — #224
+(the RTL width-vs-bounds decision) re-anchored into v0.7's text lowering
+issue #160, and #228 (the extended-Arabic joining-context sweep) folded into
+the same story, both firing when imported documents first carry those
+constructs — and the v0.7 breakdown is re-checked at this close (see v0.7
+below).
 
 ### v0.7 — importer catch-up — open
 
@@ -298,6 +321,20 @@ why):
 
 Depends on: v0.3 (the minimal importer) and the validator. Independent of the
 text slices, except for text lowering, which needs v0.5/v0.6.
+
+Re-checked at the v0.6 close (2026-07-16): the v0.3-close re-order stands —
+the lowering widening remains the gate and the story shapes are unchanged.
+Two increments: multi-font fallback (#219) becomes its own
+`dashscene-typeset` story rather than folding into the text lowering,
+because it is a runtime capability (per-style font lists, per-font charset
+unions, per-font atlas pages) that depends only on the completed v0.6
+typeset runtime, so it runs in parallel with the lowering widening; and #224
+(the fixed-width RTL width-vs-bounds decision) re-anchors into the text
+lowering, its first real consumer. Until #219 lands, a codepoint outside a
+style's single font is a named missing-glyph diagnostic (P4), never a silent
+drop, so the text lowering names fallback and the extended-Arabic sweep
+(#228) as explicit non-scope
+([`decisions/font-fallback-deferred-past-v06.md`](decisions/font-fallback-deferred-past-v06.md)).
 
 The wasm ABI this slice crosses is already a settled boundary, not an open
 question: it was designed and pinned at v0.3
