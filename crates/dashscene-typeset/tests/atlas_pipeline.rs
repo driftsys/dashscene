@@ -10,7 +10,7 @@ use dashscene_typeset::atlas::{AtlasBundle, AtlasSpec, REQUIRE_TOOL_ENV, generat
 
 mod common;
 
-use common::FONT;
+use common::{FONT, FONT_ARABIC};
 
 const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ascii");
 
@@ -54,8 +54,11 @@ fn generates_ascii_atlas_with_full_coverage() {
     let bundle = shared_ascii_bundle();
     let m = &bundle.metrics;
     assert!(m.missing_codepoints.is_empty());
-    // 95 ASCII chars resolve to 95 distinct gids, plus .notdef.
-    assert_eq!(m.glyphs.len(), 96);
+    // 95 ASCII chars resolve to 95 distinct gids, plus .notdef, plus the
+    // three Latin ligatures the GSUB closure now covers (ff, fi, fl —
+    // the two-character `liga` outputs; ffi/ffl are three-character and
+    // out of the pairwise sweep).
+    assert_eq!(m.glyphs.len(), 99);
     assert!(m.glyphs.windows(2).all(|w| w[0].glyph_id < w[1].glyph_id));
     // space advances but paints nothing; every other glyph has bounds.
     let space_gid = {
@@ -124,6 +127,106 @@ fn missing_codepoints_are_reported_not_dropped() {
     let spec = AtlasSpec::new(PathBuf::from(FONT), charset);
     let bundle = generate(&spec).expect("pipeline runs");
     assert_eq!(bundle.metrics.missing_codepoints, vec![0x0710]);
+}
+
+/// A representative Arabic UI charset: the standard Arabic letters,
+/// Arabic-Indic digits, the common harakat, and space. The letter and
+/// haraka ranges are the closure's own sweep ranges, reused here so the
+/// two definitions cannot drift.
+fn arabic_charset() -> BTreeSet<char> {
+    let letters = dashscene_typeset::atlas::ARABIC_LETTERS.filter_map(char::from_u32);
+    let harakat = dashscene_typeset::atlas::ARABIC_HARAKAT.filter_map(char::from_u32);
+    let digits = (0x0660u32..=0x0669).filter_map(char::from_u32);
+    letters.chain(harakat).chain(digits).chain([' ']).collect()
+}
+
+/// Shapes `text` with the default OpenType feature set (ligatures on) —
+/// the independent oracle for what the atlas must cover.
+fn shaped_gids(face: &rustybuzz::Face<'_>, text: &str) -> Vec<u16> {
+    let mut buffer = rustybuzz::UnicodeBuffer::new();
+    buffer.push_str(text);
+    buffer.guess_segment_properties();
+    rustybuzz::shape(face, &[], buffer)
+        .glyph_infos()
+        .iter()
+        .map(|i| i.glyph_id as u16)
+        .collect()
+}
+
+/// The whole point of the story: an atlas built from a declared Arabic
+/// charset covers the GSUB contextual forms and ligatures that real
+/// words composed from that charset shape to — glyphs that carry no
+/// cmap entry and that a cmap-only closure would drop.
+#[test]
+fn arabic_atlas_covers_shaped_contextual_forms() {
+    if !tool_available() {
+        return;
+    }
+    let spec = AtlasSpec::new(PathBuf::from(FONT_ARABIC), arabic_charset());
+    let bundle = generate(&spec).expect("pipeline runs over the Arabic fixture");
+    let m = &bundle.metrics;
+    assert!(
+        m.missing_codepoints.is_empty(),
+        "the fixture covers every declared codepoint: {:?}",
+        m.missing_codepoints
+    );
+    let covered: BTreeSet<u16> = m.glyphs.iter().map(|g| g.glyph_id).collect();
+    assert!(m.glyphs.windows(2).all(|w| w[0].glyph_id < w[1].glyph_id));
+
+    let data = std::fs::read(FONT_ARABIC).unwrap();
+    let face = rustybuzz::Face::from_slice(&data, 0).unwrap();
+
+    // The atlas must carry glyphs cmap alone cannot reach — the
+    // contextual forms and dots Noto Sans Arabic composes through GSUB.
+    let cmap_only: BTreeSet<u16> = arabic_charset()
+        .iter()
+        .filter_map(|&c| face.glyph_index(c).map(|g| g.0))
+        .chain(std::iter::once(0))
+        .collect();
+    assert!(
+        covered.iter().any(|g| !cmap_only.contains(g)),
+        "atlas added no GSUB-only glyph"
+    );
+
+    // Every glyph real Arabic words shape to (contextual forms, lam-alef
+    // ligature, harakat) must be in the atlas.
+    for word in [
+        "مرحبا", // hello
+        "السلام", // the peace — seen-joined lam-alef
+        "بيت",   // house
+        "كتاب",  // book
+        "مدرسة", // school
+        "درجة",  // degree
+        "لا",     // isolated lam-alef
+        "بَ",     // beh + fatha
+        "١٢٣٤٥", // Arabic-Indic digits
+    ] {
+        for gid in shaped_gids(&face, word) {
+            assert!(
+                covered.contains(&gid),
+                "word {word:?} shapes to gid {gid}, absent from the atlas"
+            );
+        }
+    }
+}
+
+/// The Arabic atlas is byte-reproducible from the same inputs on one
+/// machine (R7), the same guarantee the ASCII fixture proves — over a
+/// charset whose closure runs the full GSUB sweep.
+#[test]
+fn arabic_atlas_double_run_is_byte_identical() {
+    if !tool_available() {
+        return;
+    }
+    let spec = AtlasSpec::new(PathBuf::from(FONT_ARABIC), arabic_charset());
+    let a = generate(&spec).expect("first run");
+    let b = generate(&spec).expect("second run");
+    assert_eq!(a.image_png, b.image_png, "atlas.png must be byte-identical");
+    assert_eq!(
+        a.metrics.to_bytes(),
+        b.metrics.to_bytes(),
+        "atlas.metrics must be byte-identical"
+    );
 }
 
 #[test]

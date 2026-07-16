@@ -9,7 +9,7 @@ mod closure;
 mod metrics;
 mod tool;
 
-pub use closure::{Closure, charset_closure};
+pub use closure::{ARABIC_HARAKAT, ARABIC_LETTERS, Closure, charset_closure};
 pub use metrics::{
     AtlasInfo, AtlasMetrics, FORMAT_VERSION, FontMetrics, GeneratorInfo, GlyphEntry, font_metrics,
 };
@@ -24,6 +24,13 @@ use std::path::{Path, PathBuf};
 pub(crate) const TEST_FONT: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../corpus/fonts/noto-sans/NotoSans-Regular.ttf"
+);
+
+/// Arabic fixture font (GSUB/GPOS/cmap) for the closure's GSUB tests.
+#[cfg(test)]
+pub(crate) const TEST_FONT_ARABIC: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../corpus/fonts/noto-sans-arabic/NotoSansArabic-Regular.ttf"
 );
 
 /// File names inside an atlas bundle directory.
@@ -72,8 +79,11 @@ pub fn generate(spec: &AtlasSpec) -> Result<AtlasBundle, AtlasError> {
     let tool = tool::find_tool_checked()?;
     let data = std::fs::read(&spec.font_path)
         .map_err(|e| AtlasError::FontRead(spec.font_path.clone(), e))?;
-    let face =
-        ttf_parser::Face::parse(&data, 0).map_err(|e| AtlasError::FontParse(e.to_string()))?;
+    // rustybuzz's face wraps and derefs to ttf-parser's, so one parse
+    // serves both the GSUB closure (shaping) and the ttf-parser metrics
+    // and cross-checks below.
+    let face = rustybuzz::Face::from_slice(&data, 0)
+        .ok_or_else(|| AtlasError::FontParse("not a parseable font face".to_string()))?;
     let closure = closure::charset_closure(&face, &spec.charset, &spec.extra_glyph_ids);
 
     let (image_png, layout, args) = tool::run(

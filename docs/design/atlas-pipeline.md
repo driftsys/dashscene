@@ -36,6 +36,51 @@ charset is an input parameter; per-locale charsets arrive with #34.
   field — the tool was invoked with that exact `-size`, so the two are
   guaranteed equal and the JSON field is redundant.
 
+## Charset closure
+
+`charset_closure` turns a declared charset into the glyph-id set the
+atlas must cover. It takes a `rustybuzz::Face` (which derefs to
+`ttf_parser::Face`, so the cmap lookups are unchanged) and unions three
+sources:
+
+- **cmap** — the nominal glyph of each charset codepoint; codepoints the
+  cmap cannot represent go to `missing_codepoints` (R6), never dropped.
+- **GSUB** — the contextual forms, mark forms, and ligatures shaping
+  produces. rustybuzz exposes shaping but no standalone glyph-closure
+  operation, so the closure shapes representative strings and unions the
+  output glyph ids (spike #25's method): each character isolated, each
+  Arabic letter through the four joining contexts (a dual-joining beh
+  connector gives final/initial/medial), each haraka on a base letter,
+  and every ordered character pair. The pair sweep, extended with the
+  joining contexts when the first character is an Arabic letter, is what
+  carries lam-alef with its contextual variants and the Latin `fi`.
+- **extra_glyph_ids** — the caller's manual additions.
+
+Shaping runs with the default OpenType feature set (ligatures on), so
+the ligature glyphs are covered before shaping re-enables `liga`/`clig`
+at the #33 join (`docs/decisions/liga-clig-off-until-gsub-closure.md`);
+the closure changes no shaping feature itself.
+
+Two scope boundaries hold at v0.6:
+
+- **Two-character ligatures only.** Ligatures of three or more
+  characters (`ffi`/`ffl`, the Allah ligature) are outside the pairwise
+  sweep. A shaped run that reaches one is the painter's named
+  missing-glyph diagnostic (#30), never a silent drop (P4).
+- **Standard Arabic only.** `ARABIC_LETTERS` (0x0621..=0x064A) and
+  `ARABIC_HARAKAT` (0x064B..=0x0652) are the sweep ranges. An
+  extended-Arabic codepoint (Persian/Urdu, presentation forms) still
+  gets its isolated form, its ligature forms, and the contextual forms
+  the pair sweep reaches incidentally, but no joining-context sweep of
+  its own.
+
+Coverage is computed from the run's natural direction (Arabic
+right-to-left), so it assumes the production shaper also shapes Arabic
+in its natural direction — true once #32's direction-parameterised
+`shape()` lands. Until then the production shaper forces left-to-right,
+which produces a disjoint Arabic glyph set; no runtime gap opens,
+because Arabic is not production-shaped until #33.
+
 ## Home
 
 `dashscene-typeset` (`docs/design/architecture.md` maps the atlas pipeline
@@ -50,7 +95,9 @@ example regenerates the committed test fixture.
                        generate(); joins closure + tool output into
                        AtlasMetrics
     atlas/closure.rs   charset → (sorted gid set, missing codepoints)
-                       via ttf-parser cmap
+                       via ttf-parser cmap plus a shaping-based GSUB
+                       closure (rustybuzz) that adds contextual forms
+                       and ligatures
     atlas/tool.rs      binary discovery, version gate, invocation,
                        JSON layout parse (`Layout` and the related
                        layout types are `pub(crate)` — not public API)
@@ -66,6 +113,11 @@ example regenerates the committed test fixture.
                        NotoSans-Regular.ttf v2.015, unhinted/ttf build
                        (OFL, license file committed alongside) — shared
                        test/golden fixture for #27, #28, #29, #30
+    corpus/fonts/noto-sans-arabic/
+                       NotoSansArabic-Regular.ttf v2.013, unhinted/ttf
+                       build (OFL, license file committed alongside) —
+                       the Arabic fixture the GSUB closure tests shape
+                       against (#33, #34, #35)
 
 ## Public API
 
@@ -88,15 +140,18 @@ example regenerates the committed test fixture.
     pub const REQUIRED_TOOL_VERSION: &str = "1.4.0"
     pub const ATLAS_IMAGE_FILE: &str = "atlas.png"
     pub const ATLAS_METRICS_FILE: &str = "atlas.metrics"
-    pub fn charset_closure(face: &ttf_parser::Face<'_>,
+    pub fn charset_closure(face: &rustybuzz::Face<'_>,
         charset: &BTreeSet<char>, extra_glyph_ids: &BTreeSet<u16>) -> Closure
     pub struct Closure { glyph_ids: Vec<u16>, missing_codepoints: Vec<u32> }
+    pub const ARABIC_LETTERS: RangeInclusive<u32>  // 0x0621..=0x064A
+    pub const ARABIC_HARAKAT: RangeInclusive<u32>  // 0x064B..=0x0652
 
 ## Data flow
 
     AtlasSpec { font_path, charset, extra_glyph_ids,
                 px_per_em = 32, px_range = 4, seed = 1 }
-      → closure(font, charset, extras)   → gids (incl. extras), missing
+      → closure(font, charset, extras)   → gids (cmap + GSUB forms +
+                                            extras), missing
       → tool::run(font, gids)            → (atlas.png bytes, layout JSON)
       → build_glyph_entries(font, gids, layout)
                                           → Vec<GlyphEntry>
@@ -191,7 +246,10 @@ actionable (P4 spirit); nothing panics on user input.
 
 - `atlas::closure` (in-module, no tool): known cmap hits resolve to
   sorted/deduplicated gids including `.notdef`; missing codepoints
-  reported sorted; `extra_glyph_ids` merged.
+  reported sorted; `extra_glyph_ids` merged; the GSUB closure covers the
+  Latin `fi` and Arabic lam-alef ligatures (including lam-alef's
+  seen-joined form) and a haraka on a base, covers every glyph a set of
+  real Arabic words shape to, and adds glyphs beyond cmap.
 - `atlas::metrics` (in-module, no tool): blob round-trip equality; blob
   bytes canonical across two encodes of the same value; unknown
   `format_version` and garbage bytes rejected; `font_metrics` extracts
@@ -204,7 +262,9 @@ actionable (P4 spirit); nothing panics on user input.
   present, dims sane, space glyph has no bounds, every other glyph
   does); double-run byte-identity; bundle write/load round-trip;
   uncovered codepoints reported, not dropped; the committed-fixture
-  reproducibility check.
+  reproducibility check; and, over the Arabic fixture, that a generated
+  atlas covers every glyph real Arabic words shape to and is
+  byte-identical across a double run.
 - Tool-dependent tests self-skip when the binary is absent, but fail
   loudly when `DASHSCENE_REQUIRE_ATLAS_TOOL=1` (the library-owned
   `REQUIRE_TOOL_ENV` constant) — CI's `atlas-repro` job sets it, so a
@@ -226,16 +286,20 @@ actionable (P4 spirit); nothing panics on user input.
   the same contract `build_glyph_entries` enforces build-time (a
   requested gid missing from the tool's layout is `AtlasError::
   ToolOutput`, not a dropped glyph).
-- **#34** (per-locale charsets) is expected to extend `closure` with
-  real GSUB closure; `extra_glyph_ids` keeps `AtlasSpec`'s contract
-  stable across that change (see
-  `docs/decisions/atlas-closure-cmap-plus-extras.md`).
+- **#34** (per-locale charsets) delivered the shaping-based GSUB closure
+  (see Charset closure above); `extra_glyph_ids` kept `AtlasSpec`'s
+  contract stable across the change, as
+  `docs/decisions/atlas-closure-cmap-plus-extras.md` planned.
+- **#33** (Arabic shaping) re-enables `liga`/`clig` and shapes Arabic in
+  its natural direction. The closure already covers the ligature and
+  contextual-form glyphs that flip will produce, so the join opens no
+  coverage gap; #33 should assert production-shaped output is a subset
+  of the charset's coverage (see the Charset closure direction note).
 
 ## Out of scope (this story)
 
-GSUB-closure of charsets (#34), shaping/line-breaking (#28), painter
-consumption (#30), `.dsb` packaging of atlas assets (later slice),
-per-size bitmap fallback (parked by
+Shaping/line-breaking (#28), painter consumption (#30), `.dsb` packaging
+of atlas assets (later slice), per-size bitmap fallback (parked by
 `docs/decisions/q1-msdf-below-14px.md`), CLI surface (`dashc`, later).
 
 ## Trace
