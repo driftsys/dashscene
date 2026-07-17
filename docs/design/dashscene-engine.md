@@ -179,15 +179,21 @@ wiring.
 switch (or any re-solve) produces. It is a thin engine-side binder onto
 `dashcue`, not standalone geometry math and not a `dashcue` producer:
 
-- `Channel { X, Y, W, H }` and `prop_key(node, channel) -> dashcue::PropKey`
-  pack `(node index << 2) | channel` into `dashcue`'s opaque key; the
-  engine owns this packing, the way `dashlang`'s reactive layer owns its
-  own `PropKey` packing.
+- `prop_key(node, channel) -> dashcue::PropKey` packs
+  `(node slot << 8) | channel code` into `dashcue`'s opaque key, over
+  `dashscene_core::Channel` — the document binding vocabulary. Since
+  story #167 this is the **only** packing: `dashlang`'s reactive layer
+  builds its keys here too, and `decode_prop_key` is the one canonical
+  decoder (debts #207/#208).
 - `VariantFlip::start(before, after, &dashcue::VariantTransition)` takes the
   two solved layouts as `&[(NodeId, SolvedRect)]` slices and binds a
   caller-declared transition: it resolves each track's `from`/`to` from the
   before/after rects and hands them to `dashcue`'s `Scheduler`. `dashcue`
   carries no resolved values (P1), so the engine binds them at commit time.
+  It refuses, by named panic, a track key that does not decode or that
+  names a non-rect channel — a foreign packing can no longer silently
+  mis-bind (debt #207); a raw key that happens to decode to a valid
+  animated rect channel remains indistinguishable from a real one.
 - `advance(dt)`, then `sample(node)` / `sampled_rects()` reassemble a full
   `SolvedRect` per node by overlaying the live per-channel scheduler samples
   on the `after` target.

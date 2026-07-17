@@ -310,6 +310,13 @@ into the records below. Per-story decisions land here directly:
   before/after solve and binds the resolved `(from, to)` and `(node, channel)`
   keys at commit, delegating timing and retarget to the scheduler (story #22).
 
+- [binding-table-in-the-document.md](binding-table-in-the-document.md)
+  — the serialized binding table: named scalar signals plus flat rows beside
+  the resolved literals (no token refs); a COLOR variable is four `.r/.g/.b/.a`
+  signals; a non-default mode qualifies the name (`size/gap@dark`); the join
+  splits at the ABI — Deno owns variables and modes, `dashc` owns channels
+  (story #167; §23 D8/D9).
+
 Gardened out of `docs/technotes/`'s `DECISION` / `DECISION direction` tags,
 so each technote stops being the authority for the conclusion it reached:
 

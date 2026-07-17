@@ -287,8 +287,8 @@ impl Scene {
     /// Adds this description's roots to `arena` and publishes them in
     /// exactly one commit, using `solver` for every node's geometry —
     /// the entry point a flex scene needs (`dashscene-engine`'s
-    /// `TaffySolver`, injected by the caller so `dashlang` itself never
-    /// depends on the engine).
+    /// `TaffySolver` being the product case). The solver stays injected:
+    /// the caller chooses it, and this crate never constructs one.
     pub fn build_with(&self, arena: &mut Arena, solver: &mut dyn LayoutSolver) -> Built {
         Built {
             generation: self.stage(arena).commit_with(solver),

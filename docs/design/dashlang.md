@@ -2,7 +2,8 @@
 
     crate    crates/dashlang
     covers   v0.1 walking skeleton (story #5), the v0.2 flex vocabulary
-             (story #118), and the v0.4 reactive layer (story #166)
+             (story #118), the v0.4 reactive layer (story #166), and the
+             v0.7 document binding tables + loader-side attach (story #167)
 
 ## Purpose
 
@@ -81,8 +82,11 @@ and rejected alternatives (a closure/callback builder over a live
 ## Reactive layer (v0.4, story #166)
 
 The reactive layer lets a producer drive a live scene at 60 Hz through one
-commit per frame, without ever handling a `NodeId`. It lives entirely in
-`crates/dashlang/src/reactive.rs`; `dashscene-core` is unchanged
+commit per frame, without ever handling a `NodeId`. It lives in
+`crates/dashlang/src/reactive.rs`; at v0.4 `dashscene-core` was unchanged,
+and at v0.7 the staged move fired — the binding _table_ (never signal
+values) became a document construct in `dashbuf` and core's arena, with
+this layer as one producer of it
 (`docs/decisions/reactive-layer-home-and-staging.md`). The four load-bearing
 decisions it realizes are recorded as decision records
 (`reactive-layer-home-and-staging.md`, `bindings-are-explicit-and-flat.md`,
@@ -107,17 +111,35 @@ them on the `Node`, builds a `LiveScene`, and drives it per frame:
   flush (push-on-flush, never pull-on-paint, P3); `LiveScene::tick(dt, &mut
   Arena) -> u64` advances one frame.
 
-**Channels and transforms.** A `Channel` is one scalar prop slot; at v0.4 it
-is `X`/`Y`/`Width`/`Height` only — the paint channels (`Fill.r`, …) and
-`Gap` the umbrella design also lists are deliberate follow-ups, not needed
-by the v0.4 acceptance cases (text covers the paint-only path). A binding's
-target is addressed by `dashcue`'s opaque `PropKey` (`node index ++ channel
-code`), so `dashlang` and `dashcue` speak one `(PropKey, f32)` language
-without depending on each other. The transform vocabulary is the declarative
-`enum Transform` (`Identity`/`Scale`/`MapRange`/`Clamp`/`Format`/`Custom`);
-`Custom(ClosureId)` holds a `dashlang`-only closure in a side table so the
-enum itself stays serializable
-(`docs/decisions/reactive-layer-home-and-staging.md`).
+**Channels and transforms.** A `Channel` is one scalar prop slot — since
+story #167 it is `dashscene_core::Channel`, the document binding
+vocabulary, re-exported: the full §23 set (`X`/`Y`/`Width`/`Height`,
+`Gap`, and the four `Fill` channels — debt #201). A fill channel is
+paint-only and writes through a per-node fill shadow (one channel writes
+one component of a four-component color); `Gap` always solves. A
+binding's target is addressed by `dashcue`'s opaque `PropKey`, built by
+the engine-owned `dashscene_engine::prop_key` — the one packing and the
+one decoder everywhere (debt #208) — so `dashlang`, the engine, and
+`dashcue` speak one `(PropKey, f32)` language. The transform vocabulary
+is the declarative `enum Transform`
+(`Identity`/`Scale`/`MapRange`/`Clamp`/`Format`/`Custom`);
+`Custom(ClosureId)` holds a `dashlang`-only closure in a side table so
+the enum itself stays serializable
+(`docs/decisions/reactive-layer-home-and-staging.md`). A `smooth()` whose
+channel has no matching `bind()` is a named build-time panic, never a
+silently inert spring (debt #194, P4).
+
+**The document binding tables (v0.7, story #167).** `build_live` stages
+every scalar signal (named via `Scene::signal_named`, or anonymous) and
+every declarative scalar binding into the arena's binding tables
+(`Txn::declare_signal`/`Txn::bind`), so a `dashlang` scene and a loaded
+`.dsb` expose one table; `Custom` rows stay live-only (D8). The
+loader-side entry point is `attach_live(arena, solver) -> LiveScene`: a
+document loaded by `dashscene_core::load_document` attaches into a live
+scene whose signals are addressable by their document names
+(`LiveScene::signal_named` — a Figma variable's mode-qualified name),
+with the same write classification as authored bindings
+(`docs/decisions/binding-table-in-the-document.md`).
 
 **The flush loop.** `LiveScene::tick` opens one `Txn`, then: flushes scalar
 bindings whose signal changed (a smoothed one sets its spring's target, a
@@ -159,7 +181,9 @@ smoothing.
                                        Signal/Channel/Transform/Spring,
                                        Node bind/smooth/bind_text/
                                        visible_when, Scene::build_live,
-                                       LiveScene::set/tick
+                                       LiveScene::set/tick; the v0.7
+                                       additions (#167): signal_named,
+                                       core-table staging, attach_live
     crates/dashlang/tests/builder.rs   acceptance (issues #5, #118): DSL
                                        output == hand-built output;
                                        repeater children; multi-root;
@@ -193,9 +217,10 @@ resolved binding tables, the `dashcue` scheduler, and the flush loop.
   §23 D1-D4, D8).
 - Blocks: #6 (golden harness, done); #46 (the DSL-generated stress
   corpus, unblocked by the flex vocabulary). The reactive layer (#166) is
-  built; the v0.7 importer (#36) inherits the staged move of the binding
-  table into `dashbuf` + core
-  (`docs/decisions/reactive-layer-home-and-staging.md`).
+  built, and the staged move of the binding table into `dashbuf` + core
+  fired at story #167
+  (`docs/decisions/reactive-layer-home-and-staging.md`,
+  `docs/decisions/binding-table-in-the-document.md`).
 - Related decisions: `docs/decisions/dashlang-value-tree-builder.md`
   (this crate's surface shape); `docs/decisions/staged-mutation-v01-scope.md`
   (the `open`/`set_prop`/`commit` API this crate consumes);

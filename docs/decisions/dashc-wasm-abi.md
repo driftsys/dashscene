@@ -42,9 +42,11 @@ whether the mechanism exists.
 
 ## Choice
 
-Option 4. Five exports on the `dashc_wasm.wasm` cdylib, wire version 1:
+Option 4. Five exports on the `dashc_wasm.wasm` cdylib, wire version 2
+(version 1 shipped #17; version 2 appended the binding-row section
+below at story #167):
 
-    dashc_abi_version() -> u32                          // 1
+    dashc_abi_version() -> u32                          // 2
     dashc_alloc(len: u32) -> *mut u8                     // align 1; null on failure
     dashc_free(ptr: *mut u8, len: u32)
     dashc_compile_figma(ptr: *const u8, len: u32) -> *mut u8
@@ -88,6 +90,14 @@ the raw UTF-8 JSON with no framing at all. `dashc_compile_figma` takes:
       u32 ref_len   | ref        imageRef, UTF-8
       u32 format                 0 = Png
       u32 bytes_len | bytes      the encoded image
+    u32 binding_count            joined variable-binding rows (v2, story #167;
+                                 docs/decisions/binding-table-in-the-document.md)
+      u32 id_len   | nodeId      the Figma node id, UTF-8
+      u32 prop_len | property    the sidecar property path, UTF-8
+      u32 sig_len  | signal      the mode-qualified signal name, UTF-8
+      u32 type                   0 = float, 1 = color
+      f32 value                  (type 0), or
+      f32 r | f32 g | f32 b | f32 a   (type 1)
 
 ### Response framing
 
