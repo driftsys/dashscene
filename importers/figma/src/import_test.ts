@@ -495,3 +495,224 @@ Deno.test("more than one declared root is refused by name", async () => {
   // Refused before any request is made.
   assertEquals(requested, []);
 });
+
+// ------------------------------------------------ cross-file resolution (#38)
+
+const VARIANT_GOLDEN = new URL(
+  "../../../goldens/dsb/v07-variant-topology.dsb",
+  import.meta.url,
+);
+const LIBRARY_KEY = "libkey0000000000000000";
+
+/** A fetch script serving a `GET /file` body per file key. */
+function scriptedFiles(files: Readonly<Record<string, string>>) {
+  const requested: string[] = [];
+  const fetchFn = (input: string | URL | Request) => {
+    const url = input instanceof Request ? input.url : String(input);
+    requested.push(url);
+    const match = url.match(
+      /^https:\/\/api\.figma\.com\/v1\/files\/([^/?]+)\?plugin_data=shared$/,
+    );
+    const body = match ? files[match[1]] : undefined;
+    if (body !== undefined) return Promise.resolve(new Response(body));
+    return Promise.resolve(new Response("not found", { status: 404 }));
+  };
+  return { requested, fetchFn };
+}
+
+/**
+ * The consumer half of a library pair, derived from the local component fixture:
+ * the component set is lifted out into a library file, and the entries the
+ * instance still references are marked remote — how a library instance appears
+ * in a consumer capture (its componentId points at a `remote: true` entry, and
+ * the definition is not in the consumer's own tree).
+ */
+function remoteConsumerCapture(): Record<string, unknown> {
+  const consumer = JSON.parse(
+    Deno.readTextFileSync(
+      new URL("lowering-variant-topology.json", CORPUS),
+    ),
+  );
+  const canvas = consumer.document.children[0];
+  canvas.children = canvas.children.filter(
+    (n: { id: string }) => n.id !== "1:11",
+  );
+  consumer.components["1:2"].remote = true;
+  consumer.components["1:5"].remote = true;
+  return consumer;
+}
+
+Deno.test("importFigmaFile resolves a remote component from a declared library", async () => {
+  // The consumer instances a component whose set lives in the library file. The
+  // library carries the definitions locally (the same capture, unmodified). The
+  // resolved definition resolves but does not paint, and the instance paints
+  // from its baked subtree — so the pair compiles to the exact same bytes as the
+  // single-file local-component golden.
+  const library = Deno.readTextFileSync(
+    new URL("lowering-variant-topology.json", CORPUS),
+  );
+  const consumer = JSON.stringify(remoteConsumerCapture());
+  const { requested, fetchFn } = scriptedFiles({
+    [FILE_KEY]: consumer,
+    [LIBRARY_KEY]: library,
+  });
+
+  const result = await importFigmaFile({
+    client: createFigmaClient({ token: "x", fetchFn }),
+    dashc,
+    fileKey: FILE_KEY,
+    profile: "core",
+    manifest: { roots: ["1:12"], libraries: [LIBRARY_KEY] },
+    fetchFn,
+  });
+
+  assertEquals(result.diagnostics, []);
+  assertEquals(result.excluded, []);
+  // Byte-identical to the local-component golden: the spliced definition does
+  // not paint, so cross-file resolution changes nothing the painter sees.
+  assertEquals(result.bytes, Deno.readFileSync(VARIANT_GOLDEN));
+  // Two file fetches (consumer, then library); the fixture has no image fills.
+  assertEquals(requested, [
+    `https://api.figma.com/v1/files/${FILE_KEY}?plugin_data=shared`,
+    `https://api.figma.com/v1/files/${LIBRARY_KEY}?plugin_data=shared`,
+  ]);
+});
+
+Deno.test("importFigmaFile blocks a remote component no declared library carries", async () => {
+  // The library declared carries a different key, so the remote does not
+  // resolve. The export is blocked with a named error before any image is
+  // fetched or the document is compiled (P4).
+  const otherLibrary = JSON.parse(
+    Deno.readTextFileSync(
+      new URL("lowering-variant-topology.json", CORPUS),
+    ),
+  );
+  otherLibrary.components["1:2"].key = "some-other-component-key";
+  otherLibrary.components["1:5"].key = "some-other-component-key-2";
+  const consumer = JSON.stringify(remoteConsumerCapture());
+  const { fetchFn } = scriptedFiles({
+    [FILE_KEY]: consumer,
+    [LIBRARY_KEY]: JSON.stringify(otherLibrary),
+  });
+
+  const error = await assertRejects(
+    () =>
+      importFigmaFile({
+        client: createFigmaClient({ token: "x", fetchFn }),
+        dashc,
+        fileKey: FILE_KEY,
+        profile: "core",
+        manifest: { roots: ["1:12"], libraries: [LIBRARY_KEY] },
+        fetchFn,
+      }),
+    ExportBlocked,
+    "cross-file-unresolved",
+  );
+  // The error names both the library key that was searched and the component
+  // key that did not resolve.
+  assert(error.message.includes(LIBRARY_KEY), error.message);
+  assert(
+    error.message.includes("ca96eccab03b7cb50979e45b3936ad29e5486ba7"),
+    error.message,
+  );
+});
+
+Deno.test("a frozen subset on a library set resolves end to end (C2)", async () => {
+  // The manifest freezes the library set by its (phantom) set id. Frozen
+  // validation must run over the SPLICED document, not the discovery closure, or
+  // it trips frozen-variants-unused before the set is ever spliced in.
+  const library = Deno.readTextFileSync(
+    new URL("lowering-variant-topology.json", CORPUS),
+  );
+  const consumer = JSON.stringify(remoteConsumerCapture());
+  const { fetchFn } = scriptedFiles({
+    [FILE_KEY]: consumer,
+    [LIBRARY_KEY]: library,
+  });
+
+  const result = await importFigmaFile({
+    client: createFigmaClient({ token: "x", fetchFn }),
+    dashc,
+    fileKey: FILE_KEY,
+    profile: "core",
+    manifest: {
+      roots: ["1:12"],
+      libraries: [LIBRARY_KEY],
+      // 1:2 is the instanced (collapsed) variant; freezing to it is valid.
+      frozenVariants: { "1:11": ["1:2"] },
+    },
+    fetchFn,
+  });
+
+  assertEquals(result.diagnostics, []);
+  // The frozen set resolves-but-does-not-paint, so the bytes still match the
+  // single-file golden.
+  assertEquals(result.bytes, Deno.readFileSync(VARIANT_GOLDEN));
+});
+
+/** The library fixture with a `boundVariables` added to its collapsed variant. */
+function libraryWithBinding(boundVariables: unknown): string {
+  const library = JSON.parse(
+    Deno.readTextFileSync(new URL("lowering-variant-topology.json", CORPUS)),
+  );
+  const set = library.document.children[0].children.find(
+    (n: { id: string }) => n.id === "1:11",
+  );
+  const collapsed = set.children.find((n: { id: string }) => n.id === "1:2");
+  collapsed.boundVariables = boundVariables;
+  return JSON.stringify(library);
+}
+
+Deno.test("a malformed binding in a spliced library definition does not block (C3a)", async () => {
+  // The consumer does not control and never paints the library's definition, so
+  // a malformed binding inside it must not block the consumer's export — the
+  // spliced definition is excluded from sidecar derivation.
+  const consumer = JSON.stringify(remoteConsumerCapture());
+  const { fetchFn } = scriptedFiles({
+    [FILE_KEY]: consumer,
+    // `{ opacity: {} }` is a boundVariables map that yields no alias — the token
+    // gate would reject it if the library definition were scanned.
+    [LIBRARY_KEY]: libraryWithBinding({ opacity: {} }),
+  });
+
+  const result = await importFigmaFile({
+    client: createFigmaClient({ token: "x", fetchFn }),
+    dashc,
+    fileKey: FILE_KEY,
+    profile: "core",
+    manifest: { roots: ["1:12"], libraries: [LIBRARY_KEY] },
+    fetchFn,
+  });
+
+  // The export compiles: the malformed library binding never reached the gate.
+  assertEquals(result.bytes, Deno.readFileSync(VARIANT_GOLDEN));
+});
+
+Deno.test("a library binding's variable id does not enter the sidecar (C3b)", async () => {
+  // A well-formed library binding's variableId lives in the library's variable
+  // space, which a per-file vartable cannot join, so it must not appear in the
+  // consumer's sidecar.
+  const consumer = JSON.stringify(remoteConsumerCapture());
+  const { fetchFn } = scriptedFiles({
+    [FILE_KEY]: consumer,
+    [LIBRARY_KEY]: libraryWithBinding({
+      opacity: { type: "VARIABLE_ALIAS", id: "VariableID:library:99" },
+    }),
+  });
+
+  const result = await importFigmaFile({
+    client: createFigmaClient({ token: "x", fetchFn }),
+    dashc,
+    fileKey: FILE_KEY,
+    profile: "core",
+    manifest: { roots: ["1:12"], libraries: [LIBRARY_KEY] },
+    fetchFn,
+  });
+
+  assert(
+    !result.sidecar.bindings.some((b) =>
+      b.variableId === "VariableID:library:99"
+    ),
+    "a library variable id must not enter the consumer sidecar",
+  );
+});

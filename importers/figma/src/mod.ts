@@ -8,7 +8,8 @@
  *
  * The REST client (fetch.ts), the fixture capture tool (capture.ts), the wasm
  * boundary (wasm.ts), image resolution (images.ts), the export closure
- * (closure.ts — declared roots, reachability, per-set variant closure), the
+ * (closure.ts — declared roots, reachability, per-set variant closure, and
+ * cross-file library resolution #38), the
  * trim pass (trim.ts — sharedPluginData roles, `_`-prefix sugar, slot-child
  * auto-replacement, #39), the import flow (import.ts), token phase 1
  * (tokens.ts — the resolved-literal sidecar, #159), and the token-export

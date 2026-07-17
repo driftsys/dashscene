@@ -255,6 +255,16 @@ into the records below. Per-story decisions land here directly:
   before the export closure and names every removed subtree (sharedPluginData
   roles, `_`-prefix sugar, slot-child auto-replacement; hidden is not trimmed);
   P4 records, R7-deterministic (story #39).
+- [figma-cross-file-library-resolution.md](figma-cross-file-library-resolution.md)
+  — the #38 cross-file resolution: an instance of a library component resolves
+  by the global key against the libraries the export manifest declares (declared,
+  not auto-discovered), and the library definition is spliced into the consumer
+  document — every id reference remapped into a per-library namespace and nested
+  references spliced transitively — as a resolve-but-do-not-paint node, so a
+  consumer + library pair compiles to the same bytes as the single-file golden.
+  Spliced definitions are excluded from sidecar derivation (their bindings live
+  in the library's variable space, #167); unresolvable keys, cross-file images,
+  transitive-remote references, and shadowed keys are all named (P4).
 - [producer-assembles-its-own-diagnostics.md](producer-assembles-its-own-diagnostics.md)
   — `Report` gains `FromIterator` + `Extend` so a producer can report what the
   import gate hands it (story #139); closes a gap

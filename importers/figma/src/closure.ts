@@ -26,8 +26,10 @@
  * (docs/decisions/figma-image-refs-resolved-by-the-caller.md).
  *
  * Cross-file resolution is story #38: a `remote` component is recorded as a
- * requirement (the contract #38 builds on) and diagnosed as an error naming
- * the library key, never silently skipped.
+ * requirement carrying its library key, and `resolveRemoteComponents` resolves
+ * that key against the libraries the export manifest declares — splicing the
+ * library's definition into the document before the final closure runs — or
+ * names it unresolvable (P4). See docs/decisions/figma-cross-file-library-resolution.md.
  */
 
 import { rebuildChildren } from "./tree.ts";
@@ -83,6 +85,14 @@ export interface ExportManifest {
    * member). A frozen subset is a declaration, never an inference.
    */
   readonly frozenVariants?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * Figma file keys of the libraries this export may resolve remote components
+   * from (#38). A library dependency is declared, never auto-discovered — the
+   * same principle as a declared root. Absent: no library resolves, so every
+   * remote component the export reaches is a named `cross-file-unresolved`
+   * error (P4).
+   */
+  readonly libraries?: readonly string[];
 }
 
 /** A closure verdict: named, never silent (P4). */
@@ -158,7 +168,7 @@ export class ExportBlocked extends Error {
 /** Parses an export manifest, throwing a named error on a malformed one. */
 export function parseExportManifest(text: string): ExportManifest {
   const parsed = JSON.parse(text) as
-    | { roots?: unknown; frozenVariants?: unknown }
+    | { roots?: unknown; frozenVariants?: unknown; libraries?: unknown }
     | null;
   if (parsed === null || typeof parsed !== "object") {
     throw new Error("the export manifest is not a JSON object");
@@ -180,7 +190,26 @@ export function parseExportManifest(text: string): ExportManifest {
   }
   const roots = parsed.roots as string[];
 
-  if (parsed.frozenVariants === undefined) return { roots };
+  let libraries: string[] | undefined;
+  if (parsed.libraries !== undefined) {
+    if (!Array.isArray(parsed.libraries)) {
+      throw new Error("the export manifest's libraries must be an array");
+    }
+    for (const key of parsed.libraries) {
+      if (typeof key !== "string" || key.length === 0) {
+        throw new Error(
+          `the export manifest has a library that is not a file key: ${
+            JSON.stringify(key)
+          }`,
+        );
+      }
+    }
+    libraries = parsed.libraries as string[];
+  }
+
+  if (parsed.frozenVariants === undefined) {
+    return libraries === undefined ? { roots } : { roots, libraries };
+  }
   const frozen = parsed.frozenVariants;
   if (frozen === null || typeof frozen !== "object" || Array.isArray(frozen)) {
     throw new Error("frozenVariants must map a set id to member node ids");
@@ -198,6 +227,7 @@ export function parseExportManifest(text: string): ExportManifest {
   return {
     roots,
     frozenVariants: frozen as Record<string, readonly string[]>,
+    ...(libraries === undefined ? {} : { libraries }),
   };
 }
 
@@ -227,6 +257,11 @@ export function exportableRoots(file: ClosureFile): ExportableRoot[] {
 
 function canvasesOf(file: ClosureFile): readonly ClosureNode[] {
   return (file.document.children ?? []).filter((n) => n.type === "CANVAS");
+}
+
+/** One node's paints — fills then strokes — the one place both walks read. */
+function paintsOf(node: ClosureNode): readonly ClosurePaint[] {
+  return [...(node.fills ?? []), ...(node.strokes ?? [])];
 }
 
 /** The whole-tree index the closure resolves ids against. */
@@ -293,9 +328,7 @@ export function computeClosure(
     while (stack.length > 0) {
       const node = stack.pop() as ClosureNode;
       nodeIds.add(node.id);
-      for (
-        const paint of [...(node.fills ?? []), ...(node.strokes ?? [])]
-      ) {
+      for (const paint of paintsOf(node)) {
         if (paint.type === "IMAGE" && paint.imageRef) {
           imageRefs.add(paint.imageRef);
         }
@@ -415,16 +448,14 @@ export function computeClosure(
         ? {}
         : { setId: meta.componentSetId }),
     });
-    if (meta.remote) {
-      diagnostics.push({
-        rule: "figma.closure.cross-file-component",
-        severity: "error",
-        message: `component ${componentId} (key ${meta.key}) lives in ` +
-          `another file — cross-file library resolution is story #38`,
-        nodeId: componentId,
-      });
-      continue;
-    }
+    // A remote component lives in a library file, so it is not in this
+    // document's tree. The requirement is recorded (above) and the walk stops
+    // here. `resolveRemoteComponents` (#38) is the single owner of the
+    // cross-file verdict: it splices a declared library's definition in before
+    // the final closure runs — so a resolved remote is local by the time this
+    // branch sees it again — or it names the remote unresolvable (P4). The
+    // closure alone never diagnoses a remote, which would double the verdict.
+    if (meta.remote) continue;
 
     const setId = meta.componentSetId;
     if (setId === undefined) {
@@ -605,4 +636,430 @@ export function computeClosure(
     excluded,
     diagnostics,
   };
+}
+
+// -- Cross-file resolution (#38) ---------------------------------------------
+
+/**
+ * A library file the export declared and the caller fetched, so its component
+ * definitions can be resolved against the remote requirements a consumer file
+ * carries. The importer fetches one with `GET /file` per declared library key
+ * (docs/decisions/figma-cross-file-library-resolution.md).
+ */
+export interface ResolvedLibrary {
+  /** The library's Figma file key — provenance for a resolved definition. */
+  readonly fileKey: string;
+  /** The library's `GET /file` response. */
+  readonly file: ClosureFile;
+}
+
+/** One remote component resolved to a library definition — provenance. */
+export interface ResolvedRemote {
+  /** The consumer-side (phantom) component id the instance references. */
+  readonly componentId: string;
+  /** The library key the resolution matched on. */
+  readonly key: string;
+  /** The library file the definition came from. */
+  readonly libraryFileKey: string;
+}
+
+/**
+ * The consumer file with its resolved remote definitions spliced in, plus the
+ * provenance of what resolved and named verdicts for what did not.
+ */
+export interface RemoteResolution {
+  /**
+   * The consumer file with each resolved library definition spliced in as a
+   * local, resolve-but-do-not-paint top-level node. A remote requirement that
+   * did not resolve is left untouched (still `remote: true`) and named in
+   * {@link diagnostics}.
+   */
+  readonly file: ClosureFile;
+  /** Remote requirements resolved to a library, in resolution order. */
+  readonly resolved: readonly ResolvedRemote[];
+  /**
+   * The ids of the spliced definitions' top-level nodes. These resolve but do
+   * not paint, and their bindings live in the library's variable space, so the
+   * caller excludes them from sidecar derivation
+   * (docs/decisions/figma-cross-file-library-resolution.md, C3/#167).
+   */
+  readonly splicedRootIds: readonly string[];
+  /**
+   * Named verdicts: an unresolvable key, a spliced definition this slice cannot
+   * fully carry (a cross-file image fill), or a shadowed library key (a
+   * warning). An error here blocks the export the same way an unknown root does
+   * (P4).
+   */
+  readonly diagnostics: readonly ClosureDiagnostic[];
+}
+
+/** One declared library, indexed for resolution by key and by node id. */
+interface LibraryIndex {
+  readonly fileKey: string;
+  readonly file: ClosureFile;
+  /** Every node in the library document, by id. */
+  readonly byId: ReadonlyMap<string, ClosureNode>;
+}
+
+/** Indexes every node in a document by id (the whole tree, not just tops). */
+function indexDocument(document: ClosureNode): Map<string, ClosureNode> {
+  const byId = new Map<string, ClosureNode>();
+  const stack = [document];
+  while (stack.length > 0) {
+    const node = stack.pop() as ClosureNode;
+    byId.set(node.id, node);
+    for (const child of node.children ?? []) stack.push(child);
+  }
+  return byId;
+}
+
+/** True when the subtree carries an image fill or stroke on any node. */
+function subtreeHasImagePaint(node: ClosureNode): boolean {
+  if (paintsOf(node).some((paint) => paint.type === "IMAGE")) return true;
+  return (node.children ?? []).some(subtreeHasImagePaint);
+}
+
+/**
+ * Deep-clones a subtree, remapping every id reference through `mapId` — the
+ * node's own `id` and the `componentId` a nested `INSTANCE` points at. Every
+ * other field is copied verbatim, so a spliced definition keeps the paint,
+ * layout, and text fields the drift oracle and the lowering read.
+ *
+ * Remapping `componentId` is what keeps a library and its consumer from ever
+ * confusing ids: a nested instance inside a spliced definition points at a
+ * library-space component id that could collide with a different consumer
+ * component (both files mint ids from `0:0`), so the reference is remapped into
+ * the same namespace as the node it targets.
+ */
+function reidSubtree(
+  node: ClosureNode,
+  mapId: (id: string) => string,
+): ClosureNode {
+  const children = node.children?.map((child) => reidSubtree(child, mapId));
+  return {
+    ...node,
+    id: mapId(node.id),
+    ...(node.componentId === undefined
+      ? {}
+      : { componentId: mapId(node.componentId) }),
+    ...(children === undefined ? {} : { children }),
+  };
+}
+
+/** Collects every node id inside the given subtree roots (library id space). */
+function descendantIds(
+  byId: ReadonlyMap<string, ClosureNode>,
+  roots: readonly string[],
+): Set<string> {
+  const ids = new Set<string>();
+  for (const root of roots) {
+    const node = byId.get(root);
+    if (node === undefined) continue;
+    const stack = [node];
+    while (stack.length > 0) {
+      const at = stack.pop() as ClosureNode;
+      ids.add(at.id);
+      for (const child of at.children ?? []) stack.push(child);
+    }
+  }
+  return ids;
+}
+
+/** A requirement matched to the declared library that carries its key. */
+interface HitRequirement {
+  readonly remote: ComponentRequirement;
+  readonly library: LibraryIndex;
+  /** The matched component's node id in the library's own id space. */
+  readonly libNodeId: string;
+}
+
+/**
+ * Resolves the remote component requirements a consumer file carries against
+ * the libraries the export declared (#38).
+ *
+ * Resolution is by key, never by id: a library and the consumer that instances
+ * it have independent id spaces, so a remote requirement carries the library
+ * `key`, and the matching definition is found by inverting each library's
+ * `components` map. A resolved definition is spliced into the consumer document
+ * as a local, resolve-but-do-not-paint top-level node — its whole subtree re-id'd
+ * into a per-library namespace (`<libraryFileKey>~<id>`), except the directly
+ * required member and its set, which are anchored to the consumer's own phantom
+ * ids. The final closure then treats a spliced definition as an ordinary
+ * in-document one. The instance still paints from its own baked subtree
+ * (docs/decisions/figma-component-lowering.md); the spliced definition only
+ * makes the closure stop refusing the export.
+ *
+ * References are remapped, not just node ids: a nested `INSTANCE` inside a
+ * spliced definition points at a library-space component, so its `componentId`
+ * is remapped into the same namespace, and the library component it names is
+ * spliced too — transitively — so the reference resolves to a real definition.
+ * A library-internal reference resolves against that library's own `components`
+ * map; a nested reference into yet another library is named and deferred.
+ *
+ * When the remote is a variant, the whole component set is spliced (variant
+ * closure is per set), so frozen-variant narrowing applies across files exactly
+ * as it does to a local set.
+ *
+ * Unresolvable requirements are named, never silently skipped (P4): a key no
+ * declared library carries is `cross-file-unresolved`; a spliced definition
+ * whose subtree carries an image fill is `cross-file-image`, deferred because
+ * this slice resolves image bytes from the consumer file only; a key more than
+ * one declared library carries is a `cross-file-key-shadowed` warning.
+ */
+export function resolveRemoteComponents(
+  file: ClosureFile,
+  remotes: readonly ComponentRequirement[],
+  libraries: readonly ResolvedLibrary[],
+): RemoteResolution {
+  const diagnostics: ClosureDiagnostic[] = [];
+  const resolved: ResolvedRemote[] = [];
+  const splicedNodes: ClosureNode[] = [];
+  const splicedRootIds: string[] = [];
+  const localizedComponents: Record<string, ComponentMeta> = {};
+  const localizedSets: Record<string, ComponentSetMeta> = {};
+
+  const indexes: LibraryIndex[] = libraries.map((library) => ({
+    fileKey: library.fileKey,
+    file: library.file,
+    byId: indexDocument(library.file.document),
+  }));
+
+  // Invert every library's components map: global key -> where it lives. The
+  // first declared library that carries a key wins; a later library that also
+  // carries it is shadowed (named below), never silently preferred.
+  const byKey = new Map<string, { library: LibraryIndex; libNodeId: string }>();
+  const carriers = new Map<string, string[]>();
+  for (const library of indexes) {
+    for (
+      const [libNodeId, meta] of Object.entries(library.file.components ?? {})
+    ) {
+      // A library's OWN definitions are local to it; its remote entries point
+      // at yet another file and are not what this library resolves.
+      if (meta.remote) continue;
+      let carrying = carriers.get(meta.key);
+      if (carrying === undefined) carriers.set(meta.key, carrying = []);
+      carrying.push(library.fileKey);
+      if (!byKey.has(meta.key)) byKey.set(meta.key, { library, libNodeId });
+    }
+  }
+
+  const declaredList = libraries.map((l) => l.fileKey).join(", ") || "(none)";
+
+  // Match each requirement to its library; name the unresolvable ones and warn
+  // once per shadowed key (P4/C4).
+  const hits: HitRequirement[] = [];
+  const shadowWarned = new Set<string>();
+  for (const remote of remotes) {
+    const found = byKey.get(remote.key);
+    if (found === undefined) {
+      diagnostics.push({
+        rule: "figma.closure.cross-file-unresolved",
+        severity: "error",
+        message: `component ${remote.componentId} (key ${remote.key}) is ` +
+          `remote and no declared library carries it — declared ` +
+          `libraries: ${declaredList}`,
+        nodeId: remote.componentId,
+      });
+      continue;
+    }
+    const declaredBy = carriers.get(remote.key) as string[];
+    if (declaredBy.length > 1 && !shadowWarned.has(remote.key)) {
+      shadowWarned.add(remote.key);
+      const shadowed = declaredBy.filter((fk) => fk !== found.library.fileKey);
+      diagnostics.push({
+        rule: "figma.closure.cross-file-key-shadowed",
+        severity: "warning",
+        message: `key ${remote.key} is declared by more than one library — ` +
+          `resolved from ${found.library.fileKey}; also carried by ` +
+          `${shadowed.join(", ")} (ignored)`,
+        nodeId: remote.componentId,
+      });
+    }
+    hits.push({ remote, library: found.library, libNodeId: found.libNodeId });
+  }
+
+  // Splice per library, in declared order (determinism). Each library's spliced
+  // content is one namespace, so transitive references stay inside it.
+  for (const library of indexes) {
+    const reqs = hits.filter((h) => h.library === library);
+    if (reqs.length === 0) continue;
+
+    const anchors = new Map<string, string>(); // library id -> consumer id
+    const defRoots: string[] = []; // library node ids spliced as top-level nodes
+    const defRootSet = new Set<string>();
+    const reqKeys: string[] = [];
+    const addDefRoot = (id: string) => {
+      if (!defRootSet.has(id)) {
+        defRootSet.add(id);
+        defRoots.push(id);
+      }
+    };
+
+    for (const req of reqs) {
+      const meta = library.file.components?.[req.libNodeId];
+      reqKeys.push(req.remote.key);
+      if (req.remote.setId !== undefined) {
+        const libSetId = meta?.componentSetId;
+        const setNode = libSetId === undefined
+          ? undefined
+          : library.byId.get(libSetId);
+        if (libSetId === undefined || setNode === undefined) {
+          diagnostics.push({
+            rule: "figma.closure.cross-file-unresolved",
+            severity: "error",
+            message: `component ${req.remote.componentId} (key ` +
+              `${req.remote.key}) is a variant, but library ` +
+              `${library.fileKey} carries no component set for it`,
+            nodeId: req.remote.componentId,
+          });
+          continue;
+        }
+        anchors.set(libSetId, req.remote.setId);
+        anchors.set(req.libNodeId, req.remote.componentId);
+        addDefRoot(libSetId);
+      } else {
+        anchors.set(req.libNodeId, req.remote.componentId);
+        addDefRoot(req.libNodeId);
+      }
+      resolved.push({
+        componentId: req.remote.componentId,
+        key: req.remote.key,
+        libraryFileKey: library.fileKey,
+      });
+    }
+
+    if (defRoots.length === 0) continue; // every requirement for this library failed
+
+    // Transitive expansion: follow the componentId of every nested instance to
+    // the library component it names, and splice that definition too, until no
+    // reference points outside the spliced content.
+    const prefix = `${library.fileKey}~`;
+    let splicedIds = descendantIds(library.byId, defRoots);
+    const seenRefs = new Set<string>();
+    for (let changed = true; changed;) {
+      changed = false;
+      for (const id of [...splicedIds]) {
+        const node = library.byId.get(id);
+        if (node?.type !== "INSTANCE" || node.componentId === undefined) {
+          continue;
+        }
+        const cid = node.componentId;
+        if (seenRefs.has(cid) || splicedIds.has(cid)) continue;
+        seenRefs.add(cid);
+        const cmeta = library.file.components?.[cid];
+        if (cmeta === undefined) {
+          diagnostics.push({
+            rule: "figma.closure.cross-file-unresolved",
+            severity: "error",
+            message: `a spliced definition from ${library.fileKey} instances ` +
+              `${cid}, which the library's components map does not carry`,
+            nodeId: prefix + id,
+          });
+          continue;
+        }
+        if (cmeta.remote) {
+          diagnostics.push({
+            rule: "figma.closure.cross-file-transitive-remote",
+            severity: "error",
+            message: `a spliced definition from ${library.fileKey} instances ` +
+              `another library's component (key ${cmeta.key}) — transitive ` +
+              `cross-library resolution is a follow-up`,
+            nodeId: prefix + id,
+          });
+          continue;
+        }
+        addDefRoot(cmeta.componentSetId ?? cid);
+        changed = true;
+      }
+      if (changed) splicedIds = descendantIds(library.byId, defRoots);
+    }
+
+    const mapId = (id: string): string => anchors.get(id) ?? prefix + id;
+
+    let libraryHasImage = false;
+    for (const defRoot of defRoots) {
+      const node = library.byId.get(defRoot) as ClosureNode;
+      const spliced = reidSubtree(node, mapId);
+      if (subtreeHasImagePaint(spliced)) libraryHasImage = true;
+      splicedNodes.push(spliced);
+      splicedRootIds.push(spliced.id);
+    }
+
+    // Localize every component and set inside the spliced content, so a remapped
+    // reference resolves to a local definition rather than dangling.
+    for (const id of splicedIds) {
+      const cmeta = library.file.components?.[id];
+      if (cmeta !== undefined && !cmeta.remote) {
+        localizedComponents[mapId(id)] = {
+          key: cmeta.key,
+          remote: false,
+          ...(cmeta.componentSetId === undefined
+            ? {}
+            : { componentSetId: mapId(cmeta.componentSetId) }),
+        };
+      }
+      const smeta = library.file.componentSets?.[id];
+      if (smeta !== undefined) localizedSets[mapId(id)] = { key: smeta.key };
+    }
+
+    if (libraryHasImage) {
+      diagnostics.push({
+        rule: "figma.closure.cross-file-image",
+        severity: "error",
+        message: `a library definition in file ${library.fileKey} carries an ` +
+          `image fill (reached by key(s) ${
+            [...new Set(reqKeys)].join(", ")
+          }) ` +
+          `— cross-file image resolution is a follow-up`,
+        nodeId: reqs[0].remote.componentId,
+      });
+    }
+  }
+
+  if (splicedNodes.length === 0) {
+    // Nothing resolved: return the file untouched so the unresolved requirements
+    // stay named, never localized behind a diagnostic.
+    return { file, resolved, splicedRootIds, diagnostics };
+  }
+
+  // Splice the definitions into the first canvas, ahead of its own children, so
+  // a resolved definition is a top-level child of a canvas (what the closure
+  // requires of a definition). Resolution order is preserved and deterministic.
+  const children = file.document.children ?? [];
+  const firstCanvasAt = children.findIndex((n) => n.type === "CANVAS");
+  const newChildren = children.map((node, at) =>
+    at === firstCanvasAt
+      ? { ...node, children: [...splicedNodes, ...(node.children ?? [])] }
+      : node
+  );
+
+  const splicedFile: ClosureFile = {
+    ...file,
+    document: { ...file.document, children: newChildren },
+    components: { ...file.components, ...localizedComponents },
+    componentSets: { ...file.componentSets, ...localizedSets },
+  };
+
+  return { file: splicedFile, resolved, splicedRootIds, diagnostics };
+}
+
+/**
+ * Returns the file with the named top-level canvas nodes removed. The importer
+ * uses it to keep spliced library definitions out of sidecar derivation: they
+ * resolve but do not paint, and their bindings' ids live in another file's
+ * variable space (docs/decisions/figma-cross-file-library-resolution.md, C3/#167).
+ */
+export function excludeTopLevelNodes(
+  file: ClosureFile,
+  ids: ReadonlySet<string>,
+): ClosureFile {
+  const children = (file.document.children ?? []).map((canvas) =>
+    canvas.type === "CANVAS"
+      ? {
+        ...canvas,
+        children: (canvas.children ?? []).filter((n) => !ids.has(n.id)),
+      }
+      : canvas
+  );
+  return { ...file, document: { ...file.document, children } };
 }

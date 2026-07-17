@@ -59,7 +59,7 @@ skipped, unchanged, or failed fixture never has its images pruned — the
 directory is only authoritative when the fixture was actually captured.
 
 Nine tier-1 fixtures are authored and captured, committed under
-this directory. Two more are registered in the manifest and await a
+this directory. Four more are registered in the manifest and await a
 manual authoring step:
 
 - `real-file` — the v0.7 real-file import spike (story #37):
@@ -76,6 +76,18 @@ manual authoring step:
   roles), then capture. The trim rules themselves are covered offline by
   `importers/figma/src/trim_test.ts`; this fixture replays annotate →
   trim → named record against a real `?plugin_data=shared` response.
+- `xfile-library` / `xfile-consumer` — the cross-file library-resolution
+  pair (story #38, `docs/decisions/figma-cross-file-library-resolution.md`).
+  A **two-file** manual step, because no Plugin API publishes a team
+  library or instances a component across files: author `xfile-library`
+  with a component set and **publish** it as a team library, then author
+  `xfile-consumer` instancing a variant of that published set, paste both
+  file keys into the manifest, and capture. The consumer's `components`
+  map then carries the instanced component as `remote: true` with the
+  library key — the shape resolution matches on. The mechanism is covered
+  offline by `importers/figma/src/closure_test.ts` and `import_test.ts`;
+  this pair replays remote-instance resolution against real
+  `?plugin_data=shared` responses.
 
 | fixture                     | covers                                                                                                                                                                                                                                                                                |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
