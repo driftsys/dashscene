@@ -93,7 +93,7 @@ fn variant_switch_animates_between_two_solved_layouts() {
                 },
             },
             PropTransition {
-                prop: prop_key(child, Channel::W),
+                prop: prop_key(child, Channel::Width),
                 spec: TransitionSpec::Tween {
                     duration: 1.0,
                     easing: Easing::Linear,
@@ -253,4 +253,81 @@ fn rect_x(x: f32) -> SolvedRect {
         w: 50.0,
         h: 50.0,
     }
+}
+
+// -- The engine-owned prop key (debts #207/#208) -----------------------------
+
+#[test]
+fn prop_key_round_trips_through_the_canonical_decoder() {
+    use dashscene_engine::decode_prop_key;
+
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let root = txn.add_node(None, None);
+    let child = txn.add_node(Some(root), None);
+    drop(txn);
+
+    for channel in [
+        Channel::X,
+        Channel::Y,
+        Channel::Width,
+        Channel::Height,
+        Channel::Gap,
+        Channel::FillR,
+        Channel::FillG,
+        Channel::FillB,
+        Channel::FillA,
+    ] {
+        let key = prop_key(child, channel);
+        assert_eq!(
+            decode_prop_key(key),
+            Some((child.index() as u32, channel)),
+            "{channel:?} round-trips"
+        );
+    }
+
+    // A key whose low byte is no channel code was not built by prop_key.
+    assert_eq!(decode_prop_key(dashcue::PropKey(0xFF)), None);
+}
+
+#[test]
+#[should_panic(expected = "is not an engine-packed prop key")]
+fn a_foreign_prop_key_is_refused_by_name() {
+    // A raw key a producer packed itself (debt #207): the low byte (0xAB)
+    // is no channel code, so the track cannot be an engine-packed key and
+    // the FLIP refuses it by name instead of silently mis-binding it.
+    let transition = VariantTransition {
+        tracks: vec![PropTransition {
+            prop: dashcue::PropKey(0xABCD_00AB),
+            spec: TransitionSpec::Tween {
+                duration: 1.0,
+                easing: Easing::Linear,
+            },
+        }],
+        stagger: 0.0,
+    };
+    VariantFlip::new().start(&[], &[], &transition);
+}
+
+#[test]
+#[should_panic(expected = "is not a rect channel")]
+fn a_non_rect_channel_track_is_refused_by_name() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let node = txn.add_node(None, None);
+    drop(txn);
+
+    // Gap is a legitimate binding channel but not a rect channel; FLIP
+    // animates rects only, so the track is refused by name.
+    let transition = VariantTransition {
+        tracks: vec![PropTransition {
+            prop: prop_key(node, Channel::Gap),
+            spec: TransitionSpec::Tween {
+                duration: 1.0,
+                easing: Easing::Linear,
+            },
+        }],
+        stagger: 0.0,
+    };
+    VariantFlip::new().start(&[], &[], &transition);
 }
