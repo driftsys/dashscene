@@ -1371,6 +1371,33 @@ fn an_anchor_past_the_i16_line_range_is_named_without_declared_tracks() {
 }
 
 #[test]
+fn a_span_running_past_the_declared_tracks_is_named() {
+    // The anchor itself fits (column 1 of 2), but anchor 1 + span 2 = 3
+    // runs past the two declared column tracks. The engine would grow an
+    // implicit third column and solve differently from the authored grid,
+    // so it is named rather than solved silently (story #264, D7).
+    let report = validate(&grid_document(GridDoc {
+        child_column: Some(1),
+        child_spans: (1, 2),
+        ..Default::default()
+    }));
+    assert!(report.has(rule::GRID_SPAN_OUT_OF_RANGE), "{report}");
+    assert!(report.has_errors());
+    // The anchor fits, so the anchor rule does not also fire — the overrun
+    // is attributed to the span, not the anchor.
+    assert!(!report.has(rule::GRID_ANCHOR_OUT_OF_RANGE), "{report}");
+
+    // A span that exactly reaches the last track is fine: anchor 0 + span 2
+    // = 2 covers both columns.
+    let report = validate(&grid_document(GridDoc {
+        child_column: Some(0),
+        child_spans: (1, 2),
+        ..Default::default()
+    }));
+    assert!(!report.has(rule::GRID_SPAN_OUT_OF_RANGE), "{report}");
+}
+
+#[test]
 fn a_fraction_track_on_a_hug_axis_is_named() {
     // A fraction divides free space and a hug axis has none: the track
     // (and everything anchored to it) silently collapses to zero, so

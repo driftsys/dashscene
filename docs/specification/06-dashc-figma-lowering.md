@@ -1,8 +1,9 @@
 # dashc — the Figma REST front end (requirements)
 
 As-built after stories #139 and #17 (epic #12, v0.3 — basic paint +
-importer) and #140 (epic #36, v0.7 — the flex lowering). The architecture
-is in `docs/design/dashc.md`; the rationale is in the decision records this
+importer), #140 (epic #36, v0.7 — the flex lowering), and #264 (epic #42,
+v0.8 — the grid/wrap/baseline layout lowering). The architecture is in
+`docs/design/dashc.md`; the rationale is in the decision records this
 document links.
 
 These requirements are gardened from the stories' acceptance criteria and
@@ -30,8 +31,11 @@ gradient kinds, image fills with their scale mode, solid strokes in all
 three alignments, uniform and per-corner radii, axis-aligned clip, and
 `HORIZONTAL`/`VERTICAL` auto-layout — mode, gap (negative included),
 padding, per-axis hug/fill/fixed sizing, main- and cross-axis alignment,
-and min/max clamps. Text, effects, and the v0.8 layout-fidelity vocabulary
-(grid, wrap, baseline) are out of scope until their slices.
+and min/max clamps. Since v0.8 (#264) the layout-fidelity vocabulary lowers
+too: `GRID` onto grid mode with per-axis gaps, `Fixed`/`Fraction` track
+lists, and per-child cell placement; `layoutWrap: WRAP` onto wrap mode with
+a cross-axis line gap; and `counterAxisAlignItems: BASELINE` onto baseline
+cross-alignment. Effects (shadows) are out of scope until their slice.
 
 ## Compilation
 
@@ -148,6 +152,52 @@ and min/max clamps. Text, effects, and the v0.8 layout-fidelity vocabulary
    (`the_fixture_emits_the_golden_dsb` against the unchanged
    `goldens/dsb/v03-paint.dsb`)
 
+## The v0.8 layout lowering (story #264)
+
+Refines the flex lowering with the constructs story #43 taught the engine and
+appended to the schema (`docs/decisions/v08-layout-vocabulary-shape.md`),
+un-pinning `docs/decisions/figma-flex-lowering.md` D5. Verified in
+`crates/dashc/tests/flex_lowering.rs`.
+
+1. **`GRID` shall lower onto grid mode with tracks and placement** (P1, R2). A
+   `layoutMode: GRID` frame shall lower onto `LayoutMode::Grid` with
+   `gridColumnGap` as the main gap and `gridRowGap` as the cross gap; the
+   serialized `gridColumnsSizing`/`gridRowsSizing` strings shall lower onto
+   `Fixed`/`Fraction` track lists (`Npx` -> `Fixed(N)`, `minmax(0,Nfr)` ->
+   `Fraction(N)`); and each child's `gridRowAnchorIndex`/
+   `gridColumnAnchorIndex` and `gridRowSpan`/`gridColumnSpan` shall lower onto
+   its grid placement.
+   (`the_grid_fixture_lowers_onto_grid_mode_with_tracks_and_placement`)
+
+2. **`layoutWrap: WRAP` shall lower onto wrap mode with a cross gap** (P1, R2).
+   A horizontal wrapping frame shall lower onto `LayoutMode::Wrap` with
+   `itemSpacing` as the main gap and `counterAxisSpacing` as the cross gap.
+   (`the_wrap_fixture_lowers_onto_wrap_mode_with_a_cross_gap`)
+
+3. **`counterAxisAlignItems: BASELINE` shall lower onto baseline
+   cross-alignment.** (`the_baseline_fixture_lowers_onto_baseline_cross_align_and_compiles`)
+
+4. **The lowered grid and wrap intent, solved by the runtime, shall land on
+   the boxes Figma's own solver produced** — the captured fixtures are the
+   oracle, solved font-free where a hug cell holds text (a `TEXT` leaf swapped
+   for a fixed `FRAME` of its shaped box).
+   (`the_grid_fixture_solves_to_figmas_captured_rects`,
+   `the_wrap_fixture_solves_to_figmas_captured_rects`)
+
+5. **A baseline text row's solved rects shall not be forced to match the
+   capture** (debt #273). The engine's leaf baseline is the box bottom, not
+   the glyph baseline, so a mixed-size baseline row diverges; the lowered
+   intent is pinned and the divergence is named, never hidden.
+   (`the_baseline_fixture_lowers_onto_baseline_cross_align_and_compiles`)
+
+6. **The v0.8 widening shall keep its own named refusals** (P4). A negative
+   `itemSpacing` on a `WRAP` frame (no margin encoding for a wrap gap), a
+   `counterAxisAlignContent: SPACE_BETWEEN` on a wrap frame (no
+   `align_content` vocabulary), and a grid track token the `Fixed`/`Fraction`
+   vocabulary cannot express shall each be a named `figma.unsupported` error.
+   (`a_wrap_with_a_negative_item_spacing_is_refused_by_name`,
+   `a_wrap_space_between_line_distribution_is_refused_by_name`)
+
 ## The import gate
 
 1. **The producer maps, the validator decides** (P5). `dashc` shall map a
@@ -190,9 +240,8 @@ and min/max clamps. Text, effects, and the v0.8 layout-fidelity vocabulary
    `a_text_node_used_as_a_mask_is_refused_by_name`,
    `a_non_basic_stroke_fails_loudly_rather_than_lowering_as_a_solid_one`,
    `a_stroke_dash_pattern_fails_loudly_rather_than_lowering_as_a_continuous_stroke`,
-   `the_wrap_fixture_is_diagnosed_not_flattened_onto_one_line`,
-   `the_grid_fixture_is_diagnosed_not_flattened`,
-   `the_baseline_fixture_is_diagnosed_not_realigned`,
+   `a_wrap_with_a_negative_item_spacing_is_refused_by_name`,
+   `a_wrap_space_between_line_distribution_is_refused_by_name`,
    `a_fill_child_on_its_parents_hug_axis_is_diagnosed`,
    `an_absolutely_positioned_child_is_diagnosed`)
 
@@ -218,10 +267,14 @@ never by a reading of Figma's documentation (P5).
 `lowering-variant-topology.json` pins the dashed-stroke shape. Story #140
 adds `lowering-hug-in-fill.json` and `lowering-negative-gap.json` as the
 flex lowering's fixtures (their solve oracles are Figma's own captured
-boxes), `lowering-wrap.json`, `grid-basic.json`, and
-`lowering-baseline.json` as the v0.8-vocabulary refusal fixtures, and
-`variables-bound.json` as the fill-on-hug refusal fixture. The exceptions
-to fixture pinning — `SPACE_BETWEEN`, `layoutPositioning`,
+boxes), and `variables-bound.json` as the fill-on-hug refusal fixture.
+Story #264 lowers `lowering-wrap.json`, `grid-basic.json`, and
+`lowering-baseline.json`, which the v0.7 slice captured as v0.8-vocabulary
+refusal fixtures — they now pin the grid/wrap/baseline lowering and its
+Figma-captured-rect fidelity (baseline pins the lowered intent only,
+debt #273). The exceptions to fixture pinning — the two v0.8 wrap refusals
+(`counterAxisAlignContent: SPACE_BETWEEN`, negative `itemSpacing` under
+`WRAP`), `SPACE_BETWEEN` main alignment, `layoutPositioning`,
 `strokesIncludedInLayout`, `itemReverseZIndex`, the `MIN`/`CENTER`/`MAX`
 alignment values — are synthetic from Figma's documented enums and say so
 at their tests

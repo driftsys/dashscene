@@ -224,9 +224,9 @@ into the records below. Per-story decisions land here directly:
   binds the lowering's shape.
 - [figma-flex-lowering.md](figma-flex-lowering.md) — the #140 auto-layout
   lowering: `layoutSizingHorizontal`/`Vertical` are the sizing source,
-  non-intent lowers as zeros per axis (P1), the negative-gap rewrite runs in
-  the walk, and grid/wrap/baseline plus fill-on-hug stay refused by name
-  until v0.8.
+  non-intent lowers as zeros per axis (P1), and the negative-gap rewrite runs
+  in the walk. Grid, wrap, and baseline lower since #264 (D5 un-pinned);
+  fill-on-hug stays refused by name.
 - [figma-text-lowering.md](figma-text-lowering.md) — the #160 `TEXT`
   lowering: the document `TextStyle` carries family/size/weight/color only,
   every other authored text feature is a named diagnostic (P4, not a schema

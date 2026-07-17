@@ -431,15 +431,17 @@ fn check_node_links(
             // anchor check falls back to the undeclared-tracks bound.
             _ => None,
         };
-        for (axis, anchor, tracks) in [
+        for (axis, anchor, span, tracks) in [
             (
                 "row",
                 constraints.grid_row(),
+                constraints.grid_row_span(),
                 parent_flex.and_then(|f| f.grid_rows()),
             ),
             (
                 "column",
                 constraints.grid_column(),
+                constraints.grid_column_span(),
                 parent_flex.and_then(|f| f.grid_columns()),
             ),
         ] {
@@ -454,6 +456,19 @@ fn check_node_links(
                             format!(
                                 "grid {axis} anchor is {anchor}, but the parent declares \
                                  {count} {axis} tracks"
+                            ),
+                        ));
+                    } else if anchor as usize + span as usize > count {
+                        // The anchor fits but the spanned range runs off
+                        // the end. A span of 0 is separately named above,
+                        // and it cannot overflow (anchor + 0 <= count), so
+                        // this fires only for a genuine overrun (D7).
+                        report.push(error(
+                            rule::GRID_SPAN_OUT_OF_RANGE,
+                            &at(),
+                            format!(
+                                "grid {axis} anchor {anchor} plus span {span} runs past the \
+                                 parent's {count} {axis} tracks"
                             ),
                         ));
                     }

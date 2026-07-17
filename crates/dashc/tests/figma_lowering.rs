@@ -1041,7 +1041,10 @@ fn an_auto_layout_child_never_bakes_the_solved_position() {
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
 
     let (_, column) = node(&doc, "column");
-    let container = column.container.expect("the column is a flex container");
+    let container = column
+        .container
+        .as_ref()
+        .expect("the column is a flex container");
     assert_eq!(container.gap, 24.0);
     assert_eq!(
         (container.padding.left, container.padding.top),

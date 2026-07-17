@@ -25,7 +25,7 @@
 use std::collections::BTreeMap;
 
 use dashc_wasm::figma::{CompileError, lower, rule};
-use dashc_wasm::{AxisSizing, LayoutMode, MainAxisAlign, compile_figma};
+use dashc_wasm::{AxisSizing, CrossAxisAlign, GridTrack, LayoutMode, MainAxisAlign, compile_figma};
 use dashpaint::{CornerRadii, GlyphRunTable, Painter};
 use dashscene_core::{Arena, load_document};
 use dashscene_engine::TaffySolver;
@@ -79,6 +79,24 @@ fn hug_in_fill_derived() -> String {
     )
 }
 
+/// `grid-basic.json` with its one `TEXT` leaf ("hug me") swapped for a
+/// `FRAME` fixed at the box Figma gave the text (50×17). The same font-free
+/// solve pattern `hug_in_fill_derived` uses: solving text needs the
+/// typesetter this binary does not wire, and a fixed frame of the shaped
+/// size gives the hug cell the same content extent. Figma's captured boxes
+/// stay the oracle.
+fn grid_basic_derived() -> String {
+    derive(
+        GRID_BASIC,
+        |object| kind_is(object, "TEXT"),
+        |object| {
+            object.insert("type".to_string(), "FRAME".into());
+            object.insert("layoutSizingHorizontal".to_string(), "FIXED".into());
+            object.insert("layoutSizingVertical".to_string(), "FIXED".into());
+        },
+    )
+}
+
 /// Compile, load, and solve through the engine; returns the committed rects.
 fn solved_rects(json: &str) -> Vec<dashpaint::RectEntry> {
     let (bytes, _) = compile_figma(json, Profile::Core, &BTreeMap::new())
@@ -105,7 +123,10 @@ fn the_hug_in_fill_fixture_lowers_its_authored_flex_intent() {
 
     // The root: a fixed-width, hug-height vertical stack.
     let (_, root) = node(&doc, "lowering-hug-in-fill");
-    let container = root.container.expect("the root is an auto-layout frame");
+    let container = root
+        .container
+        .as_ref()
+        .expect("the root is an auto-layout frame");
     assert_eq!(container.mode, LayoutMode::Vertical);
     assert_eq!(container.gap, 12.0);
     assert_eq!(
@@ -139,7 +160,7 @@ fn the_hug_in_fill_fixture_lowers_its_authored_flex_intent() {
     let constraints = hug.constraints.expect("hug-inside hugs");
     assert_eq!(constraints.sizing_h, AxisSizing::Hug);
     assert_eq!(constraints.sizing_v, AxisSizing::Hug);
-    let padding = hug.container.expect("hug-inside is a row").padding;
+    let padding = hug.container.as_ref().expect("hug-inside is a row").padding;
     assert_eq!((padding.left, padding.top), (10.0, 6.0));
 
     // Since story #160 the TEXT leaf lowers too, so the whole fixture is
@@ -174,7 +195,10 @@ fn a_negative_gap_lowers_to_leading_margins_before_emission() {
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
 
     let (_, root) = node(&doc, "lowering-negative-gap");
-    let container = root.container.expect("the root is an auto-layout frame");
+    let container = root
+        .container
+        .as_ref()
+        .expect("the root is an auto-layout frame");
     assert_eq!(container.mode, LayoutMode::Horizontal);
     assert_eq!(container.gap, 0.0, "the authored -16 is gone");
 
@@ -472,7 +496,7 @@ fn space_between_zeroes_the_authored_gap() {
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
 
     let (_, root) = node(&doc, "spread");
-    let container = root.container.expect("an auto-layout frame");
+    let container = root.container.as_ref().expect("an auto-layout frame");
     assert_eq!(container.main_align, MainAxisAlign::SpaceBetween);
     assert_eq!(container.gap, 0.0);
     let (_, b) = node(&doc, "b");
@@ -600,61 +624,533 @@ fn the_solved_flex_fixtures_render_through_the_skia_painter() {
 }
 
 // ---------------------------------------------------------------------------
-// What the runtime cannot solve until v0.8 is refused by name, never
-// flattened (P4) — wrap, grid, baseline. The roadmap places all three in
-// the v0.8 layout-fidelity slice; the schema's enums append there.
+// The v0.8 layout-fidelity vocabulary lowers onto story #43's schema fields
+// (story #264): grid with tracks/placement, wrap with a cross gap, baseline
+// cross-alignment. The lowered intent, solved by the runtime, lands on the
+// boxes Figma's own solver produced — the same fidelity contract the flex
+// fixtures hold, extended to the constructs the engine gained at v0.8.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn the_wrap_fixture_is_diagnosed_not_flattened_onto_one_line() {
-    let (_, diagnostics) = lowered(WRAP);
-
-    assert_eq!(
-        unsupported(&diagnostics),
-        vec![(
-            "/lowering-wrap".to_string(),
-            "wrapping auto-layout (WRAP)".to_string(),
-        )],
-        "one diagnostic: the subtree under an unlowerable container is skipped",
-    );
-}
-
-#[test]
-fn the_grid_fixture_is_diagnosed_not_flattened() {
+fn the_grid_fixture_lowers_onto_grid_mode_with_tracks_and_placement() {
+    // GRID un-pins onto LayoutMode::Grid: the per-axis grid gaps map to
+    // gap (column) and cross_gap (row), the serialized track strings to
+    // the track lists, and the per-child anchors/spans to the placement.
     let (doc, diagnostics) = lowered(GRID_BASIC);
-
-    assert_eq!(
-        unsupported(&diagnostics),
-        vec![(
-            "/grid-basic".to_string(),
-            "grid auto-layout (GRID)".to_string(),
-        )],
-    );
     assert!(
-        doc.nodes.is_empty(),
-        "a grid root lowers nothing: every child box is grid-solver output (P1)",
+        unsupported(&diagnostics).is_empty(),
+        "{:?}",
+        unsupported(&diagnostics),
     );
 
-    // And under R6 it can never emit.
-    let err = compile_figma(GRID_BASIC, Profile::Core, &BTreeMap::new())
-        .expect_err("a grid document is blocked");
-    let CompileError::Diagnostics(report) = err else {
-        panic!("expected diagnostics, got {err:?}");
-    };
-    assert!(report.has(rule::UNSUPPORTED));
+    let (_, root) = node(&doc, "grid-basic");
+    let container = root
+        .container
+        .as_ref()
+        .expect("the grid root lowers a container");
+    assert_eq!(container.mode, LayoutMode::Grid);
+    // gap is the column gap, cross_gap the row gap (v0.8 D4).
+    assert_eq!(container.gap, 12.0);
+    assert_eq!(container.cross_gap, Some(12.0));
+    // A fixed first track, then two fractions that divide the free space
+    // — Figma's `minmax(0,1fr)` lowers to Fraction(1) (v0.8 D2).
+    assert_eq!(
+        container.grid_columns,
+        vec![
+            GridTrack::Fixed(160.0),
+            GridTrack::Fraction(1.0),
+            GridTrack::Fraction(1.0),
+        ],
+    );
+    assert_eq!(
+        container.grid_rows,
+        vec![
+            GridTrack::Fixed(96.0),
+            GridTrack::Fraction(1.0),
+            GridTrack::Fraction(1.0),
+        ],
+    );
+
+    // span-3-cols: anchored at (0,0), spans three columns, FILL both axes.
+    let (_, span_cols) = node(&doc, "span-3-cols");
+    let c = span_cols.constraints.expect("carries grid placement");
+    assert_eq!((c.grid_row, c.grid_column), (Some(0), Some(0)));
+    assert_eq!((c.grid_row_span, c.grid_column_span), (1, 3));
+    assert_eq!(
+        (c.sizing_h, c.sizing_v),
+        (AxisSizing::Fill, AxisSizing::Fill)
+    );
+    // A grid child's solved box is never baked (P1): a FILL cell is zero.
+    let b = span_cols.box2d;
+    assert_eq!((b.x, b.y, b.width, b.height), (0.0, 0.0, 0.0, 0.0));
+
+    // span-2-rows: anchored at (1,0), spans two rows.
+    let (_, span_rows) = node(&doc, "span-2-rows");
+    let c = span_rows.constraints.expect("carries grid placement");
+    assert_eq!((c.grid_row, c.grid_column), (Some(1), Some(0)));
+    assert_eq!((c.grid_row_span, c.grid_column_span), (2, 1));
+
+    // fill-minmax: the placement and the min/max clamps ride one table.
+    let (_, minmax) = node(&doc, "fill-minmax");
+    let c = minmax
+        .constraints
+        .expect("carries grid placement and clamps");
+    assert_eq!((c.grid_row, c.grid_column), (Some(1), Some(1)));
+    assert_eq!((c.min_width, c.max_width), (Some(120.0), Some(400.0)));
+
+    // fixed-size keeps its authored extent (a Fixed axis reads the box).
+    let (_, fixed) = node(&doc, "fixed-size");
+    assert_eq!((fixed.box2d.width, fixed.box2d.height), (140.0, 60.0));
+
+    // The whole raw capture emits now (its one TEXT leaf lowers since #160).
+    let (bytes, report) = compile_figma(GRID_BASIC, Profile::Core, &BTreeMap::new())
+        .expect("the grid capture compiles now that GRID lowers");
+    assert!(report.is_empty(), "{report}");
+    assert!(!bytes.is_empty());
 }
 
 #[test]
-fn the_baseline_fixture_is_diagnosed_not_realigned() {
-    let (_, diagnostics) = lowered(BASELINE);
+fn the_grid_fixture_solves_to_figmas_captured_rects() {
+    // The captured grid, solved font-free: its one TEXT leaf swapped for a
+    // FRAME fixed at the box Figma gave the text (50×17), so the hug cell
+    // has the same content extent. Every box equals the capture's
+    // absoluteBoundingBox — the engine solves this scene since story #43.
+    let rects = solved_rects(&grid_basic_derived());
+
+    // DFS order: root, then the six children in document order, with the
+    // hug cell's fixed stand-in nested inside it.
+    let expected: [(f32, f32, f32, f32); 8] = [
+        (0.0, 0.0, 720.0, 480.0),     // grid root
+        (16.0, 16.0, 688.0, 96.0),    // span-3-cols
+        (16.0, 124.0, 160.0, 340.0),  // span-2-rows
+        (188.0, 124.0, 252.0, 164.0), // fill-minmax
+        (452.0, 124.0, 74.0, 33.0),   // hug-content
+        (464.0, 132.0, 50.0, 17.0),   // the fixed stand-in for "hug me"
+        (188.0, 300.0, 140.0, 60.0),  // fixed-size
+        (452.0, 300.0, 252.0, 164.0), // fill-plain
+    ];
+    assert_eq!(rects.len(), expected.len());
+    for (i, (rect, (x, y, w, h))) in rects.iter().zip(expected).enumerate() {
+        assert_eq!((rect.x, rect.y, rect.w, rect.h), (x, y, w, h), "rect {i}");
+    }
+}
+
+#[test]
+fn the_wrap_fixture_lowers_onto_wrap_mode_with_a_cross_gap() {
+    // layoutWrap: WRAP un-pins a horizontal row onto LayoutMode::Wrap. The
+    // two authored gaps stay distinct: gap is itemSpacing (between chips),
+    // cross_gap is counterAxisSpacing (between lines) — v0.8 D4.
+    let (doc, diagnostics) = lowered(WRAP);
+    assert!(
+        unsupported(&diagnostics).is_empty(),
+        "{:?}",
+        unsupported(&diagnostics),
+    );
+
+    let (_, root) = node(&doc, "lowering-wrap");
+    let container = root
+        .container
+        .as_ref()
+        .expect("the wrap root lowers a container");
+    assert_eq!(container.mode, LayoutMode::Wrap);
+    assert_eq!(container.gap, 12.0);
+    assert_eq!(container.cross_gap, Some(16.0));
+    // counterAxisAlignContent AUTO carries no line-distribution vocabulary,
+    // so the cross alignment stays the axis start.
+    assert_eq!(container.cross_align, CrossAxisAlign::Start);
+
+    // The chips are fixed-size, so they carry no constraints table.
+    let (_, chip) = node(&doc, "chip-1");
+    assert_eq!(chip.constraints, None);
+    assert_eq!((chip.box2d.width, chip.box2d.height), (120.0, 40.0));
+}
+
+#[test]
+fn the_wrap_fixture_solves_to_figmas_captured_rects() {
+    // Fixed-size chips, no text, so the raw capture solves font-free. The
+    // engine breaks the lines and hugs the height since story #43; every
+    // box equals the capture's absoluteBoundingBox.
+    let rects = solved_rects(WRAP);
+
+    let expected: [(f32, f32, f32, f32); 8] = [
+        (0.0, 0.0, 420.0, 184.0),   // the fixed-width, hug-height root
+        (16.0, 16.0, 120.0, 40.0),  // chip-1
+        (148.0, 16.0, 80.0, 40.0),  // chip-2
+        (240.0, 16.0, 160.0, 40.0), // chip-3 (line one ends)
+        (16.0, 72.0, 100.0, 40.0),  // chip-4 (line two)
+        (128.0, 72.0, 140.0, 40.0), // chip-5
+        (280.0, 72.0, 90.0, 40.0),  // chip-6
+        (16.0, 128.0, 110.0, 40.0), // chip-7 (line three)
+    ];
+    assert_eq!(rects.len(), expected.len());
+    for (i, (rect, (x, y, w, h))) in rects.iter().zip(expected).enumerate() {
+        assert_eq!((rect.x, rect.y, rect.w, rect.h), (x, y, w, h), "rect {i}");
+    }
+}
+
+#[test]
+fn the_baseline_fixture_lowers_onto_baseline_cross_align_and_compiles() {
+    // counterAxisAlignItems: BASELINE un-pins onto CrossAxisAlign::Baseline
+    // (Q-4). The whole fixture lowers clean and compiles end to end — its
+    // text children lower since #160.
+    //
+    // The lowered intent is exact and is what this test pins. The SOLVED
+    // rects are deliberately NOT asserted against the capture: the engine's
+    // leaf baseline is the box bottom, not the glyph baseline (debt #273),
+    // and this binary wires no typesetter, so a solve of this text row
+    // would diverge from Figma's boxes. Pinning a false rect match would
+    // hide that divergence, so only the intent is pinned here.
+    let (doc, diagnostics) = lowered(BASELINE);
+    assert!(
+        unsupported(&diagnostics).is_empty(),
+        "{:?}",
+        unsupported(&diagnostics),
+    );
+
+    let (_, root) = node(&doc, "lowering-baseline");
+    let container = root
+        .container
+        .as_ref()
+        .expect("the baseline root lowers a container");
+    assert_eq!(container.mode, LayoutMode::Horizontal);
+    assert_eq!(container.cross_align, CrossAxisAlign::Baseline);
+    assert_eq!(container.gap, 16.0);
+    assert_eq!(
+        container.cross_gap, None,
+        "a plain row has no wrap/grid cross gap"
+    );
+
+    // The mixed-size text children lowered their characters.
+    for name in ["small", "MEDIUM", "Large"] {
+        let (_, n) = node(&doc, name);
+        assert!(n.text.is_some(), "{name} lowered its characters");
+    }
+
+    // The whole capture compiles end to end (emit plus the load gate).
+    let (bytes, report) = compile_figma(BASELINE, Profile::Core, &BTreeMap::new())
+        .expect("the baseline capture compiles now that BASELINE lowers");
+    assert!(report.is_empty(), "{report}");
+    assert!(!bytes.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// The v0.8 widening keeps its own named refusals (P4): a wrap gap that has
+// no margin encoding, and a wrap line distribution with no vocabulary.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_wrap_with_a_negative_item_spacing_is_refused_by_name() {
+    // A negative gap on a WRAP frame has no margin encoding: wrap decides
+    // its line breaks after the lowering, so pulling every later line's
+    // leading chip into the padding band distorts the breaks. The engine
+    // refuses the core equivalent by name
+    // (docs/decisions/v08-layout-vocabulary-shape.md D5,
+    // docs/decisions/negative-margin-hug-rebate.md); the dashc side
+    // matches. Synthetic: no capture pins a negative wrap gap.
+    let json = serde_json::json!({
+        "document": { "name": "Document", "type": "DOCUMENT", "children": [{
+            "name": "Page 1", "type": "CANVAS", "children": [{
+                "name": "wrap-neg", "type": "FRAME",
+                "layoutMode": "HORIZONTAL",
+                "layoutWrap": "WRAP",
+                "itemSpacing": -8.0,
+                "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 200.0, "height": 80.0 },
+                "children": [
+                    { "name": "a", "type": "FRAME",
+                      "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 60.0, "height": 40.0 } },
+                ],
+            }],
+        }]},
+    })
+    .to_string();
 
     assert_eq!(
-        unsupported(&diagnostics),
+        diagnosed(&json),
         vec![(
-            "/lowering-baseline".to_string(),
-            "cross-axis alignment BASELINE".to_string(),
+            "/wrap-neg".to_string(),
+            "a wrapping row with a negative gap (layoutWrap WRAP + negative itemSpacing)"
+                .to_string(),
         )],
     );
+}
+
+#[test]
+fn a_wrap_space_between_line_distribution_is_refused_by_name() {
+    // counterAxisAlignContent: SPACE_BETWEEN distributes wrap lines with no
+    // vocabulary to carry it; an align_content field appends when a real
+    // file needs it (docs/decisions/v08-layout-vocabulary-shape.md, "Out
+    // of scope"). Until then it is refused (P4). Synthetic: no capture
+    // pins it.
+    let json = serde_json::json!({
+        "document": { "name": "Document", "type": "DOCUMENT", "children": [{
+            "name": "Page 1", "type": "CANVAS", "children": [{
+                "name": "wrap-spread", "type": "FRAME",
+                "layoutMode": "HORIZONTAL",
+                "layoutWrap": "WRAP",
+                "counterAxisAlignContent": "SPACE_BETWEEN",
+                "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 200.0, "height": 80.0 },
+                "children": [
+                    { "name": "a", "type": "FRAME",
+                      "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 60.0, "height": 40.0 } },
+                ],
+            }],
+        }]},
+    })
+    .to_string();
+
+    assert_eq!(
+        diagnosed(&json),
+        vec![(
+            "/wrap-spread".to_string(),
+            "wrap line distribution (counterAxisAlignContent SPACE_BETWEEN)".to_string(),
+        )],
+    );
+}
+
+#[test]
+fn counter_axis_align_content_is_ignored_off_a_wrap_frame() {
+    // counterAxisAlignContent is meaningful only on a wrap frame; a stale
+    // value on a plain HORIZONTAL row is inert in Figma too, so it lowers
+    // normally rather than refusing with the misleading "wrap line
+    // distribution" message (D4). Synthetic: no capture pins the stale case.
+    let json = serde_json::json!({
+        "document": { "name": "Document", "type": "DOCUMENT", "children": [{
+            "name": "Page 1", "type": "CANVAS", "children": [{
+                "name": "row", "type": "FRAME",
+                "layoutMode": "HORIZONTAL",
+                "counterAxisAlignContent": "SPACE_BETWEEN",
+                "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 200.0, "height": 50.0 },
+                "children": [
+                    { "name": "a", "type": "FRAME",
+                      "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 60.0, "height": 40.0 } },
+                ],
+            }],
+        }]},
+    })
+    .to_string();
+
+    let (doc, diagnostics) = lower(&parse(&json), Profile::Core, &BTreeMap::new()).unwrap();
+    assert!(
+        unsupported(&diagnostics).is_empty(),
+        "{:?}",
+        unsupported(&diagnostics),
+    );
+    let (_, root) = node(&doc, "row");
+    assert_eq!(
+        root.container.as_ref().expect("the row lowers").mode,
+        LayoutMode::Horizontal,
+    );
+}
+
+#[test]
+fn a_wrap_with_a_negative_counter_axis_spacing_is_refused_by_name() {
+    // The cross gap (counterAxisSpacing) has no margin encoding either, so a
+    // negative one is refused by name just like the main gap (D5) — nothing
+    // downstream rejects a negative cross_gap (core's lower_negative_gaps
+    // reads only the main gap). itemSpacing stays positive, so this is the
+    // only finding. Synthetic: no capture pins a negative wrap cross gap.
+    let json = serde_json::json!({
+        "document": { "name": "Document", "type": "DOCUMENT", "children": [{
+            "name": "Page 1", "type": "CANVAS", "children": [{
+                "name": "wrap-neg-cross", "type": "FRAME",
+                "layoutMode": "HORIZONTAL",
+                "layoutWrap": "WRAP",
+                "itemSpacing": 12.0,
+                "counterAxisSpacing": -8.0,
+                "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 200.0, "height": 80.0 },
+                "children": [
+                    { "name": "a", "type": "FRAME",
+                      "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 60.0, "height": 40.0 } },
+                ],
+            }],
+        }]},
+    })
+    .to_string();
+
+    assert_eq!(
+        diagnosed(&json),
+        vec![(
+            "/wrap-neg-cross".to_string(),
+            "a wrapping row with a negative cross gap \
+             (layoutWrap WRAP + negative counterAxisSpacing)"
+                .to_string(),
+        )],
+    );
+}
+
+/// A minimal single-cell GRID frame with the given track strings — the
+/// synthetic input for the grid-track parser tests. Both gaps are positive
+/// so the only finding a test sees is the track it is about.
+fn grid_frame_json(column_sizing: &str, row_sizing: &str) -> String {
+    serde_json::json!({
+        "document": { "name": "Document", "type": "DOCUMENT", "children": [{
+            "name": "Page 1", "type": "CANVAS", "children": [{
+                "name": "grid", "type": "FRAME",
+                "layoutMode": "GRID",
+                "gridColumnGap": 12.0,
+                "gridRowGap": 12.0,
+                "gridColumnsSizing": column_sizing,
+                "gridRowsSizing": row_sizing,
+                "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 300.0, "height": 200.0 },
+            }],
+        }]},
+    })
+    .to_string()
+}
+
+#[test]
+fn an_unsupported_grid_track_is_refused_by_name() {
+    // A track the Fixed/Fraction vocabulary cannot express is a named
+    // refusal (P4) — 06-dashc-figma-lowering.md item 6. Covers `auto`,
+    // `min-content`, a minmax with a non-zero minimum, and non-finite
+    // lengths and weights. The last two matter on the `lower` producer API,
+    // which runs no load gate: without the parser's finiteness check they
+    // would reach the document as Fixed(inf)/Fraction(NaN) with no
+    // diagnostic (D3). The row track stays valid, so the refused column
+    // token is the only finding.
+    for bad in [
+        "auto",
+        "min-content",
+        "minmax(10px,1fr)",
+        "infpx",
+        "minmax(0,NaNfr)",
+    ] {
+        let json = grid_frame_json(bad, "96px");
+        assert_eq!(
+            diagnosed(&json),
+            vec![(
+                "/grid".to_string(),
+                format!("an unsupported grid track ({bad})"),
+            )],
+            "{bad}",
+        );
+        // R6: a document carrying the refused track can never emit.
+        compile_figma(&json, Profile::Core, &BTreeMap::new())
+            .expect_err("a grid with an unsupported track is blocked");
+    }
+}
+
+#[test]
+fn a_spaced_or_zero_unit_minmax_track_lowers() {
+    // The two parser regressions D1/D2 guard: `minmax(0, 1fr)` with a space
+    // after the comma stays one token (top-level whitespace split), and a
+    // zero minimum in any serialized unit (`0px`, `0.0`, `0%`) is accepted.
+    // Each lowers to Fraction(1).
+    for columns in [
+        "minmax(0, 1fr)",
+        "minmax(0px,1fr)",
+        "minmax(0.0,1fr)",
+        "minmax(0%,1fr)",
+    ] {
+        let json = grid_frame_json(columns, "minmax(0,1fr)");
+        let (doc, diagnostics) = lower(&parse(&json), Profile::Core, &BTreeMap::new()).unwrap();
+        assert!(
+            unsupported(&diagnostics).is_empty(),
+            "{columns}: {:?}",
+            unsupported(&diagnostics),
+        );
+        let (_, root) = node(&doc, "grid");
+        assert_eq!(
+            root.container
+                .as_ref()
+                .expect("the grid lowers")
+                .grid_columns,
+            vec![GridTrack::Fraction(1.0)],
+            "{columns}",
+        );
+    }
+}
+
+#[test]
+fn a_grid_with_a_negative_gap_is_refused_by_name() {
+    // A grid gap is track spacing, not flow spacing, so a negative value has
+    // no margin form (a leading margin would shift cell content, not overlap
+    // tracks) and is refused by name per axis (D6). The other gap stays
+    // positive, so each case has one finding.
+    for (column_gap, row_gap, want) in [
+        (
+            -20.0,
+            12.0,
+            "a grid with a negative column gap (negative gridColumnGap)",
+        ),
+        (
+            12.0,
+            -20.0,
+            "a grid with a negative row gap (negative gridRowGap)",
+        ),
+    ] {
+        let json = serde_json::json!({
+            "document": { "name": "Document", "type": "DOCUMENT", "children": [{
+                "name": "Page 1", "type": "CANVAS", "children": [{
+                    "name": "grid", "type": "FRAME",
+                    "layoutMode": "GRID",
+                    "gridColumnGap": column_gap,
+                    "gridRowGap": row_gap,
+                    "gridColumnsSizing": "160px minmax(0,1fr)",
+                    "gridRowsSizing": "96px minmax(0,1fr)",
+                    "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 300.0, "height": 200.0 },
+                }],
+            }]},
+        })
+        .to_string();
+        assert_eq!(
+            diagnosed(&json),
+            vec![("/grid".to_string(), want.to_string())],
+        );
+    }
+}
+
+#[test]
+fn an_asymmetric_grid_gap_maps_each_gap_to_its_own_axis() {
+    // Regression armor for the gap-axis mapping (gridColumnGap -> gap,
+    // gridRowGap -> cross_gap): with distinct gaps a column/row swap moves
+    // every second-row/second-column cell. Synthetic — no captured fixture
+    // has asymmetric grid gaps. Columns [40,60] gap 8, rows [30,50] gap 24,
+    // no padding: column x runs 0, 48; row y runs 0, 54. Each child is fixed
+    // at its cell size, so it fills the cell.
+    let child = |name: &str, row: u32, column: u32, w: f32, h: f32| {
+        serde_json::json!({
+            "name": name, "type": "FRAME",
+            "layoutSizingHorizontal": "FIXED", "layoutSizingVertical": "FIXED",
+            "gridRowAnchorIndex": row, "gridColumnAnchorIndex": column,
+            "gridRowSpan": 1, "gridColumnSpan": 1,
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": w, "height": h },
+        })
+    };
+    let json = serde_json::json!({
+        "document": { "name": "Document", "type": "DOCUMENT", "children": [{
+            "name": "Page 1", "type": "CANVAS", "children": [{
+                "name": "asym-grid", "type": "FRAME",
+                "layoutMode": "GRID",
+                "layoutSizingHorizontal": "FIXED", "layoutSizingVertical": "FIXED",
+                "gridColumnGap": 8.0,
+                "gridRowGap": 24.0,
+                "gridColumnsSizing": "40px 60px",
+                "gridRowsSizing": "30px 50px",
+                "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 108.0, "height": 104.0 },
+                "children": [
+                    child("a", 0, 0, 40.0, 30.0),
+                    child("b", 0, 1, 60.0, 30.0),
+                    child("c", 1, 0, 40.0, 50.0),
+                    child("d", 1, 1, 60.0, 50.0),
+                ],
+            }],
+        }]},
+    })
+    .to_string();
+
+    let rects = solved_rects(&json);
+    let expected: [(f32, f32, f32, f32); 5] = [
+        (0.0, 0.0, 108.0, 104.0), // grid root
+        (0.0, 0.0, 40.0, 30.0),   // a (row 0, col 0)
+        (48.0, 0.0, 60.0, 30.0),  // b (row 0, col 1) — catches a column-gap swap
+        (0.0, 54.0, 40.0, 50.0),  // c (row 1, col 0) — catches a row-gap swap
+        (48.0, 54.0, 60.0, 50.0), // d (row 1, col 1)
+    ];
+    assert_eq!(rects.len(), expected.len());
+    for (i, (rect, (x, y, w, h))) in rects.iter().zip(expected).enumerate() {
+        assert_eq!((rect.x, rect.y, rect.w, rect.h), (x, y, w, h), "rect {i}");
+    }
 }
 
 #[test]

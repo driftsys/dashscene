@@ -66,11 +66,21 @@ Refusals are error diagnostics
 each names its construct:
 
 - **`GRID`**, **`layoutWrap: WRAP`**, **`counterAxisAlignItems: BASELINE`**
-  — the runtime solves none of them until v0.8 (`docs/roadmap.md`, layout
-  fidelity; the schema's enum members append there). Lowering grid or wrap
-  onto a single flex line, or baseline onto `Start`, would move every
-  child. The refusing node's subtree is skipped: its children's boxes are
-  that solver's output (P1).
+  — refused until v0.8, **lowered since story #264**. Story #43 taught the
+  runtime all three and appended their vocabulary to the schema
+  (`docs/decisions/v08-layout-vocabulary-shape.md`); story #264 lowers
+  `GRID` onto `LayoutMode::Grid` with its track lists and per-child
+  placement, `WRAP` onto `LayoutMode::Wrap` with a cross gap, and
+  `BASELINE` onto `CrossAxisAlign::Baseline`. Two refusals **appear** with
+  the un-pin, both P4: a **negative `itemSpacing` on a `WRAP` frame** (a
+  negative wrap gap has no margin encoding — wrap breaks its lines after
+  the lowering, so a leading margin would distort the breaks; the engine
+  refuses the core equivalent, `docs/decisions/v08-layout-vocabulary-shape.md`
+  D5), and **`counterAxisAlignContent: SPACE_BETWEEN`** on a wrap frame (no
+  `align_content` vocabulary yet — the field appends when a real file needs
+  it). A grid track token the `Fixed`/`Fraction` vocabulary cannot express
+  (an `auto`, a `minmax` with a non-zero minimum) is likewise a named
+  refusal.
 - **A `Fill` child on an axis its parent hugs** — Figma resolves the
   sizing cycle from the child's stored size (solver state P1 forbids
   reading); a CSS solve derives the hug from content. The two render
@@ -96,12 +106,15 @@ the fidelity test now asserts the Figma-captured root width (264).
 
 ## Trace
 
-- Satisfies: issue #140 (auto-layout scope; grid remains refused —
-  reported at the story, resolved by the v0.8 slice), R2 via
+- Satisfies: issue #140 (auto-layout scope; grid/wrap/baseline refused at
+  the story, **un-pinned and lowered at story #264** onto story #43's
+  schema fields — `docs/decisions/v08-layout-vocabulary-shape.md`), R2 via
   `docs/decisions/flex-vocabulary-shape.md`, P1/P4.
 - Verified by: `crates/dashc/tests/flex_lowering.rs` (fixture lowering,
-  Figma-captured-rect fidelity, refusals, goldens),
-  `crates/dashc/tests/round_trip.rs::flex_intent_round_trips_through_the_document`.
+  Figma-captured-rect fidelity, refusals, goldens — including the v0.8
+  grid/wrap/baseline lowering and the two v0.8 wrap refusals),
+  `crates/dashc/tests/round_trip.rs::flex_intent_round_trips_through_the_document`
+  (its grid subtree round-trips the v0.8 fields through emit and core load).
 - Related: `docs/decisions/figma-auto-layout-refused-on-two-grounds.md`,
   `docs/decisions/negative-gap-lowering.md`,
   `docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`.

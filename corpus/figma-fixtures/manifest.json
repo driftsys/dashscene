@@ -17,8 +17,8 @@
       "name": "grid-basic",
       "fileKey": "BJ1sPobsTmNLQLWqtgjwJU",
       "covers": "GRID mode: row/column spans, fixed+flex tracks, hug/fill/fixed children, min/max constraints",
-      "emits": false,
-      "note": "Refused by name until the v0.8 layout-fidelity slice: the walk diagnoses grid auto-layout (GRID) and skips the subtree (docs/decisions/figma-flex-lowering.md D5). Captured now so the v0.8 grid lowering starts from pinned shapes."
+      "emits": true,
+      "note": "Lowers since #264 (the v0.8 grid un-pin): GRID -> LayoutMode::Grid with gridColumnGap/gridRowGap as the main/cross gaps, the gridColumnsSizing/gridRowsSizing strings as Fixed/Fraction track lists, and per-child anchors/spans as placement (docs/decisions/figma-flex-lowering.md D5, docs/decisions/v08-layout-vocabulary-shape.md). The raw capture emits (its one TEXT leaf lowers since #160); crates/dashc/tests/flex_lowering.rs solves it font-free (the TEXT leaf swapped for a FRAME fixed at its captured box) to the captured rects. #272 (a Fixed child larger than its Fraction cell) is not exercised: the one fixed child (140x60) is smaller than its 252x164 cell."
     },
     {
       "name": "variables-bound",
@@ -40,8 +40,8 @@
       "name": "lowering-wrap",
       "fileKey": "bInPIUfkcxNKAzBOxOOpDZ",
       "covers": "WRAP auto-layout: fixed-width children wrapping at a fixed container width",
-      "emits": false,
-      "note": "Refused by name until the v0.8 layout-fidelity slice: the walk diagnoses wrapping auto-layout (WRAP) and skips the subtree (docs/decisions/figma-flex-lowering.md D5)."
+      "emits": true,
+      "note": "Lowers since #264 (the v0.8 wrap un-pin): layoutWrap: WRAP -> LayoutMode::Wrap with itemSpacing as the main gap and counterAxisSpacing as the cross gap (docs/decisions/figma-flex-lowering.md D5, docs/decisions/v08-layout-vocabulary-shape.md). Fixed-size chips, no text, so the raw capture solves font-free to the captured rects (crates/dashc/tests/flex_lowering.rs)."
     },
     {
       "name": "lowering-hug-in-fill",
@@ -63,9 +63,9 @@
       "name": "lowering-baseline",
       "fileKey": "R1S4QqZtT54WVcYcFFuQoD",
       "covers": "mixed-size BASELINE alignment row (docs/technotes/open-questions.md, Q-4) + Arabic RTL run with Arabic-Indic numerals (E2)",
-      "emits": false,
+      "emits": true,
       "derivedEmits": "with the root's BASELINE cross-axis alignment lifted to MIN (crates/dashc/tests/text_lowering.rs), the mixed-size Latin rows and the Arabic RTL run lower and emit goldens/dsb/v07-text-baseline-derived.dsb",
-      "note": "Refused raw until the v0.8 layout-fidelity slice: the walk diagnoses cross-axis alignment BASELINE at the root and skips the subtree (Q-4). The TEXT children lower since #160, which names this file as its designated text input; a declared derivation lifts only the BASELINE refusal to exercise them. The Arabic run is basic Arabic (U+0621-U+064A), so #228 (extended-Arabic joining sweep) does not fire and re-defers."
+      "note": "Lowers since #264 (the v0.8 baseline un-pin): counterAxisAlignItems: BASELINE -> CrossAxisAlign::Baseline (Q-4), and the raw capture emits (its TEXT children lower since #160). Its solved rects diverge from the capture: the engine's leaf baseline is the box bottom, not the glyph baseline (debt #273), so crates/dashc/tests/flex_lowering.rs pins the lowered intent only, not a solve match. The BASELINE->MIN derivation is kept for the text-lowering golden. The Arabic run is basic Arabic (U+0621-U+064A), so #228 (extended-Arabic joining sweep) does not fire and re-defers."
     },
     {
       "name": "lowering-variant-topology",

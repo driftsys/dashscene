@@ -49,9 +49,9 @@ use dashscene_validator::{Diagnostic, Location, NodePath, Profile, Report, Sever
 // in `emit.rs` the IR is the subject, so the flatbuffer types are aliased
 // (its `Node` stays bare and the flatbuffer's is `FbNode`).
 use crate::document::{
-    AxisSizing, Box2D, CrossAxisAlign, Document, EdgeInsets, LayoutConstraints,
-    LayoutContainer as DocContainer, LayoutMode, MainAxisAlign, Node as DocNode, Paint as DocPaint,
-    TextStyle as DocTextStyle,
+    AxisSizing, Box2D, CrossAxisAlign, Document, EdgeInsets, GridTrack as DocGridTrack,
+    LayoutConstraints, LayoutContainer as DocContainer, LayoutMode, MainAxisAlign, Node as DocNode,
+    Paint as DocPaint, TextStyle as DocTextStyle,
 };
 use crate::figma::rest::{FigmaFile, Node, Paint, PaintTag};
 
@@ -711,11 +711,26 @@ impl Walk<'_> {
         let container = container.map(|mut c| {
             if c.main_align == MainAxisAlign::SpaceBetween {
                 c.gap = 0.0;
-            } else if c.gap < 0.0 {
+            } else if c.gap < 0.0 && matches!(c.mode, LayoutMode::Horizontal | LayoutMode::Vertical)
+            {
+                // Only a flex-flow gap lowers to a leading margin. A
+                // negative Wrap gap is refused in `container_of` (a margin
+                // would distort the line breaks), and a Grid gap is track
+                // spacing, not flow spacing
+                // (`docs/decisions/v08-layout-vocabulary-shape.md` D5).
                 child_leading_margin = c.gap;
                 c.gap = 0.0;
             }
             c
+        });
+
+        // Computed before the container is moved into the node, since the
+        // v0.8 grid track lists make `LayoutContainer` non-`Copy`.
+        let flow = container.as_ref().map(|c| Flow {
+            horizontal: c.mode == LayoutMode::Horizontal,
+            leading_margin: child_leading_margin,
+            parent_hugs_h: sizing.sizing_h == AxisSizing::Hug,
+            parent_hugs_v: sizing.sizing_v == AxisSizing::Hug,
         });
 
         let index = self.doc.push(DocNode {
@@ -769,13 +784,6 @@ impl Walk<'_> {
         // segments are disambiguated by the same rule the top-level roots use.
         let child_refs: Vec<&Node> = node.children.iter().collect();
         let segments = disambiguated_segments(&child_refs);
-
-        let flow = container.map(|c| Flow {
-            horizontal: c.mode == LayoutMode::Horizontal,
-            leading_margin: child_leading_margin,
-            parent_hugs_h: sizing.sizing_h == AxisSizing::Hug,
-            parent_hugs_v: sizing.sizing_v == AxisSizing::Hug,
-        });
 
         // Reversed, so the LIFO stack pops them in document order.
         for (position, child) in node.children.iter().enumerate().rev() {
@@ -1294,31 +1302,110 @@ fn single_visible_paint(paints: &[Paint]) -> OnePaint<'_> {
 /// The container-side flex intent of `node`, or `None` for a passthrough
 /// (`layoutMode` absent or `NONE`).
 ///
-/// The authored intent lowers — mode, gap, padding, alignment — and never
-/// the solved boxes (P1, the surviving ground of
-/// `docs/decisions/figma-auto-layout-refused-on-two-grounds.md`). What the
-/// runtime cannot solve yet is a blocker, not an approximation: `GRID` and
-/// wrap land at v0.8 with the schema's enum appends, `BASELINE` with them
-/// (Q-4).
+/// The authored intent lowers — mode, gaps, padding, alignment, grid tracks
+/// and placement — and never the solved boxes (P1, the surviving ground of
+/// `docs/decisions/figma-auto-layout-refused-on-two-grounds.md`). Since
+/// v0.8 (story #264) `GRID` lowers onto `LayoutMode::Grid` with its track
+/// lists, `layoutWrap: WRAP` onto `LayoutMode::Wrap`, and
+/// `counterAxisAlignItems: BASELINE` onto `CrossAxisAlign::Baseline`
+/// (`docs/decisions/v08-layout-vocabulary-shape.md`). What still has no
+/// vocabulary is a named blocker, not an approximation.
 fn container_of(node: &Node, blockers: &mut Vec<String>) -> Option<DocContainer> {
-    let mode = match node.layout_mode.as_deref() {
+    let base_mode = match node.layout_mode.as_deref() {
         None | Some("NONE") => return None,
         Some("HORIZONTAL") => LayoutMode::Horizontal,
         Some("VERTICAL") => LayoutMode::Vertical,
-        Some("GRID") => {
-            blockers.push("grid auto-layout (GRID)".to_string());
-            return None;
-        }
+        Some("GRID") => LayoutMode::Grid,
         Some(other) => {
             blockers.push(format!("auto-layout ({other})"));
             return None;
         }
     };
 
-    match node.layout_wrap.as_deref() {
-        None | Some("NO_WRAP") => {}
-        Some(wrap) => blockers.push(format!("wrapping auto-layout ({wrap})")),
+    // layoutWrap: WRAP turns a horizontal row into a wrapping row — Figma
+    // allows wrap on horizontal auto-layout only (D1). WRAP on any other
+    // mode, or an unknown wrap value, has no lowering and is refused.
+    let mode = match node.layout_wrap.as_deref() {
+        None | Some("NO_WRAP") => base_mode,
+        Some("WRAP") if base_mode == LayoutMode::Horizontal => LayoutMode::Wrap,
+        Some(wrap) => {
+            blockers.push(format!(
+                "wrapping auto-layout ({wrap}) on a non-horizontal frame"
+            ));
+            base_mode
+        }
+    };
+
+    // counterAxisAlignContent distributes wrap lines, so it is meaningful
+    // only under Wrap; only AUTO (the packed default the runtime already
+    // carries) has a lowering, and SPACE_BETWEEN — or any other value —
+    // has no vocabulary yet, so it is refused by name (P4) rather than
+    // packed silently (`docs/decisions/v08-layout-vocabulary-shape.md`,
+    // "Out of scope"). A stale value on a non-wrap frame is inert in Figma
+    // too, so it is ignored rather than refused.
+    if mode == LayoutMode::Wrap {
+        match node.counter_axis_align_content.as_deref() {
+            None | Some("AUTO") => {}
+            Some(other) => {
+                blockers.push(format!(
+                    "wrap line distribution (counterAxisAlignContent {other})"
+                ));
+            }
+        }
     }
+
+    // The two gaps depend on the mode: Grid reads its per-axis grid gaps,
+    // Wrap the item spacing plus the cross-axis line spacing, and H/V the
+    // item spacing alone (its cross gap follows the main gap, so it lowers
+    // as absent).
+    let (gap, cross_gap) = match mode {
+        LayoutMode::Grid => (node.grid_column_gap.unwrap_or(0.0), node.grid_row_gap),
+        LayoutMode::Wrap => (node.item_spacing.unwrap_or(0.0), node.counter_axis_spacing),
+        LayoutMode::Horizontal | LayoutMode::Vertical => (node.item_spacing.unwrap_or(0.0), None),
+    };
+
+    // Negative gaps under Wrap and Grid are refused by name, both axes
+    // (`docs/decisions/v08-layout-vocabulary-shape.md` D5). A wrap gap has
+    // no margin encoding: wrap decides its line breaks after the lowering,
+    // so a leading margin would pull every later line's first chip into the
+    // padding band and distort the breaks — the engine refuses the core
+    // equivalent, and the dashc side matches. A grid gap is track spacing,
+    // not flow spacing, so a leading margin would shift cell content rather
+    // than overlap tracks; there is no margin form for it either. A
+    // negative H/V main gap is not refused here — the walk rewrites it to a
+    // leading margin (`docs/decisions/negative-gap-lowering.md`).
+    let negative_gap = |value: f32, what: &str| (value < 0.0).then(|| what.to_string());
+    match mode {
+        LayoutMode::Wrap => {
+            blockers.extend(negative_gap(
+                gap,
+                "a wrapping row with a negative gap (layoutWrap WRAP + negative itemSpacing)",
+            ));
+            blockers.extend(cross_gap.and_then(|g| {
+                negative_gap(
+                    g,
+                    "a wrapping row with a negative cross gap \
+                     (layoutWrap WRAP + negative counterAxisSpacing)",
+                )
+            }));
+        }
+        LayoutMode::Grid => {
+            blockers.extend(negative_gap(
+                gap,
+                "a grid with a negative column gap (negative gridColumnGap)",
+            ));
+            blockers.extend(cross_gap.and_then(|g| {
+                negative_gap(g, "a grid with a negative row gap (negative gridRowGap)")
+            }));
+        }
+        LayoutMode::Horizontal | LayoutMode::Vertical => {}
+    }
+
+    // The grid track lists, parsed from Figma's serialized track strings.
+    // Empty for a non-grid container; a track token with no vocabulary is
+    // refused by name (P4).
+    let grid_rows = grid_tracks_of(mode, node.grid_rows_sizing.as_deref(), blockers);
+    let grid_columns = grid_tracks_of(mode, node.grid_columns_sizing.as_deref(), blockers);
 
     // Absent alignment is Figma's MIN — the start of the axis.
     let main_align = match node.primary_axis_align_items.as_deref() {
@@ -1335,9 +1422,8 @@ fn container_of(node: &Node, blockers: &mut Vec<String>) -> Option<DocContainer>
         None | Some("MIN") => CrossAxisAlign::Start,
         Some("CENTER") => CrossAxisAlign::Center,
         Some("MAX") => CrossAxisAlign::End,
-        // Baseline appends to the schema's CrossAxisAlign at v0.8 (Q-4);
-        // aligning a baseline row to the cross start instead would move
-        // every child (pinned by lowering-baseline.json).
+        // Baseline appended to the schema's CrossAxisAlign at v0.8 (Q-4).
+        Some("BASELINE") => CrossAxisAlign::Baseline,
         Some(other) => {
             blockers.push(format!("cross-axis alignment {other}"));
             CrossAxisAlign::Start
@@ -1346,7 +1432,7 @@ fn container_of(node: &Node, blockers: &mut Vec<String>) -> Option<DocContainer>
 
     Some(DocContainer {
         mode,
-        gap: node.item_spacing.unwrap_or(0.0),
+        gap,
         padding: EdgeInsets {
             left: node.padding_left.unwrap_or(0.0),
             top: node.padding_top.unwrap_or(0.0),
@@ -1355,7 +1441,110 @@ fn container_of(node: &Node, blockers: &mut Vec<String>) -> Option<DocContainer>
         },
         main_align,
         cross_align,
+        cross_gap,
+        grid_rows,
+        grid_columns,
     })
+}
+
+/// Parses one grid axis's serialized track string into the schema's track
+/// vocabulary, collecting the reason any token cannot be lowered. Only
+/// meaningful under `Grid`; every other mode carries no tracks. An absent
+/// string under `Grid` is Figma's implicit auto tracks, which lower as an
+/// empty list (the schema's "implicit auto tracks" state).
+fn grid_tracks_of(
+    mode: LayoutMode,
+    sizing: Option<&str>,
+    blockers: &mut Vec<String>,
+) -> Vec<DocGridTrack> {
+    if mode != LayoutMode::Grid {
+        return Vec::new();
+    }
+    let Some(sizing) = sizing else {
+        return Vec::new();
+    };
+    let mut tracks = Vec::new();
+    for token in split_top_level_whitespace(sizing) {
+        match parse_grid_track(token) {
+            Some(track) => tracks.push(track),
+            // A track the Fixed|Fraction vocabulary cannot express (an
+            // `auto`, a `min-content`, a `minmax` with a non-zero minimum,
+            // a non-finite length or weight): named refusal, never a
+            // silent substitution (P4).
+            None => blockers.push(format!("an unsupported grid track ({token})")),
+        }
+    }
+    tracks
+}
+
+/// Splits a track string on **top-level** whitespace — whitespace outside
+/// any parentheses — so a `minmax(0, 1fr)` with a space after the comma (a
+/// valid CSS serialization) stays one token rather than over-splitting into
+/// `minmax(0,` + `1fr)` and refusing the whole grid.
+fn split_top_level_whitespace(s: &str) -> Vec<&str> {
+    let mut tokens = Vec::new();
+    let mut depth: u32 = 0;
+    let mut token_start: Option<usize> = None;
+    for (i, ch) in s.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        if ch.is_whitespace() && depth == 0 {
+            if let Some(start) = token_start.take() {
+                tokens.push(&s[start..i]);
+            }
+        } else if token_start.is_none() {
+            token_start = Some(i);
+        }
+    }
+    if let Some(start) = token_start {
+        tokens.push(&s[start..]);
+    }
+    tokens
+}
+
+/// One Figma grid track token. `Npx` lowers to `Fixed(N)`; `minmax(0, Nfr)`
+/// lowers to `Fraction(N)` — Figma's own serialized fraction form, whose
+/// zero minimum (unlike a bare `fr`'s min-content one) divides free space
+/// exactly the way the captured grid does (D2). Any other token, and any
+/// token that parses to a non-finite value, has no lowering — `None` here
+/// becomes a named refusal, so a `NaN`/`inf` track never reaches the
+/// document even on the `lower` producer API that runs no load gate (P4).
+fn parse_grid_track(token: &str) -> Option<DocGridTrack> {
+    // `Npx`: a fixed length in document units.
+    if let Some(px) = token.strip_suffix("px") {
+        let value = px.trim().parse::<f32>().ok()?;
+        return value.is_finite().then_some(DocGridTrack::Fixed(value));
+    }
+    // `minmax(min, Nfr)`: a fraction weight, valid only with a zero
+    // minimum. The minimum is numeric-parsed and accepted when it is zero
+    // in any unit Figma might serialize (`0`, `0px`, `0.0`, `0%`); the
+    // weight is read off the `Nfr` maximum.
+    if let Some(inner) = token
+        .strip_prefix("minmax(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
+        let (min, max) = inner.split_once(',')?;
+        if !parses_to_zero(min.trim()) {
+            return None;
+        }
+        let weight = max.trim().strip_suffix("fr")?.trim().parse::<f32>().ok()?;
+        return weight.is_finite().then_some(DocGridTrack::Fraction(weight));
+    }
+    None
+}
+
+/// Whether a grid track's minmax minimum is zero in any unit Figma might
+/// serialize (`0`, `0px`, `0.0`, `0%`). A zero minimum is the only one the
+/// `Fraction` lowering expresses: it divides free space with no floor.
+fn parses_to_zero(min: &str) -> bool {
+    let number = min
+        .strip_suffix("px")
+        .or_else(|| min.strip_suffix('%'))
+        .unwrap_or(min);
+    number.trim().parse::<f32>().is_ok_and(|value| value == 0.0)
 }
 
 /// The child-side flex intent of `node`, or `None` when every field is the
@@ -1423,6 +1612,13 @@ fn constraints_of(
         min_height: node.min_height,
         max_height: node.max_height,
         margin,
+        // Grid placement (story #264): the 0-based anchor cell and the
+        // track span. Absent anchors are auto-placement; absent spans
+        // default to 1, matching the schema and `Default`.
+        grid_row: node.grid_row_anchor_index,
+        grid_column: node.grid_column_anchor_index,
+        grid_row_span: node.grid_row_span.unwrap_or(1),
+        grid_column_span: node.grid_column_span.unwrap_or(1),
     };
     (constraints != LayoutConstraints::default()).then_some(constraints)
 }
