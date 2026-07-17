@@ -16,39 +16,15 @@ import {
 } from "./import.ts";
 import { type ResolvedVarsSidecar, TokensBlocked } from "./tokens.ts";
 import { loadDashc } from "./wasm.ts";
-
-const CORPUS = new URL("../../../corpus/figma-fixtures/", import.meta.url);
-const GOLDEN = new URL("../../../goldens/dsb/v03-paint.dsb", import.meta.url);
-const FILE_KEY = "abc123";
-const REF = "390616a0e7321eddb464388366d9a2a1bcb7f4c3";
-const ASSET_URL = "https://s3-alpha-sig.figma.com/img/390616a0?signed=yes";
+import {
+  CORPUS,
+  FILE_KEY,
+  GOLDEN,
+  REF,
+  scriptedFetch,
+} from "./test_support.ts";
 
 const dashc = await loadDashc();
-
-function scriptedFetch(file: string, png: Uint8Array<ArrayBuffer>) {
-  const requested: string[] = [];
-  const fetchFn = (input: string | URL | Request) => {
-    const url = input instanceof Request ? input.url : String(input);
-    requested.push(url);
-    if (
-      url === `https://api.figma.com/v1/files/${FILE_KEY}?plugin_data=shared`
-    ) {
-      return Promise.resolve(new Response(file));
-    }
-    if (url === `https://api.figma.com/v1/files/${FILE_KEY}/images`) {
-      return Promise.resolve(
-        Response.json({
-          error: false,
-          status: 200,
-          meta: { images: { [REF]: ASSET_URL } },
-        }),
-      );
-    }
-    if (url === ASSET_URL) return Promise.resolve(new Response(png));
-    return Promise.resolve(new Response("not found", { status: 404 }));
-  };
-  return { requested, fetchFn };
-}
 
 Deno.test("importFigmaFile compiles the declared root into the golden .dsb", async () => {
   const file = Deno.readTextFileSync(new URL("v03-paint.json", CORPUS));
