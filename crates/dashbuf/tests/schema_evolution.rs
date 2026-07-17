@@ -36,14 +36,16 @@ use std::sync::OnceLock;
 use std::{env, fs};
 
 use dashbuf::{
-    AxisSizing, Color, CornerRadii, CrossAxisAlign, Document, DocumentArgs, EdgeInsets, Fill,
-    FixedSizeLayout, Gradient, GradientArgs, GradientKind, GradientStop, Image, ImageArgs,
-    ImageFill, ImageFillArgs, ImageFormat, LayoutConstraints, LayoutConstraintsArgs,
-    LayoutContainer, LayoutContainerArgs, LayoutMode, MainAxisAlign, Mat23, NO_PAINT, NO_PARENT,
-    NO_TEXT, NO_TEXT_STYLE, Node, NodeArgs, Paint, PaintArgs, ScaleMode, SolidFill, SolidFillArgs,
-    Stroke, StrokeAlign, StrokeArgs, TextStyle, TextStyleArgs, VariantFill, VariantFillArgs,
-    VariantMember, VariantMemberArgs, VariantOverride, VariantOverrideArgs, VariantPropValue,
-    VariantSet, VariantSetArgs, VariantX, VariantXArgs, Vec2, root_as_document,
+    AxisSizing, Binding, BindingArgs, BindingChannel, BindingTransform, Color, CornerRadii,
+    CrossAxisAlign, Document, DocumentArgs, EdgeInsets, Fill, FixedSizeLayout, Gradient,
+    GradientArgs, GradientKind, GradientStop, Image, ImageArgs, ImageFill, ImageFillArgs,
+    ImageFormat, LayoutConstraints, LayoutConstraintsArgs, LayoutContainer, LayoutContainerArgs,
+    LayoutMode, MainAxisAlign, Mat23, NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE, Node, NodeArgs,
+    Paint, PaintArgs, ScaleMode, SignalDecl, SignalDeclArgs, SolidFill, SolidFillArgs, Stroke,
+    StrokeAlign, StrokeArgs, TextStyle, TextStyleArgs, TransformScale, TransformScaleArgs,
+    VariantFill, VariantFillArgs, VariantMember, VariantMemberArgs, VariantOverride,
+    VariantOverrideArgs, VariantPropValue, VariantSet, VariantSetArgs, VariantX, VariantXArgs,
+    Vec2, root_as_document,
 };
 use flatbuffers::FlatBufferBuilder;
 
@@ -400,6 +402,46 @@ fn frozen_variant_set_reads_back() {
     );
 }
 
+/// The v0.7 binding tables (story #167): two signal declarations (one
+/// named, one anonymous) and two binding rows — one with the union-NONE
+/// identity transform, one with a `Scale` transform. `channel` is
+/// written non-zero (`Gap` = 4) against the enum default of `X` = 0,
+/// and the second row's `signal`/`node` are non-zero, the same
+/// non-default-value discipline as the suites above.
+#[test]
+fn frozen_binding_tables_read_back() {
+    let doc = document();
+    let signals = doc.signals().expect("signals present");
+    assert_eq!(signals.len(), 2);
+    assert_eq!(signals.get(0).name(), Some("size/gap"));
+    assert_eq!(signals.get(0).initial(), 16.0);
+    assert_eq!(signals.get(1).name(), None);
+    assert_eq!(signals.get(1).initial(), 0.25);
+
+    let bindings = doc.bindings().expect("bindings present");
+    assert_eq!(bindings.len(), 2);
+
+    let gap = bindings.get(0);
+    assert_eq!(gap.signal(), 0);
+    assert_eq!(gap.node(), 0);
+    assert_eq!(gap.channel(), BindingChannel::Gap);
+    // Union NONE is the identity transform.
+    assert_eq!(gap.transform_type(), BindingTransform::NONE);
+
+    let scaled = bindings.get(1);
+    assert_eq!(scaled.signal(), 1);
+    assert_eq!(scaled.node(), 1);
+    assert_eq!(scaled.channel(), BindingChannel::FillR);
+    assert_eq!(scaled.transform_type(), BindingTransform::TransformScale);
+    assert_eq!(
+        scaled
+            .transform_as_transform_scale()
+            .expect("TransformScale present")
+            .factor(),
+        2.0
+    );
+}
+
 // ---------------------------------------------------------------------
 // The writer. Runs only under UPDATE_DSB_FIXTURE=1 — see the module
 // docs. Editing it changes nothing until the fixture is regenerated,
@@ -659,6 +701,48 @@ fn build_fixture() -> Vec<u8> {
     );
     let variant_sets = b.create_vector(&[variant_set]);
 
+    // v0.7 binding tables (story #167): two declarations, two rows — one
+    // identity (union NONE), one carrying a Scale transform.
+    let gap_name = b.create_string("size/gap");
+    let gap_signal = SignalDecl::create(
+        &mut b,
+        &SignalDeclArgs {
+            name: Some(gap_name),
+            initial: 16.0,
+        },
+    );
+    let anon_signal = SignalDecl::create(
+        &mut b,
+        &SignalDeclArgs {
+            name: None,
+            initial: 0.25,
+        },
+    );
+    let signals = b.create_vector(&[gap_signal, anon_signal]);
+
+    let gap_binding = Binding::create(
+        &mut b,
+        &BindingArgs {
+            signal: 0,
+            node: 0,
+            channel: BindingChannel::Gap,
+            transform_type: BindingTransform::NONE,
+            transform: None,
+        },
+    );
+    let scale = TransformScale::create(&mut b, &TransformScaleArgs { factor: 2.0 });
+    let scaled_binding = Binding::create(
+        &mut b,
+        &BindingArgs {
+            signal: 1,
+            node: 1,
+            channel: BindingChannel::FillR,
+            transform_type: BindingTransform::TransformScale,
+            transform: Some(scale.as_union_value()),
+        },
+    );
+    let bindings = b.create_vector(&[gap_binding, scaled_binding]);
+
     let document = Document::create(
         &mut b,
         &DocumentArgs {
@@ -668,6 +752,8 @@ fn build_fixture() -> Vec<u8> {
             strings: Some(strings),
             text_styles: Some(text_styles),
             variant_sets: Some(variant_sets),
+            signals: Some(signals),
+            bindings: Some(bindings),
         },
     );
     b.finish(document, None);

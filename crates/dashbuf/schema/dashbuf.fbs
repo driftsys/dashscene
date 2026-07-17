@@ -343,6 +343,70 @@ table VariantSet {
   active_member: uint32 = 0;
 }
 
+// v0.7 binding tables (story #167,
+// docs/decisions/binding-table-in-the-document.md). A binding is intent
+// a designer authors (a Figma Variable bound to a property), so it is a
+// document construct; signal *values* stay producer-side always (P1).
+// One declared signal: the runtime lookup name and the initial value
+// every binding of it seeds from. The name is a Figma variable's
+// mode-qualified name for an imported document, or a dashlang
+// signal_named declaration; absent for an anonymous producer signal.
+table SignalDecl {
+  name: string;
+  initial: float32;
+}
+
+// One scalar prop slot a binding can target — the §23 channel
+// vocabulary. The values mirror dashscene-core's Channel wire codes;
+// append at the tail, never renumber (R7). A reader that meets an
+// unknown value must range-check and refuse it by name (P4), like the
+// layout enums above.
+enum BindingChannel : uint8 {
+  X = 0,
+  Y = 1,
+  Width = 2,
+  Height = 3,
+  Gap = 4,
+  FillR = 5,
+  FillG = 6,
+  FillB = 7,
+  FillA = 8,
+}
+
+// The declarative scalar transforms (§23 D8). A transform is data by
+// construction — dashlang's Custom closure transform never serializes;
+// a compiler refuses it by name instead. Format (numeric-to-text) joins
+// the union when text bindings serialize.
+table TransformScale { factor: float32; }
+table TransformMapRange {
+  in_lo: float32;
+  in_hi: float32;
+  out_lo: float32;
+  out_hi: float32;
+}
+table TransformClamp { lo: float32; hi: float32; }
+
+union BindingTransform {
+  TransformScale,
+  TransformMapRange,
+  TransformClamp,
+}
+
+// One binding row: signal -> (node, channel) through a transform.
+// Explicit and flat — a binding never relates two nodes
+// (docs/decisions/bindings-are-explicit-and-flat.md). An absent
+// `transform` (union NONE) is the identity transform, so the common
+// Figma-authored row costs no transform table at all.
+table Binding {
+  // Index into Document.signals.
+  signal: uint32;
+  // Index into Document.nodes — the same cross-reference convention as
+  // Node.parent.
+  node: uint32;
+  channel: BindingChannel;
+  transform: BindingTransform;
+}
+
 table Document {
   // Flattened DFS node tree: array order is DFS order, so array index
   // doubles as rect-table index (docs/design/dashbuf.md).
@@ -358,6 +422,10 @@ table Document {
   text_styles: [TextStyle];
   // The variant sets a set_variant call selects among (v0.4, story #20).
   variant_sets: [VariantSet];
+  // The signal declarations referenced by Binding.signal (v0.7, story #167).
+  signals: [SignalDecl];
+  // The binding rows joining signals to node channels (v0.7, story #167).
+  bindings: [Binding];
 }
 
 root_type Document;

@@ -118,6 +118,56 @@ pub fn validate_document(doc: &Document<'_>) -> Report {
         check_variant_set(&mut report, &set, i as u32, &sizes);
     }
 
+    // The v0.7 binding tables (story #167). The loader resolves both
+    // indices unchecked, so a dangling one is named here; the channel is
+    // an append-only enum, range-checked like the layout enums; and a
+    // duplicate signal name would make the runtime's by-name lookup
+    // ambiguous.
+    let signals = doc.signals().unwrap_or_default();
+    let mut seen_names: std::collections::HashMap<&str, u32> = std::collections::HashMap::new();
+    for (i, signal) in signals.iter().enumerate() {
+        let Some(name) = signal.name() else { continue };
+        if let Some(first) = seen_names.get(name) {
+            report.push(error(
+                rule::SIGNAL_NAME_DUPLICATE,
+                &Location::Signal(i as u32),
+                format!(
+                    "signal declaration {i} carries the name \"{name}\", which declaration \
+                     {first} already carries; a by-name lookup would resolve one and silently \
+                     shadow the other"
+                ),
+            ));
+        } else {
+            seen_names.insert(name, i as u32);
+        }
+    }
+    for (i, binding) in doc.bindings().unwrap_or_default().iter().enumerate() {
+        let at = Location::Binding(i as u32);
+        let signal = binding.signal();
+        if signal as usize >= signals.len() {
+            report.push(error(
+                rule::BINDING_SIGNAL_OUT_OF_RANGE,
+                &at,
+                format!(
+                    "binding references signal {signal}, but the document declares {} signals",
+                    signals.len()
+                ),
+            ));
+        }
+        let node = binding.node();
+        if node as usize >= sizes.nodes {
+            report.push(error(
+                rule::BINDING_NODE_OUT_OF_RANGE,
+                &at,
+                format!(
+                    "binding references node {node}, but the document carries {} nodes",
+                    sizes.nodes
+                ),
+            ));
+        }
+        check_enum!(report, &at, "Binding.channel", binding.channel());
+    }
+
     // A text style's color is optional in the schema, so a producer can omit
     // it. Nothing downstream may invent one: the loader would have to pick a
     // default, and a silently-defaulted color is discovered vocabulary (P4).

@@ -131,3 +131,122 @@ fn a_document_without_variant_sets_still_loads() {
     assert_eq!(arena.committed().rects().len(), 1);
     assert_eq!(arena.committed().rects()[0].w, 5.0);
 }
+
+/// The binding tables (story #167) replay through the same producer API:
+/// a loaded document's signals and rows land in the arena tables exactly
+/// as a hand-staged `declare_signal`/`bind` sequence would, with node
+/// and signal indices resolved through this load's own mappings.
+#[test]
+fn a_loaded_document_replays_its_binding_tables() {
+    use dashbuf::{
+        Binding, BindingArgs, BindingChannel, BindingTransform, SignalDecl, SignalDeclArgs,
+        TransformScale, TransformScaleArgs,
+    };
+    use dashscene_core::{Channel, ScalarTransform};
+
+    let mut b = FlatBufferBuilder::new();
+    let layout = FixedSizeLayout::new(0.0, 0.0, 10.0, 10.0);
+    let a = Node::create(
+        &mut b,
+        &NodeArgs {
+            layout: Some(&layout),
+            ..Default::default()
+        },
+    );
+    let child = Node::create(
+        &mut b,
+        &NodeArgs {
+            parent: 0,
+            layout: Some(&layout),
+            ..Default::default()
+        },
+    );
+    let nodes = b.create_vector(&[a, child]);
+
+    let name = b.create_string("size/gap");
+    let named = SignalDecl::create(
+        &mut b,
+        &SignalDeclArgs {
+            name: Some(name),
+            initial: 16.0,
+        },
+    );
+    let anonymous = SignalDecl::create(
+        &mut b,
+        &SignalDeclArgs {
+            name: None,
+            initial: 2.0,
+        },
+    );
+    let signals = b.create_vector(&[named, anonymous]);
+
+    let scale = TransformScale::create(&mut b, &TransformScaleArgs { factor: 3.0 });
+    let rows = [
+        Binding::create(
+            &mut b,
+            &BindingArgs {
+                signal: 0,
+                node: 0,
+                channel: BindingChannel::Gap,
+                transform_type: BindingTransform::NONE,
+                transform: None,
+            },
+        ),
+        Binding::create(
+            &mut b,
+            &BindingArgs {
+                signal: 1,
+                node: 1,
+                channel: BindingChannel::FillA,
+                transform_type: BindingTransform::TransformScale,
+                transform: Some(scale.as_union_value()),
+            },
+        ),
+    ];
+    let bindings = b.create_vector(&rows);
+
+    let document = Document::create(
+        &mut b,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            signals: Some(signals),
+            bindings: Some(bindings),
+            ..Default::default()
+        },
+    );
+    b.finish(document, None);
+    let bytes = b.finished_data().to_vec();
+
+    // Pre-seed the arena with one node and one signal, so the loader's
+    // index mappings are exercised: the document's indices are not the
+    // arena's.
+    let mut arena = Arena::new();
+    {
+        let mut txn = arena.open();
+        let seeded = txn.add_node(None, Some("pre-existing"));
+        let _ = seeded;
+        txn.declare_signal(Some("pre-existing"), 1.0);
+        txn.commit();
+    }
+
+    let doc = root_as_document(&bytes).expect("valid document");
+    load_document(&doc, &mut arena);
+
+    let signals = arena.signals();
+    assert_eq!(signals.len(), 3);
+    assert_eq!(signals[1].name.as_deref(), Some("size/gap"));
+    assert_eq!(signals[1].initial, 16.0);
+    assert_eq!(signals[2].name, None);
+
+    let rows = arena.bindings();
+    assert_eq!(rows.len(), 2);
+    // Node 0 of the document is arena node 1 (one pre-existing node).
+    assert_eq!(rows[0].node.index(), 1);
+    assert_eq!(rows[0].channel, Channel::Gap);
+    assert_eq!(rows[0].signal.index(), 1);
+    assert_eq!(rows[0].transform, ScalarTransform::Identity);
+    assert_eq!(rows[1].node.index(), 2);
+    assert_eq!(rows[1].channel, Channel::FillA);
+    assert_eq!(rows[1].signal.index(), 2);
+    assert_eq!(rows[1].transform, ScalarTransform::Scale(3.0));
+}

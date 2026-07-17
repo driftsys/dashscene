@@ -25,12 +25,15 @@
 //! crate cannot call it — which is exactly why the contract is stated here
 //! rather than enforced here.
 
-use dashbuf::{Document, Fill, NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE, VariantPropValue};
+use dashbuf::{
+    BindingTransform, Document, Fill, NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE, VariantPropValue,
+};
 
 use crate::arena::{
     Arena, AxisSizing, CrossAxisAlign, LayoutMode, MainAxisAlign, NodeId, Prop, TextStyle,
     VariantMember, VariantValue,
 };
+use crate::bindings::{Channel, ScalarTransform, SignalId};
 use crate::committed::{
     Color, Gradient, GradientKind, GradientStop, ImageAsset, ImageFormat, Mat23, PaintKind,
     ScaleMode, Stroke, StrokeAlign, Vec2,
@@ -208,7 +211,70 @@ pub fn load_document(doc: &Document<'_>, arena: &mut Arena) -> u64 {
         }
     }
 
+    // The binding tables (v0.7, story #167) replay through the same
+    // producer API: every declaration, then every row, in document
+    // order. Indices resolve through this load's own mappings (`ids`,
+    // `signal_ids`), never raw — the arena may already hold nodes and
+    // signals from an earlier load.
+    let signal_ids: Vec<SignalId> = doc
+        .signals()
+        .unwrap_or_default()
+        .iter()
+        .map(|signal| txn.declare_signal(signal.name(), signal.initial()))
+        .collect();
+    for row in doc.bindings().unwrap_or_default().iter() {
+        txn.bind(
+            ids[row.node() as usize],
+            channel_of(row.channel()),
+            signal_ids[row.signal() as usize],
+            transform_of(&row),
+        );
+    }
+
     txn.commit()
+}
+
+/// One binding row's channel, converted from the wire enum. An unknown
+/// value is `binding.unknown-channel` at the load gate, so it never
+/// reaches here (the same posture as the layout enums below).
+fn channel_of(channel: dashbuf::BindingChannel) -> Channel {
+    Channel::from_code(channel.0 as u8).unwrap_or_else(|| {
+        unreachable!("unknown BindingChannel {channel:?}: rejected by the load gate (P4)")
+    })
+}
+
+/// One binding row's transform, converted from the `BindingTransform`
+/// union. Union NONE is the identity transform by schema contract.
+fn transform_of(row: &dashbuf::Binding<'_>) -> ScalarTransform {
+    match row.transform_type() {
+        BindingTransform::NONE => ScalarTransform::Identity,
+        BindingTransform::TransformScale => ScalarTransform::Scale(
+            row.transform_as_transform_scale()
+                .expect("TransformScale present")
+                .factor(),
+        ),
+        BindingTransform::TransformMapRange => {
+            let m = row
+                .transform_as_transform_map_range()
+                .expect("TransformMapRange present");
+            ScalarTransform::MapRange {
+                in_lo: m.in_lo(),
+                in_hi: m.in_hi(),
+                out_lo: m.out_lo(),
+                out_hi: m.out_hi(),
+            }
+        }
+        BindingTransform::TransformClamp => {
+            let c = row
+                .transform_as_transform_clamp()
+                .expect("TransformClamp present");
+            ScalarTransform::Clamp {
+                lo: c.lo(),
+                hi: c.hi(),
+            }
+        }
+        other => unreachable!("unknown BindingTransform {other:?}: rejected by the load gate (P4)"),
+    }
 }
 
 /// One `VariantOverride`'s value, converted from the `VariantPropValue`
