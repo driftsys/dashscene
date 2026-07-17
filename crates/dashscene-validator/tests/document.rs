@@ -46,6 +46,11 @@ struct NodeSpec {
     legacy_paint: bool,
     text: Option<u32>,
     text_style: Option<u32>,
+    /// `None` leaves the schema default (1.0); `Some` sets it, so a test
+    /// can drive an out-of-range value (story #44).
+    opacity: Option<f32>,
+    /// Marks the node a mask (story #44).
+    mask: bool,
 }
 
 #[derive(Clone)]
@@ -169,6 +174,8 @@ impl Doc {
                         paint_entry: spec.paint_entry.unwrap_or(NO_PAINT),
                         text: spec.text.unwrap_or(dashbuf::NO_TEXT),
                         text_style: spec.text_style.unwrap_or(dashbuf::NO_TEXT_STYLE),
+                        opacity: spec.opacity.unwrap_or(1.0),
+                        mask: spec.mask,
                         ..Default::default()
                     },
                 )
@@ -309,6 +316,83 @@ fn a_well_formed_document_produces_no_diagnostics() {
             .paint(PaintSpec::Solid),
     );
     assert!(report.is_empty(), "unexpected diagnostics:\n{report}");
+}
+
+#[test]
+fn a_node_opacity_out_of_range_is_named() {
+    // Story #44 M7: a non-finite or out-of-[0,1] opacity is named at the
+    // load gate rather than silently clamped by the loader.
+    for bad in [2.0, -0.5, f32::NAN, f32::INFINITY] {
+        let report = check(Doc::default().node(NodeSpec {
+            name: "translucent",
+            opacity: Some(bad),
+            ..Default::default()
+        }));
+        assert!(
+            report.has(rule::NODE_OPACITY_OUT_OF_RANGE),
+            "opacity {bad} must be named:\n{report}"
+        );
+    }
+    // The in-range endpoints pass.
+    for good in [0.0, 0.5, 1.0] {
+        let report = check(Doc::default().node(NodeSpec {
+            name: "ok",
+            opacity: Some(good),
+            ..Default::default()
+        }));
+        assert!(
+            !report.has(rule::NODE_OPACITY_OUT_OF_RANGE),
+            "opacity {good} is in range:\n{report}"
+        );
+    }
+}
+
+#[test]
+fn a_mask_with_a_following_sibling_is_not_inert_but_one_without_is() {
+    // Story #44 M13: a mask that stencils a following sibling is fine; a
+    // mask with none (a root mask, or the last child) is named inert.
+    let masking = check(
+        Doc::default()
+            .node(named("parent"))
+            .node(NodeSpec {
+                name: "mask",
+                parent: Some(0),
+                mask: true,
+                ..Default::default()
+            })
+            .node(NodeSpec {
+                name: "content",
+                parent: Some(0),
+                ..Default::default()
+            }),
+    );
+    assert!(
+        !masking.has(rule::INERT_MASK),
+        "a masking mask is fine:\n{masking}"
+    );
+
+    // The mask is the last child — nothing follows it.
+    let inert = check(Doc::default().node(named("parent")).node(NodeSpec {
+        name: "mask",
+        parent: Some(0),
+        mask: true,
+        ..Default::default()
+    }));
+    assert!(
+        inert.has(rule::INERT_MASK),
+        "a trailing mask is inert:\n{inert}"
+    );
+
+    // A root mask is not applied, so it is inert too.
+    let root_mask = check(Doc::default().node(NodeSpec {
+        name: "root-mask",
+        mask: true,
+        ..Default::default()
+    }));
+    assert!(
+        root_mask.has(rule::INERT_MASK),
+        "a root mask is inert:\n{root_mask}"
+    );
 }
 
 #[test]

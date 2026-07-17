@@ -61,6 +61,7 @@ fn render_and_compare(arena: &Arena, name: &str) {
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        scene.groups(),
         &GlyphRunTable::new(),
         None,
     );

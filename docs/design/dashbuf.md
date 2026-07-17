@@ -191,7 +191,11 @@ All types are generated from `crates/dashbuf/schema/dashbuf.fbs`:
   `Document.text_styles`, or the sentinel for unstyled text — a
   diagnostic once text validation exists, never a silent default),
   `flex: LayoutContainer`, `constraints: LayoutConstraints` (both
-  optional; absent = mode `None` / fully default constraints).
+  optional; absent = mode `None` / fully default constraints),
+  `opacity: float32 = 1.0`, `mask: bool = false`, `visible: bool = true`
+  (v0.8, story #44: group opacity, mask membership, and Figma
+  visibility — each default omits from the buffer, so a pre-v0.8 document
+  emits unchanged; `docs/decisions/masks-and-group-opacity.md`).
 - `VariantX`, `VariantY`, `VariantWidth`, `VariantHeight` (tables) —
   each `{ value: float32 }`; `VariantFill` (table) — `{ color: Color
   (required) }`. The five `VariantPropValue` union members (v0.4).
@@ -210,7 +214,8 @@ All types are generated from `crates/dashbuf/schema/dashbuf.fbs`:
   binding of it seeds from — authored intent, never a runtime value,
   P1). `BindingChannel` (`uint8` enum) — the §23 channel set `X`, `Y`,
   `Width`, `Height`, `Gap`, `FillR`, `FillG`, `FillB`, `FillA`,
-  mirroring `dashscene-core`'s `Channel` wire codes. `TransformScale` /
+  `Opacity` (v0.8, story #44, debt #253), mirroring `dashscene-core`'s
+  `Channel` wire codes. `TransformScale` /
   `TransformMapRange` / `TransformClamp` (tables) — the three
   `BindingTransform` union members; union `NONE` means the identity
   transform, so the common Figma-authored row costs no transform table.

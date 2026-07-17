@@ -518,26 +518,53 @@ impl Walk<'_> {
         // What blocks this node, all findings collected before the verdict.
         let mut blockers: Vec<String> = Vec::new();
 
-        // Document has no field for a hidden node, and no way to represent one
-        // without shifting the DFS indices every later node depends on — so
-        // it is diagnosed rather than lowered as though it were visible
-        // (P4). Hidden layers are routine in real Figma files (debt #143).
-        if node.visible == Some(false) {
-            blockers.push("a hidden node".to_string());
-        }
-        // Document carries no opacity, rotation, or mask vocabulary — no
-        // Construct fits any of them (debt #143), so each is diagnosed
-        // rather than lowered as though it were opaque, axis-aligned, or an
-        // ordinary frame (P4). Figma omits `rotation` entirely when it is
-        // zero, so `None` and `Some(0.0)` both mean unrotated.
-        if node.opacity.is_some_and(|o| o < 1.0) {
-            blockers.push("node opacity".to_string());
-        }
+        // v0.8 (story #44) un-pinned node opacity, mask membership, and
+        // hidden nodes — the document now carries all three
+        // (`docs/decisions/masks-and-group-opacity.md`, debt #143), lowered
+        // below into the DocNode's `opacity`/`mask`/`visible`. A hidden
+        // node keeps its DFS index (Prop::Visible → Display::None), so it
+        // no longer shifts the indices every later node depends on.
+        let node_opacity = node.opacity.unwrap_or(1.0).clamp(0.0, 1.0);
+        let node_visible = node.visible != Some(false);
+
+        // A mask lowers only when it is a box-shaped, geometry (outline)
+        // mask — the only kind the hard clip-region vocabulary can express
+        // (M6). A soft alpha or luminance mask, and a mask whose shape is
+        // not a box (a text node's letterforms; a VECTOR/BOOLEAN shape is
+        // already refused above as an unsupported node type), refuse by name
+        // rather than lowering as a hard rounded-box stencil (P4). An absent
+        // `maskType` is a synthetic node and lowers as the geometric
+        // default.
+        let node_mask = if node.is_mask == Some(true) {
+            match node.mask_type.as_deref() {
+                Some("ALPHA") => {
+                    blockers.push(
+                        "an alpha mask (a soft mask has no hard box-clip lowering)".to_string(),
+                    );
+                    false
+                }
+                Some("LUMINANCE") => {
+                    blockers.push("a luminance mask".to_string());
+                    false
+                }
+                _ if node.kind == "TEXT" => {
+                    blockers
+                        .push("a text node used as a mask (letterforms are not a box)".to_string());
+                    false
+                }
+                _ => true,
+            }
+        } else {
+            false
+        };
+
+        // Rotation stays refused: no schema or paint support for it lands
+        // here, so a rotated node is a named diagnostic rather than lowered
+        // as though it were axis-aligned (P4). Figma omits `rotation`
+        // entirely when it is zero, so `None` and `Some(0.0)` both mean
+        // unrotated.
         if node.rotation.is_some_and(|r| r != 0.0) {
             blockers.push("node rotation".to_string());
-        }
-        if node.is_mask == Some(true) {
-            blockers.push("a mask node".to_string());
         }
         // An absolutely-positioned child sits outside its auto-layout
         // parent's flow; treating it as in-flow would reflow every sibling
@@ -705,6 +732,9 @@ impl Walk<'_> {
             constraints,
             text,
             text_style,
+            opacity: node_opacity,
+            mask: node_mask,
+            visible: node_visible,
         });
         // Where this Figma node landed — the join key for the binding
         // rows (story #167). A synthetic node without an id (a test

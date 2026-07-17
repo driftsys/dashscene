@@ -268,11 +268,12 @@ noted, because a real Figma file will hit them:
 
 - **Stacked fills or strokes** — `PaintEntry.fill`/`.stroke` are each one
   `Option`; Figma's `fills`/`strokes` are arrays (debt #146).
-- **Node opacity, rotation, mask nodes, and hidden nodes** — `Document` has no
-  field for any of them, and no way to represent a hidden node without
-  shifting the DFS indices every later node depends on. Hidden layers are
-  routine in real Figma files, so this is likely to be the first one hit
-  (debt #143).
+- **Node rotation** — `Document` has no rotation vocabulary, so a rotated
+  node is a named refusal (debt #143 remainder). Node opacity, mask nodes,
+  and hidden nodes were un-pinned at v0.8 (story #44): they lower into
+  `Node.opacity` / `Node.mask` / `Node.visible`. A box outline mask lowers;
+  a soft alpha or luminance mask, and a text-shaped mask, refuse by name
+  (`docs/decisions/masks-and-group-opacity.md`).
 - **Baked shadows** — `docs/specification/04-figma-vocabulary-profile.md`
   puts them in the NOW band, but `Document`
   has no effects vocabulary, so there is no `Construct` to triage onto and no

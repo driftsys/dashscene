@@ -14,9 +14,9 @@
 //! intersects it.
 
 use dashpaint::{
-    Atlas, ClipTable, CornerRadii, GlyphRun, GlyphRunTable, Gradient, GradientKind, ImageAsset,
-    ImageTable, MAX_GRADIENT_STOPS, PaintKind, PaintTable, Painter, RectEntry, ScaleMode, Stroke,
-    StrokeAlign,
+    Atlas, ClipTable, CornerRadii, GlyphRun, GlyphRunTable, Gradient, GradientKind, GroupComposite,
+    ImageAsset, ImageTable, MAX_GRADIENT_STOPS, PaintKind, PaintTable, Painter, RectEntry,
+    ScaleMode, Stroke, StrokeAlign,
 };
 use skia_safe::{
     AlphaType, Canvas, ClipOp, Color4f, ColorType, Data, EncodedImageFormat, FilterMode, Image,
@@ -123,6 +123,7 @@ impl Painter for SkiaPainter {
         paints: &PaintTable,
         images: &ImageTable,
         clips: &ClipTable,
+        groups: &[GroupComposite],
         glyphs: &GlyphRunTable,
         dirty: Option<&[u32]>,
     ) {
@@ -154,7 +155,25 @@ impl Painter for SkiaPainter {
 
         let canvas = self.surface.canvas();
         canvas.clear(skia_safe::colors::TRANSPARENT);
-        for rect in source {
+        // The render-target group opacities (`masks-and-group-opacity.md`):
+        // a group's rect range `[start, end)` composites offscreen and the
+        // layer blends at `alpha`. Groups arrive in ascending `start` order
+        // (DFS pre-order) and nest, so one pointer walks the starts and a
+        // stack of pending `end` indices closes the layers innermost first.
+        let mut next_group = 0usize;
+        let mut open_group_ends: Vec<u32> = Vec::new();
+        for (i, rect) in source.iter().enumerate() {
+            // Open every group that starts at this rect (at most one per
+            // index — one opacity per node). `save_layer_alpha` begins the
+            // offscreen composite.
+            while next_group < groups.len() && groups[next_group].start == i as u32 {
+                let group = groups[next_group];
+                let alpha = (group.alpha.clamp(0.0, 1.0) * 255.0).round() as u32;
+                canvas.save_layer_alpha(None, alpha);
+                open_group_ends.push(group.end);
+                next_group += 1;
+            }
+
             let entry = paints.resolve(rect.paint);
             let region = clips.resolve(rect.clip);
             // The region is already ancestor-resolved (core, at commit —
@@ -176,16 +195,19 @@ impl Painter for SkiaPainter {
             }
             let rrect = rounded_box(rect, &entry.corners);
             match &entry.fill {
-                // A fill-less entry draws nothing (a layout-only node).
+                // A fill-less entry draws nothing (a layout-only node, or a
+                // mask node whose shape is a stencil, not paint).
                 None => {}
                 Some(PaintKind::Solid { color }) => {
                     let mut paint = solid_paint(*color);
                     paint.set_anti_alias(true);
+                    apply_opacity(&mut paint, rect.opacity);
                     canvas.draw_rrect(rrect, &paint);
                 }
                 Some(PaintKind::Gradient(gradient)) => {
                     let mut paint = gradient_paint(gradient, rect);
                     paint.set_anti_alias(true);
+                    apply_opacity(&mut paint, rect.opacity);
                     canvas.draw_rrect(rrect, &paint);
                 }
                 Some(PaintKind::Image {
@@ -202,14 +224,23 @@ impl Painter for SkiaPainter {
                         *scale_mode,
                         transform.as_ref(),
                         *tile_scale,
+                        rect.opacity,
                     );
                 }
             }
             if let Some(stroke) = &entry.stroke {
-                draw_stroke(canvas, &rrect, stroke);
+                draw_stroke(canvas, &rrect, stroke, rect.opacity);
             }
             if clipped {
                 canvas.restore();
+            }
+
+            // Close every group whose subtree ends after this rect,
+            // innermost first (`end` values on the stack are non-increasing
+            // from the top by the nesting).
+            while open_group_ends.last() == Some(&(i as u32 + 1)) {
+                canvas.restore();
+                open_group_ends.pop();
             }
         }
 
@@ -270,7 +301,16 @@ fn draw_glyph_runs(canvas: &Canvas, glyphs: &GlyphRunTable) {
         // ratio of render size to the size the atlas was baked at
         // (docs/design/atlas-pipeline.md).
         let px_range = atlas.distance_range_px * run.size / f32::from(atlas.px_per_em);
-        let uniforms = msdf_uniforms(&effect, run.color, px_range);
+        // Fold the run's free-path group alpha into the fill (story #44):
+        // the MSDF resolve modulates coverage by `color.a`, so multiplying
+        // the alpha dims the whole run. The render-target group path and
+        // clip/mask regions are not applied to runs (a documented
+        // limitation on `GlyphRun::opacity`).
+        let color = dashpaint::Color {
+            a: run.color.a * run.opacity,
+            ..run.color
+        };
+        let uniforms = msdf_uniforms(&effect, color, px_range);
         for quad in &run.glyphs {
             let Some(g) = atlas.glyph(quad.glyph_id) else {
                 // No quad for this glyph id — an empty outline (space) or
@@ -363,6 +403,17 @@ fn msdf_uniforms(effect: &RuntimeEffect, color: dashpaint::Color, px_range: f32)
         }
     }
     Data::new_copy(&buf)
+}
+
+/// Modulates a paint's alpha by the rect's free-path group opacity
+/// (`docs/decisions/masks-and-group-opacity.md`). A `1.0` opacity leaves
+/// the paint untouched; for a shader paint (gradient, image) the paint
+/// alpha multiplies the shader's output, so the same call covers every
+/// fill kind.
+fn apply_opacity(paint: &mut skia_safe::Paint, opacity: f32) {
+    if opacity != 1.0 {
+        paint.set_alpha_f(paint.alpha_f() * opacity);
+    }
 }
 
 fn solid_paint(color: dashpaint::Color) -> skia_safe::Paint {
@@ -501,7 +552,7 @@ fn diamond_shader(colors: &[Color4f], positions: &[f32], frame: &Matrix) -> Opti
 /// are center-only, so inside/outside strokes offset the stroked
 /// geometry by half the width (corner radii adjust with it) and
 /// center-stroke that.
-fn draw_stroke(canvas: &Canvas, rrect: &RRect, stroke: &Stroke) {
+fn draw_stroke(canvas: &Canvas, rrect: &RRect, stroke: &Stroke, opacity: f32) {
     let half = stroke.width / 2.0;
     let stroked = match stroke.align {
         StrokeAlign::Center => *rrect,
@@ -512,10 +563,12 @@ fn draw_stroke(canvas: &Canvas, rrect: &RRect, stroke: &Stroke) {
     paint.set_anti_alias(true);
     paint.set_style(skia_safe::PaintStyle::Stroke);
     paint.set_stroke_width(stroke.width);
+    apply_opacity(&mut paint, opacity);
     canvas.draw_rrect(stroked, &paint);
 }
 
 /// Draws an image fill clipped to the entry's (rounded) box.
+#[allow(clippy::too_many_arguments)]
 fn draw_image_fill(
     canvas: &Canvas,
     rrect: &RRect,
@@ -524,6 +577,7 @@ fn draw_image_fill(
     scale_mode: ScaleMode,
     transform: Option<&dashpaint::Mat23>,
     tile_scale: f32,
+    opacity: f32,
 ) {
     let image = images::deferred_from_encoded_data(Data::new_copy(&asset.bytes), None)
         .expect("image asset decodes (validated upstream, P4)");
@@ -537,6 +591,7 @@ fn draw_image_fill(
     let sampling = SamplingOptions::default();
     let mut paint = skia_safe::Paint::default();
     paint.set_anti_alias(true);
+    apply_opacity(&mut paint, opacity);
 
     match scale_mode {
         ScaleMode::Fill | ScaleMode::Fit => {

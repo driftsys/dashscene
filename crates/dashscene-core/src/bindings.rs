@@ -46,11 +46,17 @@ pub enum Channel {
     FillG = 6,
     FillB = 7,
     FillA = 8,
+    /// The node's group opacity (`Prop::Opacity`). Paint-only: an opacity
+    /// write never reflows anything, the same side of boundary B as the
+    /// fill channels (`docs/decisions/visible-is-layout-opacity-is-paint.md`).
+    /// The natural landing for a bound Figma opacity variable (debt #253,
+    /// `docs/decisions/masks-and-group-opacity.md`).
+    Opacity = 9,
 }
 
 impl Channel {
     /// Every channel, in code order.
-    pub const ALL: [Channel; 9] = [
+    pub const ALL: [Channel; 10] = [
         Channel::X,
         Channel::Y,
         Channel::Width,
@@ -60,6 +66,7 @@ impl Channel {
         Channel::FillG,
         Channel::FillB,
         Channel::FillA,
+        Channel::Opacity,
     ];
 
     /// The channel's stable wire code (the enum discriminant).
@@ -210,7 +217,7 @@ mod tests {
         for channel in Channel::ALL {
             assert_eq!(Channel::from_code(channel.code()), Some(channel));
         }
-        assert_eq!(Channel::from_code(9), None);
+        assert_eq!(Channel::from_code(10), None);
         assert_eq!(Channel::from_code(u8::MAX), None);
     }
 

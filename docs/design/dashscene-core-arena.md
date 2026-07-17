@@ -217,6 +217,31 @@ node regardless of visibility, so nodes committed after a hidden one
 never shift. This is the invariant the bounded-pool work depends on
 (issue #166).
 
+## Masks and group opacity (story #44)
+
+`Prop::Mask(bool)` (a `mask` node flag) marks a node as a mask: at commit
+it adds its resolved (rounded) box to the clip region of every sibling
+that follows it in the same parent, and to those siblings' subtrees,
+reusing the clip-region machinery above. A new mask sibling replaces the
+active one; the mask node itself resolves to the draws-nothing paint entry
+(a stencil, not paint). A mask toggle marks the node paint-dirty and feeds
+the same region cascade a clip toggle does.
+
+`Prop::Opacity(f32)` (a `opacity` node value in `[0, 1]`, default `1.0`) is
+paint-only — it never reaches the solver
+(`docs/decisions/visible-is-layout-opacity-is-paint.md`). Commit resolves
+it in two passes after the main walk: a post-order pass finds each
+subtree's rect-index extent, then a pre-order pass carries a free-alpha
+product down the tree. A node with opacity below 1 whose painted subtree is
+non-overlapping folds its alpha into every subtree rect's
+`RectEntry.opacity` (the free path); an overlapping one emits a
+`GroupComposite` whose layer composites at the node's alpha times the
+carried product, and its subtree resets to a product of 1. The overlap test
+is pairwise over the painting rects in the subtree. Opacity records no
+change log — the walk reads it fresh every commit, and the rect entry's
+alpha bits carry a change into the dirty set. Full model and alternatives:
+`docs/decisions/masks-and-group-opacity.md`.
+
 ## Binding tables (v0.7, story #167)
 
 The document binding tables live on the arena as intent metadata:
@@ -328,10 +353,11 @@ not re-derived here:
 `CommittedScene` (in `committed.rs`) is the double-buffered painter
 input, built from `dashpaint`'s types since the story #4 unification:
 `rects() -> &[RectEntry]` (DFS-indexed, blittable
-`{ x, y, w, h: f32, paint: PaintIndex, clip: ClipIndex }`),
+`{ x, y, w, h: f32, paint: PaintIndex, clip: ClipIndex, opacity: f32 }`),
 `paints() -> &PaintTable` (deduplicated `PaintEntry` pool),
 `clips() -> &ClipTable` (deduplicated `ClipRegion` pool, story #97),
-`generation() -> u64`, `dirty() -> &[u32]`, plus the
+`groups() -> &[GroupComposite]` (the story #44 render-target group
+opacities), `generation() -> u64`, `dirty() -> &[u32]`, plus the
 NodeId↔rect-index correspondence for the commit that produced it
 (`node_of(rect_index) -> NodeId`,
 `rect_index_of(NodeId) -> Option<u32>` — `None` for a node added after

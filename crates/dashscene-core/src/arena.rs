@@ -16,8 +16,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::bindings::{Binding, Channel, ScalarTransform, SignalDecl, SignalId};
 use crate::committed::{
-    ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CommittedScene, CornerRadii, ImageAsset,
-    ImageTable, PaintEntry, PaintIndex, PaintKind, PaintTable, RectEntry, Stroke, Vec2,
+    ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CommittedScene, CornerRadii, GroupComposite,
+    ImageAsset, ImageTable, PaintEntry, PaintIndex, PaintKind, PaintTable, RectEntry, Stroke,
+    StrokeAlign, Vec2,
 };
 
 /// Stable handle to a node in one [`Arena`]. Returned by
@@ -313,6 +314,28 @@ pub enum Prop {
     /// the flex vocabulary — ignored by `commit()`'s fixed resolution.
     /// Defaults to `true`.
     Visible(bool),
+    /// Node/group alpha in `[0, 1]` (`Paint.opacity`, §23). Paint-only:
+    /// it never reaches Taffy and triggers no solve
+    /// (`docs/decisions/visible-is-layout-opacity-is-paint.md`). Commit
+    /// resolves it into the per-rect free alpha boundary B carries and,
+    /// for an overlapping subtree, a render-target group
+    /// (`docs/decisions/masks-and-group-opacity.md`). Its pair
+    /// [`Prop::Visible`] is the layout half. Defaults to `1.0`.
+    ///
+    /// Unlike `Fill`, this prop clears: a later `Opacity(1.0)` restores
+    /// full opacity (a scalar has no absent state to lose).
+    Opacity(f32),
+    /// Whether this node is a mask: it stencils the siblings that follow
+    /// it within the same parent (until the next mask sibling or the end
+    /// of the parent) to its own (rounded) box, and draws nothing itself
+    /// (`docs/decisions/masks-and-group-opacity.md`). Intent only: commit
+    /// resolves it into the following siblings' clip regions, reusing the
+    /// resolved-clip-region machinery (issue #97), because a flat rect
+    /// table gives a painter no siblings to walk (P2).
+    ///
+    /// Like [`Prop::Clip`] this prop clears: `Mask(false)` turns masking
+    /// back off.
+    Mask(bool),
 }
 
 /// Text style intent — mirrors the `dashbuf` `TextStyle` table
@@ -402,6 +425,14 @@ struct NodeData {
     /// "This node clips its children to its own box" — intent, resolved
     /// at commit (issue #97).
     clip: bool,
+    /// Node/group alpha in `[0, 1]`, default `1.0` — intent, resolved at
+    /// commit into per-rect free alpha and render-target groups
+    /// (`docs/decisions/masks-and-group-opacity.md`).
+    opacity: f32,
+    /// "This node masks the siblings that follow it" — intent, resolved
+    /// at commit into those siblings' clip regions
+    /// (`docs/decisions/masks-and-group-opacity.md`).
+    mask: bool,
     text: Option<String>,
     text_style: Option<TextStyle>,
 }
@@ -464,6 +495,19 @@ pub struct Arena {
     /// changes whether the node contributes a clip box to its subtree
     /// even when its own geometry did not move. Drained each commit.
     clip_toggled: Vec<NodeId>,
+    /// Nodes whose mask flag toggled since the last commit. A toggle
+    /// changes whether the node stencils its following siblings even when
+    /// its own geometry did not move, so those siblings must re-resolve
+    /// their clip regions. Drained each commit
+    /// (`docs/decisions/masks-and-group-opacity.md`).
+    mask_toggled: Vec<NodeId>,
+    /// Nodes whose visibility toggled since the last commit. A hidden node
+    /// (and its subtree) resolves to the draws-nothing paint entry under
+    /// the fixed solver, and stops masking if it was a mask, so a toggle
+    /// re-interns the affected subtree's paint even when no geometry moved
+    /// (`docs/decisions/masks-and-group-opacity.md`, story #44 M5). Drained
+    /// each commit.
+    visible_toggled: Vec<NodeId>,
 }
 
 impl Arena {
@@ -640,6 +684,27 @@ impl Arena {
         self.node_data(node).fill.as_ref()
     }
 
+    /// The node's opacity intent in `[0, 1]` (default `1.0`). Intent-side,
+    /// like [`Arena::fill`]: a staged [`Prop::Opacity`] is visible
+    /// immediately, before the next commit resolves it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `node` is out of range for this arena.
+    pub fn opacity(&self, node: NodeId) -> f32 {
+        self.node_data(node).opacity
+    }
+
+    /// Whether the node is a mask (stencils its following siblings).
+    /// Intent-side, like [`Arena::fill`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if `node` is out of range for this arena.
+    pub fn is_mask(&self, node: NodeId) -> bool {
+        self.node_data(node).mask
+    }
+
     /// The staged signal declarations, in declaration order — the table
     /// [`SignalId`] indexes (story #167).
     pub fn signals(&self) -> &[SignalDecl] {
@@ -785,6 +850,8 @@ impl Txn<'_> {
             stroke: None,
             corners: CornerRadii::default(),
             clip: false,
+            opacity: 1.0,
+            mask: false,
             text: None,
             text_style: None,
         });
@@ -966,12 +1033,42 @@ impl Txn<'_> {
             Prop::GridRowSpan(v) => data.layout.grid_row_span = v,
             Prop::GridColumnSpan(v) => data.layout.grid_column_span = v,
             Prop::Visible(v) => data.layout.visible = v,
+            // A non-finite opacity is a producer error the painter cannot
+            // honor. Refuse it by name rather than clamp `NaN` to a
+            // value that reads back as fully opaque (story #44 M7).
+            Prop::Opacity(v) => {
+                assert!(
+                    v.is_finite(),
+                    "{node:?}: Prop::Opacity({v}) is not finite; opacity must be in [0, 1]"
+                );
+                data.opacity = v.clamp(0.0, 1.0);
+            }
+            Prop::Mask(v) => data.mask = v,
         }
         // `data`'s borrow ends with the match above.
         match class {
             PropClass::Layout => self.arena.layout_dirty.push(node),
             PropClass::Paint => self.arena.paint_dirty.push(node),
             PropClass::ClipFlag => self.arena.clip_toggled.push(node),
+            // A mask toggle changes both the node's own paint (it now
+            // draws nothing, or paints again) and its following siblings'
+            // clip regions, so it feeds both cascades.
+            PropClass::MaskFlag => {
+                self.arena.paint_dirty.push(node);
+                self.arena.mask_toggled.push(node);
+            }
+            // A visibility toggle is layout-affecting (the solver hides the
+            // node) and also re-interns the node's — and its subtree's —
+            // paint under the fixed solver, which does not hide it (M5).
+            PropClass::VisibleFlag => {
+                self.arena.layout_dirty.push(node);
+                self.arena.visible_toggled.push(node);
+            }
+            // Opacity is recomputed from `node.opacity` on every commit's
+            // walk, so it needs no change log — the walk always picks up
+            // the staged value, and the rect entry's alpha bits carry the
+            // change into the dirty set.
+            PropClass::OpacityOnly => {}
         }
     }
 
@@ -1208,6 +1305,8 @@ impl Txn<'_> {
             arena.paint_dirty.iter().map(|n| n.index()).collect();
         let clip_toggled_set: FxHashSet<usize> =
             arena.clip_toggled.iter().map(|n| n.index()).collect();
+        let mask_toggled_set: FxHashSet<usize> =
+            arena.mask_toggled.iter().map(|n| n.index()).collect();
 
         // Borrow the retained interners for the walk. Taken out so the
         // arena stays immutably borrowable (for `overlay`) while the maps
@@ -1229,12 +1328,42 @@ impl Txn<'_> {
         let mut back_paints = Arc::clone(&previous.paints);
         let mut back_clips = Arc::clone(&previous.clips);
         let mut rects: Vec<RectEntry> = Vec::with_capacity(order.len());
-        let mut dirty: Vec<u32> = Vec::new();
         let n = arena.nodes.len();
         let mut region_out_index: Vec<ClipIndex> = vec![ClipIndex::UNCLIPPED; n];
         let mut region_out_changed: Vec<bool> = vec![false; n];
+        let visible_toggled_set: FxHashSet<usize> =
+            arena.visible_toggled.iter().map(|n| n.index()).collect();
+
+        // Mask resolution (`docs/decisions/masks-and-group-opacity.md`).
+        // `mask_region[parent slot]` is the region a mask child hands the
+        // siblings that follow it: the parent's own region with every mask
+        // child seen so far chained on (successive masks intersect, not
+        // replace — M3). `None` = no mask child yet, so a following sibling
+        // reads the parent's `region_out` directly. `mask_changed` marks
+        // that the masking a following sibling receives changed this commit
+        // (a mask added, removed, moved, or made in/visible), so the
+        // sibling re-resolves even in the mask-off direction (M1). Keyed by
+        // parent slot; the DFS never writes a parent's slot between its
+        // children, so the value a later sibling reads is stable.
+        let mut mask_region: Vec<Option<ClipIndex>> = vec![None; n];
+        let mut mask_changed: Vec<bool> = vec![false; n];
+        // `eff_hidden[slot]` is whether the node, or any ancestor, is
+        // `Visible(false)`. A hidden subtree draws nothing under the fixed
+        // solver (which does not hide it), so its rects resolve to the
+        // draws-nothing entry (M5). `hidden_changed[slot]` propagates a
+        // visibility toggle down the subtree so a descendant re-interns its
+        // paint. Parent-before-child DFS fills both.
+        let mut eff_hidden: Vec<bool> = vec![false; n];
+        let mut hidden_changed: Vec<bool> = vec![false; n];
+        // Per rect index: slot lookup, and the painted extent of the rect
+        // (its box grown by any stroke outset) for the overlap test — `None`
+        // when the rect paints nothing (M10). The exclusive subtree end is
+        // filled post-order below.
+        let mut rect_of_slot: Vec<u32> = vec![0; n];
+        let mut painted_extent: Vec<Option<Extent>> = vec![None; order.len()];
 
         for (i, &id) in order.iter().enumerate() {
+            rect_of_slot[id.index()] = i as u32;
             let node = &arena.nodes[id.index()];
             let geometry = solved[id.index()].unwrap_or_else(|| {
                 panic!(
@@ -1249,14 +1378,23 @@ impl Txn<'_> {
                 .get(id.index())
                 .map(|&ri| previous.rects[ri as usize]);
 
-            // The clip region that applies to this node is its parent's
-            // output region; a root is unclipped. (A clipping node does
-            // not clip itself, only its descendants.)
+            // The region reaching this node is the one its parent's masks
+            // hand it: the parent's own `region_out` with every earlier
+            // mask child of the parent chained on (M3), or the parent's
+            // `region_out` directly when no mask precedes this node. A root
+            // is unclipped. (A clipping or masking node does not clip
+            // itself, only its descendants / following siblings.)
             let (region_in_index, region_in_changed) = match node.parent {
-                Some(parent) => (
-                    region_out_index[parent.index()],
-                    region_out_changed[parent.index()],
-                ),
+                Some(parent) => match mask_region[parent.index()] {
+                    Some(masked) => (
+                        masked,
+                        region_out_changed[parent.index()] || mask_changed[parent.index()],
+                    ),
+                    None => (
+                        region_out_index[parent.index()],
+                        region_out_changed[parent.index()] || mask_changed[parent.index()],
+                    ),
+                },
                 None => (ClipIndex::UNCLIPPED, false),
             };
 
@@ -1267,22 +1405,55 @@ impl Txn<'_> {
                     || p.h.to_bits() != geometry.h.to_bits()
             });
 
-            // Paint: reuse the stable previous index unless the node's
-            // paint intent changed (or it is new). A variant override's
-            // fill wins over the base fill, the same "active member wins"
-            // rule `Arena::layout` applies to geometry.
-            let paint = match prev_entry.filter(|_| !paint_dirty_set.contains(&id.index())) {
+            // Effective visibility: hidden if this node or any ancestor is
+            // `Visible(false)` (M5). `hidden_changed` propagates a
+            // visibility toggle down so a descendant re-interns its paint.
+            let parent_hidden = node.parent.is_some_and(|p| eff_hidden[p.index()]);
+            let parent_hidden_changed = node.parent.is_some_and(|p| hidden_changed[p.index()]);
+            eff_hidden[id.index()] = parent_hidden || !node.layout.visible;
+            hidden_changed[id.index()] =
+                parent_hidden_changed || visible_toggled_set.contains(&id.index());
+
+            // A mask node and a hidden node both draw nothing — a mask is a
+            // stencil (`docs/decisions/masks-and-group-opacity.md`), a
+            // hidden node is not drawn (M5). Neither contributes to overlap.
+            let draws_nothing = node.mask || eff_hidden[id.index()];
+
+            // Paint: reuse the stable previous index unless the node's paint
+            // intent changed, its mask flag toggled (paint-dirty), or its
+            // visibility toggled (draws-nothing changes). `contributes[i]`
+            // reads the fill's presence without cloning; the clone stays in
+            // the cache-miss arm so a change-scaled commit does not
+            // heap-clone every gradient's stops every frame (M9, P3).
+            let paint = match prev_entry
+                .filter(|_| !paint_dirty_set.contains(&id.index()) && !hidden_changed[id.index()])
+            {
                 Some(prev) => prev.paint,
                 None => {
-                    let fill = arena.overlay(id).fill.or_else(|| node.fill.clone());
-                    let entry = PaintEntry {
-                        fill,
-                        stroke: node.stroke,
-                        corners: node.corners,
+                    let entry = if draws_nothing {
+                        PaintEntry::default()
+                    } else {
+                        let fill = arena.overlay(id).fill.or_else(|| node.fill.clone());
+                        PaintEntry {
+                            fill,
+                            stroke: node.stroke,
+                            corners: node.corners,
+                        }
                     };
                     intern_paint(&mut back_paints, &mut paint_map, entry)
                 }
             };
+
+            // The painted extent for the overlap test: the box grown by the
+            // stroke's outset (an outside or center stroke paints past the
+            // box), or `None` when the node draws nothing (M10).
+            if !draws_nothing
+                && (arena.overlay(id).fill.is_some()
+                    || node.fill.is_some()
+                    || node.stroke.is_some())
+            {
+                painted_extent[i] = Some(stroke_extent(geometry, node.stroke.as_ref()));
+            }
 
             // Clip: reuse the previous index unless the region reaching
             // this node changed (or it is new).
@@ -1291,6 +1462,9 @@ impl Txn<'_> {
                 _ => region_in_index,
             };
 
+            // `opacity` is a placeholder here; the group-opacity pass below
+            // fills every rect's free-path alpha once subtree overlap is
+            // known.
             let entry = RectEntry {
                 x: geometry.x,
                 y: geometry.y,
@@ -1298,13 +1472,14 @@ impl Txn<'_> {
                 h: geometry.h,
                 paint,
                 clip,
+                opacity: 1.0,
             };
 
-            // The region this node hands its children: its own region plus
-            // its box when it clips. `paint_dirty` stands in for a
-            // corners/box change (corners are paint intent); over-marking
-            // only re-resolves a descendant to the same index, never a
-            // wrong one.
+            // The region this node hands its children: its own incoming
+            // region plus its box when it clips. `paint_dirty` stands in
+            // for a corners/box change (corners are paint intent);
+            // over-marking only re-resolves a descendant to the same index,
+            // never a wrong one.
             let box_changed = geo_changed || paint_dirty_set.contains(&id.index());
             if node.clip {
                 let node_box = ClipBox {
@@ -1324,18 +1499,119 @@ impl Txn<'_> {
                     region_in_changed || clip_toggled_set.contains(&id.index());
             }
 
-            // Dirty is a bit compare against the previous commit at this
-            // index (what a painter refreshes). A shifted tail after a
-            // structural change reports dirty, as intended.
+            // A visible mask node stencils the siblings that follow it in
+            // the same parent: chain its box onto the parent's mask region
+            // so following siblings intersect every mask (M3). A hidden mask
+            // does not mask (M2). Any change to this node's masking — flag
+            // toggled, geometry moved, or visibility changed — re-resolves
+            // the regions its following siblings receive (M1).
+            if let Some(parent) = node.parent {
+                let node_masks = node.mask && node.layout.visible;
+                if node_masks {
+                    let node_box = ClipBox {
+                        x: geometry.x,
+                        y: geometry.y,
+                        w: geometry.w,
+                        h: geometry.h,
+                        corners: node.corners,
+                    };
+                    mask_region[parent.index()] = Some(intern_region(
+                        &mut back_clips,
+                        &mut clip_map,
+                        region_in_index,
+                        node_box,
+                    ));
+                }
+                let mask_state_changed = mask_toggled_set.contains(&id.index())
+                    || visible_toggled_set.contains(&id.index())
+                    || (node.mask && box_changed);
+                if mask_state_changed {
+                    mask_changed[parent.index()] = true;
+                }
+            }
+
+            rects.push(entry);
+        }
+
+        // Group opacity (`docs/decisions/masks-and-group-opacity.md`).
+        // First the exclusive end of every rect's subtree in rect-index
+        // order: a subtree is contiguous in DFS, so a post-order max from
+        // each child into its parent's slot suffices.
+        let mut subtree_end: Vec<u32> = (1..=order.len() as u32).collect();
+        for i in (0..order.len()).rev() {
+            if let Some(parent) = arena.nodes[order[i].index()].parent {
+                let pi = rect_of_slot[parent.index()] as usize;
+                subtree_end[pi] = subtree_end[pi].max(subtree_end[i]);
+            }
+        }
+
+        // Then a pre-order pass carrying the free-path alpha product down
+        // the tree. A node with opacity below 1 whose painted subtree is
+        // mutually non-overlapping folds its alpha into every subtree rect
+        // (the free path); an overlapping one becomes a render-target
+        // group whose layer composites at the node's alpha times the
+        // carried product, and its subtree draws into that layer at a
+        // reset product of 1.
+        let mut groups: Vec<GroupComposite> = Vec::new();
+        let mut carried_out: Vec<f32> = vec![1.0; n];
+        for (i, &id) in order.iter().enumerate() {
+            let node = &arena.nodes[id.index()];
+            let base = match node.parent {
+                Some(parent) => carried_out[parent.index()],
+                None => 1.0,
+            };
+            let opacity = node.opacity.clamp(0.0, 1.0);
+            let end = subtree_end[i];
+            // `opacity == 0` needs no compositing at all — the subtree is
+            // simply not drawn (`visible-is-layout-opacity-is-paint.md`), so
+            // it stays on the free path even when its children overlap
+            // (story #44 M14). Only `0 < opacity < 1` over an overlapping
+            // subtree needs a render target.
+            if opacity > 0.0 && opacity < 1.0 && subtree_overlaps(i as u32, end, &painted_extent) {
+                groups.push(GroupComposite {
+                    start: i as u32,
+                    end,
+                    alpha: base * opacity,
+                });
+                // The node's own rect and its subtree draw into the layer
+                // at full alpha; the group's alpha applies once, at the
+                // composite.
+                rects[i].opacity = 1.0;
+                carried_out[id.index()] = 1.0;
+            } else {
+                let alpha = if opacity < 1.0 { base * opacity } else { base };
+                rects[i].opacity = alpha;
+                carried_out[id.index()] = alpha;
+            }
+        }
+
+        // Dirty is a bit compare against the previous commit at each index
+        // (what a painter refreshes), computed once the rect entries —
+        // opacity included — are final. A shifted tail after a structural
+        // change reports dirty, as intended.
+        let mut dirty_set: FxHashSet<u32> = FxHashSet::default();
+        for (i, entry) in rects.iter().enumerate() {
             if previous
                 .rects
                 .get(i)
-                .is_none_or(|old| entry_bits(old) != entry_bits(&entry))
+                .is_none_or(|old| entry_bits(old) != entry_bits(entry))
             {
-                dirty.push(i as u32);
+                dirty_set.insert(i as u32);
             }
-            rects.push(entry);
         }
+        // A render-target group's alpha lives outside the rect entry bits,
+        // so a group forming, dissolving, or changing alpha would otherwise
+        // leave its subtree's rects clean while the composited pixels move
+        // (M8). Every rect covered by a group present on exactly one side of
+        // this commit is dirtied. Groups are few; the scan is cheap.
+        for group in groups.iter().chain(previous.groups.iter()) {
+            let on_both = groups.contains(group) && previous.groups.contains(group);
+            if !on_both {
+                dirty_set.extend(group.start..group.end.min(rects.len() as u32));
+            }
+        }
+        let mut dirty: Vec<u32> = dirty_set.into_iter().collect();
+        dirty.sort_unstable();
 
         let generation = previous.generation + 1;
         // The index maps change only on a structural change; otherwise the
@@ -1360,6 +1636,7 @@ impl Txn<'_> {
             paints: back_paints,
             images,
             clips: back_clips,
+            groups,
             generation,
             dirty,
             node_ids,
@@ -1375,6 +1652,8 @@ impl Txn<'_> {
         arena.layout_dirty.clear();
         arena.paint_dirty.clear();
         arena.clip_toggled.clear();
+        arena.mask_toggled.clear();
+        arena.visible_toggled.clear();
         generation
     }
 }
@@ -1388,6 +1667,17 @@ enum PropClass {
     Paint,
     /// The clip flag: feeds the clip-region cascade.
     ClipFlag,
+    /// The mask flag: re-interns the node's own (now draws-nothing) paint
+    /// and feeds the clip-region cascade for its following siblings.
+    MaskFlag,
+    /// The visibility flag: layout-affecting (the solver hides the node)
+    /// and paint-affecting under the fixed solver (a hidden subtree draws
+    /// nothing).
+    VisibleFlag,
+    /// Node/group opacity: recomputed on every commit walk, so it records
+    /// nothing (the walk reads `node.opacity` fresh, and the rect entry's
+    /// alpha carries the change to the dirty set).
+    OpacityOnly,
 }
 
 fn prop_class(prop: &Prop) -> PropClass {
@@ -1396,6 +1686,9 @@ fn prop_class(prop: &Prop) -> PropClass {
             PropClass::Paint
         }
         Prop::Clip(_) => PropClass::ClipFlag,
+        Prop::Mask(_) => PropClass::MaskFlag,
+        Prop::Visible(_) => PropClass::VisibleFlag,
+        Prop::Opacity(_) => PropClass::OpacityOnly,
         // Everything else is layout or measured-size intent. Text and
         // TextStyle change the shaped run a measuring solver sizes to, so
         // they are layout-affecting even though they touch no rect field
@@ -1424,8 +1717,7 @@ fn prop_class(prop: &Prop) -> PropClass {
         | Prop::GridRow(_)
         | Prop::GridColumn(_)
         | Prop::GridRowSpan(_)
-        | Prop::GridColumnSpan(_)
-        | Prop::Visible(_) => PropClass::Layout,
+        | Prop::GridColumnSpan(_) => PropClass::Layout,
     }
 }
 
@@ -1579,8 +1871,10 @@ fn corner_key(corners: CornerRadii) -> [u32; 4] {
 
 /// The bits a painter uploads for an entry (R-T4). Bit comparison keeps
 /// the diff deterministic where `f32` equality is not (NaN never equals
-/// itself and would mark a rect permanently dirty).
-fn entry_bits(entry: &RectEntry) -> [u32; 6] {
+/// itself and would mark a rect permanently dirty). The free-path group
+/// alpha is part of the entry, so a group-opacity change on the free path
+/// reaches the dirty set (`docs/decisions/masks-and-group-opacity.md`).
+fn entry_bits(entry: &RectEntry) -> [u32; 7] {
     [
         entry.x.to_bits(),
         entry.y.to_bits(),
@@ -1588,7 +1882,71 @@ fn entry_bits(entry: &RectEntry) -> [u32; 6] {
         entry.h.to_bits(),
         entry.paint.0,
         entry.clip.0,
+        entry.opacity.to_bits(),
     ]
+}
+
+/// A painting rect's device extent (top-left origin plus size), grown from
+/// the layout box by any stroke outset so the overlap test sees the pixels
+/// the stroke actually covers (`docs/decisions/masks-and-group-opacity.md`
+/// M10).
+#[derive(Clone, Copy)]
+struct Extent {
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+}
+
+/// A node's painted extent: its resolved box grown by the stroke's outset.
+/// An `Outside` stroke paints a full width past the box; a `Center` stroke
+/// half a width; an `Inside` stroke stays within the box. A gradient or
+/// image fill under a partial-opacity group is why the box alone is not
+/// enough — a center/outside stroke band otherwise escapes the overlap test
+/// and seams at ~0.75 alpha under the free path (M10).
+fn stroke_extent(geometry: SolvedRect, stroke: Option<&Stroke>) -> Extent {
+    let outset = match stroke {
+        None => 0.0,
+        Some(s) => match s.align {
+            StrokeAlign::Inside => 0.0,
+            StrokeAlign::Center => s.width / 2.0,
+            StrokeAlign::Outside => s.width,
+        },
+    };
+    Extent {
+        x: geometry.x - outset,
+        y: geometry.y - outset,
+        w: geometry.w + 2.0 * outset,
+        h: geometry.h + 2.0 * outset,
+    }
+}
+
+/// Whether two painting extents in the range `[start, end)` overlap — the
+/// group-opacity overlap test
+/// (`docs/decisions/masks-and-group-opacity.md`). Non-overlap of the
+/// painted extents is exactly the condition that lets a group opacity fold
+/// into per-rect alpha without double-blending, so the test is over the
+/// nodes that actually paint (a mask, hidden, or layout-only node
+/// contributes `None`). Zero-area extents never overlap (strict comparison).
+///
+/// The test is clip-blind: two extents whose clip regions make them
+/// visually disjoint are still judged overlapping, which over-composites
+/// (a needless render target) but never under-composites. That direction is
+/// a named debt candidate, not a correctness bug.
+fn subtree_overlaps(start: u32, end: u32, painted: &[Option<Extent>]) -> bool {
+    let extents: Vec<&Extent> = (start..end)
+        .filter_map(|i| painted[i as usize].as_ref())
+        .collect();
+    for (a_i, a) in extents.iter().enumerate() {
+        for b in &extents[a_i + 1..] {
+            let x_overlap = a.x < b.x + b.w && b.x < a.x + a.w;
+            let y_overlap = a.y < b.y + b.h && b.y < a.y + a.h;
+            if x_overlap && y_overlap {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn clip_box_bits(clip: &ClipBox) -> [u32; 8] {

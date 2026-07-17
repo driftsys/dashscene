@@ -3,7 +3,8 @@
     crate    crates/dashscene-skia
     covers   v0.1 first Painter implementation (story #4); v0.3 paint
              vocabulary (story #14); resolved subtree clips (story #97);
-             v0.5 MSDF glyph-run rendering (story #30)
+             v0.5 MSDF glyph-run rendering (story #30); v0.8 group opacity
+             (story #44)
 
 ## Purpose
 
@@ -84,7 +85,18 @@ All in `crates/dashscene-skia/src/lib.rs`:
   fill and stroke, `restore`. The painter never asks which node a box
   came from (P2), and a region with no boxes costs no save/restore. The
   clip applies to the rect's own fill and stroke, not to the rects after
-  it in slice order.
+  it in slice order. Masks arrive as clip regions too (story #44), so the
+  painter needs no mask code.
+- Group opacity arrives resolved (story #44,
+  `docs/decisions/masks-and-group-opacity.md`). The free path rides on
+  `RectEntry.opacity`: each draw's paint alpha is multiplied by it
+  (`set_alpha_f` modulates a shader paint's output, so one path covers
+  solid, gradient, and image fills). The render-target path is the
+  `groups` slice: the painter opens a `save_layer_alpha` at each
+  `GroupComposite`'s `start` and closes it (`restore`) when the innermost
+  open group's `end` is reached, so an overlapping group at partial
+  opacity flattens before its alpha applies. The groups nest by range, so
+  a stack of pending end indices closes them innermost-first.
 
 ## Text — MSDF glyph runs (v0.5 Latin, story #30)
 

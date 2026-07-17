@@ -184,11 +184,20 @@ pub struct Node {
     /// rather than lowering it as though the node were axis-aligned (P4).
     #[serde(default)]
     pub rotation: Option<f32>,
-    /// Whether this node masks its following siblings. `Document` has no mask
-    /// vocabulary, so the walk rejects a mask node loudly rather than
-    /// painting it as an ordinary frame (P4).
+    /// Whether this node masks its following siblings (story #44). A
+    /// box-shaped outline mask lowers into `Node.mask`; a soft (alpha or
+    /// luminance) mask, or a mask whose shape the box vocabulary cannot
+    /// express, is refused by name (P4).
     #[serde(default)]
     pub is_mask: Option<bool>,
+    /// A mask node's compositing type — Figma's `maskType`: `ALPHA`
+    /// (the masking layer's alpha channel), `LUMINANCE` (its brightness),
+    /// or `OUTLINE` (its vector geometry). Only a geometry/outline mask
+    /// lowers to a hard box clip; alpha and luminance are soft masks the
+    /// clip-region vocabulary cannot express (story #44 M6). Absent on a
+    /// synthetic node, which lowers as the geometric default.
+    #[serde(default)]
+    pub mask_type: Option<String>,
     /// A `TEXT` node's authored characters (story #160). The runtime shapes
     /// and breaks them; the document carries the codepoints, never the
     /// rendered lines (P1). Pinned by `lowering-baseline.json` and

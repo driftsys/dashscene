@@ -103,6 +103,7 @@ fn text_runs(
                     size,
                     color,
                     glyphs: vec![quad],
+                    opacity: 1.0,
                 }),
             }
         }
@@ -189,6 +190,7 @@ fn mixed_script_fallback_matches_its_golden() {
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        scene.groups(),
         &glyphs,
         None,
     );
@@ -335,6 +337,7 @@ fn render_rgba(
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        scene.groups(),
         table,
         None,
     );

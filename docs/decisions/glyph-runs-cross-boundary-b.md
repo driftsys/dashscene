@@ -134,3 +134,17 @@ regenerator and cross-machine reproducibility test
 (`docs/design/atlas-pipeline.md`, Determinism). One atlas per font is
 the charset-union-per-font posture the spike pinned
 (`docs/decisions/atlas-closure-cmap-plus-extras.md`).
+
+## Resolution (story #44, 2026-07-17) — free-path group alpha on runs
+
+Group opacity (`docs/decisions/masks-and-group-opacity.md`) added a
+`GlyphRun::opacity` field, mirroring `RectEntry::opacity`: a group opacity
+that took the free path folds into it, and the painter multiplies the run's
+fill alpha by it. The **render-target** group path and clip/mask regions are
+still not applied to glyph runs — a run draws as foreground, not composited
+into a group's offscreen layer nor clipped to a region — because that needs
+the full z-interleave of runs with rects this record already deferred. The
+paint gate names the combination (`paint.text-outside-group`), so a text
+node inside an overlapping partial-opacity group is a named limitation, not
+a silent wrong pixel. Compositing runs into group layers and clipping runs
+to clip/mask regions are debt candidates.

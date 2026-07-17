@@ -9,8 +9,8 @@
 
 pub use dashpaint::{
     ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CornerRadii, Gradient, GradientKind,
-    GradientStop, ImageAsset, ImageFormat, ImageTable, Mat23, PaintEntry, PaintIndex, PaintKind,
-    PaintTable, RectEntry, ScaleMode, Stroke, StrokeAlign, Vec2,
+    GradientStop, GroupComposite, ImageAsset, ImageFormat, ImageTable, Mat23, PaintEntry,
+    PaintIndex, PaintKind, PaintTable, RectEntry, ScaleMode, Stroke, StrokeAlign, Vec2,
 };
 
 use std::sync::Arc;
@@ -37,6 +37,10 @@ pub struct CommittedScene {
     pub(crate) paints: Arc<PaintTable>,
     pub(crate) images: Arc<ImageTable>,
     pub(crate) clips: Arc<ClipTable>,
+    /// The render-target group opacities, in ascending `start` (DFS
+    /// pre-order). Recomputed each commit — small and structural, unlike
+    /// the pooled paint and clip tables.
+    pub(crate) groups: Vec<GroupComposite>,
     pub(crate) generation: u64,
     pub(crate) dirty: Vec<u32>,
     /// Rect index → NodeId (DFS order of the commit).
@@ -69,6 +73,16 @@ impl CommittedScene {
     /// clipping ancestor's whole subtree shares one entry.
     pub fn clips(&self) -> &ClipTable {
         self.clips.as_ref()
+    }
+
+    /// The render-target group opacities a painter composites (the fifth
+    /// input crossing boundary B, `docs/decisions/masks-and-group-opacity.md`).
+    /// Each names a rect subtree range and the alpha its offscreen layer
+    /// composites at. The free-path (non-overlapping) opacity rides on
+    /// [`RectEntry::opacity`] instead, so a scene with no overlapping
+    /// group opacity has an empty slice here.
+    pub fn groups(&self) -> &[GroupComposite] {
+        &self.groups
     }
 
     /// Commit counter: 0 before the first commit, +1 per commit —

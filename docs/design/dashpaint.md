@@ -3,7 +3,7 @@
     crate    crates/dashpaint
     covers   v0.1 walking skeleton (story #3) + v0.3 paint vocabulary
              (story #13) + resolved subtree clips (story #97) + v0.5
-             glyph-run table (story #30)
+             glyph-run table (story #30) + v0.8 group opacity (story #44)
 
 ## Purpose
 
@@ -28,7 +28,18 @@ per-corner radii, and clip. The crate has no dependencies, including no
 - `RectEntry.clip` is an index into the `ClipTable`. Clipping crosses
   this boundary already resolved: `dashscene-core` walks the clipping
   ancestors at commit, because a flat rect table carries none for a
-  painter to walk (P2, story #97).
+  painter to walk (P2, story #97). **Masks reuse this table** (story #44):
+  a mask node's box is added at commit to the clip regions of the siblings
+  it stencils, so a painter needs no mask concept.
+- `RectEntry.opacity` is the rect's resolved _free_-path group alpha
+  (story #44): the product of the enclosing group opacities that took the
+  free path, `1.0` when none applies. A painter multiplies the rect's
+  paint alpha by it. The _render-target_ path crosses separately, as a
+  `groups: &[GroupComposite]` parameter on `Painter::paint` — each names a
+  subtree rect range `[start, end)` and the alpha its offscreen layer
+  composites at, so an overlapping group at partial opacity flattens
+  before its alpha applies. Both are resolved by `dashscene-core` at commit
+  from `Prop::Opacity` intent (`docs/decisions/masks-and-group-opacity.md`).
 - Text crosses as a `GlyphRunTable` — positioned glyph runs plus the
   MSDF atlases they sample (story #30,
   `docs/decisions/glyph-runs-cross-boundary-b.md`). Runs arrive already
@@ -50,7 +61,11 @@ All types and the trait live in `crates/dashpaint/src/lib.rs`:
 
 - `Color` — `#[repr(C)]` RGBA, 4×f32 fields `r`, `g`, `b`, `a`.
 - `RectEntry` — `#[repr(C)]`, fields `x`, `y`, `w`, `h: f32`,
-  `paint: PaintIndex` (20 bytes total, pinned by test).
+  `paint: PaintIndex`, `clip: ClipIndex`, `opacity: f32` (28 bytes total,
+  pinned by test).
+- `GroupComposite` — a render-target group opacity: a rect subtree range
+  `start`/`end: u32` and the `alpha: f32` its offscreen layer composites at
+  (story #44).
 - `PaintIndex` — `#[repr(transparent)]` newtype over `u32` (story #4,
   debt #54): a node index or other bare `u32` cannot cross into a
   paint index without an explicit wrap; layout unchanged.
@@ -101,16 +116,18 @@ All types and the trait live in `crates/dashpaint/src/lib.rs`:
   every rect resolves without a sentinel. `len()` counts it; a clip
   table is never empty, so there is no `is_empty`.
 - `Painter` — the one trait every paint backend implements:
-  `fn paint(&mut self, rects: &[RectEntry], paints: &PaintTable,
-  images: &ImageTable, clips: &ClipTable)` (an empty image table is
-  valid input for image-less scenes; a fresh `ClipTable` is valid input
-  for a scene that clips nothing).
+  `fn paint(&mut self, rects, paints: &PaintTable, images: &ImageTable,
+  clips: &ClipTable, groups: &[GroupComposite], glyphs: &GlyphRunTable,
+  dirty: Option<&[u32]>)` (an empty image table is valid input for
+  image-less scenes; a fresh `ClipTable` for a scene that clips nothing;
+  an empty `groups` slice for a scene with no render-target opacity).
 
 `Color`, `RectEntry` and `ClipBox` are `#[repr(C)]` because
 `docs/design/architecture.md` calls rect entries blittable and R-T4 plans
 dirty-range instance-buffer uploads of per-frame painter input; fixing
-the layout now costs nothing. A `RectEntry` is 24 bytes — four
-coordinates plus the paint and clip indices — pinned by test.
+the layout now costs nothing. A `RectEntry` is 28 bytes — four
+coordinates, the paint and clip indices, and the free-path group alpha —
+pinned by test.
 
 `Painter::paint` is infallible and the trait is object-safe (`Box<dyn
 Painter>` must work — backend selection is whole-scene, R3). Slice order
@@ -151,6 +168,20 @@ without asking which node each came from. A clipping node does not clip
 itself — only its descendants; its own corner radii still shape its own
 fill and stroke. The full contract and the rejected alternatives are
 `docs/decisions/resolved-clip-regions-at-commit.md`.
+
+## Masks and group opacity
+
+Story #44 adds two more constructs a painter cannot be handed directly.
+A **mask** node stencils the siblings that follow it in the same parent —
+another producer-side relation — so `dashscene-core` resolves it at commit
+into those siblings' `ClipRegion`s (the mask node's box added to each), and
+the mask node itself resolves to the draws-nothing entry. Boundary B needs
+no mask type: masks arrive as clip regions. **Group opacity** splits by the
+overlap rule: a non-overlapping subtree folds its alpha into each rect's
+`RectEntry.opacity` (the free path), while an overlapping one becomes a
+`GroupComposite` the painter draws through an offscreen layer. The full
+model, the overlap rule, and the render-target budget are
+`docs/decisions/masks-and-group-opacity.md`.
 
 ## Trace
 

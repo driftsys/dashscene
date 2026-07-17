@@ -132,6 +132,69 @@ fn a_document_without_variant_sets_still_loads() {
     assert_eq!(arena.committed().rects()[0].w, 5.0);
 }
 
+/// The v0.8 masks + group-opacity node fields (story #44) replay through
+/// `set_prop` like any other intent: a loaded document's opacity, mask,
+/// and visibility reach the arena's intent model.
+#[test]
+fn a_loaded_document_replays_masks_and_opacity() {
+    let mut b = FlatBufferBuilder::new();
+    let layout = FixedSizeLayout::new(0.0, 0.0, 5.0, 5.0);
+    // A group (opacity 0.5), a mask child, and a hidden child.
+    let group = Node::create(
+        &mut b,
+        &NodeArgs {
+            layout: Some(&layout),
+            opacity: 0.5,
+            ..Default::default()
+        },
+    );
+    let mask = Node::create(
+        &mut b,
+        &NodeArgs {
+            parent: 0,
+            layout: Some(&layout),
+            mask: true,
+            ..Default::default()
+        },
+    );
+    let hidden = Node::create(
+        &mut b,
+        &NodeArgs {
+            parent: 0,
+            layout: Some(&layout),
+            visible: false,
+            ..Default::default()
+        },
+    );
+    let nodes = b.create_vector(&[group, mask, hidden]);
+    let document = Document::create(
+        &mut b,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            ..Default::default()
+        },
+    );
+    b.finish(document, None);
+    let bytes = b.finished_data().to_vec();
+
+    let doc = root_as_document(&bytes).expect("valid dashbuf document");
+    let mut arena = Arena::new();
+    load_document(&doc, &mut arena);
+
+    let roots = arena.roots();
+    let group_id = roots[0];
+    let children: Vec<_> = arena.children(group_id).to_vec();
+    assert_eq!(arena.opacity(group_id), 0.5);
+    assert!(
+        arena.is_mask(children[0]),
+        "the mask child loaded as a mask"
+    );
+    assert!(
+        !arena.layout(children[1]).visible,
+        "the hidden child loaded as not visible"
+    );
+}
+
 /// The binding tables (story #167) replay through the same producer API:
 /// a loaded document's signals and rows land in the arena tables exactly
 /// as a hand-staged `declare_signal`/`bind` sequence would, with node

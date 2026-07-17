@@ -54,6 +54,7 @@ fn checker_asset() -> ImageAsset {
                 h: 1.0,
                 paint: if (x + y) % 2 == 0 { dark } else { light },
                 clip: ClipIndex::UNCLIPPED,
+                opacity: 1.0,
             });
         }
     }
@@ -62,6 +63,7 @@ fn checker_asset() -> ImageAsset {
         &paints,
         &ImageTable::new(),
         &ClipTable::new(),
+        &[],
         &GlyphRunTable::new(),
         None,
     );
@@ -153,6 +155,7 @@ fn the_v03_paint_vocabulary_matches_its_golden() {
         h,
         paint,
         clip: ClipIndex::UNCLIPPED,
+        opacity: 1.0,
     };
     let rects = [
         entry(0.0, 0.0, 96.0, 96.0, background),
@@ -172,6 +175,7 @@ fn the_v03_paint_vocabulary_matches_its_golden() {
         &paints,
         &images,
         &ClipTable::new(),
+        &[],
         &GlyphRunTable::new(),
         None,
     );

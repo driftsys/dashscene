@@ -122,6 +122,7 @@ fn text_run(
         size,
         color,
         glyphs,
+        opacity: 1.0,
     }
 }
 
@@ -184,6 +185,7 @@ fn render(arena: &Arena, glyphs: &GlyphRunTable) -> Vec<u8> {
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        scene.groups(),
         glyphs,
         None,
     );

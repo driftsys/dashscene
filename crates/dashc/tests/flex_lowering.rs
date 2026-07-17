@@ -591,6 +591,7 @@ fn the_solved_flex_fixtures_render_through_the_skia_painter() {
             scene.paints(),
             scene.images(),
             scene.clips(),
+            scene.groups(),
             &GlyphRunTable::new(),
             None,
         );

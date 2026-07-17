@@ -158,12 +158,43 @@ pub mod rule {
     // region (P1).
     pub const CLIP_INDEX_OUT_OF_RANGE: &str = "clip.index-out-of-range";
 
+    // Paint gate — the render-target group opacities core computes at
+    // commit (story #44). They exist only on a scene: the document carries
+    // opacity *intent* (`Node.opacity`), never the resolved overlap verdict
+    // that decides a render target (P1).
+    /// A scene uses more render-target group composites than the profile's
+    /// render-target budget allows. A warning, not an error: the budget
+    /// value is the unmeasured placeholder
+    /// [`crate::RENDER_TARGET_BUDGET_PLACEHOLDER`] (Q-6), so exceeding it
+    /// must not hard-fail a build until the real number is measured on
+    /// target hardware.
+    pub const RENDER_TARGET_BUDGET: &str = "paint.render-target-budget";
+
     // Geometry — an extent or radius that cannot rasterize (issue #128).
     /// A rect whose width or height is non-finite (NaN/infinite) or negative.
     /// Rects come from the solver, so this is a broken inter-crate contract
     /// rather than authoring — but the paint gate is the last checkpoint
     /// before a painter rasterizes NaN geometry. Paint gate only: a document
     /// carries no resolved extent (P1).
+    /// A `Node.opacity` that is non-finite or outside `0..=1` (story #44).
+    /// Load gate: the document carries the authored value, so this is
+    /// checked where the loader would otherwise clamp it silently — the same
+    /// posture as the text-style weight range.
+    pub const NODE_OPACITY_OUT_OF_RANGE: &str = "paint.node-opacity-out-of-range";
+
+    /// A mask node that stencils nothing — it has no following sibling in
+    /// its parent, or it is a root (root masks are not applied). A warning,
+    /// not an error: the document is renderable, but the mask is inert and
+    /// likely a mistake (story #44 M13).
+    pub const INERT_MASK: &str = "paint.inert-mask";
+
+    /// A scene carries glyph runs and render-target group composites
+    /// together. The painter does not composite glyph runs into group
+    /// layers yet (a deferred z-interleave), so text inside an overlapping
+    /// partial-opacity group renders at full strength. A warning naming a
+    /// known limitation (story #44 M4), not an error.
+    pub const TEXT_OUTSIDE_GROUP: &str = "paint.text-outside-group";
+
     pub const RECT_INVALID_EXTENT: &str = "geometry.rect-invalid-extent";
     /// A corner radius that is negative or non-finite. Geometry-free authored
     /// intent (like a stroke width), so it is checked on both a document
@@ -238,6 +269,10 @@ pub mod rule {
         IMAGE_NO_BYTES,
         STROKE_EXCEEDS_BOX,
         CLIP_INDEX_OUT_OF_RANGE,
+        RENDER_TARGET_BUDGET,
+        NODE_OPACITY_OUT_OF_RANGE,
+        INERT_MASK,
+        TEXT_OUTSIDE_GROUP,
         RECT_INVALID_EXTENT,
         CORNER_RADIUS_INVALID,
     ];
@@ -297,6 +332,18 @@ pub mod rule {
 /// apart — the guarantee "a validated scene never trips the painter's stop
 /// assertion" is only true while both read the same constant.
 pub use dashpaint::MAX_GRADIENT_STOPS;
+
+/// The render-target group-opacity budget — a **placeholder** value.
+///
+/// An overlapping group opacity needs an offscreen render-target composite,
+/// which the mid-frame render-target switch R-T1 restricts on a tiling GPU.
+/// The real ceiling is Q-6 (`docs/technotes/open-questions.md`): unmeasured
+/// on target hardware. Until it is measured and fixed in profile:core, this
+/// placeholder lets the paint gate warn — never error — when a scene's
+/// render-target group count exceeds it, so the budget is exercised as a
+/// contract without a fabricated hard limit
+/// (`docs/decisions/masks-and-group-opacity.md`).
+pub const RENDER_TARGET_BUDGET_PLACEHOLDER: usize = 8;
 
 /// A named paint-vocabulary subset a target honors (docs/design/architecture.md, R6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

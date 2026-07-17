@@ -210,6 +210,20 @@ pub fn load_document(doc: &Document<'_>, arena: &mut Arena) -> u64 {
             txn.set_prop(id, Prop::GridRowSpan(c.grid_row_span()));
             txn.set_prop(id, Prop::GridColumnSpan(c.grid_column_span()));
         }
+
+        // v0.8 masks + group opacity (story #44). Each stages only when it
+        // differs from the arena default, the same absence-is-not-intent
+        // rule as the min/max constraints above — a fully-opaque, unmasked,
+        // visible node stages nothing.
+        if node.opacity() != 1.0 {
+            txn.set_prop(id, Prop::Opacity(node.opacity()));
+        }
+        if node.mask() {
+            txn.set_prop(id, Prop::Mask(true));
+        }
+        if !node.visible() {
+            txn.set_prop(id, Prop::Visible(false));
+        }
     }
 
     // The variant table (v0.4, story #20) replays the same way: each

@@ -22,25 +22,64 @@
 //! load gate has nothing to check and this gate has to.
 
 use dashpaint::{
-    ClipTable, ImageTable, PaintEntry, PaintIndex, PaintKind, PaintTable, RectEntry, StrokeAlign,
+    ClipTable, GlyphRunTable, GroupComposite, ImageTable, PaintEntry, PaintIndex, PaintKind,
+    PaintTable, RectEntry, StrokeAlign,
 };
 
 use crate::paint::{
     check_corners, check_gradient_stops, check_image_bytes, check_image_index, check_stroke_width,
-    error,
+    error, warning,
 };
-use crate::{Location, Report, rule};
+use crate::{Location, NodePath, RENDER_TARGET_BUDGET_PLACEHOLDER, Report, rule};
 
 /// Validates boundary-B input: the paint pool's vocabulary, the image
-/// assets, the resolved clip regions, and the geometry budgets that need
+/// assets, the resolved clip regions, the render-target group-opacity
+/// budget, the text-in-group limitation, and the geometry budgets that need
 /// each rect's solved box.
 pub fn validate_scene(
     rects: &[RectEntry],
     paints: &PaintTable,
     images: &ImageTable,
     clips: &ClipTable,
+    groups: &[GroupComposite],
+    glyphs: &GlyphRunTable,
 ) -> Report {
     let mut report = Report::default();
+
+    // The render-target group-opacity budget (story #44). Each overlapping
+    // group opacity is one offscreen composite; too many strain the
+    // mid-frame render-target switch R-T1. The budget value is the Q-6
+    // placeholder, so this warns rather than errors — the count is a real
+    // contract even while the ceiling is unmeasured.
+    if groups.len() > RENDER_TARGET_BUDGET_PLACEHOLDER {
+        report.push(warning(
+            rule::RENDER_TARGET_BUDGET,
+            &Location::Node(NodePath::unnamed(0)),
+            format!(
+                "scene uses {} render-target group composites, over the placeholder budget of {} \
+                 (Q-6, unmeasured)",
+                groups.len(),
+                RENDER_TARGET_BUDGET_PLACEHOLDER
+            ),
+        ));
+    }
+
+    // A glyph run's free-path alpha rides on `GlyphRun::opacity`, but the
+    // painter does not composite runs into render-target group layers yet
+    // (the z-interleave is deferred, `glyph-runs-cross-boundary-b.md`). So a
+    // text node inside an overlapping partial-opacity group draws as
+    // foreground at full strength — named here rather than left as a silent
+    // wrong pixel (story #44 M4). A debt candidate, so a warning.
+    if !groups.is_empty() && !glyphs.is_empty() {
+        report.push(warning(
+            rule::TEXT_OUTSIDE_GROUP,
+            &Location::Node(NodePath::unnamed(0)),
+            "scene carries both glyph runs and render-target group composites; glyph runs are \
+             drawn as foreground, not composited into a group's layer, so text inside an \
+             overlapping partial-opacity group renders at full strength (a known limitation)"
+                .to_owned(),
+        ));
+    }
 
     // A pool entry and an image asset are each shared by every rect that
     // references them, so each is checked once, at its own index. Reporting

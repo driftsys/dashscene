@@ -21,7 +21,7 @@ use dashbuf::{
 
 use crate::paint::{
     check_corners, check_gradient_stops, check_image_bytes, check_image_index, check_stroke_width,
-    error,
+    error, warning,
 };
 use crate::{Location, NodePath, Report, rule};
 
@@ -67,15 +67,16 @@ macro_rules! check_enum {
 ///
 /// Two things this deliberately does *not* do.
 ///
-/// It takes no [`Profile`](crate::Profile). Every construct the v0.3
-/// schema can express sits in docs/specification/04-figma-vocabulary-profile.md's NOW band — the schema has no
-/// blur, no blend mode, no mask — so there is nothing here for a profile
-/// to differentiate. Out-of-profile constructs are caught at the import
-/// gate ([`crate::triage`]), which is the only place they exist: by the
-/// time a construct is in the schema, it is in the vocabulary. The
-/// parameter returns when the effect vocabulary lands at v0.8, with a rule
-/// behind it — an ignored one now would imply a check that does not
-/// happen.
+/// It takes no [`Profile`](crate::Profile). Every construct the schema can
+/// express sits in docs/specification/04-figma-vocabulary-profile.md's NOW
+/// band — including the v0.8 masks and group opacity (a mask is a shape
+/// stencil, an opacity a node alpha; neither is profile-differentiated) —
+/// so there is nothing here for a profile to differentiate. Out-of-profile
+/// constructs are caught at the import gate ([`crate::triage`]), which is
+/// the only place they exist: by the time a construct is in the schema, it
+/// is in the vocabulary. The parameter returns when the effect vocabulary
+/// lands (a blur or blend mode is profile:full-only), with a rule behind it
+/// — an ignored one now would imply a check that does not happen.
 ///
 /// It checks no geometry budgets. P1 says the document carries intent,
 /// never results, so a `Hug`/`Fill` node has no box for a stroke width to
@@ -98,6 +99,32 @@ pub fn validate_document(doc: &Document<'_>) -> Report {
 
     for (i, node) in nodes.iter().enumerate() {
         check_node_links(&mut report, &nodes, i as u32, &node, &sizes);
+    }
+
+    // An inert mask stencils nothing — it has no following sibling in its
+    // parent, or it is a root (root masks are not applied). A likely
+    // mistake, surfaced by name rather than silently doing nothing (story
+    // #44 M13). Masks are rare, so the forward scan for a following sibling
+    // is cheap.
+    for (i, node) in nodes.iter().enumerate() {
+        if !node.mask() {
+            continue;
+        }
+        let parent = node.parent();
+        let has_following_sibling = parent != NO_PARENT
+            && nodes
+                .iter()
+                .skip(i + 1)
+                .any(|later| later.parent() == parent);
+        if !has_following_sibling {
+            report.push(warning(
+                rule::INERT_MASK,
+                &Location::Node(node_path(&nodes, i as u32)),
+                "this node is a mask but has no following sibling to stencil, so it masks \
+                 nothing (a root mask is not applied either)"
+                    .to_owned(),
+            ));
+        }
     }
 
     // A pool entry and an image asset are each shared by every node that
@@ -449,6 +476,19 @@ fn check_node_links(
                 }
             }
         }
+    }
+
+    // Node opacity has a schema-pinned domain (finite, 0..=1). The loader
+    // clamps a stray value silently and a non-finite one reads back as
+    // fully opaque (`NaN < 1.0` is false), so the load gate names it here —
+    // the same posture as the text-style weight range (story #44 M7).
+    let opacity = node.opacity();
+    if !opacity.is_finite() || !(0.0..=1.0).contains(&opacity) {
+        report.push(error(
+            rule::NODE_OPACITY_OUT_OF_RANGE,
+            &at(),
+            format!("node opacity is {opacity}; the schema pins it to the range 0.0 to 1.0"),
+        ));
     }
 }
 
