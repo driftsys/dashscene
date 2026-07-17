@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use crate::bindings::{Binding, Channel, ScalarTransform, SignalDecl, SignalId};
 use crate::committed::{
     ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CommittedScene, CornerRadii, ImageAsset,
     ImageTable, PaintEntry, PaintIndex, PaintKind, PaintTable, RectEntry, Stroke, Vec2,
@@ -371,6 +372,13 @@ pub struct Arena {
     /// order a later set's override wins ties in
     /// (`docs/decisions/variant-set-flat-index.md`).
     variant_sets: Vec<VariantSetData>,
+    /// Signal declarations, in declaration order (story #167). Intent
+    /// metadata: commit never reads them — flushing a signal value
+    /// through a binding is a producer-side runtime's job (P3).
+    signals: Vec<SignalDecl>,
+    /// Binding rows, in declaration order (story #167). Intent metadata,
+    /// like `signals`.
+    bindings: Vec<Binding>,
     buffers: [CommittedScene; 2],
     front: usize,
     /// Retained paint interner: a paint entry's canonical bits → the
@@ -531,6 +539,41 @@ impl Arena {
     /// Root nodes in creation order (document DFS root order).
     pub fn roots(&self) -> &[NodeId] {
         &self.roots
+    }
+
+    /// The node's parent, or `None` for a root. Intent-side, like
+    /// [`Arena::children`] — the read seam a loader-side consumer (the
+    /// reactive attach, story #167) derives tree structure from.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `node` is out of range for this arena (same contract
+    /// as [`Arena::name`]).
+    pub fn parent(&self, node: NodeId) -> Option<NodeId> {
+        self.node_data(node).parent
+    }
+
+    /// The node's fill intent, or `None` for an unfilled node.
+    /// Intent-side, like [`Arena::text`]: staged values are visible
+    /// immediately. The base value only — a variant override's fill is
+    /// commit-time overlay, not base intent.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `node` is out of range for this arena.
+    pub fn fill(&self, node: NodeId) -> Option<&PaintKind> {
+        self.node_data(node).fill.as_ref()
+    }
+
+    /// The staged signal declarations, in declaration order — the table
+    /// [`SignalId`] indexes (story #167).
+    pub fn signals(&self) -> &[SignalDecl] {
+        &self.signals
+    }
+
+    /// The staged binding rows, in declaration order (story #167).
+    pub fn bindings(&self) -> &[Binding] {
+        &self.bindings
     }
 
     /// Total node count, roots and descendants alike. A [`LayoutSolver`]
@@ -846,6 +889,64 @@ impl Txn<'_> {
             PropClass::Paint => self.arena.paint_dirty.push(node),
             PropClass::ClipFlag => self.arena.clip_toggled.push(node),
         }
+    }
+
+    /// Declare a signal: an optional runtime lookup name and the initial
+    /// value its bindings seed from (story #167). Declarations are
+    /// append-only, like nodes.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the arena already holds `u32::MAX` signal declarations
+    /// (the same sentinel headroom rule as [`Txn::add_node`]).
+    pub fn declare_signal(&mut self, name: Option<&str>, initial: f32) -> SignalId {
+        assert!(
+            self.arena.signals.len() < u32::MAX as usize,
+            "arena is full: u32::MAX signal declarations"
+        );
+        let id = SignalId(self.arena.signals.len() as u32);
+        self.arena.signals.push(SignalDecl {
+            name: name.map(String::from),
+            initial,
+        });
+        id
+    }
+
+    /// Bind one channel of one node to a declared signal through a
+    /// declarative transform (story #167). Rows are append-only; two rows
+    /// on the same `(node, channel)` are legal and both flush, last
+    /// writer wins — the same last-write convention as `set_prop`.
+    ///
+    /// Intent metadata only: `commit` never reads the table. The commit
+    /// that publishes a signal's value is the producer-side flush that
+    /// calls `set_prop` (P3).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `node` is not a node of this arena or `signal` is not a
+    /// declaration of this arena — a broken producer contract, named
+    /// loudly (P4), matching [`Txn::add_variant_set`].
+    pub fn bind(
+        &mut self,
+        node: NodeId,
+        channel: Channel,
+        signal: SignalId,
+        transform: ScalarTransform,
+    ) {
+        assert!(
+            node.index() < self.arena.nodes.len(),
+            "{node:?} is not a node of this arena"
+        );
+        assert!(
+            signal.index() < self.arena.signals.len(),
+            "{signal:?} is not a signal declaration of this arena"
+        );
+        self.arena.bindings.push(Binding {
+            signal,
+            node,
+            channel,
+            transform,
+        });
     }
 
     /// Lower every negative flex gap to child margins (the Figma≠CSS
