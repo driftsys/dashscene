@@ -18,8 +18,17 @@
  *
  *   request   u32 profile | u32 json_len | json | u32 image_count
  *               | per image: u32 ref_len | ref | u32 format | u32 bytes_len | bytes
+ *             | u32 binding_count
+ *               | per binding: str nodeId | str property | str signal
+ *                 | u32 type (0 = float, 1 = color)
+ *                 | f32 value, or f32 r | f32 g | f32 b | f32 a
  *   response  u32 total | u32 status | u32 blob_len | blob | u32 json_len | json
+ *
+ * (str = u32 length | bytes.) ABI v2 (story #167) appended the binding
+ * section; the version handshake below is what makes the append safe.
  */
+
+import type { JoinedBinding } from "./bindings.ts";
 
 /** The paint-vocabulary subset a target honors (docs/design/architecture.md, R6). */
 export type Profile = "core" | "full";
@@ -34,7 +43,11 @@ export interface ImageAsset {
 export type Location =
   | { readonly kind: "node"; readonly index: number; readonly path: string }
   | { readonly kind: "paintEntry"; readonly index: number }
-  | { readonly kind: "imageAsset"; readonly index: number };
+  | { readonly kind: "imageAsset"; readonly index: number }
+  | { readonly kind: "variantSet"; readonly index: number }
+  | { readonly kind: "textStyle"; readonly index: number }
+  | { readonly kind: "signal"; readonly index: number }
+  | { readonly kind: "binding"; readonly index: number };
 
 export interface Diagnostic {
   readonly rule: string;
@@ -97,7 +110,7 @@ function describe(detail: CompileErrorDetail): string {
 }
 
 /** The wire format this file speaks. `dashc_abi_version` must agree. */
-const ABI_VERSION = 1;
+const ABI_VERSION = 2;
 
 const STATUS_OK = 0;
 const STATUS_COMPILE_ERROR = 1;
@@ -143,6 +156,12 @@ class Writer {
   u32(value: number): void {
     const field = new Uint8Array(4);
     new DataView(field.buffer).setUint32(0, value, true);
+    this.#append(field);
+  }
+
+  f32(value: number): void {
+    const field = new Uint8Array(4);
+    new DataView(field.buffer).setFloat32(0, value, true);
     this.#append(field);
   }
 
@@ -192,6 +211,7 @@ export class Dashc {
     json: string,
     profile: Profile,
     images: ReadonlyMap<string, ImageAsset>,
+    bindings: readonly JoinedBinding[] = [],
   ): CompileOk {
     const writer = new Writer();
     writer.u32(PROFILE[profile]);
@@ -201,6 +221,23 @@ export class Dashc {
       writer.text(imageRef);
       writer.u32(FORMAT[asset.format]);
       writer.bytes(asset.bytes);
+    }
+    // ABI v2 (story #167): the joined variable-binding rows.
+    writer.u32(bindings.length);
+    for (const binding of bindings) {
+      writer.text(binding.nodeId);
+      writer.text(binding.property);
+      writer.text(binding.signal);
+      if (binding.resolvedType === "FLOAT") {
+        writer.u32(0);
+        writer.f32(binding.value);
+      } else {
+        writer.u32(1);
+        writer.f32(binding.value.r);
+        writer.f32(binding.value.g);
+        writer.f32(binding.value.b);
+        writer.f32(binding.value.a);
+      }
     }
 
     const response = this.#call(

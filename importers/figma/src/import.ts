@@ -30,6 +30,11 @@
  */
 
 import {
+  type BindingDiagnostic,
+  BindingsBlocked,
+  joinBindings,
+} from "./bindings.ts";
+import {
   computeClosure,
   excludeTopLevelNodes,
   exportableRoots,
@@ -39,6 +44,7 @@ import {
   type ResolvedLibrary,
   resolveRemoteComponents,
 } from "./closure.ts";
+import { parseVartable, type Vartable } from "./vartable.ts";
 import type { ExcludedNode } from "./closure.ts";
 import {
   createFigmaClient,
@@ -74,6 +80,15 @@ export interface ImportFigmaFileOptions {
   readonly profile: Profile;
   /** What ships: declared roots, explicit frozen variant subsets. */
   readonly manifest: ExportManifest;
+  /**
+   * The plugin-exported vartable (story #167,
+   * docs/decisions/token-resolution-phase-split.md). Present: the
+   * sidecar's bound variables join into document binding rows, and a
+   * join failure blocks the export ({@link BindingsBlocked}). Absent:
+   * the import stays phase-1 — resolved literals plus the sidecar, no
+   * binding tables.
+   */
+  readonly vartable?: Vartable;
   /** Injectable for tests; used for the presigned asset downloads. */
   readonly fetchFn?: typeof fetch;
 }
@@ -97,6 +112,12 @@ export interface ImportOk extends CompileOk {
    * (docs/decisions/token-resolution-phase-split.md).
    */
   readonly sidecar: ResolvedVarsSidecar;
+  /**
+   * The join's non-blocking verdicts (story #167): a STRING/BOOLEAN
+   * variable the binding vocabulary does not carry yet. Empty for an
+   * import without a vartable. Named, never silent (P4).
+   */
+  readonly bindingDiagnostics: readonly BindingDiagnostic[];
 }
 
 /**
@@ -122,7 +143,10 @@ function withTrim<E extends Error>(error: E, context: TrimContext): E {
  * `ExportBlocked` or `TokensBlocked` from a run that had already trimmed.
  */
 export function trimContextOf(error: unknown): TrimContext | undefined {
-  if (!(error instanceof ExportBlocked || error instanceof TokensBlocked)) {
+  if (
+    !(error instanceof ExportBlocked || error instanceof TokensBlocked ||
+      error instanceof BindingsBlocked)
+  ) {
     return undefined;
   }
   const carried = error as Partial<TrimContext>;
@@ -165,7 +189,8 @@ async function fetchLibraries(
 export async function importFigmaFile(
   options: ImportFigmaFileOptions,
 ): Promise<ImportOk> {
-  const { client, dashc, fileKey, profile, manifest, fetchFn } = options;
+  const { client, dashc, fileKey, profile, manifest, vartable, fetchFn } =
+    options;
 
   // dashc lowers multiple roots since #242
   // (docs/decisions/figma-component-lowering.md), so this is importer policy
@@ -267,6 +292,25 @@ export async function importFigmaFile(
     throw withTrim(new TokensBlocked(tokenDiagnostics), trimContext);
   }
 
+  // The phase-2 join (story #167): with a vartable, the sidecar's bound
+  // variables become document binding rows, resolved to the mode each
+  // node pins. A join error blocks before any image is fetched — an
+  // authored binding that cannot be carried faithfully is a block, not a
+  // silent drop (P4). Without a vartable the import stays phase-1.
+  const { bindings, bindingDiagnostics } = (() => {
+    if (vartable === undefined) {
+      return { bindings: [], bindingDiagnostics: [] } as const;
+    }
+    const joined = joinBindings(sidecar, vartable, sidecarFile);
+    if (joined.diagnostics.some((d) => d.severity === "error")) {
+      throw withTrim(new BindingsBlocked(joined.diagnostics), trimContext);
+    }
+    return {
+      bindings: joined.bindings,
+      bindingDiagnostics: joined.diagnostics,
+    } as const;
+  })();
+
   const images = await resolveImages({
     client,
     fileKey,
@@ -278,6 +322,7 @@ export async function importFigmaFile(
     JSON.stringify(closure.file),
     profile,
     images,
+    bindings,
   );
   return {
     ...compiled,
@@ -285,6 +330,7 @@ export async function importFigmaFile(
     trimmed,
     trimDiagnostics,
     sidecar,
+    bindingDiagnostics,
   };
 }
 
@@ -341,6 +387,12 @@ export async function runImportCli(
     const [, path] = args.splice(at, 2);
     return path ?? null;
   })();
+  const vartablePath = (() => {
+    const at = args.indexOf("--vartable");
+    if (at === -1) return null;
+    const [, path] = args.splice(at, 2);
+    return path ?? null;
+  })();
   const [fileKey] = args;
 
   if (!fileKey || !output || (roots.length > 0 && manifestPath !== null)) {
@@ -349,6 +401,10 @@ export async function runImportCli(
     );
     deps.error(
       "       deno task import <fileKey> --manifest <export.json> -o <out.dsb>",
+    );
+    deps.error(
+      "       ... [--vartable <file.vartable.json>]  join bound variables " +
+        "into document bindings (story #167)",
     );
     return 2;
   }
@@ -390,6 +446,13 @@ export async function runImportCli(
     }
   };
 
+  // The vartable is operator-supplied (the plugin's token-export output,
+  // saved to a file); parseVartable refuses a malformed or unversioned
+  // one by name before any network round trip.
+  const vartable = vartablePath !== null
+    ? parseVartable(await deps.readTextFile(vartablePath))
+    : undefined;
+
   let result: ImportOk;
   try {
     result = await importFigmaFile({
@@ -398,6 +461,7 @@ export async function runImportCli(
       fileKey,
       profile: "core",
       manifest,
+      vartable,
       fetchFn: deps.fetchFn,
     });
   } catch (error) {
@@ -430,6 +494,11 @@ export async function runImportCli(
     deps.error(
       `excluded by declaration: ${node.type} "${node.name}" (${node.id}) ` +
         `on canvas "${node.canvas}"`,
+    );
+  }
+  for (const diagnostic of result.bindingDiagnostics) {
+    deps.error(
+      `${diagnostic.severity}[${diagnostic.rule}]: ${diagnostic.message}`,
     );
   }
   for (const diagnostic of result.diagnostics) {

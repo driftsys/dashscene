@@ -75,22 +75,33 @@ fn joined_rows() -> Vec<BoundVariable> {
     const BG_DARK: [f32; 4] = [0.08, 0.09, 0.11, 1.0];
     const ACCENT_LIGHT: [f32; 4] = [0.13, 0.45, 0.9, 1.0];
     const ACCENT_DARK: [f32; 4] = [0.4, 0.65, 1.0, 1.0];
-    vec![
-        // card-inherits-mode (1:8) and its chip (1:9) — default (light) mode.
-        float("1:8", "itemSpacing", "size/gap", 16.0),
-        float(
-            "1:8",
-            "rectangleCornerRadii.RECTANGLE_TOP_LEFT_CORNER_RADIUS",
-            "size/radius",
-            8.0,
-        ),
-        color("1:8", "fills[0].color", "color/bg", BG_LIGHT),
-        color("1:9", "fills[0].color", "color/accent", ACCENT_LIGHT),
-        // card-explicit-dark (1:11) and its chip (1:12) — dark-pinned.
-        float("1:11", "itemSpacing", "size/gap@dark", 24.0),
-        color("1:11", "fills[0].color", "color/bg@dark", BG_DARK),
-        color("1:12", "fills[0].color", "color/accent@dark", ACCENT_DARK),
-    ]
+    const CORNERS: [&str; 4] = [
+        "rectangleCornerRadii.RECTANGLE_TOP_LEFT_CORNER_RADIUS",
+        "rectangleCornerRadii.RECTANGLE_TOP_RIGHT_CORNER_RADIUS",
+        "rectangleCornerRadii.RECTANGLE_BOTTOM_LEFT_CORNER_RADIUS",
+        "rectangleCornerRadii.RECTANGLE_BOTTOM_RIGHT_CORNER_RADIUS",
+    ];
+    let mut rows = Vec::new();
+    // card-inherits-mode (1:8) and its chip (1:9) — default (light) mode.
+    rows.push(float("1:8", "itemSpacing", "size/gap", 16.0));
+    for corner in CORNERS {
+        rows.push(float("1:8", corner, "size/radius", 8.0));
+    }
+    rows.push(color("1:8", "fills[0].color", "color/bg", BG_LIGHT));
+    rows.push(color("1:9", "fills[0].color", "color/accent", ACCENT_LIGHT));
+    // card-explicit-dark (1:11) and its chip (1:12) — dark-pinned.
+    rows.push(float("1:11", "itemSpacing", "size/gap@dark", 24.0));
+    for corner in CORNERS {
+        rows.push(float("1:11", corner, "size/radius@dark", 2.0));
+    }
+    rows.push(color("1:11", "fills[0].color", "color/bg@dark", BG_DARK));
+    rows.push(color(
+        "1:12",
+        "fills[0].color",
+        "color/accent@dark",
+        ACCENT_DARK,
+    ));
+    rows
 }
 
 /// Compiles the derived capture with the joined rows and loads it.
@@ -115,17 +126,20 @@ fn compile_and_load() -> (Arena, dashscene_validator::Report) {
 fn figma_authored_bindings_land_in_the_arena_tables() {
     let (arena, report) = compile_and_load();
 
-    // The unsupported site (a corner radius has no binding channel yet)
-    // is a named warning, never a silent drop (P4) and never a block —
-    // the resolved literal ships.
+    // The unsupported sites (a corner radius has no binding channel yet;
+    // four corners per card) are named warnings, never a silent drop
+    // (P4) and never a block — the resolved literals ship.
     let unsupported: Vec<_> = report
         .diagnostics()
         .iter()
         .filter(|d| d.rule == "figma.bindings.unsupported-property")
         .collect();
-    assert_eq!(unsupported.len(), 1, "report was:\n{report}");
-    assert_eq!(unsupported[0].severity, Severity::Warning);
-    assert!(unsupported[0].message.contains("rectangleCornerRadii"));
+    assert_eq!(unsupported.len(), 8, "report was:\n{report}");
+    assert!(
+        unsupported
+            .iter()
+            .all(|d| d.severity == Severity::Warning && d.message.contains("rectangleCornerRadii"))
+    );
 
     // One signal per (variable, mode, channel), interned in row order.
     let names: Vec<Option<&str>> = arena.signals().iter().map(|s| s.name.as_deref()).collect();
