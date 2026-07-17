@@ -403,7 +403,7 @@ v0.9, #228 and #107 past v0 — see v1 below); the four manual Figma fixture
 authorings are tracked (issue #265); and the v0.8 breakdown is revised at
 this close (see v0.8 below).
 
-### v0.8 — fidelity — open
+### v0.8 — fidelity — closed
 
 **Epic #42.** Closes [`E3`](specification/05-qualification.md).
 
@@ -460,6 +460,41 @@ because the corpus frames it diffs are the ones this slice first proves green
 (`E3`). See
 [`specification/05-qualification.md`](specification/05-qualification.md), E7.
 
+Closed 2026-07-17 — all seven stories of the revised breakdown landed. `E3` is
+met: the stress corpus is green
+across all six cases, and the variant-topology case became a true child-count
+change once story #283 added `VariantValue::Visible` — the variant overlay can
+now add or remove a child from the laid-out set, replacing the wrap-line
+stand-in the corpus used while the vocabulary lacked it
+([`decisions/variant-set-flat-index.md`](decisions/variant-set-flat-index.md)).
+Wrap, grid spans, and baseline solve in the engine and lower through `dashc`
+(the three [`decisions/figma-flex-lowering.md`](decisions/figma-flex-lowering.md)
+refusals un-pinned by #264); masks, group opacity, and `Prop::Opacity` render
+live; drop and inner shadows render live, with compile-time baking still v1.
+
+The `E7` design-source render-oracle **tooling** landed (story #284): the
+perceptual-diff harness, three pinned per-rule tolerance bands, the corpus-frame
+manifest, and the CI job
+([`decisions/render-oracle-tolerance-and-gating.md`](decisions/render-oracle-tolerance-and-gating.md)).
+`E7` stays **open, not met** — its assertion needs real Figma design-source
+captures, authored manually and tracked by the parked issue #265; the harness
+measures zero frames against a design source until they land. `E7` is asserted
+at the v0.9 exit gate (#49, now scoped `E1`–`E7`). The self-oracle debt it
+retires is likewise pending #265 — the `sigma = blur/2` shadow constant is
+recorded as unmeasured, not retired.
+
+The slice merged under the CI-billing exception (GitHub Actions billing-blocked
+since 2026-07-17): each PR merged on the coordinator's full local suite —
+`just verify`, `just wasm`, `just deno-check`, `just deno-test`, and the
+tool-gated `atlas_pipeline` — with an exception comment per PR. No atlas bytes
+changed, so the cross-machine atlas-reproducibility proof is not weakened; the
+one retroactive full-CI run once billing is restored is tracked by #263.
+
+Phase-end debt triage filed #269–#293 (the Taffy scaled-shrink upstream
+report and the negative-margin rebate residual, grid/wrap emit-goldens, shadow
+and render-oracle hardening, and the variant-Visible test-locks), all anchored
+to their slices. The v0.9 breakdown is revised at this close — see v0.9 below.
+
 ### v0.9 — parity — open
 
 **Epic #47.** Closes [`E1`](specification/05-qualification.md). Closing this
@@ -470,7 +505,39 @@ through `E7` asserted in CI.
 
 Depends on: every prior epic, v0.1 through v0.8.
 
-**Provisional** — not yet revised; stands until v0.8 closes.
+Revised at the v0.8 close (2026-07-17), but only for what v0.8 mechanically
+settled — the substantive scope questions below stay open for a human
+decision, and this revision does not pre-decide them:
+
+- The exit gate (#49) is now scoped `E1`–`E7`, not `E1`–`E6`: v0.8 landed the
+  `E7` render-oracle tooling, so the gate asserts `E7` alongside the rest.
+  `E7`'s assertion is contingent — it needs the #265 design-source captures;
+  until they land, the gate asserts the harness runs and every corpus frame is
+  accounted for (measured, or explicitly pending), never a silent pass.
+- `E3` is already met (v0.8), so the parity fixture (#48) and the gate (#49)
+  build on a green stress corpus.
+
+The scope questions that shape v0.9 are recorded on epic #47 and need a human
+call — this revision does not pre-decide them:
+
+1. **E1/#48 fixture scope.** If the same-screen-both-ways parity fixture must
+   prove text, variant, and visibility _binding_ parity — not only layout and
+   paint — then STRING/BOOL binding serialization (#252) and the `Format`
+   transform serialization (#256) become v0.9 blockers of #48; otherwise they
+   stay v1.
+2. **Strict-mode gate.** Pull the strict waiver-gate wiring (#262) into v0.9
+   only if the v0 exit gate must enforce strict `profile:core` on target
+   documents.
+
+Two further items epic #47 carries fold into #49 as implementation detail, not
+slice-shape decisions: the atlas-reproducibility CI cost (#82) and the R4
+containment check (#257) the gate should cite. One hard external gate stands
+over the slice — the four manual Figma design-source captures (#265) are
+user-owned, and both `E7`'s assertion and the render-oracle's real-capture diff
+wait on them.
+
+Until epic #47's decisions are made, the story shapes past #48 and #49 are not
+yet reshaped.
 
 ## v1 — Unity, full feature set, performance, production toolchain
 
