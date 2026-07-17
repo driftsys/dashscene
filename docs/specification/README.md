@@ -10,7 +10,7 @@ make room, so gaps and out-of-sequence arrivals are expected and cost nothing.
 - [03-target-hardware-rules.md](03-target-hardware-rules.md) — R-T1..R-T5
 - [04-figma-vocabulary-profile.md](04-figma-vocabulary-profile.md) — the
   NOW/LATER/REJECT triage the validator enforces
-- [05-qualification.md](05-qualification.md) — E1-E6; requirement → criterion →
+- [05-qualification.md](05-qualification.md) — E1-E7; requirement → criterion →
   case → proof
 - [06-dashc-figma-lowering.md](06-dashc-figma-lowering.md) — the Figma lowering
   spec (stories #139 and #17)

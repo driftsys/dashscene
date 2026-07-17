@@ -24,9 +24,10 @@ missing proof must be visible.
 | E4 dirty Figma file → report      | R6       | **met**                                   |
 | E5 variant switch via FLIP        | R4       | **met**                                   |
 | E6 byte-identical `.dsb`          | R7       | **met**                                   |
+| E7 design-source render oracle    | R6       | open — v0.8 fidelity tooling (epic #42)   |
 
 The file carries no version in its name. "v0 exit criteria" is a heading
-inside it; v1's criteria will be a second heading, not a second file.
+inside it; v1's criteria are a second heading below, not a second file.
 
 ### E2 — met
 
@@ -212,3 +213,35 @@ emitter is locked in isolation by `crates/dashc/tests/figma_lowering.rs`
 E6 was scheduled for v0.7 in the original plan; the fixture guard landed early,
 as v0.3 debt (issue #64), and story #40 completed the end-to-end importer proof
 on schedule.
+
+### E7 — open
+
+R6 requires fidelity to be a measured number, not an asserted one. E7 adds a
+design-source render oracle to CI: a perceptual diff of the Skia reference
+painter's output against Figma's REST image export for every corpus frame, with
+per-rule tolerances. It is the falsifiable form of R6 that guardrail G-11 names
+([`../technotes/engineering-guardrails.md`](../technotes/engineering-guardrails.md)).
+
+E4 already gives R6 its diagnostic half — a dirty file produces a report and no
+document; E7 gives R6 its fidelity half — a clean file renders within tolerance
+of its design source. The two together make R6 checkable end to end.
+
+The oracle was targeted for the v0.7 importer close and did not land; its
+tooling is folded into the v0.8 fidelity slice (epic #42), where the corpus
+frames it diffs are themselves first proven green (E3). E7 is asserted at the
+v0.9 exit gate alongside E1–E6.
+
+## v1 exit criteria
+
+v1's criteria live here, under their own heading in this one file. The first is
+the startup-scaling benchmark that makes R5 falsifiable.
+
+### Startup scaling — open
+
+R5 requires cold-start cost proportional to what is shown, not to file size. A
+scaling benchmark with a small-root document and a many-frame corpus document
+asserts that cold-start cost tracks the shown root, not the document size — the
+falsifiable form of R5 that guardrail G-20 names
+([`../technotes/engineering-guardrails.md`](../technotes/engineering-guardrails.md)).
+It is tied to the v1 loading work — mmap section measurement and prefetch
+choreography — recorded in [`../roadmap.md`](../roadmap.md), "v1".

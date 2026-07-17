@@ -66,11 +66,13 @@ slice taught.
 
 ## v0 exit criteria
 
-Six exit criteria, `E1`-`E6`, gate v0. Each slice below states which it
+Seven exit criteria, `E1`-`E7`, gate v0. Each slice below states which it
 closes; full definitions and current proof status live in
 [`specification/05-qualification.md`](specification/05-qualification.md) —
 that file is the one place a criterion's status can drift out of date, so it
-is the only place that states it.
+is the only place that states it. `E7` — the design-source render oracle
+(guardrail G-11) — was targeted for the v0.7 importer close and slipped; its
+tooling is carried by the v0.8 fidelity slice and asserted at the v0.9 gate.
 
 ## Slices
 
@@ -450,13 +452,21 @@ Revised at the v0.7 close (2026-07-17), against the as-built importer:
   plan
   ([`decisions/asset-model-content-addressed-blobs.md`](decisions/asset-model-content-addressed-blobs.md)).
 
+This slice also carries the `E7` design-source render-oracle tooling (guardrail
+G-11), a spec-hardening addition beyond the v0.7-close revision above: a
+perceptual diff of the reference painter against the Figma REST export for every
+corpus frame, per-rule tolerances, asserted at the v0.9 gate. It lands here
+because the corpus frames it diffs are the ones this slice first proves green
+(`E3`). See
+[`specification/05-qualification.md`](specification/05-qualification.md), E7.
+
 ### v0.9 — parity — open
 
 **Epic #47.** Closes [`E1`](specification/05-qualification.md). Closing this
 epic closes v0.
 
 Delivers: the same-screen-both-ways fixture, and the v0 exit gate — `E1`
-through `E6` asserted in CI.
+through `E7` asserted in CI.
 
 Depends on: every prior epic, v0.1 through v0.8.
 
@@ -468,12 +478,28 @@ Engine painter (SDF shader library, material classes, a C# declarative
 skin); LATER-tier features land per priority, including shadow baking
 switching on and `profile:core` being enforced on target documents; loading
 performance (mmap section measurement, prefetch choreography, placeholder
-activation, the KTX2 texture pipeline); rendering performance (tiler rules
-measured on target hardware; whether the lean native painter lands here or
-later is decided on those measurements, not in advance); and the production
-toolchain — `dashc` as a shipped product, with a stable CLI, versioned
-diagnostics, a waiver workflow, linter rule packs, and golden/report tooling
-for design review.
+activation, the KTX2 texture pipeline, and the startup-scaling benchmark that
+asserts cold-start cost tracks the shown root, not document size — the v1 R5
+exit criterion, guardrail G-20,
+[`specification/05-qualification.md`](specification/05-qualification.md));
+rendering performance (tiler rules measured on target hardware; whether the
+lean native painter lands here or later is decided on those measurements, not
+in advance); and the production toolchain — `dashc` as a shipped product, with
+a stable CLI, versioned diagnostics, a waiver workflow, linter rule packs, and
+golden/report tooling for design review.
+
+Open spike (v1): platform-font provisioning — resolve and hash-pin target
+fonts at build time so a platform-provided font is baked through the same atlas
+pipeline as a bundled one (guardrail G-2) — plus a target-hardware benchmark of
+platform text raster against the MSDF-atlas path. It feeds the Q-1 small-size
+decision ([`technotes/open-questions.md`](technotes/open-questions.md)), which
+resolved MSDF-only for v0.
+
+Full-feature-set candidate (v1): the gauge and radial animation vocabulary — a
+bound scalar driving rotation about a pivot, or an arc sweep, over absolute
+placement — which rides on dashcue's per-prop smoothing row. It is
+decision-only today and is not a layout mode
+([`decisions/radial-is-not-a-layout-mode.md`](decisions/radial-is-not-a-layout-mode.md)).
 
 ## v2 — remote/streaming
 

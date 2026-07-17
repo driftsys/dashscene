@@ -36,6 +36,9 @@ Notes:
 - [open-questions.md](open-questions.md) — status index for
   `docs/archive/2026-07-14-design-1-seed.md` §12's `Q-1`..`Q-6`, so a
   `Q-N` citation still resolves once `specs/` is gone.
+- [engineering-guardrails.md](engineering-guardrails.md) — the design-review
+  and slice-sign-off checklist `G-1`..`G-23`, each anchored to the principle,
+  requirement, target-hardware rule, or open question it makes falsifiable.
 
 The four notes above were captured from a 2026-07-13 design discussion and
 carry DECISION / CANDIDATE / OPEN tags. Every `DECISION` and `DECISION
