@@ -125,12 +125,29 @@ same posture as `weight` and stroke width:
   declared track list on that axis; with no declared list the bound is
   32766, the largest 0-based anchor whose 1-based line index fits the
   solver's `i16` lines.
+- `grid.span-out-of-range` (story #264, D7) — an anchor plus its span
+  must not run past the declared track count on that axis. The anchor
+  alone can fit while `anchor + span` overruns; the engine would then
+  grow implicit auto tracks and solve differently from the authored
+  grid, so the overrun is diagnosed by name rather than solved silently.
 - `grid.fraction-track-under-hug` — a `Fraction` track on an axis the
   grid container hugs is diagnosed by name (finding R7): a fraction
   divides free space, a hug axis has none, and the track (and
   everything anchored to it) would silently collapse to zero. No
   defensible defined behavior exists short of re-specifying hug-grid
   sizing, so the honest P4 move is the refusal.
+
+Grid placement (anchor, span, track domains) is validated at the load
+gate, **not** at the dashc Figma walk that gives every other refusal the
+source Figma node path (story #264, D10). Two reasons: the check then
+covers every producer that writes the schema — `dashlang` and a future
+producer, not only the Figma lowering — and it sits in P4 parity with
+the other numeric-domain ranges (weight, stroke width), which the engine
+saturates rather than panics on, so the honest diagnosis lives at the
+gate. The tradeoff is that a placement diagnostic names the `.dsb` node
+index and path, not the source Figma layer; the track-token and
+negative-gap refusals, which are Figma-vocabulary shapes with no schema
+counterpart, stay at the walk where they carry the Figma path.
 
 ## Open question — a fixed child larger than its fraction cell (R8)
 

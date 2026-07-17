@@ -1,7 +1,8 @@
 # dashc — the dashscene compile pipeline
 
 As-built after stories #16, #139, #17 (v0.3), #140 (v0.7 — the flex
-lowering), and #167 (v0.7 — the binding tables). The requirements are in
+lowering), #167 (v0.7 — the binding tables), and #264 (v0.8 — the
+grid/wrap/baseline layout lowering). The requirements are in
 `docs/specification/06-dashc-figma-lowering.md`. The rationale is in
 `docs/decisions/`:
 
@@ -13,7 +14,11 @@ lowering), and #167 (v0.7 — the binding tables). The requirements are in
   — the v0.3 refusal #140 lifted, and the P1 ground that outlives it.
 - [figma-flex-lowering.md](../decisions/figma-flex-lowering.md) — the #140
   lowering's shape: per-axis intent, the walk-side negative-gap rewrite,
-  and what stays refused until v0.8.
+  and (D5, un-pinned at #264) the grid/wrap/baseline lowering onto story
+  #43's schema fields.
+- [v08-layout-vocabulary-shape.md](../decisions/v08-layout-vocabulary-shape.md)
+  — the v0.8 layout schema fields #264 lowers onto: grid tracks as
+  `Fixed`/`Fraction` vectors, per-child placement, the one cross gap.
 - [figma-image-refs-resolved-by-the-caller.md](../decisions/figma-image-refs-resolved-by-the-caller.md)
   — image bytes arrive as a caller-supplied map.
 - [producer-assembles-its-own-diagnostics.md](../decisions/producer-assembles-its-own-diagnostics.md)
@@ -278,11 +283,14 @@ noted, because a real Figma file will hit them:
   puts them in the NOW band, but `Document`
   has no effects vocabulary, so there is no `Construct` to triage onto and no
   field to lower into. Effects enter the schema at v0.8 (debt #144).
-- **Grid, wrap, and baseline auto-layout** — `layoutMode: GRID`,
-  `layoutWrap: WRAP`, and `counterAxisAlignItems: BASELINE`. The runtime
-  solves none of them until the v0.8 layout-fidelity slice, where the
-  schema's enum members append; lowering them onto plain H/V flex would
-  move every child (`docs/decisions/figma-flex-lowering.md` D5).
+- **Wrap line distribution and a negative wrap gap** —
+  `counterAxisAlignContent: SPACE_BETWEEN` has no `align_content`
+  vocabulary yet, and a negative `itemSpacing` on a `WRAP` frame has no
+  margin encoding (wrap breaks its lines after the lowering). Each is a
+  named refusal, both appearing with the v0.8 grid/wrap/baseline un-pin
+  (story #264, `docs/decisions/v08-layout-vocabulary-shape.md` D5). A grid
+  track token the `Fixed`/`Fraction` vocabulary cannot express (an `auto`,
+  a `minmax` with a non-zero minimum) is likewise refused by name.
 - **A `Fill` child on an axis its parent hugs** — Figma and CSS resolve the
   sizing cycle differently, so it is refused rather than solved to a
   picture Figma never rendered (`docs/decisions/figma-flex-lowering.md`
@@ -316,6 +324,14 @@ less well than it should:
 - **A hug container over a lowered negative gap solves collapsed** (engine
   debt #236). The lowering's output is correct; Taffy 0.12's intrinsic
   sizing mis-sums negative margins. Found verifying #105 at story #140.
+- **A `BASELINE` text row does not solve to Figma's captured boxes** (debt
+  #273). The lowering is exact (`counterAxisAlignItems: BASELINE` ->
+  `CrossAxisAlign::Baseline`, story #264), but the engine's leaf baseline
+  is the box bottom, not the glyph baseline, so a baseline row of
+  mixed-size text aligns on box bottoms instead. `lowering-baseline.json`'s
+  lowered intent is pinned; its solved rects are not asserted against the
+  capture, and the divergence is named rather than concealed. Found
+  un-pinning `BASELINE` at story #264.
 
 Resolved at story #140, folded in from the v0.3 debt list: the
 diagnostics-lost-on-refusal limit (#149 — one pass now reports every

@@ -86,6 +86,7 @@ fn an_instance_lowers_its_baked_subtree_like_a_frame() {
     assert_eq!(instance.box2d.width, 100.0);
     let container = instance
         .container
+        .as_ref()
         .expect("an instance lowers its container intent");
     assert_eq!(container.mode, LayoutMode::Vertical);
     assert!(instance.paint.is_some(), "the instance fill lowers");

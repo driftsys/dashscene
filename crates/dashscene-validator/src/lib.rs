@@ -125,6 +125,12 @@ pub mod rule {
     /// track list is declared, past 32766, the largest 0-based anchor
     /// whose 1-based line index still fits the solver's `i16` lines.
     pub const GRID_ANCHOR_OUT_OF_RANGE: &str = "grid.anchor-out-of-range";
+    /// A grid child whose anchor plus span runs past its parent's declared
+    /// track list on that axis. The anchor alone fits, but the spanned
+    /// range does not, so the engine grows implicit auto tracks and solves
+    /// differently from the authored grid — a named diagnostic, never a
+    /// silent implicit track (story #264, D7).
+    pub const GRID_SPAN_OUT_OF_RANGE: &str = "grid.span-out-of-range";
     /// A `Fraction` track on an axis the grid container hugs: a fraction
     /// divides free space, and a hug axis has none, so the track (and
     /// everything anchored to it) silently collapses to zero.

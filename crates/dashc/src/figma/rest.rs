@@ -130,10 +130,22 @@ pub struct Node {
     #[serde(default)]
     pub primary_axis_align_items: Option<String>,
     /// Cross-axis alignment: absent (= `MIN`), `CENTER`, `MAX`, or
-    /// `BASELINE`. `BASELINE` is v0.8 vocabulary (Q-4) and is refused;
-    /// pinned by `lowering-baseline.json`.
+    /// `BASELINE`. `BASELINE` lowers to `CrossAxisAlign::Baseline` at
+    /// v0.8 (Q-4, story #264); pinned by `lowering-baseline.json`.
     #[serde(default)]
     pub counter_axis_align_items: Option<String>,
+    /// The cross-axis gap between wrap lines — Figma's `counterAxisSpacing`.
+    /// Lowers to the container's `cross_gap` for a `WRAP` frame (story
+    /// #264). Pinned by `lowering-wrap.json` (`counterAxisSpacing: 16`).
+    #[serde(default)]
+    pub counter_axis_spacing: Option<f32>,
+    /// How wrap lines distribute along the cross axis — Figma's
+    /// `counterAxisAlignContent`: `AUTO` (the packed default the runtime
+    /// carries) or `SPACE_BETWEEN`. `SPACE_BETWEEN` has no vocabulary and
+    /// is refused by name (story #264, P4). Pinned `AUTO` by
+    /// `lowering-wrap.json`.
+    #[serde(default)]
+    pub counter_axis_align_content: Option<String>,
     /// Per-axis sizing: `FIXED`, `HUG`, or `FILL` — the modern encoding,
     /// present on every node the captures place in an auto-layout context.
     /// Absent means fixed (a node outside auto-layout). The older
@@ -154,6 +166,39 @@ pub struct Node {
     pub min_height: Option<f32>,
     #[serde(default)]
     pub max_height: Option<f32>,
+    // ---- GRID container-side fields (story #264) ---------------------
+    // Pinned by `grid-basic.json`. The gaps are separate per axis, and
+    // the track sizes are Figma's own serialized track strings (e.g.
+    // "160px minmax(0,1fr) minmax(0,1fr)"), not a plain count — a count
+    // cannot express the 160px first column. `gridColumnCount` /
+    // `gridRowCount` are not read: the sizing strings carry one entry per
+    // track, so the counts are redundant (the REST subset stays partial —
+    // only what the lowering needs).
+    /// The row gap — lowers to the container's `cross_gap` under `GRID`.
+    #[serde(default)]
+    pub grid_row_gap: Option<f32>,
+    /// The column gap — lowers to the container's `gap` under `GRID`.
+    #[serde(default)]
+    pub grid_column_gap: Option<f32>,
+    /// Per-track sizing, left-to-right / top-to-bottom, as a
+    /// whitespace-separated CSS-like track string. `Npx` is a fixed
+    /// length; `minmax(0,Nfr)` is a fraction weight. Any other token is a
+    /// named refusal (story #264, P4).
+    #[serde(default)]
+    pub grid_columns_sizing: Option<String>,
+    #[serde(default)]
+    pub grid_rows_sizing: Option<String>,
+    // ---- GRID child-side placement (story #264) ---------------------
+    /// The 0-based anchor cell. Absent = auto-placement in document order.
+    #[serde(default)]
+    pub grid_row_anchor_index: Option<u16>,
+    #[serde(default)]
+    pub grid_column_anchor_index: Option<u16>,
+    /// The number of tracks the child spans. Absent = 1.
+    #[serde(default)]
+    pub grid_row_span: Option<u16>,
+    #[serde(default)]
+    pub grid_column_span: Option<u16>,
     /// `ABSOLUTE` takes a child out of its auto-layout parent's flow and
     /// places it by its box. The document has no vocabulary for an
     /// absolutely-placed flex child, and treating one as in-flow would

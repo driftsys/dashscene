@@ -12,13 +12,13 @@ use std::collections::HashMap;
 use dashbuf::{
     Binding as FbBinding, BindingArgs as FbBindingArgs, Color, CornerRadii, Document as FbDocument,
     DocumentArgs as FbDocumentArgs, EdgeInsets as FbEdgeInsets, FixedSizeLayout, Gradient,
-    GradientArgs, GradientStop, Image, ImageArgs, ImageFill, ImageFillArgs,
-    LayoutConstraints as FbLayoutConstraints, LayoutConstraintsArgs,
-    LayoutContainer as FbLayoutContainer, LayoutContainerArgs, Mat23, NO_PAINT, NO_PARENT, NO_TEXT,
-    NO_TEXT_STYLE, Node as FbNode, NodeArgs as FbNodeArgs, Paint as BufPaint, PaintArgs,
-    SignalDecl as FbSignalDecl, SignalDeclArgs as FbSignalDeclArgs, SolidFill, SolidFillArgs,
-    Stroke, StrokeArgs, TextStyle as FbTextStyle, TextStyleArgs, TransformClamp,
-    TransformClampArgs, TransformMapRange, TransformMapRangeArgs, TransformScale,
+    GradientArgs, GradientStop, GridTrack as FbGridTrack, GridTrackArgs as FbGridTrackArgs, Image,
+    ImageArgs, ImageFill, ImageFillArgs, LayoutConstraints as FbLayoutConstraints,
+    LayoutConstraintsArgs, LayoutContainer as FbLayoutContainer, LayoutContainerArgs, Mat23,
+    NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE, Node as FbNode, NodeArgs as FbNodeArgs,
+    Paint as BufPaint, PaintArgs, SignalDecl as FbSignalDecl, SignalDeclArgs as FbSignalDeclArgs,
+    SolidFill, SolidFillArgs, Stroke, StrokeArgs, TextStyle as FbTextStyle, TextStyleArgs,
+    TransformClamp, TransformClampArgs, TransformMapRange, TransformMapRangeArgs, TransformScale,
     TransformScaleArgs, Vec2,
 };
 use dashpaint::{ImageAsset, PaintEntry, PaintKind};
@@ -26,7 +26,7 @@ use flatbuffers::{FlatBufferBuilder, WIPOffset};
 
 use crate::document::{
     AxisSizing, Binding, BindingChannel, BindingTransform, CrossAxisAlign, Document, EdgeInsets,
-    LayoutMode, MainAxisAlign, Node, Paint, SignalDecl, TextStyle,
+    GridTrack, LayoutMode, MainAxisAlign, Node, Paint, SignalDecl, TextStyle,
 };
 
 /// Serializes a document to `.dsb` bytes.
@@ -224,12 +224,19 @@ fn build_node<'a>(
 ) -> WIPOffset<FbNode<'a>> {
     let name = node.name.as_deref().map(|n| b.create_string(n));
 
-    // The two v0.2 flex tables. Absent stays absent — `container: None`
-    // is the schema's mode-`None` state and `constraints: None` its
-    // fully-default state — so a fixed-layout document emits the same
-    // bytes it did before the flex vocabulary was carried (R7: the frozen
-    // goldens hold).
-    let flex = node.container.map(|c| {
+    // The flex tables. Absent stays absent — `container: None` is the
+    // schema's mode-`None` state and `constraints: None` its fully-default
+    // state — so a fixed-layout document emits the same bytes it did
+    // before the flex vocabulary was carried (R7: the frozen goldens
+    // hold). `container` is read by reference: the v0.8 grid track lists
+    // make `LayoutContainer` non-`Copy`.
+    let flex = node.container.as_ref().map(|c| {
+        // The grid track vectors go in before the container table, since
+        // both borrow the builder. Empty lists (a non-grid container)
+        // write the schema's absent field, so a pre-v0.8 document is
+        // byte-identical (R7).
+        let grid_rows = build_grid_tracks(b, &c.grid_rows);
+        let grid_columns = build_grid_tracks(b, &c.grid_columns);
         let padding = insets(c.padding);
         FbLayoutContainer::create(
             b,
@@ -237,6 +244,8 @@ fn build_node<'a>(
                 mode: match c.mode {
                     LayoutMode::Horizontal => dashbuf::LayoutMode::Horizontal,
                     LayoutMode::Vertical => dashbuf::LayoutMode::Vertical,
+                    LayoutMode::Wrap => dashbuf::LayoutMode::Wrap,
+                    LayoutMode::Grid => dashbuf::LayoutMode::Grid,
                 },
                 gap: c.gap,
                 padding: (c.padding != EdgeInsets::default()).then_some(&padding),
@@ -250,14 +259,13 @@ fn build_node<'a>(
                     CrossAxisAlign::Start => dashbuf::CrossAxisAlign::Start,
                     CrossAxisAlign::Center => dashbuf::CrossAxisAlign::Center,
                     CrossAxisAlign::End => dashbuf::CrossAxisAlign::End,
+                    CrossAxisAlign::Baseline => dashbuf::CrossAxisAlign::Baseline,
                 },
-                // v0.8 schema appends (story #43). The lowering does not
-                // produce them yet — the D5 refusals un-pin at story
-                // #264 — so absent stays absent and the emitted bytes
-                // are unchanged.
-                cross_gap: None,
-                grid_rows: None,
-                grid_columns: None,
+                // v0.8 schema appends (story #43, lowered at story #264).
+                // Absent `cross_gap` and empty track lists stay absent.
+                cross_gap: c.cross_gap,
+                grid_rows,
+                grid_columns,
             },
         )
     });
@@ -273,13 +281,13 @@ fn build_node<'a>(
                 min_height: c.min_height,
                 max_height: c.max_height,
                 margin: (c.margin != EdgeInsets::default()).then_some(&margin),
-                // v0.8 schema appends (story #43) — absent until story
-                // #264 lowers grid placement, like the container's
-                // fields above.
-                grid_row: None,
-                grid_column: None,
-                grid_row_span: 1,
-                grid_column_span: 1,
+                // v0.8 grid placement (story #43, lowered at story #264).
+                // An absent anchor stays absent (auto-placement); unit
+                // spans equal the schema default and are omitted.
+                grid_row: c.grid_row,
+                grid_column: c.grid_column,
+                grid_row_span: c.grid_row_span,
+                grid_column_span: c.grid_column_span,
             },
         )
     });
@@ -347,6 +355,31 @@ fn axis_sizing(sizing: AxisSizing) -> dashbuf::AxisSizing {
 
 fn insets(e: EdgeInsets) -> FbEdgeInsets {
     FbEdgeInsets::new(e.left, e.top, e.right, e.bottom)
+}
+
+/// Builds a grid track vector, or `None` for an empty list — the schema's
+/// absent field, so a non-grid container writes no track vector (R7). Each
+/// track is a `GridTrack` table (sizing + value), so the vector is a vector
+/// of offsets, built before the enclosing `LayoutContainer` since both
+/// borrow the builder.
+fn build_grid_tracks<'a>(
+    b: &mut FlatBufferBuilder<'a>,
+    tracks: &[GridTrack],
+) -> Option<WIPOffset<flatbuffers::Vector<'a, flatbuffers::ForwardsUOffset<FbGridTrack<'a>>>>> {
+    if tracks.is_empty() {
+        return None;
+    }
+    let offsets: Vec<WIPOffset<FbGridTrack>> = tracks
+        .iter()
+        .map(|track| {
+            let (sizing, value) = match *track {
+                GridTrack::Fixed(v) => (dashbuf::GridTrackSizing::Fixed, v),
+                GridTrack::Fraction(v) => (dashbuf::GridTrackSizing::Fraction, v),
+            };
+            FbGridTrack::create(b, &FbGridTrackArgs { sizing, value })
+        })
+        .collect();
+    Some(b.create_vector(&offsets))
 }
 
 fn build_image<'a>(b: &mut FlatBufferBuilder<'a>, asset: &ImageAsset) -> WIPOffset<Image<'a>> {

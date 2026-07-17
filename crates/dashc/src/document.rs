@@ -26,10 +26,17 @@ pub struct Box2D {
 /// A flex container's direction. Mode `None` — the schema's
 /// `LayoutMode::None` — is spelled as `Node::container: None`: the absence
 /// the schema encodes as an absent table, `Option` encodes as `None`.
+///
+/// `Wrap` and `Grid` append at v0.8 (story #43): `Wrap` is a horizontal
+/// wrapping row (Figma's `layoutWrap` exists for horizontal auto-layout
+/// only) and `Grid` places children by cell into the container's track
+/// lists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LayoutMode {
     Horizontal,
     Vertical,
+    Wrap,
+    Grid,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -41,13 +48,25 @@ pub enum MainAxisAlign {
     SpaceBetween,
 }
 
-/// `Baseline` appends at v0.8 (Q-4); until then a producer refuses it.
+/// `Baseline` appends at v0.8 (Q-4): counter-axis baseline alignment for a
+/// horizontal row.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum CrossAxisAlign {
     #[default]
     Start,
     Center,
     End,
+    Baseline,
+}
+
+/// How one grid track sizes (v0.8, story #43) — the schema's `GridTrack`
+/// table as a plain enum, mirroring `dashscene-core`'s. `Fixed` is a
+/// document-unit length; `Fraction` is a flexible weight over the free
+/// space (Figma's `minmax(0, Nfr)` serialized track).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum GridTrack {
+    Fixed(f32),
+    Fraction(f32),
 }
 
 /// How a node sizes itself along one axis. `Fixed` reads the [`Box2D`]
@@ -71,23 +90,41 @@ pub struct EdgeInsets {
 }
 
 /// Container-side flex intent — the schema's `LayoutContainer` table.
-/// Present only on a node that lays its children out (mode H/V).
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Present only on a node that lays its children out (mode H/V/Wrap/Grid).
+///
+/// Not `Copy`: the grid track lists are variable-length. The two v0.8
+/// track vectors are empty for a non-grid container, which the emitter
+/// writes as the schema's absent field, so a pre-v0.8 document emits
+/// byte-identically.
+#[derive(Debug, Clone, PartialEq)]
 pub struct LayoutContainer {
     pub mode: LayoutMode,
-    /// Never negative in an emitted document: a negative authored gap is
-    /// lowered to child margins before it gets here
-    /// (`docs/decisions/negative-gap-lowering.md`).
+    /// The main-axis gap. Never negative in an emitted document under
+    /// mode H/V: a negative authored gap is lowered to child margins
+    /// before it gets here (`docs/decisions/negative-gap-lowering.md`).
+    /// For `Grid` this is the column gap (Figma's `gridColumnGap`); for
+    /// `Wrap` the between-chips gap (`itemSpacing`).
     pub gap: f32,
     pub padding: EdgeInsets,
     pub main_align: MainAxisAlign,
     pub cross_align: CrossAxisAlign,
+    /// The cross-axis gap (v0.8, story #43): the spacing between wrap
+    /// lines (Figma's `counterAxisSpacing`) and between grid rows
+    /// (`gridRowGap`). `None` = follows `gap`, preserving the v0.2
+    /// both-axes mapping for every H/V document.
+    pub cross_gap: Option<f32>,
+    /// The grid row tracks, top to bottom (v0.8, story #43). Empty for a
+    /// non-grid container.
+    pub grid_rows: Vec<GridTrack>,
+    /// The grid column tracks, left to right (v0.8, story #43). Empty for
+    /// a non-grid container.
+    pub grid_columns: Vec<GridTrack>,
 }
 
 /// Child-side flex intent — the schema's `LayoutConstraints` table. `None`
 /// on [`Node`] means fully default: `Fixed` sizing, unconstrained min/max,
-/// zero margin.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+/// zero margin, auto grid placement, unit spans.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LayoutConstraints {
     pub sizing_h: AxisSizing,
     pub sizing_v: AxisSizing,
@@ -99,6 +136,39 @@ pub struct LayoutConstraints {
     /// Outer margin in the parent's flex flow. Negative values express
     /// overlap — the negative-gap lowering's target.
     pub margin: EdgeInsets,
+    /// Grid placement (v0.8, story #43), meaningful under a `Grid`
+    /// parent: the 0-based anchor cell (Figma's `gridRowAnchorIndex` /
+    /// `gridColumnAnchorIndex`). `None` = auto-placement in document
+    /// order. An anchor of `Some(0)` is the first cell, distinct from
+    /// absent.
+    pub grid_row: Option<u16>,
+    pub grid_column: Option<u16>,
+    /// The number of tracks the child spans (Figma's `gridRowSpan` /
+    /// `gridColumnSpan`). The schema default is 1.
+    pub grid_row_span: u16,
+    pub grid_column_span: u16,
+}
+
+impl Default for LayoutConstraints {
+    fn default() -> Self {
+        // Hand-written so the spans default to 1 (the schema default),
+        // not the 0 a derive would give — otherwise a non-grid child's
+        // constraints would never equal the default and would emit a
+        // needless table (R7).
+        Self {
+            sizing_h: AxisSizing::default(),
+            sizing_v: AxisSizing::default(),
+            min_width: None,
+            max_width: None,
+            min_height: None,
+            max_height: None,
+            margin: EdgeInsets::default(),
+            grid_row: None,
+            grid_column: None,
+            grid_row_span: 1,
+            grid_column_span: 1,
+        }
+    }
 }
 
 /// A text node's authored style — the schema's `TextStyle` table (story

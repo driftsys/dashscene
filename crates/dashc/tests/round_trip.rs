@@ -461,7 +461,7 @@ fn flex_intent_round_trips_through_the_document() {
     // lowering (story #140) hangs on. Every value is deliberately
     // non-default, so a field that stopped being written (or started being
     // read from the wrong table) fails on the value, not on presence.
-    use dashc_wasm::{EdgeInsets, LayoutConstraints, LayoutContainer};
+    use dashc_wasm::{EdgeInsets, GridTrack, LayoutConstraints, LayoutContainer};
 
     let mut doc = Document::new();
     let row = doc.push(Node {
@@ -484,6 +484,11 @@ fn flex_intent_round_trips_through_the_document() {
             },
             main_align: dashc_wasm::MainAxisAlign::SpaceBetween,
             cross_align: dashc_wasm::CrossAxisAlign::Center,
+            // A plain H row carries no cross gap or grid tracks; the grid
+            // subtree below exercises those v0.8 fields.
+            cross_gap: None,
+            grid_rows: Vec::new(),
+            grid_columns: Vec::new(),
         }),
         ..Node::default()
     });
@@ -504,6 +509,61 @@ fn flex_intent_round_trips_through_the_document() {
                 right: 0.0,
                 bottom: 0.0,
             },
+            ..LayoutConstraints::default()
+        }),
+        ..Node::default()
+    });
+
+    // A grid subtree exercises the v0.8 appends (story #264): the mode, the
+    // cross gap, both track lists at distinct sizings, and a placed child's
+    // anchor and spans. Every value is non-default, so a field written into
+    // the wrong slot fails on the value.
+    let grid = doc.push(Node {
+        name: Some("grid".to_owned()),
+        parent: None,
+        box2d: Box2D {
+            x: 0.0,
+            y: 0.0,
+            width: 300.0,
+            height: 200.0,
+        },
+        container: Some(LayoutContainer {
+            mode: dashc_wasm::LayoutMode::Grid,
+            gap: 12.0,
+            padding: EdgeInsets::default(),
+            main_align: dashc_wasm::MainAxisAlign::Start,
+            cross_align: dashc_wasm::CrossAxisAlign::Start,
+            cross_gap: Some(20.0),
+            // Three tracks per axis, so the placed child's non-default
+            // anchor + span below stays inside the declared grid (the load
+            // gate's grid.span-out-of-range rule, story #264).
+            grid_rows: vec![
+                GridTrack::Fixed(96.0),
+                GridTrack::Fraction(2.0),
+                GridTrack::Fixed(40.0),
+            ],
+            grid_columns: vec![
+                GridTrack::Fraction(1.0),
+                GridTrack::Fixed(160.0),
+                GridTrack::Fraction(3.0),
+            ],
+        }),
+        ..Node::default()
+    });
+    doc.push(Node {
+        name: Some("placed".to_owned()),
+        parent: Some(grid),
+        box2d: Box2D::default(),
+        constraints: Some(LayoutConstraints {
+            sizing_h: dashc_wasm::AxisSizing::Fill,
+            sizing_v: dashc_wasm::AxisSizing::Fill,
+            // Anchor (row 1, col 0) with spans (2, 3): row 1+2 = 3 and
+            // column 0+3 = 3 both reach exactly the third track.
+            grid_row: Some(1),
+            grid_column: Some(0),
+            grid_row_span: 2,
+            grid_column_span: 3,
+            ..LayoutConstraints::default()
         }),
         ..Node::default()
     });
@@ -544,4 +604,35 @@ fn flex_intent_round_trips_through_the_document() {
     assert_eq!(child_layout.min_height, None);
     assert_eq!(child_layout.max_height, Some(40.0));
     assert_eq!(child_layout.margin.left, -16.0);
+
+    // The grid subtree round-trips its v0.8 fields (story #264).
+    let grid_root = arena.roots()[1];
+    let grid_layout = arena.layout(grid_root);
+    assert_eq!(grid_layout.mode, dashscene_core::LayoutMode::Grid);
+    assert_eq!(grid_layout.gap, 12.0);
+    assert_eq!(grid_layout.cross_gap, Some(20.0));
+    let (rows, columns) = arena.grid_tracks(grid_root);
+    assert_eq!(
+        rows,
+        [
+            dashscene_core::GridTrack::Fixed(96.0),
+            dashscene_core::GridTrack::Fraction(2.0),
+            dashscene_core::GridTrack::Fixed(40.0),
+        ],
+    );
+    assert_eq!(
+        columns,
+        [
+            dashscene_core::GridTrack::Fraction(1.0),
+            dashscene_core::GridTrack::Fixed(160.0),
+            dashscene_core::GridTrack::Fraction(3.0),
+        ],
+    );
+
+    let placed = arena.children(grid_root)[0];
+    let placed_layout = arena.layout(placed);
+    assert_eq!(placed_layout.grid_row, Some(1));
+    assert_eq!(placed_layout.grid_column, Some(0));
+    assert_eq!(placed_layout.grid_row_span, 2);
+    assert_eq!(placed_layout.grid_column_span, 3);
 }
