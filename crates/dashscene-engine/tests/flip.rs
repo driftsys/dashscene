@@ -10,7 +10,9 @@
 //! geometry.
 
 use dashcue::{Easing, PropTransition, TransitionSpec, VariantTransition};
-use dashscene_core::{Arena, NodeId, Prop, SolvedRect, VariantMember, VariantValue};
+use dashscene_core::{
+    Arena, AxisSizing, LayoutMode, NodeId, Prop, SolvedRect, VariantMember, VariantValue,
+};
 use dashscene_engine::{Channel, TaffySolver, VariantFlip, prop_key};
 
 /// The child's resolved rect in the last committed scene.
@@ -136,6 +138,144 @@ fn variant_switch_animates_between_two_solved_layouts() {
     flip.advance(0.5);
     assert!(flip.sample(child).is_none(), "finished tracks are dropped");
     assert!(flip.is_empty());
+}
+
+#[test]
+fn an_appearing_disappearing_node_pops_while_a_reflowing_sibling_tweens() {
+    // Issue #293: story #283 named, but did not fix, a FLIP limit. FLIP
+    // (`crates/dashscene-engine/src/flip.rs` module docs) animates rect
+    // channels only (X/Y/Width/Height); there is no visibility or opacity
+    // channel. A `set_variant` toggle that hides a child gives that child a
+    // degenerate rect (`docs/decisions/variant-set-flat-index.md`,
+    // story #283), but nothing about "degenerate" is itself a rect-channel
+    // value a transition can fade through — so a real transition (like the
+    // ones this file hand-builds elsewhere) only ever declares tracks for
+    // the nodes that move (the reflowing siblings), never for the node that
+    // is appearing or disappearing. The result: the appearing/disappearing
+    // node has no live FLIP track at all — it "pops" straight from its old
+    // committed rect to its new one with no interpolated frame — while a
+    // sibling with a declared track genuinely tweens.
+    //
+    // Same three-chip Hug row as the E3 corpus case
+    // (`crates/dashlang/tests/corpus.rs`) and the incremental-path test
+    // (`crates/dashscene-engine/tests/incremental.rs`): hugs to 90 with all
+    // shown, 60 with the middle chip (`b`) hidden — `c` reflows left by 30.
+    let mut arena = Arena::new();
+    let mut solver = TaffySolver::new();
+
+    let (b, c, set) = {
+        let mut txn = arena.open();
+        let row = txn.add_node(None, None);
+        txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
+        txn.set_prop(row, Prop::SizingH(AxisSizing::Hug));
+        txn.set_prop(row, Prop::Height(20.0));
+        let a = txn.add_node(Some(row), None);
+        txn.set_prop(a, Prop::Width(30.0));
+        txn.set_prop(a, Prop::Height(20.0));
+        let b = txn.add_node(Some(row), None);
+        txn.set_prop(b, Prop::Width(30.0));
+        txn.set_prop(b, Prop::Height(20.0));
+        let c = txn.add_node(Some(row), None);
+        txn.set_prop(c, Prop::Width(30.0));
+        txn.set_prop(c, Prop::Height(20.0));
+        let set = txn.add_variant_set(vec![
+            VariantMember::default(),
+            VariantMember {
+                name: Some("hide-middle".to_string()),
+                overrides: vec![(b, VariantValue::Visible(false))],
+            },
+        ]);
+        txn.commit_with(&mut solver);
+        (b, c, set)
+    };
+
+    // First: capture both children's before rects from the solved,
+    // committed scene.
+    let b_before = committed_rect(&arena, b);
+    let c_before = committed_rect(&arena, c);
+    // b shown, in the middle; c last.
+    assert_rect(b_before, (30.0, 0.0, 30.0, 20.0));
+    assert_rect(c_before, (60.0, 0.0, 30.0, 20.0));
+
+    // Switch to hide-middle and re-solve. Last: b's rect is degenerate; c
+    // reflowed into b's old place.
+    {
+        let mut txn = arena.open();
+        txn.set_variant(set, 1);
+        txn.commit_with(&mut solver);
+    }
+    let b_after = committed_rect(&arena, b);
+    let c_after = committed_rect(&arena, c);
+    // b leaves the laid-out set (degenerate rect); c reflows into its place.
+    assert_rect(b_after, (0.0, 0.0, 0.0, 0.0));
+    assert_rect(c_after, (30.0, 0.0, 30.0, 20.0));
+
+    // The declared transition names only c's X channel — the reflow — a
+    // 1-second linear tween. It names no channel of b's: nothing about
+    // "disappearing" is expressible as a rect-channel track (no visibility
+    // or opacity channel exists), so a real transition simply has nothing
+    // to say about b, the same as `dashcue`'s only consumer of this path
+    // does today (no auto-generated track for an appearing/disappearing
+    // node exists anywhere in the tree, "no new FLIP machinery" per the
+    // story #283 module docs).
+    let transition = VariantTransition {
+        tracks: vec![PropTransition {
+            prop: prop_key(c, Channel::X),
+            spec: TransitionSpec::Tween {
+                duration: 1.0,
+                easing: Easing::Linear,
+            },
+        }],
+        stagger: 0.0,
+    };
+
+    let mut flip = VariantFlip::new();
+    flip.start(
+        &[(b, b_before), (c, c_before)],
+        &[(b, b_after), (c, c_after)],
+        &transition,
+    );
+
+    // b has no live track at any point in the animation: it never appears
+    // in the FLIP's animated set, so it is never interpolated — it pops
+    // directly from `b_before` to `b_after` with no in-between frame. The
+    // whole-frame iterator (#23's sampling surface) never yields it either.
+    assert!(
+        flip.sample(b).is_none(),
+        "b has no declared track and is not tweened at t = 0"
+    );
+    let frame_t0: Vec<_> = flip.sampled_rects().map(|(n, _)| n).collect();
+    assert!(
+        !frame_t0.contains(&b),
+        "b is absent from the animated frame at t = 0"
+    );
+
+    // c, which does have a declared track, genuinely tweens: at t = 0 it
+    // holds the before value.
+    assert_rect(
+        flip.sample(c).expect("c is animating"),
+        (60.0, 0.0, 30.0, 20.0),
+    );
+
+    // Midway: c is at the exact midpoint; b is still untracked, so its rect
+    // never took an in-between value through FLIP.
+    flip.advance(0.5);
+    assert_rect(
+        flip.sample(c).expect("c is animating"),
+        (45.0, 0.0, 30.0, 20.0),
+    );
+    assert!(
+        flip.sample(b).is_none(),
+        "b is still untracked halfway through c's tween -- it pops, it does not tween"
+    );
+
+    // Finish: c reaches its after value; b was never part of the animation.
+    flip.advance(0.5);
+    assert_rect(
+        flip.sample(c).expect("c is animating"),
+        (30.0, 0.0, 30.0, 20.0),
+    );
+    assert!(flip.sample(b).is_none(), "b was never tweened");
 }
 
 #[test]
