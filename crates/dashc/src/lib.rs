@@ -50,8 +50,9 @@ pub mod abi;
 pub mod figma;
 
 pub use document::{
-    AxisSizing, Box2D, CrossAxisAlign, Document, EdgeInsets, LayoutConstraints, LayoutContainer,
-    LayoutMode, MainAxisAlign, Node, Paint, TextStyle,
+    AxisSizing, Binding, BindingChannel, BindingTransform, Box2D, CrossAxisAlign, Document,
+    EdgeInsets, LayoutConstraints, LayoutContainer, LayoutMode, MainAxisAlign, Node, Paint,
+    SignalDecl, TextStyle,
 };
 pub use emit::emit;
 // `CompileError` only: it is `compile_figma`'s error type, so it belongs at the
@@ -62,7 +63,19 @@ pub use figma::CompileError;
 use std::collections::BTreeMap;
 
 use dashpaint::ImageAsset;
-use dashscene_validator::{Profile, Report};
+use dashscene_validator::{Diagnostic, Location, Profile, Report, Severity};
+
+/// The diagnostic rules the document gate itself assembles — verdicts
+/// about a `Document` no serialized form can carry, so the load gate
+/// (which sees only serialized documents) can never raise them.
+pub mod rule {
+    /// A binding carries a `Custom` transform. The closure it references
+    /// lives in a producer-side table and does not serialize, so emitting
+    /// the row without it would silently change what the binding computes
+    /// — the drop P4 forbids. `Custom` stays a `dashlang`-only escape
+    /// hatch (`docs/decisions/reactive-layer-home-and-staging.md`).
+    pub const CUSTOM_TRANSFORM: &str = "binding.custom-transform";
+}
 
 /// Emits `doc`, then runs the load gate over the emitted document.
 ///
@@ -70,6 +83,32 @@ use dashscene_validator::{Profile, Report};
 /// validate what was actually emitted" (see `compile`'s doc comment for why
 /// the order is emit-then-validate, not the reverse).
 fn emit_and_validate(doc: &Document) -> (Vec<u8>, Report) {
+    // The document gate: a `Custom` binding transform cannot serialize
+    // (its closure lives producer-side), so it is refused by name before
+    // the emitter — which panics on it — ever runs. Nothing is emitted:
+    // both callers block on an error report, so no bytes escape.
+    let custom_gate: Report = doc
+        .bindings
+        .iter()
+        .enumerate()
+        .filter_map(|(i, row)| match row.transform {
+            document::BindingTransform::Custom(id) => Some(Diagnostic {
+                rule: rule::CUSTOM_TRANSFORM,
+                severity: Severity::Error,
+                at: Location::Binding(i as u32),
+                message: format!(
+                    "binding {i} carries a Custom transform (closure {id}), which does not \
+                     serialize; keep Custom bindings producer-side or use the declarative \
+                     vocabulary (Identity, Scale, MapRange, Clamp)"
+                ),
+            }),
+            _ => None,
+        })
+        .collect();
+    if custom_gate.has_errors() {
+        return (Vec::new(), custom_gate);
+    }
+
     let bytes = emit(doc);
 
     // The flatbuffer verifier runs over the emitter's own output. That is
@@ -129,8 +168,28 @@ pub fn compile_figma(
     profile: Profile,
     images: &BTreeMap<String, ImageAsset>,
 ) -> Result<(Vec<u8>, Report), CompileError> {
+    compile_figma_with_bindings(json, profile, images, &[])
+}
+
+/// [`compile_figma`], plus the joined variable-binding rows the importer
+/// produced (story #167; `docs/decisions/token-resolution-phase-split.md`).
+///
+/// Each row is one `boundVariables` site the importer joined against the
+/// plugin-exported vartable: the Figma node id, the property path, the
+/// mode-qualified signal name, and the mode-resolved value. The lowering
+/// turns the supported sites into `Document.signals`/`Document.bindings`
+/// (`itemSpacing` becomes a `Gap` binding; a solid fill's color becomes
+/// four `Fill` channel bindings); a site the channel vocabulary cannot
+/// carry yet is a named warning — the resolved literal still ships, so
+/// the picture is right and nothing is dropped in silence (P4).
+pub fn compile_figma_with_bindings(
+    json: &str,
+    profile: Profile,
+    images: &BTreeMap<String, ImageAsset>,
+    bindings: &[figma::BoundVariable],
+) -> Result<(Vec<u8>, Report), CompileError> {
     let file = figma::parse_file(json)?;
-    let (doc, found) = figma::lower(&file, profile, images)?;
+    let (doc, found) = figma::lower_with_bindings(&file, profile, images, bindings)?;
 
     let mut report: Report = found.into_iter().collect();
 

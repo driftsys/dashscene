@@ -10,20 +10,23 @@
 use std::collections::HashMap;
 
 use dashbuf::{
-    Color, CornerRadii, Document as FbDocument, DocumentArgs as FbDocumentArgs,
-    EdgeInsets as FbEdgeInsets, FixedSizeLayout, Gradient, GradientArgs, GradientStop, Image,
-    ImageArgs, ImageFill, ImageFillArgs, LayoutConstraints as FbLayoutConstraints,
-    LayoutConstraintsArgs, LayoutContainer as FbLayoutContainer, LayoutContainerArgs, Mat23,
-    NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE, Node as FbNode, NodeArgs as FbNodeArgs,
-    Paint as BufPaint, PaintArgs, SolidFill, SolidFillArgs, Stroke, StrokeArgs,
-    TextStyle as FbTextStyle, TextStyleArgs, Vec2,
+    Binding as FbBinding, BindingArgs as FbBindingArgs, Color, CornerRadii, Document as FbDocument,
+    DocumentArgs as FbDocumentArgs, EdgeInsets as FbEdgeInsets, FixedSizeLayout, Gradient,
+    GradientArgs, GradientStop, Image, ImageArgs, ImageFill, ImageFillArgs,
+    LayoutConstraints as FbLayoutConstraints, LayoutConstraintsArgs,
+    LayoutContainer as FbLayoutContainer, LayoutContainerArgs, Mat23, NO_PAINT, NO_PARENT, NO_TEXT,
+    NO_TEXT_STYLE, Node as FbNode, NodeArgs as FbNodeArgs, Paint as BufPaint, PaintArgs,
+    SignalDecl as FbSignalDecl, SignalDeclArgs as FbSignalDeclArgs, SolidFill, SolidFillArgs,
+    Stroke, StrokeArgs, TextStyle as FbTextStyle, TextStyleArgs, TransformClamp,
+    TransformClampArgs, TransformMapRange, TransformMapRangeArgs, TransformScale,
+    TransformScaleArgs, Vec2,
 };
 use dashpaint::{ImageAsset, PaintEntry, PaintKind};
 use flatbuffers::{FlatBufferBuilder, WIPOffset};
 
 use crate::document::{
-    AxisSizing, CrossAxisAlign, Document, EdgeInsets, LayoutMode, MainAxisAlign, Node, Paint,
-    TextStyle,
+    AxisSizing, Binding, BindingChannel, BindingTransform, CrossAxisAlign, Document, EdgeInsets,
+    LayoutMode, MainAxisAlign, Node, Paint, SignalDecl, TextStyle,
 };
 
 /// Serializes a document to `.dsb` bytes.
@@ -90,11 +93,24 @@ pub fn emit(doc: &Document) -> Vec<u8> {
         .map(|((node, entry), (text, style))| build_node(&mut b, node, *entry, *text, *style))
         .collect();
 
+    let signal_offsets: Vec<WIPOffset<FbSignalDecl>> = doc
+        .signals
+        .iter()
+        .map(|s| build_signal(&mut b, s))
+        .collect();
+    let binding_offsets: Vec<WIPOffset<FbBinding>> = doc
+        .bindings
+        .iter()
+        .map(|row| build_binding(&mut b, row))
+        .collect();
+
     let nodes = b.create_vector(&nodes);
     let images = (!images.is_empty()).then(|| b.create_vector(&images));
     let paints = (!paints.is_empty()).then(|| b.create_vector(&paints));
     let strings = (!string_offsets.is_empty()).then(|| b.create_vector(&string_offsets));
     let text_styles = (!style_offsets.is_empty()).then(|| b.create_vector(&style_offsets));
+    let signals = (!signal_offsets.is_empty()).then(|| b.create_vector(&signal_offsets));
+    let bindings = (!binding_offsets.is_empty()).then(|| b.create_vector(&binding_offsets));
 
     let document = FbDocument::create(
         &mut b,
@@ -104,11 +120,98 @@ pub fn emit(doc: &Document) -> Vec<u8> {
             paints,
             strings,
             text_styles,
+            signals,
+            bindings,
             ..Default::default()
         },
     );
     b.finish(document, None);
     b.finished_data().to_vec()
+}
+
+fn build_signal<'a>(
+    b: &mut FlatBufferBuilder<'a>,
+    signal: &SignalDecl,
+) -> WIPOffset<FbSignalDecl<'a>> {
+    let name = b.create_string(&signal.name);
+    FbSignalDecl::create(
+        b,
+        &FbSignalDeclArgs {
+            name: Some(name),
+            initial: signal.initial,
+        },
+    )
+}
+
+/// Builds one binding row. Identity is the union-NONE default, so the
+/// common Figma-authored row costs no transform table.
+///
+/// # Panics
+///
+/// Panics on a `Custom` transform: a closure does not serialize, and the
+/// gate in [`crate::compile`] names it (`binding.custom-transform`)
+/// before this emitter ever runs — reaching here means the caller
+/// skipped the gate (validated upstream, P4).
+fn build_binding<'a>(b: &mut FlatBufferBuilder<'a>, row: &Binding) -> WIPOffset<FbBinding<'a>> {
+    let (transform_type, transform) = match row.transform {
+        BindingTransform::Identity => (dashbuf::BindingTransform::NONE, None),
+        BindingTransform::Scale(factor) => (
+            dashbuf::BindingTransform::TransformScale,
+            Some(TransformScale::create(b, &TransformScaleArgs { factor }).as_union_value()),
+        ),
+        BindingTransform::MapRange {
+            in_lo,
+            in_hi,
+            out_lo,
+            out_hi,
+        } => (
+            dashbuf::BindingTransform::TransformMapRange,
+            Some(
+                TransformMapRange::create(
+                    b,
+                    &TransformMapRangeArgs {
+                        in_lo,
+                        in_hi,
+                        out_lo,
+                        out_hi,
+                    },
+                )
+                .as_union_value(),
+            ),
+        ),
+        BindingTransform::Clamp { lo, hi } => (
+            dashbuf::BindingTransform::TransformClamp,
+            Some(TransformClamp::create(b, &TransformClampArgs { lo, hi }).as_union_value()),
+        ),
+        BindingTransform::Custom(id) => panic!(
+            "binding carries Custom transform (closure {id}); a closure does not serialize, and \
+             compile's binding.custom-transform gate refuses it before emission (P4)"
+        ),
+    };
+    FbBinding::create(
+        b,
+        &FbBindingArgs {
+            signal: row.signal,
+            node: row.node,
+            channel: channel_of(row.channel),
+            transform_type,
+            transform,
+        },
+    )
+}
+
+fn channel_of(channel: BindingChannel) -> dashbuf::BindingChannel {
+    match channel {
+        BindingChannel::X => dashbuf::BindingChannel::X,
+        BindingChannel::Y => dashbuf::BindingChannel::Y,
+        BindingChannel::Width => dashbuf::BindingChannel::Width,
+        BindingChannel::Height => dashbuf::BindingChannel::Height,
+        BindingChannel::Gap => dashbuf::BindingChannel::Gap,
+        BindingChannel::FillR => dashbuf::BindingChannel::FillR,
+        BindingChannel::FillG => dashbuf::BindingChannel::FillG,
+        BindingChannel::FillB => dashbuf::BindingChannel::FillB,
+        BindingChannel::FillA => dashbuf::BindingChannel::FillA,
+    }
 }
 
 fn build_node<'a>(

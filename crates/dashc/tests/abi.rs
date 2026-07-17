@@ -42,6 +42,9 @@ fn encode_request(profile: u32, json: &str, images: &[(&str, u32, &[u8])]) -> Ve
         out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
         out.extend_from_slice(bytes);
     }
+    // ABI v2 (story #167): the joined binding rows. These requests carry
+    // none, so the section is just the zero count.
+    out.extend_from_slice(&0u32.to_le_bytes());
     out
 }
 
@@ -85,7 +88,9 @@ fn call(export: unsafe extern "C" fn(*const u8, u32) -> *mut u8, request: &[u8])
 fn the_abi_version_is_pinned() {
     // A bump is a deliberate break: the Deno loader refuses a version it does
     // not know, so this constant and `importers/figma/src/wasm.ts` move together.
-    assert_eq!(dashc_abi_version(), 1);
+    // Version 2 appended the joined binding rows to the compile request
+    // (story #167, docs/decisions/dashc-wasm-abi.md).
+    assert_eq!(dashc_abi_version(), 2);
 }
 
 #[test]

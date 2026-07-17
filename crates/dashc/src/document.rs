@@ -160,6 +160,65 @@ pub struct Paint {
     pub clip: bool,
 }
 
+/// One scalar prop slot a binding targets — the schema's
+/// `BindingChannel` as a plain type (story #167).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BindingChannel {
+    X,
+    Y,
+    Width,
+    Height,
+    Gap,
+    FillR,
+    FillG,
+    FillB,
+    FillA,
+}
+
+/// A binding's transform — the schema's `BindingTransform` union as a
+/// plain type, plus `Custom`: `dashlang`'s closure escape hatch, carried
+/// as its opaque closure id. A `Custom` transform cannot serialize (the
+/// closure lives in a producer-side table), so a document that carries
+/// one is refused by name at [`crate::compile`] (`binding.custom-transform`),
+/// never emitted approximately (P4).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BindingTransform {
+    Identity,
+    Scale(f32),
+    MapRange {
+        in_lo: f32,
+        in_hi: f32,
+        out_lo: f32,
+        out_hi: f32,
+    },
+    Clamp {
+        lo: f32,
+        hi: f32,
+    },
+    Custom(u32),
+}
+
+/// One declared signal: the runtime lookup name and the initial value
+/// its bindings seed from (story #167). The Figma producer names every
+/// signal (a variable's mode-qualified name); the name is what a runtime
+/// looks the signal up by after loading.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SignalDecl {
+    pub name: String,
+    pub initial: f32,
+}
+
+/// One binding row: `signal` (index into [`Document::signals`]) drives
+/// `channel` on `node` (index into [`Document::nodes`]) through
+/// `transform`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Binding {
+    pub signal: u32,
+    pub node: u32,
+    pub channel: BindingChannel,
+    pub transform: BindingTransform,
+}
+
 /// One dashscene document, ready to emit.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Document {
@@ -167,6 +226,10 @@ pub struct Document {
     pub nodes: Vec<Node>,
     /// The image assets an image fill references by index.
     pub images: Vec<ImageAsset>,
+    /// The signal declarations bindings reference by index (story #167).
+    pub signals: Vec<SignalDecl>,
+    /// The binding rows joining signals to node channels (story #167).
+    pub bindings: Vec<Binding>,
 }
 
 impl Document {

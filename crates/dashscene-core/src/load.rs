@@ -238,7 +238,7 @@ pub fn load_document(doc: &Document<'_>, arena: &mut Arena) -> u64 {
 /// value is `binding.unknown-channel` at the load gate, so it never
 /// reaches here (the same posture as the layout enums below).
 fn channel_of(channel: dashbuf::BindingChannel) -> Channel {
-    Channel::from_code(channel.0 as u8).unwrap_or_else(|| {
+    Channel::from_code(channel.0).unwrap_or_else(|| {
         unreachable!("unknown BindingChannel {channel:?}: rejected by the load gate (P4)")
     })
 }
