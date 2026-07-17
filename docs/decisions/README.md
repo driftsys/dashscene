@@ -135,6 +135,9 @@ into the records below. Per-story decisions land here directly:
 - [dashlang-flex-vocabulary.md](dashlang-flex-vocabulary.md) — `dashlang`
   mirrors the v0.2 flex vocabulary by embedding core's own `Layout` on the
   `Node` builder (#118).
+- [dashlang-stress-corpus.md](dashlang-stress-corpus.md) — the E3 stress
+  corpus is build-time DSL authoring, verified by exact rects; extends the
+  builder with the v0.8 grid/wrap vocabulary (#46; E3 partial, met via #283).
 - [layout-solver-seam.md](layout-solver-seam.md) — commit takes its geometry
   from a `LayoutSolver` trait defined in core; the engine implements it with
   Taffy (story #9); binds #22 (FLIP) and #29 (measure callback).

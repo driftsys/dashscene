@@ -16,15 +16,15 @@ missing proof must be visible.
 
 ## v0 exit criteria
 
-| Criterion                         | Verifies | Status                                    |
-| --------------------------------- | -------- | ----------------------------------------- |
-| E1 same screen authored both ways | G1       | open — v0.9 (epic #47)                    |
-| E2 Arabic golden-stable           | R1       | **met**                                   |
-| E3 stress corpus green            | R2       | partial — v0.8 (epic #42, issue #46 open) |
-| E4 dirty Figma file → report      | R6       | **met**                                   |
-| E5 variant switch via FLIP        | R4       | **met**                                   |
-| E6 byte-identical `.dsb`          | R7       | **met**                                   |
-| E7 design-source render oracle    | R6       | open — v0.8 fidelity tooling (epic #42)   |
+| Criterion                         | Verifies | Status                                  |
+| --------------------------------- | -------- | --------------------------------------- |
+| E1 same screen authored both ways | G1       | open — v0.9 (epic #47)                  |
+| E2 Arabic golden-stable           | R1       | **met**                                 |
+| E3 stress corpus green            | R2       | partial — met via #283                  |
+| E4 dirty Figma file → report      | R6       | **met**                                 |
+| E5 variant switch via FLIP        | R4       | **met**                                 |
+| E6 byte-identical `.dsb`          | R7       | **met**                                 |
+| E7 design-source render oracle    | R6       | open — v0.8 fidelity tooling (epic #42) |
 
 The file carries no version in its name. "v0 exit criteria" is a heading
 inside it; v1's criteria are a second heading below, not a second file.
@@ -86,16 +86,97 @@ form-isolation breaks it must catch
 
 ### E3 — partial
 
-The stress-corpus generator itself (`dashlang`-driven, story/issue #46) has
-not landed — epic #42 (v0.8 — fidelity) is open. Two of the six named cases
-are already proven independently of the generator, each by a hand-written
-case plus an executable test in the crate that owns the construct:
+R2 requires the runtime to solve the full Figma auto-layout vocabulary — all
+four modes (horizontal, vertical, wrap, grid with spans), hug/fill/fixed
+sizing, min/max, gap, padding, alignment. The `dashlang`-driven stress-corpus
+generator (story #46) authors it through the producer surface `dashlang` is the
+skin over, solves each scene by `dashscene-engine`'s `TaffySolver`, and pins it
+against hand-computed rects. Every scene is integer-dimensioned, so the
+comparison is exact — the discipline `docs/decisions/v02-flex-goldens-per-construct.md`
+sets — and each rect is read back by `NodeId`, never by a positional DFS index
+(debt #119). The proof is `crates/dashlang/tests/corpus.rs`; each named case has
+a documented entry under `corpus/dsl-generated/`.
 
-- `negative-gap` (story #10) — `crates/dashscene-engine/tests/solve.rs`.
-- `hug-in-fill` (story #11) — `goldens/tooling/tests/v02_flex.rs`.
+Five of the six named cases are proven exactly: `negative-gap`, `hug-in-fill`,
+`wrap`, `grid spans`, and `baseline`. The sixth, `variant topology change`, is
+proven as a **layout-topology change** — a `set_variant` that changes the
+solved wrap-line count and container height — but **not** as the Figma
+"different child counts" form: v0's variant overlay carries X/Y/Width/Height/Fill
+only (no `Visible`), so a switch cannot add or remove a child from the laid-out
+set (`docs/decisions/variant-set-flat-index.md`). That is why E3 is partial, not
+met. Issue #283 adds `VariantValue::Visible` (and the matching `dashbuf` variant
+table field), and E3 flips to met when it lands.
 
-`wrap`, `grid spans`, `baseline`, and `variant topology change` have no test
-yet. See `corpus/dsl-generated/README.md` for the case-by-case status.
+Most cases author through `dashlang`'s value-tree builder, which story #46
+extended with the v0.8 layout vocabulary (wrap cross gap, grid track templates,
+grid placement and spans; baseline cross-alignment was already reachable
+through the `cross_align` setter):
+
+- `wrap` (`wrap_breaks_lines_and_hugs_to_them`) — a 200-wide, Hug-height
+  wrapping row whose greedy line fill breaks after two chips, with a distinct
+  cross gap (20) against the main gap (10) and a hug height that sums the lines.
+  Its fixed-height sibling (`a_fixed_height_wrap_packs_its_lines_at_the_cross_start`)
+  pins the `align_content = FlexStart` line-packing D5 specifies (lines pack at
+  the cross start rather than spreading over the container).
+- `grid spans` (`grid_spans_place_children_across_tracks`) — a grid with a fixed
+  first track and two `minmax(0, 1fr)` tracks per axis, a header spanning three
+  columns, a cell spanning two rows, a footer spanning two columns, and a fixed
+  child sitting at its cell origin.
+- `baseline` (`baseline_aligns_mixed_height_boxes_on_their_bottoms`) — a row of
+  three mixed-height boxes whose bottoms (their leaf baselines) align at the
+  tallest child's; its nested-row sibling
+  (`baseline_propagates_from_a_nested_row`) pins the other half of the construct
+  — a nested row contributing its first line's baseline, not its own bottom.
+- `hug-in-fill` (`hug_in_fill_sizes_content_first_then_splits_the_rest`) — a Hug
+  box among two Fill siblings, the two sizing modes resolving in one pass.
+- `vertical` (`a_vertical_column_stacks_and_fills_the_main_axis`) and `min/max`
+  (`min_and_max_clamps_bound_a_fill_split`) — R2's `Vertical` mode and its
+  min/max clamps, which the six named cases do not otherwise reach. Added to the
+  corpus so E3's R2 coverage is self-contained rather than resting on the engine
+  suite alone.
+
+Two cases author against core's `Txn` directly, because the construct is not
+`dashlang` builder vocabulary:
+
+- `variant topology change`
+  (`a_variant_switch_changes_the_wrap_line_topology`) — an `add_variant_set`
+  whose `set_variant` switch overrides one chip's width past the point where the
+  next chip still fits, so a wrap line appears and the Hug container grows
+  taller. Core variants are sparse scalar overrides — the five-prop slice
+  X/Y/Width/Height/Fill (`docs/decisions/variant-set-flat-index.md`) — so the
+  switch changes the resolved layout topology, never the arena node tree.
+  **Why this leaves E3 partial:** the stronger reading, a child LEAVING the
+  laid-out set (a child-count change), requires a variant member setting
+  `Prop::Visible(false)` → `Display::None`. `Visible` is not in the five-prop
+  variant slice, and widening it (core `VariantValue` plus the `dashbuf` variant
+  table, R7) is out of story #46's scope — it is issue #283, which flips E3 to
+  met. This case realizes the topology change the current vocabulary can express.
+- `negative-gap`
+  (`negative_gap_overlaps_children_and_hugs_to_the_reduced_width`) — a Hug-width
+  row of fixed boxes with a negative gap. The builder authors the lowered
+  (negative-margin) form; a core `gap` + `lower_negative_gaps` form independently
+  exercises the shared lowering pass and pins its own rects (a DSL-vs-core
+  equivalence would be tautological — taffy applies a raw negative gap
+  identically to the margin form, `docs/decisions/negative-gap-lowering.md`). The
+  Hug width is correct only under the negative-margin-hug rebate
+  (`docs/decisions/negative-margin-hug-rebate.md`, debt #236); taffy 0.12 alone
+  collapses the intrinsic sum, which is why this case could not go green before
+  #236 landed. It is a plain flex row, never wrap: a negative wrap gap is a named
+  refusal (`docs/decisions/v08-layout-vocabulary-shape.md` D5).
+
+New with story #46: every corpus case above except where noted, plus the
+builder's v0.8 vocabulary. Pre-existing, kept as complementary proofs: the
+engine-level negative-gap lowering and #236 rebate tests
+(`crates/dashscene-engine/tests/solve.rs`, stories #10/#43), the hug-in-fill
+golden (`goldens/tooling/tests/v02_flex.rs`, story #11), and the hand-built
+wrap/grid/baseline pixel goldens (`goldens/tooling/tests/v08_fidelity.rs`,
+story #43). The variant switch's animated form is proven end to end by E5
+(`goldens/tooling/tests/v04_flip.rs`). Two disclosed depth limits, tracked as
+debt rather than hidden: the grid case does not yet make `minmax(0, 1fr)`'s
+zero minimum load-bearing, because a fraction track holding oversized content
+entangles with the open fixed-child-overflow question (issue #272); and a
+leaf's baseline is its bottom edge, not a glyph baseline (issue #273). All cases
+run in the workspace CI job (`just build`).
 
 ### E4 — met
 

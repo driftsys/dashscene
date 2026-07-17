@@ -55,7 +55,9 @@ pub use reactive::{
 // deliberately not re-exported, so `NodeId` stays a type no `dashlang`
 // producer ever names (see `crates/dashlang/tests/builder.rs`'s
 // `DoubleWidthSolver` for exactly this case).
-pub use dashscene_core::{Arena, AxisSizing, Color, CrossAxisAlign, LayoutMode, MainAxisAlign};
+pub use dashscene_core::{
+    Arena, AxisSizing, Color, CrossAxisAlign, GridTrack, LayoutMode, MainAxisAlign,
+};
 
 /// A named node description. See [`anon`] for unnamed nodes.
 pub fn node(name: &str) -> Node {
@@ -94,6 +96,11 @@ pub fn scene(roots: impl IntoIterator<Item = Node>) -> Scene {
 pub struct Node {
     name: Option<String>,
     layout: Layout,
+    // Grid track templates (story #43). They live beside `Layout` in the
+    // arena because they are variable-length and `Layout` is `Copy`, so
+    // they are separate fields here too. Empty = no grid tracks authored.
+    grid_rows: Vec<GridTrack>,
+    grid_columns: Vec<GridTrack>,
     fill: Option<Color>,
     children: Vec<Node>,
     // Reactive declarations (issue #166), resolved to targets at build.
@@ -201,6 +208,51 @@ impl Node {
     /// Maximum height clamp. Cannot be unset once set.
     pub fn max_height(mut self, v: f32) -> Self {
         self.layout.max_height = Some(v);
+        self
+    }
+
+    /// Spacing between wrap lines and between grid rows (story #43).
+    /// Unset follows `gap`, core's default.
+    pub fn cross_gap(mut self, gap: f32) -> Self {
+        self.layout.cross_gap = Some(gap);
+        self
+    }
+
+    /// The row track template of a `Grid` container (story #43).
+    pub fn grid_rows(mut self, tracks: impl IntoIterator<Item = GridTrack>) -> Self {
+        self.grid_rows = tracks.into_iter().collect();
+        self
+    }
+
+    /// The column track template of a `Grid` container (story #43).
+    pub fn grid_columns(mut self, tracks: impl IntoIterator<Item = GridTrack>) -> Self {
+        self.grid_columns = tracks.into_iter().collect();
+        self
+    }
+
+    /// The 0-based grid row cell this child anchors to (story #43).
+    /// Unset auto-places in document order.
+    pub fn grid_row(mut self, anchor: u16) -> Self {
+        self.layout.grid_row = Some(anchor);
+        self
+    }
+
+    /// The 0-based grid column cell this child anchors to (story #43).
+    /// Unset auto-places in document order.
+    pub fn grid_column(mut self, anchor: u16) -> Self {
+        self.layout.grid_column = Some(anchor);
+        self
+    }
+
+    /// How many grid rows this child spans (story #43). Core default 1.
+    pub fn grid_row_span(mut self, span: u16) -> Self {
+        self.layout.grid_row_span = span;
+        self
+    }
+
+    /// How many grid columns this child spans (story #43). Core default 1.
+    pub fn grid_column_span(mut self, span: u16) -> Self {
+        self.layout.grid_column_span = span;
         self
     }
 
@@ -356,6 +408,30 @@ pub(crate) fn set_base_props(txn: &mut Txn<'_>, id: NodeId, node: &Node) {
     }
     if let Some(v) = node.layout.max_height {
         txn.set_prop(id, Prop::MaxHeight(v));
+    }
+    // The v0.8 grid/wrap vocabulary (story #43). Emitted only when
+    // authored, so a non-grid node stages exactly the props it did before
+    // this vocabulary existed (the unset-defaults acceptance tests).
+    if let Some(v) = node.layout.cross_gap {
+        txn.set_prop(id, Prop::CrossGap(v));
+    }
+    if !node.grid_rows.is_empty() {
+        txn.set_prop(id, Prop::GridRows(node.grid_rows.clone()));
+    }
+    if !node.grid_columns.is_empty() {
+        txn.set_prop(id, Prop::GridColumns(node.grid_columns.clone()));
+    }
+    if let Some(v) = node.layout.grid_row {
+        txn.set_prop(id, Prop::GridRow(v));
+    }
+    if let Some(v) = node.layout.grid_column {
+        txn.set_prop(id, Prop::GridColumn(v));
+    }
+    if node.layout.grid_row_span != Layout::default().grid_row_span {
+        txn.set_prop(id, Prop::GridRowSpan(node.layout.grid_row_span));
+    }
+    if node.layout.grid_column_span != Layout::default().grid_column_span {
+        txn.set_prop(id, Prop::GridColumnSpan(node.layout.grid_column_span));
     }
     if let Some(color) = node.fill {
         txn.set_prop(id, Prop::Fill(color));

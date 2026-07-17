@@ -43,10 +43,15 @@ fn boxed(txn: &mut Txn<'_>, parent: NodeId, w: f32, h: f32, color: Color) -> Nod
     id
 }
 
-/// Rect (x, y, w, h) of the DFS index `i` — the same index order
-/// dashscene-engine's `tests/solve.rs` uses.
-fn rect(arena: &Arena, i: usize) -> (f32, f32, f32, f32) {
-    let r = arena.committed().rects()[i];
+/// Rect (x, y, w, h) of a committed node, addressed by identity rather
+/// than a positional DFS index (debt #119): each assertion names the box
+/// it checks, so inserting a node earlier cannot silently renumber it.
+fn rect_of(arena: &Arena, node: NodeId) -> (f32, f32, f32, f32) {
+    let scene = arena.committed();
+    let index = scene
+        .rect_index_of(node)
+        .expect("the node is committed in this generation");
+    let r = scene.rects()[index as usize];
     (r.x, r.y, r.w, r.h)
 }
 
@@ -61,10 +66,9 @@ fn exact_dim(v: f32) -> i32 {
 }
 
 /// Paints the committed scene on a canvas sized to the root's solved
-/// rect (rect index 0) and compares it against the exact-match golden
-/// `name`.
+/// rect and compares it against the exact-match golden `name`.
 fn render_and_compare(arena: &Arena, name: &str) {
-    let (_, _, w, h) = rect(arena, 0);
+    let (_, _, w, h) = rect_of(arena, arena.roots()[0]);
     let scene = arena.committed();
     let mut painter = SkiaPainter::new(exact_dim(w), exact_dim(h));
     painter.paint(
@@ -118,38 +122,53 @@ fn nesting_matches_its_golden() {
     );
     txn.set_prop(root, Prop::Fill(NAVY));
 
-    for (column_fill, cells) in [(RED, [GOLD, GREEN]), (BLUE, [GREEN, GOLD])] {
+    let mut columns = Vec::new();
+    let mut cell_ids = Vec::new();
+    for (column_fill, cell_colors) in [(RED, [GOLD, GREEN]), (BLUE, [GREEN, GOLD])] {
         let column = txn.add_node(Some(root), None);
         txn.set_prop(column, Prop::Width(50.0));
         txn.set_prop(column, Prop::Height(70.0));
         txn.set_prop(column, Prop::Mode(LayoutMode::Vertical));
         txn.set_prop(column, Prop::Gap(10.0));
         txn.set_prop(column, Prop::Fill(column_fill));
-        for cell in cells {
-            boxed(&mut txn, column, 50.0, 30.0, cell);
+        for cell in cell_colors {
+            cell_ids.push(boxed(&mut txn, column, 50.0, 30.0, cell));
         }
+        columns.push(column);
     }
     txn.commit_with(&mut TaffySolver::new());
 
-    assert_eq!(rect(&arena, 0), (0.0, 0.0, 120.0, 80.0), "root");
+    assert_eq!(rect_of(&arena, root), (0.0, 0.0, 120.0, 80.0), "root");
     assert_eq!(
-        rect(&arena, 1),
+        rect_of(&arena, columns[0]),
         (5.0, 5.0, 50.0, 70.0),
         "first column at the padding origin"
     );
-    assert_eq!(rect(&arena, 2), (5.0, 5.0, 50.0, 30.0), "its first cell");
     assert_eq!(
-        rect(&arena, 3),
+        rect_of(&arena, cell_ids[0]),
+        (5.0, 5.0, 50.0, 30.0),
+        "its first cell"
+    );
+    assert_eq!(
+        rect_of(&arena, cell_ids[1]),
         (5.0, 45.0, 50.0, 30.0),
         "its second cell: 5 + 30 + 10"
     );
     assert_eq!(
-        rect(&arena, 4),
+        rect_of(&arena, columns[1]),
         (65.0, 5.0, 50.0, 70.0),
         "second column: 5 + 50 + 10"
     );
-    assert_eq!(rect(&arena, 5), (65.0, 5.0, 50.0, 30.0), "its first cell");
-    assert_eq!(rect(&arena, 6), (65.0, 45.0, 50.0, 30.0), "its second cell");
+    assert_eq!(
+        rect_of(&arena, cell_ids[2]),
+        (65.0, 5.0, 50.0, 30.0),
+        "its first cell"
+    );
+    assert_eq!(
+        rect_of(&arena, cell_ids[3]),
+        (65.0, 45.0, 50.0, 30.0),
+        "its second cell"
+    );
 
     let mut dsl = Arena::new();
     let dsl_column = |fill: Color, cells: [Color; 2]| {
@@ -204,34 +223,36 @@ fn sizing_matches_its_golden() {
     txn.set_prop(hug, Prop::SizingH(AxisSizing::Hug));
     txn.set_prop(hug, Prop::Height(60.0));
     txn.set_prop(hug, Prop::Fill(RED));
-    boxed(&mut txn, hug, 30.0, 40.0, GOLD);
+    let inner = boxed(&mut txn, hug, 30.0, 40.0, GOLD);
 
+    let mut fills = Vec::new();
     for fill_color in [GREEN, BLUE] {
         let fill = txn.add_node(Some(root), None);
         txn.set_prop(fill, Prop::SizingH(AxisSizing::Fill));
         txn.set_prop(fill, Prop::Height(60.0));
         txn.set_prop(fill, Prop::Fill(fill_color));
+        fills.push(fill);
     }
     txn.commit_with(&mut TaffySolver::new());
 
-    assert_eq!(rect(&arena, 0), (0.0, 0.0, 120.0, 60.0), "root");
+    assert_eq!(rect_of(&arena, root), (0.0, 0.0, 120.0, 60.0), "root");
     assert_eq!(
-        rect(&arena, 1),
+        rect_of(&arena, hug),
         (0.0, 0.0, 30.0, 60.0),
         "hug takes its content's width"
     );
     assert_eq!(
-        rect(&arena, 2),
+        rect_of(&arena, inner),
         (0.0, 0.0, 30.0, 40.0),
         "the hug node's fixed child"
     );
     assert_eq!(
-        rect(&arena, 3),
+        rect_of(&arena, fills[0]),
         (30.0, 0.0, 45.0, 60.0),
         "first Fill: (120 - 30) / 2"
     );
     assert_eq!(
-        rect(&arena, 4),
+        rect_of(&arena, fills[1]),
         (75.0, 0.0, 45.0, 60.0),
         "second Fill: the equal split"
     );
@@ -264,8 +285,15 @@ fn sizing_matches_its_golden() {
 
 /// A 120×30 row of two Fill children, the first carrying `clamp`.
 /// Unclamped the two would split 60/60, so the row shows exactly what
-/// the clamp changed.
-fn clamped_row(txn: &mut Txn<'_>, root: NodeId, clamp: Prop, first: Color, second: Color) {
+/// the clamp changed. Returns `(row, clamped, rest)` so assertions name
+/// each box by identity (debt #119).
+fn clamped_row(
+    txn: &mut Txn<'_>,
+    root: NodeId,
+    clamp: Prop,
+    first: Color,
+    second: Color,
+) -> (NodeId, NodeId, NodeId) {
     let row = txn.add_node(Some(root), None);
     txn.set_prop(row, Prop::Width(120.0));
     txn.set_prop(row, Prop::Height(30.0));
@@ -281,6 +309,8 @@ fn clamped_row(txn: &mut Txn<'_>, root: NodeId, clamp: Prop, first: Color, secon
     txn.set_prop(rest, Prop::SizingH(AxisSizing::Fill));
     txn.set_prop(rest, Prop::Height(30.0));
     txn.set_prop(rest, Prop::Fill(second));
+
+    (row, clamped, rest)
 }
 
 fn dsl_clamped_row(clamp: impl FnOnce(Node) -> Node, first: Color, second: Color) -> Node {
@@ -317,30 +347,40 @@ fn clamping_matches_its_golden() {
     txn.set_prop(root, Prop::Mode(LayoutMode::Vertical));
     txn.set_prop(root, Prop::Fill(NAVY));
 
-    clamped_row(&mut txn, root, Prop::MaxWidth(40.0), RED, GREEN);
-    clamped_row(&mut txn, root, Prop::MinWidth(100.0), GOLD, BLUE);
+    let (max_row, max_clamped, max_rest) =
+        clamped_row(&mut txn, root, Prop::MaxWidth(40.0), RED, GREEN);
+    let (min_row, min_clamped, min_rest) =
+        clamped_row(&mut txn, root, Prop::MinWidth(100.0), GOLD, BLUE);
     txn.commit_with(&mut TaffySolver::new());
 
-    assert_eq!(rect(&arena, 0), (0.0, 0.0, 120.0, 60.0), "root");
-    assert_eq!(rect(&arena, 1), (0.0, 0.0, 120.0, 30.0), "the max row");
+    assert_eq!(rect_of(&arena, root), (0.0, 0.0, 120.0, 60.0), "root");
     assert_eq!(
-        rect(&arena, 2),
+        rect_of(&arena, max_row),
+        (0.0, 0.0, 120.0, 30.0),
+        "the max row"
+    );
+    assert_eq!(
+        rect_of(&arena, max_clamped),
         (0.0, 0.0, 40.0, 30.0),
         "capped at MaxWidth 40"
     );
     assert_eq!(
-        rect(&arena, 3),
+        rect_of(&arena, max_rest),
         (40.0, 0.0, 80.0, 30.0),
         "its sibling takes the rest"
     );
-    assert_eq!(rect(&arena, 4), (0.0, 30.0, 120.0, 30.0), "the min row");
     assert_eq!(
-        rect(&arena, 5),
+        rect_of(&arena, min_row),
+        (0.0, 30.0, 120.0, 30.0),
+        "the min row"
+    );
+    assert_eq!(
+        rect_of(&arena, min_clamped),
         (0.0, 30.0, 100.0, 30.0),
         "floored at MinWidth 100"
     );
     assert_eq!(
-        rect(&arena, 6),
+        rect_of(&arena, min_rest),
         (100.0, 30.0, 20.0, 30.0),
         "its sibling keeps only 20"
     );
@@ -368,7 +408,7 @@ fn align_row(
     cross: CrossAxisAlign,
     padding: Option<(f32, f32, f32, f32)>,
     colors: [Color; 2],
-) {
+) -> (NodeId, [NodeId; 2]) {
     let row = txn.add_node(Some(root), None);
     txn.set_prop(row, Prop::Width(160.0));
     txn.set_prop(row, Prop::Height(20.0));
@@ -387,9 +427,8 @@ fn align_row(
     }
     txn.set_prop(row, Prop::MainAlign(main));
     txn.set_prop(row, Prop::CrossAlign(cross));
-    for color in colors {
-        boxed(txn, row, 30.0, 10.0, color);
-    }
+    let children = colors.map(|color| boxed(txn, row, 30.0, 10.0, color));
+    (row, children)
 }
 
 fn dsl_align_row(
@@ -433,7 +472,7 @@ fn alignment_matches_its_golden() {
     txn.set_prop(root, Prop::Mode(LayoutMode::Vertical));
     txn.set_prop(root, Prop::Fill(NAVY));
 
-    align_row(
+    let (row0, [r0a, r0b]) = align_row(
         &mut txn,
         root,
         MainAxisAlign::Start,
@@ -441,7 +480,7 @@ fn alignment_matches_its_golden() {
         Some((10.0, 2.0, 10.0, 2.0)),
         [RED, GOLD],
     );
-    align_row(
+    let (row1, [r1a, r1b]) = align_row(
         &mut txn,
         root,
         MainAxisAlign::Center,
@@ -449,7 +488,7 @@ fn alignment_matches_its_golden() {
         None,
         [GREEN, BLUE],
     );
-    align_row(
+    let (row2, [r2a, r2b]) = align_row(
         &mut txn,
         root,
         MainAxisAlign::End,
@@ -457,7 +496,7 @@ fn alignment_matches_its_golden() {
         None,
         [GOLD, RED],
     );
-    align_row(
+    let (row3, [r3a, r3b]) = align_row(
         &mut txn,
         root,
         MainAxisAlign::SpaceBetween,
@@ -467,44 +506,56 @@ fn alignment_matches_its_golden() {
     );
     txn.commit_with(&mut TaffySolver::new());
 
-    assert_eq!(rect(&arena, 0), (0.0, 0.0, 160.0, 80.0), "root");
+    assert_eq!(rect_of(&arena, root), (0.0, 0.0, 160.0, 80.0), "root");
 
     // Start / Start, padded: content begins at the padding origin.
-    assert_eq!(rect(&arena, 1), (0.0, 0.0, 160.0, 20.0), "row 0");
+    assert_eq!(rect_of(&arena, row0), (0.0, 0.0, 160.0, 20.0), "row 0");
     assert_eq!(
-        rect(&arena, 2),
+        rect_of(&arena, r0a),
         (10.0, 2.0, 30.0, 10.0),
         "start, at the left padding"
     );
-    assert_eq!(rect(&arena, 3), (50.0, 2.0, 30.0, 10.0), "10 + 30 + 10 gap");
+    assert_eq!(
+        rect_of(&arena, r0b),
+        (50.0, 2.0, 30.0, 10.0),
+        "10 + 30 + 10 gap"
+    );
 
     // Center / Center: 90 free on the main axis, 10 on the cross.
-    assert_eq!(rect(&arena, 4), (0.0, 20.0, 160.0, 20.0), "row 1");
+    assert_eq!(rect_of(&arena, row1), (0.0, 20.0, 160.0, 20.0), "row 1");
     assert_eq!(
-        rect(&arena, 5),
+        rect_of(&arena, r1a),
         (45.0, 25.0, 30.0, 10.0),
         "centered: 90 / 2"
     );
     assert_eq!(
-        rect(&arena, 6),
+        rect_of(&arena, r1b),
         (85.0, 25.0, 30.0, 10.0),
         "45 + 30 + 10 gap"
     );
 
     // End / End: content is flush with the right and bottom edges.
-    assert_eq!(rect(&arena, 7), (0.0, 40.0, 160.0, 20.0), "row 2");
-    assert_eq!(rect(&arena, 8), (90.0, 50.0, 30.0, 10.0), "end: 160 - 70");
+    assert_eq!(rect_of(&arena, row2), (0.0, 40.0, 160.0, 20.0), "row 2");
     assert_eq!(
-        rect(&arena, 9),
+        rect_of(&arena, r2a),
+        (90.0, 50.0, 30.0, 10.0),
+        "end: 160 - 70"
+    );
+    assert_eq!(
+        rect_of(&arena, r2b),
         (130.0, 50.0, 30.0, 10.0),
         "flush right: 160 - 30"
     );
 
     // SpaceBetween: the free space becomes the space between the two,
     // so the authored gap is subsumed by it.
-    assert_eq!(rect(&arena, 10), (0.0, 60.0, 160.0, 20.0), "row 3");
-    assert_eq!(rect(&arena, 11), (0.0, 65.0, 30.0, 10.0), "flush left");
-    assert_eq!(rect(&arena, 12), (130.0, 65.0, 30.0, 10.0), "flush right");
+    assert_eq!(rect_of(&arena, row3), (0.0, 60.0, 160.0, 20.0), "row 3");
+    assert_eq!(rect_of(&arena, r3a), (0.0, 65.0, 30.0, 10.0), "flush left");
+    assert_eq!(
+        rect_of(&arena, r3b),
+        (130.0, 65.0, 30.0, 10.0),
+        "flush right"
+    );
 
     let mut dsl = Arena::new();
     scene([node("root")
