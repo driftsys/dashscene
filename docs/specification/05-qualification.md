@@ -174,5 +174,41 @@ generated bindings. `docs/decisions/dsb-frozen-fixture-r7-guard.md` (issue #64,
 closed in v0.3) closes that gap with a frozen `.dsb` byte fixture decoded by
 today's bindings with value assertions.
 
+The v0.3 proof pins the bytes at the `dashc` boundary. Story #40 (v0.7) extends
+it across the importer path that runs in front of `dashc`: trim → export closure
+→ token-sidecar derivation → the wasm codec → the written artifacts. The named
+per-artifact tests in `importers/figma/src/determinism_test.ts` cover each output
+artifact with two layers — a same-process double run that catches per-call
+nondeterminism (a clock read, an RNG, or a within-instance hash-map seed that
+advances between calls), and an independent anchor that catches
+deterministic-but-wrong output:
+
+- the `.dsb` and the `<out>.vars.json` token sidecar run the **whole importer
+  path** (`importFigmaFile`) end to end; the `.dsb` is anchored to the committed
+  golden and the sidecar to its exact expected binding;
+- the many-binding sidecar case is **partial-path** — `variables-bound.json`
+  cannot compile whole (a refused Fill-on-hug-axis child), so it derives the
+  sidecar exactly as `import.ts` does (trim → closure → derive → format, no
+  compile) and is anchored to the exact document-ordered binding sequence;
+- the `<name>.receipt.json` receipt is a capture-side artifact, not an
+  `importFigmaFile` output, so it is covered at the **unit level** over its two
+  producers (`figmaImageRefs`, `formatReceipt`), anchored to the refs coming back
+  sorted.
+
+Two separate wasm instantiations would add nothing and are deliberately not used:
+the `dashc` module imports nothing from the host, so each instance is a
+deterministic clone with identical initial state, and comparing two clones cannot
+stand in for two machines. Cross-machine byte-identity is instead the golden's
+job, pinned from two CI jobs (`goldens/dsb/README.md`). The determinism holds
+because each ordering the path depends on is pinned, not incidental: the paint,
+string, and text-style pools intern in first-use DFS order and the image pool is
+filled in first-use order rather than by hash-map iteration
+(`crates/dashc/src/emit.rs`, `crates/dashc/src/figma/mod.rs`); the closure sorts
+its image refs and keeps document order; the sidecar walks nodes in document
+order; and the receipt's refs come back sorted from a `BTreeSet`. The native
+emitter is locked in isolation by `crates/dashc/tests/figma_lowering.rs`
+(`emission_from_the_fixture_is_byte_reproducible`).
+
 E6 was scheduled for v0.7 in the original plan; the fixture guard landed early,
-as v0.3 debt (issue #64).
+as v0.3 debt (issue #64), and story #40 completed the end-to-end importer proof
+on schedule.
