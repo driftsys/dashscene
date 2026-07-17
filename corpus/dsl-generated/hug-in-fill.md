@@ -1,7 +1,8 @@
 # Corpus case: hug-in-fill
 
     construct  a Hug-sized node among Fill-sized siblings
-    exercised  goldens/tooling/tests/v02_flex.rs (sizing_matches_its_golden)
+    exercised  goldens/tooling/tests/v02_flex.rs (sizing_matches_its_golden),
+               crates/dashlang/tests/corpus.rs (hug_in_fill_sizes_content_first_then_splits_the_rest, #46)
     golden     goldens/images/v02-sizing.png
 
 ## The scene

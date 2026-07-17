@@ -7,7 +7,8 @@
 // raw core surface, imported directly for the hand-built comparison
 // side.
 use dashlang::{
-    Arena, AxisSizing, Color, CrossAxisAlign, LayoutMode, MainAxisAlign, anon, node, rgba, scene,
+    Arena, AxisSizing, Color, CrossAxisAlign, GridTrack, LayoutMode, MainAxisAlign, anon, node,
+    rgba, scene,
 };
 use dashscene_core::{LayoutSolver, NodeId, PaintEntry, Prop, SolvedRect};
 
@@ -212,6 +213,77 @@ fn flex_vocabulary_reaches_the_arena_layout() {
     assert_eq!(layout.max_width, Some(100.0));
     assert_eq!(layout.min_height, Some(20.0));
     assert_eq!(layout.max_height, Some(200.0));
+}
+
+#[test]
+fn grid_and_wrap_vocabulary_reaches_the_arena() {
+    // Story #46: the v0.8 layout vocabulary the stress corpus authors —
+    // wrap cross gap, grid track templates, per-child grid placement and
+    // spans — reaches the arena exactly as a hand-built `Txn` sets it.
+    let mut dsl = Arena::new();
+    scene([node("grid")
+        .mode(LayoutMode::Grid)
+        .size(200.0, 160.0)
+        .gap(10.0)
+        .cross_gap(20.0)
+        .grid_columns([
+            GridTrack::Fixed(60.0),
+            GridTrack::Fraction(1.0),
+            GridTrack::Fraction(1.0),
+        ])
+        .grid_rows([GridTrack::Fixed(40.0), GridTrack::Fraction(1.0)])
+        .child(
+            node("span")
+                .sizing_h(AxisSizing::Fill)
+                .sizing_v(AxisSizing::Fill)
+                .grid_row(0)
+                .grid_column(0)
+                .grid_column_span(3)
+                .grid_row_span(2),
+        )])
+    .build(&mut dsl);
+
+    let grid = dsl.roots()[0];
+    let grid_layout = dsl.layout(grid);
+    assert_eq!(grid_layout.mode, LayoutMode::Grid);
+    assert_eq!(grid_layout.gap, 10.0);
+    assert_eq!(grid_layout.cross_gap, Some(20.0));
+    let (rows, columns) = dsl.grid_tracks(grid);
+    assert_eq!(rows, &[GridTrack::Fixed(40.0), GridTrack::Fraction(1.0)]);
+    assert_eq!(
+        columns,
+        &[
+            GridTrack::Fixed(60.0),
+            GridTrack::Fraction(1.0),
+            GridTrack::Fraction(1.0),
+        ]
+    );
+
+    let child = dsl.children(grid)[0];
+    let child_layout = dsl.layout(child);
+    assert_eq!(child_layout.grid_row, Some(0));
+    assert_eq!(child_layout.grid_column, Some(0));
+    assert_eq!(child_layout.grid_column_span, 3);
+    // A non-default span (1 is the default, which stages nothing): this
+    // exercises the setter and the readback, not core's default (C11).
+    assert_eq!(child_layout.grid_row_span, 2);
+}
+
+/// Baseline cross-alignment already reaches the arena through the v0.2
+/// `cross_align` setter (the `Baseline` variant is core's, story #43) —
+/// pinned here because the stress corpus depends on it.
+#[test]
+fn baseline_cross_alignment_reaches_the_arena() {
+    let mut dsl = Arena::new();
+    scene([node("row")
+        .mode(LayoutMode::Horizontal)
+        .cross_align(CrossAxisAlign::Baseline)])
+    .build(&mut dsl);
+
+    assert_eq!(
+        dsl.layout(dsl.roots()[0]).cross_align,
+        CrossAxisAlign::Baseline
+    );
 }
 
 struct DoubleWidthSolver;

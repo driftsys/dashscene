@@ -11,10 +11,13 @@
 
 use dashpaint::{
     ClipIndex, ClipTable, Color, CornerRadii, GlyphRunTable, Gradient, GradientKind, GradientStop,
-    ImageAsset, ImageFormat, ImageTable, Mat23, PaintEntry, PaintKind, PaintTable, Painter,
-    RectEntry, ScaleMode, Stroke, StrokeAlign, Vec2,
+    ImageTable, Mat23, PaintEntry, PaintKind, PaintTable, Painter, RectEntry, ScaleMode, Stroke,
+    StrokeAlign, Vec2,
 };
 use dashscene_skia::SkiaPainter;
+
+mod common;
+use common::checker_asset;
 
 /// Small-canvas tolerance: cross-machine AA edge jitter is a larger
 /// fraction of a 64×64 image than of the combined golden's 96×96, but
@@ -67,41 +70,6 @@ fn two_stops(a: Color, b: Color) -> Vec<GradientStop> {
             color: b,
         },
     ]
-}
-
-/// A 4×4 checker asset, rendered through the painter itself.
-fn checker_asset() -> ImageAsset {
-    let mut painter = SkiaPainter::new(4, 4);
-    let mut paints = PaintTable::new();
-    let dark = paints.push(PaintEntry::solid(rgba(0.15, 0.15, 0.2)));
-    let light = paints.push(PaintEntry::solid(rgba(0.9, 0.85, 0.7)));
-    let mut rects = Vec::new();
-    for y in 0..4 {
-        for x in 0..4 {
-            rects.push(RectEntry {
-                x: x as f32,
-                y: y as f32,
-                w: 1.0,
-                h: 1.0,
-                paint: if (x + y) % 2 == 0 { dark } else { light },
-                clip: ClipIndex::UNCLIPPED,
-                opacity: 1.0,
-            });
-        }
-    }
-    painter.paint(
-        &rects,
-        &paints,
-        &ImageTable::new(),
-        &ClipTable::new(),
-        &[],
-        &GlyphRunTable::new(),
-        None,
-    );
-    ImageAsset {
-        format: ImageFormat::Png,
-        bytes: painter.png_bytes(),
-    }
 }
 
 #[test]
@@ -274,7 +242,7 @@ fn the_stroke_family_matches_its_golden() {
 fn the_image_family_matches_its_golden() {
     let navy = rgba(0.06, 0.07, 0.1);
     let mut images = ImageTable::new();
-    let checker = images.push(checker_asset());
+    let checker = images.push(checker_asset(rgba(0.15, 0.15, 0.2)));
 
     let mut paints = PaintTable::new();
     let background = paints.push(PaintEntry::solid(navy));

@@ -6,10 +6,13 @@
 
 use dashpaint::{
     ClipIndex, ClipTable, Color, CornerRadii, GlyphRunTable, Gradient, GradientKind, GradientStop,
-    ImageAsset, ImageFormat, ImageTable, PaintEntry, PaintKind, PaintTable, Painter, RectEntry,
-    ScaleMode, Stroke, StrokeAlign, Vec2,
+    ImageTable, PaintEntry, PaintKind, PaintTable, Painter, RectEntry, ScaleMode, Stroke,
+    StrokeAlign, Vec2,
 };
 use dashscene_skia::SkiaPainter;
+
+mod common;
+use common::checker_asset;
 
 fn rgba(r: f32, g: f32, b: f32) -> Color {
     Color { r, g, b, a: 1.0 }
@@ -38,41 +41,6 @@ fn gradient(kind: GradientKind, colors: [Color; 2]) -> PaintKind {
     })
 }
 
-/// A 4×4 checker asset rendered through the painter itself.
-fn checker_asset() -> ImageAsset {
-    let mut painter = SkiaPainter::new(4, 4);
-    let mut paints = PaintTable::new();
-    let dark = paints.push(PaintEntry::solid(rgba(0.2, 0.2, 0.25)));
-    let light = paints.push(PaintEntry::solid(rgba(0.9, 0.85, 0.7)));
-    let mut rects = Vec::new();
-    for y in 0..4 {
-        for x in 0..4 {
-            rects.push(RectEntry {
-                x: x as f32,
-                y: y as f32,
-                w: 1.0,
-                h: 1.0,
-                paint: if (x + y) % 2 == 0 { dark } else { light },
-                clip: ClipIndex::UNCLIPPED,
-                opacity: 1.0,
-            });
-        }
-    }
-    painter.paint(
-        &rects,
-        &paints,
-        &ImageTable::new(),
-        &ClipTable::new(),
-        &[],
-        &GlyphRunTable::new(),
-        None,
-    );
-    ImageAsset {
-        format: ImageFormat::Png,
-        bytes: painter.png_bytes(),
-    }
-}
-
 #[test]
 fn the_v03_paint_vocabulary_matches_its_golden() {
     let red = rgba(0.8, 0.15, 0.1);
@@ -81,7 +49,7 @@ fn the_v03_paint_vocabulary_matches_its_golden() {
     let teal = rgba(0.1, 0.6, 0.55);
 
     let mut images = ImageTable::new();
-    let checker = images.push(checker_asset());
+    let checker = images.push(checker_asset(rgba(0.2, 0.2, 0.25)));
 
     let mut paints = PaintTable::new();
     let background = paints.push(PaintEntry::solid(rgba(0.06, 0.07, 0.1)));

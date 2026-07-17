@@ -2,8 +2,10 @@
 
     crate    crates/dashlang
     covers   v0.1 walking skeleton (story #5), the v0.2 flex vocabulary
-             (story #118), the v0.4 reactive layer (story #166), and the
-             v0.7 document binding tables + loader-side attach (story #167)
+             (story #118), the v0.4 reactive layer (story #166), the
+             v0.7 document binding tables + loader-side attach (story #167),
+             and the v0.8 grid/wrap builder vocabulary + DSL-generated stress
+             corpus (story #46)
 
 ## Purpose
 
@@ -38,7 +40,17 @@ All types and functions live in `crates/dashlang/src/lib.rs`:
   `sizing_h(AxisSizing)`, `sizing_v(AxisSizing)`, `min_width(f32)`,
   `max_width(f32)`, `min_height(f32)`, `max_height(f32)` — one method
   per `Prop` variant, mirroring `dashscene_core::Layout`, which `Node`
-  embeds directly rather than duplicating its fields.
+  embeds directly rather than duplicating its fields. The v0.8 grid/wrap
+  vocabulary (issue #46): `cross_gap(f32)`, `grid_row(u16)`,
+  `grid_column(u16)`, `grid_row_span(u16)`, `grid_column_span(u16)` —
+  more `Layout`-mirroring setters — plus `grid_rows`/`grid_columns(impl
+  IntoIterator<Item = GridTrack>)`, whose track lists are held as separate
+  `Node` fields because they are variable-length and `Layout` is `Copy`
+  (the same split core makes). `GridTrack` is re-exported. Each new prop is
+  staged only when authored, so a non-grid node reaches the arena exactly
+  as it did before this vocabulary existed. Baseline cross-alignment needs
+  no new setter — `cross_align(CrossAxisAlign::Baseline)` already reaches
+  the arena.
 - `scene(roots: impl IntoIterator<Item = Node>) -> Scene` — collects a
   scene description from one or more root `Node`s, in order.
 
@@ -185,14 +197,21 @@ smoothing.
                                        LiveScene::set/tick; the v0.7
                                        additions (#167): signal_named,
                                        core-table staging, attach_live
-    crates/dashlang/tests/builder.rs   acceptance (issues #5, #118): DSL
-                                       output == hand-built output;
+    crates/dashlang/tests/builder.rs   acceptance (issues #5, #118, #46):
+                                       DSL output == hand-built output;
                                        repeater children; multi-root;
                                        append to an existing arena;
-                                       unset-value defaults; the flex
-                                       vocabulary reaches the arena;
-                                       build_with routes through an
-                                       injected solver
+                                       unset-value defaults; the flex and
+                                       the grid/wrap/baseline vocabulary
+                                       reach the arena; build_with routes
+                                       through an injected solver
+    crates/dashlang/tests/corpus.rs    the DSL-generated E3 stress corpus
+                                       (issue #46): negative gap, hug-in-fill,
+                                       wrap, grid spans, baseline, and a
+                                       set_variant wrap-line topology change,
+                                       plus the Vertical and min/max R2-coverage
+                                       cases, each pinned to hand-computed rects
+                                       by NodeId
     crates/dashlang/tests/reactive.rs  acceptance (issue #166): the A1-A4
                                        cases (contained scalar skips the
                                        solve; contained text is paint-only;
@@ -217,9 +236,12 @@ resolved binding tables, the `dashcue` scheduler, and the flush loop.
   transforms, per-frame flush; `docs/archive/2026-07-14-scope-decisions.md`
   §23 D1-D4, D8).
 - Blocks: #6 (golden harness, done); #46 (the DSL-generated stress
-  corpus, unblocked by the flex vocabulary). The reactive layer (#166) is
-  built, and the staged move of the binding table into `dashbuf` + core
-  fired at story #167
+  corpus, done — story #46 extended the builder with the v0.8 grid/wrap
+  vocabulary and landed the corpus,
+  `docs/decisions/dashlang-stress-corpus.md`; E3 stays partial until the
+  variant child-count form lands via issue #283). The reactive
+  layer (#166) is built, and the staged move of the binding table into
+  `dashbuf` + core fired at story #167
   (`docs/decisions/reactive-layer-home-and-staging.md`,
   `docs/decisions/binding-table-in-the-document.md`).
 - Related decisions: `docs/decisions/dashlang-value-tree-builder.md`

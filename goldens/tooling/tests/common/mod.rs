@@ -12,8 +12,12 @@
 
 #![allow(dead_code)]
 
-use dashpaint::{Atlas, AtlasGlyph, Color, ImageAsset, ImageFormat};
+use dashpaint::{
+    Atlas, AtlasGlyph, ClipIndex, ClipTable, Color, GlyphRunTable, ImageAsset, ImageFormat,
+    ImageTable, PaintEntry, PaintTable, Painter, RectEntry,
+};
 use dashscene_core::{Arena, NodeId};
+use dashscene_skia::SkiaPainter;
 use dashscene_typeset::atlas::AtlasBundle;
 
 /// An opaque colour from its RGB channels.
@@ -61,6 +65,45 @@ pub fn load_atlas(dir: &str) -> Atlas {
         m.atlas.distance_range_px,
         glyphs,
     )
+}
+
+/// A 4×4 checker `ImageAsset`, rendered through the painter itself — the
+/// shared image fixture the paint goldens fill with (debt #103). `dark` is
+/// the darker of the two checker squares; the lighter square is fixed, so
+/// each caller reproduces its own committed golden byte-for-byte (the two
+/// former copies had diverged only on `dark`).
+pub fn checker_asset(dark: Color) -> ImageAsset {
+    let mut painter = SkiaPainter::new(4, 4);
+    let mut paints = PaintTable::new();
+    let dark = paints.push(PaintEntry::solid(dark));
+    let light = paints.push(PaintEntry::solid(rgb(0.9, 0.85, 0.7)));
+    let mut rects = Vec::new();
+    for y in 0..4 {
+        for x in 0..4 {
+            rects.push(RectEntry {
+                x: x as f32,
+                y: y as f32,
+                w: 1.0,
+                h: 1.0,
+                paint: if (x + y) % 2 == 0 { dark } else { light },
+                clip: ClipIndex::UNCLIPPED,
+                opacity: 1.0,
+            });
+        }
+    }
+    painter.paint(
+        &rects,
+        &paints,
+        &ImageTable::new(),
+        &ClipTable::new(),
+        &[],
+        &GlyphRunTable::new(),
+        None,
+    );
+    ImageAsset {
+        format: ImageFormat::Png,
+        bytes: painter.png_bytes(),
+    }
 }
 
 /// The resolved box origin of a committed node.
