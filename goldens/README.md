@@ -13,6 +13,11 @@ raster) and compared pixel-for-pixel against checked-in PNGs.
                   tolerance (see goldens/dsb/README.md)
       tooling/    the `goldens` crate: diff tooling (src/lib.rs) and
                   the golden tests (tests/)
+      oracle/     the design-source render oracle (exit criterion E7,
+                  guardrail G-11): a perceptual diff of the reference
+                  render against its Figma design source, not against
+                  this crate's own previous output — see
+                  goldens/oracle/README.md; gated on issue #265
 
 ## Running
 

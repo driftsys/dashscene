@@ -221,6 +221,35 @@ jobs:
           DASHSCENE_REQUIRE_ATLAS_TOOL: "1"
           MSDF_ATLAS_GEN: /home/runner/.local/bin/msdf-atlas-gen
 
+  render-oracle:
+    name: render-oracle
+    runs-on: ubuntu-latest
+    # The design-source render oracle (exit criterion E7, guardrail G-11):
+    # a perceptual diff of the reference painter against Figma's REST image
+    # export, with per-rule tolerance bands. The harness and the bands are
+    # exercised in the `test` job; this job runs the design-source assertion,
+    # which is #[ignore]-gated until the real Figma exports are authored (the
+    # parked manual-Figma issue #265). With no committed design source the
+    # run measures nothing and prints a summary naming every pending frame —
+    # never a silent green — and E7 stays open in
+    # docs/specification/05-qualification.md, not met. When #265 lands and the
+    # exports drop into goldens/oracle/design-source/, this job asserts each
+    # frame's render against its export within the frame's band.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: install flatc
+        run: |
+          curl -fsSL -o flatc.zip https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip
+          unzip -o flatc.zip flatc -d /usr/local/bin
+          chmod +x /usr/local/bin/flatc
+      # skia-safe's prebuilt Linux binaries link the system fontconfig.
+      - name: install skia system libraries
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
+      - name: design-source render oracle (E7 / G-11)
+        run: cargo test -p goldens --test render_oracle -- --ignored --nocapture
+
   ci:
     name: ci
     if: always()
@@ -228,7 +257,18 @@ jobs:
     # (docs/decisions/house-style.md). "skipped" is accepted: convco only runs on
     # pull requests, and deno only when importers/figma/ changed.
     needs:
-      [changes, fmt, dprint, clippy, test, wasm-build, convco, deno, atlas-repro]
+      [
+        changes,
+        fmt,
+        dprint,
+        clippy,
+        test,
+        wasm-build,
+        convco,
+        deno,
+        atlas-repro,
+        render-oracle,
+      ]
     runs-on: ubuntu-latest
     steps:
       - name: check required jobs

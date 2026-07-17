@@ -1,0 +1,67 @@
+{
+  "description": "The design-source render oracle wiring (exit criterion E7, guardrail G-11). Each frame maps a committed reference-painter golden to the design source it must render within tolerance of — Figma's REST GET /images export — and the per-rule tolerance band that governs the diff. The harness and the bands live in goldens/tooling/src/oracle.rs; the diff runs in goldens/tooling/tests/render_oracle.rs (the_reference_renders_match_their_design_source, #[ignore]-gated on #265).",
+  "gate": {
+    "issue": 265,
+    "reason": "The real design-source images (Figma REST GET /images exports for the corpus frames) are authored manually and tracked by the parked manual-Figma-authoring issue #265. No design source may be fabricated or stood in for by the project's own render — that is the self-oracle fidelity failure G-11 forbids. Until #265 lands, every frame's designSource is null and its status is pending-265; the render-oracle CI job reports each pending frame, never a silent green, and E7 stays open (docs/specification/05-qualification.md)."
+  },
+  "reference_base": "images",
+  "design_source_base": "oracle/design-source",
+  "frames": [
+    {
+      "frame": "v08-wrap",
+      "referenceImage": "images/v08-wrap.png",
+      "band": "aa-edge",
+      "designSource": null,
+      "status": "pending-265",
+      "note": "E3 exact-layout case (wrap; story #46). Hard rect edges — the aa-edge band."
+    },
+    {
+      "frame": "v08-grid-spans",
+      "referenceImage": "images/v08-grid-spans.png",
+      "band": "aa-edge",
+      "designSource": null,
+      "status": "pending-265",
+      "note": "E3 exact-layout case (grid spans; story #46). Hard rect edges — the aa-edge band."
+    },
+    {
+      "frame": "v08-baseline",
+      "referenceImage": "images/v08-baseline.png",
+      "band": "aa-edge",
+      "designSource": null,
+      "status": "pending-265",
+      "note": "E3 exact-layout case (baseline; story #46). Hard rect edges — the aa-edge band."
+    },
+    {
+      "frame": "v08-drop-shadow",
+      "referenceImage": "images/v08-drop-shadow.png",
+      "band": "blur-falloff",
+      "designSource": null,
+      "status": "pending-265",
+      "note": "Soft drop shadow (blur 6; story #45). The blur-falloff band pins the sigma = blur/2 mapping against the real capture (docs/decisions/effects-vocabulary-shadows.md); until #265 lands, sigma = blur/2 stays a self-oracle constant, not retired."
+    },
+    {
+      "frame": "v08-inner-shadow",
+      "referenceImage": "images/v08-inner-shadow.png",
+      "band": "blur-falloff",
+      "designSource": null,
+      "status": "pending-265",
+      "note": "Soft inner shadow (blur 6; story #45). The blur-falloff band, same sigma = blur/2 pinning as the drop shadow."
+    },
+    {
+      "frame": "v06-text-arabic",
+      "referenceImage": "images/v06-text-arabic.png",
+      "band": "msdf-text",
+      "designSource": null,
+      "status": "pending-265",
+      "note": "Arabic RTL text rendered as MSDF atlas quads (E2). Glyph edges — the msdf-text band."
+    },
+    {
+      "frame": "v05-text-latin",
+      "referenceImage": "images/v05-text-latin.png",
+      "band": "msdf-text",
+      "designSource": null,
+      "status": "pending-265",
+      "note": "Latin text rendered as MSDF atlas quads. Glyph edges — the msdf-text band."
+    }
+  ]
+}

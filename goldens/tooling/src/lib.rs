@@ -13,6 +13,8 @@ use std::path::Path;
 
 use skia_safe::{AlphaType, ColorType, Data, ImageInfo, images};
 
+pub mod oracle;
+
 /// Compares `png_bytes` against the checked-in golden `{name}.png`,
 /// requiring an exact pixel match. Use this for content that renders
 /// bit-identically across machines — integer-aligned, un-antialiased

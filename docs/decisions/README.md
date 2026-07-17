@@ -190,6 +190,13 @@ into the records below. Per-story decisions land here directly:
 - [v03-paint-goldens-per-family.md](v03-paint-goldens-per-family.md) —
   the v0.3 paint goldens are per-family isolation scenes complementing
   story #14's combined golden; subtree clips deferred to #97 (story #18).
+- [render-oracle-tolerance-and-gating.md](render-oracle-tolerance-and-gating.md)
+  — the design-source render oracle uses per-rule tolerance bands (not one
+  global budget), diffs only against a real Figma REST export (never a
+  fabricated stand-in) with each frame pending #265, diffs the committed
+  reference golden as the render side, and ships the real-capture assertion
+  `#[ignore]`-gated rather than as a permanently-red CI job (story #284;
+  exit criterion E7, guardrail G-11; binds #49 and #265).
 
 - [asset-model-content-addressed-blobs.md](asset-model-content-addressed-blobs.md)
   — assets are content-addressed raw blobs referenced from a hot
