@@ -4,7 +4,8 @@
 use dashpaint::{
     ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CornerRadii, GlyphRunTable, Gradient,
     GradientKind, GradientStop, GroupComposite, ImageAsset, ImageFormat, ImageTable, PaintEntry,
-    PaintIndex, PaintKind, PaintTable, Painter, RectEntry, ScaleMode, Stroke, StrokeAlign, Vec2,
+    PaintIndex, PaintKind, PaintTable, Painter, RectEntry, ScaleMode, Shadow, ShadowKind, Stroke,
+    StrokeAlign, Vec2,
 };
 
 const RED: Color = Color {
@@ -109,6 +110,13 @@ fn a_full_entry_round_trips_through_the_table() {
             bottom_right: 3.0,
             bottom_left: 4.0,
         },
+        shadows: vec![Shadow {
+            kind: ShadowKind::Drop,
+            offset: Vec2 { x: 0.0, y: 4.0 },
+            blur: 8.0,
+            spread: 1.0,
+            color: HALF_BLUE,
+        }],
     };
     let mut table = PaintTable::new();
     let index = table.push(entry.clone());

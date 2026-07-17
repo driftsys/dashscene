@@ -213,6 +213,7 @@ fn the_stroke_family_matches_its_golden() {
             color: red,
         }),
         corners,
+        ..PaintEntry::default()
     };
     let inside = paints.push(stroke_entry(StrokeAlign::Inside, CornerRadii::default()));
     let center = paints.push(stroke_entry(StrokeAlign::Center, CornerRadii::default()));

@@ -16,12 +16,12 @@
 use dashpaint::{
     Atlas, ClipTable, CornerRadii, GlyphRun, GlyphRunTable, Gradient, GradientKind, GroupComposite,
     ImageAsset, ImageTable, MAX_GRADIENT_STOPS, PaintKind, PaintTable, Painter, RectEntry,
-    ScaleMode, Stroke, StrokeAlign,
+    ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign,
 };
 use skia_safe::{
-    AlphaType, Canvas, ClipOp, Color4f, ColorType, Data, EncodedImageFormat, FilterMode, Image,
-    ImageInfo, Matrix, MipmapMode, Point, RRect, Rect, RuntimeEffect, SamplingOptions, Shader,
-    TileMode, gradient_shader, images, surfaces,
+    AlphaType, BlurStyle, Canvas, ClipOp, Color4f, ColorType, Data, EncodedImageFormat, FilterMode,
+    Image, ImageInfo, MaskFilter, Matrix, MipmapMode, Path, PathFillType, Point, RRect, Rect,
+    RuntimeEffect, SamplingOptions, Shader, TileMode, gradient_shader, images, surfaces,
 };
 
 /// How a painter treats the advisory dirty set.
@@ -194,6 +194,28 @@ impl Painter for SkiaPainter {
                 }
             }
             let rrect = rounded_box(rect, &entry.corners);
+            // How far the node's stroke pushes its rendered silhouette past
+            // the fill box: an outside stroke by its full width, a center
+            // stroke by half, an inside stroke not at all. A drop shadow
+            // casts from that silhouette, not the bare fill box (P1).
+            let outset = stroke_outset(entry.stroke.as_ref());
+            // Drop shadows fall behind the fill (story #45,
+            // `docs/decisions/effects-vocabulary-shadows.md`). They draw
+            // inside this rect's clip-region save/restore, so an ancestor
+            // clip bounds the shadow, and inside any open render-target
+            // group layer, so a shadowed node under an overlapping partial
+            // opacity composites its shadow in the layer. `rect.opacity`
+            // carries the free-path group alpha.
+            //
+            // `entry.shadows` is in Figma's `effects` array order, which is
+            // back-to-front (like Figma's `children`: `effects[0]` is the
+            // backmost shadow, the last element renders on top). DFS draw
+            // order composites a later draw over an earlier one, so painting
+            // the list forward — first element first — reproduces that
+            // stacking exactly; no reversal is needed.
+            for shadow in entry.shadows.iter().filter(|s| s.kind == ShadowKind::Drop) {
+                draw_drop_shadow(canvas, rect, &entry.corners, outset, shadow, rect.opacity);
+            }
             match &entry.fill {
                 // A fill-less entry draws nothing (a layout-only node, or a
                 // mask node whose shape is a stencil, not paint).
@@ -230,6 +252,11 @@ impl Painter for SkiaPainter {
             }
             if let Some(stroke) = &entry.stroke {
                 draw_stroke(canvas, &rrect, stroke, rect.opacity);
+            }
+            // Inner shadows sit on top of the fill and stroke, clipped to
+            // the node's own shape (story #45).
+            for shadow in entry.shadows.iter().filter(|s| s.kind == ShadowKind::Inner) {
+                draw_inner_shadow(canvas, &rrect, rect, &entry.corners, shadow, rect.opacity);
             }
             if clipped {
                 canvas.restore();
@@ -414,6 +441,123 @@ fn apply_opacity(paint: &mut skia_safe::Paint, opacity: f32) {
     if opacity != 1.0 {
         paint.set_alpha_f(paint.alpha_f() * opacity);
     }
+}
+
+/// The Gaussian blur a shadow's `blur` radius applies. Skia takes a
+/// sigma, not a radius; the CSS/browser convention `sigma = radius / 2`
+/// is the one this reference painter defines (story #45). A zero-radius
+/// shadow uses no mask filter — a hard edge, not a degenerate blur.
+fn blur_mask_filter(blur: f32) -> Option<MaskFilter> {
+    (blur > 0.0)
+        .then(|| MaskFilter::blur(BlurStyle::Normal, blur / 2.0, false))
+        .flatten()
+}
+
+/// Per-corner radii adjusted by a spread delta: a corner grows with
+/// positive spread (a drop shadow) or shrinks with negative (an inner
+/// shadow's lit hole), floored at zero. A sharp corner (radius 0) stays
+/// sharp, matching CSS's spread rule.
+fn spread_corners(corners: &CornerRadii, delta: f32) -> CornerRadii {
+    let adj = |r: f32| if r > 0.0 { (r + delta).max(0.0) } else { 0.0 };
+    CornerRadii {
+        top_left: adj(corners.top_left),
+        top_right: adj(corners.top_right),
+        bottom_right: adj(corners.bottom_right),
+        bottom_left: adj(corners.bottom_left),
+    }
+}
+
+/// How far the stroke pushes the node's rendered outline past its fill box,
+/// the same geometry `draw_stroke` uses: an outside stroke by its full
+/// width, a center stroke by half, an inside stroke not at all. A drop
+/// shadow casts from that outline (P1), so it grows the shadow shape by
+/// this amount before the spread and offset apply.
+fn stroke_outset(stroke: Option<&Stroke>) -> f32 {
+    match stroke {
+        Some(s) => match s.align {
+            StrokeAlign::Inside => 0.0,
+            StrokeAlign::Center => s.width / 2.0,
+            StrokeAlign::Outside => s.width,
+        },
+        None => 0.0,
+    }
+}
+
+/// Draws a drop shadow: the node's rendered outline (its fill box grown by
+/// `stroke_outset` for an outside/center stroke), offset and grown by
+/// `spread` (the shadow-spread math of the seed §8.1), filled with the
+/// shadow color under a Gaussian blur, behind the node. `opacity` is the
+/// rect's free-path group alpha.
+fn draw_drop_shadow(
+    canvas: &Canvas,
+    rect: &RectEntry,
+    corners: &CornerRadii,
+    stroke_outset: f32,
+    shadow: &Shadow,
+    opacity: f32,
+) {
+    // The silhouette grows by the stroke outset and the spread together;
+    // the corners follow, and a sharp corner stays sharp under both.
+    let grow = stroke_outset + shadow.spread;
+    let shape = rrect_of(
+        rect.x - grow + shadow.offset.x,
+        rect.y - grow + shadow.offset.y,
+        (rect.w + 2.0 * grow).max(0.0),
+        (rect.h + 2.0 * grow).max(0.0),
+        &spread_corners(corners, grow),
+    );
+    let mut paint = solid_paint(shadow.color);
+    paint.set_anti_alias(true);
+    paint.set_mask_filter(blur_mask_filter(shadow.blur));
+    apply_opacity(&mut paint, opacity);
+    canvas.draw_rrect(shape, &paint);
+}
+
+/// Draws an inner shadow: clip to the node's shape, then fill everything
+/// except the (offset, spread-inset) inner shape with the shadow color
+/// under a Gaussian blur, so the blur bleeds inward from the shape's edge
+/// (`docs/decisions/effects-vocabulary-shadows.md`). The even-odd path is
+/// an outer rect minus the inner rounded rect; the outer rect extends past
+/// the clip by more than the blur radius, so the shadow saturates at the
+/// shape edge rather than fading from the outer boundary.
+fn draw_inner_shadow(
+    canvas: &Canvas,
+    shape: &RRect,
+    rect: &RectEntry,
+    corners: &CornerRadii,
+    shadow: &Shadow,
+    opacity: f32,
+) {
+    let s = shadow.spread;
+    let hole = rrect_of(
+        rect.x + s + shadow.offset.x,
+        rect.y + s + shadow.offset.y,
+        (rect.w - 2.0 * s).max(0.0),
+        (rect.h - 2.0 * s).max(0.0),
+        &spread_corners(corners, -s),
+    );
+    let margin =
+        shadow.blur * 3.0 + s.abs() + shadow.offset.x.abs().max(shadow.offset.y.abs()) + 4.0;
+    let outer = Rect::from_xywh(
+        rect.x - margin,
+        rect.y - margin,
+        rect.w + 2.0 * margin,
+        rect.h + 2.0 * margin,
+    );
+    let mut path = Path::new();
+    path.add_rect(outer, None);
+    path.add_rrect(hole, None);
+    path.set_fill_type(PathFillType::EvenOdd);
+
+    let mut paint = solid_paint(shadow.color);
+    paint.set_anti_alias(true);
+    paint.set_mask_filter(blur_mask_filter(shadow.blur));
+    apply_opacity(&mut paint, opacity);
+
+    canvas.save();
+    canvas.clip_rrect(*shape, ClipOp::Intersect, true);
+    canvas.draw_path(&path, &paint);
+    canvas.restore();
 }
 
 fn solid_paint(color: dashpaint::Color) -> skia_safe::Paint {

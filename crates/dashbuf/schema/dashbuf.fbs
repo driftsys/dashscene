@@ -157,6 +157,34 @@ table Image {
   bytes: [ubyte];
 }
 
+// A drop or inner shadow effect (v0.8, story #45,
+// docs/decisions/effects-vocabulary-shadows.md). Authored intent only —
+// offset, blur radius, spread, and color, per the shadow-spread math of
+// docs/archive/2026-07-14-design-1-seed.md §8.1. The resolved shadow
+// geometry (the spread-expanded, offset, blurred shape) is a painter
+// result, never in the document (P1). Effects enter the schema here; the
+// NOW band is drop and inner shadows only — noise, texture, and
+// progressive blur stay REJECT (docs/specification/04-figma-vocabulary-profile.md),
+// and layer/backdrop blur stay LATER.
+enum ShadowKind : uint8 {
+  Drop = 0,
+  Inner = 1,
+}
+
+// One shadow. `blur` is the Gaussian blur radius in document units
+// (non-negative); `spread` grows the shadow shape (a drop shadow outward,
+// an inner shadow's lit hole inward) and may be negative. `color` is
+// required: a shadow with no color has no meaning, and the verifier
+// rejects it at the load gate (P4) — the same mechanism as Stroke's
+// required color.
+table Shadow {
+  kind: ShadowKind;
+  offset: Vec2;
+  blur: float32;
+  spread: float32;
+  color: Color (required);
+}
+
 // One entry of the document's paint pool (docs/design/dashbuf.md's "dedup style
 // pool"): what a node is filled with, how its outline is stroked, how
 // its corners round, and whether it clips its children to the (rounded)
@@ -167,6 +195,11 @@ table Paint {
   stroke: Stroke;
   corners: CornerRadii;
   clip: bool = false;
+  // v0.8 shadows (story #45). A node's drop and inner shadows in paint
+  // order; absent (the pre-v0.8 default) means no shadows, so old
+  // documents emit unchanged (R7). Effects dedup with the rest of the
+  // entry — two nodes sharing a style and shadows share one pool entry.
+  shadows: [Shadow];
 }
 
 // One entry of the document's text style pool (docs/design/dashbuf.md's "dedup

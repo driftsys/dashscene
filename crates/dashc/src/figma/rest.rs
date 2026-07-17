@@ -437,6 +437,26 @@ pub struct Effect {
     /// the REJECT band, so the effect type alone cannot decide the verdict.
     #[serde(default)]
     pub blur_type: Option<String>,
+    /// A shadow effect's blend mode. `NORMAL` (the default) lowers; anything
+    /// else is an advanced blend mode with no vocabulary, diagnosed like a
+    /// paint blend mode (story #45).
+    #[serde(default)]
+    pub blend_mode: Option<String>,
+    /// A shadow effect's color (`DROP_SHADOW`/`INNER_SHADOW`). Absent on a
+    /// blur effect, which is triaged rather than lowered.
+    #[serde(default)]
+    pub color: Option<Color>,
+    /// A shadow effect's `{x, y}` offset in pixels. Absent means centered.
+    #[serde(default)]
+    pub offset: Option<Vector>,
+    /// A shadow effect's Gaussian blur radius in pixels — Figma's `radius`.
+    /// Absent means a hard-edged shadow.
+    #[serde(default)]
+    pub radius: Option<f32>,
+    /// A shadow effect's spread in pixels — grows the shadow shape. Absent
+    /// means zero.
+    #[serde(default)]
+    pub spread: Option<f32>,
 }
 
 /// Non-premultiplied, 0.0–1.0 per channel — the same convention as

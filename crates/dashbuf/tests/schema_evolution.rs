@@ -41,11 +41,11 @@ use dashbuf::{
     GradientArgs, GradientKind, GradientStop, GridTrack, GridTrackArgs, GridTrackSizing, Image,
     ImageArgs, ImageFill, ImageFillArgs, ImageFormat, LayoutConstraints, LayoutConstraintsArgs,
     LayoutContainer, LayoutContainerArgs, LayoutMode, MainAxisAlign, Mat23, NO_PAINT, NO_PARENT,
-    NO_TEXT, NO_TEXT_STYLE, Node, NodeArgs, Paint, PaintArgs, ScaleMode, SignalDecl,
-    SignalDeclArgs, SolidFill, SolidFillArgs, Stroke, StrokeAlign, StrokeArgs, TextStyle,
-    TextStyleArgs, TransformScale, TransformScaleArgs, VariantFill, VariantFillArgs, VariantMember,
-    VariantMemberArgs, VariantOverride, VariantOverrideArgs, VariantPropValue, VariantSet,
-    VariantSetArgs, VariantX, VariantXArgs, Vec2, root_as_document,
+    NO_TEXT, NO_TEXT_STYLE, Node, NodeArgs, Paint, PaintArgs, ScaleMode, Shadow, ShadowArgs,
+    ShadowKind, SignalDecl, SignalDeclArgs, SolidFill, SolidFillArgs, Stroke, StrokeAlign,
+    StrokeArgs, TextStyle, TextStyleArgs, TransformScale, TransformScaleArgs, VariantFill,
+    VariantFillArgs, VariantMember, VariantMemberArgs, VariantOverride, VariantOverrideArgs,
+    VariantPropValue, VariantSet, VariantSetArgs, VariantX, VariantXArgs, Vec2, root_as_document,
 };
 use flatbuffers::FlatBufferBuilder;
 
@@ -224,6 +224,33 @@ fn frozen_solid_fill_entry_reads_back() {
     // Written `true` against the schema default of `false`: a shifted
     // id reads the default and this assertion is what notices.
     assert!(entry.clip());
+}
+
+/// Pool entry 0's v0.8 shadow (story #45): an Inner shadow with every
+/// field written non-default. A shifted field id reads back the wrong
+/// value; a renumbered `ShadowKind` reads back `Drop`.
+#[test]
+fn frozen_shadow_reads_back() {
+    let entry = paint(0);
+    let shadows = entry.shadows().expect("shadows present");
+    assert_eq!(shadows.len(), 1);
+    let shadow = shadows.get(0);
+    // Inner = 1 against the Drop = 0 default.
+    assert_eq!(shadow.kind(), ShadowKind::Inner);
+    let offset = shadow.offset().expect("shadow offset present");
+    assert_eq!((offset.x(), offset.y()), (3.0, -4.0));
+    assert_eq!(shadow.blur(), 6.0);
+    assert_eq!(shadow.spread(), 2.0);
+    let color = shadow.color();
+    assert_eq!(
+        (color.r(), color.g(), color.b(), color.a()),
+        (0.1, 0.2, 0.3, 0.5)
+    );
+
+    // Entries 1 and 2 carry no shadows: absence reads back as absence,
+    // not as entry 0's shadow.
+    assert!(paint(1).shadows().is_none_or(|s| s.is_empty()));
+    assert!(paint(2).shadows().is_none_or(|s| s.is_empty()));
 }
 
 /// Pool entry 1: an `Angular` gradient. Both the union discriminant and
@@ -565,6 +592,21 @@ fn build_fixture() -> Vec<u8> {
             color: Some(&Color::new(0.0, 1.0, 0.0, 1.0)),
         },
     );
+    // v0.8 shadows (story #45): one Inner shadow, every field non-default
+    // (kind Inner = 1 against Drop = 0, a non-zero offset, blur, and
+    // spread, and a color distinguishable from the entry's red fill), so a
+    // shifted field id or renumbered ShadowKind reads back wrong here.
+    let shadow = Shadow::create(
+        &mut b,
+        &ShadowArgs {
+            kind: ShadowKind::Inner,
+            offset: Some(&Vec2::new(3.0, -4.0)),
+            blur: 6.0,
+            spread: 2.0,
+            color: Some(&Color::new(0.1, 0.2, 0.3, 0.5)),
+        },
+    );
+    let shadows = b.create_vector(&[shadow]);
     let solid_entry = Paint::create(
         &mut b,
         &PaintArgs {
@@ -573,6 +615,7 @@ fn build_fixture() -> Vec<u8> {
             stroke: Some(stroke),
             corners: Some(&CornerRadii::new(1.0, 2.0, 3.0, 4.0)),
             clip: true,
+            shadows: Some(shadows),
         },
     );
 

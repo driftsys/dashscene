@@ -27,8 +27,8 @@ use dashpaint::{
 };
 
 use crate::paint::{
-    check_corners, check_gradient_stops, check_image_bytes, check_image_index, check_stroke_width,
-    error, warning,
+    check_corners, check_gradient_stops, check_image_bytes, check_image_index, check_shadow,
+    check_stroke_width, error, warning,
 };
 use crate::{Location, NodePath, RENDER_TARGET_BUDGET_PLACEHOLDER, Report, rule};
 
@@ -162,6 +162,25 @@ fn check_paint_entry(report: &mut Report, entry: &PaintEntry, at: &Location, ima
         at,
         [c.top_left, c.top_right, c.bottom_right, c.bottom_left],
     );
+
+    // v0.8 shadows (story #45): the same numeric domain as the load gate, on
+    // the resolved paint entry.
+    for (i, shadow) in entry.shadows.iter().enumerate() {
+        check_shadow(
+            report,
+            at,
+            i,
+            [shadow.offset.x, shadow.offset.y],
+            shadow.blur,
+            shadow.spread,
+            [
+                shadow.color.r,
+                shadow.color.g,
+                shadow.color.b,
+                shadow.color.a,
+            ],
+        );
+    }
 }
 
 /// A rect's extents must be finite and non-negative (issue #128). Rects come

@@ -48,6 +48,7 @@ pub use bindings::{
 };
 pub use committed::{
     ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CommittedScene, CornerRadii, GroupComposite,
-    PaintEntry, PaintIndex, PaintKind, PaintTable, RectEntry, Stroke, StrokeAlign,
+    PaintEntry, PaintIndex, PaintKind, PaintTable, RectEntry, Shadow, ShadowKind, Stroke,
+    StrokeAlign,
 };
 pub use load::load_document;

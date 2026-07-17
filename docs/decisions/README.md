@@ -177,6 +177,13 @@ into the records below. Per-story decisions land here directly:
   rule; the Q-6 budget is a validator placeholder (story #44); folds the
   #143 dashc un-pin (rotation stays refused) and the #253 Opacity channel.
 
+- [effects-vocabulary-shadows.md](effects-vocabulary-shadows.md) — drop and
+  inner shadows are a `shadows: [Shadow]` list on the paint-pool entry
+  (a list, not fixed slots, so `Paint.fill`/`.stroke` arity is untouched and
+  #146 stays open), carried through core like corners and rendered live in
+  the Skia painter (spread math, clip + inverse-fill inner shadow, Figma
+  back-to-front stacking); folds the #144 dashc un-pin (story #45).
+
 - [v03-paint-goldens-per-family.md](v03-paint-goldens-per-family.md) —
   the v0.3 paint goldens are per-family isolation scenes complementing
   story #14's combined golden; subtree clips deferred to #97 (story #18).

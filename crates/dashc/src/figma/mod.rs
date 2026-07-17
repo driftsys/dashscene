@@ -37,7 +37,7 @@ use serde::Deserialize;
 
 use dashpaint::{
     Color, CornerRadii, Gradient, GradientKind, GradientStop, ImageAsset, Mat23, PaintEntry,
-    PaintKind, ScaleMode, Stroke, StrokeAlign, Vec2,
+    PaintKind, ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, Vec2,
 };
 use dashscene_validator::{Diagnostic, Location, NodePath, Profile, Report, Severity};
 
@@ -823,6 +823,7 @@ impl Walk<'_> {
             fill: self.fill_of(node, path)?,
             stroke: self.stroke_of(node, path)?,
             corners: corners_of(node),
+            shadows: shadows_of(node, path)?,
         };
 
         // A layout-only container draws nothing but still occupies a rect-table
@@ -915,10 +916,11 @@ impl Walk<'_> {
                 bottom_right: radius,
                 bottom_left: radius,
             },
+            shadows: shadows_of(node, path)?,
         };
-        // A circle with neither fill nor stroke draws nothing — the corners
-        // alone shape no ink. An ellipse is a leaf, so it never clips.
-        if entry.fill.is_none() && entry.stroke.is_none() {
+        // A circle with neither fill, stroke, nor shadow draws nothing — the
+        // corners alone shape no ink. An ellipse is a leaf, so it never clips.
+        if entry.fill.is_none() && entry.stroke.is_none() && entry.shadows.is_empty() {
             return Ok(None);
         }
         Ok(Some(DocPaint { entry, clip: false }))
@@ -1687,6 +1689,46 @@ fn corners_of(node: &Node) -> CornerRadii {
         bottom_right: r,
         bottom_left: r,
     }
+}
+
+/// Lowers a node's visible `DROP_SHADOW`/`INNER_SHADOW` effects into the
+/// paint entry's shadow list, in Figma's effect order (story #45). Non-shadow
+/// effects (noise, blur) are triaged in [`triage::constructs_of`], not here.
+/// A hidden effect is skipped, like a hidden paint. A shadow with no color has
+/// no meaning and is refused by name (P4) — the same posture as a `SOLID` with
+/// no color; `Unsupported` becomes a blocker at the caller.
+///
+/// Figma's `showShadowBehindNode` is not modeled: the REST subset is
+/// deliberately partial, and this painter always draws a drop shadow behind
+/// the node (the Figma default). That is a documented fidelity limitation, not
+/// a dropped field the schema could carry.
+fn shadows_of(node: &Node, path: &str) -> Result<Vec<Shadow>, CompileError> {
+    let mut shadows = Vec::new();
+    for effect in node.effects.iter().filter(|e| e.visible != Some(false)) {
+        let kind = match effect.kind.as_str() {
+            "DROP_SHADOW" => ShadowKind::Drop,
+            "INNER_SHADOW" => ShadowKind::Inner,
+            _ => continue,
+        };
+        let Some(color) = effect.color else {
+            return Err(CompileError::Unsupported {
+                path: path.to_string(),
+                what: "a shadow with no color".to_string(),
+            });
+        };
+        let offset = effect.offset.unwrap_or(rest::Vector { x: 0.0, y: 0.0 });
+        shadows.push(Shadow {
+            kind,
+            offset: Vec2 {
+                x: offset.x,
+                y: offset.y,
+            },
+            blur: effect.radius.unwrap_or(0.0),
+            spread: effect.spread.unwrap_or(0.0),
+            color: color_of(color, None),
+        });
+    }
+    Ok(shadows)
 }
 
 /// Figma's paint `opacity` multiplies the color's alpha. Ignoring it would be

@@ -242,6 +242,18 @@ change log — the walk reads it fresh every commit, and the rect entry's
 alpha bits carry a change into the dirty set. Full model and alternatives:
 `docs/decisions/masks-and-group-opacity.md`.
 
+## Shadows (story #45)
+
+`Prop::Shadows(Vec<Shadow>)` sets a node's drop and inner shadows (kind,
+offset, blur, spread, color). Unlike a mask or a group opacity, a shadow has
+no cross-node relation — it depends only on the node's own box and corners —
+so it is plain paint intent, the corners case exactly: stored on the node,
+classified paint-affecting, copied onto the committed `PaintEntry.shadows`
+and folded into the paint-intern key, so two nodes sharing a style and
+shadows share one pool entry and a shadow change re-interns. A mask or
+hidden node resolves to the draws-nothing entry, which carries no shadows.
+`docs/decisions/effects-vocabulary-shadows.md`.
+
 ## Binding tables (v0.7, story #167)
 
 The document binding tables live on the arena as intent metadata:

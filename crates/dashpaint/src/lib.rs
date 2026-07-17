@@ -371,8 +371,9 @@ impl ClipTable {
     }
 }
 
-/// One way to fill a rect. Effects (shadows, masks) land at v0.8 as new
-/// variants.
+/// One way to fill a rect. Shadows are a separate per-entry list
+/// ([`PaintEntry::shadows`]), not a fill kind; masks resolve into clip
+/// regions, not paint.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PaintKind {
     Solid {
@@ -391,9 +392,37 @@ pub enum PaintKind {
     },
 }
 
+/// Whether a shadow falls behind the node (a drop shadow) or inside it
+/// (an inner shadow). Mirrors `dashbuf`'s `ShadowKind`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShadowKind {
+    Drop,
+    Inner,
+}
+
+/// One drop or inner shadow (v0.8, story #45,
+/// `docs/decisions/effects-vocabulary-shadows.md`). Authored intent —
+/// offset, blur radius, spread, and color. The resolved shadow geometry
+/// (spread-expanded, offset, blurred) is per-painter math the painter
+/// derives from the rect's box and the entry's corners at draw time (P1);
+/// this carries only the parameters.
+///
+/// `blur` is the Gaussian blur radius in document units (non-negative);
+/// `spread` grows the shadow shape — a drop shadow outward, an inner
+/// shadow's lit hole inward — and may be negative. Ranges are validated
+/// upstream (`dashscene-validator`, P4).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Shadow {
+    pub kind: ShadowKind,
+    pub offset: Vec2,
+    pub blur: f32,
+    pub spread: f32,
+    pub color: Color,
+}
+
 /// One paint-table entry (docs/design/dashbuf.md's paint-table row: paint-kind
 /// enum plus fill/stroke params): what a rect is filled with, how its
-/// outline is stroked, and how its corners round.
+/// outline is stroked, how its corners round, and the shadows it casts.
 ///
 /// `fill: None` is the paint-less node — a layout-only container draws
 /// nothing but still occupies its rect-table slot (index = DFS node
@@ -409,6 +438,12 @@ pub struct PaintEntry {
     pub fill: Option<PaintKind>,
     pub stroke: Option<Stroke>,
     pub corners: CornerRadii,
+    /// The node's drop and inner shadows, in paint order (v0.8, story
+    /// #45). Empty (the default) for a node with no shadows. Shadows are
+    /// an effect, not a fill or stroke, so they carry no arity limit —
+    /// a node stacks as many as it authors, which is why `Paint.fill` and
+    /// `Paint.stroke` stay single-valued (debt #146 stays untouched).
+    pub shadows: Vec<Shadow>,
 }
 
 impl PaintEntry {

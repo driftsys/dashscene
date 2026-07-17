@@ -114,6 +114,7 @@ fn the_v03_paint_vocabulary_matches_its_golden() {
             bottom_right: 6.0,
             bottom_left: 6.0,
         },
+        ..PaintEntry::default()
     });
     let outside_stroke_only = paints.push(PaintEntry {
         stroke: Some(Stroke {

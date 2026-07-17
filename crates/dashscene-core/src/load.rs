@@ -36,7 +36,7 @@ use crate::arena::{
 use crate::bindings::{Channel, ScalarTransform, SignalId};
 use crate::committed::{
     Color, Gradient, GradientKind, GradientStop, ImageAsset, ImageFormat, Mat23, PaintKind,
-    ScaleMode, Stroke, StrokeAlign, Vec2,
+    ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, Vec2,
 };
 
 /// Replays a validated `.dsb` document into `arena` and commits it,
@@ -428,6 +428,35 @@ fn load_paint(
         );
     }
 
+    // v0.8 shadows (story #45). Absent means none; the prop replaces the
+    // whole list, so an empty vector would clear it — set the prop only
+    // when the document carries a non-empty list, matching the corners
+    // and stroke omissions above.
+    if let Some(shadows) = paint.shadows()
+        && !shadows.is_empty()
+    {
+        txn.set_prop(
+            id,
+            Prop::Shadows(
+                shadows
+                    .iter()
+                    .map(|s| Shadow {
+                        kind: shadow_kind(s.kind()),
+                        // An absent `offset` struct is a zero (centered)
+                        // shadow — Figma always writes one, but the schema
+                        // leaves the struct optional.
+                        offset: s.offset().map_or(Vec2 { x: 0.0, y: 0.0 }, vec2_of),
+                        blur: s.blur(),
+                        spread: s.spread(),
+                        // `Shadow.color` is `(required)`, so the accessor
+                        // is not an Option (like `Stroke.color`).
+                        color: color_of(s.color()),
+                    })
+                    .collect(),
+            ),
+        );
+    }
+
     // The document pools clip with the paint entry; the arena carries it as
     // node intent (issue #97). Two nodes sharing a style but differing in
     // clip therefore need two pool entries in the document, which is what
@@ -499,6 +528,14 @@ fn stroke_align(a: dashbuf::StrokeAlign) -> StrokeAlign {
         dashbuf::StrokeAlign::Center => StrokeAlign::Center,
         dashbuf::StrokeAlign::Outside => StrokeAlign::Outside,
         other => unreachable!("unknown StrokeAlign {other:?}: rejected by the load gate (P4)"),
+    }
+}
+
+fn shadow_kind(k: dashbuf::ShadowKind) -> ShadowKind {
+    match k {
+        dashbuf::ShadowKind::Drop => ShadowKind::Drop,
+        dashbuf::ShadowKind::Inner => ShadowKind::Inner,
+        other => unreachable!("unknown ShadowKind {other:?}: rejected by the load gate (P4)"),
     }
 }
 
