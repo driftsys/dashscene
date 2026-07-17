@@ -46,6 +46,7 @@ import {
   type ResolvedVarsSidecar,
   TokensBlocked,
 } from "./tokens.ts";
+import { type TrimDiagnostic, trimFile, type TrimRecord } from "./trim.ts";
 import { type CompileOk, type Dashc, loadDashc, type Profile } from "./wasm.ts";
 
 export interface ImportFigmaFileOptions {
@@ -64,6 +65,15 @@ export interface ImportOk extends CompileOk {
   /** Top-level nodes the manifest did not declare — named, never silent. */
   readonly excluded: readonly ExcludedNode[];
   /**
+   * Subtrees the trim pass removed before the closure ran: sample content,
+   * redlines, spec markup, `_`-prefixed layers, and a placeholder's
+   * auto-replaced children — each named, never silently dropped (P4,
+   * docs/decisions/annotator-plugin-contract-frozen.md).
+   */
+  readonly trimmed: readonly TrimRecord[];
+  /** Trim warnings that removed nothing (a malformed annotation), named (P4). */
+  readonly trimDiagnostics: readonly TrimDiagnostic[];
+  /**
    * The phase-1 token sidecar: the `boundVariables` ids the shipped nodes
    * carry, preserved beside the resolved literals in the `.dsb`
    * (docs/decisions/token-resolution-phase-split.md).
@@ -72,10 +82,46 @@ export interface ImportOk extends CompileOk {
 }
 
 /**
+ * What the trim pass removed, carried alongside a blocked export so the report
+ * still names every trimmed subtree. Trim runs before both the closure and the
+ * token gate, so a `_`-prefixed or role-trimmed declared root (or a trimmed
+ * component definition whose instance survives) is named by its trim reason
+ * next to the block that stopped the run — the "named twice" guarantee in
+ * docs/decisions/importer-trim-layers.md.
+ */
+export interface TrimContext {
+  readonly trimmed: readonly TrimRecord[];
+  readonly trimDiagnostics: readonly TrimDiagnostic[];
+}
+
+/** Attaches trim context to an error so a blocked path can still report it. */
+function withTrim<E extends Error>(error: E, context: TrimContext): E {
+  return Object.assign(error, context);
+}
+
+/**
+ * Reads the trim context off a thrown error, when the throw carried it — an
+ * `ExportBlocked` or `TokensBlocked` from a run that had already trimmed.
+ */
+export function trimContextOf(error: unknown): TrimContext | undefined {
+  if (!(error instanceof ExportBlocked || error instanceof TokensBlocked)) {
+    return undefined;
+  }
+  const carried = error as Partial<TrimContext>;
+  if (carried.trimmed === undefined || carried.trimDiagnostics === undefined) {
+    return undefined;
+  }
+  return { trimmed: carried.trimmed, trimDiagnostics: carried.trimDiagnostics };
+}
+
+/**
  * @throws {ExportBlocked} when the closure refuses the export — an unknown
  * root, an unresolvable component — before anything is fetched or compiled.
+ * Carries the trim context ({@link trimContextOf}) so the block still names
+ * every trimmed subtree.
  * @throws {TokensBlocked} when a `boundVariables` id cannot be preserved (P4)
- * — before any image is fetched or the document is compiled.
+ * — before any image is fetched or the document is compiled. Also carries the
+ * trim context.
  * @throws {CompileFailed} when the document is blocked (R6) — no `.dsb` is
  * emitted, and the diagnostics say why.
  */
@@ -99,9 +145,19 @@ export async function importFigmaFile(
   }
 
   const file = await client.file(fileKey);
-  const closure = computeClosure(file, manifest);
+
+  // Trim runs before the closure: a trimmed subtree never enters it, so its
+  // node ids, image refs, and component references are never pulled into the
+  // document. Every trimmed subtree is named in `trimmed` (P4).
+  const { file: trimmedFile, trimmed, diagnostics: trimDiagnostics } = trimFile(
+    file,
+  );
+
+  const trimContext: TrimContext = { trimmed, trimDiagnostics };
+
+  const closure = computeClosure(trimmedFile, manifest);
   if (closure.diagnostics.some((d) => d.severity === "error")) {
-    throw new ExportBlocked(closure.diagnostics);
+    throw withTrim(new ExportBlocked(closure.diagnostics), trimContext);
   }
 
   // The file version stamps the sidecar as the staleness guard #167 joins on,
@@ -124,7 +180,7 @@ export async function importFigmaFile(
     file.version,
   );
   if (tokenDiagnostics.some((d) => d.severity === "error")) {
-    throw new TokensBlocked(tokenDiagnostics);
+    throw withTrim(new TokensBlocked(tokenDiagnostics), trimContext);
   }
 
   const images = await resolveImages({
@@ -139,7 +195,13 @@ export async function importFigmaFile(
     profile,
     images,
   );
-  return { ...compiled, excluded: closure.excluded, sidecar };
+  return {
+    ...compiled,
+    excluded: closure.excluded,
+    trimmed,
+    trimDiagnostics,
+    sidecar,
+  };
 }
 
 /**
@@ -227,14 +289,38 @@ export async function runImportCli(
     return 2;
   }
 
-  const result = await importFigmaFile({
-    client: deps.client,
-    dashc: await deps.loadDashc(),
-    fileKey,
-    profile: "core",
-    manifest,
-    fetchFn: deps.fetchFn,
-  });
+  // Trim removals and warnings are named on every path (P4). A block throws
+  // before the success reporting below, so the trim context rides the error and
+  // is printed here before the error propagates — the operator sees the trim
+  // reason next to the closure/token verdict, never a lone "unknown-root".
+  const reportTrim = (context: TrimContext) => {
+    for (const node of context.trimmed) {
+      deps.error(
+        `trimmed: ${node.type} "${node.name}" (${node.id}) — ${node.reason}`,
+      );
+    }
+    for (const diagnostic of context.trimDiagnostics) {
+      deps.error(
+        `${diagnostic.severity}[${diagnostic.rule}]: ${diagnostic.message}`,
+      );
+    }
+  };
+
+  let result: ImportOk;
+  try {
+    result = await importFigmaFile({
+      client: deps.client,
+      dashc: await deps.loadDashc(),
+      fileKey,
+      profile: "core",
+      manifest,
+      fetchFn: deps.fetchFn,
+    });
+  } catch (error) {
+    const context = trimContextOf(error);
+    if (context !== undefined) reportTrim(context);
+    throw error;
+  }
 
   // The `.dsb` and its `<out>.vars.json` sidecar are paired by filename
   // convention and by the version stamp #167 checks. The two are separate
@@ -253,8 +339,9 @@ export async function runImportCli(
     await deps.removeFile(varsPath).catch(() => {});
     throw error;
   }
-  // Neither an exclusion nor a warning blocks, so both would otherwise leave
-  // with the bytes and never be seen. P4: never a silent drop.
+  // Neither a trim, an exclusion, nor a warning blocks, so all would otherwise
+  // leave with the bytes and never be seen. P4: never a silent drop.
+  reportTrim(result);
   for (const node of result.excluded) {
     deps.error(
       `excluded by declaration: ${node.type} "${node.name}" (${node.id}) ` +

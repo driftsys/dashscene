@@ -3,9 +3,19 @@
   "id": "dashscene-annotator",
   "api": "1.0.0",
   "main": "code.js",
+  "ui": "ui.html",
   "editorType": ["figma"],
   "documentAccess": "dynamic-page",
   "networkAccess": {
     "allowedDomains": ["none"]
-  }
+  },
+  "menu": [
+    { "name": "Mark placeholder", "command": "placeholder" },
+    { "name": "Mark sample-content", "command": "sample-content" },
+    { "name": "Mark redline", "command": "redline" },
+    { "name": "Mark spec", "command": "spec" },
+    { "name": "Clear role", "command": "clear-role" },
+    { "separator": true },
+    { "name": "Export tokens (vartable)", "command": "token-export" }
+  ]
 }

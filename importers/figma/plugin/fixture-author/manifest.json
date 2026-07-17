@@ -17,6 +17,7 @@
     { "name": "lowering-baseline", "command": "lowering-baseline" },
     { "name": "lowering-variant-topology", "command": "lowering-variant-topology" },
     { "separator": true },
-    { "name": "real-file", "command": "real-file" }
+    { "name": "real-file", "command": "real-file" },
+    { "name": "trim-demo", "command": "trim-demo" }
   ]
 }

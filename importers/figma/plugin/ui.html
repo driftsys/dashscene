@@ -1,0 +1,82 @@
+<!--
+  Token-export panel for the dashscene annotator (code.js).
+
+  The Plugin API cannot read the REST file version, so the operator pastes it
+  here (it is the `version` field of the paired `GET /file` capture); the panel
+  stamps it into the table and lets the operator copy the JSON out to
+  corpus/figma-fixtures/<file>.vartable.json
+  (docs/decisions/token-resolution-phase-split.md).
+-->
+<style>
+  body { font: 12px/1.5 system-ui, sans-serif; margin: 12px; color: #222; }
+  label { display: block; font-weight: 600; margin: 8px 0 4px; }
+  input { width: 100%; box-sizing: border-box; padding: 6px; font-family: monospace; }
+  textarea { width: 100%; box-sizing: border-box; height: 340px; font-family: monospace; font-size: 11px; }
+  .row { display: flex; gap: 8px; margin-top: 8px; }
+  button { padding: 6px 12px; cursor: pointer; }
+  .hint { color: #666; margin-top: 4px; }
+  .warn { color: #b00; }
+</style>
+
+<label for="version">File version (from the paired capture's <code>version</code>)</label>
+<input id="version" placeholder="e.g. 2375054079873371437" />
+<p class="hint" id="status"></p>
+
+<label for="json">Vartable JSON</label>
+<textarea id="json" readonly></textarea>
+
+<div class="row">
+  <button id="copy">Copy JSON</button>
+  <button id="done">Done</button>
+</div>
+
+<script>
+  let table = null;
+
+  const versionInput = document.getElementById("version");
+  const jsonArea = document.getElementById("json");
+  const status = document.getElementById("status");
+
+  function render() {
+    if (!table) return;
+    table.version = versionInput.value.trim();
+    jsonArea.value = JSON.stringify(table, null, 2) + "\n";
+    status.textContent = table.version
+      ? ""
+      : "Paste the file version before committing — it is the staleness guard.";
+    status.className = table.version ? "hint" : "hint warn";
+  }
+
+  window.onmessage = (event) => {
+    const message = event.data.pluginMessage;
+    if (message && message.type === "vartable") {
+      table = message.table;
+      const count = Object.keys(table.variables).length;
+      status.textContent = count + " variable(s) exported.";
+      render();
+    }
+  };
+
+  versionInput.addEventListener("input", render);
+
+  document.getElementById("copy").addEventListener("click", () => {
+    // Refuse to hand out a vartable with no version stamp: it is the staleness
+    // guard #167 checks, and the importer's loader (parseVartable) rejects a
+    // blank one, so copying it would only produce a table that cannot load.
+    if (!table || !table.version) {
+      status.textContent =
+        "Paste the file version first — the vartable needs its staleness stamp.";
+      status.className = "hint warn";
+      versionInput.focus();
+      return;
+    }
+    jsonArea.select();
+    document.execCommand("copy");
+    status.textContent = "Copied. Save it as corpus/figma-fixtures/<file>.vartable.json";
+    status.className = "hint";
+  });
+
+  document.getElementById("done").addEventListener("click", () => {
+    parent.postMessage({ pluginMessage: { type: "close" } }, "*");
+  });
+</script>

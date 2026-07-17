@@ -23,6 +23,11 @@ as-built compiler:
   attribute value replaced by a lowering one, e.g. `counterAxisAlignItems`
   `BASELINE` → `MIN`) — emits and is pinned by a committed golden. The raw
   blocker and the story that lifts it are in `note`.
+- `vartable` — present when a fixture has a committed token-export table
+  (`<name>.vartable.json`), the annotator plugin's id → name/collection/mode
+  output that #167 joins the phase-1 sidecar against
+  (`docs/decisions/token-resolution-phase-split.md`). Only `variables-bound`
+  carries one today.
 
 ## Tier 1 — committed static corpus
 
@@ -54,12 +59,23 @@ skipped, unchanged, or failed fixture never has its images pruned — the
 directory is only authoritative when the fixture was actually captured.
 
 Nine tier-1 fixtures are authored and captured, committed under
-this directory. A tenth, `real-file`, is registered in the manifest for
-the v0.7 real-file import spike (story #37) and awaits its manual
-authoring step — it is production-shaped (two pages, undeclared frames
-beside the export root, a component set with an instance, a hidden
-layer, an image fill) rather than single-construct, so the export
-closure replays against a realistic response shape.
+this directory. Two more are registered in the manifest and await a
+manual authoring step:
+
+- `real-file` — the v0.7 real-file import spike (story #37):
+  production-shaped (two pages, undeclared frames beside the export
+  root, a component set with an instance, a hidden layer, an image fill)
+  rather than single-construct, so the export closure replays against a
+  realistic response shape.
+- `trim-demo` — the trim-path exercise (story #39): one declared root
+  holding a placeholder slot, a redline overlay, a spec note, a
+  `_`-prefixed scratch layer, and a hidden layer. Its authoring is **two
+  steps** (the real-file precedent): run the fixture-author `trim-demo`
+  command to build the scene, then run the **separate** dashscene
+  annotator plugin to write the roles (the fixture author never writes
+  roles), then capture. The trim rules themselves are covered offline by
+  `importers/figma/src/trim_test.ts`; this fixture replays annotate →
+  trim → named record against a real `?plugin_data=shared` response.
 
 | fixture                     | covers                                                                                                                                                                                                                                                                                |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

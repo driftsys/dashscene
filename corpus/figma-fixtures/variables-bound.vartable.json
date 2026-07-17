@@ -1,0 +1,52 @@
+{
+  "vartableContract": 1,
+  "version": "2375054079873371437",
+  "fileKey": "VtbiQejcN6gYMmeWaaEy1b",
+  "collections": {
+    "VariableCollectionId:1:2": {
+      "id": "VariableCollectionId:1:2",
+      "name": "fixture-tokens",
+      "defaultModeId": "1:0",
+      "modes": [
+        { "modeId": "1:0", "name": "light" },
+        { "modeId": "1:1", "name": "dark" }
+      ]
+    }
+  },
+  "variables": {
+    "VariableID:1:3": {
+      "id": "VariableID:1:3",
+      "name": "color/bg",
+      "variableCollectionId": "VariableCollectionId:1:2",
+      "resolvedType": "COLOR",
+      "valuesByMode": {
+        "1:0": { "r": 1, "g": 1, "b": 1, "a": 1 },
+        "1:1": { "r": 0.07999999821186066, "g": 0.09000000357627869, "b": 0.10999999940395355, "a": 1 }
+      }
+    },
+    "VariableID:1:4": {
+      "id": "VariableID:1:4",
+      "name": "color/accent",
+      "variableCollectionId": "VariableCollectionId:1:2",
+      "resolvedType": "COLOR",
+      "valuesByMode": {
+        "1:0": { "r": 0.12999999523162842, "g": 0.44999998807907104, "b": 0.8999999761581421, "a": 1 },
+        "1:1": { "r": 0.4000000059604645, "g": 0.6499999761581421, "b": 1, "a": 1 }
+      }
+    },
+    "VariableID:1:5": {
+      "id": "VariableID:1:5",
+      "name": "size/gap",
+      "variableCollectionId": "VariableCollectionId:1:2",
+      "resolvedType": "FLOAT",
+      "valuesByMode": { "1:0": 16, "1:1": 24 }
+    },
+    "VariableID:1:6": {
+      "id": "VariableID:1:6",
+      "name": "size/radius",
+      "variableCollectionId": "VariableCollectionId:1:2",
+      "resolvedType": "FLOAT",
+      "valuesByMode": { "1:0": 8, "1:1": 2 }
+    }
+  }
+}
