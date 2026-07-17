@@ -186,15 +186,19 @@ table TextStyle {
 }
 
 // v0.2 flex layout vocabulary (docs/design/dashbuf.md, R2). New members append at
-// the tail with explicit values (Wrap/Grid on LayoutMode at v0.8,
-// Baseline on CrossAxisAlign, Q-4): appending keeps old documents
+// the tail with explicit values: appending keeps old documents
 // decoding unchanged, but a reader built before an append receives the
 // unknown value as a raw integer — the load gate must range-check and
-// emit a named diagnostic (P4/R6), never default silently.
+// emit a named diagnostic (P4/R6), never default silently. Wrap and
+// Grid appended at v0.8 (story #43): Wrap is a horizontal wrapping row
+// — Figma's layoutWrap exists for horizontal auto-layout only — and
+// Grid places children in the LayoutContainer track lists below.
 enum LayoutMode : uint8 {
   None = 0,
   Horizontal = 1,
   Vertical = 2,
+  Wrap = 3,
+  Grid = 4,
 }
 
 // How a node sizes itself along one axis. Fixed uses the
@@ -213,10 +217,15 @@ enum MainAxisAlign : uint8 {
   SpaceBetween = 3,
 }
 
+// Baseline appended at v0.8 (story #43, Q-4): counter-axis baseline
+// alignment for a horizontal row. The runtime's baselines are the flex
+// baselines Taffy computes — a leaf's baseline is its bottom edge, a
+// nested row propagates its first line's baseline.
 enum CrossAxisAlign : uint8 {
   Start = 0,
   Center = 1,
   End = 2,
+  Baseline = 3,
 }
 
 struct EdgeInsets {
@@ -224,6 +233,24 @@ struct EdgeInsets {
   top: float32;
   right: float32;
   bottom: float32;
+}
+
+// How one grid track sizes (v0.8, story #43). Fixed is a document-unit
+// length; Fraction is a flexible weight over the free space — Figma's
+// minmax(0, Nfr) serialized track. Append new members at the tail
+// (P4/R6 range-check discipline, like the enums above).
+enum GridTrackSizing : uint8 {
+  Fixed = 0,
+  Fraction = 1,
+}
+
+// One grid row or column track (v0.8, story #43). A table, not a
+// struct, so a future bound (a minmax minimum, a named line) appends
+// as a field instead of forcing a parallel vocabulary.
+table GridTrack {
+  sizing: GridTrackSizing;
+  // Document units for Fixed; the flexible weight for Fraction.
+  value: float32;
 }
 
 // Container-side layout properties — meaningful when mode != None.
@@ -239,6 +266,19 @@ table LayoutContainer {
   padding: EdgeInsets;
   main_align: MainAxisAlign;
   cross_align: CrossAxisAlign;
+  // v0.8 (story #43). The cross-axis gap: the spacing between wrap
+  // lines (Figma's counterAxisSpacing) and between grid rows (Figma's
+  // gridRowGap) — `gap` stays the main-axis spacing, which for Wrap
+  // and Grid is the horizontal one (Figma's itemSpacing /
+  // gridColumnGap). Absent = follows `gap`, preserving the v0.2
+  // both-axes mapping for every existing document.
+  cross_gap: float32 = null;
+  // v0.8 (story #43). The grid track lists, meaningful when
+  // mode = Grid: row tracks top-to-bottom, column tracks
+  // left-to-right. Absent under mode = Grid means implicit auto
+  // tracks.
+  grid_rows: [GridTrack];
+  grid_columns: [GridTrack];
 }
 
 // Child-side layout constraints, valid on any node. Absent min/max
@@ -255,6 +295,14 @@ table LayoutConstraints {
   // zero insets. Negative values are legal and express overlap — the
   // target the negative-gap Figma≠CSS lowering rewrites to (docs/design/dashbuf.md).
   margin: EdgeInsets;
+  // v0.8 (story #43). Grid placement, meaningful under a mode = Grid
+  // parent: the 0-based anchor cell (Figma's gridRowAnchorIndex /
+  // gridColumnAnchorIndex) and the number of tracks spanned. Absent
+  // anchors mean auto-placement in document order.
+  grid_row: ushort = null;
+  grid_column: ushort = null;
+  grid_row_span: ushort = 1;
+  grid_column_span: ushort = 1;
 }
 
 table Node {

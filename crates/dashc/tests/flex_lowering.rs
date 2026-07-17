@@ -543,19 +543,15 @@ fn the_negative_gap_fixture_solves_to_figmas_captured_rects() {
         assert_eq!((rect.x, rect.y, rect.w, rect.h), (x, y, w, h), "child {i}");
     }
 
-    // The root: fixed height 120 and origin hold; the hug width does not.
-    // Figma solved it to 264 (5×56 − 4×16 + 2×24), but Taffy 0.12's
-    // intrinsic sizing mis-sums children with negative margins, an engine
-    // gap filed as debt #236 — the lowering's output is correct (the
-    // margins are exactly the #10 margin-equivalent scene), the hug solve
-    // of it is not. The wrong value is pinned so the engine fix is loud
-    // here: closing #236 means flipping this assertion to 264.
+    // The root: fixed height 120 and origin hold, and the hug width is
+    // Figma's own 264 (5×56 − 4×16 + 2×24). Taffy 0.12's intrinsic
+    // sizing mis-sums children with negative margins (debt #236); the
+    // engine rebates the negative margin into the flex basis
+    // (docs/decisions/negative-margin-hug-rebate.md), so the hug solve
+    // of the lowering's margin output lands on the captured value.
     let root = rects[0];
     assert_eq!((root.x, root.y, root.h), (0.0, 0.0, 120.0));
-    assert_eq!(
-        root.w, 48.0,
-        "debt #236: must become 264 once the engine hug-sizes negative margins"
-    );
+    assert_eq!(root.w, 264.0, "the Figma-captured hug width (debt #236)");
 }
 
 #[test]

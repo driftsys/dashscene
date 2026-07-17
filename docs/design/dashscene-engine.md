@@ -4,8 +4,10 @@
     covers   v0.2 flex core (story #9), the v0.5 measure callback
              (story #29 — text drives hug sizing), the v0.4 retained
              Taffy tree + pruned readback (story #164), the v0.4 Visible
-             lowering (story #165), and the v0.4 variant-switch FLIP
-             (story #22)
+             lowering (story #165), the v0.4 variant-switch FLIP
+             (story #22), and the v0.8 layout fidelity — wrap, grid
+             with spans, baseline, and the negative-margin hug rebate
+             (story #43)
 
 ## Purpose
 
@@ -76,10 +78,29 @@ Container side (how a node lays out its children):
 | `Vertical`         | `gap`, `padding`, `justify_content` from |
 |                    | `MainAxisAlign`, `align_items` from      |
 |                    | `CrossAxisAlign` (never `Stretch` at the |
-|                    | container level)                         |
+|                    | container level; `Baseline` since v0.8)  |
+| mode `Wrap` (v0.8) | `Horizontal`'s mapping plus wrapping     |
+|                    | (`flex_wrap: Wrap`) with lines packed at |
+|                    | the cross start (`align_content:         |
+|                    | FlexStart` — Figma packs lines; taffy's  |
+|                    | default behaves as stretch)              |
+| mode `Grid` (v0.8) | `display: Grid`; `grid_template_rows`/   |
+|                    | `grid_template_columns` from the node's  |
+|                    | track lists (`Arena::grid_tracks`):      |
+|                    | `Fixed(v)` → `length(v)`, `Fraction(w)`  |
+|                    | → `minmax(0, fr(w))` — Figma's           |
+|                    | serialized track form. `main_align`/     |
+|                    | `cross_align` are not mapped; placement  |
+|                    | is by cell                               |
+
+The authored `gap` is the main-axis spacing (horizontal for every mode
+but `Vertical`); `cross_gap` (v0.8) is the other axis's — wrap-line and
+grid-row spacing — and follows `gap` when unset, which keeps the v0.2
+both-axes mapping for documents that never author it
+(`docs/decisions/v08-layout-vocabulary-shape.md` D4).
 
 Child side (axis-relative — the parent's direction decides which
-authored axis is main):
+authored axis is main; a `Wrap` parent's main axis is `Horizontal`'s):
 
 | sizing  | main axis                           | cross axis          |
 | ------- | ----------------------------------- | ------------------- |
@@ -88,11 +109,46 @@ authored axis is main):
 | `Fill`  | `flex_basis: 0`, grow/shrink 1      | `align_self:        |
 |         |                                     | Stretch`, size auto |
 
+Under a `Grid` parent (v0.8) the child maps per axis, not per
+main/cross: `grid_row`/`grid_column` anchors become taffy's 1-based
+start lines with `span(grid_*_span)` ends (absent anchor =
+auto-placement in document order), and in-cell alignment comes from the
+sizing intent — `Fill` → stretch over the cell area, `Fixed`/`Hug` →
+the node's own size at the cell origin (`justify_self`/`align_self`;
+taffy's default would stretch a hug child over its cell). The
+conversion saturates: a ushort anchor caps at the solver's `i16` line
+range and a zero span floors at 1, so no document value can panic —
+the honest diagnosis is the load gate's
+(`docs/decisions/v08-layout-vocabulary-shape.md` D6). A fixed child
+larger than its fraction cell keeps its size and overflows the cell
+(a `Fraction` track is `minmax(0, fr)` and never grows for content) —
+pinned behavior, named open question in the same record.
+
 `min_width`/`max_width`/`min_height`/`max_height` map to
 `min_size`/`max_size` (absent = auto). `margin` maps to
 `taffy::Style::margin` (a `Rect` of `LengthPercentageAuto`); negative
 margins are legal and express overlap — the target the negative-gap
 lowering rewrites to (`docs/decisions/negative-gap-lowering.md`).
+
+### The negative-margin hug rebate (v0.8, debt #236)
+
+Taffy 0.12's intrinsic (hug) pass mis-sums a shrink-0 item whose
+main-axis margin sum is negative: it divides the item's contribution
+diff by `max(1, shrink × inner_basis)` (= 1) but multiplies it back by
+`max(1, shrink) × inner_basis` (the item's basis minus its own
+padding), amplifying the negative margin and collapsing the hug sum.
+For a `Fixed` main-axis child with a negative main-axis margin sum,
+`style_for` therefore maps `flex_basis = size + margin_sum`; when that
+falls below the child's own main-axis padding sum — taffy floors every
+basis there — the basis anchors at `padding + 1` instead, where the
+broken branch's two formulas agree exactly and the reconstruction is
+`size + margin_sum` for any overlap depth. The main-axis `min_size`
+floors at the authored size, clamped by an authored max, maxed with an
+authored min, so the definite pass restores the real size — positions
+and sizes are unchanged everywhere else. A `Hug` child with a negative
+margin still mis-sums (its basis is content-derived; no static rebate
+exists) — a known residual. Full arithmetic, alternatives, and the
+declared corner cases: `docs/decisions/negative-margin-hug-rebate.md`.
 
 Degenerate constructs, all pinned by test and named here for the
 validator slice to diagnose (P4):
@@ -108,9 +164,9 @@ validator slice to diagnose (P4):
   applies to fixed-sized trees; trees using `Hug`/`Fill` are solver
   vocabulary the fixed resolve deliberately ignores.
 
-The single authored `gap` maps to both taffy gap axes; the cross-axis
-half is inert until wrap (v0.8), which decides whether row and column
-gaps become separate authored properties.
+The gap split resolved at v0.8: `cross_gap` is the second authored gap
+(see the mapping above), and its absence reproduces the old
+both-axes-from-`gap` behavior exactly.
 
 ## Visibility (v0.4, issue #165)
 
@@ -139,13 +195,19 @@ measure is a no-op, so a text-free scene solves exactly as before.
 Taffy calls the measure function for each text leaf during the solve.
 `measure_text` lays the text out through the typesetter and returns its
 box. The wrap width is the width Taffy has already fixed for the node
-if there is one, else a definite available width, else none: a
-min/max-content probe imposes no wrap, so an unconstrained hug node
-lays its paragraph on one line and hugs that natural width. A hug-sized
-text node therefore solves to its shaped width and height; a
-width-constrained one keeps its width and grows taller as the text
-wraps. A known axis is returned unchanged, so measurement never
-overrides a dimension Taffy has already fixed.
+if there is one, else a definite available width, else probe-dependent
+(debt #177, fixed at v0.8): a max-content probe imposes no wrap, so an
+unconstrained hug node lays its paragraph on one line and hugs that
+natural width; a min-content probe measures at wrap width zero, which
+the greedy breaker turns into one word per line — width = the widest
+word, the box wrappable text can never shrink below, and the automatic
+minimum a shrinkable (`Fill`) text node stops at. A hug-sized text node
+therefore solves to its shaped width and height; a width-constrained
+one keeps its width and grows taller as the text wraps. A known axis is
+returned unchanged, so measurement never overrides a dimension Taffy
+has already fixed. The measure seam carries no glyph baseline, so under
+baseline alignment a text leaf aligns by its box bottom (Q-4,
+`docs/technotes/open-questions.md`).
 
 ### One cache, borrowed not owned
 
@@ -215,16 +277,21 @@ spring FLIP that replays bit-identically, E5).
 - Satisfies: `docs/archive/2026-07-14-design-1-seed.md` §7.1 (Taffy as
   sole solver, R2 vocabulary), §7.2 (the common runtime's measure
   callback — text drives hug sizing), and §6.3 (FLIP);
-  `docs/roadmap.md`'s v0.2, v0.4, and v0.5; issue #9, issue #29, issue
-  #165, issue #164, and issue #22 acceptance criteria.
-- Blocks: #10 (negative-gap lowering), #11 (flex goldens), #43 (v0.8
-  layout fidelity). The measure seam blocks #30 (the hug-sizing text
-  golden). The retained tree (#164) and Visible lowering (#165) serve
-  #166 (the reactive layer's contained-write skip and bounded pools);
-  FLIP (#22) serves #23 (the FLIP golden sampling).
+  `docs/roadmap.md`'s v0.2, v0.4, v0.5, and v0.8 slices; issue #9,
+  issue #29, issue #165, issue #164, issue #22, and issue #43
+  acceptance criteria (with the folded debts #236, #177, #115).
+- Blocks: #10 (negative-gap lowering), #11 (flex goldens). The v0.8
+  vocabulary (#43) blocks #264 (the dashc un-pin) and #46 (the stress
+  corpus; #236's fix is a prerequisite of its negative-gap case). The
+  measure seam blocks #30 (the hug-sizing text golden). The retained
+  tree (#164) and Visible lowering (#165) serve #166 (the reactive
+  layer's contained-write skip and bounded pools); FLIP (#22) serves
+  #23 (the FLIP golden sampling).
 - Related decisions: `docs/decisions/layout-solver-seam.md` (the
   partial-solve contract #164 extended, and the FLIP hook),
   `docs/decisions/flex-vocabulary-shape.md`,
+  `docs/decisions/v08-layout-vocabulary-shape.md` (wrap/grid/baseline),
+  `docs/decisions/negative-margin-hug-rebate.md` (#236),
   `docs/decisions/measure-callback-typesetter-seam.md`,
   `docs/decisions/shaped-run-cache-font-units.md`,
   `docs/decisions/visible-is-layout-opacity-is-paint.md`.

@@ -27,11 +27,13 @@ pub mod flip;
 pub use dashscene_core::Channel;
 pub use flip::{VariantFlip, decode_prop_key, prop_key};
 
-use dashscene_core::{Arena, AxisSizing, Layout, LayoutMode, LayoutSolver, NodeId, SolvedRect};
+use dashscene_core::{
+    Arena, AxisSizing, GridTrack, Layout, LayoutMode, LayoutSolver, NodeId, SolvedRect,
+};
 use dashscene_typeset::text::Typesetter;
 use rustc_hash::FxHashSet;
 use taffy::prelude::*;
-use taffy::{AlignItems, AlignSelf, JustifyContent, Position};
+use taffy::{AlignContent, AlignItems, AlignSelf, GridPlacement, JustifyContent, Position};
 
 /// The Taffy implementation of `dashscene-core`'s `LayoutSolver`.
 ///
@@ -236,7 +238,14 @@ fn incremental(
         let node_layout = arena.layout(node);
         state
             .tree
-            .set_style(taffy_node, style_for(&node_layout, parent_layout.as_ref()))
+            .set_style(
+                taffy_node,
+                style_for(
+                    &node_layout,
+                    arena.grid_tracks(node),
+                    parent_layout.as_ref(),
+                ),
+            )
             .expect("restyling a retained node cannot fail");
         state
             .tree
@@ -248,7 +257,11 @@ fn incremental(
                 .tree
                 .set_style(
                     taffy_child,
-                    style_for(&arena.layout(child), Some(&node_layout)),
+                    style_for(
+                        &arena.layout(child),
+                        arena.grid_tracks(child),
+                        Some(&node_layout),
+                    ),
                 )
                 .expect("restyling a retained child cannot fail");
         }
@@ -350,10 +363,13 @@ fn text_context(arena: &Arena, node: NodeId) -> Option<TextContext> {
 /// Measure a text node against the shaped-run cache. `known` is what
 /// Taffy has already fixed for the node; `available` is the space it
 /// offers. The wrap width is the fixed width if Taffy set one, else a
-/// definite available width, else none — a min/max-content probe
+/// definite available width, else probe-dependent: a max-content probe
 /// imposes no wrap, so the paragraph lays out on one line and the node
-/// hugs its natural width. A known axis is returned unchanged; only an
-/// unfixed axis takes the shaped measurement.
+/// hugs its natural width; a min-content probe measures at wrap width
+/// zero, which the greedy breaker turns into one word per line — width
+/// = the widest word, the box wrappable text can never shrink below
+/// (debt #177). A known axis is returned unchanged; only an unfixed
+/// axis takes the shaped measurement.
 fn measure_text(
     known: Size<Option<f32>>,
     available: Size<AvailableSpace>,
@@ -362,7 +378,8 @@ fn measure_text(
 ) -> Size<f32> {
     let max_width = known.width.or(match available.width {
         AvailableSpace::Definite(width) => Some(width),
-        AvailableSpace::MinContent | AvailableSpace::MaxContent => None,
+        AvailableSpace::MinContent => Some(0.0),
+        AvailableSpace::MaxContent => None,
     });
     let laid = typesetter.layout(&context.text, context.size, max_width);
     Size {
@@ -382,7 +399,7 @@ fn build(
     parent_id: Option<NodeId>,
 ) -> taffy::NodeId {
     let layout = arena.layout(node);
-    let style = style_for(&layout, parent);
+    let style = style_for(&layout, arena.grid_tracks(node), parent);
     // A text node carries a measure context so Taffy sizes it from its
     // shaped runs; every other node is a plain leaf whose measure is a
     // no-op.
@@ -410,9 +427,39 @@ fn build(
 }
 
 /// Map one node's layout intent to a Taffy style, in the context of
-/// its parent's layout (child sizing is axis-relative).
-fn style_for(layout: &Layout, parent: Option<&Layout>) -> Style {
+/// its parent's layout (child sizing is axis-relative). `tracks` is the
+/// node's grid track lists (rows, columns) — meaningful when its mode
+/// is `Grid`, empty otherwise.
+fn style_for(
+    layout: &Layout,
+    tracks: (&[GridTrack], &[GridTrack]),
+    parent: Option<&Layout>,
+) -> Style {
     let mut style = Style::default();
+
+    // The authored gaps, axis-split (v0.8, story #43): `gap` is the
+    // main-axis spacing — horizontal for every mode but `Vertical` —
+    // and `cross_gap` the other axis's, following `gap` when unset
+    // (the v0.2 both-axes mapping, unchanged for old documents). The
+    // cross half is inert without wrap lines or grid rows.
+    let cross_gap = layout.cross_gap.unwrap_or(layout.gap);
+    let gap = if layout.mode == LayoutMode::Vertical {
+        Size {
+            width: length(cross_gap),
+            height: length(layout.gap),
+        }
+    } else {
+        Size {
+            width: length(layout.gap),
+            height: length(cross_gap),
+        }
+    };
+    let padding = Rect {
+        left: length(layout.padding.left),
+        top: length(layout.padding.top),
+        right: length(layout.padding.right),
+        bottom: length(layout.padding.bottom),
+    };
 
     // Container side: how this node lays out its own children.
     match layout.mode {
@@ -421,26 +468,23 @@ fn style_for(layout: &Layout, parent: Option<&Layout>) -> Style {
             // offsets (the passthrough); Block is the inert display.
             style.display = Display::Block;
         }
-        LayoutMode::Horizontal | LayoutMode::Vertical => {
+        LayoutMode::Horizontal | LayoutMode::Vertical | LayoutMode::Wrap => {
             style.display = Display::Flex;
-            style.flex_direction = if layout.mode == LayoutMode::Horizontal {
-                FlexDirection::Row
-            } else {
+            style.flex_direction = if layout.mode == LayoutMode::Vertical {
                 FlexDirection::Column
+            } else {
+                // Wrap is a horizontal wrapping row (story #43).
+                FlexDirection::Row
             };
-            // The vocabulary has one authored gap; the cross-axis
-            // half is inert until wrap (v0.8), which decides whether
-            // row and column gaps split into separate properties.
-            style.gap = Size {
-                width: length(layout.gap),
-                height: length(layout.gap),
-            };
-            style.padding = Rect {
-                left: length(layout.padding.left),
-                top: length(layout.padding.top),
-                right: length(layout.padding.right),
-                bottom: length(layout.padding.bottom),
-            };
+            if layout.mode == LayoutMode::Wrap {
+                style.flex_wrap = FlexWrap::Wrap;
+                // Figma packs wrap lines at the cross start; taffy's
+                // default (None = stretch) would move lines in a
+                // fixed-height container.
+                style.align_content = Some(AlignContent::FLEX_START);
+            }
+            style.gap = gap;
+            style.padding = padding;
             style.justify_content = Some(match layout.main_align {
                 dashscene_core::MainAxisAlign::Start => JustifyContent::FLEX_START,
                 dashscene_core::MainAxisAlign::Center => JustifyContent::CENTER,
@@ -449,12 +493,27 @@ fn style_for(layout: &Layout, parent: Option<&Layout>) -> Style {
             });
             // Never Stretch at the container level: Fill children opt
             // into stretching via align_self; Fixed/Hug children keep
-            // their own cross size under any alignment.
+            // their own cross size under any alignment. Baseline (Q-4)
+            // aligns a row's children on their flex baselines — a
+            // leaf's baseline is its bottom edge, a nested row
+            // propagates its first line's — and degrades to start in a
+            // column (taffy computes baselines for rows only).
             style.align_items = Some(match layout.cross_align {
                 dashscene_core::CrossAxisAlign::Start => AlignItems::FLEX_START,
                 dashscene_core::CrossAxisAlign::Center => AlignItems::CENTER,
                 dashscene_core::CrossAxisAlign::End => AlignItems::FLEX_END,
+                dashscene_core::CrossAxisAlign::Baseline => AlignItems::BASELINE,
             });
+        }
+        LayoutMode::Grid => {
+            style.display = Display::Grid;
+            style.grid_template_rows = tracks.0.iter().map(template_track).collect();
+            style.grid_template_columns = tracks.1.iter().map(template_track).collect();
+            style.gap = gap;
+            style.padding = padding;
+            // main_align/cross_align are not mapped here: grid children
+            // place by cell, and their in-cell alignment comes from
+            // their own sizing (the child side below).
         }
     }
 
@@ -498,7 +557,7 @@ fn style_for(layout: &Layout, parent: Option<&Layout>) -> Style {
                 bottom: LengthPercentageAuto::AUTO,
             };
         }
-        Some(mode @ (LayoutMode::Horizontal | LayoutMode::Vertical)) => {
+        Some(mode @ (LayoutMode::Horizontal | LayoutMode::Vertical | LayoutMode::Wrap)) => {
             // Outer margin applies only in flex flow (negative allowed
             // — it expresses overlap, the target of the negative-gap
             // lowering).
@@ -510,15 +569,77 @@ fn style_for(layout: &Layout, parent: Option<&Layout>) -> Style {
             };
             // Axis-relative sizing: the parent's main axis maps to
             // flex_basis/grow/shrink; the cross axis maps to size (set
-            // above) and align_self.
-            let (main_sizing, main_size, cross_sizing) = if mode == LayoutMode::Horizontal {
-                (layout.sizing_h, layout.width, layout.sizing_v)
-            } else {
+            // above) and align_self. Wrap flows horizontally, so its
+            // main axis is Horizontal's.
+            let (main_sizing, main_size, cross_sizing) = if mode == LayoutMode::Vertical {
                 (layout.sizing_v, layout.height, layout.sizing_h)
+            } else {
+                (layout.sizing_h, layout.width, layout.sizing_v)
             };
             match main_sizing {
                 AxisSizing::Fixed => {
-                    style.flex_basis = Dimension::length(main_size);
+                    // Debt #236: taffy 0.12's intrinsic (hug) pass divides a
+                    // shrink-0 item's negative contribution diff by
+                    // `max(1, shrink * inner_basis)` (= 1) but multiplies it
+                    // back by `max(1, shrink) * inner_basis`, so a negative
+                    // main-axis margin is amplified by the item's inner flex
+                    // basis and the hug sum collapses. Rebate the negative
+                    // margin into the basis — the contribution (clamped size
+                    // + margins) then equals the basis, the diff is zero, and
+                    // the broken reconstruction is never entered. Taffy
+                    // floors a basis at the item's own padding sum (review
+                    // finding R2), so a rebate below that floor anchors at
+                    // padding + 1 instead: the inner flex basis is then
+                    // exactly 1, where the branch's two scaled-shrink
+                    // formulas agree, and the reconstruction stays exact for
+                    // any overlap depth (R3). A min-size floor at the
+                    // authored size — clamped by an authored max (R1), maxed
+                    // with an authored min — restores the real size in the
+                    // definite pass, so positions and sizes are unchanged.
+                    // Positive margins take the diff > 0 path, whose two
+                    // formulas agree, and need no rebate. Full arithmetic:
+                    // docs/decisions/negative-margin-hug-rebate.md.
+                    let (margin_sum, authored_min, authored_max) = if mode == LayoutMode::Vertical {
+                        (
+                            layout.margin.top + layout.margin.bottom,
+                            layout.min_height,
+                            layout.max_height,
+                        )
+                    } else {
+                        (
+                            layout.margin.left + layout.margin.right,
+                            layout.min_width,
+                            layout.max_width,
+                        )
+                    };
+                    if margin_sum < 0.0 {
+                        // The padding taffy sees: style_for maps authored
+                        // padding for container modes only, and there is no
+                        // border vocabulary.
+                        let padding_sum = if layout.mode == LayoutMode::None {
+                            0.0
+                        } else if mode == LayoutMode::Vertical {
+                            layout.padding.top + layout.padding.bottom
+                        } else {
+                            layout.padding.left + layout.padding.right
+                        };
+                        let rebated = main_size + margin_sum;
+                        style.flex_basis = Dimension::length(if rebated >= padding_sum {
+                            rebated
+                        } else {
+                            padding_sum + 1.0
+                        });
+                        let clamped = authored_max.map_or(main_size, |m| main_size.min(m));
+                        let floor = authored_min.map_or(clamped, |m| m.max(clamped));
+                        let min = if mode == LayoutMode::Vertical {
+                            &mut style.min_size.height
+                        } else {
+                            &mut style.min_size.width
+                        };
+                        *min = Dimension::length(floor);
+                    } else {
+                        style.flex_basis = Dimension::length(main_size);
+                    }
                     style.flex_grow = 0.0;
                     style.flex_shrink = 0.0;
                 }
@@ -537,6 +658,45 @@ fn style_for(layout: &Layout, parent: Option<&Layout>) -> Style {
                 style.align_self = Some(AlignSelf::STRETCH);
             }
         }
+        Some(LayoutMode::Grid) => {
+            // Margin applies inside the cell, like flex flow.
+            style.margin = Rect {
+                left: LengthPercentageAuto::length(layout.margin.left),
+                top: LengthPercentageAuto::length(layout.margin.top),
+                right: LengthPercentageAuto::length(layout.margin.right),
+                bottom: LengthPercentageAuto::length(layout.margin.bottom),
+            };
+            // Placement: the 0-based anchor becomes taffy's 1-based
+            // start line; the end is always the span (default 1). An
+            // absent anchor auto-places in document order. The schema's
+            // anchors are ushort and taffy's lines are i16, so the
+            // conversion saturates — never a wrap to an end-counted
+            // line, never a debug overflow (review finding R5); a span
+            // of 0 floors at 1 (R6). The load gate bounds both for
+            // documents; this is the engine's own hardening for direct
+            // producers.
+            let placement = |anchor: Option<u16>, span_tracks: u16| taffy::Line {
+                start: anchor.map_or(GridPlacement::Auto, |a| {
+                    line(i16::try_from(i32::from(a) + 1).unwrap_or(i16::MAX))
+                }),
+                end: span(span_tracks.max(1)),
+            };
+            style.grid_row = placement(layout.grid_row, layout.grid_row_span);
+            style.grid_column = placement(layout.grid_column, layout.grid_column_span);
+            // In-cell alignment comes from the sizing intent: Fill
+            // stretches over the cell area, Fixed and Hug keep their
+            // own size at the cell origin (what the captured grid
+            // shows — taffy's default would stretch a hug child).
+            let alignment = |sizing: AxisSizing| {
+                Some(if sizing == AxisSizing::Fill {
+                    AlignSelf::STRETCH
+                } else {
+                    AlignSelf::START
+                })
+            };
+            style.justify_self = alignment(layout.sizing_h);
+            style.align_self = alignment(layout.sizing_v);
+        }
     }
 
     // Overrides both sides above: Taffy's Display::None hides the node
@@ -547,6 +707,17 @@ fn style_for(layout: &Layout, parent: Option<&Layout>) -> Style {
     }
 
     style
+}
+
+/// One authored grid track as a taffy template component. `Fixed` is a
+/// document-unit length; `Fraction` is Figma's `minmax(0, Nfr)` — the
+/// zero minimum, not `fr`'s implied min-content one, so a fraction
+/// track divides exactly the free space the captured grid divides.
+fn template_track(track: &GridTrack) -> taffy::GridTemplateComponent<String> {
+    match *track {
+        GridTrack::Fixed(v) => length(v),
+        GridTrack::Fraction(weight) => minmax(length(0.0), fr(weight)),
+    }
 }
 
 /// Emit every node's absolute rect and record its relative layout — the

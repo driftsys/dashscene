@@ -99,11 +99,24 @@ fn a_root_node_reads_back_the_default_parent_sentinel() {
 #[test]
 fn flex_and_constraint_fields_round_trip() {
     use dashbuf::{
-        AxisSizing, CrossAxisAlign, EdgeInsets, LayoutConstraints, LayoutConstraintsArgs,
-        LayoutContainer, LayoutContainerArgs, LayoutMode, MainAxisAlign,
+        AxisSizing, CrossAxisAlign, EdgeInsets, GridTrack, GridTrackArgs, GridTrackSizing,
+        LayoutConstraints, LayoutConstraintsArgs, LayoutContainer, LayoutContainerArgs, LayoutMode,
+        MainAxisAlign,
     };
 
     let mut builder = FlatBufferBuilder::new();
+
+    // v0.8 (story #43): one Fixed and one Fraction track per axis, each
+    // at a value distinguishable from the other axis's.
+    let track = |b: &mut FlatBufferBuilder<'static>, sizing, value| {
+        GridTrack::create(b, &GridTrackArgs { sizing, value })
+    };
+    let row_fixed = track(&mut builder, GridTrackSizing::Fixed, 96.0);
+    let row_flex = track(&mut builder, GridTrackSizing::Fraction, 2.0);
+    let grid_rows = builder.create_vector(&[row_fixed, row_flex]);
+    let col_flex = track(&mut builder, GridTrackSizing::Fraction, 1.0);
+    let col_fixed = track(&mut builder, GridTrackSizing::Fixed, 160.0);
+    let grid_columns = builder.create_vector(&[col_flex, col_fixed]);
 
     let padding = EdgeInsets::new(1.0, 2.0, 3.0, 4.0);
     let flex = LayoutContainer::create(
@@ -114,6 +127,9 @@ fn flex_and_constraint_fields_round_trip() {
             padding: Some(&padding),
             main_align: MainAxisAlign::Center,
             cross_align: CrossAxisAlign::End,
+            cross_gap: Some(6.0),
+            grid_rows: Some(grid_rows),
+            grid_columns: Some(grid_columns),
         },
     );
     let margin = EdgeInsets::new(-8.0, 0.0, 0.0, 0.0);
@@ -127,6 +143,10 @@ fn flex_and_constraint_fields_round_trip() {
             min_height: Some(5.0),
             max_height: Some(50.0),
             margin: Some(&margin),
+            grid_row: Some(1),
+            grid_column: Some(2),
+            grid_row_span: 2,
+            grid_column_span: 3,
         },
     );
     let layout = FixedSizeLayout::new(0.0, 0.0, 20.0, 30.0);
@@ -176,6 +196,19 @@ fn flex_and_constraint_fields_round_trip() {
     );
     assert_eq!(flex.main_align(), MainAxisAlign::Center);
     assert_eq!(flex.cross_align(), CrossAxisAlign::End);
+    assert_eq!(flex.cross_gap(), Some(6.0));
+    let rows = flex.grid_rows().expect("row tracks present");
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows.get(0).sizing(), GridTrackSizing::Fixed);
+    assert_eq!(rows.get(0).value(), 96.0);
+    assert_eq!(rows.get(1).sizing(), GridTrackSizing::Fraction);
+    assert_eq!(rows.get(1).value(), 2.0);
+    let columns = flex.grid_columns().expect("column tracks present");
+    assert_eq!(columns.len(), 2);
+    assert_eq!(columns.get(0).sizing(), GridTrackSizing::Fraction);
+    assert_eq!(columns.get(0).value(), 1.0);
+    assert_eq!(columns.get(1).sizing(), GridTrackSizing::Fixed);
+    assert_eq!(columns.get(1).value(), 160.0);
 
     let constraints = decoded_node.constraints().expect("constraints present");
     assert_eq!(constraints.sizing_h(), AxisSizing::Hug);
@@ -190,6 +223,69 @@ fn flex_and_constraint_fields_round_trip() {
         (-8.0, 0.0, 0.0, 0.0),
         "negative margin (a lowering target) round-trips"
     );
+    assert_eq!(constraints.grid_row(), Some(1));
+    assert_eq!(constraints.grid_column(), Some(2));
+    assert_eq!(constraints.grid_row_span(), 2);
+    assert_eq!(constraints.grid_column_span(), 3);
+}
+
+#[test]
+fn v08_layout_fields_default_to_absent_and_the_new_enum_members_round_trip() {
+    use dashbuf::{
+        CrossAxisAlign, LayoutConstraints, LayoutConstraintsArgs, LayoutContainer,
+        LayoutContainerArgs, LayoutMode,
+    };
+
+    // The new enum tail members (Wrap = 3, Grid = 4, Baseline = 3)
+    // round-trip as themselves — a discriminant shift would decode them
+    // as an older member.
+    for mode in [LayoutMode::Wrap, LayoutMode::Grid] {
+        let mut builder = FlatBufferBuilder::new();
+        let flex = LayoutContainer::create(
+            &mut builder,
+            &LayoutContainerArgs {
+                mode,
+                cross_align: CrossAxisAlign::Baseline,
+                ..Default::default()
+            },
+        );
+        let constraints =
+            LayoutConstraints::create(&mut builder, &LayoutConstraintsArgs::default());
+        let node = Node::create(
+            &mut builder,
+            &NodeArgs {
+                flex: Some(flex),
+                constraints: Some(constraints),
+                ..Default::default()
+            },
+        );
+        let nodes = builder.create_vector(&[node]);
+        let document = Document::create(
+            &mut builder,
+            &DocumentArgs {
+                nodes: Some(nodes),
+                ..Default::default()
+            },
+        );
+        builder.finish(document, None);
+
+        let decoded = root_as_document(builder.finished_data()).expect("valid dashbuf document");
+        let decoded_node = decoded.nodes().unwrap().get(0);
+        let flex = decoded_node.flex().expect("flex container present");
+        assert_eq!(flex.mode(), mode);
+        assert_eq!(flex.cross_align(), CrossAxisAlign::Baseline);
+
+        // The v0.8 appends, unwritten, read back absent (or the span
+        // default of 1) — absence of intent is not a value of intent (P1).
+        assert_eq!(flex.cross_gap(), None);
+        assert!(flex.grid_rows().is_none());
+        assert!(flex.grid_columns().is_none());
+        let constraints = decoded_node.constraints().expect("constraints present");
+        assert_eq!(constraints.grid_row(), None);
+        assert_eq!(constraints.grid_column(), None);
+        assert_eq!(constraints.grid_row_span(), 1);
+        assert_eq!(constraints.grid_column_span(), 1);
+    }
 }
 
 #[test]

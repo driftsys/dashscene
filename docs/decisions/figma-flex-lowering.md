@@ -82,14 +82,17 @@ each names its construct:
   strokes, and reversed paint order have no vocabulary; treating any of
   them as the default reflows or repaints siblings silently.
 
-## Known runtime gap this lowering exposed (debt #236)
+## Known runtime gap this lowering exposed (debt #236 — resolved at v0.8)
 
 The lowering's negative-gap output is correct — the derived
 `lowering-negative-gap` fixture's children solve to Figma's captured boxes
 exactly — but Taffy 0.12's intrinsic (hug) sizing mis-sums children with
 negative margins, so a hug-sized container over a lowered negative gap
-solves to a collapsed main-axis size. Filed as engine debt #236; the
-fidelity test pins the wrong value so the fix is loud.
+solved to a collapsed main-axis size. Filed as engine debt #236; the
+fidelity test pinned the wrong value so the fix would be loud.
+**Resolved at story #43**: the engine rebates the negative margin into the
+child's flex basis (`docs/decisions/negative-margin-hug-rebate.md`), and
+the fidelity test now asserts the Figma-captured root width (264).
 
 ## Trace
 

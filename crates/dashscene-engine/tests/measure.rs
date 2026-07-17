@@ -6,7 +6,7 @@
 //! `Typesetter::layout` produces, because layout and paint read one
 //! cache and so cannot disagree about a glyph's size.
 
-use dashscene_core::{Arena, AxisSizing, Color, LayoutMode, Prop, TextStyle};
+use dashscene_core::{Arena, AxisSizing, Color, LayoutMode, NodeId, Prop, TextStyle};
 use dashscene_engine::TaffySolver;
 use dashscene_typeset::text::{Font, Typesetter};
 
@@ -21,7 +21,7 @@ fn typesetter() -> Typesetter {
     Typesetter::new(Font::from_bytes(data, 0).expect("corpus font loads"))
 }
 
-fn styled(txn: &mut dashscene_core::Txn<'_>, node: dashscene_core::NodeId, text: &str, size: f32) {
+fn styled(txn: &mut dashscene_core::Txn<'_>, node: NodeId, text: &str, size: f32) {
     txn.set_prop(node, Prop::Text(text.to_string()));
     txn.set_prop(
         node,
@@ -142,5 +142,48 @@ fn a_width_constrained_text_node_wraps_and_grows_taller() {
     assert_eq!(
         rect.h, expected.height,
         "the hug height covers the wrapped lines"
+    );
+}
+
+#[test]
+fn a_shrinkable_text_node_stops_at_its_widest_word_not_its_full_line() {
+    // Debt #177: a min-content probe must measure at wrap width 0 — the
+    // greedy breaker then puts one word per line, so the min-content
+    // width is the widest word, the width wrappable text can never
+    // shrink below. Treating the probe like max-content (no wrap)
+    // reports the full one-line width instead, and a shrinkable text
+    // node refuses to shrink.
+    //
+    // The scene: a Fill text child in a fixed row far narrower than the
+    // widest word. Taffy floors the shrink at the node's automatic
+    // minimum — its min-content width — so the solved width IS the
+    // min-content answer, observable as a rect.
+    let text = "Hello world";
+    let size = 32.0;
+
+    let mut ts = typesetter();
+    let one_line = ts.layout(text, size, None).width;
+    let widest_word = ts.layout(text, size, Some(0.0)).width;
+    assert!(
+        widest_word < one_line,
+        "the fixture text breaks into words at all"
+    );
+
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let row = txn.add_node(None, None);
+    txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
+    txn.set_prop(row, Prop::Width(widest_word * 0.5));
+    txn.set_prop(row, Prop::Height(60.0));
+    let label = txn.add_node(Some(row), None);
+    txn.set_prop(label, Prop::SizingH(AxisSizing::Fill));
+    txn.set_prop(label, Prop::SizingV(AxisSizing::Hug));
+    styled(&mut txn, label, text, size);
+    txn.commit_with(&mut TaffySolver::with_typesetter(&mut ts));
+
+    let rect = arena.committed().rects()[1];
+    assert_eq!(
+        rect.w, widest_word,
+        "the shrink floor is the widest word (min-content), not the full line"
     );
 }
