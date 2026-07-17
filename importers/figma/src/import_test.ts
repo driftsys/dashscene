@@ -716,3 +716,96 @@ Deno.test("a library binding's variable id does not enter the sidecar (C3b)", as
     "a library variable id must not enter the consumer sidecar",
   );
 });
+
+// -- The phase-2 join wiring (story #167) ------------------------------------
+
+/**
+ * The variables-bound capture with the root's hug width pinned to FIXED,
+ * so its Fill cards lower (the same derivation
+ * crates/dashc/tests/bindings_lowering.rs uses; the raw fixture is the
+ * flex lowering's fill-in-hug refusal case, figma-flex-lowering.md D5).
+ */
+function derivedVariablesBound(): string {
+  const file = JSON.parse(
+    Deno.readTextFileSync(new URL("variables-bound.json", CORPUS)),
+  );
+  // deno-lint-ignore no-explicit-any
+  const patch = (node: any): void => {
+    if (node.name === "variables-bound") {
+      node.layoutSizingHorizontal = "FIXED";
+      return;
+    }
+    for (const child of node.children ?? []) patch(child);
+  };
+  patch(file.document);
+  return JSON.stringify(file);
+}
+
+Deno.test("a vartable joins the bound variables into the compiled document", async () => {
+  const { parseVartable } = await import("./vartable.ts");
+  const vartable = parseVartable(
+    Deno.readTextFileSync(new URL("variables-bound.vartable.json", CORPUS)),
+  );
+  const file = derivedVariablesBound();
+
+  const importWith = async (vt?: typeof vartable) => {
+    const { fetchFn } = scriptedFetch(file, new Uint8Array());
+    return await importFigmaFile({
+      client: createFigmaClient({ token: "x", fetchFn }),
+      dashc,
+      fileKey: FILE_KEY,
+      profile: "core",
+      manifest: { roots: ["1:7"] },
+      vartable: vt,
+      fetchFn,
+    });
+  };
+
+  const without = await importWith(undefined);
+  const withTable = await importWith(vartable);
+
+  // The joined rows crossed the ABI and landed as document binding
+  // tables, so the bytes differ from the phase-1 (no vartable) compile;
+  // the corner-radius sites are named warnings, not blocks.
+  assert(withTable.bytes.length > without.bytes.length);
+  assertEquals(without.diagnostics, []);
+  assert(
+    withTable.diagnostics.some(
+      (d) =>
+        d.rule === "figma.bindings.unsupported-property" &&
+        d.severity === "warning",
+    ),
+  );
+  assertEquals(withTable.bindingDiagnostics, []);
+});
+
+Deno.test("a stale vartable blocks the import by name, before any image fetch", async () => {
+  const { parseVartable } = await import("./vartable.ts");
+  const { BindingsBlocked } = await import("./bindings.ts");
+  const vartable = parseVartable(
+    Deno.readTextFileSync(new URL("variables-bound.vartable.json", CORPUS)),
+  );
+  const stale = { ...vartable, version: "some-older-version" };
+  const { fetchFn, requested } = scriptedFetch(
+    derivedVariablesBound(),
+    new Uint8Array(),
+  );
+
+  const error = await assertRejects(
+    () =>
+      importFigmaFile({
+        client: createFigmaClient({ token: "x", fetchFn }),
+        dashc,
+        fileKey: FILE_KEY,
+        profile: "core",
+        manifest: { roots: ["1:7"] },
+        vartable: stale,
+        fetchFn,
+      }),
+    BindingsBlocked,
+    "figma.vartable.version-mismatch",
+  );
+  assert(error instanceof BindingsBlocked);
+  // Blocked before the image map or any compile — only the file fetch ran.
+  assertEquals(requested.length, 1);
+});
