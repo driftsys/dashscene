@@ -28,6 +28,7 @@ use skia_safe::{AlphaType, ColorType, Data, ImageInfo, images};
 /// when its largest per-channel absolute delta (0..=255) exceeds
 /// `channel_delta`; a frame passes when the differing fraction is at or
 /// below `differing_fraction`.
+#[derive(Debug, PartialEq)]
 pub struct ToleranceBand {
     /// The construct this band governs, matching a manifest frame's `band`.
     pub rule: &'static str,
@@ -42,8 +43,10 @@ pub struct ToleranceBand {
 
 /// The measured outcome of one design-source diff. Carries the numbers a
 /// failure report needs — fidelity is a measured value, not a bare
-/// pass/fail (G-11).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// pass/fail (G-11) — and the band it was measured against, so the verdict
+/// cannot be graded against a different band than the one that produced
+/// `differing` (#291).
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OracleDiff {
     /// Pixels whose max per-channel delta exceeded the band's `channel_delta`.
     pub differing: usize,
@@ -52,6 +55,10 @@ pub struct OracleDiff {
     /// The largest per-channel absolute delta seen at any pixel — reports
     /// that a difference exists even when no pixel crossed the threshold.
     pub max_channel_delta: u8,
+    /// The band [`diff`] applied to produce `differing`. [`OracleDiff::passes`]
+    /// grades against this band, so the count and the budget always come from
+    /// the same rule.
+    pub band: &'static ToleranceBand,
 }
 
 impl OracleDiff {
@@ -64,11 +71,12 @@ impl OracleDiff {
         }
     }
 
-    /// Whether the measured difference is within `band`'s area budget. The
-    /// same band must have been passed to [`diff`], which applied its
-    /// per-pixel threshold to produce `differing`.
-    pub fn passes(&self, band: &ToleranceBand) -> bool {
-        self.fraction() <= band.differing_fraction
+    /// Whether the measured difference is within the area budget of the band
+    /// [`diff`] was called with. The band is carried on the diff (`self.band`),
+    /// so the differing count and the budget it is graded against always come
+    /// from the same rule (#291).
+    pub fn passes(&self) -> bool {
+        self.fraction() <= self.band.differing_fraction
     }
 }
 
@@ -81,7 +89,7 @@ impl OracleDiff {
 pub fn diff(
     reference_png: &[u8],
     design_source_png: &[u8],
-    band: &ToleranceBand,
+    band: &'static ToleranceBand,
 ) -> Result<OracleDiff, String> {
     let (reference_size, reference) = decode_rgba(reference_png, "the reference render")?;
     let (source_size, source) = decode_rgba(design_source_png, "the design source")?;
@@ -116,6 +124,7 @@ pub fn diff(
         differing,
         total: reference.len() / 4,
         max_channel_delta,
+        band,
     })
 }
 

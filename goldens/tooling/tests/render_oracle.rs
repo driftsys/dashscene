@@ -38,6 +38,90 @@ fn png(w: i32, h: i32, base: u8, patch: Option<(Rect, u8)>) -> Vec<u8> {
         .to_vec()
 }
 
+/// A `w`×`h` PNG filled with one straight-alpha RGBA color, assembled by hand
+/// (8-bit RGBA, one filter-0 scanline per row, a zlib "stored" IDAT) rather
+/// than produced through skia. skia's PNG encoder normalizes every fully
+/// transparent pixel to (0,0,0,0), which would erase the straight-alpha RGB the
+/// #290 lock test authors under alpha 0. A hand-authored PNG carries that RGB,
+/// and skia's *decoder* reads it back faithfully when the image is decoded as
+/// unpremultiplied — the exact input needed to test what `oracle::diff` does
+/// with a transparent pixel that has a non-zero color.
+fn solid_rgba_png(w: u32, h: u32, rgba: [u8; 4]) -> Vec<u8> {
+    // One scanline: a filter-type byte (0 = None) then `w` RGBA pixels.
+    let mut row = Vec::with_capacity(1 + (w * 4) as usize);
+    row.push(0u8);
+    for _ in 0..w {
+        row.extend_from_slice(&rgba);
+    }
+    let mut raw = Vec::with_capacity(h as usize * row.len());
+    for _ in 0..h {
+        raw.extend_from_slice(&row);
+    }
+
+    let mut ihdr = Vec::with_capacity(13);
+    ihdr.extend_from_slice(&w.to_be_bytes());
+    ihdr.extend_from_slice(&h.to_be_bytes());
+    ihdr.extend_from_slice(&[8, 6, 0, 0, 0]); // 8-bit, RGBA, deflate, no filter/interlace
+
+    let mut png = Vec::new();
+    png.extend_from_slice(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+    png_chunk(&mut png, b"IHDR", &ihdr);
+    png_chunk(&mut png, b"IDAT", &zlib_stored(&raw));
+    png_chunk(&mut png, b"IEND", &[]);
+    png
+}
+
+/// Appends one `length | type | data | CRC32` PNG chunk.
+fn png_chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+    out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    out.extend_from_slice(kind);
+    out.extend_from_slice(data);
+    let mut crc_input = Vec::with_capacity(4 + data.len());
+    crc_input.extend_from_slice(kind);
+    crc_input.extend_from_slice(data);
+    out.extend_from_slice(&crc32(&crc_input).to_be_bytes());
+}
+
+/// Wraps `data` in a zlib stream of DEFLATE "stored" (uncompressed) blocks —
+/// no compression, so no compressor dependency is needed to author a PNG.
+fn zlib_stored(data: &[u8]) -> Vec<u8> {
+    let mut out = vec![0x78, 0x01]; // zlib header (CMF, FLG), check value valid
+    let mut offset = 0;
+    while offset < data.len() {
+        let end = (offset + 0xFFFF).min(data.len());
+        let block = &data[offset..end];
+        out.push(u8::from(end >= data.len())); // BFINAL on the last block, BTYPE 0
+        let len = block.len() as u16;
+        out.extend_from_slice(&len.to_le_bytes());
+        out.extend_from_slice(&(!len).to_le_bytes());
+        out.extend_from_slice(block);
+        offset = end;
+    }
+    out.extend_from_slice(&adler32(data).to_be_bytes());
+    out
+}
+
+fn crc32(data: &[u8]) -> u32 {
+    let mut crc = 0xFFFF_FFFFu32;
+    for &byte in data {
+        crc ^= byte as u32;
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+        }
+    }
+    !crc
+}
+
+fn adler32(data: &[u8]) -> u32 {
+    let (mut a, mut b) = (1u32, 0u32);
+    for &byte in data {
+        a = (a + byte as u32) % 65521;
+        b = (b + a) % 65521;
+    }
+    (b << 16) | a
+}
+
 const BANDS: [&ToleranceBand; 3] = [&AA_EDGE, &BLUR_FALLOFF, &MSDF_TEXT];
 
 #[test]
@@ -53,7 +137,7 @@ fn an_identical_design_source_passes_every_band() {
             band.rule
         );
         assert_eq!(d.max_channel_delta, 0);
-        assert!(d.passes(band), "identical images pass {}", band.rule);
+        assert!(d.passes(), "identical images pass {}", band.rule);
     }
 }
 
@@ -72,7 +156,7 @@ fn a_sub_threshold_difference_is_measured_but_passes() {
         d.differing, 0,
         "no pixel exceeds the 40 per-pixel threshold"
     );
-    assert!(d.passes(&AA_EDGE));
+    assert!(d.passes());
 }
 
 #[test]
@@ -93,7 +177,7 @@ fn a_difference_above_the_band_fails() {
     assert_eq!(d.total, 10_000);
     assert_eq!(d.max_channel_delta, 60);
     assert!(
-        !d.passes(&AA_EDGE),
+        !d.passes(),
         "9% differing over the 2% AA_EDGE budget must fail (measured {:.3})",
         d.fraction()
     );
@@ -117,10 +201,7 @@ fn a_sparse_above_threshold_difference_within_budget_passes() {
         d.max_channel_delta, 60,
         "the patch pixels are over the threshold"
     );
-    assert!(
-        d.passes(&AA_EDGE),
-        "1% differing under the 2% budget passes"
-    );
+    assert!(d.passes(), "1% differing under the 2% budget passes");
 }
 
 #[test]
@@ -156,7 +237,7 @@ fn each_band_enforces_its_own_budget_above_fails_below_passes() {
         assert_eq!(above.differing, ((budget_rows + 1) * W) as usize);
         assert_eq!(above.max_channel_delta, 70);
         assert!(
-            !above.passes(band),
+            !above.passes(),
             "{}: {} rows differ ({:.3}) over the {:.3} budget must fail",
             band.rule,
             budget_rows + 1,
@@ -169,7 +250,7 @@ fn each_band_enforces_its_own_budget_above_fails_below_passes() {
         assert_eq!(below.differing, ((budget_rows - 1) * W) as usize);
         assert_eq!(below.max_channel_delta, 70);
         assert!(
-            below.passes(band),
+            below.passes(),
             "{}: {} rows differ ({:.3}) under the {:.3} budget must pass",
             band.rule,
             budget_rows - 1,
@@ -177,6 +258,44 @@ fn each_band_enforces_its_own_budget_above_fails_below_passes() {
             band.differing_fraction,
         );
     }
+}
+
+#[test]
+fn passes_grades_against_the_band_diff_was_computed_with() {
+    // #291: `passes()` must grade against the band `diff` was called with, so a
+    // caller cannot count differing pixels under one band's per-pixel threshold
+    // and then grade that count against a different band's area budget. The band
+    // is carried on the `OracleDiff`, and `passes()` takes no band argument, so
+    // the mismatch is unrepresentable.
+    //
+    // A 5-row full-width strip on a 100-row canvas differs in exactly 5% of
+    // pixels, each 70 over the base — above every band's `channel_delta`, so the
+    // differing *count* is identical under any band. Only the area budget
+    // decides the verdict: 5% is over AA_EDGE's 2% budget but under
+    // BLUR_FALLOFF's 12%.
+    let reference = png(100, 100, 120, None);
+    let source = png(
+        100,
+        100,
+        120,
+        Some((Rect::from_xywh(0.0, 0.0, 100.0, 5.0), 190)),
+    );
+
+    let strict = oracle::diff(&reference, &source, &AA_EDGE).expect("same size");
+    let lax = oracle::diff(&reference, &source, &BLUR_FALLOFF).expect("same size");
+
+    // The same image yields the same differing count under either band.
+    assert_eq!(strict.differing, 500);
+    assert_eq!(lax.differing, 500);
+    assert_eq!(strict.fraction(), 0.05);
+
+    // Each diff carries the band it was computed against …
+    assert_eq!(strict.band.rule, "aa-edge");
+    assert_eq!(lax.band.rule, "blur-falloff");
+
+    // … and the verdict follows that band's budget, not a re-supplied one.
+    assert!(!strict.passes(), "5% over AA_EDGE's 2% budget must fail");
+    assert!(lax.passes(), "5% under BLUR_FALLOFF's 12% budget must pass");
 }
 
 #[test]
@@ -222,6 +341,84 @@ fn the_three_rule_bands_are_pinned_and_distinct() {
         BLUR_FALLOFF.differing_fraction > AA_EDGE.differing_fraction
             && BLUR_FALLOFF.differing_fraction > MSDF_TEXT.differing_fraction,
     );
+}
+
+#[test]
+fn both_fully_transparent_pixels_never_count_as_differing_even_with_distinct_rgb() {
+    // #290 asks that two fully transparent pixels (alpha 0) never count as
+    // differing, however their RGB disagrees — nothing is drawn, so they are
+    // visually identical. This is already guaranteed structurally: `oracle::diff`
+    // decodes each PNG through skia's default (premultiplied) image, which
+    // collapses every alpha-0 pixel to (0,0,0,0) on both sides before the
+    // per-channel compare runs. This test *locks* that guarantee against a
+    // future decode change: it feeds two hand-authored PNGs whose transparent
+    // regions carry very different non-zero RGB, and asserts they still measure
+    // as identical. If the decode ever preserved straight-alpha RGB, this test
+    // would fail — that is exactly when the compare loop would need an explicit
+    // alpha-0 guard.
+    let a_rgb = [200u8, 50, 30];
+    let b_rgb = [10u8, 180, 90];
+
+    // Control: the same two RGBs, but opaque. This proves the hand-authored
+    // PNGs really do carry distinct color and that `oracle::diff` would count
+    // them when opaque — so the transparent case below is suppressing a real
+    // RGB difference, not measuring one the encoder happened to erase.
+    let opaque_a = solid_rgba_png(20, 20, [a_rgb[0], a_rgb[1], a_rgb[2], 255]);
+    let opaque_b = solid_rgba_png(20, 20, [b_rgb[0], b_rgb[1], b_rgb[2], 255]);
+    let control = oracle::diff(&opaque_a, &opaque_b, &AA_EDGE).expect("same size");
+    assert_eq!(
+        control.differing, 400,
+        "control: the two colors differ everywhere when opaque"
+    );
+    assert!(
+        control.max_channel_delta > AA_EDGE.channel_delta,
+        "control: the opaque RGB delta ({}) is over the band threshold",
+        control.max_channel_delta,
+    );
+
+    // Under test: the same two colors, both fully transparent.
+    let transparent_a = solid_rgba_png(20, 20, [a_rgb[0], a_rgb[1], a_rgb[2], 0]);
+    let transparent_b = solid_rgba_png(20, 20, [b_rgb[0], b_rgb[1], b_rgb[2], 0]);
+    for band in BANDS {
+        let d = oracle::diff(&transparent_a, &transparent_b, band).expect("same size");
+        assert_eq!(
+            d.differing, 0,
+            "both fully transparent → no visible difference ({})",
+            band.rule
+        );
+        assert_eq!(
+            d.max_channel_delta, 0,
+            "the meaningless RGB delta of transparent pixels is not reported ({})",
+            band.rule
+        );
+        assert!(
+            d.passes(),
+            "both fully transparent passes every band ({})",
+            band.rule
+        );
+    }
+}
+
+#[test]
+fn transparent_versus_opaque_still_counts_as_differing() {
+    // The alpha-0 guarantee is symmetric only when *both* sides are transparent.
+    // A pixel fully transparent on one side but opaque on the other disagrees on
+    // coverage — a real difference the oracle must keep counting. Same RGB on
+    // both sides isolates the alpha disagreement as the sole cause.
+    let rgb = [200u8, 50, 30];
+    let transparent = solid_rgba_png(20, 20, [rgb[0], rgb[1], rgb[2], 0]);
+    let opaque = solid_rgba_png(20, 20, [rgb[0], rgb[1], rgb[2], 255]);
+
+    let d = oracle::diff(&transparent, &opaque, &AA_EDGE).expect("same size");
+    assert_eq!(
+        d.max_channel_delta, 255,
+        "the alpha channel disagrees by the full range"
+    );
+    assert_eq!(
+        d.differing, 400,
+        "every pixel disagrees on coverage, so every pixel counts"
+    );
+    assert!(!d.passes(), "a full-coverage disagreement must fail");
 }
 
 // --- The corpus-frame ↔ design-source manifest (goldens/oracle/manifest.json) ---
@@ -353,7 +550,7 @@ fn the_reference_renders_match_their_design_source() {
                 let d = oracle::diff(&reference_bytes, &source_bytes, band)
                     .unwrap_or_else(|e| panic!("frame {name}: {e}"));
                 measured += 1;
-                if !d.passes(band) {
+                if !d.passes() {
                     failures.push(format!(
                         "{name}: {}/{} px differ ({:.3}%, max Δ {}) over the {} band's {:.1}% budget",
                         d.differing,
