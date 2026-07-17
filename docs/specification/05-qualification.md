@@ -16,15 +16,15 @@ missing proof must be visible.
 
 ## v0 exit criteria
 
-| Criterion                         | Verifies | Status                                  |
-| --------------------------------- | -------- | --------------------------------------- |
-| E1 same screen authored both ways | G1       | open — v0.9 (epic #47)                  |
-| E2 Arabic golden-stable           | R1       | **met**                                 |
-| E3 stress corpus green            | R2       | partial — met via #283                  |
-| E4 dirty Figma file → report      | R6       | **met**                                 |
-| E5 variant switch via FLIP        | R4       | **met**                                 |
-| E6 byte-identical `.dsb`          | R7       | **met**                                 |
-| E7 design-source render oracle    | R6       | open — v0.8 fidelity tooling (epic #42) |
+| Criterion                         | Verifies | Status                                                                                     |
+| --------------------------------- | -------- | ------------------------------------------------------------------------------------------ |
+| E1 same screen authored both ways | G1       | open — v0.9 (epic #47)                                                                     |
+| E2 Arabic golden-stable           | R1       | **met**                                                                                    |
+| E3 stress corpus green            | R2       | partial — met via #283                                                                     |
+| E4 dirty Figma file → report      | R6       | **met**                                                                                    |
+| E5 variant switch via FLIP        | R4       | **met**                                                                                    |
+| E6 byte-identical `.dsb`          | R7       | **met**                                                                                    |
+| E7 design-source render oracle    | R6       | open — tooling landed (v0.8, story #284); assertion pending (#49 v0.9 gate, #265 captures) |
 
 The file carries no version in its name. "v0 exit criteria" is a heading
 inside it; v1's criteria are a second heading below, not a second file.
@@ -295,7 +295,7 @@ E6 was scheduled for v0.7 in the original plan; the fixture guard landed early,
 as v0.3 debt (issue #64), and story #40 completed the end-to-end importer proof
 on schedule.
 
-### E7 — open
+### E7 — open (tooling landed)
 
 R6 requires fidelity to be a measured number, not an asserted one. E7 adds a
 design-source render oracle to CI: a perceptual diff of the Skia reference
@@ -307,10 +307,55 @@ E4 already gives R6 its diagnostic half — a dirty file produces a report and n
 document; E7 gives R6 its fidelity half — a clean file renders within tolerance
 of its design source. The two together make R6 checkable end to end.
 
-The oracle was targeted for the v0.7 importer close and did not land; its
-tooling is folded into the v0.8 fidelity slice (epic #42), where the corpus
-frames it diffs are themselves first proven green (E3). E7 is asserted at the
-v0.9 exit gate alongside E1–E6.
+Story #284 (v0.8, epic #42) delivers the **tooling** — the harness, the
+per-rule bands, the corpus-frame wiring, and an authored CI job — but not the
+**assertion**, which stays gated on a real design source. E7 is therefore
+still open, not met:
+
+- The perceptual-diff harness, `goldens::oracle`
+  (`goldens/tooling/src/oracle.rs`): `diff(reference_png, design_source_png,
+  band)` decodes both images in the golden comparison space (unpremultiplied
+  RGBA8888, `docs/decisions/golden-comparison-space.md`) and returns an
+  `OracleDiff` — the differing-pixel count, the total, and the largest
+  per-channel delta seen — so a result is a measured number, never a bare
+  pass/fail. `OracleDiff::passes(band)` checks the differing fraction against
+  the band; a dimension mismatch is an `Err` naming both sizes, never a
+  silent pass.
+- Three pinned per-rule tolerance bands, not one global budget (G-11
+  requires per-rule): `AA_EDGE` (`channel_delta = 40`, `differing_fraction =
+  0.02`) for hard rect edges, where a thin anti-aliased edge band can swing
+  far per pixel but covers little of the canvas; `BLUR_FALLOFF`
+  (`channel_delta = 24`, `differing_fraction = 0.12`) for a blurred shadow's
+  soft falloff — including the `sigma = blur / 2` mapping,
+  `docs/decisions/effects-vocabulary-shadows.md` — where many pixels
+  disagree by a little across a wide region; `MSDF_TEXT` (`channel_delta =
+  50`, `differing_fraction = 0.03`) for MSDF glyph edges, sparse but
+  high-contrast. Full rationale: the module's rustdoc and
+  `docs/design/goldens.md`.
+- The corpus-frame ↔ design-source manifest, `goldens/oracle/manifest.json`:
+  seven frames (`v08-wrap`, `v08-grid-spans`, `v08-baseline` on `aa-edge`;
+  `v08-drop-shadow`, `v08-inner-shadow` on `blur-falloff`; `v06-text-arabic`,
+  `v05-text-latin` on `msdf-text`), each naming its committed reference
+  golden and its band. Every frame's `designSource` is `null` and its
+  `status` is `pending-265` — no design source is fabricated or stood in for
+  by the project's own render (that is the exact self-oracle failure G-11
+  forbids).
+- Tests (`goldens/tooling/tests/render_oracle.rs`): synthetic-pair tests
+  prove the harness and the bands against controlled image pairs, and run in
+  the ordinary `test` job; manifest-consistency tests assert every frame
+  names a known band and an existing reference image, and that a frame
+  without a design source is honestly marked `pending-265`. The assertion
+  itself, `the_reference_renders_match_their_design_source`, is
+  `#[ignore]`-gated with a named #265 reason and does not run in `test`.
+- CI (`.github/workflows/ci.yml`): an authored `render-oracle` job runs the
+  gated assertion with `--ignored` and is wired into the `ci` aggregate
+  `needs`. With no committed design source it measures nothing and reports
+  every frame pending #265 — a loud pending summary, never a silent green.
+
+The real design-source images (Figma REST `GET /images` exports per corpus
+frame) are authored manually and tracked by the parked issue #265. E7 is
+asserted — and can only then flip to met — at the v0.9 exit gate (#49),
+once issue #265's captures land and the gated assertion runs for real.
 
 ## v1 exit criteria
 

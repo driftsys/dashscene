@@ -42,6 +42,20 @@ regenerating, inspecting a failure — is documented in
 criterion; the comparison-space choice is
 `docs/decisions/golden-comparison-space.md`. Neither is repeated here.
 
+    pub mod oracle {
+        pub fn diff(reference_png: &[u8], design_source_png: &[u8], band: &ToleranceBand) -> Result<OracleDiff, String>
+        pub struct OracleDiff { differing: usize, total: usize, max_channel_delta: u8 }
+        pub struct ToleranceBand { rule: &'static str, channel_delta: u8, differing_fraction: f64 }
+        pub fn band_for(rule: &str) -> Option<&'static ToleranceBand>
+        pub const AA_EDGE: ToleranceBand
+        pub const BLUR_FALLOFF: ToleranceBand
+        pub const MSDF_TEXT: ToleranceBand
+    }
+
+`goldens::oracle` (story #284) is the design-source render oracle — a
+second, distinct diff path from `assert_matches_golden*` above. Its bands,
+manifest, and gate are documented in their own section below.
+
 ## Golden scene (fixture)
 
 `goldens/tooling/tests/v01.rs` builds one 64×64 scene through
@@ -126,6 +140,105 @@ back-to-front `effects` order, so the probe flips and fails if the draw
 loop reverses — the golden pins the stacking order, not just the presence
 of a shadow.
 
+## Design-source render oracle (E7 / G-11)
+
+Every golden above diffs `dashscene-skia`'s render against the project's
+_own_ previously committed PNG — a self-oracle, which by construction
+cannot see the painter drifting away from what a design actually looks
+like (`docs/technotes/engineering-guardrails.md` G-23). Story #284 adds a
+second, distinct diff path: `goldens::oracle` (`goldens/tooling/src/oracle.rs`)
+perceptually diffs a reference render against its **design source** —
+Figma's REST `GET /images` export — decoded in the same unpremultiplied
+RGBA8888 comparison space the self-oracle goldens use
+(`docs/decisions/golden-comparison-space.md`). This is the tooling for
+exit criterion E7 (`docs/specification/05-qualification.md`), the
+falsifiable form of R6 that guardrail G-11 names.
+
+`diff(reference_png, design_source_png, band)` counts a pixel as differing
+only when its largest per-channel absolute delta exceeds the band's
+`channel_delta`, and returns an `OracleDiff` carrying the measured
+`differing` count, the `total` pixel count, and the largest per-channel
+delta seen at any pixel — a result is a measured number, never a bare
+pass/fail (G-11). `OracleDiff::passes(band)` checks the differing fraction
+against `band.differing_fraction`. A dimension mismatch between the two
+images is an `Err` naming both sizes, never a silent pass.
+
+### Per-rule bands, not one global budget
+
+G-11 requires per-rule tolerances: a hard rect edge, a blurred shadow's
+soft falloff, and an MSDF glyph edge each disagree with a design-source
+export differently, so one global budget would either reject a correct
+blur or accept a broken edge. Three bands are pinned
+(`goldens/tooling/src/oracle.rs`), each asserted exactly in
+`goldens/tooling/tests/render_oracle.rs`
+(`the_three_rule_bands_are_pinned_and_distinct`) so a retune is a
+deliberate, reviewed change rather than a silent drift:
+
+- **`AA_EDGE`** — `channel_delta = 40`, `differing_fraction = 0.02`. A hard
+  rect edge anti-aliased against the design source disagrees on a thin
+  1–2 px band, where the reference painter's coverage rounding and Figma's
+  server-side export resampling can swing far apart per pixel. The
+  fraction budget is the primary tolerance (an edge is a small share of
+  the canvas); `channel_delta` filters sub-threshold interior noise.
+  Governs the E3 exact-layout frames (wrap, grid spans, baseline).
+- **`BLUR_FALLOFF`** — `channel_delta = 24`, `differing_fraction = 0.12`. A
+  blurred shadow spreads a small per-pixel disagreement across a wide
+  falloff region — many pixels off by a little. The `sigma = blur / 2`
+  mapping (`docs/decisions/effects-vocabulary-shadows.md`) is an
+  approximation of Figma's blur, so the whole falloff can be
+  systematically off by a small amount; a wider fraction with a moderate
+  per-pixel threshold pins "the falloff shape is close" without demanding
+  pixel identity. Governs the drop- and inner-shadow frames, and is the
+  band that will pin `sigma = blur / 2` against a real capture once #265
+  lands.
+- **`MSDF_TEXT`** — `channel_delta = 50`, `differing_fraction = 0.03`. MSDF
+  glyph edges are sharp, high-contrast transitions; the reference
+  painter's MSDF resolve and Figma's font rasterizer disagree at glyph
+  boundaries (hinting, gamma). Text ink is sparse, so a small fraction
+  with a higher per-pixel threshold pins the glyph shapes without
+  over-tolerating. Governs the text frames (Arabic, Latin).
+
+These are engineering estimates from the AA/blur/MSDF edge
+characteristics, pinned so the harness is falsifiable now; the first real
+captures (#265) and the v0.9 exit gate (#49) confirm or retune them.
+
+### The corpus-frame ↔ design-source manifest
+
+`goldens/oracle/manifest.json` wires each corpus frame to the reference
+golden it must match, the band that governs it, and its design-source
+slot: `v08-wrap`, `v08-grid-spans`, `v08-baseline` on `aa-edge`;
+`v08-drop-shadow`, `v08-inner-shadow` on `blur-falloff`;
+`v06-text-arabic`, `v05-text-latin` on `msdf-text`. Today every frame's
+`designSource` is `null` and its `status` is `pending-265`.
+`goldens/tooling/tests/render_oracle.rs`'s manifest-consistency tests run
+in the ordinary `test` job and assert every frame names a known band and
+an existing committed reference image, and that a frame with no design
+source is honestly marked `pending-265` — an assertion that stays true
+after #265 lands too, since it checks each frame's own state rather than
+"all frames are pending". `goldens/oracle/README.md` documents the
+drop-in procedure for adding a real capture.
+
+### The #265 gate
+
+The real design-source images — a Figma REST `GET /images` export per
+corpus frame — are authored manually and tracked by the parked
+issue #265. No design source may be fabricated, hand-drawn, or stood in
+for by the project's own render; that is the exact self-oracle failure
+G-11 forbids. Until issue #265 lands:
+
+- The assertion that a frame's render matches its export,
+  `the_reference_renders_match_their_design_source`
+  (`goldens/tooling/tests/render_oracle.rs`), is `#[ignore]`-gated with a
+  named #265 reason and does not run in the ordinary `test` job.
+- An authored CI job, `render-oracle` (`.github/workflows/ci.yml`), runs
+  the gated assertion with `--ignored` and is wired into the `ci`
+  aggregate `needs`. With no committed design source it measures nothing
+  and reports every frame pending #265 — a loud pending summary, never a
+  silent green.
+- E7 stays **open (tooling landed)**, not met, in
+  `docs/specification/05-qualification.md`; it is asserted at the v0.9
+  exit gate (#49).
+
 ## Testing
 
 Unit tests in `src/lib.rs` cover the tooling's edge behavior against a
@@ -149,7 +262,8 @@ against that image is the exit criterion itself.
   `docs/specification/05-qualification.md`'s v0.1 slice exit ("golden
   harness"), `docs/technotes/rendering-and-painters.md` (CPU painters
   generate their own goldens); issue #11's v0.2 flex goldens; issue
-  #14's v0.3 golden; issue #97's clip golden.
+  #14's v0.3 golden; issue #97's clip golden; issue #284's design-source
+  render oracle tooling (exit criterion E7, guardrail G-11).
 - Closes epic #1's story list (v0.1 walking skeleton, milestone 1).
 - Closes epic #7's story list (v0.2 flex core) — issue #11 was its last
   open story.
@@ -160,4 +274,7 @@ against that image is the exit criterion itself.
   for every draw, and the v0.1 golden's unchanged pass is that
   decision's regression proof);
   `docs/decisions/v02-flex-goldens-per-construct.md` (v0.2 flex golden
-  granularity and scope, story #11).
+  granularity and scope, story #11);
+  `docs/decisions/render-oracle-tolerance-and-gating.md` (the
+  design-source render oracle's per-rule bands, real-export-only rule, and
+  #[ignore]-gated assertion, story #284).

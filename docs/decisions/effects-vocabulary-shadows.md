@@ -220,6 +220,13 @@ posture for blend modes, not a shadow-specific rule.
 - Debt candidates (reported, not filed): a zero-alpha or zero-opacity
   shadow is drawn (blurred and rasterized) rather than skipped early — a
   wasted per-frame cost the painter could short-circuit; and `sigma =
-  blur / 2` is the CSS/browser convention, not measured against a real
-  Figma capture, so its fidelity is parked-fixture territory (issue #265,
-  the manual Figma fixture authorings).
+  blur / 2` is the CSS/browser convention, still not measured against a
+  real Figma capture. Story #284 (`docs/design/goldens.md`, exit criterion
+  E7) built the mechanism that will do that measuring — the
+  `blur-falloff` tolerance band (`goldens/tooling/src/oracle.rs`) and the
+  `v08-drop-shadow` / `v08-inner-shadow` slots in
+  `goldens/oracle/manifest.json` that will pin `sigma = blur / 2` against
+  a real design-source capture — but both slots are still
+  `status: pending-265`: the real Figma REST exports have not landed, so
+  `sigma = blur / 2` remains unmeasured, not retired (issue #265, the
+  manual Figma fixture authorings).
