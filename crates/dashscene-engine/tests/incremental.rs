@@ -3,7 +3,9 @@
 //! entirely, and an incremental solve lands on the same rects a fresh
 //! build would.
 
-use dashscene_core::{Arena, AxisSizing, Color, LayoutMode, NodeId, Prop};
+use dashscene_core::{
+    Arena, AxisSizing, Color, LayoutMode, NodeId, Prop, VariantMember, VariantValue,
+};
 use dashscene_engine::TaffySolver;
 
 const RED: Color = Color {
@@ -164,5 +166,133 @@ fn an_incremental_reflow_matches_a_fresh_build() {
             (0.0, 0.0, 70.0, 30.0),
             (70.0, 0.0, 130.0, 30.0),
         ],
+    );
+}
+
+/// Rect `(x, y, w, h)` of a committed node, addressed by identity (debt
+/// #119), as in the E3 corpus case (`crates/dashlang/tests/corpus.rs`).
+fn rect_of(arena: &Arena, node: NodeId) -> (f32, f32, f32, f32) {
+    let scene = arena.committed();
+    let index = scene
+        .rect_index_of(node)
+        .expect("the node is committed in this generation");
+    let r = scene.rects()[index as usize];
+    (r.x, r.y, r.w, r.h)
+}
+
+#[test]
+fn a_variant_visible_toggle_reflows_on_the_retained_incremental_solver() {
+    // Issue #292: the E3 corpus case
+    // (`a_variant_switch_hides_a_child_and_reflows_the_laid_out_set` in
+    // `crates/dashlang/tests/corpus.rs`) builds a FRESH `TaffySolver::new()`
+    // for every `commit_with` call, so every one of its solves takes
+    // `TaffySolver`'s `rebuild` branch (`state` starts `None`) — it never
+    // exercises `incremental` (issue #164), the real production commit
+    // path. Here ONE solver is reused across both commits, matching the
+    // retained-solver pattern this file already uses elsewhere (e.g.
+    // `an_incremental_reflow_matches_a_fresh_build`).
+    //
+    // Same three-chip Hug row as the corpus case: hugs to 90 with all
+    // shown, 60 with the middle chip hidden.
+    let mut arena = Arena::new();
+    let mut solver = TaffySolver::new();
+
+    let (row, b, c, set) = {
+        let mut txn = arena.open();
+        let row = txn.add_node(None, None);
+        txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
+        txn.set_prop(row, Prop::SizingH(AxisSizing::Hug));
+        txn.set_prop(row, Prop::Height(20.0));
+        let a = txn.add_node(Some(row), None);
+        txn.set_prop(a, Prop::Width(30.0));
+        txn.set_prop(a, Prop::Height(20.0));
+        let b = txn.add_node(Some(row), None);
+        txn.set_prop(b, Prop::Width(30.0));
+        txn.set_prop(b, Prop::Height(20.0));
+        let c = txn.add_node(Some(row), None);
+        txn.set_prop(c, Prop::Width(30.0));
+        txn.set_prop(c, Prop::Height(20.0));
+        let set = txn.add_variant_set(vec![
+            VariantMember {
+                name: None,
+                overrides: vec![],
+            },
+            VariantMember {
+                name: None,
+                overrides: vec![(b, VariantValue::Visible(false))],
+            },
+        ]);
+        txn.commit_with(&mut solver);
+        (row, b, c, set)
+    };
+
+    let node_count_after_build = arena.node_count();
+    let solves_after_build = solver.solves();
+    assert!(
+        solves_after_build >= 1,
+        "the first commit builds and solves the tree"
+    );
+    assert_eq!(rect_of(&arena, row), (0.0, 0.0, 90.0, 20.0), "all shown");
+    assert_eq!(rect_of(&arena, c), (60.0, 0.0, 30.0, 20.0), "c last");
+
+    // Switch to the hide-middle member on the SAME retained solver — the
+    // node count does not change (a `Visible` override never adds or
+    // removes an arena node), so `TaffySolver::solve`'s `structural` check
+    // is false and this commit is provably routed through `incremental`,
+    // not `rebuild`.
+    let mut txn = arena.open();
+    txn.set_variant(set, 1);
+    txn.commit_with(&mut solver);
+
+    assert_eq!(
+        arena.node_count(),
+        node_count_after_build,
+        "hiding a child via a variant does not change the node count"
+    );
+    assert!(
+        solver.solves() > solves_after_build,
+        "a Visible toggle is a layout change and must run a solve"
+    );
+    assert_eq!(
+        rect_of(&arena, row),
+        (0.0, 0.0, 60.0, 20.0),
+        "the row collapses by the hidden child's width, reflowed by the incremental solve"
+    );
+    assert_eq!(
+        rect_of(&arena, b),
+        (0.0, 0.0, 0.0, 0.0),
+        "the hidden child leaves the laid-out set (degenerate rect)"
+    );
+    assert_eq!(
+        rect_of(&arena, c),
+        (30.0, 0.0, 30.0, 20.0),
+        "c reflows into b's place on the retained/incremental path"
+    );
+
+    // Switch back — a second incremental commit, the reverse reflow.
+    let solves_after_hide = solver.solves();
+    let mut txn = arena.open();
+    txn.set_variant(set, 0);
+    txn.commit_with(&mut solver);
+
+    assert_eq!(arena.node_count(), node_count_after_build);
+    assert!(
+        solver.solves() > solves_after_hide,
+        "the reverse toggle is also a layout change"
+    );
+    assert_eq!(
+        rect_of(&arena, row),
+        (0.0, 0.0, 90.0, 20.0),
+        "row restored by a second incremental commit"
+    );
+    assert_eq!(
+        rect_of(&arena, b),
+        (30.0, 0.0, 30.0, 20.0),
+        "b re-enters the laid-out set"
+    );
+    assert_eq!(
+        rect_of(&arena, c),
+        (60.0, 0.0, 30.0, 20.0),
+        "c back to last"
     );
 }
