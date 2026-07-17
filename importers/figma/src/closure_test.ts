@@ -10,9 +10,11 @@
 import { assert, assertEquals, assertThrows } from "@std/assert";
 
 import {
+  type ClosureFile,
   computeClosure,
   exportableRoots,
   parseExportManifest,
+  resolveRemoteComponents,
 } from "./closure.ts";
 import { loadDashc } from "./wasm.ts";
 
@@ -454,19 +456,22 @@ Deno.test("an unresolved componentId is a named error", () => {
   assert(closure.diagnostics[0].message.includes("9:9"));
 });
 
-Deno.test("a remote component is a named cross-file error until #38", () => {
+Deno.test("a remote component is recorded, and the closure alone does not diagnose it", () => {
+  // Since #38, the closure alone does not verdict a remote component: it records
+  // the requirement (the resolution handle) and stops. `resolveRemoteComponents`
+  // is the single owner of the cross-file verdict — it resolves the key against a
+  // declared library, or names it unresolvable (P4). The import pipeline always
+  // runs that pass when a remote requirement exists, so a remote is never silent
+  // end to end.
   const file = componentFile();
   (file.components as Record<string, { remote: boolean }>)["1:2"].remote = true;
 
   const closure = computeClosure(file, { roots: ["1:20"] });
 
-  assertEquals(
-    closure.diagnostics.map((d) => d.rule),
-    ["figma.closure.cross-file-component"],
-  );
-  // The error names the library key, which is what #38 will resolve by.
-  assert(closure.diagnostics[0].message.includes("key-collapsed"));
-  // The requirement is still recorded — it is the contract #38 builds on.
+  // No cross-file diagnostic from the closure alone anymore.
+  assertEquals(closure.diagnostics, []);
+  // The requirement is still recorded — it carries the library key the
+  // resolution pass resolves by.
   assertEquals(closure.components, [
     { componentId: "1:2", key: "key-collapsed", remote: true, setId: "1:11" },
   ]);
@@ -681,5 +686,581 @@ Deno.test("the oracle names a definition's image fill, from both walks", async (
   assertEquals(
     closure.imageRefs,
     dashc.figmaImageRefs(JSON.stringify(closure.file)),
+  );
+});
+
+// ------------------------------------------------ cross-file resolution (#38)
+
+/**
+ * A consumer file whose one instance references a REMOTE variant: the component
+ * set lives in a library file, so the consumer carries phantom ids (9:x) in its
+ * `components`/`componentSets` maps but no set node in its own document tree.
+ */
+function remoteConsumerFile(): ClosureFile {
+  return {
+    document: {
+      id: "0:0",
+      name: "Document",
+      type: "DOCUMENT",
+      children: [
+        {
+          id: "0:1",
+          name: "Page 1",
+          type: "CANVAS",
+          children: [
+            {
+              id: "1:20",
+              name: "home",
+              type: "FRAME",
+              children: [
+                {
+                  id: "1:21",
+                  name: "chip-instance",
+                  type: "INSTANCE",
+                  componentId: "9:2",
+                  children: [
+                    { id: "I1:21;9:3", name: "label", type: "FRAME" },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    components: {
+      "9:2": { key: "key-collapsed", remote: true, componentSetId: "9:11" },
+    },
+    componentSets: { "9:11": { key: "key-set" } },
+  };
+}
+
+/**
+ * The library file that publishes the chip set. Its own ids (1:x) are a
+ * different id space from the consumer's phantom ids — resolution matches by
+ * `key`, not by id.
+ */
+function chipLibraryFile(): ClosureFile {
+  return {
+    document: {
+      id: "0:0",
+      name: "Chip Library",
+      type: "DOCUMENT",
+      children: [
+        {
+          id: "0:1",
+          name: "Page 1",
+          type: "CANVAS",
+          children: [
+            {
+              id: "1:11",
+              name: "chip",
+              type: "COMPONENT_SET",
+              children: [
+                {
+                  id: "1:2",
+                  name: "state=collapsed",
+                  type: "COMPONENT",
+                  children: [{ id: "1:3", name: "label", type: "FRAME" }],
+                },
+                {
+                  id: "1:5",
+                  name: "state=expanded",
+                  type: "COMPONENT",
+                  children: [{ id: "1:6", name: "label", type: "FRAME" }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    components: {
+      "1:2": { key: "key-collapsed", remote: false, componentSetId: "1:11" },
+      "1:5": { key: "key-expanded", remote: false, componentSetId: "1:11" },
+    },
+    componentSets: { "1:11": { key: "key-set" } },
+  };
+}
+
+/** The remote requirements the discovery closure proves the export needs. */
+function remotesOf(file: ClosureFile, roots: readonly string[]) {
+  return computeClosure(file, { roots: [...roots] }).components.filter((c) =>
+    c.remote
+  );
+}
+
+Deno.test("a remote variant resolves by key: the library set is spliced in", () => {
+  const consumer = remoteConsumerFile();
+  const remotes = remotesOf(consumer, ["1:20"]);
+  assertEquals(remotes, [
+    { componentId: "9:2", key: "key-collapsed", remote: true, setId: "9:11" },
+  ]);
+
+  const resolution = resolveRemoteComponents(consumer, remotes, [
+    { fileKey: "LIBKEY", file: chipLibraryFile() },
+  ]);
+
+  // The remote is resolved to the library that carries its key; no diagnostic.
+  assertEquals(resolution.diagnostics, []);
+  assertEquals(resolution.resolved, [
+    { componentId: "9:2", key: "key-collapsed", libraryFileKey: "LIBKEY" },
+  ]);
+
+  // The spliced set is a top-level node under the first canvas, re-id'd into the
+  // consumer's phantom id space: the set node takes the phantom set id, the
+  // referenced member takes the phantom component id, and every other library
+  // node is namespaced by the library file key so it cannot collide.
+  const canvas = resolution.file.document.children?.[0];
+  assertEquals((canvas?.children ?? []).map((n) => n.id), ["9:11", "1:20"]);
+  const set = (canvas?.children ?? []).find((n) => n.id === "9:11");
+  assertEquals((set?.children ?? []).map((n) => n.id), ["9:2", "LIBKEY~1:5"]);
+
+  // The localized map entry is now local, so the final closure treats it as an
+  // ordinary in-document definition.
+  assertEquals(resolution.file.components?.["9:2"], {
+    key: "key-collapsed",
+    remote: false,
+    componentSetId: "9:11",
+  });
+
+  // The final closure over the spliced file resolves clean: the whole set ships
+  // per-set (runtime can select any member), definitions resolve but do not
+  // paint, and the instance paints from its baked subtree.
+  const closure = computeClosure(resolution.file, { roots: ["1:20"] });
+  assertEquals(closure.diagnostics, []);
+  assertEquals(closure.variantSets, [
+    { setId: "9:11", key: "key-set", members: ["9:2", "LIBKEY~1:5"] },
+  ]);
+  assert(closure.nodeIds.has("9:11"));
+  assert(closure.nodeIds.has("9:2"));
+  assert(closure.nodeIds.has("LIBKEY~1:5"));
+});
+
+Deno.test("a frozen subset narrows a spliced remote set the same as a local one", () => {
+  // Frozen-variant semantics hold across files: the manifest freezes the spliced
+  // set by its phantom set id, and the final closure narrows it exactly as it
+  // would a local set.
+  const consumer = remoteConsumerFile();
+  const remotes = remotesOf(consumer, ["1:20"]);
+  const resolution = resolveRemoteComponents(consumer, remotes, [
+    { fileKey: "LIBKEY", file: chipLibraryFile() },
+  ]);
+  assertEquals(resolution.diagnostics, []);
+
+  const closure = computeClosure(resolution.file, {
+    roots: ["1:20"],
+    frozenVariants: { "9:11": ["9:2"] },
+  });
+  assertEquals(closure.diagnostics, []);
+  assertEquals(closure.variantSets, [
+    { setId: "9:11", key: "key-set", members: ["9:2"] },
+  ]);
+  assert(closure.nodeIds.has("9:2"));
+  assert(!closure.nodeIds.has("LIBKEY~1:5"));
+});
+
+Deno.test("two instances of one remote set splice the set once, both anchored", () => {
+  // A collapsed chip and an expanded chip from the SAME library set. The set is
+  // spliced once — not once per instance — and each referenced member is
+  // anchored to its own phantom id, so there is no duplicate set node.
+  const consumer: ClosureFile = {
+    document: {
+      id: "0:0",
+      name: "Document",
+      type: "DOCUMENT",
+      children: [
+        {
+          id: "0:1",
+          name: "Page 1",
+          type: "CANVAS",
+          children: [
+            {
+              id: "1:20",
+              name: "home",
+              type: "FRAME",
+              children: [
+                {
+                  id: "1:21",
+                  name: "chip-collapsed",
+                  type: "INSTANCE",
+                  componentId: "9:2",
+                  children: [{ id: "I1:21;9:3", name: "label", type: "FRAME" }],
+                },
+                {
+                  id: "1:22",
+                  name: "chip-expanded",
+                  type: "INSTANCE",
+                  componentId: "9:5",
+                  children: [{ id: "I1:22;9:6", name: "label", type: "FRAME" }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    components: {
+      "9:2": { key: "key-collapsed", remote: true, componentSetId: "9:11" },
+      "9:5": { key: "key-expanded", remote: true, componentSetId: "9:11" },
+    },
+    componentSets: { "9:11": { key: "key-set" } },
+  };
+
+  const remotes = remotesOf(consumer, ["1:20"]);
+  const resolution = resolveRemoteComponents(consumer, remotes, [
+    { fileKey: "LIBKEY", file: chipLibraryFile() },
+  ]);
+
+  assertEquals(resolution.diagnostics, []);
+  // One spliced set node, both members anchored to their phantom ids.
+  const canvas = resolution.file.document.children?.[0];
+  assertEquals((canvas?.children ?? []).map((n) => n.id), ["9:11", "1:20"]);
+  const set = (canvas?.children ?? []).find((n) => n.id === "9:11");
+  assertEquals((set?.children ?? []).map((n) => n.id), ["9:2", "9:5"]);
+  assertEquals(resolution.resolved.map((r) => r.componentId), ["9:2", "9:5"]);
+
+  const closure = computeClosure(resolution.file, { roots: ["1:20"] });
+  assertEquals(closure.diagnostics, []);
+  assertEquals(closure.variantSets, [
+    { setId: "9:11", key: "key-set", members: ["9:2", "9:5"] },
+  ]);
+});
+
+Deno.test("a standalone remote component resolves without a set", () => {
+  const consumer: ClosureFile = {
+    document: {
+      id: "0:0",
+      name: "Document",
+      type: "DOCUMENT",
+      children: [
+        {
+          id: "0:1",
+          name: "Page 1",
+          type: "CANVAS",
+          children: [
+            {
+              id: "1:20",
+              name: "home",
+              type: "FRAME",
+              children: [
+                {
+                  id: "1:21",
+                  name: "icon-instance",
+                  type: "INSTANCE",
+                  componentId: "9:2",
+                  children: [{ id: "I1:21;9:3", name: "glyph", type: "FRAME" }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    components: { "9:2": { key: "key-icon", remote: true } },
+  };
+  const library: ClosureFile = {
+    document: {
+      id: "0:0",
+      name: "Icon Library",
+      type: "DOCUMENT",
+      children: [
+        {
+          id: "0:1",
+          name: "Page 1",
+          type: "CANVAS",
+          children: [
+            {
+              id: "1:2",
+              name: "icon",
+              type: "COMPONENT",
+              children: [{ id: "1:3", name: "glyph", type: "FRAME" }],
+            },
+          ],
+        },
+      ],
+    },
+    components: { "1:2": { key: "key-icon", remote: false } },
+  };
+
+  const remotes = remotesOf(consumer, ["1:20"]);
+  const resolution = resolveRemoteComponents(consumer, remotes, [
+    { fileKey: "ICONS", file: library },
+  ]);
+
+  assertEquals(resolution.diagnostics, []);
+  const canvas = resolution.file.document.children?.[0];
+  assertEquals((canvas?.children ?? []).map((n) => n.id), ["9:2", "1:20"]);
+  assertEquals(resolution.file.components?.["9:2"], {
+    key: "key-icon",
+    remote: false,
+  });
+
+  const closure = computeClosure(resolution.file, { roots: ["1:20"] });
+  assertEquals(closure.diagnostics, []);
+  assertEquals(closure.components, [
+    { componentId: "9:2", key: "key-icon", remote: false },
+  ]);
+  assertEquals(closure.variantSets, []);
+});
+
+/** A library whose Card component nests an instance of its own Button. */
+function nestingLibraryFile(): ClosureFile {
+  return {
+    document: {
+      id: "0:0",
+      name: "Lib",
+      type: "DOCUMENT",
+      children: [
+        {
+          id: "0:1",
+          name: "Page 1",
+          type: "CANVAS",
+          children: [
+            {
+              id: "2:1",
+              name: "Card",
+              type: "COMPONENT",
+              children: [
+                {
+                  id: "2:2",
+                  name: "button-instance",
+                  type: "INSTANCE",
+                  componentId: "2:10",
+                  children: [{ id: "I2:2;2:11", name: "bg", type: "FRAME" }],
+                },
+              ],
+            },
+            {
+              id: "2:10",
+              name: "Button",
+              type: "COMPONENT",
+              children: [{ id: "2:11", name: "bg", type: "FRAME" }],
+            },
+          ],
+        },
+      ],
+    },
+    components: {
+      "2:1": { key: "key-card", remote: false },
+      "2:10": { key: "key-button", remote: false },
+    },
+  };
+}
+
+/** A consumer that instances the library's Card (which nests a Button). */
+function cardConsumerFile(): ClosureFile {
+  return {
+    document: {
+      id: "0:0",
+      name: "Doc",
+      type: "DOCUMENT",
+      children: [
+        {
+          id: "0:1",
+          name: "Page 1",
+          type: "CANVAS",
+          children: [
+            {
+              id: "1:20",
+              name: "home",
+              type: "FRAME",
+              children: [
+                {
+                  id: "1:21",
+                  name: "card-instance",
+                  type: "INSTANCE",
+                  componentId: "9:1",
+                  children: [{ id: "I1:21;9:2", name: "bg", type: "FRAME" }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    components: { "9:1": { key: "key-card", remote: true } },
+  };
+}
+
+Deno.test("a nested library instance resolves transitively", () => {
+  // The Card definition nests an instance of the Button — both live in the
+  // library. Resolving the Card must splice the Button too and remap the nested
+  // instance's componentId into the library namespace, or the nested reference
+  // dangles.
+  const consumer = cardConsumerFile();
+  const remotes = remotesOf(consumer, ["1:20"]);
+  const resolution = resolveRemoteComponents(consumer, remotes, [
+    { fileKey: "LIB", file: nestingLibraryFile() },
+  ]);
+
+  assertEquals(resolution.diagnostics, []);
+  // The nested instance's componentId is remapped into the library namespace.
+  const canvas = resolution.file.document.children?.[0];
+  const card = (canvas?.children ?? []).find((n) => n.id === "9:1");
+  const nested = (card?.children ?? []).find((n) => n.type === "INSTANCE");
+  assertEquals(nested?.componentId, "LIB~2:10");
+  // The Button is spliced as its own top-level definition.
+  assert((canvas?.children ?? []).some((n) => n.id === "LIB~2:10"));
+
+  const closure = computeClosure(resolution.file, { roots: ["1:20"] });
+  assertEquals(closure.diagnostics, []);
+  // Both the Card and its nested Button resolve to library definitions.
+  assertEquals(closure.components, [
+    { componentId: "9:1", key: "key-card", remote: false },
+    { componentId: "LIB~2:10", key: "key-button", remote: false },
+  ]);
+  assert(closure.nodeIds.has("LIB~2:10"));
+  assert(closure.nodeIds.has("LIB~2:11"));
+});
+
+Deno.test("a nested instance's componentId cannot collide with a consumer component", () => {
+  // The library's Button node id (2:10) also names a DIFFERENT consumer
+  // component. Without remapping the nested instance's componentId, the final
+  // closure would resolve the consumer's 2:10 (the wrong definition) with no
+  // diagnostic. Remapping into the library namespace is what prevents it.
+  const consumer = JSON.parse(JSON.stringify(cardConsumerFile()));
+  // A colliding consumer component: same raw id as the library's Button.
+  consumer.document.children[0].children.push({
+    id: "2:10",
+    name: "consumer-widget",
+    type: "COMPONENT",
+    children: [{ id: "2:11", name: "consumer-bg", type: "FRAME" }],
+  });
+  consumer.components["2:10"] = { key: "consumer-thing", remote: false };
+
+  const remotes = remotesOf(consumer, ["1:20"]);
+  const resolution = resolveRemoteComponents(consumer, remotes, [
+    { fileKey: "LIB", file: nestingLibraryFile() },
+  ]);
+
+  assertEquals(resolution.diagnostics, []);
+  const spliced = resolution.file.document.children?.[0];
+  const card = (spliced?.children ?? []).find((n) => n.id === "9:1");
+  const nested = (card?.children ?? []).find((n) => n.type === "INSTANCE");
+  // Remapped away from the raw "2:10", so it targets the library Button.
+  assertEquals(nested?.componentId, "LIB~2:10");
+  // The consumer's own 2:10 is left untouched.
+  assertEquals(resolution.file.components?.["2:10"], {
+    key: "consumer-thing",
+    remote: false,
+  });
+
+  const closure = computeClosure(resolution.file, { roots: ["1:20"] });
+  assertEquals(closure.diagnostics, []);
+  // The nested reference resolves to the library Button (key-button), never to
+  // the colliding consumer component (consumer-thing).
+  const keys = closure.components.map((c) => c.key);
+  assert(keys.includes("key-button"), keys.join(", "));
+  assert(!keys.includes("consumer-thing"), keys.join(", "));
+});
+
+Deno.test("a remote key no declared library carries is a named error", () => {
+  const consumer = remoteConsumerFile();
+  const remotes = remotesOf(consumer, ["1:20"]);
+
+  // A library that carries a different key does not resolve this one.
+  const other = chipLibraryFile();
+  (other.components as Record<string, { key: string }>)["1:2"].key =
+    "key-other";
+  (other.components as Record<string, { key: string }>)["1:5"].key =
+    "key-other-2";
+
+  const resolution = resolveRemoteComponents(consumer, remotes, [
+    { fileKey: "LIBKEY", file: other },
+  ]);
+
+  assertEquals(
+    resolution.diagnostics.map((d) => d.rule),
+    ["figma.closure.cross-file-unresolved"],
+  );
+  // Names the key and the library file that was searched (P4: file + key).
+  const message = resolution.diagnostics[0].message;
+  assert(message.includes("key-collapsed"), message);
+  assert(message.includes("LIBKEY"), message);
+  // Nothing spliced: the remote entry stays remote, unresolved.
+  assertEquals(resolution.resolved, []);
+  assertEquals(resolution.file.components?.["9:2"]?.remote, true);
+});
+
+Deno.test("a remote component with no declared library is a named error", () => {
+  const consumer = remoteConsumerFile();
+  const remotes = remotesOf(consumer, ["1:20"]);
+
+  const resolution = resolveRemoteComponents(consumer, remotes, []);
+
+  assertEquals(
+    resolution.diagnostics.map((d) => d.rule),
+    ["figma.closure.cross-file-unresolved"],
+  );
+  const message = resolution.diagnostics[0].message;
+  assert(message.includes("key-collapsed"), message);
+  // With no library declared, the error says so.
+  assert(message.includes("(none)"), message);
+});
+
+Deno.test("a key two declared libraries carry is a shadow warning", () => {
+  // Two declared libraries both publish the key. The first declared wins; the
+  // shadow is a named warning (C4), never a silent preference — and it does not
+  // block, so resolution still succeeds against the first library.
+  const consumer = remoteConsumerFile();
+  const remotes = remotesOf(consumer, ["1:20"]);
+  const resolution = resolveRemoteComponents(consumer, remotes, [
+    { fileKey: "LIB_A", file: chipLibraryFile() },
+    { fileKey: "LIB_B", file: chipLibraryFile() },
+  ]);
+
+  assert(
+    resolution.diagnostics.every((d) => d.severity !== "error"),
+    "a shadow must not block",
+  );
+  const warn = resolution.diagnostics.find(
+    (d) => d.rule === "figma.closure.cross-file-key-shadowed",
+  );
+  assert(warn !== undefined);
+  assert(warn.message.includes("key-collapsed"), warn.message);
+  assert(warn.message.includes("LIB_A"), warn.message);
+  assert(warn.message.includes("LIB_B"), warn.message);
+  assertEquals(resolution.resolved.map((r) => r.libraryFileKey), ["LIB_A"]);
+});
+
+Deno.test("a resolved library definition with an image fill is a named error", () => {
+  // Cross-file image fills are a follow-up: the bytes live in the library file,
+  // and this slice resolves image bytes from the consumer only. A resolved
+  // library definition that carries an image fill is named, never a broken
+  // compile (P4).
+  const consumer = remoteConsumerFile();
+  const remotes = remotesOf(consumer, ["1:20"]);
+  const library = chipLibraryFile();
+  const collapsed = library.document.children?.[0].children?.[0].children
+    ?.[0] as { fills?: unknown };
+  collapsed.fills = [{ type: "IMAGE", imageRef: "lib-image" }];
+
+  const resolution = resolveRemoteComponents(consumer, remotes, [
+    { fileKey: "LIBKEY", file: library },
+  ]);
+
+  assertEquals(
+    resolution.diagnostics.map((d) => d.rule),
+    ["figma.closure.cross-file-image"],
+  );
+  const message = resolution.diagnostics[0].message;
+  assert(message.includes("key-collapsed"), message);
+  assert(message.includes("LIBKEY"), message);
+});
+
+Deno.test("parseExportManifest reads the declared libraries", () => {
+  const manifest = parseExportManifest(
+    JSON.stringify({ roots: ["1:1"], libraries: ["LIBKEY", "ICONS"] }),
+  );
+  assertEquals(manifest.libraries, ["LIBKEY", "ICONS"]);
+});
+
+Deno.test("parseExportManifest rejects a non-string library key", () => {
+  assertThrows(
+    () =>
+      parseExportManifest(JSON.stringify({ roots: ["1:1"], libraries: [7] })),
+    Error,
+    "librar",
   );
 });

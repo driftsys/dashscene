@@ -87,6 +87,20 @@
       "covers": "trim-path exercise (story #39): one declared root holding a placeholder slot (with sample children), a redline overlay, a spec note, a `_`-prefixed scratch layer, and a hidden layer (hidden != trimmed)",
       "emits": false,
       "note": "Awaiting manual authoring: run the fixture-author plugin's trim-demo command, then write the roles with the SEPARATE dashscene annotator plugin (importers/figma/plugin/README.md — the fixture author never writes roles), paste the file key here, and run `just deno-capture`. The trim rules themselves are covered offline by importers/figma/src/trim_test.ts and the import-level test; this fixture replays annotate -> trim -> named record against a real ?plugin_data=shared response."
+    },
+    {
+      "name": "xfile-library",
+      "fileKey": "PASTE_THE_FIGMA_FILE_KEY_HERE",
+      "covers": "cross-file library resolution (story #38), library half: a published component set (two variants) that xfile-consumer instances across files",
+      "emits": false,
+      "note": "Awaiting manual authoring — this is a two-file pair and no plugin API publishes a library or instances a component across files, so both files are authored by hand (the real-file/trim-demo precedent). Step 1: in a blank file author a component set with two variants; PUBLISH it as a team library; paste its file key here. Step 2: author xfile-consumer (below) instancing this set. Then run `just deno-capture`. On its own this file carries only definitions (resolve-but-don't-paint); it exists so xfile-consumer's remote instance resolves against a real GET /file library response."
+    },
+    {
+      "name": "xfile-consumer",
+      "fileKey": "PASTE_THE_FIGMA_FILE_KEY_HERE",
+      "covers": "cross-file library resolution (story #38), consumer half: one declared root holding an INSTANCE of a REMOTE component published by xfile-library (its components map carries remote:true plus the library key)",
+      "emits": false,
+      "note": "Awaiting manual authoring (see xfile-library step 2): in a second file, instance a variant of xfile-library's published set inside a frame, paste this file's key here, and run `just deno-capture`. Import with a manifest that declares the root and `libraries: [<xfile-library file key>]`; resolution splices the library definition in and the pair compiles end-to-end (docs/decisions/figma-cross-file-library-resolution.md). The resolution MECHANISM is covered offline by importers/figma/src/closure_test.ts and import_test.ts against synthetic and fixture-derived pairs; this captured pair replays remote-instance resolution against real ?plugin_data=shared responses."
     }
   ]
 }

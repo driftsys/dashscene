@@ -9,9 +9,12 @@
  *
  *   1. GET /files/:key         the file JSON
  *   2. computeClosure          declared roots → what the export requires
- *   3. GET /files/:key/images  the ref → URL map, for the closure's refs
- *   4. download those refs     the bytes
- *   5. compileFigma            the .dsb — the file crosses the ABI once
+ *   3. resolve remotes         fetch declared libraries, splice their
+ *                              definitions in (#38), when the export reaches
+ *                              a remote (library) component
+ *   4. GET /files/:key/images  the ref → URL map, for the closure's refs
+ *   5. download those refs     the bytes
+ *   6. compileFigma            the .dsb — the file crosses the ABI once
  *
  * An export is declared, never positional: the closure exports exactly the
  * declared roots plus what they require, and names everything it excludes
@@ -28,10 +31,13 @@
 
 import {
   computeClosure,
+  excludeTopLevelNodes,
   exportableRoots,
   ExportBlocked,
   type ExportManifest,
   parseExportManifest,
+  type ResolvedLibrary,
+  resolveRemoteComponents,
 } from "./closure.ts";
 import type { ExcludedNode } from "./closure.ts";
 import {
@@ -48,6 +54,18 @@ import {
 } from "./tokens.ts";
 import { type TrimDiagnostic, trimFile, type TrimRecord } from "./trim.ts";
 import { type CompileOk, type Dashc, loadDashc, type Profile } from "./wasm.ts";
+
+/**
+ * Frozen-variant STALENESS diagnostics. A frozen declaration on a phantom
+ * (library) set id cannot be validated until the set is spliced in, so the
+ * discovery closure defers these to the final closure over the spliced document
+ * (docs/decisions/figma-cross-file-library-resolution.md, C2). A real typo still
+ * blocks — the final closure re-raises it.
+ */
+const FROZEN_STALENESS_RULES: ReadonlySet<string> = new Set([
+  "figma.closure.frozen-variants-unused",
+  "figma.closure.frozen-variant-unknown",
+]);
 
 export interface ImportFigmaFileOptions {
   readonly client: FigmaClient;
@@ -115,10 +133,29 @@ export function trimContextOf(error: unknown): TrimContext | undefined {
 }
 
 /**
+ * Fetches each declared library file, so cross-file resolution can match the
+ * export's remote requirements against them by key (#38). One `GET /file` per
+ * declared key, serialized through the REST client's limiter. A library that
+ * cannot be fetched (auth, missing file) throws the client's named error, which
+ * stops the import — a declared library that is not reachable is not a silent
+ * skip.
+ */
+async function fetchLibraries(
+  client: FigmaClient,
+  keys: readonly string[],
+): Promise<ResolvedLibrary[]> {
+  const libraries: ResolvedLibrary[] = [];
+  for (const fileKey of keys) {
+    libraries.push({ fileKey, file: await client.file(fileKey) });
+  }
+  return libraries;
+}
+
+/**
  * @throws {ExportBlocked} when the closure refuses the export — an unknown
- * root, an unresolvable component — before anything is fetched or compiled.
- * Carries the trim context ({@link trimContextOf}) so the block still names
- * every trimmed subtree.
+ * root, or a remote component no declared library resolves (#38) — before any
+ * image is fetched or the document is compiled. Carries the trim context
+ * ({@link trimContextOf}) so the block still names every trimmed subtree.
  * @throws {TokensBlocked} when a `boundVariables` id cannot be preserved (P4)
  * — before any image is fetched or the document is compiled. Also carries the
  * trim context.
@@ -155,7 +192,44 @@ export async function importFigmaFile(
 
   const trimContext: TrimContext = { trimmed, trimDiagnostics };
 
-  const closure = computeClosure(trimmedFile, manifest);
+  // Discovery closure: prove which remote (library) components the export
+  // requires. Frozen-variant staleness is not validated here — a frozen
+  // declaration on a phantom (library) set id only becomes checkable once the
+  // set is spliced in — so those diagnostics are deferred to the final closure
+  // (C2). Frozen narrowing still applies, so a remote inside a withdrawn variant
+  // is never fetched.
+  const discovery = computeClosure(trimmedFile, manifest);
+  const discoveryErrors = discovery.diagnostics.filter(
+    (d) => d.severity === "error" && !FROZEN_STALENESS_RULES.has(d.rule),
+  );
+  if (discoveryErrors.length > 0) {
+    throw withTrim(new ExportBlocked(discoveryErrors), trimContext);
+  }
+
+  // Cross-file resolution (#38): a reachable instance of a remote (library)
+  // component needs its definition spliced in before the export can compile.
+  // The library definitions are fetched and spliced, then the closure is
+  // recomputed over the spliced document. A remote the manifest's declared
+  // libraries do not carry is a named error (P4), before any image is fetched or
+  // compiled. A resolved library definition resolves but does not paint, so the
+  // consumer's own trim is preserved across the splice by construction
+  // (docs/decisions/figma-cross-file-library-resolution.md).
+  let sourceFile = trimmedFile;
+  let splicedRootIds: readonly string[] = [];
+  const remotes = discovery.components.filter((c) => c.remote);
+  if (remotes.length > 0) {
+    const libraries = await fetchLibraries(client, manifest.libraries ?? []);
+    const resolution = resolveRemoteComponents(trimmedFile, remotes, libraries);
+    if (resolution.diagnostics.some((d) => d.severity === "error")) {
+      throw withTrim(new ExportBlocked(resolution.diagnostics), trimContext);
+    }
+    sourceFile = resolution.file;
+    splicedRootIds = resolution.splicedRootIds;
+  }
+
+  // Final closure: over the spliced document, with the full manifest, so
+  // frozen-variant validation runs against the sets that actually ship.
+  const closure = computeClosure(sourceFile, manifest);
   if (closure.diagnostics.some((d) => d.severity === "error")) {
     throw withTrim(new ExportBlocked(closure.diagnostics), trimContext);
   }
@@ -172,11 +246,21 @@ export async function importFigmaFile(
     );
   }
 
-  // The sidecar is derived from the pruned file and gated before any image is
-  // fetched: a binding whose id cannot be preserved blocks the export the same
-  // way an unknown root does (P4), and no `.dsb` is worth emitting without it.
+  // The sidecar is derived from consumer-owned content only. A spliced library
+  // definition resolves but does not paint, and its bindings' ids live in the
+  // library's variable space (which a per-file vartable cannot join), so it is
+  // excluded from derivation: neither a malformed library binding blocks the
+  // consumer's export, nor a library variable id pollutes the sidecar
+  // (docs/decisions/figma-cross-file-library-resolution.md, C3/#167).
+  const sidecarFile = splicedRootIds.length === 0
+    ? closure.file
+    : excludeTopLevelNodes(closure.file, new Set(splicedRootIds));
+
+  // Gated before any image is fetched: a binding whose id cannot be preserved
+  // blocks the export the same way an unknown root does (P4), and no `.dsb` is
+  // worth emitting without it.
   const { sidecar, diagnostics: tokenDiagnostics } = deriveVarsSidecar(
-    closure.file,
+    sidecarFile,
     file.version,
   );
   if (tokenDiagnostics.some((d) => d.severity === "error")) {
