@@ -265,7 +265,7 @@ fn prop_key_round_trips_through_the_canonical_decoder() {
     let mut txn = arena.open();
     let root = txn.add_node(None, None);
     let child = txn.add_node(Some(root), None);
-    drop(txn);
+    txn.commit();
 
     for channel in [
         Channel::X,
@@ -315,7 +315,7 @@ fn a_non_rect_channel_track_is_refused_by_name() {
     let mut arena = Arena::new();
     let mut txn = arena.open();
     let node = txn.add_node(None, None);
-    drop(txn);
+    txn.commit();
 
     // Gap is a legitimate binding channel but not a rect channel; FLIP
     // animates rects only, so the track is refused by name.

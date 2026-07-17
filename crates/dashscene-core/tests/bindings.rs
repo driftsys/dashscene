@@ -97,7 +97,7 @@ fn binding_a_foreign_signal_panics() {
     let mut donor = Arena::new();
     let mut txn = donor.open();
     let foreign = txn.declare_signal(None, 0.0);
-    drop(txn);
+    txn.commit();
 
     let mut arena = Arena::new();
     let mut txn = arena.open();
@@ -112,7 +112,7 @@ fn binding_a_foreign_node_panics() {
     let mut txn = donor.open();
     let a = txn.add_node(None, None);
     let foreign = txn.add_node(Some(a), None);
-    drop(txn);
+    txn.commit();
 
     let mut arena = Arena::new();
     let mut txn = arena.open();
