@@ -16,18 +16,63 @@ missing proof must be visible.
 
 ## v0 exit criteria
 
-| Criterion                         | Verifies | Status                                                                                     |
-| --------------------------------- | -------- | ------------------------------------------------------------------------------------------ |
-| E1 same screen authored both ways | G1       | open — v0.9 (epic #47)                                                                     |
-| E2 Arabic golden-stable           | R1       | **met**                                                                                    |
-| E3 stress corpus green            | R2       | **met**                                                                                    |
-| E4 dirty Figma file → report      | R6       | **met**                                                                                    |
-| E5 variant switch via FLIP        | R4       | **met**                                                                                    |
-| E6 byte-identical `.dsb`          | R7       | **met**                                                                                    |
-| E7 design-source render oracle    | R6       | open — tooling landed (v0.8, story #284); assertion pending (#49 v0.9 gate, #265 captures) |
+| Criterion                         | Verifies | Status                                                                                                                                |
+| --------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| E1 same screen authored both ways | G1       | **partial** — layout + solid-fill parity proven (v0.9, story #48); binding parity pending the epic #47 scope decision (#49 v0.9 gate) |
+| E2 Arabic golden-stable           | R1       | **met**                                                                                                                               |
+| E3 stress corpus green            | R2       | **met**                                                                                                                               |
+| E4 dirty Figma file → report      | R6       | **met**                                                                                                                               |
+| E5 variant switch via FLIP        | R4       | **met**                                                                                                                               |
+| E6 byte-identical `.dsb`          | R7       | **met**                                                                                                                               |
+| E7 design-source render oracle    | R6       | open — tooling landed (v0.8, story #284); assertion pending (#49 v0.9 gate, #265 captures)                                            |
 
 The file carries no version in its name. "v0 exit criteria" is a heading
 inside it; v1's criteria are a second heading below, not a second file.
+
+### E1 — partial (layout and solid-fill parity proven)
+
+G1 requires that a screen authored in Figma and the same screen authored in
+the Rust DSL produce the same document format and render identically.
+`goldens/tooling/tests/v09_parity.rs`
+(`the_same_screen_authored_both_ways_is_bit_identical`) proves this for the
+layout-plus-solid-fill subset both producers express: one screen — nested
+Fixed and Fill frames, horizontal and vertical layout, gap, four-edge
+padding, MIN/CENTER/MAX main- and cross-axis alignment, and one SOLID fill
+per node — is authored twice, as a synthetic Figma REST document compiled
+through `dashc::compile_figma` (lowered, emitted to `.dsb`, loaded by
+`dashscene-core`) and in `dashlang`, then solved by the one `dashscene-engine`
+`TaffySolver` on both sides.
+
+Three assertions close the parity, addressing the committed scenes directly
+rather than spot-checking nodes:
+
+- the two committed rect tables are equal (`CommittedScene::rects`);
+- the two committed paint pools are equal (`CommittedScene::paints`),
+  including the interning dedup — two colors each recur (a chip and a cell
+  share each one), so a correct pool holds five entries, not seven;
+- the two Skia reference renders are byte-identical PNGs. Every authored
+  dimension is an integer and every solved rect lands on an integer, so the
+  solid fills are integer-aligned, carry no anti-aliased edge, and compare
+  exactly — the bit-stable comparison the v0.2 flex goldens use
+  (`docs/decisions/golden-comparison-space.md`). Both producers are also
+  anchored to one reviewed golden, `goldens/images/v09-parity.png`, so a
+  change that shifted both producers the same way is still caught.
+
+The Figma side lowers clean (`compile_figma`'s report is empty): the whole
+screen is inside `profile:core`. No synthetic `absoluteBoundingBox` value is
+load-bearing — the importer zeroes an auto-layout child's solved position and
+every non-Fixed axis's extent (P1), so the runtime re-solves the geometry
+from the lowered intent alone.
+
+E1 is partial, not met: this is the first cut (story #48), scoped to layout
+and solid fill. The binding-parity dimension G1 also implies — text, variant,
+and visibility bindings surviving both authoring paths identically — is not
+yet proven, because it is gated on the epic #47 scope decision: whether the
+parity fixture must prove binding parity for v0, which would make STRING/BOOL
+binding serialization (#252) and the `Format` transform serialization (#256)
+v0.9 blockers, or defer them to v1 (`docs/roadmap.md` "v0.9 — parity").
+Story #48 stays open until that decision sets the second cut, and E1 flips to
+met at the v0 exit gate (#49) once the agreed dimensions are all proven.
 
 ### E2 — met
 
