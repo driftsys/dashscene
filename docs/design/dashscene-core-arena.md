@@ -110,20 +110,22 @@ declares a fixed, ordered list of members — Figma's "component SET"
 `overrides: Vec<(NodeId, VariantValue)>` against the arena's base node
 values; the first member (index 0) is active until
 `Txn::set_variant(set, member)` switches it. `VariantValue` is the
-narrow slice of `Prop`'s vocabulary the dashbuf variant table carries —
-`X`, `Y`, `Width`, `Height`, `Fill(Color)` — not the full vocabulary;
+slice of `Prop`'s vocabulary the dashbuf variant table carries —
+`X`, `Y`, `Width`, `Height`, `Fill(Color)`, and `Visible(bool)`
+(story #283) — not the full vocabulary;
 `docs/decisions/variant-set-flat-index.md` records why selection is a
 flat member index (not axis-keyed) and why the overridable-prop
-vocabulary is this narrow slice rather than all of `Prop`.
+vocabulary is this slice rather than all of `Prop`.
 
 `set_variant` is staged like `set_prop` (P3): it writes the active
 member index immediately, and `Arena::active_variant(set)` reads it
 back staged, the same immediate-visibility contract `Arena::text`
 carries. `Arena::layout(node)` — the read seam every `LayoutSolver`
 resolves geometry through, the internal `FixedSolver` included —
-applies the active member's `X`/`Y`/`Width`/`Height` overrides on top
-of the node's base layout before returning it, so a variant switch
-reaches committed geometry through the _existing_ solver seam, with
+applies the active member's `X`/`Y`/`Width`/`Height`/`Visible` overrides
+on top of the node's base layout before returning it, so a variant switch
+reaches committed geometry — and a variant-hidden child's Taffy
+`Display::None` (story #283) — through the _existing_ solver seam, with
 neither `FixedSolver` nor `dashscene-engine`'s `TaffySolver` needing to
 know variants exist. Commit's paint-interning step applies a `Fill`
 override the same way, on top of the node's base fill. When two

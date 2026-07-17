@@ -238,8 +238,8 @@ resolved binding tables, the `dashcue` scheduler, and the flush loop.
 - Blocks: #6 (golden harness, done); #46 (the DSL-generated stress
   corpus, done — story #46 extended the builder with the v0.8 grid/wrap
   vocabulary and landed the corpus,
-  `docs/decisions/dashlang-stress-corpus.md`; E3 stays partial until the
-  variant child-count form lands via issue #283). The reactive
+  `docs/decisions/dashlang-stress-corpus.md`; E3 is met — the variant
+  child-count form landed via issue #283). The reactive
   layer (#166) is built, and the staged move of the binding table into
   `dashbuf` + core fired at story #167
   (`docs/decisions/reactive-layer-home-and-staging.md`,

@@ -23,6 +23,16 @@
 //! spring-to-spring retarget keeps its velocity, and nothing snaps. Each
 //! frame's cost is `O(animated nodes)` with no per-frame allocation and no
 //! state that grows with animation history.
+//!
+//! Visibility across a variant switch (story #283, a named limit): a
+//! `set_variant` that toggles a child's `Visible` makes it appear or
+//! disappear. This FLIP path animates rect channels only (X/Y/Width/Height)
+//! and binds each track from the node's before and after rects — a hidden
+//! node's rect is degenerate, and there is no visibility or opacity channel,
+//! so the appearing/disappearing node itself is not tweened; it pops. Its
+//! reflowing siblings, present in both rect slices, animate normally. Fading
+//! an appearing node is descriptive-animation work for a later slice (an
+//! opacity channel), not this FLIP path — no new FLIP machinery is added here.
 
 use dashcue::{PropKey, Scheduler, VariantTransition};
 use dashscene_core::{Channel, NodeId, SolvedRect};

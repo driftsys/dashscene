@@ -12,8 +12,8 @@ use dashbuf::{
     GradientStop, Image, ImageArgs, ImageFill, ImageFillArgs, ImageFormat, NO_PAINT, Node,
     NodeArgs, Paint, PaintArgs, ScaleMode, SolidFill, SolidFillArgs, Stroke, StrokeAlign,
     StrokeArgs, TextStyle, TextStyleArgs, VariantMember, VariantMemberArgs, VariantOverride,
-    VariantOverrideArgs, VariantPropValue, VariantSet, VariantSetArgs, VariantX, VariantXArgs,
-    Vec2, root_as_document,
+    VariantOverrideArgs, VariantPropValue, VariantSet, VariantSetArgs, VariantVisible,
+    VariantVisibleArgs, VariantX, VariantXArgs, Vec2, root_as_document,
 };
 use dashscene_validator::{Location, NodePath, rule, validate_document};
 use flatbuffers::{FlatBufferBuilder, WIPOffset};
@@ -863,6 +863,115 @@ fn a_variant_set_with_no_members_is_named() {
     let report = validate(&bytes);
     assert!(report.has(rule::VARIANT_SET_NO_MEMBERS), "{report}");
     assert!(report.has_errors());
+}
+
+#[test]
+fn a_variant_visible_override_produces_no_diagnostics() {
+    // The v0.8 append (story #283): the load gate accepts the new
+    // VariantVisible union arm the same way it accepts every other known
+    // arm — a document that carries one on a valid node validates clean.
+    let mut b = FlatBufferBuilder::new();
+    let node = Node::create(&mut b, &NodeArgs::default());
+    let nodes = b.create_vector(&[node]);
+
+    let visible = VariantVisible::create(&mut b, &VariantVisibleArgs { value: false });
+    let override_ = VariantOverride::create(
+        &mut b,
+        &VariantOverrideArgs {
+            node: 0,
+            value_type: VariantPropValue::VariantVisible,
+            value: Some(visible.as_union_value()),
+        },
+    );
+    let overrides = b.create_vector(&[override_]);
+    let member = VariantMember::create(
+        &mut b,
+        &VariantMemberArgs {
+            overrides: Some(overrides),
+            ..Default::default()
+        },
+    );
+    let members = b.create_vector(&[member]);
+    let set = VariantSet::create(
+        &mut b,
+        &VariantSetArgs {
+            members: Some(members),
+            ..Default::default()
+        },
+    );
+    let variant_sets = b.create_vector(&[set]);
+    let document = Document::create(
+        &mut b,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            variant_sets: Some(variant_sets),
+            ..Default::default()
+        },
+    );
+    b.finish(document, None);
+    let bytes = b.finished_data().to_vec();
+
+    let report = validate(&bytes);
+    assert!(report.is_empty(), "unexpected diagnostics:\n{report}");
+}
+
+#[test]
+fn a_variant_override_value_this_build_does_not_know_is_named() {
+    // The VariantPropValue union is append-only (story #283 appends
+    // VariantVisible). The flatbuffer verifier accepts an unknown union
+    // tag as long as it carries a payload, so without this gate a newer
+    // document's override would reach the loader's overlay resolution and
+    // be silently dropped (P4). The stand-in payload is a VariantX table —
+    // what a future arm would look like to this reader.
+    let mut b = FlatBufferBuilder::new();
+    let node = Node::create(&mut b, &NodeArgs::default());
+    let nodes = b.create_vector(&[node]);
+
+    let payload = VariantX::create(&mut b, &VariantXArgs { value: 1.0 });
+    let override_ = VariantOverride::create(
+        &mut b,
+        &VariantOverrideArgs {
+            node: 0,
+            value_type: VariantPropValue(99),
+            value: Some(payload.as_union_value()),
+        },
+    );
+    let overrides = b.create_vector(&[override_]);
+    let member = VariantMember::create(
+        &mut b,
+        &VariantMemberArgs {
+            overrides: Some(overrides),
+            ..Default::default()
+        },
+    );
+    let members = b.create_vector(&[member]);
+    let set = VariantSet::create(
+        &mut b,
+        &VariantSetArgs {
+            members: Some(members),
+            ..Default::default()
+        },
+    );
+    let variant_sets = b.create_vector(&[set]);
+    let document = Document::create(
+        &mut b,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            variant_sets: Some(variant_sets),
+            ..Default::default()
+        },
+    );
+    b.finish(document, None);
+    let bytes = b.finished_data().to_vec();
+
+    let report = validate(&bytes);
+    assert!(
+        report
+            .diagnostics()
+            .iter()
+            .any(|d| d.rule == rule::UNKNOWN_ENUM && d.message.contains("VariantOverride.value")),
+        "the unknown union tag is named, not defaulted:\n{report}"
+    );
 }
 
 // ---------------------------------------------------------------------

@@ -1,6 +1,7 @@
 # Variant table: flat member index, narrow overridable-prop vocabulary
 
-    status   accepted (story #20, 2026-07-15)
+    status   accepted (story #20, 2026-07-15);
+             amended (story #283, 2026-07-17) — Visible added to the slice
     scope    crates/dashbuf, crates/dashscene-core — the variant table
              and `set_variant` commit-time resolution
 
@@ -112,9 +113,9 @@ vocabulary: option 2, the narrow five-prop slice.
 `Arena::layout(node)` (the public read seam every `LayoutSolver` —
 including the internal `FixedSolver` and `dashscene-engine`'s
 `TaffySolver` — resolves geometry through) applies the active member's
-`X`/`Y`/`Width`/`Height` overrides on top of the node's base layout
-before returning it. Commit's paint-interning step does the same for
-`Fill`. Because both sites feed the _existing_ resolve-then-diff
+`X`/`Y`/`Width`/`Height`/`Visible` overrides on top of the node's base
+layout before returning it. Commit's paint-interning step does the same
+for `Fill`. Because both sites feed the _existing_ resolve-then-diff
 pipeline (`docs/design/dashscene-core-arena.md`'s "Commit resolution
 pipeline"), the dirty-set diff that already compares resolved rect bits
 and resolved paint keys against the previous commit needs no change at
@@ -127,3 +128,45 @@ structure, props, and variant switches whenever they like"): it writes
 the arena's active-member index immediately, visible through
 `Arena::layout`/`Arena::active_variant` before the next commit, and
 published to painters only at `commit`.
+
+## Amendment (story #283, 2026-07-17): Visible joins the slice
+
+The "Widening variant overrides is the same append-only move whenever a
+future slice needs it" clause above is now exercised. E3's sixth stress
+case is "variant topology change" — variants with different child counts
+(`corpus/figma-fixtures/README.md`). The five-prop slice cannot express
+that: no override could add or remove a child from the laid-out set. This
+amendment widens the slice with visibility.
+
+- Core: `VariantValue` gains a `Visible(bool)` arm and `NodeOverlay` gains
+  `visible: Option<bool>`. `Arena::layout` folds the override onto
+  `layout.visible`, so `dashscene-engine`'s `TaffySolver` lowers a
+  variant-hidden child to Taffy `Display::None` (the child leaves the
+  laid-out set, siblings reflow) with no engine change — the same path
+  `Prop::Visible` (story #165) already took. Commit resolves the effective
+  visibility through the overlay too, so under the fixed solver a
+  variant-hidden node draws nothing (M5) and stops masking.
+- `dashbuf`: a `VariantVisible` arm is appended to the `VariantPropValue`
+  union (append-only, R7 — existing arms keep their discriminants), and the
+  frozen r7 fixture is regenerated carrying it at a non-default value.
+- The choice that a variant override is a dedicated `VariantValue` arm, not
+  a reuse of `Prop`, is unchanged and is why the widening is one new arm on
+  each side rather than a type change.
+
+Two narrower alternatives were also considered and rejected for this
+amendment:
+
+- **Encode `Visible` as a `VariantWidth`-style `float32` (0.0/1.0) instead of
+  a dedicated `bool` table.** Rejected: a bool is the exact domain, needs no
+  clamp or range rule, and reads back distinguishably from its default in the
+  frozen fixture. A float sentinel would reintroduce the absence-vs-value
+  ambiguity the schema avoids elsewhere.
+- **Resolve variant-driven visibility through `dashscene-engine`'s
+  `TaffySolver` alone, leaving the fixed-solver commit path to read
+  `node.layout.visible` directly.** Rejected: the fixed-solver commit path
+  already resolves the draws-nothing paint entry and masking from the node
+  field directly, so without the overlay a variant-hidden node would still
+  paint and still mask siblings under `commit()`. Routing effective
+  visibility through `Arena::overlay` keeps the two solvers consistent.
+
+The flat-member-index selection shape is untouched by this amendment.

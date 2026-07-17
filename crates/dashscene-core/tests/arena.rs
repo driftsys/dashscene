@@ -1607,6 +1607,62 @@ fn set_variant_is_staged_and_visible_before_commit() {
 }
 
 #[test]
+fn a_variant_visible_override_toggles_the_laid_out_set() {
+    use dashscene_core::VariantValue;
+
+    // A variant member that sets Visible(false) hides a child through the
+    // same overlay-on-read seam the X/Y/W/H overrides use: Arena::layout
+    // reports the overridden visibility, and under commit()'s fixed solver
+    // the hidden child resolves to the draws-nothing paint entry (M5). The
+    // Taffy reflow — the hidden child leaving the laid-out set and its
+    // siblings closing in — is proven in the E3 corpus case.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let root = boxed(&mut txn, None, 0.0, 0.0, 30.0, 20.0);
+    let child = boxed(&mut txn, Some(root), 0.0, 0.0, 30.0, 20.0);
+    txn.set_prop(child, Prop::Fill(RED));
+    let set = txn.add_variant_set(vec![
+        dashscene_core::VariantMember {
+            name: Some("shown".to_string()),
+            overrides: vec![],
+        },
+        dashscene_core::VariantMember {
+            name: Some("hidden".to_string()),
+            overrides: vec![(child, VariantValue::Visible(false))],
+        },
+    ]);
+    txn.commit();
+
+    // Member 0 shows the child: it is visible and paints its fill.
+    assert!(
+        arena.layout(child).visible,
+        "member 0 keeps the child visible"
+    );
+    let scene = arena.committed();
+    assert_eq!(
+        scene.paints().resolve(scene.rects()[1].paint),
+        &PaintEntry::solid(RED),
+        "the shown child paints its fill",
+    );
+
+    // Switch to member 1: the override hides the child.
+    let mut txn = arena.open();
+    txn.set_variant(set, 1);
+    txn.commit();
+
+    assert!(
+        !arena.layout(child).visible,
+        "the variant override toggles the child out of the laid-out set",
+    );
+    let scene = arena.committed();
+    assert_eq!(
+        scene.paints().resolve(scene.rects()[1].paint),
+        &PaintEntry::default(),
+        "the hidden child paints nothing under the fixed solver (M5)",
+    );
+}
+
+#[test]
 fn a_second_variant_set_overriding_the_same_prop_wins_in_creation_order() {
     use dashscene_core::VariantValue;
 

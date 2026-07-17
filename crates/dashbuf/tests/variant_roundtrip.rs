@@ -6,8 +6,8 @@
 use dashbuf::{
     Color, Document, DocumentArgs, Node, NodeArgs, VariantFill, VariantFillArgs, VariantHeight,
     VariantHeightArgs, VariantMember, VariantMemberArgs, VariantOverride, VariantOverrideArgs,
-    VariantPropValue, VariantSet, VariantSetArgs, VariantWidth, VariantWidthArgs, VariantX,
-    VariantXArgs, VariantY, VariantYArgs, root_as_document,
+    VariantPropValue, VariantSet, VariantSetArgs, VariantVisible, VariantVisibleArgs, VariantWidth,
+    VariantWidthArgs, VariantX, VariantXArgs, VariantY, VariantYArgs, root_as_document,
 };
 use flatbuffers::FlatBufferBuilder;
 
@@ -134,6 +134,9 @@ fn every_prop_value_kind_round_trips_through_one_override() {
             color: Some(&Color::new(0.0, 1.0, 0.0, 1.0)),
         },
     );
+    // `true` against the bool default of `false`, so a shifted union
+    // discriminant reads the wrong arm and this override notices.
+    let visible = VariantVisible::create(&mut b, &VariantVisibleArgs { value: true });
 
     let overrides = [
         VariantOverride::create(
@@ -176,6 +179,14 @@ fn every_prop_value_kind_round_trips_through_one_override() {
                 value: Some(fill.as_union_value()),
             },
         ),
+        VariantOverride::create(
+            &mut b,
+            &VariantOverrideArgs {
+                node: 1,
+                value_type: VariantPropValue::VariantVisible,
+                value: Some(visible.as_union_value()),
+            },
+        ),
     ];
     let overrides = b.create_vector(&overrides);
     let member = VariantMember::create(
@@ -205,7 +216,7 @@ fn every_prop_value_kind_round_trips_through_one_override() {
         .get(0)
         .overrides()
         .expect("overrides present");
-    assert_eq!(overrides.len(), 5);
+    assert_eq!(overrides.len(), 6);
 
     let x = overrides.get(0);
     assert_eq!(x.node(), 0);
@@ -231,6 +242,11 @@ fn every_prop_value_kind_round_trips_through_one_override() {
         (color.r(), color.g(), color.b(), color.a()),
         (0.0, 1.0, 0.0, 1.0)
     );
+
+    let visible = overrides.get(5);
+    assert_eq!(visible.node(), 1);
+    assert_eq!(visible.value_type(), VariantPropValue::VariantVisible);
+    assert!(visible.value_as_variant_visible().unwrap().value());
 }
 
 #[test]

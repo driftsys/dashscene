@@ -95,11 +95,13 @@ is enforced by a frozen byte fixture, not by convention alone — see
   uint32` (an index into `Document.nodes`, the same convention as
   `Node.parent`) plus a `VariantPropValue` union naming which prop and
   its value — `VariantX`/`VariantY`/`VariantWidth`/`VariantHeight`
-  (each one `{ value: float32 }`) or `VariantFill` (`{ color: Color
-  (required) }`, required for the same reason `Stroke.color` is). This
-  is the narrowest slice of `dashscene-core`'s `Prop` vocabulary that
-  proves resolved rect/paint correctness, not the full vocabulary —
-  widening it is additive future work
+  (each one `{ value: float32 }`), `VariantFill` (`{ color: Color
+  (required) }`, required for the same reason `Stroke.color` is), or
+  `VariantVisible` (`{ value: bool }`, story #283 — a variant that hides
+  or shows a child). This is the slice of `dashscene-core`'s `Prop`
+  vocabulary that proves resolved rect/paint correctness plus the
+  child-count topology change, not the full vocabulary — widening it
+  further is additive future work
   (`docs/decisions/variant-set-flat-index.md`, which also records why
   selection is a flat member index rather than axis-keyed).
 
@@ -204,7 +206,10 @@ All types are generated from `crates/dashbuf/schema/dashbuf.fbs`:
   emits unchanged; `docs/decisions/masks-and-group-opacity.md`).
 - `VariantX`, `VariantY`, `VariantWidth`, `VariantHeight` (tables) —
   each `{ value: float32 }`; `VariantFill` (table) — `{ color: Color
-  (required) }`. The five `VariantPropValue` union members (v0.4).
+  (required) }`; `VariantVisible` (table) — `{ value: bool }` (v0.8,
+  story #283: a variant that hides or shows a child, the "different child
+  counts" topology change). The six `VariantPropValue` union members
+  (five at v0.4, `VariantVisible` appended at v0.8, R7).
 - `VariantOverride` (table) — `node: uint32` (index into
   `Document.nodes`), `value: VariantPropValue`.
 - `VariantMember` (table) — `name: string`, `overrides:
