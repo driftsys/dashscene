@@ -864,11 +864,30 @@ fn a_rotated_node_fails_loudly_rather_than_silently_dropping_the_rotation() {
 }
 
 #[test]
-fn a_mask_node_fails_loudly_rather_than_silently_dropping_the_mask() {
-    // Document has no mask vocabulary and no Construct variant for it, so a mask
-    // node cannot become a diagnostic — P4 forbids silently painting it as an
-    // ordinary frame. Neither fixture carries a mask node, so this is
-    // synthetic.
+fn a_box_outline_mask_lowers_to_a_mask() {
+    // v0.8 (story #44) un-pinned box outline masks (debt #143): a geometry
+    // mask on a box shape lowers into `Node.mask`.
+    let file = document(serde_json::json!({
+        "name": "masked",
+        "type": "FRAME",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+        "isMask": true,
+        "maskType": "OUTLINE",
+    }));
+
+    let (doc, diagnostics) =
+        lower(&file, Profile::Core, &BTreeMap::new()).expect("the mask lowers");
+    assert!(
+        diagnostics.iter().all(|d| d.rule != "figma.unsupported"),
+        "a box outline mask is no longer refused: {diagnostics:?}",
+    );
+    let (_, n) = node(&doc, "masked");
+    assert!(n.mask, "the mask node lowered as a mask");
+}
+
+#[test]
+fn an_absent_mask_type_lowers_as_the_geometric_default() {
+    // A synthetic mask node with no maskType lowers as a box mask.
     let file = document(serde_json::json!({
         "name": "masked",
         "type": "FRAME",
@@ -876,9 +895,120 @@ fn a_mask_node_fails_loudly_rather_than_silently_dropping_the_mask() {
         "isMask": true,
     }));
 
+    let (doc, _) = lower(&file, Profile::Core, &BTreeMap::new()).expect("the mask lowers");
+    let (_, n) = node(&doc, "masked");
+    assert!(n.mask);
+}
+
+#[test]
+fn an_alpha_mask_is_refused_by_name() {
+    // M6: a soft alpha mask has no hard box-clip lowering, so it refuses
+    // rather than lowering as an opaque stencil (a silent drop of the fade).
+    let file = document(serde_json::json!({
+        "name": "alpha-masked",
+        "type": "FRAME",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+        "isMask": true,
+        "maskType": "ALPHA",
+    }));
+
     let (doc, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
         .expect("an unsupported construct is diagnosed, not fatal");
-    assert_sole_unsupported(&doc, &diagnostics, "masked", "a mask node");
+    assert_sole_unsupported(
+        &doc,
+        &diagnostics,
+        "alpha-masked",
+        "an alpha mask (a soft mask has no hard box-clip lowering)",
+    );
+}
+
+#[test]
+fn a_luminance_mask_is_refused_by_name() {
+    // M6: a luminance mask is a soft mask; refuse it by name.
+    let file = document(serde_json::json!({
+        "name": "luminance-masked",
+        "type": "FRAME",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+        "isMask": true,
+        "maskType": "LUMINANCE",
+    }));
+
+    let (doc, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
+        .expect("an unsupported construct is diagnosed, not fatal");
+    assert_sole_unsupported(&doc, &diagnostics, "luminance-masked", "a luminance mask");
+}
+
+#[test]
+fn a_text_node_used_as_a_mask_is_refused_by_name() {
+    // M6: a text node's shape is its letterforms, not a box, so a text mask
+    // cannot lower as a rounded-box stencil (a silent drop of the shape).
+    let file = document(serde_json::json!({
+        "name": "text-masked",
+        "type": "TEXT",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+        "characters": "Hi",
+        "isMask": true,
+        "style": { "fontFamily": "Inter", "fontSize": 12.0, "fontWeight": 400 },
+        "fills": [{ "type": "SOLID", "color": { "r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0 } }],
+    }));
+
+    let (doc, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
+        .expect("an unsupported construct is diagnosed, not fatal");
+    assert_sole_unsupported(
+        &doc,
+        &diagnostics,
+        "text-masked",
+        "a text node used as a mask (letterforms are not a box)",
+    );
+}
+
+#[test]
+fn a_node_opacity_lowers_to_group_opacity() {
+    // v0.8 (story #44) un-pinned node opacity (debt #143): it lowers into
+    // `Node.opacity` rather than refusing.
+    let file = document(serde_json::json!({
+        "name": "translucent-group",
+        "type": "FRAME",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+        "opacity": 0.4,
+    }));
+
+    let (doc, diagnostics) =
+        lower(&file, Profile::Core, &BTreeMap::new()).expect("the opacity lowers");
+    assert!(
+        diagnostics.iter().all(|d| d.rule != "figma.unsupported"),
+        "node opacity is no longer refused: {diagnostics:?}",
+    );
+    let (_, n) = node(&doc, "translucent-group");
+    assert_eq!(n.opacity, 0.4);
+}
+
+#[test]
+fn a_hidden_node_lowers_and_keeps_its_index() {
+    // v0.8 (story #44) un-pinned hidden nodes (debt #143): a hidden node
+    // lowers with `visible = false` (Prop::Visible → Display::None) and
+    // keeps its DFS index instead of forcing a refusal.
+    let file = document(serde_json::json!({
+        "name": "root",
+        "type": "FRAME",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 20.0, "height": 20.0 },
+        "children": [{
+            "name": "toggled-off",
+            "type": "FRAME",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+            "visible": false,
+        }],
+    }));
+
+    let (doc, diagnostics) =
+        lower(&file, Profile::Core, &BTreeMap::new()).expect("the hidden node lowers");
+    assert!(
+        diagnostics.iter().all(|d| d.rule != "figma.unsupported"),
+        "a hidden node is no longer refused: {diagnostics:?}",
+    );
+    let (index, n) = node(&doc, "toggled-off");
+    assert!(!n.visible, "the hidden node lowered as not visible");
+    assert_eq!(index, 1, "and kept its DFS index rather than being dropped");
 }
 
 #[test]
@@ -1077,6 +1207,7 @@ fn the_fixture_compiles_loads_and_renders() {
         scene.paints(),
         scene.images(),
         scene.clips(),
+        scene.groups(),
         &GlyphRunTable::new(),
         None,
     );

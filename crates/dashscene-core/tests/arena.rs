@@ -7,7 +7,7 @@ use std::mem::{align_of, size_of};
 
 use dashscene_core::{
     Arena, ClipBox, ClipIndex, Color, CornerRadii, LayoutMode, PaintEntry, PaintIndex, Prop,
-    RectEntry, TextStyle,
+    RectEntry, Stroke, StrokeAlign, TextStyle,
 };
 
 const RED: Color = Color {
@@ -20,9 +20,10 @@ const RED: Color = Color {
 #[test]
 fn committed_entries_are_blittable_plain_data() {
     // Boundary B pins the rect entry as blittable plain data:
-    // x, y, w, h (f32) + paint index (u32) + clip index (u32), and the
-    // solid-fill color as 4xf32 RGBA (dashbuf's Color shape).
-    assert_eq!(size_of::<RectEntry>(), 24);
+    // x, y, w, h (f32) + paint index (u32) + clip index (u32) + the
+    // free-path group alpha (f32), and the solid-fill color as 4xf32 RGBA
+    // (dashbuf's Color shape).
+    assert_eq!(size_of::<RectEntry>(), 28);
     assert_eq!(align_of::<RectEntry>(), 4);
     assert_eq!(size_of::<Color>(), 16);
     assert_eq!(align_of::<Color>(), 4);
@@ -34,6 +35,7 @@ fn committed_entries_are_blittable_plain_data() {
         h: 4.0,
         paint: PaintIndex(0),
         clip: ClipIndex::UNCLIPPED,
+        opacity: 1.0,
     };
     let copy = entry; // Copy, not a move
     assert_eq!(entry, copy);
@@ -77,6 +79,7 @@ fn a_single_filled_root_resolves_to_one_rect_and_one_paint() {
             h: 240.0,
             paint: PaintIndex(0),
             clip: ClipIndex::UNCLIPPED,
+            opacity: 1.0,
         }]
     );
     assert_eq!(scene.paints().len(), 1);
@@ -180,36 +183,53 @@ fn a_hidden_node_keeps_its_rect_table_index() {
 }
 
 #[test]
-fn commits_fixed_resolution_ignores_visible_like_the_rest_of_the_flex_vocabulary() {
-    // commit()'s FixedSolver ignores Visible, the same gap it already
-    // leaves for the rest of the flex vocabulary (docs/design/dashscene-engine.md) —
-    // only dashscene-engine's TaffySolver lowers it to Taffy Display::None.
-    // Authoring real geometry on the hidden node (rather than leaving it
-    // at its all-zero default) is what actually distinguishes "ignored"
-    // from "coincidentally already degenerate".
+fn a_hidden_node_resolves_its_geometry_but_paints_nothing() {
+    // commit()'s FixedSolver ignores Visible for GEOMETRY (the same gap it
+    // leaves for the rest of the flex vocabulary — only the TaffySolver
+    // lowers it to Display::None), so a hidden node keeps its authored box
+    // and its rect-table index (P4). But it — and its subtree — draw
+    // nothing: a solver-less consumer must not paint a toggled-off layer
+    // (story #44 M5). This supersedes the earlier pin, which asserted the
+    // hidden node resolved "unhidden"; that pin predates producers emitting
+    // hidden nodes (the Figma importer now does — debt #143).
     let mut arena = Arena::new();
     let mut txn = arena.open();
     let root = txn.add_node(None, None);
+    txn.set_prop(root, Prop::Fill(RED));
     let hidden = txn.add_node(Some(root), None);
     txn.set_prop(hidden, Prop::X(5.0));
     txn.set_prop(hidden, Prop::Y(6.0));
     txn.set_prop(hidden, Prop::Width(30.0));
     txn.set_prop(hidden, Prop::Height(20.0));
+    // A fill that must NOT show, and a descendant fill that must not either.
+    txn.set_prop(hidden, Prop::Fill(RED));
     txn.set_prop(hidden, Prop::Visible(false));
+    let child = txn.add_node(Some(hidden), None);
+    txn.set_prop(child, Prop::Fill(RED));
     txn.commit();
 
     let scene = arena.committed();
+    // Geometry still resolves — the fixed solver ignores Visible for the box.
     assert_eq!(
-        scene.rects()[1],
-        RectEntry {
-            x: 5.0,
-            y: 6.0,
-            w: 30.0,
-            h: 20.0,
-            paint: PaintIndex(0),
-            clip: ClipIndex::UNCLIPPED,
-        },
-        "commit()'s fixed resolution resolves the hidden node's authored geometry, unhidden"
+        (scene.rects()[1].x, scene.rects()[1].w),
+        (5.0, 30.0),
+        "the hidden node keeps its authored geometry",
+    );
+    // But the hidden node and its descendant both draw nothing.
+    assert_eq!(
+        scene.paints().resolve(scene.rects()[1].paint),
+        &PaintEntry::default(),
+        "a hidden node paints nothing",
+    );
+    assert_eq!(
+        scene.paints().resolve(scene.rects()[2].paint),
+        &PaintEntry::default(),
+        "a hidden node's descendant paints nothing",
+    );
+    // The visible root still paints its fill.
+    assert_eq!(
+        scene.paints().resolve(scene.rects()[0].paint),
+        &PaintEntry::solid(RED),
     );
 }
 
@@ -1714,4 +1734,415 @@ fn set_variant_panics_on_an_out_of_range_member() {
         overrides: vec![],
     }]);
     txn.set_variant(set, 1);
+}
+
+// ---------------------------------------------------------------------
+// Shape masks and group opacity (story #44). A mask stencils its
+// following siblings by reusing the resolved-clip-region machinery; group
+// opacity resolves into per-rect free alpha or a render-target group.
+// (`docs/decisions/masks-and-group-opacity.md`.)
+// ---------------------------------------------------------------------
+
+#[test]
+fn a_mask_clips_the_siblings_that_follow_it_and_draws_nothing() {
+    // parent ── mask(round) ── after1 ── after2
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let parent = boxed(&mut txn, None, 0.0, 0.0, 100.0, 100.0);
+    let mask = boxed(&mut txn, Some(parent), 10.0, 20.0, 30.0, 40.0);
+    txn.set_prop(mask, Prop::Fill(RED));
+    txn.set_prop(
+        mask,
+        Prop::Corners {
+            top_left: 4.0,
+            top_right: 4.0,
+            bottom_right: 4.0,
+            bottom_left: 4.0,
+        },
+    );
+    txn.set_prop(mask, Prop::Mask(true));
+    let after1 = boxed(&mut txn, Some(parent), 0.0, 0.0, 100.0, 100.0);
+    txn.set_prop(after1, Prop::Fill(RED));
+    boxed(&mut txn, Some(after1), 0.0, 0.0, 100.0, 100.0); // subtree of after1
+    let after2 = boxed(&mut txn, Some(parent), 0.0, 0.0, 100.0, 100.0);
+    txn.set_prop(after2, Prop::Fill(RED));
+    txn.commit();
+
+    let scene = arena.committed();
+    let region = |i: usize| scene.clips().resolve(scene.rects()[i].clip);
+    let mask_box = ClipBox {
+        x: 10.0,
+        y: 20.0,
+        w: 30.0,
+        h: 40.0,
+        corners: ROUND_4,
+    };
+
+    // The parent (0) and the mask itself (1) are unmasked; the mask does
+    // not stencil itself.
+    assert!(region(0).is_unclipped());
+    assert!(region(1).is_unclipped());
+    // The following siblings, and their subtrees, carry the mask box.
+    assert_eq!(region(2).boxes(), &[mask_box], "after1 is masked");
+    assert_eq!(region(3).boxes(), &[mask_box], "after1's child is masked");
+    assert_eq!(region(4).boxes(), &[mask_box], "after2 is masked");
+
+    // The mask node itself draws nothing — it interns the shared
+    // draws-nothing entry, not its red fill.
+    assert_eq!(
+        scene.paints().resolve(scene.rects()[1].paint),
+        &PaintEntry::default(),
+        "a mask is a stencil, not paint",
+    );
+}
+
+#[test]
+fn a_group_opacity_over_non_overlapping_children_is_the_free_path() {
+    // group(opacity 0.5) ── a(left) ── b(right, disjoint from a)
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let group = boxed(&mut txn, None, 0.0, 0.0, 100.0, 40.0);
+    txn.set_prop(group, Prop::Opacity(0.5));
+    let a = boxed(&mut txn, Some(group), 0.0, 0.0, 40.0, 40.0);
+    txn.set_prop(a, Prop::Fill(RED));
+    let b = boxed(&mut txn, Some(group), 60.0, 0.0, 40.0, 40.0);
+    txn.set_prop(b, Prop::Fill(RED));
+    txn.commit();
+
+    let scene = arena.committed();
+    // No render-target group: the alpha folds into each rect.
+    assert!(
+        scene.groups().is_empty(),
+        "non-overlapping children are free"
+    );
+    assert_eq!(scene.rects()[0].opacity, 0.5, "the group node");
+    assert_eq!(scene.rects()[1].opacity, 0.5, "child a inherits the alpha");
+    assert_eq!(scene.rects()[2].opacity, 0.5, "child b inherits the alpha");
+}
+
+#[test]
+fn a_group_opacity_over_overlapping_children_is_a_render_target() {
+    // group(opacity 0.5) ── a ── b(overlaps a)
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let group = boxed(&mut txn, None, 0.0, 0.0, 50.0, 50.0);
+    txn.set_prop(group, Prop::Opacity(0.5));
+    let a = boxed(&mut txn, Some(group), 0.0, 0.0, 40.0, 40.0);
+    txn.set_prop(a, Prop::Fill(RED));
+    let b = boxed(&mut txn, Some(group), 20.0, 20.0, 40.0, 40.0);
+    txn.set_prop(b, Prop::Fill(RED));
+    txn.commit();
+
+    let scene = arena.committed();
+    // A single render-target group over the whole subtree, at the node's
+    // alpha; the subtree draws into the layer at full alpha.
+    assert_eq!(scene.groups().len(), 1);
+    let g = scene.groups()[0];
+    assert_eq!((g.start, g.end, g.alpha), (0, 3, 0.5));
+    for rect in scene.rects() {
+        assert_eq!(rect.opacity, 1.0, "subtree draws into the layer at full");
+    }
+}
+
+#[test]
+fn nested_free_opacities_multiply_down_the_chain() {
+    // outer(0.5) ── inner(0.5) ── leaf   (all single-child, never overlap)
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let outer = boxed(&mut txn, None, 0.0, 0.0, 40.0, 40.0);
+    txn.set_prop(outer, Prop::Opacity(0.5));
+    let inner = boxed(&mut txn, Some(outer), 0.0, 0.0, 40.0, 40.0);
+    txn.set_prop(inner, Prop::Opacity(0.5));
+    let leaf = boxed(&mut txn, Some(inner), 0.0, 0.0, 40.0, 40.0);
+    txn.set_prop(leaf, Prop::Fill(RED));
+    txn.commit();
+
+    let scene = arena.committed();
+    assert!(scene.groups().is_empty());
+    assert_eq!(scene.rects()[0].opacity, 0.5);
+    assert_eq!(scene.rects()[1].opacity, 0.25, "0.5 * 0.5");
+    assert_eq!(
+        scene.rects()[2].opacity,
+        0.25,
+        "the leaf carries the product"
+    );
+}
+
+#[test]
+fn changing_a_free_opacity_dirties_the_affected_rect() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let node = boxed(&mut txn, None, 0.0, 0.0, 40.0, 40.0);
+    txn.set_prop(node, Prop::Fill(RED));
+    txn.commit();
+    // Second commit: change opacity only.
+    let mut txn = arena.open();
+    txn.set_prop(node, Prop::Opacity(0.5));
+    txn.commit();
+
+    let scene = arena.committed();
+    assert_eq!(scene.rects()[0].opacity, 0.5);
+    assert!(
+        scene.dirty().contains(&0),
+        "a free-path opacity change reaches the dirty set",
+    );
+}
+
+#[test]
+fn opacity_is_paint_only_and_never_reaches_the_layout_dirty_set() {
+    // Prop::Opacity records nothing in the layout dirty set (§23): it is
+    // paint-only and must not force a re-solve.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let node = boxed(&mut txn, None, 0.0, 0.0, 40.0, 40.0);
+    txn.commit();
+    {
+        let mut txn = arena.open();
+        txn.set_prop(node, Prop::Opacity(0.25));
+    }
+    assert!(
+        arena.layout_dirty().is_empty(),
+        "opacity is paint-only, so nothing is marked for the solver",
+    );
+}
+
+// ---------------------------------------------------------------------
+// Review fixes (story #44): the incremental and geometric edge cases the
+// code-review pass found — mask toggle-off, hidden masks, composed masks,
+// render-target dirty tracking, the stroke-outset overlap, and opacity
+// edges. (`docs/decisions/masks-and-group-opacity.md`.)
+// ---------------------------------------------------------------------
+
+#[test]
+fn toggling_a_mask_off_dirties_and_unclips_the_siblings_it_masked() {
+    // M1: a mask, then a filled sibling. After Mask(false) the sibling
+    // must be unclipped again AND reported dirty — the off-transition, not
+    // just the on-transition, feeds the region cascade.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let parent = boxed(&mut txn, None, 0.0, 0.0, 100.0, 100.0);
+    let mask = boxed(&mut txn, Some(parent), 10.0, 10.0, 30.0, 30.0);
+    txn.set_prop(mask, Prop::Mask(true));
+    let after = boxed(&mut txn, Some(parent), 0.0, 0.0, 100.0, 100.0);
+    txn.set_prop(after, Prop::Fill(RED));
+    txn.commit();
+    assert!(
+        !arena
+            .committed()
+            .clips()
+            .resolve(arena.committed().rects()[2].clip)
+            .is_unclipped(),
+        "the sibling is masked while the mask is on",
+    );
+
+    let mut txn = arena.open();
+    txn.set_prop(mask, Prop::Mask(false));
+    txn.commit();
+
+    let scene = arena.committed();
+    assert!(
+        scene.clips().resolve(scene.rects()[2].clip).is_unclipped(),
+        "M1: the sibling is unclipped once the mask is off",
+    );
+    assert!(
+        scene.dirty().contains(&2),
+        "M1: the un-masked sibling is reported dirty",
+    );
+}
+
+#[test]
+fn a_hidden_mask_does_not_mask_under_the_fixed_solver() {
+    // M2 (fixed path): a mask with Visible(false) must not stencil its
+    // siblings. (The Taffy path is covered in dashscene-engine's tests.)
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let parent = boxed(&mut txn, None, 0.0, 0.0, 100.0, 100.0);
+    let mask = boxed(&mut txn, Some(parent), 10.0, 10.0, 30.0, 30.0);
+    txn.set_prop(mask, Prop::Mask(true));
+    txn.set_prop(mask, Prop::Visible(false));
+    let after = boxed(&mut txn, Some(parent), 0.0, 0.0, 100.0, 100.0);
+    txn.set_prop(after, Prop::Fill(RED));
+    txn.commit();
+
+    let scene = arena.committed();
+    assert!(
+        scene.clips().resolve(scene.rects()[2].clip).is_unclipped(),
+        "M2: a hidden mask does not mask its siblings",
+    );
+}
+
+#[test]
+fn successive_sibling_masks_intersect_rather_than_replace() {
+    // M3: two masks then full-size content — the content is clipped by the
+    // intersection of both mask boxes, not the second alone.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let parent = boxed(&mut txn, None, 0.0, 0.0, 100.0, 100.0);
+    let m1 = boxed(&mut txn, Some(parent), 0.0, 0.0, 50.0, 100.0);
+    txn.set_prop(m1, Prop::Mask(true));
+    let m2 = boxed(&mut txn, Some(parent), 25.0, 0.0, 50.0, 100.0);
+    txn.set_prop(m2, Prop::Mask(true));
+    let content = boxed(&mut txn, Some(parent), 0.0, 0.0, 100.0, 100.0);
+    txn.set_prop(content, Prop::Fill(RED));
+    txn.commit();
+
+    let scene = arena.committed();
+    let region = scene.clips().resolve(scene.rects()[3].clip);
+    let boxes: Vec<(f32, f32, f32, f32)> = region
+        .boxes()
+        .iter()
+        .map(|b| (b.x, b.y, b.w, b.h))
+        .collect();
+    assert_eq!(
+        boxes,
+        vec![(0.0, 0.0, 50.0, 100.0), (25.0, 0.0, 50.0, 100.0)],
+        "M3: the content carries both mask boxes (their intersection)",
+    );
+}
+
+#[test]
+fn a_render_target_group_forming_and_dissolving_dirties_its_subtree() {
+    // M8: a group's alpha lives outside the rect entry bits, so forming,
+    // dissolving, or re-aiming it must still dirty the subtree.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let group = boxed(&mut txn, None, 0.0, 0.0, 50.0, 50.0);
+    let a = boxed(&mut txn, Some(group), 0.0, 0.0, 40.0, 40.0);
+    txn.set_prop(a, Prop::Fill(RED));
+    let b = boxed(&mut txn, Some(group), 20.0, 20.0, 40.0, 40.0);
+    txn.set_prop(b, Prop::Fill(RED));
+    txn.commit();
+    assert!(arena.committed().groups().is_empty());
+
+    // Form the render-target group.
+    let mut txn = arena.open();
+    txn.set_prop(group, Prop::Opacity(0.5));
+    txn.commit();
+    assert_eq!(arena.committed().groups().len(), 1);
+    for i in 0..3 {
+        assert!(
+            arena.committed().dirty().contains(&i),
+            "M8: forming a group dirties rect {i}",
+        );
+    }
+
+    // Change its alpha.
+    let mut txn = arena.open();
+    txn.set_prop(group, Prop::Opacity(0.25));
+    txn.commit();
+    assert_eq!(arena.committed().groups()[0].alpha, 0.25);
+    for i in 0..3 {
+        assert!(
+            arena.committed().dirty().contains(&i),
+            "M8: re-aiming a group's alpha dirties rect {i}",
+        );
+    }
+
+    // Dissolve it back to opaque.
+    let mut txn = arena.open();
+    txn.set_prop(group, Prop::Opacity(1.0));
+    txn.commit();
+    assert!(arena.committed().groups().is_empty());
+    for i in 0..3 {
+        assert!(
+            arena.committed().dirty().contains(&i),
+            "M8: dissolving a group dirties rect {i}",
+        );
+    }
+}
+
+#[test]
+fn a_stroke_band_counts_toward_the_overlap_test() {
+    // M10: two edge-adjacent tiles whose boxes only touch (no area overlap)
+    // but whose center strokes paint into a shared band must take the
+    // render-target path, not the free path (whose per-tile alpha would
+    // seam the shared band at ~0.75 instead of the flattened 0.5).
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let group = boxed(&mut txn, None, 0.0, 0.0, 100.0, 50.0);
+    txn.set_prop(group, Prop::Opacity(0.5));
+    let left = boxed(&mut txn, Some(group), 0.0, 0.0, 50.0, 50.0);
+    txn.set_prop(left, Prop::Fill(RED));
+    txn.set_prop(
+        left,
+        Prop::Stroke(Stroke {
+            width: 4.0,
+            align: StrokeAlign::Center,
+            color: RED,
+        }),
+    );
+    let right = boxed(&mut txn, Some(group), 50.0, 0.0, 50.0, 50.0);
+    txn.set_prop(right, Prop::Fill(RED));
+    txn.set_prop(
+        right,
+        Prop::Stroke(Stroke {
+            width: 4.0,
+            align: StrokeAlign::Center,
+            color: RED,
+        }),
+    );
+    txn.commit();
+
+    assert_eq!(
+        arena.committed().groups().len(),
+        1,
+        "M10: the shared stroke band makes the tiles overlap — render target",
+    );
+}
+
+#[test]
+fn a_zero_opacity_group_is_free_and_paints_nothing() {
+    // M14: opacity 0.0 needs no compositing — every subtree rect carries
+    // alpha 0.0 on the free path, and no render-target group is emitted.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let group = boxed(&mut txn, None, 0.0, 0.0, 50.0, 50.0);
+    txn.set_prop(group, Prop::Opacity(0.0));
+    let a = boxed(&mut txn, Some(group), 0.0, 0.0, 40.0, 40.0);
+    txn.set_prop(a, Prop::Fill(RED));
+    let b = boxed(&mut txn, Some(group), 10.0, 10.0, 40.0, 40.0);
+    txn.set_prop(b, Prop::Fill(RED));
+    txn.commit();
+
+    let scene = arena.committed();
+    assert!(
+        scene.groups().is_empty(),
+        "M14: alpha 0 needs no render target even when children overlap",
+    );
+    assert!(
+        scene.rects().iter().all(|r| r.opacity == 0.0),
+        "M14: every rect carries the zero alpha on the free path",
+    );
+}
+
+#[test]
+fn opacity_restores_to_full_when_set_back_to_one() {
+    // M14: Opacity clears — a later Opacity(1.0) restores full opacity.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let node = boxed(&mut txn, None, 0.0, 0.0, 40.0, 40.0);
+    txn.set_prop(node, Prop::Fill(RED));
+    txn.set_prop(node, Prop::Opacity(0.5));
+    txn.commit();
+    assert_eq!(arena.committed().rects()[0].opacity, 0.5);
+
+    let mut txn = arena.open();
+    txn.set_prop(node, Prop::Opacity(1.0));
+    txn.commit();
+    assert_eq!(
+        arena.committed().rects()[0].opacity,
+        1.0,
+        "M14: Opacity(1.0) restores full opacity",
+    );
+    assert!(arena.committed().dirty().contains(&0));
+}
+
+#[test]
+#[should_panic(expected = "not finite")]
+fn a_non_finite_opacity_is_refused_by_name() {
+    // M7: NaN clamps to NaN and would read back as fully opaque; refuse it.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let node = boxed(&mut txn, None, 0.0, 0.0, 10.0, 10.0);
+    txn.set_prop(node, Prop::Opacity(f32::NAN));
 }

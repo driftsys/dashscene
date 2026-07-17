@@ -125,6 +125,7 @@ fn the_clip_scene_matches_its_golden() {
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        scene.groups(),
         &GlyphRunTable::new(),
         Some(scene.dirty()),
     );

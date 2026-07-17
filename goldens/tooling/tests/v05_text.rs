@@ -70,6 +70,7 @@ fn text_run(
         size,
         color,
         glyphs,
+        opacity: 1.0,
     }
 }
 
@@ -194,6 +195,7 @@ fn latin_text_and_a_hug_label_match_their_golden() {
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        scene.groups(),
         &glyphs,
         None,
     );

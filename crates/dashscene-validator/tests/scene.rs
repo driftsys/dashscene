@@ -6,11 +6,13 @@
 //! stroke width to be measured against (issue #100).
 
 use dashpaint::{
-    ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CornerRadii, Gradient, GradientKind,
-    GradientStop, ImageAsset, ImageFormat, ImageTable, PaintEntry, PaintIndex, PaintKind,
-    PaintTable, RectEntry, ScaleMode, Stroke, StrokeAlign, Vec2,
+    ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CornerRadii, GlyphRunTable, Gradient,
+    GradientKind, GradientStop, GroupComposite, ImageAsset, ImageFormat, ImageTable, PaintEntry,
+    PaintIndex, PaintKind, PaintTable, RectEntry, ScaleMode, Stroke, StrokeAlign, Vec2,
 };
-use dashscene_validator::{Location, Report, rule, validate_scene};
+use dashscene_validator::{
+    Location, RENDER_TARGET_BUDGET_PLACEHOLDER, Report, Severity, rule, validate_scene,
+};
 
 fn red() -> Color {
     Color {
@@ -45,6 +47,7 @@ fn rect(w: f32, h: f32, paint: u32) -> RectEntry {
         h,
         paint: PaintIndex(paint),
         clip: ClipIndex::UNCLIPPED,
+        opacity: 1.0,
     }
 }
 
@@ -57,6 +60,8 @@ fn check_one(w: f32, h: f32, entry: PaintEntry) -> Report {
         &paints,
         &ImageTable::new(),
         &ClipTable::new(),
+        &[],
+        &GlyphRunTable::new(),
     )
 }
 
@@ -203,6 +208,8 @@ fn an_image_fill_past_the_image_table_is_named() {
         &paints,
         &images,
         &ClipTable::new(),
+        &[],
+        &GlyphRunTable::new(),
     );
     assert!(report.has(rule::IMAGE_OUT_OF_RANGE), "{report}");
 }
@@ -219,6 +226,8 @@ fn a_rect_pointing_past_the_paint_table_is_named() {
         &paints,
         &ImageTable::new(),
         &ClipTable::new(),
+        &[],
+        &GlyphRunTable::new(),
     );
     assert!(report.has(rule::PAINT_ENTRY_OUT_OF_RANGE), "{report}");
     assert!(report.has_errors());
@@ -236,7 +245,14 @@ fn a_shared_paint_entry_is_reported_once_not_once_per_rect() {
     });
     let rects: Vec<RectEntry> = (0..5).map(|_| rect(10.0, 10.0, index.0)).collect();
 
-    let report = validate_scene(&rects, &paints, &ImageTable::new(), &ClipTable::new());
+    let report = validate_scene(
+        &rects,
+        &paints,
+        &ImageTable::new(),
+        &ClipTable::new(),
+        &[],
+        &GlyphRunTable::new(),
+    );
     let count = report
         .diagnostics()
         .iter()
@@ -262,6 +278,8 @@ fn a_pool_diagnostic_points_at_the_pool_entry_not_a_rect() {
         &paints,
         &ImageTable::new(),
         &ClipTable::new(),
+        &[],
+        &GlyphRunTable::new(),
     );
     let diagnostic = report
         .find(rule::GRADIENT_NO_STOPS)
@@ -294,6 +312,8 @@ fn an_image_asset_with_no_bytes_is_named() {
         &paints,
         &images,
         &ClipTable::new(),
+        &[],
+        &GlyphRunTable::new(),
     );
     assert!(report.has(rule::IMAGE_NO_BYTES), "{report}");
     assert_eq!(
@@ -395,7 +415,14 @@ fn a_rect_pointing_past_the_clip_table_is_named() {
     let mut broken = rect(10.0, 10.0, paint.0);
     broken.clip = ClipIndex(7);
 
-    let report = validate_scene(&[broken], &paints, &ImageTable::new(), &ClipTable::new());
+    let report = validate_scene(
+        &[broken],
+        &paints,
+        &ImageTable::new(),
+        &ClipTable::new(),
+        &[],
+        &GlyphRunTable::new(),
+    );
     assert!(report.has(rule::CLIP_INDEX_OUT_OF_RANGE), "{report}");
     assert!(report.has_errors());
 }
@@ -417,7 +444,14 @@ fn a_rect_carrying_a_real_clip_region_is_clean() {
     let mut clipped = rect(10.0, 10.0, paint.0);
     clipped.clip = region;
 
-    let report = validate_scene(&[clipped], &paints, &ImageTable::new(), &clips);
+    let report = validate_scene(
+        &[clipped],
+        &paints,
+        &ImageTable::new(),
+        &clips,
+        &[],
+        &GlyphRunTable::new(),
+    );
     assert!(report.is_empty(), "unexpected diagnostics:\n{report}");
 }
 
@@ -433,6 +467,131 @@ fn the_reserved_unclipped_region_always_resolves() {
         &paints,
         &ImageTable::new(),
         &ClipTable::new(),
+        &[],
+        &GlyphRunTable::new(),
     );
     assert!(!report.has(rule::CLIP_INDEX_OUT_OF_RANGE), "{report}");
+}
+
+// ---------------------------------------------------------------------
+// The render-target group-opacity budget (story #44): a scene-wide
+// warning against the Q-6 placeholder, never an error.
+// (`docs/decisions/masks-and-group-opacity.md`.)
+// ---------------------------------------------------------------------
+
+fn group(start: u32) -> GroupComposite {
+    GroupComposite {
+        start,
+        end: start + 1,
+        alpha: 0.5,
+    }
+}
+
+#[test]
+fn render_target_groups_within_the_budget_do_not_warn() {
+    let mut paints = PaintTable::new();
+    let paint = paints.push(PaintEntry::solid(red()));
+    let groups: Vec<GroupComposite> = (0..RENDER_TARGET_BUDGET_PLACEHOLDER as u32)
+        .map(group)
+        .collect();
+
+    let report = validate_scene(
+        &[rect(10.0, 10.0, paint.0)],
+        &paints,
+        &ImageTable::new(),
+        &ClipTable::new(),
+        &groups,
+        &GlyphRunTable::new(),
+    );
+    assert!(!report.has(rule::RENDER_TARGET_BUDGET), "{report}");
+}
+
+#[test]
+fn too_many_render_target_groups_warn_but_never_error() {
+    let mut paints = PaintTable::new();
+    let paint = paints.push(PaintEntry::solid(red()));
+    let groups: Vec<GroupComposite> = (0..RENDER_TARGET_BUDGET_PLACEHOLDER as u32 + 1)
+        .map(group)
+        .collect();
+
+    let report = validate_scene(
+        &[rect(10.0, 10.0, paint.0)],
+        &paints,
+        &ImageTable::new(),
+        &ClipTable::new(),
+        &groups,
+        &GlyphRunTable::new(),
+    );
+    assert!(report.has(rule::RENDER_TARGET_BUDGET), "{report}");
+    // A placeholder budget must not hard-fail a build.
+    assert!(
+        !report.has_errors(),
+        "the budget is a warning, not an error"
+    );
+    assert!(
+        report
+            .diagnostics()
+            .iter()
+            .filter(|d| d.rule == rule::RENDER_TARGET_BUDGET)
+            .all(|d| d.severity == Severity::Warning)
+    );
+}
+
+#[test]
+fn text_alongside_a_render_target_group_is_named_a_limitation() {
+    // Story #44 M4: glyph runs are not composited into render-target group
+    // layers, so a scene with both is named — a warning, never an error.
+    use dashpaint::{Atlas, GlyphRun, ImageAsset, ImageFormat};
+
+    let mut paints = PaintTable::new();
+    let paint = paints.push(PaintEntry::solid(red()));
+    let mut glyphs = GlyphRunTable::new();
+    let atlas = glyphs.push_atlas(Atlas::new(
+        ImageAsset {
+            format: ImageFormat::Png,
+            bytes: vec![0],
+        },
+        1,
+        1,
+        16,
+        2.0,
+        vec![],
+    ));
+    glyphs.push_run(GlyphRun {
+        atlas,
+        size: 16.0,
+        color: red(),
+        glyphs: vec![],
+        opacity: 1.0,
+    });
+    let groups = [GroupComposite {
+        start: 0,
+        end: 1,
+        alpha: 0.5,
+    }];
+
+    let report = validate_scene(
+        &[rect(10.0, 10.0, paint.0)],
+        &paints,
+        &ImageTable::new(),
+        &ClipTable::new(),
+        &groups,
+        &glyphs,
+    );
+    assert!(report.has(rule::TEXT_OUTSIDE_GROUP), "{report}");
+    assert!(
+        !report.has_errors(),
+        "the limitation is a warning, not an error"
+    );
+
+    // No glyph runs, no warning.
+    let quiet = validate_scene(
+        &[rect(10.0, 10.0, paint.0)],
+        &paints,
+        &ImageTable::new(),
+        &ClipTable::new(),
+        &groups,
+        &GlyphRunTable::new(),
+    );
+    assert!(!quiet.has(rule::TEXT_OUTSIDE_GROUP), "{quiet}");
 }

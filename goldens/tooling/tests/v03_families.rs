@@ -42,6 +42,7 @@ fn full_box(paint: dashpaint::PaintIndex, w: f32, h: f32) -> RectEntry {
         h,
         paint,
         clip: ClipIndex::UNCLIPPED,
+        opacity: 1.0,
     }
 }
 
@@ -84,6 +85,7 @@ fn checker_asset() -> ImageAsset {
                 h: 1.0,
                 paint: if (x + y) % 2 == 0 { dark } else { light },
                 clip: ClipIndex::UNCLIPPED,
+                opacity: 1.0,
             });
         }
     }
@@ -92,6 +94,7 @@ fn checker_asset() -> ImageAsset {
         &paints,
         &ImageTable::new(),
         &ClipTable::new(),
+        &[],
         &GlyphRunTable::new(),
         None,
     );
@@ -153,6 +156,7 @@ fn the_gradient_family_matches_its_golden() {
         h: 32.0,
         paint: p,
         clip: ClipIndex::UNCLIPPED,
+        opacity: 1.0,
     };
     let rects = [
         cell(0.0, 0.0, linear),
@@ -167,6 +171,7 @@ fn the_gradient_family_matches_its_golden() {
         &paints,
         &ImageTable::new(),
         &ClipTable::new(),
+        &[],
         &GlyphRunTable::new(),
         None,
     );
@@ -229,6 +234,7 @@ fn the_stroke_family_matches_its_golden() {
         h: 20.0,
         paint: p,
         clip: ClipIndex::UNCLIPPED,
+        opacity: 1.0,
     };
     let rects = [
         full_box(background, 64.0, 64.0),
@@ -244,6 +250,7 @@ fn the_stroke_family_matches_its_golden() {
         &paints,
         &ImageTable::new(),
         &ClipTable::new(),
+        &[],
         &GlyphRunTable::new(),
         None,
     );
@@ -318,6 +325,7 @@ fn the_image_family_matches_its_golden() {
         h: 20.0,
         paint: p,
         clip: ClipIndex::UNCLIPPED,
+        opacity: 1.0,
     };
     let rects = [
         full_box(background, 64.0, 64.0),
@@ -333,6 +341,7 @@ fn the_image_family_matches_its_golden() {
         &paints,
         &images,
         &ClipTable::new(),
+        &[],
         &GlyphRunTable::new(),
         None,
     );

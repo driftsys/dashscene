@@ -94,6 +94,18 @@ unclipped control. Rounded clips are anti-aliased, so it compares at the
 same 2% tolerance as the family goldens, with flat-interior probes
 pinning each panel bit-stably.
 
+The v0.8 masks + group-opacity goldens (story #44) are authored the same
+way — through `dashscene-core`, since a mask and a group opacity are also
+producer-side relations (`docs/decisions/masks-and-group-opacity.md`).
+`v08-mask.png` is a rounded mask stenciling an oversized fill (the mask's
+own color must not show); `v08-group-opacity-free.png` is two
+non-overlapping children under a 0.5 group (the free path — no render
+target); `v08-group-opacity-rt.png` is two overlapping children under a
+0.5 group (the render-target path — the overlap is no darker than a single
+child, which is what proves the subtree flattened before its alpha
+applied). Each pins its distinguishing property with relational probes and
+compares at the 2% tolerance.
+
 ## Testing
 
 Unit tests in `src/lib.rs` cover the tooling's edge behavior against a

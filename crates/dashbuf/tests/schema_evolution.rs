@@ -466,7 +466,7 @@ fn frozen_binding_tables_read_back() {
     assert_eq!(signals.get(1).initial(), 0.25);
 
     let bindings = doc.bindings().expect("bindings present");
-    assert_eq!(bindings.len(), 2);
+    assert_eq!(bindings.len(), 3);
 
     let gap = bindings.get(0);
     assert_eq!(gap.signal(), 0);
@@ -487,6 +487,35 @@ fn frozen_binding_tables_read_back() {
             .factor(),
         2.0
     );
+
+    // The v0.8 Opacity channel (9): written against the default X = 0, so
+    // a renumbered enum reads a different channel back.
+    let opacity = bindings.get(2);
+    assert_eq!(opacity.signal(), 1);
+    assert_eq!(opacity.node(), 2);
+    assert_eq!(opacity.channel(), BindingChannel::Opacity);
+    assert_eq!(opacity.transform_type(), BindingTransform::NONE);
+}
+
+/// The v0.8 masks + group-opacity node fields (story #44), each written
+/// against its schema default so a shifted field id reads the default and
+/// this assertion is what notices.
+#[test]
+fn frozen_node_masks_and_opacity_read_back() {
+    // root wrote opacity 0.5 against the 1.0 default.
+    assert_eq!(node(0).opacity(), 0.5);
+    assert!(!node(0).mask());
+    assert!(node(0).visible());
+
+    // gradient-child wrote mask = true against the false default.
+    assert!(node(1).mask());
+    assert_eq!(node(1).opacity(), 1.0);
+    assert!(node(1).visible());
+
+    // bare-child wrote visible = false against the true default.
+    assert!(!node(3).visible());
+    assert_eq!(node(3).opacity(), 1.0);
+    assert!(!node(3).mask());
 }
 
 // ---------------------------------------------------------------------
@@ -636,6 +665,10 @@ fn build_fixture() -> Vec<u8> {
             paint: Some(legacy_paint),
             paint_entry: 0,
             flex: Some(root_flex),
+            // v0.8 (story #44): a group opacity written non-default (0.5
+            // against the 1.0 default), so a shifted field id reads the
+            // default and the guard notices.
+            opacity: 0.5,
             ..Default::default()
         },
     );
@@ -666,6 +699,9 @@ fn build_fixture() -> Vec<u8> {
             parent: 0,
             paint_entry: 1,
             constraints: Some(gradient_constraints),
+            // v0.8 (story #44): a mask node, written true against the
+            // false default.
+            mask: true,
             ..Default::default()
         },
     );
@@ -698,6 +734,9 @@ fn build_fixture() -> Vec<u8> {
         &NodeArgs {
             name: Some(bare_name),
             parent: 0,
+            // v0.8 (story #44): a hidden node, written false against the
+            // true default (debt #143).
+            visible: false,
             ..Default::default()
         },
     );
@@ -872,7 +911,20 @@ fn build_fixture() -> Vec<u8> {
             transform: Some(scale.as_union_value()),
         },
     );
-    let bindings = b.create_vector(&[gap_binding, scaled_binding]);
+    // v0.8 (story #44): the appended Opacity channel (9), so a renumbered
+    // BindingChannel enum reads back a different channel and the guard
+    // notices.
+    let opacity_binding = Binding::create(
+        &mut b,
+        &BindingArgs {
+            signal: 1,
+            node: 2,
+            channel: BindingChannel::Opacity,
+            transform_type: BindingTransform::NONE,
+            transform: None,
+        },
+    );
+    let bindings = b.create_vector(&[gap_binding, scaled_binding, opacity_binding]);
 
     let document = Document::create(
         &mut b,

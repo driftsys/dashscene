@@ -426,6 +426,48 @@ fn a_fill_channel_write_is_paint_only() {
     assert!(arena.committed().dirty().contains(&1));
 }
 
+/// Mirrors A1 for the opacity channel (debt #253): a bound group opacity
+/// changes every frame, and the frame is paint-only — no layout solve
+/// (`docs/decisions/masks-and-group-opacity.md`). Opacity is the paint
+/// side of the §23 split; its pair `Visible` is layout-affecting.
+#[test]
+fn an_opacity_channel_write_is_paint_only() {
+    use dashlang::rgba;
+
+    let count = Rc::new(Cell::new(0));
+    let mut arena = Arena::new();
+
+    let mut scene = Scene::new();
+    let level = scene.signal(1.0f32);
+    scene.roots([node("frame")
+        .mode(LayoutMode::None)
+        .size(200.0, 20.0)
+        .child(
+            node("meter")
+                .size(200.0, 20.0)
+                .fill(rgba(0.0, 0.5, 0.25, 1.0))
+                .bind(Channel::Opacity, level),
+        )]);
+
+    let mut live = scene.build_live(&mut arena, CountingSolver::boxed(count.clone()));
+    assert_eq!(count.get(), 1, "build solves once");
+
+    for frame in 1..=4 {
+        live.set(level, frame as f32 * 0.2);
+        live.tick(0.016, &mut arena);
+    }
+    assert_eq!(count.get(), 1, "an opacity write never re-solves");
+
+    let meter = arena.committed().node_of(1);
+    assert_eq!(
+        arena.opacity(meter),
+        0.8,
+        "the bound opacity tracks the signal"
+    );
+    // The paint change reaches the dirty set — a painter must re-upload.
+    assert!(arena.committed().dirty().contains(&1));
+}
+
 /// Mirrors A1's counterpart for `Gap` (debt #201): a bound gap is
 /// layout-affecting by definition — the children move on every write.
 #[test]

@@ -363,6 +363,46 @@ fn hiding_a_container_hides_its_whole_subtree_regardless_of_a_descendants_own_vi
 }
 
 #[test]
+fn a_hidden_mask_does_not_mask_under_the_taffy_solver() {
+    // Story #44 M2 (Taffy path): a hidden mask lowers to Display::None and
+    // resolves 0x0. Without honoring its visibility, that 0x0 box would clip
+    // every following sibling to nothing; honoring it, the sibling is
+    // unclipped. The fixed-solver half is in dashscene-core's arena tests.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    // A passthrough parent so the sibling keeps its authored position.
+    let parent = txn.add_node(None, None);
+    txn.set_prop(parent, Prop::Width(100.0));
+    txn.set_prop(parent, Prop::Height(100.0));
+    let mask = txn.add_node(Some(parent), None);
+    txn.set_prop(mask, Prop::X(10.0));
+    txn.set_prop(mask, Prop::Y(10.0));
+    txn.set_prop(mask, Prop::Width(30.0));
+    txn.set_prop(mask, Prop::Height(30.0));
+    txn.set_prop(mask, Prop::Mask(true));
+    txn.set_prop(mask, Prop::Visible(false));
+    let after = txn.add_node(Some(parent), None);
+    txn.set_prop(after, Prop::Width(80.0));
+    txn.set_prop(after, Prop::Height(80.0));
+    txn.set_prop(
+        after,
+        Prop::Fill(dashscene_core::Color {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        }),
+    );
+    txn.commit_with(&mut TaffySolver::new());
+
+    let scene = arena.committed();
+    assert!(
+        scene.clips().resolve(scene.rects()[2].clip).is_unclipped(),
+        "M2: a hidden mask does not stencil its siblings under the Taffy solver",
+    );
+}
+
+#[test]
 fn multiple_roots_keep_their_authored_origins() {
     let mut arena = Arena::new();
     let mut txn = arena.open();

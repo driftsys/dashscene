@@ -117,6 +117,7 @@ fn text_run(ts: &mut Typesetter, atlas: AtlasIndex, origin: (f32, f32)) -> Glyph
         size: TEXT_SIZE,
         color: INK,
         glyphs,
+        opacity: 1.0,
     }
 }
 
@@ -169,6 +170,7 @@ fn render(arena: &Arena, glyphs: &GlyphRunTable) -> Vec<u8> {
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        scene.groups(),
         glyphs,
         None,
     );

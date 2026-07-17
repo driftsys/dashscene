@@ -35,6 +35,7 @@ fn paint(painter: &mut SkiaPainter, arena: &Arena) {
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        scene.groups(),
         &GlyphRunTable::new(),
         Some(scene.dirty()),
     );
@@ -152,6 +153,67 @@ fn the_dirty_set_survives_a_mutation_sequence() {
         },
     );
 
+    // Story #44: masking `left` stencils `right` (its following sibling)
+    // to `left`'s box; `right`'s own rect bits do not change, so the mask
+    // cascade must dirty it.
+    step("mask on", &mut arena, &mut full, &mut retained, |txn| {
+        txn.set_prop(left, Prop::Mask(true));
+    });
+
+    // Toggling the mask off must un-stencil `right` and repaint it (M1) —
+    // the off-transition, not just the on-transition, feeds the cascade.
+    step("mask off", &mut arena, &mut full, &mut retained, |txn| {
+        txn.set_prop(left, Prop::Mask(false));
+    });
+
+    // Overlap the children so a group opacity on the frame needs a render
+    // target rather than the free path.
+    step(
+        "overlap the children",
+        &mut arena,
+        &mut full,
+        &mut retained,
+        |txn| {
+            txn.set_prop(right, Prop::X(10.0));
+        },
+    );
+
+    // Forming a render-target group changes the composited pixels while the
+    // subtree's rect bits stay identical (they draw into the layer at full
+    // alpha), so commit must dirty the whole subtree (M8).
+    step(
+        "form a render-target group",
+        &mut arena,
+        &mut full,
+        &mut retained,
+        |txn| {
+            txn.set_prop(frame, Prop::Opacity(0.5));
+        },
+    );
+
+    // Re-aiming the group's alpha likewise moves pixels with no rect-bit
+    // change (M8).
+    step(
+        "animate the group alpha",
+        &mut arena,
+        &mut full,
+        &mut retained,
+        |txn| {
+            txn.set_prop(frame, Prop::Opacity(0.25));
+        },
+    );
+
+    // Dissolving the group back to opaque must dirty the subtree too (M8).
+    step(
+        "dissolve the group",
+        &mut arena,
+        &mut full,
+        &mut retained,
+        |txn| {
+            txn.set_prop(frame, Prop::Opacity(1.0));
+        },
+    );
+
     // A commit that changes nothing must produce an empty dirty set and
     // leave the retained buffer untouched — and still match.
     step(
@@ -203,6 +265,7 @@ fn the_oracle_can_fail() {
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        scene.groups(),
         &GlyphRunTable::new(),
         Some(scene.dirty()),
     );
@@ -211,6 +274,7 @@ fn the_oracle_can_fail() {
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        scene.groups(),
         &GlyphRunTable::new(),
         Some(&[]),
     );

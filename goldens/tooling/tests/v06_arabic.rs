@@ -99,6 +99,7 @@ fn text_run(
         size,
         color,
         glyphs,
+        opacity: 1.0,
     }
 }
 
@@ -251,6 +252,7 @@ fn arabic_screen_matches_its_golden() {
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        scene.groups(),
         &glyphs,
         None,
     );

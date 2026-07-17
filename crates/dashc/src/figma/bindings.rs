@@ -186,16 +186,33 @@ pub(super) fn apply(
                     }
                 }
             }
+            (BoundValue::Float(v), PropertySite::Opacity) => {
+                // Node/group opacity binds on any node — no container or
+                // fill precondition, unlike gap and fill color (story #44,
+                // debt #253). The natural landing for a Figma opacity
+                // variable now that the document carries `Node.opacity`.
+                match intern_signal(doc, &mut signal_of, &row.signal, *v) {
+                    Ok(signal) => doc.bindings.push(Binding {
+                        signal,
+                        node: *node,
+                        channel: BindingChannel::Opacity,
+                        transform: BindingTransform::Identity,
+                    }),
+                    Err(diagnostic) => diagnostics.push(diagnostic_at(diagnostic, at())),
+                }
+            }
             (value, site) => {
                 let kind = match value {
                     BoundValue::Float(_) => "FLOAT",
                     BoundValue::Color { .. } => "COLOR",
                 };
                 let what = match site {
-                    PropertySite::ItemSpacing | PropertySite::FillColor => format!(
-                        "a {kind} variable is bound to {}, which takes the other value type",
-                        row.property
-                    ),
+                    PropertySite::ItemSpacing | PropertySite::FillColor | PropertySite::Opacity => {
+                        format!(
+                            "a {kind} variable is bound to {}, which takes the other value type",
+                            row.property
+                        )
+                    }
                     PropertySite::Other => format!(
                         "{} has no binding channel in the vocabulary yet",
                         row.property
@@ -264,12 +281,17 @@ enum PropertySite {
     /// not in the sidecar and stacked visible fills refuse the compile,
     /// so any index here is the single lowered fill.
     FillColor,
+    /// `opacity` — the node/group alpha (story #44, debt #253).
+    Opacity,
     Other,
 }
 
 fn classify_property(property: &str) -> PropertySite {
     if property == "itemSpacing" {
         return PropertySite::ItemSpacing;
+    }
+    if property == "opacity" {
+        return PropertySite::Opacity;
     }
     if let Some(rest) = property.strip_prefix("fills[")
         && let Some(index) = rest.strip_suffix("].color")
@@ -299,12 +321,15 @@ mod tests {
             classify_property("fills[12].color"),
             PropertySite::FillColor
         ));
+        assert!(matches!(
+            classify_property("opacity"),
+            PropertySite::Opacity
+        ));
         for other in [
             "strokes[0].color",
             "fills[0].gradientStops[2].color",
             "effects[0].color",
             "rectangleCornerRadii.RECTANGLE_TOP_LEFT_CORNER_RADIUS",
-            "opacity",
             "fills[].color",
             "fills[x].color",
         ] {

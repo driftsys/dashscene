@@ -76,6 +76,16 @@ pub struct RectEntry {
     /// re-derives the tree (P2). [`ClipIndex::UNCLIPPED`] when no
     /// ancestor clips.
     pub clip: ClipIndex,
+    /// The effective *free*-path group alpha for this rect, in `[0, 1]`
+    /// — the product of the enclosing group opacities that resolved to
+    /// the free path (`docs/decisions/masks-and-group-opacity.md`),
+    /// including the node's own opacity when it is free. A painter
+    /// multiplies the rect's paint alpha by this value. `1.0` when no
+    /// free-path group opacity applies. The alpha of a *render-target*
+    /// group is not folded in here — it is applied once when the group's
+    /// [`GroupComposite`] layer composites, so rects inside such a group
+    /// carry only their in-layer free alpha.
+    pub opacity: f32,
 }
 
 /// A 2D point or vector, in the coordinate space its context names.
@@ -578,6 +588,17 @@ pub struct GlyphRun {
     pub color: Color,
     /// The placed glyphs, in draw order.
     pub glyphs: Vec<GlyphQuad>,
+    /// The run's free-path group alpha in `[0, 1]`, mirroring
+    /// [`RectEntry::opacity`] (story #44,
+    /// `docs/decisions/masks-and-group-opacity.md`): a group opacity that
+    /// took the free path folds into it, and the painter multiplies the
+    /// run's fill alpha by it. `1.0` when no free-path group opacity
+    /// applies. **The render-target group path and clip/mask regions are
+    /// not applied to glyph runs yet** — a run inside such a construct
+    /// draws as foreground at this alpha, not composited into the layer or
+    /// clipped to the region (a named limitation, a debt candidate, not a
+    /// silent drop).
+    pub opacity: f32,
 }
 
 /// The glyph-run table (`docs/design/architecture.md` §7.3): the
@@ -648,6 +669,25 @@ impl GlyphRunTable {
     }
 }
 
+/// One render-target group opacity, resolved at commit
+/// (`docs/decisions/masks-and-group-opacity.md`). A node whose opacity is
+/// below 1 and whose painted subtree overlaps cannot have its alpha pushed
+/// per-rect (the overlap would blend twice), so its subtree — the contiguous
+/// rect range `[start, end)` in DFS order — composites offscreen and the
+/// layer composites at `alpha`. A group is fully nested inside any group
+/// that encloses it, so the ranges form a proper nesting (never a partial
+/// overlap). The non-overlapping *free* path carries its alpha in
+/// [`RectEntry::opacity`] instead and produces no `GroupComposite` at all.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GroupComposite {
+    /// First rect index in the group's subtree (the group node itself).
+    pub start: u32,
+    /// One past the last rect index in the group's subtree.
+    pub end: u32,
+    /// The alpha the group's offscreen layer composites at, in `[0, 1]`.
+    pub alpha: f32,
+}
+
 /// Boundary B (docs/design/architecture.md): the one trait every paint backend
 /// implements. A painter only colors — it never measures, wraps, kerns,
 /// or moves anything (P2).
@@ -669,12 +709,25 @@ pub trait Painter {
     /// choice (the lean painter draws opaque cores front-to-back,
     /// docs/specification/03-target-hardware-rules.md R-T2).
     ///
+    /// Each rect's paint alpha is modulated by [`RectEntry::opacity`], the
+    /// resolved free-path group alpha (`1.0` when none applies). `groups`
+    /// carries the render-target group opacities: for a
+    /// [`GroupComposite`] the painter composites the rect range
+    /// `[start, end)` offscreen and blends the layer at `alpha`, so an
+    /// overlapping group at partial opacity flattens before its alpha
+    /// applies. The groups nest by range; an empty slice is valid input for
+    /// a scene with no render-target opacity.
+    ///
     /// `glyphs` is the glyph-run table: positioned glyph runs and the
     /// atlases they sample, staged already shaped and placed. The v0.5
     /// Latin subset composites every run over all rects (text is
     /// foreground); a full z-interleave of runs with rects is later work.
     /// An empty table ([`GlyphRunTable::new`]) is valid input for a
-    /// text-free scene.
+    /// text-free scene. A run's free-path group alpha rides on
+    /// [`GlyphRun::opacity`], but render-target `groups` and clip/mask
+    /// regions are **not** applied to runs (a run draws as foreground, not
+    /// composited into a group's layer nor clipped to a region — a named
+    /// limitation, story #44, a debt candidate).
     ///
     /// `dirty` is the rect indices whose entry changed since the commit
     /// that produced the previous `rects` — **advisory**. `None` means
@@ -692,12 +745,17 @@ pub trait Painter {
     /// `paint` or `clip` index is a broken contract between crates;
     /// [`PaintTable::resolve`] and [`ClipTable::resolve`] centralize the
     /// panic for that case.
+    // Boundary B is a fixed set of parallel tables (§7.3), so `paint`
+    // takes one per table plus the advisory dirty set — the arity is the
+    // contract, not a call-site smell.
+    #[allow(clippy::too_many_arguments)]
     fn paint(
         &mut self,
         rects: &[RectEntry],
         paints: &PaintTable,
         images: &ImageTable,
         clips: &ClipTable,
+        groups: &[GroupComposite],
         glyphs: &GlyphRunTable,
         dirty: Option<&[u32]>,
     );

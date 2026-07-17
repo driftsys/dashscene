@@ -211,6 +211,7 @@ fn channel_of(channel: BindingChannel) -> dashbuf::BindingChannel {
         BindingChannel::FillG => dashbuf::BindingChannel::FillG,
         BindingChannel::FillB => dashbuf::BindingChannel::FillB,
         BindingChannel::FillA => dashbuf::BindingChannel::FillA,
+        BindingChannel::Opacity => dashbuf::BindingChannel::Opacity,
     }
 }
 
@@ -305,6 +306,12 @@ fn build_node<'a>(
             text_style: text_style.unwrap_or(NO_TEXT_STYLE),
             flex,
             constraints,
+            // v0.8 (story #44). Each equals its schema default for an
+            // opaque, unmasked, visible node, so flatc omits it and a
+            // pre-v0.8 document emits the same bytes (R7).
+            opacity: node.opacity,
+            mask: node.mask,
+            visible: node.visible,
             ..Default::default()
         },
     )

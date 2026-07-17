@@ -261,6 +261,7 @@ fn render(arena: &Arena) -> Vec<u8> {
         scene.paints(),
         scene.images(),
         scene.clips(),
+        scene.groups(),
         &GlyphRunTable::new(),
         None,
     );

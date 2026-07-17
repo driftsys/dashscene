@@ -334,6 +334,24 @@ table Node {
   // unconstrained min/max).
   flex: LayoutContainer;
   constraints: LayoutConstraints;
+  // v0.8 masks + group opacity (story #44,
+  // docs/decisions/masks-and-group-opacity.md). Node/group alpha in
+  // [0, 1]; the default 1.0 omits the field from a fully-opaque node so
+  // pre-v0.8 documents emit unchanged (R7). Resolved at commit into the
+  // per-rect free alpha boundary B carries, or a render-target group for
+  // an overlapping subtree (P1: the document carries intent, never the
+  // resolved composite).
+  opacity: float32 = 1.0;
+  // Whether this node is a mask: it stencils the siblings that follow it
+  // to its own (rounded) box and draws nothing itself. Resolved at commit
+  // into those siblings' clip regions (issue #97's machinery reused).
+  mask: bool = false;
+  // Whether the node is drawn and takes part in layout (Figma's
+  // `visible`). The default `true` omits the field; `false` lowers to
+  // Taffy Display::None (Prop::Visible, issue #165) — the node keeps its
+  // rect-table index but takes no space and draws nothing. A hidden node
+  // is routine in real Figma files (debt #143).
+  visible: bool = true;
 }
 
 // v0.4 variant table (docs/decisions/variant-set-flat-index.md,
@@ -419,6 +437,8 @@ enum BindingChannel : uint8 {
   FillG = 6,
   FillB = 7,
   FillA = 8,
+  // Node/group opacity (Prop::Opacity), paint-only (story #44, debt #253).
+  Opacity = 9,
 }
 
 // The declarative scalar transforms (§23 D8). A transform is data by

@@ -3,8 +3,8 @@
 
 use dashpaint::{
     ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CornerRadii, GlyphRunTable, Gradient,
-    GradientKind, GradientStop, ImageAsset, ImageFormat, ImageTable, PaintEntry, PaintIndex,
-    PaintKind, PaintTable, Painter, RectEntry, ScaleMode, Stroke, StrokeAlign, Vec2,
+    GradientKind, GradientStop, GroupComposite, ImageAsset, ImageFormat, ImageTable, PaintEntry,
+    PaintIndex, PaintKind, PaintTable, Painter, RectEntry, ScaleMode, Stroke, StrokeAlign, Vec2,
 };
 
 const RED: Color = Color {
@@ -217,6 +217,7 @@ fn clip_table_resolve_panics_on_an_out_of_range_index() {
 struct RecordingPainter {
     painted: Vec<(RectEntry, Color)>,
     clipped: Vec<ClipRegion>,
+    groups: Vec<GroupComposite>,
 }
 
 impl Painter for RecordingPainter {
@@ -226,6 +227,7 @@ impl Painter for RecordingPainter {
         paints: &PaintTable,
         _images: &ImageTable,
         clips: &ClipTable,
+        groups: &[GroupComposite],
         _glyphs: &GlyphRunTable,
         _dirty: Option<&[u32]>,
     ) {
@@ -236,6 +238,7 @@ impl Painter for RecordingPainter {
             }
             self.clipped.push(clips.resolve(rect.clip).clone());
         }
+        self.groups.extend_from_slice(groups);
     }
 }
 
@@ -260,6 +263,7 @@ fn two_rect_fixture() -> (Vec<RectEntry>, PaintTable, ClipTable) {
             h: 50.0,
             paint: red,
             clip: ClipIndex::UNCLIPPED,
+            opacity: 1.0,
         },
         RectEntry {
             x: 10.0,
@@ -268,6 +272,7 @@ fn two_rect_fixture() -> (Vec<RectEntry>, PaintTable, ClipTable) {
             h: 40.0,
             paint: blue,
             clip: inside_first,
+            opacity: 1.0,
         },
     ];
     (rects, paints, clips)
@@ -283,6 +288,7 @@ fn painter_receives_rects_in_slice_order_with_resolved_colors() {
         &paints,
         &ImageTable::new(),
         &clips,
+        &[],
         &GlyphRunTable::new(),
         None,
     );
@@ -303,6 +309,7 @@ fn painter_resolves_each_rects_clip_region() {
         &paints,
         &ImageTable::new(),
         &clips,
+        &[],
         &GlyphRunTable::new(),
         None,
     );
@@ -331,6 +338,7 @@ fn painter_trait_is_object_safe() {
         &paints,
         &ImageTable::new(),
         &clips,
+        &[],
         &GlyphRunTable::new(),
         None,
     );
@@ -345,7 +353,7 @@ fn painter_trait_is_object_safe() {
 fn paint_index_is_transparent_over_u32() {
     assert_eq!(std::mem::size_of::<PaintIndex>(), 4);
     assert_eq!(std::mem::size_of::<ClipIndex>(), 4);
-    assert_eq!(std::mem::size_of::<RectEntry>(), 24);
+    assert_eq!(std::mem::size_of::<RectEntry>(), 28);
     assert_eq!(std::mem::align_of::<RectEntry>(), 4);
     assert_eq!(std::mem::size_of::<Color>(), 16);
     assert_eq!(std::mem::align_of::<Color>(), 4);
@@ -369,6 +377,7 @@ impl Painter for DirtyRecordingPainter {
         _paints: &PaintTable,
         _images: &ImageTable,
         _clips: &ClipTable,
+        _groups: &[GroupComposite],
         _glyphs: &GlyphRunTable,
         dirty: Option<&[u32]>,
     ) {
@@ -388,6 +397,7 @@ fn the_dirty_set_crosses_boundary_b() {
         h: 4.0,
         paint,
         clip: ClipIndex::UNCLIPPED,
+        opacity: 1.0,
     }];
 
     let mut painter = DirtyRecordingPainter::default();
@@ -398,6 +408,7 @@ fn the_dirty_set_crosses_boundary_b() {
         &paints,
         &ImageTable::new(),
         &ClipTable::new(),
+        &[],
         &GlyphRunTable::new(),
         Some(&[0]),
     );
@@ -410,8 +421,60 @@ fn the_dirty_set_crosses_boundary_b() {
         &paints,
         &ImageTable::new(),
         &ClipTable::new(),
+        &[],
         &GlyphRunTable::new(),
         None,
     );
     assert_eq!(painter.seen_dirty, None);
+}
+
+/// The free-path group alpha rides on each rect, and the render-target
+/// groups cross boundary B as their own slice — the two halves group
+/// opacity resolves into (`docs/decisions/masks-and-group-opacity.md`).
+#[test]
+fn group_opacity_crosses_as_per_rect_alpha_and_a_group_slice() {
+    let mut paints = PaintTable::new();
+    let red = paints.push(PaintEntry::solid(RED));
+    let rects = vec![
+        RectEntry {
+            x: 0.0,
+            y: 0.0,
+            w: 10.0,
+            h: 10.0,
+            paint: red,
+            clip: ClipIndex::UNCLIPPED,
+            // A free-path opacity node: its alpha is folded per-rect.
+            opacity: 0.5,
+        },
+        RectEntry {
+            x: 20.0,
+            y: 0.0,
+            w: 10.0,
+            h: 10.0,
+            paint: red,
+            clip: ClipIndex::UNCLIPPED,
+            opacity: 1.0,
+        },
+    ];
+    // A render-target group over the first rect only, at alpha 0.25.
+    let groups = [GroupComposite {
+        start: 0,
+        end: 1,
+        alpha: 0.25,
+    }];
+
+    let mut painter = RecordingPainter::default();
+    painter.paint(
+        &rects,
+        &paints,
+        &ImageTable::new(),
+        &ClipTable::new(),
+        &groups,
+        &GlyphRunTable::new(),
+        None,
+    );
+
+    assert_eq!(painter.painted[0].0.opacity, 0.5);
+    assert_eq!(painter.painted[1].0.opacity, 1.0);
+    assert_eq!(painter.groups, groups);
 }

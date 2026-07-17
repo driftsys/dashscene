@@ -126,6 +126,7 @@ fn render_sample(
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        scene.groups(),
         &GlyphRunTable::new(),
         None,
     );

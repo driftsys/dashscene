@@ -162,6 +162,7 @@ fn flex_and_constraint_fields_round_trip() {
             text_style: u32::MAX,
             flex: Some(flex),
             constraints: Some(constraints),
+            ..Default::default()
         },
     );
     let nodes = builder.create_vector(&[node]);
@@ -305,6 +306,7 @@ fn a_node_without_flex_tables_reads_back_absent() {
             text_style: u32::MAX,
             flex: None,
             constraints: None,
+            ..Default::default()
         },
     );
     let nodes = builder.create_vector(&[node]);
@@ -353,6 +355,7 @@ fn empty_flex_tables_read_back_the_schema_defaults() {
             text_style: u32::MAX,
             flex: Some(flex),
             constraints: Some(constraints),
+            ..Default::default()
         },
     );
     let nodes = builder.create_vector(&[node]);

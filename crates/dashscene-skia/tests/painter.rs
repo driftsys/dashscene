@@ -56,6 +56,7 @@ fn paints_a_core_committed_scene_with_exact_pixels() {
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        &[],
         &GlyphRunTable::new(),
         None,
     );
@@ -95,6 +96,7 @@ fn an_unfilled_node_draws_nothing() {
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        &[],
         &GlyphRunTable::new(),
         None,
     );
@@ -125,6 +127,7 @@ fn encodes_png() {
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        &[],
         &GlyphRunTable::new(),
         None,
     );
@@ -199,6 +202,7 @@ fn single_entry_scene(entry: PaintEntry, w: f32, h: f32) -> (Vec<RectEntry>, Pai
             h,
             paint,
             clip: ClipIndex::UNCLIPPED,
+            opacity: 1.0,
         }],
         paints,
     )
@@ -224,6 +228,7 @@ fn render(rects: &[RectEntry], paints: &PaintTable, images: &ImageTable, size: i
         paints,
         images,
         &ClipTable::new(),
+        &[],
         &GlyphRunTable::new(),
         None,
     );
@@ -335,6 +340,7 @@ fn stroked_square(align: StrokeAlign) -> Vec<u8> {
         h: 8.0,
         paint,
         clip: ClipIndex::UNCLIPPED,
+        opacity: 1.0,
     }];
     let mut painter = SkiaPainter::new(16, 16);
     painter.paint(
@@ -342,6 +348,7 @@ fn stroked_square(align: StrokeAlign) -> Vec<u8> {
         &paints,
         &ImageTable::new(),
         &ClipTable::new(),
+        &[],
         &GlyphRunTable::new(),
         None,
     );
@@ -409,6 +416,7 @@ fn quadrant_asset() -> ImageAsset {
         h: 1.0,
         paint: paints.push(PaintEntry::solid(color)),
         clip: ClipIndex::UNCLIPPED,
+        opacity: 1.0,
     })
     .collect();
     painter.paint(
@@ -416,6 +424,7 @@ fn quadrant_asset() -> ImageAsset {
         &paints,
         &ImageTable::new(),
         &ClipTable::new(),
+        &[],
         &GlyphRunTable::new(),
         None,
     );
@@ -447,6 +456,7 @@ fn image_scene(entry: PaintEntry, w: f32, h: f32, size: i32) -> Vec<u8> {
         &paints,
         &images,
         &ClipTable::new(),
+        &[],
         &GlyphRunTable::new(),
         None,
     );
@@ -568,6 +578,7 @@ fn clipped_square(region: ClipRegion) -> Vec<u8> {
         h: 16.0,
         paint,
         clip,
+        opacity: 1.0,
     }];
 
     let mut painter = SkiaPainter::new(16, 16);
@@ -576,6 +587,7 @@ fn clipped_square(region: ClipRegion) -> Vec<u8> {
         &paints,
         &ImageTable::new(),
         &clips,
+        &[],
         &GlyphRunTable::new(),
         None,
     );
@@ -680,6 +692,7 @@ fn a_clip_region_does_not_leak_into_the_next_rect() {
             h: 16.0,
             paint: red,
             clip: corner,
+            opacity: 1.0,
         },
         RectEntry {
             x: 8.0,
@@ -688,6 +701,7 @@ fn a_clip_region_does_not_leak_into_the_next_rect() {
             h: 8.0,
             paint: blue,
             clip: ClipIndex::UNCLIPPED,
+            opacity: 1.0,
         },
     ];
 
@@ -697,6 +711,7 @@ fn a_clip_region_does_not_leak_into_the_next_rect() {
         &paints,
         &ImageTable::new(),
         &clips,
+        &[],
         &GlyphRunTable::new(),
         None,
     );
@@ -733,6 +748,7 @@ fn a_diamond_gradient_with_too_many_stops_panics_by_name() {
         &paints,
         &ImageTable::new(),
         &ClipTable::new(),
+        &[],
         &GlyphRunTable::new(),
         None,
     );
@@ -751,6 +767,7 @@ fn two_rects(left_w: f32) -> (Vec<RectEntry>, PaintTable) {
             h: 16.0,
             paint: l,
             clip: ClipIndex::UNCLIPPED,
+            opacity: 1.0,
         },
         RectEntry {
             x: 8.0,
@@ -759,6 +776,7 @@ fn two_rects(left_w: f32) -> (Vec<RectEntry>, PaintTable) {
             h: 16.0,
             paint: r,
             clip: ClipIndex::UNCLIPPED,
+            opacity: 1.0,
         },
     ];
     (rects, paints)
@@ -779,6 +797,7 @@ fn render_frames(mode: DirtyMode, frames: &[Frame]) -> Vec<u8> {
             paints,
             &ImageTable::new(),
             &ClipTable::new(),
+            &[],
             &GlyphRunTable::new(),
             dirty.as_deref(),
         );
@@ -850,12 +869,14 @@ fn solid_atlas_png(n: i32) -> Vec<u8> {
         h: n as f32,
         paint: white,
         clip: ClipIndex::UNCLIPPED,
+        opacity: 1.0,
     }];
     painter.paint(
         &rects,
         &paints,
         &ImageTable::new(),
         &ClipTable::new(),
+        &[],
         &GlyphRunTable::new(),
         None,
     );
@@ -898,6 +919,7 @@ fn a_glyph_quad_fills_its_box_with_the_text_color() {
             x: 8.0,
             y: 24.0,
         }],
+        opacity: 1.0,
     });
 
     let mut painter = SkiaPainter::new(32, 32);
@@ -906,6 +928,7 @@ fn a_glyph_quad_fills_its_box_with_the_text_color() {
         &PaintTable::new(),
         &ImageTable::new(),
         &ClipTable::new(),
+        &[],
         &glyphs,
         None,
     );
@@ -937,6 +960,7 @@ fn a_glyph_absent_from_the_atlas_draws_nothing() {
             x: 8.0,
             y: 24.0,
         }],
+        opacity: 1.0,
     });
 
     let mut painter = SkiaPainter::new(32, 32);
@@ -945,6 +969,7 @@ fn a_glyph_absent_from_the_atlas_draws_nothing() {
         &PaintTable::new(),
         &ImageTable::new(),
         &ClipTable::new(),
+        &[],
         &glyphs,
         None,
     );
@@ -952,5 +977,147 @@ fn a_glyph_absent_from_the_atlas_draws_nothing() {
     assert!(
         rgba.chunks_exact(4).all(|p| p == TRANSPARENT_RGBA),
         "an absent glyph leaves the surface clear"
+    );
+}
+
+// ---------------------------------------------------------------------
+// Group opacity (story #44): the free-path per-rect alpha and the
+// render-target group composite (`docs/decisions/masks-and-group-opacity.md`).
+// ---------------------------------------------------------------------
+
+fn render_with_groups(
+    rects: &[RectEntry],
+    paints: &PaintTable,
+    groups: &[dashpaint::GroupComposite],
+    width: i32,
+    height: i32,
+) -> Vec<u8> {
+    let mut painter = SkiaPainter::new(width, height);
+    painter.paint(
+        rects,
+        paints,
+        &ImageTable::new(),
+        &ClipTable::new(),
+        groups,
+        &GlyphRunTable::new(),
+        None,
+    );
+    painter.rgba_bytes()
+}
+
+#[test]
+fn free_path_opacity_modulates_a_solid_fills_alpha() {
+    let (mut rects, paints) = single_entry_scene(PaintEntry::solid(RED), 8.0, 8.0);
+    rects[0].opacity = 0.5;
+    let rgba = render_with_groups(&rects, &paints, &[], 8, 8);
+
+    let p = px(&rgba, 8, 4, 4);
+    assert_eq!([p[0], p[1], p[2]], [255, 0, 0], "still red");
+    assert!(
+        (127..=128).contains(&p[3]),
+        "alpha halved to ~128, got {}",
+        p[3]
+    );
+}
+
+#[test]
+fn a_render_target_group_flattens_before_applying_alpha() {
+    // Two opaque red rects overlap in x = [4, 8); a render-target group
+    // over both composites at 0.5. The union is opaque red inside the
+    // layer, so every covered pixel — overlap or not — reads the same
+    // half alpha. The free path would instead double-blend the overlap
+    // (0.5 over 0.5 = 0.75), so equal alphas is what proves the composite.
+    let mut paints = PaintTable::new();
+    let red = paints.push(PaintEntry::solid(RED));
+    let rects = [
+        RectEntry {
+            x: 0.0,
+            y: 0.0,
+            w: 8.0,
+            h: 8.0,
+            paint: red,
+            clip: ClipIndex::UNCLIPPED,
+            opacity: 1.0,
+        },
+        RectEntry {
+            x: 4.0,
+            y: 0.0,
+            w: 8.0,
+            h: 8.0,
+            paint: red,
+            clip: ClipIndex::UNCLIPPED,
+            opacity: 1.0,
+        },
+    ];
+    let groups = [dashpaint::GroupComposite {
+        start: 0,
+        end: 2,
+        alpha: 0.5,
+    }];
+    let rgba = render_with_groups(&rects, &paints, &groups, 12, 8);
+
+    let only_first = px(&rgba, 12, 2, 4); // rect 0 only
+    let overlap = px(&rgba, 12, 6, 4); // rect 0 and rect 1
+    let only_second = px(&rgba, 12, 10, 4); // rect 1 only
+
+    assert_eq!([overlap[0], overlap[1], overlap[2]], [255, 0, 0]);
+    assert_eq!(
+        overlap[3], only_first[3],
+        "the overlap is not darker than a single rect — the group flattened first"
+    );
+    assert_eq!(overlap[3], only_second[3]);
+    assert!(
+        (127..=128).contains(&overlap[3]),
+        "group alpha 0.5 applied once, got {}",
+        overlap[3]
+    );
+}
+
+#[test]
+fn a_glyph_runs_free_path_opacity_dims_the_text() {
+    // Story #44 M4: a glyph run's free-path group alpha (`GlyphRun.opacity`)
+    // dims the whole run, mirroring RectEntry.opacity for rects. A run at
+    // 0.5 must paint fewer fully-inked pixels than the same run at 1.0.
+    use dashpaint::GlyphRun;
+
+    fn inked(opacity: f32) -> usize {
+        let (mut glyphs, atlas) = inside_atlas();
+        glyphs.push_run(GlyphRun {
+            atlas,
+            size: 16.0,
+            color: RED,
+            glyphs: vec![GlyphQuad {
+                glyph_id: 1,
+                x: 8.0,
+                y: 24.0,
+            }],
+            opacity,
+        });
+        let mut painter = SkiaPainter::new(32, 32);
+        painter.paint(
+            &[],
+            &PaintTable::new(),
+            &ImageTable::new(),
+            &ClipTable::new(),
+            &[],
+            &glyphs,
+            None,
+        );
+        // Count near-fully-opaque inked pixels. The unpremultiplied red
+        // channel stays ~255 regardless of alpha, so the alpha channel is
+        // what the free-path opacity dims.
+        painter
+            .rgba_bytes()
+            .chunks_exact(4)
+            .filter(|p| p[3] > 180)
+            .count()
+    }
+
+    let full = inked(1.0);
+    let half = inked(0.5);
+    assert!(full > 0, "the opaque run inks near-opaque pixels");
+    assert!(
+        half < full,
+        "the 0.5 run inks fewer near-opaque pixels ({half} vs {full})",
     );
 }

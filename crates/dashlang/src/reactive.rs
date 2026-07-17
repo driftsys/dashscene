@@ -71,6 +71,10 @@ fn prop_for(channel: Channel, v: f32) -> Prop {
         Channel::Width => Prop::Width(v),
         Channel::Height => Prop::Height(v),
         Channel::Gap => Prop::Gap(v),
+        // Opacity is a single scalar prop, so it routes here like geometry
+        // rather than through the four-component fill shadow — but it is
+        // paint-only, so [`classify`] keeps it off the solve (debt #253).
+        Channel::Opacity => Prop::Opacity(v),
         Channel::FillR | Channel::FillG | Channel::FillB | Channel::FillA => {
             unreachable!("fill channels write through the fill shadow, never prop_for")
         }
@@ -107,6 +111,9 @@ fn initial_channel_value(layout: &Layout, fill: Option<Color>, channel: Channel)
         Channel::Width => layout.width,
         Channel::Height => layout.height,
         Channel::Gap => layout.gap,
+        // dashlang authors no opacity yet (the DSL's vocabulary gap #118),
+        // so a spring smooths a bound opacity from the default 1.0.
+        Channel::Opacity => 1.0,
         _ => {
             let mut color = fill.unwrap_or(TRANSPARENT);
             *fill_component(&mut color, channel)
@@ -147,7 +154,9 @@ fn classify(
     has_children: bool,
     passthrough: bool,
 ) -> WriteClass {
-    if is_fill(channel) {
+    // Fill and opacity are both paint-only (they never reflow anything —
+    // `docs/decisions/visible-is-layout-opacity-is-paint.md`, debt #253).
+    if is_fill(channel) || channel == Channel::Opacity {
         return WriteClass::PaintOnly;
     }
     if channel == Channel::Gap {
@@ -668,12 +677,18 @@ fn apply_scalar_write(
     layout_dirty: &mut bool,
 ) {
     match b.class {
-        WriteClass::PaintOnly => {
+        // A fill channel writes one component through the node's shadow;
+        // opacity is a single scalar prop, so it stages directly. Both are
+        // paint-only — no patch, no solve.
+        WriteClass::PaintOnly if is_fill(b.channel) => {
             let color = fill_shadow
                 .get_mut(&b.node)
                 .expect("every fill-bound node has a seeded shadow");
             *fill_component(color, b.channel) = v;
             txn.set_prop(b.node, Prop::Fill(*color));
+        }
+        WriteClass::PaintOnly => {
+            txn.set_prop(b.node, prop_for(b.channel, v));
         }
         WriteClass::Patch => {
             txn.set_prop(b.node, prop_for(b.channel, v));

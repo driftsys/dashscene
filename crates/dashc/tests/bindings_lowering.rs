@@ -437,3 +437,35 @@ fn a_bound_fill_under_paint_opacity_keeps_its_literal_alpha() {
         other => panic!("expected a solid fill, got {other:?}"),
     }
 }
+
+/// A bound node opacity lowers to the `Opacity` channel (story #44, debt
+/// #253) — its natural landing now that the document carries
+/// `Node.opacity`. A FLOAT variable bound to the `opacity` property path
+/// becomes an `Opacity` binding row on that node.
+#[test]
+fn a_bound_node_opacity_lowers_to_the_opacity_channel() {
+    let mut rows = joined_rows();
+    // The light chip (Figma id 1:9 → document node 2) gets a bound group
+    // opacity.
+    rows.push(float("1:9", "opacity", "chip/opacity", 0.6));
+
+    let (bytes, _) =
+        compile_figma_with_bindings(&derived_capture(), Profile::Core, &BTreeMap::new(), &rows)
+            .expect("the derived capture compiles");
+    let doc = dashbuf::root_as_document(&bytes).expect("valid .dsb");
+    let mut arena = Arena::new();
+    load_document(&doc, &mut arena);
+
+    let row = arena
+        .bindings()
+        .iter()
+        .find(|r| r.channel == Channel::Opacity)
+        .expect("an opacity binding row exists");
+    assert_eq!(row.node.index(), 2, "on the chip");
+    assert_eq!(row.transform, ScalarTransform::Identity);
+    assert_eq!(
+        arena.signals()[row.signal.index()].initial,
+        0.6,
+        "the signal seeds from the bound variable's value"
+    );
+}

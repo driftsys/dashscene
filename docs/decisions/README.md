@@ -170,6 +170,12 @@ into the records below. Per-story decisions land here directly:
   — commit resolves subtree clips into a per-rect clip-region table;
   `RectEntry.clip` indexes it and `PaintEntry.clip` is gone (story #97);
   binds every painter and the dirty set.
+- [masks-and-group-opacity.md](masks-and-group-opacity.md) — masks resolve
+  at commit into the clip-region table (a mask stencils its following
+  siblings, drawing nothing itself); group opacity splits free (per-rect
+  `RectEntry.opacity`) vs render-target (`GroupComposite`) by the overlap
+  rule; the Q-6 budget is a validator placeholder (story #44); folds the
+  #143 dashc un-pin (rotation stays refused) and the #253 Opacity channel.
 
 - [v03-paint-goldens-per-family.md](v03-paint-goldens-per-family.md) —
   the v0.3 paint goldens are per-family isolation scenes complementing

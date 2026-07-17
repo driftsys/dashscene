@@ -134,6 +134,7 @@ fn render(json: &str) -> Vec<u8> {
         scene.paints(),
         &ImageTable::new(),
         scene.clips(),
+        scene.groups(),
         &GlyphRunTable::new(),
         None,
     );

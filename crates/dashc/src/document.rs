@@ -124,7 +124,7 @@ pub struct TextStyle {
 /// One node of the document. `parent` is an index into [`Document::nodes`], and
 /// the array is in DFS order, so a parent's index is always lower than its
 /// children's.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Node {
     pub name: Option<String>,
     pub parent: Option<u32>,
@@ -144,6 +144,38 @@ pub struct Node {
     /// `Document.text_styles`. A text node carries both `text` and
     /// `text_style`, or neither.
     pub text_style: Option<TextStyle>,
+    /// Node/group alpha in `[0, 1]` (story #44,
+    /// `docs/decisions/masks-and-group-opacity.md`). `1.0` is fully
+    /// opaque, the schema default the emitter omits.
+    pub opacity: f32,
+    /// Whether this node masks the siblings that follow it. Default
+    /// `false`.
+    pub mask: bool,
+    /// Whether the node is drawn and takes part in layout (Figma's
+    /// `visible`). Default `true`; `false` lowers to Taffy Display::None
+    /// (debt #143).
+    pub visible: bool,
+}
+
+impl Default for Node {
+    fn default() -> Self {
+        // Hand-written so `opacity` defaults to fully opaque and `visible`
+        // to shown, matching the schema defaults rather than the numeric
+        // and boolean zeroes a derive would give.
+        Self {
+            name: None,
+            parent: None,
+            box2d: Box2D::default(),
+            paint: None,
+            container: None,
+            constraints: None,
+            text: None,
+            text_style: None,
+            opacity: 1.0,
+            mask: false,
+            visible: true,
+        }
+    }
 }
 
 /// A node's style: the boundary-B paint entry, plus the clip intent the
@@ -173,6 +205,8 @@ pub enum BindingChannel {
     FillG,
     FillB,
     FillA,
+    /// Node/group opacity (story #44, debt #253).
+    Opacity,
 }
 
 /// A binding's transform — the schema's `BindingTransform` union as a
