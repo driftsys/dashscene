@@ -349,6 +349,10 @@ so each technote stops being the authority for the conclusion it reached:
   — Slint is reference for ideas only; never adopted or borrowed as code, on
   both capability and licensing grounds (`docs/technotes/producers-and-ir.md`
   §5).
+- [radial-is-not-a-layout-mode.md](radial-is-not-a-layout-mode.md) — radial /
+  anchored placement stays an absolute box plus a transform, never a layout mode;
+  the gauge vocabulary is bound-prop animation data and safety-regulated regions
+  are a `fixed-region` validator check (`docs/technotes/producers-and-ir.md` §6).
 - [backend-tiering-unity-skia-lean.md](backend-tiering-unity-skia-lean.md) —
   Unity for high-end, trimmed Skia for entry, the lean painter gated on
   measurement (`docs/technotes/rendering-and-painters.md` §5).

@@ -180,7 +180,7 @@ facade. A GPLv3 dependency anywhere would poison that. The "if Unity softens, fa
 back to Slint" escape hatch is therefore not free — it is GPLv3 (incompatible) or
 commercial (cost + lock-in).
 
-## 6. Layout & placement — Taffy stands; radial/safety placement is the open gap
+## 6. Layout & placement — Taffy stands; radial/safety placement is absolute box + transform
 
 The automotive HMI world sells full _toolchains_ (Kanzi, EB GUIDE, Altia, CGI
 Studio, Crank Storyboard (now The Qt Company), Qt Automotive, Embedded Wizard),
@@ -192,19 +192,29 @@ solver choice. Among embeddable engines (Taffy, Yoga, Slint's, Flutter's, Qt's),
 Taffy remains correct: the only pure-Rust engine covering all four CSS modes with
 no runtime baggage. **No automotive engine is adopted.**
 
-OPEN (worth an explicit decision rather than an accidental one): **radial / curved /
-path-anchored placement, and safety-regulated fixed regions.** Circular gauges,
-arced menus, telltales at regulator-mandated positions — CSS flex/grid, Figma
-auto-layout, and Penpot all lack a radial mode. Today the design absorbs gauges as
-angular gradients + absolute positioning + rotation, i.e. radial is _not_ a layout
-concept, it is manual absolute placement plus a transform. Decide on purpose:
-is radial/anchored placement ever a first-class dashscene layout mode, or forever
-"absolute box + transform, producer computes the angle"? For automotive clusters
-this recurs, so it should be written down.
+DECISION → [`radial-is-not-a-layout-mode.md`](../decisions/radial-is-not-a-layout-mode.md)
+
+**Radial / curved / path-anchored placement, and safety-regulated fixed regions.**
+Circular gauges, arced menus, and telltales at regulator-mandated positions recur in
+automotive clusters, and CSS flex/grid, Figma auto-layout, and Penpot all lack a
+radial mode. Resolved on purpose: radial is _not_ a dashscene layout mode and will
+not become one. Placement stays an absolute box plus a transform (or normal flex);
+the radial part is a transform or paint computed from a bound scalar; and the gauge
+vocabulary is first-class bound-prop data in the animation vocabulary's per-prop
+smoothing row, so the runtime owns time and the gauge is reproducible in tests (P3,
+R4). Safety-regulated fixed regions stay absolute boxes checked by a `fixed-region`
+validator attribute (resolved rect equals authored rect) — a check, not a layout
+mode. Tick marks, arced label rings, and curved menus are producer-side repeater
+math into absolute boxes at authoring time: no runtime radial solver, no new IR
+concept.
 
 ## 7. Open items
 
 - Seam contract (§1): name/version the canonical post-closure JSON handoff.
 - Penpot (§4): spike a real fetch; confirm plugin-API grid-span/area fidelity.
-- Radial/safety placement (§6): first-class layout mode vs absolute+transform.
+- Radial/safety placement (§6): resolved as absolute box + transform
+  ([`radial-is-not-a-layout-mode.md`](../decisions/radial-is-not-a-layout-mode.md));
+  two follow-ups remain — fold the gauge parameter set into the animation spec when
+  the per-prop smoothing vocabulary is written, and add the `fixed-region` attribute
+  to the validator spec. Both are post-v0: a v1 full-feature-set candidate, not v2.
 - Keep Figma≠CSS lowering named as Figma-specific in `dashc` (§1/§4).

@@ -22,7 +22,7 @@ distinct pieces belong together, both C#, both in one Unity repo/package:
 ## Choice
 
 Do not create the Unity repo yet. Per `docs/roadmap.md`'s plan, Unity
-work doesn't start until v1, after the v0 exit criteria (E1-E6, which
+work doesn't start until v1, after the v0 exit criteria (E1-E7, which
 are Rust+Skia only). The Rust-side `dashscene-unity` crate (already
 reserved, `docs/decisions/crate-name-map.md`) becomes the thin
 FFI-bindings crate the C# side links against, not the Unity project
