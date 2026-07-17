@@ -35,8 +35,13 @@ use std::marker::PhantomData;
 
 use dashcue::{PropKey, Scheduler, TransitionSpec};
 use dashscene_core::{
-    Arena, AxisSizing, Layout, LayoutMode, LayoutSolver, NodeId, Prop, SolvedRect,
+    Arena, AxisSizing, Color, Layout, LayoutMode, LayoutSolver, NodeId, PaintKind, Prop,
+    ScalarTransform, SignalId, SolvedRect,
 };
+// The one engine item the reactive layer uses: the engine-owned PropKey
+// packing (debt #208). Building keys here through the same function the
+// FLIP uses is what gives one `(node, channel)` one `u64` everywhere.
+use dashscene_engine::prop_key;
 
 use crate::{Node, Scene};
 
@@ -46,47 +51,109 @@ mod private {
     impl Sealed for bool {}
 }
 
-/// One scalar prop slot a binding can target — the address the design's
-/// `PropKey` names as `node index ++ channel`. Every channel here is
-/// layout-affecting; the paint channels (`Fill.r`, …) and `Gap` the
-/// design also lists are deliberate follow-ups, not needed by the v0.4
-/// acceptance cases (text covers the paint-only path, A2).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Channel {
-    X,
-    Y,
-    Width,
-    Height,
-}
+// The channel vocabulary is the document's, in `dashscene-core`, since
+// story #167 (the full §23 set — X/Y/Width/Height, `Gap`, and the four
+// `Fill` channels; debt #201). Re-exported so the authoring surface
+// keeps one import path.
+pub use dashscene_core::Channel;
 
-impl Channel {
-    fn code(self) -> u32 {
-        match self {
-            Channel::X => 0,
-            Channel::Y => 1,
-            Channel::Width => 2,
-            Channel::Height => 3,
-        }
-    }
-}
-
+/// The core `Prop` a non-fill channel writes. Fill channels never route
+/// here: a fill write goes through the per-node fill shadow (see
+/// [`LiveScene::tick`]), because one channel writes one component of a
+/// four-component color.
 fn prop_for(channel: Channel, v: f32) -> Prop {
     match channel {
         Channel::X => Prop::X(v),
         Channel::Y => Prop::Y(v),
         Channel::Width => Prop::Width(v),
         Channel::Height => Prop::Height(v),
+        Channel::Gap => Prop::Gap(v),
+        Channel::FillR | Channel::FillG | Channel::FillB | Channel::FillA => {
+            unreachable!("fill channels write through the fill shadow, never prop_for")
+        }
     }
 }
 
-/// The initial authored value of `channel`, read from a node's builder
-/// layout — the datum a spring smooths *from* before any signal changes.
-fn initial_channel_value(layout: &Layout, channel: Channel) -> f32 {
+/// Whether `channel` addresses one component of the node's fill color.
+fn is_fill(channel: Channel) -> bool {
+    matches!(
+        channel,
+        Channel::FillR | Channel::FillG | Channel::FillB | Channel::FillA
+    )
+}
+
+/// One component of `color`, selected by a fill channel.
+fn fill_component(color: &mut Color, channel: Channel) -> &mut f32 {
+    match channel {
+        Channel::FillR => &mut color.r,
+        Channel::FillG => &mut color.g,
+        Channel::FillB => &mut color.b,
+        Channel::FillA => &mut color.a,
+        other => unreachable!("{other:?} is not a fill channel"),
+    }
+}
+
+/// The initial authored value of `channel` — the datum a spring smooths
+/// *from* before any signal changes. Geometry and gap come from the
+/// layout; a fill channel reads its component of the authored solid
+/// fill, or `0.0` for an unfilled node.
+fn initial_channel_value(layout: &Layout, fill: Option<Color>, channel: Channel) -> f32 {
     match channel {
         Channel::X => layout.x,
         Channel::Y => layout.y,
         Channel::Width => layout.width,
         Channel::Height => layout.height,
+        Channel::Gap => layout.gap,
+        _ => {
+            let mut color = fill.unwrap_or(TRANSPARENT);
+            *fill_component(&mut color, channel)
+        }
+    }
+}
+
+/// The fill a bound-but-unfilled node's shadow starts from. Fully
+/// transparent, so an author who binds only some fill channels sees the
+/// unbound components stay at zero rather than an invented color.
+const TRANSPARENT: Color = Color {
+    r: 0.0,
+    g: 0.0,
+    b: 0.0,
+    a: 0.0,
+};
+
+/// How one scalar binding's write reaches the committed output — decided
+/// at build, never per frame (the flat table is what makes a write
+/// statically classifiable, `docs/decisions/bindings-are-explicit-and-flat.md`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum WriteClass {
+    /// A contained rect write: patch one cached rect, skip the solve (A1).
+    Patch,
+    /// A layout-affecting write that escapes one rect: force the solve.
+    Solve,
+    /// A fill write: paint-only, no patch and no solve
+    /// (`docs/decisions/visible-is-layout-opacity-is-paint.md`).
+    PaintOnly,
+}
+
+/// Classifies one channel's write. `contained` and the rect containment
+/// rule are the caller's (`write_is_single_rect`); `Gap` always solves —
+/// a gap redistributes the container's children by definition.
+fn classify(
+    channel: Channel,
+    contained: bool,
+    has_children: bool,
+    passthrough: bool,
+) -> WriteClass {
+    if is_fill(channel) {
+        return WriteClass::PaintOnly;
+    }
+    if channel == Channel::Gap {
+        return WriteClass::Solve;
+    }
+    if contained && write_is_single_rect(channel, has_children, passthrough) {
+        WriteClass::Patch
+    } else {
+        WriteClass::Solve
     }
 }
 
@@ -156,24 +223,60 @@ pub enum Transform {
 
 fn eval_scalar(transform: &Transform, closures: &[Box<dyn Fn(f32) -> f32>], v: f32) -> f32 {
     match transform {
-        Transform::Identity => v,
-        Transform::Scale(factor) => v * factor,
-        Transform::MapRange {
-            in_lo,
-            in_hi,
-            out_lo,
-            out_hi,
-        } => {
-            let span = in_hi - in_lo;
-            let t = if span == 0.0 { 0.0 } else { (v - in_lo) / span };
-            out_lo + t * (out_hi - out_lo)
-        }
-        Transform::Clamp { lo, hi } => v.clamp(*lo, *hi),
         Transform::Custom(id) => closures[id.0 as usize](v),
         // A scalar binding never carries a Format transform (the builder
         // only produces Format through the text path); return the input
         // unchanged rather than panicking inside the frame loop.
         Transform::Format(_) => v,
+        // The declarative subset shares core's one implementation of the
+        // transform math, so a live binding and a loaded document binding
+        // cannot compute differently.
+        declarative => to_core(declarative)
+            .expect("every non-Custom, non-Format transform is declarative")
+            .apply(v),
+    }
+}
+
+/// The core (serializable) form of a declarative transform, or `None`
+/// for the two forms that never enter the document tables: `Custom` (a
+/// closure does not serialize — D8) and `Format` (text-only).
+fn to_core(transform: &Transform) -> Option<ScalarTransform> {
+    match *transform {
+        Transform::Identity => Some(ScalarTransform::Identity),
+        Transform::Scale(factor) => Some(ScalarTransform::Scale(factor)),
+        Transform::MapRange {
+            in_lo,
+            in_hi,
+            out_lo,
+            out_hi,
+        } => Some(ScalarTransform::MapRange {
+            in_lo,
+            in_hi,
+            out_lo,
+            out_hi,
+        }),
+        Transform::Clamp { lo, hi } => Some(ScalarTransform::Clamp { lo, hi }),
+        Transform::Format(_) | Transform::Custom(_) => None,
+    }
+}
+
+/// The `dashlang` form of a core (loaded-document) transform.
+fn from_core(transform: ScalarTransform) -> Transform {
+    match transform {
+        ScalarTransform::Identity => Transform::Identity,
+        ScalarTransform::Scale(factor) => Transform::Scale(factor),
+        ScalarTransform::MapRange {
+            in_lo,
+            in_hi,
+            out_lo,
+            out_hi,
+        } => Transform::MapRange {
+            in_lo,
+            in_hi,
+            out_lo,
+            out_hi,
+        },
+        ScalarTransform::Clamp { lo, hi } => Transform::Clamp { lo, hi },
     }
 }
 
@@ -260,6 +363,7 @@ impl SignalValue for f32 {
     fn declare(scene: &mut Scene, initial: Self) -> u32 {
         let id = scene.scalar_inits.len() as u32;
         scene.scalar_inits.push(initial);
+        scene.scalar_names.push(None);
         id
     }
 
@@ -456,12 +560,13 @@ struct ScalarBinding {
     channel: Channel,
     signal: u32,
     transform: Transform,
-    /// Whether a write to this binding's channel changes only this node's
-    /// own rect, so the commit can patch one cached rect and skip the
-    /// solve (A1). Requires both an ancestor-contained node (no upward
-    /// escape) and a write that moves no descendant — see
-    /// [`write_is_single_rect`].
-    patchable: bool,
+    /// How this binding's write reaches the committed output — patch one
+    /// cached rect (A1), force a solve, or paint-only. Decided at build:
+    /// a rect channel patches when the node is ancestor-contained (no
+    /// upward escape) and the write moves no descendant
+    /// ([`write_is_single_rect`]); `Gap` always solves; fill channels
+    /// are always paint-only.
+    class: WriteClass,
     smoothing: Option<TransitionSpec>,
     key: PropKey,
     /// The last value driven to the channel — the spring's `from` when a
@@ -500,6 +605,9 @@ fn write_is_single_rect(channel: Channel, has_children: bool, passthrough: bool)
     match channel {
         Channel::X | Channel::Y => !has_children,
         Channel::Width | Channel::Height => !has_children || passthrough,
+        // Only rect channels reach here ([`classify`] routes Gap and the
+        // fill channels before asking).
+        other => unreachable!("{other:?} is not a rect channel"),
     }
 }
 
@@ -520,6 +628,9 @@ fn resolve_patch(
         Channel::Height => Patch::H(v),
         Channel::X => Patch::X(parent_origin(|r| r.x) + v),
         Channel::Y => Patch::Y(parent_origin(|r| r.y) + v),
+        // Only WriteClass::Patch reaches here, and only rect channels
+        // classify as Patch.
+        other => unreachable!("{other:?} never classifies as a patchable rect write"),
     }
 }
 
@@ -530,6 +641,49 @@ fn apply_patch(rect: &mut SolvedRect, patch: Patch) {
         Patch::W(w) => rect.w = w,
         Patch::H(h) => rect.h = h,
     }
+}
+
+/// Drives one resolved scalar value into the arena, by the binding's
+/// write class: a fill channel updates the node's fill shadow and stages
+/// the whole color (paint-only — no patch, no solve); a contained rect
+/// channel stages the prop and patches the cached rect (A1); anything
+/// else stages the prop and forces the solve. Shared by the direct flush
+/// and the scheduler drain so a smoothed and an unsmoothed write cannot
+/// disagree.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one call site shape: the tick loop's split borrows of LiveScene"
+)]
+fn apply_scalar_write(
+    txn: &mut dashscene_core::Txn<'_>,
+    b: &mut ScalarBinding,
+    v: f32,
+    fill_shadow: &mut HashMap<NodeId, Color>,
+    cached_solve: &[(NodeId, SolvedRect)],
+    cached_index: &HashMap<NodeId, usize>,
+    patches: &mut Vec<(usize, Patch)>,
+    layout_dirty: &mut bool,
+) {
+    match b.class {
+        WriteClass::PaintOnly => {
+            let color = fill_shadow
+                .get_mut(&b.node)
+                .expect("every fill-bound node has a seeded shadow");
+            *fill_component(color, b.channel) = v;
+            txn.set_prop(b.node, Prop::Fill(*color));
+        }
+        WriteClass::Patch => {
+            txn.set_prop(b.node, prop_for(b.channel, v));
+            let idx = cached_index[&b.node];
+            let patch = resolve_patch(b.channel, v, b.parent, cached_solve, cached_index);
+            patches.push((idx, patch));
+        }
+        WriteClass::Solve => {
+            txn.set_prop(b.node, prop_for(b.channel, v));
+            *layout_dirty = true;
+        }
+    }
+    b.last_applied = v;
 }
 
 /// A [`LayoutSolver`] that replays a fixed set of rects — the retained
@@ -551,14 +705,19 @@ impl LayoutSolver for CachedSolver {
 /// Accumulates resolved bindings while the node tree is staged.
 #[derive(Default)]
 struct BuildCtx {
-    /// The dense node index packed into a scheduler `PropKey` — assigned
-    /// in DFS order so a node's key is unique across the scene.
-    dense: u32,
     scalar: Vec<ScalarBinding>,
     text: Vec<TextBinding>,
     visible: Vec<VisibleBinding>,
     scalar_closures: Vec<Box<dyn Fn(f32) -> f32>>,
     text_closures: Vec<Box<dyn Fn(f32) -> String>>,
+    /// The core `SignalId` of each `dashlang` scalar signal, in
+    /// declaration order — the ids `stage_live` stages binding rows
+    /// against (story #167: the binding table is a document construct,
+    /// so `build_live` records every declarative binding in the arena).
+    core_signals: Vec<SignalId>,
+    /// Per-node authored fill for the fill-channel shadow, seeded for
+    /// every node that binds a fill channel.
+    fill_shadow: HashMap<NodeId, Color>,
 }
 
 /// A live, bindable scene: signal state, the resolved binding tables,
@@ -583,6 +742,14 @@ pub struct LiveScene {
     /// The last solved geometry, in DFS/committed order.
     cached_solve: Vec<(NodeId, SolvedRect)>,
     cached_index: HashMap<NodeId, usize>,
+    /// Runtime lookup name → scalar signal id, for the named signals
+    /// (story #167): `Scene::signal_named` declarations, or a loaded
+    /// document's signal names ([`attach_live`]).
+    names: HashMap<String, u32>,
+    /// The current fill color of every node with a fill-channel binding.
+    /// One channel writes one component; the shadow is what makes the
+    /// other three keep their values across that write.
+    fill_shadow: HashMap<NodeId, Color>,
     generation: u64,
 }
 
@@ -592,6 +759,17 @@ impl LiveScene {
     /// (push-on-flush, P3).
     pub fn set<T: SignalValue>(&mut self, signal: Signal<T>, value: T) {
         T::store(self, signal.id, value);
+    }
+
+    /// The scalar signal declared under `name` — a `Scene::signal_named`
+    /// declaration, or a loaded document's signal (story #167: a Figma
+    /// variable's mode-qualified name). `None` when no signal carries the
+    /// name.
+    pub fn signal_named(&self, name: &str) -> Option<Signal<f32>> {
+        self.names.get(name).map(|&id| Signal {
+            id,
+            marker: PhantomData,
+        })
     }
 
     /// The generation of the most recent commit.
@@ -612,8 +790,9 @@ impl LiveScene {
 
         // 1. Scalar bindings whose source signal changed. A smoothed
         //    binding sets the spring's target; the scheduler drains
-        //    below. A direct binding writes now, and is patched (if
-        //    contained) or forces a solve.
+        //    below. A direct binding writes now: a fill channel through
+        //    the fill shadow (paint-only), a contained rect channel as a
+        //    cache patch, anything else forces a solve.
         for b in &mut self.scalar_bindings {
             if !self.scalar_dirty[b.signal as usize] {
                 continue;
@@ -624,21 +803,16 @@ impl LiveScene {
                 let from = self.scheduler.sample(b.key).unwrap_or(b.last_applied);
                 self.scheduler.start(b.key, from, v, spec.clone(), 0.0);
             } else {
-                txn.set_prop(b.node, prop_for(b.channel, v));
-                b.last_applied = v;
-                if b.patchable {
-                    let idx = self.cached_index[&b.node];
-                    let patch = resolve_patch(
-                        b.channel,
-                        v,
-                        b.parent,
-                        &self.cached_solve,
-                        &self.cached_index,
-                    );
-                    patches.push((idx, patch));
-                } else {
-                    layout_dirty = true;
-                }
+                apply_scalar_write(
+                    &mut txn,
+                    b,
+                    v,
+                    &mut self.fill_shadow,
+                    &self.cached_solve,
+                    &self.cached_index,
+                    &mut patches,
+                    &mut layout_dirty,
+                );
             }
         }
 
@@ -672,25 +846,16 @@ impl LiveScene {
         let samples: Vec<(PropKey, f32)> = self.scheduler.samples().collect();
         for (key, value) in samples {
             let bi = self.key_index[&key.0];
-            let (node, channel, patchable, parent) = {
-                let b = &self.scalar_bindings[bi];
-                (b.node, b.channel, b.patchable, b.parent)
-            };
-            txn.set_prop(node, prop_for(channel, value));
-            self.scalar_bindings[bi].last_applied = value;
-            if patchable {
-                let idx = self.cached_index[&node];
-                let patch = resolve_patch(
-                    channel,
-                    value,
-                    parent,
-                    &self.cached_solve,
-                    &self.cached_index,
-                );
-                patches.push((idx, patch));
-            } else {
-                layout_dirty = true;
-            }
+            apply_scalar_write(
+                &mut txn,
+                &mut self.scalar_bindings[bi],
+                value,
+                &mut self.fill_shadow,
+                &self.cached_solve,
+                &self.cached_index,
+                &mut patches,
+                &mut layout_dirty,
+            );
         }
 
         // 5. One commit. A reflow re-solves and refreshes the cache; a
@@ -722,6 +887,157 @@ impl LiveScene {
         self.generation = generation;
         generation
     }
+}
+
+/// Stages one binding's seed value — the build/attach-time analogue of
+/// [`apply_scalar_write`], before any cache or patch list exists. A fill
+/// channel writes through the shadow; everything else stages its prop.
+fn seed_scalar(
+    txn: &mut dashscene_core::Txn<'_>,
+    b: &mut ScalarBinding,
+    v: f32,
+    fill_shadow: &mut HashMap<NodeId, Color>,
+) {
+    if is_fill(b.channel) {
+        let color = fill_shadow
+            .get_mut(&b.node)
+            .expect("every fill-bound node has a seeded shadow");
+        *fill_component(color, b.channel) = v;
+        txn.set_prop(b.node, Prop::Fill(*color));
+    } else {
+        txn.set_prop(b.node, prop_for(b.channel, v));
+    }
+    b.last_applied = v;
+}
+
+/// Builds a [`LiveScene`] from the binding tables an arena already
+/// carries — the loader-side entry point (story #167): load a `.dsb`
+/// with `dashscene_core::load_document`, then attach. The document's
+/// signal declarations become live signals, addressable by name
+/// ([`LiveScene::signal_named`] — a Figma variable's mode-qualified
+/// name), and its binding rows become live scalar bindings driven by
+/// [`LiveScene::tick`], exactly as if the scene had been authored with
+/// `Scene::build_live`. One mechanism, two producers.
+///
+/// Seeds every bound channel from its signal's initial value and commits
+/// once through `solver`, which the live scene then owns for reflows —
+/// the same first-commit contract as `Scene::build_live`. Bindings whose
+/// signal a producer never sets simply hold their seeded values.
+///
+/// # Panics
+///
+/// Panics if a binding row references a signal or node the arena does
+/// not hold — impossible for tables staged through `Txn::bind`, which
+/// validates both.
+pub fn attach_live(arena: &mut Arena, mut solver: Box<dyn LayoutSolver>) -> LiveScene {
+    let signals: Vec<dashscene_core::SignalDecl> = arena.signals().to_vec();
+    let rows: Vec<dashscene_core::Binding> = arena.bindings().to_vec();
+
+    let mut names: HashMap<String, u32> = HashMap::new();
+    for (id, decl) in signals.iter().enumerate() {
+        if let Some(name) = &decl.name {
+            names.insert(name.clone(), id as u32);
+        }
+    }
+
+    let mut fill_shadow: HashMap<NodeId, Color> = HashMap::new();
+    let mut bindings: Vec<ScalarBinding> = Vec::with_capacity(rows.len());
+    for row in &rows {
+        let node = row.node;
+        let layout = arena.layout(node);
+        let has_children = !arena.children(node).is_empty();
+        let passthrough = layout.mode == LayoutMode::None;
+        let fill = match arena.fill(node) {
+            Some(PaintKind::Solid { color }) => Some(*color),
+            _ => None,
+        };
+        if is_fill(row.channel) {
+            fill_shadow
+                .entry(node)
+                .or_insert(fill.unwrap_or(TRANSPARENT));
+        }
+        bindings.push(ScalarBinding {
+            node,
+            parent: arena.parent(node),
+            channel: row.channel,
+            signal: row.signal.index() as u32,
+            transform: from_core(row.transform),
+            class: classify(
+                row.channel,
+                ancestor_contained(arena, node),
+                has_children,
+                passthrough,
+            ),
+            smoothing: None,
+            key: prop_key(node, row.channel),
+            last_applied: initial_channel_value(&layout, fill, row.channel),
+        });
+    }
+
+    let scalars: Vec<f32> = signals.iter().map(|s| s.initial).collect();
+
+    // Seed every bound channel from its signal's initial value and
+    // commit once through the solver — the loaded literals already agree
+    // with the initials for a document the importer produced, and the
+    // seed makes that an invariant for any producer.
+    let generation = {
+        let mut txn = arena.open();
+        for b in &mut bindings {
+            let raw = scalars[b.signal as usize];
+            let v = to_core(&b.transform)
+                .expect("attached bindings carry declarative transforms only")
+                .apply(raw);
+            seed_scalar(&mut txn, b, v, &mut fill_shadow);
+        }
+        txn.commit_with(&mut *solver)
+    };
+
+    let mut cached_solve = Vec::new();
+    refresh_cache(arena, &mut cached_solve);
+    let cached_index = cached_solve
+        .iter()
+        .enumerate()
+        .map(|(i, (id, _))| (*id, i))
+        .collect();
+
+    let scalar_dirty = vec![false; scalars.len()];
+
+    LiveScene {
+        solver,
+        scheduler: Scheduler::new(),
+        scalars,
+        bools: Vec::new(),
+        scalar_dirty,
+        bool_dirty: Vec::new(),
+        scalar_bindings: bindings,
+        text_bindings: Vec::new(),
+        visible_bindings: Vec::new(),
+        scalar_closures: Vec::new(),
+        text_closures: Vec::new(),
+        key_index: HashMap::new(),
+        cached_solve,
+        cached_index,
+        names,
+        fill_shadow,
+        generation,
+    }
+}
+
+/// Whether every ancestor of `node` keeps a size change inside `node`'s
+/// own subtree — the same containment rule `stage_live` propagates
+/// top-down (an ancestor contains iff it is a passthrough, non-hug
+/// parent), computed bottom-up for a loaded arena.
+fn ancestor_contained(arena: &Arena, node: NodeId) -> bool {
+    let mut at = arena.parent(node);
+    while let Some(ancestor) = at {
+        let layout = arena.layout(ancestor);
+        let hug = layout.sizing_h == AxisSizing::Hug || layout.sizing_v == AxisSizing::Hug;
+        if layout.mode != LayoutMode::None || hug {
+            return false;
+        }
+        at = arena.parent(ancestor);
+    }
+    true
 }
 
 /// Rebuild the retained geometry from the committed buffer after a real
@@ -758,6 +1074,17 @@ impl Scene {
         }
     }
 
+    /// Declare a named scalar signal (story #167). The name is the
+    /// runtime lookup key ([`LiveScene::signal_named`]) and is staged
+    /// into the document binding table, so a `dashlang` scene and an
+    /// imported Figma document expose signals the same way — a Figma
+    /// variable's mode-qualified name is exactly such a name.
+    pub fn signal_named(&mut self, name: &str, initial: f32) -> Signal<f32> {
+        let signal = self.signal(initial);
+        self.scalar_names[signal.id as usize] = Some(name.to_owned());
+        signal
+    }
+
     /// Set (replacing) the scene's roots. The builder form the reactive
     /// authoring surface uses: declare signals, then set the roots that
     /// bind them.
@@ -782,6 +1109,15 @@ impl Scene {
 
         let generation = {
             let mut txn = arena.open();
+            // Every scalar signal is declared in the arena first, in
+            // declaration order, so a `dashlang` signal id and its core
+            // `SignalId` coincide and the staged binding rows (story
+            // #167) reference the right declaration. Bool signals stay
+            // `dashlang`-only: the serialized vocabulary is scalar.
+            for (name, initial) in self.scalar_names.iter().zip(&self.scalar_inits) {
+                ctx.core_signals
+                    .push(txn.declare_signal(name.as_deref(), *initial));
+            }
             for root in self.roots {
                 stage_live(&mut txn, None, root, true, &mut ctx);
             }
@@ -791,8 +1127,7 @@ impl Scene {
             for b in &mut ctx.scalar {
                 let raw = self.scalar_inits[b.signal as usize];
                 let v = eval_scalar(&b.transform, &ctx.scalar_closures, raw);
-                txn.set_prop(b.node, prop_for(b.channel, v));
-                b.last_applied = v;
+                seed_scalar(&mut txn, b, v, &mut ctx.fill_shadow);
             }
             for b in &ctx.text {
                 let raw = self.scalar_inits[b.signal as usize];
@@ -825,6 +1160,12 @@ impl Scene {
         let bools = self.bool_inits;
         let scalar_dirty = vec![false; scalars.len()];
         let bool_dirty = vec![false; bools.len()];
+        let names = self
+            .scalar_names
+            .into_iter()
+            .enumerate()
+            .filter_map(|(id, name)| name.map(|n| (n, id as u32)))
+            .collect();
 
         LiveScene {
             solver,
@@ -841,6 +1182,8 @@ impl Scene {
             key_index,
             cached_solve,
             cached_index,
+            names,
+            fill_shadow: ctx.fill_shadow,
             generation,
         }
     }
@@ -866,7 +1209,9 @@ fn stage_live(
     crate::set_base_props(txn, id, &node);
 
     let Node {
+        name,
         layout,
+        fill,
         scalar_bindings,
         smoothing,
         text_binding,
@@ -875,11 +1220,20 @@ fn stage_live(
         ..
     } = node;
 
-    let dense = ctx.dense;
-    ctx.dense += 1;
-
     let has_children = !children.is_empty();
     let passthrough = layout.mode == LayoutMode::None;
+
+    // A smoothing spec with no binding on the same channel would be
+    // silently inert — the spring has no signal to take targets from.
+    // Named at build, never dropped (P4, debt #194).
+    for (channel, _) in &smoothing {
+        if !scalar_bindings.iter().any(|(c, _)| c == channel) {
+            panic!(
+                "smooth({channel:?}) on node {name:?} has no matching bind({channel:?}, ...): \
+                 the spring would be silently inert (debt #194)"
+            );
+        }
+    }
 
     for (channel, expr) in scalar_bindings {
         let ScalarExpr { signal, kind } = expr;
@@ -891,24 +1245,40 @@ fn stage_live(
                 Transform::Custom(closure_id)
             }
         };
+        // The binding table is a document construct (story #167): every
+        // declarative binding is staged into the arena as a row, so a
+        // dashlang scene and a loaded document expose one table. A
+        // `Custom` transform stays dashlang-only — its closure does not
+        // serialize (D8) — so it lives in the live tables but never in
+        // the arena's.
+        if let Some(core_transform) = to_core(&transform) {
+            txn.bind(
+                id,
+                channel,
+                ctx.core_signals[signal as usize],
+                core_transform,
+            );
+        }
+        if is_fill(channel) {
+            ctx.fill_shadow
+                .entry(id)
+                .or_insert(fill.unwrap_or(TRANSPARENT));
+        }
         let smoothing_spec = smoothing
             .iter()
             .find(|(c, _)| *c == channel)
             .map(|(_, spring)| spring.spec());
-        let key = PropKey(((dense as u64) << 32) | channel.code() as u64);
-        // Patchable only when the whole write stays in this one rect:
-        // ancestor-contained, and the channel moves no descendant.
-        let patchable = contained && write_is_single_rect(channel, has_children, passthrough);
+        let key = prop_key(id, channel);
         ctx.scalar.push(ScalarBinding {
             node: id,
             parent,
             channel,
             signal,
             transform,
-            patchable,
+            class: classify(channel, contained, has_children, passthrough),
             smoothing: smoothing_spec,
             key,
-            last_applied: initial_channel_value(&layout, channel),
+            last_applied: initial_channel_value(&layout, fill, channel),
         });
     }
 

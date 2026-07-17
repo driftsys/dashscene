@@ -371,3 +371,215 @@ fn one_signal_binds_two_nodes() {
     assert_eq!(rects[1].w, 30.0, "identity");
     assert_eq!(rects[2].w, 60.0, "scaled");
 }
+
+// ---------------------------------------------------------------------
+// Story #167 — the completed channel vocabulary (debt #201), the
+// smooth-without-bind diagnostic (debt #194), named signals, the staged
+// core binding table, and the loader-side attach.
+// ---------------------------------------------------------------------
+
+/// Mirrors A1 for a fill channel (debt #201): a bound fill component
+/// changes every frame, and the frame is paint-only — no layout solve —
+/// while the other components of the authored color hold their values.
+#[test]
+fn a_fill_channel_write_is_paint_only() {
+    use dashlang::rgba;
+    use dashscene_core::PaintKind;
+
+    let count = Rc::new(Cell::new(0));
+    let mut arena = Arena::new();
+
+    let mut scene = Scene::new();
+    let level = scene.signal(0.25f32);
+    scene.roots([node("frame")
+        .mode(LayoutMode::None)
+        .size(200.0, 20.0)
+        .child(
+            node("meter")
+                .size(200.0, 20.0)
+                .fill(rgba(0.0, 0.5, 0.25, 1.0))
+                .bind(Channel::FillR, level),
+        )]);
+
+    let mut live = scene.build_live(&mut arena, CountingSolver::boxed(count.clone()));
+    assert_eq!(count.get(), 1, "build solves once");
+
+    for frame in 1..=4 {
+        live.set(level, frame as f32 * 0.2);
+        live.tick(0.016, &mut arena);
+    }
+    assert_eq!(count.get(), 1, "a fill write never re-solves");
+
+    let meter = arena.committed().node_of(1);
+    match arena.fill(meter) {
+        Some(PaintKind::Solid { color }) => {
+            assert_eq!(color.r, 0.8, "the bound component tracks the signal");
+            assert_eq!(
+                (color.g, color.b, color.a),
+                (0.5, 0.25, 1.0),
+                "unbound components keep the authored color"
+            );
+        }
+        other => panic!("expected a solid fill, got {other:?}"),
+    }
+    // The paint change reaches the dirty set — a painter must re-upload.
+    assert!(arena.committed().dirty().contains(&1));
+}
+
+/// Mirrors A1's counterpart for `Gap` (debt #201): a bound gap is
+/// layout-affecting by definition — the children move on every write.
+#[test]
+fn a_gap_binding_reflows_the_containers_children() {
+    let mut arena = Arena::new();
+
+    let mut scene = Scene::new();
+    let gap = scene.signal_named("size/gap", 10.0);
+    scene.roots([node("column")
+        .mode(LayoutMode::Vertical)
+        .size(100.0, 300.0)
+        .bind(Channel::Gap, gap)
+        .children((0..2).map(|_| node("item").size(100.0, 20.0)))]);
+
+    let mut live = scene.build_live(&mut arena, Box::new(TaffySolver::new()));
+    assert_eq!(
+        arena.committed().rects()[2].y,
+        30.0,
+        "seeded gap 10: second item at 20 + 10"
+    );
+
+    live.set(gap, 40.0);
+    live.tick(0.016, &mut arena);
+    assert_eq!(
+        arena.committed().rects()[2].y,
+        60.0,
+        "gap 40: second item at 20 + 40"
+    );
+}
+
+/// Debt #194: a smoothing spec with no binding on the same channel is
+/// named at build, never silently discarded.
+#[test]
+#[should_panic(expected = "has no matching bind")]
+fn smooth_without_a_matching_bind_is_refused_by_name() {
+    let mut arena = Arena::new();
+    let mut scene = Scene::new();
+    let _speed = scene.signal(0.0f32);
+    scene.roots([node("bar")
+        .size(10.0, 10.0)
+        .smooth(Channel::Width, Spring::critically_damped(0.1))]);
+    scene.build_live(&mut arena, Box::new(TaffySolver::new()));
+}
+
+/// Story #167: every declarative binding is staged into the arena as a
+/// document-construct row; a `Custom` closure binding stays out (D8).
+#[test]
+fn declarative_bindings_are_staged_into_the_arena_tables() {
+    use dashscene_core::{Channel as CoreChannel, ScalarTransform};
+
+    let mut arena = Arena::new();
+    let mut scene = Scene::new();
+    let gap = scene.signal_named("size/gap", 16.0);
+    let anon = scene.signal(1.0f32);
+    scene.roots([node("card")
+        .mode(LayoutMode::Vertical)
+        .size(100.0, 100.0)
+        .bind(Channel::Gap, gap)
+        .child(
+            node("chip")
+                .size(10.0, 10.0)
+                .bind(Channel::Width, anon.scale(2.0))
+                // The closure stays dashlang-only: no row for it.
+                .bind(Channel::Height, anon.map(|v| v + 1.0)),
+        )]);
+    scene.build_live(&mut arena, Box::new(TaffySolver::new()));
+
+    let signals = arena.signals();
+    assert_eq!(signals.len(), 2);
+    assert_eq!(signals[0].name.as_deref(), Some("size/gap"));
+    assert_eq!(signals[0].initial, 16.0);
+    assert_eq!(signals[1].name, None);
+
+    let rows = arena.bindings();
+    assert_eq!(rows.len(), 2, "the Custom binding stages no row");
+    assert_eq!(rows[0].channel, CoreChannel::Gap);
+    assert_eq!(rows[0].transform, ScalarTransform::Identity);
+    assert_eq!(rows[1].channel, CoreChannel::Width);
+    assert_eq!(rows[1].transform, ScalarTransform::Scale(2.0));
+}
+
+/// Story #167: an arena that already carries binding tables — the shape
+/// `load_document` leaves after loading an imported `.dsb` — attaches
+/// into a `LiveScene` whose signals are addressable by name, drive the
+/// same flush, and re-seed the bound channels.
+#[test]
+fn attach_live_drives_a_loaded_arenas_bindings() {
+    use dashlang::attach_live;
+    use dashscene_core::{Channel as CoreChannel, Color, PaintKind, Prop, ScalarTransform};
+
+    // Stage what a loaded document would have staged: nodes, literals,
+    // and the binding tables.
+    let mut arena = Arena::new();
+    let (card, chip) = {
+        let mut txn = arena.open();
+        let card = txn.add_node(None, Some("card"));
+        txn.set_prop(card, Prop::Width(100.0));
+        txn.set_prop(card, Prop::Height(300.0));
+        txn.set_prop(card, Prop::Mode(dashscene_core::LayoutMode::Vertical));
+        txn.set_prop(card, Prop::Gap(16.0));
+        let chip = txn.add_node(Some(card), Some("chip"));
+        txn.set_prop(chip, Prop::Width(24.0));
+        txn.set_prop(chip, Prop::Height(24.0));
+        txn.set_prop(
+            chip,
+            Prop::Fill(Color {
+                r: 0.13,
+                g: 0.45,
+                b: 0.9,
+                a: 1.0,
+            }),
+        );
+        let filler = txn.add_node(Some(card), Some("filler"));
+        txn.set_prop(filler, Prop::Width(24.0));
+        txn.set_prop(filler, Prop::Height(24.0));
+
+        let gap = txn.declare_signal(Some("size/gap"), 16.0);
+        let accent_r = txn.declare_signal(Some("color/accent.r"), 0.13);
+        txn.bind(card, CoreChannel::Gap, gap, ScalarTransform::Identity);
+        txn.bind(
+            chip,
+            CoreChannel::FillR,
+            accent_r,
+            ScalarTransform::Identity,
+        );
+        txn.commit();
+        (card, chip)
+    };
+    let _ = card;
+
+    let mut live = attach_live(&mut arena, Box::new(TaffySolver::new()));
+
+    // The document's signals are addressable by their authored names.
+    let gap = live.signal_named("size/gap").expect("size/gap is declared");
+    assert!(live.signal_named("no/such/name").is_none());
+
+    // The attach seeded from the initials: gap 16 places the second
+    // child at 24 + 16.
+    assert_eq!(arena.committed().rects()[2].y, 40.0);
+
+    live.set(gap, 30.0);
+    live.tick(0.016, &mut arena);
+    assert_eq!(arena.committed().rects()[2].y, 54.0, "gap 30: 24 + 30");
+
+    let accent_r = live
+        .signal_named("color/accent.r")
+        .expect("color/accent.r is declared");
+    live.set(accent_r, 0.4);
+    live.tick(0.016, &mut arena);
+    match arena.fill(chip) {
+        Some(PaintKind::Solid { color }) => {
+            assert_eq!(color.r, 0.4, "the bound component tracks the signal");
+            assert_eq!(color.g, 0.45, "unbound components keep the literal");
+        }
+        other => panic!("expected a solid fill, got {other:?}"),
+    }
+}

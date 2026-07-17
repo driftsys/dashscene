@@ -17,9 +17,9 @@ dashscene-core.workspace = true
 # 2026-07-14-scope-decisions.md §23 D1). dashlang depending on both core
 # and dashcue is what keeps core clear of the animation crate (SCOPE §9).
 dashcue.workspace = true
-
-[dev-dependencies]
-# The reflow acceptance cases (A3/A4) need the real flex/`Display::None`
-# solve, which lives in the engine. A dev-dependency only: dashlang's
-# library never depends on the engine (the solver is injected).
+# For exactly one item: `prop_key`, the engine-owned PropKey packing. The
+# reactive layer builds its scheduler keys through it instead of defining
+# a second packing (debt #208), so a serialized binding row and a live
+# track address a prop identically. The layout solver itself stays
+# injected as a trait object — this dependency adds no solver coupling.
 dashscene-engine.workspace = true
