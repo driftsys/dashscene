@@ -390,10 +390,11 @@ table Node {
 // v0.4 variant table (docs/decisions/variant-set-flat-index.md,
 // docs/archive/2026-07-14-design-1-seed.md §5: "sparse per-variant
 // overrides, never duplicate trees"). One overridden prop's value,
-// mirroring the narrowest slice of dashscene-core's `Prop` vocabulary
-// needed to prove resolved rect/paint correctness — X, Y, Width,
-// Height, and the solid-fill shorthand. Widening to the rest of `Prop`
-// is additive future work.
+// mirroring the slice of dashscene-core's `Prop` vocabulary needed to
+// prove resolved rect/paint correctness — X, Y, Width, Height, the
+// solid-fill shorthand, and visibility (VariantVisible, story #283, the
+// variant-driven "different child counts" topology change). Widening to
+// the rest of `Prop` is additive future work.
 table VariantX { value: float32; }
 table VariantY { value: float32; }
 table VariantWidth { value: float32; }
@@ -402,6 +403,11 @@ table VariantHeight { value: float32; }
 // the verifier rejects it at the load gate (P4) — the same mechanism as
 // Stroke's required color.
 table VariantFill { color: Color (required); }
+// Whether the member shows (true) or hides (false) the target node.
+// `false` lowers to Taffy Display::None — the child leaves the laid-out
+// set and its siblings reflow — exactly as Node.visible does through
+// set_prop (story #283).
+table VariantVisible { value: bool; }
 
 union VariantPropValue {
   VariantX,
@@ -409,6 +415,8 @@ union VariantPropValue {
   VariantWidth,
   VariantHeight,
   VariantFill,
+  // Appended at the tail (R7): existing arms keep their discriminants.
+  VariantVisible,
 }
 
 // One overridden prop on one node, active when the owning member is

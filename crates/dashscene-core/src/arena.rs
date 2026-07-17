@@ -359,11 +359,13 @@ pub struct TextStyle {
     pub color: Color,
 }
 
-/// One prop value a variant member can override — the narrow slice of
-/// `Prop`'s vocabulary the dashbuf variant table carries (X, Y, Width,
-/// Height, the solid-fill shorthand): the props needed to prove
-/// resolved rect/paint correctness. Widening to the rest of `Prop` is
-/// additive future work (`docs/decisions/variant-set-flat-index.md`).
+/// One prop value a variant member can override — the slice of `Prop`'s
+/// vocabulary the dashbuf variant table carries (X, Y, Width, Height, the
+/// solid-fill shorthand, and visibility): the props needed to prove
+/// resolved rect/paint correctness plus the topology change a switch that
+/// hides or shows a child makes (story #283). Widening to the rest of
+/// `Prop` is additive future work
+/// (`docs/decisions/variant-set-flat-index.md`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum VariantValue {
     X(f32),
@@ -371,6 +373,12 @@ pub enum VariantValue {
     Width(f32),
     Height(f32),
     Fill(Color),
+    /// Whether a variant member shows or hides the target node. `false`
+    /// takes the child out of the laid-out set (Taffy `Display::None`) and
+    /// its siblings reflow, exactly as [`Prop::Visible`] does through
+    /// `set_prop` — the variant-driven "different child counts" topology
+    /// change (story #283).
+    Visible(bool),
 }
 
 /// One selectable state of a [`VariantSetId`]: an optional name and its
@@ -407,6 +415,11 @@ struct NodeOverlay {
     width: Option<f32>,
     height: Option<f32>,
     fill: Option<PaintKind>,
+    /// `Some(false)` hides the node (and its subtree) — the same effect as
+    /// [`Prop::Visible(false)`](Prop::Visible), reached through a variant
+    /// switch (story #283). `None` = the member does not override
+    /// visibility, so the node's base `layout.visible` stands.
+    visible: Option<bool>,
 }
 
 /// Intent for one node — layout intent plus paint and text intent and
@@ -577,7 +590,8 @@ impl Arena {
 
     /// The node's layout intent (authored fixed geometry + flex
     /// vocabulary), by value — with any active variant override
-    /// (`X`/`Y`/`Width`/`Height`) applied on top of the base value. This
+    /// (`X`/`Y`/`Width`/`Height`/`Visible`) applied on top of the base
+    /// value. This
     /// is the read seam every [`LayoutSolver`] resolves geometry
     /// through (the internal [`FixedSolver`] included), so a variant
     /// switch reaches committed geometry without either solver knowing
@@ -602,6 +616,9 @@ impl Arena {
         }
         if let Some(height) = overlay.height {
             layout.height = height;
+        }
+        if let Some(visible) = overlay.visible {
+            layout.visible = visible;
         }
         layout
     }
@@ -661,6 +678,7 @@ impl Arena {
                     VariantValue::Fill(color) => {
                         overlay.fill = Some(PaintKind::Solid { color });
                     }
+                    VariantValue::Visible(v) => overlay.visible = Some(v),
                 }
             }
         }
@@ -951,15 +969,25 @@ impl Txn<'_> {
         // them all layout- and paint-dirty (a variant override carries
         // geometry and fill, docs/decisions/variant-set-flat-index.md), so
         // the next commit re-solves and re-interns exactly those nodes
-        // (issue #164). Bounded by the set's override count.
-        let targets: Vec<NodeId> = self.arena.variant_sets[set.0 as usize]
+        // (issue #164). A Visible override additionally toggles the node's
+        // draws-nothing state, so its subtree re-interns paint through the
+        // hidden_changed cascade — mark it visible_toggled too (story #283).
+        // Bounded by the set's override count.
+        let targets: Vec<(NodeId, bool)> = self.arena.variant_sets[set.0 as usize]
             .members
             .iter()
-            .flat_map(|m| m.overrides.iter().map(|(node, _)| *node))
+            .flat_map(|m| {
+                m.overrides
+                    .iter()
+                    .map(|(node, value)| (*node, matches!(value, VariantValue::Visible(_))))
+            })
             .collect();
-        for node in targets {
+        for (node, toggles_visibility) in targets {
             self.arena.layout_dirty.push(node);
             self.arena.paint_dirty.push(node);
+            if toggles_visibility {
+                self.arena.visible_toggled.push(node);
+            }
         }
     }
 
@@ -1379,6 +1407,13 @@ impl Txn<'_> {
         for (i, &id) in order.iter().enumerate() {
             rect_of_slot[id.index()] = i as u32;
             let node = &arena.nodes[id.index()];
+            // Effective visibility folds the active variant override on top
+            // of the base field, the same overlay-on-read the geometry and
+            // fill use (story #283): a member that sets Visible(false) hides
+            // the node here too, not only through the TaffySolver, so the
+            // fixed-solver commit resolves it to draws-nothing (M5) and stops
+            // it masking.
+            let node_visible = arena.overlay(id).visible.unwrap_or(node.layout.visible);
             let geometry = solved[id.index()].unwrap_or_else(|| {
                 panic!(
                     "no rect for {id:?}: the solver did not resolve it and no previous commit did \
@@ -1424,7 +1459,7 @@ impl Txn<'_> {
             // visibility toggle down so a descendant re-interns its paint.
             let parent_hidden = node.parent.is_some_and(|p| eff_hidden[p.index()]);
             let parent_hidden_changed = node.parent.is_some_and(|p| hidden_changed[p.index()]);
-            eff_hidden[id.index()] = parent_hidden || !node.layout.visible;
+            eff_hidden[id.index()] = parent_hidden || !node_visible;
             hidden_changed[id.index()] =
                 parent_hidden_changed || visible_toggled_set.contains(&id.index());
 
@@ -1525,7 +1560,7 @@ impl Txn<'_> {
             // toggled, geometry moved, or visibility changed — re-resolves
             // the regions its following siblings receive (M1).
             if let Some(parent) = node.parent {
-                let node_masks = node.mask && node.layout.visible;
+                let node_masks = node.mask && node_visible;
                 if node_masks {
                     let node_box = ClipBox {
                         x: geometry.x,

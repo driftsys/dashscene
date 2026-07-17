@@ -17,20 +17,19 @@
 //! `Txn` directly, because the construct is not builder vocabulary:
 //!
 //! - the variant case declares an `add_variant_set` and switches its active
-//!   member with `set_variant`; core variants are sparse scalar overrides — the
-//!   five-prop slice X/Y/Width/Height/Fill
-//!   (`docs/decisions/variant-set-flat-index.md`);
+//!   member with `set_variant` to hide a child (`VariantValue::Visible(false)`
+//!   → Taffy `Display::None`); core variants are sparse scalar overrides — the
+//!   slice X/Y/Width/Height/Fill/Visible
+//!   (`docs/decisions/variant-set-flat-index.md`, story #283);
 //! - the negative-gap case cross-checks the DSL margin form against a
 //!   `gap` + `lower_negative_gaps` form, the shared core lowering pass
 //!   (`docs/decisions/negative-gap-lowering.md`).
 //!
-//! Reported limit of the variant case: `Visible` is not in the five-prop
-//! variant slice, so a variant cannot hide a child (`Display::None`). The
-//! stronger "variant topology change" — a child LEAVING the laid-out set — is
-//! therefore not expressible without widening the variant override vocabulary
-//! (core plus the `dashbuf` variant table), which is out of this story's scope.
-//! The case here realizes the topology change the slice can express: a switch
-//! that makes a wrap line appear.
+//! The variant case proves the "different child counts" reading of E3's sixth
+//! stress case: a `set_variant` switch that hides a child removes it from the
+//! laid-out set, its sibling reflows, and the Hug container collapses — the
+//! topology change the five-prop slice could not express until `Visible` joined
+//! the variant override vocabulary (story #283).
 //!
 //! Pre-existing complementary proofs are kept, not replaced: `negative-gap` in
 //! `crates/dashscene-engine/tests/solve.rs`, `hug-in-fill` in
@@ -579,87 +578,93 @@ fn a_fixed_height_wrap_packs_its_lines_at_the_cross_start() {
 }
 
 #[test]
-fn a_variant_switch_changes_the_wrap_line_topology() {
-    // The variant case. Core variants are sparse scalar overrides — the
-    // five-prop slice X/Y/Width/Height/Fill
-    // (`docs/decisions/variant-set-flat-index.md`) — so a `set_variant`
-    // switch cannot change the arena node tree, and it cannot hide a child
-    // (`Visible` is not in the variant override vocabulary). What it can
-    // change is the RESOLVED layout topology: two members drive a horizontal
-    // wrap row to different line structures. Member 0 fits both chips on one
-    // line; member 1 widens the first chip past the point where the second
-    // still fits, so a wrap line appears and the Hug container grows taller —
-    // a line-topology change of the resolved flow.
+fn a_variant_switch_hides_a_child_and_reflows_the_laid_out_set() {
+    // The variant case, in E3's true "different child counts" form
+    // (story #283): a `set_variant` switch sets a child's `Visible(false)`,
+    // which lowers to Taffy `Display::None` — the child leaves the laid-out
+    // set, its sibling closes into its place, and the Hug row collapses by the
+    // child's width. Switching back re-adds it. `Visible` reaching the
+    // laid-out set through a variant override is exactly the topology change
+    // the five-prop slice could not express before
+    // (`docs/decisions/variant-set-flat-index.md`).
     //
-    // A child leaving the laid-out set (a `Visible(false)` variant override →
-    // `Display::None`) is the stronger form of "variant topology change" and
-    // is NOT expressible with the five-prop slice; that is a reported blocker
-    // (see the E3 section and the PR description), not a silent gap.
-    //
-    // Both members override chip a's width away from its authored 20, so the
-    // pre-switch assertions witness member 0's override, not the authored
-    // base — a no-op variant machinery would leave a at 20 and fail them.
+    // A Hug-width horizontal row of three fixed 30x20 chips, no gap: the row
+    // hugs to 90 with all shown, 60 with the middle chip hidden.
     let mut arena = Arena::new();
     let mut txn = arena.open();
     let row = txn.add_node(None, Some("row"));
-    txn.set_prop(row, Prop::Mode(LayoutMode::Wrap));
-    txn.set_prop(row, Prop::Width(120.0));
-    txn.set_prop(row, Prop::SizingV(AxisSizing::Hug));
-    txn.set_prop(row, Prop::Gap(10.0));
-    txn.set_prop(row, Prop::CrossGap(10.0));
+    txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
+    txn.set_prop(row, Prop::SizingH(AxisSizing::Hug));
+    txn.set_prop(row, Prop::Height(20.0));
     let a = txn.add_node(Some(row), Some("a"));
-    txn.set_prop(a, Prop::Width(20.0));
+    txn.set_prop(a, Prop::Width(30.0));
     txn.set_prop(a, Prop::Height(20.0));
     let b = txn.add_node(Some(row), Some("b"));
-    txn.set_prop(b, Prop::Width(50.0));
+    txn.set_prop(b, Prop::Width(30.0));
     txn.set_prop(b, Prop::Height(20.0));
+    let c = txn.add_node(Some(row), Some("c"));
+    txn.set_prop(c, Prop::Width(30.0));
+    txn.set_prop(c, Prop::Height(20.0));
     let set = txn.add_variant_set(vec![
         VariantMember {
-            name: Some("one-line".to_string()),
-            overrides: vec![(a, VariantValue::Width(50.0))],
+            name: Some("all".to_string()),
+            overrides: vec![],
         },
         VariantMember {
-            name: Some("wrapped".to_string()),
-            overrides: vec![(a, VariantValue::Width(80.0))],
+            name: Some("hide-middle".to_string()),
+            overrides: vec![(b, VariantValue::Visible(false))],
         },
     ]);
     txn.commit_with(&mut TaffySolver::new());
 
-    // Member 0 "one-line": a = 50 (the override, not the authored 20), so
-    // 50 + 10 + 50 = 110 <= 120 and both chips sit on one line; the Hug row
-    // is one line tall. a = 50 here is what proves member 0's override live.
-    assert_eq!(rect_of(&arena, row), (0.0, 0.0, 120.0, 20.0), "one line");
-    assert_eq!(
-        rect_of(&arena, a),
-        (0.0, 0.0, 50.0, 20.0),
-        "member 0 override"
-    );
+    // Member 0 "all": three chips packed left to right, the row hugs to 90.
+    assert_eq!(rect_of(&arena, row), (0.0, 0.0, 90.0, 20.0), "all shown");
+    assert_eq!(rect_of(&arena, a), (0.0, 0.0, 30.0, 20.0), "a first");
     assert_eq!(
         rect_of(&arena, b),
-        (60.0, 0.0, 50.0, 20.0),
-        "same line, 50 + 10 gap"
+        (30.0, 0.0, 30.0, 20.0),
+        "b in the middle"
     );
+    assert_eq!(rect_of(&arena, c), (60.0, 0.0, 30.0, 20.0), "c last");
 
-    // Switch to member 1 "wrapped": a = 80, so 80 + 10 + 50 = 140 > 120 and b
-    // wraps to a second line; the Hug row grows to 20 + 10 + 20 = 50. A wrap
-    // line that did not exist before now does.
+    // Switch to member 1 "hide-middle": b leaves the laid-out set (a
+    // degenerate rect), c reflows into b's place, and the row collapses to 60.
     let mut txn = arena.open();
     txn.set_variant(set, 1);
     txn.commit_with(&mut TaffySolver::new());
 
     assert_eq!(
         rect_of(&arena, row),
-        (0.0, 0.0, 120.0, 50.0),
-        "a wrap line appeared"
+        (0.0, 0.0, 60.0, 20.0),
+        "the row collapses by the hidden child's width"
     );
-    assert_eq!(
-        rect_of(&arena, a),
-        (0.0, 0.0, 80.0, 20.0),
-        "widened override"
-    );
+    assert_eq!(rect_of(&arena, a), (0.0, 0.0, 30.0, 20.0), "a unaffected");
     assert_eq!(
         rect_of(&arena, b),
-        (0.0, 30.0, 50.0, 20.0),
-        "b wrapped to line 2"
+        (0.0, 0.0, 0.0, 0.0),
+        "the hidden child leaves the laid-out set (degenerate rect)"
+    );
+    assert_eq!(
+        rect_of(&arena, c),
+        (30.0, 0.0, 30.0, 20.0),
+        "c reflows into b's place"
+    );
+
+    // Switch back to member 0: b re-enters the laid-out set and the row grows
+    // back — the reverse topology change.
+    let mut txn = arena.open();
+    txn.set_variant(set, 0);
+    txn.commit_with(&mut TaffySolver::new());
+
+    assert_eq!(rect_of(&arena, row), (0.0, 0.0, 90.0, 20.0), "row restored");
+    assert_eq!(
+        rect_of(&arena, b),
+        (30.0, 0.0, 30.0, 20.0),
+        "b re-enters the set"
+    );
+    assert_eq!(
+        rect_of(&arena, c),
+        (60.0, 0.0, 30.0, 20.0),
+        "c back to last"
     );
 }

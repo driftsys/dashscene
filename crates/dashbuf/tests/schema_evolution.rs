@@ -45,7 +45,8 @@ use dashbuf::{
     ShadowKind, SignalDecl, SignalDeclArgs, SolidFill, SolidFillArgs, Stroke, StrokeAlign,
     StrokeArgs, TextStyle, TextStyleArgs, TransformScale, TransformScaleArgs, VariantFill,
     VariantFillArgs, VariantMember, VariantMemberArgs, VariantOverride, VariantOverrideArgs,
-    VariantPropValue, VariantSet, VariantSetArgs, VariantX, VariantXArgs, Vec2, root_as_document,
+    VariantPropValue, VariantSet, VariantSetArgs, VariantVisible, VariantVisibleArgs, VariantX,
+    VariantXArgs, Vec2, root_as_document,
 };
 use flatbuffers::FlatBufferBuilder;
 
@@ -435,7 +436,8 @@ fn frozen_text_pools_read_back() {
 }
 
 /// The v0.4 variant table (story #20): one set, two members, one
-/// override of each of two `VariantPropValue` kinds. `active_member` is
+/// override of each of three `VariantPropValue` kinds — the v0.8 append
+/// `VariantVisible` (story #283) is the third. `active_member` is
 /// written non-zero against the schema default of 0 — the same
 /// non-default-value discipline as `Paint.clip` above.
 #[test]
@@ -453,7 +455,7 @@ fn frozen_variant_set_reads_back() {
     let hover = members.get(1);
     assert_eq!(hover.name(), Some("Hover"));
     let overrides = hover.overrides().expect("overrides present");
-    assert_eq!(overrides.len(), 2);
+    assert_eq!(overrides.len(), 3);
 
     let x = overrides.get(0);
     assert_eq!(x.node(), 1);
@@ -473,6 +475,19 @@ fn frozen_variant_set_reads_back() {
     assert_eq!(
         (color.r(), color.g(), color.b(), color.a()),
         (0.2, 0.4, 0.6, 1.0)
+    );
+
+    // The v0.8 append (story #283): a VariantVisible override written
+    // `true` against the bool default of `false`, so a reordered union
+    // discriminant reads back a different arm and this notices.
+    let visible = overrides.get(2);
+    assert_eq!(visible.node(), 2);
+    assert_eq!(visible.value_type(), VariantPropValue::VariantVisible);
+    assert!(
+        visible
+            .value_as_variant_visible()
+            .expect("VariantVisible present")
+            .value()
     );
 }
 
@@ -859,7 +874,8 @@ fn build_fixture() -> Vec<u8> {
     let nodes = b.create_vector(&[root, gradient_child, text_child, bare_child, grid_child]);
 
     // v0.4 variant table (story #20): one set, two members, one override
-    // of each of two `VariantPropValue` kinds — enough to catch a
+    // of each of three `VariantPropValue` kinds — the v0.8 append
+    // `VariantVisible` (story #283) is the third — enough to catch a
     // shifted field id or reordered union discriminant the same way the
     // suites above do.
     let variant_x = VariantX::create(&mut b, &VariantXArgs { value: 99.0 });
@@ -869,6 +885,9 @@ fn build_fixture() -> Vec<u8> {
             color: Some(&Color::new(0.2, 0.4, 0.6, 1.0)),
         },
     );
+    // v0.8 append (story #283): a VariantVisible override, value `true`
+    // against the bool default of `false`.
+    let variant_visible = VariantVisible::create(&mut b, &VariantVisibleArgs { value: true });
     let override_x = VariantOverride::create(
         &mut b,
         &VariantOverrideArgs {
@@ -885,7 +904,15 @@ fn build_fixture() -> Vec<u8> {
             value: Some(variant_fill.as_union_value()),
         },
     );
-    let overrides = b.create_vector(&[override_x, override_fill]);
+    let override_visible = VariantOverride::create(
+        &mut b,
+        &VariantOverrideArgs {
+            node: 2,
+            value_type: VariantPropValue::VariantVisible,
+            value: Some(variant_visible.as_union_value()),
+        },
+    );
+    let overrides = b.create_vector(&[override_x, override_fill, override_visible]);
     let hover_name = b.create_string("Hover");
     let hover_member = VariantMember::create(
         &mut b,

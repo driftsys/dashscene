@@ -14,11 +14,12 @@ hand-computed rects (integer-dimensioned, exact-compare —
 `crates/dashlang/tests/corpus.rs`; wrap, grid, and baseline also have
 hand-built pixel goldens in `goldens/tooling/tests/v08_fidelity.rs` (#43).
 
-Exit criterion E3 stays **partial** after this story: five of the six named
-cases are proven exactly, and the variant case is proven as a layout-topology
-change (a wrap line appearing) but not the Figma child-count form, which needs
-the variant `Visible` widening (issue #283, the path to met — see
-`docs/specification/05-qualification.md` E3).
+Exit criterion E3 is **met**: all six named cases are proven exactly,
+including the variant case in its Figma child-count form — a `set_variant`
+hides a child, the child leaves the laid-out set, its sibling reflows, and the
+Hug container collapses. The former blocker — the variant vocabulary lacked a
+`Visible` override — is resolved by this story's `VariantValue::Visible`
+widening (issue #283; see `docs/specification/05-qualification.md` E3).
 
 Most cases author through the `dashlang` builder. Two use core's `Txn`
 directly, because the construct is not builder vocabulary: the variant case
@@ -44,9 +45,9 @@ value-tree construct) and the negative-gap cross-check (`gap` +
   a nested row propagating its first line (#43/#46). Proof:
   `crates/dashlang/tests/corpus.rs`.
 - [variant-topology.md](variant-topology.md) — a `set_variant` switch that
-  makes a wrap line appear, restructuring the resolved flow (#46). A child
-  leaving the laid-out set is a reported blocker (variant vocabulary lacks
-  `Visible`). Proof: `crates/dashlang/tests/corpus.rs`.
+  hides a child, so the child leaves the laid-out set, its sibling reflows,
+  and the Hug container collapses (#46; `Visible` widening via #283). Proof:
+  `crates/dashlang/tests/corpus.rs`.
 
 R2 coverage the six named cases do not otherwise reach, added to the corpus
 (#46): a `Vertical` column with a Fill child, and a min/max-clamp split.

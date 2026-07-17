@@ -344,6 +344,11 @@ fn variant_value(o: &dashbuf::VariantOverride<'_>) -> VariantValue {
                 .expect("VariantFill present")
                 .color(),
         )),
+        VariantPropValue::VariantVisible => VariantValue::Visible(
+            o.value_as_variant_visible()
+                .expect("VariantVisible present")
+                .value(),
+        ),
         other => unreachable!("unknown VariantPropValue {other:?}: rejected by the load gate (P4)"),
     }
 }

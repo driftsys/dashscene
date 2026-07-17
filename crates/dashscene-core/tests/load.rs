@@ -8,7 +8,7 @@ use dashbuf::{
     Color, Document, DocumentArgs, Fill, FixedSizeLayout, Node, NodeArgs, Paint, PaintArgs, Shadow,
     ShadowArgs, ShadowKind, SolidFill, SolidFillArgs, VariantMember, VariantMemberArgs,
     VariantOverride, VariantOverrideArgs, VariantPropValue, VariantSet, VariantSetArgs,
-    VariantWidth, VariantWidthArgs, Vec2, root_as_document,
+    VariantVisible, VariantVisibleArgs, VariantWidth, VariantWidthArgs, Vec2, root_as_document,
 };
 use dashscene_core::{Arena, load_document};
 use flatbuffers::FlatBufferBuilder;
@@ -100,6 +100,90 @@ fn a_loaded_document_resolves_with_a_non_default_active_member() {
         arena.committed().rects()[1].w,
         99.0,
         "the document's own active_member selects the override at load time"
+    );
+}
+
+/// The v0.8 `VariantVisible` override (story #283) replays through
+/// `load_document` like every other variant value: a document whose
+/// active member hides a child must load without panicking, and the
+/// loaded overlay must carry that visibility onto the child's layout.
+///
+/// Before the `variant_value` `VariantVisible` arm existed, this
+/// document passed the load gate (the validator's own
+/// `a_variant_visible_override_produces_no_diagnostics` proves it
+/// validates clean) yet panicked here on the `unreachable!` wildcard —
+/// the two-gate contract's exact gap.
+#[test]
+fn a_loaded_document_replays_a_variant_visible_override() {
+    let mut b = FlatBufferBuilder::new();
+    let layout = FixedSizeLayout::new(0.0, 0.0, 10.0, 10.0);
+    // Node 0 is the container; node 1 is its child.
+    let container = Node::create(
+        &mut b,
+        &NodeArgs {
+            layout: Some(&layout),
+            ..Default::default()
+        },
+    );
+    let child = Node::create(
+        &mut b,
+        &NodeArgs {
+            parent: 0,
+            layout: Some(&layout),
+            ..Default::default()
+        },
+    );
+    let nodes = b.create_vector(&[container, child]);
+
+    let default_member = VariantMember::create(&mut b, &VariantMemberArgs::default());
+    let hidden = VariantVisible::create(&mut b, &VariantVisibleArgs { value: false });
+    let visible_override = VariantOverride::create(
+        &mut b,
+        &VariantOverrideArgs {
+            node: 1,
+            value_type: VariantPropValue::VariantVisible,
+            value: Some(hidden.as_union_value()),
+        },
+    );
+    let overrides = b.create_vector(&[visible_override]);
+    let hidden_member = VariantMember::create(
+        &mut b,
+        &VariantMemberArgs {
+            overrides: Some(overrides),
+            ..Default::default()
+        },
+    );
+    let members = b.create_vector(&[default_member, hidden_member]);
+    // active_member 1 selects the override at load time.
+    let set = VariantSet::create(
+        &mut b,
+        &VariantSetArgs {
+            members: Some(members),
+            active_member: 1,
+        },
+    );
+    let variant_sets = b.create_vector(&[set]);
+
+    let document = Document::create(
+        &mut b,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            variant_sets: Some(variant_sets),
+            ..Default::default()
+        },
+    );
+    b.finish(document, None);
+    let bytes = b.finished_data().to_vec();
+
+    let doc = root_as_document(&bytes).expect("valid dashbuf document");
+    let mut arena = Arena::new();
+    load_document(&doc, &mut arena);
+
+    let root = arena.roots()[0];
+    let child = arena.children(root)[0];
+    assert!(
+        !arena.layout(child).visible,
+        "the active member's VariantVisible(false) override hid the child at load time"
     );
 }
 

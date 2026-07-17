@@ -20,7 +20,7 @@ missing proof must be visible.
 | --------------------------------- | -------- | ------------------------------------------------------------------------------------------ |
 | E1 same screen authored both ways | G1       | open — v0.9 (epic #47)                                                                     |
 | E2 Arabic golden-stable           | R1       | **met**                                                                                    |
-| E3 stress corpus green            | R2       | partial — met via #283                                                                     |
+| E3 stress corpus green            | R2       | **met**                                                                                    |
 | E4 dirty Figma file → report      | R6       | **met**                                                                                    |
 | E5 variant switch via FLIP        | R4       | **met**                                                                                    |
 | E6 byte-identical `.dsb`          | R7       | **met**                                                                                    |
@@ -84,7 +84,7 @@ anti-aliased edge count, well below the 2,818-px text-erase and 4,633-px
 form-isolation breaks it must catch
 (`docs/decisions/golden-comparison-space.md`, "Text goldens").
 
-### E3 — partial
+### E3 — met
 
 R2 requires the runtime to solve the full Figma auto-layout vocabulary — all
 four modes (horizontal, vertical, wrap, grid with spans), hug/fill/fixed
@@ -97,15 +97,16 @@ sets — and each rect is read back by `NodeId`, never by a positional DFS index
 (debt #119). The proof is `crates/dashlang/tests/corpus.rs`; each named case has
 a documented entry under `corpus/dsl-generated/`.
 
-Five of the six named cases are proven exactly: `negative-gap`, `hug-in-fill`,
-`wrap`, `grid spans`, and `baseline`. The sixth, `variant topology change`, is
-proven as a **layout-topology change** — a `set_variant` that changes the
-solved wrap-line count and container height — but **not** as the Figma
-"different child counts" form: v0's variant overlay carries X/Y/Width/Height/Fill
-only (no `Visible`), so a switch cannot add or remove a child from the laid-out
-set (`docs/decisions/variant-set-flat-index.md`). That is why E3 is partial, not
-met. Issue #283 adds `VariantValue::Visible` (and the matching `dashbuf` variant
-table field), and E3 flips to met when it lands.
+All six named cases are proven exactly: `negative-gap`, `hug-in-fill`, `wrap`,
+`grid spans`, `baseline`, and `variant topology change`. The sixth is proven in
+its Figma "different child counts" form (story #283): a `set_variant` switch
+sets a child's `Visible(false)`, which lowers to Taffy `Display::None`, so the
+child leaves the laid-out set, its sibling reflows into its place, and the Hug
+container collapses; switching back re-adds it. `Visible` reaching the laid-out
+set through a variant override is the widening
+`docs/decisions/variant-set-flat-index.md` records — core `VariantValue` gained
+a `Visible(bool)` arm and the `dashbuf` variant-prop-value union gained a
+matching `VariantVisible` arm (append-only, R7).
 
 Most cases author through `dashlang`'s value-tree builder, which story #46
 extended with the v0.8 layout vocabulary (wrap cross gap, grid track templates,
@@ -139,18 +140,15 @@ Two cases author against core's `Txn` directly, because the construct is not
 `dashlang` builder vocabulary:
 
 - `variant topology change`
-  (`a_variant_switch_changes_the_wrap_line_topology`) — an `add_variant_set`
-  whose `set_variant` switch overrides one chip's width past the point where the
-  next chip still fits, so a wrap line appears and the Hug container grows
-  taller. Core variants are sparse scalar overrides — the five-prop slice
-  X/Y/Width/Height/Fill (`docs/decisions/variant-set-flat-index.md`) — so the
-  switch changes the resolved layout topology, never the arena node tree.
-  **Why this leaves E3 partial:** the stronger reading, a child LEAVING the
-  laid-out set (a child-count change), requires a variant member setting
-  `Prop::Visible(false)` → `Display::None`. `Visible` is not in the five-prop
-  variant slice, and widening it (core `VariantValue` plus the `dashbuf` variant
-  table, R7) is out of story #46's scope — it is issue #283, which flips E3 to
-  met. This case realizes the topology change the current vocabulary can express.
+  (`a_variant_switch_hides_a_child_and_reflows_the_laid_out_set`) — an
+  `add_variant_set` whose `set_variant` switch sets a chip's `Visible(false)`,
+  which lowers to Taffy `Display::None`: the chip leaves the laid-out set and
+  resolves to a degenerate rect, its sibling closes into its place, and the Hug
+  row collapses by the chip's width. Switching back re-adds it. This is the
+  child-count change — a child leaving and re-entering the solved layout —
+  reached through the variant override vocabulary that story #283 widened with
+  `Visible` (core `VariantValue::Visible` plus the `dashbuf` `VariantVisible`
+  union arm, append-only R7; `docs/decisions/variant-set-flat-index.md`).
 - `negative-gap`
   (`negative_gap_overlaps_children_and_hugs_to_the_reduced_width`) — a Hug-width
   row of fixed boxes with a negative gap. The builder authors the lowered
@@ -171,12 +169,17 @@ engine-level negative-gap lowering and #236 rebate tests
 golden (`goldens/tooling/tests/v02_flex.rs`, story #11), and the hand-built
 wrap/grid/baseline pixel goldens (`goldens/tooling/tests/v08_fidelity.rs`,
 story #43). The variant switch's animated form is proven end to end by E5
-(`goldens/tooling/tests/v04_flip.rs`). Two disclosed depth limits, tracked as
-debt rather than hidden: the grid case does not yet make `minmax(0, 1fr)`'s
-zero minimum load-bearing, because a fraction track holding oversized content
-entangles with the open fixed-child-overflow question (issue #272); and a
-leaf's baseline is its bottom edge, not a glyph baseline (issue #273). All cases
-run in the workspace CI job (`just build`).
+(`goldens/tooling/tests/v04_flip.rs`), except for the appearing or
+disappearing node itself, which pops rather than tweening (disclosed below).
+Three disclosed limits, tracked as debt rather than hidden: the grid case does
+not yet make `minmax(0, 1fr)`'s zero minimum load-bearing, because a fraction
+track holding oversized content entangles with the open fixed-child-overflow
+question (issue #272); a leaf's baseline is its bottom edge, not a glyph
+baseline (issue #273); and a variant-driven `Visible` toggle is not tweened by
+FLIP — the toggled node pops while its reflowing siblings animate, because the
+FLIP path animates rect channels only and carries no visibility or opacity
+channel (`crates/dashscene-engine/src/flip.rs`, issue #293). All cases run in
+the workspace CI job (`just build`).
 
 ### E4 — met
 
