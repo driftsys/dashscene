@@ -358,3 +358,82 @@ fn a_custom_transform_reaching_compile_is_refused_by_name() {
     assert_eq!(diagnostic.severity, Severity::Error);
     assert!(diagnostic.message.contains("does not serialize"));
 }
+
+/// A bound fill under paint opacity (probed at review, C2): the lowering
+/// folds the paint's `opacity` into the shipped literal alpha
+/// (`color.a * opacity`), so the FillA binding must capture the same
+/// multiply — a `Scale(opacity)` transform over the raw variable alpha —
+/// or the seeded scene visibly jumps to full opacity on attach.
+#[test]
+fn a_bound_fill_under_paint_opacity_keeps_its_literal_alpha() {
+    use dashscene_core::PaintKind;
+    use dashscene_engine::TaffySolver;
+
+    // The derived capture, with the light chip's bound fill at 50%
+    // paint opacity.
+    let mut file: serde_json::Value =
+        serde_json::from_str(&derived_capture()).expect("the derived capture parses");
+    fn patch(node: &mut serde_json::Value) {
+        if node["id"] == "1:9" {
+            node["fills"][0]["opacity"] = 0.5.into();
+            return;
+        }
+        // `get_mut`, not indexing: `node["children"]` would insert a null
+        // into every childless node, which the REST parser refuses.
+        let children = node.get_mut("children").and_then(|c| c.as_array_mut());
+        if let Some(children) = children {
+            for child in children {
+                patch(child);
+            }
+        }
+    }
+    patch(&mut file["document"]);
+
+    let (bytes, _) = compile_figma_with_bindings(
+        &file.to_string(),
+        Profile::Core,
+        &BTreeMap::new(),
+        &joined_rows(),
+    )
+    .expect("the derived capture compiles");
+    let doc = dashbuf::root_as_document(&bytes).expect("valid .dsb");
+    let gate = dashscene_validator::validate_document(&doc);
+    assert!(!gate.has_errors(), "the load gate passes:\n{gate}");
+    let mut arena = Arena::new();
+    load_document(&doc, &mut arena);
+
+    // The chip is document node 2. Its FillA row captures the paint
+    // opacity as a Scale transform over the raw variable alpha, so the
+    // transform-applied initial equals the shipped literal (the record's
+    // invariant), and a future producer pushing a new variable alpha
+    // stays folded.
+    let fill_a = arena
+        .bindings()
+        .iter()
+        .find(|row| row.node.index() == 2 && row.channel == Channel::FillA)
+        .expect("the chip's FillA row exists");
+    assert_eq!(fill_a.transform, ScalarTransform::Scale(0.5));
+    let initial = arena.signals()[fill_a.signal.index()].initial;
+    assert_eq!(initial, 1.0, "the signal carries the raw variable alpha");
+
+    let chip = arena.committed().node_of(2);
+    let literal_alpha = match arena.fill(chip) {
+        Some(PaintKind::Solid { color }) => color.a,
+        other => panic!("expected a solid fill, got {other:?}"),
+    };
+    assert_eq!(
+        fill_a.transform.apply(initial),
+        literal_alpha,
+        "the bound channel's literal is the transform-applied initial"
+    );
+
+    // Attaching seeds every bound channel; the folded alpha must hold —
+    // no visible jump to full opacity.
+    let _live = dashlang::attach_live(&mut arena, Box::new(TaffySolver::new()));
+    match arena.fill(chip) {
+        Some(PaintKind::Solid { color }) => {
+            assert_eq!(color.a, 0.5, "the seeded alpha equals the shipped literal")
+        }
+        other => panic!("expected a solid fill, got {other:?}"),
+    }
+}

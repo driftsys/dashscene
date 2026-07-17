@@ -117,10 +117,11 @@ vocabulary, re-exported: the full §23 set (`X`/`Y`/`Width`/`Height`,
 `Gap`, and the four `Fill` channels — debt #201). A fill channel is
 paint-only and writes through a per-node fill shadow (one channel writes
 one component of a four-component color); `Gap` always solves. A
-binding's target is addressed by `dashcue`'s opaque `PropKey`, built by
-the engine-owned `dashscene_engine::prop_key` — the one packing and the
-one decoder everywhere (debt #208) — so `dashlang`, the engine, and
-`dashcue` speak one `(PropKey, f32)` language. The transform vocabulary
+binding's target is addressed by `dashcue`'s opaque `PropKey`, packed by
+core's `dashscene_core::prop_key` — the one packing and the one decoder
+everywhere, living beside `Channel` so no consumer needs the engine to
+build a key (debt #208) — so `dashlang`, the engine, and `dashcue` speak
+one `(PropKey, f32)` language. The transform vocabulary
 is the declarative `enum Transform`
 (`Identity`/`Scale`/`MapRange`/`Clamp`/`Format`/`Custom`);
 `Custom(ClosureId)` holds a `dashlang`-only closure in a side table so

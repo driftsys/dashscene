@@ -708,9 +708,22 @@ impl Walk<'_> {
         });
         // Where this Figma node landed — the join key for the binding
         // rows (story #167). A synthetic node without an id (a test
-        // shape) simply cannot be bound.
+        // shape) simply cannot be bound. The visible fill's paint opacity
+        // rides along: the lowering folded it into the literal's alpha,
+        // so a FillA binding must capture the same multiply.
         if let Some(id) = &node.id {
-            self.index_of_id.insert(id.clone(), (index, path.clone()));
+            let fill_opacity = match single_visible_paint(&node.fills) {
+                OnePaint::One(paint) => paint.opacity.unwrap_or(1.0),
+                OnePaint::None | OnePaint::Many => 1.0,
+            };
+            self.index_of_id.insert(
+                id.clone(),
+                bindings::LoweredNode {
+                    index,
+                    path: path.clone(),
+                    fill_opacity,
+                },
+            );
         }
 
         for construct in constructs {

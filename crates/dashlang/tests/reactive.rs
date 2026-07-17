@@ -583,3 +583,15 @@ fn attach_live_drives_a_loaded_arenas_bindings() {
         other => panic!("expected a solid fill, got {other:?}"),
     }
 }
+
+/// The authoring-side mirror of the load gate's `signal.name-duplicate`
+/// (probed at review, C4): a second `signal_named` under one name would
+/// make the by-name lookup silently shadow the first declaration, so it
+/// is refused at the declaration, by name — the #194 pattern.
+#[test]
+#[should_panic(expected = "is already declared")]
+fn a_duplicate_named_signal_is_refused_at_declaration() {
+    let mut scene = Scene::new();
+    let _first = scene.signal_named("size/gap", 16.0);
+    let _second = scene.signal_named("size/gap", 24.0);
+}

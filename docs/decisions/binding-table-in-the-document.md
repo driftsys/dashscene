@@ -26,7 +26,13 @@ is `[{ signal, node, channel, transform }]` — the §23 model, verbatim
 (`docs/decisions/bindings-are-explicit-and-flat.md`). The phase-1
 resolved literals are untouched: a `.dsb` with binding tables still
 renders correctly with no runtime that understands them, because every
-bound channel's literal is the signal's initial value. Signal _values_
+bound channel's literal is the binding's transform applied to the
+signal's initial. The transform is the identity everywhere except a
+bound fill's alpha under paint opacity: the lowering folds the paint's
+`opacity` into the shipped literal (`color.a * opacity`), so the FillA
+row captures the same multiply as a `Scale(opacity)` transform over the
+raw variable alpha — the seeded scene matches the literal, and a
+producer pushing a new variable value stays folded. Signal _values_
 never serialize (P1); a signal declaration's `initial` is authored
 intent — the value the document displays until a producer pushes.
 
@@ -95,9 +101,16 @@ One mechanism, two producers.
 
 ## Consequences
 
-- The scheduler address is the engine-owned `prop_key` everywhere:
-  `dashlang` deleted its private packing and `VariantFlip` validates
-  track keys through the one decoder (debts #207/#208).
+- The scheduler address is one packing everywhere: the math
+  (`prop_key`/`decode_prop_key`) lives in `dashscene-core` beside
+  `Channel`, over core types (a bare `u64` — core cannot depend on
+  `dashcue`); `dashscene-engine` exposes it as the typed
+  `dashcue::PropKey` and `VariantFlip` validates track keys through the
+  one decoder; `dashlang` deleted its private packing and builds keys
+  from core's (debts #207/#208, which said "engine-owned" — refined
+  here to core-owned math with an engine-typed surface, so `dashlang`'s
+  library keeps its core-plus-dashcue dependency set,
+  `docs/decisions/dashlang-flex-vocabulary.md` D3).
 - The `Channel` vocabulary lives in `dashscene-core`, completed with
   `Fill.*` and `Gap` (debt #201).
 - The wasm ABI version is 2; a stale `dashc_wasm.wasm` fails the version
@@ -118,6 +131,12 @@ One mechanism, two producers.
 - **A global mode selector instead of mode-qualified names** — rejected
   (choice 3): a document-level mode switch would move dark-pinned
   subtrees the designer pinned deliberately.
+- **The packing owned by the engine** — rejected: it would put
+  `dashlang`'s library on `dashscene-engine` for one pure function,
+  contradicting `docs/decisions/dashlang-flex-vocabulary.md` D3 (the
+  solver is injected; `cargo tree -p dashlang` shows core, not the
+  engine) and the crate map's dashlang-builds-on-core statement. The
+  math is a pure function over core types, so it lives in core.
 - **The join in dashc (vartable across the ABI)** — rejected (choice 4):
   the sidecar is the decided join input ("one mechanism, two consumers",
   `docs/decisions/token-resolution-phase-split.md`), the vartable

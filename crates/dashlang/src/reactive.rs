@@ -38,12 +38,15 @@ use dashscene_core::{
     Arena, AxisSizing, Color, Layout, LayoutMode, LayoutSolver, NodeId, PaintKind, Prop,
     ScalarTransform, SignalId, SolvedRect,
 };
-// The one engine item the reactive layer uses: the engine-owned PropKey
-// packing (debt #208). Building keys here through the same function the
-// FLIP uses is what gives one `(node, channel)` one `u64` everywhere.
-use dashscene_engine::prop_key;
 
 use crate::{Node, Scene};
+
+/// The scheduler key for one binding: core's one packing (debt #208),
+/// wrapped in `dashcue`'s typed key. The same math the engine's FLIP
+/// uses, so one `(node, channel)` yields one key everywhere.
+fn prop_key(node: NodeId, channel: Channel) -> PropKey {
+    PropKey(dashscene_core::prop_key(node, channel))
+}
 
 mod private {
     pub trait Sealed {}
@@ -1079,7 +1082,22 @@ impl Scene {
     /// into the document binding table, so a `dashlang` scene and an
     /// imported Figma document expose signals the same way — a Figma
     /// variable's mode-qualified name is exactly such a name.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `name` is already declared on this scene: the by-name
+    /// lookup would silently shadow one declaration, which is the exact
+    /// condition the load gate names `signal.name-duplicate` on a
+    /// serialized document — the authoring path refuses it the same way,
+    /// by name (P4).
     pub fn signal_named(&mut self, name: &str, initial: f32) -> Signal<f32> {
+        if self.scalar_names.iter().flatten().any(|n| n == name) {
+            panic!(
+                "signal_named({name:?}) is already declared on this scene: a by-name lookup \
+                 would silently shadow one declaration (the load gate names the same condition \
+                 signal.name-duplicate)"
+            );
+        }
         let signal = self.signal(initial);
         self.scalar_names[signal.id as usize] = Some(name.to_owned());
         signal

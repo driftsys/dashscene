@@ -1048,3 +1048,62 @@ fn a_duplicate_signal_name_is_named_and_anonymous_signals_are_not() {
     assert_eq!(duplicates.len(), 1, "two anonymous signals do not collide");
     assert_eq!(duplicates[0].at, Location::Signal(3));
 }
+
+#[test]
+fn a_binding_transform_this_build_does_not_know_is_named() {
+    // The BindingTransform union is append-only (Format joins at v0.8,
+    // per the schema comment), and the flatbuffer verifier accepts an
+    // unknown union tag as long as it carries a payload — so without
+    // this gate the loader's transform_of would panic on a document from
+    // a newer producer.
+    use dashbuf::{
+        Binding, BindingArgs, BindingChannel, BindingTransform, Document, DocumentArgs, Node,
+        NodeArgs, SignalDecl, SignalDeclArgs, TransformScale, TransformScaleArgs,
+    };
+
+    let mut b = FlatBufferBuilder::new();
+    let bare = Node::create(&mut b, &NodeArgs::default());
+    let nodes = b.create_vector(&[bare]);
+    let signal = SignalDecl::create(
+        &mut b,
+        &SignalDeclArgs {
+            name: None,
+            initial: 1.0,
+        },
+    );
+    let signals = b.create_vector(&[signal]);
+    // A stand-in payload for the tag this build does not know — what a
+    // v0.8 Format table would look like to a v0.7 reader.
+    let payload = TransformScale::create(&mut b, &TransformScaleArgs { factor: 1.0 });
+    let row = Binding::create(
+        &mut b,
+        &BindingArgs {
+            signal: 0,
+            node: 0,
+            channel: BindingChannel::Gap,
+            transform_type: BindingTransform(9),
+            transform: Some(payload.as_union_value()),
+        },
+    );
+    let bindings = b.create_vector(&[row]);
+    let document = Document::create(
+        &mut b,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            signals: Some(signals),
+            bindings: Some(bindings),
+            ..Default::default()
+        },
+    );
+    b.finish(document, None);
+    let bytes = b.finished_data().to_vec();
+
+    let report = validate_bytes(&bytes);
+    assert!(
+        report
+            .diagnostics()
+            .iter()
+            .any(|d| d.rule == rule::UNKNOWN_ENUM && d.message.contains("Binding.transform")),
+        "the unknown union tag is named, not defaulted:\n{report}"
+    );
+}

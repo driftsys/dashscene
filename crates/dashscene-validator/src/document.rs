@@ -166,6 +166,10 @@ pub fn validate_document(doc: &Document<'_>) -> Report {
             ));
         }
         check_enum!(report, &at, "Binding.channel", binding.channel());
+        // The transform union tag is append-only like every enum (Format
+        // joins at v0.8); the verifier accepts an unknown tag with a
+        // payload, and the loader resolves the tag unchecked.
+        check_enum!(report, &at, "Binding.transform", binding.transform_type());
     }
 
     // A text style's color is optional in the schema, so a producer can omit

@@ -255,7 +255,7 @@ fn rect_x(x: f32) -> SolvedRect {
     }
 }
 
-// -- The engine-owned prop key (debts #207/#208) -----------------------------
+// -- The one prop-key packing (debts #207/#208): core's math, typed here ------
 
 #[test]
 fn prop_key_round_trips_through_the_canonical_decoder() {

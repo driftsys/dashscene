@@ -67,9 +67,23 @@ pub enum BoundValue {
     Color { r: f32, g: f32, b: f32, a: f32 },
 }
 
-/// Where one lowered node landed: its document index and its diagnostic
-/// name path.
-pub(super) type IndexOfId = BTreeMap<String, (u32, String)>;
+/// Where one lowered node landed, and what the binding rows need to know
+/// about how it lowered.
+pub(super) struct LoweredNode {
+    /// The node's document index.
+    pub(super) index: u32,
+    /// The node's diagnostic name path.
+    pub(super) path: String,
+    /// The visible fill's paint `opacity` (1.0 when absent). The lowering
+    /// folds it into the shipped literal's alpha (`color_of`:
+    /// `color.a * opacity`), so a FillA binding must capture the same
+    /// multiply as its transform — otherwise the seeded scene would jump
+    /// to the raw variable alpha.
+    pub(super) fill_opacity: f32,
+}
+
+/// Figma node id → how it lowered, for every node the walk emitted.
+pub(super) type IndexOfId = BTreeMap<String, LoweredNode>;
 
 /// Applies the joined rows to the lowered document, appending
 /// `Document.signals` and `Document.bindings`, and returns the
@@ -85,7 +99,7 @@ pub(super) fn apply(
     let mut signal_of: HashMap<String, u32> = HashMap::new();
 
     for row in rows {
-        let Some((node, path)) = index_of_id.get(&row.node_id) else {
+        let Some(lowered) = index_of_id.get(&row.node_id) else {
             diagnostics.push(Diagnostic {
                 rule: rule::UNLOWERED_NODE,
                 severity: Severity::Warning,
@@ -98,6 +112,7 @@ pub(super) fn apply(
             });
             continue;
         };
+        let (node, path) = (&lowered.index, &lowered.path);
         let at = || Location::Node(NodePath::new(*node, path.clone()));
         let unsupported = |what: &str| Diagnostic {
             rule: rule::UNSUPPORTED_PROPERTY,
@@ -141,20 +156,31 @@ pub(super) fn apply(
                     )));
                     continue;
                 }
-                let components: [(&str, BindingChannel, f32); 4] = [
-                    (".r", BindingChannel::FillR, *r),
-                    (".g", BindingChannel::FillG, *g),
-                    (".b", BindingChannel::FillB, *b),
-                    (".a", BindingChannel::FillA, *a),
+                // The lowering folds the paint's opacity into the shipped
+                // literal's alpha (`color_of`), so the alpha channel's
+                // transform captures the same multiply over the raw
+                // variable alpha — the transform-applied initial equals
+                // the literal, and a producer pushing a new variable
+                // value stays folded. The other components are unfolded.
+                let alpha_transform = if lowered.fill_opacity == 1.0 {
+                    BindingTransform::Identity
+                } else {
+                    BindingTransform::Scale(lowered.fill_opacity)
+                };
+                let components: [(&str, BindingChannel, f32, BindingTransform); 4] = [
+                    (".r", BindingChannel::FillR, *r, BindingTransform::Identity),
+                    (".g", BindingChannel::FillG, *g, BindingTransform::Identity),
+                    (".b", BindingChannel::FillB, *b, BindingTransform::Identity),
+                    (".a", BindingChannel::FillA, *a, alpha_transform),
                 ];
-                for (suffix, channel, component) in components {
+                for (suffix, channel, component, transform) in components {
                     let name = format!("{}{suffix}", row.signal);
                     match intern_signal(doc, &mut signal_of, &name, component) {
                         Ok(signal) => doc.bindings.push(Binding {
                             signal,
                             node: *node,
                             channel,
-                            transform: BindingTransform::Identity,
+                            transform,
                         }),
                         Err(diagnostic) => diagnostics.push(diagnostic_at(diagnostic, at())),
                     }

@@ -40,9 +40,11 @@ Two consequences shape the API:
   of the bound `from → to` span, not absolute prop values — see
   `docs/decisions/dashcue-keyframe-values-are-progress-fractions.md`.
 - **`dashcue` has no dependencies.** Props are identified by an opaque
-  `PropKey(u64)` the caller encodes (the engine packs node index and
-  channel into it). This keeps the §9 dependency direction: consumers
-  depend on `dashcue`, never the reverse.
+  `PropKey(u64)` the caller encodes (the packing math is
+  `dashscene_core::prop_key` — node slot and channel wire code — and
+  `dashscene-engine` exposes it as this typed key; story #167). This
+  keeps the §9 dependency direction: consumers depend on `dashcue`,
+  never the reverse.
 
 Animated values are `f32` scalars. A multi-channel prop (a color, a
 rect) animates as one track per channel.

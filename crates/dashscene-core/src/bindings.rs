@@ -119,6 +119,34 @@ impl ScalarTransform {
     }
 }
 
+/// Packs one `(node, channel)` prop address into the opaque `u64` that
+/// `dashcue`'s `PropKey` wraps: the node's arena slot in the high bits,
+/// the [`Channel`] wire code in the low eight. This is the **one**
+/// packing (debt #208): `dashscene-engine` exposes it as the typed
+/// `dashcue::PropKey` for FLIP tracks, and `dashlang`'s reactive layer
+/// builds its scheduler keys from it, so one `(node, channel)` yields
+/// one key everywhere. It lives here — beside [`Channel`], over core
+/// types only — because core cannot depend on `dashcue` and both
+/// consumers already depend on core
+/// (`docs/decisions/binding-table-in-the-document.md`).
+pub fn prop_key(node: NodeId, channel: Channel) -> u64 {
+    ((node.index() as u64) << 8) | channel.code() as u64
+}
+
+/// Decodes a [`prop_key`]-packed address back to its node slot and
+/// channel — the one canonical decoder (debts #207/#208). Returns `None`
+/// when the low byte is not a known [`Channel`] code or the slot does
+/// not fit an arena index: such a key was not built by [`prop_key`], and
+/// the caller names the failure (P4) rather than mis-binding it.
+pub fn decode_prop_key(key: u64) -> Option<(u32, Channel)> {
+    let channel = Channel::from_code((key & 0xFF) as u8)?;
+    let slot = key >> 8;
+    if slot > u32::MAX as u64 {
+        return None;
+    }
+    Some((slot as u32, channel))
+}
+
 /// Stable handle to a signal declaration in one [`crate::Arena`],
 /// returned by `Txn::declare_signal`. Only meaningful for the arena that
 /// produced it.
@@ -158,6 +186,24 @@ pub struct Binding {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prop_keys_round_trip_through_the_canonical_decoder() {
+        // NodeId cannot be constructed here (its field is private to the
+        // arena), so the round trip over real ids lives in the arena
+        // integration tests and in dashscene-engine's; this pins the
+        // decode-refusal contract on raw keys.
+        assert_eq!(decode_prop_key(0xFF), None, "0xFF is no channel code");
+        assert_eq!(
+            decode_prop_key((7 << 8) | Channel::Gap.code() as u64),
+            Some((7, Channel::Gap))
+        );
+        assert_eq!(
+            decode_prop_key((u32::MAX as u64 + 1) << 8),
+            None,
+            "a slot past u32 was not packed by prop_key"
+        );
+    }
 
     #[test]
     fn channel_codes_round_trip() {

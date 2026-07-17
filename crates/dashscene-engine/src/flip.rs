@@ -37,31 +37,24 @@ use rustc_hash::FxHashMap;
 /// address a prop the same way (debt #208).
 const RECT_CHANNELS: [Channel; 4] = [Channel::X, Channel::Y, Channel::Width, Channel::Height];
 
-/// The `dashcue` prop key for one channel of one node. `dashscene-engine`
-/// owns this packing (`docs/design/dashcue.md`: "the engine packs node index
-/// and channel into [the `PropKey`]"), and it is the only packing: the
-/// reactive layer (`dashlang`) builds its keys here too, so one
-/// `(node, channel)` yields one `u64` everywhere (debt #208). The node's
-/// arena slot goes in the high bits, the [`Channel`] wire code in the low
-/// eight — room for the full §23 channel vocabulary, decoded by
-/// [`decode_prop_key`].
+/// The `dashcue` prop key for one channel of one node — core's one
+/// packing (`dashscene_core::prop_key`: node slot in the high bits, the
+/// [`Channel`] wire code in the low eight; debt #208), exposed as the
+/// typed `dashcue::PropKey` FLIP tracks carry. The math lives in core,
+/// beside `Channel`, because core cannot depend on `dashcue` and every
+/// consumer (this engine, `dashlang`'s reactive layer) already depends
+/// on core — so one `(node, channel)` yields one `u64` everywhere.
 pub fn prop_key(node: NodeId, channel: Channel) -> PropKey {
-    PropKey(((node.index() as u64) << 8) | channel.code() as u64)
+    PropKey(dashscene_core::prop_key(node, channel))
 }
 
-/// Decodes an engine-packed [`PropKey`] back to its node slot and channel
-/// — the one canonical decoder for a key that crossed a table or a
-/// document (debt #207/#208). Returns `None` when the low byte is not a
-/// known [`Channel`] code or the slot does not fit an arena index: such a
-/// key was not built by [`prop_key`], and the caller names the failure
-/// (P4) rather than mis-binding it.
+/// Decodes a packed [`PropKey`] back to its node slot and channel —
+/// core's canonical decoder (`dashscene_core::decode_prop_key`), over the
+/// typed key (debts #207/#208). Returns `None` when the key was not built
+/// by [`prop_key`]; the caller names the failure (P4) rather than
+/// mis-binding it.
 pub fn decode_prop_key(key: PropKey) -> Option<(u32, Channel)> {
-    let channel = Channel::from_code((key.0 & 0xFF) as u8)?;
-    let slot = key.0 >> 8;
-    if slot > u32::MAX as u64 {
-        return None;
-    }
-    Some((slot as u32, channel))
+    dashscene_core::decode_prop_key(key.0)
 }
 
 /// Drives the minimal FLIP for a variant switch: bind the declared

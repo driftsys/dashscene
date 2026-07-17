@@ -42,7 +42,9 @@ pub use arena::{
     Arena, AxisSizing, CrossAxisAlign, EdgeInsets, Layout, LayoutMode, LayoutSolver, MainAxisAlign,
     NodeId, Prop, SolvedRect, TextStyle, Txn, VariantMember, VariantSetId, VariantValue,
 };
-pub use bindings::{Binding, Channel, ScalarTransform, SignalDecl, SignalId};
+pub use bindings::{
+    Binding, Channel, ScalarTransform, SignalDecl, SignalId, decode_prop_key, prop_key,
+};
 pub use committed::{
     ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CommittedScene, CornerRadii, PaintEntry,
     PaintIndex, PaintKind, PaintTable, RectEntry,

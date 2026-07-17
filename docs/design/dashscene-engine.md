@@ -179,12 +179,13 @@ wiring.
 switch (or any re-solve) produces. It is a thin engine-side binder onto
 `dashcue`, not standalone geometry math and not a `dashcue` producer:
 
-- `prop_key(node, channel) -> dashcue::PropKey` packs
-  `(node slot << 8) | channel code` into `dashcue`'s opaque key, over
-  `dashscene_core::Channel` — the document binding vocabulary. Since
-  story #167 this is the **only** packing: `dashlang`'s reactive layer
-  builds its keys here too, and `decode_prop_key` is the one canonical
-  decoder (debts #207/#208).
+- `prop_key(node, channel) -> dashcue::PropKey` exposes core's one
+  packing (`dashscene_core::prop_key`: `(node slot << 8) | channel
+  code`, beside `Channel` — the document binding vocabulary) as the
+  typed `dashcue` key FLIP tracks carry; `decode_prop_key` wraps core's
+  one canonical decoder. Since story #167 there is no other packing —
+  `dashlang`'s reactive layer builds its keys from the same core math
+  (debts #207/#208).
 - `VariantFlip::start(before, after, &dashcue::VariantTransition)` takes the
   two solved layouts as `&[(NodeId, SolvedRect)]` slices and binds a
   caller-declared transition: it resolves each track's `from`/`to` from the

@@ -3,7 +3,8 @@
 //! live here (P1) — endpoints bind at commit time.
 
 /// Opaque per-track key. The caller encodes prop identity into it (the
-/// engine packs node index and channel); `dashcue` only compares it.
+/// packing math is `dashscene_core::prop_key` — node slot and channel —
+/// and the engine exposes it as this key); `dashcue` only compares it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PropKey(pub u64);
 
