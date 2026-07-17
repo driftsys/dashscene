@@ -52,7 +52,8 @@ revision, which is why each one says which revision produced it.
 
 The ritual has fired off-cycle twice, ahead of its own slice's close: v0.4 was
 revised by a design session before epic #19 closed, and v0.7 was revised at
-the v0.3 close even though epic #36 itself is still open. A slice can be
+the v0.3 close even though epic #36 had not yet closed at that point. A
+slice can be
 revised earlier than its own close if something learned elsewhere bears on it;
 the mechanism is not strictly "close, then revise the next one" — it is
 "revise whenever the ground shifts enough that carrying the old shape forward
@@ -96,7 +97,9 @@ Revised at close (`docs/archive/2026-07-14-scope-decisions.md` §18):
 - The content-addressed asset model supersedes the inline `Document.images`
   field, but v0.1 through v0.3 keep the inline field to keep those slices
   small. Migration is deferred to v0.7
-  ([`decisions/asset-model-content-addressed-blobs.md`](decisions/asset-model-content-addressed-blobs.md)).
+  ([`decisions/asset-model-content-addressed-blobs.md`](decisions/asset-model-content-addressed-blobs.md));
+  at the v0.7 close it was deferred again, past v0 (see v0.7's close note
+  and v0.8's revision).
 
 ### v0.2 — flex core — closed
 
@@ -291,11 +294,13 @@ the same story, both firing when imported documents first carry those
 constructs — and the v0.7 breakdown is re-checked at this close (see v0.7
 below).
 
-### v0.7 — importer catch-up — open
+### v0.7 — importer catch-up — closed
 
-**Epic #36.** Closes [`E4`](specification/05-qualification.md). (`E6` was
-scheduled here in the original plan but landed early at v0.3 — see
-[`specification/05-qualification.md`](specification/05-qualification.md).)
+**Epic #36.** Closes [`E4`](specification/05-qualification.md) and
+[`E6`](specification/05-qualification.md): `E6`'s core byte-identity proof
+landed early, at v0.3, and story #40 completed the end-to-end importer-path
+proof at this slice — see
+[`specification/05-qualification.md`](specification/05-qualification.md).
 
 Delivers, re-ordered at the v0.3 close (see v0.3's revision note above for
 why):
@@ -315,6 +320,8 @@ why):
 - The asset model's migration to content-addressed blobs, deferred here from
   v0.1
   ([`decisions/asset-model-content-addressed-blobs.md`](decisions/asset-model-content-addressed-blobs.md)).
+  Planned for this slice but not landed — re-anchored past v0 at the close
+  (see the close note below).
 - Bindings authored in Figma Variables (§23) — cannot move earlier, since it
   needs the annotator plugin's token-export command that the token pipeline
   above already requires.
@@ -336,15 +343,63 @@ drop, so the text lowering names fallback and the extended-Arabic sweep
 (#228) as explicit non-scope
 ([`decisions/font-fallback-deferred-past-v06.md`](decisions/font-fallback-deferred-past-v06.md)).
 
-The wasm ABI this slice crosses is already a settled boundary, not an open
-question: it was designed and pinned at v0.3
-([`decisions/dashc-wasm-abi.md`](decisions/dashc-wasm-abi.md)). This slice
-widens what crosses it, not the contract.
+The wasm ABI this slice crosses was designed and pinned at v0.3
+([`decisions/dashc-wasm-abi.md`](decisions/dashc-wasm-abi.md)). The slice
+mostly widened what crosses it; the one contract change — the binding-row
+request section, story #167 — evolved it the way the record allows, behind
+a version bump to wire 2.
 
 Watch: the Figma access PAT is an external, unmonitored dependency this slice
 leans on far more heavily than v0.3 did — it has already expired unnoticed
 once. Rotation policy:
 [`decisions/figma-access-plan-and-pat-policy.md`](decisions/figma-access-plan-and-pat-policy.md).
+
+Closed 2026-07-17 — the twelve stories of the revised breakdown all landed.
+`E4` is met (a dirty Figma file produces a full diagnostic report and no
+document, backed by the complete named-rule set — story #41; the strict
+waiver gate the same story delivered is not yet wired and does not tighten
+`E4`, issue #262), and story #40 completed `E6`'s end-to-end importer-path
+proof on schedule
+([`specification/05-qualification.md`](specification/05-qualification.md)).
+The lowering widened to auto-layout, with grid, wrap, and baseline staying
+refusal-pinned until v0.8
+([`decisions/figma-flex-lowering.md`](decisions/figma-flex-lowering.md));
+components, instances, and declared roots lower
+([`decisions/figma-component-lowering.md`](decisions/figma-component-lowering.md));
+cross-file library components resolve by declared key
+([`decisions/figma-cross-file-library-resolution.md`](decisions/figma-cross-file-library-resolution.md));
+text, basic shapes, and trim layers lower; emission is deterministic per
+artifact; token resolution runs both phases — the resolved-literal sidecar
+and the plugin-vartable join — and bindings authored in Figma Variables
+reach the runtime as document constructs over wasm ABI wire version 2
+([`decisions/binding-table-in-the-document.md`](decisions/binding-table-in-the-document.md)).
+Multi-font fallback landed as its own typeset story, as the v0.6-close
+revision placed it.
+
+The epic also carried the content-addressed asset migration (#107, deferred
+here from v0.1 and not among the twelve). It never started — displaced by
+the three stories the v0.3-close revision added — and was re-anchored past
+v0 at this close; v0.8's revision note records why it does not enter there.
+
+The slice's last four PRs merged without GitHub Actions. From 2026-07-17,
+Actions was billing-blocked: every job failed in about two seconds, before
+any step ran. With the user's explicit approval, PRs #247, #249, #250,
+and #251 merged on the coordinator's full local suite — `just verify`,
+`just wasm`, `just deno-check`, `just deno-test`, and the tool-gated
+atlas-pipeline tests — with an exception comment recorded on each PR. The
+local suite covers everything CI covers except the cross-machine
+atlas-reproducibility proof, which needs two independent runners; no atlas
+bytes changed in those diffs, so the uncovered proof was not weakened by
+them. The outstanding step — one full retroactive CI run on main once
+billing is restored — is tracked as issue #263.
+
+Phase-end steps complete: epic #36 and its milestone are closed; the
+record-named deferrals from the bindings, cross-file, and waiver work are
+filed (issues #252–#262); the leftover v0.7 items are re-anchored to the
+slice where each next matters (#105 into the v0.8 layout story, #82 to
+v0.9, #228 and #107 past v0 — see v1 below); the four manual Figma fixture
+authorings are tracked (issue #265); and the v0.8 breakdown is revised at
+this close (see v0.8 below).
 
 ### v0.8 — fidelity — open
 
@@ -353,24 +408,47 @@ once. Rotation policy:
 Delivers: layout fidelity (wrap, grid spans, baseline — including the Taffy
 baseline-behavior question tracked in
 [`technotes/open-questions.md`](technotes/open-questions.md)); masks and
-group opacity; baked drop and inner shadows; and the stress corpus itself,
-green.
+group opacity; baked drop and inner shadows — the vocabulary rendering live
+in the Skia painter at this slice, compile-time baking at v1; and the
+stress corpus itself, green.
 
 Depends on: v0.2 (layout), v0.3 (paint), v0.4 (variants — the
 topology-change case).
 
-Revised (`docs/archive/2026-07-14-scope-decisions.md` §23): `Prop::Opacity` is scoped here,
-inside the masks-and-group-opacity work, paired with the compiler's overlap
-rule (non-overlapping children get per-node opacity free; overlapping is
-budgeted render-target work — the budget value itself is also tracked in
-[`technotes/open-questions.md`](technotes/open-questions.md)). Its paired
-prop, `Prop::Visible`, already landed at v0.4, because the bounded-pool and
-stacking-container cases needed it sooner. The two split deliberately:
-`Visible` is a layout prop the solver consumes, `Opacity` is a paint prop
-that never reaches Taffy, and there is no third CSS-style
-`visibility: hidden` state.
+Revised at the v0.7 close (2026-07-17), against the as-built importer:
 
-**Provisional otherwise** — not yet revised; stands until v0.7 closes.
+- Layout fidelity is two-sided.
+  [`decisions/figma-flex-lowering.md`](decisions/figma-flex-lowering.md)
+  refuses grid, wrap, and baseline by name in the `dashc` lowering until
+  this slice, so the layout story splits: an engine-plus-schema half that
+  solves the three constructs, and a `dashc` half that un-pins the three
+  refusals into the new schema fields.
+- A v0.7 engine defect became an `E3` prerequisite. Taffy 0.12 mis-sums a
+  hug-sized container over the negative margins the negative-gap lowering
+  produces (debt #236); the negative-gap corpus case — one of `E3`'s six —
+  cannot go green until it is fixed. The fix lands in the engine half of
+  the layout work.
+- `Prop::Opacity` stays in this slice, as the design session that decided
+  the split scoped it (`docs/archive/2026-07-14-scope-decisions.md` §23) —
+  inside the masks-and-group-opacity work, paired with the compiler's
+  overlap rule (non-overlapping children get per-node opacity free;
+  overlapping is a budgeted render target — the budget value is tracked in
+  [`technotes/open-questions.md`](technotes/open-questions.md)). Its paired
+  prop, `Prop::Visible`, already landed at v0.4, because the bounded-pool
+  and stacking-container cases needed it sooner. The two split
+  deliberately: `Visible` is a layout prop the solver consumes, `Opacity`
+  is a paint prop that never reaches Taffy, and there is no third CSS-style
+  `visibility: hidden` state.
+- Masks/opacity and shadows each carry a `dashc`-lowering obligation v0.7
+  exposed but the original breakdown omitted: the lowering rejects node
+  opacity, mask nodes, effects, and stacked fills. Those un-pins fold into
+  the two paint stories.
+- The content-addressed asset model does not enter here. This slice's
+  shadows render live and compile-time baking is v1 (story #45's scope), so
+  the slice adds no new consumer that needs the content-addressed model;
+  the migration (#107) stays deferred rather than building ahead of the
+  plan
+  ([`decisions/asset-model-content-addressed-blobs.md`](decisions/asset-model-content-addressed-blobs.md)).
 
 ### v0.9 — parity — open
 
