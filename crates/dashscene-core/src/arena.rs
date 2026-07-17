@@ -17,8 +17,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::bindings::{Binding, Channel, ScalarTransform, SignalDecl, SignalId};
 use crate::committed::{
     ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CommittedScene, CornerRadii, GroupComposite,
-    ImageAsset, ImageTable, PaintEntry, PaintIndex, PaintKind, PaintTable, RectEntry, Stroke,
-    StrokeAlign, Vec2,
+    ImageAsset, ImageTable, PaintEntry, PaintIndex, PaintKind, PaintTable, RectEntry, Shadow,
+    Stroke, StrokeAlign, Vec2,
 };
 
 /// Stable handle to a node in one [`Arena`]. Returned by
@@ -253,6 +253,14 @@ pub enum Prop {
         bottom_right: f32,
         bottom_left: f32,
     },
+    /// The node's drop and inner shadows, in paint order (v0.8, story
+    /// #45, `docs/decisions/effects-vocabulary-shadows.md`). Replaces the
+    /// whole list — an empty vec clears the node's shadows. Paint intent
+    /// like fill/stroke/corners: a shadow depends only on the node's own
+    /// box and corners, so commit copies it straight onto the paint-pool
+    /// entry with no cross-node resolution (unlike a mask or group
+    /// opacity).
+    Shadows(Vec<Shadow>),
     /// Whether the node clips its children to its own (rounded) box
     /// (`Paint.clip`, docs/design/architecture.md). Intent only: commit resolves it
     /// into the per-rect clip regions boundary B carries, because a flat
@@ -422,6 +430,10 @@ struct NodeData {
     fill: Option<PaintKind>,
     stroke: Option<Stroke>,
     corners: CornerRadii,
+    /// The node's drop and inner shadows, in paint order (v0.8, story
+    /// #45). Beside the scalar paint fields rather than inside them — it
+    /// is variable-length — the same split as `text`. Empty = no shadows.
+    shadows: Vec<Shadow>,
     /// "This node clips its children to its own box" — intent, resolved
     /// at commit (issue #97).
     clip: bool,
@@ -849,6 +861,7 @@ impl Txn<'_> {
             fill: None,
             stroke: None,
             corners: CornerRadii::default(),
+            shadows: Vec::new(),
             clip: false,
             opacity: 1.0,
             mask: false,
@@ -986,6 +999,7 @@ impl Txn<'_> {
                     bottom_left,
                 }
             }
+            Prop::Shadows(shadows) => data.shadows = shadows,
             Prop::Clip(v) => data.clip = v,
             Prop::Text(s) => data.text = Some(s),
             Prop::TextStyle(ts) => data.text_style = Some(ts),
@@ -1438,6 +1452,11 @@ impl Txn<'_> {
                             fill,
                             stroke: node.stroke,
                             corners: node.corners,
+                            // Shadows are not variant-overridable (the
+                            // variant vocabulary is X/Y/W/H/Fill), so they
+                            // come straight from the node. Cloned in the
+                            // cache-miss arm only, like the fill's stops.
+                            shadows: node.shadows.clone(),
                         }
                     };
                     intern_paint(&mut back_paints, &mut paint_map, entry)
@@ -1682,9 +1701,11 @@ enum PropClass {
 
 fn prop_class(prop: &Prop) -> PropClass {
     match prop {
-        Prop::Fill(_) | Prop::FillWith(_) | Prop::Stroke(_) | Prop::Corners { .. } => {
-            PropClass::Paint
-        }
+        Prop::Fill(_)
+        | Prop::FillWith(_)
+        | Prop::Stroke(_)
+        | Prop::Corners { .. }
+        | Prop::Shadows(_) => PropClass::Paint,
         Prop::Clip(_) => PropClass::ClipFlag,
         Prop::Mask(_) => PropClass::MaskFlag,
         Prop::Visible(_) => PropClass::VisibleFlag,
@@ -1844,6 +1865,15 @@ fn paint_key(entry: &PaintEntry) -> PaintKey {
     }
 
     key.extend(corner_key(entry.corners));
+
+    key.push(entry.shadows.len() as u32);
+    for shadow in &entry.shadows {
+        key.push(shadow.kind as u32);
+        key.extend(vec2_key(shadow.offset));
+        key.push(shadow.blur.to_bits());
+        key.push(shadow.spread.to_bits());
+        key.extend(color_key(shadow.color));
+    }
     key
 }
 

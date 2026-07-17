@@ -8,7 +8,8 @@
 use dashpaint::{
     ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CornerRadii, GlyphRunTable, Gradient,
     GradientKind, GradientStop, GroupComposite, ImageAsset, ImageFormat, ImageTable, PaintEntry,
-    PaintIndex, PaintKind, PaintTable, RectEntry, ScaleMode, Stroke, StrokeAlign, Vec2,
+    PaintIndex, PaintKind, PaintTable, RectEntry, ScaleMode, Shadow, ShadowKind, Stroke,
+    StrokeAlign, Vec2,
 };
 use dashscene_validator::{
     Location, RENDER_TARGET_BUDGET_PLACEHOLDER, Report, Severity, rule, validate_scene,
@@ -594,4 +595,99 @@ fn text_alongside_a_render_target_group_is_named_a_limitation() {
         &GlyphRunTable::new(),
     );
     assert!(!quiet.has(rule::TEXT_OUTSIDE_GROUP), "{quiet}");
+}
+
+/// A paint entry carrying one shadow, over a plain red fill.
+fn shadowed(shadow: Shadow) -> PaintEntry {
+    PaintEntry {
+        shadows: vec![shadow],
+        ..PaintEntry::solid(red())
+    }
+}
+
+fn drop_shadow() -> Shadow {
+    Shadow {
+        kind: ShadowKind::Drop,
+        offset: Vec2 { x: 0.0, y: 4.0 },
+        blur: 8.0,
+        spread: 1.0,
+        color: Color {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 0.25,
+        },
+    }
+}
+
+#[test]
+fn a_well_formed_shadow_produces_no_diagnostics() {
+    let report = check_one(100.0, 50.0, shadowed(drop_shadow()));
+    assert!(report.is_empty(), "unexpected diagnostics:\n{report}");
+}
+
+#[test]
+fn a_negative_blur_radius_is_named() {
+    let report = check_one(
+        100.0,
+        50.0,
+        shadowed(Shadow {
+            blur: -4.0,
+            ..drop_shadow()
+        }),
+    );
+    assert!(report.has(rule::SHADOW_INVALID_GEOMETRY), "{report}");
+    assert!(report.has_errors());
+}
+
+#[test]
+fn a_non_finite_offset_is_named() {
+    let report = check_one(
+        100.0,
+        50.0,
+        shadowed(Shadow {
+            offset: Vec2 {
+                x: f32::NAN,
+                y: 0.0,
+            },
+            ..drop_shadow()
+        }),
+    );
+    assert!(report.has(rule::SHADOW_INVALID_GEOMETRY), "{report}");
+}
+
+#[test]
+fn a_shadow_color_channel_out_of_range_is_named() {
+    let report = check_one(
+        100.0,
+        50.0,
+        shadowed(Shadow {
+            color: Color {
+                r: 1.5,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0,
+            },
+            ..drop_shadow()
+        }),
+    );
+    assert!(report.has(rule::SHADOW_COLOR_OUT_OF_RANGE), "{report}");
+}
+
+#[test]
+fn a_negative_spread_is_allowed() {
+    // CSS/Figma spread may be negative (it shrinks the shadow); only the
+    // blur radius is required non-negative.
+    let report = check_one(
+        100.0,
+        50.0,
+        shadowed(Shadow {
+            spread: -3.0,
+            ..drop_shadow()
+        }),
+    );
+    assert!(
+        !report.has(rule::SHADOW_INVALID_GEOMETRY),
+        "a negative spread is legal:\n{report}"
+    );
 }

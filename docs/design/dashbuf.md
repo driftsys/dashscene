@@ -140,7 +140,13 @@ All types are generated from `crates/dashbuf/schema/dashbuf.fbs`:
   `color: Color (required)`; solid-only at v0.3.
 - `Image` (table) — `format: ImageFormat`, `bytes: [ubyte]`.
 - `Paint` (table) — one pool entry: `fill: Fill`, `stroke: Stroke`,
-  `corners: CornerRadii`, `clip: bool = false`.
+  `corners: CornerRadii`, `clip: bool = false`, `shadows: [Shadow]` (v0.8,
+  story #45; absent = no shadows, so a pre-v0.8 entry emits unchanged).
+- `ShadowKind` (`uint8` enum, v0.8) — `Drop`, `Inner`. `Shadow` (table,
+  v0.8) — one drop or inner shadow: `kind`, `offset: Vec2`, `blur: float32`
+  (non-negative Gaussian radius), `spread: float32`, `color: Color
+  (required)`. Authored intent; the resolved shadow shape is a painter
+  result (P1) — `docs/decisions/effects-vocabulary-shadows.md`.
 - `TextStyle` (table) — one text-style-pool entry: `family: string
   (required)` (font family name; the verifier rejects a family-less
   style at the load gate — P4, the same mechanism as `Gradient`'s

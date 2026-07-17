@@ -10,7 +10,8 @@
 pub use dashpaint::{
     ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CornerRadii, Gradient, GradientKind,
     GradientStop, GroupComposite, ImageAsset, ImageFormat, ImageTable, Mat23, PaintEntry,
-    PaintIndex, PaintKind, PaintTable, RectEntry, ScaleMode, Stroke, StrokeAlign, Vec2,
+    PaintIndex, PaintKind, PaintTable, RectEntry, ScaleMode, Shadow, ShadowKind, Stroke,
+    StrokeAlign, Vec2,
 };
 
 use std::sync::Arc;

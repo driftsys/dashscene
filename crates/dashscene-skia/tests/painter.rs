@@ -1121,3 +1121,351 @@ fn a_glyph_runs_free_path_opacity_dims_the_text() {
         "the 0.5 run inks fewer near-opaque pixels ({half} vs {full})",
     );
 }
+
+/// A drop shadow inks pixels outside the node's own box, in the offset
+/// direction, and leaves the far side untouched (story #45).
+#[test]
+fn a_drop_shadow_inks_behind_and_outside_the_node() {
+    use dashscene_core::{Shadow, ShadowKind};
+
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let node = txn.add_node(None, Some("card"));
+    txn.set_prop(node, Prop::X(8.0));
+    txn.set_prop(node, Prop::Y(8.0));
+    txn.set_prop(node, Prop::Width(16.0));
+    txn.set_prop(node, Prop::Height(16.0));
+    txn.set_prop(node, Prop::Fill(RED));
+    txn.set_prop(
+        node,
+        Prop::Shadows(vec![Shadow {
+            kind: ShadowKind::Drop,
+            offset: Vec2 { x: 4.0, y: 4.0 },
+            blur: 4.0,
+            spread: 0.0,
+            color: Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0,
+            },
+        }]),
+    );
+    txn.commit();
+
+    let scene = arena.committed();
+    let mut painter = SkiaPainter::new(32, 32);
+    painter.paint(
+        scene.rects(),
+        scene.paints(),
+        &ImageTable::new(),
+        scene.clips(),
+        &[],
+        &GlyphRunTable::new(),
+        None,
+    );
+    let rgba = painter.rgba_bytes();
+
+    // The fill still covers the box interior.
+    assert_eq!(pixel(&rgba, 32, 16, 16), RED_RGBA, "the fill is unchanged");
+    // Just past the box's bottom-right (box ends at 24), in the offset
+    // direction: the shadow inks it.
+    assert!(
+        pixel(&rgba, 32, 26, 26)[3] > 0,
+        "the drop shadow inks outside the box, toward the offset"
+    );
+    // The opposite corner, away from the offset, stays clear.
+    assert_eq!(
+        pixel(&rgba, 32, 2, 2),
+        TRANSPARENT_RGBA,
+        "no shadow on the far side of the node"
+    );
+}
+
+/// An inner shadow rings the inside edge and fades toward the center, so
+/// the center is lighter than a pixel near the edge (story #45).
+#[test]
+fn an_inner_shadow_darkens_the_edge_not_the_center() {
+    use dashscene_core::{Shadow, ShadowKind};
+
+    const WHITE: Color = Color {
+        r: 1.0,
+        g: 1.0,
+        b: 1.0,
+        a: 1.0,
+    };
+
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let node = txn.add_node(None, Some("well"));
+    txn.set_prop(node, Prop::X(8.0));
+    txn.set_prop(node, Prop::Y(8.0));
+    txn.set_prop(node, Prop::Width(16.0));
+    txn.set_prop(node, Prop::Height(16.0));
+    txn.set_prop(node, Prop::Fill(WHITE));
+    txn.set_prop(
+        node,
+        Prop::Shadows(vec![Shadow {
+            kind: ShadowKind::Inner,
+            offset: Vec2 { x: 0.0, y: 0.0 },
+            blur: 4.0,
+            spread: 0.0,
+            color: Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0,
+            },
+        }]),
+    );
+    txn.commit();
+
+    let scene = arena.committed();
+    let mut painter = SkiaPainter::new(32, 32);
+    painter.paint(
+        scene.rects(),
+        scene.paints(),
+        &ImageTable::new(),
+        scene.clips(),
+        &[],
+        &GlyphRunTable::new(),
+        None,
+    );
+    let rgba = painter.rgba_bytes();
+
+    let center = pixel(&rgba, 32, 16, 16);
+    let edge = pixel(&rgba, 32, 9, 9);
+    // The inner shadow (black) darkens the edge; the center stays near the
+    // white fill.
+    assert!(
+        center[0] > edge[0],
+        "the inner shadow darkens the edge ({}) more than the center ({})",
+        edge[0],
+        center[0]
+    );
+    // And it stays inside the shape: a pixel outside the node is untouched.
+    assert_eq!(
+        pixel(&rgba, 32, 2, 2),
+        TRANSPARENT_RGBA,
+        "an inner shadow does not leak outside the node"
+    );
+}
+
+/// Renders a single node (a `size`×`size` box at (bx,by,bw,bh)) with one
+/// drop shadow, onto a `dim`×`dim` transparent surface, and returns the
+/// RGBA readback. `stroke` optionally adds an outside stroke.
+fn one_shadow(
+    dim: i32,
+    bx: f32,
+    by: f32,
+    bw: f32,
+    bh: f32,
+    shadow: dashscene_core::Shadow,
+    stroke: Option<dashscene_core::Stroke>,
+) -> Vec<u8> {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let node = txn.add_node(None, Some("card"));
+    txn.set_prop(node, Prop::X(bx));
+    txn.set_prop(node, Prop::Y(by));
+    txn.set_prop(node, Prop::Width(bw));
+    txn.set_prop(node, Prop::Height(bh));
+    txn.set_prop(node, Prop::Fill(RED));
+    if let Some(s) = stroke {
+        txn.set_prop(node, Prop::Stroke(s));
+    }
+    txn.set_prop(node, Prop::Shadows(vec![shadow]));
+    txn.commit();
+
+    let scene = arena.committed();
+    let mut painter = SkiaPainter::new(dim, dim);
+    painter.paint(
+        scene.rects(),
+        scene.paints(),
+        &ImageTable::new(),
+        scene.clips(),
+        &[],
+        &GlyphRunTable::new(),
+        None,
+    );
+    painter.rgba_bytes()
+}
+
+/// P1: a drop shadow casts from the stroked silhouette, so an outside
+/// stroke widens the shadow past the fill box.
+#[test]
+fn a_drop_shadow_casts_from_the_outside_stroke_silhouette() {
+    use dashscene_core::{Shadow, ShadowKind, Stroke, StrokeAlign};
+
+    let shadow = Shadow {
+        kind: ShadowKind::Drop,
+        offset: Vec2 { x: 0.0, y: 8.0 },
+        blur: 0.0,
+        spread: 0.0,
+        color: Color {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        },
+    };
+    let stroke = Stroke {
+        width: 4.0,
+        align: StrokeAlign::Outside,
+        color: Color {
+            r: 0.0,
+            g: 1.0,
+            b: 0.0,
+            a: 1.0,
+        },
+    };
+    // node fill box (16,16)-(32,32); outside stroke widens the silhouette to
+    // (12,12)-(36,36); the shadow offsets that down by 8 -> (12,20)-(36,44).
+    let rgba = one_shadow(48, 16.0, 16.0, 16.0, 16.0, shadow, Some(stroke));
+
+    // x in [12,16) at y=42 is left of the fill box, below the stroke, and
+    // inked ONLY because the shadow casts from the stroked silhouette. With
+    // the bare fill box the shadow's left edge would be x=16 and this pixel
+    // would be transparent.
+    assert!(
+        pixel(&rgba, 48, 13, 42)[3] > 0,
+        "the drop shadow reaches the stroke-widened left edge"
+    );
+    // Far outside even the widened shadow: clear.
+    assert_eq!(
+        pixel(&rgba, 48, 2, 2),
+        TRANSPARENT_RGBA,
+        "the shadow does not ink the far corner"
+    );
+}
+
+/// T4: a zero-blur shadow has a hard edge — a pixel one step outside the
+/// shadow box is fully transparent (a blurred shadow would bleed there).
+#[test]
+fn a_zero_blur_shadow_has_a_hard_edge() {
+    use dashscene_core::{Shadow, ShadowKind};
+
+    let shadow = Shadow {
+        kind: ShadowKind::Drop,
+        offset: Vec2 { x: 0.0, y: 0.0 },
+        blur: 0.0,
+        spread: 4.0,
+        color: Color {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        },
+    };
+    // node (16,16)-(32,32); spread 4 -> shadow box (12,12)-(36,36).
+    let rgba = one_shadow(48, 16.0, 16.0, 16.0, 16.0, shadow, None);
+
+    // The spread band left of the fill: pixel 12 is inside the box, pixel 11
+    // is exactly outside. Zero blur -> pixel 11 is fully transparent.
+    assert!(
+        pixel(&rgba, 48, 13, 24)[3] > 0,
+        "inside the zero-blur shadow"
+    );
+    assert_eq!(
+        pixel(&rgba, 48, 11, 24),
+        TRANSPARENT_RGBA,
+        "a zero-blur shadow does not bleed past its hard edge"
+    );
+}
+
+/// T5: a negative spread shrinks the shadow — it inks fewer pixels than the
+/// same shadow with a positive spread, which catches a sign error in the
+/// spread math that the validator (which allows a negative spread) cannot.
+#[test]
+fn a_negative_spread_shrinks_the_shadow() {
+    use dashscene_core::{Shadow, ShadowKind};
+
+    let base = Shadow {
+        kind: ShadowKind::Drop,
+        offset: Vec2 { x: 0.0, y: 20.0 },
+        blur: 0.0,
+        spread: 0.0,
+        color: Color {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        },
+    };
+    let ink = |spread: f32| {
+        let s = Shadow { spread, ..base };
+        one_shadow(64, 16.0, 16.0, 24.0, 24.0, s, None)
+            .chunks_exact(4)
+            .filter(|p| p[3] > 0)
+            .count()
+    };
+    let shrunk = ink(-4.0);
+    let grown = ink(4.0);
+    assert!(shrunk > 0, "a negative-spread shadow still renders");
+    assert!(
+        shrunk < grown,
+        "a negative spread inks fewer pixels ({shrunk}) than a positive one ({grown})"
+    );
+}
+
+/// T6: a shadow whose color alpha is zero renders invisible.
+#[test]
+fn a_zero_alpha_shadow_is_invisible() {
+    use dashscene_core::{Shadow, ShadowKind};
+
+    let shadow = Shadow {
+        kind: ShadowKind::Drop,
+        offset: Vec2 { x: 0.0, y: 12.0 },
+        blur: 4.0,
+        spread: 0.0,
+        color: Color {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 0.0,
+        },
+    };
+    let rgba = one_shadow(48, 16.0, 16.0, 16.0, 16.0, shadow, None);
+
+    // Where the shadow would ink if it had alpha, the surface stays clear.
+    assert_eq!(
+        pixel(&rgba, 48, 24, 34),
+        TRANSPARENT_RGBA,
+        "a fully transparent shadow leaves no ink"
+    );
+    // The fill is untouched.
+    assert_eq!(pixel(&rgba, 48, 24, 24), RED_RGBA, "the fill still draws");
+}
+
+/// T7: a shadow pushed entirely off the surface paints nothing, without a
+/// panic — the painter clips to the surface and the fill is intact.
+#[test]
+fn an_off_canvas_shadow_paints_nothing_without_error() {
+    use dashscene_core::{Shadow, ShadowKind};
+
+    let shadow = Shadow {
+        kind: ShadowKind::Drop,
+        offset: Vec2 {
+            x: 1000.0,
+            y: 1000.0,
+        },
+        blur: 4.0,
+        spread: 0.0,
+        color: Color {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        },
+    };
+    // A 32×32 surface; the shadow lands ~1000 px off it.
+    let rgba = one_shadow(32, 8.0, 8.0, 16.0, 16.0, shadow, None);
+
+    // The fill draws; nothing else does.
+    assert_eq!(pixel(&rgba, 32, 16, 16), RED_RGBA, "the fill draws");
+    assert_eq!(
+        pixel(&rgba, 32, 2, 2),
+        TRANSPARENT_RGBA,
+        "the off-canvas shadow leaves the surface clear"
+    );
+}

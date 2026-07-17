@@ -85,11 +85,19 @@ All types and the trait live in `crates/dashpaint/src/lib.rs`:
   copies that drifted would make the validator's guarantee false.
 - `PaintEntry` — the paint-table entry: `fill: Option<PaintKind>`
   (`None` = a paint-less, layout-only node), `stroke: Option<Stroke>`,
-  `corners: CornerRadii`; `PaintEntry::solid(Color)` is the v0.1
-  shorthand. See `docs/decisions/paint-entry-composition.md`. It carries
-  no clip flag — whether a node clips its children is intent, and lives
-  in the document and the arena, not in resolved painter input
+  `corners: CornerRadii`, `shadows: Vec<Shadow>` (v0.8, story #45);
+  `PaintEntry::solid(Color)` is the v0.1 shorthand. See
+  `docs/decisions/paint-entry-composition.md`. It carries no clip flag —
+  whether a node clips its children is intent, and lives in the document
+  and the arena, not in resolved painter input
   (`docs/decisions/resolved-clip-regions-at-commit.md`).
+- `Shadow` / `ShadowKind` — a drop or inner shadow (v0.8, story #45):
+  `kind` (`Drop`/`Inner`), `offset: Vec2`, `blur: f32` (Gaussian radius,
+  non-negative), `spread: f32`, `color: Color`. Authored intent — the
+  painter derives the shadow geometry from the rect's box and the entry's
+  corners (P1). A list, not a fill kind, so a node stacks any number and
+  `Paint.fill`/`.stroke` arity stays single-valued
+  (`docs/decisions/effects-vocabulary-shadows.md`).
 - `PaintTable` — a dense entry list behind a private field, indexed by
   `RectEntry.paint`: `new`, `push(&mut self, PaintEntry) -> PaintIndex`
   (returns the sequential index just assigned), `get(&self, PaintIndex)

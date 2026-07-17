@@ -117,6 +117,57 @@ pub(crate) fn check_corners(report: &mut Report, at: &Location, radii: [f32; 4])
     }
 }
 
+/// One shadow's numeric domain (story #45): finite offsets, a finite
+/// non-negative blur radius, a finite spread, and color channels finite and
+/// in `[0, 1]`. Geometry-free, so — like a corner radius — it holds on a
+/// document (`Paint.shadows`) as much as on a solved scene
+/// (`PaintEntry.shadows`), and runs on both gates.
+///
+/// The painter offsets and spread-adjusts the shadow geometry and feeds
+/// `blur / 2` to Skia as a mask-filter sigma; a NaN or negative blur produces
+/// a degenerate or missing filter, and an out-of-range color channel
+/// misrasterizes against the premultiplied surface. `offset` is `[x, y]`;
+/// `color` is `[r, g, b, a]`.
+pub(crate) fn check_shadow(
+    report: &mut Report,
+    at: &Location,
+    index: usize,
+    offset: [f32; 2],
+    blur: f32,
+    spread: f32,
+    color: [f32; 4],
+) {
+    if offset.iter().any(|v| !v.is_finite())
+        || !spread.is_finite()
+        || !blur.is_finite()
+        || blur < 0.0
+    {
+        report.push(error(
+            rule::SHADOW_INVALID_GEOMETRY,
+            at,
+            format!(
+                "shadow {index} has offset ({}, {}), blur {blur}, spread {spread}; offsets and \
+                 spread must be finite, and the blur radius finite and non-negative",
+                offset[0], offset[1]
+            ),
+        ));
+    }
+    if color
+        .iter()
+        .any(|c| !c.is_finite() || !(0.0..=1.0).contains(c))
+    {
+        report.push(error(
+            rule::SHADOW_COLOR_OUT_OF_RANGE,
+            at,
+            format!(
+                "shadow {index} color ({}, {}, {}, {}) has a channel that is non-finite or outside \
+                 0..=1",
+                color[0], color[1], color[2], color[3]
+            ),
+        ));
+    }
+}
+
 /// Stroke width must be a finite, non-negative number. Geometry-free, so it
 /// holds on a document as much as on a solved scene.
 pub(crate) fn check_stroke_width(report: &mut Report, at: &Location, width: f32) {

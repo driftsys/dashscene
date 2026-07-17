@@ -19,7 +19,7 @@ use dashc_wasm::figma::rest::{FigmaFile, PaintTag};
 use dashc_wasm::figma::{CompileError, lower};
 use dashpaint::{
     Color, CornerRadii, GlyphRunTable, GradientKind, ImageAsset, ImageFormat, Mat23, PaintEntry,
-    PaintKind, Painter, ScaleMode, StrokeAlign, Vec2,
+    PaintKind, Painter, ScaleMode, ShadowKind, StrokeAlign, Vec2,
 };
 use dashscene_core::{Arena, load_document};
 use dashscene_skia::SkiaPainter;
@@ -355,6 +355,168 @@ fn both_corner_forms_lower() {
             bottom_left: 48.0,
         },
     );
+}
+
+#[test]
+fn drop_and_inner_shadows_lower_into_the_paint_entry() {
+    // Un-pins the DROP_SHADOW/INNER_SHADOW refusal (debt #144): the shadow
+    // parameters lower into the paint entry in Figma's effect order, and the
+    // node is no diagnostic at all. `spread` absent lowers to zero.
+    let file = document(serde_json::json!({
+        "name": "card",
+        "type": "FRAME",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 60.0 },
+        "fills": [{ "type": "SOLID", "color": { "r": 1.0, "g": 1.0, "b": 1.0, "a": 1.0 } }],
+        "effects": [
+            {
+                "type": "DROP_SHADOW",
+                "visible": true,
+                "color": { "r": 0.0, "g": 0.0, "b": 0.0, "a": 0.25 },
+                "offset": { "x": 0.0, "y": 4.0 },
+                "radius": 8.0,
+                "spread": 1.0,
+            },
+            {
+                "type": "INNER_SHADOW",
+                "visible": true,
+                "color": { "r": 0.1, "g": 0.1, "b": 0.1, "a": 0.5 },
+                "offset": { "x": 2.0, "y": 2.0 },
+                "radius": 4.0,
+            },
+        ],
+    }));
+
+    let (doc, diagnostics) =
+        lower(&file, Profile::Core, &BTreeMap::new()).expect("a shadowed frame lowers");
+    assert!(
+        diagnostics.is_empty(),
+        "drop and inner shadows are no diagnostic: {diagnostics:?}",
+    );
+
+    let (_, card) = node(&doc, "card");
+    let shadows = &card.paint.as_ref().unwrap().entry.shadows;
+    assert_eq!(shadows.len(), 2);
+
+    assert_eq!(shadows[0].kind, ShadowKind::Drop);
+    assert_eq!(shadows[0].offset, Vec2 { x: 0.0, y: 4.0 });
+    assert_eq!(shadows[0].blur, 8.0);
+    assert_eq!(shadows[0].spread, 1.0);
+    assert_eq!(
+        shadows[0].color,
+        Color {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 0.25
+        },
+    );
+
+    assert_eq!(shadows[1].kind, ShadowKind::Inner);
+    assert_eq!(shadows[1].offset, Vec2 { x: 2.0, y: 2.0 });
+    assert_eq!(shadows[1].blur, 4.0);
+    assert_eq!(shadows[1].spread, 0.0, "an absent spread lowers to zero");
+}
+
+#[test]
+fn a_hidden_shadow_does_not_lower() {
+    // A hidden effect is skipped, like a hidden paint (P4: not a silent drop —
+    // a hidden effect casts nothing in Figma either).
+    let file = document(serde_json::json!({
+        "name": "card",
+        "type": "FRAME",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 60.0 },
+        "fills": [{ "type": "SOLID", "color": { "r": 1.0, "g": 1.0, "b": 1.0, "a": 1.0 } }],
+        "effects": [{
+            "type": "DROP_SHADOW",
+            "visible": false,
+            "color": { "r": 0.0, "g": 0.0, "b": 0.0, "a": 0.25 },
+            "offset": { "x": 0.0, "y": 4.0 },
+            "radius": 8.0,
+        }],
+    }));
+
+    let (doc, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new()).expect("lowers");
+    assert!(diagnostics.is_empty());
+    let (_, card) = node(&doc, "card");
+    assert!(
+        card.paint.as_ref().unwrap().entry.shadows.is_empty(),
+        "a hidden shadow lowers to nothing",
+    );
+}
+
+#[test]
+fn a_shadow_with_an_advanced_blend_lowers_normal_and_warns_under_full() {
+    // The intended degrade for a non-NORMAL shadow blend mode mirrors a
+    // paint blend mode: under Profile::Full the effect is out-of-profile
+    // vocabulary that degrades, so the shadow still lowers (drawn NORMAL —
+    // the painter has no blend-mode vocabulary) AND an AdvancedBlendMode
+    // warning fires, so the drop-to-NORMAL is never silent (P4). Under
+    // Profile::Core the same construct is an error and blocks the document,
+    // so the shadow never renders.
+    let root = serde_json::json!({
+        "name": "card",
+        "type": "FRAME",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 60.0 },
+        "fills": [{ "type": "SOLID", "color": { "r": 1.0, "g": 1.0, "b": 1.0, "a": 1.0 } }],
+        "effects": [{
+            "type": "DROP_SHADOW",
+            "visible": true,
+            "blendMode": "MULTIPLY",
+            "color": { "r": 0.0, "g": 0.0, "b": 0.0, "a": 0.25 },
+            "offset": { "x": 0.0, "y": 4.0 },
+            "radius": 8.0,
+        }],
+    });
+
+    // Under Full: the shadow lowers and a warning comes back with it.
+    let (doc, diagnostics) =
+        lower(&document(root.clone()), Profile::Full, &BTreeMap::new()).expect("lowers under Full");
+    let (_, card) = node(&doc, "card");
+    assert_eq!(
+        card.paint.as_ref().unwrap().entry.shadows.len(),
+        1,
+        "the shadow lowers (drawn NORMAL) even though its blend mode is dropped"
+    );
+    let blend: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.rule == "profile.advanced-blend-mode")
+        .collect();
+    let [warning] = blend[..] else {
+        panic!("expected one advanced-blend-mode diagnostic, got {blend:?}");
+    };
+    assert_eq!(
+        warning.severity,
+        dashscene_validator::Severity::Warning,
+        "under Full the blend mode degrades to a warning, not a block"
+    );
+
+    // Under Core: the same construct is an error, so the document does not
+    // emit and the shadow never renders.
+    let (_, core_diagnostics) =
+        lower(&document(root), Profile::Core, &BTreeMap::new()).expect("lowers with diagnostics");
+    assert!(
+        core_diagnostics
+            .iter()
+            .any(|d| d.rule == "profile.advanced-blend-mode"
+                && d.severity == dashscene_validator::Severity::Error),
+        "under Core the advanced blend mode is an error that blocks the document"
+    );
+}
+
+#[test]
+fn a_shadow_with_no_color_is_refused() {
+    // A shadow with no color has no meaning; refused by name (P4), the same
+    // posture as a SOLID with no color.
+    let file = document(serde_json::json!({
+        "name": "card",
+        "type": "FRAME",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 60.0 },
+        "fills": [{ "type": "SOLID", "color": { "r": 1.0, "g": 1.0, "b": 1.0, "a": 1.0 } }],
+        "effects": [{ "type": "DROP_SHADOW", "visible": true, "radius": 8.0 }],
+    }));
+
+    let (doc, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new()).expect("lowers");
+    assert_sole_unsupported(&doc, &diagnostics, "card", "a shadow with no color");
 }
 
 #[test]

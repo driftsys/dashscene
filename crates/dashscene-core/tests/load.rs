@@ -5,9 +5,10 @@
 //! tables a hand-staged `add_variant_set`/`set_variant` call would.
 
 use dashbuf::{
-    Document, DocumentArgs, FixedSizeLayout, Node, NodeArgs, VariantMember, VariantMemberArgs,
+    Color, Document, DocumentArgs, Fill, FixedSizeLayout, Node, NodeArgs, Paint, PaintArgs, Shadow,
+    ShadowArgs, ShadowKind, SolidFill, SolidFillArgs, VariantMember, VariantMemberArgs,
     VariantOverride, VariantOverrideArgs, VariantPropValue, VariantSet, VariantSetArgs,
-    VariantWidth, VariantWidthArgs, root_as_document,
+    VariantWidth, VariantWidthArgs, Vec2, root_as_document,
 };
 use dashscene_core::{Arena, load_document};
 use flatbuffers::FlatBufferBuilder;
@@ -192,6 +193,89 @@ fn a_loaded_document_replays_masks_and_opacity() {
     assert!(
         !arena.layout(children[1]).visible,
         "the hidden child loaded as not visible"
+    );
+}
+
+/// A shadow on a document paint entry replays through `load_document`'s
+/// `load_paint` into the committed `PaintEntry.shadows` (story #45). The
+/// frozen r7 fixture decodes a shadow only through raw dashbuf accessors;
+/// this exercises the `.dsb` → core seam that stages `Prop::Shadows`.
+#[test]
+fn a_loaded_document_replays_its_shadows() {
+    let mut b = FlatBufferBuilder::new();
+    let layout = FixedSizeLayout::new(0.0, 0.0, 10.0, 10.0);
+
+    // Paint entry 0: a solid fill plus an inner shadow, every field
+    // non-default so a mis-staged field is visible.
+    let solid = SolidFill::create(
+        &mut b,
+        &SolidFillArgs {
+            color: Some(&Color::new(1.0, 0.0, 0.0, 1.0)),
+        },
+    );
+    let shadow = Shadow::create(
+        &mut b,
+        &ShadowArgs {
+            kind: ShadowKind::Inner,
+            offset: Some(&Vec2::new(3.0, -4.0)),
+            blur: 6.0,
+            spread: 2.0,
+            color: Some(&Color::new(0.1, 0.2, 0.3, 0.5)),
+        },
+    );
+    let shadows = b.create_vector(&[shadow]);
+    let paint = Paint::create(
+        &mut b,
+        &PaintArgs {
+            fill_type: Fill::SolidFill,
+            fill: Some(solid.as_union_value()),
+            shadows: Some(shadows),
+            ..Default::default()
+        },
+    );
+    let paints = b.create_vector(&[paint]);
+
+    let node = Node::create(
+        &mut b,
+        &NodeArgs {
+            layout: Some(&layout),
+            paint_entry: 0,
+            ..Default::default()
+        },
+    );
+    let nodes = b.create_vector(&[node]);
+    let document = Document::create(
+        &mut b,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            paints: Some(paints),
+            ..Default::default()
+        },
+    );
+    b.finish(document, None);
+    let bytes = b.finished_data().to_vec();
+
+    let doc = root_as_document(&bytes).expect("valid dashbuf document");
+    let mut arena = Arena::new();
+    load_document(&doc, &mut arena);
+
+    let scene = arena.committed();
+    let entry = scene.paints().resolve(scene.rects()[0].paint);
+    assert_eq!(
+        entry.shadows,
+        vec![dashpaint::Shadow {
+            kind: dashpaint::ShadowKind::Inner,
+            offset: dashpaint::Vec2 { x: 3.0, y: -4.0 },
+            blur: 6.0,
+            spread: 2.0,
+            color: dashpaint::Color {
+                r: 0.1,
+                g: 0.2,
+                b: 0.3,
+                a: 0.5,
+            },
+        }],
+        "the document's shadow replayed onto the committed paint entry"
     );
 }
 

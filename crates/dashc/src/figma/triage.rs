@@ -16,18 +16,24 @@ use crate::figma::rest::{Effect, Node};
 /// document cannot express at all.
 ///
 /// The first list triages through the validator. The second names constructs
-/// with no `Construct` variant — an unmapped effect such as a baked shadow
-/// (debt #144) — which the walk reports under its own `figma.unsupported`
-/// rule; P4 forbids dropping them in silence. Both lists come back from one
-/// pass, so a node carrying one of each reports both (debt #149).
+/// with no `Construct` variant — an unmapped effect the schema cannot carry —
+/// which the walk reports under its own `figma.unsupported` rule; P4 forbids
+/// dropping them in silence. Both lists come back from one pass, so a node
+/// carrying one of each reports both (debt #149).
+///
+/// Drop and inner shadows are neither: they lower into the schema (story #45,
+/// debt #144 resolved), so `effect_construct` returns `None` for them and the
+/// `shadows_of` lowering carries them — the effect produces no diagnostic at
+/// all.
 pub(crate) fn constructs_of(node: &Node) -> (Vec<Construct>, Vec<String>) {
     let mut found = Vec::new();
     let mut unsupported = Vec::new();
 
     for effect in node.effects.iter().filter(|e| e.visible != Some(false)) {
         match effect_construct(effect) {
-            Ok(construct) => found.push(construct),
-            Err(what) => unsupported.push(what),
+            None => {}
+            Some(Ok(construct)) => found.push(construct),
+            Some(Err(what)) => unsupported.push(what),
         }
     }
 
@@ -54,20 +60,33 @@ pub(crate) fn constructs_of(node: &Node) -> (Vec<Construct>, Vec<String>) {
     (found, unsupported)
 }
 
-fn effect_construct(effect: &Effect) -> Result<Construct, String> {
+/// One effect's verdict: `None` when it lowers cleanly (a drop or inner
+/// shadow with no advanced blend), `Some(Ok(_))` for an out-of-profile
+/// construct the validator triages, `Some(Err(_))` for an effect the schema
+/// cannot carry at all.
+fn effect_construct(effect: &Effect) -> Option<Result<Construct, String>> {
     match effect.kind.as_str() {
-        "NOISE" | "TEXTURE" => Ok(Construct::NoiseOrTextureEffect),
+        "NOISE" | "TEXTURE" => Some(Ok(Construct::NoiseOrTextureEffect)),
         // A progressive blur serializes as a LAYER_BLUR carrying
         // `blurType: PROGRESSIVE` — pinned by effects-2025.json. Plain layer
         // blur only warns; progressive blur is an error.
-        "LAYER_BLUR" => Ok(match effect.blur_type.as_deref() {
+        "LAYER_BLUR" => Some(Ok(match effect.blur_type.as_deref() {
             Some("PROGRESSIVE") => Construct::ProgressiveBlur,
             _ => Construct::LayerBlur,
-        }),
-        "BACKGROUND_BLUR" => Ok(Construct::BackdropBlur),
-        // Shadows are NOW-band, but Document cannot express them yet. No Construct
-        // fits, so it fails loudly rather than vanishing (debt #144).
-        other => Err(format!("effect {other}")),
+        })),
+        "BACKGROUND_BLUR" => Some(Ok(Construct::BackdropBlur)),
+        // Drop and inner shadows lower into the schema (story #45), so they
+        // are no diagnostic — the `shadows_of` lowering carries their
+        // parameters. A non-NORMAL shadow blend mode still has no
+        // vocabulary; diagnose it like a paint blend mode.
+        "DROP_SHADOW" | "INNER_SHADOW" => {
+            if is_plain_blend(effect.blend_mode.as_deref()) {
+                None
+            } else {
+                Some(Ok(Construct::AdvancedBlendMode))
+            }
+        }
+        other => Some(Err(format!("effect {other}"))),
     }
 }
 
@@ -146,21 +165,61 @@ mod tests {
     }
 
     #[test]
-    fn a_shadow_is_unsupported_rather_than_silently_dropped() {
-        // Baked shadows are NOW-band per docs/specification/04-figma-vocabulary-profile.md, but Document cannot express
-        // them, so there is no Construct to triage. P4 forbids dropping it in
-        // silence, so it fails loudly instead.
+    fn a_drop_or_inner_shadow_lowers_and_is_no_diagnostic() {
+        // Drop and inner shadows are NOW-band and now lower into the schema
+        // (story #45, debt #144 resolved): the `shadows_of` lowering carries
+        // them, so the triage produces neither a construct nor an unsupported
+        // finding.
+        for kind in ["DROP_SHADOW", "INNER_SHADOW"] {
+            let node: Node = serde_json::from_value(serde_json::json!({
+                "name": "card",
+                "type": "FRAME",
+                "effects": [{
+                    "type": kind,
+                    "visible": true,
+                    "color": { "r": 0.0, "g": 0.0, "b": 0.0, "a": 0.25 },
+                    "offset": { "x": 0.0, "y": 4.0 },
+                    "radius": 8.0,
+                    "spread": 0.0,
+                }],
+            }))
+            .unwrap();
+
+            assert_eq!(constructs_of(&node), (vec![], vec![]), "{kind} lowers");
+        }
+    }
+
+    #[test]
+    fn a_shadow_with_an_advanced_blend_mode_is_an_advanced_blend_mode() {
+        // The offset/blur/spread/color lower, but a non-NORMAL blend mode has
+        // no vocabulary — diagnosed like a paint blend mode, not dropped.
         let node: Node = serde_json::from_value(serde_json::json!({
             "name": "card",
             "type": "FRAME",
-            "effects": [{ "type": "DROP_SHADOW", "visible": true }],
+            "effects": [{
+                "type": "DROP_SHADOW",
+                "visible": true,
+                "blendMode": "MULTIPLY",
+                "color": { "r": 0.0, "g": 0.0, "b": 0.0, "a": 0.25 },
+            }],
         }))
         .unwrap();
 
-        assert_eq!(
-            constructs_of(&node),
-            (vec![], vec!["effect DROP_SHADOW".to_string()]),
-        );
+        assert_eq!(constructs_of(&node).0, vec![Construct::AdvancedBlendMode]);
+    }
+
+    #[test]
+    fn a_hidden_shadow_is_skipped() {
+        // A hidden effect produces no lowering and no diagnostic, like a
+        // hidden paint.
+        let node: Node = serde_json::from_value(serde_json::json!({
+            "name": "card",
+            "type": "FRAME",
+            "effects": [{ "type": "DROP_SHADOW", "visible": false, "blendMode": "MULTIPLY" }],
+        }))
+        .unwrap();
+
+        assert_eq!(constructs_of(&node), (vec![], vec![]));
     }
 
     #[test]

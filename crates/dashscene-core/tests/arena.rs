@@ -2146,3 +2146,103 @@ fn a_non_finite_opacity_is_refused_by_name() {
     let node = boxed(&mut txn, None, 0.0, 0.0, 10.0, 10.0);
     txn.set_prop(node, Prop::Opacity(f32::NAN));
 }
+
+#[test]
+fn shadows_commit_onto_the_paint_entry_and_dedup() {
+    use dashpaint::{Shadow, ShadowKind, Vec2};
+
+    let shadow = |kind| Shadow {
+        kind,
+        offset: Vec2 { x: 0.0, y: 4.0 },
+        blur: 8.0,
+        spread: 1.0,
+        color: Color {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 0.25,
+        },
+    };
+
+    let boxed = |txn: &mut dashscene_core::Txn<'_>, name: &str, shadow_kind| {
+        let node = txn.add_node(None, Some(name));
+        txn.set_prop(node, Prop::Width(10.0));
+        txn.set_prop(node, Prop::Height(10.0));
+        txn.set_prop(node, Prop::Fill(RED));
+        txn.set_prop(node, Prop::Shadows(vec![shadow(shadow_kind)]));
+        node
+    };
+
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    // a and b carry an identical fill + drop shadow; c differs only in the
+    // shadow kind.
+    boxed(&mut txn, "a", ShadowKind::Drop);
+    boxed(&mut txn, "b", ShadowKind::Drop);
+    boxed(&mut txn, "c", ShadowKind::Inner);
+    txn.commit();
+
+    let scene = arena.committed();
+    assert_eq!(
+        scene.rects()[0].paint,
+        scene.rects()[1].paint,
+        "identical fill + shadow dedup to one entry"
+    );
+    assert_ne!(
+        scene.rects()[0].paint,
+        scene.rects()[2].paint,
+        "a different shadow earns a distinct entry (the paint key folds it in)"
+    );
+    assert_eq!(scene.paints().len(), 2);
+
+    let entry = scene.paints().resolve(scene.rects()[0].paint);
+    assert_eq!(entry.shadows, vec![shadow(ShadowKind::Drop)]);
+}
+
+#[test]
+fn a_masks_paint_entry_carries_no_shadows() {
+    use dashpaint::{Shadow, ShadowKind, Vec2};
+
+    // A mask node draws nothing (PaintEntry::default()), so its authored
+    // shadow does not reach boundary B either.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let bg = txn.add_node(None, Some("bg"));
+    txn.set_prop(bg, Prop::Width(20.0));
+    txn.set_prop(bg, Prop::Height(20.0));
+    txn.set_prop(bg, Prop::Fill(RED));
+
+    let mask = txn.add_node(Some(bg), Some("mask"));
+    txn.set_prop(mask, Prop::Width(10.0));
+    txn.set_prop(mask, Prop::Height(10.0));
+    txn.set_prop(mask, Prop::Fill(RED));
+    txn.set_prop(
+        mask,
+        Prop::Shadows(vec![Shadow {
+            kind: ShadowKind::Drop,
+            offset: Vec2 { x: 0.0, y: 2.0 },
+            blur: 4.0,
+            spread: 0.0,
+            color: Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 0.5,
+            },
+        }]),
+    );
+    txn.set_prop(mask, Prop::Mask(true));
+    // A following sibling so the mask is not inert.
+    let content = txn.add_node(Some(bg), Some("content"));
+    txn.set_prop(content, Prop::Width(10.0));
+    txn.set_prop(content, Prop::Height(10.0));
+    txn.set_prop(content, Prop::Fill(RED));
+    txn.commit();
+
+    let scene = arena.committed();
+    let mask_entry = scene.paints().resolve(scene.rects()[1].paint);
+    assert!(
+        mask_entry.shadows.is_empty(),
+        "a mask draws nothing, so it casts no shadow"
+    );
+}

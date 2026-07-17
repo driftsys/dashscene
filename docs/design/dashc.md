@@ -279,10 +279,13 @@ noted, because a real Figma file will hit them:
   `Node.opacity` / `Node.mask` / `Node.visible`. A box outline mask lowers;
   a soft alpha or luminance mask, and a text-shaped mask, refuse by name
   (`docs/decisions/masks-and-group-opacity.md`).
-- **Baked shadows** — `docs/specification/04-figma-vocabulary-profile.md`
-  puts them in the NOW band, but `Document`
-  has no effects vocabulary, so there is no `Construct` to triage onto and no
-  field to lower into. Effects enter the schema at v0.8 (debt #144).
+- **Baked shadows** — drop and inner shadows lower at v0.8 (story #45,
+  debt #144 resolved): `shadows_of` reads a node's visible
+  `DROP_SHADOW`/`INNER_SHADOW` effects (color, offset, radius, spread) onto
+  the paint entry's `shadows` list, in Figma's effect order. A hidden effect
+  is skipped; a non-`NORMAL` shadow blend mode is an advanced-blend
+  diagnostic; a shadow with no color refuses by name. Noise, texture, and
+  progressive blur stay REJECT (`docs/decisions/effects-vocabulary-shadows.md`).
 - **Wrap line distribution and a negative wrap gap** —
   `counterAxisAlignContent: SPACE_BETWEEN` has no `align_content`
   vocabulary yet, and a negative `itemSpacing` on a `WRAP` frame has no

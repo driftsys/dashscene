@@ -20,8 +20,8 @@ use dashbuf::{
 };
 
 use crate::paint::{
-    check_corners, check_gradient_stops, check_image_bytes, check_image_index, check_stroke_width,
-    error, warning,
+    check_corners, check_gradient_stops, check_image_bytes, check_image_index, check_shadow,
+    check_stroke_width, error, warning,
 };
 use crate::{Location, NodePath, Report, rule};
 
@@ -577,6 +577,24 @@ fn check_paint_entry(report: &mut Report, paint: &Paint<'_>, at: &Location, size
                 corners.bottom_right(),
                 corners.bottom_left(),
             ],
+        );
+    }
+
+    // v0.8 shadows (story #45): the kind is an append-only enum, range-checked
+    // like the layout enums, and the offset/blur/spread/color have a pinned
+    // numeric domain like corners and stroke width.
+    for (i, shadow) in paint.shadows().unwrap_or_default().iter().enumerate() {
+        check_enum!(report, at, "Shadow.kind", shadow.kind());
+        let offset = shadow.offset().map_or([0.0, 0.0], |o| [o.x(), o.y()]);
+        let color = shadow.color();
+        check_shadow(
+            report,
+            at,
+            i,
+            offset,
+            shadow.blur(),
+            shadow.spread(),
+            [color.r(), color.g(), color.b(), color.a()],
         );
     }
 }

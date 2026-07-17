@@ -16,12 +16,13 @@ use dashbuf::{
     ImageArgs, ImageFill, ImageFillArgs, LayoutConstraints as FbLayoutConstraints,
     LayoutConstraintsArgs, LayoutContainer as FbLayoutContainer, LayoutContainerArgs, Mat23,
     NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE, Node as FbNode, NodeArgs as FbNodeArgs,
-    Paint as BufPaint, PaintArgs, SignalDecl as FbSignalDecl, SignalDeclArgs as FbSignalDeclArgs,
-    SolidFill, SolidFillArgs, Stroke, StrokeArgs, TextStyle as FbTextStyle, TextStyleArgs,
-    TransformClamp, TransformClampArgs, TransformMapRange, TransformMapRangeArgs, TransformScale,
+    Paint as BufPaint, PaintArgs, Shadow as FbShadow, ShadowArgs, ShadowKind as FbShadowKind,
+    SignalDecl as FbSignalDecl, SignalDeclArgs as FbSignalDeclArgs, SolidFill, SolidFillArgs,
+    Stroke, StrokeArgs, TextStyle as FbTextStyle, TextStyleArgs, TransformClamp,
+    TransformClampArgs, TransformMapRange, TransformMapRangeArgs, TransformScale,
     TransformScaleArgs, Vec2,
 };
-use dashpaint::{ImageAsset, PaintEntry, PaintKind};
+use dashpaint::{ImageAsset, PaintEntry, PaintKind, ShadowKind};
 use flatbuffers::{FlatBufferBuilder, WIPOffset};
 
 use crate::document::{
@@ -485,6 +486,33 @@ fn build_paint<'a>(b: &mut FlatBufferBuilder<'a>, paint: &Paint) -> WIPOffset<Bu
         )
     });
 
+    // Shadows (story #45). Each Shadow table is built before the vector, and
+    // the vector before the enclosing Paint — the standard flatbuffer nesting
+    // order. Absent (an empty list) omits the field, so a shadow-less entry
+    // round-trips identically (R7).
+    let shadows = (!entry.shadows.is_empty()).then(|| {
+        let shadows: Vec<_> = entry
+            .shadows
+            .iter()
+            .map(|s| {
+                FbShadow::create(
+                    b,
+                    &ShadowArgs {
+                        kind: match s.kind {
+                            ShadowKind::Drop => FbShadowKind::Drop,
+                            ShadowKind::Inner => FbShadowKind::Inner,
+                        },
+                        offset: Some(&vec2_of(s.offset)),
+                        blur: s.blur,
+                        spread: s.spread,
+                        color: Some(&color_of(s.color)),
+                    },
+                )
+            })
+            .collect();
+        b.create_vector(&shadows)
+    });
+
     BufPaint::create(
         b,
         &PaintArgs {
@@ -493,6 +521,7 @@ fn build_paint<'a>(b: &mut FlatBufferBuilder<'a>, paint: &Paint) -> WIPOffset<Bu
             stroke,
             corners: corners.as_ref(),
             clip: paint.clip,
+            shadows,
         },
     )
 }
@@ -604,6 +633,14 @@ fn entry_bits(entry: &PaintEntry) -> Vec<u32> {
         entry.corners.bottom_right.to_bits(),
         entry.corners.bottom_left.to_bits(),
     ]);
+    key.push(entry.shadows.len() as u32);
+    for s in &entry.shadows {
+        key.push(s.kind as u32);
+        key.extend([s.offset.x.to_bits(), s.offset.y.to_bits()]);
+        key.push(s.blur.to_bits());
+        key.push(s.spread.to_bits());
+        key.extend(color_bits(s.color));
+    }
     key
 }
 

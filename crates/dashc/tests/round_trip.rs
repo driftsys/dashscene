@@ -19,7 +19,7 @@
 use dashc_wasm::{Box2D, Document, Node, Paint, compile, emit};
 use dashpaint::{
     Color, GlyphRunTable, Gradient, GradientKind, GradientStop, ImageAsset, ImageFormat,
-    PaintEntry, PaintKind, Painter, ScaleMode, Stroke, StrokeAlign, Vec2,
+    PaintEntry, PaintKind, Painter, ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, Vec2,
 };
 use dashscene_core::{Arena, Prop, load_document};
 use dashscene_skia::SkiaPainter;
@@ -109,6 +109,7 @@ fn v03_document() -> Document {
                 fill: Some(gradient()),
                 stroke: None,
                 corners: dashpaint::CornerRadii::default(),
+                shadows: Vec::new(),
             },
             clip: true,
         }),
@@ -146,6 +147,7 @@ fn v03_document() -> Document {
                 fill: None,
                 stroke: Some(stroke()),
                 corners: corners(),
+                shadows: Vec::new(),
             },
             clip: false,
         }),
@@ -171,6 +173,7 @@ fn v03_document() -> Document {
                 }),
                 stroke: None,
                 corners: dashpaint::CornerRadii::default(),
+                shadows: Vec::new(),
             },
             clip: false,
         }),
@@ -313,6 +316,78 @@ fn emission_is_byte_reproducible() {
     assert_eq!(first, second, "emission is not deterministic");
 }
 
+/// A shadow-carrying document: one node whose paint entry stacks a drop and
+/// an inner shadow. Every prior determinism/byte/round-trip test uses the
+/// shadow-less V03 fixture, so this covers the emit path for the v0.8
+/// vocabulary (R7/E6).
+fn shadowed_document() -> Document {
+    let mut doc = Document::new();
+    doc.push(Node {
+        name: Some("card".to_owned()),
+        parent: None,
+        box2d: Box2D {
+            x: 0.0,
+            y: 0.0,
+            width: 20.0,
+            height: 20.0,
+        },
+        paint: Some(Paint {
+            entry: PaintEntry {
+                fill: Some(PaintKind::Solid { color: RED }),
+                shadows: vec![
+                    Shadow {
+                        kind: ShadowKind::Drop,
+                        offset: Vec2 { x: 0.0, y: 4.0 },
+                        blur: 8.0,
+                        spread: 1.0,
+                        color: Color {
+                            r: 0.0,
+                            g: 0.0,
+                            b: 0.0,
+                            a: 0.25,
+                        },
+                    },
+                    Shadow {
+                        kind: ShadowKind::Inner,
+                        offset: Vec2 { x: 2.0, y: 2.0 },
+                        blur: 4.0,
+                        spread: -1.0,
+                        color: Color {
+                            r: 0.1,
+                            g: 0.1,
+                            b: 0.1,
+                            a: 0.5,
+                        },
+                    },
+                ],
+                ..PaintEntry::default()
+            },
+            clip: false,
+        }),
+        ..Node::default()
+    });
+    doc
+}
+
+#[test]
+fn emission_of_a_shadowed_document_is_byte_reproducible() {
+    // R7 for the shadow vocabulary: same shadowed input → identical bytes.
+    let first = emit(&shadowed_document());
+    let second = emit(&shadowed_document());
+    assert_eq!(first, second, "shadow emission is not deterministic");
+
+    // And the bytes carry the shadows: emit actually writes the list, in
+    // order, rather than dropping it.
+    let document = dashbuf::root_as_document(&first).expect("valid buffer");
+    let paints = document.paints().expect("paint pool present");
+    let shadows = paints.get(0).shadows().expect("shadows present");
+    assert_eq!(shadows.len(), 2);
+    assert_eq!(shadows.get(0).kind(), dashbuf::ShadowKind::Drop);
+    assert_eq!(shadows.get(0).blur(), 8.0);
+    assert_eq!(shadows.get(1).kind(), dashbuf::ShadowKind::Inner);
+    assert_eq!(shadows.get(1).spread(), -1.0);
+}
+
 #[test]
 fn nodes_sharing_a_style_share_one_pool_entry() {
     let mut doc = Document::new();
@@ -399,6 +474,7 @@ fn an_invalid_document_is_refused_rather_than_emitted() {
                 })),
                 stroke: None,
                 corners: dashpaint::CornerRadii::default(),
+                shadows: Vec::new(),
             },
             clip: false,
         }),

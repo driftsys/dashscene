@@ -76,7 +76,6 @@ As-built, `Unsupported` covers:
 | a stacked fill or stroke (more than one visible) | `PaintEntry.fill`/`.stroke` are each one `Option`                   | #146                                                     |
 | node rotation                                    | no rotation vocabulary (opacity/mask/hidden un-pinned at v0.8, #44) | #143 (remainder)                                         |
 | a soft (alpha/luminance) or text-shaped mask     | the clip-region model is a hard box clip only (v0.8, #44)           | `masks-and-group-opacity.md`                             |
-| a baked shadow (any unmapped effect)             | no effects vocabulary; effects enter the schema at v0.8             | #144                                                     |
 | an auto-layout frame                             | no flex vocabulary — and the boxes are results, not intent          | #140 (see `figma-auto-layout-refused-on-two-grounds.md`) |
 | a dashed or non-`BASIC` stroke                   | `dashpaint::Stroke` is one color, one width, one align              | #145                                                     |
 | a non-`FRAME` node                               | v0.3 lowers frames only                                             | —                                                        |
@@ -124,4 +123,10 @@ intended trade — correct or refused, never approximately right.
   flex (#140) or effects (v0.8), the corresponding guard is deleted and a real
   lowering replaces it. The pattern here does not change. _(#140 did both:
   it deleted the auto-layout guard and revised the pattern's mechanism —
-  see "Revised at #140" above.)_
+  see "Revised at #140" above. #45 did it for effects: the document gained a
+  shadow vocabulary, so drop and inner shadows now lower and the baked-shadow
+  refusal is retired — `docs/decisions/effects-vocabulary-shadows.md`, debt
+  #144 resolved. Noise, texture, and progressive blur stay REJECT-band, and a
+  shadow with no color is a malformed-value refusal, not an expressiveness
+  gap — the same class as "a SOLID with no color", so neither is tabled
+  above.)_

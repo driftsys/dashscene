@@ -97,6 +97,21 @@ All in `crates/dashscene-skia/src/lib.rs`:
   open group's `end` is reached, so an overlapping group at partial
   opacity flattens before its alpha applies. The groups nest by range, so
   a stack of pending end indices closes them innermost-first.
+- Shadows render live (v0.8, story #45,
+  `docs/decisions/effects-vocabulary-shadows.md`). A drop shadow draws
+  before the fill: the node's rendered outline — its fill box grown by the
+  stroke outset for an outside/center stroke — outset by `spread`, offset,
+  filled with the shadow color under a Gaussian blur mask filter (`sigma =
+  blur / 2`; no filter at `blur = 0`). An inner shadow draws after the
+  stroke: clip to the shape, then fill an even-odd path (outer rect minus
+  the offset, spread-inset inner rounded rect) so the blur bleeds inward.
+  Both draw inside the rect's clip-region `save`/`restore` and any open
+  render-target `save_layer`, and each is modulated by `RectEntry.opacity`,
+  so a shadowed node dims with a folded opacity, composites inside a
+  render-target group, and clips to its ancestor region. Stacked shadows
+  draw in `PaintEntry.shadows` order, which is Figma's back-to-front
+  `effects` array order, so the last-listed shadow composites on top — no
+  reversal.
 
 ## Text — MSDF glyph runs (v0.5 Latin, story #30)
 

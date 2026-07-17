@@ -212,6 +212,20 @@ pub mod rule {
     /// negative radius, so the whole subtree would clip wrongly.
     pub const CORNER_RADIUS_INVALID: &str = "geometry.corner-radius-invalid";
 
+    /// A shadow whose offset, blur, or spread is out of domain (story #45):
+    /// offsets and spread must be finite, and the blur radius finite and
+    /// non-negative (a negative Gaussian is meaningless). Geometry-free
+    /// authored intent (like a corner radius), so it is checked on both a
+    /// document (`Paint.shadows`) and a solved scene (`PaintEntry.shadows`);
+    /// the painter feeds `blur / 2` to Skia as a mask-filter sigma and offsets
+    /// the shadow geometry with the offset and spread, none of which tolerate
+    /// NaN.
+    pub const SHADOW_INVALID_GEOMETRY: &str = "paint.shadow.invalid-geometry";
+    /// A shadow color channel that is non-finite or outside `0..=1` (story
+    /// #45). The painter multiplies the channel into a premultiplied surface,
+    /// where an out-of-range channel misrasterizes.
+    pub const SHADOW_COLOR_OUT_OF_RANGE: &str = "paint.shadow.color-out-of-range";
+
     // Waiver vocabulary — P4 applies to the waiver declarations themselves:
     // an out-of-scope waiver is a named diagnostic, never a silent no-op
     // (issue #41). These ids never appear on a document/scene diagnostic, so
@@ -281,6 +295,8 @@ pub mod rule {
         TEXT_OUTSIDE_GROUP,
         RECT_INVALID_EXTENT,
         CORNER_RADIUS_INVALID,
+        SHADOW_INVALID_GEOMETRY,
+        SHADOW_COLOR_OUT_OF_RANGE,
     ];
 
     /// Whether `rule` is a real document/scene diagnostic rule id. A waiver

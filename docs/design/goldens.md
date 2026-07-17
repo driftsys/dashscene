@@ -106,6 +106,26 @@ child, which is what proves the subtree flattened before its alpha
 applied). Each pins its distinguishing property with relational probes and
 compares at the 2% tolerance.
 
+The v0.8 shadow goldens (story #45,
+`docs/decisions/effects-vocabulary-shadows.md`) are authored through
+`dashscene-core` (`Prop::Shadows`) too. `v08-drop-shadow.png` is a rounded
+amber card casting a soft drop shadow onto navy; `v08-inner-shadow.png` is a
+rounded near-white panel with an inner shadow ringing its inside edges. A
+blurred shadow is anti-aliased, so each compares at the 2% tolerance — but a
+2% budget (~82 px on the 64×64 canvas) cannot on its own prove the golden
+pins the shadow, so each test adds a sensitivity guard: it renders the same
+scene with the shadow removed and asserts the two renders differ by far more
+than the budget (1159 px for the drop, 748 px for the inner). That is the
+demonstrated-sensitivity discipline `docs/decisions/golden-comparison-space.md`
+requires; relational probes (the card fill unchanged behind its shadow, the
+inner shadow darker at the edge than the center, the background untouched)
+add exact machine-independent checks on top. `v08-stacked-shadows.png`
+stacks two semi-transparent hard-edge drop shadows (a backmost blue and a
+front red) and probes their overlap: it is red-over-blue only in Figma's
+back-to-front `effects` order, so the probe flips and fails if the draw
+loop reverses — the golden pins the stacking order, not just the presence
+of a shadow.
+
 ## Testing
 
 Unit tests in `src/lib.rs` cover the tooling's edge behavior against a
