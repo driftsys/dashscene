@@ -212,6 +212,24 @@ node regardless of visibility, so nodes committed after a hidden one
 never shift. This is the invariant the bounded-pool work depends on
 (issue #166).
 
+## Binding tables (v0.7, story #167)
+
+The document binding tables live on the arena as intent metadata:
+`Txn::declare_signal(name, initial) -> SignalId` and `Txn::bind(node,
+channel, signal, transform)` stage them, `Arena::signals()` /
+`Arena::bindings()` read them back, and commit ignores them — flushing a
+signal's value through a binding is a producer-side runtime's job
+(`dashlang`'s reactive layer; P3), and signal values never enter the
+arena (P1). The vocabulary (`Channel` — the §23 set, whose discriminants
+are the wire codes `dashbuf` and the engine's `PropKey` packing share —
+and the declarative `ScalarTransform` with one shared `apply`) lives in
+`crates/dashscene-core/src/bindings.rs`. `load_document` replays both
+tables through the same producer API, indices resolved through the
+load's own mappings. The intent accessors `Arena::parent` and
+`Arena::fill` are the read seam the loader-side attach
+(`dashlang::attach_live`) derives tree structure and fill seeds from.
+See `docs/decisions/binding-table-in-the-document.md`.
+
 ## Commit resolution pipeline
 
 `Txn::commit` (in `arena.rs`) runs in one pass, and since story #164 it

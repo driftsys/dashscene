@@ -175,3 +175,32 @@ collection's `defaultModeId` when a subtree inherits). The `variables-bound`
 fixture's committed vartable (`variables-bound.vartable.json`) is the pinned
 example; `importers/figma/src/vartable_test.ts` asserts the join is total and
 version-consistent against the capture.
+
+## Phase 2, the join as-built (#167)
+
+The join runs importer-side (`importers/figma/src/bindings.ts`,
+`joinBindings(sidecar, vartable, file)`), when the import is given a
+vartable (`--vartable <file>`); without one the import stays phase 1.
+Per sidecar row: resolve the variable, resolve the node's mode (the
+nearest ancestor's `explicitVariableModes` pin for the variable's
+collection, else the collection's `defaultModeId`), take
+`valuesByMode[mode]`, and name the signal — the variable's name, with
+`@<modeName>` appended when the resolved mode is not the default
+(`size/gap@dark`). One variable in two mode contexts is two signals.
+
+Every row that cannot join whole is a named error and blocks the export
+(`BindingsBlocked`, the `TokensBlocked` posture): the staleness
+mismatch this record's stamp exists for, an id the vartable does not
+carry, a missing mode value, an alias-valued mode (chains are not
+resolved this slice), a malformed value, an ambiguous signal name. A
+STRING/BOOLEAN variable is a named warning — text/variant/visibility
+bindings are later slices — and the resolved literal still ships.
+
+The joined rows cross the wasm ABI (version 2, one appended request
+section) as `{ nodeId, property, signal, value }`; `dashc` maps the
+property paths onto binding channels and emits the document's
+signal/binding tables. The **`.dsb` shape** phase 2 lands is the binding
+table, not a literal-replacing token ref: the resolved literals stay,
+and each bound channel gains a row against a named signal whose initial
+is the mode-resolved value. The rationale, the naming contract, and the
+Deno/dashc split are `docs/decisions/binding-table-in-the-document.md`.

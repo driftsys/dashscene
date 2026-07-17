@@ -99,6 +99,17 @@ pub mod rule {
     pub const VARIANT_SET_NO_MEMBERS: &str = "variant.set-no-members";
     pub const VARIANT_ACTIVE_MEMBER_OUT_OF_RANGE: &str = "variant.active-member-out-of-range";
 
+    // Load gate — the v0.7 binding tables (story #167). The loader
+    // resolves both indices unchecked (it assumes a validated document),
+    // so a dangling one must be named here or it panics at load.
+    pub const BINDING_SIGNAL_OUT_OF_RANGE: &str = "binding.signal-out-of-range";
+    pub const BINDING_NODE_OUT_OF_RANGE: &str = "binding.node-out-of-range";
+    /// Two signal declarations carry the same non-empty name. A runtime
+    /// looks a document signal up by name, so a duplicate makes the
+    /// lookup ambiguous — one declaration would shadow the other
+    /// silently (P4).
+    pub const SIGNAL_NAME_DUPLICATE: &str = "signal.name-duplicate";
+
     // Load gate — the append-only enum range check. The schema's own
     // contract: "a reader built before an append receives the unknown
     // value as a raw integer — the load gate must range-check and emit a
@@ -194,6 +205,9 @@ pub mod rule {
         VARIANT_OVERRIDE_NODE_OUT_OF_RANGE,
         VARIANT_SET_NO_MEMBERS,
         VARIANT_ACTIVE_MEMBER_OUT_OF_RANGE,
+        BINDING_SIGNAL_OUT_OF_RANGE,
+        BINDING_NODE_OUT_OF_RANGE,
+        SIGNAL_NAME_DUPLICATE,
         UNKNOWN_ENUM,
         GRADIENT_NO_STOPS,
         GRADIENT_STOP_BUDGET,
@@ -348,6 +362,11 @@ pub enum Location {
     /// A text style, by its index in `Document.text_styles` — not a node, the
     /// same reasoning as `PaintEntry`/`ImageAsset` (issue #41).
     TextStyle(u32),
+    /// A signal declaration, by its index in `Document.signals` (story
+    /// #167) — a pooled surface like the others.
+    Signal(u32),
+    /// A binding row, by its index in `Document.bindings` (story #167).
+    Binding(u32),
 }
 
 impl fmt::Display for Location {
@@ -358,6 +377,8 @@ impl fmt::Display for Location {
             Self::ImageAsset(index) => write!(f, "<image asset #{index}>"),
             Self::VariantSet(index) => write!(f, "<variant set #{index}>"),
             Self::TextStyle(index) => write!(f, "<text style #{index}>"),
+            Self::Signal(index) => write!(f, "<signal #{index}>"),
+            Self::Binding(index) => write!(f, "<binding #{index}>"),
         }
     }
 }

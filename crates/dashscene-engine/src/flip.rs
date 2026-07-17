@@ -25,34 +25,36 @@
 //! state that grows with animation history.
 
 use dashcue::{PropKey, Scheduler, VariantTransition};
-use dashscene_core::{NodeId, SolvedRect};
+use dashscene_core::{Channel, NodeId, SolvedRect};
 use rustc_hash::FxHashMap;
 
-/// One channel of a node's rect. A rect animates as one `dashcue` track per
-/// channel (`docs/design/dashcue.md`: "a multi-channel prop ... animates as
-/// one track per channel"). The discriminants are the low bits of the
-/// packed [`PropKey`]; keep them stable so a producer and this engine agree
-/// on the encoding.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Channel {
-    X = 0,
-    Y = 1,
-    W = 2,
-    H = 3,
+/// The four rect channels, in packing order — the fixed set a rect
+/// decomposes into. A rect animates as one `dashcue` track per channel
+/// (`docs/design/dashcue.md`: "a multi-channel prop ... animates as one
+/// track per channel"). The channel vocabulary itself is
+/// `dashscene_core::Channel` — the document binding vocabulary — so a
+/// serialized binding row, a reactive binding, and a FLIP track all
+/// address a prop the same way (debt #208).
+const RECT_CHANNELS: [Channel; 4] = [Channel::X, Channel::Y, Channel::Width, Channel::Height];
+
+/// The `dashcue` prop key for one channel of one node — core's one
+/// packing (`dashscene_core::prop_key`: node slot in the high bits, the
+/// [`Channel`] wire code in the low eight; debt #208), exposed as the
+/// typed `dashcue::PropKey` FLIP tracks carry. The math lives in core,
+/// beside `Channel`, because core cannot depend on `dashcue` and every
+/// consumer (this engine, `dashlang`'s reactive layer) already depends
+/// on core — so one `(node, channel)` yields one `u64` everywhere.
+pub fn prop_key(node: NodeId, channel: Channel) -> PropKey {
+    PropKey(dashscene_core::prop_key(node, channel))
 }
 
-/// The four channels, in packing order — the fixed set a rect decomposes
-/// into.
-const CHANNELS: [Channel; 4] = [Channel::X, Channel::Y, Channel::W, Channel::H];
-
-/// The `dashcue` prop key for one node's one rect channel. `dashscene-engine`
-/// owns this packing (`docs/design/dashcue.md`: "the engine packs node index
-/// and channel into [the `PropKey`]"): the node's arena slot in the high
-/// bits, the [`Channel`] discriminant in the low two. A producer declares a
-/// variant transition's tracks with keys built here, so [`VariantFlip::start`]
-/// binds each track's `from`/`to` from the before/after rects.
-pub fn prop_key(node: NodeId, channel: Channel) -> PropKey {
-    PropKey(((node.index() as u64) << 2) | channel as u64)
+/// Decodes a packed [`PropKey`] back to its node slot and channel —
+/// core's canonical decoder (`dashscene_core::decode_prop_key`), over the
+/// typed key (debts #207/#208). Returns `None` when the key was not built
+/// by [`prop_key`]; the caller names the failure (P4) rather than
+/// mis-binding it.
+pub fn decode_prop_key(key: PropKey) -> Option<(u32, Channel)> {
+    dashscene_core::decode_prop_key(key.0)
 }
 
 /// Drives the minimal FLIP for a variant switch: bind the declared
@@ -99,16 +101,36 @@ impl VariantFlip {
     ///
     /// # Panics
     ///
-    /// Panics if a transition track names a `(node, channel)` whose node is
-    /// absent from `before` or `after` — a broken contract between the
-    /// producer's declared tracks and the captured rects (house rule:
-    /// cross-crate contract violations panic).
+    /// Panics if a transition track's prop key is not engine-packed — it
+    /// does not decode through [`decode_prop_key`], or it names a channel
+    /// that is not a rect channel (FLIP animates rects only) — or if it
+    /// names a `(node, channel)` whose node is absent from `before` or
+    /// `after`. Each is a broken contract between the producer's declared
+    /// tracks and this engine (house rule: cross-crate contract
+    /// violations panic; debt #207). A raw key that happens to decode to
+    /// a rect channel of a node present in both slices is
+    /// indistinguishable from a legitimate one and is not detected.
     pub fn start(
         &mut self,
         before: &[(NodeId, SolvedRect)],
         after: &[(NodeId, SolvedRect)],
         transition: &VariantTransition,
     ) {
+        for track in &transition.tracks {
+            match decode_prop_key(track.prop) {
+                None => panic!(
+                    "FLIP track {:?} is not an engine-packed prop key; build track keys with \
+                     dashscene_engine::prop_key",
+                    track.prop
+                ),
+                Some((_, channel)) if !RECT_CHANNELS.contains(&channel) => panic!(
+                    "FLIP track {:?} names channel {channel:?}, which is not a rect channel; \
+                     FLIP animates rects only (X, Y, Width, Height)",
+                    track.prop
+                ),
+                Some(_) => {}
+            }
+        }
         let before_val = channel_values(before);
         let after_val = channel_values(after);
         self.scheduler.start_transition(transition, |key| {
@@ -174,7 +196,7 @@ impl VariantFlip {
     /// Overlay `node`'s live channel samples on its `target` rect.
     fn compose(&self, node: NodeId, target: SolvedRect) -> SolvedRect {
         let mut rect = target;
-        for channel in CHANNELS {
+        for channel in RECT_CHANNELS {
             if let Some(value) = self.scheduler.sample(prop_key(node, channel)) {
                 *channel_mut(&mut rect, channel) = value;
             }
@@ -185,7 +207,7 @@ impl VariantFlip {
 
 /// Whether `node` has any live channel track in `scheduler`.
 fn node_is_live(scheduler: &Scheduler, node: NodeId) -> bool {
-    CHANNELS
+    RECT_CHANNELS
         .iter()
         .any(|&channel| scheduler.sample(prop_key(node, channel)).is_some())
 }
@@ -195,7 +217,7 @@ fn node_is_live(scheduler: &Scheduler, node: NodeId) -> bool {
 fn channel_values(rects: &[(NodeId, SolvedRect)]) -> FxHashMap<PropKey, f32> {
     let mut map = FxHashMap::default();
     for &(node, rect) in rects {
-        for channel in CHANNELS {
+        for channel in RECT_CHANNELS {
             map.insert(prop_key(node, channel), channel_of(&rect, channel));
         }
     }
@@ -206,8 +228,10 @@ fn channel_of(rect: &SolvedRect, channel: Channel) -> f32 {
     match channel {
         Channel::X => rect.x,
         Channel::Y => rect.y,
-        Channel::W => rect.w,
-        Channel::H => rect.h,
+        Channel::Width => rect.w,
+        Channel::Height => rect.h,
+        // Only RECT_CHANNELS reach here.
+        other => unreachable!("{other:?} is not a rect channel"),
     }
 }
 
@@ -215,7 +239,9 @@ fn channel_mut(rect: &mut SolvedRect, channel: Channel) -> &mut f32 {
     match channel {
         Channel::X => &mut rect.x,
         Channel::Y => &mut rect.y,
-        Channel::W => &mut rect.w,
-        Channel::H => &mut rect.h,
+        Channel::Width => &mut rect.w,
+        Channel::Height => &mut rect.h,
+        // Only RECT_CHANNELS reach here.
+        other => unreachable!("{other:?} is not a rect channel"),
     }
 }

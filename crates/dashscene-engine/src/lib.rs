@@ -20,7 +20,12 @@
 
 pub mod flip;
 
-pub use flip::{Channel, VariantFlip, prop_key};
+// `Channel` is the document binding vocabulary and lives in
+// `dashscene-core` since story #167 (one channel set for binding rows,
+// reactive bindings, and FLIP tracks — debt #208); re-exported here so a
+// FLIP consumer keeps one import path for the key and its channel.
+pub use dashscene_core::Channel;
+pub use flip::{VariantFlip, decode_prop_key, prop_key};
 
 use dashscene_core::{Arena, AxisSizing, Layout, LayoutMode, LayoutSolver, NodeId, SolvedRect};
 use dashscene_typeset::text::Typesetter;

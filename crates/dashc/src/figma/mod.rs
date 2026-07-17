@@ -24,8 +24,11 @@
 //! input that does not parse, a file with no root frame, an `imageRef` the
 //! caller failed to resolve.
 
+pub mod bindings;
 pub mod rest;
 pub(crate) mod triage;
+
+pub use bindings::{BoundValue, BoundVariable};
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
@@ -229,12 +232,27 @@ pub fn lower(
     profile: Profile,
     images: &BTreeMap<String, ImageAsset>,
 ) -> Result<(Document, Vec<Diagnostic>), CompileError> {
+    lower_with_bindings(file, profile, images, &[])
+}
+
+/// [`lower`], plus the importer's joined variable-binding rows (story
+/// #167): after the walk, each row is mapped onto the document node its
+/// Figma id lowered to and applied as `Document.signals`/
+/// `Document.bindings` — see [`bindings::apply`] for the property →
+/// channel mapping and the named verdicts.
+pub fn lower_with_bindings(
+    file: &FigmaFile,
+    profile: Profile,
+    images: &BTreeMap<String, ImageAsset>,
+    bound: &[BoundVariable],
+) -> Result<(Document, Vec<Diagnostic>), CompileError> {
     let roots = top_level_nodes(&file.document)?;
 
     let mut walk = Walk {
         doc: Document::new(),
         diagnostics: Vec::new(),
         image_of: BTreeMap::new(),
+        index_of_id: BTreeMap::new(),
         profile,
         images,
     };
@@ -283,6 +301,13 @@ pub fn lower(
     // blocks the document (an unsupported top-level node), that error explains
     // the emptiness and R6 already blocks, so this diagnostic is not added on
     // top of it.
+    // The joined binding rows (story #167), applied after the walk so
+    // every lowered node's index is known. Their diagnostics append after
+    // the walk's — the rows arrive in sidecar (document) order, so the
+    // report stays deterministic (R7).
+    let binding_diagnostics = bindings::apply(&mut walk.doc, bound, &walk.index_of_id);
+    walk.diagnostics.extend(binding_diagnostics);
+
     if walk.doc.nodes.is_empty()
         && !walk
             .diagnostics
@@ -432,6 +457,9 @@ struct Walk<'a> {
     /// Interns `imageRef` → image-table index, so two nodes sharing one image
     /// share one asset.
     image_of: BTreeMap<String, u32>,
+    /// Figma node id → (document index, diagnostic path) for every node
+    /// the walk lowered — what the binding rows join against (story #167).
+    index_of_id: bindings::IndexOfId,
     profile: Profile,
     images: &'a BTreeMap<String, ImageAsset>,
 }
@@ -678,6 +706,25 @@ impl Walk<'_> {
             text,
             text_style,
         });
+        // Where this Figma node landed — the join key for the binding
+        // rows (story #167). A synthetic node without an id (a test
+        // shape) simply cannot be bound. The visible fill's paint opacity
+        // rides along: the lowering folded it into the literal's alpha,
+        // so a FillA binding must capture the same multiply.
+        if let Some(id) = &node.id {
+            let fill_opacity = match single_visible_paint(&node.fills) {
+                OnePaint::One(paint) => paint.opacity.unwrap_or(1.0),
+                OnePaint::None | OnePaint::Many => 1.0,
+            };
+            self.index_of_id.insert(
+                id.clone(),
+                bindings::LoweredNode {
+                    index,
+                    path: path.clone(),
+                    fill_opacity,
+                },
+            );
+        }
 
         for construct in constructs {
             self.diagnostics.push(dashscene_validator::triage(

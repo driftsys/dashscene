@@ -189,7 +189,7 @@ impl Doc {
                 paints,
                 strings,
                 text_styles,
-                variant_sets: None,
+                ..Default::default()
             },
         );
         b.finish(doc, None);
@@ -923,4 +923,187 @@ fn well_formed_paint_corners_are_allowed() {
     // Ordinary rounded corners must not be diagnosed.
     let report = validate(&document_with_paint_corners([8.0, 8.0, 8.0, 8.0]));
     assert!(report.is_empty(), "unexpected diagnostics:\n{report}");
+}
+
+// ---------------------------------------------------------------------
+// The v0.7 binding tables (story #167): dangling indices, the channel
+// range check, and duplicate signal names. Built with a local raw
+// builder — the tables need no node specs beyond a bare node.
+// ---------------------------------------------------------------------
+
+/// One document with `signal_names` declarations and one binding row.
+fn document_with_bindings(
+    signal_names: &[Option<&str>],
+    signal: u32,
+    node: u32,
+    channel: dashbuf::BindingChannel,
+) -> Vec<u8> {
+    use dashbuf::{
+        Binding, BindingArgs, BindingTransform, Document, DocumentArgs, Node, NodeArgs, SignalDecl,
+        SignalDeclArgs,
+    };
+
+    let mut b = FlatBufferBuilder::new();
+    let bare = Node::create(&mut b, &NodeArgs::default());
+    let nodes = b.create_vector(&[bare]);
+
+    let decls: Vec<_> = signal_names
+        .iter()
+        .map(|name| {
+            let name = name.map(|n| b.create_string(n));
+            SignalDecl::create(&mut b, &SignalDeclArgs { name, initial: 1.0 })
+        })
+        .collect();
+    let signals = b.create_vector(&decls);
+
+    let row = Binding::create(
+        &mut b,
+        &BindingArgs {
+            signal,
+            node,
+            channel,
+            transform_type: BindingTransform::NONE,
+            transform: None,
+        },
+    );
+    let bindings = b.create_vector(&[row]);
+
+    let document = Document::create(
+        &mut b,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            signals: Some(signals),
+            bindings: Some(bindings),
+            ..Default::default()
+        },
+    );
+    b.finish(document, None);
+    b.finished_data().to_vec()
+}
+
+fn validate_bytes(bytes: &[u8]) -> dashscene_validator::Report {
+    let document = root_as_document(bytes).expect("the flatbuffer verifier accepts this buffer");
+    validate_document(&document)
+}
+
+#[test]
+fn a_well_formed_binding_table_produces_no_diagnostics() {
+    let bytes = document_with_bindings(&[Some("size/gap")], 0, 0, dashbuf::BindingChannel::Gap);
+    let report = validate_bytes(&bytes);
+    assert!(report.is_empty(), "unexpected diagnostics:\n{report}");
+}
+
+#[test]
+fn a_binding_signal_past_the_declarations_is_named() {
+    let bytes = document_with_bindings(&[Some("a")], 7, 0, dashbuf::BindingChannel::X);
+    let report = validate_bytes(&bytes);
+    let diagnostic = report
+        .diagnostics()
+        .iter()
+        .find(|d| d.rule == rule::BINDING_SIGNAL_OUT_OF_RANGE)
+        .expect("the dangling signal is named");
+    assert_eq!(diagnostic.at, Location::Binding(0));
+}
+
+#[test]
+fn a_binding_node_past_the_node_array_is_named() {
+    let bytes = document_with_bindings(&[Some("a")], 0, 9, dashbuf::BindingChannel::X);
+    let report = validate_bytes(&bytes);
+    assert!(
+        report
+            .diagnostics()
+            .iter()
+            .any(|d| d.rule == rule::BINDING_NODE_OUT_OF_RANGE)
+    );
+}
+
+#[test]
+fn a_binding_channel_this_build_does_not_know_is_named() {
+    // The enum is append-only: a newer document can carry a channel this
+    // build has no variant for. Range-checked, never defaulted (P4).
+    let bytes = document_with_bindings(&[Some("a")], 0, 0, dashbuf::BindingChannel(200));
+    let report = validate_bytes(&bytes);
+    assert!(
+        report
+            .diagnostics()
+            .iter()
+            .any(|d| d.rule == rule::UNKNOWN_ENUM && d.message.contains("Binding.channel"))
+    );
+}
+
+#[test]
+fn a_duplicate_signal_name_is_named_and_anonymous_signals_are_not() {
+    let bytes = document_with_bindings(
+        &[Some("size/gap"), None, None, Some("size/gap")],
+        0,
+        0,
+        dashbuf::BindingChannel::Gap,
+    );
+    let report = validate_bytes(&bytes);
+    let duplicates: Vec<_> = report
+        .diagnostics()
+        .iter()
+        .filter(|d| d.rule == rule::SIGNAL_NAME_DUPLICATE)
+        .collect();
+    assert_eq!(duplicates.len(), 1, "two anonymous signals do not collide");
+    assert_eq!(duplicates[0].at, Location::Signal(3));
+}
+
+#[test]
+fn a_binding_transform_this_build_does_not_know_is_named() {
+    // The BindingTransform union is append-only (Format joins at v0.8,
+    // per the schema comment), and the flatbuffer verifier accepts an
+    // unknown union tag as long as it carries a payload — so without
+    // this gate the loader's transform_of would panic on a document from
+    // a newer producer.
+    use dashbuf::{
+        Binding, BindingArgs, BindingChannel, BindingTransform, Document, DocumentArgs, Node,
+        NodeArgs, SignalDecl, SignalDeclArgs, TransformScale, TransformScaleArgs,
+    };
+
+    let mut b = FlatBufferBuilder::new();
+    let bare = Node::create(&mut b, &NodeArgs::default());
+    let nodes = b.create_vector(&[bare]);
+    let signal = SignalDecl::create(
+        &mut b,
+        &SignalDeclArgs {
+            name: None,
+            initial: 1.0,
+        },
+    );
+    let signals = b.create_vector(&[signal]);
+    // A stand-in payload for the tag this build does not know — what a
+    // v0.8 Format table would look like to a v0.7 reader.
+    let payload = TransformScale::create(&mut b, &TransformScaleArgs { factor: 1.0 });
+    let row = Binding::create(
+        &mut b,
+        &BindingArgs {
+            signal: 0,
+            node: 0,
+            channel: BindingChannel::Gap,
+            transform_type: BindingTransform(9),
+            transform: Some(payload.as_union_value()),
+        },
+    );
+    let bindings = b.create_vector(&[row]);
+    let document = Document::create(
+        &mut b,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            signals: Some(signals),
+            bindings: Some(bindings),
+            ..Default::default()
+        },
+    );
+    b.finish(document, None);
+    let bytes = b.finished_data().to_vec();
+
+    let report = validate_bytes(&bytes);
+    assert!(
+        report
+            .diagnostics()
+            .iter()
+            .any(|d| d.rule == rule::UNKNOWN_ENUM && d.message.contains("Binding.transform")),
+        "the unknown union tag is named, not defaulted:\n{report}"
+    );
 }

@@ -1,7 +1,7 @@
 # dashc — the dashscene compile pipeline
 
-As-built after stories #16, #139, #17 (v0.3), and #140 (v0.7 — the flex
-lowering). The requirements are in
+As-built after stories #16, #139, #17 (v0.3), #140 (v0.7 — the flex
+lowering), and #167 (v0.7 — the binding tables). The requirements are in
 `docs/specification/06-dashc-figma-lowering.md`. The rationale is in
 `docs/decisions/`:
 
@@ -102,6 +102,8 @@ guessed.
     figma::rest         the Figma REST JSON shape (serde types)
     figma::triage       maps Figma constructs onto dashscene_validator::Construct
     figma::lower        the Figma REST JSON → Document walk
+    figma::bindings     the joined variable-binding rows → binding tables
+                        (story #167)
     figma::image_refs   the imageRefs a lowering of a file will demand
 
 `lower` does no I/O: `dashc` compiles to `wasm32-unknown-unknown`, so it
@@ -192,8 +194,9 @@ not reimplement it (P5;
     dashc_compile_figma(ptr: *const u8, len: u32) -> *mut u8
     dashc_figma_image_refs(ptr: *const u8, len: u32) -> *mut u8
 
-`dashc_compile_figma` frames `compile_figma` above: the request carries the
-profile, the Figma JSON, and the caller-supplied image map; the response
+`dashc_compile_figma` frames `compile_figma_with_bindings` above: the
+request (wire version 2) carries the profile, the Figma JSON, the
+caller-supplied image map, and the joined binding rows; the response
 carries the `.dsb` bytes and the report on success, or the tagged
 `CompileError` on failure. `dashc_figma_image_refs` frames `figma::image_refs`
 the same way, with no blob in the response. Why the ABI is hand-written
@@ -233,6 +236,24 @@ would repaint one document's nodes with another document's assets.
 `compile_figma` has no CLI subcommand: the acceptance path for that entry
 point is a library call, consumed by the Deno importer (#17) through the
 `wasm32` target, not by this native binary.
+
+## Bindings (v0.7, story #167)
+
+`compile_figma_with_bindings` takes the importer's joined
+variable-binding rows beside the JSON and images (the compile request's
+ABI v2 section). `figma::bindings::apply` maps each row's Figma node id
+onto the document node the walk lowered it to, and its property path
+onto a binding channel: `itemSpacing` becomes a `Gap` row, a solid
+fill's `fills[i].color` becomes four `Fill` channel rows with `.r/.g/
+.b/.a` signal suffixes. Signals intern by name in first-use row order
+(R7). A path with no channel yet, or a row targeting an unlowered node,
+is a named warning — the resolved literal still ships (P4); an
+inconsistent signal declaration is a named error. `Document` mirrors the
+schema's tables as plain types (`SignalDecl`, `Binding`,
+`BindingChannel`, `BindingTransform`), and `BindingTransform::Custom`
+reaching `compile` is the named error `binding.custom-transform` —
+a closure does not serialize, so the document is refused, never emitted
+approximately (`docs/decisions/binding-table-in-the-document.md`).
 
 ## Scope boundaries (v0.7, after #140)
 

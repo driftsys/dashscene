@@ -216,7 +216,7 @@ fn variant_transition_goldens_at_t_0_half_and_1() {
                 },
             },
             PropTransition {
-                prop: prop_key(chip, Channel::W),
+                prop: prop_key(chip, Channel::Width),
                 spec: TransitionSpec::Tween {
                     duration: 1.0,
                     easing: Easing::Linear,

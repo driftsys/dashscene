@@ -36,3 +36,7 @@ serde_json = { workspace = true, features = ["unbounded_depth"] }
 dashscene-core.workspace = true
 dashscene-engine.workspace = true
 dashscene-skia.workspace = true
+# The story #167 acceptance ("a scene authored in Figma and the same
+# scene authored in dashlang emit the same binding rows") compares the
+# arena tables both producers stage — see tests/bindings_lowering.rs.
+dashlang.workspace = true

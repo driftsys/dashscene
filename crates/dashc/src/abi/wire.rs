@@ -14,10 +14,17 @@ use std::collections::BTreeMap;
 use dashpaint::{ImageAsset, ImageFormat};
 use dashscene_validator::Profile;
 
+use crate::figma::{BoundValue, BoundVariable};
+
 /// The version of this wire format. The Deno side reads it at load and refuses
 /// a module it does not understand, so a stale `.wasm` fails with a sentence
 /// instead of a misdecode.
-pub const ABI_VERSION: u32 = 1;
+///
+/// Version 2 (story #167) appends the joined variable-binding rows to the
+/// compile request — see [`decode_compile_request`]. The framing and every
+/// earlier field are unchanged; the version handshake is what makes the
+/// append safe across a stale module.
+pub const ABI_VERSION: u32 = 2;
 
 /// The first field of every response.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +41,9 @@ pub struct CompileRequest {
     pub profile: Profile,
     pub json: String,
     pub images: BTreeMap<String, ImageAsset>,
+    /// The importer's joined variable-binding rows (story #167); empty
+    /// for an import without a vartable.
+    pub bindings: Vec<BoundVariable>,
 }
 
 /// A cursor that runs out of bytes instead of panicking.
@@ -81,6 +91,10 @@ impl<'a> Reader<'a> {
         String::from_utf8(bytes.to_vec()).map_err(|e| format!("not UTF-8: {e}"))
     }
 
+    fn f32(&mut self) -> Result<f32, String> {
+        Ok(f32::from_le_bytes(self.u32()?.to_le_bytes()))
+    }
+
     fn remaining(&self) -> usize {
         self.bytes.len().saturating_sub(self.at)
     }
@@ -122,12 +136,44 @@ pub fn decode_compile_request(bytes: &[u8]) -> Result<CompileRequest, String> {
             return Err(format!("imageRef {image_ref} appears twice"));
         }
     }
+
+    // The joined variable-binding rows (ABI v2, story #167): per row, the
+    // Figma node id, the property path, the mode-qualified signal name,
+    // and a tagged value — 0 = one f32, 1 = four f32 color components.
+    let count = reader.u32()?;
+    let mut bindings = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        let node_id = reader.string()?;
+        let property = reader.string()?;
+        let signal = reader.string()?;
+        let value = match reader.u32()? {
+            0 => BoundValue::Float(reader.f32()?),
+            1 => BoundValue::Color {
+                r: reader.f32()?,
+                g: reader.f32()?,
+                b: reader.f32()?,
+                a: reader.f32()?,
+            },
+            other => {
+                return Err(format!(
+                    "unknown bound value type {other} (0 = float, 1 = color)"
+                ));
+            }
+        };
+        bindings.push(BoundVariable {
+            node_id,
+            property,
+            signal,
+            value,
+        });
+    }
     reader.finish()?;
 
     Ok(CompileRequest {
         profile,
         json,
         images,
+        bindings,
     })
 }
 
@@ -155,10 +201,21 @@ pub fn encode_response(status: u32, blob: &[u8], json: &str) -> Vec<u8> {
 mod tests {
     use super::*;
 
+    /// One test row's value, mirroring the TypeScript codec's tagging.
+    enum WireValue {
+        Float(f32),
+        Color([f32; 4]),
+    }
+
     /// Encodes a request the way the TypeScript codec does
     /// (`importers/figma/src/wasm.ts`). If this helper and that codec ever
     /// disagree, the Deno suite fails on the golden — which is the point.
-    fn encode_request(profile: u32, json: &str, images: &[(&str, u32, &[u8])]) -> Vec<u8> {
+    fn encode_request(
+        profile: u32,
+        json: &str,
+        images: &[(&str, u32, &[u8])],
+        bindings: &[(&str, &str, &str, WireValue)],
+    ) -> Vec<u8> {
         let mut out = Vec::new();
         out.extend_from_slice(&profile.to_le_bytes());
         out.extend_from_slice(&(json.len() as u32).to_le_bytes());
@@ -171,12 +228,31 @@ mod tests {
             out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
             out.extend_from_slice(bytes);
         }
+        out.extend_from_slice(&(bindings.len() as u32).to_le_bytes());
+        for (node_id, property, signal, value) in bindings {
+            for field in [node_id, property, signal] {
+                out.extend_from_slice(&(field.len() as u32).to_le_bytes());
+                out.extend_from_slice(field.as_bytes());
+            }
+            match value {
+                WireValue::Float(v) => {
+                    out.extend_from_slice(&0u32.to_le_bytes());
+                    out.extend_from_slice(&v.to_le_bytes());
+                }
+                WireValue::Color(components) => {
+                    out.extend_from_slice(&1u32.to_le_bytes());
+                    for component in components {
+                        out.extend_from_slice(&component.to_le_bytes());
+                    }
+                }
+            }
+        }
         out
     }
 
     #[test]
     fn a_request_round_trips() {
-        let bytes = encode_request(1, "{}", &[("abc", 0, &[1, 2, 3])]);
+        let bytes = encode_request(1, "{}", &[("abc", 0, &[1, 2, 3])], &[]);
         let request = decode_compile_request(&bytes).expect("the request decodes");
 
         assert_eq!(request.profile, Profile::Full);
@@ -185,11 +261,66 @@ mod tests {
         let asset = &request.images["abc"];
         assert_eq!(asset.format, ImageFormat::Png);
         assert_eq!(asset.bytes, vec![1, 2, 3]);
+        assert!(request.bindings.is_empty());
+    }
+
+    #[test]
+    fn binding_rows_round_trip_both_value_types() {
+        let bytes = encode_request(
+            0,
+            "{}",
+            &[],
+            &[
+                ("1:8", "itemSpacing", "size/gap", WireValue::Float(16.0)),
+                (
+                    "1:9",
+                    "fills[0].color",
+                    "color/accent@dark",
+                    WireValue::Color([0.4, 0.65, 1.0, 1.0]),
+                ),
+            ],
+        );
+        let request = decode_compile_request(&bytes).expect("the request decodes");
+
+        assert_eq!(request.bindings.len(), 2);
+        assert_eq!(
+            request.bindings[0],
+            BoundVariable {
+                node_id: "1:8".to_string(),
+                property: "itemSpacing".to_string(),
+                signal: "size/gap".to_string(),
+                value: BoundValue::Float(16.0),
+            }
+        );
+        assert_eq!(
+            request.bindings[1].value,
+            BoundValue::Color {
+                r: 0.4,
+                g: 0.65,
+                b: 1.0,
+                a: 1.0
+            }
+        );
+    }
+
+    #[test]
+    fn an_unknown_bound_value_type_is_an_error() {
+        let mut bytes = encode_request(0, "{}", &[], &[]);
+        // Rewrite the binding count to 1 and append a row with tag 9.
+        let at = bytes.len() - 4;
+        bytes[at..].copy_from_slice(&1u32.to_le_bytes());
+        for field in ["1:8", "itemSpacing", "size/gap"] {
+            bytes.extend_from_slice(&(field.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(field.as_bytes());
+        }
+        bytes.extend_from_slice(&9u32.to_le_bytes());
+        bytes.extend_from_slice(&1.0f32.to_le_bytes());
+        assert!(decode_compile_request(&bytes).is_err());
     }
 
     #[test]
     fn a_truncated_request_is_an_error_not_a_panic() {
-        let bytes = encode_request(0, "{}", &[("abc", 0, &[1, 2, 3])]);
+        let bytes = encode_request(0, "{}", &[("abc", 0, &[1, 2, 3])], &[]);
         for cut in 0..bytes.len() {
             // Every prefix must decode to an error. A panic here would trap the
             // wasm module, turning a bad request into an unrecoverable importer.
@@ -202,20 +333,20 @@ mod tests {
 
     #[test]
     fn trailing_bytes_are_an_error() {
-        let mut bytes = encode_request(0, "{}", &[]);
+        let mut bytes = encode_request(0, "{}", &[], &[]);
         bytes.push(0);
         assert!(decode_compile_request(&bytes).is_err());
     }
 
     #[test]
     fn an_unknown_profile_is_an_error() {
-        let bytes = encode_request(7, "{}", &[]);
+        let bytes = encode_request(7, "{}", &[], &[]);
         assert!(decode_compile_request(&bytes).is_err());
     }
 
     #[test]
     fn an_unknown_image_format_is_an_error() {
-        let bytes = encode_request(0, "{}", &[("abc", 9, &[1])]);
+        let bytes = encode_request(0, "{}", &[("abc", 9, &[1])], &[]);
         assert!(decode_compile_request(&bytes).is_err());
     }
 

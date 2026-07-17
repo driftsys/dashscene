@@ -37,10 +37,12 @@ mod reactive;
 
 // The reactive layer (issue #166): signals, bindings, transforms, and
 // the per-frame flush. Declared on this crate's `Node`/`Scene`, so the
-// authoring surface is one import path.
+// authoring surface is one import path. `attach_live` (story #167) is
+// the loader-side entry point: it builds a `LiveScene` from the binding
+// tables a loaded document staged into the arena.
 pub use reactive::{
     Channel, ClosureId, FormatSpec, LiveScene, Mapped, ScalarExpr, Signal, SignalValue, Spring,
-    TextExpr, Transform,
+    TextExpr, Transform, attach_live,
 };
 
 // A DSL consumer needs an `Arena` to build into, a `Color` to fill
@@ -231,6 +233,11 @@ pub struct Scene {
     // Signal initial values, in declaration order. `SignalValue::declare`
     // pushes here; `build_live` moves them into the `LiveScene`.
     scalar_inits: Vec<f32>,
+    // The scalar signals' runtime lookup names, parallel to
+    // `scalar_inits`. `None` for a signal declared through
+    // `Scene::signal`; `Some` through `Scene::signal_named` (story #167,
+    // the name staged into the document binding table).
+    scalar_names: Vec<Option<String>>,
     bool_inits: Vec<bool>,
 }
 
@@ -280,8 +287,8 @@ impl Scene {
     /// Adds this description's roots to `arena` and publishes them in
     /// exactly one commit, using `solver` for every node's geometry —
     /// the entry point a flex scene needs (`dashscene-engine`'s
-    /// `TaffySolver`, injected by the caller so `dashlang` itself never
-    /// depends on the engine).
+    /// `TaffySolver` being the product case). The solver stays injected:
+    /// the caller chooses it, and this crate never constructs one.
     pub fn build_with(&self, arena: &mut Arena, solver: &mut dyn LayoutSolver) -> Built {
         Built {
             generation: self.stage(arena).commit_with(solver),

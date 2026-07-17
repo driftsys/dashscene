@@ -4,7 +4,7 @@
     covers   v0.1 walking skeleton + v0.2 flex layout vocabulary
              (story #8) + v0.3 paint vocabulary (story #13)
              + v0.5 text vocabulary (story #26) + v0.4 variant table
-             (story #20)
+             (story #20) + v0.7 binding tables (story #167)
 
 ## Purpose
 
@@ -186,9 +186,24 @@ All types are generated from `crates/dashbuf/schema/dashbuf.fbs`:
 - `VariantSet` (table) — `members: [VariantMember]`, `active_member:
   uint32 = 0` (flat index into `members`;
   `docs/decisions/variant-set-flat-index.md`).
+- The binding tables (v0.7, story #167,
+  `docs/decisions/binding-table-in-the-document.md`): `SignalDecl`
+  (table) — `name: string` (the runtime lookup name; absent for an
+  anonymous producer signal), `initial: float32` (the value every
+  binding of it seeds from — authored intent, never a runtime value,
+  P1). `BindingChannel` (`uint8` enum) — the §23 channel set `X`, `Y`,
+  `Width`, `Height`, `Gap`, `FillR`, `FillG`, `FillB`, `FillA`,
+  mirroring `dashscene-core`'s `Channel` wire codes. `TransformScale` /
+  `TransformMapRange` / `TransformClamp` (tables) — the three
+  `BindingTransform` union members; union `NONE` means the identity
+  transform, so the common Figma-authored row costs no transform table.
+  `Binding` (table) — `signal: uint32` (index into `Document.signals`),
+  `node: uint32` (index into `Document.nodes`), `channel:
+  BindingChannel`, `transform: BindingTransform`.
 - `Document` (table, `root_type`) — `nodes: [Node]`, `images: [Image]`,
   `paints: [Paint]`, `strings: [string]`, `text_styles: [TextStyle]`,
-  `variant_sets: [VariantSet]`.
+  `variant_sets: [VariantSet]`, `signals: [SignalDecl]`,
+  `bindings: [Binding]`.
 
 ## Testing
 
@@ -229,6 +244,13 @@ back empty when absent, `active_member` reading back both its default
 and a set value, and independent round-tripping across multiple
 `VariantSet`s in one document.
 
+`crates/dashbuf/tests/bindings_roundtrip.rs` covers the v0.7 binding
+tables (story #167), one focused test per construct, matching
+`paint_roundtrip.rs`'s style: named and anonymous declarations, every
+`BindingChannel` via the generated `ENUM_VALUES`, every
+`BindingTransform` union member plus the union-NONE identity default,
+two rows sharing one declaration, and absent tables reading back absent.
+
 `crates/dashbuf/tests/schema_evolution.rs` is the R7 guard (debt #64).
 The suites above build and decode with the same freshly generated
 bindings, so a schema edit that shifts a field id or a union
@@ -238,10 +260,12 @@ leaves them green. This suite instead decodes
 checked into the repo and frozen: one document exercising the four
 sentinel-defaulted `Node` fields, all three `Fill` union members,
 `Paint.clip`, the legacy inline `Node.paint`, both flex tables, both
-text pools, and (v0.4) one `VariantSet` with a non-default
+text pools, (v0.4) one `VariantSet` with a non-default
 `active_member` and one override of each of two `VariantPropValue`
-kinds, every field written to a value distinguishable from its
-default. The assertions are on those values — a shifted field id
+kinds, and (v0.7) both binding tables — a named and an anonymous
+declaration, an identity row on a non-default channel, and a
+`TransformScale` row — every field written to a value distinguishable
+from its default. The assertions are on those values — a shifted field id
 usually still decodes, and quietly returns another field's value or a
 default, which is the failure worth catching.
 

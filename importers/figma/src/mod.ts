@@ -12,13 +12,15 @@
  * cross-file library resolution #38), the
  * trim pass (trim.ts — sharedPluginData roles, `_`-prefix sugar, slot-child
  * auto-replacement, #39), the import flow (import.ts), token phase 1
- * (tokens.ts — the resolved-literal sidecar, #159), and the token-export
- * vartable loader (vartable.ts — the phase-2 join input, #39/#167) are
- * implemented. closure.ts and trim.ts share one identity-preserving tree
- * rebuild (tree.ts).
+ * (tokens.ts — the resolved-literal sidecar, #159), the token-export
+ * vartable loader (vartable.ts — the phase-2 join input, #39/#167), and the
+ * phase-2 join itself (bindings.ts — sidecar x vartable with per-node mode
+ * resolution, #167) are implemented. closure.ts and trim.ts share one
+ * identity-preserving tree rebuild (tree.ts).
  */
 
 export * from "./fetch.ts";
+export * from "./bindings.ts";
 export * from "./closure.ts";
 export * from "./trim.ts";
 export * from "./tokens.ts";
