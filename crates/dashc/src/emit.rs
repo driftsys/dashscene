@@ -250,6 +250,13 @@ fn build_node<'a>(
                     CrossAxisAlign::Center => dashbuf::CrossAxisAlign::Center,
                     CrossAxisAlign::End => dashbuf::CrossAxisAlign::End,
                 },
+                // v0.8 schema appends (story #43). The lowering does not
+                // produce them yet — the D5 refusals un-pin at story
+                // #264 — so absent stays absent and the emitted bytes
+                // are unchanged.
+                cross_gap: None,
+                grid_rows: None,
+                grid_columns: None,
             },
         )
     });
@@ -265,6 +272,13 @@ fn build_node<'a>(
                 min_height: c.min_height,
                 max_height: c.max_height,
                 margin: (c.margin != EdgeInsets::default()).then_some(&margin),
+                // v0.8 schema appends (story #43) — absent until story
+                // #264 lowers grid placement, like the container's
+                // fields above.
+                grid_row: None,
+                grid_column: None,
+                grid_row_span: 1,
+                grid_column_span: 1,
             },
         )
     });

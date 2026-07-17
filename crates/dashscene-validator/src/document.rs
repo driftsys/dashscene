@@ -324,6 +324,46 @@ fn check_node_links(
             "LayoutContainer.cross_align",
             flex.cross_align()
         );
+        // The v0.8 grid track lists (story #43): each track's sizing is
+        // an append-only enum like the ones above, and its value has a
+        // pinned numeric domain like `weight` and stroke width.
+        for (axis, tracks) in [("row", flex.grid_rows()), ("column", flex.grid_columns())] {
+            for (i, track) in tracks.unwrap_or_default().iter().enumerate() {
+                check_enum!(report, &at(), "GridTrack.sizing", track.sizing());
+                check_grid_track(report, &at(), axis, i, &track);
+            }
+        }
+        // A Fraction track divides free space, and an axis the container
+        // hugs has none — the track, and everything anchored to it,
+        // silently collapses to zero (story #43, review finding R7). The
+        // constraints table holds the sizing; absent means Fixed.
+        if flex.mode() == dashbuf::LayoutMode::Grid
+            && let Some(constraints) = node.constraints()
+        {
+            let hugs = |sizing| sizing == dashbuf::AxisSizing::Hug;
+            let has_fraction = |tracks: Option<flatbuffers::Vector<'_, _>>| {
+                tracks
+                    .unwrap_or_default()
+                    .iter()
+                    .any(|t: dashbuf::GridTrack| t.sizing() == dashbuf::GridTrackSizing::Fraction)
+            };
+            for (axis, sizing, tracks) in [
+                ("vertical", constraints.sizing_v(), flex.grid_rows()),
+                ("horizontal", constraints.sizing_h(), flex.grid_columns()),
+            ] {
+                if hugs(sizing) && has_fraction(tracks) {
+                    report.push(error(
+                        rule::GRID_FRACTION_TRACK_UNDER_HUG,
+                        &at(),
+                        format!(
+                            "the grid hugs its {axis} axis but declares a Fraction track on \
+                             it; a fraction divides free space, and a hug axis has none, so \
+                             the track would silently collapse to zero"
+                        ),
+                    ));
+                }
+            }
+        }
     }
 
     if let Some(constraints) = node.constraints() {
@@ -339,6 +379,108 @@ fn check_node_links(
             "LayoutConstraints.sizing_v",
             constraints.sizing_v()
         );
+        // The v0.8 grid placement (story #43): spans span at least one
+        // track, and anchors stay inside the parent's declared track
+        // list — or, with no declared list, inside the solver's i16
+        // line range (review findings R5/R6).
+        for (axis, span) in [
+            ("row", constraints.grid_row_span()),
+            ("column", constraints.grid_column_span()),
+        ] {
+            if span == 0 {
+                report.push(error(
+                    rule::GRID_SPAN_ZERO,
+                    &at(),
+                    format!("grid {axis} span is 0; spanning no tracks has no meaning"),
+                ));
+            }
+        }
+        let parent_flex = match node.parent() {
+            NO_PARENT => None,
+            parent if (parent as usize) < sizes.nodes && parent < index => {
+                nodes.get(parent as usize).flex()
+            }
+            // A dangling or forward parent is already named above; the
+            // anchor check falls back to the undeclared-tracks bound.
+            _ => None,
+        };
+        for (axis, anchor, tracks) in [
+            (
+                "row",
+                constraints.grid_row(),
+                parent_flex.and_then(|f| f.grid_rows()),
+            ),
+            (
+                "column",
+                constraints.grid_column(),
+                parent_flex.and_then(|f| f.grid_columns()),
+            ),
+        ] {
+            let Some(anchor) = anchor else { continue };
+            match tracks {
+                Some(tracks) if !tracks.is_empty() => {
+                    let count = tracks.len();
+                    if anchor as usize >= count {
+                        report.push(error(
+                            rule::GRID_ANCHOR_OUT_OF_RANGE,
+                            &at(),
+                            format!(
+                                "grid {axis} anchor is {anchor}, but the parent declares \
+                                 {count} {axis} tracks"
+                            ),
+                        ));
+                    }
+                }
+                // No declared track list (implicit auto tracks, or no
+                // grid parent at all): bound the anchor so its 1-based
+                // line index fits the solver's i16 lines.
+                _ => {
+                    if anchor > (i16::MAX as u16) - 1 {
+                        report.push(error(
+                            rule::GRID_ANCHOR_OUT_OF_RANGE,
+                            &at(),
+                            format!(
+                                "grid {axis} anchor is {anchor}; without a declared track \
+                                 list the anchor is bounded at 32766, the largest value \
+                                 whose 1-based line index fits the solver's i16 lines"
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// One grid track's numeric domain: a `Fixed` value must be finite and
+/// non-negative (a length), a `Fraction` weight finite and positive (a
+/// zero or NaN weight makes the free-space division meaningless). Story
+/// #43, review finding R6 — the same posture as `check_stroke_width`.
+fn check_grid_track(
+    report: &mut Report,
+    at: &Location,
+    axis: &str,
+    index: usize,
+    track: &dashbuf::GridTrack<'_>,
+) {
+    let value = track.value();
+    let invalid = match track.sizing() {
+        dashbuf::GridTrackSizing::Fixed => !value.is_finite() || value < 0.0,
+        dashbuf::GridTrackSizing::Fraction => !value.is_finite() || value <= 0.0,
+        // An unknown sizing is already named by check_enum; its value
+        // has no domain to check.
+        _ => false,
+    };
+    if invalid {
+        let sizing = track.sizing().variant_name().unwrap_or("unknown");
+        report.push(error(
+            rule::GRID_TRACK_INVALID_VALUE,
+            at,
+            format!(
+                "{axis} track {index} is {sizing}({value}); a Fixed track must be finite and \
+                 non-negative, a Fraction weight finite and positive"
+            ),
+        ));
     }
 }
 

@@ -138,6 +138,43 @@ fn unset_fill_and_geometry_keep_core_defaults() {
 }
 
 #[test]
+fn unset_flex_fields_keep_core_defaults() {
+    // Debt #189: the dedicated unset-flex mirror of
+    // `unset_fill_and_geometry_keep_core_defaults` — an untouched DSL
+    // node's `Layout` matches `Layout::default()` field-by-field, so a
+    // regression in the flex-defaults path fails here by name instead
+    // of as a downstream rects mismatch.
+    let mut dsl = Arena::new();
+    scene([anon()]).build(&mut dsl);
+
+    let layout = dsl.layout(dsl.roots()[0]);
+    let defaults = dashscene_core::Layout::default();
+    assert_eq!(layout.mode, defaults.mode);
+    assert_eq!(layout.gap, defaults.gap);
+    assert_eq!(layout.cross_gap, defaults.cross_gap);
+    let insets = |i: dashscene_core::EdgeInsets| (i.left, i.top, i.right, i.bottom);
+    assert_eq!(insets(layout.padding), insets(defaults.padding));
+    assert_eq!(insets(layout.margin), insets(defaults.margin));
+    assert_eq!(layout.main_align, defaults.main_align);
+    assert_eq!(layout.cross_align, defaults.cross_align);
+    assert_eq!(layout.sizing_h, defaults.sizing_h);
+    assert_eq!(layout.sizing_v, defaults.sizing_v);
+    assert_eq!(layout.min_width, defaults.min_width);
+    assert_eq!(layout.max_width, defaults.max_width);
+    assert_eq!(layout.min_height, defaults.min_height);
+    assert_eq!(layout.max_height, defaults.max_height);
+    assert_eq!(layout.grid_row, defaults.grid_row);
+    assert_eq!(layout.grid_column, defaults.grid_column);
+    assert_eq!(layout.grid_row_span, defaults.grid_row_span);
+    assert_eq!(layout.grid_column_span, defaults.grid_column_span);
+    assert_eq!(layout.visible, defaults.visible);
+    // The track lists live beside `Layout` (story #43): both empty.
+    let (rows, columns) = dsl.grid_tracks(dsl.roots()[0]);
+    assert!(rows.is_empty());
+    assert!(columns.is_empty());
+}
+
+#[test]
 fn flex_vocabulary_reaches_the_arena_layout() {
     let mut dsl = Arena::new();
     scene([node("row")

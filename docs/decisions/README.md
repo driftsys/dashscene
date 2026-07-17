@@ -316,6 +316,15 @@ into the records below. Per-story decisions land here directly:
   signals; a non-default mode qualifies the name (`size/gap@dark`); the join
   splits at the ABI — Deno owns variables and modes, `dashc` owns channels
   (story #167; §23 D8/D9).
+- [v08-layout-vocabulary-shape.md](v08-layout-vocabulary-shape.md) — the
+  v0.8 layout vocabulary: Wrap/Grid as `LayoutMode` members, grid tracks as
+  `GridTrack` table vectors (Fixed/Fraction), placement on
+  `LayoutConstraints`, one appended `cross_gap` that follows `gap` when
+  absent; resolves Q-4 (story #43).
+- [negative-margin-hug-rebate.md](negative-margin-hug-rebate.md) — the
+  engine rebates a fixed child's negative main-axis margin into its flex
+  basis (with a min-size floor) to route around taffy 0.12's intrinsic
+  mis-sum; closes debt #236 (story #43).
 
 Gardened out of `docs/technotes/`'s `DECISION` / `DECISION direction` tags,
 so each technote stops being the authority for the conclusion it reached:

@@ -1107,3 +1107,210 @@ fn a_binding_transform_this_build_does_not_know_is_named() {
         "the unknown union tag is named, not defaulted:\n{report}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The v0.8 grid vocabulary (story #43, review findings R5–R7).
+// ---------------------------------------------------------------------------
+
+/// A grid container (declared row/column tracks, optional explicit
+/// sizing) with one anchored child — each test varies the one field it
+/// is about.
+struct GridDoc {
+    rows: Vec<(dashbuf::GridTrackSizing, f32)>,
+    columns: Vec<(dashbuf::GridTrackSizing, f32)>,
+    /// The container's (sizing_h, sizing_v); `None` writes no
+    /// constraints table (Fixed defaults).
+    container_sizing: Option<(dashbuf::AxisSizing, dashbuf::AxisSizing)>,
+    child_row: Option<u16>,
+    child_column: Option<u16>,
+    child_spans: (u16, u16),
+}
+
+impl Default for GridDoc {
+    fn default() -> Self {
+        Self {
+            rows: vec![(dashbuf::GridTrackSizing::Fixed, 40.0)],
+            columns: vec![
+                (dashbuf::GridTrackSizing::Fixed, 60.0),
+                (dashbuf::GridTrackSizing::Fraction, 1.0),
+            ],
+            container_sizing: None,
+            child_row: Some(0),
+            child_column: Some(1),
+            child_spans: (1, 1),
+        }
+    }
+}
+
+fn grid_document(spec: GridDoc) -> Vec<u8> {
+    use dashbuf::{
+        GridTrack, GridTrackArgs, LayoutConstraints, LayoutConstraintsArgs, LayoutContainer,
+        LayoutContainerArgs, LayoutMode,
+    };
+
+    let mut b = FlatBufferBuilder::new();
+    let build_tracks = |b: &mut FlatBufferBuilder<'static>,
+                        tracks: &[(dashbuf::GridTrackSizing, f32)]| {
+        let tracks: Vec<_> = tracks
+            .iter()
+            .map(|&(sizing, value)| GridTrack::create(b, &GridTrackArgs { sizing, value }))
+            .collect();
+        b.create_vector(&tracks)
+    };
+    let rows = build_tracks(&mut b, &spec.rows);
+    let columns = build_tracks(&mut b, &spec.columns);
+    let flex = LayoutContainer::create(
+        &mut b,
+        &LayoutContainerArgs {
+            mode: LayoutMode::Grid,
+            grid_rows: Some(rows),
+            grid_columns: Some(columns),
+            ..Default::default()
+        },
+    );
+    let container_constraints = spec.container_sizing.map(|(sizing_h, sizing_v)| {
+        LayoutConstraints::create(
+            &mut b,
+            &LayoutConstraintsArgs {
+                sizing_h,
+                sizing_v,
+                ..Default::default()
+            },
+        )
+    });
+    let container = Node::create(
+        &mut b,
+        &NodeArgs {
+            flex: Some(flex),
+            constraints: container_constraints,
+            ..Default::default()
+        },
+    );
+    let child_constraints = LayoutConstraints::create(
+        &mut b,
+        &LayoutConstraintsArgs {
+            grid_row: spec.child_row,
+            grid_column: spec.child_column,
+            grid_row_span: spec.child_spans.0,
+            grid_column_span: spec.child_spans.1,
+            ..Default::default()
+        },
+    );
+    let child = Node::create(
+        &mut b,
+        &NodeArgs {
+            parent: 0,
+            constraints: Some(child_constraints),
+            ..Default::default()
+        },
+    );
+    let nodes = b.create_vector(&[container, child]);
+    let document = Document::create(
+        &mut b,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            ..Default::default()
+        },
+    );
+    b.finish(document, None);
+    b.finished_data().to_vec()
+}
+
+#[test]
+fn a_well_formed_grid_produces_no_diagnostics() {
+    let report = validate(&grid_document(GridDoc::default()));
+    assert!(report.is_empty(), "unexpected diagnostics:\n{report}");
+}
+
+#[test]
+fn invalid_grid_track_values_are_named() {
+    // The same numeric-domain posture as weight and stroke width: a
+    // Fixed track is a length (finite, non-negative), a Fraction weight
+    // divides free space (finite, positive).
+    for (sizing, value) in [
+        (dashbuf::GridTrackSizing::Fixed, -50.0),
+        (dashbuf::GridTrackSizing::Fixed, f32::NAN),
+        (dashbuf::GridTrackSizing::Fraction, 0.0),
+        (dashbuf::GridTrackSizing::Fraction, f32::NAN),
+        (dashbuf::GridTrackSizing::Fraction, -1.0),
+    ] {
+        let report = validate(&grid_document(GridDoc {
+            rows: vec![(sizing, value)],
+            ..Default::default()
+        }));
+        assert!(
+            report.has(rule::GRID_TRACK_INVALID_VALUE),
+            "{sizing:?}({value}): {report}"
+        );
+        assert!(report.has_errors());
+    }
+}
+
+#[test]
+fn a_grid_span_of_zero_is_named() {
+    let report = validate(&grid_document(GridDoc {
+        child_spans: (0, 1),
+        ..Default::default()
+    }));
+    assert!(report.has(rule::GRID_SPAN_ZERO), "{report}");
+    assert!(report.has_errors());
+}
+
+#[test]
+fn an_anchor_past_the_declared_tracks_is_named() {
+    // The default container declares one row track; anchoring the child
+    // at row 1 names the overrun.
+    let report = validate(&grid_document(GridDoc {
+        child_row: Some(1),
+        ..Default::default()
+    }));
+    assert!(report.has(rule::GRID_ANCHOR_OUT_OF_RANGE), "{report}");
+    assert!(report.has_errors());
+}
+
+#[test]
+fn an_anchor_past_the_i16_line_range_is_named_without_declared_tracks() {
+    // With no declared track list there is no count to bound against,
+    // so the bound is the solver's i16 line range: 32766 is the largest
+    // 0-based anchor whose 1-based line still fits.
+    let report = validate(&grid_document(GridDoc {
+        rows: vec![],
+        columns: vec![],
+        child_row: Some(32767),
+        child_column: Some(32766),
+        ..Default::default()
+    }));
+    assert!(report.has(rule::GRID_ANCHOR_OUT_OF_RANGE), "{report}");
+    // Only the row anchor overruns; the column anchor sits exactly at
+    // the bound.
+    assert_eq!(report.diagnostics().len(), 1, "{report}");
+}
+
+#[test]
+fn a_fraction_track_on_a_hug_axis_is_named() {
+    // A fraction divides free space and a hug axis has none: the track
+    // (and everything anchored to it) silently collapses to zero, so
+    // the construct is diagnosed rather than solved to nothing (P4).
+    let report = validate(&grid_document(GridDoc {
+        container_sizing: Some((dashbuf::AxisSizing::Hug, dashbuf::AxisSizing::Fixed)),
+        ..Default::default()
+    }));
+    assert!(report.has(rule::GRID_FRACTION_TRACK_UNDER_HUG), "{report}");
+    assert!(report.has_errors());
+
+    // The transpose: hug vertical + fraction row.
+    let report = validate(&grid_document(GridDoc {
+        rows: vec![(dashbuf::GridTrackSizing::Fraction, 1.0)],
+        container_sizing: Some((dashbuf::AxisSizing::Fixed, dashbuf::AxisSizing::Hug)),
+        child_row: Some(0),
+        ..Default::default()
+    }));
+    assert!(report.has(rule::GRID_FRACTION_TRACK_UNDER_HUG), "{report}");
+
+    // Hug on an axis whose tracks are all Fixed is fine.
+    let report = validate(&grid_document(GridDoc {
+        container_sizing: Some((dashbuf::AxisSizing::Fixed, dashbuf::AxisSizing::Hug)),
+        ..Default::default()
+    }));
+    assert!(!report.has(rule::GRID_FRACTION_TRACK_UNDER_HUG), "{report}");
+}

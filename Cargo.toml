@@ -51,6 +51,7 @@ taffy = { version = "0.12", default-features = false, features = [
     "taffy_tree",
     "flexbox",
     "block_layout",
+    "grid",
 ] }
 rustybuzz = "0.20"
 # Retained paint/clip interners and the solver's per-node caches key on

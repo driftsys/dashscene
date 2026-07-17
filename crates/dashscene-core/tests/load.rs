@@ -250,3 +250,106 @@ fn a_loaded_document_replays_its_binding_tables() {
     assert_eq!(rows[1].signal.index(), 2);
     assert_eq!(rows[1].transform, ScalarTransform::Scale(3.0));
 }
+
+/// The v0.8 layout fields (story #43) replay through the same producer
+/// API: a loaded grid container's tracks, cross gap, and baseline
+/// alignment — and a child's placement — land in the arena's layout
+/// intent exactly as hand-staged props would.
+#[test]
+fn a_loaded_document_replays_its_v08_layout_fields() {
+    use dashbuf::{
+        CrossAxisAlign, GridTrack, GridTrackArgs, GridTrackSizing, LayoutConstraints,
+        LayoutConstraintsArgs, LayoutContainer, LayoutContainerArgs, LayoutMode,
+    };
+
+    let mut b = FlatBufferBuilder::new();
+    let row_track = GridTrack::create(
+        &mut b,
+        &GridTrackArgs {
+            sizing: GridTrackSizing::Fixed,
+            value: 96.0,
+        },
+    );
+    let column_track = GridTrack::create(
+        &mut b,
+        &GridTrackArgs {
+            sizing: GridTrackSizing::Fraction,
+            value: 2.0,
+        },
+    );
+    let grid_rows = b.create_vector(&[row_track]);
+    let grid_columns = b.create_vector(&[column_track]);
+    let flex = LayoutContainer::create(
+        &mut b,
+        &LayoutContainerArgs {
+            mode: LayoutMode::Grid,
+            gap: 12.0,
+            cross_align: CrossAxisAlign::Baseline,
+            cross_gap: Some(16.0),
+            grid_rows: Some(grid_rows),
+            grid_columns: Some(grid_columns),
+            ..Default::default()
+        },
+    );
+    let layout = FixedSizeLayout::new(0.0, 0.0, 100.0, 100.0);
+    let container = Node::create(
+        &mut b,
+        &NodeArgs {
+            layout: Some(&layout),
+            flex: Some(flex),
+            ..Default::default()
+        },
+    );
+    let constraints = LayoutConstraints::create(
+        &mut b,
+        &LayoutConstraintsArgs {
+            grid_row: Some(0),
+            grid_column: Some(0),
+            grid_row_span: 1,
+            grid_column_span: 1,
+            ..Default::default()
+        },
+    );
+    let child = Node::create(
+        &mut b,
+        &NodeArgs {
+            parent: 0,
+            layout: Some(&layout),
+            constraints: Some(constraints),
+            ..Default::default()
+        },
+    );
+    let nodes = b.create_vector(&[container, child]);
+    let document = Document::create(
+        &mut b,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            ..Default::default()
+        },
+    );
+    b.finish(document, None);
+    let bytes = b.finished_data().to_vec();
+
+    let doc = root_as_document(&bytes).expect("valid dashbuf document");
+    let mut arena = Arena::new();
+    load_document(&doc, &mut arena);
+
+    let root = arena.roots()[0];
+    let container_layout = arena.layout(root);
+    assert_eq!(container_layout.mode, dashscene_core::LayoutMode::Grid);
+    assert_eq!(container_layout.cross_gap, Some(16.0));
+    assert_eq!(
+        container_layout.cross_align,
+        dashscene_core::CrossAxisAlign::Baseline
+    );
+    let (rows, columns) = arena.grid_tracks(root);
+    assert_eq!(rows, [dashscene_core::GridTrack::Fixed(96.0)]);
+    assert_eq!(columns, [dashscene_core::GridTrack::Fraction(2.0)]);
+
+    let child = arena.children(root)[0];
+    let child_layout = arena.layout(child);
+    assert_eq!(child_layout.grid_row, Some(0));
+    assert_eq!(child_layout.grid_column, Some(0));
+    assert_eq!(child_layout.grid_row_span, 1);
+    assert_eq!(child_layout.grid_column_span, 1);
+}

@@ -30,8 +30,8 @@ use dashbuf::{
 };
 
 use crate::arena::{
-    Arena, AxisSizing, CrossAxisAlign, LayoutMode, MainAxisAlign, NodeId, Prop, TextStyle,
-    VariantMember, VariantValue,
+    Arena, AxisSizing, CrossAxisAlign, GridTrack, LayoutMode, MainAxisAlign, NodeId, Prop,
+    TextStyle, VariantMember, VariantValue,
 };
 use crate::bindings::{Channel, ScalarTransform, SignalId};
 use crate::committed::{
@@ -151,6 +151,21 @@ pub fn load_document(doc: &Document<'_>, arena: &mut Arena) -> u64 {
             }
             txn.set_prop(id, Prop::MainAlign(main_align(flex.main_align())));
             txn.set_prop(id, Prop::CrossAlign(cross_align(flex.cross_align())));
+            // Absent cross gap means follows-`gap`, absent track lists
+            // mean implicit auto tracks — absence of intent stages no
+            // prop (P1), like min/max below.
+            if let Some(v) = flex.cross_gap() {
+                txn.set_prop(id, Prop::CrossGap(v));
+            }
+            if let Some(rows) = flex.grid_rows() {
+                txn.set_prop(id, Prop::GridRows(rows.iter().map(grid_track).collect()));
+            }
+            if let Some(columns) = flex.grid_columns() {
+                txn.set_prop(
+                    id,
+                    Prop::GridColumns(columns.iter().map(grid_track).collect()),
+                );
+            }
         }
 
         if let Some(c) = node.constraints() {
@@ -182,6 +197,18 @@ pub fn load_document(doc: &Document<'_>, arena: &mut Arena) -> u64 {
                     },
                 );
             }
+            // Grid placement (v0.8, story #43). An absent anchor is
+            // auto-placement, so it stages no prop; the spans default
+            // to 1 in the schema and in `Layout`, so replaying the
+            // value unconditionally is a no-op for old documents.
+            if let Some(v) = c.grid_row() {
+                txn.set_prop(id, Prop::GridRow(v));
+            }
+            if let Some(v) = c.grid_column() {
+                txn.set_prop(id, Prop::GridColumn(v));
+            }
+            txn.set_prop(id, Prop::GridRowSpan(c.grid_row_span()));
+            txn.set_prop(id, Prop::GridColumnSpan(c.grid_column_span()));
         }
     }
 
@@ -466,6 +493,8 @@ fn layout_mode(m: dashbuf::LayoutMode) -> LayoutMode {
         dashbuf::LayoutMode::None => LayoutMode::None,
         dashbuf::LayoutMode::Horizontal => LayoutMode::Horizontal,
         dashbuf::LayoutMode::Vertical => LayoutMode::Vertical,
+        dashbuf::LayoutMode::Wrap => LayoutMode::Wrap,
+        dashbuf::LayoutMode::Grid => LayoutMode::Grid,
         other => unreachable!("unknown LayoutMode {other:?}: rejected by the load gate (P4)"),
     }
 }
@@ -485,7 +514,16 @@ fn cross_align(a: dashbuf::CrossAxisAlign) -> CrossAxisAlign {
         dashbuf::CrossAxisAlign::Start => CrossAxisAlign::Start,
         dashbuf::CrossAxisAlign::Center => CrossAxisAlign::Center,
         dashbuf::CrossAxisAlign::End => CrossAxisAlign::End,
+        dashbuf::CrossAxisAlign::Baseline => CrossAxisAlign::Baseline,
         other => unreachable!("unknown CrossAxisAlign {other:?}: rejected by the load gate (P4)"),
+    }
+}
+
+fn grid_track(t: dashbuf::GridTrack<'_>) -> GridTrack {
+    match t.sizing() {
+        dashbuf::GridTrackSizing::Fixed => GridTrack::Fixed(t.value()),
+        dashbuf::GridTrackSizing::Fraction => GridTrack::Fraction(t.value()),
+        other => unreachable!("unknown GridTrackSizing {other:?}: rejected by the load gate (P4)"),
     }
 }
 

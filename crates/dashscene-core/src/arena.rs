@@ -74,14 +74,18 @@ pub trait LayoutSolver {
 
 /// Layout mode of a container node. `None` = passthrough (children
 /// place by their authored offsets); `Horizontal`/`Vertical` = flex
-/// (the solver owns placement — story #9). Wrap and Grid append at
-/// v0.8.
+/// (the solver owns placement — story #9). `Wrap` (v0.8, story #43) is
+/// a horizontal wrapping row — Figma's `layoutWrap` exists for
+/// horizontal auto-layout only. `Grid` (v0.8) places children in the
+/// container's track lists ([`Prop::GridRows`]/[`Prop::GridColumns`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LayoutMode {
     #[default]
     None,
     Horizontal,
     Vertical,
+    Wrap,
+    Grid,
 }
 
 /// How a node sizes itself along one axis: `Fixed` uses the authored
@@ -104,13 +108,18 @@ pub enum MainAxisAlign {
     SpaceBetween,
 }
 
-/// `Baseline` appends at v0.8 (docs/technotes/open-questions.md, Q-4).
+/// `Baseline` (v0.8, story #43, Q-4) aligns a horizontal row's children
+/// on their flex baselines: a leaf's baseline is its bottom edge, a
+/// nested row propagates its first line's baseline. In a `Vertical`
+/// container it degrades to start alignment (Taffy computes baselines
+/// for rows only).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CrossAxisAlign {
     #[default]
     Start,
     Center,
     End,
+    Baseline,
 }
 
 /// Padding insets, named to make edge order unmistakable — solver
@@ -122,6 +131,16 @@ pub struct EdgeInsets {
     pub top: f32,
     pub right: f32,
     pub bottom: f32,
+}
+
+/// One grid row or column track (v0.8, story #43) — mirrors the
+/// `dashbuf` `GridTrack` table. `Fixed` is a document-unit length;
+/// `Fraction` is a flexible weight over the free space (Figma's
+/// `minmax(0, Nfr)` serialized track).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum GridTrack {
+    Fixed(f32),
+    Fraction(f32),
 }
 
 /// One node's layout intent — the authored fixed geometry plus the
@@ -137,6 +156,11 @@ pub struct Layout {
     pub height: f32,
     pub mode: LayoutMode,
     pub gap: f32,
+    /// The cross-axis gap (v0.8, story #43): the spacing between wrap
+    /// lines and between grid rows — `gap` stays the main-axis spacing,
+    /// which for `Wrap` and `Grid` is the horizontal one. `None` =
+    /// follows `gap` (the v0.2 both-axes mapping).
+    pub cross_gap: Option<f32>,
     pub padding: EdgeInsets,
     /// Outer margin in the parent's flow. Negative values express
     /// overlap and are what [`Txn::lower_negative_gaps`] rewrites a
@@ -151,6 +175,13 @@ pub struct Layout {
     pub max_width: Option<f32>,
     pub min_height: Option<f32>,
     pub max_height: Option<f32>,
+    /// Grid placement under a mode-`Grid` parent (v0.8, story #43): the
+    /// 0-based anchor cell. `None` = auto-placed in document order.
+    pub grid_row: Option<u16>,
+    pub grid_column: Option<u16>,
+    /// How many tracks the node spans from its anchor. Defaults to 1.
+    pub grid_row_span: u16,
+    pub grid_column_span: u16,
     /// `false` lowers to Taffy `Display::None` (issue #165): not drawn
     /// and out of layout, siblings reflow. Defaults to `true`.
     pub visible: bool,
@@ -165,6 +196,7 @@ impl Default for Layout {
             height: 0.0,
             mode: LayoutMode::default(),
             gap: 0.0,
+            cross_gap: None,
             padding: EdgeInsets::default(),
             margin: EdgeInsets::default(),
             main_align: MainAxisAlign::default(),
@@ -175,6 +207,10 @@ impl Default for Layout {
             max_width: None,
             min_height: None,
             max_height: None,
+            grid_row: None,
+            grid_column: None,
+            grid_row_span: 1,
+            grid_column_span: 1,
             visible: true,
         }
     }
@@ -252,6 +288,24 @@ pub enum Prop {
     MaxWidth(f32),
     MinHeight(f32),
     MaxHeight(f32),
+    /// The cross-axis gap (v0.8, story #43): wrap-line / grid-row
+    /// spacing. Sets a value but cannot clear one back to
+    /// follows-`gap`, the same gap as the min/max props.
+    CrossGap(f32),
+    /// The container's grid row tracks, top to bottom (v0.8, story
+    /// #43). Replaces the whole list; meaningful when the mode is
+    /// [`LayoutMode::Grid`].
+    GridRows(Vec<GridTrack>),
+    /// The container's grid column tracks, left to right.
+    GridColumns(Vec<GridTrack>),
+    /// The node's 0-based grid anchor row under a mode-`Grid` parent.
+    GridRow(u16),
+    /// The node's 0-based grid anchor column.
+    GridColumn(u16),
+    /// How many row tracks the node spans from its anchor (default 1).
+    GridRowSpan(u16),
+    /// How many column tracks the node spans from its anchor (default 1).
+    GridColumnSpan(u16),
     /// Whether the node is drawn and takes part in layout. `false`
     /// lowers to Taffy `Display::None` (`docs/design/dashscene-engine.md`,
     /// issue #165): the node and its descendants are not drawn and take
@@ -333,6 +387,12 @@ struct NodeData {
     /// Creation order; DFS child order at commit.
     children: Vec<NodeId>,
     layout: Layout,
+    /// The container's grid track lists (v0.8, story #43). Beside
+    /// `layout` rather than inside it — they are variable-length, and
+    /// `Layout` is `Copy` — the same split as `text`. Empty = no tracks
+    /// authored (implicit auto tracks under mode `Grid`).
+    grid_rows: Vec<GridTrack>,
+    grid_columns: Vec<GridTrack>,
     /// The node's fill, in the full boundary-B vocabulary. `Prop::Fill`
     /// stays as the solid shorthand v0.1 producers use; `Prop::FillWith`
     /// stages a gradient or an image fill.
@@ -488,6 +548,21 @@ impl Arena {
             layout.height = height;
         }
         layout
+    }
+
+    /// The node's grid track lists (v0.8, story #43) — row tracks top
+    /// to bottom, column tracks left to right. Beside [`Arena::layout`]
+    /// rather than inside it because the lists are variable-length and
+    /// `Layout` is `Copy` (the same split as [`Arena::text`]). Both
+    /// empty for a node that authored no tracks — under a mode-`Grid`
+    /// container that means implicit auto tracks.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `node` is out of range for this arena.
+    pub fn grid_tracks(&self, node: NodeId) -> (&[GridTrack], &[GridTrack]) {
+        let data = self.node_data(node);
+        (&data.grid_rows, &data.grid_columns)
     }
 
     /// The currently active member index of `set` — staged intent, like
@@ -704,6 +779,8 @@ impl Txn<'_> {
             parent,
             children: Vec::new(),
             layout: Layout::default(),
+            grid_rows: Vec::new(),
+            grid_columns: Vec::new(),
             fill: None,
             stroke: None,
             corners: CornerRadii::default(),
@@ -881,6 +958,13 @@ impl Txn<'_> {
             Prop::MaxWidth(v) => data.layout.max_width = Some(v),
             Prop::MinHeight(v) => data.layout.min_height = Some(v),
             Prop::MaxHeight(v) => data.layout.max_height = Some(v),
+            Prop::CrossGap(v) => data.layout.cross_gap = Some(v),
+            Prop::GridRows(tracks) => data.grid_rows = tracks,
+            Prop::GridColumns(tracks) => data.grid_columns = tracks,
+            Prop::GridRow(v) => data.layout.grid_row = Some(v),
+            Prop::GridColumn(v) => data.layout.grid_column = Some(v),
+            Prop::GridRowSpan(v) => data.layout.grid_row_span = v,
+            Prop::GridColumnSpan(v) => data.layout.grid_column_span = v,
             Prop::Visible(v) => data.layout.visible = v,
         }
         // `data`'s borrow ends with the match above.
@@ -967,6 +1051,17 @@ impl Txn<'_> {
     /// committing, and the Figma importer (`dashc`) reuses it. It
     /// stages like any other mutation — the rewrite publishes with the
     /// next commit (P3).
+    ///
+    /// # Panics
+    ///
+    /// Panics on a `Wrap` container with a negative gap. The margin
+    /// rewrite is only gap-equivalent for a child that follows another
+    /// child on the same line, and wrap decides its line breaks after
+    /// the lowering — a lowered wrap scene pulls every later line's
+    /// leading child into the padding band and distorts the breaks.
+    /// There is no margin encoding of a negative wrap gap, so the
+    /// construct is refused by name (P4), never lowered wrong
+    /// (story #43, review finding R4).
     pub fn lower_negative_gaps(&mut self) {
         let mut dirtied: Vec<NodeId> = Vec::new();
         let nodes = &mut self.arena.nodes;
@@ -980,9 +1075,20 @@ impl Txn<'_> {
             let horizontal = match nodes[i].layout.mode {
                 LayoutMode::Horizontal => true,
                 LayoutMode::Vertical => false,
+                // A margin is only gap-equivalent for a child that
+                // follows another child on the same line, and wrap
+                // breaks its lines after the lowering — refused by
+                // name, never lowered wrong (P4; see the method docs).
+                LayoutMode::Wrap => panic!(
+                    "negative gap on a Wrap container has no margin lowering \
+                     (line breaks are decided after the lowering); the \
+                     construct is refused (story #43, P4)"
+                ),
                 // A mode-None container ignores gap entirely; nothing
-                // to lower.
-                LayoutMode::None => continue,
+                // to lower. Grid gaps are track spacing, not flex-flow
+                // spacing — a leading margin would shift cell content,
+                // not overlap tracks — so they do not lower here.
+                LayoutMode::None | LayoutMode::Grid => continue,
             };
             let gap = nodes[i].layout.gap;
             nodes[i].layout.gap = 0.0;
@@ -1312,6 +1418,13 @@ fn prop_class(prop: &Prop) -> PropClass {
         | Prop::MaxWidth(_)
         | Prop::MinHeight(_)
         | Prop::MaxHeight(_)
+        | Prop::CrossGap(_)
+        | Prop::GridRows(_)
+        | Prop::GridColumns(_)
+        | Prop::GridRow(_)
+        | Prop::GridColumn(_)
+        | Prop::GridRowSpan(_)
+        | Prop::GridColumnSpan(_)
         | Prop::Visible(_) => PropClass::Layout,
     }
 }

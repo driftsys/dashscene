@@ -5,6 +5,8 @@
              (story #8) + v0.3 paint vocabulary (story #13)
              + v0.5 text vocabulary (story #26) + v0.4 variant table
              (story #20) + v0.7 binding tables (story #167)
+             + v0.8 layout fidelity — wrap/grid modes, grid tracks and
+             placement, baseline, cross gap (story #43)
 
 ## Purpose
 
@@ -147,24 +149,39 @@ All types are generated from `crates/dashbuf/schema/dashbuf.fbs`:
   families repeat little once styles themselves are pooled),
   `size: float32` (em size in document units), `weight: ushort =
   400` (CSS-scale weight, 100 to 900 inclusive), `color: Color`.
-- `LayoutMode` (`uint8` enum) — `None`, `Horizontal`, `Vertical`;
-  Wrap and Grid append at v0.8.
+- `LayoutMode` (`uint8` enum) — `None`, `Horizontal`, `Vertical`, and
+  since v0.8 (story #43) `Wrap` (a horizontal wrapping row — Figma's
+  `layoutWrap` exists for horizontal auto-layout only) and `Grid`.
 - `AxisSizing` (`uint8` enum) — `Fixed`, `Hug`, `Fill`.
 - `MainAxisAlign` (`uint8` enum) — `Start`, `Center`, `End`,
   `SpaceBetween`.
-- `CrossAxisAlign` (`uint8` enum) — `Start`, `Center`, `End`;
-  `Baseline` appends at v0.8 (Q-4).
+- `CrossAxisAlign` (`uint8` enum) — `Start`, `Center`, `End`, and
+  since v0.8 `Baseline` (Q-4 — resolved,
+  `docs/technotes/open-questions.md`).
 - `EdgeInsets` — `left`, `top`, `right`, `bottom: float32`.
-- `LayoutContainer` (table) — container-side v0.2 flex properties:
+- `GridTrackSizing` (`uint8` enum, v0.8) — `Fixed` (a document-unit
+  length), `Fraction` (a flexible weight, Figma's `minmax(0, Nfr)`).
+- `GridTrack` (table, v0.8) — one grid row or column track:
+  `sizing: GridTrackSizing`, `value: float32`. A table, not a struct,
+  so a future bound appends as a field
+  (`docs/decisions/v08-layout-vocabulary-shape.md` D2).
+- `LayoutContainer` (table) — container-side flex properties:
   `mode: LayoutMode`, `gap: float32`, `padding: EdgeInsets`,
-  `main_align: MainAxisAlign`, `cross_align: CrossAxisAlign`.
+  `main_align: MainAxisAlign`, `cross_align: CrossAxisAlign`, plus the
+  v0.8 appends `cross_gap: float32 = null` (wrap-line / grid-row
+  spacing; absent = follows `gap`, preserving the v0.2 both-axes
+  mapping) and `grid_rows`/`grid_columns: [GridTrack]` (absent under
+  mode `Grid` = implicit auto tracks).
 - `LayoutConstraints` (table) — child-side v0.2 flex properties, valid
   on any node: `sizing_h`, `sizing_v: AxisSizing`, `min_width`,
   `max_width`, `min_height`, `max_height: float32 = null` (absent =
   unconstrained), and `margin: EdgeInsets` (story #10; absent = zero
   insets, negative values legal — the negative-gap lowering target,
-  `docs/decisions/negative-gap-lowering.md`). Full rationale for the
-  two-table split: `docs/decisions/flex-vocabulary-shape.md`.
+  `docs/decisions/negative-gap-lowering.md`), plus the v0.8 grid
+  placement appends `grid_row`/`grid_column: ushort = null` (0-based
+  anchor cell; absent = auto-placed) and
+  `grid_row_span`/`grid_column_span: ushort = 1`. Full rationale for
+  the two-table split: `docs/decisions/flex-vocabulary-shape.md`.
 - `Node` (table) — `name: string`, `parent: uint32` (`uint32::MAX`
   sentinel for roots), `layout: FixedSizeLayout`, `paint: SolidFill`
   (legacy), `paint_entry: uint32 = uint32::MAX` (the document-level
@@ -212,8 +229,12 @@ criterion E6, `docs/specification/05-qualification.md`): a document built in mem
 survives a flatbuffer round trip byte-for-byte-equivalent in its decoded
 fields, including the root-node parent sentinel. It also covers the
 v0.2 flex vocabulary (story #8): a node carrying every `LayoutContainer`
-and `LayoutConstraints` field round-trips field-for-field, and a node
-without either table reads back absent.
+and `LayoutConstraints` field round-trips field-for-field — since v0.8
+(story #43) including the cross gap, both grid track lists, and the
+grid placement at non-default values — and a node without either table
+reads back absent. A v0.8 test additionally round-trips the appended
+enum tail members (`Wrap`, `Grid`, `Baseline`) and pins that the
+unwritten v0.8 fields read back absent (spans at their default of 1).
 
 `crates/dashbuf/tests/paint_roundtrip.rs` covers the v0.3 vocabulary
 through the paint pool, one focused test per construct: every gradient
@@ -262,10 +283,13 @@ sentinel-defaulted `Node` fields, all three `Fill` union members,
 `Paint.clip`, the legacy inline `Node.paint`, both flex tables, both
 text pools, (v0.4) one `VariantSet` with a non-default
 `active_member` and one override of each of two `VariantPropValue`
-kinds, and (v0.7) both binding tables — a named and an anonymous
+kinds, (v0.7) both binding tables — a named and an anonymous
 declaration, an identity row on a non-default channel, and a
-`TransformScale` row — every field written to a value distinguishable
-from its default. The assertions are on those values — a shifted field id
+`TransformScale` row — and (v0.8, story #43) a grid node carrying the
+appended layout fields: mode `Grid`, `Baseline` cross alignment, a
+cross gap, a `Fixed` and a `Fraction` track per axis at
+per-axis-distinct values, and a non-default anchor and span per axis —
+every field written to a value distinguishable from its default. The assertions are on those values — a shifted field id
 usually still decodes, and quietly returns another field's value or a
 default, which is the failure worth catching.
 
@@ -301,11 +325,12 @@ receive the encoded, format-tagged assets as a `dashpaint::ImageTable`
 - Satisfies: `docs/archive/2026-07-14-design-1-seed.md` §5 document
   format (including the dedup style pool, the text row — strings +
   style refs, and the variant row — sparse per-variant overrides, never
-  duplicate trees), `docs/roadmap.md`'s v0.1, v0.2, v0.3, v0.4, and v0.5
-  (text I) slices (v0.2 vocabulary is R2; v0.3 vocabulary drawn from
+  duplicate trees), `docs/roadmap.md`'s v0.1, v0.2, v0.3, v0.4, v0.5
+  (text I), and v0.8 (layout fidelity) slices (v0.2 vocabulary is R2;
+  v0.3 vocabulary drawn from
   `docs/specification/04-figma-vocabulary-profile.md`'s NOW list), R7
-  additive schema evolution; issue #8, issue #13, issue #20, and
-  issue #26 acceptance criteria.
+  additive schema evolution; issue #8, issue #13, issue #20, issue #26,
+  and issue #43 acceptance criteria.
 - Blocks: `dashscene-core` lowering, `dashc`'s importer consumption
   (out of scope until later slices); #28's typeset consumption of the
   string and style pools. The story #9 Taffy solve consumes
@@ -314,6 +339,7 @@ receive the encoded, format-tagged assets as a `dashpaint::ImageTable`
   code until a `.dsb` load path exists (v0.3+); see
   `docs/decisions/flex-vocabulary-shape.md`.
 - Related decisions: `docs/decisions/dsb-frozen-fixture-r7-guard.md`,
+  `docs/decisions/v08-layout-vocabulary-shape.md` (the v0.8 appends),
   `docs/decisions/flex-vocabulary-shape.md`,
   `docs/decisions/document-paint-pool-and-legacy-paint-field.md`,
   `docs/decisions/paint-entry-composition.md`,

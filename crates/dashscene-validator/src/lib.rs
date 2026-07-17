@@ -110,6 +110,26 @@ pub mod rule {
     /// silently (P4).
     pub const SIGNAL_NAME_DUPLICATE: &str = "signal.name-duplicate";
 
+    // Load gate — the v0.8 grid vocabulary (story #43). The engine
+    // saturates rather than panics on these, so the honest diagnosis
+    // lives here, in P4 parity with the other numeric ranges (weight,
+    // stroke width, gradient offsets).
+    /// A `Fixed` track whose value is not finite and non-negative, or a
+    /// `Fraction` track whose weight is not finite and positive (a zero
+    /// or NaN weight makes the free-space division meaningless).
+    pub const GRID_TRACK_INVALID_VALUE: &str = "grid.track-invalid-value";
+    /// A grid span of 0: spanning no tracks has no meaning, and the
+    /// engine would otherwise have to invent one (it floors at 1).
+    pub const GRID_SPAN_ZERO: &str = "grid.span-zero";
+    /// A grid anchor past its parent's declared track list — or, when no
+    /// track list is declared, past 32766, the largest 0-based anchor
+    /// whose 1-based line index still fits the solver's `i16` lines.
+    pub const GRID_ANCHOR_OUT_OF_RANGE: &str = "grid.anchor-out-of-range";
+    /// A `Fraction` track on an axis the grid container hugs: a fraction
+    /// divides free space, and a hug axis has none, so the track (and
+    /// everything anchored to it) silently collapses to zero.
+    pub const GRID_FRACTION_TRACK_UNDER_HUG: &str = "grid.fraction-track-under-hug";
+
     // Load gate — the append-only enum range check. The schema's own
     // contract: "a reader built before an append receives the unknown
     // value as a raw integer — the load gate must range-check and emit a

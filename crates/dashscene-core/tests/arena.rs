@@ -939,6 +939,43 @@ fn lower_negative_gaps_uses_the_top_margin_for_a_vertical_column() {
 }
 
 #[test]
+#[should_panic(expected = "negative gap on a Wrap container")]
+fn lower_negative_gaps_refuses_a_wrap_container_by_name() {
+    // Review finding R4 (story #43): the margin rewrite is only
+    // gap-equivalent for a child that follows another child on the SAME
+    // line, and wrap decides its line breaks after the lowering — a
+    // lowered wrap scene pulls every later line's leading child into
+    // the padding band and distorts the breaks. There is no margin
+    // encoding of a negative wrap gap, so the construct is refused by
+    // name (P4), never lowered wrong.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let row = txn.add_node(None, None);
+    txn.set_prop(row, Prop::Mode(LayoutMode::Wrap));
+    txn.set_prop(row, Prop::Gap(-8.0));
+    txn.add_node(Some(row), None);
+    txn.add_node(Some(row), None);
+    txn.lower_negative_gaps();
+}
+
+#[test]
+fn lower_negative_gaps_leaves_a_wrap_container_with_a_positive_gap_untouched() {
+    // Only the negative-gap wrap construct is refused; positive and
+    // zero gaps are CSS-native vocabulary on a Wrap container too.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let row = txn.add_node(None, None);
+    txn.set_prop(row, Prop::Mode(LayoutMode::Wrap));
+    txn.set_prop(row, Prop::Gap(8.0));
+    let a = txn.add_node(Some(row), None);
+    txn.lower_negative_gaps();
+    txn.commit();
+
+    assert_eq!(arena.layout(row).gap, 8.0);
+    assert_eq!(arena.layout(a).margin.left, 0.0);
+}
+
+#[test]
 fn lower_negative_gaps_leaves_positive_gaps_and_adds_to_existing_margins() {
     let mut arena = Arena::new();
     let mut txn = arena.open();

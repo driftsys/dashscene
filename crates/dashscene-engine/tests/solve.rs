@@ -1,8 +1,12 @@
 //! Story #9 acceptance: representative H/V, hug-in-fill, fill-weight,
 //! and min/max cases against hand-computed rects (issue #9;
-//! docs/design/architecture.md).
+//! docs/design/architecture.md). Story #43 (v0.8) adds the wrap, grid-span,
+//! baseline, and negative-margin-hug cases, verified against the
+//! Figma-captured fixtures' boxes where a capture exists.
 
-use dashscene_core::{Arena, AxisSizing, CrossAxisAlign, LayoutMode, MainAxisAlign, NodeId, Prop};
+use dashscene_core::{
+    Arena, AxisSizing, CrossAxisAlign, GridTrack, LayoutMode, MainAxisAlign, NodeId, Prop,
+};
 use dashscene_engine::TaffySolver;
 
 /// Shorthand: rect (x, y, w, h) of the DFS index `i`.
@@ -16,6 +20,20 @@ fn fixed(txn: &mut dashscene_core::Txn<'_>, parent: NodeId, w: f32, h: f32) -> N
     txn.set_prop(id, Prop::Width(w));
     txn.set_prop(id, Prop::Height(h));
     id
+}
+
+/// Shorthand for the margin shape most scenes here author: a leading
+/// left margin only — the negative-gap lowering's output (debt #115).
+fn margin_left(txn: &mut dashscene_core::Txn<'_>, node: NodeId, left: f32) {
+    txn.set_prop(
+        node,
+        Prop::Margin {
+            left,
+            top: 0.0,
+            right: 0.0,
+            bottom: 0.0,
+        },
+    );
 }
 
 #[test]
@@ -362,6 +380,160 @@ fn multiple_roots_keep_their_authored_origins() {
     assert_eq!(rect(&arena, 1), (400.0, 300.0, 60.0, 60.0));
 }
 
+#[test]
+fn a_hug_row_over_negative_child_margins_sums_like_positive_ones() {
+    // Debt #236: taffy 0.12's intrinsic (max-content) pass reconstructs
+    // a shrink-0 item's contribution with a different scaled-shrink
+    // factor than the one it divided by, so a negative main-axis margin
+    // is amplified by the item's flex basis and the hug sum collapses.
+    // The engine rebates the negative margin into the flex basis (and
+    // floors the min size back at the authored size), so the sum is
+    // plain arithmetic again. This is the issue's reproduction table:
+    // two fixed 56-wide children, the second carrying a left margin.
+    for (left, expected_width) in [(0.0, 112.0), (16.0, 128.0), (-1.0, 111.0), (-16.0, 96.0)] {
+        let mut arena = Arena::new();
+        let mut txn = arena.open();
+        let row = txn.add_node(None, None);
+        txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
+        txn.set_prop(row, Prop::SizingH(AxisSizing::Hug));
+        txn.set_prop(row, Prop::Height(56.0));
+        fixed(&mut txn, row, 56.0, 56.0);
+        let b = fixed(&mut txn, row, 56.0, 56.0);
+        margin_left(&mut txn, b, left);
+        txn.commit_with(&mut TaffySolver::new());
+
+        assert_eq!(
+            rect(&arena, 0).2,
+            expected_width,
+            "hug width with margin-left {left}"
+        );
+        // The children land where the margin puts them in both cases.
+        assert_eq!(rect(&arena, 1), (0.0, 0.0, 56.0, 56.0));
+        assert_eq!(rect(&arena, 2), (56.0 + left, 0.0, 56.0, 56.0));
+    }
+}
+
+#[test]
+fn the_rebate_respects_an_authored_max_alongside_a_negative_margin() {
+    // Review finding R1: the rebate's min-size floor is the authored
+    // size clamped by the authored max (spec D1). Without the cap, the
+    // floor (56) beats the authored max (40) — taffy clamps min-wins —
+    // and the negative margin GROWS the child from 40 to 56.
+    let solve = |left: f32| {
+        let mut arena = Arena::new();
+        let mut txn = arena.open();
+        let row = txn.add_node(None, None);
+        txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
+        txn.set_prop(row, Prop::Width(200.0));
+        txn.set_prop(row, Prop::Height(56.0));
+        fixed(&mut txn, row, 56.0, 56.0);
+        let b = fixed(&mut txn, row, 56.0, 56.0);
+        txn.set_prop(b, Prop::MaxWidth(40.0));
+        margin_left(&mut txn, b, left);
+        txn.commit_with(&mut TaffySolver::new());
+        rect(&arena, 2).2
+    };
+
+    assert_eq!(solve(0.0), 40.0, "the max clamps without a margin");
+    assert_eq!(solve(-16.0), 40.0, "the max still clamps under the rebate");
+}
+
+#[test]
+fn the_rebate_survives_a_padded_childs_basis_floor() {
+    // Review finding R2: taffy floors a flex basis at the item's own
+    // padding sum, which used to re-enter the broken shrink-0 branch
+    // for a padded child (an overlapped padded card — the exact shape
+    // the rebate exists for). The mapping anchors a floored basis at
+    // padding + 1, where the branch's two scaled-shrink formulas agree,
+    // so the sum stays exact on both sides of the old floor.
+    let solve = |left: f32| {
+        let mut arena = Arena::new();
+        let mut txn = arena.open();
+        let row = txn.add_node(None, None);
+        txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
+        txn.set_prop(row, Prop::SizingH(AxisSizing::Hug));
+        txn.set_prop(row, Prop::Height(56.0));
+        fixed(&mut txn, row, 56.0, 56.0);
+        // The padded card: a fixed 30-wide container whose own
+        // horizontal padding sums to 24.
+        let card = txn.add_node(Some(row), None);
+        txn.set_prop(card, Prop::Mode(LayoutMode::Horizontal));
+        txn.set_prop(card, Prop::Width(30.0));
+        txn.set_prop(card, Prop::Height(56.0));
+        txn.set_prop(
+            card,
+            Prop::Padding {
+                left: 12.0,
+                top: 0.0,
+                right: 12.0,
+                bottom: 0.0,
+            },
+        );
+        margin_left(&mut txn, card, left);
+        txn.commit_with(&mut TaffySolver::new());
+        (rect(&arena, 0).2, rect(&arena, 2))
+    };
+
+    // At the old floor boundary (margin −6: 30 − 6 = 24 = the padding
+    // sum) and beyond it (margin −10: 20 < 24), the hug width is
+    // 56 + 30 + margin and the card keeps its authored size.
+    assert_eq!(solve(-6.0), (80.0, (50.0, 0.0, 30.0, 56.0)));
+    assert_eq!(solve(-10.0), (76.0, (46.0, 0.0, 30.0, 56.0)));
+}
+
+#[test]
+fn a_deep_overlap_beyond_the_childs_own_width_still_sums_exactly() {
+    // Review finding R3: a margin more negative than the child's own
+    // width used to floor the rebated basis at zero and contribute
+    // nothing. The padding+1 anchor keeps the contribution exact even
+    // when it goes negative — the child pulls the hug sum below its
+    // predecessor's edge, which is what the overlap means.
+    let solve = |left: f32| {
+        let mut arena = Arena::new();
+        let mut txn = arena.open();
+        let row = txn.add_node(None, None);
+        txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
+        txn.set_prop(row, Prop::SizingH(AxisSizing::Hug));
+        txn.set_prop(row, Prop::Height(56.0));
+        fixed(&mut txn, row, 56.0, 56.0);
+        let b = fixed(&mut txn, row, 10.0, 56.0);
+        margin_left(&mut txn, b, left);
+        txn.commit_with(&mut TaffySolver::new());
+        (rect(&arena, 0).2, rect(&arena, 2))
+    };
+
+    // 56 + 10 − 12 = 54; the child sits at 56 − 12 = 44.
+    assert_eq!(solve(-12.0), (54.0, (44.0, 0.0, 10.0, 56.0)));
+    // A contribution that goes negative (10 − 20) still sums: 46.
+    assert_eq!(solve(-20.0), (46.0, (36.0, 0.0, 10.0, 56.0)));
+}
+
+#[test]
+fn the_rebate_respects_an_authored_min_alongside_a_negative_margin() {
+    // The #236 rebate floors the child's main-axis min size at its
+    // authored size; an authored min above the size must still win
+    // exactly as it does without the margin.
+    let solve = |left: f32| {
+        let mut arena = Arena::new();
+        let mut txn = arena.open();
+        let row = txn.add_node(None, None);
+        txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
+        txn.set_prop(row, Prop::SizingH(AxisSizing::Hug));
+        txn.set_prop(row, Prop::Height(56.0));
+        fixed(&mut txn, row, 56.0, 56.0);
+        let b = fixed(&mut txn, row, 56.0, 56.0);
+        txn.set_prop(b, Prop::MinWidth(70.0));
+        margin_left(&mut txn, b, left);
+        txn.commit_with(&mut TaffySolver::new());
+        (rect(&arena, 0).2, rect(&arena, 2).2)
+    };
+
+    // The min widens the child to 70, margin or no: 56 + 70 = 126 flat,
+    // minus the 16 overlap = 110.
+    assert_eq!(solve(0.0), (126.0, 70.0));
+    assert_eq!(solve(-16.0), (110.0, 70.0));
+}
+
 /// Build a horizontal row of three fixed 30x20 children, letting
 /// `configure` set the container gap / margins. Returns the solved
 /// child x-positions.
@@ -392,15 +564,7 @@ fn a_negative_gap_scene_lowers_to_the_same_rects_as_the_margin_scene() {
     // Scene B: the equivalent margin-based scene, authored directly.
     let scene_b = row_child_xs(|txn, _row, [_a, b, c]| {
         for child in [b, c] {
-            txn.set_prop(
-                child,
-                Prop::Margin {
-                    left: -8.0,
-                    top: 0.0,
-                    right: 0.0,
-                    bottom: 0.0,
-                },
-            );
+            margin_left(txn, child, -8.0);
         }
     });
 
@@ -450,15 +614,7 @@ fn authored_margins_solve_without_any_lowering() {
     txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
     fixed(&mut txn, row, 30.0, 20.0);
     let b = fixed(&mut txn, row, 30.0, 20.0);
-    txn.set_prop(
-        b,
-        Prop::Margin {
-            left: 10.0,
-            top: 0.0,
-            right: 0.0,
-            bottom: 0.0,
-        },
-    );
+    margin_left(&mut txn, b, 10.0);
     txn.commit_with(&mut TaffySolver::new());
 
     // a at 0..30; b pushed by margin-left 10 to x=40.
@@ -571,22 +727,11 @@ fn lowered_margins_compose_through_nesting() {
     });
     // The same scene with every lowered margin authored by hand.
     let authored = nested_row_xs(|txn, _outer, inners| {
-        let pull = |txn: &mut dashscene_core::Txn<'_>, node: NodeId, left: f32| {
-            txn.set_prop(
-                node,
-                Prop::Margin {
-                    left,
-                    top: 0.0,
-                    right: 0.0,
-                    bottom: 0.0,
-                },
-            );
-        };
         // Second inner row pulled back by the outer gap; second child of
         // each inner row pulled back by that row's own gap.
-        pull(txn, inners[1].0, -10.0);
+        margin_left(txn, inners[1].0, -10.0);
         for (_, [_, second]) in inners {
-            pull(txn, second, -4.0);
+            margin_left(txn, second, -4.0);
         }
     });
 
@@ -596,4 +741,403 @@ fn lowered_margins_compose_through_nesting() {
     let expected = [0.0, 0.0, 0.0, 26.0, 90.0, 90.0, 116.0];
     assert_eq!(lowered, expected, "nested negative gap, lowered");
     assert_eq!(authored, expected, "equivalent hand-authored margins");
+}
+
+// ---------------------------------------------------------------------------
+// v0.8 layout fidelity (story #43): wrap, grid with spans, baseline.
+// ---------------------------------------------------------------------------
+
+/// Build the wrap scene of `corpus/figma-fixtures/lowering-wrap.json` in
+/// core vocabulary: a fixed-width, hug-height wrapping row of seven
+/// fixed-size chips. `cross_gap` is the authored line spacing; `None`
+/// leaves it following `gap`.
+fn wrap_scene(cross_gap: Option<f32>) -> Arena {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let row = txn.add_node(None, None);
+    txn.set_prop(row, Prop::Mode(LayoutMode::Wrap));
+    txn.set_prop(row, Prop::Width(420.0));
+    txn.set_prop(row, Prop::SizingV(AxisSizing::Hug));
+    txn.set_prop(row, Prop::Gap(12.0));
+    if let Some(v) = cross_gap {
+        txn.set_prop(row, Prop::CrossGap(v));
+    }
+    txn.set_prop(
+        row,
+        Prop::Padding {
+            left: 16.0,
+            top: 16.0,
+            right: 16.0,
+            bottom: 16.0,
+        },
+    );
+    for w in [120.0, 80.0, 160.0, 100.0, 140.0, 90.0, 110.0] {
+        fixed(&mut txn, row, w, 40.0);
+    }
+    txn.commit_with(&mut TaffySolver::new());
+    arena
+}
+
+#[test]
+fn a_wrap_row_breaks_lines_and_hugs_to_them_like_figmas_capture() {
+    // The captured `lowering-wrap` scene, hand-computed: the inner width
+    // is 420 − 2×16 = 388; chips greedily fill 120+12+80+12+160 = 384,
+    // then 100+12+140+12+90 = 354, then 110. Lines sit 40 high with the
+    // authored cross gap 16 between them, so the hug height is
+    // 16+40+16+40+16+40+16 = 184. Every box equals the capture's
+    // absoluteBoundingBox.
+    let arena = wrap_scene(Some(16.0));
+    assert_eq!(rect(&arena, 0), (0.0, 0.0, 420.0, 184.0), "hug root");
+    let chips: [(f32, f32, f32); 7] = [
+        (16.0, 16.0, 120.0),
+        (148.0, 16.0, 80.0),
+        (240.0, 16.0, 160.0),
+        (16.0, 72.0, 100.0),
+        (128.0, 72.0, 140.0),
+        (280.0, 72.0, 90.0),
+        (16.0, 128.0, 110.0),
+    ];
+    for (i, (x, y, w)) in chips.into_iter().enumerate() {
+        assert_eq!(rect(&arena, i + 1), (x, y, w, 40.0), "chip {i}");
+    }
+}
+
+#[test]
+fn an_unset_cross_gap_follows_the_main_gap() {
+    // Without an authored cross gap the line spacing is the main gap
+    // (the v0.2 both-axes mapping, kept for wrap): lines at y = 16,
+    // 16+40+12 = 68, 120; hug height 176.
+    let arena = wrap_scene(None);
+    assert_eq!(rect(&arena, 0).3, 176.0, "hug height at gap-spaced lines");
+    assert_eq!(rect(&arena, 4).1, 68.0, "second line");
+    assert_eq!(rect(&arena, 7).1, 120.0, "third line");
+}
+
+#[test]
+fn a_grid_with_spans_solves_to_figmas_captured_rects() {
+    // The captured `grid-basic` scene in core vocabulary: a fixed
+    // 720×480 grid, padding 16, both gaps 12, tracks
+    // rows [96px, 1fr, 1fr] and columns [160px, 1fr, 1fr] — so the
+    // fraction columns take (720−32−24−160)/2 = 252 and the fraction
+    // rows (480−32−24−96)/2 = 164. Children anchor to cells and span
+    // tracks; every box equals the capture's absoluteBoundingBox.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let grid = txn.add_node(None, None);
+    txn.set_prop(grid, Prop::Mode(LayoutMode::Grid));
+    txn.set_prop(grid, Prop::Width(720.0));
+    txn.set_prop(grid, Prop::Height(480.0));
+    txn.set_prop(grid, Prop::Gap(12.0));
+    txn.set_prop(grid, Prop::CrossGap(12.0));
+    txn.set_prop(
+        grid,
+        Prop::Padding {
+            left: 16.0,
+            top: 16.0,
+            right: 16.0,
+            bottom: 16.0,
+        },
+    );
+    txn.set_prop(
+        grid,
+        Prop::GridRows(vec![
+            GridTrack::Fixed(96.0),
+            GridTrack::Fraction(1.0),
+            GridTrack::Fraction(1.0),
+        ]),
+    );
+    txn.set_prop(
+        grid,
+        Prop::GridColumns(vec![
+            GridTrack::Fixed(160.0),
+            GridTrack::Fraction(1.0),
+            GridTrack::Fraction(1.0),
+        ]),
+    );
+
+    let place = |txn: &mut dashscene_core::Txn<'_>, node: NodeId, row: u16, column: u16| {
+        txn.set_prop(node, Prop::GridRow(row));
+        txn.set_prop(node, Prop::GridColumn(column));
+    };
+    let fill = |txn: &mut dashscene_core::Txn<'_>| {
+        let node = txn.add_node(Some(grid), None);
+        txn.set_prop(node, Prop::SizingH(AxisSizing::Fill));
+        txn.set_prop(node, Prop::SizingV(AxisSizing::Fill));
+        node
+    };
+
+    // span-3-cols: the full first row.
+    let span_cols = fill(&mut txn);
+    place(&mut txn, span_cols, 0, 0);
+    txn.set_prop(span_cols, Prop::GridColumnSpan(3));
+    // span-2-rows: the first column of the two fraction rows.
+    let span_rows = fill(&mut txn);
+    place(&mut txn, span_rows, 1, 0);
+    txn.set_prop(span_rows, Prop::GridRowSpan(2));
+    // fill-plain cells.
+    let fill_a = fill(&mut txn);
+    place(&mut txn, fill_a, 1, 1);
+    let fill_b = fill(&mut txn);
+    place(&mut txn, fill_b, 2, 2);
+    // hug-content: a hug×hug row (padding 12/8) around fixed 50×17
+    // content — it sits at its cell origin instead of stretching.
+    let hug = txn.add_node(Some(grid), None);
+    txn.set_prop(hug, Prop::Mode(LayoutMode::Horizontal));
+    txn.set_prop(hug, Prop::SizingH(AxisSizing::Hug));
+    txn.set_prop(hug, Prop::SizingV(AxisSizing::Hug));
+    txn.set_prop(
+        hug,
+        Prop::Padding {
+            left: 12.0,
+            top: 8.0,
+            right: 12.0,
+            bottom: 8.0,
+        },
+    );
+    place(&mut txn, hug, 1, 2);
+    fixed(&mut txn, hug, 50.0, 17.0);
+    // fixed-size: keeps its authored size at its cell origin.
+    let fixed_child = fixed(&mut txn, grid, 140.0, 60.0);
+    place(&mut txn, fixed_child, 2, 1);
+    txn.commit_with(&mut TaffySolver::new());
+
+    assert_eq!(rect(&arena, 0), (0.0, 0.0, 720.0, 480.0), "grid root");
+    assert_eq!(rect(&arena, 1), (16.0, 16.0, 688.0, 96.0), "span-3-cols");
+    assert_eq!(rect(&arena, 2), (16.0, 124.0, 160.0, 340.0), "span-2-rows");
+    assert_eq!(rect(&arena, 3), (188.0, 124.0, 252.0, 164.0), "fill-minmax");
+    assert_eq!(rect(&arena, 4), (452.0, 300.0, 252.0, 164.0), "fill-plain");
+    assert_eq!(rect(&arena, 5), (452.0, 124.0, 74.0, 33.0), "hug-content");
+    assert_eq!(rect(&arena, 6), (464.0, 132.0, 50.0, 17.0), "hug me");
+    assert_eq!(rect(&arena, 7), (188.0, 300.0, 140.0, 60.0), "fixed-size");
+}
+
+#[test]
+fn a_mixed_size_baseline_row_aligns_on_flex_baselines() {
+    // Q-4 (docs/technotes/open-questions.md): the mixed-size baseline
+    // acceptance case, hand-computed from Taffy's baseline rules — a
+    // leaf's baseline is its bottom edge (height), a nested row
+    // propagates its first line's baseline (its child's offset plus
+    // that child's baseline).
+    //
+    //   a 30×20 leaf            baseline 20
+    //   b 40×48 leaf            baseline 48   (the row's max)
+    //   c 60×40 nested row,     baseline 4 + 10 = 14
+    //     padding-top 4, one 20×10 leaf
+    //
+    // Offsets from the line top: a at 48−20 = 28, b at 0, c at
+    // 48−14 = 34 (its inner leaf at 38); x runs 0, 40, 90 with gap 10.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let row = txn.add_node(None, None);
+    txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
+    txn.set_prop(row, Prop::Width(200.0));
+    txn.set_prop(row, Prop::Height(80.0));
+    txn.set_prop(row, Prop::Gap(10.0));
+    txn.set_prop(row, Prop::CrossAlign(CrossAxisAlign::Baseline));
+    fixed(&mut txn, row, 30.0, 20.0);
+    fixed(&mut txn, row, 40.0, 48.0);
+    let nested = txn.add_node(Some(row), None);
+    txn.set_prop(nested, Prop::Mode(LayoutMode::Horizontal));
+    txn.set_prop(nested, Prop::Width(60.0));
+    txn.set_prop(nested, Prop::Height(40.0));
+    txn.set_prop(
+        nested,
+        Prop::Padding {
+            left: 0.0,
+            top: 4.0,
+            right: 0.0,
+            bottom: 0.0,
+        },
+    );
+    fixed(&mut txn, nested, 20.0, 10.0);
+    txn.commit_with(&mut TaffySolver::new());
+
+    assert_eq!(rect(&arena, 1), (0.0, 28.0, 30.0, 20.0), "short leaf");
+    assert_eq!(rect(&arena, 2), (40.0, 0.0, 40.0, 48.0), "tall leaf");
+    assert_eq!(rect(&arena, 3), (90.0, 34.0, 60.0, 40.0), "nested row");
+    assert_eq!(rect(&arena, 4), (90.0, 38.0, 20.0, 10.0), "nested leaf");
+}
+
+#[test]
+fn baseline_in_a_vertical_container_degrades_to_start() {
+    // Taffy computes baselines for rows only; in a column the Baseline
+    // keyword falls back to flex-start. Pinned so the degradation is
+    // chosen, not accidental (Q-4).
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let col = txn.add_node(None, None);
+    txn.set_prop(col, Prop::Mode(LayoutMode::Vertical));
+    txn.set_prop(col, Prop::Width(40.0));
+    txn.set_prop(col, Prop::Height(100.0));
+    txn.set_prop(col, Prop::CrossAlign(CrossAxisAlign::Baseline));
+    fixed(&mut txn, col, 20.0, 20.0);
+    fixed(&mut txn, col, 30.0, 20.0);
+    txn.commit_with(&mut TaffySolver::new());
+
+    assert_eq!(rect(&arena, 1).0, 0.0, "start-aligned");
+    assert_eq!(rect(&arena, 2).0, 0.0, "start-aligned");
+}
+
+#[test]
+fn an_out_of_range_grid_anchor_does_not_panic() {
+    // Review finding R5: the schema's anchors are ushort, and taffy's
+    // line indices are i16 — the conversion must saturate, never
+    // overflow (a debug-build panic at 32767, a wrapped end-counted
+    // line above it). The load gate bounds anchors for documents; this
+    // pins the engine's own hardening for direct producers.
+    // 32767 is the debug-overflow boundary (`i16::MAX`), u16::MAX the
+    // extreme; both saturate to the same line. (The solve pays for the
+    // implicit tracks taffy materializes, so the list stays short.)
+    for anchor in [32767u16, u16::MAX] {
+        let mut arena = Arena::new();
+        let mut txn = arena.open();
+        let grid = txn.add_node(None, None);
+        txn.set_prop(grid, Prop::Mode(LayoutMode::Grid));
+        txn.set_prop(grid, Prop::Width(100.0));
+        txn.set_prop(grid, Prop::Height(100.0));
+        txn.set_prop(
+            grid,
+            Prop::GridColumns(vec![GridTrack::Fraction(1.0), GridTrack::Fraction(1.0)]),
+        );
+        let child = fixed(&mut txn, grid, 10.0, 10.0);
+        txn.set_prop(child, Prop::GridRow(anchor));
+        txn.set_prop(child, Prop::GridColumn(anchor));
+        // The contract under test is only "no panic, finite output":
+        // the solved placement of a saturated anchor is degenerate by
+        // construction, and the load gate refuses it for documents.
+        txn.commit_with(&mut TaffySolver::new());
+        let r = arena.committed().rects()[1];
+        assert!(r.x.is_finite() && r.y.is_finite(), "finite at {anchor}");
+    }
+}
+
+#[test]
+fn a_zero_span_is_saturated_to_one() {
+    // Review finding R6's engine half: a span of 0 (refused at the load
+    // gate) must not reach taffy as Span(0) from a direct producer —
+    // the engine floors it at 1.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let grid = txn.add_node(None, None);
+    txn.set_prop(grid, Prop::Mode(LayoutMode::Grid));
+    txn.set_prop(grid, Prop::Width(100.0));
+    txn.set_prop(grid, Prop::Height(40.0));
+    txn.set_prop(
+        grid,
+        Prop::GridColumns(vec![GridTrack::Fraction(1.0), GridTrack::Fraction(1.0)]),
+    );
+    let child = txn.add_node(Some(grid), None);
+    txn.set_prop(child, Prop::SizingH(AxisSizing::Fill));
+    txn.set_prop(child, Prop::SizingV(AxisSizing::Fill));
+    txn.set_prop(child, Prop::GridRow(0));
+    txn.set_prop(child, Prop::GridColumn(0));
+    txn.set_prop(child, Prop::GridRowSpan(0));
+    txn.set_prop(child, Prop::GridColumnSpan(0));
+    txn.commit_with(&mut TaffySolver::new());
+
+    assert_eq!(rect(&arena, 1), (0.0, 0.0, 50.0, 40.0), "spans one cell");
+}
+
+#[test]
+fn a_fixed_child_larger_than_its_fraction_cell_overflows_it() {
+    // Review finding R8, pinned as chosen behavior with a named open
+    // question (docs/decisions/v08-layout-vocabulary-shape.md): a
+    // Fraction track is minmax(0, fr) — it divides free space and never
+    // grows for content — so a fixed child larger than its cell keeps
+    // its authored size and overflows into the neighbor cell. Figma's
+    // reference behavior for this combination is uncaptured; revisit at
+    // story #264 when real grid captures exist.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let grid = txn.add_node(None, None);
+    txn.set_prop(grid, Prop::Mode(LayoutMode::Grid));
+    txn.set_prop(grid, Prop::Width(100.0));
+    txn.set_prop(grid, Prop::Height(100.0));
+    txn.set_prop(
+        grid,
+        Prop::GridColumns(vec![GridTrack::Fraction(1.0), GridTrack::Fraction(1.0)]),
+    );
+    let big = fixed(&mut txn, grid, 80.0, 40.0);
+    txn.set_prop(big, Prop::GridRow(0));
+    txn.set_prop(big, Prop::GridColumn(0));
+    txn.commit_with(&mut TaffySolver::new());
+
+    // Each fraction column is 50 wide; the 80-wide child overflows 30
+    // into the second column rather than growing its track.
+    assert_eq!(rect(&arena, 1), (0.0, 0.0, 80.0, 40.0));
+}
+
+#[test]
+fn distinct_gaps_and_asymmetric_sizing_map_to_their_own_grid_axes() {
+    // Review findings R9/R10 (regression armor): the column gap (8) and
+    // row gap (20) differ, so an axis swap in the gap mapping moves
+    // every second-row/second-column cell; and each child sizes Fill on
+    // one axis only, so a justify_self/align_self swap changes its box.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let grid = txn.add_node(None, None);
+    txn.set_prop(grid, Prop::Mode(LayoutMode::Grid));
+    txn.set_prop(grid, Prop::Width(148.0));
+    txn.set_prop(grid, Prop::Height(110.0));
+    txn.set_prop(grid, Prop::Gap(8.0));
+    txn.set_prop(grid, Prop::CrossGap(20.0));
+    txn.set_prop(
+        grid,
+        Prop::GridColumns(vec![GridTrack::Fixed(30.0), GridTrack::Fixed(40.0)]),
+    );
+    txn.set_prop(
+        grid,
+        Prop::GridRows(vec![GridTrack::Fixed(20.0), GridTrack::Fixed(25.0)]),
+    );
+
+    // Fill across, fixed 10 high: stretches to the 30-wide cell only.
+    let wide = txn.add_node(Some(grid), None);
+    txn.set_prop(wide, Prop::SizingH(AxisSizing::Fill));
+    txn.set_prop(wide, Prop::Height(10.0));
+    txn.set_prop(wide, Prop::GridRow(0));
+    txn.set_prop(wide, Prop::GridColumn(0));
+    // Fixed 15 wide, Fill down: stretches to the 20-high cell only.
+    let tall = txn.add_node(Some(grid), None);
+    txn.set_prop(tall, Prop::Width(15.0));
+    txn.set_prop(tall, Prop::SizingV(AxisSizing::Fill));
+    txn.set_prop(tall, Prop::GridRow(0));
+    txn.set_prop(tall, Prop::GridColumn(1));
+    // Fill on both axes in the second row and column.
+    let both = txn.add_node(Some(grid), None);
+    txn.set_prop(both, Prop::SizingH(AxisSizing::Fill));
+    txn.set_prop(both, Prop::SizingV(AxisSizing::Fill));
+    txn.set_prop(both, Prop::GridRow(1));
+    txn.set_prop(both, Prop::GridColumn(1));
+    txn.commit_with(&mut TaffySolver::new());
+
+    // Column x runs 0, 30+8 = 38; row y runs 0, 20+20 = 40.
+    assert_eq!(rect(&arena, 1), (0.0, 0.0, 30.0, 10.0), "fill across");
+    assert_eq!(rect(&arena, 2), (38.0, 0.0, 15.0, 20.0), "fill down");
+    assert_eq!(rect(&arena, 3), (38.0, 40.0, 40.0, 25.0), "fill both");
+}
+
+#[test]
+fn a_fixed_height_wrap_container_packs_its_lines_at_the_cross_start() {
+    // Review finding R11: the align_content FlexStart mapping is inert
+    // in a hug-height wrap container (the lines define the height), so
+    // this scene fixes the height. Packed lines sit at y = 0 and
+    // y = 30 + 10; taffy's default (stretch) would spread them over the
+    // 200-high container instead.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let row = txn.add_node(None, None);
+    txn.set_prop(row, Prop::Mode(LayoutMode::Wrap));
+    txn.set_prop(row, Prop::Width(100.0));
+    txn.set_prop(row, Prop::Height(200.0));
+    txn.set_prop(row, Prop::CrossGap(10.0));
+    fixed(&mut txn, row, 60.0, 30.0);
+    fixed(&mut txn, row, 60.0, 30.0);
+    txn.commit_with(&mut TaffySolver::new());
+
+    assert_eq!(rect(&arena, 1), (0.0, 0.0, 60.0, 30.0), "first line");
+    assert_eq!(
+        rect(&arena, 2),
+        (0.0, 40.0, 60.0, 30.0),
+        "packed, not spread"
+    );
 }

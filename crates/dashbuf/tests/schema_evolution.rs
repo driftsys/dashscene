@@ -38,14 +38,14 @@ use std::{env, fs};
 use dashbuf::{
     AxisSizing, Binding, BindingArgs, BindingChannel, BindingTransform, Color, CornerRadii,
     CrossAxisAlign, Document, DocumentArgs, EdgeInsets, Fill, FixedSizeLayout, Gradient,
-    GradientArgs, GradientKind, GradientStop, Image, ImageArgs, ImageFill, ImageFillArgs,
-    ImageFormat, LayoutConstraints, LayoutConstraintsArgs, LayoutContainer, LayoutContainerArgs,
-    LayoutMode, MainAxisAlign, Mat23, NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE, Node, NodeArgs,
-    Paint, PaintArgs, ScaleMode, SignalDecl, SignalDeclArgs, SolidFill, SolidFillArgs, Stroke,
-    StrokeAlign, StrokeArgs, TextStyle, TextStyleArgs, TransformScale, TransformScaleArgs,
-    VariantFill, VariantFillArgs, VariantMember, VariantMemberArgs, VariantOverride,
-    VariantOverrideArgs, VariantPropValue, VariantSet, VariantSetArgs, VariantX, VariantXArgs,
-    Vec2, root_as_document,
+    GradientArgs, GradientKind, GradientStop, GridTrack, GridTrackArgs, GridTrackSizing, Image,
+    ImageArgs, ImageFill, ImageFillArgs, ImageFormat, LayoutConstraints, LayoutConstraintsArgs,
+    LayoutContainer, LayoutContainerArgs, LayoutMode, MainAxisAlign, Mat23, NO_PAINT, NO_PARENT,
+    NO_TEXT, NO_TEXT_STYLE, Node, NodeArgs, Paint, PaintArgs, ScaleMode, SignalDecl,
+    SignalDeclArgs, SolidFill, SolidFillArgs, Stroke, StrokeAlign, StrokeArgs, TextStyle,
+    TextStyleArgs, TransformScale, TransformScaleArgs, VariantFill, VariantFillArgs, VariantMember,
+    VariantMemberArgs, VariantOverride, VariantOverrideArgs, VariantPropValue, VariantSet,
+    VariantSetArgs, VariantX, VariantXArgs, Vec2, root_as_document,
 };
 use flatbuffers::FlatBufferBuilder;
 
@@ -109,12 +109,12 @@ fn paint(index: usize) -> Paint<'static> {
 // read back identically through today's bindings.
 // ---------------------------------------------------------------------
 
-/// The tree shape: four nodes in DFS order, with the root carrying the
+/// The tree shape: five nodes in DFS order, with the root carrying the
 /// `NO_PARENT` sentinel and the children indexing back at the root.
 #[test]
 fn frozen_node_tree_reads_back() {
     let nodes = document().nodes().expect("nodes present");
-    assert_eq!(nodes.len(), 4);
+    assert_eq!(nodes.len(), 5);
 
     let root = nodes.get(0);
     assert_eq!(root.name(), Some("root"));
@@ -125,7 +125,7 @@ fn frozen_node_tree_reads_back() {
         (8.0, 4.0, 320.0, 200.0)
     );
 
-    for index in 1..4 {
+    for index in 1..5 {
         assert_eq!(
             nodes.get(index).parent(),
             0,
@@ -135,6 +135,7 @@ fn frozen_node_tree_reads_back() {
     assert_eq!(nodes.get(1).name(), Some("gradient-child"));
     assert_eq!(nodes.get(2).name(), Some("text-child"));
     assert_eq!(nodes.get(3).name(), Some("bare-child"));
+    assert_eq!(nodes.get(4).name(), Some("grid-child"));
 }
 
 /// The four sentinel-defaulted `Node` fields. A field-id shift most
@@ -333,6 +334,52 @@ fn frozen_flex_constraints_read_back() {
     assert_eq!(text_constraints.margin(), None);
 }
 
+/// The v0.8 layout appends (story #43): the enum tail members
+/// (`Grid` = 4, `Baseline` = 3), the cross-axis gap, both track lists
+/// (a `Fixed` and a `Fraction` track per axis, at per-axis-distinct
+/// values), and the grid placement — every value non-default, so a
+/// shifted field id or discriminant reads back wrong here.
+#[test]
+fn frozen_v08_layout_fields_read_back() {
+    let grid = node(4);
+    let flex = grid.flex().expect("grid-child is a container");
+    assert_eq!(flex.mode(), LayoutMode::Grid);
+    assert_eq!(flex.cross_align(), CrossAxisAlign::Baseline);
+    assert_eq!(flex.gap(), 12.0);
+    assert_eq!(flex.cross_gap(), Some(16.0));
+
+    let rows = flex.grid_rows().expect("row tracks present");
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows.get(0).sizing(), GridTrackSizing::Fixed);
+    assert_eq!(rows.get(0).value(), 96.0);
+    assert_eq!(rows.get(1).sizing(), GridTrackSizing::Fraction);
+    assert_eq!(rows.get(1).value(), 2.0);
+    let columns = flex.grid_columns().expect("column tracks present");
+    assert_eq!(columns.len(), 2);
+    assert_eq!(columns.get(0).sizing(), GridTrackSizing::Fraction);
+    assert_eq!(columns.get(0).value(), 1.0);
+    assert_eq!(columns.get(1).sizing(), GridTrackSizing::Fixed);
+    assert_eq!(columns.get(1).value(), 160.0);
+
+    let constraints = grid.constraints().expect("constraints present");
+    assert_eq!(constraints.grid_row(), Some(1));
+    assert_eq!(constraints.grid_column(), Some(2));
+    assert_eq!(constraints.grid_row_span(), 2);
+    assert_eq!(constraints.grid_column_span(), 3);
+
+    // The nodes that predate v0.8 keep the appends absent (spans read
+    // their default of 1) — the append cost old documents nothing.
+    let old = node(0).flex().expect("root flex present");
+    assert_eq!(old.cross_gap(), None);
+    assert!(old.grid_rows().is_none());
+    assert!(old.grid_columns().is_none());
+    let old_constraints = node(1).constraints().expect("constraints present");
+    assert_eq!(old_constraints.grid_row(), None);
+    assert_eq!(old_constraints.grid_column(), None);
+    assert_eq!(old_constraints.grid_row_span(), 1);
+    assert_eq!(old_constraints.grid_column_span(), 1);
+}
+
 /// The two text pools, reached through the node's sentinel-indexed
 /// references.
 #[test]
@@ -449,10 +496,11 @@ fn frozen_binding_tables_read_back() {
 // older schema generation.
 // ---------------------------------------------------------------------
 
-/// Builds the fixture document: four nodes, three paint-pool entries
-/// (one per `Fill` union member), two images, both text pools, and both
-/// flex tables — every field written to a value distinguishable from
-/// its default.
+/// Builds the fixture document: five nodes, three paint-pool entries
+/// (one per `Fill` union member), two images, both text pools, both
+/// flex tables, and the v0.8 layout appends (cross gap, grid tracks,
+/// grid placement, the Grid/Baseline enum tails) — every field written
+/// to a value distinguishable from its default.
 fn build_fixture() -> Vec<u8> {
     let mut b = FlatBufferBuilder::new();
 
@@ -565,6 +613,11 @@ fn build_fixture() -> Vec<u8> {
             padding: Some(&EdgeInsets::new(1.0, 2.0, 3.0, 4.0)),
             main_align: MainAxisAlign::SpaceBetween,
             cross_align: CrossAxisAlign::End,
+            // The v0.8 appends stay absent here — grid-child below is
+            // the node that writes them.
+            cross_gap: None,
+            grid_rows: None,
+            grid_columns: None,
         },
     );
     let root_name = b.create_string("root");
@@ -597,6 +650,12 @@ fn build_fixture() -> Vec<u8> {
             min_height: Some(20.0),
             max_height: None,
             margin: Some(&EdgeInsets::new(-4.0, 0.0, 5.0, 0.0)),
+            // The v0.8 placement appends stay absent here — grid-child
+            // below is the node that writes them.
+            grid_row: None,
+            grid_column: None,
+            grid_row_span: 1,
+            grid_column_span: 1,
         },
     );
     let gradient_name = b.create_string("gradient-child");
@@ -643,7 +702,79 @@ fn build_fixture() -> Vec<u8> {
         },
     );
 
-    let nodes = b.create_vector(&[root, gradient_child, text_child, bare_child]);
+    // v0.8 layout appends (story #43): every new field at a value
+    // distinguishable from its default — mode Grid (4) and Baseline (3)
+    // are the appended enum tails, the tracks mix both sizings at
+    // distinct values per axis, and the placement writes non-default
+    // anchors and spans.
+    let row_fixed = GridTrack::create(
+        &mut b,
+        &GridTrackArgs {
+            sizing: GridTrackSizing::Fixed,
+            value: 96.0,
+        },
+    );
+    let row_flex = GridTrack::create(
+        &mut b,
+        &GridTrackArgs {
+            sizing: GridTrackSizing::Fraction,
+            value: 2.0,
+        },
+    );
+    let grid_rows = b.create_vector(&[row_fixed, row_flex]);
+    let col_flex = GridTrack::create(
+        &mut b,
+        &GridTrackArgs {
+            sizing: GridTrackSizing::Fraction,
+            value: 1.0,
+        },
+    );
+    let col_fixed = GridTrack::create(
+        &mut b,
+        &GridTrackArgs {
+            sizing: GridTrackSizing::Fixed,
+            value: 160.0,
+        },
+    );
+    let grid_columns = b.create_vector(&[col_flex, col_fixed]);
+    let grid_flex = LayoutContainer::create(
+        &mut b,
+        &LayoutContainerArgs {
+            mode: LayoutMode::Grid,
+            gap: 12.0,
+            padding: None,
+            main_align: MainAxisAlign::Start,
+            cross_align: CrossAxisAlign::Baseline,
+            cross_gap: Some(16.0),
+            grid_rows: Some(grid_rows),
+            grid_columns: Some(grid_columns),
+        },
+    );
+    let grid_constraints = LayoutConstraints::create(
+        &mut b,
+        &LayoutConstraintsArgs {
+            sizing_h: AxisSizing::Fill,
+            sizing_v: AxisSizing::Fill,
+            grid_row: Some(1),
+            grid_column: Some(2),
+            grid_row_span: 2,
+            grid_column_span: 3,
+            ..Default::default()
+        },
+    );
+    let grid_name = b.create_string("grid-child");
+    let grid_child = Node::create(
+        &mut b,
+        &NodeArgs {
+            name: Some(grid_name),
+            parent: 0,
+            flex: Some(grid_flex),
+            constraints: Some(grid_constraints),
+            ..Default::default()
+        },
+    );
+
+    let nodes = b.create_vector(&[root, gradient_child, text_child, bare_child, grid_child]);
 
     // v0.4 variant table (story #20): one set, two members, one override
     // of each of two `VariantPropValue` kinds — enough to catch a

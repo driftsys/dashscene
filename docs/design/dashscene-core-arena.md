@@ -79,7 +79,12 @@ intent" below); since v0.2 (story #8) the flex vocabulary: `Mode`,
 v0.4 (story #165) added `Visible(bool)` (see "Visibility" below).
 `Txn::lower_negative_gaps` is a shared producer pass that rewrites a
 negative container `gap` into child margins — the Figma≠CSS lowering
-(`docs/decisions/negative-gap-lowering.md`). Node names are set at
+(`docs/decisions/negative-gap-lowering.md`). Since v0.8 (story #43) it
+refuses a `Wrap` container with a negative gap by named panic — a
+margin is only gap-equivalent for a child that follows another child on
+the same line, and wrap breaks its lines after the lowering — and skips
+`Grid` containers, whose gaps are track spacing, not flex-flow spacing
+(`docs/decisions/v08-layout-vocabulary-shape.md` D5). Node names are set at
 `add_node`, not a mutable prop. Adding a `String`-carrying variant
 means `Prop` can no longer derive `Copy` — it derives `Clone, Debug,
 PartialEq` as of v0.5; nothing in `dashscene-core` or its `dashlang`
