@@ -478,14 +478,15 @@ manifest, and the CI job
 ([`decisions/render-oracle-tolerance-and-gating.md`](decisions/render-oracle-tolerance-and-gating.md)).
 `E7` was **open (tooling landed)** at this v0.8 close: the harness then measured
 zero frames against a design source, its assertion still needing real Figma
-design-source captures (issue #265). It has since moved to **partial** — the E7
-productionization measures the two layout frames against real Figma captures;
-current `E7` status lives in
+design-source captures (issue #265). It has since moved to **met** — the E7
+productionization measures all seven frames against real Figma captures, each
+within its band, and the last frame (`v08-baseline`) caught the box-bottom
+baseline drift fixed for #272; current `E7` status lives in
 [`specification/05-qualification.md`](specification/05-qualification.md), the
-authority on criterion status, and full `E7` is asserted at the v0.9 exit gate
-(#49, now scoped `E1`–`E7`). The self-oracle debt it retires is likewise
-pending #265 — the `sigma = blur/2` shadow constant is recorded as unmeasured,
-not retired.
+authority on criterion status, and `E7` is asserted alongside `E1`–`E6` at the
+v0.9 exit gate (#49). The `sigma = blur/2` shadow constant is now measured against
+Figma by the two shadow frames (`v08-drop-shadow` 0.02 %, `v08-inner-shadow`
+0.00 %), retiring that self-oracle debt.
 
 The slice merged under the CI-billing exception (GitHub Actions billing-blocked
 since 2026-07-17): each PR merged on the coordinator's full local suite —

@@ -228,13 +228,20 @@ fn decode_rgba(png_bytes: &[u8], label: &str) -> Result<((i32, i32), Vec<u8>), S
     Ok(((width, height), pixels))
 }
 
-/// Hard rect edges (the E3 exact-layout frames: wrap, grid, baseline).
+/// Hard rect edges (the E3 exact-layout frames: wrap, grid).
 ///
 /// A hard edge anti-aliased against the design source disagrees on a thin
 /// 1–2 px band, where the reference painter's coverage rounding and Figma's
 /// server-side export resampling can swing far apart. The fraction budget is
 /// the primary tolerance — an edge is a small share of the canvas — and the
 /// per-pixel threshold filters sub-threshold interior noise.
+///
+/// The E3 baseline frame (v08-baseline) is also an exact-layout case, but its
+/// content is all text: once the baseline alignment is correct (#272), its
+/// residual is glyph edges and font-metric difference, not rect edges, so it
+/// is measured in the `msdf-text` band with the other text frames. Its layout
+/// correctness — the mixed-size runs meeting one glyph baseline — is proven
+/// exactly by the engine unit test, not by this pixel diff.
 pub const AA_EDGE: ToleranceBand = ToleranceBand {
     rule: "aa-edge",
     channel_delta: 40,
@@ -256,13 +263,15 @@ pub const BLUR_FALLOFF: ToleranceBand = ToleranceBand {
     differing_fraction: 0.12,
 };
 
-/// MSDF glyph edges (the text frames).
+/// MSDF glyph edges (the text frames: v05-text-latin, v06-text-arabic, and
+/// the mixed-size baseline row v08-baseline).
 ///
 /// MSDF glyph edges are sharp high-contrast transitions; the reference
 /// painter's MSDF resolve and Figma's font rasterizer disagree at glyph
-/// boundaries (hinting, gamma). Text ink is sparse, so a small area budget
-/// with a higher per-pixel threshold pins the glyph shapes without
-/// over-tolerating.
+/// boundaries (hinting, gamma), and a whole run shifts by the small
+/// difference between the reference and Figma first-line ascent metrics. Text
+/// ink is sparse, so a small area budget with a higher per-pixel threshold
+/// pins the glyph shapes without over-tolerating.
 pub const MSDF_TEXT: ToleranceBand = ToleranceBand {
     rule: "msdf-text",
     channel_delta: 50,

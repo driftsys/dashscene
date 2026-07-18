@@ -235,7 +235,7 @@ job (`.github/workflows/ci.yml`) re-runs the suite with `--nocapture` so
 the measured per-frame numbers show in the log, and is wired into the `ci`
 aggregate `needs`.
 
-Six frames are measured today, each within its band. `v08-grid-spans` declares no
+All seven frames are measured today, each within its band. `v08-grid-spans` declares no
 exclusion: with the text render path wired (#303) its `hug me` TEXT leaf sizes to
 the shaped text instead of collapsing to 0x0, so the grid solves as Figma laid it
 out — the whole 720x480 frame diffs 0.116 %. The two shadow frames
@@ -249,15 +249,23 @@ height from the cascade's primary font — that story #314 fixed, bringing it fr
 excluded pixels leaving both the numerator and the denominator) stays available
 for a genuine structural divergence, though no frame declares one today.
 
-Only `v08-baseline` is pending: a font gap — its Latin leaves author `Inter`,
-absent from the committed corpus, so its HUG root renders 621x160 against Figma's
-608x160 and cannot be diffed (pending a committed Inter atlas or a Noto-authored
-re-capture). It is tracked by the parked issue #265. No design source may
-be fabricated, hand-drawn, or stood in for by the project's own render;
-that is the exact self-oracle failure G-11 forbids, which is why a pending
-frame's `designSource` stays `null`. E7 is **partial**, not met, in
-`docs/specification/05-qualification.md`; it flips to met at the v0.9 exit
-gate (#49), once every frame is measured.
+The third text frame, `v08-baseline`, is a mixed-size baseline row — three
+Noto Sans runs (`small` 12, `medium` 24, `LARGE` 40) baseline-aligned in a fixed
+380x120 frame — replacing the earlier Inter-authored fixture whose HUG root
+resized under a substituted font and could not be diffed. It caught a second real
+bug the self-oracle goldens missed: the diff first measured 3.807 % (over every
+band) because Taffy's high-level measure reports no baseline for a leaf, so a text
+leaf aligned on its box bottom, not its glyph baseline — the shorter runs sat a
+descender too low (#272). A post-solve glyph-baseline correction in
+`dashscene-engine` brought it to 1.816 %, measured in the `msdf-text` band because,
+once the layout is correct, the residual is glyph edges and the small
+reference-vs-Figma ascent-metric difference, the same nature as the other two text
+frames; the baseline geometry itself is proven exactly by an engine unit test. No
+design source may be fabricated, hand-drawn, or stood in for by the project's own
+render; that is the exact self-oracle failure G-11 forbids, which is why an
+un-captured frame's `designSource` stays `null`. With all seven frames measured,
+E7 is **met** in `docs/specification/05-qualification.md`; the v0.9 exit gate (#49)
+asserts it in CI alongside `E1`–`E6`.
 
 ## Testing
 
