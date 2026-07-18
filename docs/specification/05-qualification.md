@@ -16,15 +16,15 @@ missing proof must be visible.
 
 ## v0 exit criteria
 
-| Criterion                         | Verifies | Status                                                                                                                                                                                                                                                                                                                             |
-| --------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| E1 same screen authored both ways | G1       | **met** — layout + solid-fill rect/render parity (story #48); text-inclusive parity is a disclosed v1 follow-on (#299)                                                                                                                                                                                                             |
-| E2 Arabic golden-stable           | R1       | **met**                                                                                                                                                                                                                                                                                                                            |
-| E3 stress corpus green            | R2       | **met**                                                                                                                                                                                                                                                                                                                            |
-| E4 dirty Figma file → report      | R6       | **met**                                                                                                                                                                                                                                                                                                                            |
-| E5 variant switch via FLIP        | R4       | **met**                                                                                                                                                                                                                                                                                                                            |
-| E6 byte-identical `.dsb`          | R7       | **met**                                                                                                                                                                                                                                                                                                                            |
-| E7 design-source render oracle    | R6       | **partial** — the oracle measures the two layout frames (v08-wrap 0.00 %; v08-grid-spans 0.00 % over its five structural cells, its one text-driven cell excluded pending the text render path, inside the aa-edge 2 % band) against real Figma renders; the shadow and text/baseline frames are a disclosed follow-on (#265, #49) |
+| Criterion                         | Verifies | Status                                                                                                                                                                                                                                                                                                                                         |
+| --------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| E1 same screen authored both ways | G1       | **met** — layout + solid-fill rect/render parity (story #48); text-inclusive parity is a disclosed v1 follow-on (#299)                                                                                                                                                                                                                         |
+| E2 Arabic golden-stable           | R1       | **met**                                                                                                                                                                                                                                                                                                                                        |
+| E3 stress corpus green            | R2       | **met**                                                                                                                                                                                                                                                                                                                                        |
+| E4 dirty Figma file → report      | R6       | **met**                                                                                                                                                                                                                                                                                                                                        |
+| E5 variant switch via FLIP        | R4       | **met**                                                                                                                                                                                                                                                                                                                                        |
+| E6 byte-identical `.dsb`          | R7       | **met**                                                                                                                                                                                                                                                                                                                                        |
+| E7 design-source render oracle    | R6       | **partial** — the oracle measures the two layout frames (v08-wrap 0.00 %; v08-grid-spans 0.12 % over the whole frame, its `hug me` text cell now rendered by the text render path #303, no region excluded, inside the aa-edge 2 % band) against real Figma renders; the shadow and text/baseline frames are a disclosed follow-on (#265, #49) |
 
 The file carries no version in its name. "v0 exit criteria" is a heading
 inside it; v1's criteria are a second heading below, not a second file.
@@ -361,35 +361,40 @@ document; E7 gives R6 its fidelity half — a clean file renders within toleranc
 of its design source. The two together make R6 checkable end to end.
 
 Story #284 (v0.8, epic #42) landed the **tooling** — the harness, the per-rule
-bands, the corpus-frame wiring, and an authored CI job. This story wires the
-**assertion** for the two layout frames against a real Figma design source, so
-E7 is now **partial**: the layout half is measured, the shadow and text/baseline
-frames are a disclosed follow-on.
+bands, the corpus-frame wiring, and an authored CI job. Story #301 wired the
+**assertion** for the two layout frames against a real Figma design source, and
+story #303 wired the **text render path** (the typesetter measure seam plus a
+staged glyph-run table), so a text-bearing frame's text now renders and
+`v08-grid-spans` measures its text cell in-band with no region excluded. E7 is
+**partial**: the layout half is measured, the shadow and text-fidelity frames
+are a disclosed follow-on (each needs a fixture it can render faithfully, not
+the render path).
 
 The reference is not a pre-committed corpus golden. Per measured frame the oracle
 imports the frame's committed Figma fixture
 (`corpus/figma-fixtures/<name>.json`), compiles it in-process through
-`dashc::compile_figma` (`Profile::Core`), re-solves it with the one `TaffySolver`,
-and renders the committed scene with the Skia reference painter — sized to the
-root's solved rect. That fresh render is diffed against the committed Figma
-export of the same node at the same size, so the diff measures the reference
-painter against Figma's own render of the same scene, not against the project's
-own golden (guardrail G-23).
+`dashc::compile_figma` (`Profile::Core`), re-solves it with the one `TaffySolver`
+— running the typesetter measure seam so TEXT nodes size to their shaped extent
+(#303) — and renders the committed scene with the Skia reference painter, sized
+to the root's solved rect, with text painted from a glyph-run table staged over
+the committed Noto atlases. That fresh render is diffed against the committed
+Figma export of the same node at the same size, so the diff measures the
+reference painter against Figma's own render of the same scene, not against the
+project's own golden (guardrail G-23).
 
 Two layout frames are measured, both inside the `aa-edge` 2 % band:
 
 - `v08-wrap` (fixture `lowering-wrap.json`, Figma node `1:10`, 420x184) —
   0.000 % of pixels differ.
 - `v08-grid-spans` (fixture `grid-basic.json`, Figma node `1:11`, 720x480) —
-  0.000 % of pixels differ over its five structural cells, which match the
-  export pixel-exact (span/fill/minmax/fixed placement and positions). Its sixth
-  cell diverges structurally and is excluded: the `hug me` TEXT leaf solves to
-  0x0 because text measurement is not wired into the oracle render path, so the
-  HUG cell collapses to its padding box (24x16 vs Figma's 74x33). That one
-  text-driven cell is excluded (the frame's `excludeRegions` is Figma's cell
-  bbox, the superset covering every differing pixel) pending the text
-  render-path follow-on (#265); it is a real structural divergence the area
-  budget must not absorb, not missing glyph ink.
+  0.116 % of pixels differ over the whole frame. Its five structural cells
+  (span/fill/minmax/fixed placement and positions) match the export pixel-exact.
+  Its sixth cell is a `hug me` TEXT leaf: with the text render path wired (#303)
+  its HUG box sizes to the shaped text instead of collapsing to 0x0, so the grid
+  solves as Figma laid it out and no region is excluded. The 0.116 % residual is
+  the Latin glyph-shape substitution (the fixture authors `Inter`, which the
+  committed corpus does not provide, so the oracle renders it in Noto Sans) plus
+  MSDF glyph edges — well within the 2 % budget.
 
 The parts that make this checkable:
 
@@ -436,15 +441,20 @@ The parts that make this checkable:
   `--nocapture` (so the measured per-frame numbers and the pending frames show in
   the log) and is wired into the `ci` aggregate `needs`.
 
-The remaining five frames are a disclosed follow-on, not a v0 gap:
-`v08-baseline`'s fixture exists but carries TEXT, so it needs the
-glyph-run/typeset render path the render helper does not yet drive;
+The remaining five frames are a disclosed follow-on, not a v0 gap. The text
+render path is wired (#303), so none is blocked on it. `v08-baseline` is a font
+gap: its fixture authors the Latin leaves in `Inter`, which the committed corpus
+does not provide, so rendered in Noto Sans its HUG root measures 621x160 against
+Figma's 608x160 (Noto Sans is wider than Inter) — a dimension mismatch that
+cannot be diffed, pending a committed Inter atlas or a Noto-authored re-capture.
 `v08-drop-shadow` and `v08-inner-shadow` have no renderable fixture
 (`effects-2025` is a diagnostic REJECT fixture) and need a new plugin-authored
-shadow fixture; `v05-text-latin` and `v06-text-arabic` have no committed fixture
-yet and also need the text render path. Authoring those fixtures and wiring the
-text render path is tracked by the parked issue #265; the v0.9 exit gate (#49) is
-where E7 flips from partial to met, once every frame is measured.
+shadow fixture (#304). `v05-text-latin` and `v06-text-arabic` have no committed
+fixture yet and must be authored in the committed Noto fonts so the `msdf-text`
+band measures the reference painter against Figma's render of the same font.
+Authoring those remaining fixtures is tracked by the parked issue #265; the v0.9
+exit gate (#49) is where E7 flips from partial to met, once every frame is
+measured.
 
 ## v1 exit criteria
 

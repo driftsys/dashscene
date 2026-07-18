@@ -67,8 +67,8 @@ productionization). 4 — un-gated assertion once a real capture exists
   retune is a deliberate, reviewed change. Their values are engineering
   estimates from the AA/blur/MSDF edge characteristics. The two committed
   layout captures confirm `AA_EDGE` (`v08-wrap` 0.000 %, `v08-grid-spans`
-  0.000 % over its five structural cells, its one text-driven cell excluded
-  as a disclosed structural divergence — `goldens/oracle/manifest.json`,
+  0.116 % over the whole frame — its `hug me` text cell now rendered by the
+  text render path #303, no region excluded — `goldens/oracle/manifest.json`,
   `goldens/oracle/README.md`); only `BLUR_FALLOFF` and `MSDF_TEXT` remain
   to be confirmed or retuned once their frames become renderable (#265, the
   v0.9 exit gate #49).
@@ -105,7 +105,9 @@ productionization). 4 — un-gated assertion once a real capture exists
   and `pending` is exactly the null-source frames — so an un-gated green
   cannot hide an unmeasured frame. The `render-oracle` CI job now re-runs
   the suite with `--nocapture` so the measured per-frame numbers show in the
-  log. E7 is **partial**, not met: the two layout frames are measured, the
-  shadow and text/baseline frames stay pending a renderable fixture and the
-  text render path, and E7 flips to met at the v0.9 exit gate (#49) once
-  every frame is measured.
+  log. E7 is **partial**, not met: the two layout frames are measured (the
+  text render path #303 renders `v08-grid-spans`'s text cell in-band), the
+  shadow and text/baseline frames stay pending a fixture each can render
+  faithfully — a committed font for the text frames, a plugin-authored
+  fixture for the shadows — and E7 flips to met at the v0.9 exit gate (#49)
+  once every frame is measured.

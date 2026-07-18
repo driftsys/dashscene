@@ -23,13 +23,17 @@ use std::collections::BTreeMap;
 
 use dashbuf::root_as_document;
 use dashc_wasm::compile_figma;
-use dashpaint::{GlyphRunTable, Painter};
-use dashscene_core::{Arena, load_document};
+use dashpaint::{AtlasIndex, GlyphQuad, GlyphRun, GlyphRunTable, Painter};
+use dashscene_core::{Arena, NodeId, load_document};
 use dashscene_engine::TaffySolver;
 use dashscene_skia::SkiaPainter;
+use dashscene_typeset::text::{Font, Typesetter};
 use dashscene_validator::Profile;
 use goldens::oracle::{self, AA_EDGE, BLUR_FALLOFF, MSDF_TEXT, ToleranceBand};
 use skia_safe::{Color, Color4f, EncodedImageFormat, Paint, Rect, surfaces};
+
+mod common;
+use common::{load_atlas, origin_of};
 
 /// A `w`×`h` opaque PNG cleared to `base`, optionally with one axis-aligned
 /// integer `patch` rect painted over it with anti-aliasing off — so every
@@ -227,9 +231,11 @@ fn a_difference_confined_to_an_excluded_region_does_not_count() {
     // differs by 80 (over AA_EDGE's threshold) is measured as 400 differing
     // pixels without an exclusion; excluding that exact rect drops all 400 from
     // the differing count AND drops them from the total, so the frame measures 0
-    // differing over the pixels that remain. This is the masking that keeps
-    // `v08-grid-spans` a clean grid-structure measurement by excluding its one
-    // text-driven HUG cell (`goldens/oracle/manifest.json`).
+    // differing over the pixels that remain. This is the masking a frame can use
+    // for one genuine, disclosed structural divergence the area budget must not
+    // silently absorb (`goldens/oracle/manifest.json`). No frame declares an
+    // exclusion today — the text render path (#303) made `v08-grid-spans`'s
+    // former text-cell exclusion unnecessary — but the mechanism stays available.
     let reference = png(100, 100, 120, None);
     let source = png(
         100,
@@ -530,24 +536,148 @@ fn repo_root() -> std::path::PathBuf {
     goldens_root().join("..")
 }
 
+// --- The text render path (story #303) ---
+//
+// The oracle imports arbitrary Figma fixtures, some of which carry TEXT. A
+// TEXT node measures to 0x0 unless the solver runs the typesetter measure seam
+// (#29), and paints nothing unless a `GlyphRunTable` is staged for it. These
+// helpers wire both, generalizing the single-node stagers the v0.5/v0.6/v0.7
+// text goldens use (`v07_text_lowering.rs`, `v07_fallback.rs`) to every TEXT
+// node in a lowered fixture.
+//
+// Font resolution is caller-side (there is no registry — `docs/design/
+// typeset-latin.md`): the oracle shapes through one coverage cascade of the
+// only committed, R7-reproducible atlases — Noto Sans (Latin) then Noto Sans
+// Arabic. A Latin family the committed corpus does not provide (e.g. "Inter",
+// the family every committed fixture authors) renders in Noto Sans, so its
+// glyph *shapes* and advances differ from Figma's own render of that family.
+// That substitution is a measured fidelity gap the diff surfaces, disclosed per
+// frame in `goldens/oracle/manifest.json` — it is why a Latin-Inter frame is
+// not wired as a passing design source (`goldens/oracle/README.md`).
+
+const FONT_LATIN: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../corpus/fonts/noto-sans/NotoSans-Regular.ttf"
+);
+const FONT_ARABIC: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../corpus/fonts/noto-sans-arabic/NotoSansArabic-Regular.ttf"
+);
+const ATLAS_ASCII_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../corpus/atlas/ascii");
+const ATLAS_ARABIC_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../corpus/atlas/arabic");
+
+/// The one coverage cascade the oracle measures and stages every TEXT node
+/// through: Noto Sans primary (font 0), Noto Sans Arabic fallback (font 1).
+/// The font index a shaped glyph carries indexes both this cascade and the
+/// atlas list built in the same order (`[ascii, arabic]`).
+fn oracle_typesetter() -> Typesetter {
+    let latin = Font::from_bytes(
+        std::fs::read(FONT_LATIN).expect("corpus Latin font present"),
+        0,
+    )
+    .expect("Noto Sans parses");
+    let arabic = Font::from_bytes(
+        std::fs::read(FONT_ARABIC).expect("corpus Arabic font present"),
+        0,
+    )
+    .expect("Noto Sans Arabic parses");
+    Typesetter::with_fonts(vec![latin, arabic])
+}
+
+/// Shapes `text` at `size` and places every glyph in absolute document space
+/// (the painter moves nothing, P2: the node's box origin is added here),
+/// splitting a new run wherever the cascade switched fonts so each run samples
+/// the atlas of its own font. `atlases` is built in font-list order, so the
+/// font index a glyph carries selects its atlas.
+fn text_runs(
+    ts: &mut Typesetter,
+    atlases: &[AtlasIndex],
+    origin: (f32, f32),
+    text: &str,
+    size: f32,
+    color: dashpaint::Color,
+) -> Vec<GlyphRun> {
+    let laid = ts.layout(text, size, None);
+    let mut runs: Vec<GlyphRun> = Vec::new();
+    for line in &laid.lines {
+        for g in &line.glyphs {
+            let atlas = atlases[g.font as usize];
+            let quad = GlyphQuad {
+                glyph_id: g.glyph_id,
+                x: origin.0 + g.x,
+                y: origin.1 + g.y,
+            };
+            match runs.last_mut() {
+                Some(run) if run.atlas == atlas => run.glyphs.push(quad),
+                _ => runs.push(GlyphRun {
+                    atlas,
+                    size,
+                    color,
+                    glyphs: vec![quad],
+                    opacity: 1.0,
+                }),
+            }
+        }
+    }
+    runs
+}
+
+/// Walks the committed arena and stages glyph runs for every TEXT node — one
+/// or more runs per node, at the node's resolved box origin. A node is a text
+/// leaf exactly when it carries both authored characters and a text style
+/// (`dashscene_engine::text_context`); its style's `size` and `color` drive the
+/// run. Non-text fixtures produce no runs.
+fn stage_text(arena: &Arena, ts: &mut Typesetter, atlases: &[AtlasIndex]) -> Vec<GlyphRun> {
+    fn walk(
+        arena: &Arena,
+        node: NodeId,
+        ts: &mut Typesetter,
+        atlases: &[AtlasIndex],
+        out: &mut Vec<GlyphRun>,
+    ) {
+        if let (Some(text), Some(style)) = (arena.text(node), arena.text_style(node)) {
+            let origin = origin_of(arena, node);
+            out.extend(text_runs(
+                ts,
+                atlases,
+                origin,
+                text,
+                style.size,
+                style.color,
+            ));
+        }
+        for &child in arena.children(node) {
+            walk(arena, child, ts, atlases, out);
+        }
+    }
+    let mut out = Vec::new();
+    for &root in arena.roots() {
+        walk(arena, root, ts, atlases, &mut out);
+    }
+    out
+}
+
 /// Imports a committed Figma fixture the way a real producer does — compile
 /// through `dashc`'s `compile_figma` (`Profile::Core`), load the emitted
 /// `.dsb`, re-solve through the one `TaffySolver` — then renders the committed
 /// scene with the Skia reference painter and returns the PNG. This is the
 /// reference half of the oracle: our own fresh render of the imported fixture,
 /// sized to the root's solved rect, which the design source is diffed against.
-/// The scene carries no glyph runs, so the glyph-run table passed is empty (the
-/// text render path is a disclosed follow-on; `goldens/oracle/README.md`).
+///
+/// The solver runs the typesetter measure seam (#29) so TEXT nodes size to
+/// their shaped extent instead of collapsing to 0x0, and a `GlyphRunTable` is
+/// staged for every TEXT node so text paints. Font resolution is the committed
+/// Noto cascade — see the module note above for the Latin-family fidelity
+/// caveat this carries.
 fn render_fixture(name: &str, fixture_json: &str) -> Vec<u8> {
     let (bytes, report) = compile_figma(fixture_json, Profile::Core, &BTreeMap::new())
         .unwrap_or_else(|e| panic!("frame {name} fixture compiles: {e:?}"));
     // A clean fixture lowers with an empty report; a diagnostic would mean the
     // fixture is not renderable and must not be wired as a measured frame. This
     // guards only *lowering* diagnostics — an empty report does not certify the
-    // render is faithful. Render-time degradation the report cannot see (e.g. a
-    // TEXT leaf that solves to 0x0 because text measurement is not wired into
-    // this path) is caught by the diff against the design source, and disclosed
-    // per frame in the manifest — not by this assertion.
+    // render is faithful. Render-time fidelity (glyph shape and advance under
+    // font substitution, atlas coverage) is caught by the diff against the
+    // design source, and disclosed per frame in the manifest — not here.
     assert!(
         report.is_empty(),
         "frame {name} fixture lowers clean: {report}"
@@ -555,10 +685,23 @@ fn render_fixture(name: &str, fixture_json: &str) -> Vec<u8> {
     let document = root_as_document(&bytes).expect("a valid buffer");
     let mut arena = Arena::new();
     load_document(&document, &mut arena);
-    // `load_document` commits with the fixed solver; a full first solve needs
-    // the engine, so re-commit an empty transaction through a fresh
-    // `TaffySolver` (the pattern v09_parity.rs and the flex-lowering tests use).
-    arena.open().commit_with(&mut TaffySolver::new());
+    // `load_document` commits with the fixed solver, which measures a text node
+    // to zero; re-commit an empty transaction through a typesetter-backed solver
+    // so a full solve runs the measure seam (the pattern the text goldens use).
+    let mut ts = oracle_typesetter();
+    arena
+        .open()
+        .commit_with(&mut TaffySolver::with_typesetter(&mut ts));
+
+    // Stage glyph runs for every TEXT node. The atlases are pushed in the
+    // cascade's font order (`[ascii, arabic]`), so the font index a shaped
+    // glyph carries selects its atlas.
+    let mut glyphs = GlyphRunTable::new();
+    let ascii = glyphs.push_atlas(load_atlas(ATLAS_ASCII_DIR));
+    let arabic = glyphs.push_atlas(load_atlas(ATLAS_ARABIC_DIR));
+    for run in stage_text(&arena, &mut ts, &[ascii, arabic]) {
+        glyphs.push_run(run);
+    }
 
     let scene = arena.committed();
     let root = scene.rects()[0];
@@ -569,7 +712,7 @@ fn render_fixture(name: &str, fixture_json: &str) -> Vec<u8> {
         scene.images(),
         scene.clips(),
         scene.groups(),
-        &GlyphRunTable::new(),
+        &glyphs,
         None,
     );
     painter.png_bytes()
@@ -736,12 +879,12 @@ fn the_reference_renders_match_their_design_source() {
                 let reference_bytes = render_fixture(&name, &fixture_json);
 
                 // A frame may declare `excludeRegions` — rectangles carrying one
-                // genuine, disclosed structural divergence (v08-grid-spans's
-                // text-driven HUG cell that collapses because text measurement is
-                // not wired into the oracle render path). Excluded pixels count
-                // toward neither the differing count nor the total, so the frame
-                // measures the rest rather than absorbing the divergence into the
-                // band. The manifest note states the mechanism per frame.
+                // genuine, disclosed structural divergence the area budget must
+                // not silently absorb. Excluded pixels count toward neither the
+                // differing count nor the total, so the frame measures the rest.
+                // No frame declares one today (the text render path removed
+                // v08-grid-spans's former text-cell exclusion), so this is the
+                // empty-slice case; the mechanism stays for a future divergence.
                 let exclude = exclude_regions(frame);
                 let d = oracle::diff_excluding(&reference_bytes, &source_bytes, band, &exclude)
                     .unwrap_or_else(|e| panic!("frame {name}: {e}"));

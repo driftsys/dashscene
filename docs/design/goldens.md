@@ -200,11 +200,12 @@ deliberate, reviewed change rather than a silent drift:
 
 These are engineering estimates from the AA/blur/MSDF edge
 characteristics, pinned so the harness is falsifiable. The two layout
-captures confirm `AA_EDGE` (`v08-wrap` 0.000 %; `v08-grid-spans` 0.000 %
-over its five structural cells, which match the export pixel-exact, with
-its one text-driven cell excluded — see below — both inside the 2 %
-budget); `BLUR_FALLOFF` and `MSDF_TEXT` are confirmed or retuned when
-their frames become renderable (the v0.9 exit gate, #49).
+captures confirm `AA_EDGE` (`v08-wrap` 0.000 %; `v08-grid-spans` 0.116 %
+over the whole frame — its five structural cells match the export
+pixel-exact and its `hug me` text cell now renders through the text render
+path, see below — both inside the 2 % budget); `BLUR_FALLOFF` and
+`MSDF_TEXT` are confirmed or retuned when their frames become renderable
+(the v0.9 exit gate, #49).
 
 ### The corpus-frame ↔ design-source manifest
 
@@ -235,22 +236,25 @@ job (`.github/workflows/ci.yml`) re-runs the suite with `--nocapture` so
 the measured per-frame numbers show in the log, and is wired into the `ci`
 aggregate `needs`.
 
-Two layout frames are measured today. `v08-grid-spans` carries one
-`excludeRegions` rectangle: its `hug me` TEXT leaf solves to 0x0 because text
-measurement is not wired into the oracle render path, so that HUG cell collapses
-to its padding box (24x16 vs Figma's 74x33). That one text-driven cell is a real
-structural divergence, so it is excluded (the region is Figma's cell bbox, the
-superset covering every differing pixel) pending the text render-path follow-on
-(#265) rather than absorbed into the band; the five structural cells
-(span/fill/minmax/fixed) match the export pixel-exact. Excluded pixels leave
-both the numerator and the denominator (`oracle::diff_excluding`).
+Two layout frames are measured today. `v08-grid-spans` declares no exclusion:
+with the text render path wired (#303) its `hug me` TEXT leaf sizes to the
+shaped text instead of collapsing to 0x0, so the grid solves as Figma laid it
+out. The whole 720x480 frame diffs 0.116 %; the five structural cells
+(span/fill/minmax/fixed) match the export pixel-exact, and the residual is the
+Latin glyph-shape substitution (the fixture authors `Inter`, which the committed
+corpus does not provide, so it renders in Noto Sans) plus MSDF glyph edges, well
+within the band. The `excludeRegions` mechanism (`oracle::diff_excluding`,
+excluded pixels leaving both the numerator and the denominator) stays available
+for a genuine structural divergence, though no frame declares one today.
 
 The other five frames are pending, each for a named reason
-(`goldens/oracle/manifest.json`): `v08-baseline` needs the glyph-run/typeset
-render path (its fixture is TEXT); the shadow frames need a new plugin-authored
-fixture (`effects-2025` is a diagnostic reject); the text frames need a fixture
-and the text render path. Authoring those is a
-disclosed follow-on tracked by the parked issue #265. No design source may
+(`goldens/oracle/manifest.json`): `v08-baseline` is a font gap — its Latin
+leaves author `Inter`, absent from the committed corpus, so its HUG root renders
+621x160 against Figma's 608x160 and cannot be diffed (pending a committed Inter
+atlas or a Noto-authored re-capture); the shadow frames need a new
+plugin-authored fixture (#304; `effects-2025` is a diagnostic reject); the
+`msdf-text` frames need a fixture authored in the committed Noto fonts. Authoring
+those is a disclosed follow-on tracked by the parked issue #265. No design source may
 be fabricated, hand-drawn, or stood in for by the project's own render;
 that is the exact self-oracle failure G-11 forbids, which is why a pending
 frame's `designSource` stays `null`. E7 is **partial**, not met, in
