@@ -14,6 +14,7 @@ use std::path::Path;
 use skia_safe::{AlphaType, ColorType, Data, ImageInfo, images};
 
 pub mod oracle;
+pub mod render;
 
 /// Compares `png_bytes` against the checked-in golden `{name}.png`,
 /// requiring an exact pixel match. Use this for content that renders

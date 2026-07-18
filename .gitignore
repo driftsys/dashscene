@@ -15,6 +15,10 @@ importers/figma/.deno
 # committed; the recipe removes it on exit, this is a backstop.
 importers/figma/.reprobe-tmp.*
 
+# `just render` scratch output — same live-only Figma import, never committed;
+# the recipe removes it on exit, this is a backstop.
+importers/figma/.render-tmp.*
+
 # OS/editor cruft
 .DS_Store
 *.swp
