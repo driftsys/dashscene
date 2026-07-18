@@ -11,12 +11,14 @@ per-rule tolerance bands.
 The reference is not a pre-committed corpus golden. Per frame the oracle imports
 the committed Figma **fixture** (`corpus/figma-fixtures/<name>.json`), compiles
 it in-process through `dashc`'s `compile_figma` (`Profile::Core`), loads the
-emitted `.dsb`, re-solves it with the one `TaffySolver`, and renders the
-committed scene with the Skia reference painter — sized to the root's solved
-rect. That fresh render is diffed against the committed Figma export of the same
-node at the same size. Importing the fixture and rendering it is exactly what a
-producer does, so the diff measures the reference painter against Figma's own
-render of the same scene.
+emitted `.dsb`, re-solves it with the one `TaffySolver` — running the typesetter
+measure seam so TEXT nodes size to their shaped extent (#303) — and renders the
+committed scene with the Skia reference painter, sized to the root's solved
+rect, with text painted from a glyph-run table staged over the committed Noto
+atlases. That fresh render is diffed against the committed Figma export of the
+same node at the same size. Importing the fixture and rendering it is exactly
+what a producer does, so the diff measures the reference painter against Figma's
+own render of the same scene.
 
     goldens/oracle/
       manifest.json     per-frame wiring: fixture -> design source -> band,
@@ -55,10 +57,10 @@ differently, so each rule pins its own band:
 The rationale for each value is in the module's rustdoc and in
 `docs/design/goldens.md`. The values are pinned so the harness is falsifiable.
 The two layout captures confirm the `aa-edge` band: `v08-wrap` diffs 0.000 % and
-`v08-grid-spans` diffs 0.000 % over its five structural cells (its one
-text-driven cell excluded — see below), both inside the 2 % budget. The other
-two bands (`blur-falloff`, `msdf-text`) are confirmed or retuned at the v0.9 exit
-gate (#49), when their frames become renderable. A retune is a deliberate, reviewed
+`v08-grid-spans` diffs 0.116 % over the whole frame (its `hug me` text cell now
+rendered by the text render path, no region excluded — see below), both inside
+the 2 % budget. The other two bands (`blur-falloff`, `msdf-text`) are confirmed
+or retuned at the v0.9 exit gate (#49), when their frames become renderable. A retune is a deliberate, reviewed
 change — the band values are asserted in `goldens/tooling/tests/render_oracle.rs`
 (`the_three_rule_bands_are_pinned_and_distinct`), so a silent drift fails the
 test.
@@ -76,32 +78,38 @@ Two layout frames are measured today:
 - `v08-wrap` (fixture `corpus/figma-fixtures/lowering-wrap.json`, node `1:10`,
   420x184) — 0.000 % differing.
 - `v08-grid-spans` (fixture `corpus/figma-fixtures/grid-basic.json`, node
-  `1:11`, 720x480) — 0.000 % differing over its five structural cells, which
-  match the export pixel-exact (span/fill/minmax/fixed placement and positions).
-  Its sixth cell diverges structurally and is excluded: the `hug me` TEXT leaf
-  solves to 0x0 because text measurement is not wired into the oracle render
-  path, so the HUG cell collapses to its padding box (24x16 vs Figma's 74x33).
-  That one text-driven cell is excluded via the frame's `excludeRegions` (Figma's
-  cell bbox, the superset covering every differing pixel) pending the text
-  render-path follow-on (#265) — a real structural divergence the band must not
-  absorb, not missing glyph ink. Excluded pixels count toward neither the
-  differing count nor the total.
+  `1:11`, 720x480) — 0.116 % differing over the whole frame. Its five structural
+  cells (span/fill/minmax/fixed placement and positions) match the export
+  pixel-exact. Its sixth cell is a `hug me` TEXT leaf: with the text render path
+  wired (#303) its HUG box sizes to the shaped text instead of collapsing to
+  0x0, so the grid solves as Figma laid it out and no region is excluded. The
+  0.116 % residual is the Latin glyph-shape substitution (the fixture authors
+  `Inter`, which the committed corpus does not provide, so the oracle renders it
+  in Noto Sans) plus MSDF glyph edges — well within the 2 % aa-edge budget.
 
-The other five frames stay `pending-265`, each for a named reason (see the
-per-frame `note` in `manifest.json`):
+The other five frames stay `pending-265`. With the text render path wired
+(#303), none is blocked on the render path any more — each needs a fixture it
+can render faithfully (see the per-frame `note` in `manifest.json`):
 
-- `v08-baseline` — its fixture exists but its leaves are TEXT, so it needs the
-  glyph-run/typeset render path the oracle render helper does not yet drive.
+- `v08-baseline` — a font gap, not the render path. Its fixture authors the
+  Latin leaves in `Inter`, which the committed corpus does not provide; rendered
+  in Noto Sans the HUG root measures 621x160 against Figma's 608x160 (Noto Sans
+  is wider than Inter), a dimension mismatch that cannot be diffed. It becomes
+  measurable once it renders in its authored font — a committed Inter atlas, or
+  a Noto-authored re-capture of node `1:2`. Its arabic leaf (`Noto Sans Arabic`)
+  is a committed font and would render faithfully.
 - `v08-drop-shadow`, `v08-inner-shadow` — no renderable fixture: `effects-2025`
   is a diagnostic REJECT fixture that emits no document, so pinning the
   `sigma = blur/2` mapping against a real capture needs a new plugin-authored
-  shadow fixture.
-- `v05-text-latin`, `v06-text-arabic` — no committed fixture yet, and also need
-  the text render path.
+  shadow fixture (#304).
+- `v05-text-latin`, `v06-text-arabic` — no committed fixture yet. These are the
+  faithful text-fidelity frames: they must be authored in the committed Noto
+  fonts so the `msdf-text` band measures the reference painter against Figma's
+  render of the same font, not a substitution.
 
-Authoring those fixtures and wiring the text render path is a disclosed
-follow-on tracked by the parked issue **#265**; the v0.9 exit gate (#49) is where
-E7 flips from `partial` to `met`. E7 is `partial`, not `met`, in
+Authoring those remaining fixtures is a disclosed follow-on tracked by the
+parked issue **#265**; the v0.9 exit gate (#49) is where E7 flips from `partial`
+to `met`. E7 is `partial`, not `met`, in
 `docs/specification/05-qualification.md`.
 
 No design source may be fabricated, hand-drawn, or stood in for by the

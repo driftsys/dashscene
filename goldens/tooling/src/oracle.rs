@@ -49,12 +49,14 @@ pub struct ToleranceBand {
 /// measured fraction reflects only the pixels outside every excluded region.
 ///
 /// This exists for a frame that carries one genuine, disclosed structural
-/// divergence the area budget must not silently absorb: `v08-grid-spans`'s
-/// `hug me` TEXT leaf solves to 0x0 because text measurement is not wired into
-/// the oracle render path, collapsing its HUG cell. Excluding that one cell
-/// keeps the frame a clean grid-structure measurement (the five non-text cells
-/// match the export pixel-exact) rather than hiding the cell inside the band
-/// (`goldens/oracle/manifest.json`, `goldens/oracle/README.md`).
+/// divergence the area budget must not silently absorb — a real placement or
+/// size disagreement, not missing glyph ink — so the frame measures the rest
+/// rather than hiding the divergence inside the band. No frame declares an
+/// exclusion today: `v08-grid-spans` used one for its `hug me` TEXT cell while
+/// text measurement was unwired, but the text render path (story #303) sizes
+/// that cell correctly, so the exclusion was removed and the whole frame is
+/// measured (`goldens/oracle/manifest.json`, `goldens/oracle/README.md`). The
+/// mechanism stays available for a future divergence.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ExcludeRegion {
     pub x: i32,
@@ -132,11 +134,13 @@ pub fn diff(
 /// pixels outside every excluded region. An empty `exclude` slice is exactly
 /// [`diff`].
 ///
-/// A frame declares its regions in `goldens/oracle/manifest.json` for one
-/// genuine, disclosed structural divergence (a text-driven HUG cell that
-/// collapses because text measurement is not wired into the oracle render
-/// path); excluding it keeps the frame a clean measurement of the rest rather
-/// than absorbing the divergence into the area budget.
+/// A frame may declare its regions in `goldens/oracle/manifest.json` for one
+/// genuine, disclosed structural divergence (a real placement or size
+/// disagreement the area budget must not absorb); excluding it keeps the frame
+/// a clean measurement of the rest. No frame declares one today — the text
+/// render path (#303) removed `v08-grid-spans`'s former text-cell exclusion —
+/// so `exclude` is the empty slice in practice, and the mechanism stays for a
+/// future divergence.
 pub fn diff_excluding(
     reference_png: &[u8],
     design_source_png: &[u8],
