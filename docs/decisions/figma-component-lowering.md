@@ -1,7 +1,9 @@
 # A local INSTANCE lowers its baked subtree; component definitions resolve but do not paint; every top-level node is a root
 
-    status   accepted (story #242, 2026-07-16)
-    scope    crates/dashc (the figma module)
+    status   accepted (story #242, 2026-07-16;
+             extended by story #312 / S3, 2026-07-18 — §4)
+    scope    crates/dashc (the figma module); the export closure
+             (importers/figma/src/closure.ts) and its import path (§4)
     binds    #38 (cross-file component resolution builds on local lowering),
              the closure↔dashc drift oracle's component seam, and the
              importer's `figma-export-multi-root` guard (the remaining gate on
@@ -106,6 +108,56 @@ lowering. No ABI export or wire-framing change is needed (the wire format
 `docs/decisions/dashc-wasm-abi.md` pins is untouched); the walk simply lowers
 what it is given.
 
+### 4. A baked instance renders without its master; the closure auto-pulls or warns (S3)
+
+The instance renders from its baked subtree (§ "The fact that ties instances to
+overrides"), so a master is needed only to validate the reference and to ship
+the variant set for `image_refs` and the future v0.4 switcher — not to render
+the authored state. Story #312 (S3) turns that fact into two closure behaviors,
+so a real component-heavy file reaches `dashc` instead of being refused by the
+Deno closure first.
+
+**Auto-pull a buried local master.** When a declared root's instance references
+a local (`remote: false`) component or set whose definition is in-tree but under
+an undeclared top-level node, the closure walks just that definition subtree and
+lifts it as a top-level node of the pruned file (`closure.ts`, the
+`includeDefinition` and component-set branches, and the pruned-file splice). The
+`pendingComponents` worklist carries transitivity, so a nested instance inside a
+pulled definition is followed and its own definition pulled too. The closure
+never keeps the burying frame — that would export undeclared content — so the
+frame stays named in `excluded` (P4). A lifted definition is a top-level node
+`dashc` scans for `image_refs`, so the closure↔dashc drift oracle stays exact
+across an auto-pull.
+
+**Downgrade an unplaceable master to a named warning.** A master the closure
+cannot place is a warning, not a block:
+
+- A local master absent from the tree — absent from the `components` map, or in
+  the map with no definition node (for example removed by `trim`) — is a
+  `figma.closure.local-master-unplaceable` warning.
+- A remote master whose key no declared library carries is a
+  `figma.closure.remote-master-unplaceable` warning. A declared library that is
+  matched but cannot be fully resolved — a missing set, a cross-file image fill,
+  a transitive remote — stays an error, because that is a genuine resolution
+  failure rather than an undeclared library.
+
+`ExportBlocked` fires only on error-severity closure diagnostics, so these
+warnings do not block; the importer prints them on stderr alongside its other
+diagnostics (`import.ts`, `ImportOk.closureDiagnostics`).
+
+**Omission, not approximation.** Baked children are Figma's own resolved
+content, not an approximation, so rendering an instance without its master omits
+only the master's own validation and variant table — it never guesses at the
+authored state. This is the closure-stage sibling of the S0 partial-emit rule
+(`docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`):
+skip-and-diagnose, never approximate. `EmitPolicy` is a `dashc` compile-time
+policy that never reaches the closure, so this is a separate closure/import-path
+severity change rather than a reuse of it.
+
+**Deferred.** Proper remote-library resolution (#259/#261) — for variant
+switching and complete library fidelity — is still valuable, but it is not
+needed to render the authored state, so it is out of scope here.
+
 ## Consequences
 
 - `lowering-variant-topology.json` compiles raw and emits
@@ -156,18 +208,36 @@ what it is given.
   It would add an export and a request field for a selection the declared-roots
   closure already makes upstream; the walk lowering every root it is given needs
   no new ABI surface.
+- **Refuse a buried local master and require the operator to declare or move it
+  (S3)** — rejected. The baked instance already renders without the master, so
+  refusing the export withholds a document that would render correctly. Auto-pull
+  lifts only the definition subtree, never the burying frame, so no undeclared
+  content is exported.
+- **Declare every scattered master as an extra root, or teach `trim` to preserve
+  a referenced master (S3)** — rejected. The hero's masters are scattered under
+  many frames across many canvases; declaring them would paint component
+  galleries as document content, and a `trim` exception is more invasive than a
+  warning. The warning is cleaner because the baked instance renders without the
+  master.
 
 ## Trace
 
 - Satisfies: issue #242 (lower local components, instances, and declared roots);
-  discharges the walk-side remainder of debt #147; P1/P4/P5.
+  discharges the walk-side remainder of debt #147; issue #312 / S3 (§4 — the
+  closure auto-pulls a buried local master and downgrades an unplaceable master
+  to a named warning); P1/P4/P5.
 - Verified by: `crates/dashc/tests/component_lowering.rs` (instance-as-frame,
   definitions resolve-not-paint, nested-definition skip, out-of-vocabulary
   override diagnostic, multi-root lift, the empty-document refusal, the raw
   golden `.dsb`), `goldens/tooling/tests/v07_variant_topology.rs` (lowered →
   solved → painted golden with a calibrated budget and a label-drop sensitivity
   guard), `importers/figma/src/closure_test.ts` (the drift oracle on the
-  component-carrying fixture).
+  component-carrying fixture; §4 — auto-pull of a buried local component and set
+  with transitivity and the drift oracle held, `local-master-unplaceable` and
+  `remote-master-unplaceable` warnings), `importers/figma/src/import_test.ts`
+  (§4 — a remote instance renders from baked children with a warning, a trimmed
+  component definition renders with a warning, the CLI surfaces the warning on
+  stderr).
 - Related: `docs/decisions/figma-flex-lowering.md`,
   `docs/decisions/figma-text-lowering.md`,
   `docs/decisions/figma-ellipse-as-circle.md` (which names this story as lowering

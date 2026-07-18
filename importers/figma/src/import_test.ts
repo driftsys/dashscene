@@ -347,10 +347,12 @@ Deno.test("a blocked export carries the trim context (trimmed declared root)", a
   );
 });
 
-Deno.test("a blocked export carries the trim context (trimmed component definition)", async () => {
+Deno.test("a trimmed component definition renders its instance with a warning, both named", async () => {
   // The declared root keeps an instance; the instance's component definition is
-  // tagged sample-content, so trim removes it and the closure cannot resolve
-  // the instance. The trimmed definition is still named alongside the block.
+  // tagged sample-content, so trim removes it. The export no longer blocks — the
+  // baked instance renders and the now-missing master is a named closure warning
+  // (docs/decisions/figma-component-lowering.md) — and the trimmed definition is
+  // still named too (the "named twice" guarantee, importer-trim-layers.md).
   const file = JSON.stringify({
     document: {
       id: "0:0",
@@ -365,8 +367,15 @@ Deno.test("a blocked export carries the trim context (trimmed component definiti
             id: "1:1",
             name: "home",
             type: "FRAME",
+            absoluteBoundingBox: { x: 0, y: 0, width: 100, height: 100 },
             children: [
-              { id: "1:2", name: "chip", type: "INSTANCE", componentId: "C:1" },
+              {
+                id: "1:2",
+                name: "chip",
+                type: "INSTANCE",
+                componentId: "C:1",
+                absoluteBoundingBox: { x: 0, y: 0, width: 50, height: 50 },
+              },
             ],
           },
           {
@@ -384,25 +393,29 @@ Deno.test("a blocked export carries the trim context (trimmed component definiti
   });
   const { fetchFn } = scriptedFetch(file, new Uint8Array());
 
-  const error = await assertRejects(
-    () =>
-      importFigmaFile({
-        client: createFigmaClient({ token: "x", fetchFn }),
-        dashc,
-        fileKey: FILE_KEY,
-        profile: "core",
-        manifest: { roots: ["1:1"] },
-        fetchFn,
-      }),
-    ExportBlocked,
-    "unresolved-component",
-  ) as ExportBlocked;
+  const result = await importFigmaFile({
+    client: createFigmaClient({ token: "x", fetchFn }),
+    dashc,
+    fileKey: FILE_KEY,
+    profile: "core",
+    manifest: { roots: ["1:1"] },
+    fetchFn,
+  });
 
-  const context = trimContextOf(error);
-  assert(context !== undefined, "the block carries the trim context");
+  // The trimmed component definition is named (P4)...
   assertEquals(
-    context.trimmed.map((r) => [r.id, r.reason]),
+    result.trimmed.map((r) => [r.id, r.reason]),
     [["C:1", "role:sample-content"]],
+  );
+  // ...and so is the now-unplaceable master, as a closure warning naming C:1.
+  const warnings = result.closureDiagnostics.filter(
+    (d) => d.rule === "figma.closure.local-master-unplaceable",
+  );
+  assert(warnings.length > 0, "the unplaceable master is named");
+  assert(warnings.every((d) => d.severity === "warning"));
+  assert(
+    warnings.some((d) => d.message.includes("C:1")),
+    warnings.map((d) => d.message).join(" | "),
   );
 });
 
@@ -496,6 +509,55 @@ Deno.test("more than one declared root is refused by name", async () => {
   assertEquals(requested, []);
 });
 
+Deno.test("the CLI names a downgraded closure warning on stderr (success path)", async () => {
+  // A declared root instances a local master absent from the tree: the export
+  // succeeds (the baked instance renders) and the warning is surfaced on
+  // stderr, never dropped (P4).
+  const file = JSON.stringify({
+    document: {
+      id: "0:0",
+      name: "Document",
+      type: "DOCUMENT",
+      children: [{
+        id: "0:1",
+        name: "Page 1",
+        type: "CANVAS",
+        children: [{
+          id: "1:20",
+          name: "home",
+          type: "FRAME",
+          absoluteBoundingBox: { x: 0, y: 0, width: 100, height: 100 },
+          children: [{
+            id: "1:21",
+            name: "chip-instance",
+            type: "INSTANCE",
+            componentId: "1:31",
+            absoluteBoundingBox: { x: 0, y: 0, width: 50, height: 50 },
+          }],
+        }],
+      }],
+    },
+    components: { "1:31": { key: "key-chip", remote: false } },
+    version: "v1",
+  });
+  const { fetchFn } = scriptedFetch(file, new Uint8Array());
+  const { deps, err } = cliDeps(fetchFn);
+
+  const code = await runImportCli(
+    [FILE_KEY, "--root", "1:20", "-o", "out.dsb"],
+    deps,
+  );
+
+  assertEquals(code, 0);
+  assert(
+    err.some((line) =>
+      line.startsWith("warning[figma.closure.local-master-unplaceable]:") &&
+      line.includes("1:31")
+    ),
+    err.join(" | "),
+  );
+});
+
 // ------------------------------------------------ cross-file resolution (#38)
 
 const VARIANT_GOLDEN = new URL(
@@ -578,10 +640,10 @@ Deno.test("importFigmaFile resolves a remote component from a declared library",
   ]);
 });
 
-Deno.test("importFigmaFile blocks a remote component no declared library carries", async () => {
+Deno.test("importFigmaFile renders a remote instance from baked children with a warning", async () => {
   // The library declared carries a different key, so the remote does not
-  // resolve. The export is blocked with a named error before any image is
-  // fetched or the document is compiled (P4).
+  // resolve. It is no longer a block: the baked instance renders and the
+  // missing master is a named warning (docs/decisions/figma-component-lowering.md).
   const otherLibrary = JSON.parse(
     Deno.readTextFileSync(
       new URL("lowering-variant-topology.json", CORPUS),
@@ -595,26 +657,24 @@ Deno.test("importFigmaFile blocks a remote component no declared library carries
     [LIBRARY_KEY]: JSON.stringify(otherLibrary),
   });
 
-  const error = await assertRejects(
-    () =>
-      importFigmaFile({
-        client: createFigmaClient({ token: "x", fetchFn }),
-        dashc,
-        fileKey: FILE_KEY,
-        profile: "core",
-        manifest: { roots: ["1:12"], libraries: [LIBRARY_KEY] },
-        fetchFn,
-      }),
-    ExportBlocked,
-    "cross-file-unresolved",
+  const result = await importFigmaFile({
+    client: createFigmaClient({ token: "x", fetchFn }),
+    dashc,
+    fileKey: FILE_KEY,
+    profile: "core",
+    manifest: { roots: ["1:12"], libraries: [LIBRARY_KEY] },
+    fetchFn,
+  });
+
+  // The remote master is named as unplaceable (P4), at warning severity.
+  const warnings = result.closureDiagnostics.filter(
+    (d) => d.rule === "figma.closure.remote-master-unplaceable",
   );
-  // The error names both the library key that was searched and the component
-  // key that did not resolve.
-  assert(error.message.includes(LIBRARY_KEY), error.message);
-  assert(
-    error.message.includes("ca96eccab03b7cb50979e45b3936ad29e5486ba7"),
-    error.message,
-  );
+  assert(warnings.length > 0, "the unresolved remote is named");
+  assert(warnings.every((d) => d.severity === "warning"));
+  // The instance renders from its baked subtree, so the bytes still match the
+  // single-file local-component golden (the master never painted anyway).
+  assertEquals(result.bytes, Deno.readFileSync(VARIANT_GOLDEN));
 });
 
 Deno.test("a frozen subset on a library set resolves end to end (C2)", async () => {

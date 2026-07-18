@@ -35,6 +35,7 @@ import {
   joinBindings,
 } from "./bindings.ts";
 import {
+  type ClosureDiagnostic,
   computeClosure,
   excludeTopLevelNodes,
   exportableRoots,
@@ -126,6 +127,13 @@ export interface ImportOk extends CompileOk {
    * import without a vartable. Named, never silent (P4).
    */
   readonly bindingDiagnostics: readonly BindingDiagnostic[];
+  /**
+   * The closure's non-blocking verdicts: a local master absent from the tree,
+   * or a remote master no declared library resolves — the instance renders from
+   * its baked children, the missing master is a named warning (P4,
+   * docs/decisions/figma-component-lowering.md). Empty for a clean closure.
+   */
+  readonly closureDiagnostics: readonly ClosureDiagnostic[];
 }
 
 /**
@@ -257,6 +265,7 @@ export async function importFigmaFile(
   // (docs/decisions/figma-cross-file-library-resolution.md).
   let sourceFile = trimmedFile;
   let splicedRootIds: readonly string[] = [];
+  const remoteDiagnostics: ClosureDiagnostic[] = [];
   const remotes = discovery.components.filter((c) => c.remote);
   if (remotes.length > 0) {
     const libraries = await fetchLibraries(client, manifest.libraries ?? []);
@@ -266,6 +275,9 @@ export async function importFigmaFile(
     }
     sourceFile = resolution.file;
     splicedRootIds = resolution.splicedRootIds;
+    // Warnings survive the error gate above: an unplaceable remote master, or a
+    // shadowed library key. Surfaced with the final closure's warnings below.
+    remoteDiagnostics.push(...resolution.diagnostics);
   }
 
   // Final closure: over the spliced document, with the full manifest, so
@@ -348,6 +360,9 @@ export async function importFigmaFile(
     trimDiagnostics,
     sidecar,
     bindingDiagnostics,
+    // The final closure's diagnostics are warnings (errors threw above), joined
+    // with the remote-resolution warnings — surfaced, never dropped (P4).
+    closureDiagnostics: [...closure.diagnostics, ...remoteDiagnostics],
   };
 }
 
@@ -524,6 +539,11 @@ export async function runImportCli(
     );
   }
   for (const diagnostic of result.bindingDiagnostics) {
+    deps.error(
+      `${diagnostic.severity}[${diagnostic.rule}]: ${diagnostic.message}`,
+    );
+  }
+  for (const diagnostic of result.closureDiagnostics) {
     deps.error(
       `${diagnostic.severity}[${diagnostic.rule}]: ${diagnostic.message}`,
     );

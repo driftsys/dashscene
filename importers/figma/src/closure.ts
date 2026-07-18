@@ -89,8 +89,9 @@ export interface ExportManifest {
    * Figma file keys of the libraries this export may resolve remote components
    * from (#38). A library dependency is declared, never auto-discovered — the
    * same principle as a declared root. Absent: no library resolves, so every
-   * remote component the export reaches is a named `cross-file-unresolved`
-   * error (P4).
+   * remote component the export reaches is a named `remote-master-unplaceable`
+   * warning and renders from its baked children
+   * (docs/decisions/figma-component-lowering.md), never a silent drop (P4).
    */
   readonly libraries?: readonly string[];
 }
@@ -403,19 +404,23 @@ export function computeClosure(
   const resolvedComponents = new Set<string>();
   const resolvedSets = new Set<string>();
 
+  // Buried LOCAL masters the walk auto-pulled: their instance renders from
+  // baked children, but their definition subtree is lifted as a top-level node
+  // so image_refs/the variant table still see it. NEVER the burying frame —
+  // that would export undeclared content (P4).
+  const pulled: ClosureNode[] = [];
+
   /** Ships one component-definition subtree, or diagnoses why it cannot. */
   const includeDefinition = (node: ClosureNode): void => {
     if (nodeIds.has(node.id)) return; // already inside a kept subtree
     const top = index.topOf.get(node.id) as ClosureNode;
     if (top.id !== node.id && !keptTop.has(top.id)) {
-      diagnostics.push({
-        rule: "figma.closure.buried-component",
-        severity: "error",
-        message: `component ${node.id} ("${node.name}") is reachable only ` +
-          `through the undeclared top-level node "${top.name}" (${top.id}) ` +
-          `— declare it, or move the component to the canvas`,
-        nodeId: node.id,
-      });
+      // Buried under an undeclared top-level node: auto-pull JUST this
+      // definition subtree (walk records its ids/refs and queues its nested
+      // instances) and lift it top-level in the pruned file. The burying frame
+      // is never kept.
+      walk(node);
+      pulled.push(node);
       return;
     }
     keptTop.add(top.id);
@@ -432,10 +437,11 @@ export function computeClosure(
     const meta = file.components?.[componentId];
     if (meta === undefined) {
       diagnostics.push({
-        rule: "figma.closure.unresolved-component",
-        severity: "error",
-        message: `an instance references component ${componentId}, which ` +
-          `the file's components map does not carry`,
+        rule: "figma.closure.local-master-unplaceable",
+        severity: "warning",
+        message: `an instance references component ${componentId}, which the ` +
+          `file's components map does not carry — the instance renders from ` +
+          `its baked children; the missing master is not shipped`,
         nodeId: componentId,
       });
       continue;
@@ -462,10 +468,11 @@ export function computeClosure(
       const node = index.byId.get(componentId);
       if (node === undefined) {
         diagnostics.push({
-          rule: "figma.closure.unresolved-component",
-          severity: "error",
+          rule: "figma.closure.local-master-unplaceable",
+          severity: "warning",
           message: `component ${componentId} (key ${meta.key}) is in the ` +
-            `components map but not in the document tree`,
+            `components map but not in the document tree — the instance ` +
+            `renders from its baked children; the missing master is not shipped`,
           nodeId: componentId,
         });
         continue;
@@ -494,10 +501,12 @@ export function computeClosure(
     const setNode = index.byId.get(setId);
     if (setNode === undefined) {
       diagnostics.push({
-        rule: "figma.closure.unresolved-component",
-        severity: "error",
-        message: `component ${componentId} belongs to component set ` +
-          `${setId}, which is not in the document tree`,
+        rule: "figma.closure.local-master-unplaceable",
+        severity: "warning",
+        message:
+          `component ${componentId} belongs to component set ${setId}, ` +
+          `which is not in the document tree — the instance renders from its ` +
+          `baked children; the missing master is not shipped`,
         nodeId: setId,
       });
       continue;
@@ -521,19 +530,15 @@ export function computeClosure(
     if (!nodeIds.has(setNode.id)) {
       const top = index.topOf.get(setId) as ClosureNode;
       if (top.id !== setId && !keptTop.has(top.id)) {
-        diagnostics.push({
-          rule: "figma.closure.buried-component",
-          severity: "error",
-          message: `component set ${setId} ("${setNode.name}") is ` +
-            `reachable only through the undeclared top-level node ` +
-            `"${top.name}" (${top.id}) — declare it, or move the set to ` +
-            `the canvas`,
-          nodeId: setId,
-        });
-        continue;
+        // Buried under an undeclared top-level node: auto-pull the set subtree
+        // (frozen narrowing still applies inside walk) and lift it top-level;
+        // the burying frame is never kept.
+        walk(setNode);
+        pulled.push(setNode);
+      } else {
+        keptTop.add(top.id);
+        walk(setNode);
       }
-      keptTop.add(top.id);
-      walk(setNode);
     }
   }
 
@@ -621,6 +626,19 @@ export function computeClosure(
       Number(a.canvas === firstRootCanvas)
     )
     .map(({ canvas, children }) => ({ ...canvas, children }));
+
+  // Lift each auto-pulled definition as a top-level node, ahead of the leading
+  // canvas's own children (the first declared root's canvas leads). dashc lowers
+  // every top-level node and skips COMPONENT/COMPONENT_SET definitions (#242),
+  // so which canvas holds a definition does not change what paints; the drift
+  // oracle stays exact because a lifted definition is a node dashc scans.
+  if (pulled.length > 0 && keptCanvases.length > 0) {
+    const lifted = pulled.map(narrowTree);
+    keptCanvases[0] = {
+      ...keptCanvases[0],
+      children: [...lifted, ...(keptCanvases[0].children ?? [])],
+    };
+  }
 
   const pruned: ClosureFile = {
     ...file,
@@ -801,10 +819,11 @@ interface HitRequirement {
  * as it does to a local set.
  *
  * Unresolvable requirements are named, never silently skipped (P4): a key no
- * declared library carries is `cross-file-unresolved`; a spliced definition
- * whose subtree carries an image fill is `cross-file-image`, deferred because
- * this slice resolves image bytes from the consumer file only; a key more than
- * one declared library carries is a `cross-file-key-shadowed` warning.
+ * declared library carries is a `remote-master-unplaceable` warning (the
+ * instance renders from its baked children); a spliced definition whose subtree
+ * carries an image fill is a `cross-file-image` error, deferred because this
+ * slice resolves image bytes from the consumer file only; a key more than one
+ * declared library carries is a `cross-file-key-shadowed` warning.
  */
 export function resolveRemoteComponents(
   file: ClosureFile,
@@ -852,12 +871,18 @@ export function resolveRemoteComponents(
   for (const remote of remotes) {
     const found = byKey.get(remote.key);
     if (found === undefined) {
+      // No declared library carries the key: the instance renders from its
+      // baked children, so the missing remote master is a named warning, not a
+      // block (docs/decisions/figma-component-lowering.md). A declared library
+      // that is matched but cannot be fully resolved (a missing set, an image
+      // fill, a transitive remote) is still an error below.
       diagnostics.push({
-        rule: "figma.closure.cross-file-unresolved",
-        severity: "error",
+        rule: "figma.closure.remote-master-unplaceable",
+        severity: "warning",
         message: `component ${remote.componentId} (key ${remote.key}) is ` +
-          `remote and no declared library carries it — declared ` +
-          `libraries: ${declaredList}`,
+          `remote and no declared library carries it — the instance renders ` +
+          `from its baked children; the missing master is not shipped ` +
+          `(declared libraries: ${declaredList})`,
         nodeId: remote.componentId,
       });
       continue;
