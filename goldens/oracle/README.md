@@ -56,12 +56,12 @@ differently, so each rule pins its own band:
 
 The rationale for each value is in the module's rustdoc and in
 `docs/design/goldens.md`. The values are pinned so the harness is falsifiable.
-The two layout captures confirm the `aa-edge` band: `v08-wrap` diffs 0.000 % and
-`v08-grid-spans` diffs 0.116 % over the whole frame (its `hug me` text cell now
-rendered by the text render path, no region excluded — see below), both inside
-the 2 % budget. The other two bands (`blur-falloff`, `msdf-text`) are confirmed
-or retuned at the v0.9 exit gate (#49), when their frames become renderable. A retune is a deliberate, reviewed
-change — the band values are asserted in `goldens/tooling/tests/render_oracle.rs`
+All three bands are now confirmed by real captures, none retuned: `aa-edge`
+(`v08-wrap` 0.000 %, `v08-grid-spans` 0.116 %), `blur-falloff` (`v08-drop-shadow`
+0.022 %, `v08-inner-shadow` 0.000 %), and `msdf-text` (`v05-text-latin` 0.033 %,
+`v06-text-arabic` 1.405 %) — every measured frame inside its budget. A retune is a
+deliberate, reviewed change — the band values are asserted in
+`goldens/tooling/tests/render_oracle.rs`
 (`the_three_rule_bands_are_pinned_and_distinct`), so a silent drift fails the
 test.
 
@@ -73,44 +73,39 @@ job — un-gated. It is hermetic (committed fixture + committed export +
 in-process compile, no network) and fast (~0.05 s/frame), and the `render-oracle`
 CI job re-runs it with `--nocapture` so the per-frame numbers show in the log.
 
-Two layout frames are measured today:
+Six frames are measured today, each within its band:
 
-- `v08-wrap` (fixture `corpus/figma-fixtures/lowering-wrap.json`, node `1:10`,
-  420x184) — 0.000 % differing.
-- `v08-grid-spans` (fixture `corpus/figma-fixtures/grid-basic.json`, node
-  `1:11`, 720x480) — 0.116 % differing over the whole frame. Its five structural
-  cells (span/fill/minmax/fixed placement and positions) match the export
-  pixel-exact. Its sixth cell is a `hug me` TEXT leaf: with the text render path
-  wired (#303) its HUG box sizes to the shaped text instead of collapsing to
-  0x0, so the grid solves as Figma laid it out and no region is excluded. The
-  0.116 % residual is the Latin glyph-shape substitution (the fixture authors
-  `Inter`, which the committed corpus does not provide, so the oracle renders it
-  in Noto Sans) plus MSDF glyph edges — well within the 2 % aa-edge budget.
+- `v08-wrap` (`lowering-wrap.json`, node `1:10`, 420x184) — 0.000 %.
+- `v08-grid-spans` (`grid-basic.json`, node `1:11`, 720x480) — 0.116 % over the
+  whole frame; its five structural cells match the export pixel-exact, and its
+  `hug me` TEXT cell renders through the text render path (#303). The residual is
+  the Latin glyph substitution (the fixture authors `Inter`; the oracle renders
+  Noto Sans) plus MSDF edges, inside the 2 % aa-edge budget.
+- `v08-drop-shadow` (`drop-shadow.json`, node `1:2`, 96x96) — 0.022 %, and
+  `v08-inner-shadow` (`inner-shadow.json`, node `1:2`, 96x96) — 0.000 %. One
+  shadowed card each (fixtures authored by the fixture-author plugin, #304); the
+  first real measurement of `sigma = blur/2` against Figma, near-pixel-exact —
+  the blur-falloff band.
+- `v05-text-latin` (`text-latin.json`, node `1:2`, 480x200) — 0.033 %, and
+  `v06-text-arabic` (`text-arabic.json`, node `1:2`, 520x240) — 1.405 %. Noto
+  text authored in the committed atlas fonts (#304), rendered through the text
+  path (#303) — the msdf-text band. The Arabic frame caught a real line-height
+  bug (the typesetter took a line's height from the cascade's primary font);
+  story #314 fixed it, bringing Arabic from 3.300 % to 1.405 %.
 
-The other five frames stay `pending-265`. With the text render path wired
-(#303), none is blocked on the render path any more — each needs a fixture it
-can render faithfully (see the per-frame `note` in `manifest.json`):
+One frame stays `pending-265`:
 
-- `v08-baseline` — a font gap, not the render path. Its fixture authors the
-  Latin leaves in `Inter`, which the committed corpus does not provide; rendered
-  in Noto Sans the HUG root measures 621x160 against Figma's 608x160 (Noto Sans
-  is wider than Inter), a dimension mismatch that cannot be diffed. It becomes
-  measurable once it renders in its authored font — a committed Inter atlas, or
-  a Noto-authored re-capture of node `1:2`. Its arabic leaf (`Noto Sans Arabic`)
-  is a committed font and would render faithfully.
-- `v08-drop-shadow`, `v08-inner-shadow` — no renderable fixture: `effects-2025`
-  is a diagnostic REJECT fixture that emits no document, so pinning the
-  `sigma = blur/2` mapping against a real capture needs a new plugin-authored
-  shadow fixture (#304).
-- `v05-text-latin`, `v06-text-arabic` — no committed fixture yet. These are the
-  faithful text-fidelity frames: they must be authored in the committed Noto
-  fonts so the `msdf-text` band measures the reference painter against Figma's
-  render of the same font, not a substitution.
+- `v08-baseline` — a font gap, not the render path. Its fixture authors the Latin
+  leaves in `Inter`, which the committed corpus does not provide; rendered in
+  Noto Sans the HUG root measures 621x160 against Figma's 608x160 (Noto Sans is
+  wider than Inter), a dimension mismatch that cannot be diffed. It becomes
+  measurable once it renders in its authored font — a committed Inter atlas, or a
+  Noto-authored re-capture of node `1:2`. (Its arabic leaf, `Noto Sans Arabic`,
+  is a committed font and would render faithfully.)
 
-Authoring those remaining fixtures is a disclosed follow-on tracked by the
-parked issue **#265**; the v0.9 exit gate (#49) is where E7 flips from `partial`
-to `met`. E7 is `partial`, not `met`, in
-`docs/specification/05-qualification.md`.
+The last frame is tracked by the parked issue **#265**; the v0.9 exit gate (#49)
+is where E7 flips from `partial` to `met`, once `v08-baseline` is measured too.
+E7 is `partial`, not `met`, in `docs/specification/05-qualification.md`.
 
 No design source may be fabricated, hand-drawn, or stood in for by the
 project's own render. That is the exact self-oracle fidelity failure G-11

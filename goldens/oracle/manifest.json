@@ -2,7 +2,7 @@
   "description": "The design-source render oracle wiring (exit criterion E7, guardrail G-11). Per frame the oracle imports the committed Figma fixture (corpus/figma-fixtures/<name>.json), compiles it through dashc's compile_figma (Profile::Core), loads and re-solves it with the TaffySolver — running the typesetter measure seam so TEXT nodes size to their shaped extent — renders the committed scene with the Skia reference painter (text painted from a GlyphRunTable staged over the committed Noto atlases, story #303), and diffs that fresh render against the committed Figma design-source PNG (Figma's REST GET /images export) within the frame's per-rule tolerance band. The reference is OUR render of the imported fixture, not a pre-committed corpus golden — so the diff measures the reference painter against Figma's own render of the same scene at the same size. The harness and the bands live in goldens/tooling/src/oracle.rs; the diff runs in goldens/tooling/tests/render_oracle.rs (the_reference_renders_match_their_design_source), un-gated because it is hermetic (committed fixture + committed design source + in-process compile_figma, no network) and fast. A frame is captured by setting its figmaFileKey and figmaNodeId and running `deno task oracle-capture` (importers/figma); that step downloads Figma's GET /images render into design-source/<frame>.png and flips the frame's designSource and status to captured.",
   "gate": {
     "issue": 265,
-    "reason": "The text render path is wired (story #303): TEXT nodes measure through the typesetter and paint from a staged GlyphRunTable, so v08-grid-spans now renders its 'hug me' text cell and diffs the whole frame within the aa-edge band with no region excluded. The remaining pending frames each need work that is NOT the render path. v08-baseline authors its Latin leaves in 'Inter', which the committed corpus does not provide; rendered in Noto Sans its HUG root measures 621x160 against Figma's 608x160 (Noto Sans advances are wider than Inter), a dimension mismatch that cannot be diffed — it stays pending until the frame renders in its authored font (a committed Inter atlas, or a Noto-authored re-capture of the node). v08-drop-shadow and v08-inner-shadow have no renderable fixture (effects-2025 is a diagnostic REJECT fixture that emits no document) and need a new plugin-authored shadow fixture (story #304). v05-text-latin and v06-text-arabic have no committed fixture yet and need one authored in the committed Noto fonts, so the msdf-text fidelity is measured against the same font Figma renders. Authoring those remaining fixtures is tracked by the parked issue #265; the v0.9 exit gate (#49) is where E7 flips from partial to met. No design source is fabricated or stood in for by the project's own render — that is the self-oracle failure G-11 forbids — so a pending frame's figmaFileKey, figmaNodeId, and designSource stay null and its status stays pending-265."
+    "reason": "The oracle now measures 6 of 7 frames, each within its band. The two layout frames (v08-wrap 0.000%, v08-grid-spans 0.116%, aa-edge) plus the four fixtures authored by the fixture-author plugin (#304) and captured: v08-drop-shadow (0.022%) and v08-inner-shadow (0.000%) on blur-falloff, and v05-text-latin (0.033%) and v06-text-arabic (1.405%) on msdf-text. The text frames render through the text render path (#303) in the committed Noto fonts, so each measures the reference painter against Figma's render of the same font. The Arabic frame caught a real line-height bug — the typesetter took a line's height from the cascade's primary font — fixed in #314, which brought it from 3.300% to 1.405%. Only v08-baseline stays pending: it authors its Latin leaves in 'Inter', which the committed corpus does not provide, so rendered in Noto Sans its HUG root measures 621x160 against Figma's 608x160 (Noto Sans advances are wider than Inter) — a dimension mismatch that cannot be diffed. It becomes measurable once it renders in its authored font (a committed Inter atlas, or a Noto-authored re-capture of the node). No design source is fabricated or stood in for by the project's own render — that is the self-oracle failure G-11 forbids — so v08-baseline's figmaFileKey, figmaNodeId, and designSource stay null and its status stays pending-265. The v0.9 exit gate (#49) flips E7 from partial to met once v08-baseline is measured too."
   },
   "design_source_base": "oracle/design-source",
   "frames": [
@@ -38,43 +38,43 @@
     },
     {
       "frame": "v08-drop-shadow",
-      "fixture": null,
+      "fixture": "corpus/figma-fixtures/drop-shadow.json",
       "band": "blur-falloff",
-      "figmaFileKey": null,
-      "figmaNodeId": null,
-      "designSource": null,
-      "status": "pending-265",
-      "note": "PENDING follow-on. No renderable fixture: effects-2025.json is a DIAGNOSTIC REJECT fixture (its effects are on the REJECT list, so it emits no document). Pinning the sigma = blur/2 mapping (docs/decisions/effects-vocabulary-shadows.md) against a real capture needs a new plugin-authored shadow fixture. Soft drop shadow (story #45) — the blur-falloff band."
+      "figmaFileKey": "dqzSsQxPvj09i5VVG36JkG",
+      "figmaNodeId": "1:2",
+      "designSource": "oracle/design-source/v08-drop-shadow.png",
+      "status": "captured",
+      "note": "Soft drop shadow (story #45; fixture authored by the fixture-author drop-shadow command, #304). One 40x40 rounded card with a DROP_SHADOW (offset y=4, blur 6, spread 0, black alpha 0.55) centered in a 96x96 light frame, lowering clean under Profile::Core. The committed fixture imports and renders to 96x96 and diffs 2/9216 px (0.022%) against Figma's GET /images render of node 1:2 — within the blur-falloff band. This is the first real measurement of the sigma = blur/2 mapping (G-1, docs/decisions/effects-vocabulary-shadows.md) against Figma: near-pixel-exact confirms it. The blur-falloff band."
     },
     {
       "frame": "v08-inner-shadow",
-      "fixture": null,
+      "fixture": "corpus/figma-fixtures/inner-shadow.json",
       "band": "blur-falloff",
-      "figmaFileKey": null,
-      "figmaNodeId": null,
-      "designSource": null,
-      "status": "pending-265",
-      "note": "PENDING follow-on. Same blocker as v08-drop-shadow: no renderable fixture (effects-2025 is a diagnostic reject), needs a new plugin-authored shadow fixture. Soft inner shadow (story #45) — the blur-falloff band, same sigma = blur/2 pinning as the drop shadow."
+      "figmaFileKey": "8jlaJUSKF5qPWqnlHDe46R",
+      "figmaNodeId": "1:2",
+      "designSource": "oracle/design-source/v08-inner-shadow.png",
+      "status": "captured",
+      "note": "Soft inner shadow (story #45; fixture authored by the fixture-author inner-shadow command, #304). One 40x40 rounded card with an INNER_SHADOW (offset 0, blur 6, spread 0, black alpha 0.55) centered in a 96x96 light frame, lowering clean under Profile::Core. The committed fixture imports and renders to 96x96 and diffs 0/9216 px (0.000%) against Figma's GET /images render of node 1:2 — pixel-exact, within the blur-falloff band. Same sigma = blur/2 pinning as the drop shadow. The blur-falloff band."
     },
     {
       "frame": "v06-text-arabic",
-      "fixture": null,
+      "fixture": "corpus/figma-fixtures/text-arabic.json",
       "band": "msdf-text",
-      "figmaFileKey": null,
-      "figmaNodeId": null,
-      "designSource": null,
-      "status": "pending-265",
-      "note": "PENDING follow-on. The text render path is wired (story #303); this frame has no committed fixture yet. It must be authored in Figma in the committed Noto Sans Arabic font (which the oracle can render faithfully) and captured, so the msdf-text band measures the reference painter against Figma's render of the same font, not a substitution. Arabic RTL text as MSDF atlas quads (E2) — the msdf-text band."
+      "figmaFileKey": "lH9NgRr9lYRrIF8GizCNRU",
+      "figmaNodeId": "1:2",
+      "designSource": "oracle/design-source/v06-text-arabic.png",
+      "status": "captured",
+      "note": "Arabic RTL text as MSDF atlas quads (E2; fixture authored by the fixture-author text-arabic command, #304). A banner, a harakat word, and an Arabic-Indic numeral readout, all Noto Sans Arabic Regular (the committed corpus/atlas/arabic font). The committed fixture imports and renders to 520x240 and diffs 1753/124800 px (1.405%) against Figma's GET /images render of node 1:2 — within the msdf-text band. This frame CAUGHT a real bug the self-oracle goldens missed: before story #314 the diff was 3.300% (just over the band) because the typesetter took a line's height from the cascade's primary (Latin) font, so the stacked Arabic lines were measured too short and drifted; #314 derives line height per line from the fonts that shaped it, bringing this to 1.405%. The residual is fine glyph-edge and line-metric difference vs Figma's raster, well within budget. The msdf-text band."
     },
     {
       "frame": "v05-text-latin",
-      "fixture": null,
+      "fixture": "corpus/figma-fixtures/text-latin.json",
       "band": "msdf-text",
-      "figmaFileKey": null,
-      "figmaNodeId": null,
-      "designSource": null,
-      "status": "pending-265",
-      "note": "PENDING follow-on. The text render path is wired (story #303); this frame has no committed fixture yet. It must be authored in Figma in the committed Noto Sans font (which the oracle can render faithfully) and captured, so the msdf-text band measures the reference painter against Figma's render of the same font, not a substitution. Latin text as MSDF atlas quads — the msdf-text band."
+      "figmaFileKey": "ARZJXh3QZKgtEWzA01eRmB",
+      "figmaNodeId": "1:2",
+      "designSource": "oracle/design-source/v05-text-latin.png",
+      "status": "captured",
+      "note": "Latin text as MSDF atlas quads (fixture authored by the fixture-author text-latin command, #304). 'Hello dashscene' (28) and '88 mph' (44), both Noto Sans Regular — the committed corpus/atlas/ascii font, so the oracle measures the reference painter against Figma's render of the SAME font, not a substitution. The committed fixture imports and renders to 480x200 and diffs 32/96000 px (0.033%) against Figma's GET /images render of node 1:2 — near-pixel-exact, deep inside the msdf-text band. Confirms the msdf-text band and the text render path (#303). The msdf-text band."
     }
   ]
 }
