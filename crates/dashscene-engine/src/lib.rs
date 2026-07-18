@@ -178,7 +178,17 @@ fn rebuild(
         roots.push(taffy_root);
     }
 
-    compute_all(&mut tree, &roots, typesetter, solves);
+    let typesetter = compute_all(&mut tree, &roots, typesetter, solves);
+
+    // #272 baseline correction: re-place text children of baseline rows on
+    // their glyph baseline. Needs the typesetter — without it text nodes
+    // measure to zero and there is no baseline to correct.
+    let mut cross_offset = vec![None; n];
+    if let Some(ts) = typesetter {
+        for &root in arena.roots() {
+            collect_baseline_offsets(&tree, &taffy_of, arena, ts, root, &mut cross_offset);
+        }
+    }
 
     let mut prev_rel = vec![[0u32; 4]; n];
     let mut prev_root_origin = Vec::with_capacity(roots.len());
@@ -192,6 +202,7 @@ fn rebuild(
             &tree,
             &taffy_of,
             &mut prev_rel,
+            &cross_offset,
             arena,
             root,
             (origin.x, origin.y),
@@ -270,7 +281,25 @@ fn incremental(
     // `roots` is cloned so the loop does not hold a borrow of `state`
     // while `state.tree` is recomputed (the roots list is small).
     let roots = state.roots.clone();
-    compute_all(&mut state.tree, &roots, typesetter, solves);
+    let typesetter = compute_all(&mut state.tree, &roots, typesetter, solves);
+
+    // #272 baseline correction (see `rebuild`): re-place a baseline row's text
+    // children on their glyph baseline. The corrected y is folded into
+    // `rel_bits`, so the pruned read-back re-emits a child whose baseline shift
+    // moved it — including when a sibling changed the tallest baseline.
+    let mut cross_offset = vec![None; state.node_count];
+    if let Some(ts) = typesetter {
+        for &root in arena.roots() {
+            collect_baseline_offsets(
+                &state.tree,
+                &state.taffy_of,
+                arena,
+                ts,
+                root,
+                &mut cross_offset,
+            );
+        }
+    }
 
     // A subtree can hold a changed node without moving at its own root
     // (a fixed-size frame with a shifted child): mark every dirty node and
@@ -298,6 +327,7 @@ fn incremental(
             &state.tree,
             &state.taffy_of,
             &mut state.prev_rel,
+            &cross_offset,
             &on_path,
             arena,
             root,
@@ -314,13 +344,14 @@ fn incremental(
 /// so its one shaped-run cache serves every root (and, at #30, the
 /// painter). A solver with no typesetter measures every text node to zero
 /// — the same result Taffy's default (no-op) measure gives.
-fn compute_all(
+/// Returns the typesetter it was lent, so the caller can run the #272
+/// baseline-correction pass over the freshly solved tree without reborrowing.
+fn compute_all<'t>(
     tree: &mut TaffyTree<TextContext>,
     roots: &[taffy::NodeId],
-    typesetter: Option<&mut Typesetter>,
+    mut typesetter: Option<&'t mut Typesetter>,
     solves: &mut u64,
-) {
-    let mut typesetter = typesetter;
+) -> Option<&'t mut Typesetter> {
     for &taffy_root in roots {
         tree.compute_layout_with_measure(
             taffy_root,
@@ -333,6 +364,7 @@ fn compute_all(
         .expect("taffy tree built from the arena is always valid");
         *solves += 1;
     }
+    typesetter
 }
 
 /// A text node's measure input, attached to its Taffy leaf: the
@@ -497,7 +529,9 @@ fn style_for(
             // aligns a row's children on their flex baselines — a
             // leaf's baseline is its bottom edge, a nested row
             // propagates its first line's — and degrades to start in a
-            // column (taffy computes baselines for rows only).
+            // column (taffy computes baselines for rows only). A text
+            // leaf's box-bottom baseline is corrected to its glyph
+            // baseline after the solve (#272, `collect_baseline_offsets`).
             style.align_items = Some(match layout.cross_align {
                 dashscene_core::CrossAxisAlign::Start => AlignItems::FLEX_START,
                 dashscene_core::CrossAxisAlign::Center => AlignItems::CENTER,
@@ -722,10 +756,12 @@ fn template_track(track: &GridTrack) -> taffy::GridTemplateComponent<String> {
 
 /// Emit every node's absolute rect and record its relative layout — the
 /// full readback a rebuild uses (issue #164).
+#[allow(clippy::too_many_arguments)]
 fn read_back_full(
     tree: &TaffyTree<TextContext>,
     taffy_of: &[taffy::NodeId],
     prev_rel: &mut [[u32; 4]],
+    cross_offset: &[Option<f32>],
     arena: &Arena,
     node: NodeId,
     parent_origin: (f32, f32),
@@ -734,9 +770,16 @@ fn read_back_full(
     let layout = tree
         .layout(taffy_of[node.index()])
         .expect("layout was computed for the whole tree");
+    // A baseline-corrected child (#272) overrides Taffy's cross-axis offset.
+    let local_y = cross_offset[node.index()].unwrap_or(layout.location.y);
     let x = parent_origin.0 + layout.location.x;
-    let y = parent_origin.1 + layout.location.y;
-    prev_rel[node.index()] = rel_bits(layout);
+    let y = parent_origin.1 + local_y;
+    prev_rel[node.index()] = rel_bits(
+        layout.location.x,
+        local_y,
+        layout.size.width,
+        layout.size.height,
+    );
     out.push((
         node,
         SolvedRect {
@@ -747,7 +790,16 @@ fn read_back_full(
         },
     ));
     for &child in arena.children(node) {
-        read_back_full(tree, taffy_of, prev_rel, arena, child, (x, y), out);
+        read_back_full(
+            tree,
+            taffy_of,
+            prev_rel,
+            cross_offset,
+            arena,
+            child,
+            (x, y),
+            out,
+        );
     }
 }
 
@@ -761,6 +813,7 @@ fn read_back_pruned(
     tree: &TaffyTree<TextContext>,
     taffy_of: &[taffy::NodeId],
     prev_rel: &mut [[u32; 4]],
+    cross_offset: &[Option<f32>],
     on_path: &[bool],
     arena: &Arena,
     node: NodeId,
@@ -771,9 +824,18 @@ fn read_back_pruned(
     let layout = tree
         .layout(taffy_of[node.index()])
         .expect("layout was computed for the whole tree");
+    // A baseline-corrected child (#272) overrides Taffy's cross-axis offset;
+    // the corrected `y` is folded into `rel_bits`, so a change to a sibling's
+    // baseline shift is detected and re-emitted like any other move.
+    let local_y = cross_offset[node.index()].unwrap_or(layout.location.y);
     let x = parent_origin.0 + layout.location.x;
-    let y = parent_origin.1 + layout.location.y;
-    let cur = rel_bits(layout);
+    let y = parent_origin.1 + local_y;
+    let cur = rel_bits(
+        layout.location.x,
+        local_y,
+        layout.size.width,
+        layout.size.height,
+    );
     let prev = prev_rel[node.index()];
     prev_rel[node.index()] = cur;
 
@@ -806,6 +868,7 @@ fn read_back_pruned(
                 tree,
                 taffy_of,
                 prev_rel,
+                cross_offset,
                 on_path,
                 arena,
                 child,
@@ -819,11 +882,87 @@ fn read_back_pruned(
 
 /// One node's Taffy-relative layout as bit patterns — position and size,
 /// the values a readback compares to decide whether a rect moved.
-fn rel_bits(layout: &taffy::Layout) -> [u32; 4] {
+/// The change-detection key for a node's relative layout: its local
+/// position and size. `local_y` is the cross-axis offset after the #272
+/// baseline correction, so a re-placed baseline child is seen by the
+/// incremental read-back exactly like any other move — when a sibling's
+/// baseline shift changes the whole row re-emits.
+fn rel_bits(local_x: f32, local_y: f32, w: f32, h: f32) -> [u32; 4] {
     [
-        layout.location.x.to_bits(),
-        layout.location.y.to_bits(),
-        layout.size.width.to_bits(),
-        layout.size.height.to_bits(),
+        local_x.to_bits(),
+        local_y.to_bits(),
+        w.to_bits(),
+        h.to_bits(),
     ]
+}
+
+/// #272: after the solve, re-place the children of a baseline row on one
+/// glyph baseline. Taffy's high-level measure reports no baseline for a
+/// leaf, so Taffy aligns box bottoms (`baseline.unwrap_or(height)`); a text
+/// leaf's real first-line baseline — the ascent the typesetter already
+/// computes as `line.baseline_y` — sits a descender above its box bottom, so
+/// a mixed-size row of box-bottom-aligned runs drops the shorter runs too
+/// low. This walks the tree and, for every `Horizontal` row whose cross
+/// alignment is `Baseline` and that holds at least one text child, records
+/// each child's corrected cross-axis (local y): the child sits so its
+/// baseline meets the row's baseline line, the content-box top plus the
+/// tallest participating baseline. A non-text child keeps the box bottom
+/// Taffy uses for it (recomputed to the same place). Rows with no text child,
+/// and every other mode or alignment, are left untouched (`None`), so a
+/// baseline row of plain boxes solves exactly as before.
+///
+/// The walk visits every node, but only shapes at a baseline text row, which
+/// is rare. `baseline_y` is the first-line ascent — width-independent for a
+/// single-font run — so laying out at the solved width is only to key a
+/// wrapped run off its real first line.
+///
+/// Limitation: a nested container inside a baseline text row is taken by its
+/// box bottom, not its own first line's baseline (Taffy's `Layout` does not
+/// expose the computed baseline). No corpus scene nests under a text
+/// baseline row; the general nested case is tracked as follow-up debt.
+fn collect_baseline_offsets(
+    tree: &TaffyTree<TextContext>,
+    taffy_of: &[taffy::NodeId],
+    arena: &Arena,
+    typesetter: &mut Typesetter,
+    node: NodeId,
+    offsets: &mut [Option<f32>],
+) {
+    let layout = arena.layout(node);
+    let children = arena.children(node);
+    if layout.mode == LayoutMode::Horizontal
+        && layout.cross_align == dashscene_core::CrossAxisAlign::Baseline
+        && !children.is_empty()
+    {
+        let mut has_text = false;
+        let mut baselines = Vec::with_capacity(children.len());
+        for &child in children {
+            let child_layout = tree
+                .layout(taffy_of[child.index()])
+                .expect("layout was computed for the whole tree");
+            let baseline = match (arena.text(child), arena.text_style(child)) {
+                (Some(text), Some(style)) => {
+                    has_text = true;
+                    let laid = typesetter.layout(text, style.size, Some(child_layout.size.width));
+                    laid.lines
+                        .first()
+                        .map_or(child_layout.size.height, |line| line.baseline_y)
+                }
+                // A non-text child keeps Taffy's leaf baseline: the box bottom.
+                _ => child_layout.size.height,
+            };
+            baselines.push(baseline);
+        }
+        if has_text {
+            let max_baseline = baselines.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            for (&child, &baseline) in children.iter().zip(&baselines) {
+                // Local y within the row's border box: the content-box top
+                // plus the gap between this child's baseline and the tallest.
+                offsets[child.index()] = Some(layout.padding.top + (max_baseline - baseline));
+            }
+        }
+    }
+    for &child in children {
+        collect_baseline_offsets(tree, taffy_of, arena, typesetter, child, offsets);
+    }
 }
