@@ -16,20 +16,20 @@ missing proof must be visible.
 
 ## v0 exit criteria
 
-| Criterion                         | Verifies | Status                                                                                                                                |
-| --------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| E1 same screen authored both ways | G1       | **partial** — layout + solid-fill parity proven (v0.9, story #48); binding parity pending the epic #47 scope decision (#49 v0.9 gate) |
-| E2 Arabic golden-stable           | R1       | **met**                                                                                                                               |
-| E3 stress corpus green            | R2       | **met**                                                                                                                               |
-| E4 dirty Figma file → report      | R6       | **met**                                                                                                                               |
-| E5 variant switch via FLIP        | R4       | **met**                                                                                                                               |
-| E6 byte-identical `.dsb`          | R7       | **met**                                                                                                                               |
-| E7 design-source render oracle    | R6       | open — tooling landed (v0.8, story #284); assertion pending (#49 v0.9 gate, #265 captures)                                            |
+| Criterion                         | Verifies | Status                                                                                                                 |
+| --------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------- |
+| E1 same screen authored both ways | G1       | **met** — layout + solid-fill rect/render parity (story #48); text-inclusive parity is a disclosed v1 follow-on (#299) |
+| E2 Arabic golden-stable           | R1       | **met**                                                                                                                |
+| E3 stress corpus green            | R2       | **met**                                                                                                                |
+| E4 dirty Figma file → report      | R6       | **met**                                                                                                                |
+| E5 variant switch via FLIP        | R4       | **met**                                                                                                                |
+| E6 byte-identical `.dsb`          | R7       | **met**                                                                                                                |
+| E7 design-source render oracle    | R6       | open — tooling landed (v0.8, story #284); assertion pending (#49 v0.9 gate, #265 captures)                             |
 
 The file carries no version in its name. "v0 exit criteria" is a heading
 inside it; v1's criteria are a second heading below, not a second file.
 
-### E1 — partial (layout and solid-fill parity proven)
+### E1 — met
 
 G1 requires that a screen authored in Figma and the same screen authored in
 the Rust DSL produce the same document format and render identically.
@@ -64,15 +64,20 @@ load-bearing — the importer zeroes an auto-layout child's solved position and
 every non-Fixed axis's extent (P1), so the runtime re-solves the geometry
 from the lowered intent alone.
 
-E1 is partial, not met: this is the first cut (story #48), scoped to layout
-and solid fill. The binding-parity dimension G1 also implies — text, variant,
-and visibility bindings surviving both authoring paths identically — is not
-yet proven, because it is gated on the epic #47 scope decision: whether the
-parity fixture must prove binding parity for v0, which would make STRING/BOOL
-binding serialization (#252) and the `Format` transform serialization (#256)
-v0.9 blockers, or defer them to v1 (`docs/roadmap.md` "v0.9 — parity").
-Story #48 stays open until that decision sets the second cut, and E1 flips to
-met at the v0 exit gate (#49) once the agreed dimensions are all proven.
+E1 is met. The epic #47 scope decision, recorded at the v0.9 revision
+(`docs/roadmap.md` "v0.9 — parity"), set E1's bar as the bit-identical
+rect-table and render convergence of the layout-and-solid-fill subset both
+producers express — the mechanical property that the two authoring paths do
+not silently diverge — and story #48's fixture proves it.
+
+A richer, text-inclusive parity fixture — text, and binding-driven variant
+and visibility, surviving both authoring paths identically — is a disclosed v1
+enhancement, not a v0 gap. It is deferred because `dashlang` text is
+binding-driven, so text parity depends on STRING/BOOL binding serialization
+(#252) and the `Format` transform (#256), both v1; scalar binding
+producer-parity is already proven independently
+(`crates/dashc/tests/bindings_lowering.rs`). The v1 follow-on is tracked as
+issue #299.
 
 ### E2 — met
 

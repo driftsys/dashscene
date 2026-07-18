@@ -505,9 +505,9 @@ through `E7` asserted in CI.
 
 Depends on: every prior epic, v0.1 through v0.8.
 
-Revised at the v0.8 close (2026-07-17), but only for what v0.8 mechanically
-settled — the substantive scope questions below stay open for a human
-decision, and this revision does not pre-decide them:
+Revised at the v0.8 close (2026-07-17) for what v0.8 mechanically settled, then
+extended the same day with the two scope decisions epic #47 carried (recorded
+below). The mechanical reconciliation:
 
 - The exit gate (#49) is now scoped `E1`–`E7`, not `E1`–`E6`: v0.8 landed the
   `E7` render-oracle tooling, so the gate asserts `E7` alongside the rest.
@@ -517,17 +517,18 @@ decision, and this revision does not pre-decide them:
 - `E3` is already met (v0.8), so the parity fixture (#48) and the gate (#49)
   build on a green stress corpus.
 
-The scope questions that shape v0.9 are recorded on epic #47 and need a human
-call — this revision does not pre-decide them:
+The two scope questions epic #47 carried are now decided (2026-07-17):
 
-1. **E1/#48 fixture scope.** If the same-screen-both-ways parity fixture must
-   prove text, variant, and visibility _binding_ parity — not only layout and
-   paint — then STRING/BOOL binding serialization (#252) and the `Format`
-   transform serialization (#256) become v0.9 blockers of #48; otherwise they
-   stay v1.
-2. **Strict-mode gate.** Pull the strict waiver-gate wiring (#262) into v0.9
-   only if the v0 exit gate must enforce strict `profile:core` on target
-   documents.
+1. **E1/#48 fixture scope — decided: layout + paint is E1's bar.** E1 is the
+   bit-identical rect-table and render convergence of the layout-and-solid-fill
+   subset both producers express, met by story #48. A text-inclusive parity
+   fixture (text, and binding-driven variant and visibility) is the stronger
+   proof but is tracked as debt for v1 (#299), not a v0 blocker; STRING/BOOL
+   binding serialization (#252) and the `Format` transform (#256) therefore
+   stay v1. `E1` is met; story #48 closes.
+2. **Strict-mode gate — decided: no.** The v0 exit gate does not enforce strict
+   `profile:core`; `E4` is met without it, so the strict waiver-gate wiring
+   (#262) stays v1.
 
 Two further items epic #47 carries fold into #49 as implementation detail, not
 slice-shape decisions: the atlas-reproducibility CI cost (#82) and the R4
@@ -536,8 +537,10 @@ over the slice — the four manual Figma design-source captures (#265) are
 user-owned, and both `E7`'s assertion and the render-oracle's real-capture diff
 wait on them.
 
-Until epic #47's decisions are made, the story shapes past #48 and #49 are not
-yet reshaped.
+With those decisions made, `E1` through `E6` are met and the remaining v0.9
+work is the exit gate (#49): it waits on `E7` (the #265 design-source captures)
+and the restoration of Actions billing (#263) before it can assert all seven in
+CI.
 
 ## v1 — Unity, full feature set, performance, production toolchain
 
