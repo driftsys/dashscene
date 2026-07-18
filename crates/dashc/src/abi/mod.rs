@@ -125,11 +125,12 @@ fn compile_figma_response(request: &[u8]) -> Vec<u8> {
         }
     };
 
-    match crate::compile_figma_with_bindings(
+    match crate::compile_figma_with_bindings_and_policy(
         &request.json,
         request.profile,
         &request.images,
         &request.bindings,
+        request.policy,
     ) {
         Ok((bytes, report)) => {
             wire::encode_response(Status::Ok as u32, &bytes, &json::report_json(&report))

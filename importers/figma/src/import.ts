@@ -89,6 +89,14 @@ export interface ImportFigmaFileOptions {
    * binding tables.
    */
   readonly vartable?: Vartable;
+  /**
+   * The emit policy (story S0-impl,
+   * docs/decisions/unsupported-figma-constructs-refuse-the-compile.md).
+   * `false` (the default) skips an unsupported node with a warning and still
+   * emits; `true` refuses the whole file on any vocabulary gap. A REJECT-band
+   * construct refuses in both modes — partial-emit never approximates.
+   */
+  readonly strict?: boolean;
   /** Injectable for tests; used for the presigned asset downloads. */
   readonly fetchFn?: typeof fetch;
 }
@@ -189,8 +197,16 @@ async function fetchLibraries(
 export async function importFigmaFile(
   options: ImportFigmaFileOptions,
 ): Promise<ImportOk> {
-  const { client, dashc, fileKey, profile, manifest, vartable, fetchFn } =
-    options;
+  const {
+    client,
+    dashc,
+    fileKey,
+    profile,
+    manifest,
+    vartable,
+    fetchFn,
+    strict = false,
+  } = options;
 
   // dashc lowers multiple roots since #242
   // (docs/decisions/figma-component-lowering.md), so this is importer policy
@@ -323,6 +339,7 @@ export async function importFigmaFile(
     profile,
     images,
     bindings,
+    strict,
   );
   return {
     ...compiled,
@@ -393,6 +410,11 @@ export async function runImportCli(
     const [, path] = args.splice(at, 2);
     return path ?? null;
   })();
+  // Partial-emit is the default (story S0-impl): an unsupported node is skipped
+  // with a warning and the document still emits. `--strict` restores the
+  // all-or-nothing refusal.
+  const strict = args.includes("--strict");
+  if (strict) args.splice(args.indexOf("--strict"), 1);
   const [fileKey] = args;
 
   if (!fileKey || !output || (roots.length > 0 && manifestPath !== null)) {
@@ -405,6 +427,10 @@ export async function runImportCli(
     deps.error(
       "       ... [--vartable <file.vartable.json>]  join bound variables " +
         "into document bindings (story #167)",
+    );
+    deps.error(
+      "       ... [--strict]  refuse the whole file on any vocabulary gap " +
+        "(default: skip unsupported nodes with a warning and still emit)",
     );
     return 2;
   }
@@ -462,6 +488,7 @@ export async function runImportCli(
       profile: "core",
       manifest,
       vartable,
+      strict,
       fetchFn: deps.fetchFn,
     });
   } catch (error) {

@@ -47,8 +47,22 @@ cross-alignment. Effects (shadows) are out of scope until their slice.
 2. **An error from either gate withholds the bytes** (R6). An error-severity
    diagnostic from the import gate or from the load gate shall block emission
    and return `CompileError::Diagnostics`, and the emitted bytes shall be
-   discarded. (`the_reject_fixture_is_refused_rather_than_emitted`,
-   `a_load_gate_only_error_still_blocks_emission`)
+   discarded. The emit policy decides which vocabulary gaps are errors: under
+   `EmitPolicy::Strict` (the Rust library default) a `figma.unsupported`
+   omission shall be an error and withhold the bytes; under
+   `EmitPolicy::Partial` (the importer default, opted out of with `--strict`)
+   that omission shall be a warning instead, so the document shall emit with
+   the node omitted. An approximation-if-shipped construct (a REJECT-band
+   feature on a lowered node) and `figma.no-content` shall remain errors that
+   withhold the bytes in both modes. See
+   `docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`
+   ("Revised at S0-impl").
+   (`the_reject_fixture_is_refused_rather_than_emitted`,
+   `a_load_gate_only_error_still_blocks_emission`,
+   `strict_refuses_a_file_with_an_unsupported_construct`,
+   `partial_emits_the_frame_and_warns_on_the_skipped_vector`,
+   `partial_still_refuses_a_reject_band_construct`,
+   `partial_still_refuses_a_no_content_file`)
 
 3. **A warning shall not block emission, and shall not be discarded** (P4). A
    successful compile shall return the diagnostics alongside the bytes.
@@ -223,16 +237,19 @@ un-pinning `docs/decisions/figma-flex-lowering.md` D5. Verified in
 
 ## Refusal
 
-1. **A construct the `Document` cannot express shall be a named
-   error-severity diagnostic** under the producer's `figma.unsupported`
-   rule, shall never be lowered approximately and never dropped in silence
-   (P4), and shall block emission (R6). The unsupported node's subtree
-   shall be skipped, and the walk shall continue, so one pass reports every
-   finding. See
+1. **A construct the `Document` cannot express shall be a named diagnostic**
+   under the producer's `figma.unsupported` rule, shall never be lowered
+   approximately and never dropped in silence (P4). The unsupported node's
+   subtree shall be skipped, and the walk shall continue, so one pass reports
+   every finding. Its severity shall follow the emit policy: an error that
+   blocks emission under `EmitPolicy::Strict` (R6), a warning that lets the
+   document emit with the node omitted under `EmitPolicy::Partial`. See
    `docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`
-   ("Revised at #140"). The refused set as-built is listed in
-   `docs/design/dashc.md` ("Scope boundaries").
-   (`a_second_visible_fill_fails_loudly_rather_than_being_silently_dropped`,
+   ("Revised at #140", "Revised at S0-impl"). The refused set as-built is
+   listed in `docs/design/dashc.md` ("Scope boundaries").
+   (`strict_refuses_a_file_with_an_unsupported_construct`,
+   `partial_emits_the_frame_and_warns_on_the_skipped_vector`,
+   `a_second_visible_fill_fails_loudly_rather_than_being_silently_dropped`,
    `a_second_visible_stroke_fails_loudly_rather_than_being_silently_dropped`,
    `a_rotated_node_fails_loudly_rather_than_silently_dropping_the_rotation`,
    `an_alpha_mask_is_refused_by_name`,
