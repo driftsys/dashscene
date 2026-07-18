@@ -21,7 +21,7 @@
 //! Regeneration and diff workflow: goldens/README.md.
 
 use dashpaint::{AtlasIndex, Color, GlyphQuad, GlyphRun, GlyphRunTable, ImageTable, Painter};
-use dashscene_core::{Arena, AxisSizing, LayoutMode, Prop, TextStyle};
+use dashscene_core::{Arena, AxisSizing, LayoutMode, Prop, TextAlign, TextAlignV, TextStyle};
 use dashscene_engine::TaffySolver;
 use dashscene_skia::SkiaPainter;
 use dashscene_typeset::text::{Font, Typesetter};
@@ -109,6 +109,10 @@ fn latin_text_and_a_hug_label_match_their_golden() {
                 size: 28.0,
                 weight: 400,
                 color: NEAR_WHITE,
+                line_height_px: None,
+                letter_spacing: 0.0,
+                text_align: TextAlign::Left,
+                text_align_v: TextAlignV::Top,
             }),
         );
 
@@ -136,6 +140,10 @@ fn latin_text_and_a_hug_label_match_their_golden() {
                 size: 44.0,
                 weight: 400,
                 color: INK,
+                line_height_px: None,
+                letter_spacing: 0.0,
+                text_align: TextAlign::Left,
+                text_align_v: TextAlignV::Top,
             }),
         );
 
@@ -240,6 +248,10 @@ fn the_hug_boxes_are_laid_out_where_the_golden_expects() {
                 size: 28.0,
                 weight: 400,
                 color: NEAR_WHITE,
+                line_height_px: None,
+                letter_spacing: 0.0,
+                text_align: TextAlign::Left,
+                text_align_v: TextAlignV::Top,
             }),
         );
         let chip = txn.add_node(Some(root), Some("chip"));
@@ -255,6 +267,10 @@ fn the_hug_boxes_are_laid_out_where_the_golden_expects() {
                 size: 44.0,
                 weight: 400,
                 color: INK,
+                line_height_px: None,
+                letter_spacing: 0.0,
+                text_align: TextAlign::Left,
+                text_align_v: TextAlignV::Top,
             }),
         );
         txn.commit_with(&mut solver);

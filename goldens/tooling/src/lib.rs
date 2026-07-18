@@ -126,6 +126,34 @@ pub fn pixel(rgba: &[u8], width: usize, x: usize, y: usize) -> [u8; 4] {
     rgba[offset..offset + 4].try_into().expect("pixel in range")
 }
 
+/// Vertical alignment of a text block within its node box (Figma's
+/// `textAlignVertical`, story #310). The document carries the intent as an
+/// enum (P1); this crate's text stager resolves it into an offset when it
+/// places the block at the box origin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerticalAlign {
+    Top,
+    Center,
+    Bottom,
+}
+
+/// The y-offset that places a text block of height `content_height` within a
+/// node box of height `box_height` under `align`. The stager adds it to the
+/// block's box origin before emitting glyph runs — vertical alignment is a
+/// placement, not paint (P2), and the document never carries the resolved
+/// offset (P1). `Top` is the zero-offset default the existing fixtures use, so
+/// they are unchanged; `Center` and `Bottom` distribute the box's free space
+/// (`box_height − content_height`), which is negative when the text overflows
+/// the box, mirroring the overflow the horizontal placement already allows.
+pub fn vertical_offset(box_height: f32, content_height: f32, align: VerticalAlign) -> f32 {
+    let slack = box_height - content_height;
+    match align {
+        VerticalAlign::Top => 0.0,
+        VerticalAlign::Center => slack / 2.0,
+        VerticalAlign::Bottom => slack,
+    }
+}
+
 /// The comparison body, with the images root injected (unit tests use
 /// a temporary root; [`assert_matches_golden`] passes the repository's
 /// `goldens/images/`).
@@ -265,7 +293,17 @@ mod tests {
     use skia_safe::{Color4f, surfaces};
     use tempfile::TempDir;
 
-    use super::{Budget, compare_against};
+    use super::{Budget, VerticalAlign, compare_against, vertical_offset};
+
+    /// Story #310: the stager offsets a text block within its node box by the
+    /// vertical alignment. `Top` sits at the origin; `Center` and `Bottom`
+    /// distribute the box's free space (100 − 40 = 60).
+    #[test]
+    fn vertical_offset_places_the_block_within_the_box() {
+        assert_eq!(vertical_offset(100.0, 40.0, VerticalAlign::Top), 0.0);
+        assert_eq!(vertical_offset(100.0, 40.0, VerticalAlign::Center), 30.0);
+        assert_eq!(vertical_offset(100.0, 40.0, VerticalAlign::Bottom), 60.0);
+    }
 
     /// A 2×2 PNG: three pixels of `base`, the bottom-right pixel of
     /// `corner`. Encoded directly through skia rather than through

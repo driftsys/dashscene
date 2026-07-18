@@ -171,13 +171,38 @@ impl Default for LayoutConstraints {
     }
 }
 
-/// A text node's authored style — the schema's `TextStyle` table (story
-/// #26). Intent only (P1): family, em size, CSS-scale weight, and fill
-/// color. Never glyph data, line breaks, or resolved metrics — shaping and
-/// placement are the runtime's (`docs/design/typeset-latin.md`). The
-/// vocabulary carries exactly these four axes; a non-default alignment, line
-/// height, or letter spacing has nothing to lower into and is a named
-/// diagnostic at the walk (P4), never carried here as though it rendered.
+/// Horizontal text alignment within the node box (Figma's
+/// `textAlignHorizontal`). `Left` is the "no explicit alignment" state — the
+/// runtime flushes an LTR paragraph left and an RTL one right by direction, so
+/// it is the default. `JUSTIFIED` has no vocabulary and stays a named
+/// diagnostic (story #310).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TextAlign {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+/// Vertical alignment of the text block within the node box (Figma's
+/// `textAlignVertical`). `Top` is the default the runtime places from (story
+/// #310).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TextAlignV {
+    #[default]
+    Top,
+    Center,
+    Bottom,
+}
+
+/// A text node's authored style — the schema's `TextStyle` table (stories #26,
+/// #310). Intent only (P1): family, em size, CSS-scale weight, fill color, and
+/// the four style axes the runtime consumes — a fixed line height, letter
+/// spacing, and horizontal/vertical alignment. Never glyph data, line breaks,
+/// or resolved metrics — shaping and placement are the runtime's
+/// (`docs/design/typeset-latin.md`). A percentage line height, `JUSTIFIED`
+/// alignment, and mixed-style segments still have no vocabulary and are named
+/// diagnostics at the walk (P4), never carried here as though they rendered.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextStyle {
     pub family: String,
@@ -189,6 +214,16 @@ pub struct TextStyle {
     /// The fill color. Always set by the lowering (a text node with no solid
     /// fill is refused at the walk), so an emitted style always carries one.
     pub color: Color,
+    /// A fixed line height in document units, or `None` for auto (the font's
+    /// natural line advance — Figma's `INTRINSIC_%`). Only Figma's `PIXELS`
+    /// unit lowers here; a percentage unit stays a named diagnostic.
+    pub line_height_px: Option<f32>,
+    /// Letter spacing (tracking) in document units. Zero is the default.
+    pub letter_spacing: f32,
+    /// Horizontal alignment. `Left` is the default.
+    pub text_align: TextAlign,
+    /// Vertical alignment within the box. `Top` is the default.
+    pub text_align_v: TextAlignV,
 }
 
 /// One node of the document. `parent` is an index into [`Document::nodes`], and

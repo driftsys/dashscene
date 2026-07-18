@@ -147,6 +147,7 @@ impl Doc {
                         size: 16.0,
                         weight: 400,
                         color: Some(&red()),
+                        ..Default::default()
                     },
                 )
             })
@@ -995,6 +996,7 @@ fn document_with_text_style_weight(weight: u16) -> Vec<u8> {
             size: 16.0,
             weight,
             color: Some(&red()),
+            ..Default::default()
         },
     );
     let text_styles = b.create_vector(&[style]);

@@ -202,9 +202,28 @@ table Paint {
   shadows: [Shadow];
 }
 
+// Horizontal text alignment within the node box (Figma's
+// textAlignHorizontal, story #310). Left is the default: the runtime flushes
+// an LTR paragraph left and an RTL one right by direction. Append new members
+// at the tail (JUSTIFIED has no lowering yet); a reader that meets an unknown
+// value range-checks and refuses it by name (P4), like the layout enums.
+enum TextAlign : uint8 {
+  Left = 0,
+  Center = 1,
+  Right = 2,
+}
+
+// Vertical alignment of the text block within the node box (Figma's
+// textAlignVertical, story #310). Top is the default the runtime places from.
+enum TextAlignV : uint8 {
+  Top = 0,
+  Center = 1,
+  Bottom = 2,
+}
+
 // One entry of the document's text style pool (docs/design/dashbuf.md's "dedup
 // style pool" applied to text): how a text node renders. Never glyph
-// data (P1) — family/size/weight/color are intent; shaping and
+// data (P1) — family/size/weight/color/metrics are intent; shaping and
 // placement happen in the runtime (docs/design/architecture.md).
 table TextStyle {
   // Font family name. Required: a family-less style has no meaning,
@@ -216,6 +235,21 @@ table TextStyle {
   // CSS-scale weight, 100 to 900 inclusive.
   weight: ushort = 400;
   color: Color;
+  // v0.9 text vocabulary widening (story #310,
+  // docs/decisions/figma-text-lowering.md). Appended at the tail with
+  // behavior-preserving defaults so a style using none of them emits
+  // byte-identically (R7): a pre-#310 document decodes with these absent.
+  // A fixed line height in document units; absent (null) is auto — the
+  // font's natural line advance (Figma's INTRINSIC_%). Only Figma's PIXELS
+  // unit lowers here; a percentage line height stays a named diagnostic.
+  line_height_px: float32 = null;
+  // Letter spacing (tracking) in document units. Zero (the default) is no
+  // tracking, so it is omitted from a plain style.
+  letter_spacing: float32 = 0;
+  // Horizontal alignment; Left (the default) is omitted.
+  text_align: TextAlign = Left;
+  // Vertical alignment within the box; Top (the default) is omitted.
+  text_align_v: TextAlignV = Top;
 }
 
 // v0.2 flex layout vocabulary (docs/design/dashbuf.md, R2). New members append at

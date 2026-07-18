@@ -212,6 +212,49 @@ un-pinning `docs/decisions/figma-flex-lowering.md` D5. Verified in
    (`a_wrap_with_a_negative_item_spacing_is_refused_by_name`,
    `a_wrap_space_between_line_distribution_is_refused_by_name`)
 
+## The text lowering (stories #160, #310)
+
+A `TEXT` node lowers its authored characters and style into the document's
+string and text-style pools. The style carries the axes the runtime consumes:
+family, em size, CSS-scale weight, and fill color (story #160), plus the four
+axes story #310 widened — a fixed line height, letter spacing, and horizontal
+and vertical alignment. Verified in `crates/dashc/tests/text_lowering.rs`.
+
+1. **The four widened axes shall lower onto the style** (P1, story #310). A
+   `PIXELS` line height shall lower onto `line_height_px`; a `letterSpacing`
+   onto `letter_spacing`; `textAlignHorizontal` `LEFT`/`CENTER`/`RIGHT` onto
+   `text_align`; and `textAlignVertical` `TOP`/`CENTER`/`BOTTOM` onto
+   `text_align_v`. The default values (`LEFT`/`TOP` alignment, `INTRINSIC_%`
+   — auto — line height, zero letter spacing) lower to the field defaults, so a
+   style using none of them emits byte-identically (R7).
+   (`the_four_style_axes_lower_into_the_text_style`,
+   `horizontal_and_vertical_alignment_lower_each_value`,
+   `the_default_axes_lower_to_left_top_auto_and_zero`)
+
+2. **A text node's fill shall lower into the glyph color, never a paint entry**
+   (story #160). The single visible SOLID fill shall lower onto
+   `TextStyle.color`; a stacked or non-solid text fill has no lowering into one
+   color and shall be a named diagnostic. (`a_hug_text_leaf_lowers_its_characters_and_style`,
+   `a_text_node_with_no_solid_fill_is_diagnosed`)
+
+3. **The remaining text features shall stay named diagnostics** (P4). A
+   percentage line height (`FONT_SIZE_%`, `PERCENT`), `JUSTIFIED` alignment,
+   multiple style segments (`styleOverrideTable`), italic, a text decoration, a
+   case transform, truncation, a hyperlink, an OpenType feature flag, or a text
+   outline shall each be a named `figma.unsupported` diagnostic, never lowered
+   approximately — lowering one would paint a picture the designer never
+   authored. (`a_percent_line_height_and_justified_alignment_are_still_refused`,
+   `multiple_style_segments_are_diagnosed`,
+   `out_of_vocabulary_text_features_are_named_diagnostics`,
+   `a_text_stroke_outline_is_diagnosed`)
+
+4. **Two styles differing only in one axis shall be two pool entries.** The
+   text-style pool dedup key covers every axis, so two nodes identical but for,
+   for example, their alignment never collapse to one entry — which would render
+   one of them with the wrong style.
+   (`two_styles_differing_only_in_alignment_are_two_pool_entries`,
+   `nodes_sharing_text_or_style_dedup_to_one_pool_entry`)
+
 ## The import gate
 
 1. **The producer maps, the validator decides** (P5). `dashc` shall map a

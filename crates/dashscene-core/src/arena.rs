@@ -346,9 +346,31 @@ pub enum Prop {
     Mask(bool),
 }
 
+/// Horizontal text alignment within the node box — mirrors the `dashbuf`
+/// `TextAlign` enum (story #310). `Left` is the default: the runtime flushes
+/// an LTR paragraph left and an RTL one right by direction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum TextAlign {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+/// Vertical alignment of the text block within the node box — mirrors the
+/// `dashbuf` `TextAlignV` enum (story #310). `Top` is the default.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum TextAlignV {
+    #[default]
+    Top,
+    Center,
+    Bottom,
+}
+
 /// Text style intent — mirrors the `dashbuf` `TextStyle` table
-/// (family, em size in document units, CSS-scale weight, color)
-/// without linking the generated code.
+/// (family, em size in document units, CSS-scale weight, color, and the four
+/// v0.9 axes — a fixed line height, letter spacing, horizontal and vertical
+/// alignment) without linking the generated code.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextStyle {
     pub family: String,
@@ -357,6 +379,15 @@ pub struct TextStyle {
     /// CSS-scale weight, 100 to 900 inclusive.
     pub weight: u16,
     pub color: Color,
+    /// A fixed line height in document units, or `None` for auto (the font's
+    /// natural line advance). Story #310.
+    pub line_height_px: Option<f32>,
+    /// Letter spacing (tracking) in document units; zero is the default.
+    pub letter_spacing: f32,
+    /// Horizontal alignment; `Left` is the default.
+    pub text_align: TextAlign,
+    /// Vertical alignment within the box; `Top` is the default.
+    pub text_align_v: TextAlignV,
 }
 
 /// One prop value a variant member can override — the slice of `Prop`'s

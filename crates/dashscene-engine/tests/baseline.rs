@@ -10,7 +10,8 @@
 //! Figma directly.
 
 use dashscene_core::{
-    Arena, AxisSizing, Color, CrossAxisAlign, LayoutMode, NodeId, Prop, TextStyle,
+    Arena, AxisSizing, Color, CrossAxisAlign, LayoutMode, NodeId, Prop, TextAlign, TextAlignV,
+    TextStyle,
 };
 use dashscene_engine::TaffySolver;
 use dashscene_typeset::text::{Font, Typesetter};
@@ -40,6 +41,10 @@ fn styled(txn: &mut dashscene_core::Txn<'_>, node: NodeId, text: &str, size: f32
                 b: 0.0,
                 a: 1.0,
             },
+            line_height_px: None,
+            letter_spacing: 0.0,
+            text_align: TextAlign::Left,
+            text_align_v: TextAlignV::Top,
         }),
     );
 }

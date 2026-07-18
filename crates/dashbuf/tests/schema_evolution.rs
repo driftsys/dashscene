@@ -688,6 +688,10 @@ fn build_fixture() -> Vec<u8> {
             size: 16.0,
             weight: 700,
             color: Some(&Color::new(0.1, 0.2, 0.3, 1.0)),
+            // The four v0.9 axes (story #310) stay at their defaults here: the
+            // frozen fixture predates them, so it must decode with them absent.
+            // Do NOT regenerate the fixture to fill them.
+            ..Default::default()
         },
     );
     let text_styles = b.create_vector(&[style]);

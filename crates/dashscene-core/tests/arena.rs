@@ -7,7 +7,7 @@ use std::mem::{align_of, size_of};
 
 use dashscene_core::{
     Arena, ClipBox, ClipIndex, Color, CornerRadii, LayoutMode, PaintEntry, PaintIndex, Prop,
-    RectEntry, Stroke, StrokeAlign, TextStyle,
+    RectEntry, Stroke, StrokeAlign, TextAlign, TextAlignV, TextStyle,
 };
 
 const RED: Color = Color {
@@ -479,6 +479,10 @@ fn text_props_set_and_read_back_through_the_intent_accessors() {
                 b: 0.0,
                 a: 1.0,
             },
+            line_height_px: None,
+            letter_spacing: 0.0,
+            text_align: TextAlign::Left,
+            text_align_v: TextAlignV::Top,
         }),
     );
     txn.commit();
