@@ -18,6 +18,11 @@
     { "name": "lowering-variant-topology", "command": "lowering-variant-topology" },
     { "separator": true },
     { "name": "real-file", "command": "real-file" },
-    { "name": "trim-demo", "command": "trim-demo" }
+    { "name": "trim-demo", "command": "trim-demo" },
+    { "separator": true },
+    { "name": "text-latin", "command": "text-latin" },
+    { "name": "text-arabic", "command": "text-arabic" },
+    { "name": "drop-shadow", "command": "drop-shadow" },
+    { "name": "inner-shadow", "command": "inner-shadow" }
   ]
 }

@@ -11,6 +11,13 @@ const INTER = { family: "Inter", style: "Regular" };
 const INTER_BOLD = { family: "Inter", style: "Bold" };
 // Arabic coverage for the RTL locale variant (§8: rides on lowering files).
 const ARABIC = { family: "Noto Sans Arabic", style: "Regular" };
+// Noto Sans Regular — the E7 text-oracle fixtures (text-latin, text-arabic)
+// author in the fonts the committed corpus atlases are generated from
+// (corpus/atlas/ascii from NotoSans-Regular, corpus/atlas/arabic from
+// NotoSansArabic-Regular), so the render oracle measures the reference painter
+// against Figma's render of the SAME font, not a substitution. Regular only:
+// no committed bold atlas, so a bold run would not render faithfully.
+const NOTO = { family: "Noto Sans", style: "Regular" };
 
 const GRAY = (v) => ({ r: v, g: v, b: v });
 const solid = (color, opacity) => ({
@@ -843,6 +850,156 @@ async function trimDemo() {
     "capture.";
 }
 
+// -------------------------------------------- text-latin (E7 render oracle)
+// A Latin text scene authored in Noto Sans Regular — the font the committed
+// ascii atlas (corpus/atlas/ascii) is generated from — so the E7 render oracle
+// (goldens/oracle, frame v05-text-latin, msdf-text band) measures the reference
+// painter's MSDF glyphs against Figma's own render of the SAME font at the same
+// size, not a substitution. The frame is FIXED on both axes so our render and
+// Figma's GET /images export are identical in size regardless of glyph metrics
+// (the v08-baseline lesson: a substituted font resized the HUG root and the
+// mismatch could not be diffed). The text nodes hug inside the fixed frame.
+// Strings are printable ASCII, fully covered by the ascii atlas (0x20..0x7e).
+async function textLatin() {
+  await figma.loadFontAsync(NOTO);
+  const root = baseFrame("text-latin", 480, 200);
+  root.layoutMode = "VERTICAL";
+  root.primaryAxisSizingMode = "FIXED"; // fixed height ...
+  root.counterAxisSizingMode = "FIXED"; // ... and width: an identical box
+  root.resize(480, 200); // re-fix after the sizing modes (the gridBasic pattern:
+  // setting layoutMode collapses an empty frame to its padding, and FIXED would
+  // otherwise lock that collapsed size)
+  root.itemSpacing = 16;
+  root.paddingLeft = root.paddingRight = 24;
+  root.paddingTop = root.paddingBottom = 24;
+  root.appendChild(label("Hello dashscene", NOTO, 28));
+  root.appendChild(label("88 mph", NOTO, 44));
+  return "text-latin built: Noto Sans 'Hello dashscene' (28) + '88 mph' (44) in a fixed 480x200 frame";
+}
+
+// ------------------------------------------- text-arabic (E7 render oracle)
+// An Arabic RTL text scene in Noto Sans Arabic Regular — the font the committed
+// arabic atlas (corpus/atlas/arabic) is generated from — for the E7 render
+// oracle (frame v06-text-arabic, msdf-text band). It exercises RTL shaping, a
+// harakat (diacritic) word, and Arabic-Indic numerals written EXPLICITLY
+// (٠..٩, not European digits): the shaper renders European digits as
+// Arabic-Indic in Arabic context, which would diverge from Figma's render, so
+// authoring the Arabic-Indic codepoints keeps both sides on the same glyphs.
+// Every glyph is in the arabic atlas (Arabic letters + harakat + Arabic-Indic
+// digits + space). FIXED frame box for identical dimensions, as text-latin.
+async function textArabic() {
+  let haveArabic = false;
+  try {
+    await figma.loadFontAsync(ARABIC);
+    haveArabic = true;
+  } catch (e) {
+    console.warn("Noto Sans Arabic unavailable:", e);
+    await figma.loadFontAsync(INTER); // for the manual-steps note
+  }
+
+  const root = baseFrame("text-arabic", 520, 240);
+  root.layoutMode = "VERTICAL";
+  root.primaryAxisSizingMode = "FIXED";
+  root.counterAxisSizingMode = "FIXED";
+  root.resize(520, 240); // re-fix after the sizing modes (see textLatin)
+  root.counterAxisAlignItems = "MAX"; // right-align the RTL runs
+  root.itemSpacing = 16;
+  root.paddingLeft = root.paddingRight = 24;
+  root.paddingTop = root.paddingBottom = 24;
+
+  if (!haveArabic) {
+    // Same fallback shape as effects-2025: leave a `_`-prefixed checklist so
+    // the missing runs are authored by hand in Noto Sans Arabic Regular.
+    const note = label(
+      "_manual-steps: Noto Sans Arabic unavailable. Add three text nodes in " +
+        "Noto Sans Arabic Regular:\n  السلام عليكم (28)\n  مَرْحَبًا (32)\n" +
+        "  سرعة ١٢٠ (36)",
+      INTER,
+      12,
+    );
+    note.name = "_manual-checklist";
+    root.appendChild(note);
+    return "text-arabic: Noto Sans Arabic unavailable — add the three Arabic runs manually (see _manual-checklist)";
+  }
+
+  const banner = label("السلام عليكم", ARABIC, 28);
+  banner.name = "banner";
+  root.appendChild(banner);
+  const harakat = label("مَرْحَبًا", ARABIC, 32);
+  harakat.name = "harakat";
+  root.appendChild(harakat);
+  const speed = label("سرعة ١٢٠", ARABIC, 36);
+  speed.name = "speed";
+  root.appendChild(speed);
+  return "text-arabic built: Noto Sans Arabic banner + harakat word + Arabic-Indic numeral readout in a fixed 520x240 frame";
+}
+
+// ------------------------------------ drop-shadow / inner-shadow (E7 oracle)
+// Two single-construct shadow scenes (§8: a failure must bisect to one
+// construct), one per E7 oracle frame (v08-drop-shadow / v08-inner-shadow,
+// blur-falloff band). Each is one card carrying exactly one shadow that LOWERS
+// CLEAN under Profile::Core: a DROP_SHADOW / INNER_SHADOW with a present color,
+// NORMAL blend, and a finite non-negative blur is on dashc's accept path
+// (crates/dashc/src/figma/{triage.rs,mod.rs}). The parameters are the
+// proven-rendered values from the v08_shadows golden (offset, blur 6, black
+// alpha 0.55): the oracle pins the sigma = blur/2 mapping (G-1,
+// docs/decisions/effects-vocabulary-shadows.md) against Figma's own render.
+//
+// The card sits centered in a 96x96 light frame with a wide margin so the
+// soft falloff stays inside the frame (no clip divergence), and on a light
+// background so a dark shadow's falloff is observable. Fixed frame box, so our
+// render and Figma's GET /images export are the same size.
+const SHADOW_INK = { r: 0, g: 0, b: 0, a: 0.55 };
+const DROP_SHADOW = {
+  type: "DROP_SHADOW",
+  visible: true,
+  blendMode: "NORMAL",
+  color: SHADOW_INK,
+  offset: { x: 0, y: 4 },
+  radius: 6, // Figma "radius" == dashc blur; painter sigma = radius/2
+  spread: 0,
+  showShadowBehindNode: false, // required by the plugin API; dashc ignores it
+};
+const INNER_SHADOW = {
+  type: "INNER_SHADOW",
+  visible: true,
+  blendMode: "NORMAL",
+  color: SHADOW_INK,
+  offset: { x: 0, y: 0 },
+  radius: 6,
+  spread: 0,
+};
+
+function shadowScene(name, cardFill, effect) {
+  const root = baseFrame(name, 96, 96);
+  root.layoutMode = "NONE"; // the card is absolutely placed, not laid out
+  root.clipsContent = true;
+  const card = figma.createFrame();
+  card.name = "card";
+  card.resize(40, 40);
+  card.cornerRadius = 6;
+  card.strokes = [];
+  card.clipsContent = false;
+  card.fills = [solid(cardFill)];
+  card.effects = [effect];
+  root.appendChild(card);
+  card.x = 28; // centered: (96 - 40) / 2
+  card.y = 28;
+  return root;
+}
+
+function dropShadow() {
+  shadowScene("drop-shadow", { r: 0.98, g: 0.78, b: 0.2 }, DROP_SHADOW);
+  return "drop-shadow built: a 40x40 amber card (r=6) with a drop shadow " +
+    "(offset y=4, blur 6, black alpha 0.55) centered in a 96x96 light frame";
+}
+
+function innerShadow() {
+  shadowScene("inner-shadow", { r: 0.92, g: 0.94, b: 0.98 }, INNER_SHADOW);
+  return "inner-shadow built: a 40x40 near-white card (r=6) with an inner " +
+    "shadow (offset 0, blur 6, black alpha 0.55) centered in a 96x96 light frame";
+}
+
 // ------------------------------------------------------------------ dispatch
 const COMMANDS = {
   "v03-paint": v03Paint,
@@ -856,6 +1013,10 @@ const COMMANDS = {
   "lowering-variant-topology": loweringVariantTopology,
   "real-file": realFile,
   "trim-demo": trimDemo,
+  "text-latin": textLatin,
+  "text-arabic": textArabic,
+  "drop-shadow": dropShadow,
+  "inner-shadow": innerShadow,
 };
 
 (async () => {
