@@ -1,11 +1,60 @@
 # A construct the v0.3 `Document` cannot express refuses the compile
 
     status   accepted (story #139, 2026-07-13); mechanism revised by story
-             #140 (2026-07-16) — see "Revised at #140" below
-    scope    crates/dashc (the figma module)
+             #140 (2026-07-16) — see "Revised at #140" below; the verdict made
+             policy-dependent by story S0-impl (2026-07-18) — see "Revised at
+             S0-impl" below
+    scope    crates/dashc (lib, the figma module, the abi wire),
+             importers/figma
     binds    #17 (the Deno importer is where a designer meets this error),
              #140, #143, #144, #145, #146, #147 (each gap it refuses), and
              every future widening of the Figma front end
+
+## Revised at S0-impl: the verdict is a policy, not a fixed refusal
+
+The verdict below — "correct or refused, never approximately right" — is now
+one of two policies, chosen per compile by an `EmitPolicy` that threads from
+the ABI request (`crates/dashc/src/abi/wire.rs`) into the walk. The full-real-
+file-import epic's S0 gate decided this (human, 2026-07-18): a real, media-rich
+Figma file hits at least one construct the vocabulary cannot express, so an
+all-or-nothing refusal made "full import" unreachable — one unsupported node
+anywhere refused every byte.
+
+- **`EmitPolicy::Strict`** is the original posture, unchanged: any vocabulary
+  gap is an error and the file refuses to emit (R6). This stays the Rust
+  library default, so every existing caller and test keeps today's behavior.
+- **`EmitPolicy::Partial`** downgrades one class of diagnostic — the
+  `figma.unsupported` omission — from error to warning. The node's subtree is
+  still skipped (nothing is lowered approximately), so the document emits with
+  the covered majority and the skipped nodes ride back as named warnings. The
+  Deno importer defaults to Partial; its new `--strict` flag restores Strict.
+
+The line partial-emit does **not** cross is approximation. Two kinds of
+vocabulary diagnostic already exist, and Partial treats them oppositely:
+
+- **Omission** (`figma.unsupported`, minted by `Walk::unsupported_at`): the
+  node is skipped, leaving a hole plus a named diagnostic. This is the only
+  policy-sensitive diagnostic. Downgraded to a warning under Partial.
+- **Approximation-if-shipped** (a REJECT-band construct triaged on the success
+  path — noise, texture, progressive blur): the node **is** lowered, just
+  without the rejected feature, so shipping it would render a picture the
+  designer never authored. Stays a fatal error in both modes.
+
+`figma.no-content` (a zero-node `.dsb` a downstream loader panics on), a parse
+failure, and an unresolved image ref also stay fatal in both modes.
+
+This is within R6, which permits a vocabulary gap to be a warning
+(`docs/specification/01-goals-and-requirements.md`), and it strengthens P4
+rather than weakening it: a skip is still a named diagnostic, only its severity
+changes, and nothing becomes silent. P1 holds because a skipped node leaves
+nothing behind — no baked box, no placeholder extent.
+
+**Consequence accepted at this gate.** A file whose _only_ blocker is a
+REJECT-band construct on an otherwise-lowerable node still refuses under
+Partial. Omitting just that one node from the success path — moving its triage
+into the skip decision — is a per-construct follow-up, filed only if a real
+target needs it. The conservative "still refuses" is the faithful reading of
+"never approximate".
 
 ## Revised at #140: the refusal is a diagnostic, and the walk keeps going
 

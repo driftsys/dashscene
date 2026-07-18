@@ -15,7 +15,7 @@ import {
   trimContextOf,
 } from "./import.ts";
 import { type ResolvedVarsSidecar, TokensBlocked } from "./tokens.ts";
-import { loadDashc } from "./wasm.ts";
+import { type Dashc, loadDashc } from "./wasm.ts";
 import {
   CORPUS,
   FILE_KEY,
@@ -808,4 +808,66 @@ Deno.test("a stale vartable blocks the import by name, before any image fetch", 
   assert(error instanceof BindingsBlocked);
   // Blocked before the image map or any compile — only the file fetch ran.
   assertEquals(requested.length, 1);
+});
+
+// -- Emit policy: the importer defaults to partial-emit (story S0-impl) -------
+
+/** A one-frame file that compiles, so the run reaches `dashc.compileFigma`. */
+const ONE_FRAME_FILE = JSON.stringify({
+  document: {
+    id: "0:0",
+    name: "Document",
+    type: "DOCUMENT",
+    children: [{
+      id: "0:1",
+      name: "Page 1",
+      type: "CANVAS",
+      children: [{ id: "1:2", name: "frame", type: "FRAME" }],
+    }],
+  },
+  version: "v1",
+});
+
+/** A stub `dashc` that records the `strict` value reaching `compileFigma`. */
+function recordingDashc(seen: { strict?: boolean }): Dashc {
+  return {
+    compileFigma(
+      _json: unknown,
+      _profile: unknown,
+      _images: unknown,
+      _bindings: unknown,
+      strict: boolean,
+    ) {
+      seen.strict = strict;
+      return { bytes: new Uint8Array([1]), diagnostics: [] };
+    },
+  } as unknown as Dashc;
+}
+
+Deno.test("import defaults to partial-emit", async () => {
+  const { fetchFn } = scriptedFetch(ONE_FRAME_FILE, new Uint8Array());
+  const seen: { strict?: boolean } = {};
+  const { deps } = cliDeps(fetchFn);
+
+  const code = await runImportCli(
+    [FILE_KEY, "--root", "1:2", "-o", "out.dsb"],
+    { ...deps, loadDashc: () => Promise.resolve(recordingDashc(seen)) },
+  );
+
+  assertEquals(code, 0);
+  assertEquals(seen.strict, false);
+});
+
+Deno.test("import --strict opts into all-or-nothing", async () => {
+  const { fetchFn } = scriptedFetch(ONE_FRAME_FILE, new Uint8Array());
+  const seen: { strict?: boolean } = {};
+  const { deps } = cliDeps(fetchFn);
+
+  const code = await runImportCli(
+    [FILE_KEY, "--root", "1:2", "-o", "out.dsb", "--strict"],
+    { ...deps, loadDashc: () => Promise.resolve(recordingDashc(seen)) },
+  );
+
+  assertEquals(code, 0);
+  assertEquals(seen.strict, true);
 });

@@ -44,6 +44,10 @@ pub struct CompileRequest {
     /// The importer's joined variable-binding rows (story #167); empty
     /// for an import without a vartable.
     pub bindings: Vec<BoundVariable>,
+    /// The emit policy (story S0-impl): an optional trailing flag whose
+    /// absence decodes as [`crate::EmitPolicy::Strict`], so a caller that
+    /// predates the field still refuses-hard.
+    pub policy: crate::EmitPolicy,
 }
 
 /// A cursor that runs out of bytes instead of panicking.
@@ -97,6 +101,18 @@ impl<'a> Reader<'a> {
 
     fn remaining(&self) -> usize {
         self.bytes.len().saturating_sub(self.at)
+    }
+
+    /// A `u32` at the tail, or `None` at end-of-buffer — the tolerant read the
+    /// appended emit-policy flag needs (story S0-impl). A request that predates
+    /// the field ends here with nothing left, so it reads as `None`; a request
+    /// carrying the flag reads it, and a partial (1–3 byte) tail is a decode
+    /// error like any other truncation.
+    fn optional_u32(&mut self) -> Result<Option<u32>, String> {
+        if self.remaining() == 0 {
+            return Ok(None);
+        }
+        Ok(Some(self.u32()?))
     }
 
     /// Trailing bytes mean the two sides disagree about the format, which is
@@ -167,6 +183,13 @@ pub fn decode_compile_request(bytes: &[u8]) -> Result<CompileRequest, String> {
             value,
         });
     }
+
+    // The emit-policy flag (story S0-impl), appended after the bindings:
+    // `1` or absent ⇒ Strict (an old caller refuses-hard), `0` ⇒ Partial.
+    let policy = match reader.optional_u32()? {
+        Some(0) => crate::EmitPolicy::Partial,
+        _ => crate::EmitPolicy::Strict,
+    };
     reader.finish()?;
 
     Ok(CompileRequest {
@@ -174,6 +197,7 @@ pub fn decode_compile_request(bytes: &[u8]) -> Result<CompileRequest, String> {
         json,
         images,
         bindings,
+        policy,
     })
 }
 
@@ -215,6 +239,7 @@ mod tests {
         json: &str,
         images: &[(&str, u32, &[u8])],
         bindings: &[(&str, &str, &str, WireValue)],
+        strict: Option<u32>,
     ) -> Vec<u8> {
         let mut out = Vec::new();
         out.extend_from_slice(&profile.to_le_bytes());
@@ -247,12 +272,18 @@ mod tests {
                 }
             }
         }
+        // The trailing emit-policy flag (story S0-impl): appended only when the
+        // caller sets it, so `None` reproduces the pre-existing wire shape an
+        // old caller sends — which must still decode (as Strict).
+        if let Some(flag) = strict {
+            out.extend_from_slice(&flag.to_le_bytes());
+        }
         out
     }
 
     #[test]
     fn a_request_round_trips() {
-        let bytes = encode_request(1, "{}", &[("abc", 0, &[1, 2, 3])], &[]);
+        let bytes = encode_request(1, "{}", &[("abc", 0, &[1, 2, 3])], &[], None);
         let request = decode_compile_request(&bytes).expect("the request decodes");
 
         assert_eq!(request.profile, Profile::Full);
@@ -262,6 +293,24 @@ mod tests {
         assert_eq!(asset.format, ImageFormat::Png);
         assert_eq!(asset.bytes, vec![1, 2, 3]);
         assert!(request.bindings.is_empty());
+    }
+
+    #[test]
+    fn a_request_without_a_policy_flag_decodes_as_strict() {
+        // The pre-existing wire shape (no trailing u32) must still decode.
+        let bytes = encode_request(0, "{}", &[], &[], None);
+        let request = decode_compile_request(&bytes).expect("decodes");
+        assert_eq!(request.policy, crate::EmitPolicy::Strict);
+    }
+
+    #[test]
+    fn a_trailing_zero_flag_decodes_as_partial() {
+        let bytes = encode_request(0, "{}", &[], &[], Some(0));
+        let request = decode_compile_request(&bytes).expect("decodes");
+        assert_eq!(request.policy, crate::EmitPolicy::Partial);
+        let bytes = encode_request(0, "{}", &[], &[], Some(1));
+        let request = decode_compile_request(&bytes).expect("decodes");
+        assert_eq!(request.policy, crate::EmitPolicy::Strict);
     }
 
     #[test]
@@ -279,6 +328,7 @@ mod tests {
                     WireValue::Color([0.4, 0.65, 1.0, 1.0]),
                 ),
             ],
+            None,
         );
         let request = decode_compile_request(&bytes).expect("the request decodes");
 
@@ -305,7 +355,7 @@ mod tests {
 
     #[test]
     fn an_unknown_bound_value_type_is_an_error() {
-        let mut bytes = encode_request(0, "{}", &[], &[]);
+        let mut bytes = encode_request(0, "{}", &[], &[], None);
         // Rewrite the binding count to 1 and append a row with tag 9.
         let at = bytes.len() - 4;
         bytes[at..].copy_from_slice(&1u32.to_le_bytes());
@@ -320,7 +370,7 @@ mod tests {
 
     #[test]
     fn a_truncated_request_is_an_error_not_a_panic() {
-        let bytes = encode_request(0, "{}", &[("abc", 0, &[1, 2, 3])], &[]);
+        let bytes = encode_request(0, "{}", &[("abc", 0, &[1, 2, 3])], &[], None);
         for cut in 0..bytes.len() {
             // Every prefix must decode to an error. A panic here would trap the
             // wasm module, turning a bad request into an unrecoverable importer.
@@ -333,20 +383,20 @@ mod tests {
 
     #[test]
     fn trailing_bytes_are_an_error() {
-        let mut bytes = encode_request(0, "{}", &[], &[]);
+        let mut bytes = encode_request(0, "{}", &[], &[], None);
         bytes.push(0);
         assert!(decode_compile_request(&bytes).is_err());
     }
 
     #[test]
     fn an_unknown_profile_is_an_error() {
-        let bytes = encode_request(7, "{}", &[], &[]);
+        let bytes = encode_request(7, "{}", &[], &[], None);
         assert!(decode_compile_request(&bytes).is_err());
     }
 
     #[test]
     fn an_unknown_image_format_is_an_error() {
-        let bytes = encode_request(0, "{}", &[("abc", 9, &[1])], &[]);
+        let bytes = encode_request(0, "{}", &[("abc", 9, &[1])], &[], None);
         assert!(decode_compile_request(&bytes).is_err());
     }
 

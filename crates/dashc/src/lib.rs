@@ -65,6 +65,17 @@ use std::collections::BTreeMap;
 use dashpaint::ImageAsset;
 use dashscene_validator::{Diagnostic, Location, Profile, Report, Severity};
 
+/// How the Figma front end treats a construct the document cannot express.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EmitPolicy {
+    /// All-or-nothing: any vocabulary gap refuses the whole file (R6, the
+    /// original `unsupported-figma-constructs-refuse-the-compile.md` posture).
+    Strict,
+    /// Skip an unsupported node with a warning, still emit. Never approximates:
+    /// a construct that could only ship approximately still refuses.
+    Partial,
+}
+
 /// The diagnostic rules the document gate itself assembles — verdicts
 /// about a `Document` no serialized form can carry, so the load gate
 /// (which sees only serialized documents) can never raise them.
@@ -188,8 +199,28 @@ pub fn compile_figma_with_bindings(
     images: &BTreeMap<String, ImageAsset>,
     bindings: &[figma::BoundVariable],
 ) -> Result<(Vec<u8>, Report), CompileError> {
+    compile_figma_with_bindings_and_policy(json, profile, images, bindings, EmitPolicy::Strict)
+}
+
+/// [`compile_figma_with_bindings`], choosing the emit policy
+/// (`docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`).
+///
+/// Under [`EmitPolicy::Strict`] any vocabulary gap is an error that withholds
+/// the bytes (R6). Under [`EmitPolicy::Partial`] an omission-class gap
+/// (`figma.unsupported`) is a warning instead — the node is still skipped, so
+/// the document emits with the gap riding back as a warning, never a silent
+/// drop (P4). An approximation-if-shipped construct (a REJECT-band feature on a
+/// lowered node) and `figma.no-content` stay fatal in both modes.
+pub fn compile_figma_with_bindings_and_policy(
+    json: &str,
+    profile: Profile,
+    images: &BTreeMap<String, ImageAsset>,
+    bindings: &[figma::BoundVariable],
+    policy: EmitPolicy,
+) -> Result<(Vec<u8>, Report), CompileError> {
     let file = figma::parse_file(json)?;
-    let (doc, found) = figma::lower_with_bindings(&file, profile, images, bindings)?;
+    let (doc, found) =
+        figma::lower_with_bindings_and_policy(&file, profile, images, bindings, policy)?;
 
     let mut report: Report = found.into_iter().collect();
 

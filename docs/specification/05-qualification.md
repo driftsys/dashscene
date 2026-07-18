@@ -248,6 +248,14 @@ diagnostic points at its own node, pinned separately by
 `each_diagnostic_points_at_its_own_node`. Both tests run in the workspace CI
 job (`just build`).
 
+`compile_figma` compiles under `EmitPolicy::Strict`, the Rust library default,
+so E4's dirty-file-refuses proof is unchanged by the S0-impl partial-emit mode.
+This fixture is REJECT-band throughout (noise, texture, progressive blur), so it
+refuses under `EmitPolicy::Partial` as well — partial-emit only downgrades the
+omission-class `figma.unsupported` gap, never a REJECT-band construct
+(`docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`, "Revised
+at S0-impl").
+
 The report is backed by the complete named-rule set the validator delivers
 at v0.7 (story #41): the import gate's out-of-profile bands (including
 variable-width stroke, #145), the load gate's referential-integrity, enum,

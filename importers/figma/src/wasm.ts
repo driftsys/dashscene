@@ -22,6 +22,7 @@
  *               | per binding: str nodeId | str property | str signal
  *                 | u32 type (0 = float, 1 = color)
  *                 | f32 value, or f32 r | f32 g | f32 b | f32 a
+ *             | u32 emitPolicy (1 = strict, 0 = partial; absent = strict)
  *   response  u32 total | u32 status | u32 blob_len | blob | u32 json_len | json
  *
  * (str = u32 length | bytes.) ABI v2 (story #167) appended the binding
@@ -205,6 +206,11 @@ export class Dashc {
    * it compiles to wasm, so resolving a ref is the caller's job by
    * construction.
    *
+   * `strict` chooses the emit policy (story S0-impl): `true` (the default,
+   * mirroring the Rust library) refuses the whole file on any vocabulary gap;
+   * `false` skips an unsupported node with a warning and still emits, so a
+   * REJECT-band construct still refuses. The importer opts into `false`.
+   *
    * @throws {CompileFailed} when the document is blocked (R6).
    */
   compileFigma(
@@ -212,6 +218,7 @@ export class Dashc {
     profile: Profile,
     images: ReadonlyMap<string, ImageAsset>,
     bindings: readonly JoinedBinding[] = [],
+    strict: boolean = true,
   ): CompileOk {
     const writer = new Writer();
     writer.u32(PROFILE[profile]);
@@ -239,6 +246,9 @@ export class Dashc {
         writer.f32(binding.value.a);
       }
     }
+    // The emit-policy flag (story S0-impl), appended after the bindings:
+    // 1 = strict, 0 = partial. See crates/dashc/src/abi/wire.rs.
+    writer.u32(strict ? 1 : 0);
 
     const response = this.#call(
       this.#exports.dashc_compile_figma,

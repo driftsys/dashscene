@@ -14,16 +14,16 @@
 
 use std::collections::BTreeMap;
 
-use dashc_wasm::compile_figma;
 use dashc_wasm::figma::rest::{FigmaFile, PaintTag};
 use dashc_wasm::figma::{CompileError, lower};
+use dashc_wasm::{EmitPolicy, compile_figma, compile_figma_with_bindings_and_policy};
 use dashpaint::{
     Color, CornerRadii, GlyphRunTable, GradientKind, ImageAsset, ImageFormat, Mat23, PaintEntry,
     PaintKind, Painter, ScaleMode, ShadowKind, StrokeAlign, Vec2,
 };
 use dashscene_core::{Arena, load_document};
 use dashscene_skia::SkiaPainter;
-use dashscene_validator::{Location, Profile};
+use dashscene_validator::{Location, Profile, Severity};
 
 mod common;
 use common::{node, parse};
@@ -1723,4 +1723,126 @@ fn the_fixture_emits_the_golden_dsb() {
         bytes.len(),
         golden.len(),
     );
+}
+
+// -- Emit policy: Strict refuses, Partial skips-and-warns (story S0-impl) ----
+
+/// A FRAME whose only problem is a VECTOR child: an omission-class gap
+/// (`figma.unsupported`, "node type VECTOR"). Strict refuses the file;
+/// Partial omits the VECTOR and emits the frame with a warning.
+fn frame_with_vector_child() -> serde_json::Value {
+    document_json(serde_json::json!({
+        "name": "root",
+        "type": "FRAME",
+        "clipsContent": true,
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0 },
+        "children": [{
+            "name": "glyph",
+            "type": "VECTOR",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 }
+        }],
+    }))
+}
+
+#[test]
+fn strict_refuses_a_file_with_an_unsupported_construct() {
+    let json = frame_with_vector_child().to_string();
+    let images = BTreeMap::new();
+    let result = compile_figma_with_bindings_and_policy(
+        &json,
+        Profile::Core,
+        &images,
+        &[],
+        EmitPolicy::Strict,
+    );
+    assert!(matches!(result, Err(CompileError::Diagnostics(_))));
+}
+
+#[test]
+fn partial_emits_the_frame_and_warns_on_the_skipped_vector() {
+    let json = frame_with_vector_child().to_string();
+    let images = BTreeMap::new();
+    let (bytes, report) = compile_figma_with_bindings_and_policy(
+        &json,
+        Profile::Core,
+        &images,
+        &[],
+        EmitPolicy::Partial,
+    )
+    .expect("partial-emit returns a document");
+    assert!(!bytes.is_empty(), "a document is emitted");
+    // The gap survives as a WARNING (P4), never dropped.
+    let warnings: Vec<_> = report
+        .diagnostics()
+        .iter()
+        .filter(|d| d.rule == dashc_wasm::figma::rule::UNSUPPORTED)
+        .collect();
+    assert_eq!(warnings.len(), 1, "one figma.unsupported for the VECTOR");
+    assert_eq!(warnings[0].severity, Severity::Warning);
+    // The frame is present, the VECTOR is omitted: exactly one node.
+    let document = dashbuf::root_as_document(&bytes).expect("the emitted document loads");
+    let mut arena = Arena::new();
+    load_document(&document, &mut arena);
+    assert_eq!(
+        arena.committed().rects().len(),
+        1,
+        "the frame is present, the VECTOR omitted",
+    );
+}
+
+// -- Partial never approximates, and never ships zero content (story S0-impl) -
+
+/// A noise effect is REJECT-band: shipping the node without it would be an
+/// approximation, so Partial must still refuse — the never-approximate line.
+fn frame_with_noise_effect() -> serde_json::Value {
+    document_json(serde_json::json!({
+        "name": "root",
+        "type": "FRAME",
+        "clipsContent": true,
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0 },
+        "effects": [{ "type": "NOISE", "visible": true }],
+    }))
+}
+
+#[test]
+fn partial_still_refuses_a_reject_band_construct() {
+    let json = frame_with_noise_effect().to_string();
+    let images = BTreeMap::new();
+    let result = compile_figma_with_bindings_and_policy(
+        &json,
+        Profile::Core,
+        &images,
+        &[],
+        EmitPolicy::Partial,
+    );
+    assert!(
+        matches!(result, Err(CompileError::Diagnostics(_))),
+        "a REJECT-band construct is never shipped approximated, even under Partial",
+    );
+}
+
+/// A canvas holding only a COMPONENT resolves to no paintable content:
+/// figma.no-content, a zero-node .dsb that panics a loader. Always an error.
+#[test]
+fn partial_still_refuses_a_no_content_file() {
+    let json = serde_json::json!({
+        "document": {
+            "name": "Document", "type": "DOCUMENT",
+            "children": [{
+                "name": "Page 1", "type": "CANVAS",
+                "children": [{ "name": "def", "type": "COMPONENT",
+                    "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 } }],
+            }],
+        },
+    })
+    .to_string();
+    let images = BTreeMap::new();
+    let result = compile_figma_with_bindings_and_policy(
+        &json,
+        Profile::Core,
+        &images,
+        &[],
+        EmitPolicy::Partial,
+    );
+    assert!(matches!(result, Err(CompileError::Diagnostics(_))));
 }

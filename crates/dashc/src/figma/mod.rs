@@ -246,6 +246,25 @@ pub fn lower_with_bindings(
     images: &BTreeMap<String, ImageAsset>,
     bound: &[BoundVariable],
 ) -> Result<(Document, Vec<Diagnostic>), CompileError> {
+    lower_with_bindings_and_policy(file, profile, images, bound, crate::EmitPolicy::Strict)
+}
+
+/// [`lower_with_bindings`], choosing the emit policy
+/// (`docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`).
+///
+/// The policy rides on the [`Walk`] and reaches [`Walk::unsupported_at`]: under
+/// [`crate::EmitPolicy::Partial`] a `figma.unsupported` omission is minted at
+/// `Severity::Warning` instead of `Severity::Error`, so the skipped node's gap
+/// no longer blocks emission. Nothing else in the walk changes — the subtree is
+/// skipped either way, and `figma.no-content` and the triaged
+/// approximation-if-shipped constructs keep their severity.
+pub fn lower_with_bindings_and_policy(
+    file: &FigmaFile,
+    profile: Profile,
+    images: &BTreeMap<String, ImageAsset>,
+    bound: &[BoundVariable],
+    policy: crate::EmitPolicy,
+) -> Result<(Document, Vec<Diagnostic>), CompileError> {
     let roots = top_level_nodes(&file.document)?;
 
     let mut walk = Walk {
@@ -255,6 +274,7 @@ pub fn lower_with_bindings(
         index_of_id: BTreeMap::new(),
         profile,
         images,
+        policy,
     };
 
     // Iterative depth-first walk (debt #148: a recursive walk would turn
@@ -462,6 +482,9 @@ struct Walk<'a> {
     index_of_id: bindings::IndexOfId,
     profile: Profile,
     images: &'a BTreeMap<String, ImageAsset>,
+    /// How an omission-class gap (`figma.unsupported`) is minted: an error
+    /// under `Strict`, a warning under `Partial` (story S0-impl).
+    policy: crate::EmitPolicy,
 }
 
 impl Walk<'_> {
@@ -663,9 +686,11 @@ impl Walk<'_> {
         blockers.extend(effect_blockers);
 
         if !blockers.is_empty() {
-            // The index this node would have taken. No document survives an
-            // error (R6), so the index is advisory — the path is the stable
-            // half — and two skipped siblings may share one.
+            // The index this node would have taken had it lowered. The node is
+            // skipped either way — refused under Strict, omitted with a warning
+            // under Partial — so it never enters the document; the index is an
+            // advisory locator, the path is the stable half, and two skipped
+            // siblings may share one.
             let index = self.doc.nodes.len() as u32;
             for what in blockers {
                 self.unsupported_at(index, path, what);
@@ -824,9 +849,17 @@ impl Walk<'_> {
     }
 
     fn unsupported_at(&mut self, index: u32, path: &str, what: String) {
+        // The one policy-sensitive diagnostic (story S0-impl): an omission is
+        // an error under Strict (R6 refuses the file) and a warning under
+        // Partial (the node is skipped either way, so the document still
+        // emits with the gap named — P4, never a silent drop).
+        let severity = match self.policy {
+            crate::EmitPolicy::Strict => Severity::Error,
+            crate::EmitPolicy::Partial => Severity::Warning,
+        };
         self.diagnostics.push(Diagnostic {
             rule: rule::UNSUPPORTED,
-            severity: Severity::Error,
+            severity,
             at: Location::Node(NodePath::new(index, path)),
             message: format!("{what} is not in the document vocabulary yet"),
         });
