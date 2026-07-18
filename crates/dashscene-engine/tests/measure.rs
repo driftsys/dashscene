@@ -45,6 +45,79 @@ fn styled(txn: &mut dashscene_core::Txn<'_>, node: NodeId, text: &str, size: f32
     );
 }
 
+/// A styled hug-height text node solved through the measure seam, returning
+/// (width, height). `wrap` fixes the width (else the node hugs); `line_height`
+/// and `align` exercise the axes the measure seam must honor.
+fn solved_text_box(
+    text: &str,
+    size: f32,
+    wrap: Option<f32>,
+    line_height: Option<f32>,
+    align: TextAlign,
+) -> (f32, f32) {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let node = txn.add_node(None, None);
+    match wrap {
+        Some(w) => {
+            txn.set_prop(node, Prop::SizingH(AxisSizing::Fixed));
+            txn.set_prop(node, Prop::Width(w));
+        }
+        None => txn.set_prop(node, Prop::SizingH(AxisSizing::Hug)),
+    }
+    txn.set_prop(node, Prop::SizingV(AxisSizing::Hug));
+    txn.set_prop(node, Prop::Text(text.to_string()));
+    txn.set_prop(
+        node,
+        Prop::TextStyle(TextStyle {
+            family: "Noto Sans".to_string(),
+            size,
+            weight: 400,
+            color: Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0,
+            },
+            line_height_px: line_height,
+            letter_spacing: 0.0,
+            text_align: align,
+            text_align_v: TextAlignV::Top,
+        }),
+    );
+    let mut ts = typesetter();
+    txn.commit_with(&mut TaffySolver::with_typesetter(&mut ts));
+    let rect = arena.committed().rects()[0];
+    (rect.w, rect.h)
+}
+
+#[test]
+fn a_fixed_line_height_grows_the_measured_height_and_default_is_byte_identical() {
+    let text = "Hello world";
+    let size = 32.0;
+    // A width that fits one word but not the whole string forces two lines, so
+    // the line advance drives the total height.
+    let one_line = typesetter().layout(text, size, None).width;
+    let wrap = one_line * 0.75;
+
+    let (_, default_h) = solved_text_box(text, size, Some(wrap), None, TextAlign::Left);
+    let (_, tall_h) = solved_text_box(text, size, Some(wrap), Some(80.0), TextAlign::Left);
+
+    assert!(
+        tall_h > default_h,
+        "a fixed line height larger than the auto advance grows the measured height \
+         (default {default_h}, fixed {tall_h})"
+    );
+
+    // Byte-identical guard: a default-axis node measures exactly the pre-#327
+    // `layout()` height.
+    let expected = typesetter().layout(text, size, Some(wrap));
+    assert_eq!(
+        default_h, expected.height,
+        "a default-axis node's measured height is byte-identical to layout()"
+    );
+}
+
 #[test]
 fn a_hug_text_node_lays_out_to_its_shaped_width_and_height() {
     let text = "Hello";

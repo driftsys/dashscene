@@ -20,7 +20,7 @@ use dashscene_core::{Arena, NodeId, load_document};
 use dashscene_engine::TaffySolver;
 use dashscene_skia::SkiaPainter;
 use dashscene_typeset::atlas::AtlasBundle;
-use dashscene_typeset::text::{Font, Typesetter};
+use dashscene_typeset::text::{Font, TextShape, Typesetter};
 
 const FONT_LATIN: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -89,26 +89,62 @@ pub fn load_atlas(dir: &str) -> Atlas {
     )
 }
 
-/// The resolved box origin of a committed node.
-fn origin_of(arena: &Arena, node: NodeId) -> (f32, f32) {
+/// The resolved box of a committed node: origin (x, y) and size (w, h).
+fn box_of(arena: &Arena, node: NodeId) -> (f32, f32, f32, f32) {
     let scene = arena.committed();
     let rect = scene.rects()[scene.rect_index_of(node).expect("the node is committed") as usize];
-    (rect.x, rect.y)
+    (rect.x, rect.y, rect.w, rect.h)
+}
+
+/// The `TextShape` for a node's text style (story #327): the fixed line height,
+/// letter spacing, and horizontal alignment the stager lays the run out under.
+fn text_shape(style: &dashscene_core::TextStyle) -> TextShape {
+    TextShape {
+        line_height_px: style.line_height_px,
+        letter_spacing: style.letter_spacing,
+        align: match style.text_align {
+            dashscene_core::TextAlign::Left => dashscene_typeset::text::TextAlign::Left,
+            dashscene_core::TextAlign::Center => dashscene_typeset::text::TextAlign::Center,
+            dashscene_core::TextAlign::Right => dashscene_typeset::text::TextAlign::Right,
+        },
+    }
+}
+
+/// The stager's vertical alignment for a node's text style (story #327).
+fn vertical_align(align: dashscene_core::TextAlignV) -> crate::VerticalAlign {
+    match align {
+        dashscene_core::TextAlignV::Top => crate::VerticalAlign::Top,
+        dashscene_core::TextAlignV::Center => crate::VerticalAlign::Center,
+        dashscene_core::TextAlignV::Bottom => crate::VerticalAlign::Bottom,
+    }
 }
 
 /// Shapes `text` at `size` and places every glyph in absolute document space
 /// (the painter moves nothing, P2: the node's box origin is added here),
 /// splitting a new run wherever the cascade switched fonts so each run samples
-/// the atlas of its own font. A copy of the E7 oracle's `text_runs`.
+/// the atlas of its own font. Unlike the E7 oracle's `text_runs` (default axes),
+/// this honors the node's lowered text axes (story #327): it lays out under
+/// `shape` (fixed line height, letter spacing, horizontal align) within the
+/// resolved box width `box_size.0` — so horizontal alignment centers within the
+/// box, and the line breaks match the box the engine measured — and offsets the
+/// whole block down by the vertical alignment over `box_size.1`.
+#[allow(clippy::too_many_arguments)]
 fn text_runs(
     ts: &mut Typesetter,
     atlases: &[AtlasIndex],
     origin: (f32, f32),
+    box_size: (f32, f32),
     text: &str,
     size: f32,
     color: Color,
+    shape: TextShape,
+    valign: crate::VerticalAlign,
 ) -> Vec<GlyphRun> {
-    let laid = ts.layout(text, size, None);
+    let (box_w, box_h) = box_size;
+    let laid = ts.layout_with(text, size, Some(box_w), shape);
+    // Vertical alignment is block placement, not paint (P2) and not a measured
+    // extent (P1): shift every glyph down by the box's free space above the block.
+    let voff = crate::vertical_offset(box_h, laid.height, valign);
     let mut runs: Vec<GlyphRun> = Vec::new();
     for line in &laid.lines {
         for g in &line.glyphs {
@@ -116,7 +152,7 @@ fn text_runs(
             let quad = GlyphQuad {
                 glyph_id: g.glyph_id,
                 x: origin.0 + g.x,
-                y: origin.1 + g.y,
+                y: origin.1 + voff + g.y,
             };
             match runs.last_mut() {
                 Some(run) if run.atlas == atlas => run.glyphs.push(quad),
@@ -134,10 +170,11 @@ fn text_runs(
 }
 
 /// Walks the committed arena and stages glyph runs for every TEXT node — one or
-/// more runs per node, at the node's resolved box origin. A node is a text leaf
-/// exactly when it carries both authored characters and a text style; its
-/// style's `size` and `color` drive the run. A copy of the E7 oracle's
-/// `stage_text`.
+/// more runs per node, placed within the node's resolved box. A node is a text
+/// leaf exactly when it carries both authored characters and a text style; its
+/// style's `size`, `color`, and the lowered text axes (line height, letter
+/// spacing, horizontal and vertical align) drive the run (story #327). Based on
+/// the E7 oracle's `stage_text`, which stays on default axes.
 fn stage_text(arena: &Arena, ts: &mut Typesetter, atlases: &[AtlasIndex]) -> Vec<GlyphRun> {
     fn walk(
         arena: &Arena,
@@ -147,14 +184,17 @@ fn stage_text(arena: &Arena, ts: &mut Typesetter, atlases: &[AtlasIndex]) -> Vec
         out: &mut Vec<GlyphRun>,
     ) {
         if let (Some(text), Some(style)) = (arena.text(node), arena.text_style(node)) {
-            let origin = origin_of(arena, node);
+            let (x, y, w, h) = box_of(arena, node);
             out.extend(text_runs(
                 ts,
                 atlases,
-                origin,
+                (x, y),
+                (w, h),
                 text,
                 style.size,
                 style.color,
+                text_shape(style),
+                vertical_align(style.text_align_v),
             ));
         }
         for &child in arena.children(node) {
@@ -238,6 +278,76 @@ mod tests {
                 }],
             },
         })
+    }
+
+    #[test]
+    fn the_stager_shifts_glyphs_for_center_and_vertical_center_alignment() {
+        use dashpaint::{AtlasIndex, Color};
+        use dashscene_typeset::text::{TextAlign, TextShape};
+
+        use crate::VerticalAlign;
+
+        use super::{oracle_typesetter, text_runs};
+
+        let mut ts = oracle_typesetter();
+        // The atlas index only tags a run; it does not affect placement, so a
+        // bare index pair is enough (font 0 = Latin, font 1 = Arabic).
+        let atlases = [AtlasIndex(0), AtlasIndex(1)];
+        let text = "Hi";
+        let size = 32.0;
+        let black = Color {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        };
+        let origin = (0.0, 0.0);
+        // A box much wider and taller than "Hi", so centering has slack.
+        let box_size = (400.0, 200.0);
+
+        let left = text_runs(
+            &mut ts,
+            &atlases,
+            origin,
+            box_size,
+            text,
+            size,
+            black,
+            TextShape::default(),
+            VerticalAlign::Top,
+        );
+        let center = text_runs(
+            &mut ts,
+            &atlases,
+            origin,
+            box_size,
+            text,
+            size,
+            black,
+            TextShape {
+                line_height_px: None,
+                letter_spacing: 0.0,
+                align: TextAlign::Center,
+            },
+            VerticalAlign::Center,
+        );
+
+        let left_glyph = left[0].glyphs[0];
+        let center_glyph = center[0].glyphs[0];
+        assert!(
+            center_glyph.x > left_glyph.x,
+            "center alignment shifts the first glyph right within the box \
+             (left {}, center {})",
+            left_glyph.x,
+            center_glyph.x
+        );
+        assert!(
+            center_glyph.y > left_glyph.y,
+            "vertical centering shifts the block down within the box \
+             (left {}, center {})",
+            left_glyph.y,
+            center_glyph.y
+        );
     }
 
     #[test]
