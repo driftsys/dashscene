@@ -225,16 +225,15 @@ jobs:
     name: render-oracle
     runs-on: ubuntu-latest
     # The design-source render oracle (exit criterion E7, guardrail G-11):
-    # a perceptual diff of the reference painter against Figma's REST image
-    # export, with per-rule tolerance bands. The harness and the bands are
-    # exercised in the `test` job; this job runs the design-source assertion,
-    # which is #[ignore]-gated until the real Figma exports are authored (the
-    # parked manual-Figma issue #265). With no committed design source the
-    # run measures nothing and prints a summary naming every pending frame —
-    # never a silent green — and E7 stays open in
-    # docs/specification/05-qualification.md, not met. When #265 lands and the
-    # exports drop into goldens/oracle/design-source/, this job asserts each
-    # frame's render against its export within the frame's band.
+    # a perceptual diff of the Skia reference painter against Figma's REST
+    # image export, with per-rule tolerance bands. Each measured frame imports
+    # its committed Figma fixture in-process, renders it, and diffs that render
+    # against the committed export. The suite also runs in the `test` job; this
+    # job re-runs it in isolation with --nocapture so the measured per-frame
+    # numbers, and the pending frames, show in the CI log. E7 is partial: the
+    # two layout frames (v08-wrap, v08-grid-spans) are measured; the shadow and
+    # text frames are a disclosed follow-on that needs a renderable fixture
+    # and/or the text render path (docs/specification/05-qualification.md).
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -248,7 +247,7 @@ jobs:
       - name: install skia system libraries
         run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
       - name: design-source render oracle (E7 / G-11)
-        run: cargo test -p goldens --test render_oracle -- --ignored --nocapture
+        run: cargo test -p goldens --test render_oracle -- --nocapture
 
   ci:
     name: ci

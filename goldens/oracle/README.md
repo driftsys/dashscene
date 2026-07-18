@@ -8,9 +8,31 @@ missing half of R6 (exit criterion E7): a perceptual diff of the reference
 render against its **design source** — Figma's REST `GET /images` export — with
 per-rule tolerance bands.
 
+The reference is not a pre-committed corpus golden. Per frame the oracle imports
+the committed Figma **fixture** (`corpus/figma-fixtures/<name>.json`), compiles
+it in-process through `dashc`'s `compile_figma` (`Profile::Core`), loads the
+emitted `.dsb`, re-solves it with the one `TaffySolver`, and renders the
+committed scene with the Skia reference painter — sized to the root's solved
+rect. That fresh render is diffed against the committed Figma export of the same
+node at the same size. Importing the fixture and rendering it is exactly what a
+producer does, so the diff measures the reference painter against Figma's own
+render of the same scene.
+
     goldens/oracle/
-      manifest.json     per-frame wiring: reference golden -> design source -> band
-      design-source/    the committed Figma REST image exports (PENDING #265)
+      manifest.json     per-frame wiring: fixture -> design source -> band,
+                        plus the figmaFileKey + figmaNodeId capture inputs
+      design-source/    the committed Figma REST image exports (two captured)
+
+Each `manifest.json` frame carries: `frame` (name and design-source basename),
+`fixture` (the committed Figma fixture the oracle imports and renders, `null`
+when the frame has no renderable fixture yet), `band` (the tolerance rule),
+`figmaFileKey` and `figmaNodeId` (the capture inputs — the Figma file and node
+the design source is rendered from, `null` until authored), `designSource` (the
+committed export path, `null` until captured), `status` (`pending-265` until
+captured, then `captured`), and optionally `excludeRegions` (a list of
+`{ x, y, w, h }` rectangles whose pixels the diff drops from both the differing
+count and the total — for one genuine, disclosed structural divergence that the
+area budget must not silently absorb; see the per-frame `note`).
 
 ## The harness and the bands
 
@@ -31,41 +53,81 @@ differently, so each rule pins its own band:
 | `msdf-text`    | 50              | 0.03                 | MSDF glyph edges (text)            |
 
 The rationale for each value is in the module's rustdoc and in
-`docs/design/goldens.md`. The values are pinned so the harness is falsifiable
-now; the first real captures (#265) and the v0.9 exit gate (#49) confirm or
-retune them. A retune is a deliberate, reviewed change — the band values are
-asserted in `goldens/tooling/tests/render_oracle.rs`
+`docs/design/goldens.md`. The values are pinned so the harness is falsifiable.
+The two layout captures confirm the `aa-edge` band: `v08-wrap` diffs 0.000 % and
+`v08-grid-spans` diffs 0.000 % over its five structural cells (its one
+text-driven cell excluded — see below), both inside the 2 % budget. The other
+two bands (`blur-falloff`, `msdf-text`) are confirmed or retuned at the v0.9 exit
+gate (#49), when their frames become renderable. A retune is a deliberate, reviewed
+change — the band values are asserted in `goldens/tooling/tests/render_oracle.rs`
 (`the_three_rule_bands_are_pinned_and_distinct`), so a silent drift fails the
 test.
 
-## The #265 gate
+## Measured now, and the pending follow-on
 
-The real design-source images are authored manually — a Figma REST `GET /images`
-export of each corpus frame's Figma file — and are tracked by the parked
-manual-Figma-authoring issue **#265**. Until they land:
+The design-source assertion
+(`the_reference_renders_match_their_design_source`) runs in the ordinary `test`
+job — un-gated. It is hermetic (committed fixture + committed export +
+in-process compile, no network) and fast (~0.05 s/frame), and the `render-oracle`
+CI job re-runs it with `--nocapture` so the per-frame numbers show in the log.
 
-- Every `manifest.json` frame's `designSource` is `null` and its `status` is
-  `pending-265`.
-- The assertion that a frame's render matches its export
-  (`the_reference_renders_match_their_design_source`) is `#[ignore]`-gated with a
-  named #265 reason. It does not run in the ordinary `test` job.
-- The `render-oracle` CI job runs the gated assertion with `--ignored`; with no
-  committed design source it reports every frame as pending #265 and measures
-  nothing — a loud pending summary, never a silent green.
-- E7 stays **open (tooling landed)** in `docs/specification/05-qualification.md`,
-  not `met`. The v0.9 exit gate (#49) is where E7 is asserted.
+Two layout frames are measured today:
+
+- `v08-wrap` (fixture `corpus/figma-fixtures/lowering-wrap.json`, node `1:10`,
+  420x184) — 0.000 % differing.
+- `v08-grid-spans` (fixture `corpus/figma-fixtures/grid-basic.json`, node
+  `1:11`, 720x480) — 0.000 % differing over its five structural cells, which
+  match the export pixel-exact (span/fill/minmax/fixed placement and positions).
+  Its sixth cell diverges structurally and is excluded: the `hug me` TEXT leaf
+  solves to 0x0 because text measurement is not wired into the oracle render
+  path, so the HUG cell collapses to its padding box (24x16 vs Figma's 74x33).
+  That one text-driven cell is excluded via the frame's `excludeRegions` (Figma's
+  cell bbox, the superset covering every differing pixel) pending the text
+  render-path follow-on (#265) — a real structural divergence the band must not
+  absorb, not missing glyph ink. Excluded pixels count toward neither the
+  differing count nor the total.
+
+The other five frames stay `pending-265`, each for a named reason (see the
+per-frame `note` in `manifest.json`):
+
+- `v08-baseline` — its fixture exists but its leaves are TEXT, so it needs the
+  glyph-run/typeset render path the oracle render helper does not yet drive.
+- `v08-drop-shadow`, `v08-inner-shadow` — no renderable fixture: `effects-2025`
+  is a diagnostic REJECT fixture that emits no document, so pinning the
+  `sigma = blur/2` mapping against a real capture needs a new plugin-authored
+  shadow fixture.
+- `v05-text-latin`, `v06-text-arabic` — no committed fixture yet, and also need
+  the text render path.
+
+Authoring those fixtures and wiring the text render path is a disclosed
+follow-on tracked by the parked issue **#265**; the v0.9 exit gate (#49) is where
+E7 flips from `partial` to `met`. E7 is `partial`, not `met`, in
+`docs/specification/05-qualification.md`.
 
 No design source may be fabricated, hand-drawn, or stood in for by the
 project's own render. That is the exact self-oracle fidelity failure G-11
-forbids.
+forbids — which is why a pending frame's `designSource` stays `null` rather than
+holding a placeholder.
 
-## Adding a design source (when #265 lands)
+## Capturing a design source
 
-1. Export the frame from its Figma file via the REST `GET /images` endpoint at
-   the same pixel dimensions as the reference golden.
-2. Commit it as `goldens/oracle/design-source/<frame>.png`.
-3. Set the frame's `designSource` in `manifest.json` to that path and its
-   `status` to `captured`.
-4. Run the gated assertion: `cargo test -p goldens --test render_oracle -- --ignored`.
+The export step is `importers/figma/src/render_oracle.ts`, run as
+`deno task oracle-capture`. It fetches Figma's own render of each authored
+frame; it never draws one (G-11).
+
+1. Set the frame's `figmaFileKey` and `figmaNodeId` in `manifest.json` — the
+   Figma file the frame lives in and the node id rendered as the design source —
+   and its `fixture` to the committed Figma fixture the oracle imports and
+   renders.
+2. From `importers/figma/`, with `FIGMA_TOKEN` exported, run
+   `deno task oracle-capture`. For each frame that names both keys it calls the
+   Figma REST render `GET /v1/images/:key?ids=<nodeId>&format=png&scale=1`,
+   downloads the returned PNG into `goldens/oracle/design-source/<frame>.png`,
+   and flips that frame's `designSource` to the committed path and its `status`
+   to `captured`. A frame with either key `null` is skipped and stays
+   `pending-265`; a non-200, a non-null `err`, a missing node, or a non-PNG
+   download fails that frame and writes nothing. Commit the written PNG and the
+   `manifest.json` update together.
+3. Run the assertion: `cargo test -p goldens --test render_oracle`.
    Tune nothing to make it pass — if a frame fails its band, that is a measured
    fidelity gap to fix in the painter or a band to re-pin with review.

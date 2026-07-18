@@ -1,17 +1,33 @@
-//! The design-source render oracle (story #284, exit criterion E7,
-//! guardrail G-11): a perceptual diff of the reference painter's output
-//! against a design source (Figma's REST `GET /images` export), with
-//! per-rule tolerance bands.
+//! The design-source render oracle (story #284 tooling, story #301
+//! productionization; exit criterion E7, guardrail G-11): a perceptual
+//! diff of the reference painter's output against a design source (Figma's
+//! REST `GET /images` export), with per-rule tolerance bands.
 //!
-//! This file validates the diff harness and the pinned bands with
-//! controlled **synthetic** image pairs — no design source is pretended.
-//! The real design-source captures are authored manually and tracked by
-//! issue #265 (parked), so the assertion that a frame's render matches its
-//! real Figma export is `#[ignore]`-gated with a named #265 reason (see
-//! `the_reference_renders_match_their_design_source` below) and is not run
-//! by the ordinary `test` job. What runs here proves the math the gated
-//! assertion depends on, honestly and without a real source.
+//! Two kinds of test live here. The first validates the diff harness and
+//! the pinned bands with controlled **synthetic** image pairs — no design
+//! source is pretended. The second,
+//! `the_reference_renders_match_their_design_source`, is the real oracle:
+//! for every frame that has a committed design source it imports that
+//! frame's committed Figma fixture, compiles it in-process through
+//! `compile_figma` (`Profile::Core`), renders the committed scene with the
+//! Skia reference painter, and diffs that fresh render against the committed
+//! Figma export within the frame's band. The reference is our own render of
+//! the imported fixture, not a pre-committed corpus golden — so the diff
+//! measures the reference painter against Figma's own render of the same
+//! scene at the same size. It runs in the ordinary `test` job: it is
+//! hermetic (committed fixture + committed export + in-process compile, no
+//! network) and fast. Frames without a committed design source stay pending
+//! (`goldens/oracle/README.md`); no design source is fabricated (G-11).
 
+use std::collections::BTreeMap;
+
+use dashbuf::root_as_document;
+use dashc_wasm::compile_figma;
+use dashpaint::{GlyphRunTable, Painter};
+use dashscene_core::{Arena, load_document};
+use dashscene_engine::TaffySolver;
+use dashscene_skia::SkiaPainter;
+use dashscene_validator::Profile;
 use goldens::oracle::{self, AA_EDGE, BLUR_FALLOFF, MSDF_TEXT, ToleranceBand};
 use skia_safe::{Color, Color4f, EncodedImageFormat, Paint, Rect, surfaces};
 
@@ -202,6 +218,78 @@ fn a_sparse_above_threshold_difference_within_budget_passes() {
         "the patch pixels are over the threshold"
     );
     assert!(d.passes(), "1% differing under the 2% budget passes");
+}
+
+#[test]
+fn a_difference_confined_to_an_excluded_region_does_not_count() {
+    // A per-frame excluded region removes its pixels from both the numerator
+    // and the denominator (`oracle::diff_excluding`). A 20×20 patch that
+    // differs by 80 (over AA_EDGE's threshold) is measured as 400 differing
+    // pixels without an exclusion; excluding that exact rect drops all 400 from
+    // the differing count AND drops them from the total, so the frame measures 0
+    // differing over the pixels that remain. This is the masking that keeps
+    // `v08-grid-spans` a clean grid-structure measurement by excluding its one
+    // text-driven HUG cell (`goldens/oracle/manifest.json`).
+    let reference = png(100, 100, 120, None);
+    let source = png(
+        100,
+        100,
+        120,
+        Some((Rect::from_xywh(10.0, 10.0, 20.0, 20.0), 200)),
+    );
+
+    // Baseline: without the exclusion the patch is counted.
+    let plain = oracle::diff(&reference, &source, &AA_EDGE).expect("same size");
+    assert_eq!(plain.differing, 400, "the 20×20 patch differs");
+    assert_eq!(plain.total, 10_000);
+    assert_eq!(plain.max_channel_delta, 80);
+
+    // Excluding the patch's exact rect removes every differing pixel from both
+    // the numerator and the denominator.
+    let mask = [oracle::ExcludeRegion {
+        x: 10,
+        y: 10,
+        w: 20,
+        h: 20,
+    }];
+    let masked = oracle::diff_excluding(&reference, &source, &AA_EDGE, &mask).expect("same size");
+    assert_eq!(
+        masked.differing, 0,
+        "every differing pixel lies inside the excluded rect"
+    );
+    assert_eq!(
+        masked.total, 9_600,
+        "the 400 excluded pixels leave the denominator too (10000 − 400)"
+    );
+    assert_eq!(
+        masked.max_channel_delta, 0,
+        "the excluded pixels do not move the reported max delta"
+    );
+    assert!(
+        masked.passes(),
+        "0 differing over the remaining pixels passes"
+    );
+}
+
+#[test]
+fn an_empty_exclusion_is_exactly_the_plain_diff() {
+    // The masking must be inert when no region is declared: `diff_excluding`
+    // with an empty slice measures identically to `diff`, so a frame with no
+    // `excludeRegions` is unaffected.
+    let reference = png(100, 100, 120, None);
+    let source = png(
+        100,
+        100,
+        120,
+        Some((Rect::from_xywh(0.0, 0.0, 30.0, 30.0), 200)),
+    );
+
+    let plain = oracle::diff(&reference, &source, &AA_EDGE).expect("same size");
+    let empty = oracle::diff_excluding(&reference, &source, &AA_EDGE, &[]).expect("same size");
+    assert_eq!(
+        (plain.differing, plain.total, plain.max_channel_delta),
+        (empty.differing, empty.total, empty.max_channel_delta)
+    );
 }
 
 #[test]
@@ -423,16 +511,68 @@ fn transparent_versus_opaque_still_counts_as_differing() {
 
 // --- The corpus-frame ↔ design-source manifest (goldens/oracle/manifest.json) ---
 //
-// These tests prove the plumbing that carries a real capture into the oracle,
-// without a real capture: the manifest names known bands and existing
-// reference goldens, and every frame either has a committed design source or
-// is explicitly pending #265. They run in the ordinary `test` job.
+// These tests check the manifest that carries each capture into the oracle:
+// every frame names a known band and, when it declares a fixture, one that
+// exists; and every frame either has a committed design source (status
+// captured) or is explicitly pending. They run in the ordinary `test` job.
 
 use serde_json::Value;
 
 /// The `goldens/` root — one level up from this crate (`goldens/tooling`).
 fn goldens_root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
+}
+
+/// The repository root — two levels up from this crate. A frame's `fixture`
+/// path is repo-relative (`corpus/figma-fixtures/<name>.json`), unlike the
+/// goldens-relative `designSource`.
+fn repo_root() -> std::path::PathBuf {
+    goldens_root().join("..")
+}
+
+/// Imports a committed Figma fixture the way a real producer does — compile
+/// through `dashc`'s `compile_figma` (`Profile::Core`), load the emitted
+/// `.dsb`, re-solve through the one `TaffySolver` — then renders the committed
+/// scene with the Skia reference painter and returns the PNG. This is the
+/// reference half of the oracle: our own fresh render of the imported fixture,
+/// sized to the root's solved rect, which the design source is diffed against.
+/// The scene carries no glyph runs, so the glyph-run table passed is empty (the
+/// text render path is a disclosed follow-on; `goldens/oracle/README.md`).
+fn render_fixture(name: &str, fixture_json: &str) -> Vec<u8> {
+    let (bytes, report) = compile_figma(fixture_json, Profile::Core, &BTreeMap::new())
+        .unwrap_or_else(|e| panic!("frame {name} fixture compiles: {e:?}"));
+    // A clean fixture lowers with an empty report; a diagnostic would mean the
+    // fixture is not renderable and must not be wired as a measured frame. This
+    // guards only *lowering* diagnostics — an empty report does not certify the
+    // render is faithful. Render-time degradation the report cannot see (e.g. a
+    // TEXT leaf that solves to 0x0 because text measurement is not wired into
+    // this path) is caught by the diff against the design source, and disclosed
+    // per frame in the manifest — not by this assertion.
+    assert!(
+        report.is_empty(),
+        "frame {name} fixture lowers clean: {report}"
+    );
+    let document = root_as_document(&bytes).expect("a valid buffer");
+    let mut arena = Arena::new();
+    load_document(&document, &mut arena);
+    // `load_document` commits with the fixed solver; a full first solve needs
+    // the engine, so re-commit an empty transaction through a fresh
+    // `TaffySolver` (the pattern v09_parity.rs and the flex-lowering tests use).
+    arena.open().commit_with(&mut TaffySolver::new());
+
+    let scene = arena.committed();
+    let root = scene.rects()[0];
+    let mut painter = SkiaPainter::new(root.w as i32, root.h as i32);
+    painter.paint(
+        scene.rects(),
+        scene.paints(),
+        scene.images(),
+        scene.clips(),
+        scene.groups(),
+        &GlyphRunTable::new(),
+        None,
+    );
+    painter.png_bytes()
 }
 
 fn load_manifest() -> Value {
@@ -449,10 +589,41 @@ fn frames(manifest: &Value) -> &Vec<Value> {
         .expect("the manifest has a frames array")
 }
 
+/// A frame's optional `excludeRegions`: rectangles whose pixels the diff drops
+/// from both the differing count and the total. Absent or empty means no
+/// exclusion. Each region is `{x, y, w, h}` in the render's pixel coordinates;
+/// a missing or non-integer component is a manifest error, not a silent skip.
+fn exclude_regions(frame: &Value) -> Vec<oracle::ExcludeRegion> {
+    let name = frame["frame"].as_str().unwrap_or("<unnamed>");
+    let Some(regions) = frame.get("excludeRegions") else {
+        return Vec::new();
+    };
+    let regions = regions
+        .as_array()
+        .unwrap_or_else(|| panic!("frame {name}'s excludeRegions must be an array"));
+    regions
+        .iter()
+        .map(|region| {
+            let component = |key: &str| {
+                region[key]
+                    .as_i64()
+                    .unwrap_or_else(|| panic!("frame {name}'s excludeRegion needs integer {key}"))
+                    as i32
+            };
+            oracle::ExcludeRegion {
+                x: component("x"),
+                y: component("y"),
+                w: component("w"),
+                h: component("h"),
+            }
+        })
+        .collect()
+}
+
 #[test]
-fn every_frame_names_a_known_band_and_an_existing_reference_image() {
+fn every_frame_names_a_known_band_and_any_declared_fixture_exists() {
     let manifest = load_manifest();
-    let root = goldens_root();
+    let repo = repo_root();
     assert!(!frames(&manifest).is_empty(), "the manifest lists frames");
 
     for frame in frames(&manifest) {
@@ -466,13 +637,17 @@ fn every_frame_names_a_known_band_and_an_existing_reference_image() {
             "band_for({band}) must return the band whose rule matches the name, \
              not a mis-mapped band"
         );
-        let reference = frame["referenceImage"].as_str().expect("referenceImage");
-        let path = root.join(reference);
-        assert!(
-            path.exists(),
-            "frame {name}'s reference golden {} is not committed",
-            path.display()
-        );
+        // A frame's `fixture` is the committed Figma fixture the oracle imports
+        // and renders. A pending frame with no renderable fixture carries null;
+        // a frame that names one must ship it.
+        if let Some(fixture) = frame["fixture"].as_str() {
+            let path = repo.join(fixture);
+            assert!(
+                path.exists(),
+                "frame {name}'s fixture {} is not committed",
+                path.display()
+            );
+        }
     }
 }
 
@@ -516,20 +691,27 @@ fn every_frame_declares_a_captured_source_or_is_pending_265() {
     }
 }
 
-/// The design-source assertion itself: each reference render must fall within
-/// its band of the real Figma REST export. `#[ignore]`-gated because the real
-/// exports are authored manually and tracked by the parked issue #265 — this
-/// story delivers the tooling, not the assertion. The `render-oracle` CI job
-/// runs it with `--ignored`. With no committed design source it measures
-/// nothing and prints a pending summary naming #265; it never fabricates a
-/// source, and E7 stays open in `docs/specification/05-qualification.md`.
+/// The design-source assertion itself: for every frame that has a committed
+/// design source, our fresh render of the frame's committed Figma fixture must
+/// fall within the frame's band of Figma's REST `GET /images` export. Each
+/// measured frame imports its fixture in-process ([`render_fixture`]) and diffs
+/// the render against the export — no network, no pre-committed corpus golden.
+///
+/// This runs in the ordinary `test` job (no `#[ignore]`): it is hermetic and
+/// fast (~0.05 s/frame). Frames with no committed design source are pending —
+/// they need a renderable fixture and/or the text render path, a disclosed
+/// follow-on (`goldens/oracle/README.md`); nothing is fabricated (G-11). The
+/// accounting below asserts every frame is measured or pending, so a frame
+/// cannot be silently dropped, and E7 is `partial` in
+/// `docs/specification/05-qualification.md` until every frame is measured (the
+/// v0.9 exit gate, #49).
 #[test]
-#[ignore = "design-source Figma REST image exports are authored manually and tracked by #265 (parked)"]
 fn the_reference_renders_match_their_design_source() {
     let manifest = load_manifest();
     let root = goldens_root();
+    let repo = repo_root();
 
-    let mut measured = 0usize;
+    let mut measured_lines: Vec<String> = Vec::new();
     let mut pending: Vec<String> = Vec::new();
     let mut failures: Vec<String> = Vec::new();
 
@@ -544,30 +726,51 @@ fn the_reference_renders_match_their_design_source() {
             Some(source) => {
                 let source_bytes = std::fs::read(root.join(source))
                     .unwrap_or_else(|e| panic!("frame {name} design source {source}: {e}"));
-                let reference = frame["referenceImage"].as_str().expect("referenceImage");
-                let reference_bytes = std::fs::read(root.join(reference))
-                    .unwrap_or_else(|e| panic!("frame {name} reference {reference}: {e}"));
-                let d = oracle::diff(&reference_bytes, &source_bytes, band)
+                // The reference is our own render of the committed fixture, not a
+                // pre-committed golden — the correct oracle (G-11, G-23).
+                let fixture = frame["fixture"].as_str().unwrap_or_else(|| {
+                    panic!("frame {name} has a design source but names no fixture to render")
+                });
+                let fixture_json = std::fs::read_to_string(repo.join(fixture))
+                    .unwrap_or_else(|e| panic!("frame {name} fixture {fixture}: {e}"));
+                let reference_bytes = render_fixture(&name, &fixture_json);
+
+                // A frame may declare `excludeRegions` — rectangles carrying one
+                // genuine, disclosed structural divergence (v08-grid-spans's
+                // text-driven HUG cell that collapses because text measurement is
+                // not wired into the oracle render path). Excluded pixels count
+                // toward neither the differing count nor the total, so the frame
+                // measures the rest rather than absorbing the divergence into the
+                // band. The manifest note states the mechanism per frame.
+                let exclude = exclude_regions(frame);
+                let d = oracle::diff_excluding(&reference_bytes, &source_bytes, band, &exclude)
                     .unwrap_or_else(|e| panic!("frame {name}: {e}"));
-                measured += 1;
+                let excluded_note = if exclude.is_empty() {
+                    String::new()
+                } else {
+                    format!(" [{} region(s) excluded]", exclude.len())
+                };
+                let line = format!(
+                    "{name}: {}/{} px differ ({:.3}%, max Δ {}) vs the {} band's {:.1}% budget{excluded_note}",
+                    d.differing,
+                    d.total,
+                    d.fraction() * 100.0,
+                    d.max_channel_delta,
+                    band.rule,
+                    band.differing_fraction * 100.0,
+                );
                 if !d.passes() {
-                    failures.push(format!(
-                        "{name}: {}/{} px differ ({:.3}%, max Δ {}) over the {} band's {:.1}% budget",
-                        d.differing,
-                        d.total,
-                        d.fraction() * 100.0,
-                        d.max_channel_delta,
-                        band.rule,
-                        band.differing_fraction * 100.0,
-                    ));
+                    failures.push(line.clone());
                 }
+                measured_lines.push(line);
             }
         }
     }
 
     eprintln!(
-        "RENDER ORACLE (E7/G-11): {measured} frame(s) measured against a design source, \
-         {} pending #265{}",
+        "RENDER ORACLE (E7/G-11): {} frame(s) measured against a Figma design source, \
+         {} pending{}",
+        measured_lines.len(),
         pending.len(),
         if pending.is_empty() {
             String::new()
@@ -575,22 +778,25 @@ fn the_reference_renders_match_their_design_source() {
             format!(" ({})", pending.join(", "))
         }
     );
+    for line in &measured_lines {
+        eprintln!("  {line}");
+    }
 
     // Test-lock the report's honesty: `assert!(failures.is_empty())` alone
     // passes even when nothing was measured, so the accounting must be
-    // asserted too. Every frame is either measured against a real source or
-    // pending #265 — nothing is silently dropped — and `pending` names exactly
+    // asserted too. Every frame is either measured against a real design source
+    // or pending — nothing is silently dropped — and `pending` names exactly
     // the frames whose `designSource` is null. This is NOT
-    // `assert!(pending.is_empty())`: that is the v0.9 exit gate's job (#49) and
-    // would make this job red today. The current posture is green-with-loud-log
-    // until #265 lands; only the accounting is enforced here.
+    // `assert!(pending.is_empty())`: asserting the last pending frame away is
+    // the v0.9 exit gate's job (#49). E7 stays partial until then; here only the
+    // accounting and the measured frames' fidelity are enforced.
     let expected_pending: Vec<String> = frames(&manifest)
         .iter()
         .filter(|frame| frame["designSource"].as_str().is_none())
         .map(|frame| frame["frame"].as_str().expect("frame name").to_string())
         .collect();
     assert_eq!(
-        measured + pending.len(),
+        measured_lines.len() + pending.len(),
         frames(&manifest).len(),
         "every manifest frame must be measured or pending — none silently dropped"
     );

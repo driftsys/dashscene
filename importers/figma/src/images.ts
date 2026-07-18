@@ -41,7 +41,8 @@ const PNG_SIGNATURE = Uint8Array.from([
   0x0a,
 ]);
 
-function isPng(bytes: Uint8Array): boolean {
+/** Whether `bytes` opens with the eight-byte PNG signature. */
+export function isPng(bytes: Uint8Array): boolean {
   return bytes.length >= PNG_SIGNATURE.length &&
     PNG_SIGNATURE.every((byte, at) => bytes[at] === byte);
 }

@@ -39,6 +39,21 @@ export interface FigmaClientOptions {
  */
 export type FileMeta = Readonly<Pick<GetFileMetaResponse["file"], "version">>;
 
+/**
+ * A `GET /v1/images` server-side render response, narrowed to the two fields
+ * the design-source render oracle reads (E7/G-11).
+ *
+ * `err` is `null` on success and a message string on failure — the official
+ * `GetImagesResponse` types it as `null` only, so a broader type is declared
+ * here to let the caller check for a failure the spec does not model. `images`
+ * maps each requested node id to its presigned PNG URL, or `null` when Figma
+ * rendered nothing for that node.
+ */
+export interface RenderImagesResponse {
+  readonly err: string | null;
+  readonly images: Readonly<Record<string, string | null>>;
+}
+
 /** Scopes the PAT must carry (docs/decisions/figma-access-plan-and-pat-policy.md). */
 export const REQUIRED_SCOPES =
   "file_content:read, file_metadata:read, library_content:read";
@@ -103,6 +118,33 @@ export class FigmaClient {
     return this.#request(`/v1/files/${fileKey}/images`).then((body) => {
       const images = (body as GetImageFillsResponse | null)?.meta?.images;
       return images ?? {};
+    });
+  }
+
+  /**
+   * Figma's server-side render of one node: the `nodeId` → presigned PNG URL
+   * map that the design-source render oracle diffs the reference painter
+   * against (E7/G-11). The request is pinned to `format=png&scale=1` so the
+   * export matches the reference golden's dimensions before it is diffed.
+   *
+   * The presigned URLs point at Figma's asset host and are short-lived, which
+   * is why the oracle capture downloads the bytes and commits those, never the
+   * URL. A missing node or a non-null `err` in the returned body is left for
+   * the caller to diagnose, so it can name the frame that failed.
+   */
+  renderImage(fileKey: string, nodeId: string): Promise<RenderImagesResponse> {
+    const query = `ids=${encodeURIComponent(nodeId)}&format=png&scale=1`;
+    return this.#request(`/v1/images/${fileKey}?${query}`).then((body) => {
+      const parsed = (body ?? {}) as { err?: unknown; images?: unknown };
+      const err = parsed.err == null
+        ? null
+        : typeof parsed.err === "string"
+        ? parsed.err
+        : JSON.stringify(parsed.err);
+      const images = parsed.images && typeof parsed.images === "object"
+        ? parsed.images as Record<string, string | null>
+        : {};
+      return { err, images };
     });
   }
 

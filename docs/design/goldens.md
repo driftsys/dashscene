@@ -199,45 +199,63 @@ deliberate, reviewed change rather than a silent drift:
   over-tolerating. Governs the text frames (Arabic, Latin).
 
 These are engineering estimates from the AA/blur/MSDF edge
-characteristics, pinned so the harness is falsifiable now; the first real
-captures (#265) and the v0.9 exit gate (#49) confirm or retune them.
+characteristics, pinned so the harness is falsifiable. The two layout
+captures confirm `AA_EDGE` (`v08-wrap` 0.000 %; `v08-grid-spans` 0.000 %
+over its five structural cells, which match the export pixel-exact, with
+its one text-driven cell excluded — see below — both inside the 2 %
+budget); `BLUR_FALLOFF` and `MSDF_TEXT` are confirmed or retuned when
+their frames become renderable (the v0.9 exit gate, #49).
 
 ### The corpus-frame ↔ design-source manifest
 
-`goldens/oracle/manifest.json` wires each corpus frame to the reference
-golden it must match, the band that governs it, and its design-source
-slot: `v08-wrap`, `v08-grid-spans`, `v08-baseline` on `aa-edge`;
-`v08-drop-shadow`, `v08-inner-shadow` on `blur-falloff`;
-`v06-text-arabic`, `v05-text-latin` on `msdf-text`. Today every frame's
-`designSource` is `null` and its `status` is `pending-265`.
+`goldens/oracle/manifest.json` wires each corpus frame to the committed
+Figma **fixture** the oracle imports and renders, the band that governs
+it, and its design-source slot: `v08-wrap`, `v08-grid-spans`,
+`v08-baseline` on `aa-edge`; `v08-drop-shadow`, `v08-inner-shadow` on
+`blur-falloff`; `v06-text-arabic`, `v05-text-latin` on `msdf-text`. The
+two layout frames carry a committed `designSource` (status `captured`);
+the other five carry `null` and `pending-265`.
 `goldens/tooling/tests/render_oracle.rs`'s manifest-consistency tests run
-in the ordinary `test` job and assert every frame names a known band and
-an existing committed reference image, and that a frame with no design
-source is honestly marked `pending-265` — an assertion that stays true
-after #265 lands too, since it checks each frame's own state rather than
-"all frames are pending". `goldens/oracle/README.md` documents the
-drop-in procedure for adding a real capture.
+in the ordinary `test` job and assert every frame names a known band and,
+when it declares a fixture, one that exists, and that a frame with no
+design source is honestly marked `pending-265` — an assertion that checks
+each frame's own state rather than "all frames are pending".
+`goldens/oracle/README.md` documents the capture procedure.
 
-### The #265 gate
+### Measured now, and the pending follow-on
 
-The real design-source images — a Figma REST `GET /images` export per
-corpus frame — are authored manually and tracked by the parked
-issue #265. No design source may be fabricated, hand-drawn, or stood in
-for by the project's own render; that is the exact self-oracle failure
-G-11 forbids. Until issue #265 lands:
+The assertion `the_reference_renders_match_their_design_source`
+(`goldens/tooling/tests/render_oracle.rs`) imports each captured frame's
+committed fixture, renders it, and diffs the render against the committed
+Figma export within the frame's band. It is un-gated — hermetic (committed
+fixture + committed export + in-process compile, no network) and fast — so
+it runs in the ordinary `test` job, and its accounting asserts every frame
+is measured or pending so none is silently dropped. The `render-oracle` CI
+job (`.github/workflows/ci.yml`) re-runs the suite with `--nocapture` so
+the measured per-frame numbers show in the log, and is wired into the `ci`
+aggregate `needs`.
 
-- The assertion that a frame's render matches its export,
-  `the_reference_renders_match_their_design_source`
-  (`goldens/tooling/tests/render_oracle.rs`), is `#[ignore]`-gated with a
-  named #265 reason and does not run in the ordinary `test` job.
-- An authored CI job, `render-oracle` (`.github/workflows/ci.yml`), runs
-  the gated assertion with `--ignored` and is wired into the `ci`
-  aggregate `needs`. With no committed design source it measures nothing
-  and reports every frame pending #265 — a loud pending summary, never a
-  silent green.
-- E7 stays **open (tooling landed)**, not met, in
-  `docs/specification/05-qualification.md`; it is asserted at the v0.9
-  exit gate (#49).
+Two layout frames are measured today. `v08-grid-spans` carries one
+`excludeRegions` rectangle: its `hug me` TEXT leaf solves to 0x0 because text
+measurement is not wired into the oracle render path, so that HUG cell collapses
+to its padding box (24x16 vs Figma's 74x33). That one text-driven cell is a real
+structural divergence, so it is excluded (the region is Figma's cell bbox, the
+superset covering every differing pixel) pending the text render-path follow-on
+(#265) rather than absorbed into the band; the five structural cells
+(span/fill/minmax/fixed) match the export pixel-exact. Excluded pixels leave
+both the numerator and the denominator (`oracle::diff_excluding`).
+
+The other five frames are pending, each for a named reason
+(`goldens/oracle/manifest.json`): `v08-baseline` needs the glyph-run/typeset
+render path (its fixture is TEXT); the shadow frames need a new plugin-authored
+fixture (`effects-2025` is a diagnostic reject); the text frames need a fixture
+and the text render path. Authoring those is a
+disclosed follow-on tracked by the parked issue #265. No design source may
+be fabricated, hand-drawn, or stood in for by the project's own render;
+that is the exact self-oracle failure G-11 forbids, which is why a pending
+frame's `designSource` stays `null`. E7 is **partial**, not met, in
+`docs/specification/05-qualification.md`; it flips to met at the v0.9 exit
+gate (#49), once every frame is measured.
 
 ## Testing
 

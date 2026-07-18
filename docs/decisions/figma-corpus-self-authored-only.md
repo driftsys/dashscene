@@ -41,6 +41,14 @@ storing no JSON, is a different activity from committing a fixture and
 is not restricted by this ruling. The tier-1/tier-2 fixture split this
 produces is recorded in `corpus/figma-fixtures/README.md`.
 
+This ruling was originally scoped to the fixture JSON in
+`corpus/figma-fixtures/`. Committing Figma's _render_ of a self-authored
+fixture — the `GET /images` PNG export the render oracle diffs against, in
+`goldens/oracle/design-source/` — is equally in-scope and license-clean:
+it is the owner exporting their own design from their own account, the
+same self-authored-only basis. Only self-authored fixtures' exports are
+committed; no third-party file's render enters the repo.
+
 ## Why
 
 Not a legal opinion — an ambiguity being routed around rather than
