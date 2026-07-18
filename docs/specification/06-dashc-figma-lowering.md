@@ -243,7 +243,8 @@ un-pinning `docs/decisions/figma-flex-lowering.md` D5. Verified in
    `a_wrap_with_a_negative_item_spacing_is_refused_by_name`,
    `a_wrap_space_between_line_distribution_is_refused_by_name`,
    `a_fill_child_on_its_parents_hug_axis_is_diagnosed`,
-   `an_absolutely_positioned_child_is_diagnosed`)
+   `an_absolutely_positioned_child_is_diagnosed`,
+   `a_section_with_hidden_contents_is_diagnosed`)
 
 2. **Every finding shall survive one pass** (debt #149). A diagnostic
    collected before an unsupported construct shall appear in the same

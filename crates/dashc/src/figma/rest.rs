@@ -243,6 +243,12 @@ pub struct Node {
     /// synthetic node, which lowers as the geometric default.
     #[serde(default)]
     pub mask_type: Option<String>,
+    /// Whether a `SECTION`'s children are hidden (#309). The document has no
+    /// vocabulary for a hidden-contents section, so the walk refuses one by
+    /// name rather than silently rendering children Figma hides. Absent =
+    /// `false`.
+    #[serde(default)]
+    pub section_contents_hidden: Option<bool>,
     /// A `TEXT` node's authored characters (story #160). The runtime shapes
     /// and breaks them; the document carries the codepoints, never the
     /// rendered lines (P1). Pinned by `lowering-baseline.json` and
