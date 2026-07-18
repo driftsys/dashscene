@@ -65,13 +65,13 @@ productionization). 4 — un-gated assertion once a real capture exists
   `goldens/tooling/src/oracle.rs` (`AA_EDGE`, `BLUR_FALLOFF`, `MSDF_TEXT`),
   each asserted exactly in `goldens/tooling/tests/render_oracle.rs` so a
   retune is a deliberate, reviewed change. Their values are engineering
-  estimates from the AA/blur/MSDF edge characteristics. The two committed
-  layout captures confirm `AA_EDGE` (`v08-wrap` 0.000 %, `v08-grid-spans`
-  0.116 % over the whole frame — its `hug me` text cell now rendered by the
-  text render path #303, no region excluded — `goldens/oracle/manifest.json`,
-  `goldens/oracle/README.md`); only `BLUR_FALLOFF` and `MSDF_TEXT` remain
-  to be confirmed or retuned once their frames become renderable (#265, the
-  v0.9 exit gate #49).
+  estimates from the AA/blur/MSDF edge characteristics. All three bands are
+  now confirmed by real captures, none retuned: `AA_EDGE` (`v08-wrap`
+  0.000 %, `v08-grid-spans` 0.116 %), `BLUR_FALLOFF` (`v08-drop-shadow`
+  0.022 %, `v08-inner-shadow` 0.000 %), and `MSDF_TEXT` (`v05-text-latin`
+  0.033 %, `v06-text-arabic` 1.405 % after the #314 line-height fix) — every
+  measured frame inside its budget (`goldens/oracle/manifest.json`,
+  `goldens/oracle/README.md`).
 - **Real export only (2b).** No design source may be fabricated,
   hand-drawn, or stood in for by the project's own render. That is the
   exact self-oracle fidelity failure G-11 forbids — a renderer graded
@@ -105,9 +105,10 @@ productionization). 4 — un-gated assertion once a real capture exists
   and `pending` is exactly the null-source frames — so an un-gated green
   cannot hide an unmeasured frame. The `render-oracle` CI job now re-runs
   the suite with `--nocapture` so the measured per-frame numbers show in the
-  log. E7 is **partial**, not met: the two layout frames are measured (the
-  text render path #303 renders `v08-grid-spans`'s text cell in-band), the
-  shadow and text/baseline frames stay pending a fixture each can render
-  faithfully — a committed font for the text frames, a plugin-authored
-  fixture for the shadows — and E7 flips to met at the v0.9 exit gate (#49)
-  once every frame is measured.
+  log. E7 is **partial**, not met: six of the seven frames are measured,
+  each within its band (the layout frames on `AA_EDGE`, the plugin-authored
+  shadow fixtures #304 on `BLUR_FALLOFF`, and the Noto text fixtures #304 on
+  `MSDF_TEXT` through the #303 render path, after the #314 line-height fix the
+  Arabic frame revealed). Only `v08-baseline` stays pending — its Latin leaves
+  author `Inter`, a font the committed corpus does not provide — and E7 flips
+  to met at the v0.9 exit gate (#49) once that last frame is measured.

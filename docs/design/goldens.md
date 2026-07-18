@@ -199,13 +199,12 @@ deliberate, reviewed change rather than a silent drift:
   over-tolerating. Governs the text frames (Arabic, Latin).
 
 These are engineering estimates from the AA/blur/MSDF edge
-characteristics, pinned so the harness is falsifiable. The two layout
-captures confirm `AA_EDGE` (`v08-wrap` 0.000 %; `v08-grid-spans` 0.116 %
-over the whole frame — its five structural cells match the export
-pixel-exact and its `hug me` text cell now renders through the text render
-path, see below — both inside the 2 % budget); `BLUR_FALLOFF` and
-`MSDF_TEXT` are confirmed or retuned when their frames become renderable
-(the v0.9 exit gate, #49).
+characteristics, pinned so the harness is falsifiable. All three bands are
+now confirmed by real captures, none retuned: `AA_EDGE` (`v08-wrap`
+0.000 %, `v08-grid-spans` 0.116 %), `BLUR_FALLOFF` (`v08-drop-shadow`
+0.022 %, `v08-inner-shadow` 0.000 %), and `MSDF_TEXT` (`v05-text-latin`
+0.033 %, `v06-text-arabic` 1.405 %) — every measured frame inside its
+budget.
 
 ### The corpus-frame ↔ design-source manifest
 
@@ -213,9 +212,9 @@ path, see below — both inside the 2 % budget); `BLUR_FALLOFF` and
 Figma **fixture** the oracle imports and renders, the band that governs
 it, and its design-source slot: `v08-wrap`, `v08-grid-spans`,
 `v08-baseline` on `aa-edge`; `v08-drop-shadow`, `v08-inner-shadow` on
-`blur-falloff`; `v06-text-arabic`, `v05-text-latin` on `msdf-text`. The
-two layout frames carry a committed `designSource` (status `captured`);
-the other five carry `null` and `pending-265`.
+`blur-falloff`; `v06-text-arabic`, `v05-text-latin` on `msdf-text`. Six
+frames carry a committed `designSource` (status `captured`); only
+`v08-baseline` carries `null` and `pending-265`.
 `goldens/tooling/tests/render_oracle.rs`'s manifest-consistency tests run
 in the ordinary `test` job and assert every frame names a known band and,
 when it declares a fixture, one that exists, and that a frame with no
@@ -236,25 +235,24 @@ job (`.github/workflows/ci.yml`) re-runs the suite with `--nocapture` so
 the measured per-frame numbers show in the log, and is wired into the `ci`
 aggregate `needs`.
 
-Two layout frames are measured today. `v08-grid-spans` declares no exclusion:
-with the text render path wired (#303) its `hug me` TEXT leaf sizes to the
-shaped text instead of collapsing to 0x0, so the grid solves as Figma laid it
-out. The whole 720x480 frame diffs 0.116 %; the five structural cells
-(span/fill/minmax/fixed) match the export pixel-exact, and the residual is the
-Latin glyph-shape substitution (the fixture authors `Inter`, which the committed
-corpus does not provide, so it renders in Noto Sans) plus MSDF glyph edges, well
-within the band. The `excludeRegions` mechanism (`oracle::diff_excluding`,
+Six frames are measured today, each within its band. `v08-grid-spans` declares no
+exclusion: with the text render path wired (#303) its `hug me` TEXT leaf sizes to
+the shaped text instead of collapsing to 0x0, so the grid solves as Figma laid it
+out — the whole 720x480 frame diffs 0.116 %. The two shadow frames
+(`v08-drop-shadow` 0.022 %, `v08-inner-shadow` 0.000 %) and the two text frames
+(`v05-text-latin` 0.033 %, `v06-text-arabic` 1.405 %) render from fixtures the
+fixture-author plugin builds (#304): the shadows pin `sigma = blur/2` against
+Figma's own render, and the Noto text renders through the text path (#303).
+`v06-text-arabic` caught a real line-height bug — the typesetter took a line's
+height from the cascade's primary font — that story #314 fixed, bringing it from
+3.300 % to 1.405 %. The `excludeRegions` mechanism (`oracle::diff_excluding`,
 excluded pixels leaving both the numerator and the denominator) stays available
 for a genuine structural divergence, though no frame declares one today.
 
-The other five frames are pending, each for a named reason
-(`goldens/oracle/manifest.json`): `v08-baseline` is a font gap — its Latin
-leaves author `Inter`, absent from the committed corpus, so its HUG root renders
-621x160 against Figma's 608x160 and cannot be diffed (pending a committed Inter
-atlas or a Noto-authored re-capture); the shadow frames need a new
-plugin-authored fixture (#304; `effects-2025` is a diagnostic reject); the
-`msdf-text` frames need a fixture authored in the committed Noto fonts. Authoring
-those is a disclosed follow-on tracked by the parked issue #265. No design source may
+Only `v08-baseline` is pending: a font gap — its Latin leaves author `Inter`,
+absent from the committed corpus, so its HUG root renders 621x160 against Figma's
+608x160 and cannot be diffed (pending a committed Inter atlas or a Noto-authored
+re-capture). It is tracked by the parked issue #265. No design source may
 be fabricated, hand-drawn, or stood in for by the project's own render;
 that is the exact self-oracle failure G-11 forbids, which is why a pending
 frame's `designSource` stays `null`. E7 is **partial**, not met, in
