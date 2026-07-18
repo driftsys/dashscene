@@ -1494,6 +1494,192 @@ fn image_refs_refuses_a_file_with_no_root_frame() {
     ));
 }
 
+#[test]
+fn a_rectangle_lowers_as_a_box_leaf() {
+    // A RECTANGLE is a paint-bearing leaf: no children, its authored box and
+    // fill lower through the same paint path a FRAME uses.
+    let file = document(serde_json::json!({
+        "name": "rect",
+        "type": "RECTANGLE",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 80.0, "height": 40.0 },
+        "fills": [{ "type": "SOLID", "color": { "r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0 } }],
+        "cornerRadius": 8.0,
+    }));
+
+    let (doc, diagnostics) =
+        lower(&file, Profile::Core, &BTreeMap::new()).expect("a rectangle lowers");
+
+    assert!(
+        common::unsupported(&diagnostics).is_empty(),
+        "RECTANGLE must not be an unsupported node type: {:?}",
+        common::unsupported(&diagnostics),
+    );
+    let (_, rect) = node(&doc, "rect");
+    assert_eq!((rect.box2d.width, rect.box2d.height), (80.0, 40.0));
+    assert!(rect.paint.is_some(), "the rectangle carries its fill");
+    assert_eq!(
+        rect.paint.as_ref().unwrap().entry.corners,
+        CornerRadii {
+            top_left: 8.0,
+            top_right: 8.0,
+            bottom_right: 8.0,
+            bottom_left: 8.0,
+        },
+        "the rectangle's corner radius lowers into its paint entry",
+    );
+    assert!(
+        rect.container.is_none(),
+        "a rectangle is a leaf, not a container"
+    );
+}
+
+#[test]
+fn a_section_lowers_as_an_absolute_container_with_offset_children() {
+    // A SECTION has no layoutMode, so it is an absolute container: its child's
+    // position is the authored offset (child bbox - section bbox), and the
+    // child carries its authored size (absent sizing outside auto-layout is
+    // Fixed).
+    let file = document(serde_json::json!({
+        "name": "section",
+        "type": "SECTION",
+        "absoluteBoundingBox": { "x": 100.0, "y": 100.0, "width": 400.0, "height": 300.0 },
+        "children": [{
+            "name": "card",
+            "type": "RECTANGLE",
+            "absoluteBoundingBox": { "x": 150.0, "y": 180.0, "width": 80.0, "height": 40.0 },
+            "fills": [{ "type": "SOLID", "color": { "r": 0.0, "g": 0.0, "b": 1.0, "a": 1.0 } }],
+        }],
+    }));
+
+    let (doc, diagnostics) =
+        lower(&file, Profile::Core, &BTreeMap::new()).expect("a section lowers");
+
+    assert!(
+        common::unsupported(&diagnostics).is_empty(),
+        "SECTION must not be unsupported: {:?}",
+        common::unsupported(&diagnostics),
+    );
+    let (_, card) = node(&doc, "card");
+    // Offset from the section origin (150-100, 180-100), authored size preserved.
+    assert_eq!((card.box2d.x, card.box2d.y), (50.0, 80.0));
+    assert_eq!((card.box2d.width, card.box2d.height), (80.0, 40.0));
+}
+
+#[test]
+fn a_group_lowers_as_an_absolute_container_carrying_opacity() {
+    // GROUP is an inert container: it lowers as an absolute container, and its
+    // own opacity rides the existing node-opacity machinery (v0.8, #44).
+    let file = document(serde_json::json!({
+        "name": "group",
+        "type": "GROUP",
+        "opacity": 0.5,
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 200.0, "height": 120.0 },
+        "children": [{
+            "name": "member",
+            "type": "RECTANGLE",
+            "absoluteBoundingBox": { "x": 10.0, "y": 20.0, "width": 40.0, "height": 40.0 },
+            "fills": [{ "type": "SOLID", "color": { "r": 0.0, "g": 1.0, "b": 0.0, "a": 1.0 } }],
+        }],
+    }));
+
+    let (doc, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new()).expect("a group lowers");
+
+    assert!(
+        common::unsupported(&diagnostics).is_empty(),
+        "GROUP must not be unsupported: {:?}",
+        common::unsupported(&diagnostics),
+    );
+    let (_, group) = node(&doc, "group");
+    assert_eq!(group.opacity, 0.5, "group opacity is carried, not dropped");
+    let (_, member) = node(&doc, "member");
+    assert_eq!((member.box2d.x, member.box2d.y), (10.0, 20.0));
+}
+
+#[test]
+fn a_group_with_an_advanced_blend_mode_is_diagnosed_not_dropped() {
+    // The P4 guard: an inert container is passed through, but a GROUP carrying
+    // visual intent the schema cannot express (a non-NORMAL blend mode) is a
+    // named diagnostic, never a silent accept. The diagnostic must be the
+    // blend mode, never the node-type refusal GROUP would have gotten before
+    // it joined the allowlist.
+    let file = document(serde_json::json!({
+        "name": "blended-group",
+        "type": "GROUP",
+        "blendMode": "MULTIPLY",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0 },
+        "children": [],
+    }));
+
+    let (_doc, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
+        .expect("lowering returns the doc plus diagnostics");
+
+    // GROUP is admitted: the diagnostic is the blend mode, not a refused type.
+    assert!(
+        common::unsupported(&diagnostics).is_empty(),
+        "GROUP must be admitted, not refused as an unsupported node type: {:?}",
+        common::unsupported(&diagnostics),
+    );
+    // The blend-mode intent is named (P4), not silently dropped.
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.rule == "profile.advanced-blend-mode"),
+        "the advanced blend mode must surface a named diagnostic: {diagnostics:?}",
+    );
+}
+
+#[test]
+fn a_section_with_hidden_contents_is_diagnosed() {
+    // sectionContentsHidden hides a section's children in Figma. We do not model
+    // that, so a section carrying it is a named diagnostic (P4), not a silent
+    // render of children that should be hidden.
+    let file = document(serde_json::json!({
+        "name": "collapsed",
+        "type": "SECTION",
+        "sectionContentsHidden": true,
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 200.0, "height": 120.0 },
+        "children": [{
+            "name": "hidden-card",
+            "type": "RECTANGLE",
+            "absoluteBoundingBox": { "x": 10.0, "y": 10.0, "width": 40.0, "height": 40.0 },
+            "fills": [{ "type": "SOLID", "color": { "r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0 } }],
+        }],
+    }));
+
+    let (_doc, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
+        .expect("lowering returns the doc plus diagnostics");
+
+    assert!(
+        common::unsupported(&diagnostics)
+            .iter()
+            .any(|(_, what)| what.contains("sectionContentsHidden")),
+        "a hidden-contents section must be diagnosed: {:?}",
+        common::unsupported(&diagnostics),
+    );
+}
+
+#[test]
+fn a_vector_is_still_an_unsupported_node_type() {
+    // #309 admits exactly RECTANGLE/SECTION/GROUP. Path-geometry types stay
+    // refused by name — the boundary this story did not cross.
+    let file = document(serde_json::json!({
+        "name": "vec",
+        "type": "VECTOR",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+    }));
+
+    let (_doc, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
+        .expect("lowering returns the doc plus diagnostics");
+
+    assert!(
+        common::unsupported(&diagnostics)
+            .iter()
+            .any(|(_, what)| what == "node type VECTOR"),
+        "VECTOR must remain unsupported: {:?}",
+        common::unsupported(&diagnostics),
+    );
+}
+
 /// The `.dsb` the Deno importer must reproduce byte for byte.
 ///
 /// This is one half of story #17's acceptance criterion. The other half is

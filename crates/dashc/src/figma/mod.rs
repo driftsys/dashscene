@@ -497,19 +497,26 @@ impl Walk<'_> {
         }
 
         // `FRAME`, `INSTANCE`, `TEXT`, and `ELLIPSE` are the node kinds with a
-        // lowering (stories #140, #242, #160, #239). An `INSTANCE` lowers like a
-        // `FRAME`: Figma bakes the referenced component's content — with the
+        // lowering (stories #140, #242, #160, #239). An `INSTANCE` lowers like
+        // a `FRAME`: Figma bakes the referenced component's content — with the
         // instance's overrides applied — into the instance's own children, so
         // the baked subtree goes through the ordinary walk and an
         // out-of-vocabulary override on it is a named diagnostic like any other
-        // (P4). Any other kind reports its type and nothing else: its other
-        // properties belong to whatever story lowers that type (the remaining
-        // shape kinds when a shape construct lands), so diagnosing them here
-        // would be noise around the verdict that matters.
+        // (P4). `RECTANGLE` is a paint-bearing leaf lowered through the same
+        // container/paint path with no `layoutMode` and no children (#309).
+        // `SECTION` and `GROUP` lower as absolute containers — no `layoutMode`,
+        // so their children are positioned by authored offset through the same
+        // path (#309). Any other kind reports its type and nothing else: its
+        // other properties belong to whatever story lowers that type (the
+        // remaining shape kinds when a shape construct lands), so diagnosing
+        // them here would be noise around the verdict that matters.
         if node.kind != "FRAME"
             && node.kind != "INSTANCE"
             && node.kind != "TEXT"
             && node.kind != "ELLIPSE"
+            && node.kind != "RECTANGLE"
+            && node.kind != "SECTION"
+            && node.kind != "GROUP"
         {
             self.unsupported(path, format!("node type {}", node.kind));
             return Ok(());
@@ -565,6 +572,13 @@ impl Walk<'_> {
         // unrotated.
         if node.rotation.is_some_and(|r| r != 0.0) {
             blockers.push("node rotation".to_string());
+        }
+        // `sectionContentsHidden` hides a SECTION's children in Figma. The
+        // document has no vocabulary for a hidden-contents section, so
+        // lowering its children anyway would silently render content Figma
+        // hides (P4).
+        if node.kind == "SECTION" && node.section_contents_hidden == Some(true) {
+            blockers.push("a section with hidden contents (sectionContentsHidden)".to_string());
         }
         // An absolutely-positioned child sits outside its auto-layout
         // parent's flow; treating it as in-flow would reflow every sibling

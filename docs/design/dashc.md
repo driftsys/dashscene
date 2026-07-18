@@ -307,9 +307,19 @@ noted, because a real Figma file will hit them:
   `complexStrokeProperties.strokeType` other than `BASIC`, or a non-empty
   `strokeDashes`, has nothing to lower into, so it is refused rather than
   repainted as a plain solid stroke of the same color (debt #145).
-- **Non-`FRAME` nodes** — `TEXT` is story #160, `ELLIPSE`→circle is #239, and
-  `INSTANCE` is #242; the remaining shape nodes (`RECTANGLE`, vectors) have no
-  story yet.
+- **Non-`FRAME` nodes** — `TEXT` is story #160, `ELLIPSE`→circle is #239,
+  `INSTANCE` is #242, and `RECTANGLE` (a paint-bearing leaf beside `ELLIPSE`)
+  plus `SECTION`/`GROUP` (absolute containers, admitted through the same
+  container branch a `layoutMode`-less `FRAME` already takes) are #309
+  (`docs/decisions/figma-rectangle-and-structural-containers.md`). The
+  remaining shape nodes — `VECTOR`, `LINE`, `STAR`, `REGULAR_POLYGON`,
+  `BOOLEAN_OPERATION` — carry bezier/path geometry the `.dsb` schema does not
+  model yet, so they stay refused by name; admitting them is a distinct,
+  larger vocabulary effort.
+- **A `SECTION` with hidden contents** — `sectionContentsHidden: true` has no
+  vocabulary (the document cannot express "this container's children are
+  hidden"), so it is a named refusal (#309) rather than a silent render of
+  content Figma hides.
 
 One gap sits half outside the lowering: **variable-width stroke** is on
 `docs/specification/04-figma-vocabulary-profile.md`'s REJECT list, but `dashscene_validator::Construct` has no
