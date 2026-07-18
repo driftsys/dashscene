@@ -127,10 +127,11 @@ impl Typesetter {
         }
     }
 
-    /// The primary font — the first in the cascade. Its vertical metrics
-    /// (ascent, descent, line gap) set the line box; cross-font metric
-    /// unification is out of scope, so a single-font layout is
-    /// unchanged.
+    /// The primary font — the first in the cascade. A single-font
+    /// typesetter has only this one; a multi-font typesetter falls back
+    /// past it by coverage (story #219). Line metrics are taken per line
+    /// from the fonts that actually shaped that line ([`layout`](Self::layout)
+    /// through [`line_box`](Self::line_box)), not from the primary alone.
     pub fn font(&self) -> &Font {
         &self.fonts[0]
     }
@@ -159,12 +160,6 @@ impl Typesetter {
     /// line's glyph positions can reach up to `max_width`, past
     /// `width`. Empty text produces an empty, zero-size layout.
     pub fn layout(&mut self, text: &str, size: f32, max_width: Option<f32>) -> TextLayout {
-        // Line metrics come from the primary font (cross-font
-        // unification is out of scope, so the single-font path is
-        // unchanged).
-        let primary_scale = size / f32::from(self.fonts[0].units_per_em());
-        let ascent = f32::from(self.fonts[0].ascender()) * primary_scale;
-        let advance = self.fonts[0].line_advance() as f32 * primary_scale;
         // Per-font pixel scale: each glyph's advances and offsets are in
         // its own font's units, so a different-upem fallback is scaled by
         // its own upem, not the primary's (story #219).
@@ -173,6 +168,12 @@ impl Typesetter {
             .iter()
             .map(|f| size / f32::from(f.units_per_em()))
             .collect();
+        // Lines stack down the page: `pen_y` accumulates the line boxes
+        // above the current line, and each box is measured from the fonts
+        // that actually shaped its own glyphs ([`line_box`]), not the
+        // primary — a line shaped by a taller fallback gets a taller box
+        // (story #219, applied per line).
+        let mut pen_y = 0.0f32;
         let mut lines = Vec::new();
         // Parallel to `lines`: the owning paragraph's base direction.
         let mut rtl_lines = Vec::new();
@@ -182,11 +183,15 @@ impl Typesetter {
                 let shaped = self.shaped(paragraph, &bidi);
                 // An empty chunk has no bidi paragraph: one empty line.
                 if bidi.paragraphs.is_empty() {
+                    // A blank line has no glyphs; measure its box by the
+                    // primary font.
+                    let (ascent, advance) = self.line_box(std::iter::empty(), &scales);
                     lines.push(Line {
                         glyphs: Vec::new(),
                         width: 0.0,
-                        baseline_y: ascent + lines.len() as f32 * advance,
+                        baseline_y: pen_y + ascent,
                     });
+                    pen_y += advance;
                     rtl_lines.push(false);
                     continue;
                 }
@@ -205,7 +210,14 @@ impl Typesetter {
                         .partition_point(|g| (g.cluster as usize) < content.end);
                     for range in layout::break_lines(paragraph, &shaped, gs..ge, &scales, max_width)
                     {
-                        let baseline = ascent + lines.len() as f32 * advance;
+                        // The line's box comes from the fonts that shaped
+                        // its glyphs, not the primary (story #219).
+                        let (ascent, advance) = self.line_box(
+                            shaped.glyphs[range.clone()].iter().map(|g| g.font as usize),
+                            &scales,
+                        );
+                        let baseline = pen_y + ascent;
+                        pen_y += advance;
                         rtl_lines.push(para.level.is_rtl());
                         lines.push(layout::position_line(
                             &bidi, para, &shaped, range, &scales, baseline,
@@ -227,13 +239,58 @@ impl Typesetter {
                 }
             }
         }
-        let height = lines.len() as f32 * advance;
+        let height = pen_y;
         TextLayout {
             lines,
             width,
             height,
             size,
         }
+    }
+
+    /// The vertical metrics of one line, taken from the fonts that
+    /// actually shaped its glyphs — not the cascade's primary alone.
+    /// Story #219 established the per-font principle for glyph scale
+    /// (each glyph scaled by its own font's units-per-em); a line box
+    /// has the same shape of dependency. The box spans the tallest
+    /// ascender and the deepest descender across the line's fonts, plus
+    /// the widest line gap, so a line shaped entirely by a taller
+    /// fallback is measured by that fallback rather than by a shorter
+    /// primary.
+    ///
+    /// `fonts_on_line` yields the font index of each glyph on the line;
+    /// repeats are harmless, since the maximum and minimum ignore them.
+    /// An empty iterator is a blank line, which carries no glyphs and is
+    /// measured by the primary font. Returns the line's ascent (the
+    /// distance from the top of the box down to the baseline) and its
+    /// baseline-to-baseline advance, both in pixels.
+    fn line_box(&self, fonts_on_line: impl Iterator<Item = usize>, scales: &[f32]) -> (f32, f32) {
+        let metrics = |f: usize| {
+            let scale = scales[f];
+            (
+                f32::from(self.fonts[f].ascender()) * scale,
+                f32::from(self.fonts[f].descender()) * scale,
+                f32::from(self.fonts[f].line_gap()) * scale,
+            )
+        };
+        // Seed from the primary so a blank line (no glyphs) is measured
+        // by it; the first shaping font on the line replaces the seed.
+        let (mut ascent, mut descent, mut gap) = metrics(0);
+        let mut seen = false;
+        for f in fonts_on_line {
+            let (a, d, g) = metrics(f);
+            if seen {
+                ascent = ascent.max(a);
+                descent = descent.min(d);
+                gap = gap.max(g);
+            } else {
+                (ascent, descent, gap) = (a, d, g);
+                seen = true;
+            }
+        }
+        // The descender is negative, so subtracting it adds the depth
+        // below the baseline: advance = ascent + |descent| + line gap.
+        (ascent, ascent - descent + gap)
     }
 
     /// The cache key stays the paragraph text alone: resolved bidi

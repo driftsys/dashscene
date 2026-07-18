@@ -121,6 +121,51 @@ fn single_font_tags_every_glyph_font_zero() {
     );
 }
 
+/// A line's height comes from the fonts that actually shaped its glyphs,
+/// not from the cascade's primary font (story #219 applied per line, the
+/// same per-font principle the per-glyph scale follows). A pure-Arabic
+/// word is shaped entirely by the Arabic font whether the Arabic font is
+/// the primary or the fallback, so its laid-out height must be identical
+/// under either cascade order. Noto Sans Arabic's line box is taller than
+/// Noto Sans's (its ascender and descender reach further), so taking the
+/// height from a Latin primary would measure the Arabic text too short.
+#[test]
+fn line_height_comes_from_the_shaping_font_not_the_primary() {
+    // Four Arabic letters, no spaces: one line, every glyph shaped by the
+    // Arabic font under either cascade order.
+    let text = "سرعة";
+    let size = 32.0;
+
+    let mut latin_primary = multi(&[FONT, FONT_ARABIC]);
+    let mut arabic_primary = multi(&[FONT_ARABIC, FONT]);
+    let laid_latin_primary = latin_primary.layout(text, size, None);
+    let laid_arabic_primary = arabic_primary.layout(text, size, None);
+
+    // Premise: the cascade routed every glyph to the Arabic font in each
+    // order — the fallback (index 1) under a Latin primary, the primary
+    // (index 0) under an Arabic primary. The two layouts therefore shaped
+    // the identical Arabic glyphs, so their heights must match.
+    assert!(
+        glyphs(&mut latin_primary, text, size)
+            .iter()
+            .all(|&(f, _, _)| f == 1),
+        "every glyph must cascade to the Arabic fallback under a Latin primary"
+    );
+    assert!(
+        glyphs(&mut arabic_primary, text, size)
+            .iter()
+            .all(|&(f, _, _)| f == 0),
+        "every glyph must shape in the Arabic primary under an Arabic primary"
+    );
+
+    assert_eq!(
+        laid_latin_primary.height, laid_arabic_primary.height,
+        "a pure-Arabic line's height must come from the Arabic font that shaped it, \
+         not the cascade's primary (Latin-primary {} vs Arabic-primary {})",
+        laid_latin_primary.height, laid_arabic_primary.height,
+    );
+}
+
 /// The shaped-run cache key stays the paragraph text alone: the font list
 /// is fixed per typesetter (runtime configuration, not a per-call axis),
 /// so the cascade is a pure function of the text and one cache entry serves
