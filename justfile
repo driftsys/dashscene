@@ -218,3 +218,44 @@ reprobe key root="": wasm
         sed -E 's/\x1b\[[0-9;]*m//g' "$err_file"
     fi
     exit "$status"
+
+# Live render: import a Figma file to a .dsb, render it through the v0 Skia
+# reference painter, and write a PNG to /tmp for review — the "renders through
+# Skia" half of the full-real-file-import exit criterion (story Sf-1,
+# docs/wip/2026-07-18-render-dsb-design.md). Depends on `wasm` (the importer
+# loads dashc_wasm.wasm). Reads FIGMA_TOKEN from the macOS keychain
+# (`security add-generic-password -a "$USER" -s figma-pat -w <token>`); the
+# token is read, never printed — only its length. `root` is optional. Public
+# Figma files are live-only: the .dsb and .png land in /tmp, never committed;
+# the in-scope scratch is cleaned on exit, like reprobe's.
+#
+# Epic targets:
+#   just render MRk9I5cYY6yJa8JhljzkBn 2411:10795  # first-light
+#   just render S30AJmYfnDKGeSQmzuXEUk 1973:6580    # hero
+render key root="": wasm
+    #!/usr/bin/env bash
+    set -euo pipefail
+    token=$(security find-generic-password -a "$USER" -s figma-pat -w)
+    export FIGMA_TOKEN="$token"
+    echo "render: FIGMA_TOKEN loaded (${#token} chars)" >&2
+
+    root_flag=""
+    if [ -n "{{root}}" ]; then
+        root_flag="--root {{root}}"
+    fi
+
+    tmp_dsb="importers/figma/.render-tmp.dsb"
+    # The importer writes a sidecar next to `-o`'s output
+    # (`<out minus .dsb>.vars.json`) — cleaned alongside the .dsb, not read here.
+    tmp_vars="importers/figma/.render-tmp.vars.json"
+    trap 'rm -f "$tmp_dsb" "$tmp_vars"' EXIT
+
+    (cd importers/figma && deno task import "{{key}}" $root_flag -o .render-tmp.dsb)
+
+    cp "$tmp_dsb" /tmp/render.dsb
+    dsb_size=$(wc -c < /tmp/render.dsb | tr -d ' ')
+    echo "render: imported /tmp/render.dsb (${dsb_size} bytes)" >&2
+
+    cargo run --quiet -p goldens --bin render-dsb -- /tmp/render.dsb /tmp/render.png
+    png_size=$(wc -c < /tmp/render.png | tr -d ' ')
+    echo "RENDERED — wrote /tmp/render.png (${png_size} bytes)"

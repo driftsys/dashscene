@@ -10,24 +10,27 @@ description = "Golden-image harness: renders scenes through the reference painte
 
 [dependencies]
 skia-safe.workspace = true
-
-[dev-dependencies]
-dashlang.workspace = true
-tempfile.workspace = true
-dashcue.workspace = true
+# render_dsb (src/render.rs) loads a committed `.dsb` and renders it through the
+# full stack, so the render-pipeline crates are real dependencies now, not
+# dev-only: dashbuf parses the buffer, dashscene-core loads it, dashscene-engine
+# re-solves through the typesetter measure seam, dashscene-typeset shapes,
+# dashpaint carries the boundary-B tables, dashscene-skia paints.
+dashbuf.workspace = true
 dashpaint.workspace = true
 dashscene-core.workspace = true
 dashscene-engine.workspace = true
 dashscene-skia.workspace = true
 dashscene-typeset.workspace = true
-# The v0.7 text-lowering golden (#160) drives the whole importer chain:
-# `dashc` lowers a captured Figma fixture (under a `dashscene-validator`
-# profile) and `dashbuf` parses the emitted `.dsb` before `dashscene-core`
-# loads it.
-dashbuf.workspace = true
+
+[dev-dependencies]
+dashlang.workspace = true
+tempfile.workspace = true
+dashcue.workspace = true
+# The render_dsb unit test and the v0.7 text-lowering golden (#160) drive
+# `dashc`'s compile_figma to build a `.dsb` in-process; the `dashscene-validator`
+# profile selects the compile profile. Both are test-only.
 dashc.workspace = true
 dashscene-validator.workspace = true
-# The v0.7 ellipse golden (#239) derives the captured negative-gap fixture in
-# place (lifting the root's HUG width, retyping ellipses to frames for the
-# sensitivity guard).
+# serde_json builds the render_dsb unit test's inline Figma fixture and derives
+# the v0.7 ellipse golden's (#239) captured negative-gap fixture in place.
 serde_json.workspace = true
