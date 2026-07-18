@@ -438,7 +438,7 @@ Deno.test("frozen narrowing applies to a set nested in a kept subtree", () => {
   assertEquals((home.children ?? []).map((n) => n.id), ["1:11", "1:21"]);
 });
 
-Deno.test("an unresolved componentId is a named error", () => {
+Deno.test("a componentId absent from the components map is a named warning", () => {
   const file = componentFile();
   // An instance pointing at a component the file does not carry.
   const canvas = file.document.children[0];
@@ -449,11 +449,102 @@ Deno.test("an unresolved componentId is a named error", () => {
 
   const closure = computeClosure(file, { roots: ["1:20"] });
 
+  // Downgraded, not blocked: the baked instance renders without the master.
   assertEquals(
-    closure.diagnostics.map((d) => d.rule),
-    ["figma.closure.unresolved-component"],
+    closure.diagnostics.map((d) => [d.rule, d.severity]),
+    [["figma.closure.local-master-unplaceable", "warning"]],
   );
   assert(closure.diagnostics[0].message.includes("9:9"));
+});
+
+Deno.test("a local master in the map but absent from the tree is a named warning", () => {
+  // The components map carries the id, but the definition node is not in the
+  // document tree (e.g. trim removed it). The instance still renders from its
+  // baked children, so the missing master is a warning, not a block.
+  const file = {
+    document: {
+      id: "0:0",
+      name: "Document",
+      type: "DOCUMENT",
+      children: [
+        {
+          id: "0:1",
+          name: "Page 1",
+          type: "CANVAS",
+          children: [
+            {
+              id: "1:20",
+              name: "home",
+              type: "FRAME",
+              children: [
+                {
+                  id: "1:21",
+                  name: "chip-instance",
+                  type: "INSTANCE",
+                  componentId: "1:31",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    components: { "1:31": { key: "key-chip", remote: false } },
+  };
+
+  const closure = computeClosure(file, { roots: ["1:20"] });
+
+  assertEquals(
+    closure.diagnostics.map((d) => [d.rule, d.severity]),
+    [["figma.closure.local-master-unplaceable", "warning"]],
+  );
+  assert(closure.diagnostics[0].message.includes("1:31"));
+});
+
+Deno.test("a component set absent from the tree is a named warning", () => {
+  // The member's set id is not a node in the tree. Same rule: the baked
+  // instance renders, the set is a named warning.
+  const file = {
+    document: {
+      id: "0:0",
+      name: "Document",
+      type: "DOCUMENT",
+      children: [
+        {
+          id: "0:1",
+          name: "Page 1",
+          type: "CANVAS",
+          children: [
+            {
+              id: "1:20",
+              name: "home",
+              type: "FRAME",
+              children: [
+                {
+                  id: "1:21",
+                  name: "chip-instance",
+                  type: "INSTANCE",
+                  componentId: "1:2",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    components: {
+      "1:2": { key: "key-collapsed", remote: false, componentSetId: "1:11" },
+    },
+    componentSets: { "1:11": { key: "key-set" } },
+  };
+
+  const closure = computeClosure(file, { roots: ["1:20"] });
+
+  assertEquals(
+    closure.diagnostics.map((d) => [d.rule, d.severity]),
+    [["figma.closure.local-master-unplaceable", "warning"]],
+  );
+  assert(closure.diagnostics[0].message.includes("1:11"));
 });
 
 Deno.test("a remote component is recorded, and the closure alone does not diagnose it", () => {
@@ -477,11 +568,12 @@ Deno.test("a remote component is recorded, and the closure alone does not diagno
   ]);
 });
 
-Deno.test("a component buried in an undeclared subtree is a named error", () => {
+Deno.test("a component buried in an undeclared subtree is auto-pulled and lifted", () => {
   // The component definition is reachable only through a top-level node the
-  // manifest does not declare. Shipping it would pull undeclared nodes into
-  // the document, and skipping it would break the instance — so it is an
-  // error naming both the component and the subtree that buries it.
+  // manifest does not declare. Its baked instance renders without the master,
+  // so the closure pulls JUST the definition subtree and lifts it as a
+  // top-level node — it never keeps the burying frame (that would export
+  // undeclared content), which stays named in `excluded`.
   const file = {
     document: {
       id: "0:0",
@@ -524,12 +616,124 @@ Deno.test("a component buried in an undeclared subtree is a named error", () => 
   };
   const closure = computeClosure(file, { roots: ["1:20"] });
 
+  // Clean: no diagnostic — the buried local master is pulled, not refused.
+  assertEquals(closure.diagnostics, []);
+  // The pulled definition ships and is a top-level node of the pruned file,
+  // ahead of the declared root; the burying frame is not in the tree.
+  assert(closure.nodeIds.has("1:31"));
+  const canvases = closure.file.document.children ?? [];
+  assertEquals((canvases[0].children ?? []).map((n) => n.id), ["1:31", "1:20"]);
+  // The burying frame is excluded by name (P4), never silently exported.
+  assertEquals(closure.excluded.map((n) => n.id), ["1:30"]);
+});
+
+Deno.test("a buried component set is auto-pulled, transitively, and the drift oracle holds", async () => {
+  // The declared root instances a member of a set buried under one undeclared
+  // frame; that set nests an instance of an inner component buried under a
+  // SECOND undeclared frame. Auto-pull lifts both definitions top-level, follows
+  // the nested instance transitively, keeps neither burying frame, and the
+  // closure's refs still equal dashc's — the invariant this feature must not
+  // break.
+  const file = {
+    document: {
+      id: "0:0",
+      name: "Document",
+      type: "DOCUMENT",
+      children: [
+        {
+          id: "0:1",
+          name: "Page 1",
+          type: "CANVAS",
+          children: [
+            {
+              id: "1:30",
+              name: "set-scratch",
+              type: "FRAME",
+              children: [
+                {
+                  id: "1:11",
+                  name: "outer",
+                  type: "COMPONENT_SET",
+                  children: [
+                    {
+                      id: "1:2",
+                      name: "state=default",
+                      type: "COMPONENT",
+                      children: [
+                        {
+                          id: "1:12",
+                          name: "inner-instance",
+                          type: "INSTANCE",
+                          componentId: "1:40",
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+            {
+              id: "1:50",
+              name: "inner-scratch",
+              type: "FRAME",
+              children: [
+                {
+                  id: "1:40",
+                  name: "inner",
+                  type: "COMPONENT",
+                  fills: [{ type: "IMAGE", imageRef: "inner-image" }],
+                },
+              ],
+            },
+            {
+              id: "1:20",
+              name: "home",
+              type: "FRAME",
+              children: [
+                {
+                  id: "1:21",
+                  name: "chip-instance",
+                  type: "INSTANCE",
+                  componentId: "1:2",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    components: {
+      "1:2": { key: "key-default", remote: false, componentSetId: "1:11" },
+      "1:40": { key: "key-inner", remote: false },
+    },
+    componentSets: { "1:11": { key: "key-set" } },
+  };
+
+  const closure = computeClosure(file, { roots: ["1:20"] });
+
+  assertEquals(closure.diagnostics, []);
+  // Both definitions were walked (the nested instance's target followed
+  // transitively), and both are lifted top-level ahead of the root.
+  assert(closure.nodeIds.has("1:11"));
+  assert(closure.nodeIds.has("1:2"));
+  assert(closure.nodeIds.has("1:40"));
+  const canvases = closure.file.document.children ?? [];
+  assertEquals((canvases[0].children ?? []).map((n) => n.id), [
+    "1:11",
+    "1:40",
+    "1:20",
+  ]);
+  // Neither burying frame is kept; both are named in `excluded` (P4).
+  assertEquals(closure.excluded.map((n) => n.id).sort(), ["1:30", "1:50"]);
+
+  // The drift oracle: the closure's refs equal dashc's own scan across the
+  // auto-pulled definitions.
+  const dashc = await loadDashc();
+  assertEquals(closure.imageRefs, ["inner-image"]);
   assertEquals(
-    closure.diagnostics.map((d) => d.rule),
-    ["figma.closure.buried-component"],
+    closure.imageRefs,
+    dashc.figmaImageRefs(JSON.stringify(closure.file)),
   );
-  assert(closure.diagnostics[0].message.includes("1:31"));
-  assert(closure.diagnostics[0].message.includes("library-scratch"));
 });
 
 Deno.test("exportableRoots lists every top-level node per canvas", () => {
@@ -1155,7 +1359,7 @@ Deno.test("a nested instance's componentId cannot collide with a consumer compon
   assert(!keys.includes("consumer-thing"), keys.join(", "));
 });
 
-Deno.test("a remote key no declared library carries is a named error", () => {
+Deno.test("a remote key no declared library carries is a named warning", () => {
   const consumer = remoteConsumerFile();
   const remotes = remotesOf(consumer, ["1:20"]);
 
@@ -1170,9 +1374,10 @@ Deno.test("a remote key no declared library carries is a named error", () => {
     { fileKey: "LIBKEY", file: other },
   ]);
 
+  // Downgraded, not blocked: the baked instance renders without the master.
   assertEquals(
-    resolution.diagnostics.map((d) => d.rule),
-    ["figma.closure.cross-file-unresolved"],
+    resolution.diagnostics.map((d) => [d.rule, d.severity]),
+    [["figma.closure.remote-master-unplaceable", "warning"]],
   );
   // Names the key and the library file that was searched (P4: file + key).
   const message = resolution.diagnostics[0].message;
@@ -1183,19 +1388,19 @@ Deno.test("a remote key no declared library carries is a named error", () => {
   assertEquals(resolution.file.components?.["9:2"]?.remote, true);
 });
 
-Deno.test("a remote component with no declared library is a named error", () => {
+Deno.test("a remote component with no declared library is a named warning", () => {
   const consumer = remoteConsumerFile();
   const remotes = remotesOf(consumer, ["1:20"]);
 
   const resolution = resolveRemoteComponents(consumer, remotes, []);
 
   assertEquals(
-    resolution.diagnostics.map((d) => d.rule),
-    ["figma.closure.cross-file-unresolved"],
+    resolution.diagnostics.map((d) => [d.rule, d.severity]),
+    [["figma.closure.remote-master-unplaceable", "warning"]],
   );
   const message = resolution.diagnostics[0].message;
   assert(message.includes("key-collapsed"), message);
-  // With no library declared, the error says so.
+  // With no library declared, the warning says so.
   assert(message.includes("(none)"), message);
 });
 
