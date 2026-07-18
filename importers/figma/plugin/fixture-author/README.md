@@ -54,6 +54,10 @@ then run Plugins → Development → dashscene fixture author → _(name)_.
                                  Noto Sans Arabic Regular — banner, a harakat
                                  word, and an Arabic-Indic numeral readout (see
                                  the manual note below if the font is missing)
+    text-baseline                E7 render-oracle text frame (v08-baseline):
+                                 Noto Sans Regular mixed-size BASELINE row —
+                                 'small' 12, 'medium' 24, 'LARGE' 40 — the
+                                 baseline-alignment case text-latin/arabic omit
     drop-shadow                  E7 render-oracle shadow frame (v08-drop-shadow):
                                  one DROP_SHADOW card, sigma = blur/2 pinning
     inner-shadow                 E7 render-oracle shadow frame (v08-inner-shadow):

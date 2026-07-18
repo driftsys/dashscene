@@ -117,6 +117,13 @@
       "note": "Awaiting authoring: run the fixture-author plugin's text-arabic command in a blank Figma file named text-arabic, paste the file key here, run `just deno-capture`. Numerals are authored as Arabic-Indic codepoints (not European), so both Figma and the reference render the same glyphs. Basic Arabic (U+0621-U+064A) plus harakat and Arabic-Indic digits, all covered by corpus/atlas/arabic. The TEXT leaves lower since #160."
     },
     {
+      "name": "text-baseline",
+      "fileKey": "PASTE_THE_FIGMA_FILE_KEY_HERE",
+      "covers": "mixed-size Latin BASELINE-alignment row in Noto Sans Regular (the committed ascii atlas font) for the E7 render oracle (frame v08-baseline): 'small' (12), 'medium' (24), 'LARGE' (40) baseline-aligned in a fixed 380x120 frame",
+      "emits": true,
+      "note": "Awaiting authoring: run the fixture-author plugin's text-baseline command in a blank Figma file named text-baseline, paste the file key here, run `just deno-capture` (importers/figma/plugin/fixture-author/README.md). Authored in Noto Sans, not Inter, so the render oracle measures the reference painter against Figma's render of the SAME font in a fixed box. Once captured and wired it replaces lowering-baseline as the v08-baseline oracle frame (goldens/oracle/manifest.json still maps v08-baseline to lowering-baseline until then), whose Inter leaves rendered in Noto Sans resized its HUG root and could not be diffed. counterAxisAlignItems BASELINE lowers to CrossAxisAlign::Baseline since #264; the TEXT leaves lower since #160. Unlike the stacked text-latin/text-arabic frames, this frame exercises baseline alignment of mixed-size runs: the engine's leaf baseline is the box bottom, not the glyph baseline (debt #272), so the oracle measures that alignment fidelity against Figma. Strings are printable ASCII, covered by corpus/atlas/ascii."
+    },
+    {
       "name": "drop-shadow",
       "fileKey": "dqzSsQxPvj09i5VVG36JkG",
       "covers": "one DROP_SHADOW on a rounded card for the E7 render oracle (frame v08-drop-shadow, blur-falloff band): offset y=4, blur 6, spread 0, black alpha 0.55",

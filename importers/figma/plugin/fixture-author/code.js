@@ -934,6 +934,40 @@ async function textArabic() {
   return "text-arabic built: Noto Sans Arabic banner + harakat word + Arabic-Indic numeral readout in a fixed 520x240 frame";
 }
 
+// ----------------------------------------- text-baseline (E7 render oracle)
+// A mixed-size Latin row aligned on the BASELINE — the E7 render oracle frame
+// v08-baseline, authored in Noto Sans Regular (the committed ascii atlas font)
+// so the oracle measures the reference painter against Figma's render of the
+// SAME font, not a substitution. It is authored to replace the earlier
+// lowering-baseline fixture as the v08-baseline oracle frame once captured and
+// wired (a later step; goldens/oracle/manifest.json still maps v08-baseline to
+// lowering-baseline until then): lowering-baseline authors its Latin leaves in
+// Inter (uncommitted), so rendered in Noto Sans its HUG root measured 621x160
+// against Figma's 608x160 and could not be diffed. A HORIZONTAL row with
+// counterAxisAlignItems BASELINE (lowers to CrossAxisAlign::Baseline since #264)
+// and three Regular runs at 12/24/40 — no committed bold atlas, so Regular only.
+// Unlike the stacked v05-text-latin/v06-text-arabic frames, this frame exercises
+// baseline alignment of mixed-size runs: the engine aligns a leaf on the box
+// bottom, not the glyph baseline (debt #272), so the oracle measures that
+// alignment fidelity against Figma. FIXED frame box so our render and Figma's
+// GET /images export are the same size regardless of glyph metrics.
+async function textBaseline() {
+  await figma.loadFontAsync(NOTO);
+  const root = baseFrame("text-baseline", 380, 120);
+  root.layoutMode = "HORIZONTAL";
+  root.primaryAxisSizingMode = "FIXED"; // fixed width ...
+  root.counterAxisSizingMode = "FIXED"; // ... and height: an identical box
+  root.resize(380, 120); // re-fix after the sizing modes (see textLatin)
+  root.counterAxisAlignItems = "BASELINE"; // the construct under test
+  root.itemSpacing = 16;
+  root.paddingLeft = root.paddingRight = 24;
+  root.paddingTop = root.paddingBottom = 24;
+  root.appendChild(label("small", NOTO, 12));
+  root.appendChild(label("medium", NOTO, 24));
+  root.appendChild(label("LARGE", NOTO, 40));
+  return "text-baseline built: Noto Sans mixed-size BASELINE row (small 12, medium 24, LARGE 40) in a fixed 380x120 frame";
+}
+
 // ------------------------------------ drop-shadow / inner-shadow (E7 oracle)
 // Two single-construct shadow scenes (§8: a failure must bisect to one
 // construct), one per E7 oracle frame (v08-drop-shadow / v08-inner-shadow,
@@ -1015,6 +1049,7 @@ const COMMANDS = {
   "trim-demo": trimDemo,
   "text-latin": textLatin,
   "text-arabic": textArabic,
+  "text-baseline": textBaseline,
   "drop-shadow": dropShadow,
   "inner-shadow": innerShadow,
 };
