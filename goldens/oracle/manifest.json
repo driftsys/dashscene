@@ -1,67 +1,81 @@
 {
-  "description": "The design-source render oracle wiring (exit criterion E7, guardrail G-11). Each frame maps a committed reference-painter golden to the design source it must render within tolerance of — Figma's REST GET /images export — and the per-rule tolerance band that governs the diff. The harness and the bands live in goldens/tooling/src/oracle.rs; the diff runs in goldens/tooling/tests/render_oracle.rs (the_reference_renders_match_their_design_source, #[ignore]-gated on #265).",
+  "description": "The design-source render oracle wiring (exit criterion E7, guardrail G-11). Per frame the oracle imports the committed Figma fixture (corpus/figma-fixtures/<name>.json), compiles it through dashc's compile_figma (Profile::Core), loads and re-solves it with the TaffySolver, renders the committed scene with the Skia reference painter, and diffs that fresh render against the committed Figma design-source PNG (Figma's REST GET /images export) within the frame's per-rule tolerance band. The reference is OUR render of the imported fixture, not a pre-committed corpus golden — so the diff measures the reference painter against Figma's own render of the same scene at the same size. The harness and the bands live in goldens/tooling/src/oracle.rs; the diff runs in goldens/tooling/tests/render_oracle.rs (the_reference_renders_match_their_design_source), un-gated because it is hermetic (committed fixture + committed design source + in-process compile_figma, no network) and fast. A frame is captured by setting its figmaFileKey and figmaNodeId and running `deno task oracle-capture` (importers/figma); that step downloads Figma's GET /images render into design-source/<frame>.png and flips the frame's designSource and status to captured.",
   "gate": {
     "issue": 265,
-    "reason": "The real design-source images (Figma REST GET /images exports for the corpus frames) are authored manually and tracked by the parked manual-Figma-authoring issue #265. No design source may be fabricated or stood in for by the project's own render — that is the self-oracle fidelity failure G-11 forbids. Until #265 lands, every frame's designSource is null and its status is pending-265; the render-oracle CI job reports each pending frame, never a silent green, and E7 stays open (docs/specification/05-qualification.md)."
+    "reason": "Two layout frames (v08-wrap, v08-grid-spans) are measured now: their committed fixtures render through the reference painter and diff within the aa-edge band against a captured Figma GET /images design source. The other five frames stay pending because each needs work that is not this story: v08-baseline's fixture (lowering-baseline.json) carries TEXT, so it needs the glyph-run/typeset render path the oracle render helper does not yet drive; v08-drop-shadow and v08-inner-shadow have no renderable fixture (effects-2025 is a diagnostic REJECT fixture that emits no document) and need a new plugin-authored shadow fixture; v05-text-latin and v06-text-arabic have no committed fixture yet and also need the text render path. Authoring those fixtures and wiring the text render path is tracked by the parked issue #265; the v0.9 exit gate (#49) is where E7 flips from partial to met. No design source is fabricated or stood in for by the project's own render — that is the self-oracle failure G-11 forbids — so a pending frame's figmaFileKey, figmaNodeId, and designSource stay null and its status stays pending-265."
   },
-  "reference_base": "images",
   "design_source_base": "oracle/design-source",
   "frames": [
     {
       "frame": "v08-wrap",
-      "referenceImage": "images/v08-wrap.png",
+      "fixture": "corpus/figma-fixtures/lowering-wrap.json",
       "band": "aa-edge",
-      "designSource": null,
-      "status": "pending-265",
-      "note": "E3 exact-layout case (wrap; story #46). Hard rect edges — the aa-edge band."
+      "figmaFileKey": "bInPIUfkcxNKAzBOxOOpDZ",
+      "figmaNodeId": "1:10",
+      "designSource": "oracle/design-source/v08-wrap.png",
+      "status": "captured",
+      "note": "Layout frame (E3 wrap; story #46). The committed fixture imports and renders to 420x184 and diffs within the aa-edge band against Figma's GET /images render of node 1:10. Hard rect edges — the aa-edge band."
     },
     {
       "frame": "v08-grid-spans",
-      "referenceImage": "images/v08-grid-spans.png",
+      "fixture": "corpus/figma-fixtures/grid-basic.json",
       "band": "aa-edge",
-      "designSource": null,
-      "status": "pending-265",
-      "note": "E3 exact-layout case (grid spans; story #46). Hard rect edges — the aa-edge band."
+      "figmaFileKey": "BJ1sPobsTmNLQLWqtgjwJU",
+      "figmaNodeId": "1:11",
+      "designSource": "oracle/design-source/v08-grid-spans.png",
+      "excludeRegions": [{ "x": 452, "y": 124, "w": 74, "h": 33 }],
+      "status": "captured",
+      "note": "Layout frame (E3 grid spans; story #46). The committed fixture imports and renders to 720x480 and diffs within the aa-edge band against Figma's GET /images render of node 1:11. The five structural cells (span/fill/minmax/fixed placement and positions) match the export pixel-exact — 0 differing pixels. The sixth cell diverges: its 'hug me' TEXT leaf solves to 0x0 because text measurement is not wired into the oracle render path, so the HUG cell hug-content collapses to its padding box (our 24x16 at x=452,y=124 vs Figma's 74x33). That single text-driven cell is excluded (excludeRegions is Figma's cell bbox, the superset covering every differing pixel) pending the text render-path follow-on (#265); with it excluded the frame measures 0 differing over the five structural cells. Hard rect edges — the aa-edge band."
     },
     {
       "frame": "v08-baseline",
-      "referenceImage": "images/v08-baseline.png",
+      "fixture": "corpus/figma-fixtures/lowering-baseline.json",
       "band": "aa-edge",
+      "figmaFileKey": null,
+      "figmaNodeId": null,
       "designSource": null,
       "status": "pending-265",
-      "note": "E3 exact-layout case (baseline; story #46). Hard rect edges — the aa-edge band."
+      "note": "PENDING follow-on. The fixture corpus/figma-fixtures/lowering-baseline.json exists, but its leaves are TEXT — rendering it faithfully needs the glyph-run/typeset render path the oracle render helper does not yet drive. figmaFileKey/figmaNodeId/designSource stay null until that path lands. E3 baseline case (story #46) — the aa-edge band."
     },
     {
       "frame": "v08-drop-shadow",
-      "referenceImage": "images/v08-drop-shadow.png",
+      "fixture": null,
       "band": "blur-falloff",
+      "figmaFileKey": null,
+      "figmaNodeId": null,
       "designSource": null,
       "status": "pending-265",
-      "note": "Soft drop shadow (blur 6; story #45). The blur-falloff band pins the sigma = blur/2 mapping against the real capture (docs/decisions/effects-vocabulary-shadows.md); until #265 lands, sigma = blur/2 stays a self-oracle constant, not retired."
+      "note": "PENDING follow-on. No renderable fixture: effects-2025.json is a DIAGNOSTIC REJECT fixture (its effects are on the REJECT list, so it emits no document). Pinning the sigma = blur/2 mapping (docs/decisions/effects-vocabulary-shadows.md) against a real capture needs a new plugin-authored shadow fixture. Soft drop shadow (story #45) — the blur-falloff band."
     },
     {
       "frame": "v08-inner-shadow",
-      "referenceImage": "images/v08-inner-shadow.png",
+      "fixture": null,
       "band": "blur-falloff",
+      "figmaFileKey": null,
+      "figmaNodeId": null,
       "designSource": null,
       "status": "pending-265",
-      "note": "Soft inner shadow (blur 6; story #45). The blur-falloff band, same sigma = blur/2 pinning as the drop shadow."
+      "note": "PENDING follow-on. Same blocker as v08-drop-shadow: no renderable fixture (effects-2025 is a diagnostic reject), needs a new plugin-authored shadow fixture. Soft inner shadow (story #45) — the blur-falloff band, same sigma = blur/2 pinning as the drop shadow."
     },
     {
       "frame": "v06-text-arabic",
-      "referenceImage": "images/v06-text-arabic.png",
+      "fixture": null,
       "band": "msdf-text",
+      "figmaFileKey": null,
+      "figmaNodeId": null,
       "designSource": null,
       "status": "pending-265",
-      "note": "Arabic RTL text rendered as MSDF atlas quads (E2). Glyph edges — the msdf-text band."
+      "note": "PENDING follow-on. No committed fixture yet, and rendering Arabic MSDF text needs the glyph-run/typeset render path the oracle render helper does not yet drive. Arabic RTL text as MSDF atlas quads (E2) — the msdf-text band."
     },
     {
       "frame": "v05-text-latin",
-      "referenceImage": "images/v05-text-latin.png",
+      "fixture": null,
       "band": "msdf-text",
+      "figmaFileKey": null,
+      "figmaNodeId": null,
       "designSource": null,
       "status": "pending-265",
-      "note": "Latin text rendered as MSDF atlas quads. Glyph edges — the msdf-text band."
+      "note": "PENDING follow-on. No committed fixture yet, and rendering Latin MSDF text needs the glyph-run/typeset render path the oracle render helper does not yet drive. Latin text as MSDF atlas quads — the msdf-text band."
     }
   ]
 }

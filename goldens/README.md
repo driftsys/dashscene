@@ -14,10 +14,14 @@ raster) and compared pixel-for-pixel against checked-in PNGs.
       tooling/    the `goldens` crate: diff tooling (src/lib.rs) and
                   the golden tests (tests/)
       oracle/     the design-source render oracle (exit criterion E7,
-                  guardrail G-11): a perceptual diff of the reference
-                  render against its Figma design source, not against
-                  this crate's own previous output — see
-                  goldens/oracle/README.md; gated on issue #265
+                  guardrail G-11): a perceptual diff of a fresh
+                  import-and-render of the committed Figma fixture
+                  against its Figma design source, not against this
+                  crate's own previous output — see
+                  goldens/oracle/README.md. The assertion runs un-gated
+                  in the ordinary test job for captured frames; issue
+                  #265 tracks capturing the remaining frames, not the
+                  mechanism
 
 ## Running
 

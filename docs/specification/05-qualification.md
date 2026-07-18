@@ -16,15 +16,15 @@ missing proof must be visible.
 
 ## v0 exit criteria
 
-| Criterion                         | Verifies | Status                                                                                                                 |
-| --------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------- |
-| E1 same screen authored both ways | G1       | **met** — layout + solid-fill rect/render parity (story #48); text-inclusive parity is a disclosed v1 follow-on (#299) |
-| E2 Arabic golden-stable           | R1       | **met**                                                                                                                |
-| E3 stress corpus green            | R2       | **met**                                                                                                                |
-| E4 dirty Figma file → report      | R6       | **met**                                                                                                                |
-| E5 variant switch via FLIP        | R4       | **met**                                                                                                                |
-| E6 byte-identical `.dsb`          | R7       | **met**                                                                                                                |
-| E7 design-source render oracle    | R6       | open — tooling landed (v0.8, story #284); assertion pending (#49 v0.9 gate, #265 captures)                             |
+| Criterion                         | Verifies | Status                                                                                                                                                                                                                                                                                                                             |
+| --------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| E1 same screen authored both ways | G1       | **met** — layout + solid-fill rect/render parity (story #48); text-inclusive parity is a disclosed v1 follow-on (#299)                                                                                                                                                                                                             |
+| E2 Arabic golden-stable           | R1       | **met**                                                                                                                                                                                                                                                                                                                            |
+| E3 stress corpus green            | R2       | **met**                                                                                                                                                                                                                                                                                                                            |
+| E4 dirty Figma file → report      | R6       | **met**                                                                                                                                                                                                                                                                                                                            |
+| E5 variant switch via FLIP        | R4       | **met**                                                                                                                                                                                                                                                                                                                            |
+| E6 byte-identical `.dsb`          | R7       | **met**                                                                                                                                                                                                                                                                                                                            |
+| E7 design-source render oracle    | R6       | **partial** — the oracle measures the two layout frames (v08-wrap 0.00 %; v08-grid-spans 0.00 % over its five structural cells, its one text-driven cell excluded pending the text render path, inside the aa-edge 2 % band) against real Figma renders; the shadow and text/baseline frames are a disclosed follow-on (#265, #49) |
 
 The file carries no version in its name. "v0 exit criteria" is a heading
 inside it; v1's criteria are a second heading below, not a second file.
@@ -348,22 +348,50 @@ E6 was scheduled for v0.7 in the original plan; the fixture guard landed early,
 as v0.3 debt (issue #64), and story #40 completed the end-to-end importer proof
 on schedule.
 
-### E7 — open (tooling landed)
+### E7 — partial
 
 R6 requires fidelity to be a measured number, not an asserted one. E7 adds a
-design-source render oracle to CI: a perceptual diff of the Skia reference
-painter's output against Figma's REST image export for every corpus frame, with
-per-rule tolerances. It is the falsifiable form of R6 that guardrail G-11 names
+design-source render oracle: a perceptual diff of the Skia reference painter's
+output against Figma's REST image export for each corpus frame, with per-rule
+tolerances. It is the falsifiable form of R6 that guardrail G-11 names
 ([`../technotes/engineering-guardrails.md`](../technotes/engineering-guardrails.md)).
 
 E4 already gives R6 its diagnostic half — a dirty file produces a report and no
 document; E7 gives R6 its fidelity half — a clean file renders within tolerance
 of its design source. The two together make R6 checkable end to end.
 
-Story #284 (v0.8, epic #42) delivers the **tooling** — the harness, the
-per-rule bands, the corpus-frame wiring, and an authored CI job — but not the
-**assertion**, which stays gated on a real design source. E7 is therefore
-still open, not met:
+Story #284 (v0.8, epic #42) landed the **tooling** — the harness, the per-rule
+bands, the corpus-frame wiring, and an authored CI job. This story wires the
+**assertion** for the two layout frames against a real Figma design source, so
+E7 is now **partial**: the layout half is measured, the shadow and text/baseline
+frames are a disclosed follow-on.
+
+The reference is not a pre-committed corpus golden. Per measured frame the oracle
+imports the frame's committed Figma fixture
+(`corpus/figma-fixtures/<name>.json`), compiles it in-process through
+`dashc::compile_figma` (`Profile::Core`), re-solves it with the one `TaffySolver`,
+and renders the committed scene with the Skia reference painter — sized to the
+root's solved rect. That fresh render is diffed against the committed Figma
+export of the same node at the same size, so the diff measures the reference
+painter against Figma's own render of the same scene, not against the project's
+own golden (guardrail G-23).
+
+Two layout frames are measured, both inside the `aa-edge` 2 % band:
+
+- `v08-wrap` (fixture `lowering-wrap.json`, Figma node `1:10`, 420x184) —
+  0.000 % of pixels differ.
+- `v08-grid-spans` (fixture `grid-basic.json`, Figma node `1:11`, 720x480) —
+  0.000 % of pixels differ over its five structural cells, which match the
+  export pixel-exact (span/fill/minmax/fixed placement and positions). Its sixth
+  cell diverges structurally and is excluded: the `hug me` TEXT leaf solves to
+  0x0 because text measurement is not wired into the oracle render path, so the
+  HUG cell collapses to its padding box (24x16 vs Figma's 74x33). That one
+  text-driven cell is excluded (the frame's `excludeRegions` is Figma's cell
+  bbox, the superset covering every differing pixel) pending the text
+  render-path follow-on (#265); it is a real structural divergence the area
+  budget must not absorb, not missing glyph ink.
+
+The parts that make this checkable:
 
 - The perceptual-diff harness, `goldens::oracle`
   (`goldens/tooling/src/oracle.rs`): `diff(reference_png, design_source_png,
@@ -371,9 +399,9 @@ still open, not met:
   RGBA8888, `docs/decisions/golden-comparison-space.md`) and returns an
   `OracleDiff` — the differing-pixel count, the total, and the largest
   per-channel delta seen — so a result is a measured number, never a bare
-  pass/fail. `OracleDiff::passes(band)` checks the differing fraction against
-  the band; a dimension mismatch is an `Err` naming both sizes, never a
-  silent pass.
+  pass/fail. `OracleDiff::passes()` checks the differing fraction against the
+  band the diff was computed with; a dimension mismatch is an `Err` naming both
+  sizes, never a silent pass.
 - Three pinned per-rule tolerance bands, not one global budget (G-11
   requires per-rule): `AA_EDGE` (`channel_delta = 40`, `differing_fraction =
   0.02`) for hard rect edges, where a thin anti-aliased edge band can swing
@@ -383,32 +411,40 @@ still open, not met:
   `docs/decisions/effects-vocabulary-shadows.md` — where many pixels
   disagree by a little across a wide region; `MSDF_TEXT` (`channel_delta =
   50`, `differing_fraction = 0.03`) for MSDF glyph edges, sparse but
-  high-contrast. Full rationale: the module's rustdoc and
-  `docs/design/goldens.md`.
+  high-contrast. The two layout captures confirm `aa-edge`; the other two bands
+  are confirmed or retuned when their frames become renderable. Full rationale:
+  the module's rustdoc and `docs/design/goldens.md`.
 - The corpus-frame ↔ design-source manifest, `goldens/oracle/manifest.json`:
   seven frames (`v08-wrap`, `v08-grid-spans`, `v08-baseline` on `aa-edge`;
   `v08-drop-shadow`, `v08-inner-shadow` on `blur-falloff`; `v06-text-arabic`,
-  `v05-text-latin` on `msdf-text`), each naming its committed reference
-  golden and its band. Every frame's `designSource` is `null` and its
-  `status` is `pending-265` — no design source is fabricated or stood in for
-  by the project's own render (that is the exact self-oracle failure G-11
-  forbids).
-- Tests (`goldens/tooling/tests/render_oracle.rs`): synthetic-pair tests
-  prove the harness and the bands against controlled image pairs, and run in
-  the ordinary `test` job; manifest-consistency tests assert every frame
-  names a known band and an existing reference image, and that a frame
-  without a design source is honestly marked `pending-265`. The assertion
-  itself, `the_reference_renders_match_their_design_source`, is
-  `#[ignore]`-gated with a named #265 reason and does not run in `test`.
-- CI (`.github/workflows/ci.yml`): an authored `render-oracle` job runs the
-  gated assertion with `--ignored` and is wired into the `ci` aggregate
-  `needs`. With no committed design source it measures nothing and reports
-  every frame pending #265 — a loud pending summary, never a silent green.
+  `v05-text-latin` on `msdf-text`), each naming its committed fixture (when it
+  has one) and its band. The two layout frames carry a committed `designSource`
+  and status `captured`; the other five carry `null` and `pending-265` — no
+  design source is fabricated or stood in for by the project's own render (that
+  is the exact self-oracle failure G-11 forbids).
+- Tests (`goldens/tooling/tests/render_oracle.rs`): synthetic-pair tests prove
+  the harness and the bands against controlled image pairs; manifest-consistency
+  tests assert every frame names a known band and, when it declares a fixture,
+  one that exists, and that a frame without a design source is honestly marked
+  `pending-265`. The assertion itself,
+  `the_reference_renders_match_their_design_source`, imports each captured
+  frame's fixture, renders it, and diffs the render against the committed export;
+  it is un-gated (no `#[ignore]`) — hermetic and fast — so it runs in the
+  ordinary `test` job, and its accounting asserts every frame is measured or
+  pending so none is silently dropped.
+- CI (`.github/workflows/ci.yml`): the `render-oracle` job re-runs the suite with
+  `--nocapture` (so the measured per-frame numbers and the pending frames show in
+  the log) and is wired into the `ci` aggregate `needs`.
 
-The real design-source images (Figma REST `GET /images` exports per corpus
-frame) are authored manually and tracked by the parked issue #265. E7 is
-asserted — and can only then flip to met — at the v0.9 exit gate (#49),
-once issue #265's captures land and the gated assertion runs for real.
+The remaining five frames are a disclosed follow-on, not a v0 gap:
+`v08-baseline`'s fixture exists but carries TEXT, so it needs the
+glyph-run/typeset render path the render helper does not yet drive;
+`v08-drop-shadow` and `v08-inner-shadow` have no renderable fixture
+(`effects-2025` is a diagnostic REJECT fixture) and need a new plugin-authored
+shadow fixture; `v05-text-latin` and `v06-text-arabic` have no committed fixture
+yet and also need the text render path. Authoring those fixtures and wiring the
+text render path is tracked by the parked issue #265; the v0.9 exit gate (#49) is
+where E7 flips from partial to met, once every frame is measured.
 
 ## v1 exit criteria
 

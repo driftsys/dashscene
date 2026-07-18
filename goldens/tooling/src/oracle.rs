@@ -41,6 +41,36 @@ pub struct ToleranceBand {
     pub differing_fraction: f64,
 }
 
+/// An axis-aligned rectangle of pixels excluded from a frame's diff, in the
+/// render's pixel coordinates (origin top-left, `x` right, `y` down). A pixel
+/// at `(px, py)` is inside when `x <= px < x + w` and `y <= py < y + h`
+/// (half-open). Excluded pixels count toward neither `differing` nor `total`
+/// — they are removed from both the numerator and the denominator — so the
+/// measured fraction reflects only the pixels outside every excluded region.
+///
+/// This exists for a frame that carries one genuine, disclosed structural
+/// divergence the area budget must not silently absorb: `v08-grid-spans`'s
+/// `hug me` TEXT leaf solves to 0x0 because text measurement is not wired into
+/// the oracle render path, collapsing its HUG cell. Excluding that one cell
+/// keeps the frame a clean grid-structure measurement (the five non-text cells
+/// match the export pixel-exact) rather than hiding the cell inside the band
+/// (`goldens/oracle/manifest.json`, `goldens/oracle/README.md`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ExcludeRegion {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+}
+
+impl ExcludeRegion {
+    /// Whether the pixel at `(px, py)` lies inside this region (half-open on
+    /// the right and bottom edges).
+    fn contains(&self, px: i32, py: i32) -> bool {
+        px >= self.x && px < self.x + self.w && py >= self.y && py < self.y + self.h
+    }
+}
+
 /// The measured outcome of one design-source diff. Carries the numbers a
 /// failure report needs — fidelity is a measured value, not a bare
 /// pass/fail (G-11) — and the band it was measured against, so the verdict
@@ -86,10 +116,32 @@ impl OracleDiff {
 /// per-channel absolute delta exceeds `band.channel_delta` and reports the
 /// measured difference. A dimension mismatch is an `Err` naming both sizes,
 /// never a silent pass.
+///
+/// This is [`diff_excluding`] with no excluded regions — every pixel counts.
 pub fn diff(
     reference_png: &[u8],
     design_source_png: &[u8],
     band: &'static ToleranceBand,
+) -> Result<OracleDiff, String> {
+    diff_excluding(reference_png, design_source_png, band, &[])
+}
+
+/// Like [`diff`], but pixels inside any [`ExcludeRegion`] are removed from
+/// both the differing count and the total (numerator and denominator), and
+/// from `max_channel_delta` — so the measured fidelity reflects only the
+/// pixels outside every excluded region. An empty `exclude` slice is exactly
+/// [`diff`].
+///
+/// A frame declares its regions in `goldens/oracle/manifest.json` for one
+/// genuine, disclosed structural divergence (a text-driven HUG cell that
+/// collapses because text measurement is not wired into the oracle render
+/// path); excluding it keeps the frame a clean measurement of the rest rather
+/// than absorbing the divergence into the area budget.
+pub fn diff_excluding(
+    reference_png: &[u8],
+    design_source_png: &[u8],
+    band: &'static ToleranceBand,
+    exclude: &[ExcludeRegion],
 ) -> Result<OracleDiff, String> {
     let (reference_size, reference) = decode_rgba(reference_png, "the reference render")?;
     let (source_size, source) = decode_rgba(design_source_png, "the design source")?;
@@ -103,9 +155,23 @@ pub fn diff(
         ));
     }
 
+    let width = reference_size.0;
     let mut differing = 0usize;
+    let mut total = 0usize;
     let mut max_channel_delta = 0u8;
-    for (a, b) in reference.chunks_exact(4).zip(source.chunks_exact(4)) {
+    for (i, (a, b)) in reference
+        .chunks_exact(4)
+        .zip(source.chunks_exact(4))
+        .enumerate()
+    {
+        let x = i as i32 % width;
+        let y = i as i32 / width;
+        // An excluded pixel counts toward neither numerator nor denominator,
+        // and does not move max_channel_delta — it is as if it were not there.
+        if exclude.iter().any(|region| region.contains(x, y)) {
+            continue;
+        }
+        total += 1;
         // The alpha channel is compared like any other: a design source and
         // a render disagreeing on coverage is a real difference.
         let pixel_delta = a
@@ -122,7 +188,7 @@ pub fn diff(
 
     Ok(OracleDiff {
         differing,
-        total: reference.len() / 4,
+        total,
         max_channel_delta,
         band,
     })

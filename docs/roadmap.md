@@ -476,12 +476,16 @@ The `E7` design-source render-oracle **tooling** landed (story #284): the
 perceptual-diff harness, three pinned per-rule tolerance bands, the corpus-frame
 manifest, and the CI job
 ([`decisions/render-oracle-tolerance-and-gating.md`](decisions/render-oracle-tolerance-and-gating.md)).
-`E7` stays **open, not met** — its assertion needs real Figma design-source
-captures, authored manually and tracked by the parked issue #265; the harness
-measures zero frames against a design source until they land. `E7` is asserted
-at the v0.9 exit gate (#49, now scoped `E1`–`E7`). The self-oracle debt it
-retires is likewise pending #265 — the `sigma = blur/2` shadow constant is
-recorded as unmeasured, not retired.
+`E7` was **open (tooling landed)** at this v0.8 close: the harness then measured
+zero frames against a design source, its assertion still needing real Figma
+design-source captures (issue #265). It has since moved to **partial** — the E7
+productionization measures the two layout frames against real Figma captures;
+current `E7` status lives in
+[`specification/05-qualification.md`](specification/05-qualification.md), the
+authority on criterion status, and full `E7` is asserted at the v0.9 exit gate
+(#49, now scoped `E1`–`E7`). The self-oracle debt it retires is likewise
+pending #265 — the `sigma = blur/2` shadow constant is recorded as unmeasured,
+not retired.
 
 The slice merged under the CI-billing exception (GitHub Actions billing-blocked
 since 2026-07-17): each PR merged on the coordinator's full local suite —
