@@ -135,3 +135,86 @@ deno-fmt:
 # FIGMA_TOKEN (docs/decisions/figma-access-plan-and-pat-policy.md). Never commit the token.
 deno-capture: wasm
     cd importers/figma && deno task capture
+
+# Empirical import probe: rebuilds wasm, then runs the Deno importer against a
+# live Figma file and prints the sorted, unique diagnostics — blockers on a
+# refused import, or whatever warnings (e.g. skipped-node `figma.unsupported`
+# under partial-emit) rode along on a successful one — the harness the
+# full-real-file-import epic re-runs every wave to re-derive the frontier
+# (docs/wip/2026-07-18-epic-full-real-file-import.md). Reads FIGMA_TOKEN from
+# the macOS keychain (`security add-generic-password -a "$USER" -s figma-pat
+# -w <token>`); the token is read, never printed — only its length. `root` is
+# optional: with none, the importer lists the file's declarable roots instead
+# of guessing one. The compiled `.dsb` lands at /tmp/reprobe.dsb, outside git
+# — public Figma files are live-only content, never committed.
+#
+# Epic targets:
+#   just reprobe MRk9I5cYY6yJa8JhljzkBn 2411:10795  # first-light
+#   just reprobe S30AJmYfnDKGeSQmzuXEUk              # hero: root TBD — run
+#                                                     # rootless first to list
+#                                                     # declarable roots, then
+#                                                     # rerun with the chosen
+#                                                     # --root
+reprobe key root="": wasm
+    #!/usr/bin/env bash
+    set -euo pipefail
+    token=$(security find-generic-password -a "$USER" -s figma-pat -w)
+    export FIGMA_TOKEN="$token"
+    echo "reprobe: FIGMA_TOKEN loaded (${#token} chars)" >&2
+
+    root_flag=""
+    if [ -n "{{root}}" ]; then
+        root_flag="--root {{root}}"
+    fi
+
+    tmp_dsb="importers/figma/.reprobe-tmp.dsb"
+    # The importer writes this sidecar itself, next to `-o`'s output
+    # (`sidecarPath` in import.ts: `<out minus .dsb>.vars.json`) — not written
+    # or read by this recipe, only cleaned up alongside the .dsb.
+    tmp_vars="importers/figma/.reprobe-tmp.vars.json"
+    err_file="$(mktemp)"
+    trap 'rm -f "$tmp_dsb" "$tmp_vars" "$err_file"' EXIT
+
+    set +e
+    (cd importers/figma && deno task import "{{key}}" $root_flag -o .reprobe-tmp.dsb) \
+        >/dev/null 2>"$err_file"
+    status=$?
+    set -e
+
+    # Every diagnostic this pipeline can raise — the Deno closure's own
+    # (figma.closure.*) and dashc's (figma.unsupported, figma.no-content, the
+    # validator's Report) — formats as `severity[rule]: message`. A blocking
+    # one rides an Error's `.message`, so an uncaught one prints inside
+    # Deno's own "Uncaught (in promise) <Name>: ..." wrapper; a non-blocking
+    # warning on a successful (partial) emit prints as its own plain line via
+    # `deps.error`. Either way strip ANSI color codes, then pull that shape
+    # wherever it sits in the line. `|| true`: with no such line, grep's
+    # no-match exit code is 1, and `pipefail` would otherwise carry that into
+    # the assignment and abort the script under `set -e`.
+    extract_diagnostics() {
+        sed -E 's/\x1b\[[0-9;]*m//g' "$err_file" \
+            | grep -oE '(error|warning)\[[^]]+\]: .*$' \
+            | sort -u || true
+    }
+
+    if [ "$status" -eq 0 ]; then
+        cp "$tmp_dsb" /tmp/reprobe.dsb
+        size=$(wc -c < /tmp/reprobe.dsb | tr -d ' ')
+        echo "EMITTED — wrote /tmp/reprobe.dsb (${size} bytes)"
+        diagnostics=$(extract_diagnostics)
+        if [ -n "$diagnostics" ]; then
+            echo "$diagnostics"
+        else
+            echo "(no diagnostics)"
+        fi
+        exit 0
+    fi
+
+    blockers=$(extract_diagnostics)
+    if [ -n "$blockers" ]; then
+        echo "$blockers"
+    else
+        echo "reprobe: no structured blocker diagnostics found (exit ${status}) — raw stderr:" >&2
+        sed -E 's/\x1b\[[0-9;]*m//g' "$err_file"
+    fi
+    exit "$status"
