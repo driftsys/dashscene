@@ -311,6 +311,47 @@ fn nodes_sharing_text_or_style_dedup_to_one_pool_entry() {
     assert_eq!(document.text_styles().expect("a style pool").len(), 1);
 }
 
+#[test]
+fn two_styles_differing_only_in_alignment_are_two_pool_entries() {
+    // The pool dedup key must include the four widened axes (story #310):
+    // two text nodes identical but for alignment must not collapse to one
+    // style entry, which would render one of them with the wrong alignment.
+    let a = {
+        let mut t = text_json("a", "OK", 16.0, 400);
+        t["style"]["textAlignHorizontal"] = "CENTER".into();
+        t
+    };
+    let b = {
+        let mut t = text_json("b", "OK", 16.0, 400);
+        t["style"]["textAlignHorizontal"] = "LEFT".into();
+        t
+    };
+    let json = serde_json::json!({
+        "document": { "name": "Document", "type": "DOCUMENT", "children": [{
+            "name": "Page 1", "type": "CANVAS", "children": [{
+                "name": "row", "type": "FRAME", "layoutMode": "HORIZONTAL",
+                "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 200.0, "height": 40.0 },
+                "children": [a, b],
+            }],
+        }]},
+    })
+    .to_string();
+
+    let (bytes, report) = compile_figma(&json, Profile::Core, &BTreeMap::new()).expect("compiles");
+    assert!(report.is_empty(), "{report}");
+    let document = dashbuf::root_as_document(&bytes).expect("a valid buffer");
+    assert_eq!(
+        document.strings().expect("a string pool").len(),
+        1,
+        "the shared string still dedups to one entry"
+    );
+    assert_eq!(
+        document.text_styles().expect("a style pool").len(),
+        2,
+        "distinct alignments must not collapse to one pool entry"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Out-of-vocabulary text features are named diagnostics, never silent drops
 // (P4). Each would render a picture the designer never authored if lowered
@@ -324,26 +365,6 @@ fn out_of_vocabulary_text_features_are_named_diagnostics() {
     // is refused by name. Each `style` override sits on an otherwise-clean
     // HUG text node, so the diagnostic named is the feature under test.
     let cases: &[(&str, serde_json::Value, &str)] = &[
-        (
-            "align",
-            serde_json::json!({ "textAlignHorizontal": "CENTER" }),
-            "text alignment CENTER",
-        ),
-        (
-            "valign",
-            serde_json::json!({ "textAlignVertical": "CENTER" }),
-            "vertical text alignment CENTER",
-        ),
-        (
-            "line-height",
-            serde_json::json!({ "lineHeightUnit": "PIXELS" }),
-            "a PIXELS line height",
-        ),
-        (
-            "letter-spacing",
-            serde_json::json!({ "letterSpacing": 2.0 }),
-            "letter spacing",
-        ),
         (
             "italic",
             serde_json::json!({ "fontStyle": "Italic" }),
@@ -397,6 +418,142 @@ fn out_of_vocabulary_text_features_are_named_diagnostics() {
             unsupported(&diagnostics),
             vec![("/root/t".to_string(), expected.to_string())],
             "{label}",
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The four widened style axes lower (story #310): PIXELS line height, letter
+// spacing, horizontal alignment (LEFT/CENTER/RIGHT), and vertical alignment
+// (TOP/CENTER/BOTTOM). A percentage line height and JUSTIFIED stay refused.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_four_style_axes_lower_into_the_text_style() {
+    use dashc_wasm::{TextAlign, TextAlignV};
+    let mut style = base_style();
+    let m = style.as_object_mut().unwrap();
+    m.insert("lineHeightUnit".into(), "PIXELS".into());
+    m.insert("lineHeightPx".into(), 30.0.into());
+    m.insert("letterSpacing".into(), 2.5.into());
+    m.insert("textAlignHorizontal".into(), "CENTER".into());
+    m.insert("textAlignVertical".into(), "BOTTOM".into());
+    let mut text = text_json("t", "hi", 16.0, 400);
+    text["style"] = style;
+    let json = wrap_single(text);
+
+    let (doc, diagnostics) = lower(
+        &serde_json::from_str(&json).unwrap(),
+        Profile::Core,
+        &BTreeMap::new(),
+    )
+    .expect("the widened axes lower");
+    assert!(
+        unsupported(&diagnostics).is_empty(),
+        "{:?}",
+        unsupported(&diagnostics),
+    );
+    let ts = node(&doc, "t")
+        .1
+        .text_style
+        .as_ref()
+        .expect("carries a style");
+    assert_eq!(ts.line_height_px, Some(30.0));
+    assert_eq!(ts.letter_spacing, 2.5);
+    assert_eq!(ts.text_align, TextAlign::Center);
+    assert_eq!(ts.text_align_v, TextAlignV::Bottom);
+}
+
+#[test]
+fn horizontal_and_vertical_alignment_lower_each_value() {
+    use dashc_wasm::{TextAlign, TextAlignV};
+    for (figma, want) in [
+        ("LEFT", TextAlign::Left),
+        ("CENTER", TextAlign::Center),
+        ("RIGHT", TextAlign::Right),
+    ] {
+        let mut text = text_json("t", "hi", 16.0, 400);
+        text["style"]["textAlignHorizontal"] = figma.into();
+        let json = wrap_single(text);
+        let (doc, _) = lower(
+            &serde_json::from_str(&json).unwrap(),
+            Profile::Core,
+            &BTreeMap::new(),
+        )
+        .expect("lowers");
+        assert_eq!(
+            node(&doc, "t").1.text_style.as_ref().unwrap().text_align,
+            want,
+            "h-align {figma}"
+        );
+    }
+    for (figma, want) in [
+        ("TOP", TextAlignV::Top),
+        ("CENTER", TextAlignV::Center),
+        ("BOTTOM", TextAlignV::Bottom),
+    ] {
+        let mut text = text_json("t", "hi", 16.0, 400);
+        text["style"]["textAlignVertical"] = figma.into();
+        let json = wrap_single(text);
+        let (doc, _) = lower(
+            &serde_json::from_str(&json).unwrap(),
+            Profile::Core,
+            &BTreeMap::new(),
+        )
+        .expect("lowers");
+        assert_eq!(
+            node(&doc, "t").1.text_style.as_ref().unwrap().text_align_v,
+            want,
+            "v-align {figma}"
+        );
+    }
+}
+
+#[test]
+fn the_default_axes_lower_to_left_top_auto_and_zero() {
+    use dashc_wasm::{TextAlign, TextAlignV};
+    // The hug-in-fill leaf carries LEFT/TOP, INTRINSIC_% line height, and zero
+    // letter spacing — the behavior-preserving defaults.
+    let (doc, _) = lowered(HUG_IN_FILL);
+    let ts = node(&doc, "hug inside fill").1.text_style.as_ref().unwrap();
+    assert_eq!(ts.line_height_px, None);
+    assert_eq!(ts.letter_spacing, 0.0);
+    assert_eq!(ts.text_align, TextAlign::Left);
+    assert_eq!(ts.text_align_v, TextAlignV::Top);
+}
+
+#[test]
+fn a_percent_line_height_and_justified_alignment_are_still_refused() {
+    // Only PIXELS line height lowers; the percentage units and JUSTIFIED have
+    // no vocabulary and stay named refusals (P4).
+    for (field, value, expected) in [
+        ("lineHeightUnit", "FONT_SIZE_%", "a FONT_SIZE_% line height"),
+        ("lineHeightUnit", "PERCENT", "a PERCENT line height"),
+        (
+            "textAlignHorizontal",
+            "JUSTIFIED",
+            "text alignment JUSTIFIED",
+        ),
+    ] {
+        let mut style = base_style();
+        style
+            .as_object_mut()
+            .unwrap()
+            .insert(field.into(), value.into());
+        let mut text = text_json("t", "hi", 16.0, 400);
+        text["style"] = style;
+        let json = wrap_single(text);
+
+        let (_, diagnostics) = lower(
+            &serde_json::from_str(&json).unwrap(),
+            Profile::Core,
+            &BTreeMap::new(),
+        )
+        .expect("diagnosed, not fatal");
+        assert_eq!(
+            unsupported(&diagnostics),
+            vec![("/root/t".to_string(), expected.to_string())],
+            "{value}",
         );
     }
 }

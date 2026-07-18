@@ -25,6 +25,7 @@ fn build_doc(strings: &[&str], styles: &[(&str, f32, u16)], nodes: &[(u32, u32)]
                     size: *size,
                     weight: *weight,
                     color: Some(&Color::new(0.1, 0.2, 0.3, 1.0)),
+                    ..Default::default()
                 },
             )
         })
@@ -110,6 +111,78 @@ fn a_node_without_text_reads_the_sentinels_by_default() {
     let n = doc.nodes().unwrap().get(0);
     assert_eq!(n.text(), NO_TEXT);
     assert_eq!(n.text_style(), NO_TEXT_STYLE);
+}
+
+#[test]
+fn the_new_style_fields_round_trip() {
+    // Story #310: a fixed line height, letter spacing, and horizontal/vertical
+    // alignment round-trip through the appended TextStyle fields.
+    let mut b = FlatBufferBuilder::new();
+    let family = b.create_string("Inter");
+    let style = TextStyle::create(
+        &mut b,
+        &TextStyleArgs {
+            family: Some(family),
+            size: 16.0,
+            weight: 400,
+            color: Some(&Color::new(0.1, 0.2, 0.3, 1.0)),
+            line_height_px: Some(30.0),
+            letter_spacing: 2.5,
+            text_align: dashbuf::TextAlign::Center,
+            text_align_v: dashbuf::TextAlignV::Bottom,
+        },
+    );
+    let styles = b.create_vector(&[style]);
+    let doc = Document::create(
+        &mut b,
+        &DocumentArgs {
+            text_styles: Some(styles),
+            ..Default::default()
+        },
+    );
+    b.finish(doc, None);
+    let bytes = b.finished_data().to_vec();
+    let doc = root_as_document(&bytes).expect("verifies");
+    let s = doc.text_styles().unwrap().get(0);
+    assert_eq!(s.line_height_px(), Some(30.0));
+    assert_eq!(s.letter_spacing(), 2.5);
+    assert_eq!(s.text_align(), dashbuf::TextAlign::Center);
+    assert_eq!(s.text_align_v(), dashbuf::TextAlignV::Bottom);
+}
+
+#[test]
+fn a_default_style_reads_back_the_behavior_preserving_defaults() {
+    // R7: a style using none of the new fields reads them back as their
+    // defaults (auto line height, zero spacing, Left/Top), which flatc omits
+    // from the buffer — so a pre-#310 document decodes unchanged.
+    let mut b = FlatBufferBuilder::new();
+    let family = b.create_string("Inter");
+    let style = TextStyle::create(
+        &mut b,
+        &TextStyleArgs {
+            family: Some(family),
+            ..Default::default()
+        },
+    );
+    let styles = b.create_vector(&[style]);
+    let doc = Document::create(
+        &mut b,
+        &DocumentArgs {
+            text_styles: Some(styles),
+            ..Default::default()
+        },
+    );
+    b.finish(doc, None);
+    let bytes = b.finished_data().to_vec();
+    let s = root_as_document(&bytes)
+        .unwrap()
+        .text_styles()
+        .unwrap()
+        .get(0);
+    assert_eq!(s.line_height_px(), None);
+    assert_eq!(s.letter_spacing(), 0.0);
+    assert_eq!(s.text_align(), dashbuf::TextAlign::Left);
+    assert_eq!(s.text_align_v(), dashbuf::TextAlignV::Top);
 }
 
 #[test]

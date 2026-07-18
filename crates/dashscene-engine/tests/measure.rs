@@ -6,7 +6,9 @@
 //! `Typesetter::layout` produces, because layout and paint read one
 //! cache and so cannot disagree about a glyph's size.
 
-use dashscene_core::{Arena, AxisSizing, Color, LayoutMode, NodeId, Prop, TextStyle};
+use dashscene_core::{
+    Arena, AxisSizing, Color, LayoutMode, NodeId, Prop, TextAlign, TextAlignV, TextStyle,
+};
 use dashscene_engine::TaffySolver;
 use dashscene_typeset::text::{Font, Typesetter};
 
@@ -35,6 +37,10 @@ fn styled(txn: &mut dashscene_core::Txn<'_>, node: NodeId, text: &str, size: f32
                 b: 0.0,
                 a: 1.0,
             },
+            line_height_px: None,
+            letter_spacing: 0.0,
+            text_align: TextAlign::Left,
+            text_align_v: TextAlignV::Top,
         }),
     );
 }

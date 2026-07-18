@@ -27,7 +27,9 @@
 use std::collections::BTreeSet;
 
 use dashpaint::{AtlasIndex, Color, GlyphQuad, GlyphRun, GlyphRunTable, ImageTable, Painter};
-use dashscene_core::{Arena, AxisSizing, LayoutMode, NodeId, Prop, TextStyle};
+use dashscene_core::{
+    Arena, AxisSizing, LayoutMode, NodeId, Prop, TextAlign, TextAlignV, TextStyle,
+};
 use dashscene_engine::TaffySolver;
 use dashscene_skia::SkiaPainter;
 use dashscene_typeset::text::{Font, Typesetter};
@@ -142,6 +144,10 @@ fn author_scene(ts: &mut Typesetter) -> (Arena, NodeId) {
                 size: LABEL_SIZE,
                 weight: 400,
                 color: NEAR_WHITE,
+                line_height_px: None,
+                letter_spacing: 0.0,
+                text_align: TextAlign::Left,
+                text_align_v: TextAlignV::Top,
             }),
         );
 

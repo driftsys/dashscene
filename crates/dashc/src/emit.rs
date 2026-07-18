@@ -27,7 +27,8 @@ use flatbuffers::{FlatBufferBuilder, WIPOffset};
 
 use crate::document::{
     AxisSizing, Binding, BindingChannel, BindingTransform, CrossAxisAlign, Document, EdgeInsets,
-    GridTrack, LayoutMode, MainAxisAlign, Node, Paint, SignalDecl, TextStyle,
+    GridTrack, LayoutMode, MainAxisAlign, Node, Paint, SignalDecl, TextAlign, TextAlignV,
+    TextStyle,
 };
 
 /// Serializes a document to `.dsb` bytes.
@@ -329,7 +330,10 @@ fn build_node<'a>(
 /// Builds one `TextStyle` pool entry. The color is always written: the
 /// lowering never emits a color-less style (a text node with no solid fill is
 /// refused at the walk), and the loader treats an absent color as a producer
-/// error (`text.style-no-color`, P4).
+/// error (`text.style-no-color`, P4). The four v0.9 axes (story #310) write
+/// their value; each equals its schema default for a plain style (auto line
+/// height, zero spacing, Left/Top), so flatc omits it and a pre-#310 document
+/// emits byte-identically (R7).
 fn build_text_style<'a>(
     b: &mut FlatBufferBuilder<'a>,
     style: &TextStyle,
@@ -342,8 +346,28 @@ fn build_text_style<'a>(
             size: style.size,
             weight: style.weight,
             color: Some(&color_of(style.color)),
+            line_height_px: style.line_height_px,
+            letter_spacing: style.letter_spacing,
+            text_align: text_align_of(style.text_align),
+            text_align_v: text_align_v_of(style.text_align_v),
         },
     )
+}
+
+fn text_align_of(align: TextAlign) -> dashbuf::TextAlign {
+    match align {
+        TextAlign::Left => dashbuf::TextAlign::Left,
+        TextAlign::Center => dashbuf::TextAlign::Center,
+        TextAlign::Right => dashbuf::TextAlign::Right,
+    }
+}
+
+fn text_align_v_of(align: TextAlignV) -> dashbuf::TextAlignV {
+    match align {
+        TextAlignV::Top => dashbuf::TextAlignV::Top,
+        TextAlignV::Center => dashbuf::TextAlignV::Center,
+        TextAlignV::Bottom => dashbuf::TextAlignV::Bottom,
+    }
 }
 
 fn axis_sizing(sizing: AxisSizing) -> dashbuf::AxisSizing {
@@ -554,11 +578,13 @@ fn paint_key(paint: &Paint) -> PaintKey {
     (entry_bits(&paint.entry), paint.clip)
 }
 
-/// The text-style pool's interning key. The `f32` size and the color go in by
-/// bit pattern for the same reason the paint key's do (`f32` is not
-/// `Eq`/`Hash`, and a value key would mint a fresh entry per NaN, breaking
-/// R7's byte-reproducibility).
-type TextStyleKey = (String, u32, u16, [u32; 4]);
+/// The text-style pool's interning key. The `f32` size, color, line height,
+/// and letter spacing go in by bit pattern for the same reason the paint key's
+/// do (`f32` is not `Eq`/`Hash`, and a value key would mint a fresh entry per
+/// NaN, breaking R7's byte-reproducibility). The key covers every axis the
+/// style carries (story #310): two styles differing only in, say, alignment
+/// must be two distinct pool entries, never collapse to one.
+type TextStyleKey = (String, u32, u16, [u32; 4], Option<u32>, u32, u32, u32);
 
 fn text_style_key(style: &TextStyle) -> TextStyleKey {
     (
@@ -566,6 +592,10 @@ fn text_style_key(style: &TextStyle) -> TextStyleKey {
         style.size.to_bits(),
         style.weight,
         color_bits(style.color),
+        style.line_height_px.map(f32::to_bits),
+        style.letter_spacing.to_bits(),
+        style.text_align as u32,
+        style.text_align_v as u32,
     )
 }
 

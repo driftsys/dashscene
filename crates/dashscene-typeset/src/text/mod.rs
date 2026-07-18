@@ -69,6 +69,45 @@ pub struct TextLayout {
     pub size: f32,
 }
 
+/// Horizontal alignment of a line within the container width (story #310).
+/// `Left` is the default and reproduces the pre-#310 flush placement: an LTR
+/// line stays at x = 0, an RTL line flushes right by direction. `Center` and
+/// `Right` shift every line by the container's free space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TextAlign {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+/// The additive shaping knobs [`Typesetter::layout_with`] honors (story #310):
+/// a fixed line height, letter spacing, and horizontal alignment. The
+/// [`Default`] reproduces the previous behavior exactly — an auto line height
+/// (font metrics), no tracking, and flush-by-direction placement — so
+/// [`Typesetter::layout`] delegating with the default is byte-for-byte the
+/// pre-#310 output (the E7 guard).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TextShape {
+    /// A fixed line advance in pixels, or `None` for the intrinsic advance
+    /// (ascent − descent + line gap of the fonts that shaped each line).
+    pub line_height_px: Option<f32>,
+    /// Letter spacing (tracking) added after each glyph, in pixels.
+    pub letter_spacing: f32,
+    /// Horizontal alignment within the container width.
+    pub align: TextAlign,
+}
+
+impl Default for TextShape {
+    fn default() -> Self {
+        TextShape {
+            line_height_px: None,
+            letter_spacing: 0.0,
+            align: TextAlign::Left,
+        }
+    }
+}
+
 /// Cache observability for tests and the measure callback's caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CacheStats {
@@ -160,6 +199,23 @@ impl Typesetter {
     /// line's glyph positions can reach up to `max_width`, past
     /// `width`. Empty text produces an empty, zero-size layout.
     pub fn layout(&mut self, text: &str, size: f32, max_width: Option<f32>) -> TextLayout {
+        self.layout_with(text, size, max_width, TextShape::default())
+    }
+
+    /// [`layout`](Self::layout) with the additive shaping knobs (story #310):
+    /// `shape.line_height_px` overrides the per-line advance, `shape.letter_spacing`
+    /// tracks each glyph in both the measured width and the placement pen, and
+    /// `shape.align` shifts each line within `max_width` (or the widest line when
+    /// `None`). With [`TextShape::default`] this is exactly `layout`'s previous
+    /// behavior, so every existing call site — the E7 oracle and goldens included
+    /// — renders identically.
+    pub fn layout_with(
+        &mut self,
+        text: &str,
+        size: f32,
+        max_width: Option<f32>,
+        shape: TextShape,
+    ) -> TextLayout {
         // Per-font pixel scale: each glyph's advances and offsets are in
         // its own font's units, so a different-upem fallback is scaled by
         // its own upem, not the primary's (story #219).
@@ -184,14 +240,15 @@ impl Typesetter {
                 // An empty chunk has no bidi paragraph: one empty line.
                 if bidi.paragraphs.is_empty() {
                     // A blank line has no glyphs; measure its box by the
-                    // primary font.
-                    let (ascent, advance) = self.line_box(std::iter::empty(), &scales);
+                    // primary font. A fixed line height overrides the advance
+                    // (story #310); the baseline keeps the intrinsic ascent.
+                    let (ascent, intrinsic) = self.line_box(std::iter::empty(), &scales);
                     lines.push(Line {
                         glyphs: Vec::new(),
                         width: 0.0,
                         baseline_y: pen_y + ascent,
                     });
-                    pen_y += advance;
+                    pen_y += shape.line_height_px.unwrap_or(intrinsic);
                     rtl_lines.push(false);
                     continue;
                 }
@@ -208,32 +265,54 @@ impl Typesetter {
                     let ge = shaped
                         .glyphs
                         .partition_point(|g| (g.cluster as usize) < content.end);
-                    for range in layout::break_lines(paragraph, &shaped, gs..ge, &scales, max_width)
-                    {
+                    for range in layout::break_lines(
+                        paragraph,
+                        &shaped,
+                        gs..ge,
+                        &scales,
+                        max_width,
+                        shape.letter_spacing,
+                    ) {
                         // The line's box comes from the fonts that shaped
-                        // its glyphs, not the primary (story #219).
-                        let (ascent, advance) = self.line_box(
+                        // its glyphs, not the primary (story #219). A fixed
+                        // line height overrides the advance; the baseline keeps
+                        // the intrinsic ascent (story #310).
+                        let (ascent, intrinsic) = self.line_box(
                             shaped.glyphs[range.clone()].iter().map(|g| g.font as usize),
                             &scales,
                         );
                         let baseline = pen_y + ascent;
-                        pen_y += advance;
+                        pen_y += shape.line_height_px.unwrap_or(intrinsic);
                         rtl_lines.push(para.level.is_rtl());
                         lines.push(layout::position_line(
-                            &bidi, para, &shaped, range, &scales, baseline,
+                            &bidi,
+                            para,
+                            &shaped,
+                            range,
+                            &scales,
+                            baseline,
+                            shape.letter_spacing,
                         ));
                     }
                 }
             }
         }
         let width = lines.iter().map(|l| l.width).fold(0.0, f32::max);
-        // Flush-right placement for RTL-base paragraphs. A line wider
-        // than the container (an overflowing word) overflows leftward
-        // past x = 0, mirroring LTR overflow.
+        // Horizontal alignment within the container (story #310). `Left` is the
+        // default and reproduces the pre-#310 flush placement: an LTR line stays
+        // at x = 0, an RTL-base line flushes right by direction. `Center` and
+        // `Right` shift every line by the container's free space, regardless of
+        // direction. A line wider than the container overflows leftward past
+        // x = 0, mirroring the prior LTR overflow.
         let container = max_width.unwrap_or(width);
         for (line, rtl) in lines.iter_mut().zip(&rtl_lines) {
-            if *rtl {
-                let shift = container - line.width;
+            let shift = match shape.align {
+                TextAlign::Left if *rtl => container - line.width,
+                TextAlign::Left => 0.0,
+                TextAlign::Center => (container - line.width) / 2.0,
+                TextAlign::Right => container - line.width,
+            };
+            if shift != 0.0 {
                 for g in &mut line.glyphs {
                     g.x += shift;
                 }

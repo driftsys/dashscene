@@ -40,8 +40,8 @@ mod load;
 
 pub use arena::{
     Arena, AxisSizing, CrossAxisAlign, EdgeInsets, GridTrack, Layout, LayoutMode, LayoutSolver,
-    MainAxisAlign, NodeId, Prop, SolvedRect, TextStyle, Txn, VariantMember, VariantSetId,
-    VariantValue,
+    MainAxisAlign, NodeId, Prop, SolvedRect, TextAlign, TextAlignV, TextStyle, Txn, VariantMember,
+    VariantSetId, VariantValue,
 };
 pub use bindings::{
     Binding, Channel, ScalarTransform, SignalDecl, SignalId, decode_prop_key, prop_key,

@@ -1,9 +1,68 @@
 # The Figma text lowering carries four style axes and diagnoses the rest
 
-    status   accepted (story #160, 2026-07-16)
-    scope    crates/dashc (the figma module and the document model)
-    binds    the v0.8+ text widening, and every consumer of the .dsb
-             string/text-style pools
+    status   accepted (story #160, 2026-07-16); revised (story #310, 2026-07-18)
+    scope    crates/dashc (the figma module and the document model), the
+             dashbuf schema, dashscene-core (load), and dashscene-typeset
+    binds    every consumer of the .dsb string/text-style pools
+
+## Revised at #310 (2026-07-18): four more axes now lower
+
+Story #310 does exactly what D1 below anticipated ("when the runtime gains
+alignment or line-height, the schema widens with it, and the diagnostic becomes
+a lowering"). The `TextStyle` vocabulary — schema (`dashbuf.fbs`), both IR
+mirrors (`dashc` `document.rs`, `dashscene-core` `arena.rs`), and the loader —
+widens by four axes, each appended at the `TextStyle` table tail with a
+behavior-preserving default so a style using none of them emits byte-identically
+(R7): the frozen `v0_5_document.dsb` and the text golden `.dsb`s are unchanged,
+no regeneration.
+
+- `line_height_px: Option<f32>` — a fixed line height. **Only Figma's `PIXELS`
+  unit lowers.** `INTRINSIC_%` (auto) lowers as `None` as before; a percentage
+  line height (`FONT_SIZE_%`, `PERCENT`) stays a named diagnostic — the runtime
+  has no percentage model yet, and the minimal safe scope is a fixed pixel value.
+- `letter_spacing: f32` — tracking; zero is the default.
+- `text_align: TextAlign` (`Left`/`Center`/`Right`) — `LEFT` is the default;
+  `JUSTIFIED` stays a named diagnostic (no vocabulary).
+- `text_align_v: TextAlignV` (`Top`/`Center`/`Bottom`) — `TOP` is the default.
+
+**Where each axis will live, and the boundary each respects.** The typesetter
+gains an additive `TextShape { line_height_px, letter_spacing, align }` and a
+`layout_with(text, size, max_width, shape)`; `layout(text, size, max_width)`
+keeps its signature and delegates with `TextShape::default()`, which reproduces
+the previous output exactly — the E7 oracle and every golden call `layout` and
+render unchanged. Horizontal alignment belongs in the typesetter (over the
+container width); vertical alignment is a stager placement — an offset
+`(box_height − content_height) × factor` applied where the box origin is added
+(`goldens/tooling`, `vertical_offset`) — because the block's box height is a
+solver result the typesetter does not hold. The painter never changes (P2), and
+the document carries the alignment _intent_ as an enum, never a resolved offset
+(P1).
+
+**Lowered and capable, not yet wired to render (as-built).** This story adds the
+four axes to the schema and the lowering, and gives the typesetter and the
+stager the _capability_ to honor them — but it does not yet connect that
+capability to the render path. The engine measure seam (`TextContext`,
+`crates/dashscene-engine/src/lib.rs`) still carries only text and size and calls
+`layout()`, and `vertical_offset` has no production caller. So a lowered
+document's line-height, letter-spacing, and alignment persist to the `.dsb` and
+load into the arena, but do not yet affect a rendered result. This is
+deliberate: keeping `layout()` byte-identical leaves the v0.9 E7 oracle
+untouched until a non-default text render fixture verifies the wiring. The
+end-to-end render wiring is tracked as a follow-up (#327).
+
+**Still refused (unchanged from #160):** a percentage line height, `JUSTIFIED`
+alignment, multiple style segments (`styleOverrideTable`), italic, decoration,
+a case transform, truncation, a hyperlink, an OpenType flag, and a text outline.
+
+The emit pool dedup key (`text_style_key`) now covers all eight axes, so two
+styles differing only in, for example, alignment stay two distinct pool entries
+rather than collapsing to one (which would render one node with the wrong style).
+
+The `binds` line above is updated: this record now binds the dashbuf schema,
+`dashscene-core`, and `dashscene-typeset`, not just `dashc`. The rest of this
+record is the original #160 decision, kept for its rationale; the paragraphs
+below on the right-alignment refusal and the "not widened speculatively" stance
+describe the pre-#310 posture and are superseded for the four axes above.
 
 ## Context
 
@@ -121,15 +180,24 @@ emits an out-of-range weight today; the gap is flagged for #41.
 
 ## Trace
 
-- Satisfies: issue #160 (text lowering), P1 (authored intent only — the
-  document carries the codepoints and style, never the shaped lines, glyph
-  positions, or `absoluteRenderBounds`), P4 (out-of-vocabulary features are
-  named diagnostics), P5 (Figma compatibility is one producer's property).
+- Satisfies: issue #160 (text lowering) and issue #310 (the four-axis widening
+  — line height, letter spacing, horizontal and vertical alignment); P1
+  (authored intent only — the document carries the codepoints, style, and
+  alignment enums, never the shaped lines, glyph positions, resolved offsets, or
+  `absoluteRenderBounds`), P2 (horizontal align in the typesetter, vertical
+  align in the stager, the painter unchanged), P4 (out-of-vocabulary features
+  are named diagnostics), P5 (Figma compatibility is one producer's property).
 - Verified by: `crates/dashc/tests/text_lowering.rs` (characters + style
-  lowering, the Arabic RTL run's authored codepoints, round-trip through
-  `dashscene-core`, pool dedup, the out-of-vocabulary diagnostics, the golden
-  `.dsb`s), `goldens/tooling/tests/v07_text_lowering.rs` (the lowered scene
-  solves through the measure callback and paints).
+  lowering, the four widened axes and their still-refused neighbors, the Arabic
+  RTL run's authored codepoints, round-trip through `dashscene-core`, pool dedup
+  including the alignment-distinct-entries guard, the out-of-vocabulary
+  diagnostics, the golden `.dsb`s), `crates/dashbuf/tests/text_roundtrip.rs`
+  (the new fields round-trip and a default style reads back the defaults),
+  `crates/dashscene-core/tests/load.rs` (the axes reach the arena),
+  `crates/dashscene-typeset/tests/typeset_shape.rs` (`layout_with` honors each
+  knob and `layout` is byte-identical to the default),
+  `goldens/tooling/tests/v07_text_lowering.rs` (the lowered scene solves through
+  the measure callback and paints).
 - Related: `docs/decisions/figma-flex-lowering.md` (the shared walk
   conventions and per-axis sizing), `docs/decisions/rtl-text-width-is-the-placed-extent.md`
   (the width-vs-bounds decision #160 settled, #224),

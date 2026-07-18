@@ -348,10 +348,15 @@ pub struct TextStyle {
     #[serde(default)]
     pub letter_spacing: Option<f32>,
     /// `INTRINSIC_%` is Figma's "Auto" — the font's natural line advance,
-    /// which is what the runtime uses. `FONT_SIZE_%`, `PERCENT`, or `PIXELS`
-    /// are fixed line heights with no vocabulary.
+    /// which is what the runtime uses. `PIXELS` is a fixed line height that
+    /// lowers into `line_height_px`; `FONT_SIZE_%` and `PERCENT` are
+    /// percentage line heights with no vocabulary and stay diagnosed.
     #[serde(default)]
     pub line_height_unit: Option<String>,
+    /// The line height in document units, meaningful when `line_height_unit`
+    /// is `PIXELS`. Figma serializes it alongside the unit.
+    #[serde(default)]
+    pub line_height_px: Option<f32>,
     /// A hyperlink on the whole text run. No vocabulary, so diagnosed.
     #[serde(default)]
     pub hyperlink: Option<serde_json::Value>,

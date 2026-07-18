@@ -584,3 +584,64 @@ fn a_loaded_document_replays_its_v08_layout_fields() {
     assert_eq!(child_layout.grid_row_span, 1);
     assert_eq!(child_layout.grid_column_span, 1);
 }
+
+/// Story #310: the four widened text-style axes — a fixed line height, letter
+/// spacing, and horizontal/vertical alignment — replay through
+/// `load_document` into the arena's `TextStyle`, the seam the runtime reads.
+#[test]
+fn the_text_style_metrics_and_alignment_reach_the_arena() {
+    use dashbuf::{TextStyle, TextStyleArgs};
+    use dashscene_core::{TextAlign, TextAlignV};
+
+    let mut b = FlatBufferBuilder::new();
+    let hi = b.create_string("Hi");
+    let strings = b.create_vector(&[hi]);
+    let family = b.create_string("Inter");
+    let style = TextStyle::create(
+        &mut b,
+        &TextStyleArgs {
+            family: Some(family),
+            size: 16.0,
+            weight: 400,
+            color: Some(&Color::new(0.1, 0.2, 0.3, 1.0)),
+            line_height_px: Some(30.0),
+            letter_spacing: 2.5,
+            text_align: dashbuf::TextAlign::Center,
+            text_align_v: dashbuf::TextAlignV::Bottom,
+        },
+    );
+    let text_styles = b.create_vector(&[style]);
+    let layout = FixedSizeLayout::new(0.0, 0.0, 40.0, 20.0);
+    let node = Node::create(
+        &mut b,
+        &NodeArgs {
+            layout: Some(&layout),
+            text: 0,
+            text_style: 0,
+            ..Default::default()
+        },
+    );
+    let nodes = b.create_vector(&[node]);
+    let doc = Document::create(
+        &mut b,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            strings: Some(strings),
+            text_styles: Some(text_styles),
+            ..Default::default()
+        },
+    );
+    b.finish(doc, None);
+    let bytes = b.finished_data().to_vec();
+
+    let document = root_as_document(&bytes).expect("verifies");
+    let mut arena = Arena::new();
+    load_document(&document, &mut arena);
+
+    let root = arena.roots()[0];
+    let s = arena.text_style(root).expect("the style reached the arena");
+    assert_eq!(s.line_height_px, Some(30.0));
+    assert_eq!(s.letter_spacing, 2.5);
+    assert_eq!(s.text_align, TextAlign::Center);
+    assert_eq!(s.text_align_v, TextAlignV::Bottom);
+}

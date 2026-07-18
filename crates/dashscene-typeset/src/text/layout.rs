@@ -34,13 +34,16 @@ pub(crate) fn break_lines(
     para_glyphs: Range<usize>,
     scales: &[f32],
     max_width: Option<f32>,
+    letter_spacing: f32,
 ) -> Vec<Range<usize>> {
     let max_width = max_width.unwrap_or(f32::INFINITY);
     let glyphs = &shaped.glyphs;
     // Each glyph is measured at its own font's scale (story #219): a
     // fallback font's advances are in that font's units, so measuring them
-    // at the primary's scale would mis-size a different-upem fallback.
-    let advance = |g: &ShapedGlyph| g.x_advance as f32 * scales[g.font as usize];
+    // at the primary's scale would mis-size a different-upem fallback. Letter
+    // spacing (story #310) tracks each glyph — added here so the fit check
+    // measures the same width the pen places (default 0.0 is a no-op).
+    let advance = |g: &ShapedGlyph| g.x_advance as f32 * scales[g.font as usize] + letter_spacing;
     // Clusters are byte indices of char starts, non-decreasing (the
     // shaping layer stores glyphs in logical order), so a glyph is a
     // space glyph exactly when its source byte is one. Breaking in
@@ -105,6 +108,7 @@ pub(crate) fn position_line(
     range: Range<usize>,
     scales: &[f32],
     baseline_y: f32,
+    letter_spacing: f32,
 ) -> Line {
     if range.is_empty() {
         return Line {
@@ -136,11 +140,11 @@ pub(crate) fn position_line(
         let run_glyphs = &line_glyphs[s..e];
         if levels[run.start].is_rtl() {
             for g in run_glyphs.iter().rev() {
-                pen_x = place(&mut glyphs, g, pen_x, scales, baseline_y);
+                pen_x = place(&mut glyphs, g, pen_x, scales, baseline_y, letter_spacing);
             }
         } else {
             for g in run_glyphs {
-                pen_x = place(&mut glyphs, g, pen_x, scales, baseline_y);
+                pen_x = place(&mut glyphs, g, pen_x, scales, baseline_y, letter_spacing);
             }
         }
     }
@@ -160,10 +164,13 @@ fn place(
     pen_x: f32,
     scales: &[f32],
     baseline_y: f32,
+    letter_spacing: f32,
 ) -> f32 {
     // Each glyph scales by its own font's upem (story #219): offsets and
     // the advance are in that glyph's font units, so a different-upem
-    // fallback places correctly beside the primary.
+    // fallback places correctly beside the primary. Letter spacing (story
+    // #310) advances the pen an extra step after the glyph — the same amount
+    // the measure fold in `break_lines` adds (default 0.0 is a no-op).
     let scale = scales[g.font as usize];
     out.push(PositionedGlyph {
         glyph_id: g.glyph_id,
@@ -171,7 +178,7 @@ fn place(
         x: pen_x + g.x_offset as f32 * scale,
         y: baseline_y - g.y_offset as f32 * scale,
     });
-    pen_x + g.x_advance as f32 * scale
+    pen_x + g.x_advance as f32 * scale + letter_spacing
 }
 
 #[cfg(test)]
@@ -208,7 +215,7 @@ mod tests {
         // size 32: primary upem 1000 → scale 0.032; fallback upem 2000 →
         // scale 0.016.
         let scales = [32.0 / 1000.0, 32.0 / 2000.0];
-        let line = position_line(&bidi, para, &shaped, 0..2, &scales, 0.0);
+        let line = position_line(&bidi, para, &shaped, 0..2, &scales, 0.0, 0.0);
         assert_eq!(line.glyphs.len(), 2);
         assert!((line.glyphs[0].x - 0.0).abs() < 1e-4);
         // Second glyph placed after the FIRST glyph's own-font advance
@@ -244,7 +251,7 @@ mod tests {
         let scales = [32.0 / 1000.0, 32.0 / 2000.0];
         // 32 + 32 + 16 = 80 ≤ 85 fits on one line; at the primary's scale it
         // would be 32 + 32 + 32 = 96 > 85 and wrap.
-        let lines = break_lines(text, &shaped, 0..3, &scales, Some(85.0));
+        let lines = break_lines(text, &shaped, 0..3, &scales, Some(85.0), 0.0);
         assert_eq!(lines, vec![0..3]);
     }
 }

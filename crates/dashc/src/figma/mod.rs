@@ -51,7 +51,8 @@ use dashscene_validator::{Diagnostic, Location, NodePath, Profile, Report, Sever
 use crate::document::{
     AxisSizing, Box2D, CrossAxisAlign, Document, EdgeInsets, GridTrack as DocGridTrack,
     LayoutConstraints, LayoutContainer as DocContainer, LayoutMode, MainAxisAlign, Node as DocNode,
-    Paint as DocPaint, TextStyle as DocTextStyle,
+    Paint as DocPaint, TextAlign as DocTextAlign, TextAlignV as DocTextAlignV,
+    TextStyle as DocTextStyle,
 };
 use crate::figma::rest::{FigmaFile, Node, Paint, PaintTag};
 
@@ -1198,31 +1199,45 @@ impl Walk<'_> {
         if !node.style_override_table.is_empty() {
             blockers.push("multiple text style segments (styleOverrideTable)".to_string());
         }
-        // Horizontal alignment: `LEFT` is the "no explicit alignment" state —
-        // the runtime flushes an LTR paragraph left and an RTL one right by
-        // direction (`docs/design/typeset-latin.md`), so it needs no field.
-        // `CENTER`/`RIGHT`/`JUSTIFIED` have no vocabulary.
-        match style.text_align_horizontal.as_deref() {
-            None | Some("LEFT") => {}
-            Some(other) => blockers.push(format!("text alignment {other}")),
-        }
-        // Vertical alignment within the box: `TOP` is the default the runtime
-        // places from.
-        match style.text_align_vertical.as_deref() {
-            None | Some("TOP") => {}
-            Some(other) => blockers.push(format!("vertical text alignment {other}")),
-        }
-        // Line height: `INTRINSIC_%` is Figma's "Auto" — the font's natural
-        // line advance, which is exactly what the runtime uses. A fixed
-        // percentage or pixel line height has no vocabulary.
-        match style.line_height_unit.as_deref() {
-            None | Some("INTRINSIC_%") => {}
-            Some(other) => blockers.push(format!("a {other} line height")),
-        }
-        // Letter spacing: the runtime tracks none.
-        if style.letter_spacing.is_some_and(|spacing| spacing != 0.0) {
-            blockers.push("letter spacing".to_string());
-        }
+        // Horizontal alignment (story #310): `LEFT` is the default — the runtime
+        // flushes an LTR paragraph left and an RTL one right by direction
+        // (`docs/design/typeset-latin.md`). `CENTER`/`RIGHT` lower onto the
+        // style; `JUSTIFIED` has no vocabulary and stays a named diagnostic.
+        let text_align = match style.text_align_horizontal.as_deref() {
+            None | Some("LEFT") => DocTextAlign::Left,
+            Some("CENTER") => DocTextAlign::Center,
+            Some("RIGHT") => DocTextAlign::Right,
+            Some(other) => {
+                blockers.push(format!("text alignment {other}"));
+                DocTextAlign::Left
+            }
+        };
+        // Vertical alignment within the box (story #310): `TOP` is the default
+        // the runtime places from; `CENTER`/`BOTTOM` lower onto the style.
+        let text_align_v = match style.text_align_vertical.as_deref() {
+            None | Some("TOP") => DocTextAlignV::Top,
+            Some("CENTER") => DocTextAlignV::Center,
+            Some("BOTTOM") => DocTextAlignV::Bottom,
+            Some(other) => {
+                blockers.push(format!("vertical text alignment {other}"));
+                DocTextAlignV::Top
+            }
+        };
+        // Line height (story #310): `INTRINSIC_%` is Figma's "Auto" — the
+        // font's natural line advance, which the runtime uses (lowered as
+        // `None`). Only a `PIXELS` line height lowers into a fixed value; a
+        // percentage line height (`FONT_SIZE_%`, `PERCENT`) has no vocabulary
+        // and stays a named diagnostic.
+        let line_height_px = match style.line_height_unit.as_deref() {
+            None | Some("INTRINSIC_%") => None,
+            Some("PIXELS") => style.line_height_px,
+            Some(other) => {
+                blockers.push(format!("a {other} line height"));
+                None
+            }
+        };
+        // Letter spacing (story #310): lowers verbatim; absent is zero.
+        let letter_spacing = style.letter_spacing.unwrap_or(0.0);
         // Italic / non-upright style: the document font reference is family +
         // weight only.
         if style
@@ -1292,6 +1307,10 @@ impl Walk<'_> {
                 size: style.font_size,
                 weight,
                 color,
+                line_height_px,
+                letter_spacing,
+                text_align,
+                text_align_v,
             }),
         )
     }

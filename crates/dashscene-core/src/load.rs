@@ -31,7 +31,7 @@ use dashbuf::{
 
 use crate::arena::{
     Arena, AxisSizing, CrossAxisAlign, GridTrack, LayoutMode, MainAxisAlign, NodeId, Prop,
-    TextStyle, VariantMember, VariantValue,
+    TextAlign, TextAlignV, TextStyle, VariantMember, VariantValue,
 };
 use crate::bindings::{Channel, ScalarTransform, SignalId};
 use crate::committed::{
@@ -131,6 +131,13 @@ pub fn load_document(doc: &Document<'_>, arena: &mut Arena) -> u64 {
                     color: color_of(style.color().expect(
                         "text style carries a color (validated upstream, P4: text.style-no-color)",
                     )),
+                    // The four v0.9 axes (story #310). Absent reads back as the
+                    // schema default (auto line height, zero spacing, Left/Top),
+                    // so a pre-#310 document loads unchanged.
+                    line_height_px: style.line_height_px(),
+                    letter_spacing: style.letter_spacing(),
+                    text_align: text_align_of(style.text_align()),
+                    text_align_v: text_align_v_of(style.text_align_v()),
                 }),
             );
         }
@@ -572,6 +579,24 @@ fn cross_align(a: dashbuf::CrossAxisAlign) -> CrossAxisAlign {
         dashbuf::CrossAxisAlign::End => CrossAxisAlign::End,
         dashbuf::CrossAxisAlign::Baseline => CrossAxisAlign::Baseline,
         other => unreachable!("unknown CrossAxisAlign {other:?}: rejected by the load gate (P4)"),
+    }
+}
+
+fn text_align_of(a: dashbuf::TextAlign) -> TextAlign {
+    match a {
+        dashbuf::TextAlign::Left => TextAlign::Left,
+        dashbuf::TextAlign::Center => TextAlign::Center,
+        dashbuf::TextAlign::Right => TextAlign::Right,
+        other => unreachable!("unknown TextAlign {other:?}: rejected by the load gate (P4)"),
+    }
+}
+
+fn text_align_v_of(a: dashbuf::TextAlignV) -> TextAlignV {
+    match a {
+        dashbuf::TextAlignV::Top => TextAlignV::Top,
+        dashbuf::TextAlignV::Center => TextAlignV::Center,
+        dashbuf::TextAlignV::Bottom => TextAlignV::Bottom,
+        other => unreachable!("unknown TextAlignV {other:?}: rejected by the load gate (P4)"),
     }
 }
 
