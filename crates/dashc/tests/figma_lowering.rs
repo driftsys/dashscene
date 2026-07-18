@@ -14,7 +14,7 @@
 
 use std::collections::BTreeMap;
 
-use dashc_wasm::figma::rest::{FigmaFile, PaintTag};
+use dashc_wasm::figma::rest::FigmaFile;
 use dashc_wasm::figma::{CompileError, lower};
 use dashc_wasm::{EmitPolicy, compile_figma, compile_figma_with_bindings_and_policy};
 use dashpaint::{
@@ -122,7 +122,7 @@ fn an_image_fill_carries_only_a_ref() {
     let node = find(&file, "image-fit");
 
     let fill = &node.fills[0];
-    assert_eq!(fill.kind, PaintTag::Image);
+    assert_eq!(fill.kind, "IMAGE");
     assert_eq!(
         fill.image_ref.as_deref(),
         Some("390616a0e7321eddb464388366d9a2a1bcb7f4c3"),
@@ -1845,4 +1845,193 @@ fn partial_still_refuses_a_no_content_file() {
         EmitPolicy::Partial,
     );
     assert!(matches!(result, Err(CompileError::Diagnostics(_))));
+}
+
+// -- Unknown paint-vocabulary values degrade to a diagnostic, never a parse
+// crash (story S2). Each fixture nests the unsupported construct one level
+// under a valid root, mirroring frame_with_vector_child: the root itself must
+// still lower, or Partial's "never ship zero content" gate (figma.no-content)
+// would fire instead of the warning under test.
+
+/// A child FRAME whose only fill is a Figma paint type this file did not
+/// model until now (`PATTERN`, a repeating source-node tile — story S2 says
+/// diagnose, never model).
+fn frame_with_pattern_fill_child() -> serde_json::Value {
+    document_json(serde_json::json!({
+        "name": "root",
+        "type": "FRAME",
+        "clipsContent": true,
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0 },
+        "children": [{
+            "name": "swatch",
+            "type": "FRAME",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+            "fills": [{ "type": "PATTERN" }],
+        }],
+    }))
+}
+
+#[test]
+fn strict_refuses_an_unknown_paint_type_naming_it() {
+    let json = frame_with_pattern_fill_child().to_string();
+    let images = BTreeMap::new();
+    let result = compile_figma_with_bindings_and_policy(
+        &json,
+        Profile::Core,
+        &images,
+        &[],
+        EmitPolicy::Strict,
+    );
+    assert!(matches!(result, Err(CompileError::Diagnostics(_))));
+}
+
+#[test]
+fn partial_skips_and_warns_on_an_unknown_paint_type_naming_it() {
+    let json = frame_with_pattern_fill_child().to_string();
+    let images = BTreeMap::new();
+    let (bytes, report) = compile_figma_with_bindings_and_policy(
+        &json,
+        Profile::Core,
+        &images,
+        &[],
+        EmitPolicy::Partial,
+    )
+    .expect("partial-emit returns a document even with an unknown paint type");
+    assert!(!bytes.is_empty(), "a document is emitted");
+
+    let warnings: Vec<_> = report
+        .diagnostics()
+        .iter()
+        .filter(|d| d.rule == dashc_wasm::figma::rule::UNSUPPORTED)
+        .collect();
+    let [warning] = warnings[..] else {
+        panic!("expected exactly one figma.unsupported, got {warnings:?}");
+    };
+    assert_eq!(warning.severity, Severity::Warning);
+    assert_eq!(
+        warning.message, "a PATTERN paint is not in the document vocabulary yet",
+        "the diagnostic must name the actual value (P4)",
+    );
+}
+
+/// A child FRAME whose image fill carries `scaleMode: STRETCH` — a
+/// non-uniform scale-to-fill Figma supports that `dashpaint::ScaleMode` does
+/// not (story S2 says diagnose, never model). Needs a resolvable imageRef, or
+/// paint_kind fails with UnresolvedImage before ever reaching the scaleMode
+/// match.
+fn frame_with_stretch_image_child() -> serde_json::Value {
+    document_json(serde_json::json!({
+        "name": "root",
+        "type": "FRAME",
+        "clipsContent": true,
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0 },
+        "children": [{
+            "name": "photo",
+            "type": "FRAME",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+            "fills": [{ "type": "IMAGE", "scaleMode": "STRETCH", "imageRef": IMAGE_REF }],
+        }],
+    }))
+}
+
+#[test]
+fn strict_refuses_an_unknown_scale_mode_naming_it() {
+    let json = frame_with_stretch_image_child().to_string();
+    let result = compile_figma_with_bindings_and_policy(
+        &json,
+        Profile::Core,
+        &images(),
+        &[],
+        EmitPolicy::Strict,
+    );
+    assert!(matches!(result, Err(CompileError::Diagnostics(_))));
+}
+
+#[test]
+fn partial_skips_and_warns_on_an_unknown_scale_mode_naming_it() {
+    let json = frame_with_stretch_image_child().to_string();
+    let (bytes, report) = compile_figma_with_bindings_and_policy(
+        &json,
+        Profile::Core,
+        &images(),
+        &[],
+        EmitPolicy::Partial,
+    )
+    .expect("partial-emit returns a document even with an unknown scaleMode");
+    assert!(!bytes.is_empty(), "a document is emitted");
+
+    let warnings: Vec<_> = report
+        .diagnostics()
+        .iter()
+        .filter(|d| d.rule == dashc_wasm::figma::rule::UNSUPPORTED)
+        .collect();
+    let [warning] = warnings[..] else {
+        panic!("expected exactly one figma.unsupported, got {warnings:?}");
+    };
+    assert_eq!(warning.severity, Severity::Warning);
+    assert_eq!(
+        warning.message, "an image scaleMode STRETCH is not in the document vocabulary yet",
+        "the diagnostic must name the actual value (P4)",
+    );
+}
+
+/// A child FRAME whose stroke carries a strokeAlign Figma might add that this
+/// file has never modeled (synthetic — no captured fixture has one).
+fn frame_with_unknown_stroke_align_child() -> serde_json::Value {
+    document_json(serde_json::json!({
+        "name": "root",
+        "type": "FRAME",
+        "clipsContent": true,
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0 },
+        "children": [{
+            "name": "odd-border",
+            "type": "FRAME",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+            "strokeAlign": "MIDDLE",
+            "strokes": [{ "type": "SOLID", "color": { "r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0 } }],
+        }],
+    }))
+}
+
+#[test]
+fn strict_refuses_an_unknown_stroke_align_naming_it() {
+    let json = frame_with_unknown_stroke_align_child().to_string();
+    let images = BTreeMap::new();
+    let result = compile_figma_with_bindings_and_policy(
+        &json,
+        Profile::Core,
+        &images,
+        &[],
+        EmitPolicy::Strict,
+    );
+    assert!(matches!(result, Err(CompileError::Diagnostics(_))));
+}
+
+#[test]
+fn partial_skips_and_warns_on_an_unknown_stroke_align_naming_it() {
+    let json = frame_with_unknown_stroke_align_child().to_string();
+    let images = BTreeMap::new();
+    let (bytes, report) = compile_figma_with_bindings_and_policy(
+        &json,
+        Profile::Core,
+        &images,
+        &[],
+        EmitPolicy::Partial,
+    )
+    .expect("partial-emit returns a document even with an unknown strokeAlign");
+    assert!(!bytes.is_empty(), "a document is emitted");
+
+    let warnings: Vec<_> = report
+        .diagnostics()
+        .iter()
+        .filter(|d| d.rule == dashc_wasm::figma::rule::UNSUPPORTED)
+        .collect();
+    let [warning] = warnings[..] else {
+        panic!("expected exactly one figma.unsupported, got {warnings:?}");
+    };
+    assert_eq!(warning.severity, Severity::Warning);
+    assert_eq!(
+        warning.message, "a MIDDLE stroke alignment is not in the document vocabulary yet",
+        "the diagnostic must name the actual value (P4)",
+    );
 }

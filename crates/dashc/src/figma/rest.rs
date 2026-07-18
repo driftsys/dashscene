@@ -5,9 +5,14 @@
 //! by a reading of Figma's documentation — the lowering was deferred out of
 //! #16 precisely so it would never be written against a guess (P5).
 //!
-//! Enum-valued fields deserialize into real enums, so an unknown value fails
-//! the parse rather than silently lowering to a default. A silent default is
-//! the silent drop P4 forbids.
+//! Every Figma-vocabulary field with a small closed set of values — a
+//! paint's `type`, an image fill's `scaleMode`, a stroke's `align` — stays a
+//! `String`, like the file's other open-vocabulary fields (`Node::kind`,
+//! `Effect::kind`). An unknown value used to deserialize into a Rust enum and
+//! fail the whole parse; the walk's named catch-all diagnostic is not a
+//! silent default (P4), so a `String` field plus a walk-side verdict is now
+//! this file's only pattern — parse never refuses on a value it does not
+//! recognize.
 
 use serde::Deserialize;
 
@@ -46,7 +51,7 @@ pub struct Node {
     #[serde(default)]
     pub stroke_weight: Option<f32>,
     #[serde(default)]
-    pub stroke_align: Option<StrokeAlign>,
+    pub stroke_align: Option<String>,
     /// The stroke's shape family. Every frame in `v03-paint.json` carries
     /// `{"strokeType": "BASIC"}`, which is what pins the shape of this field.
     /// `dashpaint::Stroke` is solid and uniform-width, so the walk rejects any
@@ -373,7 +378,7 @@ pub struct TextStyle {
 #[serde(rename_all = "camelCase")]
 pub struct Paint {
     #[serde(rename = "type")]
-    pub kind: PaintTag,
+    pub kind: String,
     #[serde(default)]
     pub blend_mode: Option<String>,
     #[serde(default)]
@@ -390,7 +395,7 @@ pub struct Paint {
     #[serde(default)]
     pub gradient_stops: Vec<GradientStop>,
     #[serde(default)]
-    pub scale_mode: Option<ScaleMode>,
+    pub scale_mode: Option<String>,
     /// The content hash of an image asset. The bytes are **not** in this
     /// JSON; the caller resolves the ref (design D1).
     #[serde(default)]
@@ -404,34 +409,6 @@ pub struct Paint {
     /// 1.0 — the image tiles at its natural size.
     #[serde(default)]
     pub scaling_factor: Option<f32>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum PaintTag {
-    Solid,
-    GradientLinear,
-    GradientRadial,
-    GradientAngular,
-    GradientDiamond,
-    Image,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum ScaleMode {
-    Fill,
-    Fit,
-    Crop,
-    Tile,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum StrokeAlign {
-    Inside,
-    Center,
-    Outside,
 }
 
 /// An effect. `kind` stays a `String` for the same reason `Node::kind` does:

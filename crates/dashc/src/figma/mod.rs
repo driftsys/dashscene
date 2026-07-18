@@ -54,7 +54,7 @@ use crate::document::{
     Paint as DocPaint, TextAlign as DocTextAlign, TextAlignV as DocTextAlignV,
     TextStyle as DocTextStyle,
 };
-use crate::figma::rest::{FigmaFile, Node, Paint, PaintTag};
+use crate::figma::rest::{FigmaFile, Node, Paint};
 
 /// The diagnostic rules this producer assembles itself — constructs with no
 /// `dashscene_validator::Construct` variant, because adding one would turn
@@ -377,7 +377,7 @@ pub fn image_refs(file: &FigmaFile) -> Result<Vec<String>, CompileError> {
     let mut stack = top_level_nodes(&file.document)?;
     while let Some(node) = stack.pop() {
         for paint in node.fills.iter().chain(node.strokes.iter()) {
-            if paint.kind == PaintTag::Image
+            if paint.kind == "IMAGE"
                 && let Some(image_ref) = &paint.image_ref
             {
                 found.insert(image_ref.clone());
@@ -995,8 +995,8 @@ impl Walk<'_> {
             what: what.to_string(),
         };
 
-        match paint.kind {
-            PaintTag::Solid => {
+        match paint.kind.as_str() {
+            "SOLID" => {
                 let color = paint
                     .color
                     .ok_or_else(|| unsupported("a SOLID with no color"))?;
@@ -1004,19 +1004,16 @@ impl Walk<'_> {
                     color: color_of(color, paint.opacity),
                 })
             }
-            PaintTag::GradientLinear
-            | PaintTag::GradientRadial
-            | PaintTag::GradientAngular
-            | PaintTag::GradientDiamond => {
+            "GRADIENT_LINEAR" | "GRADIENT_RADIAL" | "GRADIENT_ANGULAR" | "GRADIENT_DIAMOND" => {
                 let handles = &paint.gradient_handle_positions;
                 let [origin, primary, secondary] = handles[..] else {
                     return Err(unsupported("a gradient without three handles"));
                 };
                 Ok(PaintKind::Gradient(Gradient {
-                    kind: match paint.kind {
-                        PaintTag::GradientLinear => GradientKind::Linear,
-                        PaintTag::GradientRadial => GradientKind::Radial,
-                        PaintTag::GradientAngular => GradientKind::Angular,
+                    kind: match paint.kind.as_str() {
+                        "GRADIENT_LINEAR" => GradientKind::Linear,
+                        "GRADIENT_RADIAL" => GradientKind::Radial,
+                        "GRADIENT_ANGULAR" => GradientKind::Angular,
                         _ => GradientKind::Diamond,
                     },
                     handle_origin: Vec2 {
@@ -1043,7 +1040,7 @@ impl Walk<'_> {
                         .collect(),
                 }))
             }
-            PaintTag::Image => {
+            "IMAGE" => {
                 let image_ref = paint
                     .image_ref
                     .as_deref()
@@ -1068,12 +1065,14 @@ impl Walk<'_> {
                     image,
                     scale_mode: match paint
                         .scale_mode
+                        .as_deref()
                         .ok_or_else(|| unsupported("an IMAGE fill with no scaleMode"))?
                     {
-                        rest::ScaleMode::Fill => ScaleMode::Fill,
-                        rest::ScaleMode::Fit => ScaleMode::Fit,
-                        rest::ScaleMode::Crop => ScaleMode::Crop,
-                        rest::ScaleMode::Tile => ScaleMode::Tile,
+                        "FILL" => ScaleMode::Fill,
+                        "FIT" => ScaleMode::Fit,
+                        "CROP" => ScaleMode::Crop,
+                        "TILE" => ScaleMode::Tile,
+                        other => return Err(unsupported(&format!("an image scaleMode {other}"))),
                     },
                     // Both are `dashpaint` vocabulary already, so dropping
                     // them would not be an expressiveness gap — it would
@@ -1092,6 +1091,7 @@ impl Walk<'_> {
                     tile_scale: paint.scaling_factor.unwrap_or(1.0),
                 })
             }
+            other => Err(unsupported(&format!("a {other} paint"))),
         }
     }
 
@@ -1142,8 +1142,8 @@ impl Walk<'_> {
             });
         }
 
-        let color = match stroke.kind {
-            PaintTag::Solid => stroke.color.ok_or_else(|| CompileError::Unsupported {
+        let color = match stroke.kind.as_str() {
+            "SOLID" => stroke.color.ok_or_else(|| CompileError::Unsupported {
                 path: path.to_string(),
                 what: "a SOLID stroke with no color".to_string(),
             })?,
@@ -1158,10 +1158,16 @@ impl Walk<'_> {
 
         Ok(Some(Stroke {
             width: node.stroke_weight.unwrap_or(1.0),
-            align: match node.stroke_align.unwrap_or(rest::StrokeAlign::Inside) {
-                rest::StrokeAlign::Inside => StrokeAlign::Inside,
-                rest::StrokeAlign::Center => StrokeAlign::Center,
-                rest::StrokeAlign::Outside => StrokeAlign::Outside,
+            align: match node.stroke_align.as_deref().unwrap_or("INSIDE") {
+                "INSIDE" => StrokeAlign::Inside,
+                "CENTER" => StrokeAlign::Center,
+                "OUTSIDE" => StrokeAlign::Outside,
+                other => {
+                    return Err(CompileError::Unsupported {
+                        path: path.to_string(),
+                        what: format!("a {other} stroke alignment"),
+                    });
+                }
             },
             color: color_of(color, stroke.opacity),
         }))
@@ -1331,8 +1337,8 @@ impl Walk<'_> {
             }
             OnePaint::One(fill) => fill,
         };
-        match fill.kind {
-            PaintTag::Solid => {
+        match fill.kind.as_str() {
+            "SOLID" => {
                 let Some(color) = fill.color else {
                     blockers.push("a text SOLID fill with no color".to_string());
                     return None;
