@@ -30,7 +30,7 @@ pub use flip::{VariantFlip, decode_prop_key, prop_key};
 use dashscene_core::{
     Arena, AxisSizing, GridTrack, Layout, LayoutMode, LayoutSolver, NodeId, SolvedRect,
 };
-use dashscene_typeset::text::Typesetter;
+use dashscene_typeset::text::{TextShape, Typesetter};
 use rustc_hash::FxHashSet;
 use taffy::prelude::*;
 use taffy::{AlignContent, AlignItems, AlignSelf, GridPlacement, JustifyContent, Position};
@@ -377,6 +377,11 @@ fn compute_all<'t>(
 struct TextContext {
     text: String,
     size: f32,
+    /// The measure-affecting shaping axes (fixed line height, letter
+    /// spacing, horizontal align) from the node's `TextStyle` (story
+    /// #327). Vertical alignment is not here: it is block placement, not
+    /// a measured extent, so it lives in the stager, not the solve.
+    shape: TextShape,
 }
 
 /// The measure context for a node, present only when the node carries
@@ -389,7 +394,26 @@ fn text_context(arena: &Arena, node: NodeId) -> Option<TextContext> {
     Some(TextContext {
         text: text.to_string(),
         size: style.size,
+        shape: text_shape(style),
     })
+}
+
+/// The measure-affecting shaping axes of a node's text style (story
+/// #327): a fixed line height, letter spacing, and horizontal alignment.
+/// Vertical alignment is placement (the stager), not a measured extent,
+/// so it is not carried here. A default-axis style maps to
+/// [`TextShape::default`], so the solve stays byte-identical to the
+/// pre-#327 `layout()` path (the E7 guard).
+fn text_shape(style: &dashscene_core::TextStyle) -> TextShape {
+    TextShape {
+        line_height_px: style.line_height_px,
+        letter_spacing: style.letter_spacing,
+        align: match style.text_align {
+            dashscene_core::TextAlign::Left => dashscene_typeset::text::TextAlign::Left,
+            dashscene_core::TextAlign::Center => dashscene_typeset::text::TextAlign::Center,
+            dashscene_core::TextAlign::Right => dashscene_typeset::text::TextAlign::Right,
+        },
+    }
 }
 
 /// Measure a text node against the shaped-run cache. `known` is what
@@ -413,7 +437,7 @@ fn measure_text(
         AvailableSpace::MinContent => Some(0.0),
         AvailableSpace::MaxContent => None,
     });
-    let laid = typesetter.layout(&context.text, context.size, max_width);
+    let laid = typesetter.layout_with(&context.text, context.size, max_width, context.shape);
     Size {
         width: known.width.unwrap_or(laid.width),
         height: known.height.unwrap_or(laid.height),
@@ -943,7 +967,12 @@ fn collect_baseline_offsets(
             let baseline = match (arena.text(child), arena.text_style(child)) {
                 (Some(text), Some(style)) => {
                     has_text = true;
-                    let laid = typesetter.layout(text, style.size, Some(child_layout.size.width));
+                    let laid = typesetter.layout_with(
+                        text,
+                        style.size,
+                        Some(child_layout.size.width),
+                        text_shape(style),
+                    );
                     laid.lines
                         .first()
                         .map_or(child_layout.size.height, |line| line.baseline_y)
