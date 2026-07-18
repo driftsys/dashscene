@@ -101,6 +101,34 @@
       "covers": "cross-file library resolution (story #38), consumer half: one declared root holding an INSTANCE of a REMOTE component published by xfile-library (its components map carries remote:true plus the library key)",
       "emits": false,
       "note": "Awaiting manual authoring (see xfile-library step 2): in a second file, instance a variant of xfile-library's published set inside a frame, paste this file's key here, and run `just deno-capture`. Import with a manifest that declares the root and `libraries: [<xfile-library file key>]`; resolution splices the library definition in and the pair compiles end-to-end (docs/decisions/figma-cross-file-library-resolution.md). The resolution MECHANISM is covered offline by importers/figma/src/closure_test.ts and import_test.ts against synthetic and fixture-derived pairs; this captured pair replays remote-instance resolution against real ?plugin_data=shared responses."
+    },
+    {
+      "name": "text-latin",
+      "fileKey": "PASTE_THE_FIGMA_FILE_KEY_HERE",
+      "covers": "Latin text in Noto Sans Regular (the committed ascii atlas font) for the E7 render oracle (frame v05-text-latin, msdf-text band): 'Hello dashscene' (28) + '88 mph' (44) in a fixed 480x200 frame",
+      "emits": true,
+      "note": "Awaiting authoring: run the fixture-author plugin's text-latin command in a blank Figma file named text-latin, paste the file key here, run `just deno-capture` (importers/figma/plugin/fixture-author/README.md). Authored in Noto Sans, not Inter, so the render oracle measures the reference painter's MSDF glyphs against Figma's render of the SAME font, not a substitution (goldens/oracle/README.md). Strings are printable ASCII, covered by corpus/atlas/ascii. The TEXT leaves lower since #160."
+    },
+    {
+      "name": "text-arabic",
+      "fileKey": "PASTE_THE_FIGMA_FILE_KEY_HERE",
+      "covers": "Arabic RTL text in Noto Sans Arabic Regular (the committed arabic atlas font) for the E7 render oracle (frame v06-text-arabic, msdf-text band): a banner, a harakat word, and an Arabic-Indic numeral readout in a fixed 520x240 frame",
+      "emits": true,
+      "note": "Awaiting authoring: run the fixture-author plugin's text-arabic command in a blank Figma file named text-arabic, paste the file key here, run `just deno-capture`. Numerals are authored as Arabic-Indic codepoints (not European), so both Figma and the reference render the same glyphs. Basic Arabic (U+0621-U+064A) plus harakat and Arabic-Indic digits, all covered by corpus/atlas/arabic. The TEXT leaves lower since #160."
+    },
+    {
+      "name": "drop-shadow",
+      "fileKey": "PASTE_THE_FIGMA_FILE_KEY_HERE",
+      "covers": "one DROP_SHADOW on a rounded card for the E7 render oracle (frame v08-drop-shadow, blur-falloff band): offset y=4, blur 6, spread 0, black alpha 0.55",
+      "emits": true,
+      "note": "Awaiting authoring: run the fixture-author plugin's drop-shadow command in a blank Figma file named drop-shadow, paste the file key here, run `just deno-capture`. A DROP_SHADOW with a present color and NORMAL blend is on dashc's accept path under Profile::Core (crates/dashc/src/figma/{triage.rs,mod.rs}); the parameters are the v08_shadows golden's proven-rendered values. The oracle pins the sigma = blur/2 mapping (docs/decisions/effects-vocabulary-shadows.md, G-1) against Figma's own render (#304)."
+    },
+    {
+      "name": "inner-shadow",
+      "fileKey": "PASTE_THE_FIGMA_FILE_KEY_HERE",
+      "covers": "one INNER_SHADOW on a rounded card for the E7 render oracle (frame v08-inner-shadow, blur-falloff band): offset 0, blur 6, spread 0, black alpha 0.55",
+      "emits": true,
+      "note": "Awaiting authoring: run the fixture-author plugin's inner-shadow command in a blank Figma file named inner-shadow, paste the file key here, run `just deno-capture`. Same clean-lowering path and sigma = blur/2 pinning as drop-shadow (#304)."
     }
   ]
 }

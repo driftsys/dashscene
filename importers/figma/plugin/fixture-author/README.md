@@ -46,6 +46,18 @@ then run Plugins → Development → dashscene fixture author → _(name)_.
                                  overlay, a spec note, a `_`-prefixed
                                  scratch layer, and a hidden layer — then
                                  annotate the roles (see below)
+    text-latin                   E7 render-oracle text frame (v05-text-latin):
+                                 Noto Sans Regular — the committed ascii-atlas
+                                 font, NOT Inter — so the oracle measures the
+                                 painter against Figma's render of the same font
+    text-arabic                  E7 render-oracle text frame (v06-text-arabic):
+                                 Noto Sans Arabic Regular — banner, a harakat
+                                 word, and an Arabic-Indic numeral readout (see
+                                 the manual note below if the font is missing)
+    drop-shadow                  E7 render-oracle shadow frame (v08-drop-shadow):
+                                 one DROP_SHADOW card, sigma = blur/2 pinning
+    inner-shadow                 E7 render-oracle shadow frame (v08-inner-shadow):
+                                 one INNER_SHADOW card
 
 Re-running a command deletes and rebuilds its frame — safe to iterate.
 
@@ -83,6 +95,10 @@ capture as below.
 - **lowering-baseline**: if `Noto Sans Arabic` isn't available the
   Arabic run is skipped — add any Arabic text node manually (keep the
   Arabic-Indic numerals, e.g. `السرعة ١٢٠ كم/س`).
+- **text-arabic**: if `Noto Sans Arabic` isn't available the command
+  builds the frame with a `_manual-checklist` note instead of the runs;
+  add the three text nodes it lists in Noto Sans Arabic Regular. The
+  font is a Figma-bundled Google font, so this is rare.
 - **v03-paint**: none. The image fill needs no asset from you — a 16x16
   PNG checkerboard is inlined in `code.js` as hex and handed to
   `figma.createImage`, which returns the hash the `IMAGE` paint refers
