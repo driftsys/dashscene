@@ -11,6 +11,10 @@ Cargo.lock
 # Deno
 importers/figma/.deno
 
+# `just reprobe` scratch output — a live-only Figma import probe, never
+# committed; the recipe removes it on exit, this is a backstop.
+importers/figma/.reprobe-tmp.*
+
 # OS/editor cruft
 .DS_Store
 *.swp
