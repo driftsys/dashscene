@@ -41,6 +41,7 @@ fn styled(txn: &mut dashscene_core::Txn<'_>, node: NodeId, text: &str, size: f32
             letter_spacing: 0.0,
             text_align: TextAlign::Left,
             text_align_v: TextAlignV::Top,
+            ligatures_off: false,
         }),
     );
 }
@@ -83,6 +84,7 @@ fn solved_text_box(
             letter_spacing: 0.0,
             text_align: align,
             text_align_v: TextAlignV::Top,
+            ligatures_off: false,
         }),
     );
     let mut ts = typesetter();

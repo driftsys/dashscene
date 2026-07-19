@@ -81,12 +81,13 @@ pub enum TextAlign {
     Right,
 }
 
-/// The additive shaping knobs [`Typesetter::layout_with`] honors (story #310):
-/// a fixed line height, letter spacing, and horizontal alignment. The
-/// [`Default`] reproduces the previous behavior exactly — an auto line height
-/// (font metrics), no tracking, and flush-by-direction placement — so
-/// [`Typesetter::layout`] delegating with the default is byte-for-byte the
-/// pre-#310 output (the E7 guard).
+/// The additive shaping knobs [`Typesetter::layout_with`] honors (story #310,
+/// #341): a fixed line height, letter spacing, horizontal alignment, and
+/// standard ligatures forced off. The [`Default`] reproduces the previous
+/// behavior exactly — an auto line height (font metrics), no tracking,
+/// flush-by-direction placement, and the per-run context's own ligature
+/// posture (`shape::RunContext`) — so [`Typesetter::layout`] delegating with
+/// the default is byte-for-byte the pre-#310 output (the E7 guard).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TextShape {
     /// A fixed line advance in pixels, or `None` for the intrinsic advance
@@ -96,6 +97,14 @@ pub struct TextShape {
     pub letter_spacing: f32,
     /// Horizontal alignment within the container width.
     pub align: TextAlign,
+    /// Forces standard ligatures (`liga`/`clig`) off for every run in this
+    /// layout, regardless of the run's own context (story #341: Figma's
+    /// OpenType `LIGA: 0`). A non-Arabic run already shapes with these
+    /// features off by default (`docs/decisions/
+    /// liga-clig-off-until-gsub-closure.md`), so `false` here is a no-op for
+    /// it; an Arabic-context run's other default features (digit shapes,
+    /// joining, `rlig`/`ccmp`, …) are unaffected either way.
+    pub ligatures_off: bool,
 }
 
 impl Default for TextShape {
@@ -104,6 +113,7 @@ impl Default for TextShape {
             line_height_px: None,
             letter_spacing: 0.0,
             align: TextAlign::Left,
+            ligatures_off: false,
         }
     }
 }
@@ -142,12 +152,20 @@ pub struct CacheStats {
 /// key). It is unbounded: cockpit UI text is a bounded set, and an
 /// eviction policy before a real producer shows growth would be
 /// speculative.
+///
+/// `ligatures_off` (story #341) is a per-call knob, not a property of the
+/// text, so the same paragraph text can shape two different ways depending
+/// on it — a single map keyed by text alone would hand back a stale entry
+/// shaped under the other setting. `cache_ligatures_off` holds that second
+/// posture's entries; `cache` (the `false` posture, which every existing
+/// call site uses) is untouched by the split.
 #[derive(Debug)]
 pub struct Typesetter {
     /// Primary font first, then fallbacks in cascade order. Always at
     /// least one element.
     fonts: Vec<Font>,
     cache: HashMap<Box<str>, Arc<ShapedText>>,
+    cache_ligatures_off: HashMap<Box<str>, Arc<ShapedText>>,
     hits: u64,
     misses: u64,
 }
@@ -174,6 +192,7 @@ impl Typesetter {
         Typesetter {
             fonts,
             cache: HashMap::new(),
+            cache_ligatures_off: HashMap::new(),
             hits: 0,
             misses: 0,
         }
@@ -251,7 +270,7 @@ impl Typesetter {
         if !text.is_empty() {
             for paragraph in text.split('\n') {
                 let bidi = BidiInfo::new(paragraph, None);
-                let shaped = self.shaped(paragraph, &bidi);
+                let shaped = self.shaped(paragraph, &bidi, shape.ligatures_off);
                 // An empty chunk has no bidi paragraph: one empty line.
                 if bidi.paragraphs.is_empty() {
                     // A blank line has no glyphs; measure its box by the
@@ -392,17 +411,37 @@ impl Typesetter {
         (ascent, ascent - descent + gap)
     }
 
-    /// The cache key stays the paragraph text alone: resolved bidi
-    /// levels are a pure function of that text, so one entry serves
-    /// every layout of the paragraph.
-    fn shaped(&mut self, paragraph: &str, bidi: &BidiInfo<'_>) -> Arc<ShapedText> {
-        if let Some(hit) = self.cache.get(paragraph) {
+    /// The cache key is the paragraph text plus `ligatures_off`: resolved
+    /// bidi levels and the per-run context (Arabic/Plain, `shape::
+    /// RunContext`) are a pure function of the text alone, but
+    /// `ligatures_off` is an authored knob the text carries no trace of, so
+    /// the same text shaped under each posture must not collide in one
+    /// entry (story #341). `ligatures_off` selects which of the two maps to
+    /// probe and fill; the default (`false`) path is `cache`, unchanged from
+    /// before this knob existed.
+    fn shaped(
+        &mut self,
+        paragraph: &str,
+        bidi: &BidiInfo<'_>,
+        ligatures_off: bool,
+    ) -> Arc<ShapedText> {
+        let hit = if ligatures_off {
+            self.cache_ligatures_off.get(paragraph).cloned()
+        } else {
+            self.cache.get(paragraph).cloned()
+        };
+        if let Some(shaped) = hit {
             self.hits += 1;
-            return hit.clone();
+            return shaped;
         }
         self.misses += 1;
-        let shaped = Arc::new(shape::shape_paragraph(&self.fonts, bidi));
-        self.cache.insert(paragraph.into(), shaped.clone());
+        let shaped = Arc::new(shape::shape_paragraph(&self.fonts, bidi, ligatures_off));
+        if ligatures_off {
+            self.cache_ligatures_off
+                .insert(paragraph.into(), shaped.clone());
+        } else {
+            self.cache.insert(paragraph.into(), shaped.clone());
+        }
         shaped
     }
 }

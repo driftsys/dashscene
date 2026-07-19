@@ -164,6 +164,13 @@
       "covers": "one fixed 160x160 FRAME whose only paint is an opaque IMAGE fill (scaleMode FILL) whose bytes are a real static GIF89a (magic 47 49 46 38 39 61), for the static-GIF image-fill vocabulary path (story #342, epic #343) — dashpaint::ImageFormat::Gif end to end: importer accept-and-tag, dashc passthrough, Skia decode, and the import-fidelity oracle (frame gif-fill, aa-edge band)",
       "emits": true,
       "note": "Authored with the fixture-author plugin's gif-fill command (importers/figma/plugin/fixture-author/README.md). The image is a 16x16 solid-color static GIF generated once with ImageMagick and inlined as hex in the plugin (no asset placed through the UI, same bisection reason as jpeg-fill). Static GIF decode is proven end to end by dashscene_skia::tests::decode_image_handles_a_real_static_gif and by direct pixel inspection of the compiled render (solid opaque #33CC66, exactly the source color); there is no committed render-oracle frame for this fixture because Figma's own GET /images renders GIF-backed image fills as fully transparent, not the source color (debt #355) — goldens/oracle/import-manifest.json measures jpeg-fill only."
+    },
+    {
+      "name": "liga-text",
+      "fileKey": "uJR3anK97E1ljyyjpThabG",
+      "covers": "standard-ligatures-off text vocabulary (Figma TextStyle.opentypeFlags {\"LIGA\":0}) for the import-fidelity oracle (frame liga-text, msdf-text band, issue #332): the same string set twice in Noto Sans — liga-off with standard ligatures explicitly disabled, liga-on at the font default — so the diff isolates the ligatures_off axis lowered by story #341 (epic #343)",
+      "emits": true,
+      "note": "Authored with the fixture-author plugin's liga-text command (importers/figma/plugin/fixture-author/README.md), plus a manual step: the Plugin API's openTypeFeatures is read-only (no setter), so standard ligatures were disabled on the liga-off node by hand (Type settings > Details panel > Ligatures); the liga-on node stays at the font default for contrast. Measured by goldens/oracle/import-manifest.json (issue #332)."
     }
   ]
 }

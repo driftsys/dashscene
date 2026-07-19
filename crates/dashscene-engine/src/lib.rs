@@ -378,9 +378,10 @@ struct TextContext {
     text: String,
     size: f32,
     /// The measure-affecting shaping axes (fixed line height, letter
-    /// spacing, horizontal align) from the node's `TextStyle` (story
-    /// #327). Vertical alignment is not here: it is block placement, not
-    /// a measured extent, so it lives in the stager, not the solve.
+    /// spacing, horizontal align, standard-ligatures-off) from the node's
+    /// `TextStyle` (story #327, #341). Vertical alignment is not here: it
+    /// is block placement, not a measured extent, so it lives in the
+    /// stager, not the solve.
     shape: TextShape,
 }
 
@@ -398,10 +399,12 @@ fn text_context(arena: &Arena, node: NodeId) -> Option<TextContext> {
     })
 }
 
-/// The measure-affecting shaping axes of a node's text style (story
-/// #327): a fixed line height, letter spacing, and horizontal alignment.
-/// Vertical alignment is placement (the stager), not a measured extent,
-/// so it is not carried here. A default-axis style maps to
+/// The measure-affecting shaping axes of a node's text style (story #327,
+/// #341): a fixed line height, letter spacing, horizontal alignment, and
+/// standard-ligatures-off (a ligated glyph's advance generally differs from
+/// its component glyphs' combined advance, so it can move the measured
+/// extent). Vertical alignment is placement (the stager), not a measured
+/// extent, so it is not carried here. A default-axis style maps to
 /// [`TextShape::default`], so the solve stays byte-identical to the
 /// pre-#327 `layout()` path (the E7 guard).
 fn text_shape(style: &dashscene_core::TextStyle) -> TextShape {
@@ -413,6 +416,7 @@ fn text_shape(style: &dashscene_core::TextStyle) -> TextShape {
             dashscene_core::TextAlign::Center => dashscene_typeset::text::TextAlign::Center,
             dashscene_core::TextAlign::Right => dashscene_typeset::text::TextAlign::Right,
         },
+        ligatures_off: style.ligatures_off,
     }
 }
 

@@ -330,10 +330,10 @@ fn build_node<'a>(
 /// Builds one `TextStyle` pool entry. The color is always written: the
 /// lowering never emits a color-less style (a text node with no solid fill is
 /// refused at the walk), and the loader treats an absent color as a producer
-/// error (`text.style-no-color`, P4). The four v0.9 axes (story #310) write
-/// their value; each equals its schema default for a plain style (auto line
-/// height, zero spacing, Left/Top), so flatc omits it and a pre-#310 document
-/// emits byte-identically (R7).
+/// error (`text.style-no-color`, P4). The four v0.9 axes (story #310) and
+/// #341's `ligatures_off` write their value; each equals its schema default
+/// for a plain style (auto line height, zero spacing, Left/Top, ligatures
+/// on), so flatc omits it and a pre-#310 document emits byte-identically (R7).
 fn build_text_style<'a>(
     b: &mut FlatBufferBuilder<'a>,
     style: &TextStyle,
@@ -350,6 +350,7 @@ fn build_text_style<'a>(
             letter_spacing: style.letter_spacing,
             text_align: text_align_of(style.text_align),
             text_align_v: text_align_v_of(style.text_align_v),
+            ligatures_off: style.ligatures_off,
         },
     )
 }
@@ -584,9 +585,10 @@ fn paint_key(paint: &Paint) -> PaintKey {
 /// and letter spacing go in by bit pattern for the same reason the paint key's
 /// do (`f32` is not `Eq`/`Hash`, and a value key would mint a fresh entry per
 /// NaN, breaking R7's byte-reproducibility). The key covers every axis the
-/// style carries (story #310): two styles differing only in, say, alignment
-/// must be two distinct pool entries, never collapse to one.
-type TextStyleKey = (String, u32, u16, [u32; 4], Option<u32>, u32, u32, u32);
+/// style carries (story #310, #341): two styles differing only in, say,
+/// alignment or `ligatures_off` must be two distinct pool entries, never
+/// collapse to one.
+type TextStyleKey = (String, u32, u16, [u32; 4], Option<u32>, u32, u32, u32, bool);
 
 fn text_style_key(style: &TextStyle) -> TextStyleKey {
     (
@@ -598,6 +600,7 @@ fn text_style_key(style: &TextStyle) -> TextStyleKey {
         style.letter_spacing.to_bits(),
         style.text_align as u32,
         style.text_align_v as u32,
+        style.ligatures_off,
     )
 }
 

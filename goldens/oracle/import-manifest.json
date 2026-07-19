@@ -32,6 +32,16 @@
       "designSource": "oracle/import-design-source/jpeg-fill.png",
       "status": "captured",
       "note": "One fixed 160x160 FRAME whose only paint is an opaque IMAGE fill (scaleMode FILL) whose bytes are a real baseline JPEG (magic FF D8 FF, ends FF D9, 16x16) — the JPEG image-fill vocabulary path (story #342): dashpaint::ImageFormat::Jpeg decoded through the Skia reference painter's own codec. Self-authored with the fixture-author plugin's jpeg-fill command (importers/figma/plugin/fixture-author/README.md); no asset placed through the UI. Measured 0/25600 px (0.000%, max delta 0) — an exact match, well within the aa-edge band."
+    },
+    {
+      "frame": "liga-text",
+      "fixture": "corpus/figma-fixtures/liga-text.json",
+      "band": "msdf-text",
+      "figmaFileKey": "uJR3anK97E1ljyyjpThabG",
+      "figmaNodeId": "1:2",
+      "designSource": "oracle/import-design-source/liga-text.png",
+      "status": "captured",
+      "note": "One FRAME holding two TEXT nodes in Noto Sans, the same string 'waffle finish office' set twice — liga-off carrying Figma's standard-ligatures-off OpenType flag (style.opentypeFlags {\"LIGA\":0}), liga-on at the font default — the ligatures_off text axis lowered by story #341 (epic #343). Self-authored with the fixture-author plugin's liga-text command (importers/figma/plugin/fixture-author/README.md) plus the manual ligature toggle the Plugin API cannot write. Measured 1907/84000 px (2.270%, max delta 224) — glyph edges plus the ligature-substitution shape difference itself, within the msdf-text band."
     }
   ]
 }

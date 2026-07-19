@@ -365,9 +365,12 @@ pub struct TextStyle {
     /// A hyperlink on the whole text run. No vocabulary, so diagnosed.
     #[serde(default)]
     pub hyperlink: Option<serde_json::Value>,
-    /// OpenType feature flags. A non-empty set has no vocabulary
-    /// (`liga`/`clig` posture is the runtime's per-run default, not authored,
-    /// `docs/decisions/liga-clig-off-until-gsub-closure.md`), so it is
+    /// OpenType feature flags. Exactly `{"LIGA": 0}` (standard ligatures off)
+    /// lowers into `ligatures_off` (story #341) — the one flag measured on a
+    /// real file's text; any other flag, value, or combination has no
+    /// vocabulary (`liga`/`clig` posture is otherwise the runtime's per-run
+    /// default, not authored,
+    /// `docs/decisions/liga-clig-off-until-gsub-closure.md`) and is
     /// diagnosed.
     #[serde(default)]
     pub opentype_flags: serde_json::Map<String, serde_json::Value>,

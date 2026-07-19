@@ -1279,10 +1279,20 @@ impl Walk<'_> {
         if style.hyperlink.is_some() {
             blockers.push("a text hyperlink".to_string());
         }
-        // OpenType feature flags.
-        if !style.opentype_flags.is_empty() {
-            blockers.push("OpenType features".to_string());
-        }
+        // OpenType feature flags (story #341): the vocabulary lowers exactly
+        // the measured flag, standard ligatures off (`{LIGA: 0}`), into
+        // `ligatures_off`. That is the narrowing this story earned by
+        // measurement, not a guess at what else might show up — any other
+        // flag, any other value on `LIGA`, or `LIGA` alongside another flag
+        // has no vocabulary and stays the named diagnostic (P4).
+        let ligatures_off = match (style.opentype_flags.len(), style.opentype_flags.get("LIGA")) {
+            (0, _) => false,
+            (1, Some(v)) if v.as_i64() == Some(0) => true,
+            _ => {
+                blockers.push("OpenType features".to_string());
+                false
+            }
+        };
 
         // A text outline (stroke) has no vocabulary — the style carries a fill
         // color only, so an outline is refused rather than dropped (P4). Gate
@@ -1317,6 +1327,7 @@ impl Walk<'_> {
                 letter_spacing,
                 text_align,
                 text_align_v,
+                ligatures_off,
             }),
         )
     }

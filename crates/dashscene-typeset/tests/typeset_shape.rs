@@ -107,6 +107,30 @@ fn letter_spacing_widens_the_measured_line() {
     assert!((wide - base - 12.0).abs() < 1e-3, "base {base} wide {wide}");
 }
 
+/// `ligatures_off` plumbs through `layout_with` to the shaping seam (story
+/// #341). A Latin run already shapes with `liga`/`clig` off by default
+/// (`docs/decisions/liga-clig-off-until-gsub-closure.md`), so setting the
+/// knob here is a no-op for this (non-Arabic) typesetter's output — the
+/// override changing an Arabic-context run's posture is shape.rs's own unit
+/// tests. This pins the wiring: the knob must not panic or otherwise disturb
+/// output for the common case.
+#[test]
+fn ligatures_off_plumbs_through_without_disturbing_latin_output() {
+    let mut a = typesetter();
+    let mut b = typesetter();
+    let base = a.layout("office", 24.0, None);
+    let with_flag = b.layout_with(
+        "office",
+        24.0,
+        None,
+        TextShape {
+            ligatures_off: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(base, with_flag);
+}
+
 /// CENTER and RIGHT shift the line within the container width; the default
 /// (LEFT) leaves an LTR line flush at x = 0.
 #[test]
