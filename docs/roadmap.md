@@ -11,7 +11,7 @@ is nothing to keep in sync between the two.
 
 | This file (shape)               | GitHub (state)                                |
 | ------------------------------- | --------------------------------------------- |
-| Which slices exist (v0.1-v0.9)  | Which stories exist under each epic           |
+| Which slices exist (v0.1-v0.12) | Which stories exist under each epic           |
 | What each slice delivers        | Which stories are open, closed, who owns them |
 | Inter-slice dependency edges    | Story-level dependency edges                  |
 | Which E-criteria a slice closes | Debt triage and milestone assignment          |
@@ -503,7 +503,9 @@ to their slices. The v0.9 breakdown is revised at this close — see v0.9 below.
 ### v0.9 — parity — open
 
 **Epic #47.** Closes [`E1`](specification/05-qualification.md). Closing this
-epic closes v0.
+epic asserts the v0 exit gate (`E1`–`E7`); v0 itself now extends through
+v0.12 (the 2026-07-19 plan revision below), so the gate closes the
+qualification arc, not the version.
 
 Delivers: the same-screen-both-ways fixture, and the v0 exit gate — `E1`
 through `E7` asserted in CI.
@@ -542,18 +544,79 @@ over the slice — the four manual Figma design-source captures (#265) are
 user-owned, and both `E7`'s assertion and the render-oracle's real-capture diff
 wait on them.
 
-With those decisions made, `E1` through `E6` are met and the remaining v0.9
-work is the exit gate (#49): it waits on `E7` (the #265 design-source captures)
-and the restoration of Actions billing (#263) before it can assert all seven in
-CI.
+With those decisions made, `E1` through `E6` are met — and `E7` followed
+(2026-07-18): all seven oracle frames are captured and measured within their
+bands, two of them catching real engine bugs on first measurement (#314's
+line-height fix, #272's baseline correction). The remaining v0.9 work is the
+exit gate (#49) alone: it waits only on the restoration of Actions billing
+(#263) before it can assert all seven criteria in CI.
+
+After `E7` was met, the full real-file-import epic ran outside the slice map
+(2026-07-18/19, [`technotes/2026-07-19-real-file-import.md`](technotes/2026-07-19-real-file-import.md)):
+two real public Figma files now emit and render end to end under partial-emit,
+and a committed import-fidelity oracle (issue #332) measures the two vocabulary
+paths no `E7` frame covers. What that epic measured is the v0.10 slice below.
+
+### v0.10 — real-file fidelity — open
+
+**Epic #343.** The current slice.
+
+Delivers: the named, counted gaps the real-file import left as
+skip-with-warning holes, in measured-value order — the `LIGA:0` text unlock
+(#341, one shaping bit gating 31 hero text blocks), JPEG and static-GIF image
+fills (#342, Figma's photo and re-encode formats), `VECTOR` nodes baked to
+MSDF at compile time (#340, the recorded quad-model strategy, with a
+Skia-path-versus-field bake oracle), stacked fills (#146), node
+opacity/rotation/mask/hidden lowering (#143), and mixed text style segments
+(#310). Each new vocabulary lands with a self-authored committed frame in the
+import oracle.
+
+Exit: the Landify hero solves to Figma's canvas size and pixel-diffs against
+Figma's own render inside a declared band (live-only, per
+[`decisions/figma-corpus-self-authored-only.md`](decisions/figma-corpus-self-authored-only.md)).
+
+Depends on: the v0.5–v0.7 text and importer stack, and the import oracle
+(#332). Runs while #49 stays billing-gated; the v0 exit gate is unchanged.
+
+### v0.11 — document sections + asset model — provisional
+
+**Epic #344.** Provisional; revised at the v0.10 close.
+
+Delivers: the `.dsb` sectioned-container envelope
+([`decisions/dsb-sectioned-container.md`](decisions/dsb-sectioned-container.md)
+deferred it to exactly this work), the content-addressed `AssetTable` (#107)
+replacing inline image bytes — existing documents remain the null-binding
+special case — and shared image identification in `dashc` for all producers
+(#339). Seeds the R5 loading-performance measurements.
+
+Depends on: v0.10 (the widened image vocabulary it carries into sections).
+Design capture: `docs/wip/2026-07-19-asset-pipeline-profiles-and-baking.md`.
+
+### v0.12 — packer + quality profiles — provisional
+
+**Epic #345.** Provisional; revised at the v0.11 close.
+
+Delivers: `dashpack` (an in-workspace standalone tool — vendored astcenc, an
+own KTX2 writer, no external CLIs), the RAW/HiFi/Lite quality profiles as
+per-asset-class band contracts with a per-asset encode-and-diff oracle,
+cold-bank assembly onto the v0.11 sections, the Gfx QA profile preview (the
+reference painter renders all three profiles), and the native-ASTC codec
+table for the SA8255/SA7255 + R-Car launch fleet (a proposed refinement to
+[`specification/03-target-hardware-rules.md`](specification/03-target-hardware-rules.md);
+Basis stays the mixed-fleet contingency). The oracle-harness consolidation
+(#338) lands here, after #49 lifts the `E7` freeze.
+
+Depends on: v0.11 (sections and the asset table). Design capture:
+`docs/wip/2026-07-19-asset-pipeline-profiles-and-baking.md`.
 
 ## v1 — Unity, full feature set, performance, production toolchain
 
 Engine painter (SDF shader library, material classes, a C# declarative
 skin); LATER-tier features land per priority, including shadow baking
 switching on and `profile:core` being enforced on target documents; loading
-performance (mmap section measurement, prefetch choreography, placeholder
-activation, the KTX2 texture pipeline, and the startup-scaling benchmark that
+performance — its foundations (the sectioned envelope, the asset table, the
+KTX2 texture pipeline) land in v0.11–v0.12, leaving v1 the prefetch
+choreography, placeholder activation, and the startup-scaling benchmark that
 asserts cold-start cost tracks the shown root, not document size — the v1 R5
 exit criterion, guardrail G-20,
 [`specification/05-qualification.md`](specification/05-qualification.md));
