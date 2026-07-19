@@ -187,6 +187,12 @@ into the records below. Per-story decisions land here directly:
   #146 stays open), carried through core like corners and rendered live in
   the Skia painter (spread math, clip + inverse-fill inner shadow, Figma
   back-to-front stacking); folds the #144 dashc un-pin (story #45).
+- [baked-vector-msdf-field.md](baked-vector-msdf-field.md) — a Figma `VECTOR`
+  lowers into a baked multi-channel signed-distance field carried on the paint
+  entry as a coverage mask; the generator is pure-Rust `fdsm` inside
+  `dashc.wasm` welded to pinned msdfgen; the schema is additive/R7-safe with a
+  `shape_field` sentinel; baking is fixed at 48 px/em with escalation deferred
+  to #357; unfieldable shapes are named refusals (story B1/#340, v0.10).
 
 - [v03-paint-goldens-per-family.md](v03-paint-goldens-per-family.md) —
   the v0.3 paint goldens are per-family isolation scenes complementing
