@@ -48,5 +48,11 @@ directly:
   `dashscene-core` load path (story #16); the Figma REST front end — the
   lowering walk, the import gate, and `compile_figma` (story #139); the
   wasm ABI the Deno importer calls it through (story #17).
+- [vector-msdf-baking.md](vector-msdf-baking.md) — Figma `VECTOR` nodes bake
+  into multi-channel signed-distance fields carried on the paint entry as
+  coverage masks: the pure-Rust `fdsm` generator inside `dashc.wasm` (welded to
+  pinned msdfgen), the additive `VectorAtlas`/`VectorShape` schema + `shape_field`
+  sentinel, the boundary-B field sampling, and the bake oracle (v0.10, story
+  B1/#340).
 
 See the `sdd-working-memory-lifecycle` rule.

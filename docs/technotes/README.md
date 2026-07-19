@@ -39,6 +39,16 @@ Notes:
 - [engineering-guardrails.md](engineering-guardrails.md) — the design-review
   and slice-sign-off checklist `G-1`..`G-23`, each anchored to the principle,
   requirement, target-hardware rule, or open question it makes falsifiable.
+- [2026-07-19-real-file-import.md](2026-07-19-real-file-import.md) — how the
+  project took two real public Figma files end to end through `dashc` to a
+  rendered `.dsb` under partial-emit, and what remained (the full real-file
+  import epic, 2026-07-18/19).
+- [2026-07-19-v010-real-file-fidelity.md](2026-07-19-v010-real-file-fidelity.md)
+  — what the v0.10 slice delivered (standard-ligatures-off, JPEG/GIF fills,
+  baked-vector MSDF shapes, stacked fills, node opacity/mask/hidden lowering, the
+  component-instance trim fix), the seven in-band import-oracle frames, and the
+  Landify hero's fidelity state at the close (solves to Figma's 1440×4263 canvas,
+  ~5–6 % edge-dominated live diff; #368 font weight, backdrop-blur, #336).
 
 The four notes above were captured from a 2026-07-13 design discussion and
 carry DECISION / CANDIDATE / OPEN tags. Every `DECISION` and `DECISION

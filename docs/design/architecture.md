@@ -142,7 +142,7 @@ runtime that solves it),
 | `crates/dashcue`             | descriptive animation vocabulary + runtime scheduling                     | [dashcue.md](dashcue.md)                                                       |
 | `crates/dashlang`            | Rust DSL skin + stress-corpus generator                                   | [dashlang.md](dashlang.md)                                                     |
 | `crates/dashbuf`             | the `.dsb` flatbuffer schema                                              | [dashbuf.md](dashbuf.md)                                                       |
-| `crates/dashc`               | compiler CLI; also builds to wasm32 for the Deno importer                 | [dashc.md](dashc.md)                                                           |
+| `crates/dashc`               | compiler CLI; also builds to wasm32 for the Deno importer                 | [dashc.md](dashc.md), [vector-msdf-baking.md](vector-msdf-baking.md)           |
 | `crates/dashscene-unity`     | Rust-side FFI bindings for the Unity painter                              | planned — see below                                                            |
 | `crates/dashscene-web`       | wasm/tiny-skia painter                                                    | planned — see below                                                            |
 | `importers/figma/`           | Deno/TypeScript Figma REST importer + `sharedPluginData` annotator plugin | [dashc-wasm-abi.md](../decisions/dashc-wasm-abi.md) (the ABI it calls through) |

@@ -557,9 +557,9 @@ two real public Figma files now emit and render end to end under partial-emit,
 and a committed import-fidelity oracle (issue #332) measures the two vocabulary
 paths no `E7` frame covers. What that epic measured is the v0.10 slice below.
 
-### v0.10 — real-file fidelity — open
+### v0.10 — real-file fidelity — closed
 
-**Epic #343.** The current slice.
+**Epic #343.**
 
 Delivers: the named, counted gaps the real-file import left as
 skip-with-warning holes, in measured-value order — the `LIGA:0` text unlock
@@ -578,9 +578,27 @@ Figma's own render inside a declared band (live-only, per
 Depends on: the v0.5–v0.7 text and importer stack, and the import oracle
 (#332). Runs while #49 stays billing-gated; the v0 exit gate is unchanged.
 
-### v0.11 — document sections + asset model — provisional
+Closed 2026-07-19 — all six vocabulary stories landed: standard-ligatures-off
+(#341), JPEG and static-GIF fills (#342), `VECTOR` → baked MSDF shapes (#340),
+stacked fills (#146), node opacity/mask/hidden lowering (#143), plus the
+component-instance trim fix (#359) that restored six of the hero's nine
+sections. The Landify hero
+now solves to Figma's exact 1440×4263 canvas and renders essentially complete;
+its live pixel-diff against Figma's own render is a ~5–6 % edge-dominated
+residual (font weight #368, the omitted profile:full backdrop-blur overlays,
+letter-spacing #336, and anti-aliasing), with no missing structural content. The
+import-fidelity oracle (#332) grew to seven self-authored frames, all captured
+and in band, none touching the frozen `E7` gate. Rotation stays a named refusal
+(no non-axis-aligned transform in either target) and #310 mixed text segments
+demoted to v1 (no `styleOverrideTable` use in either target). Full outcome:
+[`technotes/2026-07-19-v010-real-file-fidelity.md`](technotes/2026-07-19-v010-real-file-fidelity.md);
+the baked-vector carrier:
+[`decisions/baked-vector-msdf-field.md`](decisions/baked-vector-msdf-field.md).
+The v0.11 breakdown is revised at this close — see v0.11 below.
 
-**Epic #344.** Provisional; revised at the v0.10 close.
+### v0.11 — document sections + asset model — open
+
+**Epic #344.** The current slice.
 
 Delivers: the `.dsb` sectioned-container envelope
 ([`decisions/dsb-sectioned-container.md`](decisions/dsb-sectioned-container.md)
@@ -591,6 +609,15 @@ special case — and shared image identification in `dashc` for all producers
 
 Depends on: v0.10 (the widened image vocabulary it carries into sections).
 Design capture: `docs/wip/2026-07-19-asset-pipeline-profiles-and-baking.md`.
+
+Revised at the v0.10 close (2026-07-19): v0.10's live hero diff surfaced three
+fidelity contributors that fold in here as provisional candidates, not
+commitments, alongside the sections-and-asset-model core above — multi-weight
+font support (#368, weighted atlases plus a `(script, weight) → face` seam, the
+largest text residual and likely its own story), backdrop blur under
+profile:full, and the trailing letter-spacing metric (#336). The scope shape is
+otherwise unchanged; the candidates are prioritized at the v0.10→v0.11 grounding
+pass, and epic #344 carries the detail.
 
 ### v0.12 — packer + quality profiles — provisional
 
