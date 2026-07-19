@@ -85,10 +85,16 @@ fn a_fixed_line_height_centers_the_em_box_half_leading() {
     }
 }
 
-/// Letter spacing widens the measured line by one tracking step per glyph, in
-/// both the placement pen advance (`line.width`) and the layout width.
+/// Letter spacing widens the measured line by one tracking step per glyph
+/// *gap* — n - 1 steps for n glyphs, not n. The placement pen
+/// (`layout::place`) still advances past every glyph including the last, but
+/// the reported width — `line.width` and the layout width — drops that
+/// final step: Figma excludes it from the box extent and alignment (debt
+/// #336; the import oracle's `import-text-axes` frame measures this against
+/// Figma's own `GET /images` render). This test previously pinned the #310
+/// "n glyphs, n steps" contract; #336 corrects it.
 #[test]
-fn letter_spacing_widens_the_measured_line() {
+fn letter_spacing_widens_the_measured_line_by_n_minus_one_steps() {
     let mut ts = typesetter();
     let base = ts.layout("abc", 24.0, None).lines[0].width;
     let wide = ts
@@ -103,8 +109,46 @@ fn letter_spacing_widens_the_measured_line() {
         )
         .lines[0]
         .width;
-    // "abc" is three glyphs; each advances by an extra 4.0.
-    assert!((wide - base - 12.0).abs() < 1e-3, "base {base} wide {wide}");
+    // "abc" is three glyphs, two internal gaps; the trailing step after 'c'
+    // is excluded.
+    assert!((wide - base - 8.0).abs() < 1e-3, "base {base} wide {wide}");
+}
+
+/// A wrapped line drops its *own* trailing tracking step, not only the
+/// paragraph's last line (story #336): "aaa" (3 glyphs, not the last line)
+/// still gets 3 - 1 = 2 steps, and "b" (1 glyph, the last line) gets
+/// 1 - 1 = 0 steps — each `Line.width` is corrected independently, since
+/// each line gets its own alignment shift and can be the widest line the
+/// HUG box sizes to.
+#[test]
+fn each_wrapped_line_drops_its_own_trailing_step() {
+    let mut ts = typesetter();
+    let natural_aaa = ts.layout("aaa", 24.0, None).lines[0].width;
+    let natural_b = ts.layout("b", 24.0, None).lines[0].width;
+
+    // Wide enough for "aaa" plus its 2 tracking steps alone; narrow enough
+    // that appending " b" overflows — forces a wrap right after "aaa".
+    let max_width = natural_aaa + 2.0 * 4.0 + 1.0;
+    let laid = ts.layout_with(
+        "aaa b",
+        24.0,
+        Some(max_width),
+        TextShape {
+            letter_spacing: 4.0,
+            ..Default::default()
+        },
+    );
+    assert_eq!(laid.lines.len(), 2, "expected a wrap into two lines");
+    assert!(
+        (laid.lines[0].width - (natural_aaa + 2.0 * 4.0)).abs() < 1e-3,
+        "line 0 (\"aaa\", 3 glyphs) width {} != natural {natural_aaa} + 2 steps",
+        laid.lines[0].width
+    );
+    assert!(
+        (laid.lines[1].width - natural_b).abs() < 1e-3,
+        "line 1 (\"b\", 1 glyph) width {} != natural {natural_b} + 0 steps",
+        laid.lines[1].width
+    );
 }
 
 /// `ligatures_off` plumbs through `layout_with` to the shaping seam (story

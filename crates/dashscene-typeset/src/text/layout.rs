@@ -74,7 +74,14 @@ pub(crate) fn break_lines(
             for g in &glyphs[run_start..i] {
                 prospective += advance(g);
             }
-            if end == start || prospective <= max_width {
+            // The candidate line's own trailing letter-spacing step — after
+            // its own last glyph, were nothing else appended — is excluded
+            // from the width Figma wraps against (story #336), matching
+            // what `position_line` will actually report for it. `prospective`
+            // always covers at least one glyph here (the inner while loop
+            // above advances `i` past `run_start` at least once), so this
+            // cannot underflow past an empty run.
+            if end == start || prospective - letter_spacing <= max_width {
                 // The first word of a line is always placed, overflow
                 // included; leading authored spaces are part of that
                 // first placement since `start` never moves past them.
@@ -150,7 +157,16 @@ pub(crate) fn position_line(
     }
     Line {
         glyphs,
-        width: pen_x,
+        // The pen (`place`, below) advances past every glyph including the
+        // line's last, so `pen_x` carries one letter-spacing step too many
+        // for the reported width — Figma excludes the trailing step from the
+        // box extent and alignment (story #336). Glyph positions above are
+        // untouched by this: each glyph is pushed *before* its own trailing
+        // step is folded into `pen_x`, so only this returned width shrinks,
+        // never a glyph's `x`. `range` is non-empty here (the empty case
+        // returns above), so at least one step was added and this cannot
+        // underflow.
+        width: pen_x - letter_spacing,
         baseline_y,
     }
 }
@@ -253,5 +269,123 @@ mod tests {
         // would be 32 + 32 + 32 = 96 > 85 and wrap.
         let lines = break_lines(text, &shaped, 0..3, &scales, Some(85.0), 0.0);
         assert_eq!(lines, vec![0..3]);
+    }
+
+    /// Figma excludes a line's trailing letter-spacing step — the one after
+    /// its own last glyph — from the width it wraps against (story #336):
+    /// the fit check must compare against that corrected width, not the raw
+    /// per-glyph fold. "a b" at letter_spacing 4.0, scale 1.0: 'a' (always
+    /// placed) plus the space accumulate 1000+4 + 1000+4 = 2008; adding 'b'
+    /// raw (1000+4) reaches 3012, but the real rendered width of "a b" as
+    /// one line — dropping only 'b's own trailing step — is 3008. A
+    /// max_width of 3010 sits between the two: the old (uncorrected) fit
+    /// check compared 3012 and would have wrapped; the corrected one must
+    /// compare 3008 and keep both words on one line.
+    #[test]
+    fn break_lines_fit_check_excludes_the_candidate_lines_trailing_step() {
+        let text = "a b"; // 'a'=0, ' '=1, 'b'=2
+        let shaped = ShapedText {
+            glyphs: vec![
+                glyph(1, 0, 0, 1000),
+                glyph(2, 1, 0, 1000),
+                glyph(3, 2, 0, 1000),
+            ],
+        };
+        let scales = [1.0];
+        let lines = break_lines(text, &shaped, 0..3, &scales, Some(3010.0), 4.0);
+        assert_eq!(lines, vec![0..3], "expected \"a b\" to stay on one line");
+    }
+
+    /// A run's reported width drops the one tracking step after its own
+    /// last glyph (story #336); glyph positions are untouched — each glyph
+    /// still sits after the *preceding* glyph's own advance-plus-spacing,
+    /// exactly as before. Three glyphs, letter_spacing 4.0, scale 1.0: the
+    /// pen crosses two internal steps (after glyph 0, after glyph 1) but not
+    /// a third after glyph 2, since nothing follows it on this line.
+    #[test]
+    fn position_line_drops_the_lines_trailing_letter_spacing_step() {
+        let text = "abc";
+        let bidi = BidiInfo::new(text, None);
+        let para = &bidi.paragraphs[0];
+        let shaped = ShapedText {
+            glyphs: vec![
+                glyph(1, 0, 0, 1000),
+                glyph(2, 1, 0, 1000),
+                glyph(3, 2, 0, 1000),
+            ],
+        };
+        let scales = [1.0];
+        let line = position_line(&bidi, para, &shaped, 0..3, &scales, 0.0, 4.0);
+        // Positions unchanged: glyph 0 at 0, glyph 1 after 1000+4, glyph 2
+        // after 2*(1000+4).
+        assert!(
+            (line.glyphs[0].x - 0.0).abs() < 1e-4,
+            "glyph 0 x {}",
+            line.glyphs[0].x
+        );
+        assert!(
+            (line.glyphs[1].x - 1004.0).abs() < 1e-4,
+            "glyph 1 x {}",
+            line.glyphs[1].x
+        );
+        assert!(
+            (line.glyphs[2].x - 2008.0).abs() < 1e-4,
+            "glyph 2 x {}",
+            line.glyphs[2].x
+        );
+        // Width drops the third glyph's trailing step: 3*1000 + 2*4, not
+        // + 3*4.
+        assert!((line.width - 3008.0).abs() < 1e-4, "width {}", line.width);
+    }
+
+    /// A single-glyph run has no internal gap to space, so it carries zero
+    /// tracking steps in its width — the pen's one trailing step (after the
+    /// glyph, with nothing following it on the line) is excluded.
+    #[test]
+    fn position_line_single_glyph_run_has_zero_tracking_steps() {
+        let text = "a";
+        let bidi = BidiInfo::new(text, None);
+        let para = &bidi.paragraphs[0];
+        let shaped = ShapedText {
+            glyphs: vec![glyph(1, 0, 0, 1000)],
+        };
+        let scales = [1.0];
+        let line = position_line(&bidi, para, &shaped, 0..1, &scales, 0.0, 4.0);
+        assert!((line.width - 1000.0).abs() < 1e-4, "width {}", line.width);
+    }
+
+    /// An empty glyph range must not underflow to a negative width when
+    /// subtracting a trailing step that was never added.
+    #[test]
+    fn position_line_empty_range_has_zero_width_no_underflow() {
+        let text = "a";
+        let bidi = BidiInfo::new(text, None);
+        let para = &bidi.paragraphs[0];
+        let shaped = ShapedText {
+            glyphs: vec![glyph(1, 0, 0, 1000)],
+        };
+        let scales = [1.0];
+        let line = position_line(&bidi, para, &shaped, 0..0, &scales, 0.0, 4.0);
+        assert_eq!(line.width, 0.0);
+        assert!(line.glyphs.is_empty());
+    }
+
+    /// Zero letter-spacing is a no-op for the trailing-step correction too —
+    /// the width is exactly the raw per-glyph advance sum, as before #336.
+    #[test]
+    fn position_line_zero_letter_spacing_is_unchanged() {
+        let text = "abc";
+        let bidi = BidiInfo::new(text, None);
+        let para = &bidi.paragraphs[0];
+        let shaped = ShapedText {
+            glyphs: vec![
+                glyph(1, 0, 0, 1000),
+                glyph(2, 1, 0, 1000),
+                glyph(3, 2, 0, 1000),
+            ],
+        };
+        let scales = [1.0];
+        let line = position_line(&bidi, para, &shaped, 0..3, &scales, 0.0, 0.0);
+        assert!((line.width - 3000.0).abs() < 1e-4, "width {}", line.width);
     }
 }
