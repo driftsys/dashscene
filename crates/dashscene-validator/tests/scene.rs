@@ -152,6 +152,23 @@ fn a_gradient_with_no_stops_is_named() {
 }
 
 #[test]
+fn a_gradient_with_no_stops_inside_a_stacked_fill_is_named() {
+    // Story C1 (debt #146): a stacked layer's own vocabulary rules apply
+    // exactly as the primary fill's on the resolved paint entry, same as at
+    // the load gate.
+    let report = check_one(
+        100.0,
+        50.0,
+        PaintEntry {
+            fill: Some(PaintKind::Solid { color: red() }),
+            extra_fills: vec![gradient(&[])],
+            ..PaintEntry::default()
+        },
+    );
+    assert!(report.has(rule::GRADIENT_NO_STOPS), "{report}");
+}
+
+#[test]
 fn a_gradient_over_the_stop_budget_is_named() {
     let offsets: Vec<f32> = (0..=dashscene_validator::MAX_GRADIENT_STOPS)
         .map(|i| i as f32 / dashscene_validator::MAX_GRADIENT_STOPS as f32)

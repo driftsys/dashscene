@@ -363,6 +363,126 @@ fn a_loaded_document_replays_its_shadows() {
     );
 }
 
+/// A stacked fill on a document paint entry replays through `load_document`'s
+/// `load_paint` into the committed `PaintEntry.extra_fills` (story C1, debt
+/// #146) — the same `.dsb` -> core seam the shadows test exercises, now for
+/// `Prop::ExtraFills`.
+#[test]
+fn a_loaded_document_replays_its_stacked_fills() {
+    use dashbuf::{FillLayer, FillLayerArgs, Gradient, GradientArgs, GradientKind, GradientStop};
+
+    let mut b = FlatBufferBuilder::new();
+    let layout = FixedSizeLayout::new(0.0, 0.0, 10.0, 10.0);
+
+    let solid = SolidFill::create(
+        &mut b,
+        &SolidFillArgs {
+            color: Some(&Color::new(1.0, 0.0, 0.0, 1.0)),
+        },
+    );
+    let stops = b.create_vector(&[
+        GradientStop::new(0.0, &Color::new(0.0, 1.0, 0.0, 1.0)),
+        GradientStop::new(1.0, &Color::new(0.0, 0.0, 1.0, 0.55)),
+    ]);
+    let gradient = Gradient::create(
+        &mut b,
+        &GradientArgs {
+            kind: GradientKind::Linear,
+            handle_origin: Some(&Vec2::new(0.0, 0.0)),
+            handle_primary: Some(&Vec2::new(1.0, 0.0)),
+            handle_secondary: Some(&Vec2::new(0.0, 1.0)),
+            stops: Some(stops),
+        },
+    );
+    let top_layer = FillLayer::create(
+        &mut b,
+        &FillLayerArgs {
+            fill_type: Fill::Gradient,
+            fill: Some(gradient.as_union_value()),
+        },
+    );
+    let extra_fills = b.create_vector(&[top_layer]);
+    let paint = Paint::create(
+        &mut b,
+        &PaintArgs {
+            fill_type: Fill::SolidFill,
+            fill: Some(solid.as_union_value()),
+            extra_fills: Some(extra_fills),
+            ..Default::default()
+        },
+    );
+    let paints = b.create_vector(&[paint]);
+
+    let node = Node::create(
+        &mut b,
+        &NodeArgs {
+            layout: Some(&layout),
+            paint_entry: 0,
+            ..Default::default()
+        },
+    );
+    let nodes = b.create_vector(&[node]);
+    let document = Document::create(
+        &mut b,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            paints: Some(paints),
+            ..Default::default()
+        },
+    );
+    b.finish(document, None);
+    let bytes = b.finished_data().to_vec();
+
+    let doc = root_as_document(&bytes).expect("valid dashbuf document");
+    let mut arena = Arena::new();
+    load_document(&doc, &mut arena);
+
+    let scene = arena.committed();
+    let entry = scene.paints().resolve(scene.rects()[0].paint);
+    assert_eq!(
+        entry.fill,
+        Some(dashpaint::PaintKind::Solid {
+            color: dashpaint::Color {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0,
+            },
+        }),
+        "the bottom fill replays exactly as a single fill always has"
+    );
+    assert_eq!(
+        entry.extra_fills,
+        vec![dashpaint::PaintKind::Gradient(dashpaint::Gradient {
+            kind: dashpaint::GradientKind::Linear,
+            handle_origin: dashpaint::Vec2 { x: 0.0, y: 0.0 },
+            handle_primary: dashpaint::Vec2 { x: 1.0, y: 0.0 },
+            handle_secondary: dashpaint::Vec2 { x: 0.0, y: 1.0 },
+            stops: vec![
+                dashpaint::GradientStop {
+                    offset: 0.0,
+                    color: dashpaint::Color {
+                        r: 0.0,
+                        g: 1.0,
+                        b: 0.0,
+                        a: 1.0,
+                    },
+                },
+                dashpaint::GradientStop {
+                    offset: 1.0,
+                    color: dashpaint::Color {
+                        r: 0.0,
+                        g: 0.0,
+                        b: 1.0,
+                        a: 0.55,
+                    },
+                },
+            ],
+        })],
+        "the document's stacked fill replayed onto the committed paint entry"
+    );
+}
+
 /// The binding tables (story #167) replay through the same producer API:
 /// a loaded document's signals and rows land in the arena tables exactly
 /// as a hand-staged `declare_signal`/`bind` sequence would, with node

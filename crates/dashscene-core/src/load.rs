@@ -396,6 +396,45 @@ fn variant_value(o: &dashbuf::VariantOverride<'_>) -> VariantValue {
     }
 }
 
+/// The `PaintKind` a stacked-fill layer's `Fill` union resolves to (story C1,
+/// debt #146), or `None` for `Fill::NONE` — a malformed layer (a stacked
+/// layer with no fill has no meaning, unlike the primary `Paint.fill`, which
+/// legitimately can be absent for a stroke-only entry), so it is dropped
+/// here the same way `load_paint`'s own primary-fill match tolerates an
+/// unrecognized value: this function assumes a validated document (P4),
+/// same contract as the rest of this module.
+fn fill_layer_kind_of(layer: &dashbuf::FillLayer<'_>, image_of: &[u32]) -> Option<PaintKind> {
+    match layer.fill_type() {
+        Fill::SolidFill => layer
+            .fill_as_solid_fill()
+            .and_then(|s| s.color())
+            .map(|c| PaintKind::Solid { color: color_of(c) }),
+        Fill::Gradient => layer.fill_as_gradient().map(|g| {
+            PaintKind::Gradient(Gradient {
+                kind: gradient_kind(g.kind()),
+                handle_origin: vec2_of(g.handle_origin()),
+                handle_primary: vec2_of(g.handle_primary()),
+                handle_secondary: vec2_of(g.handle_secondary()),
+                stops: g
+                    .stops()
+                    .iter()
+                    .map(|s| GradientStop {
+                        offset: s.offset(),
+                        color: color_of(s.color()),
+                    })
+                    .collect(),
+            })
+        }),
+        Fill::ImageFill => layer.fill_as_image_fill().map(|f| PaintKind::Image {
+            image: image_of[f.image() as usize],
+            scale_mode: scale_mode(f.scale_mode()),
+            transform: f.transform().map(mat23_of),
+            tile_scale: f.tile_scale(),
+        }),
+        _ => None,
+    }
+}
+
 /// One pool entry's fill, stroke, corners, clip, and baked-vector shape,
 /// staged onto `id`.
 fn load_paint(
@@ -451,6 +490,24 @@ fn load_paint(
         // A pool entry with no fill is a stroke-only or clip-only entry — a
         // legitimate shape, not a missing one.
         _ => {}
+    }
+
+    // Stacked fills (story C1, debt #146): every layer above the bottom
+    // fill, in the same array order it paints. Absent (the pre-C1 default)
+    // means a single fill, so an old document stages nothing here — matching
+    // `PaintEntry::extra_fills`'s empty default.
+    if let Some(layers) = paint.extra_fills()
+        && !layers.is_empty()
+    {
+        txn.set_prop(
+            id,
+            Prop::ExtraFills(
+                layers
+                    .iter()
+                    .filter_map(|layer| fill_layer_kind_of(&layer, image_of))
+                    .collect(),
+            ),
+        );
     }
 
     if let Some(s) = paint.stroke() {

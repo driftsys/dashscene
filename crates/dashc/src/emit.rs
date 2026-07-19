@@ -12,20 +12,20 @@ use std::collections::HashMap;
 use dashbuf::{
     AtlasRect, Binding as FbBinding, BindingArgs as FbBindingArgs, Color, CornerRadii,
     Document as FbDocument, DocumentArgs as FbDocumentArgs, EdgeInsets as FbEdgeInsets,
-    FixedSizeLayout, Gradient, GradientArgs, GradientStop, GridTrack as FbGridTrack,
-    GridTrackArgs as FbGridTrackArgs, Image, ImageArgs, ImageFill, ImageFillArgs,
-    LayoutConstraints as FbLayoutConstraints, LayoutConstraintsArgs,
-    LayoutContainer as FbLayoutContainer, LayoutContainerArgs, Mat23, NO_FIELD, NO_PAINT,
-    NO_PARENT, NO_TEXT, NO_TEXT_STYLE, Node as FbNode, NodeArgs as FbNodeArgs, Paint as BufPaint,
-    PaintArgs, PlaneBounds, Shadow as FbShadow, ShadowArgs, ShadowKind as FbShadowKind,
-    SignalDecl as FbSignalDecl, SignalDeclArgs as FbSignalDeclArgs, SolidFill, SolidFillArgs,
-    Stroke, StrokeArgs, TextStyle as FbTextStyle, TextStyleArgs, TransformClamp,
-    TransformClampArgs, TransformMapRange, TransformMapRangeArgs, TransformScale,
+    FillLayer as FbFillLayer, FillLayerArgs as FbFillLayerArgs, FixedSizeLayout, Gradient,
+    GradientArgs, GradientStop, GridTrack as FbGridTrack, GridTrackArgs as FbGridTrackArgs, Image,
+    ImageArgs, ImageFill, ImageFillArgs, LayoutConstraints as FbLayoutConstraints,
+    LayoutConstraintsArgs, LayoutContainer as FbLayoutContainer, LayoutContainerArgs, Mat23,
+    NO_FIELD, NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE, Node as FbNode, NodeArgs as FbNodeArgs,
+    Paint as BufPaint, PaintArgs, PlaneBounds, Shadow as FbShadow, ShadowArgs,
+    ShadowKind as FbShadowKind, SignalDecl as FbSignalDecl, SignalDeclArgs as FbSignalDeclArgs,
+    SolidFill, SolidFillArgs, Stroke, StrokeArgs, TextStyle as FbTextStyle, TextStyleArgs,
+    TransformClamp, TransformClampArgs, TransformMapRange, TransformMapRangeArgs, TransformScale,
     TransformScaleArgs, Vec2, VectorAtlas as FbVectorAtlas, VectorAtlasArgs,
     VectorShape as FbVectorShape, VectorShapeArgs,
 };
 use dashpaint::{ImageAsset, PaintEntry, PaintKind, ShadowKind};
-use flatbuffers::{FlatBufferBuilder, WIPOffset};
+use flatbuffers::{FlatBufferBuilder, UnionWIPOffset, WIPOffset};
 
 use crate::document::{
     AxisSizing, Binding, BindingChannel, BindingTransform, CrossAxisAlign, Document, EdgeInsets,
@@ -477,21 +477,24 @@ fn build_vector_shape<'a>(
     )
 }
 
-fn build_paint<'a>(b: &mut FlatBufferBuilder<'a>, paint: &Paint) -> WIPOffset<BufPaint<'a>> {
-    let entry = &paint.entry;
-
-    let (fill_type, fill) = match &entry.fill {
-        None => (dashbuf::Fill::NONE, None),
-        Some(PaintKind::Solid { color }) => {
+/// Builds one fill union value. `Paint.fill` and each stacked `FillLayer.fill`
+/// (story C1, debt #146) are the same union in the same shape, so
+/// `build_paint` shares this rather than duplicating the match per layer.
+fn build_fill<'a>(
+    b: &mut FlatBufferBuilder<'a>,
+    kind: &PaintKind,
+) -> (dashbuf::Fill, WIPOffset<UnionWIPOffset>) {
+    match kind {
+        PaintKind::Solid { color } => {
             let solid = SolidFill::create(
                 b,
                 &SolidFillArgs {
                     color: Some(&color_of(*color)),
                 },
             );
-            (dashbuf::Fill::SolidFill, Some(solid.as_union_value()))
+            (dashbuf::Fill::SolidFill, solid.as_union_value())
         }
-        Some(PaintKind::Gradient(g)) => {
+        PaintKind::Gradient(g) => {
             let stops: Vec<GradientStop> = g
                 .stops
                 .iter()
@@ -513,14 +516,14 @@ fn build_paint<'a>(b: &mut FlatBufferBuilder<'a>, paint: &Paint) -> WIPOffset<Bu
                     stops: Some(stops),
                 },
             );
-            (dashbuf::Fill::Gradient, Some(gradient.as_union_value()))
+            (dashbuf::Fill::Gradient, gradient.as_union_value())
         }
-        Some(PaintKind::Image {
+        PaintKind::Image {
             image,
             scale_mode,
             transform,
             tile_scale,
-        }) => {
+        } => {
             let image_fill = ImageFill::create(
                 b,
                 &ImageFillArgs {
@@ -535,9 +538,43 @@ fn build_paint<'a>(b: &mut FlatBufferBuilder<'a>, paint: &Paint) -> WIPOffset<Bu
                     tile_scale: *tile_scale,
                 },
             );
-            (dashbuf::Fill::ImageFill, Some(image_fill.as_union_value()))
+            (dashbuf::Fill::ImageFill, image_fill.as_union_value())
+        }
+    }
+}
+
+fn build_paint<'a>(b: &mut FlatBufferBuilder<'a>, paint: &Paint) -> WIPOffset<BufPaint<'a>> {
+    let entry = &paint.entry;
+
+    let (fill_type, fill) = match &entry.fill {
+        None => (dashbuf::Fill::NONE, None),
+        Some(kind) => {
+            let (fill_type, fill) = build_fill(b, kind);
+            (fill_type, Some(fill))
         }
     };
+
+    // Stacked fills (story C1, debt #146): each layer built before the
+    // vector, and the vector before the enclosing Paint — the standard
+    // flatbuffer nesting order, like `shadows` below. Absent (an empty list)
+    // omits the field, so a single-fill entry round-trips identically (R7).
+    let extra_fills = (!entry.extra_fills.is_empty()).then(|| {
+        let layers: Vec<_> = entry
+            .extra_fills
+            .iter()
+            .map(|kind| {
+                let (fill_type, fill) = build_fill(b, kind);
+                FbFillLayer::create(
+                    b,
+                    &FbFillLayerArgs {
+                        fill_type,
+                        fill: Some(fill),
+                    },
+                )
+            })
+            .collect();
+        b.create_vector(&layers)
+    });
 
     let stroke = entry.stroke.as_ref().map(|s| {
         Stroke::create(
@@ -607,6 +644,7 @@ fn build_paint<'a>(b: &mut FlatBufferBuilder<'a>, paint: &Paint) -> WIPOffset<Bu
             // non-vector entry carries `None`, so the sentinel keeps the
             // output byte-identical (R7).
             shape_field: paint.shape_field.unwrap_or(NO_FIELD),
+            extra_fills,
         },
     )
 }
@@ -665,15 +703,17 @@ fn text_style_key(style: &TextStyle) -> TextStyleKey {
     )
 }
 
-fn entry_bits(entry: &PaintEntry) -> Vec<u32> {
+/// The interning key's bits for one fill kind — the tag plus its payload.
+/// Shared by `entry_bits` for the primary fill and every stacked layer
+/// (story C1, debt #146), so a solid tags `1` no matter which slot it fills.
+fn fill_kind_bits(kind: &PaintKind) -> Vec<u32> {
     let mut key = Vec::new();
-    match &entry.fill {
-        None => key.push(0),
-        Some(PaintKind::Solid { color }) => {
+    match kind {
+        PaintKind::Solid { color } => {
             key.push(1);
             key.extend(color_bits(*color));
         }
-        Some(PaintKind::Gradient(g)) => {
+        PaintKind::Gradient(g) => {
             key.push(2);
             key.push(g.kind as u32);
             key.extend([g.handle_origin.x.to_bits(), g.handle_origin.y.to_bits()]);
@@ -688,12 +728,12 @@ fn entry_bits(entry: &PaintEntry) -> Vec<u32> {
                 key.extend(color_bits(s.color));
             }
         }
-        Some(PaintKind::Image {
+        PaintKind::Image {
             image,
             scale_mode,
             transform,
             tile_scale,
-        }) => {
+        } => {
             key.push(3);
             key.push(*image);
             key.push(*scale_mode as u32);
@@ -713,6 +753,24 @@ fn entry_bits(entry: &PaintEntry) -> Vec<u32> {
                 }
             }
         }
+    }
+    key
+}
+
+fn entry_bits(entry: &PaintEntry) -> Vec<u32> {
+    let mut key = Vec::new();
+    match &entry.fill {
+        None => key.push(0),
+        Some(kind) => key.extend(fill_kind_bits(kind)),
+    }
+    // Stacked fills (story C1, debt #146): two entries sharing the same
+    // bottom fill but a different stack (or no stack at all) must not
+    // collapse to one pool entry, so the count and each layer's bits join
+    // the key — the same "count then each entry's bits" shape `shadows`
+    // below uses.
+    key.push(entry.extra_fills.len() as u32);
+    for kind in &entry.extra_fills {
+        key.extend(fill_kind_bits(kind));
     }
     match &entry.stroke {
         None => key.push(0),

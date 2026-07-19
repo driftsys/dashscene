@@ -323,6 +323,86 @@ fn a_gradient_with_a_degenerate_frame_falls_back_to_the_first_stop() {
     assert_eq!(px(&rgba, 4, 2, 2), RED_RGBA);
 }
 
+// Stacked fills (story C1, debt #146): `PaintEntry.extra_fills` composites
+// over `fill`, bottom to top, on the same box `fill` alone always painted.
+
+#[test]
+fn a_single_fill_entry_renders_byte_identically_with_no_extra_fills() {
+    // The guard: an entry that never touches `extra_fills` (the
+    // `PaintEntry::default()` empty vec) paints exactly the single fill it
+    // always has — no compositing loop runs for it.
+    let entry = PaintEntry::solid(RED);
+    let (rects, paints) = single_entry_scene(entry, 4.0, 4.0);
+    let rgba = render(&rects, &paints, &ImageTable::new(), 4);
+
+    for y in 0..4 {
+        for x in 0..4 {
+            assert_eq!(px(&rgba, 4, x, y), RED_RGBA, "pixel ({x}, {y})");
+        }
+    }
+}
+
+#[test]
+fn stacked_opaque_fills_composite_bottom_to_top_last_on_top() {
+    // Three fully opaque layers stacked on one node: `fill` (bottom, red),
+    // then `extra_fills` blue then green (top). Each fully occludes the one
+    // below it, so the visible color is the *last* array element — proving
+    // the painter draws the list in array order, not reversed.
+    let entry = PaintEntry {
+        fill: Some(PaintKind::Solid { color: RED }),
+        extra_fills: vec![
+            PaintKind::Solid { color: BLUE },
+            PaintKind::Solid { color: GREEN },
+        ],
+        ..PaintEntry::default()
+    };
+    let (rects, paints) = single_entry_scene(entry, 4.0, 4.0);
+    let rgba = render(&rects, &paints, &ImageTable::new(), 4);
+
+    for y in 0..4 {
+        for x in 0..4 {
+            assert_eq!(px(&rgba, 4, x, y), GREEN_RGBA, "pixel ({x}, {y})");
+        }
+    }
+}
+
+#[test]
+fn a_semi_transparent_stacked_fill_blends_over_the_bottom_fill() {
+    // The stacked-fills fixture's own shape: an opaque bottom fill, a
+    // semi-transparent layer on top. Real alpha compositing, not a bare
+    // overwrite — the result carries both colors, and stays fully opaque
+    // (compositing anything over an opaque base cannot lower its alpha).
+    let entry = PaintEntry {
+        fill: Some(PaintKind::Solid { color: RED }),
+        extra_fills: vec![PaintKind::Solid {
+            color: Color {
+                r: 0.0,
+                g: 0.0,
+                b: 1.0,
+                a: 0.5,
+            },
+        }],
+        ..PaintEntry::default()
+    };
+    let (rects, paints) = single_entry_scene(entry, 4.0, 4.0);
+    let rgba = render(&rects, &paints, &ImageTable::new(), 4);
+    let center = px(&rgba, 4, 2, 2);
+
+    assert_eq!(
+        center[3], 255,
+        "an opaque bottom fill keeps the result opaque"
+    );
+    assert!(
+        (100..155).contains(&center[0]),
+        "red channel carries the bottom fill's contribution: {center:?}"
+    );
+    assert_eq!(center[1], 0, "no fill in the stack has a green component");
+    assert!(
+        (100..155).contains(&center[2]),
+        "blue channel carries the top fill's contribution: {center:?}"
+    );
+}
+
 fn stroked_square(align: StrokeAlign) -> Vec<u8> {
     let mut paints = PaintTable::new();
     let paint = paints.push(PaintEntry {

@@ -118,6 +118,7 @@ fn a_full_entry_round_trips_through_the_table() {
             color: HALF_BLUE,
         }],
         shape: None,
+        extra_fills: Vec::new(),
     };
     let mut table = PaintTable::new();
     let index = table.push(entry.clone());

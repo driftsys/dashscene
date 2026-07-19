@@ -8,12 +8,12 @@
 //! from the producing bug, at paint time.
 
 use dashbuf::{
-    Color, CornerRadii, Document, DocumentArgs, Fill, Gradient, GradientArgs, GradientKind,
-    GradientStop, Image, ImageArgs, ImageFill, ImageFillArgs, ImageFormat, NO_PAINT, Node,
-    NodeArgs, Paint, PaintArgs, ScaleMode, SolidFill, SolidFillArgs, Stroke, StrokeAlign,
-    StrokeArgs, TextStyle, TextStyleArgs, VariantMember, VariantMemberArgs, VariantOverride,
-    VariantOverrideArgs, VariantPropValue, VariantSet, VariantSetArgs, VariantVisible,
-    VariantVisibleArgs, VariantX, VariantXArgs, Vec2, root_as_document,
+    Color, CornerRadii, Document, DocumentArgs, Fill, FillLayer, FillLayerArgs, Gradient,
+    GradientArgs, GradientKind, GradientStop, Image, ImageArgs, ImageFill, ImageFillArgs,
+    ImageFormat, NO_PAINT, Node, NodeArgs, Paint, PaintArgs, ScaleMode, SolidFill, SolidFillArgs,
+    Stroke, StrokeAlign, StrokeArgs, TextStyle, TextStyleArgs, VariantMember, VariantMemberArgs,
+    VariantOverride, VariantOverrideArgs, VariantPropValue, VariantSet, VariantSetArgs,
+    VariantVisible, VariantVisibleArgs, VariantX, VariantXArgs, Vec2, root_as_document,
 };
 use dashscene_validator::{Location, NodePath, rule, validate_document};
 use flatbuffers::{FlatBufferBuilder, WIPOffset};
@@ -528,6 +528,75 @@ fn a_gradient_with_no_stops_is_named() {
                 stops: vec![],
             }),
     );
+    assert!(report.has(rule::GRADIENT_NO_STOPS), "{report}");
+}
+
+#[test]
+fn a_gradient_with_no_stops_inside_a_stacked_fill_is_named() {
+    // Story C1 (debt #146): a stacked layer's own vocabulary rules apply
+    // exactly as the primary fill's — the false assurance issue #100 names
+    // is not confined to `Paint.fill`. Built directly (not through
+    // `Doc`/`PaintSpec`, which has no stacked-fill support) since this is
+    // the one test that needs it.
+    let mut b = FlatBufferBuilder::new();
+    let solid = SolidFill::create(
+        &mut b,
+        &SolidFillArgs {
+            color: Some(&red()),
+        },
+    );
+    let stops = b.create_vector::<GradientStop>(&[]);
+    let gradient = Gradient::create(
+        &mut b,
+        &GradientArgs {
+            kind: GradientKind::Linear,
+            handle_origin: Some(&Vec2::new(0.0, 0.0)),
+            handle_primary: Some(&Vec2::new(1.0, 0.0)),
+            handle_secondary: Some(&Vec2::new(0.0, 1.0)),
+            stops: Some(stops),
+        },
+    );
+    let layer = FillLayer::create(
+        &mut b,
+        &FillLayerArgs {
+            fill_type: Fill::Gradient,
+            fill: Some(gradient.as_union_value()),
+        },
+    );
+    let extra_fills = b.create_vector(&[layer]);
+    let paint = Paint::create(
+        &mut b,
+        &PaintArgs {
+            fill_type: Fill::SolidFill,
+            fill: Some(solid.as_union_value()),
+            extra_fills: Some(extra_fills),
+            ..Default::default()
+        },
+    );
+    let paints = b.create_vector(&[paint]);
+    let name = b.create_string("stacked");
+    let node = Node::create(
+        &mut b,
+        &NodeArgs {
+            name: Some(name),
+            paint_entry: 0,
+            ..Default::default()
+        },
+    );
+    let nodes = b.create_vector(&[node]);
+    let document = Document::create(
+        &mut b,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            paints: Some(paints),
+            ..Default::default()
+        },
+    );
+    b.finish(document, None);
+    let bytes = b.finished_data().to_vec();
+
+    let document = root_as_document(&bytes).expect("the flatbuffer verifier accepts this buffer");
+    let report = dashscene_validator::validate_document(&document);
     assert!(report.has(rule::GRADIENT_NO_STOPS), "{report}");
 }
 

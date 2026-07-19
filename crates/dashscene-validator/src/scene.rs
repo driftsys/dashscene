@@ -140,16 +140,32 @@ pub fn validate_scene(
     report
 }
 
-fn check_paint_entry(report: &mut Report, entry: &PaintEntry, at: &Location, image_count: usize) {
-    match &entry.fill {
-        None | Some(PaintKind::Solid { .. }) => {}
-        Some(PaintKind::Gradient(gradient)) => {
+/// One resolved fill kind's vocabulary rules: a gradient's stops, an image
+/// fill's asset index. Shared by the primary `PaintEntry.fill` and every
+/// stacked layer in `PaintEntry.extra_fills` (story C1, debt #146) — a
+/// layer is not exempt from the same rules just because it sits in a stack.
+fn check_fill_kind(report: &mut Report, at: &Location, kind: &PaintKind, image_count: usize) {
+    match kind {
+        PaintKind::Solid { .. } => {}
+        PaintKind::Gradient(gradient) => {
             let offsets: Vec<f32> = gradient.stops.iter().map(|s| s.offset).collect();
             check_gradient_stops(report, at, &offsets);
         }
-        Some(PaintKind::Image { image, .. }) => {
+        PaintKind::Image { image, .. } => {
             check_image_index(report, at, *image, image_count);
         }
+    }
+}
+
+fn check_paint_entry(report: &mut Report, entry: &PaintEntry, at: &Location, image_count: usize) {
+    if let Some(kind) = &entry.fill {
+        check_fill_kind(report, at, kind, image_count);
+    }
+    // Stacked fills (story C1, debt #146): each layer's own vocabulary
+    // rules, the same posture as the shadows loop below — one check per
+    // layer, `at` naming the paint entry rather than the individual layer.
+    for kind in &entry.extra_fills {
+        check_fill_kind(report, at, kind, image_count);
     }
 
     if let Some(stroke) = &entry.stroke {

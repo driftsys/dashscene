@@ -4,9 +4,10 @@
 
 use dashbuf::NO_PAINT;
 use dashbuf::{
-    Color, Document, DocumentArgs, Fill, Gradient, GradientArgs, GradientKind, GradientStop, Image,
-    ImageArgs, ImageFill, ImageFillArgs, ImageFormat, Mat23, Node, NodeArgs, Paint, PaintArgs,
-    ScaleMode, SolidFill, SolidFillArgs, Stroke, StrokeAlign, StrokeArgs, Vec2, root_as_document,
+    Color, Document, DocumentArgs, Fill, FillLayer, FillLayerArgs, Gradient, GradientArgs,
+    GradientKind, GradientStop, Image, ImageArgs, ImageFill, ImageFillArgs, ImageFormat, Mat23,
+    Node, NodeArgs, Paint, PaintArgs, ScaleMode, SolidFill, SolidFillArgs, Stroke, StrokeAlign,
+    StrokeArgs, Vec2, root_as_document,
 };
 use flatbuffers::{FlatBufferBuilder, WIPOffset};
 
@@ -351,6 +352,117 @@ fn two_nodes_share_one_paint_pool_entry() {
         let solid = entry.fill_as_solid_fill().expect("solid fill present");
         assert_eq!(solid.color().expect("color present").r(), 1.0);
     }
+}
+
+#[test]
+fn stacked_fills_round_trip_bottom_to_top() {
+    // Story C1 (debt #146): `Paint.fill` stays the bottom fill; `extra_fills`
+    // — an appended tail field, absent by default — carries the fills
+    // stacked over it, each wrapped in a `FillLayer` (flatc does not support
+    // a vector of a bare union for Rust). Bottom is a solid; on top, a
+    // gradient — the stacked-fills fixture's own shape (SOLID@1,
+    // GRADIENT_LINEAR@0.55).
+    let mut builder = FlatBufferBuilder::new();
+    let solid = SolidFill::create(
+        &mut builder,
+        &SolidFillArgs {
+            color: Some(&red()),
+        },
+    );
+    let stops = builder.create_vector(&[
+        GradientStop::new(0.0, &red()),
+        GradientStop::new(1.0, &half_blue()),
+    ]);
+    let gradient = Gradient::create(
+        &mut builder,
+        &GradientArgs {
+            kind: GradientKind::Linear,
+            handle_origin: Some(&Vec2::new(0.0, 0.0)),
+            handle_primary: Some(&Vec2::new(1.0, 0.0)),
+            handle_secondary: Some(&Vec2::new(0.0, 1.0)),
+            stops: Some(stops),
+        },
+    );
+    let top_layer = FillLayer::create(
+        &mut builder,
+        &FillLayerArgs {
+            fill_type: Fill::Gradient,
+            fill: Some(gradient.as_union_value()),
+        },
+    );
+    let extra_fills = builder.create_vector(&[top_layer]);
+    let paint = Paint::create(
+        &mut builder,
+        &PaintArgs {
+            fill_type: Fill::SolidFill,
+            fill: Some(solid.as_union_value()),
+            extra_fills: Some(extra_fills),
+            ..Default::default()
+        },
+    );
+    let node = Node::create(
+        &mut builder,
+        &NodeArgs {
+            paint_entry: 0,
+            ..Default::default()
+        },
+    );
+
+    let bytes = finish_document(builder, node, &[paint], &[]);
+    let paint = single_node_paint(&bytes);
+
+    // The bottom fill reads exactly as a single-fill entry always has.
+    assert_eq!(paint.fill_type(), Fill::SolidFill);
+    assert_eq!(
+        paint
+            .fill_as_solid_fill()
+            .expect("solid fill present")
+            .color()
+            .expect("color present")
+            .r(),
+        1.0
+    );
+
+    let extra = paint.extra_fills().expect("extra_fills present");
+    assert_eq!(extra.len(), 1);
+    let top = extra.get(0);
+    assert_eq!(top.fill_type(), Fill::Gradient);
+    let gradient = top.fill_as_gradient().expect("gradient fill present");
+    assert_eq!(gradient.kind(), GradientKind::Linear);
+    assert_eq!(gradient.stops().len(), 2);
+}
+
+#[test]
+fn absent_extra_fills_reads_back_as_a_single_fill() {
+    // A pre-C1 entry (or one built without ever touching `extra_fills`)
+    // carries no stacked layers at all — the R7 guard for this field: the
+    // vector is simply absent, not an empty-but-present one.
+    let mut builder = FlatBufferBuilder::new();
+    let solid = SolidFill::create(
+        &mut builder,
+        &SolidFillArgs {
+            color: Some(&red()),
+        },
+    );
+    let paint = Paint::create(
+        &mut builder,
+        &PaintArgs {
+            fill_type: Fill::SolidFill,
+            fill: Some(solid.as_union_value()),
+            ..Default::default()
+        },
+    );
+    let node = Node::create(
+        &mut builder,
+        &NodeArgs {
+            paint_entry: 0,
+            ..Default::default()
+        },
+    );
+
+    let bytes = finish_document(builder, node, &[paint], &[]);
+    let paint = single_node_paint(&bytes);
+    assert!(paint.extra_fills().is_none());
 }
 
 #[test]

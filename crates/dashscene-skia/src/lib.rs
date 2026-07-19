@@ -237,39 +237,20 @@ impl Painter for SkiaPainter {
                     .or_insert_with(|| decode_image(images.resolve(field.image)));
                 draw_vector_field(canvas, rect, entry.fill.as_ref(), field, atlas, effect);
             } else {
-                match &entry.fill {
-                    // A fill-less entry draws nothing (a layout-only node, or
-                    // a mask node whose shape is a stencil, not paint).
-                    None => {}
-                    Some(PaintKind::Solid { color }) => {
-                        let mut paint = solid_paint(*color);
-                        paint.set_anti_alias(true);
-                        apply_opacity(&mut paint, rect.opacity);
-                        canvas.draw_rrect(rrect, &paint);
-                    }
-                    Some(PaintKind::Gradient(gradient)) => {
-                        let mut paint = gradient_paint(gradient, rect);
-                        paint.set_anti_alias(true);
-                        apply_opacity(&mut paint, rect.opacity);
-                        canvas.draw_rrect(rrect, &paint);
-                    }
-                    Some(PaintKind::Image {
-                        image,
-                        scale_mode,
-                        transform,
-                        tile_scale,
-                    }) => {
-                        draw_image_fill(
-                            canvas,
-                            &rrect,
-                            rect,
-                            images.resolve(*image),
-                            *scale_mode,
-                            transform.as_ref(),
-                            *tile_scale,
-                            rect.opacity,
-                        );
-                    }
+                // A fill-less entry draws nothing (a layout-only node, or a
+                // mask node whose shape is a stencil, not paint). Stacked
+                // fills (story C1, debt #146) composite bottom to top on the
+                // same box: `fill` first, then each of `extra_fills` in
+                // order, an ordinary sequence of draws — a later one is
+                // already an "over" composite onto the ones before it, so no
+                // fill-specific blend logic is needed beyond drawing in
+                // order. Empty `extra_fills` (every pre-C1 entry) draws
+                // exactly the one fill it always has.
+                if let Some(kind) = &entry.fill {
+                    draw_fill_kind(canvas, rrect, rect, images, kind);
+                }
+                for kind in &entry.extra_fills {
+                    draw_fill_kind(canvas, rrect, rect, images, kind);
                 }
                 if let Some(stroke) = &entry.stroke {
                     draw_stroke(canvas, &rrect, stroke, rect.opacity);
@@ -696,6 +677,53 @@ fn draw_inner_shadow(
     canvas.clip_rrect(*shape, ClipOp::Intersect, true);
     canvas.draw_path(&path, &paint);
     canvas.restore();
+}
+
+/// Draws one fill kind into `rrect` — `entry.fill` or one of
+/// `entry.extra_fills` (story C1, debt #146). Every caller draws the ordinary
+/// (non-vector-masked) box in the same order the entry's fills stack, so a
+/// later call composites over an earlier one with Skia's default "over"
+/// blend — no per-fill blend mode is needed, because an advanced blend mode
+/// on any fill is already refused upstream by name (the profile triage,
+/// before it ever reaches a paint entry).
+fn draw_fill_kind(
+    canvas: &Canvas,
+    rrect: RRect,
+    rect: &RectEntry,
+    images: &ImageTable,
+    kind: &PaintKind,
+) {
+    match kind {
+        PaintKind::Solid { color } => {
+            let mut paint = solid_paint(*color);
+            paint.set_anti_alias(true);
+            apply_opacity(&mut paint, rect.opacity);
+            canvas.draw_rrect(rrect, &paint);
+        }
+        PaintKind::Gradient(gradient) => {
+            let mut paint = gradient_paint(gradient, rect);
+            paint.set_anti_alias(true);
+            apply_opacity(&mut paint, rect.opacity);
+            canvas.draw_rrect(rrect, &paint);
+        }
+        PaintKind::Image {
+            image,
+            scale_mode,
+            transform,
+            tile_scale,
+        } => {
+            draw_image_fill(
+                canvas,
+                &rrect,
+                rect,
+                images.resolve(*image),
+                *scale_mode,
+                transform.as_ref(),
+                *tile_scale,
+                rect.opacity,
+            );
+        }
+    }
 }
 
 fn solid_paint(color: dashpaint::Color) -> skia_safe::Paint {

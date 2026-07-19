@@ -484,15 +484,24 @@ pub struct PaintEntry {
     pub corners: CornerRadii,
     /// The node's drop and inner shadows, in paint order (v0.8, story
     /// #45). Empty (the default) for a node with no shadows. Shadows are
-    /// an effect, not a fill or stroke, so they carry no arity limit —
-    /// a node stacks as many as it authors, which is why `Paint.fill` and
-    /// `Paint.stroke` stay single-valued (debt #146 stays untouched).
+    /// an effect, not a fill or stroke, so they carry no arity limit — a
+    /// node stacks as many as it authors, the same posture `extra_fills`
+    /// (below) brought to the fill side (story C1, debt #146). `stroke`
+    /// stays single-valued (the debt's stroke half is untouched).
     pub shadows: Vec<Shadow>,
     /// The baked-vector coverage mask (story B1). `Some` masks `fill` by the
     /// referenced field's coverage — a Figma VECTOR shape. `None` (the
     /// default) is the implicit parametric shape, so every pre-B1 entry is
     /// unchanged. Skipped for a fill-less entry (no ink to mask).
     pub shape: Option<VectorField>,
+    /// Fills stacked over `fill`, bottom to top (story C1, debt #146): `fill`
+    /// is the bottom (first visible) layer, and this carries every fill
+    /// above it, in the same order a node's fills paint. Empty (the
+    /// default) for a single-fill or fill-less entry, so a pre-C1 entry is
+    /// unchanged (a single-fill node renders byte-identically). A layer's
+    /// own opacity is already folded into its color/stops the same way
+    /// `fill`'s is — nothing else is needed to composite it.
+    pub extra_fills: Vec<PaintKind>,
 }
 
 impl PaintEntry {

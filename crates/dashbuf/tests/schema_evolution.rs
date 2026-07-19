@@ -659,6 +659,10 @@ fn build_fixture() -> Vec<u8> {
             // sentinel is the schema default, so flatc omits it and the
             // committed bytes are unchanged.
             shape_field: NO_FIELD,
+            // Story C1: the frozen fixture predates stacked fills. Absent is
+            // the schema default, so flatc omits it and the committed bytes
+            // are unchanged.
+            extra_fills: None,
         },
     );
 

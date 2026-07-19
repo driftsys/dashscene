@@ -271,8 +271,14 @@ Known gaps in the Figma lowering, each a named `figma.unsupported` error
 diagnostic rather than a silent drop (P4), filed as debt or scheduled where
 noted, because a real Figma file will hit them:
 
-- **Stacked fills or strokes** — `PaintEntry.fill`/`.stroke` are each one
-  `Option`; Figma's `fills`/`strokes` are arrays (debt #146).
+- **Stacked strokes** — `PaintEntry.stroke` is one `Option`; Figma's
+  `strokes` is an array (debt #146 remainder). Stacked _fills_ lower since
+  story C1 (epic #343): `paint_of` reads every visible entry of a plain
+  frame/rectangle's `fills` array in order onto `PaintEntry.fill` (the
+  bottom layer) and `PaintEntry.extra_fills` (the rest), each already
+  carrying its own baked-in opacity. An ellipse, a baked vector, and a text
+  glyph color keep the single-fill refusal — the measured need was a plain
+  frame/rectangle.
 - **Node rotation** — `Document` has no rotation vocabulary, so a rotated
   node is a named refusal (debt #143 remainder). Node opacity, mask nodes,
   and hidden nodes were un-pinned at v0.8 (story #44): they lower into

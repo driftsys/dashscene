@@ -185,6 +185,13 @@
       "covers": "four node-effects lowering paths in one 540x160 FRAME — a rotated rectangle, a partially-opaque rectangle, a hidden layer, and a mask pair (isMask ellipse masking a rectangle) — for the node-opacity/mask/hidden lowering un-pins (story C2/#143, epic #343) and the import-fidelity oracle (frame node-fx, aa-edge band, issue #332)",
       "emits": true,
       "note": "Authored with the fixture-author plugin's node-fx command (importers/figma/plugin/fixture-author/README.md). Node opacity, box-outline masks, and hidden nodes already lower (v0.8 story #44, debt #143) — this fixture is the committed replay fixture for that lowering plus the oracle measurement, not a new un-pin. The rotated rectangle stays refused by name (rotation deferred per this issue's design gate; zero non-axis-aligned relativeTransform in either real-file target) and is skipped under partial-emit; its footprint is excluded from the oracle diff (goldens/oracle/import-manifest.json excludeRegions) so the frame measures the opacity/mask/hidden result, the disclosed hole noted rather than hidden inside the band. This capture predates a fixture-author fix (this story, code.js) that corrects the mask shape to a full circle with maskType VECTOR (the Plugin API name for the REST OUTLINE mask dashc's lowering accepts) — as captured, the mask ellipse is still a non-circular ALPHA-type mask and refuses for both reasons (debt #361), so its footprint is ALSO excluded from the oracle diff pending a human re-run of the corrected command and a re-capture."
+    },
+    {
+      "name": "stacked-fills",
+      "fileKey": "aVrn0XTElCIgiejyuCqMmW",
+      "covers": "one fixed RECTANGLE with two visible fills — an opaque SOLID at fills[0] (the bottom layer) and a semi-transparent GRADIENT_LINEAR at fills[1] (opacity 0.55, stacked on top) — for the stacked-fills vocabulary path (story C1/#146, epic #343): dashc's paint_of lowering a node's fills array in order onto PaintEntry.fill/extra_fills, the dashpaint/dashscene-skia bottom-to-top composite, and the import-fidelity oracle (frame stacked-fills, aa-edge band). No image fills.",
+      "emits": true,
+      "note": "Authored with the fixture-author plugin's stacked-fills command (importers/figma/plugin/fixture-author/README.md), self-authored and license-clean (docs/decisions/figma-corpus-self-authored-only.md). Probe-verified: one RECTANGLE, fills = [SOLID opacity 1, GRADIENT_LINEAR opacity 0.55], both visible, composited in array order. Measured by goldens/oracle/import-manifest.json (issue #332)."
     }
   ]
 }

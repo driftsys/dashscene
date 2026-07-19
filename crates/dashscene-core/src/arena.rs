@@ -261,6 +261,12 @@ pub enum Prop {
     /// entry with no cross-node resolution (unlike a mask or group
     /// opacity).
     Shadows(Vec<Shadow>),
+    /// Fills stacked over the node's `Fill`/`FillWith` fill, bottom to top
+    /// (story C1, debt #146). Replaces the whole list — an empty vec clears
+    /// the node's stacked layers back to a single fill. Paint intent like
+    /// `Shadows`: not variant-overridable, copied straight onto the
+    /// paint-pool entry at commit with no cross-node resolution.
+    ExtraFills(Vec<PaintKind>),
     /// The node's baked-vector coverage mask (story B1). Sets the resolved
     /// [`VectorField`] a Figma VECTOR node lowered into; the painter masks
     /// the node's fill by it. Paint intent like [`Prop::Shadows`] — commit
@@ -483,6 +489,12 @@ struct NodeData {
     /// stays as the solid shorthand v0.1 producers use; `Prop::FillWith`
     /// stages a gradient or an image fill.
     fill: Option<PaintKind>,
+    /// Fills stacked over `fill`, bottom to top (story C1, debt #146). Beside
+    /// the scalar paint fields rather than inside them — it is
+    /// variable-length — the same split as `shadows`. Empty = a single fill
+    /// (or no fill), not variant-overridable (the variant vocabulary is
+    /// X/Y/W/H/Fill).
+    extra_fills: Vec<PaintKind>,
     stroke: Option<Stroke>,
     corners: CornerRadii,
     /// The node's drop and inner shadows, in paint order (v0.8, story
@@ -926,6 +938,7 @@ impl Txn<'_> {
             grid_rows: Vec::new(),
             grid_columns: Vec::new(),
             fill: None,
+            extra_fills: Vec::new(),
             stroke: None,
             corners: CornerRadii::default(),
             shadows: Vec::new(),
@@ -1078,6 +1091,7 @@ impl Txn<'_> {
                 }
             }
             Prop::Shadows(shadows) => data.shadows = shadows,
+            Prop::ExtraFills(fills) => data.extra_fills = fills,
             Prop::ShapeField(field) => data.shape = Some(field),
             Prop::Clip(v) => data.clip = v,
             Prop::Text(s) => data.text = Some(s),
@@ -1547,6 +1561,10 @@ impl Txn<'_> {
                             // variant-overridable either — straight from the
                             // node. `VectorField` is `Copy`, so no clone.
                             shape: node.shape,
+                            // Stacked fills (story C1), not variant-overridable
+                            // either — same posture as shadows, straight from
+                            // the node.
+                            extra_fills: node.extra_fills.clone(),
                         }
                     };
                     intern_paint(&mut back_paints, &mut paint_map, entry)
@@ -1796,6 +1814,7 @@ fn prop_class(prop: &Prop) -> PropClass {
         | Prop::Stroke(_)
         | Prop::Corners { .. }
         | Prop::Shadows(_)
+        | Prop::ExtraFills(_)
         | Prop::ShapeField(_) => PropClass::Paint,
         Prop::Clip(_) => PropClass::ClipFlag,
         Prop::Mask(_) => PropClass::MaskFlag,

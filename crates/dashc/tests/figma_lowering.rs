@@ -985,15 +985,114 @@ fn a_hidden_second_stroke_is_not_a_second_visible_stroke() {
 }
 
 #[test]
-fn a_second_visible_fill_fails_loudly_rather_than_being_silently_dropped() {
-    // The same P4 rule on the fill side.
+fn two_visible_fills_lower_bottom_to_top() {
+    // Story C1 (debt #146): a plain frame's stacked fills lower in Figma's
+    // array order instead of refusing — the first (bottom) becomes
+    // `entry.fill`, the rest become `entry.extra_fills`, painted over it in
+    // the same order. Mirrors the stacked-fills fixture's own shape (a solid
+    // base, a semi-transparent gradient on top); each fill's own `opacity`
+    // is already folded into its color/stops, same as a single fill.
     let file = document(serde_json::json!({
         "name": "two-fills",
         "type": "FRAME",
         "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
         "fills": [
             { "type": "SOLID", "color": { "r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0 } },
+            {
+                "type": "SOLID",
+                "opacity": 0.5,
+                "color": { "r": 0.0, "g": 1.0, "b": 0.0, "a": 1.0 },
+            },
+        ],
+    }));
+
+    let (doc, diagnostics) =
+        lower(&file, Profile::Core, &BTreeMap::new()).expect("the document lowers");
+    assert!(
+        diagnostics.is_empty(),
+        "a stacked fill is not a diagnostic: {diagnostics:?}"
+    );
+    let (_, n) = node(&doc, "two-fills");
+    let entry = &n.paint.as_ref().expect("the node paints").entry;
+
+    assert_eq!(
+        entry.fill,
+        Some(PaintKind::Solid {
+            color: Color {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0,
+            },
+        }),
+        "the bottom fill lowers exactly as a single fill always has",
+    );
+    assert_eq!(
+        entry.extra_fills,
+        vec![PaintKind::Solid {
+            color: Color {
+                r: 0.0,
+                g: 1.0,
+                b: 0.0,
+                a: 0.5,
+            },
+        }],
+        "the top fill's own opacity folds into its color, same as a lone fill's",
+    );
+}
+
+#[test]
+fn a_hidden_fill_amid_a_stack_is_not_a_third_visible_fill() {
+    // The stack counts *visible* fills, same rule `fill_of`'s single-fill
+    // case already applies: a hidden layer draws nothing, so it neither
+    // becomes part of the stack nor blocks it.
+    let file = document(serde_json::json!({
+        "name": "hidden-amid-stack",
+        "type": "FRAME",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+        "fills": [
+            { "type": "SOLID", "color": { "r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0 } },
+            {
+                "type": "SOLID",
+                "visible": false,
+                "color": { "r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0 },
+            },
             { "type": "SOLID", "color": { "r": 0.0, "g": 1.0, "b": 0.0, "a": 1.0 } },
+        ],
+    }));
+
+    let (doc, diagnostics) =
+        lower(&file, Profile::Core, &BTreeMap::new()).expect("the document lowers");
+    assert!(diagnostics.is_empty());
+    let (_, n) = node(&doc, "hidden-amid-stack");
+    let entry = &n.paint.as_ref().expect("the node paints").entry;
+
+    assert_eq!(
+        entry.extra_fills,
+        vec![PaintKind::Solid {
+            color: Color {
+                r: 0.0,
+                g: 1.0,
+                b: 0.0,
+                a: 1.0,
+            },
+        }],
+        "the hidden middle fill is skipped, not stacked",
+    );
+}
+
+#[test]
+fn an_unsupported_fill_within_a_stack_is_still_refused_by_name() {
+    // Stacking a visible fill is no longer itself a blocker, but a fill
+    // whose own kind has no lowering still is — P4 does not relax just
+    // because the fill sits in a stack.
+    let file = document(serde_json::json!({
+        "name": "stack-with-a-pattern",
+        "type": "FRAME",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+        "fills": [
+            { "type": "SOLID", "color": { "r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0 } },
+            { "type": "PATTERN" },
         ],
     }));
 
@@ -1002,8 +1101,8 @@ fn a_second_visible_fill_fails_loudly_rather_than_being_silently_dropped() {
     assert_sole_unsupported(
         &doc,
         &diagnostics,
-        "two-fills",
-        "more than one visible fill",
+        "stack-with-a-pattern",
+        "a PATTERN paint",
     );
 }
 
