@@ -1284,6 +1284,15 @@ function stackedFills() {
 // subsequent siblings in the children array (BlendMixin.isMask), so
 // containing the mask and the node it masks in a dedicated frame keeps the
 // propagation scoped to that pair and out of the other three constructs.
+//
+// story C2 (#143) fix: the mask shape is a full circle (not an oblong
+// ellipse) with maskType explicitly "VECTOR" — the Plugin API's name for
+// the REST API's "OUTLINE" — so it exercises dashc's box-outline mask
+// lowering rather than the default ALPHA mask type, which dashc refuses by
+// name (a soft mask has no hard box-clip lowering). A file captured before
+// this fix carries the old ALPHA/oblong mask shape and needs this command
+// re-run in Figma, then a re-capture, before its mask exercises the
+// lowering.
 function nodeFx() {
   const root = baseFrame("node-fx", 540, 160);
   root.layoutMode = "NONE";
@@ -1336,13 +1345,20 @@ function nodeFx() {
   maskPair.x = slotX(3);
   maskPair.y = Y0;
 
+  // A full circle (equal width/height): the ellipse-as-circle lowering
+  // limit (docs/decisions/figma-ellipse-as-circle.md) — a non-circular
+  // ellipse refuses regardless of masking. `maskType` defaults to `"ALPHA"`
+  // (the Plugin API's `MaskType`), which dashc refuses by name (a soft mask
+  // has no hard box-clip lowering, docs/decisions/masks-and-group-opacity.md);
+  // `"VECTOR"` is the Plugin API's name for what the REST API reports as
+  // `"OUTLINE"` — the box-outline mask dashc's lowering accepts.
   const maskShape = figma.createEllipse();
   maskShape.name = "mask-shape";
-  maskShape.resize(CELL, CELL * 0.6);
+  maskShape.resize(CELL, CELL);
   maskShape.fills = [solid(GRAY(0))];
   maskPair.appendChild(maskShape);
   maskShape.x = 0;
-  maskShape.y = CELL * 0.2;
+  maskShape.y = 0;
 
   const maskedContent = figma.createRectangle();
   maskedContent.name = "masked-content";
@@ -1352,10 +1368,11 @@ function nodeFx() {
   maskedContent.x = 0;
   maskedContent.y = 0;
   maskShape.isMask = true;
+  maskShape.maskType = "VECTOR";
 
   return "node-fx built: rotated-15deg rect, half-opacity rect, a hidden " +
-    "layer, and a mask pair (ellipse isMask masking a rect) in a 540x160 " +
-    "frame";
+    "layer, and a mask pair (full-circle ellipse isMask masking a rect, " +
+    "maskType VECTOR) in a 540x160 frame";
 }
 
 // ------------------------------------------------------------------ dispatch

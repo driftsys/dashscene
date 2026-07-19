@@ -28,7 +28,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use dashc_wasm::compile_figma;
+use dashc_wasm::EmitPolicy;
+use dashc_wasm::compile_figma_with_bindings_and_policy;
 use dashpaint::{ImageAsset, ImageFormat};
 use dashscene_validator::Profile;
 use goldens::{oracle, render};
@@ -103,26 +104,106 @@ fn images_for(fixture: &Path) -> BTreeMap<String, ImageAsset> {
 }
 
 /// Imports a committed fixture the way a real producer does — compile through
-/// `dashc`'s `compile_figma` (`Profile::Core`, strict policy, the committed
-/// image bytes supplied) — and renders the emitted `.dsb` through the Sf-1
-/// production render path (`goldens::render::render_dsb`: measure seam, text
-/// axes, embedded images), returning the PNG the design source is diffed
-/// against.
-fn render_import_fixture(name: &str, fixture: &Path) -> Vec<u8> {
+/// `dashc`'s `compile_figma_with_bindings_and_policy` (`Profile::Core`, no
+/// bindings, `EmitPolicy::Partial`, the committed image bytes supplied) — and
+/// renders the emitted `.dsb` through the Sf-1 production render path
+/// (`goldens::render::render_dsb`: measure seam, text axes, embedded images),
+/// returning the PNG the design source is diffed against.
+///
+/// Partial, not strict: most committed fixtures still lower fully clean (an
+/// empty `expected_warnings`, the historical invariant this asserts exactly as
+/// before), but a frame may disclose one or more constructs it deliberately
+/// does not lower — story C2/#143's `node-fx` skips a rotated rect (rotation
+/// stays refused by design) — declared as `expectedWarnings` in the manifest
+/// so the assertion still catches anything *un*expected. A diagnostic outside
+/// that declared set would mean part of the frame was skipped or refused for
+/// an undisclosed reason, so the diff would measure an omission, not fidelity.
+fn render_import_fixture(name: &str, fixture: &Path, expected_warnings: &[String]) -> Vec<u8> {
     let fixture_json = std::fs::read_to_string(fixture)
         .unwrap_or_else(|e| panic!("frame {name} fixture {}: {e}", fixture.display()));
     let images = images_for(fixture);
-    let (bytes, report) = compile_figma(&fixture_json, Profile::Core, &images)
-        .unwrap_or_else(|e| panic!("frame {name} fixture compiles: {e:?}"));
-    // A committed import-oracle fixture must lower fully clean under the
-    // strict policy: a diagnostic would mean part of the frame was skipped or
-    // refused, so the diff would measure an omission, not fidelity. This
-    // guards only lowering; render-time fidelity is what the diff measures.
-    assert!(
-        report.is_empty(),
-        "frame {name} fixture lowers clean: {report}"
+    let (bytes, report) = compile_figma_with_bindings_and_policy(
+        &fixture_json,
+        Profile::Core,
+        &images,
+        &[],
+        EmitPolicy::Partial,
+    )
+    .unwrap_or_else(|e| panic!("frame {name} fixture compiles: {e:?}"));
+    let mut messages: Vec<&str> = report
+        .diagnostics()
+        .iter()
+        .map(|d| d.message.as_str())
+        .collect();
+    messages.sort_unstable();
+    let mut expected: Vec<&str> = expected_warnings.iter().map(String::as_str).collect();
+    expected.sort_unstable();
+    assert_eq!(
+        messages, expected,
+        "frame {name} fixture lowers with exactly its declared expectedWarnings \
+         (empty by default — an undeclared diagnostic means part of the frame \
+         was skipped or refused for an undisclosed reason, so the diff would \
+         measure an omission, not fidelity)"
     );
     render::render_dsb(&bytes)
+}
+
+/// A frame's optional `expectedWarnings`: the exact diagnostic messages a
+/// fixture is declared to lower with under `EmitPolicy::Partial` (a
+/// deliberately un-lowered construct, disclosed rather than silently
+/// tolerated). Absent or empty means the fixture must lower fully clean — the
+/// historical invariant every frame before story C2/#143 satisfies.
+fn expected_warnings(frame: &Value) -> Vec<String> {
+    let name = frame["frame"].as_str().unwrap_or("<unnamed>");
+    let Some(warnings) = frame.get("expectedWarnings") else {
+        return Vec::new();
+    };
+    warnings
+        .as_array()
+        .unwrap_or_else(|| panic!("frame {name}'s expectedWarnings must be an array"))
+        .iter()
+        .map(|w| {
+            w.as_str()
+                .unwrap_or_else(|| {
+                    panic!("frame {name}'s expectedWarnings entries must be strings")
+                })
+                .to_string()
+        })
+        .collect()
+}
+
+/// A frame's optional `excludeRegions`: rectangles whose pixels the diff drops
+/// from both the differing count and the total. Absent or empty means no
+/// exclusion. Each region is `{x, y, w, h}` in the render's pixel coordinates;
+/// a missing or non-integer component is a manifest error, not a silent skip.
+/// Mirrors the E7 oracle's own `render_oracle.rs` helper of the same name —
+/// duplicated rather than shared because the two tests are deliberately
+/// separate crates/files (E7 stays frozen).
+fn exclude_regions(frame: &Value) -> Vec<oracle::ExcludeRegion> {
+    let name = frame["frame"].as_str().unwrap_or("<unnamed>");
+    let Some(regions) = frame.get("excludeRegions") else {
+        return Vec::new();
+    };
+    let regions = regions
+        .as_array()
+        .unwrap_or_else(|| panic!("frame {name}'s excludeRegions must be an array"));
+    regions
+        .iter()
+        .map(|region| {
+            let component = |key: &str| {
+                region[key]
+                    .as_i64()
+                    .unwrap_or_else(|| panic!("frame {name}'s excludeRegion needs integer {key}"))
+                    as i32
+            };
+            oracle::ExcludeRegion {
+                x: component("x"),
+                y: component("y"),
+                w: component("w"),
+                h: component("h"),
+            }
+        })
+        .collect()
 }
 
 #[test]
@@ -222,12 +303,19 @@ fn the_import_renders_match_their_design_source() {
                 let fixture = frame["fixture"].as_str().unwrap_or_else(|| {
                     panic!("frame {name} has a design source but names no fixture to render")
                 });
-                let reference_bytes = render_import_fixture(&name, &repo.join(fixture));
+                let warnings = expected_warnings(frame);
+                let reference_bytes = render_import_fixture(&name, &repo.join(fixture), &warnings);
 
-                let d = oracle::diff(&reference_bytes, &source_bytes, band)
+                let exclude = exclude_regions(frame);
+                let d = oracle::diff_excluding(&reference_bytes, &source_bytes, band, &exclude)
                     .unwrap_or_else(|e| panic!("frame {name}: {e}"));
+                let excluded_note = if exclude.is_empty() {
+                    String::new()
+                } else {
+                    format!(" [{} region(s) excluded]", exclude.len())
+                };
                 let line = format!(
-                    "{name}: {}/{} px differ ({:.3}%, max Δ {}) vs the {} band's {:.1}% budget",
+                    "{name}: {}/{} px differ ({:.3}%, max Δ {}) vs the {} band's {:.1}% budget{excluded_note}",
                     d.differing,
                     d.total,
                     d.fraction() * 100.0,

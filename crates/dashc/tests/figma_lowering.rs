@@ -1174,6 +1174,53 @@ fn a_hidden_node_lowers_and_keeps_its_index() {
 }
 
 #[test]
+fn a_hidden_node_does_not_break_its_visible_siblings() {
+    // Under partial-emit and otherwise, a hidden node lowers in place — it is
+    // never omitted from the tree (P1: the document carries the node, not
+    // just its resolved visual result, so a later staged `set_prop(Visible,
+    // true)` can un-hide it without re-lowering). Confirms a sibling after
+    // the hidden node lowers normally, with no diagnostic and no index
+    // disruption.
+    let file = document(serde_json::json!({
+        "name": "root",
+        "type": "FRAME",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 20.0, "height": 20.0 },
+        "children": [
+            {
+                "name": "toggled-off",
+                "type": "FRAME",
+                "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+                "visible": false,
+            },
+            {
+                "name": "after-the-hidden-node",
+                "type": "FRAME",
+                "absoluteBoundingBox": { "x": 10.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+            },
+        ],
+    }));
+
+    let (doc, diagnostics) =
+        lower(&file, Profile::Core, &BTreeMap::new()).expect("the file lowers");
+    assert!(
+        diagnostics.iter().all(|d| d.rule != "figma.unsupported"),
+        "a hidden node and its sibling both lower cleanly: {diagnostics:?}",
+    );
+    let (hidden_index, hidden) = node(&doc, "toggled-off");
+    assert!(!hidden.visible, "the hidden node lowered as not visible");
+    let (sibling_index, sibling) = node(&doc, "after-the-hidden-node");
+    assert!(
+        sibling.visible,
+        "the sibling after the hidden node lowers as visible"
+    );
+    assert_eq!(hidden_index, 1, "the hidden node keeps its DFS index");
+    assert_eq!(
+        sibling_index, 2,
+        "the sibling's DFS index is not shifted by the hidden node before it"
+    );
+}
+
+#[test]
 fn an_auto_layout_child_never_bakes_the_solved_position() {
     // The surviving ground of
     // docs/decisions/figma-auto-layout-refused-on-two-grounds.md: inside an

@@ -52,6 +52,35 @@
       "designSource": "oracle/import-design-source/vector-shapes.png",
       "status": "captured",
       "note": "One fixed 460x160 FRAME with four filled VECTOR nodes (star-5-point NONZERO, arrow NONZERO, organic-blob cubic Béziers NONZERO, square-with-hole EVENODD) — the baked-vector lowering path (story B1/#340): each VECTOR's fillGeometry lowers through dashc to an fdsm MSDF field packed into a shared atlas (geometry=paths fetch, B1.4), rendered as a field quad through the Skia painter's median-of-3 coverage resolve (B1.3). The msdf-text band: a baked MSDF field rendered as a quad is the same reconstruction as an msdf-text glyph — median-of-3, sharp high-contrast edges — so its residual vs Figma's exact path raster is glyph-edge-like (sub-pixel AA disagreement along curved edges), the residual the msdf-text band was tuned for, reused read-only and never retuned. Re-authored with the fixtureShapes stroke-clear plugin fix (importers/figma/plugin/fixture-author/code.js): the frame rebuilt at node 3:2, its four vectors now fill-only (SOLID, no stroke), so dashc lowers all four cleanly. Measured 1/73600 px (0.001%, max delta 61) against Figma's GET /images render — effectively an exact match, comfortably inside the msdf-text band; the earlier 2.935% figure was an artifact of the still-stroked source's black outline inflating the diff, not the baked-vector lowering's own fidelity."
+    },
+    {
+      "frame": "node-fx",
+      "fixture": "corpus/figma-fixtures/node-fx.json",
+      "band": "aa-edge",
+      "figmaFileKey": "OAXcoWO5j5NghXV3ZKw9QV",
+      "figmaNodeId": "1:2",
+      "designSource": "oracle/import-design-source/node-fx.png",
+      "status": "captured",
+      "expectedWarnings": [
+        "node rotation is not in the document vocabulary yet",
+        "a non-circular ellipse (unequal extents) is not in the document vocabulary yet",
+        "an alpha mask (a soft mask has no hard box-clip lowering) is not in the document vocabulary yet"
+      ],
+      "excludeRegions": [
+        {
+          "x": 30,
+          "y": 4,
+          "w": 123,
+          "h": 123
+        },
+        {
+          "x": 402,
+          "y": 30,
+          "w": 100,
+          "h": 100
+        }
+      ],
+      "note": "One fixed 540x160 FRAME with four node-effects lowering paths (story C2/#143, epic #343): a rotated rectangle, a half-opacity rectangle, a hidden layer (visible:false), and a mask pair (an isMask ellipse masking a rectangle). Node opacity, box-outline masks, and hidden nodes already lower (v0.8 story #44, debt #143) — this frame is the committed replay+measurement for that lowering, not a new dashc un-pin. Two disclosed holes, both excluded from the diff and named here rather than hidden inside the band: (1) the rotated rectangle — rotation stays refused by design (this issue's design gate: zero non-axis-aligned relativeTransform in either real-file target, no rotation schema in v0.10), a permanent hole; its excludeRegion is Figma's own reported absoluteBoundingBox for the rotated node, ceil/floor-rounded to the covering integer pixel box. (2) the mask pair — this capture predates a fixture-author plugin fix (this story, code.js) that makes the mask shape a full circle with maskType VECTOR (the Plugin API name for the REST OUTLINE mask dashc's lowering accepts); as captured the mask ellipse is non-circular with the Plugin API's default ALPHA maskType and refuses for both reasons (debt #361), a temporary hole pending a human re-run of the corrected command plus a re-capture — at that point this excludeRegion and its two expectedWarnings entries should be removed and the frame re-measured. Hard-edged rectangles and a circle: the aa-edge band. Measured 0/61271 px (0.000%, max delta 2) over the remaining opacity+hidden region — a pixel-exact match, well within the aa-edge band."
     }
   ]
 }
