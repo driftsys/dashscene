@@ -102,8 +102,8 @@ fn a_fixed_line_height_grows_the_measured_height_and_default_is_byte_identical()
     let one_line = typesetter().layout(text, size, None).width;
     let wrap = one_line * 0.75;
 
-    let (_, default_h) = solved_text_box(text, size, Some(wrap), None, TextAlign::Left);
-    let (_, tall_h) = solved_text_box(text, size, Some(wrap), Some(80.0), TextAlign::Left);
+    let (default_w, default_h) = solved_text_box(text, size, Some(wrap), None, TextAlign::Left);
+    let (tall_w, tall_h) = solved_text_box(text, size, Some(wrap), Some(80.0), TextAlign::Left);
 
     assert!(
         tall_h > default_h,
@@ -117,6 +117,14 @@ fn a_fixed_line_height_grows_the_measured_height_and_default_is_byte_identical()
     assert_eq!(
         default_h, expected.height,
         "a default-axis node's measured height is byte-identical to layout()"
+    );
+    // Width byte-identity across the line-height axis: a fixed line height grows
+    // the height only, so it must never perturb the measured width. (The solved
+    // width here is the node's fixed constraint, not the shaped content width, so
+    // this guards axis-invariance rather than equality to `layout().width`.)
+    assert_eq!(
+        default_w, tall_w,
+        "a fixed line height changes the measured height only, never the width"
     );
 }
 

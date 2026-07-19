@@ -1,5 +1,5 @@
 //! v0.4 FLIP goldens (issue #23; docs/specification/05-qualification.md
-//! E5, `DESIGN_1.md` §11): a variant switch sampled at t = 0 / 0.5 / 1
+//! E5, docs/archive/2026-07-14-design-1-seed.md §11): a variant switch sampled at t = 0 / 0.5 / 1
 //! under a deterministic clock, each sample rendered through the Skia
 //! reference painter and compared against a checked-in golden. These
 //! three goldens are exit criterion E5.
