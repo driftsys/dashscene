@@ -60,12 +60,27 @@ fn frames(manifest: &Value) -> &Vec<Value> {
         .expect("the manifest has a frames array")
 }
 
-/// The committed image bytes beside a fixture: `<name>.images/<imageRef>.png`,
-/// keyed by the `imageRef` (the file stem), as `compile_figma` takes them.
-/// This is the map the Deno importer resolves live from `GET /images`; here it
-/// is the committed corpus directory the capture tool wrote (`capture.ts`), so
-/// the compile is hermetic. A fixture with no image fills has no `.images/`
-/// directory and gets the empty map.
+/// The `.dsb` image-table format tag for a corpus image file's extension —
+/// the capture tool's own naming (`EXTENSION_OF`, `importers/figma/src/
+/// capture.ts`), inverted: `.png` -> Png, `.jpg` -> Jpeg, `.gif` -> Gif
+/// (story #342). Any other extension is not a capture-tool asset (a file
+/// browser's `.DS_Store`, an editor backup) and is skipped, never guessed
+/// at (P4).
+fn image_format_of_extension(ext: &std::ffi::OsStr) -> Option<ImageFormat> {
+    match ext.to_str()? {
+        "png" => Some(ImageFormat::Png),
+        "jpg" => Some(ImageFormat::Jpeg),
+        "gif" => Some(ImageFormat::Gif),
+        _ => None,
+    }
+}
+
+/// The committed image bytes beside a fixture:
+/// `<name>.images/<imageRef><ext>`, keyed by the `imageRef` (the file stem),
+/// as `compile_figma` takes them. This is the map the Deno importer resolves
+/// live from `GET /images`; here it is the committed corpus directory the
+/// capture tool wrote (`capture.ts`), so the compile is hermetic. A fixture
+/// with no image fills has no `.images/` directory and gets the empty map.
 fn images_for(fixture: &Path) -> BTreeMap<String, ImageAsset> {
     let dir = fixture.with_extension("images");
     let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -74,13 +89,7 @@ fn images_for(fixture: &Path) -> BTreeMap<String, ImageAsset> {
     entries
         .filter_map(|entry| {
             let path = entry.expect("readable corpus directory entry").path();
-            // The capture tool writes exactly `<imageRef>.png` files and prunes
-            // the rest; anything else here — a file browser's .DS_Store, an
-            // editor backup — is not an image asset and must not enter the map
-            // with a bogus key and a false Png label.
-            if path.extension().is_none_or(|ext| ext != "png") {
-                return None;
-            }
+            let format = path.extension().and_then(image_format_of_extension)?;
             let image_ref = path
                 .file_stem()
                 .expect("an image asset file has a stem")
@@ -88,13 +97,7 @@ fn images_for(fixture: &Path) -> BTreeMap<String, ImageAsset> {
                 .into_owned();
             let bytes =
                 std::fs::read(&path).unwrap_or_else(|e| panic!("{} reads: {e}", path.display()));
-            Some((
-                image_ref,
-                ImageAsset {
-                    format: ImageFormat::Png,
-                    bytes,
-                },
-            ))
+            Some((image_ref, ImageAsset { format, bytes }))
         })
         .collect()
 }

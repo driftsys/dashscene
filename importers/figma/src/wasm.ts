@@ -17,7 +17,9 @@
  * `crates/dashc/src/abi/wire.rs`:
  *
  *   request   u32 profile | u32 json_len | json | u32 image_count
- *               | per image: u32 ref_len | ref | u32 format | u32 bytes_len | bytes
+ *               | per image: u32 ref_len | ref
+ *                 | u32 format (0 = png, 1 = jpeg, 2 = gif)
+ *                 | u32 bytes_len | bytes
  *             | u32 binding_count
  *               | per binding: str nodeId | str property | str signal
  *                 | u32 type (0 = float, 1 = color)
@@ -34,9 +36,13 @@ import type { JoinedBinding } from "./bindings.ts";
 /** The paint-vocabulary subset a target honors (docs/design/architecture.md, R6). */
 export type Profile = "core" | "full";
 
-/** One encoded image asset. v0.3 knows exactly one container format. */
+/**
+ * One encoded image asset. `jpeg` and `gif` (story #342) join `png` — Figma
+ * re-encodes opaque uploads to Jpeg, and Gif covers static (single-frame)
+ * fills; `images.ts` refuses an animated Gif before it ever reaches here.
+ */
 export interface ImageAsset {
-  readonly format: "png";
+  readonly format: "png" | "jpeg" | "gif";
   readonly bytes: Uint8Array;
 }
 
@@ -118,7 +124,11 @@ const STATUS_COMPILE_ERROR = 1;
 const STATUS_MALFORMED_REQUEST = 2;
 
 const PROFILE: Record<Profile, number> = { core: 0, full: 1 };
-const FORMAT: Record<ImageAsset["format"], number> = { png: 0 };
+const FORMAT: Record<ImageAsset["format"], number> = {
+  png: 0,
+  jpeg: 1,
+  gif: 2,
+};
 
 /** Where `just wasm` puts the module. */
 const DEFAULT_MODULE = new URL(

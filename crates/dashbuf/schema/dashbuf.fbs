@@ -102,8 +102,15 @@ enum ScaleMode : uint8 {
   Tile,
 }
 
+// Append-only (P4): a new container format is a new variant at the end, never
+// a reordering. Jpeg and Gif (story #342) are Figma's other two Fill-time
+// containers — Figma re-encodes opaque uploads to Jpeg, and Gif covers
+// static (single-frame) image fills; animated Gif is refused upstream at
+// the importer (`figma-image-animated-gif`), so it never reaches this enum.
 enum ImageFormat : uint8 {
   Png = 0,
+  Jpeg = 1,
+  Gif = 2,
 }
 
 // One geometry model serves all four gradient kinds: three normalized
