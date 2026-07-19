@@ -1707,16 +1707,19 @@ fn constraints_of(
 /// carries it, that result stands.
 ///
 /// Outside auto-layout Figma sets no `layoutSizing*` at all, so
-/// `textAutoResize` is the sizing source. Without this a free-standing label
-/// would lower `Fixed`/`Fixed` from `constraints_of`'s absent-is-fixed
-/// default and carry its resolved box as authored extent — but Figma's
-/// default for a text box is auto (`WIDTH_AND_HEIGHT` — hug both). `HEIGHT`
-/// fixes the width and grows the height; `NONE` fixes the box. For a
-/// free-standing node the `absoluteBoundingBox` is authored (the designer
-/// placed and sized it — it is not an auto-layout solver result, so P1 permits
-/// a Fixed axis to read it). `TRUNCATE` and any unknown value are refused in
-/// [`Walk::text_of`], so the `NONE`-equivalent fixed fallback here is never
-/// emitted for them.
+/// `textAutoResize` is the sizing source. `WIDTH_AND_HEIGHT` hugs both axes;
+/// `HEIGHT` fixes the width and grows the height; `NONE` fixes the box — and
+/// so does an **absent** field, because `NONE` is the REST default and the API
+/// omits it: a fixed-box label serializes with no `textAutoResize` at all,
+/// while an auto-sizing node always carries the field explicitly (every
+/// committed capture does). Mapping absent to auto instead mis-lowered a fixed
+/// free-standing label as hug-both — its box collapsed to its content, so the
+/// text axes had no room to place the block — caught by the #332 import
+/// oracle's `import-text-axes` frame. For a free-standing node the
+/// `absoluteBoundingBox` is authored (the designer placed and sized it — it is
+/// not an auto-layout solver result, so P1 permits a Fixed axis to read it).
+/// `TRUNCATE` and any unknown value are refused in [`Walk::text_of`], so the
+/// `NONE`-equivalent fixed fallback here is never emitted for them.
 fn text_sizing(
     node: &Node,
     from_layout_sizing: Option<LayoutConstraints>,
@@ -1729,8 +1732,9 @@ fn text_sizing(
         .as_ref()
         .and_then(|s| s.text_auto_resize.as_deref())
     {
-        Some("WIDTH_AND_HEIGHT") | None => (AxisSizing::Hug, AxisSizing::Hug),
+        Some("WIDTH_AND_HEIGHT") => (AxisSizing::Hug, AxisSizing::Hug),
         Some("HEIGHT") => (AxisSizing::Fixed, AxisSizing::Hug),
+        // `NONE` and an absent field alike: the box is fixed as authored.
         _ => (AxisSizing::Fixed, AxisSizing::Fixed),
     };
     let constraints = LayoutConstraints {

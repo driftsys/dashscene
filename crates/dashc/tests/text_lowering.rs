@@ -167,20 +167,43 @@ fn free_standing_text_takes_its_sizing_from_text_auto_resize() {
     // intent (P1); a Hug axis carries no extent.
     for (auto_resize, sh, sv, width_is_fixed, height_is_fixed) in [
         (
-            "WIDTH_AND_HEIGHT",
+            Some("WIDTH_AND_HEIGHT"),
             AxisSizing::Hug,
             AxisSizing::Hug,
             false,
             false,
         ),
-        ("HEIGHT", AxisSizing::Fixed, AxisSizing::Hug, true, false),
-        ("NONE", AxisSizing::Fixed, AxisSizing::Fixed, true, true),
+        (
+            Some("HEIGHT"),
+            AxisSizing::Fixed,
+            AxisSizing::Hug,
+            true,
+            false,
+        ),
+        (
+            Some("NONE"),
+            AxisSizing::Fixed,
+            AxisSizing::Fixed,
+            true,
+            true,
+        ),
+        // An absent field IS `NONE`: the REST API omits the default, so a
+        // fixed-box label serializes with no `textAutoResize` at all, while an
+        // auto-sizing node always carries the field explicitly (every
+        // committed capture does). Mapping absent to auto mis-lowered a fixed
+        // free-standing label as hug-both — caught by the #332 import oracle's
+        // import-text-axes frame, whose fixed box collapsed to its content and
+        // parked the RIGHT/BOTTOM-aligned text top-left.
+        (None, AxisSizing::Fixed, AxisSizing::Fixed, true, true),
     ] {
+        let label = auto_resize.unwrap_or("absent");
         let mut style = base_style();
-        style
-            .as_object_mut()
-            .unwrap()
-            .insert("textAutoResize".to_string(), auto_resize.into());
+        if let Some(value) = auto_resize {
+            style
+                .as_object_mut()
+                .unwrap()
+                .insert("textAutoResize".to_string(), value.into());
+        }
         // No layoutSizing* fields — free-standing, under a mode-None parent.
         let leaf = serde_json::json!({
             "name": "label", "type": "TEXT", "characters": "hi", "style": style,
@@ -206,23 +229,23 @@ fn free_standing_text_takes_its_sizing_from_text_auto_resize() {
         .expect("the free-standing text lowers");
         assert!(
             unsupported(&diagnostics).is_empty(),
-            "{auto_resize}: {:?}",
+            "{label}: {:?}",
             unsupported(&diagnostics),
         );
         let (_, text) = node(&doc, "label");
         let c = text.constraints.unwrap_or_default();
-        assert_eq!(c.sizing_h, sh, "{auto_resize} horizontal sizing");
-        assert_eq!(c.sizing_v, sv, "{auto_resize} vertical sizing");
+        assert_eq!(c.sizing_h, sh, "{label} horizontal sizing");
+        assert_eq!(c.sizing_v, sv, "{label} vertical sizing");
         // A Fixed axis reads the authored box; a Hug axis carries no extent.
         assert_eq!(
             text.box2d.width == 120.0,
             width_is_fixed,
-            "{auto_resize} width extent",
+            "{label} width extent",
         );
         assert_eq!(
             text.box2d.height == 40.0,
             height_is_fixed,
-            "{auto_resize} height extent",
+            "{label} height extent",
         );
     }
 }

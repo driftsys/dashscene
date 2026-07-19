@@ -1,0 +1,107 @@
+{
+  "document": {
+    "id": "0:0",
+    "name": "Document",
+    "type": "DOCUMENT",
+    "scrollBehavior": "SCROLLS",
+    "children": [
+      {
+        "id": "0:1",
+        "name": "Page",
+        "type": "CANVAS",
+        "scrollBehavior": "SCROLLS",
+        "children": [
+          {
+            "id": "1:2",
+            "name": "Background Image",
+            "type": "FRAME",
+            "scrollBehavior": "SCROLLS",
+            "children": [],
+            "blendMode": "PASS_THROUGH",
+            "clipsContent": true,
+            "background": [
+              {
+                "blendMode": "NORMAL",
+                "type": "IMAGE",
+                "scaleMode": "FILL",
+                "imageRef": "f856e637d6f6c2eb858e17a31d810f00542d2035",
+                "rotation": 360
+              }
+            ],
+            "fills": [
+              {
+                "blendMode": "NORMAL",
+                "type": "IMAGE",
+                "scaleMode": "FILL",
+                "imageRef": "f856e637d6f6c2eb858e17a31d810f00542d2035",
+                "rotation": 360
+              }
+            ],
+            "strokes": [],
+            "strokeWeight": 1,
+            "strokeAlign": "INSIDE",
+            "backgroundColor": {
+              "r": 0,
+              "g": 0,
+              "b": 0,
+              "a": 0
+            },
+            "absoluteBoundingBox": {
+              "x": -72,
+              "y": -68,
+              "width": 400,
+              "height": 200
+            },
+            "absoluteRenderBounds": {
+              "x": -72,
+              "y": -68,
+              "width": 400,
+              "height": 200
+            },
+            "constraints": {
+              "vertical": "TOP",
+              "horizontal": "LEFT"
+            },
+            "exportSettings": [
+              {
+                "suffix": "",
+                "format": "PNG",
+                "constraint": {
+                  "type": "SCALE",
+                  "value": 1
+                }
+              }
+            ],
+            "effects": [],
+            "interactions": [],
+            "complexStrokeProperties": {
+              "strokeType": "BASIC"
+            }
+          }
+        ],
+        "backgroundColor": {
+          "r": 0.11764705926179886,
+          "g": 0.11764705926179886,
+          "b": 0.11764705926179886,
+          "a": 1
+        },
+        "prototypeStartNodeID": null,
+        "flowStartingPoints": [],
+        "prototypeDevice": {
+          "type": "NONE",
+          "rotation": "NONE"
+        }
+      }
+    ]
+  },
+  "components": {},
+  "componentSets": {},
+  "schemaVersion": 0,
+  "styles": {},
+  "name": "import-image-fill",
+  "lastModified": "2026-07-19T04:38:20Z",
+  "version": "2377781834533941184",
+  "role": "owner",
+  "editorType": "figma",
+  "linkAccess": "inherit"
+}

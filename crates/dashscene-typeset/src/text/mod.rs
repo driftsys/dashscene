@@ -108,6 +108,19 @@ impl Default for TextShape {
     }
 }
 
+/// The vertical shift a fixed line height applies to a line's baseline.
+/// Figma (like CSS inline layout) centers the line's intrinsic box within the
+/// fixed line box, so half the leading — `line_height - intrinsic` — sits
+/// above the ascent: negative leading (a line height below the intrinsic
+/// advance) lifts the baseline, positive lowers it. The default auto line
+/// height applies none. Pinned against Figma's own `GET /images` render by
+/// the #332 import oracle.
+fn half_leading(shape: &TextShape, intrinsic: f32) -> f32 {
+    shape
+        .line_height_px
+        .map_or(0.0, |line_height| (line_height - intrinsic) / 2.0)
+}
+
 /// Cache observability for tests and the measure callback's caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CacheStats {
@@ -203,12 +216,14 @@ impl Typesetter {
     }
 
     /// [`layout`](Self::layout) with the additive shaping knobs (story #310):
-    /// `shape.line_height_px` overrides the per-line advance, `shape.letter_spacing`
-    /// tracks each glyph in both the measured width and the placement pen, and
-    /// `shape.align` shifts each line within `max_width` (or the widest line when
-    /// `None`). With [`TextShape::default`] this is exactly `layout`'s previous
-    /// behavior, so every existing call site — the E7 oracle and goldens included
-    /// — renders identically.
+    /// `shape.line_height_px` overrides the per-line advance and centers each
+    /// line's intrinsic box within the fixed box ([`half_leading`], Figma's
+    /// model), `shape.letter_spacing` tracks each glyph in both the measured
+    /// width and the placement pen, and `shape.align` shifts each line within
+    /// `max_width` (or the widest line when `None`). With
+    /// [`TextShape::default`] this is exactly `layout`'s previous behavior, so
+    /// every existing call site — the E7 oracle and goldens included — renders
+    /// identically.
     pub fn layout_with(
         &mut self,
         text: &str,
@@ -241,12 +256,13 @@ impl Typesetter {
                 if bidi.paragraphs.is_empty() {
                     // A blank line has no glyphs; measure its box by the
                     // primary font. A fixed line height overrides the advance
-                    // (story #310); the baseline keeps the intrinsic ascent.
+                    // and centers the intrinsic box within it (half-leading,
+                    // story #310 corrected by #332).
                     let (ascent, intrinsic) = self.line_box(std::iter::empty(), &scales);
                     lines.push(Line {
                         glyphs: Vec::new(),
                         width: 0.0,
-                        baseline_y: pen_y + ascent,
+                        baseline_y: pen_y + ascent + half_leading(&shape, intrinsic),
                     });
                     pen_y += shape.line_height_px.unwrap_or(intrinsic);
                     rtl_lines.push(false);
@@ -275,13 +291,17 @@ impl Typesetter {
                     ) {
                         // The line's box comes from the fonts that shaped
                         // its glyphs, not the primary (story #219). A fixed
-                        // line height overrides the advance; the baseline keeps
-                        // the intrinsic ascent (story #310).
+                        // line height overrides the advance and centers the
+                        // intrinsic box within it — half-leading, Figma's
+                        // model: the baseline sits at ascent plus half the
+                        // leading, lifted under negative leading and lowered
+                        // under positive (story #310, corrected by the #332
+                        // import oracle against Figma's own render).
                         let (ascent, intrinsic) = self.line_box(
                             shaped.glyphs[range.clone()].iter().map(|g| g.font as usize),
                             &scales,
                         );
-                        let baseline = pen_y + ascent;
+                        let baseline = pen_y + ascent + half_leading(&shape, intrinsic);
                         pen_y += shape.line_height_px.unwrap_or(intrinsic);
                         rtl_lines.push(para.level.is_rtl());
                         lines.push(layout::position_line(
