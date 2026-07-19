@@ -8,7 +8,9 @@
  *      `dashscene` namespace, stamped `v = "1"`
  *      (docs/decisions/annotator-plugin-contract-frozen.md). The REST API
  *      returns them via `?plugin_data=shared`.
- *   2. the `_` name-prefix, sugar for "trim this subtree".
+ *   2. the `_` name-prefix, sugar for "trim this subtree" — except on an
+ *      `INSTANCE`, `COMPONENT`, or `COMPONENT_SET`, where a leading `_` is
+ *      Figma's own private-component convention, not a trim annotation.
  *   3. slot-child auto-replacement: a `placeholder` node keeps its own box,
  *      but its children are sample content by definition and are trimmed —
  *      at runtime the slot is filled with real content.
@@ -172,8 +174,18 @@ export function trimFile(file: ClosureFile): TrimResult {
         : { ...node, children: [] };
     }
 
-    // The `_` prefix is sugar for the same "trim this subtree" intent.
-    if (node.name.startsWith("_")) {
+    // The `_` prefix is sugar for the same "trim this subtree" intent — but
+    // not on a component-system node. Figma's own convention uses a leading
+    // `_` (or `.`) to mark a component or component set "private" (excluded
+    // from library publishing), and an instance inherits its master's name by
+    // default. Design systems commonly name their building-block components
+    // this way, so without this exemption every instance of such a component
+    // would be trimmed whole (docs/decisions/importer-trim-layers.md). An
+    // author who genuinely wants an instance trimmed uses the annotator's
+    // `sample-content` role instead (handled above).
+    const isComponentSystemNode = node.type === "INSTANCE" ||
+      node.type === "COMPONENT" || node.type === "COMPONENT_SET";
+    if (!isComponentSystemNode && node.name.startsWith("_")) {
       trimmed.push({
         id: node.id,
         name: node.name,

@@ -33,7 +33,19 @@ lowering only ever see kept content. `importFigmaFile` runs
 - **sharedPluginData roles.** A node whose `dashscene` role is
   `sample-content`, `redline`, or `spec` is removed with its whole subtree.
 - **The `_` name prefix** is sugar for the same "trim this subtree" intent, so
-  a scratch layer trims with no plugin run.
+  a scratch layer trims with no plugin run — **except on a component-system
+  node.** The rule does not apply to `INSTANCE`, `COMPONENT`, or
+  `COMPONENT_SET`: Figma's own convention names a "private" component
+  (excluded from library publishing) with a leading `_` or `.`, and an
+  instance inherits its master's name by default. Design systems commonly
+  name their building-block components this way (story #359 found Landify's
+  `_Feature Item`, `_Testimonial item`, `_Client logo`, `_Button base`,
+  `_Nav group`, …), so without the exemption every instance of such a
+  component trims whole — 6 of 9 sections on the target hero file emptied
+  this way. Scratch layers of every other type (`FRAME`, `GROUP`, `TEXT`, …)
+  keep the sugar unchanged. An author who genuinely wants an instance trimmed
+  uses the `sample-content` role instead — the escape hatch stays a machine
+  truth, not a name convention, on a component-system node.
 - **Slot-child auto-replacement.** A `placeholder` node keeps its own box, but
   its children are sample content by definition and are removed; at runtime the
   slot is filled with real content. (The placeholder node kind itself is a
@@ -69,6 +81,15 @@ the export.
   named record, never a silent drop.
 - **Treat `visible: false` as trimmed.** Rejected by the design: hidden nodes
   are variant states and must ship as `visible: false`.
+- **Instance exemption by inherited name (story #359), rather than by
+  type.** Considered exempting an `INSTANCE` only when its name equals its
+  master's name in the `components`/`componentSets` map — so a hand-renamed
+  `_foo` instance still trims. Rejected as more plumbing (`trimFile` would
+  need both maps threaded in, keyed by componentId/componentSetId) for a case
+  — hand-renaming an instance to a leading underscore instead of role-tagging
+  it `sample-content` — with no known user. The type-based exemption (any
+  `INSTANCE`/`COMPONENT`/`COMPONENT_SET`) is simpler and the `sample-content`
+  role remains the correct channel for a genuinely-scratch instance.
 
 ## Consequences
 
@@ -80,3 +101,14 @@ the export.
 - Phase-1 token binding coverage is unaffected: the sidecar derives from the
   closure-pruned file, so a trimmed sample-content node's `boundVariables` are
   never recorded — correct, since the node does not ship.
+- The name-prefix sugar and Figma's private-component convention collide by
+  construction: a leading `_` means opposite things on a component-system
+  node vs. a scratch layer. Excluding `INSTANCE`/`COMPONENT`/`COMPONENT_SET`
+  from the sugar (story #359) resolves the collision without a manifest flag
+  — the default now matches real-world files, not just self-authored ones.
+- `just reprobe`'s frontier report greps only `severity[rule]:`-shaped lines,
+  so the `trimmed:` lines this pass emits were invisible there even though
+  the removal is named (P4) — the drop above went unseen for exactly that
+  reason. `reprobe` now also surfaces the `trimmed:` lines (a count plus the
+  lines themselves), so a trim-caused content gap shows up in the frontier
+  output going forward.

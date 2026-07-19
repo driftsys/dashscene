@@ -132,6 +132,75 @@ Deno.test("a `_` name prefix trims the subtree (sugar), named", () => {
   ]);
 });
 
+Deno.test("a `_` name prefix does NOT trim an INSTANCE — Figma's private-component convention, not a trim annotation", () => {
+  const file = fileOf([
+    {
+      id: "1:1",
+      name: "_Feature Item",
+      type: "INSTANCE",
+      componentId: "2:1",
+      children: [{ id: "1:2", name: "Headline", type: "TEXT" }],
+    },
+    { id: "1:3", name: "keep", type: "FRAME", children: [] },
+  ]);
+
+  const result = trimFile(file);
+
+  assertEquals(survivingTopIds(result.file), ["1:1", "1:3"]);
+  assertEquals(result.trimmed, []);
+});
+
+Deno.test("a `_` name prefix does NOT trim a COMPONENT or COMPONENT_SET definition", () => {
+  const file = fileOf([
+    { id: "1:1", name: "_Feature Item", type: "COMPONENT", children: [] },
+    {
+      id: "1:2",
+      name: "_Testimonial item",
+      type: "COMPONENT_SET",
+      children: [],
+    },
+  ]);
+
+  const result = trimFile(file);
+
+  assertEquals(survivingTopIds(result.file), ["1:1", "1:2"]);
+  assertEquals(result.trimmed, []);
+});
+
+Deno.test("a `_` name prefix still trims a scratch FRAME/GROUP/TEXT (the sugar is unchanged for non-component-system nodes)", () => {
+  const file = fileOf([
+    { id: "1:1", name: "_scratch frame", type: "FRAME", children: [] },
+    { id: "1:2", name: "_scratch group", type: "GROUP", children: [] },
+    { id: "1:3", name: "_scratch text", type: "TEXT" },
+    { id: "1:4", name: "keep", type: "FRAME", children: [] },
+  ]);
+
+  const result = trimFile(file);
+
+  assertEquals(survivingTopIds(result.file), ["1:4"]);
+  assertEquals(result.trimmed.map((r) => r.id), ["1:1", "1:2", "1:3"]);
+  assert(result.trimmed.every((r) => r.reason === "name-prefix"));
+});
+
+Deno.test("the sample-content role still trims an INSTANCE — the escape hatch for a genuinely-scratch instance", () => {
+  const file = fileOf([
+    annotated("1:1", "_Feature Item", "sample-content", { type: "INSTANCE" }),
+    { id: "1:2", name: "keep", type: "FRAME", children: [] },
+  ]);
+
+  const result = trimFile(file);
+
+  assertEquals(survivingTopIds(result.file), ["1:2"]);
+  assertEquals(result.trimmed, [
+    {
+      id: "1:1",
+      name: "_Feature Item",
+      type: "INSTANCE",
+      reason: "role:sample-content",
+    },
+  ]);
+});
+
 Deno.test("hidden is not trimmed — visible:false ships (it may be a variant state)", () => {
   const file = fileOf([
     { id: "1:1", name: "banner", type: "FRAME", visible: false, children: [] },
