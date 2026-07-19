@@ -421,10 +421,11 @@ fn a_non_fixed_size_ellipse_is_diagnosed() {
 
 #[test]
 fn other_shape_kinds_are_each_diagnosed_by_name() {
-    // LINE/VECTOR/STAR/POLYGON/REGULAR_POLYGON have no lowering; each is its
-    // own named node-type diagnostic (P4), none silently dropped. Lowering
-    // them stays out of scope (docs/decisions/figma-ellipse-as-circle.md).
-    let children: Vec<serde_json::Value> = ["LINE", "VECTOR", "STAR", "POLYGON", "REGULAR_POLYGON"]
+    // LINE/STAR/POLYGON/REGULAR_POLYGON have no lowering; each is its own named
+    // node-type diagnostic (P4), none silently dropped. Lowering them stays out
+    // of scope (docs/decisions/figma-ellipse-as-circle.md). VECTOR is no longer
+    // here — story B1 lowers it into a baked MSDF field.
+    let children: Vec<serde_json::Value> = ["LINE", "STAR", "POLYGON", "REGULAR_POLYGON"]
         .iter()
         .map(|kind| {
             serde_json::json!({
@@ -448,7 +449,6 @@ fn other_shape_kinds_are_each_diagnosed_by_name() {
         diagnosed(&json),
         vec![
             ("/shapes/LINE".to_string(), "node type LINE".to_string()),
-            ("/shapes/VECTOR".to_string(), "node type VECTOR".to_string()),
             ("/shapes/STAR".to_string(), "node type STAR".to_string()),
             (
                 "/shapes/POLYGON".to_string(),

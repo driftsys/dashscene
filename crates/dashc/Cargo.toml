@@ -25,6 +25,22 @@ path = "src/main.rs"
 dashbuf.workspace = true
 dashpaint.workspace = true
 dashscene-validator.workspace = true
+# Pure-Rust MSDF generator for the Figma VECTOR field bake (story B1,
+# docs/wip/2026-07-19-B1-vector-msdf-design.md). Pinned exactly: the
+# generated field is welded per-texel to a committed pinned-msdfgen
+# reference (tests/vector_field_weld.rs), so an fdsm bump must arrive as a
+# deliberate, re-welded change (the same posture as the glyph atlas tool
+# pin). Built into dashc.wasm, so it must stay wasm32-clean — no C/C++, no
+# threads (verified by `just wasm`).
+fdsm = { version = "=0.8.0", default-features = false }
+# fdsm's public API takes and returns nalgebra points and affine transforms;
+# the version tracks fdsm's own (0.34) so the point/transform types unify.
+nalgebra = "0.34"
+# fdsm writes fields into `image::RgbImage`; the `png` feature (only) encodes
+# the packed atlas into `Document.images` and decodes the weld reference.
+# default-features off keeps the colour-management subtree (moxcms, pxfm) and
+# the other codecs out of dashc.wasm.
+image = { version = "0.25", default-features = false, features = ["png"] }
 flatbuffers.workspace = true
 serde.workspace = true
 # `unbounded_depth` enables `Deserializer::disable_recursion_limit`, which

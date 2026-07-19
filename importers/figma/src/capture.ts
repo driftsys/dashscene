@@ -3,7 +3,8 @@
  * (docs/design/dashc.md, corpus/figma-fixtures/README.md).
  *
  * Reads `corpus/figma-fixtures/manifest.json`, fetches each fixture's
- * `GET /v1/files/:key?plugin_data=shared` JSON, and writes it to
+ * `GET /v1/files/:key?plugin_data=shared&geometry=paths` JSON (the geometry
+ * param carries VECTOR path outlines, story B1), and writes it to
  * `corpus/figma-fixtures/<name>.json` so importer tests replay offline.
  *
  * The capture is the raw response minus its non-deterministic fields: the

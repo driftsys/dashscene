@@ -427,6 +427,43 @@ pub struct Shadow {
     pub color: Color,
 }
 
+/// A resolved baked-vector coverage mask (story B1,
+/// `docs/wip/2026-07-19-B1-vector-msdf-design.md`) — the runtime form of a
+/// Figma VECTOR node's shape. A paint entry carrying `Some(VectorField)`
+/// samples this multi-channel signed-distance field as a coverage mask and
+/// composes it with the entry's ordinary `fill` (solid or gradient), so the
+/// painter never rasterizes a path (P2). `None` is the implicit parametric
+/// (rounded-rect) shape — unchanged from every pre-B1 entry.
+///
+/// The atlas image lives in the [`ImageTable`] the same way an image fill's
+/// bytes do (`image` indexes it); it is a lossless PNG of the packed RGB
+/// distance channels. `atlas_rect` is this shape's sub-rect in that image, in
+/// texels (`[x, y, width, height]`, top-left origin). `plane_bounds` is the
+/// padded field quad in the shape's own coordinate space, relative to the
+/// node box origin, y-down (`[left, top, right, bottom]`) — the painter maps
+/// it to device space by `device = rect_origin + plane_bounds` (unit scale).
+///
+/// Plain mirror of `dashbuf`'s `VectorAtlas` + `VectorShape` tables, resolved
+/// (atlas → image index, `px_per_em`/`distance_range` folded in) at load
+/// time, so the painter needs no pool walk — the same shape the glyph
+/// [`Atlas`] takes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VectorField {
+    /// Index into the [`ImageTable`] — the packed MSDF atlas PNG.
+    pub image: u32,
+    /// This shape's sub-rect in the atlas, in texels: `[x, y, width, height]`,
+    /// top-left origin.
+    pub atlas_rect: [u32; 4],
+    /// The padded field quad in shape space, node-box-relative, y-down:
+    /// `[left, top, right, bottom]`.
+    pub plane_bounds: [f32; 4],
+    /// Atlas texels per shape em (the em is the shape's longer bounding-box
+    /// side) — the bake resolution.
+    pub px_per_em: f32,
+    /// The MSDF distance range in atlas texels (msdfgen `-pxrange`).
+    pub distance_range: f32,
+}
+
 /// One paint-table entry (docs/design/dashbuf.md's paint-table row: paint-kind
 /// enum plus fill/stroke params): what a rect is filled with, how its
 /// outline is stroked, how its corners round, and the shadows it casts.
@@ -451,6 +488,11 @@ pub struct PaintEntry {
     /// a node stacks as many as it authors, which is why `Paint.fill` and
     /// `Paint.stroke` stay single-valued (debt #146 stays untouched).
     pub shadows: Vec<Shadow>,
+    /// The baked-vector coverage mask (story B1). `Some` masks `fill` by the
+    /// referenced field's coverage — a Figma VECTOR shape. `None` (the
+    /// default) is the implicit parametric shape, so every pre-B1 entry is
+    /// unchanged. Skipped for a fill-less entry (no ink to mask).
+    pub shape: Option<VectorField>,
 }
 
 impl PaintEntry {

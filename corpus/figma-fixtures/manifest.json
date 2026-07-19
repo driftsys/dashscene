@@ -171,6 +171,13 @@
       "covers": "standard-ligatures-off text vocabulary (Figma TextStyle.opentypeFlags {\"LIGA\":0}) for the import-fidelity oracle (frame liga-text, msdf-text band, issue #332): the same string set twice in Noto Sans — liga-off with standard ligatures explicitly disabled, liga-on at the font default — so the diff isolates the ligatures_off axis lowered by story #341 (epic #343)",
       "emits": true,
       "note": "Authored with the fixture-author plugin's liga-text command (importers/figma/plugin/fixture-author/README.md), plus a manual step: the Plugin API's openTypeFeatures is read-only (no setter), so standard ligatures were disabled on the liga-off node by hand (Type settings > Details panel > Ligatures); the liga-on node stays at the font default for contrast. Measured by goldens/oracle/import-manifest.json (issue #332)."
+    },
+    {
+      "name": "vector-shapes",
+      "fileKey": "f0nG7azeYELWb9KZ2tLnu9",
+      "covers": "one fixed 460x160 FRAME with four filled VECTOR nodes — star-5-point (NONZERO, straight segments), arrow (NONZERO, closed polygon), organic-blob (NONZERO, cubic Béziers), and square-with-hole (EVENODD, outer + inner subpath) — for the baked-vector lowering path (story B1/#340, epic #343): the geometry=paths fetch, dashc VECTOR fillGeometry lowering, the fdsm MSDF bake + atlas pack, and the import-fidelity oracle (frame vector-shapes, msdf-text band). No image fills.",
+      "emits": true,
+      "note": "Authored with the fixture-author plugin's fixtureShapes command (importers/figma/plugin/fixture-author/README.md), self-authored and license-clean (docs/decisions/figma-corpus-self-authored-only.md). The capture must run with the geometry=paths fetch in place (importers/figma/src/fetch.ts, B1.4) or the committed JSON carries no fillGeometry and every VECTOR would refuse. The fixture exercises NONZERO and EVENODD winding, straight and cubic segments, and the hole case; it does not exercise gradients or stroke-only vectors — those are checked live against the hero and first-light targets. Measured by goldens/oracle/import-manifest.json (Sf-2, issue #332)."
     }
   ]
 }

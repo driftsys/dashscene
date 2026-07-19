@@ -42,6 +42,16 @@
       "designSource": "oracle/import-design-source/liga-text.png",
       "status": "captured",
       "note": "One FRAME holding two TEXT nodes in Noto Sans, the same string 'waffle finish office' set twice — liga-off carrying Figma's standard-ligatures-off OpenType flag (style.opentypeFlags {\"LIGA\":0}), liga-on at the font default — the ligatures_off text axis lowered by story #341 (epic #343). Self-authored with the fixture-author plugin's liga-text command (importers/figma/plugin/fixture-author/README.md) plus the manual ligature toggle the Plugin API cannot write. Measured 1907/84000 px (2.270%, max delta 224) — glyph edges plus the ligature-substitution shape difference itself, within the msdf-text band."
+    },
+    {
+      "frame": "vector-shapes",
+      "fixture": "corpus/figma-fixtures/vector-shapes.json",
+      "band": "msdf-text",
+      "figmaFileKey": "f0nG7azeYELWb9KZ2tLnu9",
+      "figmaNodeId": "1:2",
+      "designSource": null,
+      "status": "pending-332",
+      "note": "One fixed 460x160 FRAME with four filled VECTOR nodes (star-5-point NONZERO, arrow NONZERO, organic-blob cubic Béziers NONZERO, square-with-hole EVENODD) — the baked-vector lowering path (story B1/#340): each VECTOR's fillGeometry lowers through dashc to an fdsm MSDF field packed into a shared atlas (geometry=paths fetch, B1.4), rendered as a field quad through the Skia painter's median-of-3 coverage resolve (B1.3). The msdf-text band: a baked MSDF field rendered as a quad is the same reconstruction as an msdf-text glyph — median-of-3, sharp high-contrast edges — so its residual vs Figma's exact path raster is glyph-edge-like (sub-pixel AA disagreement along curved edges), the residual the msdf-text band was tuned for, reused read-only and never retuned. Pending #332: the committed capture predates the fixtureShapes stroke-clear plugin fix (importers/figma/plugin/fixture-author/code.js), so its four vectors still carry figma.createVector()'s default 1px black stroke and dashc refuses each as a differently-coloured fill+stroke. Re-author the fixture (fixtureShapes, now stroke-free) then run just deno-capture + deno task import-oracle-capture to capture the design source and flip this frame to captured. An in-memory strokeless render of the current capture measures 2.935% (maxΔ 250) against the still-stroked Figma source — an upper bound (the source's black outline inflates it), inside the 3% band, so the re-authored frame will measure lower."
     }
   ]
 }

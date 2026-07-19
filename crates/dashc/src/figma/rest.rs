@@ -46,6 +46,20 @@ pub struct Node {
     pub fills: Vec<Paint>,
     #[serde(default)]
     pub strokes: Vec<Paint>,
+    /// A `VECTOR` node's filled geometry (story B1) — Figma's `fillGeometry`,
+    /// present only when the file was fetched with `geometry=paths`. Each
+    /// entry is one closed path (`M`/`L`/`C`/`Z`) plus its winding rule; the
+    /// node's fill is the concatenation of them, holes riding as EVENODD
+    /// subpaths. Absent (an empty vector) for a non-vector node or a
+    /// geometry-free fetch.
+    #[serde(default)]
+    pub fill_geometry: Vec<Geometry>,
+    /// A `VECTOR` node's stroke outline (story B1) — Figma's `strokeGeometry`,
+    /// the already-expanded closed outline of the stroke. The fieldable
+    /// geometry for a stroke-only vector (a hairline arrow), whose
+    /// `fillGeometry` is degenerate.
+    #[serde(default)]
+    pub stroke_geometry: Vec<Geometry>,
     #[serde(default)]
     pub effects: Vec<Effect>,
     #[serde(default)]
@@ -283,6 +297,20 @@ pub struct ArcData {
     pub starting_angle: f32,
     pub ending_angle: f32,
     pub inner_radius: f32,
+}
+
+/// One contour of a `VECTOR` node's `fillGeometry`/`strokeGeometry` (story
+/// B1): an SVG path string in the census vocabulary (`M`/`L`/`C`/`Z`) and its
+/// fill rule. Figma emits these only when the file is fetched with
+/// `geometry=paths`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Geometry {
+    pub path: String,
+    /// Figma's `windingRule`: `NONZERO` or `EVENODD`. Absent defaults to
+    /// NONZERO (Figma always emits it alongside path geometry).
+    #[serde(default)]
+    pub winding_rule: Option<String>,
 }
 
 /// The stroke's shape family.

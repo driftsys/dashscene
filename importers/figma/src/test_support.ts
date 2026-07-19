@@ -35,7 +35,7 @@ export function scriptedFetch(
     const url = input instanceof Request ? input.url : String(input);
     requested.push(url);
     if (
-      url === `https://api.figma.com/v1/files/${FILE_KEY}?plugin_data=shared`
+      url === `https://api.figma.com/v1/files/${FILE_KEY}?plugin_data=shared&geometry=paths`
     ) {
       return Promise.resolve(new Response(file));
     }

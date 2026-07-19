@@ -40,13 +40,13 @@ use dashbuf::{
     CrossAxisAlign, Document, DocumentArgs, EdgeInsets, Fill, FixedSizeLayout, Gradient,
     GradientArgs, GradientKind, GradientStop, GridTrack, GridTrackArgs, GridTrackSizing, Image,
     ImageArgs, ImageFill, ImageFillArgs, ImageFormat, LayoutConstraints, LayoutConstraintsArgs,
-    LayoutContainer, LayoutContainerArgs, LayoutMode, MainAxisAlign, Mat23, NO_PAINT, NO_PARENT,
-    NO_TEXT, NO_TEXT_STYLE, Node, NodeArgs, Paint, PaintArgs, ScaleMode, Shadow, ShadowArgs,
-    ShadowKind, SignalDecl, SignalDeclArgs, SolidFill, SolidFillArgs, Stroke, StrokeAlign,
-    StrokeArgs, TextStyle, TextStyleArgs, TransformScale, TransformScaleArgs, VariantFill,
-    VariantFillArgs, VariantMember, VariantMemberArgs, VariantOverride, VariantOverrideArgs,
-    VariantPropValue, VariantSet, VariantSetArgs, VariantVisible, VariantVisibleArgs, VariantX,
-    VariantXArgs, Vec2, root_as_document,
+    LayoutContainer, LayoutContainerArgs, LayoutMode, MainAxisAlign, Mat23, NO_FIELD, NO_PAINT,
+    NO_PARENT, NO_TEXT, NO_TEXT_STYLE, Node, NodeArgs, Paint, PaintArgs, ScaleMode, Shadow,
+    ShadowArgs, ShadowKind, SignalDecl, SignalDeclArgs, SolidFill, SolidFillArgs, Stroke,
+    StrokeAlign, StrokeArgs, TextStyle, TextStyleArgs, TransformScale, TransformScaleArgs,
+    VariantFill, VariantFillArgs, VariantMember, VariantMemberArgs, VariantOverride,
+    VariantOverrideArgs, VariantPropValue, VariantSet, VariantSetArgs, VariantVisible,
+    VariantVisibleArgs, VariantX, VariantXArgs, Vec2, root_as_document,
 };
 use flatbuffers::FlatBufferBuilder;
 
@@ -225,6 +225,30 @@ fn frozen_solid_fill_entry_reads_back() {
     // Written `true` against the schema default of `false`: a shifted
     // id reads the default and this assertion is what notices.
     assert!(entry.clip());
+}
+
+/// Story B1 additive fields on the frozen (pre-B1) fixture: the `Paint`
+/// shape channel and the two document-level vector pools. A frozen document
+/// carries none of them, so `shape_field` must read back the `NO_FIELD`
+/// sentinel and both vector-pool vectors must be absent — the R7 proof that
+/// the B1 additions shifted no existing field id (an id shift would surface
+/// `shape_field` reading a real index out of the wrong vtable slot, or one of
+/// the vector vectors resolving another field's offset).
+#[test]
+fn frozen_vector_fields_read_back_as_defaults() {
+    // Every frozen paint entry predates the shape channel, so each reads the
+    // parametric-shape sentinel.
+    let paints = document().paints().expect("paint pool present");
+    for i in 0..paints.len() {
+        assert_eq!(
+            paints.get(i).shape_field(),
+            NO_FIELD,
+            "frozen paint entry {i} has no shape channel"
+        );
+    }
+    // The document declares no vector pools.
+    assert!(document().vector_atlases().is_none());
+    assert!(document().vector_shapes().is_none());
 }
 
 /// Pool entry 0's v0.8 shadow (story #45): an Inner shadow with every
@@ -631,6 +655,10 @@ fn build_fixture() -> Vec<u8> {
             corners: Some(&CornerRadii::new(1.0, 2.0, 3.0, 4.0)),
             clip: true,
             shadows: Some(shadows),
+            // Story B1: the frozen fixture predates the shape channel. The
+            // sentinel is the schema default, so flatc omits it and the
+            // committed bytes are unchanged.
+            shape_field: NO_FIELD,
         },
     );
 
@@ -1011,6 +1039,10 @@ fn build_fixture() -> Vec<u8> {
             variant_sets: Some(variant_sets),
             signals: Some(signals),
             bindings: Some(bindings),
+            // Story B1: the frozen fixture declares no vector pools; absent
+            // vectors write nothing, so the committed bytes are unchanged.
+            vector_atlases: None,
+            vector_shapes: None,
         },
     );
     b.finish(document, None);

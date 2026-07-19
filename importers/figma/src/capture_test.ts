@@ -177,7 +177,7 @@ Deno.test("captureFixtures skips the full fetch when the receipt version matches
   const { client, requests } = scriptedClient({
     "/v1/files/KEYA/meta": () => jsonResponse({ file: { version: "5" } }),
     "/v1/files/KEYB/meta": () => jsonResponse({ file: { version: "6" } }),
-    "/v1/files/KEYB?plugin_data=shared": () =>
+    "/v1/files/KEYB?plugin_data=shared&geometry=paths": () =>
       jsonResponse({ version: "6", document: { id: "0:0" } }),
   });
   const writes: Array<{ name: string; text: string }> = [];
@@ -206,7 +206,7 @@ Deno.test("captureFixtures skips the full fetch when the receipt version matches
   assertEquals(requests, [
     "https://api.figma.com/v1/files/KEYA/meta",
     "https://api.figma.com/v1/files/KEYB/meta",
-    "https://api.figma.com/v1/files/KEYB?plugin_data=shared",
+    "https://api.figma.com/v1/files/KEYB?plugin_data=shared&geometry=paths",
   ]);
   assertEquals(writes.length, 1);
   assertEquals(writes[0].name, "effects-2025");
@@ -251,7 +251,7 @@ Deno.test("a receipt without its capture is ignored", async () => {
   // trusting the receipt would skip the fixture forever with no JSON in the
   // corpus at all.
   const { client, requests } = scriptedClient({
-    "/v1/files/KEYA?plugin_data=shared": () =>
+    "/v1/files/KEYA?plugin_data=shared&geometry=paths": () =>
       jsonResponse({ version: "5", document: { id: "0:0" } }),
   });
   const writes: string[] = [];
@@ -270,15 +270,15 @@ Deno.test("a receipt without its capture is ignored", async () => {
   assertEquals(results[0].action, "captured");
   assertEquals(writes, ["grid-basic"]);
   assertEquals(requests, [
-    "https://api.figma.com/v1/files/KEYA?plugin_data=shared",
+    "https://api.figma.com/v1/files/KEYA?plugin_data=shared&geometry=paths",
   ]);
 });
 
 Deno.test("captureFixtures captures when no previous capture exists", async () => {
   const { client, requests } = scriptedClient({
-    "/v1/files/KEYA?plugin_data=shared": () =>
+    "/v1/files/KEYA?plugin_data=shared&geometry=paths": () =>
       jsonResponse({ version: "3", document: {} }),
-    "/v1/files/KEYB?plugin_data=shared": () =>
+    "/v1/files/KEYB?plugin_data=shared&geometry=paths": () =>
       jsonResponse({ version: "8", document: {} }),
   });
   const writes: string[] = [];
@@ -296,8 +296,8 @@ Deno.test("captureFixtures captures when no previous capture exists", async () =
   // no previous capture exists, so the cheap meta check is skipped entirely
   // and only the two full GET /file requests are made.
   assertEquals(requests, [
-    "https://api.figma.com/v1/files/KEYA?plugin_data=shared",
-    "https://api.figma.com/v1/files/KEYB?plugin_data=shared",
+    "https://api.figma.com/v1/files/KEYA?plugin_data=shared&geometry=paths",
+    "https://api.figma.com/v1/files/KEYB?plugin_data=shared&geometry=paths",
   ]);
 });
 
@@ -306,7 +306,7 @@ Deno.test("a capture strips the presigned thumbnailUrl", async () => {
   // fetch: committing it would rewrite every fixture on every capture and
   // land a credential-shaped string in git (issue #141).
   const { client } = scriptedClient({
-    "/v1/files/KEYA?plugin_data=shared": () =>
+    "/v1/files/KEYA?plugin_data=shared&geometry=paths": () =>
       jsonResponse({
         name: "grid-basic",
         thumbnailUrl: "https://s3-alpha-sig.figma.com/thumb?X-Amz-Signature=x",
@@ -335,7 +335,7 @@ Deno.test("a capture prunes image assets its file no longer references", async (
   // committed forever (issue #156). The refs a full capture resolves are the
   // fixture's whole live set, so anything else on disk goes.
   const { client } = scriptedClient({
-    "/v1/files/KEYA?plugin_data=shared": () =>
+    "/v1/files/KEYA?plugin_data=shared&geometry=paths": () =>
       jsonResponse({ version: "3", document: {} }),
   });
   const removed: string[] = [];
@@ -389,7 +389,7 @@ Deno.test("captureFixtures skips a fixture whose fileKey is the placeholder", as
     ],
   });
   const { client, requests } = scriptedClient({
-    "/v1/files/KEYA?plugin_data=shared": () =>
+    "/v1/files/KEYA?plugin_data=shared&geometry=paths": () =>
       jsonResponse({ version: "9", document: {} }),
   });
   const writes: string[] = [];
@@ -414,7 +414,7 @@ Deno.test("captureFixtures skips a fixture whose fileKey is the placeholder", as
   ]);
   // no request carries the placeholder, and no capture file is written for it.
   assertEquals(requests, [
-    "https://api.figma.com/v1/files/KEYA?plugin_data=shared",
+    "https://api.figma.com/v1/files/KEYA?plugin_data=shared&geometry=paths",
   ]);
   assertEquals(writes, ["grid-basic"]);
   assert(
@@ -428,9 +428,9 @@ Deno.test("captureFixtures skips a fixture whose fileKey is the placeholder", as
 
 Deno.test("captureFixtures records a failing fixture without blocking the rest", async () => {
   const { client } = scriptedClient({
-    "/v1/files/KEYA?plugin_data=shared": () =>
+    "/v1/files/KEYA?plugin_data=shared&geometry=paths": () =>
       new Response("server error", { status: 500 }),
-    "/v1/files/KEYB?plugin_data=shared": () =>
+    "/v1/files/KEYB?plugin_data=shared&geometry=paths": () =>
       jsonResponse({ version: "6", document: {} }),
   });
   const writes: string[] = [];
@@ -479,7 +479,7 @@ Deno.test("a captured fixture also captures its image-fill bytes", async () => {
   // is a presigned URL on Figma's asset host, so it arrives through the
   // separate fetchFn.
   const { client } = scriptedClient({
-    "/v1/files/KEYA?plugin_data=shared": () =>
+    "/v1/files/KEYA?plugin_data=shared&geometry=paths": () =>
       new Response(V03_PAINT, { status: 200 }),
     "/v1/files/KEYA/images": () =>
       jsonResponse({
@@ -531,7 +531,7 @@ Deno.test("a failed image download writes nothing at all", async () => {
   // hand. The next run's version check would then call the fixture unchanged,
   // skip it, and never fetch the bytes — a permanently silent gap.
   const { client } = scriptedClient({
-    "/v1/files/KEYA?plugin_data=shared": () =>
+    "/v1/files/KEYA?plugin_data=shared&geometry=paths": () =>
       new Response(V03_PAINT, { status: 200 }),
     "/v1/files/KEYA/images": () =>
       jsonResponse({

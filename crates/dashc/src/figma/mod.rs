@@ -27,6 +27,7 @@
 pub mod bindings;
 pub mod rest;
 pub(crate) mod triage;
+pub mod vector_field;
 
 pub use bindings::{BoundValue, BoundVariable};
 
@@ -39,7 +40,7 @@ use dashpaint::{
     Color, CornerRadii, Gradient, GradientKind, GradientStop, ImageAsset, Mat23, PaintEntry,
     PaintKind, ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, Vec2,
 };
-use dashscene_validator::{Diagnostic, Location, NodePath, Profile, Report, Severity};
+use dashscene_validator::{Construct, Diagnostic, Location, NodePath, Profile, Report, Severity};
 
 // `Node` and `Paint` collide with `rest`'s Figma-vocabulary types of the same
 // name (imported below, unaliased, since they are what the rest of this
@@ -52,9 +53,10 @@ use crate::document::{
     AxisSizing, Box2D, CrossAxisAlign, Document, EdgeInsets, GridTrack as DocGridTrack,
     LayoutConstraints, LayoutContainer as DocContainer, LayoutMode, MainAxisAlign, Node as DocNode,
     Paint as DocPaint, TextAlign as DocTextAlign, TextAlignV as DocTextAlignV,
-    TextStyle as DocTextStyle,
+    TextStyle as DocTextStyle, VectorAtlas as DocVectorAtlas, VectorShape as DocVectorShape,
 };
-use crate::figma::rest::{FigmaFile, Node, Paint};
+use crate::figma::rest::{FigmaFile, Geometry, Node, Paint};
+use crate::figma::vector_field::{VectorAtlasBaker, VectorFieldError, VectorPath, WindingRule};
 
 /// The diagnostic rules this producer assembles itself — constructs with no
 /// `dashscene_validator::Construct` variant, because adding one would turn
@@ -276,6 +278,7 @@ pub fn lower_with_bindings_and_policy(
         profile,
         images,
         policy,
+        baker: VectorAtlasBaker::new(),
     };
 
     // Iterative depth-first walk (debt #148: a recursive walk would turn
@@ -312,6 +315,39 @@ pub fn lower_with_bindings_and_policy(
     }
     while let Some(visit) = stack.pop() {
         walk.visit(visit, &mut stack)?;
+    }
+
+    // Finish the baked-vector atlas (story B1): pack every unique field into
+    // one PNG, append it to the image pool, and record the atlas and each
+    // shape's placement. Skipped when no `VECTOR` node lowered, so a
+    // vector-free document carries no atlas and emits byte-identically (R7).
+    // The shape indices the walk stamped onto paint entries are the values
+    // `baker.add` returned, which index this same `vector_shapes` list.
+    if !walk.baker.is_empty() {
+        // Packing cannot fail once each field baked (the fallible step is
+        // `baker.add`, at the walk); the `Result` is the generator's uniform
+        // signature.
+        let bake = std::mem::take(&mut walk.baker)
+            .finish()
+            .expect("vector atlas packing is infallible once the fields baked");
+        let image = walk.doc.push_image(ImageAsset {
+            format: dashpaint::ImageFormat::Png,
+            bytes: bake.image_png,
+        });
+        walk.doc.vector_atlases.push(DocVectorAtlas {
+            image,
+            px_per_em: bake.px_per_em as f32,
+            distance_range: bake.distance_range as f32,
+        });
+        for placement in &bake.shapes {
+            let r = placement.atlas_rect;
+            let p = placement.plane_bounds;
+            walk.doc.vector_shapes.push(DocVectorShape {
+                atlas: 0,
+                atlas_rect: [r.x, r.y, r.width, r.height],
+                plane_bounds: [p.left as f32, p.top as f32, p.right as f32, p.bottom as f32],
+            });
+        }
     }
 
     // A document that lowered to no content is refused by name (P4). The
@@ -486,6 +522,11 @@ struct Walk<'a> {
     /// How an omission-class gap (`figma.unsupported`) is minted: an error
     /// under `Strict`, a warning under `Partial` (story S0-impl).
     policy: crate::EmitPolicy,
+    /// The baked-vector atlas builder (story B1). Every `VECTOR` node's
+    /// geometry bakes into this one shared atlas; identical geometry dedups by
+    /// path hash. Finished after the walk into `Document.vector_atlases` /
+    /// `vector_shapes` and one packed atlas PNG in `Document.images`.
+    baker: VectorAtlasBaker,
 }
 
 impl Walk<'_> {
@@ -541,6 +582,7 @@ impl Walk<'_> {
             && node.kind != "RECTANGLE"
             && node.kind != "SECTION"
             && node.kind != "GROUP"
+            && node.kind != "VECTOR"
         {
             self.unsupported(path, format!("node type {}", node.kind));
             return Ok(());
@@ -665,6 +707,20 @@ impl Walk<'_> {
                 }
                 Err(other) => return Err(other),
             };
+        } else if node.kind == "VECTOR" {
+            // A leaf: no container. Its geometry bakes into an MSDF field
+            // carried on the paint entry as a coverage mask (story B1). The
+            // field-input selection rule and the bake keep their own refusals;
+            // each blocks the node like any other finding. `UnresolvedImage`
+            // aborts (an image-filled vector defers to the caller's contract).
+            paint = match self.vector_paint_of(node, path, &mut blockers) {
+                Ok(paint) => paint,
+                Err(CompileError::Unsupported { what, .. }) => {
+                    blockers.push(what);
+                    None
+                }
+                Err(other) => return Err(other),
+            };
         } else {
             container = container_of(node, &mut blockers);
             // The paint lowering keeps its own refusals; an unsupported paint
@@ -683,8 +739,30 @@ impl Walk<'_> {
         // The import gate: the producer maps, the validator decides (P5).
         // Unmapped effects (a baked shadow, debt #144) have no Construct and
         // block the node instead.
-        let (constructs, effect_blockers) = triage::constructs_of(node);
+        let (mut constructs, effect_blockers) = triage::constructs_of(node);
         blockers.extend(effect_blockers);
+
+        // A backdrop blur whose verdict is an error (profile:core) cannot
+        // ship on a lowered node — that would approximate: the node minus
+        // its blur. Under Partial the triage moves into the skip decision
+        // instead: the node is omitted whole, and the gap is the
+        // policy-sensitive `figma.unsupported` omission, so the document
+        // still emits. This is the per-construct follow-up
+        // `docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`
+        // names under "Consequence accepted at this gate"; the first real
+        // target needing it is the Landify hero's background vector, which
+        // story B1's VECTOR lowering un-skipped (before B1 the node skipped
+        // as an unsupported type and its blur never reached the triage).
+        if self.policy == crate::EmitPolicy::Partial {
+            constructs.retain(|construct| {
+                let omit = *construct == Construct::BackdropBlur
+                    && construct.verdict(self.profile) == Severity::Error;
+                if omit {
+                    blockers.push("a backdrop blur (profile:full only)".to_string());
+                }
+                !omit
+            });
+        }
 
         if !blockers.is_empty() {
             // The index this node would have taken had it lowered. The node is
@@ -872,6 +950,9 @@ impl Walk<'_> {
             stroke: self.stroke_of(node, path)?,
             corners: corners_of(node),
             shadows: shadows_of(node, path)?,
+            // A parametric (rounded-box) node carries no baked shape; the
+            // VECTOR arm is the only place a shape index is set.
+            shape: None,
         };
 
         // A layout-only container draws nothing but still occupies a rect-table
@@ -882,6 +963,7 @@ impl Walk<'_> {
         Ok(Some(DocPaint {
             entry,
             clip: node.clips_content,
+            shape_field: None,
         }))
     }
 
@@ -965,13 +1047,141 @@ impl Walk<'_> {
                 bottom_left: radius,
             },
             shadows: shadows_of(node, path)?,
+            // An ellipse is a parametric (rounded-box) shape, not a baked one.
+            shape: None,
         };
         // A circle with neither fill, stroke, nor shadow draws nothing — the
         // corners alone shape no ink. An ellipse is a leaf, so it never clips.
         if entry.fill.is_none() && entry.stroke.is_none() && entry.shadows.is_empty() {
             return Ok(None);
         }
-        Ok(Some(DocPaint { entry, clip: false }))
+        Ok(Some(DocPaint {
+            entry,
+            clip: false,
+            shape_field: None,
+        }))
+    }
+
+    /// Lowers a `VECTOR` node into a baked MSDF field carried on its paint
+    /// entry as a coverage mask (story B1), or collects the reasons it cannot
+    /// be lowered.
+    ///
+    /// The field-input selection rule widens by exactly the measured census:
+    /// a filled node bakes its `fillGeometry`; a stroke-only node bakes
+    /// Figma's already-expanded `strokeGeometry`; a same-colour fill+stroke
+    /// unions both into one field; a differently-coloured fill+stroke is
+    /// refused by name (v0.11 candidate, in neither live target); and a node
+    /// with no fieldable geometry — or a path outside the `M`/`L`/`C`/`Z`
+    /// census, or a degenerate extent — is refused by name (P4), preserving
+    /// the node rather than approximating it. The winding rule (NONZERO /
+    /// EVENODD) rides into the bake so holes fill correctly.
+    fn vector_paint_of(
+        &mut self,
+        node: &Node,
+        path: &str,
+        blockers: &mut Vec<String>,
+    ) -> Result<Option<DocPaint>, CompileError> {
+        // The fill and stroke lower through the shared paint path; their own
+        // refusals (a stacked fill, a non-solid or dashed stroke) become
+        // blockers, and `UnresolvedImage` aborts.
+        let fill = match self.fill_of(node, path) {
+            Ok(fill) => fill,
+            Err(CompileError::Unsupported { what, .. }) => {
+                blockers.push(what);
+                None
+            }
+            Err(other) => return Err(other),
+        };
+        let stroke = match self.stroke_of(node, path) {
+            Ok(stroke) => stroke,
+            Err(CompileError::Unsupported { what, .. }) => {
+                blockers.push(what);
+                None
+            }
+            Err(other) => return Err(other),
+        };
+
+        // Select the field-input geometry and the fill that paints it.
+        let (geometry, paint_fill): (Vec<Geometry>, PaintKind) = match (fill, stroke) {
+            // Filled: the fill's own geometry, painted by the fill.
+            (Some(fill), None) => (node.fill_geometry.clone(), fill),
+            // Stroke-only (a hairline arrow): Figma's expanded outline,
+            // painted a synthesized solid of the stroke's colour.
+            (None, Some(stroke)) => (
+                node.stroke_geometry.clone(),
+                PaintKind::Solid {
+                    color: stroke.color,
+                },
+            ),
+            // Both: only a same-colour fill+stroke (the hero's white/white
+            // hairlines) unions cleanly into one field painted that colour.
+            (Some(fill), Some(stroke)) => {
+                let same_colour =
+                    matches!(&fill, PaintKind::Solid { color } if *color == stroke.color);
+                if !same_colour {
+                    blockers
+                        .push("a vector with a differently-coloured fill and stroke".to_string());
+                    return Ok(None);
+                }
+                let mut geometry = node.fill_geometry.clone();
+                geometry.extend(node.stroke_geometry.iter().cloned());
+                (geometry, fill)
+            }
+            // Neither fill nor stroke: no ink, a layout-only leaf.
+            (None, None) => return Ok(None),
+        };
+
+        if geometry.is_empty() {
+            // Unfieldable: no path geometry at all (a geometry-free fetch, or
+            // a genuinely degenerate node). Named, never silently dropped (P4).
+            blockers.push("a vector with no path geometry".to_string());
+            return Ok(None);
+        }
+
+        // Settle the winding rule (all contours must agree — a mixed-winding
+        // node has no single-field bake) and concatenate the contours into one
+        // multi-contour path.
+        let winding = match uniform_winding(&geometry) {
+            Ok(winding) => winding,
+            Err(what) => {
+                blockers.push(what);
+                return Ok(None);
+            }
+        };
+        let path_data = geometry
+            .iter()
+            .map(|g| g.path.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        // Bake into the shared atlas; identical geometry dedups by path hash.
+        // A path outside the census or a degenerate extent is refused by name.
+        let shape_field = match self.baker.add(&VectorPath {
+            path: &path_data,
+            winding,
+        }) {
+            Ok(index) => index,
+            Err(error) => {
+                blockers.push(vector_field_blocker(&error));
+                return Ok(None);
+            }
+        };
+
+        let entry = PaintEntry {
+            fill: Some(paint_fill),
+            // The outline is baked into the field, not a parametric stroke.
+            stroke: None,
+            corners: CornerRadii::default(),
+            shadows: Vec::new(),
+            // The resolved `VectorField` is a runtime form; the `.dsb` carries
+            // the shape index, on `DocPaint::shape_field` below.
+            shape: None,
+        };
+        Ok(Some(DocPaint {
+            entry,
+            clip: false,
+            shape_field: Some(shape_field),
+        }))
     }
 
     fn fill_of(&mut self, node: &Node, path: &str) -> Result<Option<PaintKind>, CompileError> {
@@ -1754,6 +1964,47 @@ fn text_sizing(
         ..from_layout_sizing.unwrap_or_default()
     };
     (constraints != LayoutConstraints::default()).then_some(constraints)
+}
+
+/// The single winding rule a `VECTOR` node's contours share (story B1), or a
+/// blocker message when they disagree or carry an unknown rule. fdsm applies
+/// one fill rule to the whole shape, so a node whose contours mix NONZERO and
+/// EVENODD has no single-field bake and is refused rather than baked wrong
+/// (P4). The caller guarantees `geometry` is non-empty.
+fn uniform_winding(geometry: &[Geometry]) -> Result<WindingRule, String> {
+    let mut winding: Option<WindingRule> = None;
+    for contour in geometry {
+        let rule = match contour.winding_rule.as_deref() {
+            // Figma always emits the rule alongside path geometry; absent
+            // defaults to NONZERO.
+            None | Some("NONZERO") => WindingRule::NonZero,
+            Some("EVENODD") => WindingRule::EvenOdd,
+            Some(other) => return Err(format!("a vector with winding rule {other}")),
+        };
+        match winding {
+            None => winding = Some(rule),
+            Some(prev) if prev != rule => {
+                return Err("a vector with mixed per-contour winding rules".to_string());
+            }
+            Some(_) => {}
+        }
+    }
+    Ok(winding.expect("the caller guarantees non-empty geometry"))
+}
+
+/// The named-refusal message for a bake error (story B1) — the generator-side
+/// cause of a `figma.unsupported` verdict, preserving the node rather than
+/// approximating it (P4).
+fn vector_field_blocker(error: &VectorFieldError) -> String {
+    match error {
+        VectorFieldError::UnsupportedCommand(command) => {
+            format!("a vector path command {command:?} (census is M/L/C/Z)")
+        }
+        VectorFieldError::MalformedPath(detail) => format!("a malformed vector path ({detail})"),
+        VectorFieldError::DegenerateGeometry => {
+            "a degenerate vector (no fillable extent)".to_string()
+        }
+    }
 }
 
 /// `cornerRadius` and `rectangleCornerRadii` are mutually exclusive — Figma
