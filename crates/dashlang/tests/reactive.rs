@@ -637,3 +637,54 @@ fn a_duplicate_named_signal_is_refused_at_declaration() {
     let _first = scene.signal_named("size/gap", 16.0);
     let _second = scene.signal_named("size/gap", 24.0);
 }
+
+// ---------------------------------------------------------------------
+// An idle tick commits nothing, and a set to the current value is idle.
+// ---------------------------------------------------------------------
+#[test]
+fn an_idle_tick_holds_the_generation_and_an_unchanged_set_is_a_no_op() {
+    let count = Rc::new(Cell::new(0));
+    let mut arena = Arena::new();
+
+    let mut scene = Scene::new();
+    let speed = scene.signal(5.0f32);
+    scene.roots([node("frame")
+        .mode(LayoutMode::None)
+        .size(200.0, 20.0)
+        .child(
+            node("bar")
+                .mode(LayoutMode::None)
+                .size(0.0, 12.0)
+                .bind(Channel::Width, speed.map(|v| v * 2.0)),
+        )]);
+
+    let mut live = scene.build_live(&mut arena, CountingSolver::boxed(count.clone()));
+    let g0 = live.generation();
+
+    // An idle tick — no signal changed, no live track — commits nothing, so
+    // the generation holds steady and no solve runs (#203).
+    let g1 = live.tick(0.016, &mut arena);
+    assert_eq!(g1, g0, "an idle tick does not bump the generation");
+    assert_eq!(count.get(), 1, "an idle tick does not solve");
+
+    // A set to the signal's current value is a no-op, so the next tick is
+    // still idle (#193).
+    live.set(speed, 5.0);
+    let g2 = live.tick(0.016, &mut arena);
+    assert_eq!(
+        g2, g1,
+        "a set to the current value does not bump the generation"
+    );
+
+    // A real change bumps the generation and moves the bound rect (still no
+    // solve — the write is contained).
+    live.set(speed, 6.0);
+    let g3 = live.tick(0.016, &mut arena);
+    assert_ne!(g3, g2, "a real change bumps the generation");
+    assert_eq!(
+        count.get(),
+        1,
+        "the contained change still performs no solve"
+    );
+    assert_eq!(arena.committed().rects()[1].w, 12.0, "width tracks 6 * 2");
+}

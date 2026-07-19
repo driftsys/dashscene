@@ -152,6 +152,14 @@ impl Scheduler {
     pub fn is_empty(&self) -> bool {
         self.tracks.is_empty()
     }
+
+    /// True when no track will produce a further sample — every track has
+    /// finished, or there are none. A track that finished this frame lingers
+    /// until the next `advance` sweeps it (see `advance`), so a settled
+    /// scheduler is not necessarily empty.
+    pub fn is_settled(&self) -> bool {
+        self.tracks.iter().all(|t| t.finished)
+    }
 }
 
 impl Track {

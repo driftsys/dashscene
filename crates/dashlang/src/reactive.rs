@@ -380,6 +380,13 @@ impl SignalValue for f32 {
     }
 
     fn store(live: &mut LiveScene, id: u32, value: Self) {
+        // A set to the current value is a no-op: skip it so the next tick
+        // does not re-evaluate the signal's bindings (and possibly re-solve)
+        // for a value that did not change (P3). A NaN set stays dirty, which
+        // is safe.
+        if live.scalars[id as usize] == value {
+            return;
+        }
         live.scalars[id as usize] = value;
         live.scalar_dirty[id as usize] = true;
     }
@@ -393,6 +400,9 @@ impl SignalValue for bool {
     }
 
     fn store(live: &mut LiveScene, id: u32, value: Self) {
+        if live.bools[id as usize] == value {
+            return;
+        }
         live.bools[id as usize] = value;
         live.bool_dirty[id as usize] = true;
     }
@@ -742,6 +752,12 @@ struct BuildCtx {
 /// the `dashcue` scheduler, and the retained geometry that lets a
 /// contained write skip the solve. Produced by [`Scene::build_live`],
 /// advanced by [`LiveScene::tick`].
+///
+/// A `LiveScene` assumes it solely owns the committed geometry of its
+/// arena between ticks: a no-solve tick replays the whole retained cache
+/// ([`LiveScene::tick`]), so a second producer that mutates the same
+/// arena's nodes between ticks would be overwritten by the cached
+/// geometry. Give a live scene its own arena.
 pub struct LiveScene {
     solver: Box<dyn LayoutSolver>,
     scheduler: Scheduler,
@@ -801,6 +817,19 @@ impl LiveScene {
     /// commits through the retained geometry and never calls the real
     /// solver; a frame that reflowed re-solves and refreshes the cache.
     pub fn tick(&mut self, dt: f32, arena: &mut Arena) -> u64 {
+        // Idle frame: no signal changed and no track is still live — a track
+        // that finished but has not yet been swept produces no sample, so
+        // `is_settled` (not `is_empty`) is the right test. A commit would only
+        // churn the generation while nothing moved (D4), so skip it and hold
+        // the generation steady, keeping it a meaningful "something changed"
+        // signal for a downstream consumer.
+        if self.scheduler.is_settled()
+            && !self.scalar_dirty.iter().any(|&d| d)
+            && !self.bool_dirty.iter().any(|&d| d)
+        {
+            return self.generation;
+        }
+
         let mut layout_dirty = false;
         let mut patches: Vec<(usize, Patch)> = Vec::new();
 
@@ -1063,7 +1092,7 @@ fn ancestor_contained(arena: &Arena, node: NodeId) -> bool {
 /// node→index map does not change.
 fn refresh_cache(arena: &Arena, cached: &mut Vec<(NodeId, SolvedRect)>) {
     let committed = arena.committed();
-    *cached = committed
+    let rebuilt: Vec<(NodeId, SolvedRect)> = committed
         .rects()
         .iter()
         .enumerate()
@@ -1079,6 +1108,18 @@ fn refresh_cache(arena: &Arena, cached: &mut Vec<(NodeId, SolvedRect)>) {
             )
         })
         .collect();
+    // A static tree's committed order is invariant across reflows: a reflow
+    // changes geometry, never the node count or DFS order (a `Visible` flip
+    // keeps the node with a degenerate rect). `cached_index` is built once and
+    // never rebuilt, so a shape change here would silently misalign every
+    // patch. Guard it, skipping the first call before any prior cache exists.
+    debug_assert!(
+        cached.is_empty()
+            || (cached.len() == rebuilt.len()
+                && cached.iter().zip(&rebuilt).all(|(a, b)| a.0 == b.0)),
+        "refresh_cache: committed node count or order changed across a reflow"
+    );
+    *cached = rebuilt;
 }
 
 impl Scene {

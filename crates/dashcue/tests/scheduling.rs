@@ -26,6 +26,39 @@ fn tween_advances_deterministically_with_a_fixed_step() {
     assert_eq!(s.sample(K), Some(75.0));
 }
 
+// ---------------------------------------------------------------------
+// A track that finished this frame lingers until the next `advance`
+// sweeps it: `is_settled` reports idle (no live track) even while
+// `is_empty` does not.
+// ---------------------------------------------------------------------
+#[test]
+fn a_finished_track_is_settled_before_the_next_advance_sweeps_it() {
+    let mut s = Scheduler::new();
+    assert!(s.is_settled(), "an empty scheduler is settled");
+
+    s.start(K, 0.0, 100.0, linear_tween(1.0), 0.0);
+    assert!(!s.is_settled(), "a live track is not settled");
+    assert!(!s.is_empty());
+
+    // Advance past the tween's duration: the track finishes on this call but
+    // is not swept until the next advance.
+    s.advance(1.5);
+    assert_eq!(s.sample(K), Some(100.0), "the tween snapped to its target");
+    assert!(
+        !s.is_empty(),
+        "the finished track lingers until the next advance"
+    );
+    assert!(
+        s.is_settled(),
+        "but the scheduler is settled — no live track"
+    );
+
+    // The next advance sweeps it.
+    s.advance(0.0);
+    assert!(s.is_empty(), "swept");
+    assert!(s.is_settled());
+}
+
 #[test]
 fn eased_tween_samples_the_easing_polynomial() {
     let mut s = Scheduler::new();
