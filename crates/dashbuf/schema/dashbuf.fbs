@@ -207,6 +207,14 @@ table Paint {
   // documents emit unchanged (R7). Effects dedup with the rest of the
   // entry — two nodes sharing a style and shadows share one pool entry.
   shadows: [Shadow];
+  // Story B1 — the shape channel. NO_FIELD (uint32::MAX, the same
+  // sentinel-index convention as Node.paint_entry/text) is the implicit
+  // parametric shape, the rounded box `corners` already describes. A valid
+  // index selects a baked MSDF coverage mask,
+  // Document.vector_shapes[shape_field], which the painter samples and masks
+  // the fill by. Appended at the tail with the sentinel default, so a pre-B1
+  // paint entry emits byte-identically (R7).
+  shape_field: uint32 = 4294967295;
 }
 
 // Horizontal text alignment within the node box (Figma's
@@ -563,6 +571,44 @@ table Binding {
   transform: BindingTransform;
 }
 
+// Story B1 — baked vector shapes
+// (docs/wip/2026-07-19-B1-vector-msdf-design.md). A Figma VECTOR node lowers
+// into a baked multi-channel signed distance field carried as a coverage mask
+// on its paint entry: the document keeps the field as resolution-independent
+// intent (like the glyph atlas), never a rasterized result (P1). The painter
+// samples median-of-3 to a coverage value and masks the ordinary fill by it,
+// so a gradient-filled vector composes day one (P2 composition holds).
+
+// A packed MSDF atlas sheet: one PNG in Document.images holding one or more
+// baked vector-shape fields. px_per_em is the field resolution (atlas texels
+// per shape em, the em being the shape's longer bounding-box side);
+// distance_range is the MSDF spread in atlas texels (msdfgen -pxrange). The
+// painter's screen-pixel range is distance_range * screen_px_per_em /
+// px_per_em — the glyph-atlas metric
+// (crates/dashscene-typeset/src/atlas/metrics.rs).
+table VectorAtlas {
+  image: uint32;            // index into Document.images (the atlas PNG)
+  px_per_em: float32;
+  distance_range: float32;
+}
+
+// The sub-rect of one baked shape inside its atlas, in atlas texels.
+struct AtlasRect { x: uint32; y: uint32; width: uint32; height: uint32; }
+
+// Where the field quad sits in the shape's own coordinate space (Figma's
+// fillGeometry space, y-down). The field extends distance_range/px_per_em
+// beyond the geometry edge, so these bounds are the padded quad, not the tight
+// geometry box (msdfgen's planeBounds vs. the em box).
+struct PlaneBounds { left: float32; top: float32; right: float32; bottom: float32; }
+
+// One baked shape: which atlas, which sub-rect, and how the field quad maps
+// into the shape's coordinate space.
+table VectorShape {
+  atlas: uint32;           // index into Document.vector_atlases
+  atlas_rect: AtlasRect;
+  plane_bounds: PlaneBounds;
+}
+
 table Document {
   // Flattened DFS node tree: array order is DFS order, so array index
   // doubles as rect-table index (docs/design/dashbuf.md).
@@ -582,6 +628,11 @@ table Document {
   signals: [SignalDecl];
   // The binding rows joining signals to node channels (v0.7, story #167).
   bindings: [Binding];
+  // Story B1: the packed MSDF atlases referenced by VectorShape.atlas, and
+  // the baked shapes referenced by Paint.shape_field. Appended at the tail so
+  // every pre-B1 document decodes unchanged (R7).
+  vector_atlases: [VectorAtlas];
+  vector_shapes: [VectorShape];
 }
 
 root_type Document;

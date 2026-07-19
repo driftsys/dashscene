@@ -60,7 +60,7 @@ Deno.test("file() hits /v1/files/:key with plugin_data=shared and the PAT header
   const file = await client.file("KEYA");
   assertEquals(file.version, "5");
   assertEquals(requests, [
-    "https://api.figma.com/v1/files/KEYA?plugin_data=shared",
+    "https://api.figma.com/v1/files/KEYA?plugin_data=shared&geometry=paths",
   ]);
   assertEquals(sawHeader, "test-token");
 });

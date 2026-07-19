@@ -302,6 +302,36 @@ impl Default for Node {
 pub struct Paint {
     pub entry: PaintEntry,
     pub clip: bool,
+    /// The baked-vector shape index (story B1): `Some(i)` masks this entry's
+    /// fill by `Document::vector_shapes[i]`. `None` is the implicit
+    /// parametric shape — the schema's `NO_FIELD` sentinel — so a non-vector
+    /// entry emits byte-identically (R7). The emitter pools it in the paint
+    /// key, so two entries with the same fill but different shapes stay
+    /// distinct. It rides here rather than on the boundary-B `PaintEntry`
+    /// because the `.dsb` carries an index, and the resolved `VectorField` is
+    /// a runtime (load-time) form the emitter never builds.
+    pub shape_field: Option<u32>,
+}
+
+/// One packed MSDF atlas (story B1) — the schema's `VectorAtlas` table as a
+/// plain type: which `Document::images` PNG holds the packed fields, and the
+/// two scalars the painter's screen-pixel range needs.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VectorAtlas {
+    pub image: u32,
+    pub px_per_em: f32,
+    pub distance_range: f32,
+}
+
+/// One baked vector shape (story B1) — the schema's `VectorShape` table as a
+/// plain type: which atlas holds it, its sub-rect there (texels,
+/// `[x, y, width, height]`), and the padded field quad in the shape's own
+/// coordinate space (`[left, top, right, bottom]`, node-box-relative, y-down).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VectorShape {
+    pub atlas: u32,
+    pub atlas_rect: [u32; 4],
+    pub plane_bounds: [f32; 4],
 }
 
 /// One scalar prop slot a binding targets — the schema's
@@ -376,6 +406,13 @@ pub struct Document {
     pub signals: Vec<SignalDecl>,
     /// The binding rows joining signals to node channels (story #167).
     pub bindings: Vec<Binding>,
+    /// The packed MSDF atlases a `VectorShape` references by index (story
+    /// B1). Empty for a document with no baked vectors, so a pre-B1 document
+    /// emits byte-identically (R7).
+    pub vector_atlases: Vec<VectorAtlas>,
+    /// The baked shapes a paint entry's `shape_field` references by index
+    /// (story B1). Empty for a document with no baked vectors.
+    pub vector_shapes: Vec<VectorShape>,
 }
 
 impl Document {

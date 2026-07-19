@@ -1185,6 +1185,11 @@ function vectorShapes() {
   const MARGIN = 24;
   const slotX = (i) => MARGIN + i * (CELL + GAP);
 
+  // figma.createVector() gives a new vector a default 1px black stroke; these
+  // fixtures are filled shapes, so clear it (`strokes = []`) or the coloured
+  // fill plus the black stroke lowers as a differently-coloured fill+stroke,
+  // which dashc refuses (a v0.11-deferred case) — the same clear the other
+  // shape commands make.
   const star = figma.createVector();
   star.name = "star-5-point";
   star.vectorPaths = [{
@@ -1192,6 +1197,7 @@ function vectorShapes() {
     data: starPathData(40, 40, 5, 38, 15),
   }];
   star.fills = [solid({ r: 0.95, g: 0.75, b: 0.2 })];
+  star.strokes = [];
   root.appendChild(star);
   star.x = slotX(0);
   star.y = 24;
@@ -1203,6 +1209,7 @@ function vectorShapes() {
     data: "M 0 20 L 50 20 L 50 5 L 80 30 L 50 55 L 50 40 L 0 40 Z",
   }];
   arrow.fills = [solid({ r: 0.35, g: 0.6, b: 0.9 })];
+  arrow.strokes = [];
   root.appendChild(arrow);
   arrow.x = slotX(1);
   arrow.y = 40;
@@ -1215,6 +1222,7 @@ function vectorShapes() {
       "C 8 60 5 35 15 18 C 20 8 30 5 40 5 Z",
   }];
   blob.fills = [solid({ r: 0.55, g: 0.8, b: 0.55 })];
+  blob.strokes = [];
   root.appendChild(blob);
   blob.x = slotX(2);
   blob.y = 24;
@@ -1226,6 +1234,7 @@ function vectorShapes() {
     data: "M 0 0 L 80 0 L 80 80 L 0 80 Z M 20 20 L 60 20 L 60 60 L 20 60 Z",
   }];
   withHole.fills = [solid({ r: 0.85, g: 0.4, b: 0.55 })];
+  withHole.strokes = [];
   root.appendChild(withHole);
   withHole.x = slotX(3);
   withHole.y = 24;

@@ -21,7 +21,10 @@ members = [
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/driftsys/dashscene-staging"
-rust-version = "1.85"
+# Bumped from 1.85 for story B1's `fdsm` MSDF tree (nalgebra 0.34, image 0.25),
+# whose editions/APIs require a newer floor; 1.85 was inaccurate once the
+# vector-field generator landed (dashc, B1.1).
+rust-version = "1.88"
 
 # path + version for every internal crate, per house style (docs/decisions/house-style.md).
 # Publish order (see justfile `publish` recipe):

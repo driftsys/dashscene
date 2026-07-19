@@ -16,7 +16,8 @@
 //! and emit a named diagnostic (P4/R6), never default silently."
 
 use dashbuf::{
-    Document, Fill, Image, NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE, Node, Paint, VariantSet,
+    Document, Fill, Image, NO_FIELD, NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE, Node, Paint,
+    VariantSet,
 };
 
 use crate::paint::{
@@ -35,6 +36,10 @@ struct PoolSizes {
     images: usize,
     strings: usize,
     text_styles: usize,
+    /// Story B1: the baked-vector pools, so a paint entry's `shape_field` and
+    /// a shape's `atlas` can be range-checked against them.
+    vector_shapes: usize,
+    vector_atlases: usize,
 }
 
 /// Range-checks one append-only enum field.
@@ -88,6 +93,8 @@ pub fn validate_document(doc: &Document<'_>) -> Report {
     let nodes = doc.nodes().unwrap_or_default();
     let paints = doc.paints().unwrap_or_default();
     let images = doc.images().unwrap_or_default();
+    let vector_atlases = doc.vector_atlases().unwrap_or_default();
+    let vector_shapes = doc.vector_shapes().unwrap_or_default();
 
     let sizes = PoolSizes {
         nodes: nodes.len(),
@@ -95,6 +102,8 @@ pub fn validate_document(doc: &Document<'_>) -> Report {
         images: images.len(),
         strings: doc.strings().unwrap_or_default().len(),
         text_styles: doc.text_styles().unwrap_or_default().len(),
+        vector_shapes: vector_shapes.len(),
+        vector_atlases: vector_atlases.len(),
     };
 
     for (i, node) in nodes.iter().enumerate() {
@@ -139,6 +148,38 @@ pub fn validate_document(doc: &Document<'_>) -> Report {
 
     for (i, image) in images.iter().enumerate() {
         check_image_asset(&mut report, &image, &Location::ImageAsset(i as u32));
+    }
+
+    // Story B1: the baked-vector index chain. A shape names its atlas and an
+    // atlas names its image, each a bare `u32` the loader resolves unchecked;
+    // a dangling one is named here, at the pool entry that carries it (the
+    // same per-pool posture as the paint and image checks above).
+    for (i, shape) in vector_shapes.iter().enumerate() {
+        let atlas = shape.atlas();
+        if atlas as usize >= sizes.vector_atlases {
+            report.push(error(
+                rule::VECTOR_SHAPE_ATLAS_OUT_OF_RANGE,
+                &Location::VectorShape(i as u32),
+                format!(
+                    "vector shape references atlas {atlas}, but the document carries {} vector \
+                     atlases",
+                    sizes.vector_atlases
+                ),
+            ));
+        }
+    }
+    for (i, atlas) in vector_atlases.iter().enumerate() {
+        let image = atlas.image();
+        if image as usize >= sizes.images {
+            report.push(error(
+                rule::VECTOR_ATLAS_IMAGE_OUT_OF_RANGE,
+                &Location::VectorAtlas(i as u32),
+                format!(
+                    "vector atlas references image {image}, but the image pool holds {} entries",
+                    sizes.images
+                ),
+            ));
+        }
     }
 
     for (i, set) in doc.variant_sets().unwrap_or_default().iter().enumerate() {
@@ -578,6 +619,22 @@ fn check_paint_entry(report: &mut Report, paint: &Paint<'_>, at: &Location, size
                 corners.bottom_left(),
             ],
         );
+    }
+
+    // Story B1: the shape channel. NO_FIELD is the implicit parametric shape;
+    // a valid index selects a baked field the loader resolves unchecked, so a
+    // dangling one is named here (the same posture as `paint_entry`).
+    let shape_field = paint.shape_field();
+    if shape_field != NO_FIELD && shape_field as usize >= sizes.vector_shapes {
+        report.push(error(
+            rule::SHAPE_FIELD_OUT_OF_RANGE,
+            at,
+            format!(
+                "paint entry references vector shape {shape_field}, but the document carries {} \
+                 vector shapes",
+                sizes.vector_shapes
+            ),
+        ));
     }
 
     // v0.8 shadows (story #45): the kind is an append-only enum, range-checked

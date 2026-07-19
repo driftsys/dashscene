@@ -117,6 +117,7 @@ fn a_full_entry_round_trips_through_the_table() {
             spread: 1.0,
             color: HALF_BLUE,
         }],
+        shape: None,
     };
     let mut table = PaintTable::new();
     let index = table.push(entry.clone());

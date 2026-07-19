@@ -102,9 +102,14 @@ export class FigmaClient {
   }
 
   file(fileKey: string): Promise<GetFileResponse> {
-    return this.#request(`/v1/files/${fileKey}?plugin_data=shared`) as Promise<
-      GetFileResponse
-    >;
+    // `geometry=paths` makes Figma return `fillGeometry`/`strokeGeometry` on
+    // VECTOR nodes (story B1) — the path outlines dashc.wasm bakes into MSDF
+    // fields. Without it the response carries no geometry and every VECTOR is
+    // refused. `plugin_data=shared` still surfaces the sharedPluginData
+    // annotations.
+    return this.#request(
+      `/v1/files/${fileKey}?plugin_data=shared&geometry=paths`,
+    ) as Promise<GetFileResponse>;
   }
 
   /**

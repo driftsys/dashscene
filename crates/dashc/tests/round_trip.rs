@@ -110,8 +110,10 @@ fn v03_document() -> Document {
                 stroke: None,
                 corners: dashpaint::CornerRadii::default(),
                 shadows: Vec::new(),
+                shape: None,
             },
             clip: true,
+            shape_field: None,
         }),
         ..Node::default()
     });
@@ -129,6 +131,7 @@ fn v03_document() -> Document {
         paint: Some(Paint {
             entry: PaintEntry::solid(RED),
             clip: false,
+            shape_field: None,
         }),
         ..Node::default()
     });
@@ -148,8 +151,10 @@ fn v03_document() -> Document {
                 stroke: Some(stroke()),
                 corners: corners(),
                 shadows: Vec::new(),
+                shape: None,
             },
             clip: false,
+            shape_field: None,
         }),
         ..Node::default()
     });
@@ -174,8 +179,10 @@ fn v03_document() -> Document {
                 stroke: None,
                 corners: dashpaint::CornerRadii::default(),
                 shadows: Vec::new(),
+                shape: None,
             },
             clip: false,
+            shape_field: None,
         }),
         ..Node::default()
     });
@@ -363,6 +370,7 @@ fn shadowed_document() -> Document {
                 ..PaintEntry::default()
             },
             clip: false,
+            shape_field: None,
         }),
         ..Node::default()
     });
@@ -394,6 +402,7 @@ fn nodes_sharing_a_style_share_one_pool_entry() {
     let paint = Paint {
         entry: PaintEntry::solid(RED),
         clip: false,
+        shape_field: None,
     };
     for i in 0..3 {
         doc.push(Node {
@@ -439,6 +448,7 @@ fn two_nodes_that_differ_only_in_clip_do_not_share_a_pool_entry() {
             paint: Some(Paint {
                 entry: PaintEntry::solid(RED),
                 clip,
+                shape_field: None,
             }),
             ..Node::default()
         });
@@ -475,8 +485,10 @@ fn an_invalid_document_is_refused_rather_than_emitted() {
                 stroke: None,
                 corners: dashpaint::CornerRadii::default(),
                 shadows: Vec::new(),
+                shape: None,
             },
             clip: false,
+            shape_field: None,
         }),
         ..Node::default()
     });

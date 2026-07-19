@@ -13,15 +13,17 @@
 //! clipping ancestors at commit (issue #97), and the painter only
 //! intersects it.
 
+use std::collections::HashMap;
+
 use dashpaint::{
     Atlas, ClipTable, CornerRadii, GlyphRun, GlyphRunTable, Gradient, GradientKind, GroupComposite,
     ImageAsset, ImageTable, MAX_GRADIENT_STOPS, PaintKind, PaintTable, Painter, RectEntry,
-    ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign,
+    ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, VectorField,
 };
 use skia_safe::{
-    AlphaType, BlurStyle, Canvas, ClipOp, Color4f, ColorType, Data, EncodedImageFormat, FilterMode,
-    Image, ImageInfo, MaskFilter, Matrix, MipmapMode, Path, PathFillType, Point, RRect, Rect,
-    RuntimeEffect, SamplingOptions, Shader, TileMode, gradient_shader, images, surfaces,
+    AlphaType, BlendMode, BlurStyle, Canvas, ClipOp, Color4f, ColorType, Data, EncodedImageFormat,
+    FilterMode, Image, ImageInfo, MaskFilter, Matrix, MipmapMode, Path, PathFillType, Point, RRect,
+    Rect, RuntimeEffect, SamplingOptions, Shader, TileMode, gradient_shader, images, surfaces,
 };
 
 /// How a painter treats the advisory dirty set.
@@ -162,6 +164,11 @@ impl Painter for SkiaPainter {
         // stack of pending `end` indices closes the layers innermost first.
         let mut next_group = 0usize;
         let mut open_group_ends: Vec<u32> = Vec::new();
+        // Baked-vector shapes (story B1): the MSDF resolve effect compiles
+        // once (lazily — a vector-free scene pays nothing), and each atlas PNG
+        // decodes once (the hero repeats one atlas across ~148 vectors).
+        let mut field_effect: Option<RuntimeEffect> = None;
+        let mut field_atlases: HashMap<u32, Image> = HashMap::new();
         for (i, rect) in source.iter().enumerate() {
             // Open every group that starts at this rect (at most one per
             // index — one opacity per node). `save_layer_alpha` begins the
@@ -216,42 +223,57 @@ impl Painter for SkiaPainter {
             for shadow in entry.shadows.iter().filter(|s| s.kind == ShadowKind::Drop) {
                 draw_drop_shadow(canvas, rect, &entry.corners, outset, shadow, rect.opacity);
             }
-            match &entry.fill {
-                // A fill-less entry draws nothing (a layout-only node, or a
-                // mask node whose shape is a stencil, not paint).
-                None => {}
-                Some(PaintKind::Solid { color }) => {
-                    let mut paint = solid_paint(*color);
-                    paint.set_anti_alias(true);
-                    apply_opacity(&mut paint, rect.opacity);
-                    canvas.draw_rrect(rrect, &paint);
+            if let Some(field) = &entry.shape {
+                // A baked-vector shape (story B1): the fill is masked by the
+                // field's coverage, not by the parametric box. The parametric
+                // stroke and corners do not apply (a vector carries its
+                // outline in the baked geometry).
+                let effect = field_effect.get_or_insert_with(|| {
+                    RuntimeEffect::make_for_shader(FIELD_MASK_SKSL, None)
+                        .expect("field-mask resolve SkSL compiles")
+                });
+                let atlas = field_atlases
+                    .entry(field.image)
+                    .or_insert_with(|| decode_image(images.resolve(field.image)));
+                draw_vector_field(canvas, rect, entry.fill.as_ref(), field, atlas, effect);
+            } else {
+                match &entry.fill {
+                    // A fill-less entry draws nothing (a layout-only node, or
+                    // a mask node whose shape is a stencil, not paint).
+                    None => {}
+                    Some(PaintKind::Solid { color }) => {
+                        let mut paint = solid_paint(*color);
+                        paint.set_anti_alias(true);
+                        apply_opacity(&mut paint, rect.opacity);
+                        canvas.draw_rrect(rrect, &paint);
+                    }
+                    Some(PaintKind::Gradient(gradient)) => {
+                        let mut paint = gradient_paint(gradient, rect);
+                        paint.set_anti_alias(true);
+                        apply_opacity(&mut paint, rect.opacity);
+                        canvas.draw_rrect(rrect, &paint);
+                    }
+                    Some(PaintKind::Image {
+                        image,
+                        scale_mode,
+                        transform,
+                        tile_scale,
+                    }) => {
+                        draw_image_fill(
+                            canvas,
+                            &rrect,
+                            rect,
+                            images.resolve(*image),
+                            *scale_mode,
+                            transform.as_ref(),
+                            *tile_scale,
+                            rect.opacity,
+                        );
+                    }
                 }
-                Some(PaintKind::Gradient(gradient)) => {
-                    let mut paint = gradient_paint(gradient, rect);
-                    paint.set_anti_alias(true);
-                    apply_opacity(&mut paint, rect.opacity);
-                    canvas.draw_rrect(rrect, &paint);
+                if let Some(stroke) = &entry.stroke {
+                    draw_stroke(canvas, &rrect, stroke, rect.opacity);
                 }
-                Some(PaintKind::Image {
-                    image,
-                    scale_mode,
-                    transform,
-                    tile_scale,
-                }) => {
-                    draw_image_fill(
-                        canvas,
-                        &rrect,
-                        rect,
-                        images.resolve(*image),
-                        *scale_mode,
-                        transform.as_ref(),
-                        *tile_scale,
-                        rect.opacity,
-                    );
-                }
-            }
-            if let Some(stroke) = &entry.stroke {
-                draw_stroke(canvas, &rrect, stroke, rect.opacity);
             }
             // Inner shadows sit on top of the fill and stroke, clipped to
             // the node's own shape (story #45).
@@ -427,6 +449,122 @@ fn msdf_uniforms(effect: &RuntimeEffect, color: dashpaint::Color, px_range: f32)
                 buf[offset..offset + 4].copy_from_slice(&px_range.to_le_bytes());
             }
             other => panic!("unexpected MSDF uniform {other}"),
+        }
+    }
+    Data::new_copy(&buf)
+}
+
+/// The baked-vector coverage resolve (story B1). Samples the field atlas
+/// (RGB distance channels), takes the median as the signed distance, and
+/// turns it into a coverage value over a screen-pixel range — the same
+/// multi-channel SDF reconstruction as [`MSDF_SKSL`], differing only in what
+/// it modulates: it returns a white premultiplied coverage the painter blends
+/// as an alpha mask (`BlendMode::DstIn`) over an already-drawn fill, so the
+/// fill (solid or gradient) shows only inside the shape (P2 composition).
+const FIELD_MASK_SKSL: &str = r"
+    uniform shader field;
+    uniform float px_range;
+    half4 main(float2 p) {
+        float3 s = float3(field.eval(p).rgb);
+        float sd = max(min(s.r, s.g), min(max(s.r, s.g), s.b));
+        float coverage = clamp(px_range * (sd - 0.5) + 0.5, 0.0, 1.0);
+        return half4(coverage);
+    }
+";
+
+/// Draws one baked-vector shape (story B1): the field masks the paint
+/// entry's fill. The fill draws into an offscreen layer, then the field
+/// coverage multiplies the layer's alpha (`DstIn`), so the fill — solid or
+/// gradient — shows only inside the shape. The gradient's frame stays the
+/// node box, so a gradient-filled vector composes day one.
+///
+/// The padded field quad (`plane_bounds`) maps to device space at unit scale,
+/// origin at the node box top-left (`device = rect_origin + plane_bounds`).
+/// The quad's margin reads as coverage 0, so drawing over exactly the quad
+/// clips nothing wrongly.
+fn draw_vector_field(
+    canvas: &Canvas,
+    rect: &RectEntry,
+    fill: Option<&PaintKind>,
+    field: &VectorField,
+    atlas: &Image,
+    effect: &RuntimeEffect,
+) {
+    // A shape with no fill has no ink to mask — a defensive guard; the
+    // lowering always pairs a shape with a fill.
+    let Some(fill) = fill else {
+        return;
+    };
+
+    let [left, top, right, bottom] = field.plane_bounds;
+    let dest = Rect::from_ltrb(rect.x + left, rect.y + top, rect.x + right, rect.y + bottom);
+    if dest.width() <= 0.0 || dest.height() <= 0.0 {
+        return;
+    }
+
+    // texel -> device: the shape's atlas sub-rect maps onto the padded quad.
+    let [ax, ay, aw, ah] = field.atlas_rect;
+    let (sx, sy) = (dest.width() / aw as f32, dest.height() / ah as f32);
+    let mut local = Matrix::translate((-(ax as f32), -(ay as f32)));
+    local.post_scale((sx, sy), None);
+    local.post_translate((dest.left, dest.top));
+
+    // Linear filtering interpolates the distance field (MSDF's crisp edges);
+    // the raster surface carries no color space, so channels sample raw — the
+    // same sampling the glyph atlas uses.
+    let sampling = SamplingOptions::new(FilterMode::Linear, MipmapMode::None);
+    let field_shader = atlas
+        .to_shader((TileMode::Clamp, TileMode::Clamp), sampling, Some(&local))
+        .expect("field atlas shader");
+    // Screen-pixel range: the distance range (atlas texels) times device
+    // pixels per texel — the glyph-atlas metric, with unit shape->device
+    // scale, so `sx` is the pixels-per-texel factor.
+    let px_range = field.distance_range * sx;
+    let uniforms = field_mask_uniforms(effect, px_range);
+    let coverage = effect
+        .make_shader(uniforms, &[field_shader.into()], None)
+        .expect("field-mask resolve shader");
+
+    // Draw the fill into a layer, then multiply its alpha by the coverage.
+    // The layer composites (SrcOver) over whatever is behind, so the masked
+    // shape stacks correctly. `rect.opacity` is the free-path group alpha,
+    // folded into the fill.
+    canvas.save_layer_alpha(None, 255);
+    match fill {
+        PaintKind::Solid { color } => {
+            let mut paint = solid_paint(*color);
+            apply_opacity(&mut paint, rect.opacity);
+            canvas.draw_rect(dest, &paint);
+        }
+        PaintKind::Gradient(gradient) => {
+            let mut paint = gradient_paint(gradient, rect);
+            apply_opacity(&mut paint, rect.opacity);
+            canvas.draw_rect(dest, &paint);
+        }
+        // An image-filled vector is not in the measured census (B1 widens by
+        // exactly what is measured); it draws nothing rather than an unmasked
+        // rectangle. Masking an image fill is additive later work.
+        PaintKind::Image { .. } => {}
+    }
+    let mut mask = skia_safe::Paint::default();
+    mask.set_shader(coverage);
+    mask.set_blend_mode(BlendMode::DstIn);
+    mask.set_anti_alias(false);
+    canvas.draw_rect(dest, &mask);
+    canvas.restore();
+}
+
+/// Packs the field-mask effect's one `px_range` uniform by the offset the
+/// compiled effect reports, so the byte layout cannot drift from the SkSL.
+fn field_mask_uniforms(effect: &RuntimeEffect, px_range: f32) -> Data {
+    let mut buf = vec![0u8; effect.uniform_size()];
+    for uniform in effect.uniforms() {
+        match uniform.name() {
+            "px_range" => {
+                let offset = uniform.offset();
+                buf[offset..offset + 4].copy_from_slice(&px_range.to_le_bytes());
+            }
+            other => panic!("unexpected field-mask uniform {other}"),
         }
     }
     Data::new_copy(&buf)

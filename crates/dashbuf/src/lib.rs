@@ -24,3 +24,6 @@ pub const NO_PAINT: u32 = u32::MAX;
 pub const NO_TEXT: u32 = u32::MAX;
 /// `Node.text_style`'s "unstyled text" sentinel.
 pub const NO_TEXT_STYLE: u32 = u32::MAX;
+/// `Paint.shape_field`'s "parametric shape" sentinel (story B1): the paint
+/// entry carries the implicit rounded box, not a baked field.
+pub const NO_FIELD: u32 = u32::MAX;

@@ -22,6 +22,8 @@ enum WireLocation<'a> {
     TextStyle { index: u32 },
     Signal { index: u32 },
     Binding { index: u32 },
+    VectorAtlas { index: u32 },
+    VectorShape { index: u32 },
 }
 
 impl<'a> From<&'a Location> for WireLocation<'a> {
@@ -37,6 +39,8 @@ impl<'a> From<&'a Location> for WireLocation<'a> {
             Location::TextStyle(index) => Self::TextStyle { index: *index },
             Location::Signal(index) => Self::Signal { index: *index },
             Location::Binding(index) => Self::Binding { index: *index },
+            Location::VectorAtlas(index) => Self::VectorAtlas { index: *index },
+            Location::VectorShape(index) => Self::VectorShape { index: *index },
         }
     }
 }

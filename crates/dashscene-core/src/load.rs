@@ -26,7 +26,8 @@
 //! rather than enforced here.
 
 use dashbuf::{
-    BindingTransform, Document, Fill, NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE, VariantPropValue,
+    BindingTransform, Document, Fill, NO_FIELD, NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE,
+    VariantPropValue,
 };
 
 use crate::arena::{
@@ -36,7 +37,7 @@ use crate::arena::{
 use crate::bindings::{Channel, ScalarTransform, SignalId};
 use crate::committed::{
     Color, Gradient, GradientKind, GradientStop, ImageAsset, ImageFormat, Mat23, PaintKind,
-    ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, Vec2,
+    ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, Vec2, VectorField,
 };
 
 /// Replays a validated `.dsb` document into `arena` and commits it,
@@ -82,6 +83,37 @@ pub fn load_document(doc: &Document<'_>, arena: &mut Arena) -> u64 {
         })
         .collect();
 
+    // The baked-vector pools (story B1). Each `VectorShape` resolves to a
+    // flat, self-contained `VectorField` the painter samples: its atlas's
+    // image index is rewritten through `image_of` (the atlas PNG is an
+    // ordinary `Document.images` entry), and the atlas's `px_per_em` /
+    // `distance_range` fold in beside the shape's own rect and plane bounds.
+    // A paint entry's `shape_field` then indexes this vector directly. All
+    // indices are validated upstream (P4), so a miss is a panic, matching the
+    // paint/image resolution above.
+    let vector_atlases = doc.vector_atlases().unwrap_or_default();
+    let shape_of: Vec<VectorField> = doc
+        .vector_shapes()
+        .unwrap_or_default()
+        .iter()
+        .map(|shape| {
+            let atlas = vector_atlases.get(shape.atlas() as usize);
+            let rect = shape
+                .atlas_rect()
+                .expect("vector shape carries an atlas rect (validated upstream, P4)");
+            let plane = shape
+                .plane_bounds()
+                .expect("vector shape carries plane bounds (validated upstream, P4)");
+            VectorField {
+                image: image_of[atlas.image() as usize],
+                atlas_rect: [rect.x(), rect.y(), rect.width(), rect.height()],
+                plane_bounds: [plane.left(), plane.top(), plane.right(), plane.bottom()],
+                px_per_em: atlas.px_per_em(),
+                distance_range: atlas.distance_range(),
+            }
+        })
+        .collect();
+
     // The node array is in DFS order, so a parent is always staged before
     // its children and `ids[parent]` is always populated by the time a child
     // reads it (the load gate's `node.parent-not-before-child` rule is what
@@ -107,7 +139,7 @@ pub fn load_document(doc: &Document<'_>, arena: &mut Arena) -> u64 {
         // gate rejects a node that sets both (`paint.conflicting-representation`).
         if node.paint_entry() != NO_PAINT {
             let paint = paints.get(node.paint_entry() as usize);
-            load_paint(&mut txn, id, &paint, &image_of);
+            load_paint(&mut txn, id, &paint, &image_of, &shape_of);
         } else if let Some(solid) = node.paint()
             && let Some(color) = solid.color()
         {
@@ -364,12 +396,14 @@ fn variant_value(o: &dashbuf::VariantOverride<'_>) -> VariantValue {
     }
 }
 
-/// One pool entry's fill, stroke, corners, and clip, staged onto `id`.
+/// One pool entry's fill, stroke, corners, clip, and baked-vector shape,
+/// staged onto `id`.
 fn load_paint(
     txn: &mut crate::arena::Txn<'_>,
     id: NodeId,
     paint: &dashbuf::Paint<'_>,
     image_of: &[u32],
+    shape_of: &[VectorField],
 ) {
     match paint.fill_type() {
         Fill::SolidFill => {
@@ -479,6 +513,14 @@ fn load_paint(
     // the emitter's pool key accounts for.
     if paint.clip() {
         txn.set_prop(id, Prop::Clip(true));
+    }
+
+    // The baked-vector shape channel (story B1). `NO_FIELD` is the implicit
+    // parametric shape, so an old document (which carries no shape field)
+    // stages nothing here and loads unchanged. A valid index resolves to the
+    // pre-built `VectorField` and stages it as paint intent.
+    if paint.shape_field() != NO_FIELD {
+        txn.set_prop(id, Prop::ShapeField(shape_of[paint.shape_field() as usize]));
     }
 }
 

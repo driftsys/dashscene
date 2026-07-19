@@ -18,7 +18,7 @@ use crate::bindings::{Binding, Channel, ScalarTransform, SignalDecl, SignalId};
 use crate::committed::{
     ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CommittedScene, CornerRadii, GroupComposite,
     ImageAsset, ImageTable, PaintEntry, PaintIndex, PaintKind, PaintTable, RectEntry, Shadow,
-    Stroke, StrokeAlign, Vec2,
+    Stroke, StrokeAlign, Vec2, VectorField,
 };
 
 /// Stable handle to a node in one [`Arena`]. Returned by
@@ -261,6 +261,13 @@ pub enum Prop {
     /// entry with no cross-node resolution (unlike a mask or group
     /// opacity).
     Shadows(Vec<Shadow>),
+    /// The node's baked-vector coverage mask (story B1). Sets the resolved
+    /// [`VectorField`] a Figma VECTOR node lowered into; the painter masks
+    /// the node's fill by it. Paint intent like [`Prop::Shadows`] — commit
+    /// copies it onto the paint-pool entry with no cross-node resolution.
+    /// Set-only, no clear (the same gap as `Fill`), which the loader never
+    /// needs (a document either carries a shape channel or it does not).
+    ShapeField(VectorField),
     /// Whether the node clips its children to its own (rounded) box
     /// (`Paint.clip`, docs/design/architecture.md). Intent only: commit resolves it
     /// into the per-rect clip regions boundary B carries, because a flat
@@ -482,6 +489,13 @@ struct NodeData {
     /// #45). Beside the scalar paint fields rather than inside them — it
     /// is variable-length — the same split as `text`. Empty = no shadows.
     shadows: Vec<Shadow>,
+    /// The node's baked-vector coverage mask (story B1). `Some` for a Figma
+    /// VECTOR node: the fill is masked by the resolved field. `None` (the
+    /// default) is the implicit parametric shape. Resolved at load
+    /// (`load::load_document`) from the document's vector pools, then copied
+    /// straight onto the paint-pool entry at commit — paint intent like
+    /// fill/stroke, with no cross-node resolution.
+    shape: Option<VectorField>,
     /// "This node clips its children to its own box" — intent, resolved
     /// at commit (issue #97).
     clip: bool,
@@ -915,6 +929,7 @@ impl Txn<'_> {
             stroke: None,
             corners: CornerRadii::default(),
             shadows: Vec::new(),
+            shape: None,
             clip: false,
             opacity: 1.0,
             mask: false,
@@ -1063,6 +1078,7 @@ impl Txn<'_> {
                 }
             }
             Prop::Shadows(shadows) => data.shadows = shadows,
+            Prop::ShapeField(field) => data.shape = Some(field),
             Prop::Clip(v) => data.clip = v,
             Prop::Text(s) => data.text = Some(s),
             Prop::TextStyle(ts) => data.text_style = Some(ts),
@@ -1527,6 +1543,10 @@ impl Txn<'_> {
                             // come straight from the node. Cloned in the
                             // cache-miss arm only, like the fill's stops.
                             shadows: node.shadows.clone(),
+                            // The baked-vector coverage mask (story B1), not
+                            // variant-overridable either — straight from the
+                            // node. `VectorField` is `Copy`, so no clone.
+                            shape: node.shape,
                         }
                     };
                     intern_paint(&mut back_paints, &mut paint_map, entry)
@@ -1775,7 +1795,8 @@ fn prop_class(prop: &Prop) -> PropClass {
         | Prop::FillWith(_)
         | Prop::Stroke(_)
         | Prop::Corners { .. }
-        | Prop::Shadows(_) => PropClass::Paint,
+        | Prop::Shadows(_)
+        | Prop::ShapeField(_) => PropClass::Paint,
         Prop::Clip(_) => PropClass::ClipFlag,
         Prop::Mask(_) => PropClass::MaskFlag,
         Prop::Visible(_) => PropClass::VisibleFlag,
@@ -1943,6 +1964,22 @@ fn paint_key(entry: &PaintEntry) -> PaintKey {
         key.push(shadow.blur.to_bits());
         key.push(shadow.spread.to_bits());
         key.extend(color_key(shadow.color));
+    }
+
+    // The baked-vector coverage mask (story B1). Absent = the parametric
+    // shape (a leading 0). A present field encodes its full resolved
+    // reference, so two nodes with the same fill but different shapes — or a
+    // shape vs. the parametric box — take distinct pool entries.
+    match &entry.shape {
+        None => key.push(0),
+        Some(field) => {
+            key.push(1);
+            key.push(field.image);
+            key.extend(field.atlas_rect);
+            key.extend(field.plane_bounds.iter().map(|v| v.to_bits()));
+            key.push(field.px_per_em.to_bits());
+            key.push(field.distance_range.to_bits());
+        }
     }
     key
 }

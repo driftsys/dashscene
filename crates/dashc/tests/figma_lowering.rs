@@ -1659,13 +1659,51 @@ fn a_section_with_hidden_contents_is_diagnosed() {
 }
 
 #[test]
-fn a_vector_is_still_an_unsupported_node_type() {
-    // #309 admits exactly RECTANGLE/SECTION/GROUP. Path-geometry types stay
-    // refused by name — the boundary this story did not cross.
+fn a_vector_with_geometry_lowers_to_a_baked_field() {
+    // Story B1: a VECTOR node with a fill and `fillGeometry` bakes into an
+    // MSDF field carried on its paint entry as a coverage mask.
     let file = document(serde_json::json!({
         "name": "vec",
         "type": "VECTOR",
         "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+        "fills": [{ "type": "SOLID", "color": { "r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0 } }],
+        "fillGeometry": [{
+            "path": "M 0 0 L 10 0 L 10 10 L 0 10 Z",
+            "windingRule": "NONZERO",
+        }],
+    }));
+
+    let (doc, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
+        .expect("lowering returns the doc plus diagnostics");
+
+    assert!(
+        common::unsupported(&diagnostics).is_empty(),
+        "a fielded vector lowers clean: {:?}",
+        common::unsupported(&diagnostics),
+    );
+    assert_eq!(doc.vector_atlases.len(), 1, "one packed atlas");
+    assert_eq!(doc.vector_shapes.len(), 1, "one baked shape");
+    let paint = doc.nodes[0]
+        .paint
+        .as_ref()
+        .expect("the vector carries a paint entry");
+    assert_eq!(
+        paint.shape_field,
+        Some(0),
+        "the paint entry references the baked shape",
+    );
+}
+
+#[test]
+fn a_vector_without_geometry_is_refused_by_name() {
+    // A VECTOR with ink but no path geometry (a geometry-free fetch, or a
+    // genuinely degenerate node) has nothing to bake, so it is refused by name
+    // (P4), never emitted as an empty box.
+    let file = document(serde_json::json!({
+        "name": "vec",
+        "type": "VECTOR",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+        "fills": [{ "type": "SOLID", "color": { "r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0 } }],
     }));
 
     let (_doc, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
@@ -1674,8 +1712,8 @@ fn a_vector_is_still_an_unsupported_node_type() {
     assert!(
         common::unsupported(&diagnostics)
             .iter()
-            .any(|(_, what)| what == "node type VECTOR"),
-        "VECTOR must remain unsupported: {:?}",
+            .any(|(_, what)| what == "a vector with no path geometry"),
+        "an ink-bearing geometry-less vector is refused by name: {:?}",
         common::unsupported(&diagnostics),
     );
 }
@@ -1727,9 +1765,10 @@ fn the_fixture_emits_the_golden_dsb() {
 
 // -- Emit policy: Strict refuses, Partial skips-and-warns (story S0-impl) ----
 
-/// A FRAME whose only problem is a VECTOR child: an omission-class gap
-/// (`figma.unsupported`, "node type VECTOR"). Strict refuses the file;
-/// Partial omits the VECTOR and emits the frame with a warning.
+/// A FRAME whose only problem is a VECTOR child that cannot bake: an
+/// omission-class gap (`figma.unsupported`, "a vector with no path geometry" —
+/// the child has ink but no `fillGeometry`, story B1). Strict refuses the
+/// file; Partial omits the VECTOR and emits the frame with a warning.
 fn frame_with_vector_child() -> serde_json::Value {
     document_json(serde_json::json!({
         "name": "root",
@@ -1739,7 +1778,8 @@ fn frame_with_vector_child() -> serde_json::Value {
         "children": [{
             "name": "glyph",
             "type": "VECTOR",
-            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 }
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+            "fills": [{ "type": "SOLID", "color": { "r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0 } }]
         }],
     }))
 }
@@ -1819,6 +1859,104 @@ fn partial_still_refuses_a_reject_band_construct() {
         matches!(result, Err(CompileError::Diagnostics(_))),
         "a REJECT-band construct is never shipped approximated, even under Partial",
     );
+}
+
+/// A FRAME whose VECTOR child bakes cleanly but carries a backdrop blur —
+/// an error verdict under profile:core. Lowering the node without its blur
+/// would approximate, so under Partial the triage moves into the skip
+/// decision instead: the node is omitted whole and the gap is the
+/// policy-sensitive `figma.unsupported` omission. This is the per-construct
+/// follow-up `docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`
+/// names under "Consequence accepted at this gate"; the first real target
+/// needing it is the Landify hero's background vector (story B1).
+fn frame_with_backdrop_blur_vector_child() -> serde_json::Value {
+    document_json(serde_json::json!({
+        "name": "root",
+        "type": "FRAME",
+        "clipsContent": true,
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0 },
+        "children": [{
+            "name": "bg",
+            "type": "VECTOR",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+            "fills": [{ "type": "SOLID", "color": { "r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0 } }],
+            "fillGeometry": [{
+                "path": "M 0 0 L 10 0 L 10 10 L 0 10 Z",
+                "windingRule": "NONZERO",
+            }],
+            "effects": [{ "type": "BACKGROUND_BLUR", "visible": true, "radius": 100.0 }],
+        }],
+    }))
+}
+
+#[test]
+fn partial_omits_a_node_whose_backdrop_blur_is_out_of_profile() {
+    let json = frame_with_backdrop_blur_vector_child().to_string();
+    let images = BTreeMap::new();
+    let (bytes, report) = compile_figma_with_bindings_and_policy(
+        &json,
+        Profile::Core,
+        &images,
+        &[],
+        EmitPolicy::Partial,
+    )
+    .expect("partial-emit omits the blurred node and returns a document");
+    assert!(!bytes.is_empty(), "a document is emitted");
+    // The omission is named (P4): one figma.unsupported warning naming the
+    // construct — never a silent drop.
+    let warnings: Vec<_> = report
+        .diagnostics()
+        .iter()
+        .filter(|d| d.rule == dashc_wasm::figma::rule::UNSUPPORTED)
+        .collect();
+    assert_eq!(
+        warnings.len(),
+        1,
+        "one figma.unsupported for the omitted vector",
+    );
+    assert_eq!(warnings[0].severity, Severity::Warning);
+    assert!(
+        warnings[0].message.contains("backdrop blur"),
+        "the warning names the construct: {}",
+        warnings[0].message,
+    );
+    // The construct's error verdict moved into the skip decision — the node
+    // never lowered, so no profile error is reported on it.
+    assert!(
+        !report.has(dashscene_validator::rule::BACKDROP_BLUR),
+        "an omitted node's backdrop blur is an omission, not a profile error",
+    );
+    // The frame is present, the vector omitted: exactly one node.
+    let document = dashbuf::root_as_document(&bytes).expect("the emitted document loads");
+    let mut arena = Arena::new();
+    load_document(&document, &mut arena);
+    assert_eq!(
+        arena.committed().rects().len(),
+        1,
+        "the frame is present, the vector omitted",
+    );
+}
+
+#[test]
+fn strict_still_refuses_a_backdrop_blur_out_of_profile() {
+    // Strict is the original posture, unchanged: the node lowers and the
+    // profile verdict blocks the file.
+    let json = frame_with_backdrop_blur_vector_child().to_string();
+    let images = BTreeMap::new();
+    let result = compile_figma_with_bindings_and_policy(
+        &json,
+        Profile::Core,
+        &images,
+        &[],
+        EmitPolicy::Strict,
+    );
+    match result {
+        Err(CompileError::Diagnostics(report)) => assert!(
+            report.has(dashscene_validator::rule::BACKDROP_BLUR),
+            "Strict keeps the profile verdict on the lowered node",
+        ),
+        other => panic!("Strict refuses the file, got {other:?}"),
+    }
 }
 
 /// A canvas holding only a COMPONENT resolves to no paintable content:

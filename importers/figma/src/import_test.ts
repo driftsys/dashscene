@@ -55,7 +55,7 @@ Deno.test("importFigmaFile compiles the declared root into the golden .dsb", asy
 
 Deno.test("a trimmed node inside the declared root leaves the export and is never fetched", async () => {
   // The annotator plugin writes this; the REST API returns it under
-  // ?plugin_data=shared. Tagging the one image cell as sample content trims it,
+  // ?plugin_data=shared&geometry=paths. Tagging the one image cell as sample content trims it,
   // so the closure never sees its imageRef and no asset is downloaded.
   const file = JSON.parse(
     Deno.readTextFileSync(new URL("v03-paint.json", CORPUS)),
@@ -89,7 +89,7 @@ Deno.test("a trimmed node inside the declared root leaves the export and is neve
   // ...so its imageRef is never resolved: only the file itself is fetched, with
   // no image-map request and no asset download.
   assertEquals(requested, [
-    `https://api.figma.com/v1/files/${FILE_KEY}?plugin_data=shared`,
+    `https://api.figma.com/v1/files/${FILE_KEY}?plugin_data=shared&geometry=paths`,
   ]);
   // The document still compiles — the trimmed cell simply is not in it.
   assert(result.bytes.length > 0);
@@ -573,7 +573,7 @@ function scriptedFiles(files: Readonly<Record<string, string>>) {
     const url = input instanceof Request ? input.url : String(input);
     requested.push(url);
     const match = url.match(
-      /^https:\/\/api\.figma\.com\/v1\/files\/([^/?]+)\?plugin_data=shared$/,
+      /^https:\/\/api\.figma\.com\/v1\/files\/([^/?]+)\?plugin_data=shared&geometry=paths$/,
     );
     const body = match ? files[match[1]] : undefined;
     if (body !== undefined) return Promise.resolve(new Response(body));
@@ -635,8 +635,8 @@ Deno.test("importFigmaFile resolves a remote component from a declared library",
   assertEquals(result.bytes, Deno.readFileSync(VARIANT_GOLDEN));
   // Two file fetches (consumer, then library); the fixture has no image fills.
   assertEquals(requested, [
-    `https://api.figma.com/v1/files/${FILE_KEY}?plugin_data=shared`,
-    `https://api.figma.com/v1/files/${LIBRARY_KEY}?plugin_data=shared`,
+    `https://api.figma.com/v1/files/${FILE_KEY}?plugin_data=shared&geometry=paths`,
+    `https://api.figma.com/v1/files/${LIBRARY_KEY}?plugin_data=shared&geometry=paths`,
   ]);
 });
 

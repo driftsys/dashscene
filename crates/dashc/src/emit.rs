@@ -10,17 +10,19 @@
 use std::collections::HashMap;
 
 use dashbuf::{
-    Binding as FbBinding, BindingArgs as FbBindingArgs, Color, CornerRadii, Document as FbDocument,
-    DocumentArgs as FbDocumentArgs, EdgeInsets as FbEdgeInsets, FixedSizeLayout, Gradient,
-    GradientArgs, GradientStop, GridTrack as FbGridTrack, GridTrackArgs as FbGridTrackArgs, Image,
-    ImageArgs, ImageFill, ImageFillArgs, LayoutConstraints as FbLayoutConstraints,
-    LayoutConstraintsArgs, LayoutContainer as FbLayoutContainer, LayoutContainerArgs, Mat23,
-    NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE, Node as FbNode, NodeArgs as FbNodeArgs,
-    Paint as BufPaint, PaintArgs, Shadow as FbShadow, ShadowArgs, ShadowKind as FbShadowKind,
+    AtlasRect, Binding as FbBinding, BindingArgs as FbBindingArgs, Color, CornerRadii,
+    Document as FbDocument, DocumentArgs as FbDocumentArgs, EdgeInsets as FbEdgeInsets,
+    FixedSizeLayout, Gradient, GradientArgs, GradientStop, GridTrack as FbGridTrack,
+    GridTrackArgs as FbGridTrackArgs, Image, ImageArgs, ImageFill, ImageFillArgs,
+    LayoutConstraints as FbLayoutConstraints, LayoutConstraintsArgs,
+    LayoutContainer as FbLayoutContainer, LayoutContainerArgs, Mat23, NO_FIELD, NO_PAINT,
+    NO_PARENT, NO_TEXT, NO_TEXT_STYLE, Node as FbNode, NodeArgs as FbNodeArgs, Paint as BufPaint,
+    PaintArgs, PlaneBounds, Shadow as FbShadow, ShadowArgs, ShadowKind as FbShadowKind,
     SignalDecl as FbSignalDecl, SignalDeclArgs as FbSignalDeclArgs, SolidFill, SolidFillArgs,
     Stroke, StrokeArgs, TextStyle as FbTextStyle, TextStyleArgs, TransformClamp,
     TransformClampArgs, TransformMapRange, TransformMapRangeArgs, TransformScale,
-    TransformScaleArgs, Vec2,
+    TransformScaleArgs, Vec2, VectorAtlas as FbVectorAtlas, VectorAtlasArgs,
+    VectorShape as FbVectorShape, VectorShapeArgs,
 };
 use dashpaint::{ImageAsset, PaintEntry, PaintKind, ShadowKind};
 use flatbuffers::{FlatBufferBuilder, WIPOffset};
@@ -28,7 +30,7 @@ use flatbuffers::{FlatBufferBuilder, WIPOffset};
 use crate::document::{
     AxisSizing, Binding, BindingChannel, BindingTransform, CrossAxisAlign, Document, EdgeInsets,
     GridTrack, LayoutMode, MainAxisAlign, Node, Paint, SignalDecl, TextAlign, TextAlignV,
-    TextStyle,
+    TextStyle, VectorAtlas, VectorShape,
 };
 
 /// Serializes a document to `.dsb` bytes.
@@ -105,6 +107,19 @@ pub fn emit(doc: &Document) -> Vec<u8> {
         .iter()
         .map(|row| build_binding(&mut b, row))
         .collect();
+    // The baked-vector pools (story B1). Both are empty for a document with
+    // no vectors, so the create_vector below is skipped and a pre-B1 document
+    // emits byte-identically (R7).
+    let vector_atlas_offsets: Vec<WIPOffset<FbVectorAtlas>> = doc
+        .vector_atlases
+        .iter()
+        .map(|a| build_vector_atlas(&mut b, a))
+        .collect();
+    let vector_shape_offsets: Vec<WIPOffset<FbVectorShape>> = doc
+        .vector_shapes
+        .iter()
+        .map(|s| build_vector_shape(&mut b, s))
+        .collect();
 
     let nodes = b.create_vector(&nodes);
     let images = (!images.is_empty()).then(|| b.create_vector(&images));
@@ -113,6 +128,10 @@ pub fn emit(doc: &Document) -> Vec<u8> {
     let text_styles = (!style_offsets.is_empty()).then(|| b.create_vector(&style_offsets));
     let signals = (!signal_offsets.is_empty()).then(|| b.create_vector(&signal_offsets));
     let bindings = (!binding_offsets.is_empty()).then(|| b.create_vector(&binding_offsets));
+    let vector_atlases =
+        (!vector_atlas_offsets.is_empty()).then(|| b.create_vector(&vector_atlas_offsets));
+    let vector_shapes =
+        (!vector_shape_offsets.is_empty()).then(|| b.create_vector(&vector_shape_offsets));
 
     let document = FbDocument::create(
         &mut b,
@@ -124,6 +143,8 @@ pub fn emit(doc: &Document) -> Vec<u8> {
             text_styles,
             signals,
             bindings,
+            vector_atlases,
+            vector_shapes,
             ..Default::default()
         },
     );
@@ -423,6 +444,39 @@ fn build_image<'a>(b: &mut FlatBufferBuilder<'a>, asset: &ImageAsset) -> WIPOffs
     )
 }
 
+/// Builds one `VectorAtlas` pool entry (story B1).
+fn build_vector_atlas<'a>(
+    b: &mut FlatBufferBuilder<'a>,
+    atlas: &VectorAtlas,
+) -> WIPOffset<FbVectorAtlas<'a>> {
+    FbVectorAtlas::create(
+        b,
+        &VectorAtlasArgs {
+            image: atlas.image,
+            px_per_em: atlas.px_per_em,
+            distance_range: atlas.distance_range,
+        },
+    )
+}
+
+/// Builds one `VectorShape` pool entry (story B1). `AtlasRect` and
+/// `PlaneBounds` are inline structs, set on the args by reference.
+fn build_vector_shape<'a>(
+    b: &mut FlatBufferBuilder<'a>,
+    shape: &VectorShape,
+) -> WIPOffset<FbVectorShape<'a>> {
+    let [x, y, width, height] = shape.atlas_rect;
+    let [left, top, right, bottom] = shape.plane_bounds;
+    FbVectorShape::create(
+        b,
+        &VectorShapeArgs {
+            atlas: shape.atlas,
+            atlas_rect: Some(&AtlasRect::new(x, y, width, height)),
+            plane_bounds: Some(&PlaneBounds::new(left, top, right, bottom)),
+        },
+    )
+}
+
 fn build_paint<'a>(b: &mut FlatBufferBuilder<'a>, paint: &Paint) -> WIPOffset<BufPaint<'a>> {
     let entry = &paint.entry;
 
@@ -549,6 +603,10 @@ fn build_paint<'a>(b: &mut FlatBufferBuilder<'a>, paint: &Paint) -> WIPOffset<Bu
             corners: corners.as_ref(),
             clip: paint.clip,
             shadows,
+            // Story B1: a VECTOR node lowers to a baked shape index here; a
+            // non-vector entry carries `None`, so the sentinel keeps the
+            // output byte-identical (R7).
+            shape_field: paint.shape_field.unwrap_or(NO_FIELD),
         },
     )
 }
@@ -574,11 +632,14 @@ fn mat23_of(m: &dashpaint::Mat23) -> Mat23 {
 ///
 /// The clip flag is part of the key because the schema pools clip with the
 /// paint entry while the arena carries it per node — two nodes with the same
-/// style but different clip are two document entries.
-type PaintKey = (Vec<u32>, bool);
+/// style but different clip are two document entries. The shape index (story
+/// B1) is in the key for the same reason: two entries with the same fill but
+/// different baked shapes — or a shape vs. the parametric box — must not
+/// collapse to one pool entry.
+type PaintKey = (Vec<u32>, bool, Option<u32>);
 
 fn paint_key(paint: &Paint) -> PaintKey {
-    (entry_bits(&paint.entry), paint.clip)
+    (entry_bits(&paint.entry), paint.clip, paint.shape_field)
 }
 
 /// The text-style pool's interning key. The `f32` size, color, line height,

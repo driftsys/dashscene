@@ -151,6 +151,15 @@ pub mod rule {
     pub const STROKE_INVALID_WIDTH: &str = "paint.stroke.invalid-width";
     pub const IMAGE_OUT_OF_RANGE: &str = "paint.image-out-of-range";
 
+    // Story B1 — the baked-vector index chain. Each is a bare-`u32` index the
+    // loader resolves unchecked, so a dangling one is named here (the same
+    // posture as `paint_entry`/`image`): a paint entry's shape field into the
+    // vector-shape pool, a shape's atlas into the atlas pool, and an atlas's
+    // image into the image pool.
+    pub const SHAPE_FIELD_OUT_OF_RANGE: &str = "paint.shape-field-out-of-range";
+    pub const VECTOR_SHAPE_ATLAS_OUT_OF_RANGE: &str = "vector.shape-atlas-out-of-range";
+    pub const VECTOR_ATLAS_IMAGE_OUT_OF_RANGE: &str = "vector.atlas-image-out-of-range";
+
     // Image assets — the painter decodes them behind an `expect` documented
     // as "validated upstream (P4)". This is that upstream.
     pub const IMAGE_NO_BYTES: &str = "asset.image-no-bytes";
@@ -456,6 +465,12 @@ pub enum Location {
     Signal(u32),
     /// A binding row, by its index in `Document.bindings` (story #167).
     Binding(u32),
+    /// A packed vector atlas, by its index in `Document.vector_atlases`
+    /// (story B1) — a pooled surface like the others.
+    VectorAtlas(u32),
+    /// A baked vector shape, by its index in `Document.vector_shapes`
+    /// (story B1).
+    VectorShape(u32),
 }
 
 impl fmt::Display for Location {
@@ -468,6 +483,8 @@ impl fmt::Display for Location {
             Self::TextStyle(index) => write!(f, "<text style #{index}>"),
             Self::Signal(index) => write!(f, "<signal #{index}>"),
             Self::Binding(index) => write!(f, "<binding #{index}>"),
+            Self::VectorAtlas(index) => write!(f, "<vector atlas #{index}>"),
+            Self::VectorShape(index) => write!(f, "<vector shape #{index}>"),
         }
     }
 }

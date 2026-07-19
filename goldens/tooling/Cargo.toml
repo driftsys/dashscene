@@ -34,3 +34,6 @@ dashscene-validator.workspace = true
 # serde_json builds the render_dsb unit test's inline Figma fixture and derives
 # the v0.7 ellipse golden's (#239) captured negative-gap fixture in place.
 serde_json.workspace = true
+# The story-B1 vector-render test (v010_vector_render.rs) hand-builds a `.dsb`
+# with a baked MSDF field to prove vectors render through the whole stack.
+flatbuffers.workspace = true
