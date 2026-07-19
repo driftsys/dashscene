@@ -11,7 +11,7 @@ is nothing to keep in sync between the two.
 
 | This file (shape)               | GitHub (state)                                |
 | ------------------------------- | --------------------------------------------- |
-| Which slices exist (v0.1-v0.12) | Which stories exist under each epic           |
+| Which slices exist (v0.1-v0.13) | Which stories exist under each epic           |
 | What each slice delivers        | Which stories are open, closed, who owns them |
 | Inter-slice dependency edges    | Story-level dependency edges                  |
 | Which E-criteria a slice closes | Debt triage and milestone assignment          |
@@ -504,7 +504,7 @@ to their slices. The v0.9 breakdown is revised at this close — see v0.9 below.
 
 **Epic #47.** Closes [`E1`](specification/05-qualification.md). Closing this
 epic asserts the v0 exit gate (`E1`–`E7`); v0 itself now extends through
-v0.12 (the 2026-07-19 plan revision below), so the gate closes the
+v0.13 (the 2026-07-19 plan revisions below), so the gate closes the
 qualification arc, not the version.
 
 Delivers: the same-screen-both-ways fixture, and the v0 exit gate — `E1`
@@ -635,6 +635,25 @@ Basis stays the mixed-fleet contingency). The oracle-harness consolidation
 
 Depends on: v0.11 (sections and the asset table). Design capture:
 `docs/wip/2026-07-19-asset-pipeline-profiles-and-baking.md`.
+
+### v0.13 — pre-v1 hardening — provisional
+
+**Epic #362.** A debt burn-down; provisional, revised at the v0.12 close.
+
+Delivers: the independent code-debt that accumulated across v0.1–v0.12 and is
+resolvable before v1 — perf and allocation micro-debt, cleanup, test-gaps, and
+latent-correctness guards, across the `dashcue`, `dashlang`, `dashscene-core`,
+`dashscene-engine`, `dashscene-typeset`, paint, goldens, and repo/importers
+clusters (the items on milestone #14). This slice exists so that debt gets a
+focused pass instead of sitting under v1's Unity-and-toolchain scope, where it
+never surfaces. Feature scope gated on a specific v1 consumer stays on v1 — it
+unlocks with its consumer, so it is not burn-down-able early. The dividing line
+and the item split are recorded in
+[`decisions/pre-v1-hardening-slice.md`](decisions/pre-v1-hardening-slice.md).
+
+Depends on: nothing in particular — the items are independent by construction
+and parallelize across crates, one PR per crate cluster. Runs after v0.12,
+before v1.
 
 ## v1 — Unity, full feature set, performance, production toolchain
 

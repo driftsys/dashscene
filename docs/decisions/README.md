@@ -401,5 +401,8 @@ so each technote stops being the authority for the conclusion it reached:
   — genuinely non-bakeable runtime vector content (arbitrary SVG, morphing
   Lottie) renders to a texture via ThorVG, a bounded escape hatch
   (`docs/technotes/runtime-content.md` §5).
+- [pre-v1-hardening-slice.md](pre-v1-hardening-slice.md) — the 2026-07-19 debt
+  triage splits the independent code-debt into a pre-v1 hardening slice (v0.13,
+  milestone #14, epic #362); feature scope gated on a v1 consumer stays on v1.
 
 See the `sdd-working-memory-lifecycle` rule.
