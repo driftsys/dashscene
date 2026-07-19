@@ -368,9 +368,10 @@ pub enum TextAlignV {
 }
 
 /// Text style intent — mirrors the `dashbuf` `TextStyle` table
-/// (family, em size in document units, CSS-scale weight, color, and the four
+/// (family, em size in document units, CSS-scale weight, color, the four
 /// v0.9 axes — a fixed line height, letter spacing, horizontal and vertical
-/// alignment) without linking the generated code.
+/// alignment — and the v0.10 standard-ligatures-off bit) without linking the
+/// generated code.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextStyle {
     pub family: String,
@@ -388,6 +389,9 @@ pub struct TextStyle {
     pub text_align: TextAlign,
     /// Vertical alignment within the box; `Top` is the default.
     pub text_align_v: TextAlignV,
+    /// Standard ligatures forced off (story #341: Figma's OpenType
+    /// `LIGA: 0`). `false` is the default.
+    pub ligatures_off: bool,
 }
 
 /// One prop value a variant member can override — the slice of `Prop`'s

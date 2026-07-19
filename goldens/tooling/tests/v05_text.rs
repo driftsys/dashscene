@@ -113,6 +113,7 @@ fn latin_text_and_a_hug_label_match_their_golden() {
                 letter_spacing: 0.0,
                 text_align: TextAlign::Left,
                 text_align_v: TextAlignV::Top,
+                ligatures_off: false,
             }),
         );
 
@@ -144,6 +145,7 @@ fn latin_text_and_a_hug_label_match_their_golden() {
                 letter_spacing: 0.0,
                 text_align: TextAlign::Left,
                 text_align_v: TextAlignV::Top,
+                ligatures_off: false,
             }),
         );
 
@@ -252,6 +254,7 @@ fn the_hug_boxes_are_laid_out_where_the_golden_expects() {
                 letter_spacing: 0.0,
                 text_align: TextAlign::Left,
                 text_align_v: TextAlignV::Top,
+                ligatures_off: false,
             }),
         );
         let chip = txn.add_node(Some(root), Some("chip"));
@@ -271,6 +274,7 @@ fn the_hug_boxes_are_laid_out_where_the_golden_expects() {
                 letter_spacing: 0.0,
                 text_align: TextAlign::Left,
                 text_align_v: TextAlignV::Top,
+                ligatures_off: false,
             }),
         );
         txn.commit_with(&mut solver);

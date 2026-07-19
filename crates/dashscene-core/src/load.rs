@@ -138,6 +138,10 @@ pub fn load_document(doc: &Document<'_>, arena: &mut Arena) -> u64 {
                     letter_spacing: style.letter_spacing(),
                     text_align: text_align_of(style.text_align()),
                     text_align_v: text_align_v_of(style.text_align_v()),
+                    // Story #341: standard ligatures off. Absent reads back
+                    // `false` (ligatures on, the pre-#341 default), so an
+                    // older document loads unchanged.
+                    ligatures_off: style.ligatures_off(),
                 }),
             );
         }

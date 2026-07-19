@@ -483,6 +483,7 @@ fn text_props_set_and_read_back_through_the_intent_accessors() {
             letter_spacing: 0.0,
             text_align: TextAlign::Left,
             text_align_v: TextAlignV::Top,
+            ligatures_off: false,
         }),
     );
     txn.commit();

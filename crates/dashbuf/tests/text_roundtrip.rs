@@ -130,6 +130,7 @@ fn the_new_style_fields_round_trip() {
             letter_spacing: 2.5,
             text_align: dashbuf::TextAlign::Center,
             text_align_v: dashbuf::TextAlignV::Bottom,
+            ligatures_off: false,
         },
     );
     let styles = b.create_vector(&[style]);
@@ -148,6 +149,37 @@ fn the_new_style_fields_round_trip() {
     assert_eq!(s.letter_spacing(), 2.5);
     assert_eq!(s.text_align(), dashbuf::TextAlign::Center);
     assert_eq!(s.text_align_v(), dashbuf::TextAlignV::Bottom);
+}
+
+#[test]
+fn ligatures_off_round_trips() {
+    // Story #341: the standard-ligatures-off bit round-trips through the
+    // appended TextStyle field, independently of the story #310 axes.
+    let mut b = FlatBufferBuilder::new();
+    let family = b.create_string("Inter");
+    let style = TextStyle::create(
+        &mut b,
+        &TextStyleArgs {
+            family: Some(family),
+            size: 16.0,
+            weight: 400,
+            color: Some(&Color::new(0.1, 0.2, 0.3, 1.0)),
+            ligatures_off: true,
+            ..Default::default()
+        },
+    );
+    let styles = b.create_vector(&[style]);
+    let doc = Document::create(
+        &mut b,
+        &DocumentArgs {
+            text_styles: Some(styles),
+            ..Default::default()
+        },
+    );
+    b.finish(doc, None);
+    let bytes = b.finished_data().to_vec();
+    let doc = root_as_document(&bytes).expect("verifies");
+    assert!(doc.text_styles().unwrap().get(0).ligatures_off());
 }
 
 #[test]
@@ -183,6 +215,7 @@ fn a_default_style_reads_back_the_behavior_preserving_defaults() {
     assert_eq!(s.letter_spacing(), 0.0);
     assert_eq!(s.text_align(), dashbuf::TextAlign::Left);
     assert_eq!(s.text_align_v(), dashbuf::TextAlignV::Top);
+    assert!(!s.ligatures_off());
 }
 
 #[test]

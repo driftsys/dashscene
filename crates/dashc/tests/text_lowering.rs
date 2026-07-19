@@ -375,6 +375,42 @@ fn two_styles_differing_only_in_alignment_are_two_pool_entries() {
     );
 }
 
+#[test]
+fn two_styles_differing_only_in_ligatures_off_are_two_pool_entries() {
+    // Story #341: the pool dedup key must include ligatures_off, or a node
+    // with it set would silently share the wrong style entry.
+    let a = {
+        let mut t = text_json("a", "OK", 16.0, 400);
+        t["style"]["opentypeFlags"] = serde_json::json!({ "LIGA": 0 });
+        t
+    };
+    let b = text_json("b", "OK", 16.0, 400);
+    let json = serde_json::json!({
+        "document": { "name": "Document", "type": "DOCUMENT", "children": [{
+            "name": "Page 1", "type": "CANVAS", "children": [{
+                "name": "row", "type": "FRAME", "layoutMode": "HORIZONTAL",
+                "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 200.0, "height": 40.0 },
+                "children": [a, b],
+            }],
+        }]},
+    })
+    .to_string();
+
+    let (bytes, report) = compile_figma(&json, Profile::Core, &BTreeMap::new()).expect("compiles");
+    assert!(report.is_empty(), "{report}");
+    let document = dashbuf::root_as_document(&bytes).expect("a valid buffer");
+    assert_eq!(
+        document.strings().expect("a string pool").len(),
+        1,
+        "the shared string still dedups to one entry"
+    );
+    assert_eq!(
+        document.text_styles().expect("a style pool").len(),
+        2,
+        "ligatures_off true vs false must not collapse to one pool entry"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Out-of-vocabulary text features are named diagnostics, never silent drops
 // (P4). Each would render a picture the designer never authored if lowered
@@ -418,6 +454,20 @@ fn out_of_vocabulary_text_features_are_named_diagnostics() {
             serde_json::json!({ "opentypeFlags": { "smcp": 1 } }),
             "OpenType features",
         ),
+        (
+            // Story #341 narrows the refusal to exactly `{LIGA: 0}`: `LIGA`
+            // present but not disabled has no vocabulary and still refuses.
+            "opentype-liga-on",
+            serde_json::json!({ "opentypeFlags": { "LIGA": 1 } }),
+            "OpenType features",
+        ),
+        (
+            // `LIGA: 0` alongside any other flag is not the measured,
+            // narrowly-lowered shape either — still refused.
+            "opentype-liga-plus-other",
+            serde_json::json!({ "opentypeFlags": { "LIGA": 0, "smcp": 1 } }),
+            "OpenType features",
+        ),
     ];
 
     for (label, style_override, expected) in cases {
@@ -443,6 +493,46 @@ fn out_of_vocabulary_text_features_are_named_diagnostics() {
             "{label}",
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Story #341: exactly the measured OpenType flag, standard ligatures off
+// (`{LIGA: 0}`), lowers into `ligatures_off` — the one flag widened past a
+// refusal; every other flag stays refused (the case above).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn liga_zero_lowers_into_ligatures_off() {
+    let mut text = text_json("t", "hi", 16.0, 400);
+    text["style"]["opentypeFlags"] = serde_json::json!({ "LIGA": 0 });
+    let json = wrap_single(text);
+
+    let (doc, diagnostics) = lower(
+        &serde_json::from_str(&json).unwrap(),
+        Profile::Core,
+        &BTreeMap::new(),
+    )
+    .expect("LIGA: 0 lowers");
+    assert!(
+        unsupported(&diagnostics).is_empty(),
+        "{:?}",
+        unsupported(&diagnostics),
+    );
+    let ts = node(&doc, "t")
+        .1
+        .text_style
+        .as_ref()
+        .expect("carries a style");
+    assert!(ts.ligatures_off);
+}
+
+#[test]
+fn the_default_ligatures_off_is_false() {
+    // No opentypeFlags at all (the hug-in-fill fixture's leaf): the default,
+    // behavior-preserving value.
+    let (doc, _) = lowered(HUG_IN_FILL);
+    let ts = node(&doc, "hug inside fill").1.text_style.as_ref().unwrap();
+    assert!(!ts.ligatures_off);
 }
 
 // ---------------------------------------------------------------------------

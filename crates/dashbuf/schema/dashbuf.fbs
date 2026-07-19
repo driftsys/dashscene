@@ -257,6 +257,12 @@ table TextStyle {
   text_align: TextAlign = Left;
   // Vertical alignment within the box; Top (the default) is omitted.
   text_align_v: TextAlignV = Top;
+  // Standard ligatures forced off (story #341,
+  // docs/decisions/figma-text-lowering.md): Figma's OpenType `LIGA: 0` flag,
+  // the one OpenType feature the vocabulary lowers — every other flag has no
+  // vocabulary and stays a named diagnostic. `false` (the default) is
+  // omitted, so a pre-#341 style emits byte-identically (R7).
+  ligatures_off: bool = false;
 }
 
 // v0.2 flex layout vocabulary (docs/design/dashbuf.md, R2). New members append at

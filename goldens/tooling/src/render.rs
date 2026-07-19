@@ -96,8 +96,9 @@ fn box_of(arena: &Arena, node: NodeId) -> (f32, f32, f32, f32) {
     (rect.x, rect.y, rect.w, rect.h)
 }
 
-/// The `TextShape` for a node's text style (story #327): the fixed line height,
-/// letter spacing, and horizontal alignment the stager lays the run out under.
+/// The `TextShape` for a node's text style (story #327, #341): the fixed line
+/// height, letter spacing, horizontal alignment, and standard-ligatures-off
+/// bit the stager lays the run out under.
 fn text_shape(style: &dashscene_core::TextStyle) -> TextShape {
     TextShape {
         line_height_px: style.line_height_px,
@@ -107,6 +108,7 @@ fn text_shape(style: &dashscene_core::TextStyle) -> TextShape {
             dashscene_core::TextAlign::Center => dashscene_typeset::text::TextAlign::Center,
             dashscene_core::TextAlign::Right => dashscene_typeset::text::TextAlign::Right,
         },
+        ligatures_off: style.ligatures_off,
     }
 }
 
@@ -328,6 +330,7 @@ mod tests {
                 line_height_px: None,
                 letter_spacing: 0.0,
                 align: TextAlign::Center,
+                ligatures_off: false,
             },
             VerticalAlign::Center,
         );

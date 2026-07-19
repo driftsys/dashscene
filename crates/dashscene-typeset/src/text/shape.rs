@@ -112,8 +112,14 @@ pub(crate) fn is_arabic_strong(c: char) -> bool {
 /// against faces it builds once per call ([`shape_paragraph`]), so this
 /// single-run entry point exists only for the shaping unit tests.
 #[cfg(test)]
-fn shape(font: &Font, text: &str, direction: Direction, context: RunContext) -> ShapedText {
-    shape_with_face(&font.face(), text, direction, context)
+fn shape(
+    font: &Font,
+    text: &str,
+    direction: Direction,
+    context: RunContext,
+    ligatures_off: bool,
+) -> ShapedText {
+    shape_with_face(&font.face(), text, direction, context, ligatures_off)
 }
 
 /// Shapes `text` as one run of the given direction and context — the
@@ -125,11 +131,18 @@ fn shape(font: &Font, text: &str, direction: Direction, context: RunContext) -> 
 /// Glyphs come back in logical order: rustybuzz emits an RTL run in
 /// visual (left-to-right) order, so it is reversed here. Positioning
 /// re-reverses RTL runs for display (`layout.rs`).
+///
+/// `ligatures_off` (story #341: Figma's authored `LIGA: 0`) forces
+/// `liga`/`clig` off regardless of `context` — overriding an Arabic-context
+/// run's normal full-default-feature-set posture — while leaving every other
+/// default feature (digit shapes, joining, `rlig`/`ccmp`, kerning) exactly as
+/// `context` already decides.
 pub(crate) fn shape_with_face(
     face: &rustybuzz::Face<'_>,
     text: &str,
     direction: Direction,
     context: RunContext,
+    ligatures_off: bool,
 ) -> ShapedText {
     let mut buffer = UnicodeBuffer::new();
     // Pushed per char so a substituted digit keeps its authored byte
@@ -149,9 +162,13 @@ pub(crate) fn shape_with_face(
         Feature::new(Tag::from_bytes(b"liga"), 0, ..),
         Feature::new(Tag::from_bytes(b"clig"), 0, ..),
     ];
-    let features: &[Feature] = match context {
-        RunContext::Arabic => &[],
-        RunContext::Plain => &liga_clig_off,
+    let features: &[Feature] = if ligatures_off {
+        &liga_clig_off
+    } else {
+        match context {
+            RunContext::Arabic => &[],
+            RunContext::Plain => &liga_clig_off,
+        }
     };
     let glyphs = rustybuzz::shape(face, features, buffer);
     let infos = glyphs.glyph_infos();
@@ -187,7 +204,14 @@ pub(crate) fn shape_with_face(
 /// A single-font list (`&[primary]`) yields one sub-run per level run
 /// spanning the whole run — the pre-#219 path, byte-for-byte, every
 /// glyph tagged font 0.
-pub(crate) fn shape_paragraph(fonts: &[Font], bidi: &BidiInfo<'_>) -> ShapedText {
+///
+/// `ligatures_off` (story #341) forces `liga`/`clig` off on every run in the
+/// paragraph, whatever its resolved context — see [`shape_with_face`].
+pub(crate) fn shape_paragraph(
+    fonts: &[Font],
+    bidi: &BidiInfo<'_>,
+    ligatures_off: bool,
+) -> ShapedText {
     // Build each font's shaping face once for the whole paragraph — the
     // cascade probes coverage with them and shapes the sub-runs with the
     // same faces. Off the hot path: the shaped-run cache sits in front of
@@ -213,8 +237,13 @@ pub(crate) fn shape_paragraph(fonts: &[Font], bidi: &BidiInfo<'_>) -> ShapedText
             let run_text = &bidi.text[run.clone()];
             for (font_index, local) in font_split(&faces, run_text, context) {
                 let start = (run.start + local.start) as u32;
-                let shaped =
-                    shape_with_face(&faces[font_index], &run_text[local], direction, context);
+                let shaped = shape_with_face(
+                    &faces[font_index],
+                    &run_text[local],
+                    direction,
+                    context,
+                    ligatures_off,
+                );
                 glyphs.extend(shaped.glyphs.into_iter().map(|g| ShapedGlyph {
                     cluster: g.cluster + start,
                     font: font_index as u16,
@@ -560,7 +589,13 @@ mod tests {
     #[test]
     fn shapes_av_with_kerning() {
         let data = std::fs::read(crate::atlas::TEST_FONT).unwrap();
-        let shaped = shape(&font(), "AV", Direction::LeftToRight, RunContext::Plain);
+        let shaped = shape(
+            &font(),
+            "AV",
+            Direction::LeftToRight,
+            RunContext::Plain,
+            false,
+        );
         assert_eq!(shaped.glyphs.len(), 2);
         assert_eq!(shaped.glyphs[0].glyph_id, cmap(&data, 'A'));
         assert_eq!(shaped.glyphs[1].glyph_id, cmap(&data, 'V'));
@@ -575,15 +610,70 @@ mod tests {
     #[test]
     fn liga_disabled_keeps_fi_two_glyphs() {
         let data = std::fs::read(crate::atlas::TEST_FONT).unwrap();
-        let shaped = shape(&font(), "fi", Direction::LeftToRight, RunContext::Plain);
+        let shaped = shape(
+            &font(),
+            "fi",
+            Direction::LeftToRight,
+            RunContext::Plain,
+            false,
+        );
         assert_eq!(shaped.glyphs.len(), 2, "liga must be off");
         assert_eq!(shaped.glyphs[0].glyph_id, cmap(&data, 'f'));
         assert_eq!(shaped.glyphs[1].glyph_id, cmap(&data, 'i'));
     }
 
     #[test]
+    fn ligatures_off_suppresses_three_letter_ligatures_under_arabic_context() {
+        // Story #341: `ligatures_off` must force `liga`/`clig` off even for a
+        // run whose resolved context is Arabic (full default feature set,
+        // liga included) — not just reproduce Plain's already-off posture.
+        // Noto Sans carries the three-letter ligatures `ffi`/`ffl`
+        // (`docs/decisions/liga-clig-off-until-gsub-closure.md`), so shaping
+        // "office"/"waffle" under Arabic context ligates by default; with
+        // `ligatures_off` the same font, same context, shapes one glyph per
+        // authored letter instead.
+        let data = std::fs::read(crate::atlas::TEST_FONT).unwrap();
+        for word in ["office", "waffle"] {
+            let off = shape(
+                &font(),
+                word,
+                Direction::LeftToRight,
+                RunContext::Arabic,
+                true,
+            );
+            let expected: Vec<u16> = word.chars().map(|c| cmap(&data, c)).collect();
+            assert_eq!(
+                gids(&off),
+                expected,
+                "{word} with ligatures_off must shape one glyph per letter"
+            );
+
+            let on = shape(
+                &font(),
+                word,
+                Direction::LeftToRight,
+                RunContext::Arabic,
+                false,
+            );
+            assert!(
+                on.glyphs.len() < off.glyphs.len(),
+                "{word} under Arabic context's default features must ligate \
+                 (on {} glyphs, off {} glyphs)",
+                on.glyphs.len(),
+                off.glyphs.len(),
+            );
+        }
+    }
+
+    #[test]
     fn clusters_are_byte_indices() {
-        let shaped = shape(&font(), "ab", Direction::LeftToRight, RunContext::Plain);
+        let shaped = shape(
+            &font(),
+            "ab",
+            Direction::LeftToRight,
+            RunContext::Plain,
+            false,
+        );
         let clusters: Vec<u32> = shaped.glyphs.iter().map(|g| g.cluster).collect();
         assert_eq!(clusters, vec![0, 1]);
     }
@@ -591,9 +681,15 @@ mod tests {
     #[test]
     fn empty_text_shapes_to_nothing() {
         assert!(
-            shape(&font(), "", Direction::LeftToRight, RunContext::Plain)
-                .glyphs
-                .is_empty()
+            shape(
+                &font(),
+                "",
+                Direction::LeftToRight,
+                RunContext::Plain,
+                false
+            )
+            .glyphs
+            .is_empty()
         );
     }
 
@@ -602,7 +698,13 @@ mod tests {
         // rustybuzz emits an RTL run in visual (left-to-right) order,
         // clusters descending; shape() reverses it back to logical
         // order — the invariant the breaker and the cache rely on.
-        let shaped = shape(&font(), "אב", Direction::RightToLeft, RunContext::Plain);
+        let shaped = shape(
+            &font(),
+            "אב",
+            Direction::RightToLeft,
+            RunContext::Plain,
+            false,
+        );
         let clusters: Vec<u32> = shaped.glyphs.iter().map(|g| g.cluster).collect();
         assert_eq!(clusters, vec![0, 2]);
     }
@@ -666,7 +768,7 @@ mod tests {
         // paragraph-relative and non-decreasing across run boundaries.
         let text = "אב 123 גד";
         let bidi = BidiInfo::new(text, None);
-        let shaped = shape_paragraph(&[font()], &bidi);
+        let shaped = shape_paragraph(&[font()], &bidi, false);
         let clusters: Vec<u32> = shaped.glyphs.iter().map(|g| g.cluster).collect();
         assert_eq!(clusters, vec![0, 2, 4, 5, 6, 7, 8, 9, 11]);
     }
@@ -684,9 +786,21 @@ mod tests {
         // medial 16, initial 19; the dot below is 316.
         let data = std::fs::read(crate::atlas::TEST_FONT_ARABIC).unwrap();
         let font = arabic_font();
-        let isolated = shape(&font, "ب", Direction::RightToLeft, RunContext::Arabic);
+        let isolated = shape(
+            &font,
+            "ب",
+            Direction::RightToLeft,
+            RunContext::Arabic,
+            false,
+        );
         assert_eq!(gids(&isolated), vec![14, 316]);
-        let word = shape(&font, "ببب", Direction::RightToLeft, RunContext::Arabic);
+        let word = shape(
+            &font,
+            "ببب",
+            Direction::RightToLeft,
+            RunContext::Arabic,
+            false,
+        );
         // Logical order: initial, medial, final — each skeleton with
         // its dot, both glyphs of a letter sharing the letter's
         // cluster (2 bytes per char).
@@ -707,6 +821,7 @@ mod tests {
             "لا",
             Direction::RightToLeft,
             RunContext::Arabic,
+            false,
         );
         assert_eq!(gids(&shaped), vec![73, 10]);
         assert!(!gids(&shaped).contains(&cmap(&data, 'ل')));
@@ -724,6 +839,7 @@ mod tests {
             "بَ",
             Direction::RightToLeft,
             RunContext::Arabic,
+            false,
         );
         let fatha = shaped
             .glyphs
@@ -746,6 +862,7 @@ mod tests {
             "123",
             Direction::LeftToRight,
             RunContext::Arabic,
+            false,
         );
         let expected: Vec<u16> = "١٢٣".chars().map(|c| cmap(&data, c)).collect();
         assert_eq!(gids(&shaped), expected);
@@ -761,6 +878,7 @@ mod tests {
             "123",
             Direction::LeftToRight,
             RunContext::Plain,
+            false,
         );
         let expected: Vec<u16> = "123".chars().map(|c| cmap(&data, c)).collect();
         assert_eq!(gids(&shaped), expected);

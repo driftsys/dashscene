@@ -196,13 +196,15 @@ pub enum TextAlignV {
 }
 
 /// A text node's authored style — the schema's `TextStyle` table (stories #26,
-/// #310). Intent only (P1): family, em size, CSS-scale weight, fill color, and
-/// the four style axes the runtime consumes — a fixed line height, letter
-/// spacing, and horizontal/vertical alignment. Never glyph data, line breaks,
-/// or resolved metrics — shaping and placement are the runtime's
+/// #310, #341). Intent only (P1): family, em size, CSS-scale weight, fill
+/// color, the four #310 style axes the runtime consumes — a fixed line
+/// height, letter spacing, and horizontal/vertical alignment — and #341's
+/// standard-ligatures-off bit. Never glyph data, line breaks, or resolved
+/// metrics — shaping and placement are the runtime's
 /// (`docs/design/typeset-latin.md`). A percentage line height, `JUSTIFIED`
-/// alignment, and mixed-style segments still have no vocabulary and are named
-/// diagnostics at the walk (P4), never carried here as though they rendered.
+/// alignment, mixed-style segments, and any OpenType flag other than
+/// standard-ligatures-off still have no vocabulary and are named diagnostics
+/// at the walk (P4), never carried here as though they rendered.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextStyle {
     pub family: String,
@@ -224,6 +226,11 @@ pub struct TextStyle {
     pub text_align: TextAlign,
     /// Vertical alignment within the box. `Top` is the default.
     pub text_align_v: TextAlignV,
+    /// Standard ligatures forced off (story #341): Figma's OpenType
+    /// `LIGA: 0` flag, the one OpenType feature the vocabulary lowers.
+    /// `false` is the default; any other OpenType flag has no vocabulary
+    /// and stays a named diagnostic at the walk.
+    pub ligatures_off: bool,
 }
 
 /// One node of the document. `parent` is an index into [`Document::nodes`], and

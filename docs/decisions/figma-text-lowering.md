@@ -1,9 +1,59 @@
 # The Figma text lowering carries four style axes and diagnoses the rest
 
-    status   accepted (story #160, 2026-07-16); revised (story #310, 2026-07-18)
+    status   accepted (story #160, 2026-07-16); revised (story #310,
+             2026-07-18; story #341, 2026-07-19)
     scope    crates/dashc (the figma module and the document model), the
              dashbuf schema, dashscene-core (load), and dashscene-typeset
     binds    every consumer of the .dsb string/text-style pools
+
+## Revised at #341 (2026-07-19): the measured OpenType flag, `LIGA: 0`, now lowers
+
+Story #341 measured what the "OpenType feature flags" refusal (D1 below) was
+actually blocking on a real imported file: the hero
+(`S30AJmYfnDKGeSQmzuXEUk` root `1973:6580`) carries 58 TEXT nodes, and every
+one of them sets exactly one OpenType flag, `{"LIGA": 0}` (standard ligatures
+explicitly off) — no stylistic sets, no fractions, no smallcaps, nothing else.
+That is narrow enough to widen the vocabulary by exactly the measured shape,
+the same discipline #310 followed per axis: **`{LIGA: 0}` lowers into a new
+`ligatures_off: bool` on `TextStyle`; every other OpenType flag, every other
+value on `LIGA`, and `LIGA: 0` alongside any other flag still has no
+vocabulary and stays the named `figma.unsupported: OpenType features`
+diagnostic** (`crates/dashc/src/figma/mod.rs` `text_of`). `ligatures_off` is
+appended at the `TextStyle` table tail with a behavior-preserving default
+(`false`), so a style using it emits byte-identically to before this story
+(R7).
+
+Where it lowers to: `dashscene-typeset`'s `Typesetter::layout_with` already
+takes a per-call `TextShape` (the #310 seam); `ligatures_off` is a fourth
+knob on it, threaded down to `shape::shape_with_face`'s feature-list
+selection.
+There it forces `liga`/`clig` off regardless of the run's resolved
+`RunContext` — overriding an Arabic-context run's otherwise full default
+feature set (`docs/decisions/liga-clig-off-until-gsub-closure.md`) — while
+leaving every other default feature (digit shapes, joining, `rlig`/`ccmp`,
+kerning) exactly as `RunContext` already decides. A non-Arabic run already
+shapes with `liga`/`clig` off by default, so the flag is a no-op there; the
+override only does real work on an Arabic-context run, which is why the unit
+test proving it (`crates/dashscene-typeset/src/text/shape.rs`) forces
+`RunContext::Arabic` on an English three-letter-ligature word ("office",
+"waffle") rather than relying on a Latin run to show a difference. Because
+the same paragraph text can now shape two different ways depending on this
+per-call knob, the `Typesetter`'s shaped-run cache — previously keyed by
+paragraph text alone — splits into two maps, one per `ligatures_off` posture;
+the `false` posture's map and its lookup/insert code path are unchanged from
+before this story.
+
+The goldens render stager's `text_shape()` (`goldens/tooling/src/render.rs`)
+threads the node's `TextStyle.ligatures_off` into the `TextShape` it builds,
+the same way it already threads line height, letter spacing, and alignment
+(#327). The `layout()`/default-axis path — `TextShape::default()`,
+`ligatures_off: false` — stays byte-identical to pre-#341 output; every E7
+oracle and golden call site is unaffected.
+
+**Not yet done by this story:** the liga-text oracle frame and the hero
+re-measure (confirming the 31 skipped text blocks now lower and the hero's
+solve height moves toward Figma's own render) wait on a captured Figma
+fixture exercising `LIGA: 0`; they are a follow-up once that fixture lands.
 
 ## Revised at #310 (2026-07-18): four more axes now lower
 
@@ -57,13 +107,15 @@ deliberate: keeping `layout()` byte-identical leaves the v0.9 E7 oracle
 untouched until a non-default text render fixture verifies the wiring. The
 end-to-end render wiring is tracked as a follow-up (#327).
 
-**Still refused (unchanged from #160):** a percentage line height, `JUSTIFIED`
+**Still refused (updated by #341):** a percentage line height, `JUSTIFIED`
 alignment, multiple style segments (`styleOverrideTable`), italic, decoration,
-a case transform, truncation, a hyperlink, an OpenType flag, and a text outline.
+a case transform, truncation, a hyperlink, any OpenType flag other than
+exactly `{LIGA: 0}`, and a text outline.
 
-The emit pool dedup key (`text_style_key`) now covers all eight axes, so two
-styles differing only in, for example, alignment stay two distinct pool entries
-rather than collapsing to one (which would render one node with the wrong style).
+The emit pool dedup key (`text_style_key`) now covers all nine axes, so two
+styles differing only in, for example, alignment or `ligatures_off` stay two
+distinct pool entries rather than collapsing to one (which would render one
+node with the wrong style).
 
 The `binds` line above is updated: this record now binds the dashbuf schema,
 `dashscene-core`, and `dashscene-typeset`, not just `dashc`. The rest of this
@@ -199,26 +251,33 @@ emits an out-of-range weight today; the gap is flagged for #41.
 
 ## Trace
 
-- Satisfies: issue #160 (text lowering) and issue #310 (the four-axis widening
-  — line height, letter spacing, horizontal and vertical alignment); P1
-  (authored intent only — the document carries the codepoints, style, and
-  alignment enums, never the shaped lines, glyph positions, resolved offsets, or
+- Satisfies: issue #160 (text lowering), issue #310 (the four-axis widening —
+  line height, letter spacing, horizontal and vertical alignment), and issue
+  #341 (the measured `LIGA: 0` → `ligatures_off` widening); P1 (authored intent
+  only — the document carries the codepoints, style, and alignment enums,
+  never the shaped lines, glyph positions, resolved offsets, or
   `absoluteRenderBounds`), P2 (horizontal align in the typesetter, vertical
-  align in the stager, the painter unchanged), P4 (out-of-vocabulary features
-  are named diagnostics), P5 (Figma compatibility is one producer's property).
+  align in the stager, the painter unchanged), P4 (out-of-vocabulary features,
+  including every OpenType flag but the one measured, are named diagnostics),
+  P5 (Figma compatibility is one producer's property).
 - Verified by: `crates/dashc/tests/text_lowering.rs` (characters + style
-  lowering, the four widened axes and their still-refused neighbors, the Arabic
-  RTL run's authored codepoints, round-trip through `dashscene-core`, pool dedup
-  including the alignment-distinct-entries guard, the out-of-vocabulary
-  diagnostics, the golden `.dsb`s), `crates/dashbuf/tests/text_roundtrip.rs`
-  (the new fields round-trip and a default style reads back the defaults),
-  `crates/dashscene-core/tests/load.rs` (the axes reach the arena),
+  lowering, the four widened axes and their still-refused neighbors, the
+  narrowed `LIGA: 0` lowering and its still-refused OpenType neighbors, the
+  Arabic RTL run's authored codepoints, round-trip through `dashscene-core`,
+  pool dedup including the alignment- and ligatures-off-distinct-entries
+  guards, the out-of-vocabulary diagnostics, the golden `.dsb`s),
+  `crates/dashbuf/tests/text_roundtrip.rs` (the new fields round-trip and a
+  default style reads back the defaults), `crates/dashscene-core/tests/load.rs`
+  (the axes reach the arena), `crates/dashscene-typeset/src/text/shape.rs`
+  (`ligatures_off` overrides an Arabic-context run's default-on ligatures),
   `crates/dashscene-typeset/tests/typeset_shape.rs` (`layout_with` honors each
-  knob and `layout` is byte-identical to the default),
-  `goldens/tooling/tests/v07_text_lowering.rs` (the lowered scene solves through
-  the measure callback and paints).
+  knob and `layout` is byte-identical to the default), `goldens/tooling/tests/
+  v07_text_lowering.rs` (the lowered scene solves through the measure callback
+  and paints).
 - Related: `docs/decisions/figma-flex-lowering.md` (the shared walk
   conventions and per-axis sizing), `docs/decisions/rtl-text-width-is-the-placed-extent.md`
   (the width-vs-bounds decision #160 settled, #224),
   `docs/design/typeset-latin.md` (the runtime this feeds through #29),
-  `docs/design/dashbuf.md` (the string/text-style pools).
+  `docs/design/dashbuf.md` (the string/text-style pools),
+  `docs/decisions/liga-clig-off-until-gsub-closure.md` (the per-run
+  `RunContext` posture #341's `ligatures_off` overrides).

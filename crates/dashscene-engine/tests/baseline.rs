@@ -45,6 +45,7 @@ fn styled(txn: &mut dashscene_core::Txn<'_>, node: NodeId, text: &str, size: f32
             letter_spacing: 0.0,
             text_align: TextAlign::Left,
             text_align_v: TextAlignV::Top,
+            ligatures_off: false,
         }),
     );
 }
