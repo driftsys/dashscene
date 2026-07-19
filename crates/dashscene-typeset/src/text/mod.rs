@@ -49,7 +49,11 @@ pub struct PositionedGlyph {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Line {
     pub glyphs: Vec<PositionedGlyph>,
-    /// Pen advance over the line's glyphs, scaled.
+    /// Pen advance over the line's glyphs, scaled, less the line's own
+    /// trailing letter-spacing step (story #336) — so this is the width
+    /// the box extent and the alignment shift use, not the raw pen
+    /// position after the last glyph. The two differ by exactly one
+    /// `letter_spacing` when that is non-zero.
     pub width: f32,
     /// Baseline position from the layout's top, y-down.
     pub baseline_y: f32,
@@ -237,9 +241,10 @@ impl Typesetter {
     /// [`layout`](Self::layout) with the additive shaping knobs (story #310):
     /// `shape.line_height_px` overrides the per-line advance and centers each
     /// line's intrinsic box within the fixed box ([`half_leading`], Figma's
-    /// model), `shape.letter_spacing` tracks each glyph in both the measured
-    /// width and the placement pen, and `shape.align` shifts each line within
-    /// `max_width` (or the widest line when `None`). With
+    /// model), `shape.letter_spacing` tracks each glyph in the placement pen
+    /// but excludes each line's own trailing step from the measured width
+    /// (story #336 — Figma's model), and `shape.align` shifts each line
+    /// within `max_width` (or the widest line when `None`). With
     /// [`TextShape::default`] this is exactly `layout`'s previous behavior, so
     /// every existing call site — the E7 oracle and goldens included — renders
     /// identically.
