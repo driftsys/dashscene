@@ -945,8 +945,14 @@ impl Walk<'_> {
     }
 
     fn paint_of(&mut self, node: &Node, path: &str) -> Result<Option<DocPaint>, CompileError> {
+        // Story C1 (debt #146): a node's visible fills lower as a stack — the
+        // first (bottom) becomes `fill`, the rest (`extra_fills`) are painted
+        // over it in the same array order.
+        let mut fills = self.fills_of(node, path)?;
+        let fill = (!fills.is_empty()).then(|| fills.remove(0));
         let entry = PaintEntry {
-            fill: self.fill_of(node, path)?,
+            fill,
+            extra_fills: fills,
             stroke: self.stroke_of(node, path)?,
             corners: corners_of(node),
             shadows: shadows_of(node, path)?,
@@ -1039,6 +1045,10 @@ impl Walk<'_> {
         // `Unsupported`, which the caller turns into a blocker.
         let entry = PaintEntry {
             fill: self.fill_of(node, path)?,
+            // An ellipse keeps the single-fill restriction (`fill_of`); the
+            // stacked-fill vocabulary (story C1) widens `paint_of` only — no
+            // stacked-fill ellipse is in the measured need.
+            extra_fills: Vec::new(),
             stroke: self.stroke_of(node, path)?,
             corners: CornerRadii {
                 top_left: radius,
@@ -1169,6 +1179,11 @@ impl Walk<'_> {
 
         let entry = PaintEntry {
             fill: Some(paint_fill),
+            // A baked vector keeps the single-fill restriction (`fill_of`
+            // above); the stacked-fill vocabulary (story C1) widens
+            // `paint_of` only — no stacked-fill vector is in the measured
+            // need.
+            extra_fills: Vec::new(),
             // The outline is baked into the field, not a parametric stroke.
             stroke: None,
             corners: CornerRadii::default(),
@@ -1191,12 +1206,28 @@ impl Walk<'_> {
             OnePaint::One(fill) => self.paint_kind(fill, path).map(Some),
             // PaintEntry.fill is one Option<PaintKind>; Figma's fills is an
             // array. Stacking is a Document expressiveness gap (debt #146), not
-            // a triage gap — and a silent drop would violate P4.
+            // a triage gap — and a silent drop would violate P4. `paint_of`
+            // (the plain rectangle/frame path) lowers a stack instead, through
+            // `fills_of`; an ellipse, a baked vector, and a text glyph color
+            // keep refusing here — the measured need (the hero, the
+            // stacked-fills fixture) is a plain frame/rectangle.
             OnePaint::Many => Err(CompileError::Unsupported {
                 path: path.to_string(),
                 what: "more than one visible fill".to_string(),
             }),
         }
+    }
+
+    /// Lowers every visible fill of `node`, in Figma's `fills` array order —
+    /// the same back-to-front convention as `effects`/`children`, so array
+    /// order is paint order with no reversal (story C1, debt #146). Unlike
+    /// `fill_of`, a stack of visible fills is not itself a blocker; a fill
+    /// whose own kind has no lowering still refuses by name (P4), through
+    /// `paint_kind`.
+    fn fills_of(&mut self, node: &Node, path: &str) -> Result<Vec<PaintKind>, CompileError> {
+        visible_paints(&node.fills)
+            .map(|fill| self.paint_kind(fill, path))
+            .collect()
     }
 
     fn paint_kind(&mut self, paint: &Paint, path: &str) -> Result<PaintKind, CompileError> {
@@ -1586,12 +1617,19 @@ enum OnePaint<'a> {
 }
 
 fn single_visible_paint(paints: &[Paint]) -> OnePaint<'_> {
-    let mut visible = paints.iter().filter(|p| p.visible != Some(false));
+    let mut visible = visible_paints(paints);
     match (visible.next(), visible.next()) {
         (None, _) => OnePaint::None,
         (Some(paint), None) => OnePaint::One(paint),
         (Some(_), Some(_)) => OnePaint::Many,
     }
+}
+
+/// Every paint in `paints` Figma does not mark `visible: false` — the shared
+/// filter `single_visible_paint` (one-or-refuse) and `fills_of` (the ordered
+/// stack, story C1) both take.
+fn visible_paints(paints: &[Paint]) -> impl Iterator<Item = &Paint> {
+    paints.iter().filter(|p| p.visible != Some(false))
 }
 
 /// The container-side flex intent of `node`, or `None` for a passthrough

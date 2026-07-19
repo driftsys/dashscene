@@ -145,6 +145,16 @@ union Fill {
   ImageFill,
 }
 
+// One stacked fill layer (story C1, debt #146): a `Fill` union wrapped in a
+// table, so it can sit in a vector — flatc does not support a vector of a
+// bare union for Rust. Carries nothing beyond the fill itself: a layer's
+// opacity is already folded into its own color/stops the same way a lone
+// `Paint.fill` is, and a non-plain blend mode is refused upstream by name
+// (the profile triage), so no other field belongs here.
+table FillLayer {
+  fill: Fill;
+}
+
 // v0.3 strokes are solid-only (see
 // docs/decisions/paint-entry-composition.md); the color widens to a
 // fill additively if a real file ever needs gradient strokes (R6
@@ -215,6 +225,13 @@ table Paint {
   // the fill by. Appended at the tail with the sentinel default, so a pre-B1
   // paint entry emits byte-identically (R7).
   shape_field: uint32 = 4294967295;
+  // Story C1 (debt #146) — stacked fills. `fill` is the bottom (first
+  // visible) fill, unchanged in meaning; `extra_fills`, when present, are
+  // the fills stacked over it, painted in array order (bottom to top — the
+  // same back-to-front convention as `shadows`/Figma's `effects` and
+  // `children`). Absent (the pre-C1 default) means a single fill, so every
+  // pre-C1 paint entry emits byte-identically (R7).
+  extra_fills: [FillLayer];
 }
 
 // Horizontal text alignment within the node box (Figma's

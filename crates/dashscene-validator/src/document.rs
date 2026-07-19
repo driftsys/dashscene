@@ -16,8 +16,8 @@
 //! and emit a named diagnostic (P4/R6), never default silently."
 
 use dashbuf::{
-    Document, Fill, Image, NO_FIELD, NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE, Node, Paint,
-    VariantSet,
+    Document, Fill, FillLayer, Image, NO_FIELD, NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE, Node,
+    Paint, VariantSet,
 };
 
 use crate::paint::{
@@ -580,13 +580,55 @@ fn check_grid_track(
     }
 }
 
-/// One paint-pool entry: its fill union, its gradient stops, its stroke, and
-/// its image reference.
-fn check_paint_entry(report: &mut Report, paint: &Paint<'_>, at: &Location, sizes: &PoolSizes) {
-    check_enum!(report, at, "Paint.fill", paint.fill_type());
+/// A flatbuffer table carrying one `Fill` union — `Paint` (the primary fill)
+/// and `FillLayer` (a stacked layer, story C1, debt #146) generate the same
+/// three accessors, so `check_fill` validates either through this rather
+/// than duplicating the rule per layer.
+trait FillUnion<'a> {
+    fn fill_type(&self) -> Fill;
+    fn fill_as_gradient(&self) -> Option<dashbuf::Gradient<'a>>;
+    fn fill_as_image_fill(&self) -> Option<dashbuf::ImageFill<'a>>;
+}
 
-    if paint.fill_type() == Fill::Gradient
-        && let Some(gradient) = paint.fill_as_gradient()
+impl<'a> FillUnion<'a> for Paint<'a> {
+    fn fill_type(&self) -> Fill {
+        Paint::fill_type(self)
+    }
+    fn fill_as_gradient(&self) -> Option<dashbuf::Gradient<'a>> {
+        Paint::fill_as_gradient(self)
+    }
+    fn fill_as_image_fill(&self) -> Option<dashbuf::ImageFill<'a>> {
+        Paint::fill_as_image_fill(self)
+    }
+}
+
+impl<'a> FillUnion<'a> for FillLayer<'a> {
+    fn fill_type(&self) -> Fill {
+        FillLayer::fill_type(self)
+    }
+    fn fill_as_gradient(&self) -> Option<dashbuf::Gradient<'a>> {
+        FillLayer::fill_as_gradient(self)
+    }
+    fn fill_as_image_fill(&self) -> Option<dashbuf::ImageFill<'a>> {
+        FillLayer::fill_as_image_fill(self)
+    }
+}
+
+/// One `Fill` union's vocabulary rules: its own enum range, a gradient's
+/// stops, an image fill's scale mode and asset index. Shared by the primary
+/// `Paint.fill` and every stacked `FillLayer` in `Paint.extra_fills` (story
+/// C1) — a layer is not exempt from the same rules just because it sits in
+/// a stack.
+fn check_fill<'a>(
+    report: &mut Report,
+    at: &Location,
+    fill: &impl FillUnion<'a>,
+    sizes: &PoolSizes,
+) {
+    check_enum!(report, at, "Paint.fill", fill.fill_type());
+
+    if fill.fill_type() == Fill::Gradient
+        && let Some(gradient) = fill.fill_as_gradient()
     {
         check_enum!(report, at, "Gradient.kind", gradient.kind());
         // `stops` is `(required)`, so the accessor is not an Option — but
@@ -596,11 +638,24 @@ fn check_paint_entry(report: &mut Report, paint: &Paint<'_>, at: &Location, size
         check_gradient_stops(report, at, &offsets);
     }
 
-    if paint.fill_type() == Fill::ImageFill
-        && let Some(image_fill) = paint.fill_as_image_fill()
+    if fill.fill_type() == Fill::ImageFill
+        && let Some(image_fill) = fill.fill_as_image_fill()
     {
         check_enum!(report, at, "ImageFill.scale_mode", image_fill.scale_mode());
         check_image_index(report, at, image_fill.image(), sizes.images);
+    }
+}
+
+/// One paint-pool entry: its fill union (and any stacked fills over it), its
+/// stroke, and its image reference.
+fn check_paint_entry(report: &mut Report, paint: &Paint<'_>, at: &Location, sizes: &PoolSizes) {
+    check_fill(report, at, paint, sizes);
+
+    // Stacked fills (story C1, debt #146): each layer's own vocabulary rules,
+    // the same posture as the shadows loop below — one field label for every
+    // layer, `at` naming the paint entry rather than the individual layer.
+    for layer in paint.extra_fills().unwrap_or_default().iter() {
+        check_fill(report, at, &layer, sizes);
     }
 
     if let Some(stroke) = paint.stroke() {

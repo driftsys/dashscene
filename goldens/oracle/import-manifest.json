@@ -81,6 +81,16 @@
         }
       ],
       "note": "One fixed 540x160 FRAME with four node-effects lowering paths (story C2/#143, epic #343): a rotated rectangle, a half-opacity rectangle, a hidden layer (visible:false), and a mask pair (an isMask ellipse masking a rectangle). Node opacity, box-outline masks, and hidden nodes already lower (v0.8 story #44, debt #143) — this frame is the committed replay+measurement for that lowering, not a new dashc un-pin. Two disclosed holes, both excluded from the diff and named here rather than hidden inside the band: (1) the rotated rectangle — rotation stays refused by design (this issue's design gate: zero non-axis-aligned relativeTransform in either real-file target, no rotation schema in v0.10), a permanent hole; its excludeRegion is Figma's own reported absoluteBoundingBox for the rotated node, ceil/floor-rounded to the covering integer pixel box. (2) the mask pair — this capture predates a fixture-author plugin fix (this story, code.js) that makes the mask shape a full circle with maskType VECTOR (the Plugin API name for the REST OUTLINE mask dashc's lowering accepts); as captured the mask ellipse is non-circular with the Plugin API's default ALPHA maskType and refuses for both reasons (debt #361), a temporary hole pending a human re-run of the corrected command plus a re-capture — at that point this excludeRegion and its two expectedWarnings entries should be removed and the frame re-measured. Hard-edged rectangles and a circle: the aa-edge band. Measured 0/61271 px (0.000%, max delta 2) over the remaining opacity+hidden region — a pixel-exact match, well within the aa-edge band."
+    },
+    {
+      "frame": "stacked-fills",
+      "fixture": "corpus/figma-fixtures/stacked-fills.json",
+      "band": "aa-edge",
+      "figmaFileKey": "aVrn0XTElCIgiejyuCqMmW",
+      "figmaNodeId": "1:2",
+      "designSource": "oracle/import-design-source/stacked-fills.png",
+      "status": "captured",
+      "note": "One fixed FRAME holding one RECTANGLE with two visible fills — an opaque SOLID at fills[0] (the bottom layer) and a semi-transparent GRADIENT_LINEAR at fills[1] (opacity 0.55, stacked on top) — for the stacked-fills vocabulary path (story C1/#146, epic #343): dashc's paint_of lowers the fills array in order onto PaintEntry.fill/extra_fills, and dashpaint/dashscene-skia composite them bottom to top on the same box. The aa-edge band: the content is a hard-edged rect with a flat-shaded gradient overlay, not msdf-like or blurred, so the expected residual is rect-edge anti-aliasing and gradient-interpolation rounding — the same residual class as the image-fill and jpeg-fill frames above, both measured in this band. Measured 0/40000 px (0.000%, max delta 2) — effectively an exact match, well within the aa-edge band."
     }
   ]
 }
