@@ -923,10 +923,9 @@ fn rel_bits(local_x: f32, local_y: f32, w: f32, h: f32) -> [u32; 4] {
 /// #272: after the solve, re-place the children of a baseline row on one
 /// glyph baseline. Taffy's high-level measure reports no baseline for a
 /// leaf, so Taffy aligns box bottoms (`baseline.unwrap_or(height)`); a text
-/// leaf's real first-line baseline — the ascent the typesetter already
-/// computes as `line.baseline_y` — sits a descender above its box bottom, so
-/// a mixed-size row of box-bottom-aligned runs drops the shorter runs too
-/// low. This walks the tree and, for every `Horizontal` row whose cross
+/// leaf's real first-line baseline — the `line.baseline_y` the typesetter
+/// already computes — sits a descender above its box bottom, so a mixed-size
+/// row of box-bottom-aligned runs drops the shorter runs too low. This walks the tree and, for every `Horizontal` row whose cross
 /// alignment is `Baseline` and that holds at least one text child, records
 /// each child's corrected cross-axis (local y): the child sits so its
 /// baseline meets the row's baseline line, the content-box top plus the
@@ -936,9 +935,12 @@ fn rel_bits(local_x: f32, local_y: f32, w: f32, h: f32) -> [u32; 4] {
 /// baseline row of plain boxes solves exactly as before.
 ///
 /// The walk visits every node, but only shapes at a baseline text row, which
-/// is rare. `baseline_y` is the first-line ascent — width-independent for a
-/// single-font run — so laying out at the solved width is only to key a
-/// wrapped run off its real first line.
+/// is rare. `baseline_y` is the first line's placed baseline, not a bare font
+/// metric: under a fixed line height it is the ascent plus half the leading
+/// (the typesetter's half-leading placement, #332), so it must come from
+/// `layout_with` under the node's own `text_shape` — the same call the render
+/// stager makes — never recomputed from font metrics alone. Laying out at the
+/// solved width also keys a wrapped run off its real first line.
 ///
 /// Limitation: a nested container inside a baseline text row is taken by its
 /// box bottom, not its own first line's baseline (Taffy's `Layout` does not

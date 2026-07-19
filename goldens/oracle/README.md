@@ -134,3 +134,57 @@ frame; it never draws one (G-11).
 3. Run the assertion: `cargo test -p goldens --test render_oracle`.
    Tune nothing to make it pass — if a frame fails its band, that is a measured
    fidelity gap to fix in the painter or a band to re-pin with review.
+
+## The import-fidelity oracle (issue #332)
+
+The full real-file-import epic ends at a quantitative question: does an
+**imported** file render inside a measured band of Figma's own render? Its two
+real targets are third-party Community files, and
+`docs/decisions/figma-corpus-self-authored-only.md` forbids committing their
+JSON or their render — they are checked live only (`just render`). The
+committed, license-clean half lives beside the E7 oracle, deliberately
+separate from it:
+
+    goldens/oracle/
+      import-manifest.json     per-frame wiring, same shape as manifest.json
+                               (status pending-332 until captured)
+      import-design-source/    the committed Figma REST exports for the
+                               import frames
+
+The E7 gate's files — `manifest.json`, `design-source/`, the
+`render_oracle.rs` test — are never read or written by the import oracle. The
+diff harness and the three pinned bands (`goldens::oracle`) are reused
+**read-only**; a band is never retuned here. The reference render is
+`goldens::render::render_dsb` — the Sf-1 production path — because unlike the
+E7 test's own stager it paints embedded image-fill bytes and honors the
+lowered text axes, the two capabilities these frames exist to measure. The
+assertion is `goldens/tooling/tests/import_oracle.rs`; the capture step is
+`deno task import-oracle-capture` (the same export mechanism as
+`oracle-capture`, pointed at the import manifest).
+
+Two self-authored frames cover the two vocabulary paths the real import
+proved live but no E7 frame measures, both measured within their band:
+
+- `import-image-fill` (`import-image-fill.json`, node `1:2`, 400x200) —
+  **0.329 %** on `aa-edge`. One frame whose only paint is an IMAGE fill
+  (scaleMode `FILL`) of a self-generated 380x380 PNG — gradients, two
+  hard-edged rectangles, and a semi-transparent square — embedded into the
+  `.dsb` at compile and decoded by the painter. The 380x380 image in the
+  400x200 box means `FILL` scales the paint up to cover and crops it, so the
+  measurement includes the scale-and-crop path. The first committed
+  measurement of the image decode -> embed -> paint path against Figma; the
+  residual is rect-edge anti-aliasing and sub-threshold resampling noise.
+- `import-text-axes` (`import-text-axes.json`, node `2:2`, 400x200) —
+  **1.829 %** on `msdf-text`. One Noto Sans Regular 24 TEXT node exercising
+  the #310 axes end-to-end: PIXELS line height 18, letter spacing 1.2, RIGHT +
+  BOTTOM alignment in a fixed box larger than its content. This frame caught
+  two real bugs on first measurement (the G-11 pattern finding real bugs
+  again, after #314 and #272): an absent `textAutoResize` mis-lowered as
+  auto-size
+  (`dashc`), and a fixed line height placing the baseline at the full
+  intrinsic ascent instead of centering the intrinsic box (half-leading,
+  `dashscene-typeset`) — together first measured 2.822 %, structurally
+  misplaced. Fixed, the run lands where Figma renders it; the remaining
+  residual is glyph edges plus ~1 px of horizontal placement from the
+  trailing letter-spacing step Figma excludes from the measured width
+  (debt #336).

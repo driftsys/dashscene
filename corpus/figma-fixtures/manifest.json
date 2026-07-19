@@ -136,6 +136,20 @@
       "covers": "one INNER_SHADOW on a rounded card for the E7 render oracle (frame v08-inner-shadow, blur-falloff band): offset 0, blur 6, spread 0, black alpha 0.55",
       "emits": true,
       "note": "Awaiting authoring: run the fixture-author plugin's inner-shadow command in a blank Figma file named inner-shadow, paste the file key here, run `just deno-capture`. Same clean-lowering path and sigma = blur/2 pinning as drop-shadow (#304)."
+    },
+    {
+      "name": "import-image-fill",
+      "fileKey": "WQrfU66n2sZee3TOrgBZ33",
+      "covers": "one fixed 400x200 FRAME whose only paint is an IMAGE fill (a 380x380 image, scaleMode FILL, so the paint covers the box and crops), for the import-fidelity oracle (frame import-image-fill, aa-edge band, issue #332): the image decode -> embed -> paint path the real-file import epic exercised live but no E7 oracle frame measures",
+      "emits": true,
+      "note": "Hand-authored in the project's own account (docs/decisions/figma-corpus-self-authored-only.md) for the Sf-2 import oracle (goldens/oracle/import-manifest.json). The fill's image is self-made and license-clean; the capture resolves its bytes into import-image-fill.images/."
+    },
+    {
+      "name": "import-text-axes",
+      "fileKey": "Csc1LrucirZEngj6xX8M1d",
+      "covers": "one fixed 400x200 FRAME with a single TEXT node in Noto Sans Regular 24 exercising the #310 text axes end-to-end, for the import-fidelity oracle (frame import-text-axes, msdf-text band, issue #332): PIXELS line height 18, letter spacing 1.2, textAlignHorizontal RIGHT, textAlignVertical BOTTOM, in a fixed 352x165 text box larger than its content",
+      "emits": true,
+      "note": "Hand-authored in the project's own account in Noto Sans (the committed corpus/atlas/ascii font), so the import oracle measures the reference painter against Figma's render of the SAME font, not a substitution (the text-latin/text-baseline precedent). Measured by goldens/oracle/import-manifest.json (Sf-2, issue #332)."
     }
   ]
 }

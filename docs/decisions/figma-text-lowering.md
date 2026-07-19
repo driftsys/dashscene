@@ -20,6 +20,13 @@ no regeneration.
   unit lowers.** `INTRINSIC_%` (auto) lowers as `None` as before; a percentage
   line height (`FONT_SIZE_%`, `PERCENT`) stays a named diagnostic — the runtime
   has no percentage model yet, and the minimal safe scope is a fixed pixel value.
+  The typesetter places each line's baseline by Figma's model: the line's
+  intrinsic box is centered within the fixed line box (half-leading), so the
+  baseline sits at `ascent + (line_height - intrinsic) / 2`. The #310
+  implementation first kept the baseline at the full intrinsic ascent; the
+  #332 import oracle measured the run 7 px below Figma's own render of the
+  same frame (24 px type, 18 px line height) and the half-leading placement
+  was pinned against that capture.
 - `letter_spacing: f32` — tracking; zero is the default.
 - `text_align: TextAlign` (`Left`/`Center`/`Right`) — `LEFT` is the default;
   `JUSTIFIED` stays a named diagnostic (no vocabulary).
@@ -140,7 +147,19 @@ already expresses, except one:
     HEIGHT             ↔  (FIXED|FILL, HUG)          fixed width, text wraps,
                                                      height grows
     NONE               ↔  (FIXED, FIXED)             fixed box
+    absent             ↔  (FIXED, FIXED)             same as NONE — the REST
+                                                     API omits the default
     TRUNCATE           ↔  (no pair equivalent)       diagnosed
+
+An **absent** `textAutoResize` is `NONE`: `NONE` is the REST default and the
+API omits it, so a fixed-box label serializes with no field at all, while an
+auto-sizing node always carries the field explicitly (every committed capture
+does, and a live probe of a fixed-box label confirms the omission). The
+lowering first mapped absent to `WIDTH_AND_HEIGHT` — the Figma editor's
+authoring default for a new text object, which is not the API's serialization
+default — and the #332 import oracle caught the consequence against Figma's
+own render: a fixed free-standing label collapsed to its content and its
+alignment had no room to act. Revised here with #332.
 
 A `HUG` axis flows through the engine's measure seam (#29), which sizes it to
 the shaped text's own extent (`docs/decisions/rtl-text-width-is-the-placed-extent.md`,

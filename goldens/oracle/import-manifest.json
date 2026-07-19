@@ -1,0 +1,27 @@
+{
+  "description": "The import-fidelity oracle wiring (issue #332, story Sf-2 of the full real-file-import epic). The epic's exit criterion asks that a real imported file render inside a measured tolerance band of Figma's own GET /images render, but the epic's two real targets are third-party Community files, and docs/decisions/figma-corpus-self-authored-only.md forbids committing their JSON or their render — their fidelity is checked live only (`just render`). This manifest carries the committed, license-clean half: two self-authored fixtures that exercise the two vocabulary paths the real import proved live but no E7 oracle frame measures — an embedded image fill, and the #310 text axes end-to-end. Per frame the oracle imports the committed fixture (corpus/figma-fixtures/<name>.json) with its committed image bytes (<name>.images/), compiles it through dashc's compile_figma (Profile::Core), renders the emitted .dsb through goldens::render::render_dsb (the Sf-1 render path: measure seam, text axes, embedded images), and diffs that fresh render against the committed Figma design-source PNG within the frame's band. The bands are the E7 oracle's three pinned rules (goldens/tooling/src/oracle.rs), reused read-only — never retuned here. The diff runs in goldens/tooling/tests/import_oracle.rs. This manifest is deliberately separate from goldens/oracle/manifest.json: that file, its design-source/ directory, and its test are the live v0.9 E7 exit gate and are never touched by the import oracle. A frame is captured by `deno task import-oracle-capture` (importers/figma), which downloads Figma's GET /images render into import-design-source/<frame>.png and flips the frame's designSource and status to captured.",
+  "issue": 332,
+  "design_source_base": "oracle/import-design-source",
+  "frames": [
+    {
+      "frame": "import-image-fill",
+      "fixture": "corpus/figma-fixtures/import-image-fill.json",
+      "band": "aa-edge",
+      "figmaFileKey": "WQrfU66n2sZee3TOrgBZ33",
+      "figmaNodeId": "1:2",
+      "designSource": "oracle/import-design-source/import-image-fill.png",
+      "status": "captured",
+      "note": "One fixed 400x200 FRAME whose only paint is an IMAGE fill with scaleMode FILL — the image decode -> embed -> paint path the hero target (Landify's phone mockups) exercised live, unmeasured by any E7 frame. The image is a self-generated 380x380 RGBA PNG (gradients, two hard-edged rectangles, a semi-transparent square; the alpha channel keeps Figma from re-encoding the upload to JPEG, which the PNG-only v0.3 image table refuses). The 380x380 image in the 400x200 box means FILL scales the paint up to cover and crops it vertically, so the diff also measures the scale-and-crop path — the way the hero's mockups actually use image fills. The reference render decodes the committed image bytes from the fixture's .images/ directory, embedded into the .dsb at compile (dashbuf Image { bytes }). Measured 263/80000 px (0.329%, max delta 89) — rect-edge anti-aliasing and sub-threshold resampling noise, within the aa-edge band."
+    },
+    {
+      "frame": "import-text-axes",
+      "fixture": "corpus/figma-fixtures/import-text-axes.json",
+      "band": "msdf-text",
+      "figmaFileKey": "Csc1LrucirZEngj6xX8M1d",
+      "figmaNodeId": "2:2",
+      "designSource": "oracle/import-design-source/import-text-axes.png",
+      "status": "captured",
+      "note": "One fixed 400x200 FRAME with a single TEXT node in Noto Sans Regular 24 exercising the #310 text axes end-to-end through the #327/#334 render wiring: PIXELS line height 18, letter spacing 1.2, textAlignHorizontal RIGHT, textAlignVertical BOTTOM, in a fixed 352x165 text box larger than its content so both alignments displace the block visibly. Authored in Noto Sans (the committed corpus/atlas/ascii font), so the diff measures the reference painter against Figma's render of the SAME font, not a substitution (the text-latin/text-baseline precedent). This frame caught two real bugs on its first measurement (2.822%, structurally misplaced): an absent textAutoResize mis-lowered as auto-size, collapsing the fixed box (dashc), and a fixed line height placing the baseline at the full intrinsic ascent instead of centering the intrinsic box within the fixed line box (half-leading, dashscene-typeset) — the run sat 7 px below Figma's. Fixed, it measures 1463/80000 px (1.829%, max delta 255): glyph edges plus ~1 px of horizontal placement from the trailing letter-spacing step Figma excludes from the measured width (debt #336). The msdf-text band."
+    }
+  ]
+}
