@@ -510,6 +510,8 @@ fn mat23_of(m: &dashbuf::Mat23) -> Mat23 {
 fn image_format(f: dashbuf::ImageFormat) -> ImageFormat {
     match f {
         dashbuf::ImageFormat::Png => ImageFormat::Png,
+        dashbuf::ImageFormat::Jpeg => ImageFormat::Jpeg,
+        dashbuf::ImageFormat::Gif => ImageFormat::Gif,
         other => unreachable!("unknown ImageFormat {other:?}: rejected by the load gate (P4)"),
     }
 }

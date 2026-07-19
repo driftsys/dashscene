@@ -22,6 +22,16 @@
       "designSource": "oracle/import-design-source/import-text-axes.png",
       "status": "captured",
       "note": "One fixed 400x200 FRAME with a single TEXT node in Noto Sans Regular 24 exercising the #310 text axes end-to-end through the #327/#334 render wiring: PIXELS line height 18, letter spacing 1.2, textAlignHorizontal RIGHT, textAlignVertical BOTTOM, in a fixed 352x165 text box larger than its content so both alignments displace the block visibly. Authored in Noto Sans (the committed corpus/atlas/ascii font), so the diff measures the reference painter against Figma's render of the SAME font, not a substitution (the text-latin/text-baseline precedent). This frame caught two real bugs on its first measurement (2.822%, structurally misplaced): an absent textAutoResize mis-lowered as auto-size, collapsing the fixed box (dashc), and a fixed line height placing the baseline at the full intrinsic ascent instead of centering the intrinsic box within the fixed line box (half-leading, dashscene-typeset) — the run sat 7 px below Figma's. Fixed, it measures 1463/80000 px (1.829%, max delta 255): glyph edges plus ~1 px of horizontal placement from the trailing letter-spacing step Figma excludes from the measured width (debt #336). The msdf-text band."
+    },
+    {
+      "frame": "jpeg-fill",
+      "fixture": "corpus/figma-fixtures/jpeg-fill.json",
+      "band": "aa-edge",
+      "figmaFileKey": "H4WG095xSFV6KzaA7JkHxf",
+      "figmaNodeId": "1:2",
+      "designSource": "oracle/import-design-source/jpeg-fill.png",
+      "status": "captured",
+      "note": "One fixed 160x160 FRAME whose only paint is an opaque IMAGE fill (scaleMode FILL) whose bytes are a real baseline JPEG (magic FF D8 FF, ends FF D9, 16x16) — the JPEG image-fill vocabulary path (story #342): dashpaint::ImageFormat::Jpeg decoded through the Skia reference painter's own codec. Self-authored with the fixture-author plugin's jpeg-fill command (importers/figma/plugin/fixture-author/README.md); no asset placed through the UI. Measured 0/25600 px (0.000%, max delta 0) — an exact match, well within the aa-edge band."
     }
   ]
 }

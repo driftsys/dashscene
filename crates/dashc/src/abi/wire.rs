@@ -142,7 +142,13 @@ pub fn decode_compile_request(bytes: &[u8]) -> Result<CompileRequest, String> {
         let image_ref = reader.string()?;
         let format = match reader.u32()? {
             0 => ImageFormat::Png,
-            other => return Err(format!("unknown image format {other} (0 = png)")),
+            1 => ImageFormat::Jpeg,
+            2 => ImageFormat::Gif,
+            other => {
+                return Err(format!(
+                    "unknown image format {other} (0 = png, 1 = jpeg, 2 = gif)"
+                ));
+            }
         };
         let asset = ImageAsset {
             format,
@@ -293,6 +299,24 @@ mod tests {
         assert_eq!(asset.format, ImageFormat::Png);
         assert_eq!(asset.bytes, vec![1, 2, 3]);
         assert!(request.bindings.is_empty());
+    }
+
+    /// Figma re-encodes opaque uploads to Jpeg (story #342), so the wire
+    /// format needs a tag for it — additive, the framing does not change.
+    #[test]
+    fn a_jpeg_image_format_round_trips() {
+        let bytes = encode_request(0, "{}", &[("abc", 1, &[0xff, 0xd8, 0xff])], &[], None);
+        let request = decode_compile_request(&bytes).expect("the request decodes");
+        assert_eq!(request.images["abc"].format, ImageFormat::Jpeg);
+    }
+
+    /// Static Gif fills (story #342); animated Gif is refused upstream by
+    /// the importer, so this ABI only ever carries a static one.
+    #[test]
+    fn a_gif_image_format_round_trips() {
+        let bytes = encode_request(0, "{}", &[("abc", 2, &[0x47, 0x49, 0x46, 0x38])], &[], None);
+        let request = decode_compile_request(&bytes).expect("the request decodes");
+        assert_eq!(request.images["abc"].format, ImageFormat::Gif);
     }
 
     #[test]

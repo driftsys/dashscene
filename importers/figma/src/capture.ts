@@ -13,9 +13,11 @@
  *
  * An image fill is a bare `imageRef` — the bytes are nowhere in that JSON. So
  * each fixture's image fills are resolved too, and their **bytes** are written
- * to `corpus/figma-fixtures/<name>.images/<imageRef>.png`. After a capture,
- * that directory is pruned to exactly the refs the capture resolved, so a
- * re-authored fill does not leave its old asset behind (issue #156).
+ * to `corpus/figma-fixtures/<name>.images/<imageRef><ext>`, `<ext>` named by
+ * the asset's detected format (story #342 — `.png`, `.jpg`, or `.gif`; see
+ * `images.ts`'s magic-byte classification). After a capture, that directory
+ * is pruned to exactly the refs the capture resolved, so a re-authored fill
+ * does not leave its old asset behind (issue #156).
  *
  * Each capture also writes `corpus/figma-fixtures/<name>.receipt.json`: the
  * captured `version` plus the image refs it resolved. The unchanged-fixture
@@ -41,7 +43,12 @@ import {
   REQUIRED_SCOPES,
 } from "./fetch.ts";
 import { resolveImages } from "./images.ts";
-import { CompileFailed, type Dashc, loadDashc } from "./wasm.ts";
+import {
+  CompileFailed,
+  type Dashc,
+  type ImageAsset,
+  loadDashc,
+} from "./wasm.ts";
 
 export interface FixtureEntry {
   readonly name: string;
@@ -77,10 +84,15 @@ export interface CaptureFixturesOptions {
   /** Whether one image fill's bytes are already in the corpus. */
   readonly hasImage: (name: string, imageRef: string) => Promise<boolean>;
   readonly writeCapture: (name: string, text: string) => Promise<void>;
-  /** Writes one image fill's bytes into the corpus. */
+  /**
+   * Writes one image fill's bytes into the corpus, named by its detected
+   * format (story #342 — png/jpeg/gif from `resolveImages`'s magic-byte
+   * classification, not assumed).
+   */
   readonly writeImage: (
     name: string,
     imageRef: string,
+    format: ImageAsset["format"],
     bytes: Uint8Array,
   ) => Promise<void>;
   /** The image refs currently on disk for one fixture. */
@@ -353,7 +365,7 @@ export async function captureFixtures(
             fetchFn,
           });
           for (const [imageRef, asset] of restored) {
-            await writeImage(name, imageRef, asset.bytes);
+            await writeImage(name, imageRef, asset.format, asset.bytes);
           }
           results.push(
             { name, fileKey, action: "captured", version: receipt.version },
@@ -385,7 +397,7 @@ export async function captureFixtures(
 
       await writeCapture(name, text);
       for (const [imageRef, asset] of images) {
-        await writeImage(name, imageRef, asset.bytes);
+        await writeImage(name, imageRef, asset.format, asset.bytes);
       }
       await writeReceipt(
         name,
@@ -417,6 +429,40 @@ export async function captureFixtures(
   return results;
 }
 
+/** The corpus fixture file extension for each detected image format. */
+const EXTENSION_OF: Record<ImageAsset["format"], string> = {
+  png: ".png",
+  jpeg: ".jpg",
+  gif: ".gif",
+};
+
+/** Every extension a corpus image file can carry — `EXTENSION_OF`'s range,
+ * used to find or prune an existing file without already knowing its
+ * format. */
+const KNOWN_EXTENSIONS = Object.values(EXTENSION_OF);
+
+/**
+ * `imageRef`'s file in `dir`, whichever of the known extensions it was
+ * written with — or `null` if none exists. `hasImage` and `removeImage`
+ * only ever see a bare ref (the format is known at write time, not at
+ * lookup time), so both search rather than assume `.png`.
+ */
+async function existingImageFile(
+  dir: URL,
+  imageRef: string,
+): Promise<URL | null> {
+  for (const ext of KNOWN_EXTENSIONS) {
+    const url = new URL(`${imageRef}${ext}`, dir);
+    try {
+      await Deno.stat(url);
+      return url;
+    } catch {
+      // Not this extension — try the next.
+    }
+  }
+  return null;
+}
+
 if (import.meta.main) {
   const token = Deno.env.get("FIGMA_TOKEN");
   if (!token) {
@@ -436,10 +482,13 @@ if (import.meta.main) {
     manifest,
     client: createFigmaClient({ token, log: (line) => console.log(line) }),
     dashc: await loadDashc(),
-    writeImage: async (name, imageRef, bytes) => {
+    writeImage: async (name, imageRef, format, bytes) => {
       const dir = new URL(`${name}.images/`, corpusDir);
       await Deno.mkdir(dir, { recursive: true });
-      await Deno.writeFile(new URL(`${imageRef}.png`, dir), bytes);
+      await Deno.writeFile(
+        new URL(`${imageRef}${EXTENSION_OF[format]}`, dir),
+        bytes,
+      );
     },
     readCapture: async (name) => {
       try {
@@ -468,12 +517,8 @@ if (import.meta.main) {
     writeReceipt: (name, text) =>
       Deno.writeTextFile(new URL(`${name}.receipt.json`, corpusDir), text),
     hasImage: async (name, imageRef) => {
-      try {
-        await Deno.stat(new URL(`${name}.images/${imageRef}.png`, corpusDir));
-        return true;
-      } catch {
-        return false;
-      }
+      const dir = new URL(`${name}.images/`, corpusDir);
+      return (await existingImageFile(dir, imageRef)) !== null;
     },
     listImages: async (name) => {
       const refs: string[] = [];
@@ -481,17 +526,22 @@ if (import.meta.main) {
         for await (
           const entry of Deno.readDir(new URL(`${name}.images/`, corpusDir))
         ) {
-          if (entry.isFile && entry.name.endsWith(".png")) {
-            refs.push(entry.name.slice(0, -".png".length));
-          }
+          if (!entry.isFile) continue;
+          const ext = KNOWN_EXTENSIONS.find((candidate) =>
+            entry.name.endsWith(candidate)
+          );
+          if (ext) refs.push(entry.name.slice(0, -ext.length));
         }
       } catch {
         // No images directory: nothing to prune.
       }
       return refs;
     },
-    removeImage: (name, imageRef) =>
-      Deno.remove(new URL(`${name}.images/${imageRef}.png`, corpusDir)),
+    removeImage: async (name, imageRef) => {
+      const dir = new URL(`${name}.images/`, corpusDir);
+      const existing = await existingImageFile(dir, imageRef);
+      if (existing) await Deno.remove(existing);
+    },
     writeCapture: (name, text) =>
       Deno.writeTextFile(new URL(`${name}.json`, corpusDir), text),
     log: (line) => console.log(line),

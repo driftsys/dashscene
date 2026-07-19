@@ -414,6 +414,8 @@ fn build_image<'a>(b: &mut FlatBufferBuilder<'a>, asset: &ImageAsset) -> WIPOffs
         &ImageArgs {
             format: match asset.format {
                 dashpaint::ImageFormat::Png => dashbuf::ImageFormat::Png,
+                dashpaint::ImageFormat::Jpeg => dashbuf::ImageFormat::Jpeg,
+                dashpaint::ImageFormat::Gif => dashbuf::ImageFormat::Gif,
             },
             bytes: Some(bytes),
         },

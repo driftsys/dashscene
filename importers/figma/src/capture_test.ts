@@ -490,6 +490,7 @@ Deno.test("a captured fixture also captures its image-fill bytes", async () => {
   });
 
   const written = new Map<string, Uint8Array>();
+  const formats = new Map<string, string>();
   const receipts: string[] = [];
   const results = await captureFixtures({
     ...emptyCorpus,
@@ -500,8 +501,9 @@ Deno.test("a captured fixture also captures its image-fill bytes", async () => {
       receipts.push(text);
       return Promise.resolve();
     },
-    writeImage: (name, imageRef, bytes) => {
+    writeImage: (name, imageRef, format, bytes) => {
       written.set(`${name}/${imageRef}`, bytes);
+      formats.set(`${name}/${imageRef}`, format);
       return Promise.resolve();
     },
     fetchFn: (input) => {
@@ -513,6 +515,11 @@ Deno.test("a captured fixture also captures its image-fill bytes", async () => {
   assertEquals(results[0].action, "captured");
   assertEquals(written.size, 1, "the fixture's one image fill is captured");
   assertEquals(written.get(`v03-paint/${V03_PAINT_REF}`), png);
+  assertEquals(
+    formats.get(`v03-paint/${V03_PAINT_REF}`),
+    "png",
+    "the real fixture asset is classified by its magic bytes",
+  );
   // The receipt records the refs beside the version, so the next run's
   // completeness check reads it instead of the multi-MB capture (issue #91).
   assertEquals(receipts.length, 1);
@@ -599,7 +606,7 @@ Deno.test("an unchanged fixture whose image bytes are absent still resolves them
       captures.push(name);
       return Promise.resolve();
     },
-    writeImage: (name, imageRef, bytes) => {
+    writeImage: (name, imageRef, _format, bytes) => {
       written.set(`${name}/${imageRef}`, bytes);
       return Promise.resolve();
     },

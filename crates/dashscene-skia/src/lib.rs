@@ -711,6 +711,18 @@ fn draw_stroke(canvas: &Canvas, rrect: &RRect, stroke: &Stroke, opacity: f32) {
     canvas.draw_rrect(stroked, &paint);
 }
 
+/// Decodes an encoded image asset with the Skia build's own codec —
+/// `docs/decisions/image-assets-cross-boundary-b.md` names this each
+/// painter's own machinery, and this build's `skia-safe` carries Png,
+/// Jpeg, and Gif decode already (proven for Jpeg and Gif by this crate's
+/// `tests::decode` module — a trimmed Skia build without codecs would need
+/// the pure-Rust fallback `docs/decisions/downloaded-raster-needs-no-vector-engine.md`
+/// describes, which the reference painter does not run).
+fn decode_image(asset: &ImageAsset) -> Image {
+    images::deferred_from_encoded_data(Data::new_copy(&asset.bytes), None)
+        .expect("image asset decodes (validated upstream, P4)")
+}
+
 /// Draws an image fill clipped to the entry's (rounded) box.
 #[allow(clippy::too_many_arguments)]
 fn draw_image_fill(
@@ -723,8 +735,7 @@ fn draw_image_fill(
     tile_scale: f32,
     opacity: f32,
 ) {
-    let image = images::deferred_from_encoded_data(Data::new_copy(&asset.bytes), None)
-        .expect("image asset decodes (validated upstream, P4)");
+    let image = decode_image(asset);
     let (iw, ih) = (image.width() as f32, image.height() as f32);
 
     canvas.save();
@@ -801,4 +812,41 @@ fn draw_image_fill(
     }
 
     canvas.restore();
+}
+
+#[cfg(test)]
+mod tests {
+    //! Proves `decode_image` actually decodes Jpeg and static Gif rather
+    //! than assuming the pinned `skia-safe` build's codecs cover them
+    //! (story #342) — a real 2x2 fixture through the real decode path, not
+    //! a stub.
+
+    use super::*;
+
+    /// A real 2x2 JPEG (`convert`-encoded; lossy, so no pixel-color
+    /// assertion — only size proves the decode).
+    const JPEG_2X2: &[u8] = include_bytes!("../tests/fixtures/quadrant.jpg");
+
+    /// A real 2x2 single-frame Gif.
+    const GIF_2X2: &[u8] = include_bytes!("../tests/fixtures/quadrant.gif");
+
+    #[test]
+    fn decode_image_handles_a_real_jpeg() {
+        let asset = ImageAsset {
+            format: dashpaint::ImageFormat::Jpeg,
+            bytes: JPEG_2X2.to_vec(),
+        };
+        let image = decode_image(&asset);
+        assert_eq!((image.width(), image.height()), (2, 2));
+    }
+
+    #[test]
+    fn decode_image_handles_a_real_static_gif() {
+        let asset = ImageAsset {
+            format: dashpaint::ImageFormat::Gif,
+            bytes: GIF_2X2.to_vec(),
+        };
+        let image = decode_image(&asset);
+        assert_eq!((image.width(), image.height()), (2, 2));
+    }
 }

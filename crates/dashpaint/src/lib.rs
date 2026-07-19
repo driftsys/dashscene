@@ -167,9 +167,16 @@ pub enum ScaleMode {
 /// Encoded image container formats a painter can decode. Mirrors
 /// `dashbuf`'s `ImageFormat`; GPU-native containers (KTX2,
 /// docs/specification/03-target-hardware-rules.md) arrive as new variants.
+///
+/// `Jpeg` and `Gif` (story #342) are Figma's other two image-fill
+/// containers — Figma re-encodes opaque uploads to Jpeg, and Gif covers
+/// static (single-frame) fills; the importer refuses animated Gif by name
+/// before it ever reaches this enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageFormat {
     Png,
+    Jpeg,
+    Gif,
 }
 
 /// One encoded image asset — bytes plus their container format. Each
