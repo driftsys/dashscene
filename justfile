@@ -197,10 +197,35 @@ reprobe key root="": wasm
             | sort -u || true
     }
 
+    # `trimmed: <type> "<name>" (<id>) — <reason>` lines (import.ts's
+    # `reportTrim`), one per subtree the pre-closure trim pass removed — a
+    # separate shape from `extract_diagnostics` above (no `severity[rule]:`
+    # prefix), so it was previously invisible in the frontier report even
+    # though the removal is named (P4). Surfaced on both the emitted and the
+    # blocked path, since trim runs before the closure either way.
+    extract_trimmed() {
+        sed -E 's/\x1b\[[0-9;]*m//g' "$err_file" \
+            | grep -oE '^trimmed: .*$' || true
+    }
+
+    report_trimmed() {
+        local trimmed
+        trimmed=$(extract_trimmed)
+        if [ -n "$trimmed" ]; then
+            local count
+            count=$(echo "$trimmed" | wc -l | tr -d ' ')
+            echo "TRIMMED — ${count} subtree(s) removed before the closure:"
+            echo "$trimmed"
+        else
+            echo "(nothing trimmed)"
+        fi
+    }
+
     if [ "$status" -eq 0 ]; then
         cp "$tmp_dsb" /tmp/reprobe.dsb
         size=$(wc -c < /tmp/reprobe.dsb | tr -d ' ')
         echo "EMITTED — wrote /tmp/reprobe.dsb (${size} bytes)"
+        report_trimmed
         diagnostics=$(extract_diagnostics)
         if [ -n "$diagnostics" ]; then
             echo "$diagnostics"
@@ -210,6 +235,7 @@ reprobe key root="": wasm
         exit 0
     fi
 
+    report_trimmed
     blockers=$(extract_diagnostics)
     if [ -n "$blockers" ]; then
         echo "$blockers"
