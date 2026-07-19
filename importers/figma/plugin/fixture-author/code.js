@@ -1034,6 +1034,321 @@ function innerShadow() {
     "shadow (offset 0, blur 6, black alpha 0.55) centered in a 96x96 light frame";
 }
 
+// ------------------------------------------------------ liga-text (v0.10 A0)
+// The standard-ligatures test vector (epic #343, story A0): a ligature-rich
+// ASCII run ("waffle" -> ffl, "office" -> ffi) with standard ligatures turned
+// OFF is what serializes OpenType LIGA:0, next to the same run at DEFAULT
+// settings (ligatures on) for contrast. Noto Sans Regular, the committed
+// ascii-atlas font (see text-latin above).
+//
+// The plugin API has NO writable ligature/OpenType-feature toggle:
+// `openTypeFeatures` is `readonly` on TextNode and `getRangeOpenTypeFeatures`
+// only reads a range's features back — @figma/plugin-typings defines no
+// `setRangeOpenTypeFeatures` or equivalent setter. So this command builds
+// both runs at DEFAULT and leaves a `_manual-checklist` (the effects-2025
+// pattern) asking for the first run's ligatures to be disabled by hand.
+async function ligaText() {
+  await figma.loadFontAsync(NOTO);
+  await figma.loadFontAsync(INTER); // for the manual-steps note
+
+  const root = baseFrame("liga-text", 420, 200);
+  root.layoutMode = "VERTICAL";
+  root.primaryAxisSizingMode = "FIXED"; // fixed width ...
+  root.counterAxisSizingMode = "FIXED"; // ... and height: an identical box
+  root.resize(420, 200); // re-fix after the sizing modes (see textLatin)
+  root.itemSpacing = 16;
+  root.paddingLeft = root.paddingRight = 24;
+  root.paddingTop = root.paddingBottom = 24;
+
+  const ligaOff = label("waffle finish office", NOTO, 28);
+  ligaOff.name = "liga-off";
+  root.appendChild(ligaOff);
+
+  const ligaOn = label("waffle finish office", NOTO, 28);
+  ligaOn.name = "liga-on";
+  root.appendChild(ligaOn);
+
+  const manual = [
+    "select 'liga-off' and disable standard ligatures (Type settings > " +
+    "Details panel > Ligatures) — no plugin API can write this",
+  ];
+  removePrevious("_manual-checklist");
+  const note = label(
+    "_manual-steps:\n" + manual.map((m) => "  - " + m).join("\n"),
+    INTER,
+    12,
+  );
+  note.name = "_manual-checklist";
+  figma.currentPage.appendChild(note);
+  note.x = root.x;
+  note.y = root.y + root.height + 24;
+
+  return "liga-text built: 'waffle finish office' x2 in Noto Sans (liga-off, " +
+    "liga-on); MANUAL STEP required — select liga-off and disable ligatures " +
+    "via Type settings > Details panel (no writable plugin API for OpenType " +
+    "features)";
+}
+
+// ------------------------------------------------------ jpeg-fill (v0.10 A0)
+// The JPEG-format image-fill test vector (epic #343, story A0): the paint's
+// imageRef bytes must actually decode as a JPEG (magic FF D8 FF), not a PNG
+// or GIF relabeled — v03Paint's CHECKER_PNG proves PNG, gif-fill below proves
+// GIF, this proves JPEG. A 16x16 solid-color baseline JPEG, generated once
+// with ImageMagick (`magick -size 16x16 xc:'#3399cc' -quality 90 tiny.jpg`)
+// and inlined as hex for the same sandbox-safety reason as CHECKER_PNG_HEX
+// above (no network, no filesystem — figma.createImage takes exactly this
+// Uint8Array).
+const JPEG_FILL_HEX =
+  "ffd8ffe000104a46494600010100000100010000ffdb004300030202030202030303" +
+  "0304030304050805050404050a070706080c0a0c0c0b0a0b0b0d0e12100d0e110e0b" +
+  "0b1016101113141515150c0f171816141812141514ffdb0043010304040504050905" +
+  "0509140d0b0d14141414141414141414141414141414141414141414141414141414" +
+  "14141414141414141414141414141414141414141414ffc000110800100010030111" +
+  "00021101031101ffc40014000100000000000000000000000000000000ffc4001410" +
+  "0100000000000000000000000000000000ffc4001601010101000000000000000000" +
+  "00000000000708ffc40014110100000000000000000000000000000000ffda000c03" +
+  "010002110311003f002e6cd800003fffd9";
+const JPEG_FILL_BYTES = new Uint8Array(
+  JPEG_FILL_HEX.match(/../g).map((byte) => parseInt(byte, 16)),
+);
+
+function jpegFill() {
+  const root = baseFrame("jpeg-fill", 160, 160);
+  root.layoutMode = "NONE"; // fixed layout: the fill is the only construct
+  const image = figma.createImage(JPEG_FILL_BYTES);
+  root.fills = [{
+    type: "IMAGE",
+    scaleMode: "FILL",
+    imageHash: image.hash,
+    visible: true,
+    opacity: 1,
+    blendMode: "NORMAL",
+  }];
+  return "jpeg-fill built: root frame filled with a 16x16 opaque baseline " +
+    "JPEG image fill (magic FF D8 FF, " + JPEG_FILL_BYTES.length + " bytes)";
+}
+
+// ------------------------------------------------------- gif-fill (v0.10 A0)
+// Same shape as jpeg-fill, but the embedded bytes are a real static GIF
+// (magic 47 49 46 = "GIF"), generated with the same tool
+// (`magick -size 16x16 xc:'#33cc66' tiny.gif`).
+const GIF_FILL_HEX =
+  "47494638396110001000f0000033cc6600000021f90400000000002c000000001000" +
+  "100000020e848fa9cbed0fa39cb4da8bb33e05003b";
+const GIF_FILL_BYTES = new Uint8Array(
+  GIF_FILL_HEX.match(/../g).map((byte) => parseInt(byte, 16)),
+);
+
+function gifFill() {
+  const root = baseFrame("gif-fill", 160, 160);
+  root.layoutMode = "NONE"; // fixed layout: the fill is the only construct
+  const image = figma.createImage(GIF_FILL_BYTES);
+  root.fills = [{
+    type: "IMAGE",
+    scaleMode: "FILL",
+    imageHash: image.hash,
+    visible: true,
+    opacity: 1,
+    blendMode: "NORMAL",
+  }];
+  return "gif-fill built: root frame filled with a 16x16 opaque static GIF " +
+    "image fill (magic GIF89a, " + GIF_FILL_BYTES.length + " bytes)";
+}
+
+// -------------------------------------------------- vector-shapes (v0.10 A0)
+// Four VECTOR nodes built with figma.createVector() + explicit .vectorPaths
+// (epic #343, story A0): a 5-point star (many straight segments), an arrow
+// (a single closed polygon), a curved organic path (cubic-bezier `C`
+// commands), and a shape with a hole (an outer + inner subpath in ONE
+// vectorPaths entry, windingRule "EVENODD" — the fill-rule case: a point
+// under an odd number of subpaths is filled, under an even number is not, so
+// the inner subpath punches a hole regardless of its winding direction).
+function starPathData(cx, cy, points, outerR, innerR) {
+  const cmds = [];
+  for (let i = 0; i < points * 2; i++) {
+    const r = i % 2 === 0 ? outerR : innerR;
+    const angle = -Math.PI / 2 + (i * Math.PI) / points;
+    const x = cx + r * Math.cos(angle);
+    const y = cy + r * Math.sin(angle);
+    cmds.push((i === 0 ? "M " : "L ") + x.toFixed(2) + " " + y.toFixed(2));
+  }
+  cmds.push("Z");
+  return cmds.join(" ");
+}
+
+function vectorShapes() {
+  const root = baseFrame("vector-shapes", 460, 160);
+  root.layoutMode = "NONE";
+
+  const CELL = 80;
+  const GAP = 24;
+  const MARGIN = 24;
+  const slotX = (i) => MARGIN + i * (CELL + GAP);
+
+  const star = figma.createVector();
+  star.name = "star-5-point";
+  star.vectorPaths = [{
+    windingRule: "NONZERO",
+    data: starPathData(40, 40, 5, 38, 15),
+  }];
+  star.fills = [solid({ r: 0.95, g: 0.75, b: 0.2 })];
+  root.appendChild(star);
+  star.x = slotX(0);
+  star.y = 24;
+
+  const arrow = figma.createVector();
+  arrow.name = "arrow";
+  arrow.vectorPaths = [{
+    windingRule: "NONZERO",
+    data: "M 0 20 L 50 20 L 50 5 L 80 30 L 50 55 L 50 40 L 0 40 Z",
+  }];
+  arrow.fills = [solid({ r: 0.35, g: 0.6, b: 0.9 })];
+  root.appendChild(arrow);
+  arrow.x = slotX(1);
+  arrow.y = 40;
+
+  const blob = figma.createVector();
+  blob.name = "organic-blob";
+  blob.vectorPaths = [{
+    windingRule: "NONZERO",
+    data: "M 40 5 C 65 5 75 30 70 50 C 65 72 45 78 25 68 " +
+      "C 8 60 5 35 15 18 C 20 8 30 5 40 5 Z",
+  }];
+  blob.fills = [solid({ r: 0.55, g: 0.8, b: 0.55 })];
+  root.appendChild(blob);
+  blob.x = slotX(2);
+  blob.y = 24;
+
+  const withHole = figma.createVector();
+  withHole.name = "square-with-hole";
+  withHole.vectorPaths = [{
+    windingRule: "EVENODD",
+    data: "M 0 0 L 80 0 L 80 80 L 0 80 Z M 20 20 L 60 20 L 60 60 L 20 60 Z",
+  }];
+  withHole.fills = [solid({ r: 0.85, g: 0.4, b: 0.55 })];
+  root.appendChild(withHole);
+  withHole.x = slotX(3);
+  withHole.y = 24;
+
+  return "vector-shapes built: 5-point star, arrow, cubic-bezier organic " +
+    "blob, and a square-with-hole (EVENODD) in a row";
+}
+
+// -------------------------------------------------- stacked-fills (v0.10 A0)
+// The multiple-visible-fills test vector (epic #343, story A0): one
+// RECTANGLE with TWO paints in `fills` — a solid at fills[0] (bottom, Figma
+// paints fills in array order, later entries on top) and a semi-transparent
+// GRADIENT_LINEAR at fills[1] (top, opacity < 1 so the solid underneath
+// stays visible through it) — so both are visible and stacked, not just the
+// topmost paint.
+function stackedFills() {
+  const root = baseFrame("stacked-fills", 200, 200);
+  root.layoutMode = "NONE";
+
+  const rect = figma.createRectangle();
+  rect.name = "stacked-fills-rect";
+  rect.resize(140, 140);
+
+  const bottom = solid({ r: 0.25, g: 0.45, b: 0.85 });
+  const top = gradient("LINEAR", [
+    stop(0, { r: 1, g: 1, b: 1, a: 1 }),
+    stop(1, { r: 1, g: 0.3, b: 0.5, a: 1 }),
+  ]);
+  top.opacity = 0.55; // semi-transparent: the solid below stays visible
+  rect.fills = [bottom, top];
+
+  root.appendChild(rect);
+  rect.x = 30;
+  rect.y = 30;
+
+  return "stacked-fills built: one RECTANGLE with two visible fills — a " +
+    "solid at fills[0] (bottom) and a semi-transparent GRADIENT_LINEAR at " +
+    "fills[1] (opacity 0.55, top)";
+}
+
+// ------------------------------------------------------- node-fx (v0.10 A0)
+// Four node-effects lowering paths in one frame (epic #343, story A0): a
+// rotated rectangle, a partially-opaque node, a hidden layer (visible:false
+// is exported as such, not trimmed — same construct real-file's wip-banner
+// already exercises, repeated here as its own single-construct fixture), and
+// a mask pair. The mask pair sits in its own sub-frame: isMask masks ALL
+// subsequent siblings in the children array (BlendMixin.isMask), so
+// containing the mask and the node it masks in a dedicated frame keeps the
+// propagation scoped to that pair and out of the other three constructs.
+function nodeFx() {
+  const root = baseFrame("node-fx", 540, 160);
+  root.layoutMode = "NONE";
+
+  const CELL = 100;
+  const GAP = 24;
+  const MARGIN = 30;
+  const Y0 = 30;
+  const slotX = (i) => MARGIN + i * (CELL + GAP);
+
+  // (a) rotation
+  const rotated = figma.createRectangle();
+  rotated.name = "rotated-15deg";
+  rotated.resize(CELL, CELL);
+  rotated.fills = [solid({ r: 0.35, g: 0.6, b: 0.9 })];
+  rotated.rotation = 15;
+  root.appendChild(rotated);
+  rotated.x = slotX(0);
+  rotated.y = Y0;
+
+  // (b) partial opacity
+  const halfOpacity = figma.createRectangle();
+  halfOpacity.name = "half-opacity";
+  halfOpacity.resize(CELL, CELL);
+  halfOpacity.fills = [solid({ r: 0.9, g: 0.35, b: 0.4 })];
+  halfOpacity.opacity = 0.5;
+  root.appendChild(halfOpacity);
+  halfOpacity.x = slotX(1);
+  halfOpacity.y = Y0;
+
+  // (c) hidden layer
+  const hidden = figma.createRectangle();
+  hidden.name = "hidden-layer";
+  hidden.resize(CELL, CELL);
+  hidden.fills = [solid({ r: 0.4, g: 0.8, b: 0.5 })];
+  hidden.visible = false;
+  root.appendChild(hidden);
+  hidden.x = slotX(2);
+  hidden.y = Y0;
+
+  // (d) a mask pair: mask-shape is appended first (the "lower" sibling in
+  // the children array) and masks masked-content, its one subsequent
+  // sibling, via isMask.
+  const maskPair = figma.createFrame();
+  maskPair.name = "mask-pair";
+  maskPair.resize(CELL, CELL);
+  maskPair.fills = [];
+  maskPair.clipsContent = false;
+  root.appendChild(maskPair);
+  maskPair.x = slotX(3);
+  maskPair.y = Y0;
+
+  const maskShape = figma.createEllipse();
+  maskShape.name = "mask-shape";
+  maskShape.resize(CELL, CELL * 0.6);
+  maskShape.fills = [solid(GRAY(0))];
+  maskPair.appendChild(maskShape);
+  maskShape.x = 0;
+  maskShape.y = CELL * 0.2;
+
+  const maskedContent = figma.createRectangle();
+  maskedContent.name = "masked-content";
+  maskedContent.resize(CELL, CELL);
+  maskedContent.fills = [solid({ r: 0.9, g: 0.7, b: 0.2 })];
+  maskPair.appendChild(maskedContent);
+  maskedContent.x = 0;
+  maskedContent.y = 0;
+  maskShape.isMask = true;
+
+  return "node-fx built: rotated-15deg rect, half-opacity rect, a hidden " +
+    "layer, and a mask pair (ellipse isMask masking a rect) in a 540x160 " +
+    "frame";
+}
+
 // ------------------------------------------------------------------ dispatch
 const COMMANDS = {
   "v03-paint": v03Paint,
@@ -1052,6 +1367,12 @@ const COMMANDS = {
   "text-baseline": textBaseline,
   "drop-shadow": dropShadow,
   "inner-shadow": innerShadow,
+  "liga-text": ligaText,
+  "jpeg-fill": jpegFill,
+  "gif-fill": gifFill,
+  "vector-shapes": vectorShapes,
+  "stacked-fills": stackedFills,
+  "node-fx": nodeFx,
 };
 
 (async () => {

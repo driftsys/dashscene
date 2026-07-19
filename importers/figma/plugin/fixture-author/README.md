@@ -62,6 +62,25 @@ then run Plugins → Development → dashscene fixture author → _(name)_.
                                  one DROP_SHADOW card, sigma = blur/2 pinning
     inner-shadow                 E7 render-oracle shadow frame (v08-inner-shadow):
                                  one INNER_SHADOW card
+    liga-text                    v0.10 A0: standard-ligatures test vector —
+                                 "waffle finish office" in Noto Sans, twice;
+                                 the first run needs a manual step (see below)
+                                 to actually turn ligatures off
+    jpeg-fill                    v0.10 A0: one frame with an opaque IMAGE fill
+                                 whose bytes are a real baseline JPEG (16x16,
+                                 inlined as hex)
+    gif-fill                     v0.10 A0: same as jpeg-fill, a real static
+                                 GIF (16x16, inlined as hex)
+    vector-shapes                v0.10 A0: 4 VECTOR nodes via createVector() +
+                                 vectorPaths — a 5-point star, an arrow, a
+                                 cubic-bezier organic blob, and a
+                                 square-with-hole (EVENODD fill rule)
+    stacked-fills                v0.10 A0: one RECTANGLE with two visible
+                                 fills — a solid at fills[0], a semi-transparent
+                                 GRADIENT_LINEAR at fills[1]
+    node-fx                      v0.10 A0: one frame with a rotated rect, a
+                                 half-opacity rect, a hidden layer, and a
+                                 mask pair (isMask)
 
 Re-running a command deletes and rebuilds its frame — safe to iterate.
 
@@ -109,6 +128,18 @@ capture as below.
   to. Do not place an image through the UI: a second asset would put two
   images in the captured file and stop an image failure from bisecting
   to one construct.
+- **liga-text**: the plugin API has no writable ligature/OpenType-feature
+  toggle (`openTypeFeatures` is `readonly` on `TextNode`; only a getter,
+  `getRangeOpenTypeFeatures`, exists — no setter). After running the
+  command, select the `liga-off` text node and disable standard ligatures
+  by hand: **Type settings > Details panel > Ligatures**. The `liga-on`
+  node stays at default (ligatures on) for contrast; the plugin's summary
+  and the `_manual-checklist` node it leaves both repeat this step.
+- **jpeg-fill** / **gif-fill**: none. Like `v03-paint`'s checkerboard, the
+  image bytes are inlined in `code.js` as hex (a real baseline JPEG /
+  static GIF, generated once with ImageMagick) and handed to
+  `figma.createImage` — no asset needed from you, and no image should be
+  placed through the UI for the same bisection reason as `v03-paint`.
 
 ## After authoring
 
