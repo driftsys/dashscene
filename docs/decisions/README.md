@@ -377,6 +377,19 @@ into the records below. Per-story decisions land here directly:
   substitution, never recorded in the `.dsb`: which weights exist is the
   renderer's asset set, and a substitution is a result (P1), so a
   compile-time record is refused (story F1/#368).
+- [font-resolution-order.md](font-resolution-order.md) — the family name
+  becomes load-bearing, and a font resolves in one order: an embedded font,
+  then the pinned cascade, then substitution named as
+  `text.family-substituted`, and the host's installed fonts only in an
+  opt-in preview mode that never reaches a golden. Refusing the compile and
+  host fallback as a default are both rejected, the second because golden
+  stability rests on a pinned asset set (#379).
+- [corpus-ships-inter.md](corpus-ships-inter.md) — the pinned cascade gains
+  Inter at weights 400/500/600/700 beside Noto Sans, since Inter is what
+  real Figma files use and family substitution is the largest remaining
+  fidelity gap. Accepted in principle; not yet executed, because it
+  re-measures the `liga-text` import frame and the frozen E7 gate must not
+  gain Inter until #49 closes (#379).
 
 Gardened out of `docs/technotes/`'s `DECISION` / `DECISION direction` tags,
 so each technote stops being the authority for the conclusion it reached:
