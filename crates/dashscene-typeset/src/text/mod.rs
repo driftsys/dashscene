@@ -9,7 +9,7 @@ mod layout;
 mod shape;
 mod weight;
 
-pub use font::{Font, WeightedFont};
+pub use font::{Font, FontFamily, WeightedFont};
 
 // The digit-shape mapping and the Arabic-strong predicate are the one
 // definition the atlas closure shares (atlas/closure.rs), so coverage
@@ -180,6 +180,46 @@ impl std::fmt::Display for WeightSubstitution {
     }
 }
 
+/// One render-time family substitution: the renderer's cascade had no
+/// family answering to the name the document asked for, so some of the
+/// run shaped in another family (story #385,
+/// `docs/decisions/font-resolution-order.md` step 3).
+///
+/// The render-time counterpart of the import diagnostic R6 describes, for
+/// the reason `docs/decisions/weight-substitution-is-a-render-time-diagnostic.md`
+/// gives for weight: which fonts exist is a property of the renderer's
+/// asset set, not of the document, so recording it at compile time would
+/// violate P1. Deduplicated per distinct (requested, resolved) pair.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FamilySubstitution {
+    /// The family name the document asked for.
+    pub requested: String,
+    /// The name of the family that actually shaped glyphs instead.
+    pub resolved: String,
+}
+
+impl std::fmt::Display for FamilySubstitution {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "text.family-substituted: the cascade carries no family {:?}; \
+             using {:?}",
+            self.requested, self.resolved
+        )
+    }
+}
+
+/// Whether any glyph in `layout` was shaped by the face at flat slot
+/// `slot`. Both substitution reports are driven by the output rather than
+/// by the resolution, so both ask this question.
+fn shaped_any(layout: &TextLayout, slot: u16) -> bool {
+    layout
+        .lines
+        .iter()
+        .flat_map(|line| &line.glyphs)
+        .any(|glyph| glyph.font == slot)
+}
+
 /// The runtime pipeline facade: an ordered font list (primary first,
 /// story #219 — the runtime resolves one document font reference to a
 /// fallback list), one shaped-run cache in front of shaping.
@@ -215,6 +255,9 @@ pub struct Typesetter {
     /// Each family's contiguous slot range, in cascade order. A cascade
     /// built by [`with_fonts`](Self::with_fonts) has one slot per family.
     families: Vec<Range<usize>>,
+    /// Each family's declared name, parallel to `families` (story #385).
+    /// Empty for every cascade built by an unnamed constructor.
+    family_names: Vec<String>,
     /// One shaped-run cache per posture; `caches[i]` is keyed by paragraph
     /// text and holds the entries shaped under `slot_sets[i]`.
     caches: Vec<HashMap<Box<str>, Arc<ShapedText>>>,
@@ -223,6 +266,9 @@ pub struct Typesetter {
     slot_sets: Vec<(Vec<u16>, bool)>,
     /// Deduplicated `text.weight-substituted` reports, in first-seen order.
     substitutions: Vec<WeightSubstitution>,
+    /// Deduplicated `text.family-substituted` reports, in first-seen order
+    /// (story #385).
+    family_substitutions: Vec<FamilySubstitution>,
     hits: u64,
     misses: u64,
 }
@@ -296,6 +342,47 @@ impl Typesetter {
     /// Panics if `families` is empty or if any family is empty — a
     /// typesetter has no primary face to fall back to.
     pub fn with_font_families(families: Vec<Vec<WeightedFont>>) -> Typesetter {
+        Self::with_named_font_families(families.into_iter().map(FontFamily::unnamed).collect())
+    }
+
+    /// A typesetter over a cascade of **named** families (story #385) —
+    /// [`with_font_families`](Self::with_font_families) plus the family
+    /// name a document's `TextStyle::family` is matched against, which is
+    /// step 2 of `docs/decisions/font-resolution-order.md`.
+    ///
+    /// Selection gains one step in front of the two
+    /// [`with_font_families`](Self::with_font_families) describes, and the
+    /// full order becomes family, then coverage, then weight:
+    ///
+    /// 1. **The requested family is probed first.** The family whose name
+    ///    matches moves to the head of the probe order for that layout;
+    ///    every other family keeps its cascade order behind it.
+    /// 2. **Coverage still picks the family that shapes each codepoint**,
+    ///    walking that reordered probe order — so a codepoint the requested
+    ///    family cannot cover still falls through to one that can, and an
+    ///    Arabic run in a Latin-only family is never lost.
+    /// 3. **The requested weight picks the face** within whichever family
+    ///    coverage chose.
+    ///
+    /// Reordering the probe order is the whole mechanism: the flattened
+    /// slot list is untouched, so [`PositionedGlyph::font`] keeps its
+    /// meaning and a stager's parallel atlas list needs no change. It also
+    /// means the requested family becomes the layout's *primary* — the
+    /// face a blank line is measured by and an uncovered codepoint keeps
+    /// its `.notdef` in — which is the #219 rule applied to the family the
+    /// document actually asked for.
+    ///
+    /// A request no family answers to is **not** an error: coverage runs
+    /// over the cascade unchanged and records a [`FamilySubstitution`],
+    /// readable through
+    /// [`family_substitutions`](Self::family_substitutions). Committed
+    /// fixtures name families the cascade does not carry, so a hard error
+    /// would break their goldens.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `families` is empty or if any family is empty.
+    pub fn with_named_font_families(families: Vec<FontFamily>) -> Typesetter {
         assert!(
             !families.is_empty(),
             "a typesetter needs at least one font family"
@@ -303,26 +390,33 @@ impl Typesetter {
         let mut fonts = Vec::new();
         let mut weights = Vec::new();
         let mut ranges = Vec::with_capacity(families.len());
+        let mut names = Vec::with_capacity(families.len());
         for family in families {
-            assert!(!family.is_empty(), "a font family needs at least one face");
+            assert!(
+                !family.faces.is_empty(),
+                "a font family needs at least one face"
+            );
             let start = fonts.len();
-            for face in family {
+            names.push(family.name);
+            for face in family.faces {
                 fonts.push(face.font);
                 weights.push(face.weight);
             }
             ranges.push(start..fonts.len());
         }
-        // Posture 0: every family at its weight-400 resolution, ligatures on
-        // — the posture every pre-#368 call site shapes under, so the
-        // default path finds its map at a fixed index.
+        // Posture 0: every family at its weight-400 resolution, in cascade
+        // order, ligatures on — the posture every pre-#368 call site shapes
+        // under, so the default path finds its map at a fixed index.
         let default_slots = resolve_slots(&weights, &ranges, 400);
         Typesetter {
             fonts,
             weights,
             families: ranges,
+            family_names: names,
             caches: vec![HashMap::new()],
             slot_sets: vec![(default_slots, false)],
             substitutions: Vec::new(),
+            family_substitutions: Vec::new(),
             hits: 0,
             misses: 0,
         }
@@ -368,6 +462,20 @@ impl Typesetter {
     /// nineteen bold nodes from producing nineteen identical reports.
     pub fn weight_substitutions(&self) -> &[WeightSubstitution] {
         &self.substitutions
+    }
+
+    /// Every `text.family-substituted` this typesetter has recorded, in
+    /// first-seen order and deduplicated per distinct (requested, resolved)
+    /// pair (story #385). Empty for a cascade with no declared names, and
+    /// for one where every request found its family.
+    pub fn family_substitutions(&self) -> &[FamilySubstitution] {
+        &self.family_substitutions
+    }
+
+    /// Each family's declared name, in cascade order — the sibling of
+    /// [`weights`](Self::weights) for the family axis.
+    pub fn family_names(&self) -> &[String] {
+        &self.family_names
     }
 
     pub fn cache_stats(&self) -> CacheStats {
@@ -435,10 +543,64 @@ impl Typesetter {
         shape: TextShape,
         weight: u16,
     ) -> TextLayout {
-        let slots = resolve_slots(&self.weights, &self.families, weight);
+        self.layout_styled(text, size, max_width, shape, weight, "")
+    }
+
+    /// [`layout_weighted`](Self::layout_weighted) at a requested **family**
+    /// as well as a requested weight (story #385) — the entry point that
+    /// makes a document's `TextStyle::family` affect the render, which is
+    /// step 2 of `docs/decisions/font-resolution-order.md`.
+    ///
+    /// The named family is probed first and the rest of the cascade follows
+    /// in declared order; see
+    /// [`with_named_font_families`](Self::with_named_font_families) for the
+    /// three-step selection. Coverage still decides which family shapes a
+    /// given codepoint, so naming a family never costs a reader their text.
+    ///
+    /// Passing `""` is exactly [`layout_weighted`](Self::layout_weighted):
+    /// no family is preferred, the cascade order is untouched, and no
+    /// family diagnostic is recorded. That is what keeps every pre-#385
+    /// call site — the goldens and both oracles included — rendering
+    /// byte-identically.
+    ///
+    /// A family the cascade does not carry is **not** an error: it resolves
+    /// by coverage as before and records a [`FamilySubstitution`], readable
+    /// through [`family_substitutions`](Self::family_substitutions).
+    pub fn layout_styled(
+        &mut self,
+        text: &str,
+        size: f32,
+        max_width: Option<f32>,
+        shape: TextShape,
+        weight: u16,
+        family: &str,
+    ) -> TextLayout {
+        let resolved = resolve_slots(&self.weights, &self.families, weight);
+        let order = self.probe_order(family);
+        let slots: Vec<u16> = order.iter().map(|&family| resolved[family]).collect();
         let layout = self.layout_slots(text, size, max_width, shape, &slots);
-        self.record_substitutions(weight, &slots, &layout);
+        self.record_substitutions(weight, &slots, &order, &layout);
+        self.record_family_substitutions(family, &slots, &order, &layout);
         layout
+    }
+
+    /// The cascade family indices in the order this layout probes them:
+    /// the family matching `requested` first, then every other family in
+    /// declared order. An unmatched or empty request leaves the cascade
+    /// order exactly as declared, so the probe order — and therefore the
+    /// interned posture and the shaped result — is bit-for-bit what it was
+    /// before family matching existed.
+    fn probe_order(&self, requested: &str) -> Vec<usize> {
+        let preferred = self
+            .family_names
+            .iter()
+            .position(|name| FontFamily::name_matches(name, requested));
+        let mut order: Vec<usize> = (0..self.families.len()).collect();
+        if let Some(preferred) = preferred {
+            let family = order.remove(preferred);
+            order.insert(0, family);
+        }
+        order
     }
 
     /// Records a [`WeightSubstitution`] for each family that both resolved
@@ -456,7 +618,16 @@ impl Typesetter {
     ///
     /// Which face renders is unaffected — this decides only what is
     /// reported.
-    fn record_substitutions(&mut self, requested: u16, slots: &[u16], layout: &TextLayout) {
+    /// `order[p]` is the cascade family index at probe position `p`, so a
+    /// report names the family the cascade declared rather than the
+    /// position family matching happened to probe it at (story #385).
+    fn record_substitutions(
+        &mut self,
+        requested: u16,
+        slots: &[u16],
+        order: &[usize],
+        layout: &TextLayout,
+    ) {
         // The common case — every resolved face is at the requested weight
         // — has nothing to report, so it never walks the glyphs.
         if slots
@@ -465,26 +636,61 @@ impl Typesetter {
         {
             return;
         }
-        let mut used = vec![false; slots.len()];
-        for glyph in layout.lines.iter().flat_map(|line| &line.glyphs) {
-            // A glyph carries its family's flat slot, and each family
-            // resolves to exactly one slot, so the slot names the family.
-            if let Some(family) = slots.iter().position(|&slot| slot == glyph.font) {
-                used[family] = true;
-            }
-        }
-        for (family, &slot) in slots.iter().enumerate() {
+        for (probe, &slot) in slots.iter().enumerate() {
             let resolved = self.weights[slot as usize];
-            if !used[family] || resolved == requested {
+            if resolved == requested || !shaped_any(layout, slot) {
                 continue;
             }
             let report = WeightSubstitution {
-                family,
+                family: order[probe],
                 requested,
                 resolved,
             };
             if !self.substitutions.contains(&report) {
                 self.substitutions.push(report);
+            }
+        }
+    }
+
+    /// Records a [`FamilySubstitution`] for each family that shaped glyphs
+    /// under a name other than the one the document asked for (story #385).
+    ///
+    /// Driven by the output for the same reason
+    /// [`record_substitutions`](Self::record_substitutions) is: resolution
+    /// covers every family, coverage reaches only some, and a diagnostic
+    /// that fires when nothing was substituted makes the true reports
+    /// unreadable.
+    ///
+    /// A run can legitimately produce a report even when the requested
+    /// family was found: a document asking for a Latin-only family and
+    /// containing Arabic has its Arabic shaped elsewhere, and that is a
+    /// real family substitution the renderer should name (P4).
+    fn record_family_substitutions(
+        &mut self,
+        requested: &str,
+        slots: &[u16],
+        order: &[usize],
+        layout: &TextLayout,
+    ) {
+        // A cascade with no names, or a document naming no family,
+        // expresses no preference — nothing was substituted.
+        if requested.trim().is_empty() {
+            return;
+        }
+        for (probe, &slot) in slots.iter().enumerate() {
+            let name = &self.family_names[order[probe]];
+            if name.trim().is_empty() || FontFamily::name_matches(name, requested) {
+                continue;
+            }
+            if !shaped_any(layout, slot) {
+                continue;
+            }
+            let report = FamilySubstitution {
+                requested: requested.trim().to_string(),
+                resolved: name.clone(),
+            };
+            if !self.family_substitutions.contains(&report) {
+                self.family_substitutions.push(report);
             }
         }
     }

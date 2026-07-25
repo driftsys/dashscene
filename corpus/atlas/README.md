@@ -28,9 +28,10 @@ across into `dashscene-typeset`'s test directory (debt #217).
   rewritten when a weight is added, so the atlas format needs no change,
   `AtlasMetrics::FORMAT_VERSION` stays 1, and every frame that renders at
   weight 400 is provably unaffected. Consumed by the production render walk
-  (`goldens/tooling/src/render.rs`), whose cascade offers the Latin family
-  at weights 400/600/700 and mirrors it with `[ascii, ascii-semibold,
-  ascii-bold, arabic]`.
+  (`goldens/tooling/src/render.rs`), whose cascade offers Noto Sans at
+  weights 400/600/700 and mirrors it, since story #385, with `[ascii,
+  ascii-semibold, ascii-bold, inter-ascii, inter-ascii-medium,
+  inter-ascii-semibold, inter-ascii-bold, arabic]`.
 - `inter-ascii/`, `inter-ascii-medium/`, `inter-ascii-semibold/`,
   `inter-ascii-bold/` — from `corpus/fonts/inter`'s Regular, Medium,
   SemiBold and Bold faces, over the same charset as `ascii/` (story

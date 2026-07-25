@@ -390,6 +390,14 @@ struct TextContext {
     /// offering only weight 400 resolves every request there and the box is
     /// measured exactly as before this field existed.
     weight: u16,
+    /// The node's font family (story #385). A measure input for the same
+    /// reason weight is, and a stronger one: a different family has its
+    /// own advances, its own kerning and its own metrics, so a run
+    /// measured in a family the document did not ask for sizes a box the
+    /// text does not fit. A cascade that declares no names, or one with no
+    /// family answering to this one, resolves by coverage and measures
+    /// exactly as before this field existed.
+    family: String,
 }
 
 /// The measure context for a node, present only when the node carries
@@ -404,6 +412,7 @@ fn text_context(arena: &Arena, node: NodeId) -> Option<TextContext> {
         size: style.size,
         shape: text_shape(style),
         weight: style.weight,
+        family: style.family.clone(),
     })
 }
 
@@ -449,12 +458,13 @@ fn measure_text(
         AvailableSpace::MinContent => Some(0.0),
         AvailableSpace::MaxContent => None,
     });
-    let laid = typesetter.layout_weighted(
+    let laid = typesetter.layout_styled(
         &context.text,
         context.size,
         max_width,
         context.shape,
         context.weight,
+        &context.family,
     );
     Size {
         width: known.width.unwrap_or(laid.width),
@@ -990,13 +1000,15 @@ fn collect_baseline_offsets(
                     // The #272 baseline pass measures the same run the
                     // measure callback did, so it must resolve the same
                     // face: a bold child's first baseline sits at the bold
-                    // face's ascent, not Regular's (story #368).
-                    let laid = typesetter.layout_weighted(
+                    // face's ascent, not Regular's (story #368), and an
+                    // Inter child's at Inter's, not Noto's (story #385).
+                    let laid = typesetter.layout_styled(
                         text,
                         style.size,
                         Some(child_layout.size.width),
                         text_shape(style),
                         style.weight,
+                        &style.family,
                     );
                     laid.lines
                         .first()

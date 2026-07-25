@@ -27,7 +27,7 @@ use dashpaint::{AtlasIndex, GlyphQuad, GlyphRun, GlyphRunTable, Painter};
 use dashscene_core::{Arena, NodeId, load_document};
 use dashscene_engine::TaffySolver;
 use dashscene_skia::SkiaPainter;
-use dashscene_typeset::text::{Font, Typesetter};
+use dashscene_typeset::text::{Font, FontFamily, TextShape, Typesetter, WeightedFont};
 use dashscene_validator::Profile;
 use goldens::oracle::{self, AA_EDGE, BLUR_FALLOFF, MSDF_TEXT, ToleranceBand};
 use skia_safe::{Color, Color4f, EncodedImageFormat, Paint, Rect, surfaces};
@@ -563,25 +563,55 @@ const FONT_ARABIC: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../corpus/fonts/noto-sans-arabic/NotoSansArabic-Regular.ttf"
 );
+const FONT_INTER: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../corpus/fonts/inter/Inter-Regular.otf"
+);
 const ATLAS_ASCII_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../corpus/atlas/ascii");
+const ATLAS_INTER_ASCII_DIR: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../corpus/atlas/inter-ascii"
+);
 const ATLAS_ARABIC_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../corpus/atlas/arabic");
 
-/// The one coverage cascade the oracle measures and stages every TEXT node
-/// through: Noto Sans primary (font 0), Noto Sans Arabic fallback (font 1).
+/// The one named cascade the oracle measures and stages every TEXT node
+/// through: Noto Sans (font 0), Inter (font 1), Noto Sans Arabic (font 2).
 /// The font index a shaped glyph carries indexes both this cascade and the
-/// atlas list built in the same order (`[ascii, arabic]`).
+/// atlas list built in the same order (`[ascii, inter-ascii, arabic]`).
+///
+/// Inter joined at story #385, once #49 closed and the E7 freeze that had
+/// kept this file's cascade private lifted.
+/// `docs/decisions/corpus-ships-inter.md` deferred exactly this to
+/// "whoever closes #49": the gate carried a disclosed Inter-to-Noto
+/// substitution, and `v08-grid-spans` is where it showed.
+///
+/// One face per family, unlike the production walk's three Noto and four
+/// Inter weights: every fixture this oracle measures is authored at weight
+/// 400, so a wider cascade would add slots nothing selects. A heavier
+/// fixture would resolve to the Regular face and say so as
+/// `text.weight-substituted`.
 fn oracle_typesetter() -> Typesetter {
-    let latin = Font::from_bytes(
-        std::fs::read(FONT_LATIN).expect("corpus Latin font present"),
-        0,
-    )
-    .expect("Noto Sans parses");
-    let arabic = Font::from_bytes(
-        std::fs::read(FONT_ARABIC).expect("corpus Arabic font present"),
-        0,
-    )
-    .expect("Noto Sans Arabic parses");
-    Typesetter::with_fonts(vec![latin, arabic])
+    let load = |path: &str, what: &str| {
+        Font::from_bytes(
+            std::fs::read(path).unwrap_or_else(|e| panic!("corpus {what} font present: {e}")),
+            0,
+        )
+        .unwrap_or_else(|e| panic!("{what} parses: {e}"))
+    };
+    Typesetter::with_named_font_families(vec![
+        FontFamily::new(
+            "Noto Sans",
+            vec![WeightedFont::regular(load(FONT_LATIN, "Noto Sans"))],
+        ),
+        FontFamily::new(
+            "Inter",
+            vec![WeightedFont::regular(load(FONT_INTER, "Inter"))],
+        ),
+        FontFamily::new(
+            "Noto Sans Arabic",
+            vec![WeightedFont::regular(load(FONT_ARABIC, "Noto Sans Arabic"))],
+        ),
+    ])
 }
 
 /// Shapes `text` at `size` and places every glyph in absolute document space
@@ -589,6 +619,17 @@ fn oracle_typesetter() -> Typesetter {
 /// splitting a new run wherever the cascade switched fonts so each run samples
 /// the atlas of its own font. `atlases` is built in font-list order, so the
 /// font index a glyph carries selects its atlas.
+///
+/// `family` and `weight` are the node's own (story #385). Both have to be
+/// passed here and not only to the measure callback: the solve resolves a
+/// family and a weight, so staging that ignored either would place one face's
+/// glyph ids at another face's advances. This cascade declares one face per
+/// family, so every request resolves to that face and neither argument can
+/// change what renders today — they are passed so that widening the cascade
+/// later cannot silently split staging from the measure. The other text axes
+/// stay at their defaults, which is a separate, disclosed limitation of this
+/// oracle (debt #306).
+#[allow(clippy::too_many_arguments)]
 fn text_runs(
     ts: &mut Typesetter,
     atlases: &[AtlasIndex],
@@ -596,8 +637,10 @@ fn text_runs(
     text: &str,
     size: f32,
     color: dashpaint::Color,
+    family: &str,
+    weight: u16,
 ) -> Vec<GlyphRun> {
-    let laid = ts.layout(text, size, None);
+    let laid = ts.layout_styled(text, size, None, TextShape::default(), weight, family);
     let mut runs: Vec<GlyphRun> = Vec::new();
     for line in &laid.lines {
         for g in &line.glyphs {
@@ -644,6 +687,8 @@ fn stage_text(arena: &Arena, ts: &mut Typesetter, atlases: &[AtlasIndex]) -> Vec
                 text,
                 style.size,
                 style.color,
+                &style.family,
+                style.weight,
             ));
         }
         for &child in arena.children(node) {
@@ -694,12 +739,13 @@ fn render_fixture(name: &str, fixture_json: &str) -> Vec<u8> {
         .commit_with(&mut TaffySolver::with_typesetter(&mut ts));
 
     // Stage glyph runs for every TEXT node. The atlases are pushed in the
-    // cascade's font order (`[ascii, arabic]`), so the font index a shaped
-    // glyph carries selects its atlas.
+    // cascade's font order (`[ascii, inter-ascii, arabic]`), so the font index
+    // a shaped glyph carries selects its atlas.
     let mut glyphs = GlyphRunTable::new();
     let ascii = glyphs.push_atlas(load_atlas(ATLAS_ASCII_DIR));
+    let inter = glyphs.push_atlas(load_atlas(ATLAS_INTER_ASCII_DIR));
     let arabic = glyphs.push_atlas(load_atlas(ATLAS_ARABIC_DIR));
-    for run in stage_text(&arena, &mut ts, &[ascii, arabic]) {
+    for run in stage_text(&arena, &mut ts, &[ascii, inter, arabic]) {
         glyphs.push_run(run);
     }
 

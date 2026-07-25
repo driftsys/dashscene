@@ -201,7 +201,7 @@ deliberate, reviewed change rather than a silent drift:
 These are engineering estimates from the AA/blur/MSDF edge
 characteristics, pinned so the harness is falsifiable. All three bands are
 now confirmed by real captures, none retuned: `AA_EDGE` (`v08-wrap`
-0.000 %, `v08-grid-spans` 0.116 %), `BLUR_FALLOFF` (`v08-drop-shadow`
+0.000 %, `v08-grid-spans` 0.037 %), `BLUR_FALLOFF` (`v08-drop-shadow`
 0.022 %, `v08-inner-shadow` 0.000 %), and `MSDF_TEXT` (`v05-text-latin`
 0.033 %, `v06-text-arabic` 1.405 %) — every measured frame inside its
 budget.
@@ -238,7 +238,8 @@ aggregate `needs`.
 All seven frames are measured today, each within its band. `v08-grid-spans` declares no
 exclusion: with the text render path wired (#303) its `hug me` TEXT leaf sizes to
 the shaped text instead of collapsing to 0x0, so the grid solves as Figma laid it
-out — the whole 720x480 frame diffs 0.116 %. The two shadow frames
+out — the whole 720x480 frame diffs 0.037 % (0.116 % before story #385 committed
+Inter and matched the family by name; the cell is authored in `Inter`). The two shadow frames
 (`v08-drop-shadow` 0.022 %, `v08-inner-shadow` 0.000 %) and the two text frames
 (`v05-text-latin` 0.033 %, `v06-text-arabic` 1.405 %) render from fixtures the
 fixture-author plugin builds (#304): the shadows pin `sigma = blur/2` against
@@ -253,8 +254,9 @@ The third text frame, `v08-baseline`, is a mixed-size baseline row — three
 Noto Sans runs (`small` 12, `medium` 24, `LARGE` 40) baseline-aligned in a fixed
 380x120 frame — replacing the earlier Inter-authored fixture whose HUG root
 resized under a substituted font and could not be diffed. It caught a second real
-bug the self-oracle goldens missed: the diff first measured 3.807 % (over every
-band) because Taffy's high-level measure reports no baseline for a leaf, so a text
+bug the self-oracle goldens missed: the diff first measured 3.807 % against the
+msdf-text band's 3 % budget because Taffy's high-level measure reports no
+baseline for a leaf, so a text
 leaf aligned on its box bottom, not its glyph baseline — the shorter runs sat a
 descender too low (#272). A post-solve glyph-baseline correction in
 `dashscene-engine` brought it to 1.816 %, measured in the `msdf-text` band because,

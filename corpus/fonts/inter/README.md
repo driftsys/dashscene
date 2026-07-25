@@ -17,8 +17,8 @@ wholesale (and update this README) when a version bump is deliberate.
 Four static upright faces, all from the same release archive, path
 `Inter Desktop/`:
 
-| file                 | CSS weight | bytes   | sha256 (first 16) |
-| -------------------- | ---------- | ------- | ----------------- |
+| file                 | CSS weight | bytes   | sha256 (first 16)  |
+| -------------------- | ---------- | ------- | ------------------ |
 | `Inter-Regular.otf`  | 400        | 258 992 | `a7e791e8f5a0fb02` |
 | `Inter-Medium.otf`   | 500        | 269 692 | `99dab2bdcb613c4c` |
 | `Inter-SemiBold.otf` | 600        | 270 760 | `8c1990b6012254ea` |
@@ -68,7 +68,7 @@ releases, whose metrics are identical. And it says nothing about letterform or
 spacing agreement — that is what the render diff against Figma's own
 `GET /images` export measures, not this table.
 
-## A trap in the face names
+## Why the family name is declared rather than read from the face
 
 `Inter-Medium.otf` and `Inter-SemiBold.otf` declare name ID 1 as
 `Inter Medium` and `Inter Semi Bold`, not `Inter` — the four-styles-per-family
