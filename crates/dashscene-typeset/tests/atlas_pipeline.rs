@@ -13,7 +13,7 @@ use dashscene_typeset::text::{Font, Typesetter};
 
 mod common;
 
-use common::{FONT, FONT_ARABIC};
+use common::{FONT, FONT_ARABIC, FONT_BOLD, FONT_SEMIBOLD};
 
 // The committed atlas fixtures live under the shared corpus/atlas/ home,
 // beside the fonts they are generated from — not under this crate's
@@ -21,6 +21,15 @@ use common::{FONT, FONT_ARABIC};
 // into a crate's private test tree (debt #217).
 const ASCII_FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../corpus/atlas/ascii");
 const ARABIC_FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../corpus/atlas/arabic");
+// One atlas directory per (script, weight) — story #368's decision. The
+// Regular fixtures above are never rewritten, so their bytes and the E7
+// frames that render through them are untouched by adding a weight.
+const ASCII_SEMIBOLD_FIXTURE_DIR: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../corpus/atlas/ascii-semibold"
+);
+const ASCII_BOLD_FIXTURE_DIR: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../../corpus/atlas/ascii-bold");
 
 /// Returns false (and prints why) when the pinned tool is unavailable
 /// and the environment tolerates that; panics when CI demands it.
@@ -45,6 +54,19 @@ fn ascii_charset() -> BTreeSet<char> {
 /// test, and every ASCII-atlas assertion all build from this spec.
 fn ascii_spec() -> AtlasSpec {
     AtlasSpec::new(PathBuf::from(FONT), ascii_charset())
+}
+
+/// The SemiBold (600) and Bold (700) ASCII fixture contracts, mirroring
+/// [`ascii_spec`]: same charset, same atlas parameters, a different face
+/// (story #368). Weight is carried by the face, not by the spec — the
+/// atlas format is unchanged and `AtlasMetrics::FORMAT_VERSION` stays 1,
+/// which is why the Regular fixtures need no regeneration.
+fn ascii_semibold_spec() -> AtlasSpec {
+    AtlasSpec::new(PathBuf::from(FONT_SEMIBOLD), ascii_charset())
+}
+
+fn ascii_bold_spec() -> AtlasSpec {
+    AtlasSpec::new(PathBuf::from(FONT_BOLD), ascii_charset())
 }
 
 /// One shared generation for the read-only tests; `double_run` adds
@@ -359,6 +381,93 @@ fn committed_arabic_fixture_is_reproducible() {
     assert_eq!(committed.metrics.to_bytes(), fresh.metrics.to_bytes());
 }
 
+/// The committed SemiBold ASCII fixture is reproducible, exactly as
+/// `committed_ascii_fixture_is_reproducible` proves for Regular — same
+/// charset and parameters, the SemiBold face (story #368).
+#[test]
+fn committed_ascii_semibold_fixture_is_reproducible() {
+    if !tool_available() {
+        return;
+    }
+    let committed = AtlasBundle::load_from_dir(&PathBuf::from(ASCII_SEMIBOLD_FIXTURE_DIR)).expect(
+        "committed SemiBold fixture loads — regenerate with `cargo test -p dashscene-typeset \
+         --test atlas_pipeline -- --ignored regenerate_committed_ascii_semibold_fixture`",
+    );
+    let fresh = generate(&ascii_semibold_spec()).expect("pipeline runs over the SemiBold face");
+    assert_eq!(
+        committed.image_png, fresh.image_png,
+        "committed SemiBold atlas.png no longer reproducible (R7) — if \
+         the toolchain legitimately changed, regenerate the fixture and \
+         record why"
+    );
+    assert_eq!(committed.metrics.to_bytes(), fresh.metrics.to_bytes());
+}
+
+/// The committed Bold ASCII fixture is reproducible (story #368).
+#[test]
+fn committed_ascii_bold_fixture_is_reproducible() {
+    if !tool_available() {
+        return;
+    }
+    let committed = AtlasBundle::load_from_dir(&PathBuf::from(ASCII_BOLD_FIXTURE_DIR)).expect(
+        "committed Bold fixture loads — regenerate with `cargo test -p dashscene-typeset \
+         --test atlas_pipeline -- --ignored regenerate_committed_ascii_bold_fixture`",
+    );
+    let fresh = generate(&ascii_bold_spec()).expect("pipeline runs over the Bold face");
+    assert_eq!(
+        committed.image_png, fresh.image_png,
+        "committed Bold atlas.png no longer reproducible (R7) — if the \
+         toolchain legitimately changed, regenerate the fixture and \
+         record why"
+    );
+    assert_eq!(committed.metrics.to_bytes(), fresh.metrics.to_bytes());
+}
+
+/// The three ASCII weights are distinct rasterizations of one charset:
+/// each covers the same 95 printable ASCII characters, and a stem-heavy
+/// glyph is measurably wider at each heavier weight. A fixture accidentally
+/// baked from the wrong face would pass both reproducibility tests above
+/// and fail here (story #368).
+#[test]
+fn the_three_ascii_weights_are_distinct_faces() {
+    let weights = [
+        (ASCII_FIXTURE_DIR, FONT, "Regular"),
+        (ASCII_SEMIBOLD_FIXTURE_DIR, FONT_SEMIBOLD, "SemiBold"),
+        (ASCII_BOLD_FIXTURE_DIR, FONT_BOLD, "Bold"),
+    ];
+    let mut advances = Vec::new();
+    for (dir, font_path, name) in weights {
+        let bundle = AtlasBundle::load_from_dir(&PathBuf::from(dir))
+            .unwrap_or_else(|e| panic!("committed {name} fixture loads: {e}"));
+        // Same charset, so the same glyph count as the Regular fixture:
+        // 95 ASCII + .notdef + the three two-character Latin ligatures.
+        assert_eq!(
+            bundle.metrics.glyphs.len(),
+            99,
+            "{name} atlas covers the same charset as Regular"
+        );
+        assert!(bundle.metrics.missing_codepoints.is_empty());
+        // 'H' — a two-stem glyph, so its advance grows with stem weight.
+        let data = std::fs::read(font_path).expect("fixture font present");
+        let gid = ttf_parser::Face::parse(&data, 0)
+            .unwrap()
+            .glyph_index('H')
+            .unwrap()
+            .0;
+        let g = bundle
+            .metrics
+            .glyphs
+            .iter()
+            .find(|g| g.glyph_id == gid)
+            .unwrap_or_else(|| panic!("{name} atlas covers 'H'"));
+        advances.push((name, g.advance_units));
+    }
+    assert!(
+        advances[0].1 < advances[1].1 && advances[1].1 < advances[2].1,
+        "'H' must advance wider at each heavier weight, got {advances:?}"
+    );
+}
+
 /// Rewrites the committed ASCII fixture from the current pipeline.
 /// Ignored: run it only after a deliberate parameter or toolchain
 /// change, then commit the result with a note recording why.
@@ -388,6 +497,40 @@ fn regenerate_committed_arabic_fixture() {
         .expect("write fixture");
     println!(
         "wrote {ARABIC_FIXTURE_DIR} ({} glyphs, {}x{})",
+        bundle.metrics.glyphs.len(),
+        bundle.metrics.atlas.width,
+        bundle.metrics.atlas.height
+    );
+}
+
+/// Rewrites the committed SemiBold ASCII fixture (story #368). Ignored,
+/// like the Regular regenerator.
+#[test]
+#[ignore = "regenerates the committed fixture; run explicitly"]
+fn regenerate_committed_ascii_semibold_fixture() {
+    let bundle = generate(&ascii_semibold_spec()).expect("pipeline runs");
+    bundle
+        .write_to_dir(&PathBuf::from(ASCII_SEMIBOLD_FIXTURE_DIR))
+        .expect("write fixture");
+    println!(
+        "wrote {ASCII_SEMIBOLD_FIXTURE_DIR} ({} glyphs, {}x{})",
+        bundle.metrics.glyphs.len(),
+        bundle.metrics.atlas.width,
+        bundle.metrics.atlas.height
+    );
+}
+
+/// Rewrites the committed Bold ASCII fixture (story #368). Ignored, like
+/// the Regular regenerator.
+#[test]
+#[ignore = "regenerates the committed fixture; run explicitly"]
+fn regenerate_committed_ascii_bold_fixture() {
+    let bundle = generate(&ascii_bold_spec()).expect("pipeline runs");
+    bundle
+        .write_to_dir(&PathBuf::from(ASCII_BOLD_FIXTURE_DIR))
+        .expect("write fixture");
+    println!(
+        "wrote {ASCII_BOLD_FIXTURE_DIR} ({} glyphs, {}x{})",
         bundle.metrics.glyphs.len(),
         bundle.metrics.atlas.width,
         bundle.metrics.atlas.height

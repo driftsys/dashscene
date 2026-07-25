@@ -20,41 +20,78 @@ use dashscene_core::{Arena, NodeId, load_document};
 use dashscene_engine::TaffySolver;
 use dashscene_skia::SkiaPainter;
 use dashscene_typeset::atlas::AtlasBundle;
-use dashscene_typeset::text::{Font, TextShape, Typesetter};
+use dashscene_typeset::text::{Font, TextShape, Typesetter, WeightedFont};
 
 const FONT_LATIN: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../corpus/fonts/noto-sans/NotoSans-Regular.ttf"
+);
+const FONT_LATIN_SEMIBOLD: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../corpus/fonts/noto-sans/NotoSans-SemiBold.ttf"
+);
+const FONT_LATIN_BOLD: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../corpus/fonts/noto-sans/NotoSans-Bold.ttf"
 );
 const FONT_ARABIC: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../corpus/fonts/noto-sans-arabic/NotoSansArabic-Regular.ttf"
 );
 
-/// The committed ASCII glyph-atlas fixture directory (Noto Sans, font 0).
+/// The committed ASCII glyph-atlas fixture directory (Noto Sans Regular, slot 0).
 pub const ATLAS_ASCII_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../corpus/atlas/ascii");
-/// The committed Arabic glyph-atlas fixture directory (Noto Sans Arabic, font 1).
+/// The committed SemiBold ASCII atlas (Noto Sans SemiBold, slot 1) — story #368.
+pub const ATLAS_ASCII_SEMIBOLD_DIR: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../corpus/atlas/ascii-semibold"
+);
+/// The committed Bold ASCII atlas (Noto Sans Bold, slot 2) — story #368.
+pub const ATLAS_ASCII_BOLD_DIR: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../../corpus/atlas/ascii-bold");
+/// The committed Arabic glyph-atlas fixture directory (Noto Sans Arabic, slot 3).
 pub const ATLAS_ARABIC_DIR: &str =
     concat!(env!("CARGO_MANIFEST_DIR"), "/../../corpus/atlas/arabic");
 
-/// The one coverage cascade every TEXT node is measured and staged through:
-/// Noto Sans primary (font 0), Noto Sans Arabic fallback (font 1). The font
-/// index a shaped glyph carries indexes both this cascade and the atlas list
-/// built in the same order (`[ascii, arabic]`). A copy of the E7 oracle's
-/// `oracle_typesetter`, kept here so the live oracle test file stays
-/// byte-identical.
+/// The one cascade every TEXT node is measured and staged through: a Latin
+/// family of the three committed Noto Sans weights (Regular 400, SemiBold
+/// 600, Bold 700) and an Arabic family of the one committed Noto Sans
+/// Arabic weight (Regular 400). Story #368 widened this from a flat
+/// Regular-only list.
+///
+/// Families flatten family-major, so the slot list — what a shaped glyph's
+/// `font` index selects — is `[ascii, ascii-semibold, ascii-bold, arabic]`,
+/// and [`render_dsb`] pushes its atlases in exactly that order.
+///
+/// Coverage still picks the family before weight picks the face, so an
+/// Arabic run at any weight resolves within the Arabic family: it has only
+/// a Regular face, so a bold Arabic run renders Regular and reports
+/// `text.weight-substituted` rather than falling into a Latin bold face
+/// that cannot render it at all.
+///
+/// Not a copy of the E7 oracle's `oracle_typesetter` any more — that one
+/// stays flat and Regular-only so the live oracle test file is untouched,
+/// and every E7 fixture carries weight 400, which resolves to the same
+/// Regular faces either way.
 pub fn oracle_typesetter() -> Typesetter {
-    let latin = Font::from_bytes(
-        std::fs::read(FONT_LATIN).expect("corpus Latin font present"),
-        0,
-    )
-    .expect("Noto Sans parses");
-    let arabic = Font::from_bytes(
-        std::fs::read(FONT_ARABIC).expect("corpus Arabic font present"),
-        0,
-    )
-    .expect("Noto Sans Arabic parses");
-    Typesetter::with_fonts(vec![latin, arabic])
+    let load = |path: &str, what: &str| {
+        Font::from_bytes(
+            std::fs::read(path).unwrap_or_else(|e| panic!("corpus {what} font present: {e}")),
+            0,
+        )
+        .unwrap_or_else(|e| panic!("{what} parses: {e}"))
+    };
+    Typesetter::with_font_families(vec![
+        vec![
+            WeightedFont::new(load(FONT_LATIN, "Noto Sans Regular"), 400),
+            WeightedFont::new(load(FONT_LATIN_SEMIBOLD, "Noto Sans SemiBold"), 600),
+            WeightedFont::new(load(FONT_LATIN_BOLD, "Noto Sans Bold"), 700),
+        ],
+        vec![WeightedFont::new(
+            load(FONT_ARABIC, "Noto Sans Arabic Regular"),
+            400,
+        )],
+    ])
 }
 
 /// Converts a committed build-time atlas fixture at `dir` into a boundary-B
@@ -141,9 +178,10 @@ fn text_runs(
     color: Color,
     shape: TextShape,
     valign: crate::VerticalAlign,
+    weight: u16,
 ) -> Vec<GlyphRun> {
     let (box_w, box_h) = box_size;
-    let laid = ts.layout_with(text, size, Some(box_w), shape);
+    let laid = ts.layout_weighted(text, size, Some(box_w), shape, weight);
     // Vertical alignment is block placement, not paint (P2) and not a measured
     // extent (P1): shift every glyph down by the box's free space above the block.
     let voff = crate::vertical_offset(box_h, laid.height, valign);
@@ -197,6 +235,7 @@ fn stage_text(arena: &Arena, ts: &mut Typesetter, atlases: &[AtlasIndex]) -> Vec
                 style.color,
                 text_shape(style),
                 vertical_align(style.text_align_v),
+                style.weight,
             ));
         }
         for &child in arena.children(node) {
@@ -234,13 +273,29 @@ pub fn render_dsb(dsb: &[u8]) -> Vec<u8> {
         .commit_with(&mut TaffySolver::with_typesetter(&mut ts));
 
     // Stage glyph runs for every TEXT node. The atlases are pushed in the
-    // cascade's font order (`[ascii, arabic]`), so the font index a shaped glyph
-    // carries selects its atlas.
+    // cascade's slot order (`[ascii, ascii-semibold, ascii-bold, arabic]` —
+    // family-major, see `oracle_typesetter`), so the slot index a shaped glyph
+    // carries selects the atlas of the face that actually shaped it.
     let mut glyphs = GlyphRunTable::new();
     let ascii = glyphs.push_atlas(load_atlas(ATLAS_ASCII_DIR));
+    let ascii_semibold = glyphs.push_atlas(load_atlas(ATLAS_ASCII_SEMIBOLD_DIR));
+    let ascii_bold = glyphs.push_atlas(load_atlas(ATLAS_ASCII_BOLD_DIR));
     let arabic = glyphs.push_atlas(load_atlas(ATLAS_ARABIC_DIR));
-    for run in stage_text(&arena, &mut ts, &[ascii, arabic]) {
+    for run in stage_text(
+        &arena,
+        &mut ts,
+        &[ascii, ascii_semibold, ascii_bold, arabic],
+    ) {
         glyphs.push_run(run);
+    }
+
+    // P4: a weight the corpus cannot supply exactly is a named diagnostic,
+    // never a silent drop. Staging is finished, so every substitution that
+    // actually rendered glyphs is now recorded (story #368). Reported to
+    // stderr because this is the render path's only caller-visible surface —
+    // the return value is the PNG.
+    for report in ts.weight_substitutions() {
+        eprintln!("warning: {report}");
     }
 
     let scene = arena.committed();
@@ -317,6 +372,7 @@ mod tests {
             black,
             TextShape::default(),
             VerticalAlign::Top,
+            400,
         );
         let center = text_runs(
             &mut ts,
@@ -333,6 +389,7 @@ mod tests {
                 ligatures_off: false,
             },
             VerticalAlign::Center,
+            400,
         );
 
         let left_glyph = left[0].glyphs[0];
@@ -350,6 +407,91 @@ mod tests {
              (left {}, center {})",
             left_glyph.y,
             center_glyph.y
+        );
+    }
+
+    /// Story #368: the render walk stages a weighted run against the atlas
+    /// of the face that actually shaped it. The cascade flattens
+    /// family-major, so Latin 400/600/700 are slots 0/1/2 and the atlas list
+    /// `[ascii, ascii-semibold, ascii-bold, arabic]` is indexed by the slot
+    /// a shaped glyph carries. Before this story the walk never read
+    /// `style.weight`, so all three rows staged from slot 0 and rendered
+    /// Regular.
+    #[test]
+    fn the_stager_selects_an_atlas_by_the_nodes_weight() {
+        use dashpaint::{AtlasIndex, Color};
+        use dashscene_typeset::text::TextShape;
+
+        use crate::VerticalAlign;
+
+        use super::{oracle_typesetter, text_runs};
+
+        let mut ts = oracle_typesetter();
+        let atlases = [
+            AtlasIndex(0), // ascii (Regular)
+            AtlasIndex(1), // ascii-semibold
+            AtlasIndex(2), // ascii-bold
+            AtlasIndex(3), // arabic
+        ];
+        let black = Color {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        };
+        let staged = |ts: &mut _, weight| {
+            text_runs(
+                ts,
+                &atlases,
+                (0.0, 0.0),
+                (400.0, 100.0),
+                "Sphinx of quartz 123",
+                28.0,
+                black,
+                TextShape::default(),
+                VerticalAlign::Top,
+                weight,
+            )
+        };
+        for (weight, expected) in [(400u16, 0u32), (600, 1), (700, 2)] {
+            let runs = staged(&mut ts, weight);
+            assert_eq!(runs.len(), 1, "one atlas per row");
+            assert_eq!(
+                runs[0].atlas,
+                AtlasIndex(expected),
+                "weight {weight} must stage against atlas {expected}"
+            );
+        }
+        // Weight 500 has no committed face: the CSS Fonts 4 rule resolves it
+        // to Regular, and the substitution is reported rather than silent.
+        let at_500 = staged(&mut ts, 500);
+        assert_eq!(at_500[0].atlas, AtlasIndex(0));
+        assert!(
+            ts.weight_substitutions()
+                .iter()
+                .any(|s| (s.requested, s.resolved) == (500, 400)),
+            "the 500 -> 400 substitution is reported: {:?}",
+            ts.weight_substitutions()
+        );
+        // The rows are not merely tagged differently — they are placed
+        // differently, because the heavier faces advance wider.
+        let regular_end = staged(&mut ts, 400)
+            .last()
+            .unwrap()
+            .glyphs
+            .last()
+            .unwrap()
+            .x;
+        let bold_end = staged(&mut ts, 700)
+            .last()
+            .unwrap()
+            .glyphs
+            .last()
+            .unwrap()
+            .x;
+        assert!(
+            bold_end > regular_end,
+            "the bold row must run wider (regular {regular_end}, bold {bold_end})"
         );
     }
 

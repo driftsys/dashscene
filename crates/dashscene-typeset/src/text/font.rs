@@ -86,6 +86,35 @@ impl Font {
     }
 }
 
+/// One face of one family at one CSS-scale weight (story #368).
+///
+/// The weight is the face's *own* weight, declared by whoever assembled
+/// the cascade — the typesetter does not read the font's OS/2 table for
+/// it. That keeps the declaration explicit and auditable: the cascade
+/// says which face stands for weight 700, and
+/// [`Typesetter::with_font_families`](super::Typesetter::with_font_families)
+/// matches a requested weight against exactly those declarations.
+#[derive(Debug, Clone)]
+pub struct WeightedFont {
+    pub font: Font,
+    /// CSS-scale weight, 100..=900 — the same scale the document carries
+    /// (`dashbuf` `weight: ushort = 400`, `dashscene_core::TextStyle`).
+    pub weight: u16,
+}
+
+impl WeightedFont {
+    /// A face at the given CSS weight.
+    pub fn new(font: Font, weight: u16) -> WeightedFont {
+        WeightedFont { font, weight }
+    }
+
+    /// A face at weight 400 — the document's default and the weight every
+    /// pre-#368 cascade implicitly declared.
+    pub fn regular(font: Font) -> WeightedFont {
+        WeightedFont::new(font, 400)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

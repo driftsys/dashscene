@@ -12,6 +12,22 @@ pub const FONT: &str = concat!(
     "/../../corpus/fonts/noto-sans/NotoSans-Regular.ttf"
 );
 
+/// The committed SemiBold (CSS weight 600) corpus fixture font, from the
+/// same Noto Sans release as [`FONT`] (story #368).
+#[allow(dead_code)]
+pub const FONT_SEMIBOLD: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../corpus/fonts/noto-sans/NotoSans-SemiBold.ttf"
+);
+
+/// The committed Bold (CSS weight 700) corpus fixture font, from the same
+/// Noto Sans release as [`FONT`] (story #368).
+#[allow(dead_code)]
+pub const FONT_BOLD: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../corpus/fonts/noto-sans/NotoSans-Bold.ttf"
+);
+
 /// The committed Arabic corpus fixture font (see
 /// corpus/fonts/noto-sans-arabic/) — carries GSUB/GPOS/cmap.
 #[allow(dead_code)]

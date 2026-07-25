@@ -134,3 +134,34 @@ Pinned by `lowering-hug-in-fill.json`, `lowering-negative-gap.json`,
   silently reflow or repaint siblings — with the shapes taken from Figma's
   documentation and flagged as such at the tests. A capture that carries
   them should be added to a fixture when one is next authored.
+
+## `style.fontPostScriptName` cannot confirm which face Figma applied (story #368)
+
+The field looks like the obvious way to check that a TEXT node really
+carries the face its `fontWeight` claims. It is not, on two counts found
+while authoring the weight fixtures.
+
+**It is `null` for a Regular face.** Every weight-400 node of the v0.10
+hero returns `null` while every heavier node returns a real name
+(`Inter-Medium`, `Inter-SemiBold`, `Inter-Bold`). Any probe that requires a
+non-null PostScript name therefore fails on exactly the rows that are
+correct.
+
+**It can be `null` on every row, whatever the weight.** In the captured
+`text-bold.json` — three TEXT rows at weights 400, 600 and 700, authored
+in Noto Sans by the fixture-author plugin — the field is `null` on all
+three. `style.fontFamily`, `style.fontWeight` and `style.fontStyle` do
+carry the three weights correctly, so the metadata gap is in this field
+alone, not in the capture.
+
+Where the metadata cannot answer the question, Figma's own render can.
+Counting non-background pixels inside each row's reported
+`absoluteBoundingBox` gives 2001 px (Regular), 2552 px (SemiBold) and
+2902 px (Bold) — strictly increasing, because a heavier face lays down
+measurably more ink for the same string at the same size — and Figma's
+three reported row widths differ for the same reason (271, 280, 285).
+That is what confirmed three distinct faces were applied, so the `null`
+PostScript names are a REST metadata gap rather than evidence of a
+substitution. A fixture probe should assert on `fontWeight` and
+`fontStyle`, and use ink or advance measurements when it needs to
+know which physical face rendered.

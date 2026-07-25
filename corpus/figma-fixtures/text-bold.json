@@ -1,0 +1,405 @@
+{
+  "document": {
+    "id": "0:0",
+    "name": "Document",
+    "type": "DOCUMENT",
+    "scrollBehavior": "SCROLLS",
+    "children": [
+      {
+        "id": "0:1",
+        "name": "Page 1",
+        "type": "CANVAS",
+        "scrollBehavior": "SCROLLS",
+        "children": [
+          {
+            "id": "47:2",
+            "name": "text-bold",
+            "type": "FRAME",
+            "scrollBehavior": "SCROLLS",
+            "children": [
+              {
+                "id": "47:3",
+                "name": "regular-400",
+                "type": "TEXT",
+                "scrollBehavior": "SCROLLS",
+                "blendMode": "PASS_THROUGH",
+                "fills": [
+                  {
+                    "blendMode": "NORMAL",
+                    "type": "SOLID",
+                    "color": {
+                      "r": 0.10000000149011612,
+                      "g": 0.10000000149011612,
+                      "b": 0.10000000149011612,
+                      "a": 1
+                    }
+                  }
+                ],
+                "fillGeometry": [],
+                "strokes": [],
+                "strokeWeight": 1,
+                "strokeAlign": "OUTSIDE",
+                "strokeGeometry": [],
+                "absoluteBoundingBox": {
+                  "x": 24,
+                  "y": 24,
+                  "width": 271,
+                  "height": 38
+                },
+                "absoluteRenderBounds": {
+                  "x": 25.42799949645996,
+                  "y": 32.57999801635742,
+                  "width": 267.75372314453125,
+                  "height": 28.140003204345703
+                },
+                "constraints": {
+                  "vertical": "TOP",
+                  "horizontal": "LEFT"
+                },
+                "relativeTransform": [
+                  [
+                    1,
+                    0,
+                    24
+                  ],
+                  [
+                    0,
+                    1,
+                    24
+                  ]
+                ],
+                "size": {
+                  "x": 271,
+                  "y": 38
+                },
+                "layoutAlign": "INHERIT",
+                "layoutGrow": 0,
+                "layoutSizingHorizontal": "HUG",
+                "layoutSizingVertical": "HUG",
+                "characters": "Sphinx of quartz 123",
+                "characterStyleOverrides": [],
+                "styleOverrideTable": {},
+                "lineTypes": [
+                  "NONE"
+                ],
+                "lineIndentations": [
+                  0
+                ],
+                "style": {
+                  "fontFamily": "Noto Sans",
+                  "fontPostScriptName": null,
+                  "fontStyle": "Regular",
+                  "fontWeight": 400,
+                  "textAutoResize": "WIDTH_AND_HEIGHT",
+                  "fontSize": 28,
+                  "textAlignHorizontal": "LEFT",
+                  "textAlignVertical": "TOP",
+                  "letterSpacing": 0,
+                  "lineHeightPx": 38.13600158691406,
+                  "lineHeightPercent": 100,
+                  "lineHeightUnit": "INTRINSIC_%"
+                },
+                "layoutVersion": 5,
+                "effects": [],
+                "interactions": [],
+                "complexStrokeProperties": {
+                  "strokeType": "BASIC"
+                }
+              },
+              {
+                "id": "47:4",
+                "name": "semibold-600",
+                "type": "TEXT",
+                "scrollBehavior": "SCROLLS",
+                "blendMode": "PASS_THROUGH",
+                "fills": [
+                  {
+                    "blendMode": "NORMAL",
+                    "type": "SOLID",
+                    "color": {
+                      "r": 0.10000000149011612,
+                      "g": 0.10000000149011612,
+                      "b": 0.10000000149011612,
+                      "a": 1
+                    }
+                  }
+                ],
+                "fillGeometry": [],
+                "strokes": [],
+                "strokeWeight": 1,
+                "strokeAlign": "OUTSIDE",
+                "strokeGeometry": [],
+                "absoluteBoundingBox": {
+                  "x": 24,
+                  "y": 78,
+                  "width": 280,
+                  "height": 38
+                },
+                "absoluteRenderBounds": {
+                  "x": 25.3439998626709,
+                  "y": 86.58000183105469,
+                  "width": 276.5129089355469,
+                  "height": 28.139999389648438
+                },
+                "constraints": {
+                  "vertical": "TOP",
+                  "horizontal": "LEFT"
+                },
+                "relativeTransform": [
+                  [
+                    1,
+                    0,
+                    24
+                  ],
+                  [
+                    0,
+                    1,
+                    78
+                  ]
+                ],
+                "size": {
+                  "x": 280,
+                  "y": 38
+                },
+                "layoutAlign": "INHERIT",
+                "layoutGrow": 0,
+                "layoutSizingHorizontal": "HUG",
+                "layoutSizingVertical": "HUG",
+                "characters": "Sphinx of quartz 123",
+                "characterStyleOverrides": [],
+                "styleOverrideTable": {},
+                "lineTypes": [
+                  "NONE"
+                ],
+                "lineIndentations": [
+                  0
+                ],
+                "style": {
+                  "fontFamily": "Noto Sans",
+                  "fontPostScriptName": null,
+                  "fontStyle": "SemiBold",
+                  "fontWeight": 600,
+                  "textAutoResize": "WIDTH_AND_HEIGHT",
+                  "fontSize": 28,
+                  "textAlignHorizontal": "LEFT",
+                  "textAlignVertical": "TOP",
+                  "letterSpacing": 0,
+                  "lineHeightPx": 38.13600158691406,
+                  "lineHeightPercent": 100,
+                  "lineHeightUnit": "INTRINSIC_%"
+                },
+                "layoutVersion": 5,
+                "effects": [],
+                "interactions": [],
+                "complexStrokeProperties": {
+                  "strokeType": "BASIC"
+                }
+              },
+              {
+                "id": "47:5",
+                "name": "bold-700",
+                "type": "TEXT",
+                "scrollBehavior": "SCROLLS",
+                "blendMode": "PASS_THROUGH",
+                "fills": [
+                  {
+                    "blendMode": "NORMAL",
+                    "type": "SOLID",
+                    "color": {
+                      "r": 0.10000000149011612,
+                      "g": 0.10000000149011612,
+                      "b": 0.10000000149011612,
+                      "a": 1
+                    }
+                  }
+                ],
+                "fillGeometry": [],
+                "strokes": [],
+                "strokeWeight": 1,
+                "strokeAlign": "OUTSIDE",
+                "strokeGeometry": [],
+                "absoluteBoundingBox": {
+                  "x": 24,
+                  "y": 132,
+                  "width": 285,
+                  "height": 38
+                },
+                "absoluteRenderBounds": {
+                  "x": 25.288000106811523,
+                  "y": 140.5800018310547,
+                  "width": 281.8501892089844,
+                  "height": 28.139999389648438
+                },
+                "constraints": {
+                  "vertical": "TOP",
+                  "horizontal": "LEFT"
+                },
+                "relativeTransform": [
+                  [
+                    1,
+                    0,
+                    24
+                  ],
+                  [
+                    0,
+                    1,
+                    132
+                  ]
+                ],
+                "size": {
+                  "x": 285,
+                  "y": 38
+                },
+                "layoutAlign": "INHERIT",
+                "layoutGrow": 0,
+                "layoutSizingHorizontal": "HUG",
+                "layoutSizingVertical": "HUG",
+                "characters": "Sphinx of quartz 123",
+                "characterStyleOverrides": [],
+                "styleOverrideTable": {},
+                "lineTypes": [
+                  "NONE"
+                ],
+                "lineIndentations": [
+                  0
+                ],
+                "style": {
+                  "fontFamily": "Noto Sans",
+                  "fontPostScriptName": null,
+                  "fontStyle": "Bold",
+                  "fontWeight": 700,
+                  "textAutoResize": "WIDTH_AND_HEIGHT",
+                  "fontSize": 28,
+                  "textAlignHorizontal": "LEFT",
+                  "textAlignVertical": "TOP",
+                  "letterSpacing": 0,
+                  "lineHeightPx": 38.13600158691406,
+                  "lineHeightPercent": 100,
+                  "lineHeightUnit": "INTRINSIC_%"
+                },
+                "layoutVersion": 5,
+                "effects": [],
+                "interactions": [],
+                "complexStrokeProperties": {
+                  "strokeType": "BASIC"
+                }
+              }
+            ],
+            "blendMode": "PASS_THROUGH",
+            "clipsContent": true,
+            "background": [
+              {
+                "blendMode": "NORMAL",
+                "type": "SOLID",
+                "color": {
+                  "r": 0.9800000190734863,
+                  "g": 0.9800000190734863,
+                  "b": 0.9800000190734863,
+                  "a": 1
+                }
+              }
+            ],
+            "fills": [
+              {
+                "blendMode": "NORMAL",
+                "type": "SOLID",
+                "color": {
+                  "r": 0.9800000190734863,
+                  "g": 0.9800000190734863,
+                  "b": 0.9800000190734863,
+                  "a": 1
+                }
+              }
+            ],
+            "strokes": [],
+            "strokeWeight": 1,
+            "strokeAlign": "INSIDE",
+            "backgroundColor": {
+              "r": 0.9800000190734863,
+              "g": 0.9800000190734863,
+              "b": 0.9800000190734863,
+              "a": 1
+            },
+            "layoutMode": "VERTICAL",
+            "counterAxisSizingMode": "FIXED",
+            "primaryAxisSizingMode": "FIXED",
+            "paddingLeft": 24,
+            "paddingRight": 24,
+            "paddingTop": 24,
+            "paddingBottom": 24,
+            "itemSpacing": 16,
+            "layoutWrap": "NO_WRAP",
+            "fillGeometry": [
+              {
+                "path": "M0 0L520 0L520 240L0 240L0 0Z",
+                "windingRule": "NONZERO"
+              }
+            ],
+            "strokeGeometry": [],
+            "absoluteBoundingBox": {
+              "x": 0,
+              "y": 0,
+              "width": 520,
+              "height": 240
+            },
+            "absoluteRenderBounds": {
+              "x": 0,
+              "y": 0,
+              "width": 520,
+              "height": 240
+            },
+            "constraints": {
+              "vertical": "TOP",
+              "horizontal": "LEFT"
+            },
+            "relativeTransform": [
+              [
+                1,
+                0,
+                0
+              ],
+              [
+                0,
+                1,
+                0
+              ]
+            ],
+            "size": {
+              "x": 520,
+              "y": 240
+            },
+            "layoutSizingHorizontal": "FIXED",
+            "layoutSizingVertical": "FIXED",
+            "effects": [],
+            "interactions": [],
+            "complexStrokeProperties": {
+              "strokeType": "BASIC"
+            }
+          }
+        ],
+        "backgroundColor": {
+          "r": 0.11764705926179886,
+          "g": 0.11764705926179886,
+          "b": 0.11764705926179886,
+          "a": 1
+        },
+        "prototypeStartNodeID": null,
+        "flowStartingPoints": [],
+        "prototypeDevice": {
+          "type": "NONE",
+          "rotation": "NONE"
+        }
+      }
+    ]
+  },
+  "components": {},
+  "componentSets": {},
+  "schemaVersion": 0,
+  "styles": {},
+  "name": "text-bold",
+  "lastModified": "2026-07-25T14:25:31Z",
+  "version": "2380171040032215270",
+  "role": "owner",
+  "editorType": "figma",
+  "linkAccess": "inherit"
+}

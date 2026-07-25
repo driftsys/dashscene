@@ -11,13 +11,21 @@ const INTER = { family: "Inter", style: "Regular" };
 const INTER_BOLD = { family: "Inter", style: "Bold" };
 // Arabic coverage for the RTL locale variant (§8: rides on lowering files).
 const ARABIC = { family: "Noto Sans Arabic", style: "Regular" };
-// Noto Sans Regular — the E7 text-oracle fixtures (text-latin, text-arabic)
+// Noto Sans — the text-oracle fixtures (text-latin, text-arabic, text-bold)
 // author in the fonts the committed corpus atlases are generated from
 // (corpus/atlas/ascii from NotoSans-Regular, corpus/atlas/arabic from
 // NotoSansArabic-Regular), so the render oracle measures the reference painter
-// against Figma's render of the SAME font, not a substitution. Regular only:
-// no committed bold atlas, so a bold run would not render faithfully.
+// against Figma's render of the SAME font, not a substitution.
+//
+// Story #368 committed SemiBold and Bold faces and their atlases
+// (corpus/atlas/ascii-semibold, corpus/atlas/ascii-bold), which lifts the
+// Regular-only constraint that stood here before: a 600 or 700 run now has a
+// committed atlas of its own and renders faithfully. Weight 500 (Medium) still
+// has no committed face — the CSS Fonts 4 rule resolves a request for it to
+// Regular — so fixtures stay on 400/600/700.
 const NOTO = { family: "Noto Sans", style: "Regular" };
+const NOTO_SEMIBOLD = { family: "Noto Sans", style: "SemiBold" };
+const NOTO_BOLD = { family: "Noto Sans", style: "Bold" };
 
 const GRAY = (v) => ({ r: v, g: v, b: v });
 const solid = (color, opacity) => ({
@@ -934,6 +942,101 @@ async function textArabic() {
   return "text-arabic built: Noto Sans Arabic banner + harakat word + Arabic-Indic numeral readout in a fixed 520x240 frame";
 }
 
+// --------------------------------------------- text-bold (import oracle)
+// A three-row WEIGHT LADDER: the same string, at the same size, at Regular
+// (400), SemiBold (600) and Bold (700) — story #368's fixture.
+//
+// The ladder shape makes the failure signature unmistakable. If weight
+// selection is broken, our three rows render pixel-identically to each other
+// while Figma's three rows differ visibly, so the diff is large and
+// unambiguous rather than a difference of a few pixels. The Regular row doubles as
+// a built-in control: it must stay as clean as v05-text-latin is today.
+//
+// FONT CHOICE — Noto Sans, NOT Inter. Noto Sans is the family the committed
+// atlases are baked from (corpus/atlas/ascii, ascii-semibold, ascii-bold), so
+// the measurement is our render against Figma's render of THE SAME family at
+// THE SAME weight, and the diff isolates weight selection and MSDF edge
+// quality. Authoring in Inter would fold family substitution back into the
+// number and make it uninterpretable — the corpus has no Inter, so every Inter
+// run renders in Noto Sans regardless.
+//
+// This frame belongs in the IMPORT oracle (goldens/oracle/import-manifest.json),
+// not the E7 manifest, which is frozen until #49 closes.
+//
+// FIXED on both axes, as text-latin: a HUG root resized by a substituted font
+// produces a dimension mismatch that cannot be diffed at all (the v08-baseline
+// lesson). Sizing check: three 28 px rows + 2x16 spacing + 48 padding is about
+// 186 px in a 240 px box, and the string at 28 px Bold is about 300 px wide in
+// 520 less 48 padding — both fit, so no row wraps or clips. "Sphinx of quartz
+// 123" is entirely printable ASCII (0x20..0x7e), inside every weight's atlas.
+//
+// One string for all three rows: identical characters at an identical size is
+// what makes the ladder a controlled comparison — only the weight varies.
+const LADDER_TEXT = "Sphinx of quartz 123";
+
+async function textBold() {
+  const ROWS = [
+    ["regular-400", NOTO, "Regular"],
+    ["semibold-600", NOTO_SEMIBOLD, "SemiBold"],
+    ["bold-700", NOTO_BOLD, "Bold"],
+  ];
+  const missing = [];
+  for (const [, font, style] of ROWS) {
+    try {
+      await figma.loadFontAsync(font);
+    } catch (e) {
+      console.warn("Noto Sans " + style + " unavailable:", e);
+      missing.push(style);
+    }
+  }
+
+  const root = baseFrame("text-bold", 520, 240);
+  root.layoutMode = "VERTICAL";
+  root.primaryAxisSizingMode = "FIXED"; // fixed height ...
+  root.counterAxisSizingMode = "FIXED"; // ... and width: an identical box
+  root.resize(520, 240); // re-fix after the sizing modes (see textLatin)
+  root.itemSpacing = 16;
+  root.paddingLeft = root.paddingRight = 24;
+  root.paddingTop = root.paddingBottom = 24;
+
+  if (missing.length > 0) {
+    // Never silently fall back to another face: a substituted weight is
+    // exactly what this fixture exists to exclude. Leave a `_`-prefixed
+    // checklist instead, the text-arabic precedent. The note itself is set
+    // in Inter, which Figma always provides — a missing Noto weight must not
+    // also break the message saying so.
+    await figma.loadFontAsync(INTER);
+    const note = label(
+      "_manual-steps: Noto Sans " +
+        missing.join(" and ") +
+        " unavailable. Add the missing row(s) by hand, each a text node " +
+        'reading "' +
+        LADDER_TEXT +
+        '" at size 28 in the named weight:\n  ' +
+        ROWS.map((r) => r[0] + " -> Noto Sans " + r[2]).join("\n  "),
+      INTER,
+      12,
+    );
+    note.name = "_manual-checklist";
+    root.appendChild(note);
+  }
+
+  for (const [name, font, style] of ROWS) {
+    if (missing.indexOf(style) !== -1) continue;
+    const row = label(LADDER_TEXT, font, 28);
+    row.name = name;
+    root.appendChild(row);
+  }
+
+  return missing.length > 0
+    ? "text-bold: Noto Sans " +
+      missing.join(" and ") +
+      " unavailable — add the missing row(s) manually (see _manual-checklist)"
+    : "text-bold built: Noto Sans weight ladder 400/600/700 of " +
+      JSON.stringify(LADDER_TEXT) +
+      " at size 28 in a fixed 520x240 frame";
+}
+
 // ----------------------------------------- text-baseline (E7 render oracle)
 // A mixed-size Latin row aligned on the BASELINE — the E7 render oracle frame
 // v08-baseline, authored in Noto Sans Regular (the committed ascii atlas font)
@@ -945,7 +1048,9 @@ async function textArabic() {
 // Inter (uncommitted), so rendered in Noto Sans its HUG root measured 621x160
 // against Figma's 608x160 and could not be diffed. A HORIZONTAL row with
 // counterAxisAlignItems BASELINE (lowers to CrossAxisAlign::Baseline since #264)
-// and three Regular runs at 12/24/40 — no committed bold atlas, so Regular only.
+// and three Regular runs at 12/24/40 — Regular only, because this frame
+// isolates baseline alignment of mixed SIZES; weight is the text-bold frame's
+// axis (committed bold atlases arrived with story #368).
 // Unlike the stacked v05-text-latin/v06-text-arabic frames, this frame exercises
 // baseline alignment of mixed-size runs: the engine aligns a leaf on the box
 // bottom, not the glyph baseline (debt #272), so the oracle measures that
@@ -1391,6 +1496,7 @@ const COMMANDS = {
   "text-latin": textLatin,
   "text-arabic": textArabic,
   "text-baseline": textBaseline,
+  "text-bold": textBold,
   "drop-shadow": dropShadow,
   "inner-shadow": innerShadow,
   "liga-text": ligaText,

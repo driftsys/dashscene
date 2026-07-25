@@ -58,6 +58,12 @@ then run Plugins → Development → dashscene fixture author → _(name)_.
                                  Noto Sans Regular mixed-size BASELINE row —
                                  'small' 12, 'medium' 24, 'LARGE' 40 — the
                                  baseline-alignment case text-latin/arabic omit
+    text-bold                    import-oracle weight frame (story #368): a
+                                 Noto Sans WEIGHT LADDER — the same string at
+                                 the same size in Regular 400, SemiBold 600 and
+                                 Bold 700, the three weights the committed
+                                 atlases cover (see the manual note below if a
+                                 weight is missing)
     drop-shadow                  E7 render-oracle shadow frame (v08-drop-shadow):
                                  one DROP_SHADOW card, sigma = blur/2 pinning
     inner-shadow                 E7 render-oracle shadow frame (v08-inner-shadow):
@@ -122,6 +128,13 @@ capture as below.
   builds the frame with a `_manual-checklist` note instead of the runs;
   add the three text nodes it lists in Noto Sans Arabic Regular. The
   font is a Figma-bundled Google font, so this is rare.
+- **text-bold**: if any of `Noto Sans` Regular / SemiBold / Bold is
+  unavailable, the command builds the frame with the weights it does have
+  plus a `_manual-checklist` note naming the missing ones. It never
+  substitutes another face for a missing weight: a substituted weight is
+  exactly what this fixture exists to exclude, so a silent fallback would
+  measure nothing. Add the listed rows by hand in the named weight. All
+  three are Figma-bundled Google fonts, so this is rare.
 - **v03-paint**: none. The image fill needs no asset from you — a 16x16
   PNG checkerboard is inlined in `code.js` as hex and handed to
   `figma.createImage`, which returns the hash the `IMAGE` paint refers

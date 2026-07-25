@@ -7,7 +7,8 @@
              lowering (story #165), the v0.4 variant-switch FLIP
              (story #22), and the v0.8 layout fidelity — wrap, grid
              with spans, baseline, and the negative-margin hug rebate
-             (story #43)
+             (story #43), and the v0.11 weight-aware measure (story
+             F1/#368 — the measure context carries the CSS weight)
 
 ## Purpose
 
@@ -188,9 +189,20 @@ Text enters the solve through Taffy's per-node measure callback
 (`compute_layout_with_measure`), added at v0.5 (story #29). A node that
 carries both text content and a text style
 (`Arena::text`/`Arena::text_style`, story #26) becomes a Taffy leaf
-with a `TextContext` — the paragraph text and the render size (px per
-em in document units). Every other node is a context-free leaf whose
+with a `TextContext` — the paragraph text, the render size (px per
+em in document units), the shaping axes, and the node's CSS-scale weight
+(story #368). Every other node is a context-free leaf whose
 measure is a no-op, so a text-free scene solves exactly as before.
+
+The weight is in the measure context because weight is a measure input,
+not only a paint one: a heavier face has its own advances, so a bold run
+measured at Regular's advances would size a box the text then overflows.
+`measure_text` therefore lays out through `Typesetter::layout_weighted`,
+and the #272 post-solve baseline-correction pass resolves the same face
+for the same reason — a bold child's first baseline sits at the bold
+face's ascent, not Regular's. A cascade offering only weight 400 resolves
+every request there, so a box measures exactly as it did before the field
+existed (`docs/decisions/weight-selection-in-the-cascade.md`).
 
 Taffy calls the measure function for each text leaf during the solve.
 `measure_text` lays the text out through the typesetter and returns its
@@ -219,7 +231,7 @@ equivalence tests use. The borrow is the single-source discipline:
 layout measures text against the same shaped-run cache the painter
 reads at paint time (#30), so the two cannot disagree about a glyph's
 size (P2 — one typesetter). The shaped-run cache stores font-unit,
-unpositioned runs keyed by paragraph text alone
+unpositioned runs keyed by paragraph text within one shaping posture
 (`docs/decisions/shaped-run-cache-font-units.md`), so one entry serves
 every render size and re-measuring unchanged text costs a lookup, not a
 re-shape.
@@ -294,6 +306,8 @@ spring FLIP that replays bit-identically, E5).
   `docs/decisions/negative-margin-hug-rebate.md` (#236),
   `docs/decisions/measure-callback-typesetter-seam.md`,
   `docs/decisions/shaped-run-cache-font-units.md`,
+  `docs/decisions/weight-selection-in-the-cascade.md` (why the measure
+  context carries the weight),
   `docs/decisions/visible-is-layout-opacity-is-paint.md`.
 - Related design: `docs/design/typeset-latin.md` (the shaped-run cache
   the measure callback consumes); `docs/design/dashscene-core-arena.md`

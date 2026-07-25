@@ -48,8 +48,11 @@ pub struct ShapedGlyph {
     pub cluster: u32,
     /// Index into the typesetter's font list of the font this glyph was
     /// shaped with — the fallback cascade's result (story #219). Zero for
-    /// a single-font typesetter and for every uncovered codepoint (the
-    /// `.notdef` posture stays in the primary font).
+    /// a single-font typesetter. An uncovered codepoint keeps its
+    /// `.notdef` in the **primary family**, which since story #368 is that
+    /// family's weight-resolved slot rather than always slot zero: a
+    /// family holding weights [400, 700] requested at 700 puts an
+    /// uncovered codepoint at slot 1.
     pub font: u16,
     pub x_advance: i32,
     pub x_offset: i32,
@@ -205,18 +208,31 @@ pub(crate) fn shape_with_face(
 /// spanning the whole run — the pre-#219 path, byte-for-byte, every
 /// glyph tagged font 0.
 ///
+/// `slots` is one resolved slot per family (story #368): the cascade the
+/// coverage split actually runs over is `fonts[slots[0]], fonts[slots[1]],
+/// …` — one face per family, already picked by weight — and each output
+/// glyph is tagged with its family's *slot* index, so
+/// [`ShapedGlyph::font`] keeps indexing the typesetter's flat font list
+/// and the stager's parallel atlas list. An identity `slots`
+/// (`[0, 1, 2, …]`), which is what an all-weight-400 cascade at weight 400
+/// resolves to, makes this the pre-#368 path byte-for-byte.
+///
 /// `ligatures_off` (story #341) forces `liga`/`clig` off on every run in the
 /// paragraph, whatever its resolved context — see [`shape_with_face`].
 pub(crate) fn shape_paragraph(
     fonts: &[Font],
+    slots: &[u16],
     bidi: &BidiInfo<'_>,
     ligatures_off: bool,
 ) -> ShapedText {
-    // Build each font's shaping face once for the whole paragraph — the
-    // cascade probes coverage with them and shapes the sub-runs with the
-    // same faces. Off the hot path: the shaped-run cache sits in front of
-    // this, so a paragraph is shaped at most once.
-    let faces: Vec<rustybuzz::Face<'_>> = fonts.iter().map(Font::face).collect();
+    // Build each resolved face once for the whole paragraph — the cascade
+    // probes coverage with them and shapes the sub-runs with the same
+    // faces. Off the hot path: the shaped-run cache sits in front of this,
+    // so a paragraph is shaped at most once.
+    let faces: Vec<rustybuzz::Face<'_>> = slots
+        .iter()
+        .map(|&slot| fonts[slot as usize].face())
+        .collect();
     let mut glyphs = Vec::new();
     // One '\n'-split paragraph normally holds one bidi paragraph; the
     // other UAX #9 block separators (U+2029, U+0085, …) add more, and
@@ -244,9 +260,12 @@ pub(crate) fn shape_paragraph(
                     context,
                     ligatures_off,
                 );
+                // `font_index` indexes the resolved-face list; the glyph
+                // carries the flat slot it came from, which is what the
+                // typesetter's font list and the stager's atlas list share.
                 glyphs.extend(shaped.glyphs.into_iter().map(|g| ShapedGlyph {
                     cluster: g.cluster + start,
-                    font: font_index as u16,
+                    font: slots[font_index],
                     ..g
                 }));
             }
@@ -768,7 +787,7 @@ mod tests {
         // paragraph-relative and non-decreasing across run boundaries.
         let text = "אב 123 גד";
         let bidi = BidiInfo::new(text, None);
-        let shaped = shape_paragraph(&[font()], &bidi, false);
+        let shaped = shape_paragraph(&[font()], &[0], &bidi, false);
         let clusters: Vec<u32> = shaped.glyphs.iter().map(|g| g.cluster).collect();
         assert_eq!(clusters, vec![0, 2, 4, 5, 6, 7, 8, 9, 11]);
     }

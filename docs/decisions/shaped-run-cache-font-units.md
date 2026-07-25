@@ -96,4 +96,38 @@ mixed-script paragraph is cascaded and shaped once and reused across
 render sizes — proven by
 `tests/typeset_fallback.rs::cache_key_is_text_across_sizes_for_a_multi_font_typesetter`
 (one miss, two hits). Only a shaping-relevant axis that varies per
-`layout` call — none exists today — would grow the key.
+`layout` call would grow the key.
+
+## Revision (story #341, then #368) — two per-call axes appeared
+
+The paragraph above closed by saying no per-`layout`-call shaping axis
+existed. Two have since landed, so the key did grow:
+
+- **#341** added `ligatures_off`, a per-call knob rather than a property
+  of the text. It was first handled with a second map
+  (`cache_ligatures_off`), which works for one boolean and does not
+  generalise.
+- **#368** added the requested font weight. Weight changes advances,
+  kerning and potentially glyph ids, so it is a shaping input, not only
+  a rasterisation input.
+
+As built after #368 the key is `(text, posture)`, where a **posture** is
+one interned `(resolved slot set, ligatures_off)` pair. The resolved
+slot set is the face each family resolves to for the requested weight,
+so two requested weights that resolve to the same faces share one cache
+entry. The all-weight-400, ligatures-on posture is interned as id 0, so
+the default path stays a single lookup and behaves exactly as it did
+before #368.
+
+The reasoning in the paragraph above still holds for the part it got
+right: the font _list_ is fixed per `Typesetter`, and the cascade is a
+pure function of the text **for a given posture**. What changed is that
+the posture itself now varies per call.
+
+Why the resolved slot set — rather than the requested weight — is the key
+component is part of the cascade design:
+`docs/decisions/weight-selection-in-the-cascade.md`. That the split is
+real is pinned by
+`tests/typeset_weight.rs::each_weight_gets_its_own_cache_entry` and
+`::the_same_string_at_two_weights_shapes_differently`; that the default
+path is unchanged is pinned by `::with_fonts_is_the_all_regular_cascade`.

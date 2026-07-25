@@ -175,7 +175,9 @@ proved live but no E7 frame measures, both measured within their band:
   measurement of the image decode -> embed -> paint path against Figma; the
   residual is rect-edge anti-aliasing and sub-threshold resampling noise.
 - `import-text-axes` (`import-text-axes.json`, node `2:2`, 400x200) —
-  **1.829 %** on `msdf-text`. One Noto Sans Regular 24 TEXT node exercising
+  **1.029 %** on `msdf-text` (1.829 % until #336 dropped the trailing
+  letter-spacing step from the measured width, PR #372). One Noto Sans
+  Regular 24 TEXT node exercising
   the #310 axes end-to-end: PIXELS line height 18, letter spacing 1.2, RIGHT +
   BOTTOM alignment in a fixed box larger than its content. This frame caught
   two real bugs on first measurement (the G-11 pattern finding real bugs
@@ -184,7 +186,7 @@ proved live but no E7 frame measures, both measured within their band:
   (`dashc`), and a fixed line height placing the baseline at the full
   intrinsic ascent instead of centering the intrinsic box (half-leading,
   `dashscene-typeset`) — together first measured 2.822 %, structurally
-  misplaced. Fixed, the run lands where Figma renders it; the remaining
-  residual is glyph edges plus ~1 px of horizontal placement from the
-  trailing letter-spacing step Figma excludes from the measured width
-  (debt #336).
+  misplaced. Fixed, the run lands where Figma renders it. The residual was
+  then glyph edges plus ~1 px of horizontal placement from the trailing
+  letter-spacing step Figma excludes from the measured width (#336); once
+  that step was dropped (PR #372) the residual is glyph edges alone.

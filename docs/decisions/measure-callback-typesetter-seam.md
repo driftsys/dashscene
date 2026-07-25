@@ -90,3 +90,12 @@ taller as the text wraps. A known axis is returned unchanged.
   node) wraps correctly today, though v0.5's own scenes are hug text;
   the branch is exercised by the width-constrained wrap test and stands
   ready for #30/#43.
+- The seam widens by adding measure inputs to `TextContext`, never by
+  changing how the typesetter is reached. Later stories added the shaping
+  axes and then the node's CSS weight (story #368), each populated from
+  the same `Arena::text_style` read and each carried into the typesetter
+  call — the borrow, the recognition rule, and the known-axis rule are
+  untouched. The as-built field list is in
+  `docs/design/dashscene-engine.md` (Measure callback); why weight is a
+  measure input rather than a paint-only one is in
+  `docs/decisions/weight-selection-in-the-cascade.md`.

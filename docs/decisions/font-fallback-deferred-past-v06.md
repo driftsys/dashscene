@@ -82,3 +82,14 @@ in `docs/decisions/glyph-runs-cross-boundary-b.md` (Resolution). #160
 remains free of multi-font work: its named non-scope is discharged by
 this typeset-runtime capability, which it may consume but need not
 build.
+
+The cascade grew a second axis at story #368: it is now a list of
+**families**, each family an ordered set of weighted faces, with coverage
+picking the family and the requested CSS weight picking the face within
+it. The deferral's two constraints survive that change unmodified — the
+charset union is still per font, and the document still carries one font
+reference per style (P1) — because the weight axis is also runtime-side
+configuration, resolved from the renderer's asset set rather than authored
+(`docs/decisions/weight-selection-in-the-cascade.md`). What the cascade
+still does not do is substitute one **family** for another; an
+out-of-corpus family remains unrecorded scope.
