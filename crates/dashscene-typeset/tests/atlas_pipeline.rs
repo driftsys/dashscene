@@ -13,7 +13,10 @@ use dashscene_typeset::text::{Font, Typesetter};
 
 mod common;
 
-use common::{FONT, FONT_ARABIC, FONT_BOLD, FONT_SEMIBOLD};
+use common::{
+    FONT, FONT_ARABIC, FONT_BOLD, FONT_INTER, FONT_INTER_BOLD, FONT_INTER_MEDIUM,
+    FONT_INTER_SEMIBOLD, FONT_SEMIBOLD,
+};
 
 // The committed atlas fixtures live under the shared corpus/atlas/ home,
 // beside the fonts they are generated from — not under this crate's
@@ -30,6 +33,27 @@ const ASCII_SEMIBOLD_FIXTURE_DIR: &str = concat!(
 );
 const ASCII_BOLD_FIXTURE_DIR: &str =
     concat!(env!("CARGO_MANIFEST_DIR"), "/../../corpus/atlas/ascii-bold");
+// The Inter fixtures (story #385). The same one-directory-per-(script,
+// weight) rule, now with the family in the name: the four `ascii*`
+// directories above stay exactly as they are — renaming them would reach
+// the shared `tests/common/` loader the E7 oracle uses, and the atlases
+// they hold are unaffected by a second family joining the cascade.
+const INTER_ASCII_FIXTURE_DIR: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../corpus/atlas/inter-ascii"
+);
+const INTER_ASCII_MEDIUM_FIXTURE_DIR: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../corpus/atlas/inter-ascii-medium"
+);
+const INTER_ASCII_SEMIBOLD_FIXTURE_DIR: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../corpus/atlas/inter-ascii-semibold"
+);
+const INTER_ASCII_BOLD_FIXTURE_DIR: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../corpus/atlas/inter-ascii-bold"
+);
 
 /// Returns false (and prints why) when the pinned tool is unavailable
 /// and the environment tolerates that; panics when CI demands it.
@@ -67,6 +91,27 @@ fn ascii_semibold_spec() -> AtlasSpec {
 
 fn ascii_bold_spec() -> AtlasSpec {
     AtlasSpec::new(PathBuf::from(FONT_BOLD), ascii_charset())
+}
+
+/// The four Inter ASCII fixture contracts (story #385), mirroring
+/// [`ascii_spec`] exactly: the same charset and the same atlas
+/// parameters, a different family. Nothing about the atlas format
+/// changes for a second family, so `AtlasMetrics::FORMAT_VERSION`
+/// stays 1 and the Noto fixtures are not regenerated.
+fn inter_ascii_spec() -> AtlasSpec {
+    AtlasSpec::new(PathBuf::from(FONT_INTER), ascii_charset())
+}
+
+fn inter_ascii_medium_spec() -> AtlasSpec {
+    AtlasSpec::new(PathBuf::from(FONT_INTER_MEDIUM), ascii_charset())
+}
+
+fn inter_ascii_semibold_spec() -> AtlasSpec {
+    AtlasSpec::new(PathBuf::from(FONT_INTER_SEMIBOLD), ascii_charset())
+}
+
+fn inter_ascii_bold_spec() -> AtlasSpec {
+    AtlasSpec::new(PathBuf::from(FONT_INTER_BOLD), ascii_charset())
 }
 
 /// One shared generation for the read-only tests; `double_run` adds
@@ -535,4 +580,158 @@ fn regenerate_committed_ascii_bold_fixture() {
         bundle.metrics.atlas.width,
         bundle.metrics.atlas.height
     );
+}
+
+// ------------------------------------------------------------- Inter (#385)
+//
+// Four more fixtures, one per (script, weight), for the family real Figma
+// files are authored in. They are written against shared helpers rather than
+// spelled out one function per fixture like the Noto four above: the four
+// differ only in face and directory, and eight more copies of the same body
+// would bury that. The Noto tests are deliberately left as they are — they
+// are what the E7 gate's atlases are checked by, and this story does not
+// rewrite them.
+
+/// Loads a committed fixture, regenerates it from `spec`, and byte-compares
+/// both files — the R7 guarantee `committed_ascii_fixture_is_reproducible`
+/// states for the Regular Noto fixture. `regenerator` names the ignored test
+/// that rewrites this fixture, so a failure says how to fix itself.
+fn assert_fixture_reproducible(dir: &str, spec: &AtlasSpec, regenerator: &str) {
+    let committed = AtlasBundle::load_from_dir(&PathBuf::from(dir)).unwrap_or_else(|e| {
+        panic!(
+            "committed fixture {dir} loads ({e}) — regenerate with `cargo test \
+             -p dashscene-typeset --test atlas_pipeline -- --ignored {regenerator}`"
+        )
+    });
+    let fresh = generate(spec).expect("pipeline runs over the committed face");
+    assert_eq!(
+        committed.image_png, fresh.image_png,
+        "committed {dir} atlas.png no longer reproducible (R7) — if the \
+         toolchain legitimately changed, regenerate the fixture and record why"
+    );
+    assert_eq!(
+        committed.metrics.to_bytes(),
+        fresh.metrics.to_bytes(),
+        "committed {dir} atlas.metrics no longer reproducible (R7)"
+    );
+}
+
+/// Rewrites a committed fixture from the current pipeline. Called only by the
+/// `#[ignore]`d regenerators, for the reason the Noto regenerators give: run
+/// one after a deliberate parameter or toolchain change, then commit the
+/// result with a note recording why.
+fn regenerate_fixture(dir: &str, spec: &AtlasSpec) {
+    let bundle = generate(spec).expect("pipeline runs");
+    bundle
+        .write_to_dir(&PathBuf::from(dir))
+        .expect("write fixture");
+    println!(
+        "wrote {dir} ({} glyphs, {}x{})",
+        bundle.metrics.glyphs.len(),
+        bundle.metrics.atlas.width,
+        bundle.metrics.atlas.height
+    );
+}
+
+#[test]
+fn committed_inter_ascii_fixture_is_reproducible() {
+    if !tool_available() {
+        return;
+    }
+    assert_fixture_reproducible(
+        INTER_ASCII_FIXTURE_DIR,
+        &inter_ascii_spec(),
+        "regenerate_committed_inter_ascii_fixture",
+    );
+}
+
+#[test]
+fn committed_inter_ascii_medium_fixture_is_reproducible() {
+    if !tool_available() {
+        return;
+    }
+    assert_fixture_reproducible(
+        INTER_ASCII_MEDIUM_FIXTURE_DIR,
+        &inter_ascii_medium_spec(),
+        "regenerate_committed_inter_ascii_medium_fixture",
+    );
+}
+
+#[test]
+fn committed_inter_ascii_semibold_fixture_is_reproducible() {
+    if !tool_available() {
+        return;
+    }
+    assert_fixture_reproducible(
+        INTER_ASCII_SEMIBOLD_FIXTURE_DIR,
+        &inter_ascii_semibold_spec(),
+        "regenerate_committed_inter_ascii_semibold_fixture",
+    );
+}
+
+#[test]
+fn committed_inter_ascii_bold_fixture_is_reproducible() {
+    if !tool_available() {
+        return;
+    }
+    assert_fixture_reproducible(
+        INTER_ASCII_BOLD_FIXTURE_DIR,
+        &inter_ascii_bold_spec(),
+        "regenerate_committed_inter_ascii_bold_fixture",
+    );
+}
+
+/// The four Inter faces are genuinely different faces, not one face committed
+/// four times — the same guard `the_three_ascii_weights_are_distinct_faces`
+/// puts on the Noto weights. A heavier weight advances 'H' wider.
+#[test]
+fn the_four_inter_weights_are_distinct_faces() {
+    let advances: Vec<(&str, u16)> = [
+        ("Regular", FONT_INTER),
+        ("Medium", FONT_INTER_MEDIUM),
+        ("SemiBold", FONT_INTER_SEMIBOLD),
+        ("Bold", FONT_INTER_BOLD),
+    ]
+    .iter()
+    .map(|(name, path)| {
+        let data = common::font_data(path);
+        let face = ttf_parser::Face::parse(&data, 0).expect("an Inter face parses");
+        let gid = face.glyph_index('H').expect("the face covers 'H'");
+        (
+            *name,
+            face.glyph_hor_advance(gid).expect("'H' has an advance"),
+        )
+    })
+    .collect();
+    assert!(
+        advances.windows(2).all(|w| w[0].1 < w[1].1),
+        "'H' must advance wider at each heavier Inter weight, got {advances:?}"
+    );
+}
+
+#[test]
+#[ignore = "regenerates the committed fixture; run explicitly"]
+fn regenerate_committed_inter_ascii_fixture() {
+    regenerate_fixture(INTER_ASCII_FIXTURE_DIR, &inter_ascii_spec());
+}
+
+#[test]
+#[ignore = "regenerates the committed fixture; run explicitly"]
+fn regenerate_committed_inter_ascii_medium_fixture() {
+    regenerate_fixture(INTER_ASCII_MEDIUM_FIXTURE_DIR, &inter_ascii_medium_spec());
+}
+
+#[test]
+#[ignore = "regenerates the committed fixture; run explicitly"]
+fn regenerate_committed_inter_ascii_semibold_fixture() {
+    regenerate_fixture(
+        INTER_ASCII_SEMIBOLD_FIXTURE_DIR,
+        &inter_ascii_semibold_spec(),
+    );
+}
+
+#[test]
+#[ignore = "regenerates the committed fixture; run explicitly"]
+fn regenerate_committed_inter_ascii_bold_fixture() {
+    regenerate_fixture(INTER_ASCII_BOLD_FIXTURE_DIR, &inter_ascii_bold_spec());
 }

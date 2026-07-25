@@ -28,6 +28,38 @@ pub const FONT_BOLD: &str = concat!(
     "/../../corpus/fonts/noto-sans/NotoSans-Bold.ttf"
 );
 
+/// The committed Inter corpus fixture faces (see corpus/fonts/inter/) — the
+/// family real Figma files are authored in, at the four CSS weights the live
+/// targets use (story #385). Unhinted static CFF, unlike the Noto TrueType
+/// faces above; the pipeline reads outlines through the same external baker
+/// either way.
+#[allow(dead_code)]
+pub const FONT_INTER: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../corpus/fonts/inter/Inter-Regular.otf"
+);
+
+/// The committed Inter Medium (CSS weight 500) face (story #385).
+#[allow(dead_code)]
+pub const FONT_INTER_MEDIUM: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../corpus/fonts/inter/Inter-Medium.otf"
+);
+
+/// The committed Inter SemiBold (CSS weight 600) face (story #385).
+#[allow(dead_code)]
+pub const FONT_INTER_SEMIBOLD: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../corpus/fonts/inter/Inter-SemiBold.otf"
+);
+
+/// The committed Inter Bold (CSS weight 700) face (story #385).
+#[allow(dead_code)]
+pub const FONT_INTER_BOLD: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../corpus/fonts/inter/Inter-Bold.otf"
+);
+
 /// The committed Arabic corpus fixture font (see
 /// corpus/fonts/noto-sans-arabic/) — carries GSUB/GPOS/cmap.
 #[allow(dead_code)]
