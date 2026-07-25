@@ -70,15 +70,16 @@ Medium nodes and Inter is being added precisely to render that file faithfully.
 A census of the committed fixtures shows where Inter already appears, and which
 consumer each one reaches:
 
-| fixture                                             | consumed by                                                 | consequence                                                          |
-| --------------------------------------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------- |
-| `grid-basic`                                        | E7 frame `v08-grid-spans` — **frozen**                      | safe only while the E7 oracle keeps its own private Noto cascade     |
-| `liga-text`                                         | import oracle, 2.270 %                                      | **re-measures** — but not for the reason it first appears; see below |
-| `lowering-baseline`                                 | the frozen R7 `.dsb` byte fixture, and dashc lowering tests | no golden and no render, so unaffected                               |
-| `lowering-hug-in-fill`, `lowering-variant-topology` | self-oracle goldens, single-font cascades                   | unaffected                                                           |
-| `effects-2025`, `variables-bound`                   | dashc lowering and triage tests only                        | no golden and no render, so unaffected                               |
+| fixture                                             | consumed by                                                 | consequence                                                      |
+| --------------------------------------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------- |
+| `grid-basic`                                        | E7 frame `v08-grid-spans` — **frozen**                      | safe only while the E7 oracle keeps its own private Noto cascade |
+| `liga-text`                                         | import oracle, 0.007 %                                      | unaffected once #382 landed; see below                           |
+| `lowering-baseline`                                 | the frozen R7 `.dsb` byte fixture, and dashc lowering tests | no golden and no render, so unaffected                           |
+| `lowering-hug-in-fill`, `lowering-variant-topology` | self-oracle goldens, single-font cascades                   | unaffected                                                       |
+| `effects-2025`, `variables-bound`                   | dashc lowering and triage tests only                        | no golden and no render, so unaffected                           |
 
-Three consequences follow, and all three are binding.
+Three consequences follow. Two still bind the story; the third has been
+discharged by landing #382 ahead of it, which is what it asked for.
 
 **The E7 oracle must not gain Inter while the freeze holds.**
 `goldens/tooling/tests/render_oracle.rs` carries its own private font paths and
@@ -100,20 +101,27 @@ authored in Noto Sans. Step 2 of `docs/decisions/font-resolution-order.md`,
 family-name matching, must therefore land in the same change as the faces. Adding
 the atlases alone would silently repoint existing frames.
 
-**`liga-text` will move, and the mechanism is not the one it looks like.** Its
-Inter node is `1:5 _manual-checklist`, the fixture-author plugin's authoring
-instruction, and it sits on the canvas **beside** the measured frame at y=224 —
-outside the 0..200 region Figma exports. So the committed design source contains
-no Inter at all, and the frame's own two text nodes are Noto Sans 400.
+**`liga-text` no longer moves — but only because #382 landed first, and that
+was the reason to require it.** Its Inter node is `1:5 _manual-checklist`, the
+fixture-author plugin's authoring instruction, and it sits on the canvas
+**beside** the measured frame at y=224 — outside the 0..200 region Figma
+exports. So the committed design source contains no Inter at all, and the
+frame's own two text nodes are Noto Sans 400.
 
-The frame still moves, because `dashc` lowers every top-level canvas node as an
-independent root re-based to the origin, and the render walk stages text for
-every root, so the annotation is painted over the measured frame. Roughly 376
-inked pixels in the first twenty rows come from the checklist rather than from
-the fixture. That means today's 2.270 % is partly an artifact, re-shaping that
-ink in Inter can move the number in either direction, and no direction should be
-predicted in advance. Tracked as #382; it is worth fixing before this story
-measures anything, so the frame measures what its note claims.
+The frame nevertheless moved, because `dashc` lowers every top-level canvas node
+as an independent root re-based to the origin, and the render walk stages text
+for every root, so the annotation was painted over the measured frame. #382 fixed
+that by narrowing the import oracle to the single node each design source
+exports, which cut the frame from 2.270 % (1907/84000) to **0.007 %**
+(6/84000) — 1901 of those differing pixels were annotation ink, far more than
+the roughly 376 first estimated from the top twenty rows alone. The ligature
+residual itself is six glyph-edge pixels.
+
+With the annotation out of the render, the frame carries no Inter, so adding
+Inter to the cascade leaves it unchanged. That is the outcome the sequencing
+requirement was for: had the faces landed first, Inter would have re-shaped that
+annotation ink and moved a number nobody could have attributed. The requirement
+is discharged, not dropped.
 
 The addition is roughly four faces and four atlases, on the order of 2 MB of
 committed fixtures.
