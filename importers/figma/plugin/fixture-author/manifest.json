@@ -23,6 +23,7 @@
     { "name": "text-latin", "command": "text-latin" },
     { "name": "text-arabic", "command": "text-arabic" },
     { "name": "text-baseline", "command": "text-baseline" },
+    { "name": "text-bold", "command": "text-bold" },
     { "name": "drop-shadow", "command": "drop-shadow" },
     { "name": "inner-shadow", "command": "inner-shadow" },
     { "separator": true },

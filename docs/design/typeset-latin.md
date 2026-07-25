@@ -4,7 +4,9 @@
     covers   v0.5 — text I: Latin (story #28, epic #24);
              v0.6 — text II: bidi (story #32) and Arabic shaping +
              digit shapes (story #33), epic #31;
-             v0.7 — multi-font fallback (story #219)
+             v0.7 — multi-font fallback (story #219);
+             v0.11 — font weight face selection (story F1/#368, epic
+             #344)
     traces   docs/archive/2026-07-14-design-1-seed.md §7.2 (runtime
              half: shape → line break → positioned glyph runs;
              shaped-run cache), §2 (rustybuzz, ttf-parser,
@@ -14,6 +16,8 @@
              coverage coupling),
              docs/decisions/liga-clig-off-until-gsub-closure.md (the
              per-run feature posture),
+             docs/decisions/weight-selection-in-the-cascade.md (coverage
+             ranks above weight; the additive seam),
              docs/technotes/msdf-arabic-atlas-spike.md (offsets and
              mis-ordered-digits findings, spike #25)
 
@@ -38,15 +42,21 @@ is the measure callback (#29), which reads those accessors and calls
 
 ## Pipeline shape
 
-    Typesetter::with_fonts([primary, ..fallbacks])   ordered font list;
-    Typesetter::new(Font)                            new = one-element list
+    Typesetter::with_font_families([[face@weight, ..], ..])  families of
+    Typesetter::with_fonts([primary, ..fallbacks])   weighted faces (#368);
+    Typesetter::new(Font)                            with_fonts = one
+                                                     weight-400 face each,
+                                                     new = one family
     Typesetter::layout(text, size, max_width)   → TextLayout
+      resolve one face per family for the        → slot per family (#368)
+        requested weight (CSS Fonts 4 §5.2)
       split text on '\n'                        → chunks
-      per-chunk cache lookup (key: text)         → ShapedText (font
-        miss: bidi-resolve (UAX #9), then per      units, unpositioned,
-        level run: resolve direction + context,    logical order, each
-        split by font coverage, shape each         glyph tagged with its
-        sub-run, rebase clusters                    font index)
+      per-chunk cache lookup (key: text within   → ShapedText (font
+        the posture)                               units, unpositioned,
+        miss: bidi-resolve (UAX #9), then per      logical order, each
+        level run: resolve direction + context,    glyph tagged with its
+        split by font coverage, shape each         resolved slot index)
+        sub-run, rebase clusters
       per bidi paragraph: greedy line break      → lines of glyph
         (space runs / '\n', logical order)         ranges
       position (visual reorder per line — UAX    → TextLayout
@@ -235,20 +245,113 @@ rather than staying with its surrounding script's font. For the
 invisible space this is harmless; a script-aware neutral itemization
 is a later refinement, not built speculatively.
 
+## Font weight (story #368)
+
+The cascade is a list of **families**, each family an ordered set of
+weighted faces (`WeightedFont { font, weight }`, the weight on the CSS
+100–900 scale the document carries). Selection runs in two steps, in this
+order:
+
+1. **Coverage picks the family**, exactly as it picked a font at #219: a
+   codepoint goes to the first family that covers the glyph it will
+   actually shape to.
+2. **The requested weight picks the face** within that family, by the CSS
+   Fonts Level 4 §5.2 rule (`text/weight.rs`,
+   `docs/decisions/css-fonts-4-weight-matching-non-fatal.md`). The rule is
+   non-fatal: a family with no face at or near the request resolves to its
+   best candidate and the layout continues.
+
+Coverage ranks above weight because the two failures are not comparable —
+an uncovered codepoint renders `.notdef` and the reader loses the text,
+while a substituted weight renders the right text at the wrong thickness.
+So a weight-700 Arabic run in a cascade with no Arabic Bold face resolves
+to Arabic Regular, never to Latin Bold
+(`docs/decisions/weight-selection-in-the-cascade.md`).
+
+The families flatten **family-major** into the one positional slot list
+`PositionedGlyph::font` indexes, so nothing at boundary B changes: a
+stager still mirrors the slot list into a parallel atlas list and indexes
+it directly. A Latin family at weights 400/600/700 followed by an Arabic
+family at 400 is mirrored by `[ascii, ascii-semibold, ascii-bold,
+arabic]`.
+
+Three properties of the cascade follow from resolving the weight before
+the coverage split:
+
+- **Coverage is probed against each family's weight-resolved face**, not
+  against a fixed representative. The faces of one family are therefore
+  expected to share a charset, as the weights of one typeface do; a family
+  with a partial heavier face would split a run differently when that
+  heavier face is the resolved one.
+- **An uncovered codepoint keeps its `.notdef` in the primary family's
+  resolved slot**, which is no longer always slot 0 — a family holding
+  weights [400, 700] requested at 700 puts it at slot 1. The #219 rule is
+  unchanged in substance: the `.notdef` stays in the primary family and
+  is the painter's named missing-glyph diagnostic (#30), never a silent
+  drop (P4).
+- **A blank line is measured by the primary family's resolved face**, so a
+  blank line inside a bold paragraph takes the bold face's metrics rather
+  than Regular's.
+
+Weight is a **shaping and measuring** input, not only a rasterization
+input: a heavier face has its own advances, kerning and potentially its
+own glyph ids. Two consequences follow. The shaped-run cache is keyed by
+paragraph text within a _posture_ (see Cache semantics). And the measure
+seam carries the weight: `dashscene-engine`'s `TextContext` populates it
+from `TextStyle.weight` for the Taffy measure callback and for the #272
+post-solve baseline correction, so a bold box is sized for bold advances
+instead of overflowing, and a bold child's first baseline sits at the bold
+face's ascent (`docs/design/dashscene-engine.md`, Measure callback).
+
+A weight the resolved family cannot supply exactly is reported as the
+named `text.weight-substituted` diagnostic — render-time, not
+compile-time, because which weights exist is a property of the renderer's
+asset set rather than of the document's intent
+(`docs/decisions/weight-substitution-is-a-render-time-diagnostic.md`).
+Reports are deduplicated per distinct (family, requested, resolved)
+triple, and only families whose resolved face actually tagged glyphs are
+reported, so every entry names a substitution the reader can see.
+
+The whole surface is additive. `with_fonts` and `new` delegate to
+`with_font_families` with one weight-400 face per family; `layout` and
+`layout_with` delegate to `layout_weighted` at weight 400. An
+all-weight-400 cascade asked for weight 400 resolves the identity slot
+list, which makes the shaping path the pre-#368 path byte-for-byte — the
+property the frozen E7 oracle depends on
+(`docs/decisions/weight-selection-in-the-cascade.md`).
+
+The committed corpus offers one atlas directory per (script, weight)
+(`docs/design/atlas-pipeline.md`,
+`docs/decisions/atlas-directory-per-script-weight.md`): Latin Regular,
+SemiBold and Bold, and Arabic Regular.
+
 ## Public surface
 
     crates/dashscene-typeset/src/text/mod.rs
 
-    pub struct Typesetter { fonts: Vec<Font>, cache: HashMap<Box<str>, Arc<ShapedText>>, hits, misses }
+    pub struct Typesetter { fonts: Vec<Font>, weights: Vec<u16>,
+                            families: Vec<Range<usize>>,
+                            caches: Vec<HashMap<Box<str>, Arc<ShapedText>>>,
+                            slot_sets: Vec<(Vec<u16>, bool)>,
+                            substitutions: Vec<WeightSubstitution>,
+                            hits, misses }
     impl Typesetter {
         pub fn new(font: Font) -> Typesetter;           // one-element list
         pub fn with_fonts(fonts: Vec<Font>) -> Typesetter;   // primary first
+        pub fn with_font_families(families: Vec<Vec<WeightedFont>>) -> Typesetter;
         pub fn font(&self) -> &Font;                    // the primary
-        pub fn fonts(&self) -> &[Font];                 // the cascade order
+        pub fn fonts(&self) -> &[Font];                 // the flat slot order
+        pub fn weights(&self) -> &[u16];                // parallel to fonts()
+        pub fn weight_substitutions(&self) -> &[WeightSubstitution];
         pub fn layout(&mut self, text: &str, size: f32, max_width: Option<f32>) -> TextLayout;
+        pub fn layout_weighted(&mut self, text: &str, size: f32,
+            max_width: Option<f32>, shape: TextShape, weight: u16) -> TextLayout;
         pub fn cache_stats(&self) -> CacheStats;
     }
     pub struct CacheStats { pub hits: u64, pub misses: u64 }
+    pub struct WeightedFont { pub font: Font, pub weight: u16 }   // #368
+    pub struct WeightSubstitution { pub family: usize,            // #368
+                                   pub requested: u16, pub resolved: u16 }
     pub struct TextLayout { pub lines: Vec<Line>, pub width: f32, pub height: f32, pub size: f32 }
     pub struct Line { pub glyphs: Vec<PositionedGlyph>, pub width: f32, pub baseline_y: f32 }
     pub struct PositionedGlyph { pub glyph_id: u16, pub font: u16, pub x: f32, pub y: f32 }
@@ -261,7 +364,22 @@ The surface grew at #219: `Typesetter` holds a font list
 index the cascade resolved — the value a boundary-B stager groups runs
 by, one glyph run per atlas. `new`, `font()`, and every other field
 keep their v0.5 meaning; a single-font `Typesetter` and its output are
-byte-identical to before. `Font` is public — the measure callback
+byte-identical to before.
+
+It grew again at #368, by addition only: `with_font_families` and
+`layout_weighted` take the weight axis, `weights()` reports which CSS
+weight each `PositionedGlyph::font` slot stands for, and
+`weight_substitutions()` reports the named gaps. `with_fonts`, `layout`,
+`layout_with`, `Font::from_bytes` and `AtlasBundle::load_from_dir` keep
+their exact signatures. The ones the frozen E7 oracle test file actually
+reaches are `with_fonts`, `Font::from_bytes`, `layout` and
+`load_from_dir`, so those four are the condition for it compiling and
+rendering unchanged
+(`docs/decisions/weight-selection-in-the-cascade.md`). `fonts()` keeps
+returning the flat slot list in slot order, because that is the contract
+`PositionedGlyph::font` indexes.
+
+`Font` is public — the measure callback
 (#29) and the painter (#30) both need the font handle and its metrics,
 including `Font::line_advance()` (the baseline-to-baseline distance
 layout uses, from the primary font). `Font::metrics()` returns the
@@ -347,28 +465,36 @@ paragraph regardless of width.
 
 ## Cache semantics
 
-The cache lives on `Typesetter` (`HashMap<Box<str>, Arc<ShapedText>>`
-plus hit/miss counters) — it is not a separate type; the cache is too
-small to warrant its own module.
+The cache lives on `Typesetter` (one `HashMap<Box<str>, Arc<ShapedText>>`
+per posture plus hit/miss counters) — it is not a separate type; the cache
+is too small to warrant its own module.
 
 - Stores font-unit, unpositioned `ShapedText` — shaping output (glyph
   ids, advances, offsets in font units) is size-independent, so the
   px scale is applied only at positioning time.
-- Keyed by chunk text alone. Resolved bidi levels, run directions,
-  digit-shape contexts, and the font cascade are all pure functions of
-  that text, so one entry serves every layout of the chunk.
-  `docs/archive/2026-07-14-design-1-seed.md`
+- Keyed by chunk text **within a posture**. Resolved bidi levels, run
+  directions, digit-shape contexts, and the coverage split are all pure
+  functions of that text, so one entry serves every layout of the chunk
+  under one posture. `docs/archive/2026-07-14-design-1-seed.md`
   §7.2 describes the key as
   "string + style"; the shaping-relevant style component — the ordered
   font list (story #219) — is fixed per `Typesetter` (runtime
-  configuration, not a per-call axis), so the key reduces to the
+  configuration, not a per-call axis), so the key reduced to the
   string. The cached `ShapedText` records the cascade's result (each
-  glyph's font index), so a mixed-script paragraph is cascaded and
+  glyph's slot index), so a mixed-script paragraph is cascaded and
   shaped once and reused across sizes. Different `size` and
   `max_width` values reuse the same cache entry — see
-  `docs/decisions/shaped-run-cache-font-units.md`. Only a shaping-
-  relevant axis that varies per `layout` call (none today) would grow
-  the key.
+  `docs/decisions/shaped-run-cache-font-units.md`.
+- Two per-call shaping axes have since appeared, so the key grew: the
+  ligature setting (story #341) and the requested weight (story #368). A
+  **posture** interns the pair `(resolved slot set, ligatures_off)` and
+  selects which map to probe and fill. Two requested weights that resolve
+  to the same faces share one posture, and posture 0 is reserved for the
+  all-weight-400, ligatures-on cascade — every pre-#368 call site — so the
+  default path is one lookup in one map, exactly as before. The interning
+  table is scanned linearly: a corpus offers a handful of weights, so it
+  holds a handful of postures, and the default is found on the first
+  comparison.
 - Unbounded: cockpit UI text is a bounded set; an eviction policy is
   speculative until a real producer shows growth.
 - `Typesetter::cache_stats() -> CacheStats { hits, misses }` makes hit
@@ -406,6 +532,18 @@ not look the glyph id up in an atlas at all.
 - **Latin ligatures.** `liga`/`clig` stay disabled for non-Arabic
   runs; see `docs/decisions/liga-clig-off-until-gsub-closure.md`
   (Resolution) for what unblocks them.
+- **Family substitution.** #368 selects a face by weight _within_ whatever
+  family coverage already picked; mapping an out-of-corpus family (Inter)
+  onto a corpus family (Noto Sans) is a separate, larger decision with its
+  own vocabulary and its own diagnostic, and it has no record yet. A
+  measurement taken after #368 must therefore be reported as "weight
+  substitution removed, family substitution remaining"
+  (`docs/decisions/weight-selection-in-the-cascade.md`).
+- **Arabic bold faces, the `wght` variable-font axis, italic and oblique
+  styles, and optical sizing.** The corpus carries one Arabic weight; a
+  variable font must still be instanced before baking
+  (`docs/decisions/atlas-directory-per-script-weight.md`); italic has no
+  document vocabulary and the Figma front end diagnoses it.
 - **An authored digit-system preference.** Digit shapes are
   context-derived only (see Digit-shape selection); an authored
   override is a producer-side property no v0 story carries.
@@ -425,10 +563,15 @@ not look the glyph id up in an atlas at all.
                                                   Typesetter, TextLayout,
                                                   Line, PositionedGlyph,
                                                   CacheStats,
-                                                  TypesetError; re-exports
-                                                  Font; the per-paragraph
-                                                  layout loop and the
-                                                  RTL flush-right shift
+                                                  TypesetError,
+                                                  WeightSubstitution;
+                                                  re-exports Font and
+                                                  WeightedFont; the
+                                                  per-paragraph layout
+                                                  loop and the RTL
+                                                  flush-right shift;
+                                                  resolve_slots and the
+                                                  posture interning (#368)
     crates/dashscene-typeset/src/text/font.rs    Font (bytes, face
                                                   index, hhea metrics);
                                                   builds the on-demand
@@ -443,9 +586,16 @@ not look the glyph id up in an atlas at all.
                                                   + is_continuation (the
                                                   coverage cascade with
                                                   mark/control inheritance,
-                                                  #219); the rustybuzz
+                                                  #219, probed against each
+                                                  family's weight-resolved
+                                                  face, #368); the rustybuzz
                                                   shaping call
                                                   (shape_with_face)
+    crates/dashscene-typeset/src/text/weight.rs  match_weight — the CSS
+                                                  Fonts 4 §5.2 weight step,
+                                                  a pure function of a
+                                                  family's declared weights
+                                                  and the request (#368)
     crates/dashscene-typeset/src/text/layout.rs  break_lines (greedy
                                                   breaker, logical order),
                                                   position_line (visual
@@ -529,10 +679,34 @@ profiling evidence.
   inheritance also have machine-independent unit tests in
   `layout.rs` (two-upem positioning and wrapping) and `shape.rs`
   (`font_split` inheritance and leading-mark cases).
+- `weight.rs` (issue #368, no font file needed): the matching rule over
+  weight lists alone — an exact face always wins; the committed corpus
+  {400, 600, 700} resolves every CSS weight (500 to 400, 800 and 900 to
+  700, every light weight to 400); a single-face family absorbs every
+  request; the 400..=500 band reaches 500 before descending; above 500
+  ascending beats absolute distance; below 400 descending beats it; a tie
+  takes the first-declared face.
+- `tests/typeset_weight.rs` (issue #368, over the committed Noto Sans
+  Regular/SemiBold/Bold faces): the same string at two weights shapes to
+  different advances; each weight gets its own cache entry, and
+  `with_fonts` is exactly the all-Regular cascade; glyphs carry the
+  resolved slot; coverage outranks weight (a bold Arabic run stays in the
+  Arabic family); a bold run measures at bold advances; weight 500
+  resolves to Regular and reports; a family the coverage split never
+  touched reports nothing, a used family reports even beside an exact one,
+  and a substitution is reported once per triple.
+- `goldens/tooling/src/render.rs` (issue #368): the stager selects an
+  atlas by the node's weight — weights 400/600/700 stage against slots
+  0/1/2 of `[ascii, ascii-semibold, ascii-bold, arabic]`, weight 500
+  stages against Regular and reports the substitution, and the bold row
+  is placed wider than the Regular row rather than merely tagged
+  differently.
 
 ## Out of scope (this record)
 
-Cross-font line-metric unification and script-aware neutral
+Family substitution, Arabic bold, the `wght` axis, italic and optical
+sizing (Font weight, above), cross-font line-metric unification and
+script-aware neutral
 itemization (Font fallback, above), the measure callback (#29 —
 `docs/design/dashscene-engine.md`), painting and atlas lookup (#30),
 hyphenation/UAX #14, vertical text, letter-spacing and other style
@@ -556,5 +730,9 @@ from #33).
 - Related decisions:
   `docs/decisions/liga-clig-off-until-gsub-closure.md`,
   `docs/decisions/shaped-run-cache-font-units.md`,
-  `docs/decisions/font-fallback-deferred-past-v06.md`.
+  `docs/decisions/font-fallback-deferred-past-v06.md`,
+  `docs/decisions/weight-selection-in-the-cascade.md`,
+  `docs/decisions/css-fonts-4-weight-matching-non-fatal.md`,
+  `docs/decisions/weight-substitution-is-a-render-time-diagnostic.md`,
+  `docs/decisions/atlas-directory-per-script-weight.md`.
 - Related technote: `docs/technotes/msdf-arabic-atlas-spike.md`.

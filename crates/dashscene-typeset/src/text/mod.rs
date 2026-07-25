@@ -7,8 +7,9 @@
 mod font;
 mod layout;
 mod shape;
+mod weight;
 
-pub use font::Font;
+pub use font::{Font, WeightedFont};
 
 // The digit-shape mapping and the Arabic-strong predicate are the one
 // definition the atlas closure shares (atlas/closure.rs), so coverage
@@ -142,6 +143,43 @@ pub struct CacheStats {
     pub misses: u64,
 }
 
+/// The named diagnostic `text.weight-substituted` (story #368): a layout
+/// asked one family for a CSS weight it has no face at, and the CSS Fonts 4
+/// rule ([`weight::match_weight`]) resolved it to a different one.
+///
+/// This is a **render-time** diagnostic, not a compile-time one. Which
+/// weights exist is a property of the renderer's asset set, not of the
+/// document's intent, so recording a substitution in the `.dsb` would put a
+/// result in the document and violate P1: the same document rendered by two
+/// runtimes with different corpora substitutes differently. The typesetter
+/// that actually made the substitution is what reports it.
+///
+/// Non-fatal by design — the layout proceeds with the resolved face. It is
+/// a named report so the gap is never a silent substitution (P4); the
+/// caller decides severity, exactly as it does for the atlas pipeline's
+/// `missing_codepoints`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WeightSubstitution {
+    /// The family's index in the cascade passed to
+    /// [`Typesetter::with_font_families`], counting from 0.
+    pub family: usize,
+    /// The CSS weight the layout asked for.
+    pub requested: u16,
+    /// The CSS weight of the face it got.
+    pub resolved: u16,
+}
+
+impl std::fmt::Display for WeightSubstitution {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "text.weight-substituted: family {} has no face at weight {}; \
+             using weight {}",
+            self.family, self.requested, self.resolved
+        )
+    }
+}
+
 /// The runtime pipeline facade: an ordered font list (primary first,
 /// story #219 — the runtime resolves one document font reference to a
 /// fallback list), one shaped-run cache in front of shaping.
@@ -157,19 +195,34 @@ pub struct CacheStats {
 /// eviction policy before a real producer shows growth would be
 /// speculative.
 ///
-/// `ligatures_off` (story #341) is a per-call knob, not a property of the
-/// text, so the same paragraph text can shape two different ways depending
-/// on it — a single map keyed by text alone would hand back a stale entry
-/// shaped under the other setting. `cache_ligatures_off` holds that second
-/// posture's entries; `cache` (the `false` posture, which every existing
-/// call site uses) is untouched by the split.
+/// Neither `ligatures_off` (story #341) nor the requested weight (story
+/// #368) is a property of the text, and both change shaping output — a
+/// ligated pair shapes to one glyph with its own advance, and a heavier
+/// face has its own advances, kerning and potentially its own glyph ids.
+/// A single map keyed by text alone would hand back an entry shaped under
+/// a different posture, so `caches` holds one map per distinct posture:
+/// `slot_sets[i]` names posture `i`, and `caches[i]` holds its entries.
+/// Posture 0 is reserved for the all-weight-400 cascade with ligatures on
+/// — every pre-#368 call site — so the default path is one lookup in one
+/// map, exactly as before.
 #[derive(Debug)]
 pub struct Typesetter {
-    /// Primary font first, then fallbacks in cascade order. Always at
-    /// least one element.
+    /// The flat slot list, primary family first — what
+    /// [`PositionedGlyph::font`] indexes. Always at least one element.
     fonts: Vec<Font>,
-    cache: HashMap<Box<str>, Arc<ShapedText>>,
-    cache_ligatures_off: HashMap<Box<str>, Arc<ShapedText>>,
+    /// Each slot's declared CSS weight, parallel to `fonts`.
+    weights: Vec<u16>,
+    /// Each family's contiguous slot range, in cascade order. A cascade
+    /// built by [`with_fonts`](Self::with_fonts) has one slot per family.
+    families: Vec<Range<usize>>,
+    /// One shaped-run cache per posture; `caches[i]` is keyed by paragraph
+    /// text and holds the entries shaped under `slot_sets[i]`.
+    caches: Vec<HashMap<Box<str>, Arc<ShapedText>>>,
+    /// The interning table naming each posture: the resolved slot per
+    /// family, plus the ligature posture. Index 0 is the default.
+    slot_sets: Vec<(Vec<u16>, bool)>,
+    /// Deduplicated `text.weight-substituted` reports, in first-seen order.
+    substitutions: Vec<WeightSubstitution>,
     hits: u64,
     misses: u64,
 }
@@ -187,16 +240,89 @@ impl Typesetter {
     /// font in `fonts` that covers it, and a codepoint no font covers
     /// stays in the primary as `.notdef` (P4).
     ///
+    /// Every font is one family at weight 400 — the weight the document
+    /// defaults to — so this is exactly
+    /// [`with_font_families`](Self::with_font_families) with one face per
+    /// family, and its flat slot order is the list as given. Every layout
+    /// through [`layout`](Self::layout) or
+    /// [`layout_with`](Self::layout_with) requests weight 400 and resolves
+    /// to that one face, so this constructor's behavior is unchanged by
+    /// story #368.
+    ///
     /// # Panics
     ///
     /// Panics if `fonts` is empty — a typesetter has no primary font to
     /// fall back to.
     pub fn with_fonts(fonts: Vec<Font>) -> Typesetter {
-        assert!(!fonts.is_empty(), "a typesetter needs at least one font");
+        Self::with_font_families(
+            fonts
+                .into_iter()
+                .map(|f| vec![WeightedFont::regular(f)])
+                .collect(),
+        )
+    }
+
+    /// A typesetter over a cascade of families, each family an ordered set
+    /// of weighted faces (story #368). Selection runs in two steps, in this
+    /// order:
+    ///
+    /// 1. **Coverage picks the family**, exactly as the flat cascade picks a
+    ///    font today: a codepoint goes to the first family that covers it.
+    ///    Coverage is a correctness property — an uncovered codepoint
+    ///    renders `.notdef` and the reader loses the text — while weight is
+    ///    a fidelity property, so correctness wins. A weight-700 Arabic run
+    ///    in a cascade with no Arabic Bold resolves to Arabic Regular, never
+    ///    to Latin Bold.
+    /// 2. **The requested weight picks the face** within that family, by the
+    ///    CSS Fonts 4 rule ([`weight::match_weight`]), reporting any
+    ///    substitution as [`WeightSubstitution`].
+    ///
+    /// The families are flattened family-major into the one positional slot
+    /// list [`PositionedGlyph::font`] indexes, so a boundary-B stager maps
+    /// each slot to its atlas in exactly this order — families in cascade
+    /// order, faces in declared order within each — and needs to know
+    /// nothing about weight.
+    ///
+    /// Coverage is probed against each family's *weight-resolved* face — the
+    /// one face step 2 picked for this layout, not a fixed representative —
+    /// so a family whose faces differ in charset splits a run differently at
+    /// different requested weights. The faces of one family are therefore
+    /// expected to share a charset, as the weights of one typeface do; a
+    /// family with a partial heavier face would drop codepoints out of that
+    /// family only when the heavier face is the resolved one.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `families` is empty or if any family is empty — a
+    /// typesetter has no primary face to fall back to.
+    pub fn with_font_families(families: Vec<Vec<WeightedFont>>) -> Typesetter {
+        assert!(
+            !families.is_empty(),
+            "a typesetter needs at least one font family"
+        );
+        let mut fonts = Vec::new();
+        let mut weights = Vec::new();
+        let mut ranges = Vec::with_capacity(families.len());
+        for family in families {
+            assert!(!family.is_empty(), "a font family needs at least one face");
+            let start = fonts.len();
+            for face in family {
+                fonts.push(face.font);
+                weights.push(face.weight);
+            }
+            ranges.push(start..fonts.len());
+        }
+        // Posture 0: every family at its weight-400 resolution, ligatures on
+        // — the posture every pre-#368 call site shapes under, so the
+        // default path finds its map at a fixed index.
+        let default_slots = resolve_slots(&weights, &ranges, 400);
         Typesetter {
             fonts,
-            cache: HashMap::new(),
-            cache_ligatures_off: HashMap::new(),
+            weights,
+            families: ranges,
+            caches: vec![HashMap::new()],
+            slot_sets: vec![(default_slots, false)],
+            substitutions: Vec::new(),
             hits: 0,
             misses: 0,
         }
@@ -216,6 +342,32 @@ impl Typesetter {
     /// font to its atlas in this order.
     pub fn fonts(&self) -> &[Font] {
         &self.fonts
+    }
+
+    /// Each slot's declared CSS weight, parallel to [`fonts`](Self::fonts)
+    /// (story #368) — the additive way to read which weight a
+    /// [`PositionedGlyph::font`] slot stands for. A cascade built by
+    /// [`with_fonts`](Self::with_fonts) reports 400 for every slot.
+    pub fn weights(&self) -> &[u16] {
+        &self.weights
+    }
+
+    /// The `text.weight-substituted` reports this typesetter has
+    /// accumulated (story #368), deduplicated per distinct (family,
+    /// requested, resolved) triple and in first-seen order. Empty when
+    /// every requested weight found an exact face — including every
+    /// [`with_fonts`](Self::with_fonts) cascade, which is asked for 400 and
+    /// declares 400.
+    ///
+    /// A report means a face at another weight actually rendered glyphs. A
+    /// family the layout resolved but coverage never selected — an Arabic
+    /// family under a pure-Latin bold run — contributes nothing, so every
+    /// entry here names a substitution the reader can see on screen.
+    ///
+    /// Deduplicating per triple rather than per layout keeps a screen with
+    /// nineteen bold nodes from producing nineteen identical reports.
+    pub fn weight_substitutions(&self) -> &[WeightSubstitution] {
+        &self.substitutions
     }
 
     pub fn cache_stats(&self) -> CacheStats {
@@ -255,6 +407,97 @@ impl Typesetter {
         max_width: Option<f32>,
         shape: TextShape,
     ) -> TextLayout {
+        self.layout_weighted(text, size, max_width, shape, 400)
+    }
+
+    /// [`layout_with`](Self::layout_with) at a requested CSS weight (story
+    /// #368). Each family resolves the request to one of its faces by the
+    /// CSS Fonts 4 rule — see
+    /// [`with_font_families`](Self::with_font_families) for the two-step
+    /// selection — and the resolved faces shape, measure and tag the run,
+    /// so a bold paragraph measures at bold advances rather than being
+    /// sized for Regular and overflowing its box.
+    ///
+    /// Requesting 400 against an all-weight-400 cascade is exactly
+    /// `layout_with`: same faces, same slot indices, same cache map, same
+    /// output. That is what keeps every pre-#368 call site — the E7 oracle
+    /// and the goldens included — rendering byte-identically.
+    ///
+    /// A request no family has an exact face for is **not** an error: it
+    /// resolves to the nearest face by the rule and records a
+    /// [`WeightSubstitution`], readable through
+    /// [`weight_substitutions`](Self::weight_substitutions).
+    pub fn layout_weighted(
+        &mut self,
+        text: &str,
+        size: f32,
+        max_width: Option<f32>,
+        shape: TextShape,
+        weight: u16,
+    ) -> TextLayout {
+        let slots = resolve_slots(&self.weights, &self.families, weight);
+        let layout = self.layout_slots(text, size, max_width, shape, &slots);
+        self.record_substitutions(weight, &slots, &layout);
+        layout
+    }
+
+    /// Records a [`WeightSubstitution`] for each family that both resolved
+    /// to a face at a weight other than `requested` and actually shaped
+    /// glyphs in `layout`.
+    ///
+    /// Reporting is driven by the output, not by the resolution, because
+    /// resolution runs over every family in the cascade while coverage
+    /// selects only some of them. A pure-Latin bold run against a cascade
+    /// that also carries an Arabic family resolves that Arabic family too —
+    /// but no Arabic glyph exists, so its Arabic Regular face was never
+    /// used and reporting it would be a substitution that did not happen.
+    /// P4 asks for a named diagnostic per real gap; a diagnostic that fires
+    /// when nothing was substituted makes the true reports unreadable.
+    ///
+    /// Which face renders is unaffected — this decides only what is
+    /// reported.
+    fn record_substitutions(&mut self, requested: u16, slots: &[u16], layout: &TextLayout) {
+        // The common case — every resolved face is at the requested weight
+        // — has nothing to report, so it never walks the glyphs.
+        if slots
+            .iter()
+            .all(|&slot| self.weights[slot as usize] == requested)
+        {
+            return;
+        }
+        let mut used = vec![false; slots.len()];
+        for glyph in layout.lines.iter().flat_map(|line| &line.glyphs) {
+            // A glyph carries its family's flat slot, and each family
+            // resolves to exactly one slot, so the slot names the family.
+            if let Some(family) = slots.iter().position(|&slot| slot == glyph.font) {
+                used[family] = true;
+            }
+        }
+        for (family, &slot) in slots.iter().enumerate() {
+            let resolved = self.weights[slot as usize];
+            if !used[family] || resolved == requested {
+                continue;
+            }
+            let report = WeightSubstitution {
+                family,
+                requested,
+                resolved,
+            };
+            if !self.substitutions.contains(&report) {
+                self.substitutions.push(report);
+            }
+        }
+    }
+
+    /// The layout body, over an already-resolved slot per family.
+    fn layout_slots(
+        &mut self,
+        text: &str,
+        size: f32,
+        max_width: Option<f32>,
+        shape: TextShape,
+        slots: &[u16],
+    ) -> TextLayout {
         // Per-font pixel scale: each glyph's advances and offsets are in
         // its own font's units, so a different-upem fallback is scaled by
         // its own upem, not the primary's (story #219).
@@ -263,6 +506,10 @@ impl Typesetter {
             .iter()
             .map(|f| size / f32::from(f.units_per_em()))
             .collect();
+        // The primary family's resolved slot — the face a line with no
+        // glyphs of its own is measured by. At weight 400 against an
+        // all-400 cascade this is slot 0, the pre-#368 seed.
+        let primary = slots[0] as usize;
         // Lines stack down the page: `pen_y` accumulates the line boxes
         // above the current line, and each box is measured from the fonts
         // that actually shaped its own glyphs ([`line_box`]), not the
@@ -275,14 +522,14 @@ impl Typesetter {
         if !text.is_empty() {
             for paragraph in text.split('\n') {
                 let bidi = BidiInfo::new(paragraph, None);
-                let shaped = self.shaped(paragraph, &bidi, shape.ligatures_off);
+                let shaped = self.shaped(paragraph, &bidi, shape.ligatures_off, slots);
                 // An empty chunk has no bidi paragraph: one empty line.
                 if bidi.paragraphs.is_empty() {
                     // A blank line has no glyphs; measure its box by the
                     // primary font. A fixed line height overrides the advance
                     // and centers the intrinsic box within it (half-leading,
                     // story #310 corrected by #332).
-                    let (ascent, intrinsic) = self.line_box(std::iter::empty(), &scales);
+                    let (ascent, intrinsic) = self.line_box(std::iter::empty(), &scales, primary);
                     lines.push(Line {
                         glyphs: Vec::new(),
                         width: 0.0,
@@ -324,6 +571,7 @@ impl Typesetter {
                         let (ascent, intrinsic) = self.line_box(
                             shaped.glyphs[range.clone()].iter().map(|g| g.font as usize),
                             &scales,
+                            primary,
                         );
                         let baseline = pen_y + ascent + half_leading(&shape, intrinsic);
                         pen_y += shape.line_height_px.unwrap_or(intrinsic);
@@ -384,10 +632,17 @@ impl Typesetter {
     /// `fonts_on_line` yields the font index of each glyph on the line;
     /// repeats are harmless, since the maximum and minimum ignore them.
     /// An empty iterator is a blank line, which carries no glyphs and is
-    /// measured by the primary font. Returns the line's ascent (the
+    /// measured by `primary` — the primary family's weight-resolved slot,
+    /// so a blank line in a bold paragraph takes the bold face's metrics
+    /// rather than Regular's (story #368). Returns the line's ascent (the
     /// distance from the top of the box down to the baseline) and its
     /// baseline-to-baseline advance, both in pixels.
-    fn line_box(&self, fonts_on_line: impl Iterator<Item = usize>, scales: &[f32]) -> (f32, f32) {
+    fn line_box(
+        &self,
+        fonts_on_line: impl Iterator<Item = usize>,
+        scales: &[f32],
+        primary: usize,
+    ) -> (f32, f32) {
         let metrics = |f: usize| {
             let scale = scales[f];
             (
@@ -398,7 +653,7 @@ impl Typesetter {
         };
         // Seed from the primary so a blank line (no glyphs) is measured
         // by it; the first shaping font on the line replaces the seed.
-        let (mut ascent, mut descent, mut gap) = metrics(0);
+        let (mut ascent, mut descent, mut gap) = metrics(primary);
         let mut seen = false;
         for f in fonts_on_line {
             let (a, d, g) = metrics(f);
@@ -416,39 +671,77 @@ impl Typesetter {
         (ascent, ascent - descent + gap)
     }
 
-    /// The cache key is the paragraph text plus `ligatures_off`: resolved
+    /// The cache key is the paragraph text within a **posture**: resolved
     /// bidi levels and the per-run context (Arabic/Plain, `shape::
-    /// RunContext`) are a pure function of the text alone, but
-    /// `ligatures_off` is an authored knob the text carries no trace of, so
-    /// the same text shaped under each posture must not collide in one
-    /// entry (story #341). `ligatures_off` selects which of the two maps to
-    /// probe and fill; the default (`false`) path is `cache`, unchanged from
-    /// before this knob existed.
+    /// RunContext`) are a pure function of the text alone, but the ligature
+    /// setting (story #341) and the resolved slot set (story #368) are not
+    /// — the text carries no trace of either, and both change shaping
+    /// output. `posture` interns the pair and indexes `caches`, so entries
+    /// shaped under different postures cannot collide. The default posture
+    /// is index 0, so the pre-#368 path is one lookup in one map exactly as
+    /// before.
     fn shaped(
         &mut self,
         paragraph: &str,
         bidi: &BidiInfo<'_>,
         ligatures_off: bool,
+        slots: &[u16],
     ) -> Arc<ShapedText> {
-        let hit = if ligatures_off {
-            self.cache_ligatures_off.get(paragraph).cloned()
-        } else {
-            self.cache.get(paragraph).cloned()
-        };
-        if let Some(shaped) = hit {
+        let posture = self.posture(slots, ligatures_off);
+        if let Some(shaped) = self.caches[posture].get(paragraph).cloned() {
             self.hits += 1;
             return shaped;
         }
         self.misses += 1;
-        let shaped = Arc::new(shape::shape_paragraph(&self.fonts, bidi, ligatures_off));
-        if ligatures_off {
-            self.cache_ligatures_off
-                .insert(paragraph.into(), shaped.clone());
-        } else {
-            self.cache.insert(paragraph.into(), shaped.clone());
-        }
+        let shaped = Arc::new(shape::shape_paragraph(
+            &self.fonts,
+            slots,
+            bidi,
+            ligatures_off,
+        ));
+        self.caches[posture].insert(paragraph.into(), shaped.clone());
         shaped
     }
+
+    /// The index of the cache map for this (slot set, ligature) pair,
+    /// interning it on first use. The table holds one entry per distinct
+    /// posture a caller has actually asked for — a handful at most, since
+    /// a corpus offers a handful of weights — so the linear scan is
+    /// cheaper than hashing the slot vector, and the default posture is
+    /// found at index 0 on the first comparison.
+    fn posture(&mut self, slots: &[u16], ligatures_off: bool) -> usize {
+        if let Some(i) = self
+            .slot_sets
+            .iter()
+            .position(|(s, l)| *l == ligatures_off && s == slots)
+        {
+            return i;
+        }
+        self.slot_sets.push((slots.to_vec(), ligatures_off));
+        self.caches.push(HashMap::new());
+        self.slot_sets.len() - 1
+    }
+}
+
+/// Resolves one slot per family for `requested` (story #368). `weights` is
+/// the flat per-slot weight list and `families` the per-family slot ranges,
+/// both as [`Typesetter`] holds them.
+///
+/// Resolution covers every family, including families this layout's coverage
+/// split will never reach, because the resolved faces are what the split
+/// probes. Reporting a substitution is therefore *not* done here — see
+/// [`Typesetter::record_substitutions`], which reports against the output.
+///
+/// A free function rather than a method because the construction path calls
+/// it before a `Typesetter` exists.
+fn resolve_slots(weights: &[u16], families: &[Range<usize>], requested: u16) -> Vec<u16> {
+    families
+        .iter()
+        .map(|range| {
+            let available = &weights[range.clone()];
+            (range.start + weight::match_weight(available, requested)) as u16
+        })
+        .collect()
 }
 
 /// A paragraph's content range: its bidi range minus the trailing

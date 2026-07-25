@@ -357,6 +357,26 @@ into the records below. Per-story decisions land here directly:
   engine rebates a fixed child's negative main-axis margin into its flex
   basis (with a min-size floor) to route around taffy 0.12's intrinsic
   mis-sum; closes debt #236 (story #43).
+- [atlas-directory-per-script-weight.md](atlas-directory-per-script-weight.md)
+  — a second font weight is a sibling committed atlas directory, not a face
+  axis inside the metrics blob, so the Regular fixtures are never rewritten
+  and `AtlasMetrics::FORMAT_VERSION` stays 1; Bold and SemiBold added,
+  Medium and Arabic Bold not (story F1/#368).
+- [weight-selection-in-the-cascade.md](weight-selection-in-the-cascade.md) —
+  the cascade is a list of families of weighted faces: coverage picks the
+  family, the requested CSS weight picks the face, and the result flattens
+  family-major into the one positional slot list boundary B already
+  indexes; the seam is additive so the frozen E7 oracle is untouched
+  (story F1/#368).
+- [css-fonts-4-weight-matching-non-fatal.md](css-fonts-4-weight-matching-non-fatal.md)
+  — the CSS Fonts Level 4 §5.2 weight step, adopted verbatim and non-fatal,
+  so weight 500 resolves to Regular by specification and a single-face
+  family absorbs every request (story F1/#368).
+- [weight-substitution-is-a-render-time-diagnostic.md](weight-substitution-is-a-render-time-diagnostic.md)
+  — `text.weight-substituted` is reported by the typesetter that made the
+  substitution, never recorded in the `.dsb`: which weights exist is the
+  renderer's asset set, and a substitution is a result (P1), so a
+  compile-time record is refused (story F1/#368).
 
 Gardened out of `docs/technotes/`'s `DECISION` / `DECISION direction` tags,
 so each technote stops being the authority for the conclusion it reached:

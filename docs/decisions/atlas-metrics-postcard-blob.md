@@ -52,3 +52,19 @@ Option 1. `AtlasMetrics::to_bytes`/`from_bytes` wrap
 - `format_version` is a stored field, not just a doc convention: an
   unsupported version fails to load (`Metrics` error) rather than being
   silently misinterpreted as the current layout.
+
+## Consequence realized (story #368)
+
+postcard is not self-describing, so adding a field to `AtlasMetrics` is a
+breaking wire change: an old blob decoded against a new struct fails, and
+the `format_version` gate plus the trailing-byte and sortedness checks
+reject it — correctly. That is the property that ruled out carrying
+several font weights as a face axis inside one atlas, and sent story #368
+to a sibling atlas directory per (script, weight) instead: a face axis
+would have forced regenerating both committed atlases through the pinned
+external generator, and would have turned a structural no-op for the
+frozen E7 frames into a test-contingent one
+(`docs/decisions/atlas-directory-per-script-weight.md`). The trade this
+record made — canonical bytes and a strict parse boundary, at the price of
+a format bump for any field addition — is therefore working as intended,
+not a cost discovered late.

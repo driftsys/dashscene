@@ -1,7 +1,9 @@
 # atlas pipeline — font → MSDF glyph atlas + metrics blob
 
     crate    crates/dashscene-typeset (module `atlas`)
-    covers   v0.5 — text I: Latin (story #27, epic #24)
+    covers   v0.5 — text I: Latin (story #27, epic #24);
+             v0.11 — the per-weight committed fixtures (story F1/#368,
+             epic #344)
     traces   docs/archive/2026-07-14-design-1-seed.md §7.2 (build-time
              half), docs/design/architecture.md (stack: msdf-atlas-gen,
              ttf-parser), R1 (text quality), R7 (byte-reproducible
@@ -94,6 +96,30 @@ acceptance test pins the coupling: production-shaped output is a subset
 of the closure's coverage for the declared charset
 (`crates/dashscene-typeset/tests/typeset_arabic.rs`).
 
+## One atlas per (script, weight) (story #368)
+
+Weight is a property of a face, and a face is what an atlas is baked
+from, so a second weight is a second rasterization of the same charset.
+It is carried as a **sibling atlas directory**, not as a face axis inside
+one atlas: `corpus/atlas/ascii-semibold` and `corpus/atlas/ascii-bold`
+hold the same two files as `corpus/atlas/ascii`, produced by the same
+`AtlasSpec` over the same charset with a different `font_path`.
+
+Nothing in this pipeline changed to allow it. `AtlasSpec` gains no field
+— the weight is carried by the face the spec points at —
+`AtlasMetrics::FORMAT_VERSION` stays 1, and the two Regular fixtures are
+never rewritten, so their bytes and the frames that render through them
+are untouched by adding a weight. The alternative, a face axis inside
+`AtlasMetrics`, would have been a breaking wire change (the blob is
+postcard, which is not self-describing) and would have forced regenerating
+both committed atlases through the pinned generator; the full comparison
+is `docs/decisions/atlas-directory-per-script-weight.md`.
+
+The consumer side is the typesetter's cascade, which resolves a requested
+CSS weight to one face per family and tags each glyph with that face's
+flat slot, so a stager maps slot to atlas positionally
+(`docs/design/typeset-latin.md`, Font weight).
+
 ## Home
 
 `dashscene-typeset` (`docs/design/architecture.md` maps the atlas pipeline
@@ -117,15 +143,19 @@ example regenerates the committed test fixture.
     atlas/metrics.rs   AtlasMetrics model, font-metrics extraction
                        (ttf-parser), postcard write/load
     tests/atlas_pipeline.rs
-                       tool-gated integration tests; also owns the
-                       ignored `regenerate_committed_ascii_fixture` and
-                       `regenerate_committed_arabic_fixture` tests that
-                       rewrite the committed fixtures, so each fixture's
-                       writer and checker share one spec definition
+                       tool-gated integration tests; also owns the four
+                       ignored regenerators (`..._ascii_fixture`,
+                       `..._arabic_fixture`, `..._ascii_semibold_fixture`,
+                       `..._ascii_bold_fixture`) that rewrite the committed
+                       fixtures, so each fixture's writer and checker share
+                       one spec definition
     corpus/fonts/noto-sans/
                        NotoSans-Regular.ttf v2.015, unhinted/ttf build
                        (OFL, license file committed alongside) — shared
-                       test/golden fixture for #27, #28, #29, #30
+                       test/golden fixture for #27, #28, #29, #30; plus
+                       NotoSans-SemiBold.ttf and NotoSans-Bold.ttf from
+                       the same release and build variant, under the same
+                       committed OFL.txt (#368)
     corpus/fonts/noto-sans-arabic/
                        NotoSansArabic-Regular.ttf v2.013, unhinted/ttf
                        build (OFL, license file committed alongside) —
@@ -138,6 +168,11 @@ example regenerates the committed test fixture.
                        another crate loads it without reaching across
                        (debt #217; the v0.5 Latin golden and the
                        reproducibility check both read it here)
+    corpus/atlas/ascii-semibold/, corpus/atlas/ascii-bold/
+                       the committed SemiBold (600) and Bold (700) ASCII
+                       fixtures (#368) — the same charset and parameters as
+                       ascii/, a different face; byte-reproduced in CI
+                       alongside it
     corpus/atlas/arabic/
                        the committed Arabic atlas fixture (#35), source of
                        the E2 golden's glyphs, generated from the Arabic
@@ -241,17 +276,25 @@ conversion is the painter's job (#30), documented on the type.
   provenance holds canonical names only, never machine paths.
 - Same-machine repro: `double_run_is_byte_identical` generates twice and
   byte-compares both artifacts.
-- Cross-machine repro: the CI `atlas-repro` job (Linux) regenerates the
-  committed ASCII and Arabic fixtures (`corpus/atlas/ascii/` and
-  `corpus/atlas/arabic/`, produced on macOS by the ignored
-  `regenerate_committed_ascii_fixture` and
-  `regenerate_committed_arabic_fixture` tests) and byte-compares
+- Cross-machine repro: the CI `atlas-repro` job (Linux) regenerates all
+  four committed fixtures (`corpus/atlas/ascii/`,
+  `corpus/atlas/ascii-semibold/`, `corpus/atlas/ascii-bold/` and
+  `corpus/atlas/arabic/`, produced on macOS by the four ignored
+  regenerators) and byte-compares each
   (`committed_ascii_fixture_is_reproducible`,
+  `committed_ascii_semibold_fixture_is_reproducible`,
+  `committed_ascii_bold_fixture_is_reproducible`,
   `committed_arabic_fixture_is_reproducible`) — this empirically answers
-  the spike's open cross-machine question on every CI run, over both a
-  Latin ASCII charset and an Arabic charset whose closure runs the full
-  GSUB sweep. If a toolchain change breaks it, that is a finding to record
-  (per-platform fixtures or a pinned generation platform), not to hide.
+  the spike's open cross-machine question on every CI run, over a Latin
+  ASCII charset at three weights and an Arabic charset whose closure runs
+  the full GSUB sweep. If a toolchain change breaks it, that is a finding
+  to record (per-platform fixtures or a pinned generation platform), not
+  to hide.
+- A reproducibility check cannot notice a fixture baked from the wrong
+  face, because it regenerates from the same spec. `the_three_ascii_weights_are_distinct_faces`
+  covers that gap without the tool: the three ASCII atlases must cover the
+  same 99 glyphs with no missing codepoints, and `H` — a two-stem glyph —
+  must advance wider at each heavier weight (#368).
 
 ## Error handling
 
@@ -347,5 +390,6 @@ of atlas assets (later slice), per-size bitmap fallback (parked by
   `docs/decisions/atlas-gen-external-pinned-binary.md`,
   `docs/decisions/atlas-metrics-postcard-blob.md`,
   `docs/decisions/atlas-closure-cmap-plus-extras.md`,
-  `docs/decisions/q1-msdf-below-14px.md`.
+  `docs/decisions/q1-msdf-below-14px.md`,
+  `docs/decisions/atlas-directory-per-script-weight.md`.
 - Related technote: `docs/technotes/msdf-arabic-atlas-spike.md`.

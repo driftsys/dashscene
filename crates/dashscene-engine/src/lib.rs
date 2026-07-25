@@ -383,6 +383,13 @@ struct TextContext {
     /// is block placement, not a measured extent, so it lives in the
     /// stager, not the solve.
     shape: TextShape,
+    /// The node's CSS-scale weight (story #368). Weight is a measure input,
+    /// not only a paint one: a heavier face has its own advances, so a bold
+    /// run measured at Regular's advances would size a box the text then
+    /// overflows. The typesetter resolves it to one of its faces; a cascade
+    /// offering only weight 400 resolves every request there and the box is
+    /// measured exactly as before this field existed.
+    weight: u16,
 }
 
 /// The measure context for a node, present only when the node carries
@@ -396,6 +403,7 @@ fn text_context(arena: &Arena, node: NodeId) -> Option<TextContext> {
         text: text.to_string(),
         size: style.size,
         shape: text_shape(style),
+        weight: style.weight,
     })
 }
 
@@ -441,7 +449,13 @@ fn measure_text(
         AvailableSpace::MinContent => Some(0.0),
         AvailableSpace::MaxContent => None,
     });
-    let laid = typesetter.layout_with(&context.text, context.size, max_width, context.shape);
+    let laid = typesetter.layout_weighted(
+        &context.text,
+        context.size,
+        max_width,
+        context.shape,
+        context.weight,
+    );
     Size {
         width: known.width.unwrap_or(laid.width),
         height: known.height.unwrap_or(laid.height),
@@ -973,11 +987,16 @@ fn collect_baseline_offsets(
             let baseline = match (arena.text(child), arena.text_style(child)) {
                 (Some(text), Some(style)) => {
                     has_text = true;
-                    let laid = typesetter.layout_with(
+                    // The #272 baseline pass measures the same run the
+                    // measure callback did, so it must resolve the same
+                    // face: a bold child's first baseline sits at the bold
+                    // face's ascent, not Regular's (story #368).
+                    let laid = typesetter.layout_weighted(
                         text,
                         style.size,
                         Some(child_layout.size.width),
                         text_shape(style),
+                        style.weight,
                     );
                     laid.lines
                         .first()
