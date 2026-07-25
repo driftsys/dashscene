@@ -387,8 +387,9 @@ into the records below. Per-story decisions land here directly:
 - [corpus-ships-inter.md](corpus-ships-inter.md) — the pinned cascade gains
   Inter at weights 400/500/600/700 beside Noto Sans, since Inter is what
   real Figma files use and family substitution is the largest remaining
-  fidelity gap. Accepted in principle; not yet executed, because it
-  re-measures the `liga-text` import frame and the frozen E7 gate must not
+  fidelity gap. Accepted in principle; not yet executed, because the
+  family-name matching has to land with the faces or a second Latin family
+  silently repoints the Noto-authored frames, and the frozen E7 gate must not
   gain Inter until #49 closes (#379).
 
 Gardened out of `docs/technotes/`'s `DECISION` / `DECISION direction` tags,

@@ -88,6 +88,13 @@ v0.10 grew it from 2 frames to **7, all captured and in band**:
 | node-fx           | 0.000 % (0/61271)    | aa-edge   | node opacity + hidden lowering (#143)              |
 | stacked-fills     | 0.000 % (0/40000)    | aa-edge   | two-layer fill compositing (#146)                  |
 
+Two of those numbers are what v0.10 measured and have since moved;
+`goldens/oracle/import-manifest.json` is the authority. `import-text-axes`
+tightened to 1.029 % (823/80000) when #336 dropped the trailing letter-spacing
+step from the measured width, and `liga-text` to 0.007 % (6/84000) when #382
+narrowed the oracle to the node its design source actually exports — the frame
+had been counting an unexported authoring annotation as design ink.
+
 The `node-fx` frame excludes two disclosed holes (the rotated rectangle —
 rotation stays refused; and a mask pair whose fixture predates a plugin fix,
 debt #361), each named in the manifest with its `expectedWarnings` rather than
