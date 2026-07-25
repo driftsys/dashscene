@@ -28,9 +28,24 @@ across into `dashscene-typeset`'s test directory (debt #217).
   rewritten when a weight is added, so the atlas format needs no change,
   `AtlasMetrics::FORMAT_VERSION` stays 1, and every frame that renders at
   weight 400 is provably unaffected. Consumed by the production render walk
-  (`goldens/tooling/src/render.rs`), whose cascade offers the Latin family
-  at weights 400/600/700 and mirrors it with `[ascii, ascii-semibold,
-  ascii-bold, arabic]`.
+  (`goldens/tooling/src/render.rs`), whose cascade offers Noto Sans at
+  weights 400/600/700 and mirrors it, since story #385, with `[ascii,
+  ascii-semibold, ascii-bold, inter-ascii, inter-ascii-medium,
+  inter-ascii-semibold, inter-ascii-bold, arabic]`.
+- `inter-ascii/`, `inter-ascii-medium/`, `inter-ascii-semibold/`,
+  `inter-ascii-bold/` — from `corpus/fonts/inter`'s Regular, Medium,
+  SemiBold and Bold faces, over the same charset as `ascii/` (story
+  #385). The family real Figma files are authored in, so a document
+  naming `Inter` resolves to Inter rather than being substituted
+  (`docs/decisions/corpus-ships-inter.md`). Each holds 113 glyphs
+  against the Noto fixtures' 99: the charset is identical, and Inter's
+  `liga` feature simply closes over more pairs.
+
+  The Noto directories keep their family-less names. Renaming them to
+  match this scheme would rewrite the atlases the shipped goldens load,
+  and one directory per (script, weight) is a rule about never
+  regenerating an existing fixture, not about spelling.
+
 - `arabic/` — from `corpus/fonts/noto-sans-arabic`, charset the standard
   Arabic letters, harakat, Arabic-Indic digits, and space (the GSUB
   closure adds the contextual forms and ligatures those shape to).
@@ -60,6 +75,14 @@ one `AtlasSpec` per fixture so the writer and the checker cannot drift:
       --ignored regenerate_committed_ascii_semibold_fixture
     cargo test -p dashscene-typeset --test atlas_pipeline -- \
       --ignored regenerate_committed_ascii_bold_fixture
+    cargo test -p dashscene-typeset --test atlas_pipeline -- \
+      --ignored regenerate_committed_inter_ascii_fixture
+    cargo test -p dashscene-typeset --test atlas_pipeline -- \
+      --ignored regenerate_committed_inter_ascii_medium_fixture
+    cargo test -p dashscene-typeset --test atlas_pipeline -- \
+      --ignored regenerate_committed_inter_ascii_semibold_fixture
+    cargo test -p dashscene-typeset --test atlas_pipeline -- \
+      --ignored regenerate_committed_inter_ascii_bold_fixture
 
 Run a regenerator only after a deliberate parameter or toolchain change,
 then commit the result with a note recording why. Do not hand-edit the
@@ -71,8 +94,11 @@ The fixtures are generated on one platform (macOS) and byte-reproduced
 on another (Linux) by the CI `atlas-repro` job, which builds the pinned
 `msdf-atlas-gen` commit and runs `committed_ascii_fixture_is_reproducible`,
 `committed_arabic_fixture_is_reproducible`,
-`committed_ascii_semibold_fixture_is_reproducible` and
-`committed_ascii_bold_fixture_is_reproducible` under
-`DASHSCENE_REQUIRE_ATLAS_TOOL=1`. A byte difference fails that job, so a
+`committed_ascii_semibold_fixture_is_reproducible`,
+`committed_ascii_bold_fixture_is_reproducible` and the four
+`committed_inter_ascii*_fixture_is_reproducible` tests under
+`DASHSCENE_REQUIRE_ATLAS_TOOL=1` — the job runs the whole
+`atlas_pipeline` binary, so a new fixture's checker is picked up by
+adding it there and nowhere else. A byte difference fails that job, so a
 toolchain change that breaks reproducibility is surfaced, not hidden
 (R7; `docs/design/atlas-pipeline.md`, Determinism).

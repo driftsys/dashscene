@@ -387,10 +387,11 @@ into the records below. Per-story decisions land here directly:
 - [corpus-ships-inter.md](corpus-ships-inter.md) — the pinned cascade gains
   Inter at weights 400/500/600/700 beside Noto Sans, since Inter is what
   real Figma files use and family substitution is the largest remaining
-  fidelity gap. Accepted in principle; not yet executed, because the
-  family-name matching has to land with the faces or a second Latin family
-  silently repoints the Noto-authored frames, and the frozen E7 gate must not
-  gain Inter until #49 closes (#379).
+  fidelity gap. Executed by story #385: the faces landed with the
+  family-name matching, because a second Latin family without it would have
+  silently repointed the Noto-authored frames, and — #49 having closed — the
+  E7 cascade took Inter too, tightening `v08-grid-spans` from 0.116 % to
+  0.037 % (#379).
 
 Gardened out of `docs/technotes/`'s `DECISION` / `DECISION direction` tags,
 so each technote stops being the authority for the conclusion it reached:

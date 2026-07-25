@@ -67,7 +67,7 @@ productionization). 4 — un-gated assertion once a real capture exists
   retune is a deliberate, reviewed change. Their values are engineering
   estimates from the AA/blur/MSDF edge characteristics. All three bands are
   now confirmed by real captures, none retuned: `AA_EDGE` (`v08-wrap`
-  0.000 %, `v08-grid-spans` 0.116 %), `BLUR_FALLOFF` (`v08-drop-shadow`
+  0.000 %, `v08-grid-spans` 0.037 %), `BLUR_FALLOFF` (`v08-drop-shadow`
   0.022 %, `v08-inner-shadow` 0.000 %), and `MSDF_TEXT` (`v05-text-latin`
   0.033 %, `v06-text-arabic` 1.405 % after the #314 line-height fix) — every
   measured frame inside its budget (`goldens/oracle/manifest.json`,
@@ -105,10 +105,11 @@ productionization). 4 — un-gated assertion once a real capture exists
   and `pending` is exactly the null-source frames — so an un-gated green
   cannot hide an unmeasured frame. The `render-oracle` CI job now re-runs
   the suite with `--nocapture` so the measured per-frame numbers show in the
-  log. E7 is **partial**, not met: six of the seven frames are measured,
-  each within its band (the layout frames on `AA_EDGE`, the plugin-authored
-  shadow fixtures #304 on `BLUR_FALLOFF`, and the Noto text fixtures #304 on
-  `MSDF_TEXT` through the #303 render path, after the #314 line-height fix the
-  Arabic frame revealed). Only `v08-baseline` stays pending — its Latin leaves
-  author `Inter`, a font the committed corpus does not provide — and E7 flips
-  to met at the v0.9 exit gate (#49) once that last frame is measured.
+  log. E7 is **met**: all seven frames are measured, each within its band
+  (the layout frames on `AA_EDGE`, the plugin-authored shadow fixtures #304 on
+  `BLUR_FALLOFF`, and the Noto text fixtures #304 on `MSDF_TEXT` through the
+  #303 render path, after the #314 line-height fix the Arabic frame revealed).
+  `v08-baseline` was the last to land: it was re-captured Noto-authored, having
+  been blocked while its Latin leaves authored `Inter`, and then measured once
+  #272 fixed the leaf-baseline defect it exposed. The v0.9 exit gate (#49)
+  closed on 2026-07-25.

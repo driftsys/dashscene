@@ -20,7 +20,7 @@ use dashscene_core::{Arena, NodeId, load_document};
 use dashscene_engine::TaffySolver;
 use dashscene_skia::SkiaPainter;
 use dashscene_typeset::atlas::AtlasBundle;
-use dashscene_typeset::text::{Font, TextShape, Typesetter, WeightedFont};
+use dashscene_typeset::text::{Font, FontFamily, TextShape, Typesetter, WeightedFont};
 
 const FONT_LATIN: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -33,6 +33,22 @@ const FONT_LATIN_SEMIBOLD: &str = concat!(
 const FONT_LATIN_BOLD: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../corpus/fonts/noto-sans/NotoSans-Bold.ttf"
+);
+const FONT_INTER: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../corpus/fonts/inter/Inter-Regular.otf"
+);
+const FONT_INTER_MEDIUM: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../corpus/fonts/inter/Inter-Medium.otf"
+);
+const FONT_INTER_SEMIBOLD: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../corpus/fonts/inter/Inter-SemiBold.otf"
+);
+const FONT_INTER_BOLD: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../corpus/fonts/inter/Inter-Bold.otf"
 );
 const FONT_ARABIC: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -49,30 +65,61 @@ pub const ATLAS_ASCII_SEMIBOLD_DIR: &str = concat!(
 /// The committed Bold ASCII atlas (Noto Sans Bold, slot 2) — story #368.
 pub const ATLAS_ASCII_BOLD_DIR: &str =
     concat!(env!("CARGO_MANIFEST_DIR"), "/../../corpus/atlas/ascii-bold");
-/// The committed Arabic glyph-atlas fixture directory (Noto Sans Arabic, slot 3).
+/// The committed Inter ASCII atlases, one per weight — story #385.
+pub const ATLAS_INTER_ASCII_DIR: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../corpus/atlas/inter-ascii"
+);
+/// The committed Inter Medium (500) ASCII atlas — story #385.
+pub const ATLAS_INTER_ASCII_MEDIUM_DIR: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../corpus/atlas/inter-ascii-medium"
+);
+/// The committed Inter SemiBold (600) ASCII atlas — story #385.
+pub const ATLAS_INTER_ASCII_SEMIBOLD_DIR: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../corpus/atlas/inter-ascii-semibold"
+);
+/// The committed Inter Bold (700) ASCII atlas — story #385.
+pub const ATLAS_INTER_ASCII_BOLD_DIR: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../corpus/atlas/inter-ascii-bold"
+);
+/// The committed Arabic glyph-atlas fixture directory (Noto Sans Arabic,
+/// the last slot).
 pub const ATLAS_ARABIC_DIR: &str =
     concat!(env!("CARGO_MANIFEST_DIR"), "/../../corpus/atlas/arabic");
 
-/// The one cascade every TEXT node is measured and staged through: a Latin
-/// family of the three committed Noto Sans weights (Regular 400, SemiBold
-/// 600, Bold 700) and an Arabic family of the one committed Noto Sans
-/// Arabic weight (Regular 400). Story #368 widened this from a flat
-/// Regular-only list.
+/// The one cascade every TEXT node is measured and staged through: three
+/// **named** families — Noto Sans at the committed weights 400/600/700,
+/// Inter at 400/500/600/700, and Noto Sans Arabic at 400. Story #368
+/// widened this from a flat Regular-only list; story #385 named the
+/// families and added Inter, so a document's `TextStyle::family` selects
+/// rather than being carried and ignored.
 ///
 /// Families flatten family-major, so the slot list — what a shaped glyph's
-/// `font` index selects — is `[ascii, ascii-semibold, ascii-bold, arabic]`,
+/// `font` index selects — is
+///
+/// ```text
+/// [ascii, ascii-semibold, ascii-bold,
+///  inter-ascii, inter-ascii-medium, inter-ascii-semibold, inter-ascii-bold,
+///  arabic]
+/// ```
+///
 /// and [`render_dsb`] pushes its atlases in exactly that order.
 ///
-/// Coverage still picks the family before weight picks the face, so an
-/// Arabic run at any weight resolves within the Arabic family: it has only
-/// a Regular face, so a bold Arabic run renders Regular and reports
-/// `text.weight-substituted` rather than falling into a Latin bold face
-/// that cannot render it at all.
+/// **Noto Sans stays first**, so a document naming a family this cascade
+/// does not carry still resolves exactly where it did before Inter
+/// existed. A document naming Inter reaches Inter by name, not by
+/// position, so the order is a fallback rule rather than a preference.
 ///
-/// Not a copy of the E7 oracle's `oracle_typesetter` any more — that one
-/// stays flat and Regular-only so the live oracle test file is untouched,
-/// and every E7 fixture carries weight 400, which resolves to the same
-/// Regular faces either way.
+/// Selection is family, then coverage, then weight. Coverage outranking
+/// weight is why an Arabic run at any weight resolves within the Arabic
+/// family — it has only a Regular face, so a bold Arabic run renders
+/// Regular and reports `text.weight-substituted` rather than falling into
+/// a Latin bold face that cannot render it at all. Coverage also outranks
+/// the family request: an Arabic run in a document that names Inter shapes
+/// in Noto Sans Arabic and reports `text.family-substituted`.
 pub fn oracle_typesetter() -> Typesetter {
     let load = |path: &str, what: &str| {
         Font::from_bytes(
@@ -81,16 +128,31 @@ pub fn oracle_typesetter() -> Typesetter {
         )
         .unwrap_or_else(|e| panic!("{what} parses: {e}"))
     };
-    Typesetter::with_font_families(vec![
-        vec![
-            WeightedFont::new(load(FONT_LATIN, "Noto Sans Regular"), 400),
-            WeightedFont::new(load(FONT_LATIN_SEMIBOLD, "Noto Sans SemiBold"), 600),
-            WeightedFont::new(load(FONT_LATIN_BOLD, "Noto Sans Bold"), 700),
-        ],
-        vec![WeightedFont::new(
-            load(FONT_ARABIC, "Noto Sans Arabic Regular"),
-            400,
-        )],
+    Typesetter::with_named_font_families(vec![
+        FontFamily::new(
+            "Noto Sans",
+            vec![
+                WeightedFont::new(load(FONT_LATIN, "Noto Sans Regular"), 400),
+                WeightedFont::new(load(FONT_LATIN_SEMIBOLD, "Noto Sans SemiBold"), 600),
+                WeightedFont::new(load(FONT_LATIN_BOLD, "Noto Sans Bold"), 700),
+            ],
+        ),
+        FontFamily::new(
+            "Inter",
+            vec![
+                WeightedFont::new(load(FONT_INTER, "Inter Regular"), 400),
+                WeightedFont::new(load(FONT_INTER_MEDIUM, "Inter Medium"), 500),
+                WeightedFont::new(load(FONT_INTER_SEMIBOLD, "Inter SemiBold"), 600),
+                WeightedFont::new(load(FONT_INTER_BOLD, "Inter Bold"), 700),
+            ],
+        ),
+        FontFamily::new(
+            "Noto Sans Arabic",
+            vec![WeightedFont::new(
+                load(FONT_ARABIC, "Noto Sans Arabic Regular"),
+                400,
+            )],
+        ),
     ])
 }
 
@@ -179,9 +241,10 @@ fn text_runs(
     shape: TextShape,
     valign: crate::VerticalAlign,
     weight: u16,
+    family: &str,
 ) -> Vec<GlyphRun> {
     let (box_w, box_h) = box_size;
-    let laid = ts.layout_weighted(text, size, Some(box_w), shape, weight);
+    let laid = ts.layout_styled(text, size, Some(box_w), shape, weight, family);
     // Vertical alignment is block placement, not paint (P2) and not a measured
     // extent (P1): shift every glyph down by the box's free space above the block.
     let voff = crate::vertical_offset(box_h, laid.height, valign);
@@ -236,6 +299,7 @@ fn stage_text(arena: &Arena, ts: &mut Typesetter, atlases: &[AtlasIndex]) -> Vec
                 text_shape(style),
                 vertical_align(style.text_align_v),
                 style.weight,
+                &style.family,
             ));
         }
         for &child in arena.children(node) {
@@ -257,9 +321,10 @@ fn stage_text(arena: &Arena, ts: &mut Typesetter, atlases: &[AtlasIndex]) -> Vec
 ///
 /// Unlike the test-only `render_fixture`, this loads emitted `.dsb` bytes
 /// directly, so embedded image-fill bytes the `.dsb` carries are present in
-/// `scene.images()` and paint. Font resolution is the committed Noto cascade;
-/// a Latin family the corpus does not provide renders in Noto Sans (a measured
-/// fidelity gap, disclosed in `goldens/oracle/README.md`).
+/// `scene.images()` and paint. Font resolution is the committed cascade, which
+/// carries Noto Sans, Inter and Noto Sans Arabic by name (story #385); a family
+/// it does not provide resolves by coverage and is reported to stderr as
+/// `text.family-substituted`.
 pub fn render_dsb(dsb: &[u8]) -> Vec<u8> {
     let document = root_as_document(dsb).expect("a valid .dsb buffer");
     let mut arena = Arena::new();
@@ -273,18 +338,31 @@ pub fn render_dsb(dsb: &[u8]) -> Vec<u8> {
         .commit_with(&mut TaffySolver::with_typesetter(&mut ts));
 
     // Stage glyph runs for every TEXT node. The atlases are pushed in the
-    // cascade's slot order (`[ascii, ascii-semibold, ascii-bold, arabic]` —
-    // family-major, see `oracle_typesetter`), so the slot index a shaped glyph
+    // cascade's slot order — family-major over Noto Sans, Inter and Noto Sans
+    // Arabic, see `oracle_typesetter` — so the slot index a shaped glyph
     // carries selects the atlas of the face that actually shaped it.
     let mut glyphs = GlyphRunTable::new();
     let ascii = glyphs.push_atlas(load_atlas(ATLAS_ASCII_DIR));
     let ascii_semibold = glyphs.push_atlas(load_atlas(ATLAS_ASCII_SEMIBOLD_DIR));
     let ascii_bold = glyphs.push_atlas(load_atlas(ATLAS_ASCII_BOLD_DIR));
+    let inter = glyphs.push_atlas(load_atlas(ATLAS_INTER_ASCII_DIR));
+    let inter_medium = glyphs.push_atlas(load_atlas(ATLAS_INTER_ASCII_MEDIUM_DIR));
+    let inter_semibold = glyphs.push_atlas(load_atlas(ATLAS_INTER_ASCII_SEMIBOLD_DIR));
+    let inter_bold = glyphs.push_atlas(load_atlas(ATLAS_INTER_ASCII_BOLD_DIR));
     let arabic = glyphs.push_atlas(load_atlas(ATLAS_ARABIC_DIR));
     for run in stage_text(
         &arena,
         &mut ts,
-        &[ascii, ascii_semibold, ascii_bold, arabic],
+        &[
+            ascii,
+            ascii_semibold,
+            ascii_bold,
+            inter,
+            inter_medium,
+            inter_semibold,
+            inter_bold,
+            arabic,
+        ],
     ) {
         glyphs.push_run(run);
     }
@@ -295,6 +373,11 @@ pub fn render_dsb(dsb: &[u8]) -> Vec<u8> {
     // stderr because this is the render path's only caller-visible surface —
     // the return value is the PNG.
     for report in ts.weight_substitutions() {
+        eprintln!("warning: {report}");
+    }
+    // The same P4 accounting for the family axis (story #385): a family the
+    // cascade cannot supply is named, never silently swapped.
+    for report in ts.family_substitutions() {
         eprintln!("warning: {report}");
     }
 
@@ -349,7 +432,12 @@ mod tests {
         let mut ts = oracle_typesetter();
         // The atlas index only tags a run; it does not affect placement, so a
         // bare index pair is enough (font 0 = Latin, font 1 = Arabic).
-        let atlases = [AtlasIndex(0), AtlasIndex(1)];
+        // One index per cascade slot, in the flattened family-major order
+        // `oracle_typesetter` declares. This test's text is Latin at weight
+        // 400 with no family requested, so it only ever reaches slot 0, but
+        // the array has to be as long as the cascade for the slot lookup to
+        // be in bounds at all.
+        let atlases: Vec<AtlasIndex> = (0..8).map(AtlasIndex).collect();
         let text = "Hi";
         let size = 32.0;
         let black = Color {
@@ -373,6 +461,7 @@ mod tests {
             TextShape::default(),
             VerticalAlign::Top,
             400,
+            "",
         );
         let center = text_runs(
             &mut ts,
@@ -390,6 +479,7 @@ mod tests {
             },
             VerticalAlign::Center,
             400,
+            "",
         );
 
         let left_glyph = left[0].glyphs[0];
@@ -428,10 +518,14 @@ mod tests {
 
         let mut ts = oracle_typesetter();
         let atlases = [
-            AtlasIndex(0), // ascii (Regular)
+            AtlasIndex(0), // ascii (Noto Regular)
             AtlasIndex(1), // ascii-semibold
             AtlasIndex(2), // ascii-bold
-            AtlasIndex(3), // arabic
+            AtlasIndex(3), // inter-ascii
+            AtlasIndex(4), // inter-ascii-medium
+            AtlasIndex(5), // inter-ascii-semibold
+            AtlasIndex(6), // inter-ascii-bold
+            AtlasIndex(7), // arabic
         ];
         let black = Color {
             r: 0.0,
@@ -451,6 +545,7 @@ mod tests {
                 TextShape::default(),
                 VerticalAlign::Top,
                 weight,
+                "",
             )
         };
         for (weight, expected) in [(400u16, 0u32), (600, 1), (700, 2)] {

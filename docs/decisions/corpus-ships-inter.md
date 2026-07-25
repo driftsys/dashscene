@@ -1,11 +1,12 @@
 # Decision: the corpus ships Inter alongside Noto Sans
 
-    status   accepted in principle (issue #379, epic #344 — the repository
-             owner's decision, 2026-07-25); NOT YET EXECUTED, see
-             "Sequencing" — it moves an oracle frame and interacts with the
-             E7 freeze
-    scope    corpus/fonts, corpus/atlas, and the production cascade in
-             goldens/tooling/src/render.rs
+    status   accepted (issue #379, epic #344 — the repository owner's
+             decision, 2026-07-25) and EXECUTED by story #385, once #382
+             had landed and #49 had closed
+    scope    corpus/fonts, corpus/atlas, the family-matching seam in
+             crates/dashscene-typeset, the measure and baseline passes in
+             crates/dashscene-engine, and both oracles' cascades in
+             goldens/tooling
     binds    #379 (the resolution order this supplies families for), #49
              (the E7 exit gate whose freeze constrains when this lands)
     related  docs/decisions/font-resolution-order.md,
@@ -81,14 +82,27 @@ consumer each one reaches:
 Three consequences follow. Two still bind the story; the third has been
 discharged by landing #382 ahead of it, which is what it asked for.
 
-**The E7 oracle must not gain Inter while the freeze holds.**
-`goldens/tooling/tests/render_oracle.rs` carries its own private font paths and
-typesetter, deliberately, so adding Inter to the production walk does not reach
-it. That separation is what keeps `v08-grid-spans` byte-identical. It also means
-the frozen exit gate contains a disclosed Inter-to-Noto substitution — already
-recorded in `goldens/oracle/manifest.json` — which will change the moment Inter
-reaches its cascade. A known, deferred consequence for whoever closes #49, not a
-defect.
+**The E7 oracle must not gain Inter while the freeze holds — and the freeze
+lifted before this landed.** `goldens/tooling/tests/render_oracle.rs` carries
+its own private font paths and typesetter, deliberately, so adding Inter to the
+production walk does not reach it. That separation is what would have kept
+`v08-grid-spans` byte-identical. It also meant the frozen exit gate contained a
+disclosed Inter-to-Noto substitution, recorded in `goldens/oracle/manifest.json`,
+which would change the moment Inter reached its cascade — a consequence this
+record deferred to whoever closed #49.
+
+Issue #49 closed on 2026-07-25, so story #385 took that consequence rather than
+deferring it again. The E7 cascade gained Inter, and `v08-grid-spans` went from
+0.116 % (401/345600 px) to **0.037 %** (127/345600), well inside its unchanged
+aa-edge band: the substituted letterforms were most of its residual. The other
+six E7 frames are byte-identical, because they are authored in Noto Sans and
+family matching keeps them there.
+
+That frame is also the answer to a gap this record did not anticipate. Every
+other Inter-carrying fixture feeds a lowering test with no render, and
+`liga-text`'s Inter left the measured region with #382 — so without the E7
+change, nothing committed would have measured Inter at all, and its fidelity
+would have rested entirely on the live hero diff against a third-party file.
 
 **The Noto-authored frames are at risk too, and this is the reason the story
 cannot be a faces-only addition.** Selection today is coverage-first with no

@@ -88,8 +88,11 @@ the result at every step:
 3. **Substitution, reported as `text.family-substituted`** — a render-time
    diagnostic beside `text.weight-substituted`, deduplicated per distinct
    (requested family, resolved family) pair. Resolution is non-fatal, for the
-   same reason weight matching is: committed fixtures request families the
-   cascade does not carry, and a hard error would break their goldens.
+   same reason weight matching is: a document may name any family (P5), and a
+   hard error would make the renderer's asset set decide whether a valid
+   document loads. Since story #385 every committed fixture names a family the
+   cascade now carries, so nothing in the corpus exercises this today — it is
+   the rule for documents the corpus does not contain.
 4. **The host's installed fonts, only in an explicitly opted-in preview mode.**
    Never the default, never in CI, never in a target build, and never in a
    golden or oracle measurement. `EmitPolicy` is the precedent for a behaviour
@@ -168,8 +171,20 @@ for weight.
   images, and the plugin API exposes font names, never binaries. A font
   therefore comes from its upstream origin under its own licence, which makes
   embedding a per-font producer decision rather than a default.
-- Reading the family changes what a cascade must carry: a
-  `WeightedFont` records a weight but no family name today, so the renderer
-  cannot currently compare a requested family against the ones it holds.
+- Reading the family changed what a cascade carries. A `WeightedFont` records
+  a weight but no family name, so story #385 added `FontFamily { name, faces }`
+  and `Typesetter::with_named_font_families` beside it, and `layout_styled`
+  takes the requested family. The name is declared by whoever assembles the
+  cascade rather than read from a face's own name table: Inter's Medium and
+  SemiBold faces declare name ID 1 as `Inter Medium` and `Inter Semi Bold`, so
+  reading it per face would put those weights in families of their own.
+- **Steps 2 and 3 are implemented** (story #385). Matching is a probe-order
+  permutation: the requested family moves to the head of the coverage probe
+  order and the flattened positional slot list is untouched, so
+  `PositionedGlyph::font` keeps its meaning, `dashpaint` is unchanged, and no
+  stager's parallel atlas list changes shape. Coverage still decides which
+  family shapes each codepoint, so naming a family never costs a reader an
+  uncovered one; a family the cascade does not carry is reported as
+  `text.family-substituted` and never refused.
 - Which families the pinned cascade ships is a separate decision, recorded in
   `docs/decisions/corpus-ships-inter.md`.

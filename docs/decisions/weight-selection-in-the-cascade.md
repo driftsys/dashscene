@@ -146,15 +146,16 @@ behavior.
 - **`fonts()` still returns the flat slot list in slot order**, because
   that is what `PositionedGlyph::font` indexes; `weights()` is the
   sibling accessor that exposes which weight each slot stands for.
-- **Family substitution is explicitly out of scope, and the consequence
-  must not be overstated.** The corpus has no Inter. Mapping an
-  out-of-corpus family onto a corpus family is a larger decision with its
-  own vocabulary, its own diagnostic and its own fidelity consequences,
-  and it needs its own record. After this story every hero run still
-  renders in Noto Sans — a different typeface with different letterforms,
-  widths and metrics — so any hero measurement taken after this change
-  must be reported as "weight substitution removed, family substitution
-  remaining", never as a fidelity result.
+- **Family substitution was explicitly out of scope of this story**, and got
+  the separate record it needed: `docs/decisions/font-resolution-order.md`
+  decided the resolution order and `docs/decisions/corpus-ships-inter.md` the
+  families the corpus carries, both executed by story #385. Until then the
+  corpus had no Inter and every hero run rendered in Noto Sans, so a hero
+  measurement taken between #368 and #385 had to be reported as "weight
+  substitution removed, family substitution remaining", never as a fidelity
+  result. #385 removed the second half; the family axis reused this story's
+  two-step shape, adding a third step in front of it rather than a second
+  mechanism.
 - Also out of scope: Arabic bold faces, the `wght` variable-font axis,
   italic and oblique styles (which have no document vocabulary — the REST
   front end diagnoses an italic style), and optical sizing.
