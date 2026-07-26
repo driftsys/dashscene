@@ -89,13 +89,6 @@ manual authoring step:
   this pair replays remote-instance resolution against real
   `?plugin_data=shared` responses.
 
-`vector-backdrop-blur` is registered and uncaptured too, but it needs no
-manual step — only an authoring run. Its fixture-author command is fully
-scripted (debt #413): run `vector-backdrop-blur` in a blank Figma file of that
-name, paste the file key into the manifest, and capture. Its `emits` stays
-`false` until then, because that field records whether the raw capture
-compiles today rather than what the fixture is meant to do.
-
 | fixture                     | covers                                                                                                                                                                                                                                                                                |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `v03-paint`                 | v0.3 paint vocabulary under fixed layout: solid fill, all four gradient kinds, an image fill with a scale mode, the three stroke aligns, uniform and per-corner corner radii, and a clipsContent frame with an overflowing child. Its image fill's bytes live in `v03-paint.images/`. |
