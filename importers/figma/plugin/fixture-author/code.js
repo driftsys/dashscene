@@ -1148,8 +1148,8 @@ function innerShadow() {
 // rather than subtly off.
 //
 // Hence three hard-edged vertical bands at high luminance contrast, plus an
-// ellipse crossing two of the seams. A Gaussian blur across a hard edge is
-// the sharpest available signal — the residual concentrates exactly where
+// ellipse sitting inside the middle band. A Gaussian blur across a hard edge
+// is the sharpest available signal — the residual concentrates exactly where
 // the reconstruction differs — and the curve adds high-frequency content in
 // the other axis so a separable-blur bug cannot hide along one of them.
 //
@@ -1168,21 +1168,29 @@ const BACKDROP_BLUR = {
   radius: 16, // Figma "radius" == dashc blur; painter sigma = radius/2
 };
 
-function backdropBlur() {
-  const root = baseFrame("backdrop-blur", 320, 180);
+// The backdrop both blur fixtures frost: three full-height bands plus a
+// circle, in a fixed 320x180 frame. Shared by `backdrop-blur` and
+// `vector-backdrop-blur` so the two frames differ only in the shape of the
+// frosting node — a parametric FRAME against a baked VECTOR — and their
+// measured residuals are therefore directly comparable. The caller appends
+// its own frosting node afterwards, so this returns the frame.
+//
+// The two seams are at x = 107 and x = 213.
+function blurBackdrop(name) {
+  const root = baseFrame(name, 320, 180);
   root.layoutMode = "NONE"; // every child is absolutely placed
   root.clipsContent = true;
 
-  // Three full-height bands. Widths are exact thirds so the two seams land on
-  // integer columns and the blur is not measured across a half-pixel edge.
+  // Widths are exact thirds so the two seams land on integer columns and the
+  // blur is not measured across a half-pixel edge.
   const bands = [
     ["band-amber", { r: 0.98, g: 0.78, b: 0.2 }, 0, 107],
     ["band-navy", { r: 0.05, g: 0.07, b: 0.12 }, 107, 106],
     ["band-pale", { r: 0.92, g: 0.94, b: 0.98 }, 213, 107],
   ];
-  for (const [name, color, x, w] of bands) {
+  for (const [bandName, color, x, w] of bands) {
     const band = figma.createRectangle();
-    band.name = name;
+    band.name = bandName;
     band.resize(w, 180);
     band.fills = [solid(color)];
     band.strokes = [];
@@ -1191,7 +1199,7 @@ function backdropBlur() {
     band.y = 0;
   }
 
-  // A circle straddling both seams: curved high-frequency content, so the
+  // A circle inside the middle band: curved high-frequency content, so the
   // frame does not only exercise vertical edges.
   const dot = figma.createEllipse();
   dot.name = "dot";
@@ -1201,6 +1209,12 @@ function backdropBlur() {
   root.appendChild(dot);
   dot.x = 124; // centered horizontally: (320 - 72) / 2
   dot.y = 18;
+
+  return root;
+}
+
+function backdropBlur() {
+  const root = blurBackdrop("backdrop-blur");
 
   // The frosted panel, last so it composites over everything above.
   const panel = figma.createFrame();
@@ -1218,6 +1232,124 @@ function backdropBlur() {
   return "backdrop-blur built: a 200x90 frosted panel (r=16, white at 0.2 " +
     "alpha, BACKGROUND_BLUR radius 16) over three hard-edged bands and a " +
     "circle, in a fixed 320x180 frame";
+}
+
+// ------------------------------------------- vector-backdrop-blur (v0.11)
+// The baked-vector half of the backdrop-blur vocabulary (debt #413).
+//
+// `backdrop-blur` above frosts a FRAME, which the Skia painter renders
+// through `draw_backdrop_blur_box`: clip to the node's rounded box, open a
+// backdrop layer, restore. A Figma VECTOR takes a different function,
+// `draw_backdrop_blur_field`, because a rounded-rect clip cannot express a
+// baked outline — it clips to the field's padded quad and masks the layer
+// with the MSDF coverage shader. That second path is the one the live hero's
+// frosted panel actually uses, and it had no oracle frame: the confinement
+// defect fixed in PR #403 (a `SaveLayerRec::bounds` Skia silently discards
+// when a backdrop filter is set, leaving the layer over the whole device
+// clip) lived entirely in it and no measurement would have caught it.
+//
+// The backdrop is deliberately identical to `backdrop-blur`'s, so the two
+// frames differ in exactly one thing — the shape of the frosting node — and
+// their residuals can be compared directly.
+//
+// The frosting shape is a ring, and what it measures is the coverage mask:
+// the blurred region must follow the baked outline, not the bounding quad.
+// Two areas lie inside the quad but outside the coverage — the hole and the
+// four corners — and both must render as sharp backdrop. A painter that
+// confined the blur to the box instead of the field frosts them.
+//
+// That is a different defect from the one PR #403 fixed. #403 was a missing
+// `clip_rect`, which left the layer over the whole *device* clip, so its
+// signature is outside the quad entirely; the hole and the corners were
+// correct both before and after it, because the `DstIn` mask already cleared
+// them. This fixture catches #403 too, and much more loudly, but through the
+// frame outside the ring rather than through the hole.
+//
+// The ring is centred in the frame. That placement is not cosmetic: it is
+// what gives the fixture enough signal to fail at all.
+//
+//   - The corner regions are the larger of the two uncovered areas — about
+//     3516 px against the hole's 3217 — and the box-versus-field difference
+//     is `|blur(backdrop) - backdrop|`, which is zero wherever the backdrop
+//     is flat. So the signal is proportional to how much hard edge falls in
+//     those regions.
+//   - Centred, the quad spans x 96..224 and contains BOTH seams (107 and
+//     213). Centred on a seam instead it spans x 149..277 and contains only
+//     one, which roughly halves the corner signal.
+//   - The hole keeps a hard edge either way: centred it spans x 128..192,
+//     inside the navy band, but the `dot` ellipse (centre 160,54 r=36) has
+//     its bottom-most point at exactly (160, 90) — the hole's own centre —
+//     so a red/navy edge runs through it.
+//
+// Modelled numerically, a box-confined blur measures about 4.1 % of the frame
+// centred and only about 1.9 % centred on the seam. The aa-edge band's budget
+// is 2 %, so the first fails and the second would have passed: the fixture
+// would have been unable to catch the defect it exists for.
+//
+// The radii are not tuned against the blur's reach, and the comment that once
+// claimed they were was wrong: a 32 px annulus band has 16 px of clearance
+// from its nearest edge, not 24. It does not need to. The field mask is
+// binary, so a correct render's value inside the band does not depend on the
+// band's width at all.
+const RING_OUTER_R = 64;
+const RING_INNER_R = 32;
+// The frame's own centre: 320/2, 180/2.
+const RING_CX = 160;
+const RING_CY = 90;
+
+// One circle as four cubic Béziers, in the vector's own coordinate space.
+// `k` is the standard circle-to-Bézier constant: the control points sit
+// 4/3*(sqrt(2)-1) of the radius along each tangent, which reproduces a circle
+// to about one part in 2000 — far inside the tolerance any band here applies.
+function circlePathData(cx, cy, r) {
+  const k = 0.5522847498 * r;
+  const n = (v) => v.toFixed(2);
+  return [
+    "M " + n(cx) + " " + n(cy - r),
+    "C " + n(cx + k) + " " + n(cy - r) + " " + n(cx + r) + " " + n(cy - k) +
+    " " + n(cx + r) + " " + n(cy),
+    "C " + n(cx + r) + " " + n(cy + k) + " " + n(cx + k) + " " + n(cy + r) +
+    " " + n(cx) + " " + n(cy + r),
+    "C " + n(cx - k) + " " + n(cy + r) + " " + n(cx - r) + " " + n(cy + k) +
+    " " + n(cx - r) + " " + n(cy),
+    "C " + n(cx - r) + " " + n(cy - k) + " " + n(cx - k) + " " + n(cy - r) +
+    " " + n(cx) + " " + n(cy - r),
+    "Z",
+  ].join(" ");
+}
+
+function vectorBackdropBlur() {
+  const root = blurBackdrop("vector-backdrop-blur");
+
+  // The frosted ring, last so it composites over everything above. Two
+  // concentric circles in ONE vectorPaths entry under EVENODD: a point under
+  // an odd number of subpaths fills, under an even number does not, so the
+  // inner circle punches the hole whichever way it winds — the same rule
+  // `vector-shapes`' square-with-hole uses.
+  const ring = figma.createVector();
+  ring.name = "frosted-ring";
+  ring.vectorPaths = [{
+    windingRule: "EVENODD",
+    data: circlePathData(RING_OUTER_R, RING_OUTER_R, RING_OUTER_R) + " " +
+      circlePathData(RING_OUTER_R, RING_OUTER_R, RING_INNER_R),
+  }];
+  // White at 0.2 alpha, exactly the panel's fill: Figma shows a background
+  // blur through the layer's own transparency, so an opaque ring would render
+  // a flat unblurred donut and the frame would measure nothing.
+  ring.fills = [solid(GRAY(1), 0.2)];
+  // `figma.createVector()` gives a new vector a 1px black stroke. Clear it, or
+  // the fill plus a differently-coloured stroke lowers as a case dashc refuses
+  // — the same clear every other shape command makes.
+  ring.strokes = [];
+  ring.effects = [BACKDROP_BLUR];
+  root.appendChild(ring);
+  ring.x = RING_CX - RING_OUTER_R;
+  ring.y = RING_CY - RING_OUTER_R;
+
+  return "vector-backdrop-blur built: a frosted VECTOR ring (outer r=" +
+    RING_OUTER_R + ", hole r=" + RING_INNER_R + ", white at 0.2 alpha, " +
+    "BACKGROUND_BLUR radius 16) centred in the frame, over the same three " +
+    "bands and circle as backdrop-blur, in a fixed 320x180 frame";
 }
 
 // ------------------------------------------------------ liga-text (v0.10 A0)
@@ -1581,6 +1713,7 @@ const COMMANDS = {
   "drop-shadow": dropShadow,
   "inner-shadow": innerShadow,
   "backdrop-blur": backdropBlur,
+  "vector-backdrop-blur": vectorBackdropBlur,
   "liga-text": ligaText,
   "jpeg-fill": jpegFill,
   "gif-fill": gifFill,

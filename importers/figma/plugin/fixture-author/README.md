@@ -72,6 +72,10 @@ then run Plugins → Development → dashscene fixture author → _(name)_.
                                  frosted panel over three hard-edged bands and
                                  a circle, the first effect that requires a
                                  painter to read the composited backdrop
+    vector-backdrop-blur         v0.11: the baked-vector half of backdrop
+                                 blur — a frosted VECTOR ring over the same
+                                 backdrop, so the two frames differ only in
+                                 the painter path they take (debt #413)
     liga-text                    v0.10 A0: standard-ligatures test vector —
                                  "waffle finish office" in Noto Sans, twice;
                                  the first run needs a manual step (see below)
@@ -155,6 +159,56 @@ capture as below.
   rectangle measuring nothing; and the content beneath is hard-edged, because
   a blur across a hard edge concentrates the residual exactly where the
   reconstruction differs.
+- **vector-backdrop-blur**: fully scripted, no manual step, and deliberately
+  built on the _same_ backdrop as `backdrop-blur` — the same three bands, the
+  same circle, the same 320x180 frame, the same `BACKGROUND_BLUR` radius 16.
+  Only the frosting node differs: a FRAME there, a Figma VECTOR here. The Skia
+  painter renders the two through different functions,
+  `draw_backdrop_blur_box` and `draw_backdrop_blur_field`, because a
+  rounded-rect clip cannot express a baked outline, and only the second is the
+  path the live hero's frosted panel uses. Keeping the backdrop identical is
+  what makes the two frames' residuals comparable, so a difference between
+  them is a difference between the code paths rather than between the scenes.
+
+  What the ring measures is the **coverage mask**: the blurred region must
+  follow the baked outline, not the bounding quad. Two areas lie inside the
+  quad but outside the coverage — the hole and the four corners — and both
+  must render as sharp backdrop. A painter that confined the blur to the box
+  frosts them.
+
+  That is a different defect from the one PR #403 fixed. #403 was a missing
+  `clip_rect` that left the layer over the whole _device_ clip, so its
+  signature is outside the quad entirely; the hole and the corners were
+  correct both before and after it, because the `DstIn` mask already cleared
+  them. This fixture does catch #403, far more loudly, but through the frame
+  outside the ring.
+
+  Two properties must be preserved if the fixture is re-authored.
+
+  The ring is **centred in the frame**, and that is what gives the fixture
+  enough signal to fail at all. The corner regions are the larger of the two
+  uncovered areas (about 3516 px against the hole's 3217), and the
+  box-versus-field difference is `|blur(backdrop) - backdrop|`, which is zero
+  wherever the backdrop is flat — so the signal is proportional to how much
+  hard edge falls in them. Centred, the quad spans x 96..224 and contains both
+  seams; centred on a seam it spans x 149..277 and contains one, which roughly
+  halves the corner signal. Modelled numerically, a box-confined blur measures
+  about 4.1 % of the frame centred against about 1.9 % centred on the seam,
+  and the aa-edge budget is 2 % — so the seam placement could not have caught
+  the defect the fixture exists for. The hole keeps a hard edge either way:
+  centred it spans x 128..192, inside the navy band, but the `dot` ellipse
+  (centre 160,54 r=36) has its bottom-most point at exactly (160, 90), the
+  hole's own centre, so a red/navy edge runs through it.
+
+  The fill is **white at 0.2 alpha**, for the same reason the panel's is:
+  Figma shows a background blur through the layer's own transparency, and an
+  opaque ring would render a flat unblurred donut measuring nothing.
+
+  The radii are _not_ tuned against the blur's reach. A 32 px annulus band has
+  16 px of clearance from its nearest edge, not the 24 px that 3*sigma would
+  ask for, and it does not need it: the field mask is binary, so a correct
+  render's value inside the band does not depend on the band's width.
+
 - **liga-text**: the plugin API has no writable ligature/OpenType-feature
   toggle (`openTypeFeatures` is `readonly` on `TextNode`; only a getter,
   `getRangeOpenTypeFeatures`, exists — no setter). After running the
