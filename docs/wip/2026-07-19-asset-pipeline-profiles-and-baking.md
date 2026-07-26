@@ -13,11 +13,19 @@
              docs/decisions/dashc-identifies-images-never-decodes.md,
              docs/design/dsb-container-format.md and
              docs/technotes/2026-07-26-v011-sections-and-assets.md.
-             Everything gated on the packer — the quality profiles, the codec
-             waves, the vector bake's end-state fork, animated content, the
-             profile-preview oracle — is unbuilt and stays here as live input to
-             epic #345 (v0.12). Two of its open points are resolved; see "Open
-             points" at the end.
+             GARDENED FURTHER 2026-07-26 (v0.12, story #436): "Targets and
+             codec plan" in full — the per-target codec table, the Wave 3
+             NVIDIA-BC7 hedge, and the RAW/HiFi/Lite naming convention live
+             in docs/decisions/native-astc-codec-table.md and
+             docs/decisions/asset-quality-profile-naming.md; the
+             fixed-target refinement is recorded in
+             docs/specification/03-target-hardware-rules.md. This file is no
+             longer their authority either. Everything else gated on the
+             packer — the quality profiles' band contracts, the vector
+             bake's end-state fork, animated content, the profile-preview
+             oracle — is unbuilt and stays here as live input to epic #345
+             (v0.12). Two of its open points are resolved; see "Open points"
+             at the end.
     scope    the asset pipeline from import to painter: image fills, baked
              vectors (MSDF), distance-field atlases; the .dsb cold sections;
              the packer and quality profiles; per-target GPU codecs
