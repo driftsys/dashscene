@@ -35,11 +35,13 @@
 //!
 //! Story #429 is the crate and its registered name. Story #430 adds [`astc`] —
 //! ASTC encode and the matching reference decode, through a vendored,
-//! version-pinned astcenc linked in process. Nothing is packed yet: the
-//! container writer, the band oracle and cold-bank assembly land across the
-//! rest of epic #345.
+//! version-pinned astcenc linked in process. Story #431 adds [`ktx2`] — the
+//! container writer that wraps either an encoded payload or an uncompressed
+//! one. Nothing is packed yet: the band oracle and cold-bank assembly land
+//! across the rest of epic #345.
 
 pub mod astc;
+pub mod ktx2;
 
 /// The packer's version, as reported by the `dashpack` binary.
 pub fn version() -> &'static str {
