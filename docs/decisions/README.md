@@ -155,9 +155,12 @@ into the records below. Per-story decisions land here directly:
   resolves debt #86).
 
 - [dsb-sectioned-container.md](dsb-sectioned-container.md) — spike #56:
-  `.dsb` becomes a thin sectioned container at v1 (fixed envelope +
-  section table, one flatbuffer per section); binds the schema stories
-  to integer-index cross-references.
+  `.dsb` is a thin sectioned container (fixed envelope + section table,
+  one flatbuffer per section); binds the schema stories to integer-index
+  cross-references. Deferred at acceptance to "the v1 loading-performance
+  work"; the v0.10 close moved that work into v0.11, and it is **as built**
+  there (stories #399 and #401). Byte layout:
+  `../design/dsb-container-format.md`.
 - [dsb-frozen-fixture-r7-guard.md](dsb-frozen-fixture-r7-guard.md) — a
   frozen, checked-in `.dsb` byte fixture guards R7's append-only schema
   evolution (debt #64); binds every edit to `dashbuf.fbs`.
