@@ -8,8 +8,12 @@ fn main() -> std::process::ExitCode {
         "dashpack {}: no packing operation is implemented yet.",
         dashpack::version()
     );
+    // The encoder pin, read off the artifact rather than off the source tree.
+    // Two banks are only comparable if the same encoder produced them.
+    let (astcenc_version, astcenc_commit) = dashpack::astc::vendored_astcenc();
+    eprintln!("Links astcenc {astcenc_version} (commit {astcenc_commit}), vendored in-tree.");
     eprintln!(
-        "Story #429 registers the crate and its name; the encoder, the container writer, the band oracle and cold-bank assembly land across the rest of epic #345."
+        "Story #429 registers the crate and its name, story #430 adds ASTC encode and the matching reference decode; the container writer, the band oracle and cold-bank assembly land across the rest of epic #345."
     );
     // Non-zero: a packer that packed nothing has not succeeded, and a caller
     // that starts scripting against it should find that out now rather than

@@ -15,3 +15,6 @@ name = "dashpack"
 path = "src/main.rs"
 
 [dependencies]
+# The vendored, version-pinned astcenc — the encoder and the reference decoder,
+# linked in process, with no external binary (story #430).
+dashpack-astcenc-sys = { workspace = true }
