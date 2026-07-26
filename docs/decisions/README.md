@@ -439,5 +439,15 @@ so each technote stops being the authority for the conclusion it reached:
 - [pre-v1-hardening-slice.md](pre-v1-hardening-slice.md) — the 2026-07-19 debt
   triage splits the independent code-debt into a pre-v1 hardening slice (v0.13,
   milestone #14, epic #362); feature scope gated on a v1 consumer stays on v1.
+- [backdrop-blur-is-core-vocabulary.md](backdrop-blur-is-core-vocabulary.md) —
+  backdrop blur stops being `profile:full` and every painter honours
+  it; the static bake is rejected because it would pass the render oracle while
+  freezing a dynamic effect; boundary B gains a `samples_backdrop` declaration
+  and one ordering guarantee, and a painter that cannot sample the backdrop
+  reports it at render time rather than at compile time (P1). The profile
+  reversal is the owner's 2026-07-19 position; the contract and the diagnostic
+  were proposed in the record and accepted with it. `LAYER_BLUR` does not ride
+  along — the only one in the corpus is a rejected progressive blur, so pairing
+  it would add vocabulary nothing measures (#344).
 
 See the `sdd-working-memory-lifecycle` rule.
