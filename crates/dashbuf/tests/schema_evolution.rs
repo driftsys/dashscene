@@ -1,6 +1,25 @@
-//! The R7 append-only guard (issue #64): a frozen `.dsb` byte fixture,
-//! written once by an older schema generation and checked into the
-//! repo, decoded here with the *current* generated bindings.
+//! The R7 append-only guard (issue #64): a frozen byte fixture, written
+//! once by an older schema generation and checked into the repo, decoded
+//! here with the *current* generated bindings.
+//!
+//! # What this fixture is, since the envelope landed
+//!
+//! `tests/fixtures/v0_5_document.dsb` is named `.dsb` but it is not a
+//! file in the format sense: it is a bare flatbuffer, handed straight to
+//! `root_as_document`. Since story #401 a `.dsb` **file** is a sectioned
+//! container (`docs/design/dsb-container-format.md`), and this fixture is
+//! what one of its structured sections carries — the payload, not the
+//! file.
+//!
+//! That is deliberate, and it is why the envelope did not rewrite these
+//! bytes. This suite's subject is **schema-field evolution**: a shifted
+//! field id, a reordered union discriminant, a renumbered enum. The
+//! envelope changes none of those, and wrapping the fixture would erase
+//! the only bytes in the repo that predate the current bindings in
+//! exchange for testing a container this suite does not test. The
+//! envelope has its own frozen fixture and its own guard,
+//! `tests/container_frozen.rs`, because its failure mode is a changed
+//! constant rather than a shifted field id.
 //!
 //! Why this file exists: the other three suites in this directory build
 //! and decode with the same freshly generated bindings, so writer and

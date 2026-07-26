@@ -46,12 +46,26 @@ fn check(path: &str) -> ExitCode {
         }
     };
 
-    // The flatbuffer verifier first: it checks structure, and the load gate
+    // The envelope first: magic, version, the section table against the root
+    // hash, and the ui section's own content hash
+    // (`docs/design/dsb-container-format.md`). It is checked before any parser
+    // is trusted, so its failure has to be reported as itself rather than
+    // falling through to "not a valid buffer" — a pre-envelope `.dsb` lands
+    // here, and the message has to say so.
+    let ui = match dashbuf::container::ui_document(&bytes) {
+        Ok(ui) => ui,
+        Err(e) => {
+            eprintln!("dashc: {path} is not a valid .dsb file: {e}");
+            return ExitCode::from(1);
+        }
+    };
+
+    // Then the flatbuffer verifier: it checks structure, and the load gate
     // assumes a structurally valid buffer.
-    let document = match dashbuf::root_as_document(&bytes) {
+    let document = match dashbuf::root_as_document(ui) {
         Ok(document) => document,
         Err(e) => {
-            eprintln!("dashc: {path} is not a valid .dsb buffer: {e}");
+            eprintln!("dashc: {path} does not carry a valid document: {e}");
             return ExitCode::from(1);
         }
     };

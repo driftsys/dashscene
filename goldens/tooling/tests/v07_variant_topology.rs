@@ -83,7 +83,8 @@ fn lower_and_solve(ts: &mut Typesetter) -> (Arena, NodeId) {
     let (bytes, report) = compile_figma(VARIANT_TOPOLOGY, Profile::Core, &BTreeMap::new())
         .expect("the component fixture compiles");
     assert!(report.is_empty(), "the raw fixture lowers clean: {report}");
-    let document = root_as_document(&bytes).expect("a valid buffer");
+    let document = root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
+        .expect("a valid buffer");
 
     let mut arena = Arena::new();
     load_document(&document, &mut arena);

@@ -62,6 +62,7 @@ pub use figma::CompileError;
 
 use std::collections::BTreeMap;
 
+use dashbuf::container;
 use dashpaint::ImageAsset;
 use dashscene_validator::{Diagnostic, Location, Profile, Report, Severity};
 
@@ -140,6 +141,27 @@ fn emit_and_validate(doc: &Document) -> (Vec<u8>, Report) {
     (bytes, report)
 }
 
+/// Wraps an emitted ui document in the `.dsb` file envelope.
+///
+/// This is the one place the compiler crosses from "a flatbuffer" to "a file"
+/// (`docs/design/dsb-container-format.md`). Everything above it — the emitter,
+/// the flatbuffers verifier, the load gate — works on the section payload,
+/// because that is what those things are about. Only the bytes that leave the
+/// compiler are a file.
+///
+/// The `expect` cannot fire: the writer refuses an empty payload, a structured
+/// section after a blob, and more sections than a `u32` can count, and none of
+/// the three is reachable with one non-empty structured section. A payload is
+/// non-empty here because a valid flatbuffer never is, and because both callers
+/// return early on an error report before reaching this.
+fn package(ui_section: &[u8]) -> Vec<u8> {
+    container::write(&[container::Section::structured(
+        container::FLAVOR_UI,
+        ui_section,
+    )])
+    .expect("one non-empty structured section is always writable")
+}
+
 /// Emits a [`Document`] as `.dsb` bytes, or refuses with the diagnostics that
 /// block it.
 ///
@@ -154,14 +176,21 @@ fn emit_and_validate(doc: &Document) -> (Vec<u8>, Report) {
 /// The bytes are discarded if the report has errors, so nothing invalid ever
 /// escapes.
 ///
-/// The returned bytes are byte-reproducible for a given `Document` (R7).
+/// The returned bytes are a complete `.dsb` **file** — the sectioned envelope
+/// with the emitted document as its one structured section
+/// (`docs/design/dsb-container-format.md`). A caller that wants the document
+/// rather than the file reads it back with `dashbuf::container::ui_document`.
+///
+/// They are byte-reproducible for a given `Document` (R7), envelope included:
+/// the container writer is a pure function of its input, with zero-filled
+/// alignment gaps and content hashes that depend on content alone.
 pub fn compile(doc: &Document) -> Result<Vec<u8>, Report> {
     let (bytes, report) = emit_and_validate(doc);
 
     if report.has_errors() {
         return Err(report);
     }
-    Ok(bytes)
+    Ok(package(&bytes))
 }
 
 /// Compiles Figma REST JSON to a `.dsb`.
@@ -174,6 +203,8 @@ pub fn compile(doc: &Document) -> Result<Vec<u8>, Report> {
 /// P4 forbids.
 ///
 /// `images` resolves the `imageRef` of every image fill; see `figma::lower`.
+///
+/// The bytes are a complete `.dsb` file, as [`compile`]'s are.
 pub fn compile_figma(
     json: &str,
     profile: Profile,
@@ -230,5 +261,5 @@ pub fn compile_figma_with_bindings_and_policy(
     if report.has_errors() {
         return Err(CompileError::Diagnostics(report));
     }
-    Ok((bytes, report))
+    Ok((package(&bytes), report))
 }

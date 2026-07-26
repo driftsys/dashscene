@@ -293,7 +293,9 @@ fn text_and_style_round_trip_through_dashscene_core() {
     let (bytes, report) =
         compile_figma(HUG_IN_FILL, Profile::Core, &BTreeMap::new()).expect("compiles");
     assert!(report.is_empty(), "{report}");
-    let document = dashbuf::root_as_document(&bytes).expect("a valid buffer");
+    let document =
+        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
+            .expect("a valid buffer");
 
     let mut arena = Arena::new();
     load_document(&document, &mut arena);
@@ -329,7 +331,9 @@ fn nodes_sharing_text_or_style_dedup_to_one_pool_entry() {
 
     let (bytes, report) = compile_figma(&json, Profile::Core, &BTreeMap::new()).expect("compiles");
     assert!(report.is_empty(), "{report}");
-    let document = dashbuf::root_as_document(&bytes).expect("a valid buffer");
+    let document =
+        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
+            .expect("a valid buffer");
     assert_eq!(document.strings().expect("a string pool").len(), 1);
     assert_eq!(document.text_styles().expect("a style pool").len(), 1);
 }
@@ -362,7 +366,9 @@ fn two_styles_differing_only_in_alignment_are_two_pool_entries() {
 
     let (bytes, report) = compile_figma(&json, Profile::Core, &BTreeMap::new()).expect("compiles");
     assert!(report.is_empty(), "{report}");
-    let document = dashbuf::root_as_document(&bytes).expect("a valid buffer");
+    let document =
+        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
+            .expect("a valid buffer");
     assert_eq!(
         document.strings().expect("a string pool").len(),
         1,
@@ -398,7 +404,9 @@ fn two_styles_differing_only_in_ligatures_off_are_two_pool_entries() {
 
     let (bytes, report) = compile_figma(&json, Profile::Core, &BTreeMap::new()).expect("compiles");
     assert!(report.is_empty(), "{report}");
-    let document = dashbuf::root_as_document(&bytes).expect("a valid buffer");
+    let document =
+        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
+            .expect("a valid buffer");
     assert_eq!(
         document.strings().expect("a string pool").len(),
         1,

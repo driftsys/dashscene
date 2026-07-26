@@ -326,7 +326,8 @@ fn stage_text(arena: &Arena, ts: &mut Typesetter, atlases: &[AtlasIndex]) -> Vec
 /// it does not provide resolves by coverage and is reported to stderr as
 /// `text.family-substituted`.
 pub fn render_dsb(dsb: &[u8]) -> Vec<u8> {
-    let document = root_as_document(dsb).expect("a valid .dsb buffer");
+    let ui = dashbuf::container::ui_document(dsb).expect("a valid .dsb file");
+    let document = root_as_document(ui).expect("a valid .dsb document section");
     let mut arena = Arena::new();
     load_document(&document, &mut arena);
     // `load_document` commits with the fixed solver, which measures a text node
