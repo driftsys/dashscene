@@ -150,10 +150,14 @@ the "hot sections byte-identical across assemblies of one document"
 invariant reachable. v0.11 ships one assembly, so it is recorded as
 intent, not claimed as tested.
 
-### What is not yet checked
+### The recorded format and extent are cross-checked
 
-An entry's recorded format and extent are not cross-checked against the
-payload the entry names. They cannot disagree today — one code path
-writes both, from one `identify` call — and the check needs a header
-parser in a crate published before `dashc`. Debt #416 carries it, and
-the v0.12 packer is the second writer that makes it matter.
+An entry's recorded format and extent are checked against the payload the
+entry names, by `dashscene_validator::validate_asset_payloads` — the load
+gate's second half. It was deferred through v0.11 as debt #416, because
+the check needs a header parser in a crate published before `dashc` and
+because one code path wrote both halves from one `identify` call, so they
+could not disagree. Story #437 closed it when the v0.12 packer became the
+second writer: the parser moved to `dashpaint`, which every writer and the
+validator reach
+(`docs/decisions/image-header-parser-lives-in-dashpaint.md`).

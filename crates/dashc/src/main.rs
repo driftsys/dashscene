@@ -47,30 +47,64 @@ fn check(path: &str) -> ExitCode {
     };
 
     // The envelope first: magic, version, the section table against the root
-    // hash, and the ui section's own content hash
-    // (`docs/design/dsb-container-format.md`). It is checked before any parser
-    // is trusted, so its failure has to be reported as itself rather than
-    // falling through to "not a valid buffer" — a pre-envelope `.dsb` lands
-    // here, and the message has to say so.
-    let ui = match dashbuf::container::ui_document(&bytes) {
-        Ok(ui) => ui,
-        Err(e) => {
-            eprintln!("dashc: {path} is not a valid .dsb file: {e}");
-            return ExitCode::from(1);
-        }
-    };
-
-    // Then the flatbuffer verifier: it checks structure, and the load gate
-    // assumes a structurally valid buffer.
-    let document = match dashbuf::root_as_document(ui) {
-        Ok(document) => document,
-        Err(e) => {
+    // hash, the ui section's own content hash, then the flatbuffers verifier
+    // over that section, then the null binding that resolves each asset entry
+    // to its blob (`docs/design/dsb-container-format.md`). `dashbuf::open`
+    // runs all of it in that order and hands back both halves of the
+    // document — the entries and the payloads they name.
+    //
+    // The failures are reported apart. A pre-envelope `.dsb` is not the same
+    // complaint as a valid envelope carrying a bad buffer, nor as a file whose
+    // asset entry names a payload it does not carry, and a person holding the
+    // wrong kind of broken file needs to be told which.
+    //
+    // A container failure does not end the check. This command exists to report
+    // everything wrong with a file, so losing every referential finding in it
+    // because one asset binding failed would make it least useful exactly when
+    // it is needed most. The failure is named, and the document gate still runs
+    // — without its asset half, which has no payloads to work with.
+    let mut file_is_broken = false;
+    let (document, payloads) = match dashbuf::open(&bytes) {
+        Ok((document, payloads)) => (document, Some(payloads)),
+        Err(dashbuf::OpenError::Document(e)) => {
+            // The ui section is not a document, so no gate can run at all.
             eprintln!("dashc: {path} does not carry a valid document: {e}");
             return ExitCode::from(1);
         }
+        Err(dashbuf::OpenError::Container(e)) => {
+            file_is_broken = true;
+            match e {
+                dashbuf::container::ContainerError::NoBlobForHash => eprintln!(
+                    "dashc: {path}: an asset entry names a payload the file does not carry: {e}"
+                ),
+                _ => eprintln!("dashc: {path} is not a valid .dsb file: {e}"),
+            }
+            // The ui section may still be readable even though the file as a
+            // whole is not, in which case every document rule can still report.
+            let Some(document) = dashbuf::container::ui_document(&bytes)
+                .ok()
+                .and_then(|ui| dashbuf::root_as_document(ui).ok())
+            else {
+                return ExitCode::from(1);
+            };
+            (document, None)
+        }
     };
 
-    let report = dashscene_validator::validate_document(&document);
+    // Both halves of the load gate. The second needs the payloads, which is
+    // why it is a separate call and why this path opens the file rather than
+    // reading the ui section alone (story #437, debt #416): it is what
+    // catches an asset entry whose recorded format or extent disagrees with
+    // the bytes it names, whichever writer produced them.
+    let mut report = dashscene_validator::validate_document(&document);
+    if let Some(payloads) = payloads.as_deref() {
+        report.extend(
+            dashscene_validator::validate_asset_payloads(&document, payloads)
+                .diagnostics()
+                .iter()
+                .cloned(),
+        );
+    }
     print!("{report}");
 
     if report.has_errors() {
@@ -78,6 +112,10 @@ fn check(path: &str) -> ExitCode {
             "dashc: {path} is blocked by {} error(s)",
             report.errors().count()
         );
+        ExitCode::from(1)
+    } else if file_is_broken {
+        // Every rule the document gate could run passed, but the file's own
+        // structure is broken, so it must not be reported as valid.
         ExitCode::from(1)
     } else {
         println!("dashc: {path} is valid");

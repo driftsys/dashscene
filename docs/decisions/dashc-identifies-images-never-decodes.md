@@ -40,7 +40,7 @@ after an audit.
 
 ## Choice
 
-**Option 1.** `crates/dashc/src/image_id.rs` — a few hundred lines, the same
+**Option 1.** `image_id.rs` — a few hundred lines, the same
 complexity class as the container's section table — does signature matching and
 a header parse for PNG, JPEG, and GIF, and the compile gate raises four named
 errors: an unknown signature, a signature contradicting the producer's tag, a
@@ -102,6 +102,16 @@ decode already sits behind.
   and debt #416 carries it. The two cannot disagree today, because one code path
   writes both from one `identify` call. There is one walk over image bytes in the
   compiler, and #107 calls this one rather than adding a second.
+- **Superseded in part by story #437 (v0.12).** The module now lives at
+  `crates/dashpaint/src/image_id.rs`, not in `dashc`, so that
+  `dashscene-validator` and the packer reach the same implementation. The
+  choice above — an own module rather than `imagesize`, and decode never
+  entering the compiler — is unchanged and is now enforced by a test on
+  `dashpaint`'s manifest, because `dashc` depends on `dashpaint` and a
+  dependency there would be reachable from the compiler. Debt #416 is closed:
+  the recorded format and extent _are_ cross-checked against the payload, by
+  `dashscene_validator::validate_asset_payloads`. See
+  `docs/decisions/image-header-parser-lives-in-dashpaint.md`.
 - One path into `Document.images` is deliberately not gated: the MSDF vector
   atlas PNG the compiler generates itself. Its format is asserted by nobody, so
   there is no tag to verify — running the gate there would test our own encoder.

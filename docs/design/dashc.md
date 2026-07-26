@@ -161,12 +161,19 @@ has no id (debt #150).
 ### The image gate — `image_id`
 
 Since v0.11 (story #400) every image entering through the `images` map is
-identified before it becomes a document asset. `crates/dashc/src/image_id.rs`
+identified before it becomes a document asset. `crates/dashpaint/src/image_id.rs`
 matches the PNG, JPEG, and GIF signatures and parses just the header for the
 intrinsic width and height. It **never decodes** — no inflate, no entropy
 decode, no LZW — and that boundary is permanent, because pixel reconstruction is
 the part of a codec that carries the CVEs
 (`docs/decisions/dashc-identifies-images-never-decodes.md`).
+
+The module lived in this crate until story #437 and now lives in `dashpaint`,
+so that `dashscene-validator` and the packer reach the same implementation —
+`dashscene-validator` publishes before `dashc`, so it could not call a parser
+that lived here. `dashpaint` declares no dependencies, and a test holds it that
+way, which is what keeps a decoder from arriving in a crate this compiler links
+(`docs/decisions/image-header-parser-lives-in-dashpaint.md`).
 
 Before this, the producer's format tag was verified only on the Deno path and
 not at all through the native compile API, so a mistagged payload reached a
