@@ -1,8 +1,5 @@
 /target
 **/*.rs.bk
-# Library workspace: Cargo.lock is not committed (dashc, the one binary
-# target, is still fully reproducible via pinned dependency versions).
-Cargo.lock
 
 # mdBook build output (docs/book is the source; mdBook's default
 # build-dir is "book", relative to the root book.toml lives in)

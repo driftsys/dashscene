@@ -470,5 +470,13 @@ so each technote stops being the authority for the conclusion it reached:
   were proposed in the record and accepted with it. `LAYER_BLUR` does not ride
   along — the only one in the corpus is a rejected progressive blur, so pairing
   it would add vocabulary nothing measures (#344).
+- [cargo-lock-is-committed.md](cargo-lock-is-committed.md) — `Cargo.lock` is
+  committed, reversing the "library workspace, no lock file" convention the
+  repo shipped with. Only three direct dependencies were pinned exactly and
+  every transitive dependency floated, so a patch release anywhere in the graph
+  could move a byte-exact `.dsb` or a bit-exact PNG golden with an unchanged
+  working tree — a diff indistinguishable from a real regression. The library
+  argument is untouched: a consumer still resolves its own graph. `--locked` is
+  deliberately not adopted while CI cannot run (#263) (#411).
 
 See the `sdd-working-memory-lifecycle` rule.
