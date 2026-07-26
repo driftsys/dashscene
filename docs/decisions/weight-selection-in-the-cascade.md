@@ -155,7 +155,10 @@ behavior.
   substitution removed, family substitution remaining", never as a fidelity
   result. #385 removed the second half; the family axis reused this story's
   two-step shape, adding a third step in front of it rather than a second
-  mechanism.
+  mechanism. The caveat is now retired by measurement rather than by rewording:
+  re-measured on 2026-07-26 the hero renders with no substitution reported on
+  either axis, at 4.1618 % / 2.9926 % (5 % / 10 % fuzz), down from 6.1721 % /
+  5.0759 % (`docs/decisions/corpus-ships-inter.md`).
 - Also out of scope: Arabic bold faces, the `wght` variable-font axis,
   italic and oblique styles (which have no document vocabulary — the REST
   front end diagnoses an italic style), and optical sizing.

@@ -25,13 +25,38 @@ entirely in Inter at weights 400, 500, 600 and 700. Seven committed fixtures
 carry Inter as well, across eleven design text nodes (thirteen counting the two
 `_manual-checklist` authoring annotations, which are not design content).
 
-So every Inter run renders in Noto Sans today: a different typeface, with
-different letterforms, widths and metrics. This is the single largest remaining
-contributor to the hero's live pixel difference, and it is why #368 raised the
-hero's heading ink coverage from 66.3 % to 99.9 % of Figma's while moving the
-whole-page difference only from 6.2514 % to 6.1721 % at 5 % fuzz (5.1583 % to
-5.0759 % at 10 %). Those are live measurements against a third-party file, so
-they are not reproducible from this repository — see #368 for the method.
+So every Inter run rendered in Noto Sans before this decision: a different
+typeface, with different letterforms, widths and metrics. This was expected to
+be the single largest remaining contributor to the hero's live pixel difference,
+and it is why #368 raised the hero's heading ink coverage from 66.3 % to 99.9 %
+of Figma's while moving the whole-page difference only from 6.2514 % to 6.1721 %
+at 5 % fuzz (5.1583 % to 5.0759 % at 10 %). Those are live measurements against a
+third-party file, so they are not reproducible from this repository — see #368
+for the method.
+
+**The expectation held, and by a wide margin** (measured 2026-07-26 on `main`
+9927827, story #385 landed):
+
+| fuzz | v0.10  | after #368 | after #385 | change     |
+| ---- | ------ | ---------- | ---------- | ---------- |
+| 5 %  | 6.2514 | 6.1721     | **4.1618** | -2.0103 pp |
+| 10 % | 5.1583 | 5.0759     | **2.9926** | -2.0833 pp |
+
+255 483 of 6 138 720 pixels differ at 5 % fuzz — a 32.6 % relative reduction at
+5 % fuzz and 41.0 % at 10 %, against the 0.08 pp #368's weight work moved. The
+render also emits **no** `text.family-substituted` and **no**
+`text.weight-substituted` for the whole file, so every run resolves to the face
+it was authored in, and the canvas matches Figma's 1440x4263 exactly, so the
+drop is fidelity rather than a dimension shift.
+
+The import names two remaining contributors on the same run: an unsupported
+backdrop blur (`profile:full` only, a v0.11 candidate) and fourteen remote
+component masters with no declared library, whose instances render from baked
+children.
+
+Same limits as the figures above: a live measurement against a third-party
+Community file, recorded in prose because neither the file nor its render may be
+committed (`docs/decisions/figma-corpus-self-authored-only.md`).
 
 ## Choice
 
