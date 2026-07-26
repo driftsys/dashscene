@@ -36,7 +36,7 @@ intentionally undecided until that point
 
 ## Crates
 
-14 crates in one Cargo workspace (`resolver = "3"`, `edition = "2024"`,
+15 crates in one Cargo workspace (`resolver = "3"`, `edition = "2024"`,
 `license = "MIT"`). Full role-by-role mapping: `docs/decisions/crate-name-map.md`.
 
     dashscene            umbrella / facade
@@ -55,6 +55,9 @@ intentionally undecided until that point
     dashbuf                flatbuffer schema — the .dsb document format
     dashc                  compiler CLI; also builds to wasm32-unknown-unknown
                           for the Deno importer
+    dashpack-astcenc-sys   raw bindings to the vendored astcenc C++ sources —
+                          the ASTC encoder and its in-process reference
+                          decoder; no external CLI
     dashpack               asset packer — canonical payloads to per-profile
                           derivations (RAW/HiFi/Lite), cold-bank assembly,
                           derivation manifest; lands across slice v0.12

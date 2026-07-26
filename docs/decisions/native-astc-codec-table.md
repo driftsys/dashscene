@@ -11,9 +11,9 @@
              "Targets and codec plan"
     related  docs/decisions/asset-quality-profile-naming.md (the RAW/HiFi/
              Lite vocabulary this table uses), docs/decisions/atlas-gen-
-             external-pinned-binary.md (the version-pinned external-tool
-             precedent this follows for astcenc), docs/decisions/crate-
-             name-map.md (dashpack), epic #345
+             external-pinned-binary.md (shares the version-pinning
+             principle; astcenc diverges on mechanism — see below),
+             docs/decisions/crate-name-map.md (dashpack), epic #345
 
 ## Context
 
@@ -56,11 +56,27 @@ having no transcoder anywhere in the pipeline, install-time or otherwise.
 Every target in Wave 1-2 samples ASTC natively, so the packer's ASTC
 output is exactly what each target GPU consumes — no Basis container, no
 UASTC intermediate, no transcode step, no code path that could fail or
-regress. The encoder is `astcenc`, version-pinned, the same precedent
-already used for `msdf-atlas-gen`
-(`docs/decisions/atlas-gen-external-pinned-binary.md`): the exact tool
-version is part of what is qualified, not "an ASTC encoder" in the
-abstract.
+regress. The encoder is `astcenc`, version-pinned: the exact tool version
+is part of what is qualified, not "an ASTC encoder" in the abstract.
+
+**How astcenc is pinned differs from `msdf-atlas-gen`, and the difference
+is deliberate.** The version-pinning principle is shared with
+`docs/decisions/atlas-gen-external-pinned-binary.md`, but the mechanism is
+not: `msdf-atlas-gen` is an external binary pinned by version, while
+astcenc is **vendored in tree and linked** through
+`crates/dashpack-astcenc-sys`, pinned by the vendored commit. Story #430
+built it that way for the reason the design capture's "Dependency plan"
+section gives: the packer runs on **every pack**, and its outputs must
+reproduce on every build machine, which in-tree vendored source serves
+better than a binary on `PATH`. It also satisfies the standing "no
+external CLIs" requirement (2026-07-19) by having no external tool at all
+rather than by pinning one.
+
+`msdf-atlas-gen` may stay as it is — it has a different cadence — or
+migrate later through its own record. An earlier version of this record
+said astcenc followed the external-binary precedent; that was transcribed
+from the capture's "Targets and codec plan" section, which predates the
+"Dependency plan" section that settled the mechanism.
 
 ## Wave 3: NVIDIA-BC7, and why it stays "maybe"
 

@@ -33,6 +33,7 @@ scopes = [
     "dashbuf",
     "dashc",
     "dashpack",
+    "dashpack-astcenc-sys",
     "dashscene-unity",
     "dashscene-web",
     "goldens",
