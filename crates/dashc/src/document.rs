@@ -444,16 +444,25 @@ impl Document {
     /// producer bug: the hash is over the payload, and the payload determines
     /// its own format and extent. The debug assertion says so rather than
     /// letting the first writer silently win.
+    ///
+    /// `kind` is checked with them for a different reason. It is *not*
+    /// determined by the payload — the same PNG could be minted as an image
+    /// fill by one path and as a baked distance field by another — so a
+    /// disagreement here is a real conflict rather than a contradiction: one
+    /// caller says the bytes may be encoded lossily and the other says they
+    /// never may. Letting the first writer win would resolve it silently, and
+    /// in the direction that loses quality half the time.
     pub fn push_asset(&mut self, asset: Asset) -> u32 {
         let hash = asset.hash();
         if let Some(index) = self.assets.iter().position(|a| a.hash() == hash) {
             debug_assert_eq!(
                 (
                     self.assets[index].format,
+                    self.assets[index].kind,
                     self.assets[index].width,
                     self.assets[index].height
                 ),
-                (asset.format, asset.width, asset.height),
+                (asset.format, asset.kind, asset.width, asset.height),
                 "two assets share a payload hash but disagree on its metadata"
             );
             return u32::try_from(index).expect("an existing index fits u32");
@@ -462,6 +471,24 @@ impl Document {
         self.assets.push(asset);
         index
     }
+}
+
+/// What an asset's payload *is*, as opposed to how it is encoded — the plain
+/// mirror of the schema's `AssetKind`, mapped in `emit`, the way
+/// `dashpaint::ImageFormat` is.
+///
+/// It exists so the packer's hard rules have a true key to read: a distance
+/// field never enters a lossy path, and the only place that can be *known* is
+/// here, where the producer decides what it is putting in the document
+/// (`docs/decisions/asset-quality-profile-bands.md`, story #432). A baked MSDF
+/// atlas is a PNG on the wire like an image fill is, so nothing downstream can
+/// tell them apart from the bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssetKind {
+    /// Displayed picture data — an image fill's payload.
+    Image,
+    /// A signed or multi-channel distance field. Never lossy.
+    DistanceField,
 }
 
 /// One asset the document references: the payload, plus the intrinsic metadata
@@ -474,6 +501,9 @@ impl Document {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Asset {
     pub format: dashpaint::ImageFormat,
+    /// What the payload is. Set by whichever producer path minted the asset,
+    /// because that is the only place it is known.
+    pub kind: AssetKind,
     pub bytes: Vec<u8>,
     /// Intrinsic pixel extent, from the payload's own header.
     pub width: u32,

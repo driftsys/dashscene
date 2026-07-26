@@ -20,12 +20,20 @@
              docs/decisions/asset-quality-profile-naming.md; the
              fixed-target refinement is recorded in
              docs/specification/03-target-hardware-rules.md. This file is no
-             longer their authority either. Everything else gated on the
-             packer — the quality profiles' band contracts, the vector
-             bake's end-state fork, animated content, the profile-preview
-             oracle — is unbuilt and stays here as live input to epic #345
-             (v0.12). Two of its open points are resolved; see "Open points"
-             at the end.
+             longer their authority either.
+             GARDENED FURTHER 2026-07-26 (v0.12, story #432): "The kernel"
+             points 2 and 3 in full — the RAW/HiFi/Lite band contracts, the
+             per-asset encode-and-diff oracle, the escalation ladder, and the
+             fields-never-lossy rule now live in
+             docs/decisions/asset-quality-profile-bands.md, which also
+             resolves the EAC-R11 contradiction below in favour of the strict
+             reading and records the residual question for the repository
+             owner. This file is no longer their authority.
+             Everything else gated on the packer — the vector bake's
+             end-state fork, animated content, the profile-preview oracle,
+             cold-bank multi-bank assembly — is unbuilt and stays here as
+             live input to epic #345 (v0.12). Three of its open points are
+             resolved; see "Open points" at the end.
     scope    the asset pipeline from import to painter: image fills, baked
              vectors (MSDF), distance-field atlases; the .dsb cold sections;
              the packer and quality profiles; per-target GPU codecs
@@ -344,6 +352,18 @@ a reader of this file does not re-open them.
   placeholder activation while a payload is not resident — is v1. The field
   lands with its consumer, producer-supplied. In the same record.
 
+- **RESOLVED — "distance fields never enter a lossy path" against
+  "single-channel fields ride EAC-R11"** (story #432): read literally the two
+  clauses in kernel point 2 conflict, because EAC-R11 is a lossy block
+  format. The **strict reading** is now the rule, on measured evidence: at
+  the finest ASTC footprint the committed MSDF atlases still fail both
+  profiles' bands, so no lossy rung could have held them anyway. It is
+  expressed structurally — a distance field's lossy ladder is empty — rather
+  than as a check. The residual question, whether a genuinely single-channel
+  non-distance field may ride a lossy codec, is left for the repository owner
+  and carried by issue #453. In
+  `docs/decisions/asset-quality-profile-bands.md`.
+
 Still open:
 
 - **Derivation-manifest signing** and its relation to the signed root.
@@ -352,7 +372,9 @@ Still open:
   way: input is the packed bank keyed to canonical, never a separate
   export. Belongs to the deferred dashscene-unity design.
 - **Band values per class per profile**: pinned empirically by the packer
-  oracle + review, never invented (the E7 band discipline).
+  oracle + review, never invented (the E7 band discipline). Done for the
+  image-fill class at story #432 (`hifi-image-fill`, `lite-image-fill`);
+  every later class still needs its own measurement.
 - **Lite profile activation**: ship HiFi first; turn Lite on when a
   measured budget/OTA constraint demands.
 - **Per-core verification at slice time**: PowerVR ASTC LDR on the actual

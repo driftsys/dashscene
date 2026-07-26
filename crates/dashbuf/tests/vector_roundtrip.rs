@@ -5,9 +5,9 @@
 //! and image assets are.
 
 use dashbuf::{
-    AssetEntry, AssetEntryArgs, AtlasRect, Color, Document, DocumentArgs, Fill, ImageFormat,
-    NO_FIELD, Node, NodeArgs, Paint, PaintArgs, PlaneBounds, SolidFill, SolidFillArgs, VectorAtlas,
-    VectorAtlasArgs, VectorShape, VectorShapeArgs, root_as_document,
+    AssetEntry, AssetEntryArgs, AssetKind, AtlasRect, Color, Document, DocumentArgs, Fill,
+    ImageFormat, NO_FIELD, Node, NodeArgs, Paint, PaintArgs, PlaneBounds, SolidFill, SolidFillArgs,
+    VectorAtlas, VectorAtlasArgs, VectorShape, VectorShapeArgs, root_as_document,
 };
 use flatbuffers::FlatBufferBuilder;
 
@@ -22,6 +22,8 @@ fn vector_atlas_shape_and_shape_field_round_trip() {
         &AssetEntryArgs {
             hash: Some(hash),
             format: ImageFormat::Png,
+            // The atlas is a baked MSDF field, not a picture.
+            kind: AssetKind::DistanceField,
             width: 4,
             height: 4,
         },

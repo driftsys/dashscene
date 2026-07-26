@@ -20,7 +20,7 @@
 use std::collections::BTreeMap;
 
 use dashbuf::container::{Container, FLAVOR_ASSET, FLAVOR_UI, SectionKind};
-use dashc_wasm::{Asset, Box2D, Document, Node, Paint, compile};
+use dashc_wasm::{Asset, AssetKind, Box2D, Document, Node, Paint, compile};
 use dashpaint::{ImageFormat, PaintEntry, PaintKind, ScaleMode};
 use dashscene_core::{Arena, load_document};
 
@@ -76,12 +76,14 @@ fn document() -> Document {
     let mut doc = Document::new();
     let first = doc.push_asset(Asset {
         format: ImageFormat::Png,
+        kind: AssetKind::Image,
         bytes: PAYLOAD_PNG.to_vec(),
         width: 7,
         height: 5,
     });
     let second = doc.push_asset(Asset {
         format: ImageFormat::Jpeg,
+        kind: AssetKind::Image,
         bytes: PAYLOAD_JPEG.to_vec(),
         width: 9,
         height: 6,
@@ -91,6 +93,7 @@ fn document() -> Document {
     // that reuses an image.
     let third = doc.push_asset(Asset {
         format: ImageFormat::Png,
+        kind: AssetKind::Image,
         bytes: PAYLOAD_PNG.to_vec(),
         width: 7,
         height: 5,
@@ -342,6 +345,7 @@ fn compile_refuses_an_asset_whose_metadata_contradicts_its_bytes() {
     let mut doc = Document::new();
     let asset = doc.push_asset(Asset {
         format: ImageFormat::Jpeg,
+        kind: AssetKind::Image,
         bytes: PAYLOAD_PNG.to_vec(),
         width: 7,
         height: 5,
@@ -360,6 +364,7 @@ fn compile_refuses_an_asset_whose_metadata_contradicts_its_bytes() {
     let mut doc = Document::new();
     let asset = doc.push_asset(Asset {
         format: ImageFormat::Png,
+        kind: AssetKind::Image,
         bytes: PAYLOAD_PNG.to_vec(),
         width: 7,
         height: 5000,

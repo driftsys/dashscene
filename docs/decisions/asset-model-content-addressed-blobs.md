@@ -112,11 +112,18 @@ suite says so at the writer.
 v0.11 writes the two fields that have both a producer and a consumer:
 the content hash, and the intrinsic extent plus format that `dashc`'s
 image gate read from the payload's own header
-(`dashc-identifies-images-never-decodes.md`). Three fields this record
-names are deliberately absent until they have both:
+(`dashc-identifies-images-never-decodes.md`). Of the three fields this
+record names as deliberately absent until they have both, **`kind` landed
+at v0.12** and two remain absent.
 
-- **`kind`** — one variant today. It is added when the packer's
-  "distance fields never enter a lossy path" rule keys on it (v0.12).
+- **`kind`** — **landed (story #432)**, as `AssetKind { Image = 0,
+  DistanceField = 1 }`, with the rule that keys on it: a distance field has
+  no lossy rung under any profile
+  (`asset-quality-profile-bands.md`). The producer sets it, because a baked
+  MSDF atlas is a PNG on the wire exactly as an image fill is and nothing
+  downstream can tell them apart from the bytes. `Image` is value 0, so the
+  append wrote no slot for any existing entry and no committed `.dsb` byte
+  moved.
 - **A placeholder colour** — computing one needs pixel access `dashc`
   cannot have and will not get; Figma's REST supplies none, so the
   importer cannot either; a neutral grey invented at compile time is a

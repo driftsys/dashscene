@@ -42,9 +42,9 @@
 //! them escalates; the ladder is exercised only by the barcode refusal.
 
 use dashbuf::{
-    AssetEntry, AssetEntryArgs, AtlasRect, Color, Document, DocumentArgs, Fill, FixedSizeLayout,
-    ImageFormat, Node, NodeArgs, Paint, PaintArgs, PlaneBounds, SolidFill, SolidFillArgs,
-    VectorAtlas, VectorAtlasArgs, VectorShape, VectorShapeArgs, root_as_document,
+    AssetEntry, AssetEntryArgs, AssetKind, AtlasRect, Color, Document, DocumentArgs, Fill,
+    FixedSizeLayout, ImageFormat, Node, NodeArgs, Paint, PaintArgs, PlaneBounds, SolidFill,
+    SolidFillArgs, VectorAtlas, VectorAtlasArgs, VectorShape, VectorShapeArgs, root_as_document,
 };
 use dashc_wasm::figma::vector_field::{
     DEFAULT_DISTANCE_RANGE, DEFAULT_PX_PER_EM, VectorAtlasBaker, VectorPath, WindingRule,
@@ -175,6 +175,8 @@ fn render_bake(path: &str, winding: WindingRule, px_per_em: f64) -> Vec<u8> {
             format: ImageFormat::Png,
             width: out.width,
             height: out.height,
+            // The atlas is a baked MSDF field, not a picture.
+            kind: AssetKind::DistanceField,
         },
     );
     let atlas = VectorAtlas::create(

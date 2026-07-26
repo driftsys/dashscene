@@ -15,6 +15,10 @@ name = "dashpack"
 path = "src/main.rs"
 
 [dependencies]
+# The asset schema. `dashpack::profile` reads `AssetEntry.kind` to apply its
+# hard rules before any measurement runs, which is the coupling the
+# asset-pipeline plan named when it placed this crate in the workspace (#432).
+dashbuf = { workspace = true }
 # The vendored, version-pinned astcenc — the encoder and the reference decoder,
 # linked in process, with no external binary (story #430).
 dashpack-astcenc-sys = { workspace = true }
@@ -26,3 +30,7 @@ zstd = { workspace = true }
 # `dashpack::ktx2` emits. It is a test dependency on purpose: the writer is
 # ours, and a check is worth more when someone else wrote it (story #431).
 ktx2 = { workspace = true }
+# Decodes the committed corpus PNGs the band contracts are measured on. A test
+# dependency for now: the packer's canonical-to-RGBA ingest is a later story,
+# and `dashpack::profile` takes texels rather than encoded bytes (story #432).
+png = { workspace = true }

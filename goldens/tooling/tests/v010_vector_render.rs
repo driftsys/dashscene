@@ -13,10 +13,10 @@
 //! composition directly.
 
 use dashbuf::{
-    AssetEntry, AssetEntryArgs, AtlasRect, Color, Document, DocumentArgs, Fill, FixedSizeLayout,
-    Gradient, GradientArgs, GradientKind, GradientStop, ImageFormat, Node, NodeArgs, Paint,
-    PaintArgs, PlaneBounds, SolidFill, SolidFillArgs, Vec2, VectorAtlas, VectorAtlasArgs,
-    VectorShape, VectorShapeArgs, root_as_document,
+    AssetEntry, AssetEntryArgs, AssetKind, AtlasRect, Color, Document, DocumentArgs, Fill,
+    FixedSizeLayout, Gradient, GradientArgs, GradientKind, GradientStop, ImageFormat, Node,
+    NodeArgs, Paint, PaintArgs, PlaneBounds, SolidFill, SolidFillArgs, Vec2, VectorAtlas,
+    VectorAtlasArgs, VectorShape, VectorShapeArgs, root_as_document,
 };
 use dashc_wasm::figma::vector_field::{VectorAtlasBaker, VectorPath, WindingRule};
 use dashpaint::{GlyphRunTable, ImageTable, Painter};
@@ -92,6 +92,8 @@ fn vector_dsb(baked: &Baked, fill: TestFill) -> Vec<u8> {
             format: ImageFormat::Png,
             width: baked.width,
             height: baked.height,
+            // The atlas is a baked MSDF field, not a picture.
+            kind: AssetKind::DistanceField,
         },
     );
     let atlas = VectorAtlas::create(

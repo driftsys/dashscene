@@ -96,6 +96,7 @@ fn v03_document() -> Document {
     // asset table's, not a running counter (story #107).
     let image = doc.push_asset(dashc_wasm::Asset {
         format: ImageFormat::Png,
+        kind: dashc_wasm::AssetKind::Image,
         bytes: png_pixel(),
         width: 1,
         height: 1,

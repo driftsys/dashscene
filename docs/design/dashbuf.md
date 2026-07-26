@@ -162,8 +162,14 @@ All types below are generated from the schema:
 - `AssetEntry` (table) — `hash: [ubyte] (required)` (BLAKE3-256 of the
   canonical payload, and the key the null binding resolves through),
   `format: ImageFormat`, `width`/`height: uint32` (the intrinsic extent
-  `dashc`'s image gate read from the payload's header). No bytes: P1
-  applied to assets.
+  `dashc`'s image gate read from the payload's header), and
+  `kind: AssetKind` (`Image = 0` or `DistanceField`, story #432 — what the
+  payload _is_, which is what the packer's hard rules read before any
+  measurement runs; a distance field has no lossy rung under any profile,
+  `docs/decisions/asset-quality-profile-bands.md`). No bytes: P1 applied to
+  assets. `kind` defaults to `Image`, so it is omitted for every entry
+  written before it existed and its arrival moved no committed `.dsb` byte —
+  the same append shape `Blur` used at v0.11.
 - `ImageFill` (table) — `image: uint32` (index into `Document.assets`),
   `scale_mode: ScaleMode`, `transform: Mat23` (normalized image-space
   crop transform, Figma's imageTransform; identity when absent),

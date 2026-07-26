@@ -4,10 +4,10 @@
 
 use dashbuf::NO_PAINT;
 use dashbuf::{
-    AssetEntry, AssetEntryArgs, Color, Document, DocumentArgs, Fill, FillLayer, FillLayerArgs,
-    Gradient, GradientArgs, GradientKind, GradientStop, ImageFill, ImageFillArgs, ImageFormat,
-    Mat23, Node, NodeArgs, Paint, PaintArgs, ScaleMode, SolidFill, SolidFillArgs, Stroke,
-    StrokeAlign, StrokeArgs, Vec2, root_as_document,
+    AssetEntry, AssetEntryArgs, AssetKind, Color, Document, DocumentArgs, Fill, FillLayer,
+    FillLayerArgs, Gradient, GradientArgs, GradientKind, GradientStop, ImageFill, ImageFillArgs,
+    ImageFormat, Mat23, Node, NodeArgs, Paint, PaintArgs, ScaleMode, SolidFill, SolidFillArgs,
+    Stroke, StrokeAlign, StrokeArgs, Vec2, root_as_document,
 };
 use flatbuffers::{FlatBufferBuilder, WIPOffset};
 
@@ -125,6 +125,7 @@ fn image_fill_round_trips_every_scale_mode() {
                 format: ImageFormat::Png,
                 width: 1,
                 height: 1,
+                kind: AssetKind::Image,
             },
         );
         let real_hash = builder.create_vector(&[8u8; 32]);
@@ -135,6 +136,7 @@ fn image_fill_round_trips_every_scale_mode() {
                 format: ImageFormat::Png,
                 width: 4,
                 height: 4,
+                kind: AssetKind::Image,
             },
         );
         let transform = Mat23::new(1.0, 0.0, 0.0, 1.0, 0.25, 0.5);

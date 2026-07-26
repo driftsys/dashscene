@@ -50,10 +50,11 @@ use dashscene_validator::{Diagnostic, Location, NodePath, Profile, Report, Sever
 // in `emit.rs` the IR is the subject, so the flatbuffer types are aliased
 // (its `Node` stays bare and the flatbuffer's is `FbNode`).
 use crate::document::{
-    Asset, AxisSizing, Box2D, CrossAxisAlign, Document, EdgeInsets, GridTrack as DocGridTrack,
-    LayoutConstraints, LayoutContainer as DocContainer, LayoutMode, MainAxisAlign, Node as DocNode,
-    Paint as DocPaint, TextAlign as DocTextAlign, TextAlignV as DocTextAlignV,
-    TextStyle as DocTextStyle, VectorAtlas as DocVectorAtlas, VectorShape as DocVectorShape,
+    Asset, AssetKind, AxisSizing, Box2D, CrossAxisAlign, Document, EdgeInsets,
+    GridTrack as DocGridTrack, LayoutConstraints, LayoutContainer as DocContainer, LayoutMode,
+    MainAxisAlign, Node as DocNode, Paint as DocPaint, TextAlign as DocTextAlign,
+    TextAlignV as DocTextAlignV, TextStyle as DocTextStyle, VectorAtlas as DocVectorAtlas,
+    VectorShape as DocVectorShape,
 };
 use crate::figma::rest::{FigmaFile, Geometry, Node, Paint};
 use crate::figma::vector_field::{VectorAtlasBaker, VectorFieldError, VectorPath, WindingRule};
@@ -391,6 +392,12 @@ pub fn lower_with_bindings_and_policy(
         // it, so story #107 does not need a header parse here either.
         let image = walk.doc.push_asset(Asset {
             format: dashpaint::ImageFormat::Png,
+            // A multi-channel distance field, not a picture. This is the only
+            // place that knows — the payload is a PNG either way, so nothing
+            // downstream could tell it apart from an image fill by inspection,
+            // and a packer that guessed would put a baked vector on a lossy
+            // ladder (docs/decisions/asset-quality-profile-bands.md).
+            kind: AssetKind::DistanceField,
             bytes: bake.image_png,
             // The baker already knows the sheet's extent, so this path needs no
             // header parse — which is why the image gate's exemption below costs
@@ -1431,6 +1438,8 @@ impl Walk<'_> {
 
                         let index = self.doc.push_asset(Asset {
                             format: asset.format,
+                            // An imported image fill: displayed picture data.
+                            kind: AssetKind::Image,
                             bytes: asset.bytes.clone(),
                             width: header.width,
                             height: header.height,
