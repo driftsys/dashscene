@@ -237,6 +237,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashpack"
+version = "0.0.0"
+
+[[package]]
 name = "dashpaint"
 version = "0.0.0"
 

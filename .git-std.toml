@@ -32,6 +32,7 @@ scopes = [
     "dashlang",
     "dashbuf",
     "dashc",
+    "dashpack",
     "dashscene-unity",
     "dashscene-web",
     "goldens",

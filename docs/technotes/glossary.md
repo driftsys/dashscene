@@ -55,7 +55,8 @@ variants, FLIP, measure), `dashscene-typeset` (bidi/shaping/atlas), `dashbuf`
 (the `.dsb` schema), `dashpaint` (paint table + painter trait = boundary B),
 `dashscene-skia` (Skia reference painter), `dashcue` (descriptive animation
 vocabulary + scheduling), `dashlang` (Rust DSL + corpus generator), `dashc`
-(compiler), `dashscene-unity` (Unity FFI bindings), `dashscene-web` /
+(compiler), `dashpack` (asset packer — per-profile derivations and cold-bank
+assembly), `dashscene-unity` (Unity FFI bindings), `dashscene-web` /
 `dashscore` / `dashscene-compose` (parked).
 
 **dirty set** — the set of changed rect/glyph entries, enabling per-frame upload
