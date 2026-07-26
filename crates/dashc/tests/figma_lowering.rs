@@ -1588,34 +1588,36 @@ fn a_warning_does_not_block_emission_and_comes_back_with_the_bytes() {
 
 #[test]
 fn a_load_gate_only_error_still_blocks_emission() {
-    // The import gate resolves an imageRef against the caller's map, but
-    // never inspects the resolved asset's byte content. An empty asset
-    // triages clean and only the load gate's asset.image-no-bytes rule
-    // catches it — so this case only fails if compile_figma actually merges
-    // the load gate's report into the one it returns.
+    // The lowering copies strokeWeight straight through with no sign check
+    // (`Walk::stroke_of`) — it is triage-clean, and story #400's image gate
+    // has nothing to say about a stroke. Only the load gate's
+    // paint.stroke.invalid-width rule catches a negative width, so this case
+    // only fails if compile_figma actually merges the load gate's report
+    // into the one it returns.
+    //
+    // (This used to be an empty-byte image asset: asset.image-no-bytes was
+    // the load-gate-only rule the empty asset's bytes tripped. Story #400's
+    // image-identification gate now catches an empty payload earlier, as
+    // figma.image-unknown-signature, before the load gate ever sees it — see
+    // the rejection tests in tests/image_id_gate.rs — so this test switched
+    // to a trigger the new gate has no opinion on.)
     let json = document_json(serde_json::json!({
-        "name": "empty-image",
+        "name": "negative-stroke",
         "type": "FRAME",
         "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
-        "fills": [{ "type": "IMAGE", "scaleMode": "FILL", "imageRef": IMAGE_REF }],
+        "strokes": [{ "type": "SOLID", "color": { "r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0 } }],
+        "strokeWeight": -5.0,
+        "strokeAlign": "INSIDE",
     }))
     .to_string();
 
-    let empty_asset = BTreeMap::from([(
-        IMAGE_REF.to_string(),
-        ImageAsset {
-            format: ImageFormat::Png,
-            bytes: Vec::new(),
-        },
-    )]);
-
-    let err = compile_figma(&json, Profile::Core, &empty_asset)
-        .expect_err("an empty image asset fails the load gate");
+    let err = compile_figma(&json, Profile::Core, &BTreeMap::new())
+        .expect_err("a negative stroke width fails the load gate");
 
     let CompileError::Diagnostics(report) = err else {
         panic!("expected diagnostics, got {err:?}");
     };
-    assert!(report.has("asset.image-no-bytes"));
+    assert!(report.has("paint.stroke.invalid-width"));
 }
 
 /// The Deno importer does not scan the file for `imageRef`s — it asks. This is

@@ -77,6 +77,53 @@ pub mod rule {
     /// no roots, which a downstream consumer panics loading, and emitting it in
     /// silence is what P4 forbids. The message names what was skipped and why.
     pub const NO_CONTENT: &str = "figma.no-content";
+
+    // The four image-identification diagnostics (story #400,
+    // `docs/wip/2026-07-19-asset-pipeline-profiles-and-baking.md`). All four
+    // are always errors, never a `figma.unsupported`-style warning under
+    // `EmitPolicy::Partial`: an image that cannot be identified cannot be
+    // given an intrinsic size, and #107's asset entry needs one — there is no
+    // approximation to fall back to. That is also why these bypass the
+    // `unsupported`/blockers mechanism entirely: they abort the compile via
+    // `CompileError::Diagnostics` the moment they are found, the same way
+    // `CompileError::UnresolvedImage` already does for a different
+    // caller-contract failure over the same `images` map.
+
+    /// The bytes an `imageRef` resolved to match none of the three
+    /// signatures `crate::image_id` knows (PNG, JPEG, GIF).
+    pub const IMAGE_UNKNOWN_SIGNATURE: &str = "figma.image-unknown-signature";
+    /// The bytes' own signature names a format that contradicts the
+    /// producer's tag on the `ImageAsset` — the asymmetry story #400 closes.
+    pub const IMAGE_FORMAT_MISMATCH: &str = "figma.image-format-mismatch";
+    /// The signature matched, but the header itself is truncated or
+    /// malformed for its declared format (`crate::image_id::ImageIdError::Malformed`).
+    pub const IMAGE_HEADER_MALFORMED: &str = "figma.image-header-malformed";
+    /// The header parsed cleanly but reports a zero width or height.
+    pub const IMAGE_ZERO_DIMENSION: &str = "figma.image-zero-dimension";
+}
+
+/// One image-identification diagnostic (`rule::IMAGE_*`), always
+/// `Severity::Error` — unlike `Walk::unsupported_at`, the emit policy never
+/// downgrades these (see the `rule` module doc). Wrapped in a
+/// [`CompileError::Diagnostics`] of exactly one entry so it propagates
+/// through the same `Err(other) => return Err(other)` path every paint call
+/// site already has for `CompileError::UnresolvedImage`, aborting the
+/// compile immediately rather than continuing the walk — an unidentifiable
+/// image is a caller-contract failure over the `images` map, not a
+/// vocabulary gap the rest of the document can ship without.
+///
+/// `index` is the advisory locator `Walk::unsupported`/`unsupported_at` use:
+/// the document index this node would have taken had it lowered.
+fn image_diagnostic(rule: &'static str, index: u32, path: &str, message: String) -> CompileError {
+    CompileError::Diagnostics(
+        std::iter::once(Diagnostic {
+            rule,
+            severity: Severity::Error,
+            at: Location::Node(NodePath::new(index, path.to_string())),
+            message,
+        })
+        .collect(),
+    )
 }
 
 /// The JSON nesting depth [`parse_file`] accepts.
@@ -330,6 +377,18 @@ pub fn lower_with_bindings_and_policy(
         let bake = std::mem::take(&mut walk.baker)
             .finish()
             .expect("vector atlas packing is infallible once the fields baked");
+        // The second path into `push_image`, and the only one story #400's
+        // gate does not cover. That is deliberate: the gate verifies a
+        // *producer's* format tag against bytes the compiler did not make,
+        // and these bytes are the compiler's own atlas encoder's output, whose
+        // format is not asserted by anyone. Running `identify` here would test
+        // our encoder, not an input.
+        //
+        // Said out loud because two ungated-versus-gated paths into one sink is
+        // the shape #396 records — a construct that is triage-clean and still
+        // never lowered, because two walks over the same data drifted apart.
+        // The atlas's intrinsic size comes from the baker, which already knows
+        // it, so story #107 does not need a header parse here either.
         let image = walk.doc.push_image(ImageAsset {
             format: dashpaint::ImageFormat::Png,
             bytes: bake.image_png,
@@ -539,8 +598,11 @@ impl Walk<'_> {
     /// parent that does not exist in the document, and under a grid or
     /// wrapped container their boxes are solver output P1 forbids reading.
     ///
-    /// `Err` is reserved for [`CompileError::UnresolvedImage`] — a
-    /// caller-contract failure, not a vocabulary verdict.
+    /// `Err` is reserved for the caller-contract failures over the `images`
+    /// map, not a vocabulary verdict: [`CompileError::UnresolvedImage`], and
+    /// — story #400 — [`CompileError::Diagnostics`] carrying exactly one
+    /// `rule::IMAGE_*` finding when an `imageRef`'s bytes fail the P4
+    /// identification gate.
     fn visit<'a>(
         &mut self,
         visit: Visit<'a>,
@@ -1314,6 +1376,53 @@ impl Walk<'_> {
                                 image_ref: image_ref.to_string(),
                             }
                         })?;
+
+                        // The P4 gate story #400 exists for: the producer
+                        // tagged `asset.format`, and nothing has verified it
+                        // against the bytes themselves until now. The node's
+                        // would-be index is the same advisory locator
+                        // `unsupported`/`unsupported_at` use.
+                        let node_index = self.doc.nodes.len() as u32;
+                        let header = crate::image_id::identify(&asset.bytes).map_err(|error| {
+                            let rule = match &error {
+                                crate::image_id::ImageIdError::UnknownSignature => {
+                                    rule::IMAGE_UNKNOWN_SIGNATURE
+                                }
+                                crate::image_id::ImageIdError::Malformed { .. } => {
+                                    rule::IMAGE_HEADER_MALFORMED
+                                }
+                            };
+                            image_diagnostic(
+                                rule,
+                                node_index,
+                                path,
+                                format!("imageRef {image_ref}: {error}"),
+                            )
+                        })?;
+                        if header.format != asset.format {
+                            return Err(image_diagnostic(
+                                rule::IMAGE_FORMAT_MISMATCH,
+                                node_index,
+                                path,
+                                format!(
+                                    "imageRef {image_ref}: the bytes' own signature is \
+                                     {:?}, which contradicts the producer's tag {:?}",
+                                    header.format, asset.format
+                                ),
+                            ));
+                        }
+                        if header.width == 0 || header.height == 0 {
+                            return Err(image_diagnostic(
+                                rule::IMAGE_ZERO_DIMENSION,
+                                node_index,
+                                path,
+                                format!(
+                                    "imageRef {image_ref}: the header reports {}x{}",
+                                    header.width, header.height
+                                ),
+                            ));
+                        }
+
                         let index = self.doc.push_image(asset.clone());
                         self.image_of.insert(image_ref.to_string(), index);
                         index

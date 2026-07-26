@@ -255,6 +255,15 @@ function notARecognizedContainer(ref: string): Error {
  * guessing from a URL, a `Content-Type`, or the Figma API's own metadata,
  * per P4.
  *
+ * Demoted to a courtesy pre-flight by story #400: `dashc` now verifies every
+ * image entering its `images` map against its own magic-byte identification
+ * and header parse (`crates/dashc/src/image_id.rs`) before the bytes become a
+ * document asset, so this function is no longer the only gate — just the one
+ * that can refuse a bad download with a fast, local error message before the
+ * bytes ever cross the wasm boundary. No behaviour changes here; PNG/JPEG and
+ * the animated-GIF refusal are still this module's own concern (`dashc`
+ * never decodes far enough to know a GIF is animated).
+ *
  * @throws when the bytes match no recognized container, match a
  * signature but are truncated or otherwise malformed, or match a GIF that
  * is animated (multi-frame or NETSCAPE-looping) — the v0.10 image table

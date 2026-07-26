@@ -158,6 +158,35 @@ diagnostic's path disambiguates duplicate sibling names with the node's
 Figma id — `Frame 1 (1:23)` — or its child position when a synthetic node
 has no id (debt #150).
 
+### The image gate — `image_id`
+
+Since v0.11 (story #400) every image entering through the `images` map is
+identified before it becomes a document asset. `crates/dashc/src/image_id.rs`
+matches the PNG, JPEG, and GIF signatures and parses just the header for the
+intrinsic width and height. It **never decodes** — no inflate, no entropy
+decode, no LZW — and that boundary is permanent, because pixel reconstruction is
+the part of a codec that carries the CVEs
+(`docs/decisions/dashc-identifies-images-never-decodes.md`).
+
+Before this, the producer's format tag was verified only on the Deno path and
+not at all through the native compile API, so a mistagged payload reached a
+painter's decoder before anything noticed. Four error-severity rules close it,
+each naming the `imageRef`:
+
+    figma.image-unknown-signature   the bytes match no known signature
+    figma.image-format-mismatch     the signature contradicts the producer's tag
+    figma.image-header-malformed    truncated, inconsistent, or a refused JPEG frame marker
+    figma.image-zero-dimension      the header parses and reports a zero extent
+
+All four are errors under both emit policies: an image that cannot be identified
+has no approximation to degrade to, so there is nothing for
+`EmitPolicy::Partial` to soften. The importer's own `isPng`/`isJpeg`/`isGif` stay
+as a courtesy pre-flight.
+
+One path into `Document.images` is exempt, and says so at its call site: the
+MSDF vector atlas PNG the compiler generates itself. Nobody asserts its format,
+so there is no tag to verify.
+
 ### `CompileError`
 
 Why a Figma file could not be compiled at all — distinct from a

@@ -290,6 +290,13 @@ into the records below. Per-story decisions land here directly:
   — image bytes arrive as a caller-supplied `imageRef` map, because `dashc`
   compiles to wasm and cannot fetch (story #139); the Deno importer built the
   caller side in story #17.
+- [dashc-identifies-images-never-decodes.md](dashc-identifies-images-never-decodes.md)
+  — supplied is not trusted: `dashc` verifies every image's format against its
+  own signature and header-parses the intrinsic size, in an own module rather
+  than a crate, so the P4 accept-list belongs to the compiler; decode never
+  enters the compiler, because pixel reconstruction is the part that carries the
+  CVEs (story #400). Closes the asymmetry where only the Deno path checked the
+  tag.
 - [importer-trim-layers.md](importer-trim-layers.md) — the trim pass runs
   before the export closure and names every removed subtree (sharedPluginData
   roles, `_`-prefix sugar, slot-child auto-replacement; hidden is not trimmed);
