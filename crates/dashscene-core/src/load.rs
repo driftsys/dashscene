@@ -670,13 +670,22 @@ fn stroke_align(a: dashbuf::StrokeAlign) -> StrokeAlign {
     }
 }
 
-/// The document's blur kind as the arena's (story #393). An unknown
-/// discriminant cannot occur — flatbuffers validates the enum at read — so
-/// this is a total map, like [`shadow_kind`] below.
+/// The document's blur kind as the arena's (story #393).
+///
+/// The catch-all is `unreachable!`, not a coercion to `Backdrop`, and the
+/// difference matters: the generated binding is a newtype over `u8` whose
+/// verifier does no range check, so an out-of-range discriminant does reach
+/// here. Coercing it would turn a future kind — a progressive blur, say —
+/// into a backdrop blur, and `PaintEntry::samples_backdrop` would then impose
+/// a painter ordering barrier for an effect that needs none. That is a silent
+/// semantic substitution, which is exactly what P4 forbids. The load gate
+/// range-checks `Blur.kind` before this runs, so reaching the arm means the
+/// gate was bypassed. Same shape as [`shadow_kind`] below.
 fn blur_kind(k: dashbuf::BlurKind) -> BlurKind {
     match k {
         dashbuf::BlurKind::Layer => BlurKind::Layer,
-        _ => BlurKind::Backdrop,
+        dashbuf::BlurKind::Backdrop => BlurKind::Backdrop,
+        other => unreachable!("unknown BlurKind {other:?}: rejected by the load gate (P4)"),
     }
 }
 

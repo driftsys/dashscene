@@ -230,6 +230,8 @@ pub mod rule {
     /// the shadow geometry with the offset and spread, none of which tolerate
     /// NaN.
     pub const SHADOW_INVALID_GEOMETRY: &str = "paint.shadow.invalid-geometry";
+    /// A blur whose radius is not finite and non-negative (story #393).
+    pub const BLUR_INVALID_RADIUS: &str = "paint.blur.invalid-radius";
     /// A shadow color channel that is non-finite or outside `0..=1` (story
     /// #45). The painter multiplies the channel into a premultiplied surface,
     /// where an out-of-range channel misrasterizes.
@@ -304,6 +306,7 @@ pub mod rule {
         RECT_INVALID_EXTENT,
         CORNER_RADIUS_INVALID,
         SHADOW_INVALID_GEOMETRY,
+        BLUR_INVALID_RADIUS,
         SHADOW_COLOR_OUT_OF_RANGE,
     ];
 

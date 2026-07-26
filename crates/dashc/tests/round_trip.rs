@@ -18,8 +18,9 @@
 // (see the crate manifest).
 use dashc_wasm::{Box2D, Document, Node, Paint, compile, emit};
 use dashpaint::{
-    Color, GlyphRunTable, Gradient, GradientKind, GradientStop, ImageAsset, ImageFormat,
-    PaintEntry, PaintKind, Painter, ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, Vec2,
+    Blur, BlurKind, Color, GlyphRunTable, Gradient, GradientKind, GradientStop, ImageAsset,
+    ImageFormat, PaintEntry, PaintKind, Painter, ScaleMode, Shadow, ShadowKind, Stroke,
+    StrokeAlign, Vec2,
 };
 use dashscene_core::{Arena, Prop, load_document};
 use dashscene_skia::SkiaPainter;
@@ -400,6 +401,176 @@ fn emission_of_a_shadowed_document_is_byte_reproducible() {
     assert_eq!(shadows.get(0).blur(), 8.0);
     assert_eq!(shadows.get(1).kind(), dashbuf::ShadowKind::Inner);
     assert_eq!(shadows.get(1).spread(), -1.0);
+}
+
+/// One 20x20 node with the shared RED fill and whatever blur list is asked
+/// for — the fixture the blur pool tests below vary. `blurs` empty is the
+/// plain (pre-v0.11) entry.
+fn blurred_node(name: &str, blurs: Vec<Blur>) -> Node {
+    Node {
+        name: Some(name.to_owned()),
+        parent: None,
+        box2d: Box2D {
+            x: 0.0,
+            y: 0.0,
+            width: 20.0,
+            height: 20.0,
+        },
+        paint: Some(Paint {
+            entry: PaintEntry {
+                fill: Some(PaintKind::Solid { color: RED }),
+                blurs,
+                ..PaintEntry::default()
+            },
+            clip: false,
+            shape_field: None,
+        }),
+        ..Node::default()
+    }
+}
+
+fn backdrop(radius: f32) -> Blur {
+    Blur {
+        kind: BlurKind::Backdrop,
+        radius,
+    }
+}
+
+#[test]
+fn a_frosted_and_a_plain_entry_with_the_same_fill_are_two_pool_entries() {
+    // Story #393: the emit pool's dedup key folds the blur list in. Every node
+    // below carries the identical solid fill, so the blur is the only thing
+    // the key can separate them by. A key that ignored it would intern all
+    // five onto one pool entry, and every node would point at whichever style
+    // the DFS walk reached first — the frosted panels would render flat, or
+    // the plain one would render frosted.
+    let mut doc = Document::new();
+    doc.push(blurred_node("frosted-a", vec![backdrop(12.0)]));
+    doc.push(blurred_node("frosted-b", vec![backdrop(12.0)]));
+    doc.push(blurred_node("wider", vec![backdrop(24.0)]));
+    doc.push(blurred_node(
+        "layer",
+        vec![Blur {
+            kind: BlurKind::Layer,
+            radius: 12.0,
+        }],
+    ));
+    doc.push(blurred_node("plain", Vec::new()));
+
+    let bytes = compile(&doc).expect("validates");
+    let document = dashbuf::root_as_document(&bytes).expect("valid buffer");
+    assert_eq!(
+        document.paints().expect("a paint pool").len(),
+        4,
+        "identical blurs dedup; radius, kind, and absence each earn an entry"
+    );
+
+    let nodes = document.nodes().expect("nodes present");
+    let entry = |i: usize| nodes.get(i).paint_entry();
+    assert_eq!(entry(0), entry(1), "an identical fill + blur dedups");
+    assert_ne!(entry(0), entry(2), "a different radius is a distinct entry");
+    assert_ne!(entry(0), entry(3), "a different kind is a distinct entry");
+    assert_ne!(
+        entry(0),
+        entry(4),
+        "a frosted entry never collapses onto the plain entry with the same fill"
+    );
+}
+
+#[test]
+fn a_blur_and_a_shadow_section_do_not_alias_each_other_in_the_pool_key() {
+    // The pool key encodes `shadows` and `blurs` as a count word followed by
+    // that many fixed-width element records, and the two sections are
+    // adjacent. This pins that the framing stays unambiguous when one is
+    // populated and the other empty: one blur and no shadow must not key the
+    // same as one shadow and no blur.
+    let mut doc = Document::new();
+    doc.push(blurred_node("blurred", vec![backdrop(4.0)]));
+    let mut shadowed = blurred_node("shadowed", Vec::new());
+    shadowed
+        .paint
+        .as_mut()
+        .expect("the fixture paints")
+        .entry
+        .shadows = vec![Shadow {
+        kind: ShadowKind::Drop,
+        offset: Vec2 { x: 0.0, y: 0.0 },
+        blur: 4.0,
+        spread: 0.0,
+        color: RED,
+    }];
+    doc.push(shadowed);
+
+    let bytes = compile(&doc).expect("validates");
+    let document = dashbuf::root_as_document(&bytes).expect("valid buffer");
+    assert_eq!(document.paints().expect("a paint pool").len(), 2);
+}
+
+#[test]
+fn emission_of_a_blurred_document_is_byte_reproducible_and_round_trips() {
+    // R7 for the blur vocabulary: same blurred input → identical bytes.
+    let doc = || {
+        let mut doc = Document::new();
+        doc.push(blurred_node(
+            "frosted",
+            vec![
+                backdrop(12.0),
+                Blur {
+                    kind: BlurKind::Layer,
+                    radius: 3.5,
+                },
+            ],
+        ));
+        doc
+    };
+    let first = emit(&doc());
+    let second = emit(&doc());
+    assert_eq!(first, second, "blur emission is not deterministic");
+
+    // The bytes carry the blurs, in order, rather than dropping them.
+    let bytes = compile(&doc()).expect("validates");
+    let document = dashbuf::root_as_document(&bytes).expect("valid buffer");
+    let paints = document.paints().expect("paint pool present");
+    let blurs = paints.get(0).blurs().expect("blurs present");
+    assert_eq!(blurs.len(), 2);
+    assert_eq!(blurs.get(0).kind(), dashbuf::BlurKind::Backdrop);
+    assert_eq!(blurs.get(0).radius(), 12.0);
+    assert_eq!(blurs.get(1).kind(), dashbuf::BlurKind::Layer);
+    assert_eq!(blurs.get(1).radius(), 3.5);
+
+    // And the whole path holds: document → .dsb → load → arena → commit hands
+    // boundary B the same list, in the same order, with the backdrop blur
+    // still declaring that the node samples what is beneath it.
+    let mut arena = Arena::new();
+    load_document(&document, &mut arena);
+    let scene = arena.committed();
+    let entry = scene.paints().resolve(scene.rects()[0].paint);
+    assert_eq!(
+        entry.blurs,
+        vec![
+            backdrop(12.0),
+            Blur {
+                kind: BlurKind::Layer,
+                radius: 3.5,
+            },
+        ],
+    );
+    assert!(entry.samples_backdrop());
+}
+
+#[test]
+fn a_blur_less_entry_omits_the_blurs_field_entirely() {
+    // R7's other half: an empty blur list must write no field at all, not an
+    // empty vector. A zero-length vector would still occupy a vtable slot and
+    // change the bytes of every document written before v0.11 — which is what
+    // would have broken the frozen `.dsb` fixture and the committed goldens.
+    let bytes = compile(&shadowed_document()).expect("validates");
+    let document = dashbuf::root_as_document(&bytes).expect("valid buffer");
+    let paint = document.paints().expect("paint pool present").get(0);
+    assert!(
+        paint.blurs().is_none(),
+        "an empty blur list must be an absent field, not an empty vector"
+    );
 }
 
 #[test]

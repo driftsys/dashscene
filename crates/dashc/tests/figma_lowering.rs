@@ -2011,13 +2011,13 @@ fn partial_still_refuses_a_reject_band_construct() {
 /// corpus fixture has (`corpus/figma-fixtures/backdrop-blur.json`: a frosted
 /// panel over a background).
 ///
-/// This used to hold a VECTOR child instead, because the case it pinned was
-/// the whole-node omission a backdrop blur forced under profile:core. Story
-/// #393 made backdrop blur core vocabulary and removed that omission, so the
-/// fixture is now the ordinary case: a node that lowers and keeps its blur. A
-/// baked vector still carries neither shadows nor blurs — see the paint entry
-/// in `crates/dashc/src/figma/mod.rs` — so a VECTOR child would prove nothing
-/// about the lowering under test.
+/// This used to hold a VECTOR child, because the case it pinned was the
+/// whole-node omission a backdrop blur forced under profile:core. Story #393
+/// made backdrop blur core vocabulary and removed that omission. The VECTOR
+/// case is covered too, by
+/// `a_backdrop_blur_on_a_baked_vector_is_kept_not_dropped` below — it is the
+/// shape the hero's frosted panel actually has, so it is the one that must not
+/// regress.
 fn frame_with_backdrop_blurred_child() -> serde_json::Value {
     document_json(serde_json::json!({
         "name": "root",
@@ -2080,6 +2080,105 @@ fn a_backdrop_blur_lowers_under_both_policies_and_keeps_its_radius() {
         assert_eq!(blurs[0].kind, dashscene_core::BlurKind::Backdrop);
         assert_eq!(blurs[0].radius, 100.0);
     }
+}
+
+/// The hero's own shape: a baked VECTOR carrying `BACKGROUND_BLUR`.
+///
+/// This is a regression test with a specific history. Story #393's first draft
+/// hardcoded `blurs: Vec::new()` on the baked-vector paint entry, which made
+/// the blur vanish with no diagnostic — the silent drop P4 forbids — on the one
+/// node the story exists to fix. `docs/decisions/baked-vector-msdf-field.md`
+/// records that lowering the hero's vectors is what unmasked a `VECTOR`
+/// carrying `BACKGROUND_BLUR` radius 100 in the first place.
+#[test]
+fn a_backdrop_blur_on_a_baked_vector_is_kept_not_dropped() {
+    let json = document_json(serde_json::json!({
+        "name": "root",
+        "type": "FRAME",
+        "clipsContent": true,
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0 },
+        "children": [{
+            "name": "bg",
+            "type": "VECTOR",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+            "fills": [{ "type": "SOLID", "color": { "r": 1.0, "g": 1.0, "b": 1.0, "a": 0.7 } }],
+            "fillGeometry": [{
+                "path": "M 0 0 L 10 0 L 10 10 L 0 10 Z",
+                "windingRule": "NONZERO",
+            }],
+            "effects": [{ "type": "BACKGROUND_BLUR", "visible": true, "radius": 100.0 }],
+        }],
+    }))
+    .to_string();
+    let images = BTreeMap::new();
+    let (bytes, report) = compile_figma_with_bindings_and_policy(
+        &json,
+        Profile::Core,
+        &images,
+        &[],
+        EmitPolicy::Strict,
+    )
+    .expect("a blurred vector is core vocabulary and compiles");
+    assert!(
+        !report.has(dashc_wasm::figma::rule::UNSUPPORTED),
+        "nothing is omitted: {:?}",
+        report.diagnostics(),
+    );
+
+    let document = dashbuf::root_as_document(&bytes).expect("the emitted document loads");
+    let mut arena = Arena::new();
+    load_document(&document, &mut arena);
+    let scene = arena.committed();
+    let blurs: Vec<_> = scene
+        .rects()
+        .iter()
+        .filter_map(|rect| scene.paints().get(rect.paint))
+        .flat_map(|entry| entry.blurs.iter())
+        .collect();
+    assert_eq!(blurs.len(), 1, "the vector keeps its blur, got {blurs:?}");
+    assert_eq!(blurs[0].kind, dashscene_core::BlurKind::Backdrop);
+    assert_eq!(blurs[0].radius, 100.0);
+}
+
+/// A blur on a TEXT node is named, not dropped. A text node builds no
+/// `PaintEntry`, so it has nowhere to carry one; before story #393 the
+/// construct's own error verdict caught this, and removing that verdict would
+/// have made it silent.
+#[test]
+fn a_blur_on_a_text_node_is_a_named_blocker() {
+    let json = document_json(serde_json::json!({
+        "name": "root",
+        "type": "FRAME",
+        "clipsContent": true,
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0 },
+        "children": [{
+            "name": "label",
+            "type": "TEXT",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 40.0, "height": 10.0 },
+            "characters": "hi",
+            "style": { "fontFamily": "Inter", "fontSize": 12.0 },
+            "effects": [{ "type": "BACKGROUND_BLUR", "visible": true, "radius": 8.0 }],
+        }],
+    }))
+    .to_string();
+    let images = BTreeMap::new();
+    let (_bytes, report) = compile_figma_with_bindings_and_policy(
+        &json,
+        Profile::Core,
+        &images,
+        &[],
+        EmitPolicy::Partial,
+    )
+    .expect("partial emit returns a document with the text node skipped");
+    let named = report
+        .diagnostics()
+        .iter()
+        .any(|d| d.rule == dashc_wasm::figma::rule::UNSUPPORTED && d.message.contains("blur"));
+    assert!(
+        named,
+        "the gap is named, never silent: {:?}",
+        report.diagnostics(),
+    );
 }
 
 /// A canvas holding only a COMPONENT resolves to no paintable content:

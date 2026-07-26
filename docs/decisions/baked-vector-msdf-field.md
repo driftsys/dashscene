@@ -104,11 +104,14 @@ The as-built mechanism (schema, generator, weld, painter, bake oracle) is
 - **Lowering the hero's vectors unmasked a backdrop-blur node.** A `VECTOR`
   carrying `BACKGROUND_BLUR` was previously hidden behind the VECTOR skip; once
   vectors lower it triages to an Error verdict. Under `EmitPolicy::Partial`
-  only, a backdrop blur now joins the node's blockers and the node is skipped
+  only, a backdrop blur then joined the node's blockers and the node was skipped
   whole with a named warning — a per-construct follow-up the refusal decision
   pre-named, recorded in place in
-  `docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`. Strict
-  mode is unchanged; this is omission, not approximation.
+  `docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`. Story
+  #393 then made backdrop blur core vocabulary, so that node no longer skips —
+  it lowers and keeps its blur, and this remains the record of why it was
+  visible in the first place
+  (`docs/decisions/backdrop-blur-is-core-vocabulary.md`).
 - **The escalation ladder is oracle-only until #357.** Production trusts the
   fixed 48 px/em census result; a future real file with a shape that fails its
   bake band at 48 needs #357's wiring, otherwise it bakes low-fidelity rather

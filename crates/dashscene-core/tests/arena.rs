@@ -2307,3 +2307,121 @@ fn a_masks_paint_entry_carries_no_shadows() {
         "a mask draws nothing, so it casts no shadow"
     );
 }
+
+#[test]
+fn blurs_commit_onto_the_paint_entry_and_dedup() {
+    use dashscene_core::{Blur, BlurKind};
+
+    // Story #393: the arena's paint key folds the blur list in, so a blur is
+    // the only thing distinguishing the five nodes below — every one of them
+    // carries the identical fill. A key that ignored the blur would intern
+    // them all onto one pool entry, and the frosted panels would silently
+    // render as the plain one (or the plain one as frosted, whichever the
+    // walk reached first).
+    let backdrop = |radius| Blur {
+        kind: BlurKind::Backdrop,
+        radius,
+    };
+
+    let blurred = |txn: &mut dashscene_core::Txn<'_>, name: &str, blurs: Vec<Blur>| {
+        let node = txn.add_node(None, Some(name));
+        txn.set_prop(node, Prop::Width(10.0));
+        txn.set_prop(node, Prop::Height(10.0));
+        txn.set_prop(node, Prop::Fill(RED));
+        if !blurs.is_empty() {
+            txn.set_prop(node, Prop::Blurs(blurs));
+        }
+        node
+    };
+
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    blurred(&mut txn, "frosted-a", vec![backdrop(12.0)]);
+    blurred(&mut txn, "frosted-b", vec![backdrop(12.0)]);
+    blurred(&mut txn, "wider", vec![backdrop(24.0)]);
+    blurred(
+        &mut txn,
+        "layer",
+        vec![Blur {
+            kind: BlurKind::Layer,
+            radius: 12.0,
+        }],
+    );
+    blurred(&mut txn, "plain", Vec::new());
+    txn.commit();
+
+    let scene = arena.committed();
+    let paint = |i: usize| scene.rects()[i].paint;
+    assert_eq!(
+        paint(0),
+        paint(1),
+        "an identical fill + blur dedups to one entry"
+    );
+    assert_ne!(
+        paint(0),
+        paint(2),
+        "a different blur radius earns a distinct entry"
+    );
+    assert_ne!(
+        paint(0),
+        paint(3),
+        "a different blur kind earns a distinct entry"
+    );
+    assert_ne!(
+        paint(0),
+        paint(4),
+        "a frosted entry never collapses onto the plain entry with the same fill"
+    );
+    assert_eq!(scene.paints().len(), 4);
+
+    assert_eq!(scene.paints().resolve(paint(0)).blurs, vec![backdrop(12.0)]);
+    assert!(scene.paints().resolve(paint(4)).blurs.is_empty());
+}
+
+#[test]
+fn a_blur_and_a_shadow_section_do_not_alias_each_other_in_the_paint_key() {
+    use dashpaint::{Shadow, ShadowKind, Vec2};
+    use dashscene_core::{Blur, BlurKind};
+
+    // The paint key encodes both `blurs` and `shadows` as a count word
+    // followed by that many fixed-width element records, and the two sections
+    // sit next to each other. This pins that the framing stays unambiguous
+    // when one section is populated and the other is empty: a node carrying
+    // one blur and no shadow must not key the same as a node carrying one
+    // shadow and no blur.
+    let styled = |txn: &mut dashscene_core::Txn<'_>, name: &str, prop: Prop| {
+        let node = txn.add_node(None, Some(name));
+        txn.set_prop(node, Prop::Width(10.0));
+        txn.set_prop(node, Prop::Height(10.0));
+        txn.set_prop(node, Prop::Fill(RED));
+        txn.set_prop(node, prop);
+        node
+    };
+
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    styled(
+        &mut txn,
+        "blurred",
+        Prop::Blurs(vec![Blur {
+            kind: BlurKind::Backdrop,
+            radius: 4.0,
+        }]),
+    );
+    styled(
+        &mut txn,
+        "shadowed",
+        Prop::Shadows(vec![Shadow {
+            kind: ShadowKind::Drop,
+            offset: Vec2 { x: 0.0, y: 0.0 },
+            blur: 4.0,
+            spread: 0.0,
+            color: RED,
+        }]),
+    );
+    txn.commit();
+
+    let scene = arena.committed();
+    assert_ne!(scene.rects()[0].paint, scene.rects()[1].paint);
+    assert_eq!(scene.paints().len(), 2);
+}

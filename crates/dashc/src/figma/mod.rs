@@ -690,6 +690,15 @@ impl Walk<'_> {
             let (t, ts) = self.text_of(node, &mut blockers);
             text = t;
             text_style = ts;
+            // A TEXT node builds no `PaintEntry`, so it has nowhere to put a
+            // blur. Story #393 made backdrop blur lowered vocabulary, which
+            // removed the diagnostic it used to raise — so without this the
+            // blur would vanish with nothing reported, the silent drop P4
+            // forbids. Naming it keeps the gap visible until a text node can
+            // carry paint (no measured need has asked for one yet).
+            if !blurs_of(node).is_empty() {
+                blockers.push("a blur on a text node".to_string());
+            }
             // Outside auto-layout Figma sets no `layoutSizing*`, so
             // `textAutoResize` is the sizing source (a free-standing label
             // must hug, not fix-size from its resolved box).
@@ -1052,9 +1061,16 @@ impl Walk<'_> {
             // An ellipse is a parametric (rounded-box) shape, not a baked one.
             shape: None,
         };
-        // A circle with neither fill, stroke, nor shadow draws nothing — the
-        // corners alone shape no ink. An ellipse is a leaf, so it never clips.
-        if entry.fill.is_none() && entry.stroke.is_none() && entry.shadows.is_empty() {
+        // A circle with neither fill, stroke, shadow nor blur draws nothing —
+        // the corners alone shape no ink. A backdrop blur counts as ink even
+        // with no fill of its own: it changes the pixels beneath it, which is
+        // the whole point of the effect.
+        // An ellipse is a leaf, so it never clips.
+        if entry.fill.is_none()
+            && entry.stroke.is_none()
+            && entry.shadows.is_empty()
+            && entry.blurs.is_empty()
+        {
             return Ok(None);
         }
         Ok(Some(DocPaint {
@@ -1180,11 +1196,16 @@ impl Walk<'_> {
             stroke: None,
             corners: CornerRadii::default(),
             shadows: Vec::new(),
-            // A baked vector carries no blur, for the same reason it carries
-            // no shadow: this entry is the baked field's own fill, and no
-            // measured need has put an effect on one. Story #393 left that
-            // as it found it rather than widening a path it does not use.
-            blurs: Vec::new(),
+            // A baked vector DOES carry its blur. The hero's frosted panel is
+            // exactly this shape — a VECTOR with BACKGROUND_BLUR radius 100 —
+            // and `docs/decisions/baked-vector-msdf-field.md` records that
+            // lowering the hero's vectors is what unmasked it. Dropping it here
+            // would silently lose the one node story #393 exists to fix.
+            //
+            // Shadows are a different case and stay empty: no measured need has
+            // put one on a baked vector, and a silent drop there is pre-existing
+            // debt rather than something this story introduced.
+            blurs: blurs_of(node),
             // The resolved `VectorField` is a runtime form; the `.dsb` carries
             // the shape index, on `DocPaint::shape_field` below.
             shape: None,

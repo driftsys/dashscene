@@ -692,6 +692,27 @@ fn check_paint_entry(report: &mut Report, paint: &Paint<'_>, at: &Location, size
         ));
     }
 
+    // v0.11 blurs (story #393): the kind is range-checked like every other
+    // append-only enum, and the radius has the same pinned numeric domain as a
+    // shadow's blur. The enum check is load-bearing beyond tidiness — the
+    // generated binding is a newtype over `u8` whose verifier does no range
+    // check, so without this an out-of-range kind would reach
+    // `dashscene-core`'s `blur_kind` and be refused there by `unreachable!`
+    // instead of being reported here (P4: a named diagnostic at the gate).
+    for (i, blur) in paint.blurs().unwrap_or_default().iter().enumerate() {
+        check_enum!(report, at, "Blur.kind", blur.kind());
+        let radius = blur.radius();
+        if !radius.is_finite() || radius < 0.0 {
+            report.push(error(
+                rule::BLUR_INVALID_RADIUS,
+                at,
+                format!(
+                    "blur {i} has radius {radius}; a blur radius must be finite and non-negative"
+                ),
+            ));
+        }
+    }
+
     // v0.8 shadows (story #45): the kind is an append-only enum, range-checked
     // like the layout enums, and the offset/blur/spread/color have a pinned
     // numeric domain like corners and stroke width.

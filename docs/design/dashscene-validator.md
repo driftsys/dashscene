@@ -101,17 +101,21 @@ Boundary B has none, so a scene node diagnostic renders as `#3`.
 ## Profiles
 
 `Profile::Core` (lean/native painters) and `Profile::Full` (Unity-class).
-At v0.3 they diverge only at the import gate, on the two constructs
+They diverge only at the import gate, on the constructs
 `docs/specification/04-figma-vocabulary-profile.md` annotates
-`(profile:full)` — backdrop blur and advanced blend modes,
-which a `Core` target can never honor and so cannot degrade to anything.
+`(profile:full)`, which a `Core` target can never honor and so cannot degrade
+to anything. Backdrop blur was one until story #393 made it core vocabulary
+every painter honours
+(`docs/decisions/backdrop-blur-is-core-vocabulary.md`); the advanced blend
+mode is now the only one.
 
 `validate_document` takes no profile: every construct the schema can
 express is in the NOW band, so there is nothing to select — including the
 v0.8 shadow vocabulary (story #45), which is NOW-band and profile-neutral (a
 drop or inner shadow is not `(profile:full)`). It would regain a profile
-only if a `(profile:full)` effect such as layer or backdrop blur ever
-entered the schema.
+only if a `(profile:full)` effect such as layer blur ever entered the schema.
+Backdrop blur entered it at story #393 without doing so, because it entered as
+NOW-band vocabulary rather than as a profile-gated one.
 
 ## Waivers (strict mode)
 
@@ -205,9 +209,8 @@ authoring mistake N times and bury the rest of the report.
 LATER and REJECT bands, and nothing else —
 the NOW band is simply the schema.
 
-    LATER (warn)    LayerBlur, BackdropBlur*, AdvancedBlendMode*,
-                    CornerSmoothing, LuminanceMask, ClipOnRotated,
-                    KashidaJustification
+    LATER (warn)    LayerBlur, AdvancedBlendMode*, CornerSmoothing,
+                    LuminanceMask, ClipOnRotated, KashidaJustification
     REJECT (error)  NoiseOrTextureEffect, ProgressiveBlur,
                     AnimatedBooleanOp, AnimatedVariableFontAxis,
                     VariableWidthStroke (#145)

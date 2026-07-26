@@ -664,9 +664,17 @@ fn build_fixture() -> Vec<u8> {
             // are unchanged.
             extra_fills: None,
             // Story #393: the frozen fixture predates blur effects. Absent is
-            // the schema default, so flatc omits the field and the committed
-            // bytes are unchanged — this test is the R7 evidence that adding
-            // the blur channel rewrote no existing document.
+            // the schema default, so flatc omits the field and this
+            // reconstruction still matches the committed bytes.
+            //
+            // Note what this suite does and does not prove. It decodes the
+            // committed fixture, so it pins decode-compatibility: the frozen
+            // bytes still read back the right values through today's bindings.
+            // The byte-identity half of R7 is pinned elsewhere, by the golden
+            // `.dsb` emitters — `figma_lowering.rs`'s
+            // `the_fixture_emits_the_golden_dsb` and its siblings in
+            // `flex_lowering.rs` and `text_lowering.rs` — which recompile a
+            // fixture with the current emitter and compare bytes.
             blurs: None,
         },
     );
