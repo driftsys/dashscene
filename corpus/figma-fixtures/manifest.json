@@ -34,7 +34,9 @@
       "covers": "REJECT-list constructs: noise, texture, progressive blur",
       "emits": false,
       "note": "DIAGNOSTIC fixture (corpus/figma-fixtures/README.md): under R6 emits no .dsb; the test asserts the diagnostic report names each construct as an error. Variable-width stroke (4th REJECT construct) pending manual application — no plugin API.",
-      "pendingManual": ["variable-width-stroke"]
+      "pendingManual": [
+        "variable-width-stroke"
+      ]
     },
     {
       "name": "lowering-wrap",
@@ -136,6 +138,13 @@
       "covers": "one INNER_SHADOW on a rounded card for the E7 render oracle (frame v08-inner-shadow, blur-falloff band): offset 0, blur 6, spread 0, black alpha 0.55",
       "emits": true,
       "note": "Awaiting authoring: run the fixture-author plugin's inner-shadow command in a blank Figma file named inner-shadow, paste the file key here, run `just deno-capture`. Same clean-lowering path and sigma = blur/2 pinning as drop-shadow (#304)."
+    },
+    {
+      "name": "backdrop-blur",
+      "fileKey": "dFD9yAtbAwPPEGaaXLTouM",
+      "covers": "the BACKGROUND_BLUR construct for the v0.11 backdrop-blur story (docs/decisions/backdrop-blur-is-core-vocabulary.md): a 200x90 frosted panel (corner radius 16, white at 0.2 alpha, BACKGROUND_BLUR radius 16) over three hard-edged vertical bands and a circle, in a fixed 320x180 frame",
+      "emits": false,
+      "note": "Authored with the fixture-author plugin's backdrop-blur command; fully scripted, so the file carries no _manual-checklist annotation (debt #382). emits is false TODAY and flips to true when the blur story lands: BackdropBlur is still Profile::Core => Error in the validator, so under EmitPolicy::Partial dashc omits the frosted panel whole and the emitted document is the bands and the circle without it. That is the correct P4 posture until the decision record's profile reversal is implemented. The fixture is captured now, ahead of the implementation, because it is the design input the story needs and the authored file exists now; its oracle frame is deliberately NOT wired yet, because a frame's tolerance band is classified by measured residual and nothing can be measured until the panel renders."
     },
     {
       "name": "import-image-fill",
