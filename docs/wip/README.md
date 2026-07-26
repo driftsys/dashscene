@@ -11,12 +11,12 @@ project's convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports six files
+## Why the WIP gate currently reports five files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-six and exits non-zero. All six are deliberate, accepted exceptions rather than
-ungardened debt, and they are recorded here so the gate's result is explained
-rather than merely tolerated.
+five and exits non-zero. All five are deliberate, accepted exceptions rather
+than ungardened debt, and they are recorded here so the gate's result is
+explained rather than merely tolerated.
 
 Three are forward-looking design captures for work that has not started. Every
 one says so in its own `status` line — "Nothing here is implemented". Gardening
@@ -37,22 +37,15 @@ rule models gardening as one atomic move because a capture spanning two slices i
 a case it does not name — the reading here is that the _implemented_ half is
 gardened, and the file leaves `docs/wip/` when its last half does.
 
-The remaining two are driver prompts: the brief a session is handed to carry out
-a named piece of work. Driver prompts are transient by construction — spent the
-moment their work lands — and the convention is to archive them verbatim rather
-than garden them into records, as the four now in `docs/archive/` were.
+The fifth is a driver prompt: the brief a session is handed to carry out a named
+piece of work. Driver prompts are transient by construction — spent the moment
+their work lands — and the convention is to archive them verbatim rather than
+garden them into records, as the five now in `docs/archive/` were.
 
 `2026-07-26-v012-open-and-triage-DRIVER-PROMPT.md` is **live**: it opens v0.12
 (#411 first, then epic #345's story breakdown), triages the v0.13 backlog
 together with the v0.9 and v0.10 strays, and carries the three-stream isolation
 protocol. It is archived when that work lands.
-
-`2026-07-26-story-393-b3-b4-DRIVER-PROMPT.md` is **spent**: story #393 is closed
-and both its PRs are merged. It is left here rather than archived because it
-belongs to a concurrent session that owns its own `docs/wip/` content, and moving
-another session's working memory out from under it is worse than leaving one file
-for it to archive. Named here so the gate's fifth file reads as a handover rather
-than as debt nobody noticed.
 
 | capture                                            | gardened when                                                                                                                                                 |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -67,5 +60,5 @@ Anything else tracked here is genuinely ungardened and should be gardened
 before its branch targets `main`. For reference, the working memory from the
 v0.11 fidelity track was gardened on completion — the font-weight design into
 four decision records plus the design records it touched, and its driver prompt
-archived verbatim — and epic #344's own driver prompt was archived the same way
-at this close.
+archived verbatim — and epic #344's and story #393's driver prompts were archived
+the same way at this close.
