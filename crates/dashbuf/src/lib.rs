@@ -33,3 +33,67 @@ pub const NO_TEXT_STYLE: u32 = u32::MAX;
 /// `Paint.shape_field`'s "parametric shape" sentinel (story B1): the paint
 /// entry carries the implicit rounded box, not a baked field.
 pub const NO_FIELD: u32 = u32::MAX;
+
+/// Opens a `.dsb` file: the envelope, the ui document, and its asset payloads.
+///
+/// The one call a reader needs, and the one that keeps the two halves of a
+/// document together. It runs every check the format promises, in the order the
+/// container decision prescribes — magic, version, bounds, the section table
+/// against the root hash, the ui section's own content hash — then the
+/// flatbuffers verifier over that section, and finally the **null binding**:
+/// each `AssetEntry`'s hash resolved to the blob section whose content hash
+/// equals it, verified.
+///
+/// The returned payloads are in entry order, one per entry, which is the shape
+/// `dashscene_core::load_document` takes. Nothing is copied: both the document
+/// and the payloads borrow `file`, so a memory mapping of it works unchanged.
+///
+/// The referential gate is still the caller's step, as it was before the
+/// envelope: `dashscene_validator::validate_document` runs after this and
+/// before loading.
+pub fn open(file: &[u8]) -> Result<(Document<'_>, Vec<&[u8]>), OpenError> {
+    let container = container::Container::parse(file)?;
+    let ui = container.ui_document()?;
+    let document = root_as_document(ui)?;
+
+    let payloads = document
+        .assets()
+        .unwrap_or_default()
+        .iter()
+        .map(|entry| container.blob_by_hash(entry.hash().bytes()))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok((document, payloads))
+}
+
+/// Why a `.dsb` file could not be opened.
+#[derive(Debug)]
+pub enum OpenError {
+    /// The envelope, the section table, or an asset's binding.
+    Container(container::ContainerError),
+    /// The ui section is not a structurally valid `Document`.
+    Document(flatbuffers::InvalidFlatbuffer),
+}
+
+impl From<container::ContainerError> for OpenError {
+    fn from(error: container::ContainerError) -> Self {
+        Self::Container(error)
+    }
+}
+
+impl From<flatbuffers::InvalidFlatbuffer> for OpenError {
+    fn from(error: flatbuffers::InvalidFlatbuffer) -> Self {
+        Self::Document(error)
+    }
+}
+
+impl std::fmt::Display for OpenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Container(error) => write!(f, "{error}"),
+            Self::Document(error) => write!(f, "the ui section is not a valid document: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for OpenError {}

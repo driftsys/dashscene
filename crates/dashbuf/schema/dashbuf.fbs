@@ -129,7 +129,9 @@ table Gradient {
 }
 
 table ImageFill {
-  // Index into Document.images.
+  // Index into Document.assets — the asset whose payload this fill draws.
+  // Named `image` since v0.3; the pool it indexes moved to the content-addressed
+  // asset table at v0.11 (story #107), the field id did not.
   image: uint32;
   scale_mode: ScaleMode;
   // Normalized image-space transform for ScaleMode::Crop (Figma's
@@ -167,11 +169,53 @@ table Stroke {
   color: Color (required);
 }
 
-// Embedded encoded image bytes — the simplest storage form; KTX2/Basis
-// packaging is v1 scope (docs/specification/03-target-hardware-rules.md).
+// Embedded encoded image bytes — the v0.3 storage form, retired at v0.11
+// (story #107). Kept only because `Document.images` is deprecated rather than
+// deleted and a deprecated field still needs its type to exist. Nothing writes
+// or reads one.
 table Image {
   format: ImageFormat;
   bytes: [ubyte];
+}
+
+// One asset's identity and the metadata a runtime needs before its payload
+// exists (docs/decisions/asset-model-content-addressed-blobs.md, story #107).
+// The bytes live outside this buffer, in a blob section of the file's envelope
+// (docs/design/dsb-container-format.md) — P1 applied to assets: the document
+// carries intent, never results.
+//
+// `hash` is the canonical payload's identity: BLAKE3-256 over the well-known
+// format's own bytes, with no dashscene framing. It is resolved to bytes
+// through a *binding*. v0.11 ships one profile, RAW, whose binding is the
+// identity map — find the blob section whose content hash equals this one — so
+// the resident payload is the canonical payload and the two readings coincide.
+// A later profile binds the same canonical hash to a derived payload through a
+// derivation manifest, and only the binding changes.
+//
+// Because the entry names a hash and never a section index, this table does not
+// depend on where a payload sits in the file. That is what makes the intended
+// "hot sections byte-identical across assemblies of one document" invariant
+// reachable; v0.11 ships one assembly, so it is intent, not a tested claim.
+//
+// `width`/`height` are the intrinsic pixel extent, read from the payload's own
+// header by dashc's image gate (docs/decisions/dashc-identifies-images-never-decodes.md).
+// They are here so layout and first paint never block on a payload, and the
+// load gate cross-checks them against the payload the entry names — the hot
+// entry and the blob are two places describing one asset, and that rule is what
+// keeps them from drifting apart.
+//
+// Three fields the asset-model record names are deliberately absent until they
+// have a producer and a consumer: `kind` (one variant today; it is added
+// with the packer's fields-never-lossy rule), a placeholder colour (computing
+// one needs pixel access dashc cannot have, and its consumer — placeholder
+// activation while a payload is not resident — is v1), and a flavor/locator bit
+// (every payload here is resident-raw, and the section table already says
+// where). All three are appends, which is the R7-cheap change.
+table AssetEntry {
+  hash: [ubyte] (required);
+  format: ImageFormat;
+  width: uint32;
+  height: uint32;
 }
 
 // A drop or inner shadow effect (v0.8, story #45,
@@ -634,7 +678,7 @@ table Binding {
 // samples median-of-3 to a coverage value and masks the ordinary fill by it,
 // so a gradient-filled vector composes day one (P2 composition holds).
 
-// A packed MSDF atlas sheet: one PNG in Document.images holding one or more
+// A packed MSDF atlas sheet: one PNG asset holding one or more
 // baked vector-shape fields. px_per_em is the field resolution (atlas texels
 // per shape em, the em being the shape's longer bounding-box side);
 // distance_range is the MSDF spread in atlas texels (msdfgen -pxrange). The
@@ -642,7 +686,7 @@ table Binding {
 // px_per_em — the glyph-atlas metric
 // (crates/dashscene-typeset/src/atlas/metrics.rs).
 table VectorAtlas {
-  image: uint32;            // index into Document.images (the atlas PNG)
+  image: uint32;            // index into Document.assets (the atlas PNG)
   px_per_em: float32;
   distance_range: float32;
 }
@@ -668,8 +712,14 @@ table Document {
   // Flattened DFS node tree: array order is DFS order, so array index
   // doubles as rect-table index (docs/design/dashbuf.md).
   nodes: [Node];
-  // Image assets referenced by ImageFill.image.
-  images: [Image];
+  // Retired at v0.11 (story #107) in favour of `assets` below: the document
+  // carries asset identity and metadata, never asset bytes
+  // (docs/decisions/asset-model-content-addressed-blobs.md). Deprecated
+  // rather than deleted, because deleting a field shifts the vtable slot of
+  // every field after it and breaks every `.dsb` already written — R7's whole
+  // subject. The slot stays reserved and unreadable; documents written before
+  // v0.11 still carry bytes here, and nothing reads them.
+  images: [Image] (deprecated);
   // The paint pool referenced by Node.paint_entry.
   paints: [Paint];
   // Interned string pool (docs/design/dashbuf.md) referenced by Node.text. Dedup is
@@ -688,6 +738,11 @@ table Document {
   // every pre-B1 document decodes unchanged (R7).
   vector_atlases: [VectorAtlas];
   vector_shapes: [VectorShape];
+  // Story #107: the content-addressed asset table, replacing the retired
+  // inline `images` pool above. Referenced by `ImageFill.image` and
+  // `VectorAtlas.image`. Appended at the tail, so every pre-v0.11 document
+  // decodes unchanged (R7).
+  assets: [AssetEntry];
 }
 
 root_type Document;

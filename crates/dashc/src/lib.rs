@@ -51,7 +51,7 @@ pub mod abi;
 pub mod figma;
 
 pub use document::{
-    AxisSizing, Binding, BindingChannel, BindingTransform, Box2D, CrossAxisAlign, Document,
+    Asset, AxisSizing, Binding, BindingChannel, BindingTransform, Box2D, CrossAxisAlign, Document,
     EdgeInsets, GridTrack, LayoutConstraints, LayoutContainer, LayoutMode, MainAxisAlign, Node,
     Paint, SignalDecl, TextAlign, TextAlignV, TextStyle,
 };
@@ -122,6 +122,30 @@ fn emit_and_validate(doc: &Document) -> (Vec<u8>, Report) {
         return (Vec::new(), custom_gate);
     }
 
+    // The same gate for an asset with no payload. Before story #107 the
+    // document carried image bytes, so the load gate could see an empty one and
+    // named it `asset.image-no-bytes`. The document now carries identity and
+    // metadata, so that gate cannot see bytes at all — and without this check an
+    // empty payload reaches the container writer, which refuses it, through an
+    // `expect`. A named diagnostic becoming a panic is exactly what P4 forbids,
+    // so the check moves here, where the bytes still are.
+    let asset_gate: Report = doc
+        .assets
+        .iter()
+        .enumerate()
+        .filter(|(_, asset)| asset.bytes.is_empty())
+        .map(|(i, _)| Diagnostic {
+            rule: dashscene_validator::rule::IMAGE_NO_BYTES,
+            severity: Severity::Error,
+            at: Location::ImageAsset(i as u32),
+            message: "asset carries no bytes; a painter cannot decode it, and the file format                       has no empty section"
+                .to_owned(),
+        })
+        .collect();
+    if asset_gate.has_errors() {
+        return (Vec::new(), asset_gate);
+    }
+
     let bytes = emit(doc);
 
     // The flatbuffer verifier runs over the emitter's own output. That is
@@ -155,12 +179,25 @@ fn emit_and_validate(doc: &Document) -> (Vec<u8>, Report) {
 /// the three is reachable with one non-empty structured section. A payload is
 /// non-empty here because a valid flatbuffer never is, and because both callers
 /// return early on an error report before reaching this.
-fn package(ui_section: &[u8]) -> Vec<u8> {
-    container::write(&[container::Section::structured(
+fn package(ui_section: &[u8], assets: &[document::Asset]) -> Vec<u8> {
+    let mut sections = Vec::with_capacity(1 + assets.len());
+    sections.push(container::Section::structured(
         container::FLAVOR_UI,
         ui_section,
-    )])
-    .expect("one non-empty structured section is always writable")
+    ));
+    // One blob per entry, in entry order. `Document::push_asset` already
+    // deduplicated by content hash, so entry order is blob order and no two
+    // blobs repeat a payload — the dedup happens once, where the index the
+    // document carries is minted, rather than a second time here.
+    for asset in assets {
+        sections.push(container::Section::blob(
+            container::FLAVOR_ASSET,
+            &asset.bytes,
+        ));
+    }
+    container::write(&sections).expect(
+        "the section set is writable: one structured section then blobs is the required order,          a valid flatbuffer is never empty, and an asset with no bytes cannot pass dashc's image          gate",
+    )
 }
 
 /// Emits a [`Document`] as `.dsb` bytes, or refuses with the diagnostics that
@@ -191,7 +228,7 @@ pub fn compile(doc: &Document) -> Result<Vec<u8>, Report> {
     if report.has_errors() {
         return Err(report);
     }
-    Ok(package(&bytes))
+    Ok(package(&bytes, &doc.assets))
 }
 
 /// Compiles Figma REST JSON to a `.dsb`.
@@ -262,5 +299,5 @@ pub fn compile_figma_with_bindings_and_policy(
     if report.has_errors() {
         return Err(CompileError::Diagnostics(report));
     }
-    Ok((package(&bytes), report))
+    Ok((package(&bytes, &doc.assets), report))
 }

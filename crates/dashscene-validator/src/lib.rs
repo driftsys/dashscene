@@ -155,14 +155,26 @@ pub mod rule {
     // loader resolves unchecked, so a dangling one is named here (the same
     // posture as `paint_entry`/`image`): a paint entry's shape field into the
     // vector-shape pool, a shape's atlas into the atlas pool, and an atlas's
-    // image into the image pool.
+    // image into the asset table.
     pub const SHAPE_FIELD_OUT_OF_RANGE: &str = "paint.shape-field-out-of-range";
     pub const VECTOR_SHAPE_ATLAS_OUT_OF_RANGE: &str = "vector.shape-atlas-out-of-range";
     pub const VECTOR_ATLAS_IMAGE_OUT_OF_RANGE: &str = "vector.atlas-image-out-of-range";
 
     // Image assets — the painter decodes them behind an `expect` documented
-    // as "validated upstream (P4)". This is that upstream.
+    // as "validated upstream (P4)". This is that upstream. `IMAGE_NO_BYTES`
+    // applies to a scene's `ImageTable`, which carries bytes; a document's
+    // `AssetEntry` carries identity and metadata instead, so it has its own
+    // two rules (story #107).
     pub const IMAGE_NO_BYTES: &str = "asset.image-no-bytes";
+    /// An `AssetEntry.hash` that is not a 32-byte BLAKE3 digest. The hash is
+    /// the asset's identity and the key the null binding resolves through, so a
+    /// wrong-length one names no payload at all.
+    pub const ASSET_HASH_LENGTH: &str = "asset.hash-wrong-length";
+    /// An `AssetEntry` whose intrinsic extent is zero on either axis. The
+    /// extent exists so layout and first paint can proceed before the payload
+    /// is resident; a zero one would resolve every dependent measurement to
+    /// zero rather than to the asset's real size.
+    pub const ASSET_ZERO_EXTENT: &str = "asset.zero-extent";
 
     // Paint gate — needs the solved box, so it exists only on a scene.
     pub const STROKE_EXCEEDS_BOX: &str = "paint.stroke.exceeds-box";
@@ -297,6 +309,8 @@ pub mod rule {
         STROKE_INVALID_WIDTH,
         IMAGE_OUT_OF_RANGE,
         IMAGE_NO_BYTES,
+        ASSET_HASH_LENGTH,
+        ASSET_ZERO_EXTENT,
         STROKE_EXCEEDS_BOX,
         CLIP_INDEX_OUT_OF_RANGE,
         RENDER_TARGET_BUDGET,
@@ -450,7 +464,8 @@ pub enum Location {
     /// An entry of the paint pool, by its index in `Document.paints` /
     /// `PaintTable`.
     PaintEntry(u32),
-    /// An image asset, by its index in `Document.images` / `ImageTable`.
+    /// An image asset, by its index in `Document.assets` (a document's
+    /// content-addressed entry, story #107) or in a scene's `ImageTable`.
     ImageAsset(u32),
     /// A variant set, by its index in `Document.variant_sets` — not a node,
     /// the same reasoning as `PaintEntry`/`ImageAsset` (issue #20).

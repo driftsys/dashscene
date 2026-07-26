@@ -11,7 +11,6 @@
 //! copy of the font/atlas resource loaders rather than moving them out of the
 //! live test file.
 
-use dashbuf::root_as_document;
 use dashpaint::{
     Atlas, AtlasGlyph, AtlasIndex, Color, GlyphQuad, GlyphRun, GlyphRunTable, ImageAsset,
     ImageFormat, Painter,
@@ -326,10 +325,11 @@ fn stage_text(arena: &Arena, ts: &mut Typesetter, atlases: &[AtlasIndex]) -> Vec
 /// it does not provide resolves by coverage and is reported to stderr as
 /// `text.family-substituted`.
 pub fn render_dsb(dsb: &[u8]) -> Vec<u8> {
-    let ui = dashbuf::container::ui_document(dsb).expect("a valid .dsb file");
-    let document = root_as_document(ui).expect("a valid .dsb document section");
+    // One call runs the envelope check, the flatbuffer verifier, and the null
+    // binding that resolves each asset entry's hash to its blob section.
+    let (document, payloads) = dashbuf::open(dsb).expect("a valid .dsb file");
     let mut arena = Arena::new();
-    load_document(&document, &mut arena);
+    load_document(&document, &payloads, &mut arena);
     // `load_document` commits with the fixed solver, which measures a text node
     // to zero; re-commit an empty transaction through a typesetter-backed solver
     // so a full solve runs the measure seam (the pattern the text goldens use).

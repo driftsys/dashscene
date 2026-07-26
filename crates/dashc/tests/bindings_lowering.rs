@@ -114,13 +114,11 @@ fn compile_and_load() -> (Arena, dashscene_validator::Report) {
     )
     .expect("the derived capture compiles");
 
-    let doc =
-        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
-            .expect("valid .dsb");
+    let (doc, payloads) = dashbuf::open(&bytes).expect("a valid .dsb file");
     let gate = dashscene_validator::validate_document(&doc);
     assert!(!gate.has_errors(), "the load gate passes:\n{gate}");
     let mut arena = Arena::new();
-    load_document(&doc, &mut arena);
+    load_document(&doc, &payloads, &mut arena);
     (arena, report)
 }
 
@@ -398,13 +396,11 @@ fn a_bound_fill_under_paint_opacity_keeps_its_literal_alpha() {
         &joined_rows(),
     )
     .expect("the derived capture compiles");
-    let doc =
-        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
-            .expect("valid .dsb");
+    let (doc, payloads) = dashbuf::open(&bytes).expect("a valid .dsb file");
     let gate = dashscene_validator::validate_document(&doc);
     assert!(!gate.has_errors(), "the load gate passes:\n{gate}");
     let mut arena = Arena::new();
-    load_document(&doc, &mut arena);
+    load_document(&doc, &payloads, &mut arena);
 
     // The chip is document node 2. Its FillA row captures the paint
     // opacity as a Scale transform over the raw variable alpha, so the
@@ -456,11 +452,9 @@ fn a_bound_node_opacity_lowers_to_the_opacity_channel() {
     let (bytes, _) =
         compile_figma_with_bindings(&derived_capture(), Profile::Core, &BTreeMap::new(), &rows)
             .expect("the derived capture compiles");
-    let doc =
-        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
-            .expect("valid .dsb");
+    let (doc, payloads) = dashbuf::open(&bytes).expect("a valid .dsb file");
     let mut arena = Arena::new();
-    load_document(&doc, &mut arena);
+    load_document(&doc, &payloads, &mut arena);
 
     let row = arena
         .bindings()

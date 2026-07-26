@@ -101,12 +101,10 @@ fn grid_basic_derived() -> String {
 fn solved_rects(json: &str) -> Vec<dashpaint::RectEntry> {
     let (bytes, _) = compile_figma(json, Profile::Core, &BTreeMap::new())
         .expect("the derived document compiles");
-    let document =
-        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
-            .expect("a valid buffer");
+    let (document, payloads) = dashbuf::open(&bytes).expect("a valid .dsb file");
 
     let mut arena = Arena::new();
-    load_document(&document, &mut arena);
+    load_document(&document, &payloads, &mut arena);
     // `load_document` commits with the fixed solver; the flex intent needs
     // the engine. An empty transaction re-committed through a fresh
     // `TaffySolver` performs a full first solve.
@@ -605,12 +603,9 @@ fn the_solved_flex_fixtures_render_through_the_skia_painter() {
     // driven one link further: solved rects in, pixels out.
     for json in [negative_gap_derived(), hug_in_fill_derived()] {
         let (bytes, _) = compile_figma(&json, Profile::Core, &BTreeMap::new()).expect("compiles");
-        let document = dashbuf::root_as_document(
-            dashbuf::container::ui_document(&bytes).expect("a .dsb file"),
-        )
-        .expect("a valid buffer");
+        let (document, payloads) = dashbuf::open(&bytes).expect("a valid .dsb file");
         let mut arena = Arena::new();
-        load_document(&document, &mut arena);
+        load_document(&document, &payloads, &mut arena);
         arena.open().commit_with(&mut TaffySolver::new());
 
         let scene = arena.committed();

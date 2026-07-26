@@ -21,7 +21,6 @@
 
 use std::collections::BTreeMap;
 
-use dashbuf::root_as_document;
 use dashc_wasm::compile_figma;
 use dashpaint::{AtlasIndex, GlyphQuad, GlyphRun, GlyphRunTable, Painter};
 use dashscene_core::{Arena, NodeId, load_document};
@@ -714,10 +713,9 @@ fn render_fixture(name: &str, fixture_json: &str) -> Vec<u8> {
         report.is_empty(),
         "frame {name} fixture lowers clean: {report}"
     );
-    let document = root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
-        .expect("a valid buffer");
+    let (document, payloads) = dashbuf::open(&bytes).expect("a valid .dsb file");
     let mut arena = Arena::new();
-    load_document(&document, &mut arena);
+    load_document(&document, &payloads, &mut arena);
     // `load_document` commits with the fixed solver, which measures a text node
     // to zero; re-commit an empty transaction through a typesetter-backed solver
     // so a full solve runs the measure seam (the pattern the text goldens use).

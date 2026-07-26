@@ -80,7 +80,7 @@ fn a_loaded_document_resolves_with_its_default_active_member() {
     let bytes = document_bytes(0);
     let doc = root_as_document(&bytes).expect("valid dashbuf document");
     let mut arena = Arena::new();
-    load_document(&doc, &mut arena);
+    load_document(&doc, &[], &mut arena);
 
     assert_eq!(
         arena.committed().rects()[1].w,
@@ -94,7 +94,7 @@ fn a_loaded_document_resolves_with_a_non_default_active_member() {
     let bytes = document_bytes(1);
     let doc = root_as_document(&bytes).expect("valid dashbuf document");
     let mut arena = Arena::new();
-    load_document(&doc, &mut arena);
+    load_document(&doc, &[], &mut arena);
 
     assert_eq!(
         arena.committed().rects()[1].w,
@@ -177,7 +177,7 @@ fn a_loaded_document_replays_a_variant_visible_override() {
 
     let doc = root_as_document(&bytes).expect("valid dashbuf document");
     let mut arena = Arena::new();
-    load_document(&doc, &mut arena);
+    load_document(&doc, &[], &mut arena);
 
     let root = arena.roots()[0];
     let child = arena.children(root)[0];
@@ -211,7 +211,7 @@ fn a_document_without_variant_sets_still_loads() {
 
     let doc = root_as_document(&bytes).expect("valid dashbuf document");
     let mut arena = Arena::new();
-    load_document(&doc, &mut arena);
+    load_document(&doc, &[], &mut arena);
 
     assert_eq!(arena.committed().rects().len(), 1);
     assert_eq!(arena.committed().rects()[0].w, 5.0);
@@ -264,7 +264,7 @@ fn a_loaded_document_replays_masks_and_opacity() {
 
     let doc = root_as_document(&bytes).expect("valid dashbuf document");
     let mut arena = Arena::new();
-    load_document(&doc, &mut arena);
+    load_document(&doc, &[], &mut arena);
 
     let roots = arena.roots();
     let group_id = roots[0];
@@ -341,7 +341,7 @@ fn a_loaded_document_replays_its_shadows() {
 
     let doc = root_as_document(&bytes).expect("valid dashbuf document");
     let mut arena = Arena::new();
-    load_document(&doc, &mut arena);
+    load_document(&doc, &[], &mut arena);
 
     let scene = arena.committed();
     let entry = scene.paints().resolve(scene.rects()[0].paint);
@@ -435,7 +435,7 @@ fn a_loaded_document_replays_its_stacked_fills() {
 
     let doc = root_as_document(&bytes).expect("valid dashbuf document");
     let mut arena = Arena::new();
-    load_document(&doc, &mut arena);
+    load_document(&doc, &[], &mut arena);
 
     let scene = arena.committed();
     let entry = scene.paints().resolve(scene.rects()[0].paint);
@@ -581,7 +581,7 @@ fn a_loaded_document_replays_its_binding_tables() {
     }
 
     let doc = root_as_document(&bytes).expect("valid document");
-    load_document(&doc, &mut arena);
+    load_document(&doc, &[], &mut arena);
 
     let signals = arena.signals();
     assert_eq!(signals.len(), 3);
@@ -683,7 +683,7 @@ fn a_loaded_document_replays_its_v08_layout_fields() {
 
     let doc = root_as_document(&bytes).expect("valid dashbuf document");
     let mut arena = Arena::new();
-    load_document(&doc, &mut arena);
+    load_document(&doc, &[], &mut arena);
 
     let root = arena.roots()[0];
     let container_layout = arena.layout(root);
@@ -757,7 +757,7 @@ fn the_text_style_metrics_and_alignment_reach_the_arena() {
 
     let document = root_as_document(&bytes).expect("verifies");
     let mut arena = Arena::new();
-    load_document(&document, &mut arena);
+    load_document(&document, &[], &mut arena);
 
     let root = arena.roots()[0];
     let s = arena.text_style(root).expect("the style reached the arena");
@@ -814,7 +814,7 @@ fn ligatures_off_reaches_the_arena() {
 
     let document = root_as_document(&bytes).expect("verifies");
     let mut arena = Arena::new();
-    load_document(&document, &mut arena);
+    load_document(&document, &[], &mut arena);
 
     let root = arena.roots()[0];
     let s = arena.text_style(root).expect("the style reached the arena");

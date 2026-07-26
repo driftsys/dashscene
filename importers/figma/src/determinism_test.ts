@@ -38,7 +38,7 @@
  * These are regression locks, not a reproduction of a known defect: the audit
  * for story #40 found the path deterministic by construction — the paint,
  * string, and text-style pools intern in first-use DFS order rather than by
- * hash-map iteration (`crates/dashc/src/emit.rs`), the image pool is populated
+ * hash-map iteration (`crates/dashc/src/emit.rs`), the asset table is populated
  * in first-use order (`crates/dashc/src/figma/mod.rs`), the closure sorts its
  * image refs and keeps document order, and the sidecar walks nodes in document
  * order. Each test below was confirmed to fail when nondeterminism is injected
@@ -124,7 +124,7 @@ const NO_PNG = new Uint8Array() as Uint8Array<ArrayBuffer>;
 
 Deno.test("the .dsb is byte-identical on a double run, and equals the golden (E6)", async () => {
   // End-to-end (importFigmaFile). v03-paint carries an image fill, so this
-  // exercises the image pool and resolve-images as well as trim, closure, and
+  // exercises the asset table and resolve-images as well as trim, closure, and
   // the codec. The committed golden is the independent anchor; the double run
   // is the per-call-nondeterminism guard.
   const file = Deno.readTextFileSync(new URL("v03-paint.json", CORPUS));

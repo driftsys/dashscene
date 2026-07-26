@@ -30,7 +30,6 @@
 
 use std::collections::BTreeMap;
 
-use dashbuf::root_as_document;
 use dashc_wasm::compile_figma;
 use dashlang::{AxisSizing, Color, CrossAxisAlign, LayoutMode, MainAxisAlign, node, scene};
 use dashpaint::{GlyphRunTable, Painter};
@@ -175,10 +174,9 @@ fn figma_arena() -> Arena {
     // no diagnostic blocks or accompanies the emission.
     assert!(report.is_empty(), "the Figma side lowers clean: {report}");
 
-    let document = root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
-        .expect("a valid buffer");
+    let (document, payloads) = dashbuf::open(&bytes).expect("a valid .dsb file");
     let mut arena = Arena::new();
-    load_document(&document, &mut arena);
+    load_document(&document, &payloads, &mut arena);
     // `load_document` commits with the fixed solver; the flex intent needs the
     // engine. An empty transaction re-committed through a fresh `TaffySolver`
     // performs a full first solve (the pattern the flex-lowering tests use).

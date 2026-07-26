@@ -111,7 +111,14 @@ The fixed stride gives O(1) indexed access, and the signed byte range is
 `header_size + section_count * section_stride` by construction.
 
 Flavors defined in version 1: for a structured section, `1` is the ui document;
-for a blob, `1` is an asset payload. Flavor is an **enumerated role**, compared
+for a blob, `1` is an asset payload.
+
+An asset payload is found by **content hash**, not by section index: the ui
+document's `AssetEntry` carries a BLAKE3-256 hash, and the null binding resolves
+it to the blob section whose recorded content hash equals it
+(`Container::blob_by_hash`, and `dashbuf::open` for the whole file at once).
+That is why the section table can be reordered or re-assembled without touching
+the ui section — the document names payloads, never places. Flavor is an **enumerated role**, compared
 for equality — a section has exactly one role, and two roles would need two
 entries, not two bits. The decision's Refinements section calls the field
 "flavor flags"; this narrows it, and the decision records that.
@@ -236,5 +243,5 @@ deliberate, reviewed version bump.
     Related decisions:  docs/decisions/dsb-format-and-one-schema.md,
                         docs/decisions/dsb-frozen-fixture-r7-guard.md,
                         docs/decisions/remoting-two-transports.md
-    Enabled:            story #401 (the .dsb file became an envelope, done)
-    Blocks:             story #107 (asset payloads become blob sections)
+    Enabled:            story #401 (the .dsb file became an envelope, done),
+                        story #107 (asset payloads are blob sections, done)

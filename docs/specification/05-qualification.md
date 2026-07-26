@@ -344,9 +344,11 @@ deterministic clone with identical initial state, and comparing two clones canno
 stand in for two machines. Cross-machine byte-identity is instead the golden's
 job, pinned from two CI jobs (`goldens/dsb/README.md`). The determinism holds
 because each ordering the path depends on is pinned, not incidental: the paint,
-string, and text-style pools intern in first-use DFS order and the image pool is
-filled in first-use order rather than by hash-map iteration
-(`crates/dashc/src/emit.rs`, `crates/dashc/src/figma/mod.rs`); the closure sorts
+string, and text-style pools intern in first-use DFS order, and the asset table
+is filled in first-use order rather than by hash-map iteration — which since
+v0.11 also fixes blob-section order, since one blob is written per entry in entry
+order (`crates/dashc/src/emit.rs`, `crates/dashc/src/lib.rs`'s `package`,
+`crates/dashc/src/figma/mod.rs`); the closure sorts
 its image refs and keeps document order; the sidecar walks nodes in document
 order; and the receipt's refs come back sorted from a `BTreeSet`. The native
 emitter is locked in isolation by `crates/dashc/tests/figma_lowering.rs`

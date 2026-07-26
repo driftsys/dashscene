@@ -5,8 +5,8 @@
 //! and image assets are.
 
 use dashbuf::{
-    AtlasRect, Color, Document, DocumentArgs, Fill, Image, ImageArgs, ImageFormat, NO_FIELD, Node,
-    NodeArgs, Paint, PaintArgs, PlaneBounds, SolidFill, SolidFillArgs, VectorAtlas,
+    AssetEntry, AssetEntryArgs, AtlasRect, Color, Document, DocumentArgs, Fill, ImageFormat,
+    NO_FIELD, Node, NodeArgs, Paint, PaintArgs, PlaneBounds, SolidFill, SolidFillArgs, VectorAtlas,
     VectorAtlasArgs, VectorShape, VectorShapeArgs, root_as_document,
 };
 use flatbuffers::FlatBufferBuilder;
@@ -15,13 +15,15 @@ use flatbuffers::FlatBufferBuilder;
 fn vector_atlas_shape_and_shape_field_round_trip() {
     let mut builder = FlatBufferBuilder::new();
 
-    // A minimal image asset standing in for the packed atlas PNG.
-    let bytes = builder.create_vector(&[1u8, 2, 3, 4]);
-    let image = Image::create(
+    // A minimal asset-table entry standing in for the packed atlas PNG.
+    let hash = builder.create_vector(&[7u8; 32]);
+    let image = AssetEntry::create(
         &mut builder,
-        &ImageArgs {
+        &AssetEntryArgs {
+            hash: Some(hash),
             format: ImageFormat::Png,
-            bytes: Some(bytes),
+            width: 4,
+            height: 4,
         },
     );
 
@@ -73,7 +75,7 @@ fn vector_atlas_shape_and_shape_field_round_trip() {
     );
 
     let nodes = builder.create_vector(&[node]);
-    let images = builder.create_vector(&[image]);
+    let assets = builder.create_vector(&[image]);
     let paints = builder.create_vector(&[field_paint, plain_paint]);
     let vector_atlases = builder.create_vector(&[atlas]);
     let vector_shapes = builder.create_vector(&[shape]);
@@ -81,7 +83,7 @@ fn vector_atlas_shape_and_shape_field_round_trip() {
         &mut builder,
         &DocumentArgs {
             nodes: Some(nodes),
-            images: Some(images),
+            assets: Some(assets),
             paints: Some(paints),
             vector_atlases: Some(vector_atlases),
             vector_shapes: Some(vector_shapes),

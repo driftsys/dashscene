@@ -1,9 +1,10 @@
 # Assets are content-addressed raw blobs referenced from a hot AssetTable
 
-    status   accepted (design session, 2026-07-12) — supersedes the
-             v0.3 inline `Document.images` storage (migration named
-             below); payload delivery (cold sections, remote fetch)
-             lands v1+
+    status   accepted (design session, 2026-07-12); AS-BUILT 2026-07-26
+             (v0.11, story #107) — the v0.3 inline `Document.images`
+             storage is retired, `AssetTable` and resident blob sections
+             ship, and the two open points below are resolved. Remote
+             fetch still lands v1+.
     scope    crates/dashbuf schema, the .dsb blob sections, the future
              asset transport
 
@@ -91,13 +92,68 @@ so texture mip tiers can be separate blobs fetched by priority.
   container decision exists to move away from — bytes inside the ui
   buffer can never be evicted, page-aligned, or fetched lazily.
 
-## Migration from the as-built v0.3 state
+## As built (story #107, 2026-07-26)
 
-`Document.images` stays until the asset work lands, tracked like the
-legacy `Node.paint` field (see
-`document-paint-pool-and-legacy-paint-field.md` for the pattern): the
-asset story introduces `AssetTable` + out-of-band payloads, moves
-`ImageFill.image` to an `AssetTable` index, and retires
-`Document.images` in a coordinated cleanup. Until then, v0 documents
-carry image bytes inline and are correct — this record binds the
-direction, not the current bytes.
+`Document.assets: [AssetEntry]` ships; `ImageFill.image` and
+`VectorAtlas.image` index it; `Document.images` is **deprecated, not
+deleted**. Deleting a field shifts the vtable slot of every field
+declared after it, which breaks every `.dsb` already written — R7's
+whole subject. The slot stays reserved and unreadable, and `table Image`
+survives only because a deprecated field still needs its type to exist.
+
+One consequence worth recording: `crates/dashbuf/tests/fixtures/v0_5_document.dsb`
+can no longer be rebuilt from its own writer, because that writer can no
+longer address the pool it wrote. The fixture's job is to be old bytes,
+so being unable to regenerate it is the stronger state, not a loss. Its
+suite says so at the writer.
+
+### What an entry carries, and what it does not
+
+v0.11 writes the two fields that have both a producer and a consumer:
+the content hash, and the intrinsic extent plus format that `dashc`'s
+image gate read from the payload's own header
+(`dashc-identifies-images-never-decodes.md`). Three fields this record
+names are deliberately absent until they have both:
+
+- **`kind`** — one variant today. It is added when the packer's
+  "distance fields never enter a lossy path" rule keys on it (v0.12).
+- **A placeholder colour** — computing one needs pixel access `dashc`
+  cannot have and will not get; Figma's REST supplies none, so the
+  importer cannot either; a neutral grey invented at compile time is a
+  _result_ the document did not intend, which P1 forbids; and packer
+  back-fill would mutate hot data after compile. Its consumer —
+  placeholder activation while a payload is not resident — is v1, and in
+  v0.11 every payload is resident before first paint. So the field lands
+  with its consumer, producer-supplied.
+- **The flavor/locator bit** — every payload here is resident-raw, and
+  the section table already says where. The bit becomes representable
+  when external payloads or compressed banks exist.
+
+All three are appends, which is the R7-cheap change. Adding them now
+would put fields in the format that no producer writes and no consumer
+reads.
+
+### Hash semantics — the open point, resolved
+
+The hash is the **canonical payload's** identity: BLAKE3-256 over the
+well-known format's own bytes, with no dashscene framing. It resolves to
+bytes **through a binding**. v0.11 ships one profile, RAW, whose binding
+is the identity map — find the blob section whose content hash equals the
+entry's — so the resident payload _is_ the canonical payload and the
+tier-neutral and payload-hash readings coincide. A later profile binds
+the same canonical hash to a derived payload through the derivation
+manifest, and only the binding changes.
+
+Because an entry names a hash and never a section index, the ui section
+does not depend on where a payload sits in the file. That is what makes
+the "hot sections byte-identical across assemblies of one document"
+invariant reachable. v0.11 ships one assembly, so it is recorded as
+intent, not claimed as tested.
+
+### What is not yet checked
+
+An entry's recorded format and extent are not cross-checked against the
+payload the entry names. They cannot disagree today — one code path
+writes both, from one `identify` call — and the check needs a header
+parser in a crate published before `dashc`. Debt #416 carries it, and
+the v0.12 packer is the second writer that makes it matter.

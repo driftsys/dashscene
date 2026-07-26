@@ -91,9 +91,14 @@ fn corners() -> dashpaint::CornerRadii {
 /// an image-filled child.
 fn v03_document() -> Document {
     let mut doc = Document::new();
-    let image = doc.push_image(ImageAsset {
+    // One asset, content-addressed: `push_asset` returns the index of an
+    // existing entry when the bytes repeat, so the index this returns is the
+    // asset table's, not a running counter (story #107).
+    let image = doc.push_asset(dashc_wasm::Asset {
         format: ImageFormat::Png,
         bytes: png_pixel(),
+        width: 1,
+        height: 1,
     });
 
     let frame = doc.push(Node {
@@ -264,11 +269,9 @@ fn v03_by_hand(arena: &mut Arena) {
 /// Compiles, loads, and returns the arena the document produced.
 fn load(doc: &Document) -> Arena {
     let bytes = compile(doc).expect("the v0.3 document validates");
-    let document =
-        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
-            .expect("valid buffer");
+    let (document, payloads) = dashbuf::open(&bytes).expect("a valid .dsb file");
     let mut arena = Arena::new();
-    load_document(&document, &mut arena);
+    load_document(&document, &payloads, &mut arena);
     arena
 }
 
@@ -535,9 +538,7 @@ fn emission_of_a_blurred_document_is_byte_reproducible_and_round_trips() {
 
     // The bytes carry the blurs, in order, rather than dropping them.
     let bytes = compile(&doc()).expect("validates");
-    let document =
-        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
-            .expect("valid buffer");
+    let (document, payloads) = dashbuf::open(&bytes).expect("a valid .dsb file");
     let paints = document.paints().expect("paint pool present");
     let blurs = paints.get(0).blurs().expect("blurs present");
     assert_eq!(blurs.len(), 2);
@@ -550,7 +551,7 @@ fn emission_of_a_blurred_document_is_byte_reproducible_and_round_trips() {
     // boundary B the same list, in the same order, with the backdrop blur
     // still declaring that the node samples what is beneath it.
     let mut arena = Arena::new();
-    load_document(&document, &mut arena);
+    load_document(&document, &payloads, &mut arena);
     let scene = arena.committed();
     let entry = scene.paints().resolve(scene.rects()[0].paint);
     assert_eq!(
@@ -701,11 +702,9 @@ fn image_indices_are_remapped_when_loading_into_a_non_empty_arena() {
     let mut arena = Arena::new();
 
     let bytes = compile(&v03_document()).expect("validates");
-    let document =
-        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
-            .expect("valid buffer");
-    load_document(&document, &mut arena);
-    load_document(&document, &mut arena);
+    let (document, payloads) = dashbuf::open(&bytes).expect("a valid .dsb file");
+    load_document(&document, &payloads, &mut arena);
+    load_document(&document, &payloads, &mut arena);
 
     let scene = arena.committed();
     assert_eq!(
@@ -852,11 +851,9 @@ fn flex_intent_round_trips_through_the_document() {
     });
 
     let bytes = compile(&doc).expect("validates");
-    let document =
-        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
-            .expect("valid buffer");
+    let (document, payloads) = dashbuf::open(&bytes).expect("a valid .dsb file");
     let mut arena = Arena::new();
-    load_document(&document, &mut arena);
+    load_document(&document, &payloads, &mut arena);
 
     let root = arena.roots()[0];
     let row_layout = arena.layout(root);

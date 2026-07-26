@@ -293,12 +293,10 @@ fn text_and_style_round_trip_through_dashscene_core() {
     let (bytes, report) =
         compile_figma(HUG_IN_FILL, Profile::Core, &BTreeMap::new()).expect("compiles");
     assert!(report.is_empty(), "{report}");
-    let document =
-        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
-            .expect("a valid buffer");
+    let (document, payloads) = dashbuf::open(&bytes).expect("a valid .dsb file");
 
     let mut arena = Arena::new();
-    load_document(&document, &mut arena);
+    load_document(&document, &payloads, &mut arena);
 
     // The one text node round-trips through the strings and text-style pools
     // into the arena's text accessors — the seam the measure callback reads.

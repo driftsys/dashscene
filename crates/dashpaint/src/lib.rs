@@ -187,7 +187,10 @@ pub struct ImageAsset {
     pub bytes: Vec<u8>,
 }
 
-/// The image-asset table (mirrors `dashbuf`'s `Document.images`):
+/// The image-asset table — the runtime side, carrying decoded-ready bytes.
+/// A document names its assets by content hash (`dashbuf`'s `Document.assets`)
+/// and the loader binds each to its payload; by the time a table reaches a
+/// painter the bytes are here:
 /// dense, indexed by [`PaintKind::Image`]'s `image` field. Part of the
 /// painter input since the v0.3 vocabulary
 /// (`docs/decisions/image-assets-cross-boundary-b.md`).

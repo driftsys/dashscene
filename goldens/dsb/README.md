@@ -12,9 +12,9 @@ byte-reproducible for a given input (R7), so there is no tolerance to allow.
 Since v0.11 (story #401) a `.dsb` is a sectioned container: a 64-byte header,
 then a table of 64-byte section entries, then the payloads
 (`docs/design/dsb-container-format.md`). A hex dump starts with the signature
-`89 44 53 42 0D 0A 1A 0A`, not with a flatbuffer root offset. Every golden here
-holds exactly one section — the ui document — because none of these fixtures
-has an asset payload yet.
+`89 44 53 42 0D 0A 1A 0A`, not with a flatbuffer root offset. Six of the seven hold exactly one
+section, the ui document. `v03-paint.dsb` holds two: the ui document and one
+asset blob, because it is the only fixture with an image fill.
 
 Reading one back means going through the envelope:
 `dashbuf::container::ui_document(&bytes)` returns the verified document
@@ -25,6 +25,21 @@ plus one section entry — and the document inside is byte-for-byte what the fil
 held before. That was checked per golden before the regeneration was committed;
 `docs/decisions/r7-survives-the-envelope-rebaseline.md` records the argument and
 the numbers.
+
+The asset table (v0.11, story #107) then moved exactly one of them.
+`v03-paint.dsb` is the only fixture with an image, so it is the only one whose ui
+section changed: it lost the 93-byte inline image pool and gained a 57-byte
+asset entry, a net 36 bytes smaller, and a 93-byte blob section appeared at the
+page-aligned hot/cold boundary. The other six are byte-identical, because a
+document with no assets has no boundary and writes no blob.
+
+That boundary is why `v03-paint.dsb` roughly doubled in size, from 2196 to 4189
+bytes: nearly all of the growth is the page alignment before the first cold
+byte. For a 2 KB document holding one 93-byte image, the padding dominates. For
+a real document it does not — the live hero is over 1 MB. The padding is what
+lets a load gate verify the hot region without faulting a cold page
+(`docs/design/dsb-container-format.md`), and it is a fixed cost per file, not
+per asset.
 
 ## v03-paint.dsb
 

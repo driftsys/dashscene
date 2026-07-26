@@ -16,13 +16,13 @@
 //! and emit a named diagnostic (P4/R6), never default silently."
 
 use dashbuf::{
-    Document, Fill, FillLayer, Image, NO_FIELD, NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE, Node,
-    Paint, VariantSet,
+    AssetEntry, Document, Fill, FillLayer, NO_FIELD, NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE,
+    Node, Paint, VariantSet,
 };
 
 use crate::paint::{
-    check_corners, check_gradient_stops, check_image_bytes, check_image_index, check_shadow,
-    check_stroke_width, error, warning,
+    check_corners, check_gradient_stops, check_image_index, check_shadow, check_stroke_width,
+    error, warning,
 };
 use crate::{Location, NodePath, Report, rule};
 
@@ -33,7 +33,7 @@ use crate::{Location, NodePath, Report, rule};
 struct PoolSizes {
     nodes: usize,
     paints: usize,
-    images: usize,
+    assets: usize,
     strings: usize,
     text_styles: usize,
     /// Story B1: the baked-vector pools, so a paint entry's `shape_field` and
@@ -92,14 +92,14 @@ pub fn validate_document(doc: &Document<'_>) -> Report {
 
     let nodes = doc.nodes().unwrap_or_default();
     let paints = doc.paints().unwrap_or_default();
-    let images = doc.images().unwrap_or_default();
+    let assets = doc.assets().unwrap_or_default();
     let vector_atlases = doc.vector_atlases().unwrap_or_default();
     let vector_shapes = doc.vector_shapes().unwrap_or_default();
 
     let sizes = PoolSizes {
         nodes: nodes.len(),
         paints: paints.len(),
-        images: images.len(),
+        assets: assets.len(),
         strings: doc.strings().unwrap_or_default().len(),
         text_styles: doc.text_styles().unwrap_or_default().len(),
         vector_shapes: vector_shapes.len(),
@@ -146,8 +146,8 @@ pub fn validate_document(doc: &Document<'_>) -> Report {
         check_paint_entry(&mut report, &paint, &Location::PaintEntry(i as u32), &sizes);
     }
 
-    for (i, image) in images.iter().enumerate() {
-        check_image_asset(&mut report, &image, &Location::ImageAsset(i as u32));
+    for (i, asset) in assets.iter().enumerate() {
+        check_asset_entry(&mut report, &asset, &Location::ImageAsset(i as u32));
     }
 
     // Story B1: the baked-vector index chain. A shape names its atlas and an
@@ -170,13 +170,13 @@ pub fn validate_document(doc: &Document<'_>) -> Report {
     }
     for (i, atlas) in vector_atlases.iter().enumerate() {
         let image = atlas.image();
-        if image as usize >= sizes.images {
+        if image as usize >= sizes.assets {
             report.push(error(
                 rule::VECTOR_ATLAS_IMAGE_OUT_OF_RANGE,
                 &Location::VectorAtlas(i as u32),
                 format!(
-                    "vector atlas references image {image}, but the image pool holds {} entries",
-                    sizes.images
+                    "vector atlas references asset {image}, but the asset table holds {} entries",
+                    sizes.assets
                 ),
             ));
         }
@@ -642,7 +642,7 @@ fn check_fill<'a>(
         && let Some(image_fill) = fill.fill_as_image_fill()
     {
         check_enum!(report, at, "ImageFill.scale_mode", image_fill.scale_mode());
-        check_image_index(report, at, image_fill.image(), sizes.images);
+        check_image_index(report, at, image_fill.image(), sizes.assets);
     }
 }
 
@@ -737,9 +737,39 @@ fn check_paint_entry(report: &mut Report, paint: &Paint<'_>, at: &Location, size
 /// The painter decodes an asset behind an `expect` documented as "validated
 /// upstream (P4)". Reading the asset table only for its length — which is
 /// all the index rules need — would leave that `expect` with no upstream.
-fn check_image_asset(report: &mut Report, image: &Image<'_>, at: &Location) {
-    check_enum!(report, at, "Image.format", image.format());
-    check_image_bytes(report, at, image.bytes().map_or(0, |bytes| bytes.len()));
+/// One `AssetEntry` (story #107): the identity and the metadata, since the
+/// payload is not in this buffer.
+///
+/// The bytes a document names live in a blob section, and this gate does not
+/// see the file — only the document. So what it can check is that the entry is
+/// self-consistent: a 32-byte hash to resolve through the binding, a format
+/// this build recognizes, and a non-zero extent for layout to use before the
+/// payload is resident. Whether the payload the hash names actually agrees with
+/// that recorded format and extent is a file-level cross-check, and it needs an
+/// image header parser this crate cannot reach — debt #416.
+fn check_asset_entry(report: &mut Report, asset: &AssetEntry<'_>, at: &Location) {
+    check_enum!(report, at, "AssetEntry.format", asset.format());
+
+    let hash_len = asset.hash().len();
+    if hash_len != 32 {
+        report.push(error(
+            rule::ASSET_HASH_LENGTH,
+            at,
+            format!("asset hash is {hash_len} bytes; a BLAKE3-256 digest is 32"),
+        ));
+    }
+
+    if asset.width() == 0 || asset.height() == 0 {
+        report.push(error(
+            rule::ASSET_ZERO_EXTENT,
+            at,
+            format!(
+                "asset records an intrinsic extent of {}x{}; layout before the payload is                  resident would resolve to nothing",
+                asset.width(),
+                asset.height()
+            ),
+        ));
+    }
 }
 
 /// One variant set (v0.4, issue #20): the active-member index, and every
