@@ -605,7 +605,7 @@ Delivers: the `.dsb` sectioned-container envelope
 deferred it to exactly this work), the content-addressed `AssetTable` (#107)
 replacing inline image bytes — existing documents remain the null-binding
 special case — and shared image identification in `dashc` for all producers
-(#339). Seeds the R5 loading-performance measurements.
+(#400). Seeds the R5 loading-performance measurements.
 
 Depends on: v0.10 (the widened image vocabulary it carries into sections).
 Design capture: `docs/wip/2026-07-19-asset-pipeline-profiles-and-baking.md`.

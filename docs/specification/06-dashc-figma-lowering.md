@@ -115,6 +115,19 @@ cross-alignment. Effects (shadows) are out of scope until their slice.
    `an_unresolved_image_ref_fails_loudly`,
    `two_nodes_sharing_an_image_ref_share_one_asset`)
 
+   **Supplied is not trusted.** Since v0.11 (story #400) `dashc` shall identify
+   every supplied image by its own signature and parse its header for the
+   intrinsic size, and shall never decode pixel data. Bytes matching no known
+   signature, a signature contradicting the caller's format tag, a malformed
+   header, and a header reporting a zero extent shall each be a named
+   error-severity diagnostic, in every emit policy. The caller's tag shall not
+   be taken as evidence of the bytes' format. See
+   `docs/decisions/dashc-identifies-images-never-decodes.md`.
+   (`a_png_reports_its_independently_confirmed_size`,
+   `fill_bytes_before_a_marker_do_not_change_the_result`,
+   `truncation_below_the_header_end_always_errors_never_panics`, and the
+   per-diagnostic cases in `crates/dashc/tests/image_id_gate.rs`)
+
 5. **Every paint property the vocabulary can carry shall be carried.** A paint
    `opacity` shall multiply the lowered alpha; an image fill's crop transform
    and tile scale shall lower. Dropping a property `dashpaint` can express

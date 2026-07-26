@@ -43,6 +43,7 @@
 
 mod document;
 mod emit;
+mod image_id;
 
 // Public because `tests/abi.rs` calls the exports directly: that native test is
 // what pins the wire format, so the module cannot be private.
