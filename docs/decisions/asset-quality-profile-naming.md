@@ -18,7 +18,7 @@ both meanings makes a sentence like "the raw profile stores raw pixels"
 genuinely ambiguous: which "raw" is the profile and which is the pixel
 format. Earlier design iterations also used four other profile names —
 Lossless, Access, Master, Eco — which are no longer part of the vocabulary
-and must not resurface from stale notes or muscle memory.
+and must not resurface from stale notes or habit.
 
 ## Choice
 
