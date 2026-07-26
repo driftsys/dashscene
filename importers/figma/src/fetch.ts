@@ -68,6 +68,28 @@ const AUTH_HINT = "the FIGMA_TOKEN PAT is expired (90-day cap, rotate at " +
   "~75 days), revoked, or missing a required scope (" + REQUIRED_SCOPES +
   ") — see docs/decisions/figma-access-plan-and-pat-policy.md";
 
+/**
+ * The `FIGMA_TOKEN` environment variable, or null when it is unset — after
+ * printing the shared "create a PAT" hint to stderr (issue #338: this hint
+ * was duplicated across four CLI entry points — render_oracle.ts, capture.ts,
+ * import_oracle_capture.ts, import.ts). Returned rather than exited so the
+ * check stays a plain, callable function; every CLI entry point calls
+ * `Deno.exit(1)` itself when this returns null.
+ */
+export function requireFigmaToken(): string | null {
+  const token = Deno.env.get("FIGMA_TOKEN");
+  if (!token) {
+    console.error(
+      "FIGMA_TOKEN is not set. Create a Figma PAT with the scopes " +
+        REQUIRED_SCOPES +
+        " (docs/decisions/figma-access-plan-and-pat-policy.md) and export it. " +
+        "Never commit it.",
+    );
+    return null;
+  }
+  return token;
+}
+
 function retryAfterSeconds(header: string | null): number {
   const seconds = Number(header);
   return Number.isFinite(seconds) && seconds > 0

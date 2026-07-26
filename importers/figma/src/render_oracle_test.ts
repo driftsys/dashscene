@@ -11,6 +11,7 @@
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
 
+import { parseManifest } from "./capture.ts";
 import { createFigmaClient } from "./fetch.ts";
 import {
   captureDesignSources,
@@ -59,8 +60,21 @@ function scripted(
   };
 }
 
-/** A one- or two-frame manifest; each frame defaults to unauthored (null keys). */
-function manifestWith(frames: Partial<OracleFrame>[]): OracleManifest {
+/**
+ * A one- or two-frame manifest; each frame defaults to unauthored (no
+ * figmaNodeId). The Figma file key for a frame is test-only — carried
+ * alongside the spec, not on `OracleFrame` itself — because production reads
+ * it by joining the frame's fixture name against
+ * corpus/figma-fixtures/manifest.json (issue #338), never from a field on the
+ * frame; `fixtureFileKeysFrom` recovers it for `captureDesignSources`'
+ * `fixtureFileKeys` option.
+ */
+interface FrameSpec extends Partial<OracleFrame> {
+  /** Test-only: this frame's fixture's Figma file key. Omitted leaves the fixture unauthored. */
+  readonly figmaFileKey?: string;
+}
+
+function manifestWith(frames: FrameSpec[]): OracleManifest {
   return {
     description: "test oracle manifest",
     design_source_base: "oracle/design-source",
@@ -70,7 +84,6 @@ function manifestWith(frames: Partial<OracleFrame>[]): OracleManifest {
         frame: name,
         fixture: `corpus/figma-fixtures/${name}.json`,
         band: f.band ?? "aa-edge",
-        figmaFileKey: f.figmaFileKey ?? null,
         figmaNodeId: f.figmaNodeId ?? null,
         designSource: f.designSource ?? null,
         status: f.status ?? "pending-265",
@@ -79,40 +92,54 @@ function manifestWith(frames: Partial<OracleFrame>[]): OracleManifest {
   };
 }
 
+/** The fixture-name -> file-key join `captureDesignSources` expects, recovered from a `FrameSpec` list (test-only; see `FrameSpec`). */
+function fixtureFileKeysFrom(frames: FrameSpec[]): Map<string, string> {
+  const keys = new Map<string, string>();
+  frames.forEach((f, i) => {
+    if (f.figmaFileKey !== undefined) {
+      keys.set(f.frame ?? `frame-${i}`, f.figmaFileKey);
+    }
+  });
+  return keys;
+}
+
 /** Drives one capture run, collecting the frames whose PNG bytes were written. */
 async function run(
-  manifest: OracleManifest,
+  frames: FrameSpec[],
   routes: Record<string, () => Response>,
 ): Promise<{
+  manifest: OracleManifest;
   results: DesignSourceResult[];
   requested: string[];
   writes: { frame: string; bytes: Uint8Array }[];
 }> {
+  const manifest = manifestWith(frames);
   const requested: string[] = [];
   const fetchFn = scripted(routes, requested);
   const writes: { frame: string; bytes: Uint8Array }[] = [];
   const results = await captureDesignSources({
     manifest,
     client: createFigmaClient({ token: "test-token", fetchFn }),
+    fixtureFileKeys: fixtureFileKeysFrom(frames),
+    pendingTag: "pending #265",
     writePng: (frame, bytes) => {
       writes.push({ frame, bytes });
       return Promise.resolve();
     },
     fetchFn,
   });
-  return { results, requested, writes };
+  return { manifest, results, requested, writes };
 }
 
 Deno.test("an authored frame renders, downloads, writes the PNG, and flips status", async () => {
-  const manifest = manifestWith([
+  const { manifest, results, requested, writes } = await run([
     {
       frame: "v08-wrap",
       band: "aa-edge",
       figmaFileKey: KEY,
       figmaNodeId: NODE,
     },
-  ]);
-  const { results, requested, writes } = await run(manifest, {
+  ], {
     [RENDER_URL]: () =>
       Response.json({ err: null, images: { [NODE]: ASSET_URL } }),
     [ASSET_URL]: () => new Response(PNG),
@@ -140,9 +167,11 @@ Deno.test("an authored frame renders, downloads, writes the PNG, and flips statu
   );
 });
 
-Deno.test("a frame with null keys is skipped and stays pending-265", async () => {
-  const manifest = manifestWith([{ frame: "v08-wrap", band: "aa-edge" }]);
-  const { results, requested, writes } = await run(manifest, {});
+Deno.test("a frame with no authored file key or node id is skipped and stays pending-265", async () => {
+  const { manifest, results, requested, writes } = await run(
+    [{ frame: "v08-wrap", band: "aa-edge" }],
+    {},
+  );
 
   assertEquals(results[0].action, "skipped");
   assertEquals(requested.length, 0, "an unauthored frame makes no request");
@@ -152,10 +181,9 @@ Deno.test("a frame with null keys is skipped and stays pending-265", async () =>
 });
 
 Deno.test("a non-null err is a clear failure that writes nothing", async () => {
-  const manifest = manifestWith([
+  const { manifest, results, writes } = await run([
     { frame: "v08-wrap", figmaFileKey: KEY, figmaNodeId: NODE },
-  ]);
-  const { results, writes } = await run(manifest, {
+  ], {
     [RENDER_URL]: () =>
       Response.json({ err: "Invalid parameters", images: {} }),
   });
@@ -168,10 +196,9 @@ Deno.test("a non-null err is a clear failure that writes nothing", async () => {
 });
 
 Deno.test("a node absent from the render response is a failure", async () => {
-  const manifest = manifestWith([
+  const { manifest, results, writes } = await run([
     { frame: "v08-wrap", figmaFileKey: KEY, figmaNodeId: NODE },
-  ]);
-  const { results, writes } = await run(manifest, {
+  ], {
     [RENDER_URL]: () => Response.json({ err: null, images: {} }),
   });
 
@@ -182,10 +209,9 @@ Deno.test("a node absent from the render response is a failure", async () => {
 });
 
 Deno.test("a node rendered as null is a failure", async () => {
-  const manifest = manifestWith([
+  const { results, writes } = await run([
     { frame: "v08-wrap", figmaFileKey: KEY, figmaNodeId: NODE },
-  ]);
-  const { results, writes } = await run(manifest, {
+  ], {
     [RENDER_URL]: () => Response.json({ err: null, images: { [NODE]: null } }),
   });
 
@@ -194,10 +220,9 @@ Deno.test("a node rendered as null is a failure", async () => {
 });
 
 Deno.test("a non-200 from the render endpoint is a failure", async () => {
-  const manifest = manifestWith([
+  const { results, writes } = await run([
     { frame: "v08-wrap", figmaFileKey: KEY, figmaNodeId: NODE },
-  ]);
-  const { results, writes } = await run(manifest, {
+  ], {
     [RENDER_URL]: () => new Response("bad request", { status: 400 }),
   });
 
@@ -207,10 +232,9 @@ Deno.test("a non-200 from the render endpoint is a failure", async () => {
 });
 
 Deno.test("a failed download writes no partial file", async () => {
-  const manifest = manifestWith([
+  const { results, writes } = await run([
     { frame: "v08-wrap", figmaFileKey: KEY, figmaNodeId: NODE },
-  ]);
-  const { results, writes } = await run(manifest, {
+  ], {
     [RENDER_URL]: () =>
       Response.json({ err: null, images: { [NODE]: ASSET_URL } }),
     [ASSET_URL]: () => new Response("gone", { status: 403 }),
@@ -222,10 +246,9 @@ Deno.test("a failed download writes no partial file", async () => {
 });
 
 Deno.test("a non-PNG download is refused, never written", async () => {
-  const manifest = manifestWith([
+  const { results, writes } = await run([
     { frame: "v08-wrap", figmaFileKey: KEY, figmaNodeId: NODE },
-  ]);
-  const { results, writes } = await run(manifest, {
+  ], {
     [RENDER_URL]: () =>
       Response.json({ err: null, images: { [NODE]: ASSET_URL } }),
     // A JPEG's leading bytes — a valid image, but not the PNG the table carries.
@@ -243,12 +266,11 @@ Deno.test("one frame's failure does not stop the others", async () => {
     encodeURIComponent(OTHER_NODE)
   }&format=png&scale=1`;
   const OTHER_ASSET = "https://s3-alpha-sig.figma.com/img/other?signed=yes";
-  const manifest = manifestWith([
+  const { manifest, results, writes } = await run([
     { frame: "bad", figmaFileKey: KEY, figmaNodeId: NODE },
     { frame: "good", figmaFileKey: KEY, figmaNodeId: OTHER_NODE },
     { frame: "unauthored" },
-  ]);
-  const { results, writes } = await run(manifest, {
+  ], {
     [RENDER_URL]: () => Response.json({ err: "boom", images: {} }),
     [OTHER_RENDER]: () =>
       Response.json({ err: null, images: { [OTHER_NODE]: OTHER_ASSET } }),
@@ -268,7 +290,11 @@ Deno.test("parseOracleManifest returns the frames", () => {
   );
   assertEquals(manifest.frames.length, 1);
   assertEquals(manifest.frames[0].frame, "v08-wrap");
-  assertEquals(manifest.frames[0].figmaFileKey, null);
+  assertEquals(
+    manifest.frames[0].fixture,
+    "corpus/figma-fixtures/v08-wrap.json",
+  );
+  assertEquals(manifest.frames[0].figmaNodeId, null);
 });
 
 Deno.test("parseOracleManifest rejects a missing design_source_base", () => {
@@ -293,19 +319,33 @@ Deno.test("parseOracleManifest rejects an empty frames array", () => {
   );
 });
 
-Deno.test("parseOracleManifest rejects a non-string, non-null figmaFileKey", () => {
+Deno.test("parseOracleManifest rejects a frame with no fixture", () => {
   const bad = JSON.stringify({
     design_source_base: "oracle/design-source",
     frames: [{
       frame: "v08-wrap",
       band: "aa-edge",
-      figmaFileKey: 42,
       figmaNodeId: null,
       designSource: null,
       status: "pending-265",
     }],
   });
-  assertThrows(() => parseOracleManifest(bad), Error, "figmaFileKey");
+  assertThrows(() => parseOracleManifest(bad), Error, "fixture");
+});
+
+Deno.test("parseOracleManifest rejects a non-string, non-null figmaNodeId", () => {
+  const bad = JSON.stringify({
+    design_source_base: "oracle/design-source",
+    frames: [{
+      frame: "v08-wrap",
+      fixture: "corpus/figma-fixtures/v08-wrap.json",
+      band: "aa-edge",
+      figmaNodeId: 42,
+      designSource: null,
+      status: "pending-265",
+    }],
+  });
+  assertThrows(() => parseOracleManifest(bad), Error, "figmaNodeId");
 });
 
 Deno.test("parseOracleManifest rejects a frame with no status", () => {
@@ -313,8 +353,8 @@ Deno.test("parseOracleManifest rejects a frame with no status", () => {
     design_source_base: "oracle/design-source",
     frames: [{
       frame: "v08-wrap",
+      fixture: "corpus/figma-fixtures/v08-wrap.json",
       band: "aa-edge",
-      figmaFileKey: null,
       figmaNodeId: null,
       designSource: null,
     }],
@@ -336,12 +376,37 @@ Deno.test("the committed oracle manifest parses and carries the figma fields", a
   assert(manifest.frames.length > 0, "the committed manifest lists frames");
   for (const frame of manifest.frames) {
     assert(
-      "figmaFileKey" in frame,
-      `frame ${frame.frame} must carry a figmaFileKey field`,
+      "fixture" in frame,
+      `frame ${frame.frame} must carry a fixture field`,
     );
     assert(
       "figmaNodeId" in frame,
       `frame ${frame.frame} must carry a figmaNodeId field`,
+    );
+  }
+});
+
+const FIXTURES_MANIFEST = new URL(
+  "../../../corpus/figma-fixtures/manifest.json",
+  import.meta.url,
+);
+
+Deno.test("every committed oracle frame's fixture joins cleanly against corpus/figma-fixtures/manifest.json", async () => {
+  // The join issue #338 replaced the duplicated figmaFileKey field with:
+  // every frame's fixture must actually be listed there, or the capture tool
+  // would silently treat it as unauthored (pending) instead of a broken
+  // reference.
+  const manifest = parseOracleManifest(
+    await Deno.readTextFile(COMMITTED_MANIFEST),
+  );
+  const fixtures = parseManifest(await Deno.readTextFile(FIXTURES_MANIFEST));
+  const fixtureNames = new Set(fixtures.fixtures.map((f) => f.name));
+  for (const frame of manifest.frames) {
+    const base = frame.fixture.slice(frame.fixture.lastIndexOf("/") + 1);
+    const name = base.endsWith(".json") ? base.slice(0, -".json".length) : base;
+    assert(
+      fixtureNames.has(name),
+      `frame ${frame.frame} names fixture "${name}", which corpus/figma-fixtures/manifest.json does not list`,
     );
   }
 });

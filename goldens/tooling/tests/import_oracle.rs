@@ -26,39 +26,26 @@
 //! these frames measure.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use dashc_wasm::EmitPolicy;
 use dashc_wasm::compile_figma_with_bindings_and_policy;
 use dashpaint::{ImageAsset, ImageFormat};
 use dashscene_validator::Profile;
-use goldens::{oracle, render};
+use goldens::render;
 use serde_json::Value;
 
-/// The `goldens/` root — one level up from this crate (`goldens/tooling`).
-fn goldens_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
-}
+mod common;
+use common::manifest;
+use common::manifest::repo_root;
 
-/// The repository root — two levels up from this crate. A frame's `fixture`
-/// path is repo-relative (`corpus/figma-fixtures/<name>.json`), unlike the
-/// goldens-relative `designSource`.
-fn repo_root() -> PathBuf {
-    goldens_root().join("..")
-}
-
-fn load_manifest() -> Value {
-    let path = goldens_root().join("oracle/import-manifest.json");
-    let bytes = std::fs::read(&path)
-        .unwrap_or_else(|e| panic!("import-oracle manifest {} present: {e}", path.display()));
-    serde_json::from_slice(&bytes)
-        .unwrap_or_else(|e| panic!("import-oracle manifest {} parses: {e}", path.display()))
-}
-
-fn frames(manifest: &Value) -> &Vec<Value> {
-    manifest["frames"]
-        .as_array()
-        .expect("the manifest has a frames array")
+/// This oracle's manifest, walked through the shared harness (debt #338).
+fn manifest() -> manifest::OracleManifest {
+    manifest::OracleManifest::load(
+        "oracle/import-manifest.json",
+        "pending-332",
+        "IMPORT ORACLE (#332)",
+    )
 }
 
 /// The `.dsb` image-table format tag for a corpus image file's extension —
@@ -104,7 +91,9 @@ fn images_for(fixture: &Path) -> BTreeMap<String, ImageAsset> {
 }
 
 /// The Figma node id the frame's design source is an export of — the
-/// `figmaNodeId` the capture tool wrote beside `figmaFileKey`.
+/// `figmaNodeId` the capture tool wrote for it. The Figma file the node lives
+/// in is not repeated per frame: the capture tool joins the fixture's name
+/// against `corpus/figma-fixtures/manifest.json` for that (debt #338).
 ///
 /// Required on every frame that is **rendered**, because it is what
 /// [`scope_to_exported_node`] narrows the fixture to. It is not required of the
@@ -254,65 +243,9 @@ fn expected_warnings(frame: &Value) -> Vec<String> {
         .collect()
 }
 
-/// A frame's optional `excludeRegions`: rectangles whose pixels the diff drops
-/// from both the differing count and the total. Absent or empty means no
-/// exclusion. Each region is `{x, y, w, h}` in the render's pixel coordinates;
-/// a missing or non-integer component is a manifest error, not a silent skip.
-/// Mirrors the E7 oracle's own `render_oracle.rs` helper of the same name —
-/// duplicated rather than shared because the two tests are deliberately
-/// separate crates/files (E7 stays frozen).
-fn exclude_regions(frame: &Value) -> Vec<oracle::ExcludeRegion> {
-    let name = frame["frame"].as_str().unwrap_or("<unnamed>");
-    let Some(regions) = frame.get("excludeRegions") else {
-        return Vec::new();
-    };
-    let regions = regions
-        .as_array()
-        .unwrap_or_else(|| panic!("frame {name}'s excludeRegions must be an array"));
-    regions
-        .iter()
-        .map(|region| {
-            let component = |key: &str| {
-                region[key]
-                    .as_i64()
-                    .unwrap_or_else(|| panic!("frame {name}'s excludeRegion needs integer {key}"))
-                    as i32
-            };
-            oracle::ExcludeRegion {
-                x: component("x"),
-                y: component("y"),
-                w: component("w"),
-                h: component("h"),
-            }
-        })
-        .collect()
-}
-
 #[test]
 fn every_import_frame_names_a_known_band_and_any_declared_fixture_exists() {
-    let manifest = load_manifest();
-    let repo = repo_root();
-    assert!(!frames(&manifest).is_empty(), "the manifest lists frames");
-
-    for frame in frames(&manifest) {
-        let name = frame["frame"].as_str().expect("frame name");
-        let band = frame["band"].as_str().expect("band name");
-        let resolved = oracle::band_for(band).unwrap_or_else(|| {
-            panic!("frame {name} names band {band}, which is not one of the pinned rules")
-        });
-        assert_eq!(
-            resolved.rule, band,
-            "band_for({band}) must return the band whose rule matches the name"
-        );
-        if let Some(fixture) = frame["fixture"].as_str() {
-            let path = repo.join(fixture);
-            assert!(
-                path.exists(),
-                "frame {name}'s fixture {} is not committed",
-                path.display()
-            );
-        }
-    }
+    manifest().assert_bands_and_fixtures();
 }
 
 /// The #382 invariant: what the oracle compiles is the one node the design
@@ -325,10 +258,10 @@ fn every_import_frame_names_a_known_band_and_any_declared_fixture_exists() {
 /// fixture that gains or loses one is visible in the test log.
 #[test]
 fn scoping_leaves_exactly_the_exported_node_of_every_frame() {
-    let manifest = load_manifest();
+    let m = manifest();
     let repo = repo_root();
 
-    for frame in frames(&manifest) {
+    for frame in m.frames() {
         let name = frame["frame"].as_str().expect("frame name");
         // Only the frames that actually render: a `pending-332` frame has no
         // design source to be an export of, and no `figmaNodeId` yet.
@@ -396,41 +329,17 @@ fn scoping_refuses_a_node_the_fixture_does_not_carry() {
 
 #[test]
 fn every_import_frame_declares_a_captured_source_or_is_pending_332() {
-    // A frame with no committed design source must say so (status
-    // pending-332), and one that has a source must actually ship the file —
-    // the same accounting discipline as the E7 gate (G-11: nothing
-    // fabricated, nothing silently dropped).
-    let manifest = load_manifest();
-    let root = goldens_root();
+    // The same accounting discipline as the E7 gate (G-11: nothing fabricated,
+    // nothing silently dropped). This manifest spells its gate as a top-level
+    // `issue`, where the E7 one uses `gate.issue`, so the field check stays
+    // here while the per-frame accounting is shared.
+    let m = manifest();
     assert_eq!(
-        manifest["issue"].as_u64(),
+        m.value()["issue"].as_u64(),
         Some(332),
         "the manifest names issue #332"
     );
-
-    for frame in frames(&manifest) {
-        let name = frame["frame"].as_str().expect("frame name");
-        match frame["designSource"].as_str() {
-            None => assert_eq!(
-                frame["status"].as_str(),
-                Some("pending-332"),
-                "frame {name} has no design source, so it must be marked pending-332"
-            ),
-            Some(source) => {
-                let path = root.join(source);
-                assert!(
-                    path.exists(),
-                    "frame {name} declares design source {} but the file is not committed",
-                    path.display()
-                );
-                assert_eq!(
-                    frame["status"].as_str(),
-                    Some("captured"),
-                    "frame {name} has a design source, so its status must be captured"
-                );
-            }
-        }
-    }
+    m.assert_captured_or_pending();
 }
 
 /// The import-fidelity assertion itself: for every frame that has a committed
@@ -442,93 +351,14 @@ fn every_import_frame_declares_a_captured_source_or_is_pending_332() {
 /// runs in the ordinary `test` job.
 #[test]
 fn the_import_renders_match_their_design_source() {
-    let manifest = load_manifest();
-    let root = goldens_root();
     let repo = repo_root();
-
-    let mut measured_lines: Vec<String> = Vec::new();
-    let mut pending: Vec<String> = Vec::new();
-    let mut failures: Vec<String> = Vec::new();
-
-    for frame in frames(&manifest) {
-        let name = frame["frame"].as_str().expect("frame name").to_string();
-        let band_name = frame["band"].as_str().expect("band name");
-        let band = oracle::band_for(band_name)
-            .unwrap_or_else(|| panic!("frame {name} names unknown band {band_name}"));
-
-        match frame["designSource"].as_str() {
-            None => pending.push(name),
-            Some(source) => {
-                let source_bytes = std::fs::read(root.join(source))
-                    .unwrap_or_else(|e| panic!("frame {name} design source {source}: {e}"));
-                let fixture = frame["fixture"].as_str().unwrap_or_else(|| {
-                    panic!("frame {name} has a design source but names no fixture to render")
-                });
-                let warnings = expected_warnings(frame);
-                let node_id = figma_node_id(frame, &name);
-                let reference_bytes =
-                    render_import_fixture(&name, &repo.join(fixture), node_id, &warnings);
-
-                let exclude = exclude_regions(frame);
-                let d = oracle::diff_excluding(&reference_bytes, &source_bytes, band, &exclude)
-                    .unwrap_or_else(|e| panic!("frame {name}: {e}"));
-                let excluded_note = if exclude.is_empty() {
-                    String::new()
-                } else {
-                    format!(" [{} region(s) excluded]", exclude.len())
-                };
-                let line = format!(
-                    "{name}: {}/{} px differ ({:.3}%, max Δ {}) vs the {} band's {:.1}% budget{excluded_note}",
-                    d.differing,
-                    d.total,
-                    d.fraction() * 100.0,
-                    d.max_channel_delta,
-                    band.rule,
-                    band.differing_fraction * 100.0,
-                );
-                if !d.passes() {
-                    failures.push(line.clone());
-                }
-                measured_lines.push(line);
-            }
-        }
-    }
-
-    eprintln!(
-        "IMPORT ORACLE (#332): {} frame(s) measured against a Figma design source, {} pending{}",
-        measured_lines.len(),
-        pending.len(),
-        if pending.is_empty() {
-            String::new()
-        } else {
-            format!(" ({})", pending.join(", "))
-        }
-    );
-    for line in &measured_lines {
-        eprintln!("  {line}");
-    }
-
-    // The accounting, asserted: every frame is either measured against a real
-    // design source or explicitly pending — nothing silently dropped — and
-    // `pending` names exactly the frames whose `designSource` is null.
-    let expected_pending: Vec<String> = frames(&manifest)
-        .iter()
-        .filter(|frame| frame["designSource"].as_str().is_none())
-        .map(|frame| frame["frame"].as_str().expect("frame name").to_string())
-        .collect();
-    assert_eq!(
-        measured_lines.len() + pending.len(),
-        frames(&manifest).len(),
-        "every manifest frame must be measured or pending — none silently dropped"
-    );
-    assert_eq!(
-        pending, expected_pending,
-        "pending must be exactly the frames whose designSource is null"
-    );
-
-    assert!(
-        failures.is_empty(),
-        "import-fidelity failures:\n{}",
-        failures.join("\n")
-    );
+    manifest().measure(|frame| {
+        let name = frame["frame"].as_str().expect("frame name");
+        let fixture = frame["fixture"].as_str().unwrap_or_else(|| {
+            panic!("frame {name} has a design source but names no fixture to render")
+        });
+        let warnings = expected_warnings(frame);
+        let node_id = figma_node_id(frame, name);
+        render_import_fixture(name, &repo.join(fixture), node_id, &warnings)
+    });
 }

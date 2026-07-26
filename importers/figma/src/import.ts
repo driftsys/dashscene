@@ -50,7 +50,7 @@ import type { ExcludedNode } from "./closure.ts";
 import {
   createFigmaClient,
   type FigmaClient,
-  REQUIRED_SCOPES,
+  requireFigmaToken,
 } from "./fetch.ts";
 import { resolveImages } from "./images.ts";
 import {
@@ -561,16 +561,8 @@ export async function runImportCli(
 }
 
 if (import.meta.main) {
-  const token = Deno.env.get("FIGMA_TOKEN");
-  if (!token) {
-    console.error(
-      "FIGMA_TOKEN is not set. Create a Figma PAT with the scopes " +
-        REQUIRED_SCOPES +
-        " (docs/decisions/figma-access-plan-and-pat-policy.md) and export it. " +
-        "Never commit it.",
-    );
-    Deno.exit(1);
-  }
+  const token = requireFigmaToken();
+  if (!token) Deno.exit(1);
 
   Deno.exit(
     await runImportCli(Deno.args, {
