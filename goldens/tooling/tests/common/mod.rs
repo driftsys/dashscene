@@ -9,8 +9,13 @@
 //! without a dev-only crate, and `goldens/tooling/src/lib.rs` cannot host
 //! scene helpers without taking `dashscene-core`/`dashscene-skia` as real
 //! dependencies. This module fixes only the within-directory half.
+//!
+//! [`manifest`] is the second shared home: the design-source oracle harness
+//! both oracle binaries walk their manifests with (debt #338).
 
 #![allow(dead_code)]
+
+pub mod manifest;
 
 use dashpaint::{
     Atlas, AtlasGlyph, ClipIndex, ClipTable, Color, GlyphRunTable, ImageAsset, ImageFormat,
