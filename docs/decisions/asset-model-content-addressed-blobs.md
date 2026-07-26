@@ -147,8 +147,26 @@ manifest, and only the binding changes.
 Because an entry names a hash and never a section index, the ui section
 does not depend on where a payload sits in the file. That is what makes
 the "hot sections byte-identical across assemblies of one document"
-invariant reachable. v0.11 ships one assembly, so it is recorded as
-intent, not claimed as tested.
+invariant reachable.
+
+**Measured 2026-07-26 (v0.12, story #433).** v0.11 shipped one assembly,
+so the invariant could only be recorded as intent. Cold-bank assembly
+made a second one constructible, and `crates/dashbuf/tests/bank.rs`
+assembles one document under two banks: the structured sections come out
+byte-identical, the asset count fixes the section count so the ui section
+does not even change offset, and every byte that differs lies in the
+envelope or in the cold payloads. Assembly reads the asset entries out of
+the ui section it is about to write, which is what makes the invariant
+structural rather than incidental — nothing in the assembly path can
+write into a hot section. Byte layout and the refusals:
+`docs/design/dsb-container-format.md`, "Assembly".
+
+Half of the derived side is still story #434's. A payload bound to a hash
+that is not its own preimage assembles correctly today, but a reader
+cannot resolve it until the derivation manifest lands, so the second bank
+in that measurement is a stand-in rather than packer output. The property
+measured is where assembly puts bytes, which does not depend on where the
+payloads came from.
 
 ### The recorded format and extent are cross-checked
 

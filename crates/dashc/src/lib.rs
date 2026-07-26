@@ -62,7 +62,7 @@ pub use figma::CompileError;
 
 use std::collections::BTreeMap;
 
-use dashbuf::container;
+use dashbuf::bank;
 use dashpaint::ImageAsset;
 use dashscene_validator::{Diagnostic, Location, Profile, Report, Severity};
 
@@ -194,7 +194,7 @@ fn emit_and_validate(doc: &Document) -> (Vec<u8>, Report) {
     (bytes, report)
 }
 
-/// Wraps an emitted ui document in the `.dsb` file envelope.
+/// Assembles an emitted ui document and its assets into a `.dsb` file.
 ///
 /// This is the one place the compiler crosses from "a flatbuffer" to "a file"
 /// (`docs/design/dsb-container-format.md`). Everything above it — the emitter,
@@ -202,29 +202,27 @@ fn emit_and_validate(doc: &Document) -> (Vec<u8>, Report) {
 /// because that is what those things are about. Only the bytes that leave the
 /// compiler are a file.
 ///
-/// The `expect` cannot fire: the writer refuses an empty payload, a structured
-/// section after a blob, and more sections than a `u32` can count, and none of
-/// the three is reachable with one non-empty structured section. A payload is
-/// non-empty here because a valid flatbuffer never is, and because both callers
-/// return early on an error report before reaching this.
+/// `dashc` compiles the **RAW** profile, and only RAW: it is deterministic and
+/// lossless, and every lossy step belongs to the packer
+/// (`docs/decisions/asset-quality-profile-naming.md`). RAW is the null binding,
+/// so the bank below is the identity map over the canonical payloads and the
+/// file carries the imported bytes unchanged.
+///
+/// The `expect` cannot fire, on any of [`bank::AssembleError`]'s four arms:
+///
+/// - `Document` — `emit_and_validate` ran the flatbuffers verifier over these
+///   same bytes and both callers return early on an error report;
+/// - `Unbound` — the bank is built from the same `doc.assets` the emitter wrote
+///   one entry per, hashed the same way, so every entry hash is in it;
+/// - `UnusedPayloads` — `Document::push_asset` deduplicates by content hash, so
+///   `doc.assets` holds no repeated payload and every binding is named once;
+/// - `Write` — an empty payload is the only reachable arm, and `dashc`'s asset
+///   gate refuses one before this point, with a named diagnostic rather than a
+///   panic.
 fn package(ui_section: &[u8], assets: &[document::Asset]) -> Vec<u8> {
-    let mut sections = Vec::with_capacity(1 + assets.len());
-    sections.push(container::Section::structured(
-        container::FLAVOR_UI,
-        ui_section,
-    ));
-    // One blob per entry, in entry order. `Document::push_asset` already
-    // deduplicated by content hash, so entry order is blob order and no two
-    // blobs repeat a payload — the dedup happens once, where the index the
-    // document carries is minted, rather than a second time here.
-    for asset in assets {
-        sections.push(container::Section::blob(
-            container::FLAVOR_ASSET,
-            &asset.bytes,
-        ));
-    }
-    container::write(&sections).expect(
-        "the section set is writable: one structured section then blobs is the required order,          a valid flatbuffer is never empty, and an asset with no bytes cannot pass dashc's image          gate",
+    let cold = bank::ColdBank::raw(assets.iter().map(|asset| asset.bytes.as_slice()));
+    bank::assemble(ui_section, &cold).expect(
+        "the document and its RAW bank assemble: the ui section verified above, the bank is          the identity map over the same assets the emitter wrote entries for, and an asset with          no bytes cannot pass dashc's image gate",
     )
 }
 

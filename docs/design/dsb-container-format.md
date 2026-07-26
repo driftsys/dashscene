@@ -1,7 +1,8 @@
 # The .dsb container format
 
-    crate    crates/dashbuf (`src/container.rs`)
-    covers   v0.11 the sectioned envelope (story #399)
+    crate    crates/dashbuf (`src/container.rs`, `src/bank.rs`)
+    covers   v0.11 the sectioned envelope (story #399);
+             v0.12 cold-bank assembly (story #433)
     traces   docs/decisions/dsb-sectioned-container.md,
              docs/decisions/asset-model-content-addressed-blobs.md,
              docs/decisions/dsb-format-and-one-schema.md,
@@ -171,6 +172,76 @@ enforced it would freeze a heuristic the format leaves open. And it accepts
 bytes after the last payload, because that is where the reserved signature will
 live — rejecting them now would foreclose the field the header already carries.
 
+## Assembly — filling a container
+
+`crates/dashbuf/src/bank.rs` (`covers` v0.12 story #433). The container writer
+places bytes; assembly decides which bytes to place.
+
+An asset has one canonical payload and one canonical hash. A **quality
+profile** binds that hash to the bytes a file actually carries
+(`docs/decisions/asset-quality-profile-naming.md`). A **cold bank** is one
+profile's side of that binding for one document: the payloads, each keyed by
+the canonical hash it stands for. `bank::assemble` takes a ui section and a
+cold bank and produces the file — one structured section, then one blob
+section per asset entry, in entry order.
+
+**RAW is the null binding** — `ColdBank::raw` binds each payload to its own
+hash. The resident payload is the canonical payload, so a RAW assembly has
+nothing to derive and therefore nothing to move. That is what makes it
+checkable in a form no other profile allows: `goldens/tooling/tests/cold_bank_assembly.rs`
+takes each committed golden apart and reassembles it under a RAW bank, and
+requires the result to equal the file it came from byte for byte. A failure
+there is an assembly bug, never a golden to regenerate.
+
+### Assembly reads the document it is about to write
+
+`assemble` takes the ui section as bytes and reads the asset entries out of it,
+rather than accepting a payload list paired positionally by the caller. Two
+consequences follow, and both are the point:
+
+- **The ui section is an input to assembly and never an output.** Nothing in
+  the assembly path writes into a hot section, so a hot section cannot vary
+  with the bank. The alternative form makes the same guarantee only for as long
+  as a caller keeps the two lists in the same order.
+- **Resolution is by hash, not by index.** An `AssetEntry` names a content hash
+  and never a section index
+  (`docs/decisions/asset-model-content-addressed-blobs.md`), and assembly is the
+  writer-side use of that. `dashbuf::open` is the exact inverse: it resolves the
+  same entry hashes back to the same blob sections.
+
+Assembly refuses a bank that binds no payload to a hash an entry names — the
+file would otherwise fail at load with `NoBlobForHash` — and a bank holding
+payloads no entry names, which would become cold bytes nothing in the file
+could reach.
+
+Because `bank` parses the ui section, it is a separate module from `container`,
+which exists to validate an untrusted file before any parser is trusted and so
+cannot depend on one. Assembly is a writer running on bytes its caller just
+produced, so the constraint does not apply to it.
+
+### Hot sections do not vary with the bank
+
+The invariant `docs/decisions/asset-model-content-addressed-blobs.md` recorded
+as intent, now measured (`crates/dashbuf/tests/bank.rs`). Assemble one document
+under two banks and:
+
+- every structured section's payload bytes are identical;
+- the asset count fixes the section count, so the section table is the same
+  length and the ui section does not even change offset;
+- every byte that does differ lies in the envelope — the header's `root_hash`
+  and the section table — or in the cold payload bytes.
+
+The header's `root_hash` is part of what differs, because it covers the table
+and the table records where the cold bytes are. "Confined to the section table
+and the cold bytes" in the design capture means the envelope as a whole.
+
+v0.11 shipped one assembly, so this could only be stated. `ColdBank::derived`
+is what makes a second one constructible, and a second one is what turns the
+statement into a measurement. The derived side is only half-built until the
+packer lands: a payload bound to a hash that is not its own preimage assembles
+correctly but cannot yet be resolved by a reader, because resolving it needs
+the derivation manifest (story #434).
+
 ## Content hashes
 
 BLAKE3, 32 bytes, over the payload exactly as stored. The header's `root_hash`
@@ -210,7 +281,8 @@ changes it.
 
 ## Testing
 
-Two suites, for two different questions.
+Four suites, for four different questions. The first two are about the
+envelope, the last two about assembly.
 
 `crates/dashbuf/tests/container.rs` is behavioural: layout asserted by offset
 rather than by round trip, determinism, zero-filled padding, and one rejection
@@ -233,6 +305,21 @@ when it landed: the schema fixture stays the structured-section guard, and the
 envelope gets its own. Regenerate with `UPDATE_CONTAINER_FIXTURE=1`, only on a
 deliberate, reviewed version bump.
 
+`crates/dashbuf/tests/bank.rs` covers assembly on hand-built documents. Its
+documents carry **three** assets, not one, because the corpus's only
+asset-bearing golden has exactly one image and every index in a one-asset
+document is 0 — such a document cannot fail an ordering, resolution, or
+wrong-index bug. It is also where the two-assembly invariant is measured, which
+needs a second bank the corpus cannot supply.
+
+`goldens/tooling/tests/cold_bank_assembly.rs` covers assembly on the committed
+bytes: each golden taken apart and reassembled under a RAW bank, required to be
+byte-identical. It is the narrower test — it takes the committed ui section as
+given, so it says nothing about the compiler above it — and it is the one that
+cannot be compensated for by a matching change elsewhere in the pipeline. The
+two are complements: the hand-built suite has the coverage, the golden suite
+has the real bytes.
+
 ## Trace
 
     Satisfies:          R5 (loading performance — the shape it needs),
@@ -244,4 +331,5 @@ deliberate, reviewed version bump.
                         docs/decisions/dsb-frozen-fixture-r7-guard.md,
                         docs/decisions/remoting-two-transports.md
     Enabled:            story #401 (the .dsb file became an envelope, done),
-                        story #107 (asset payloads are blob sections, done)
+                        story #107 (asset payloads are blob sections, done),
+                        story #433 (cold-bank assembly, RAW, done)

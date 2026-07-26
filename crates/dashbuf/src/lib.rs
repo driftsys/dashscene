@@ -11,8 +11,11 @@
 //!
 //! Alongside the schema, [`container`] owns the `.dsb` file envelope — the
 //! sectioned container that carries one or more of these flatbuffers plus raw
-//! payload blobs in one file (`docs/design/dsb-container-format.md`).
+//! payload blobs in one file (`docs/design/dsb-container-format.md`), and
+//! [`bank`] owns the assembly that fills one: a document plus the cold bank of
+//! payloads one quality profile binds its assets to.
 
+pub mod bank;
 pub mod container;
 
 #[allow(clippy::all, dead_code)]
@@ -51,6 +54,9 @@ pub const NO_FIELD: u32 = u32::MAX;
 /// The referential gate is still the caller's step, as it was before the
 /// envelope: `dashscene_validator::validate_document` runs after this and
 /// before loading.
+///
+/// [`bank::assemble`] is the write-side inverse: it resolves the same entry
+/// hashes in the same order, in the other direction.
 pub fn open(file: &[u8]) -> Result<(Document<'_>, Vec<&[u8]>), OpenError> {
     let container = container::Container::parse(file)?;
     let ui = container.ui_document()?;
