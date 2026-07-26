@@ -1,9 +1,10 @@
 # Decision: backdrop blur is core vocabulary, and boundary B gains a backdrop contract
 
-    status   DRAFT — the profile reversal and the rejected bake path are the
-             repository owner's positions from the 2026-07-19 design
-             discussion; the contract shape below is proposed here and needs
-             the owner's approval before implementation (epic #344)
+    status   accepted (epic #344 — the repository owner's decision,
+             2026-07-26). The profile reversal and the rejected bake path are
+             the owner's positions from the 2026-07-19 design discussion; the
+             boundary-B contract and the render-time diagnostic were proposed
+             in this record and approved with it
     scope    crates/dashscene-validator (the verdict), crates/dashbuf (the
              first effect representation), crates/dashpaint (boundary B),
              crates/dashscene-skia (the first implementer), crates/dashc
@@ -169,15 +170,50 @@ falls back without saying so.
   envelope is structural, so building the envelope over an existing `Effect`
   costs less than re-targeting `Effect` onto a rebuilt container.
 
+## `LAYER_BLUR` does not ride along
+
+The design capture asked whether plain layer blur should be paired in, on the
+grounds that it is node-local, needs none of the contract change above, and
+might therefore be nearly free. It is node-local, and it does need none of the
+contract change. It is still deferred, for three reasons that only appear when
+the corpus is checked.
+
+- **It would buy no committed coverage.** The only `LAYER_BLUR` anywhere in the
+  corpus is `effects-2025.json` node `1:6 progressive-blur`, and it carries
+  `blurType: PROGRESSIVE`, which triages to `Construct::ProgressiveBlur` — a
+  different construct, and a rejected one. There is no plain layer-blur fixture
+  to measure against, so pairing it would add vocabulary with nothing asserting
+  it renders correctly.
+- **Nothing is asking for it.** Backdrop blur is being pulled forward because
+  the live hero measurement names it as the largest remaining identified
+  contributor. That same import run raises no layer-blur diagnostic at all.
+- **It is budgeted elsewhere.** `docs/specification/04-figma-vocabulary-profile.md`
+  classifies layer blur as LATER (warn), budgeted, with a designer-visible
+  workaround, and the validator records it as budgeted at v1. Pairing it here
+  would pull v1 scope into v0.11 on a convenience argument rather than on
+  evidence.
+
+What the cheapness argument does justify is narrower and is adopted: the effect
+representation this story adds must be shaped so that layer blur can join it
+later **without a second schema break**. The saving was never in doing both
+features at once; it is in not designing the effect slot twice.
+
 ## Open, and deliberately not settled here
 
 - **Which tolerance band the oracle frame lands in.** There is no
-  backdrop-blur fixture, no design source, and no band exercising it. The band
-  is classified by the **measured** residual, never by expectation — the rule
-  applied when `v08-baseline` was reclassified. It cannot be chosen before the
-  frame is captured and measured.
-- **Whether `LAYER_BLUR` rides along.** `Construct::LayerBlur` is node-local and
-  needs none of the contract change above, so it may be much cheaper and worth
-  pairing. A scoping call for whoever schedules the story.
+  backdrop-blur fixture in the corpus — zero occurrences of `BACKGROUND_BLUR`
+  — so there is no design source and no residual to classify by. The band is
+  chosen from the **measured** residual, never from expectation: that rule
+  exists because `v08-baseline` was predicted into one band and measured into
+  another. Settling it now would be guessing, and the guess would be recorded
+  as though it were a measurement.
+
+  This is the story's real blocker, and it is not a code blocker: it needs a
+  self-authored Figma fixture carrying a backdrop blur, and a capture. That is
+  authoring work the repository owner has to do.
 - **The exact spelling of `samples_backdrop`** in the schema and in the paint
-  table, which follows from the effect representation chosen.
+  table. This follows from the effect representation chosen, and belongs at the
+  implementation story's design gate with the code in front of the author,
+  rather than being fixed here where it would constrain the shape before the
+  shape is designed. The one constraint this record does place on it is the
+  extensibility requirement above.
