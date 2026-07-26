@@ -11,18 +11,23 @@ project's convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports four files
+## Why the WIP gate currently reports six files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-four and exits non-zero. All four are deliberate, accepted exceptions rather
-than ungardened debt, and they are recorded here so the gate's result is
-explained rather than merely tolerated.
+six and exits non-zero. All six are deliberate, accepted exceptions rather than
+ungardened debt, and they are recorded here so the gate's result is explained
+rather than merely tolerated.
 
-Each is a forward-looking design capture for work that has not started. Every
+Four are forward-looking design captures for work that has not started. Every
 one says so in its own `status` line — "Nothing here is implemented". Gardening
 runs **after** tests are green by definition, so there is no as-built code to
 reconcile any of them against; promoting one now would put a plan into
 `docs/design/` describing a system that does not exist.
+
+The other two are driver prompts: the brief a session is handed to carry out a
+named piece of work. They are transient by construction — spent the moment their
+work lands — and follow the convention of the three already in `docs/archive/`,
+which is to archive them verbatim rather than garden them into records.
 
 | capture                                            | gardened when                                                                                                                                                 |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
