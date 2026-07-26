@@ -1,0 +1,21 @@
+[package]
+name = "dashpack-astcenc-sys"
+version = "0.0.0"
+edition.workspace = true
+# The binding code and the build script are MIT, like the rest of the
+# workspace; the sources under `vendor/astcenc` are Arm's, under Apache-2.0.
+# See vendor/VENDOR.md.
+license = "MIT AND Apache-2.0"
+repository.workspace = true
+rust-version.workspace = true
+description = "Raw bindings to a vendored, version-pinned astcenc — the ASTC encoder and reference decoder dashpack links, with no external binary (story #430)."
+# A -sys crate declares the native library it provides, so cargo refuses a build
+# that would link two copies of it into one artifact.
+links = "dashpack_astcenc"
+build = "build.rs"
+
+[lib]
+name = "dashpack_astcenc_sys"
+
+[build-dependencies]
+cc = { workspace = true }
