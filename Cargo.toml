@@ -12,6 +12,7 @@ members = [
   "crates/dashlang",
   "crates/dashbuf",
   "crates/dashc",
+  "crates/dashpack",
   "crates/dashscene-unity",
   "crates/dashscene-web",
   "goldens/tooling",
@@ -30,8 +31,10 @@ rust-version = "1.88"
 # Publish order (see justfile `publish` recipe):
 #   dashbuf -> dashpaint -> dashscene-core -> dashscene-typeset ->
 #   dashcue -> dashscene-engine -> dashscene-validator -> dashscene-skia -> dashlang ->
-#   dashc -> dashscene-unity -> dashscene-web -> dashscene
+#   dashc -> dashpack -> dashscene-unity -> dashscene-web -> dashscene
 # dashcue precedes dashscene-engine: the engine's FLIP (story #22) consumes it.
+# dashpack follows dashc: it will compile against dashbuf's asset and manifest
+# schemas, and nothing in the workspace depends on it (epic #345).
 [workspace.dependencies]
 dashscene = { path = "crates/dashscene", version = "0.0.0" }
 dashscene-core = { path = "crates/dashscene-core", version = "0.0.0" }
@@ -44,6 +47,7 @@ dashcue = { path = "crates/dashcue", version = "0.0.0" }
 dashlang = { path = "crates/dashlang", version = "0.0.0" }
 dashbuf = { path = "crates/dashbuf", version = "0.0.0" }
 dashc = { path = "crates/dashc", version = "0.0.0" }
+dashpack = { path = "crates/dashpack", version = "0.0.0" }
 dashscene-unity = { path = "crates/dashscene-unity", version = "0.0.0" }
 dashscene-web = { path = "crates/dashscene-web", version = "0.0.0" }
 

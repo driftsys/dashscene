@@ -36,7 +36,7 @@ intentionally undecided until that point
 
 ## Crates
 
-13 crates in one Cargo workspace (`resolver = "3"`, `edition = "2024"`,
+14 crates in one Cargo workspace (`resolver = "3"`, `edition = "2024"`,
 `license = "MIT"`). Full role-by-role mapping: `docs/decisions/crate-name-map.md`.
 
     dashscene            umbrella / facade
@@ -55,6 +55,9 @@ intentionally undecided until that point
     dashbuf                flatbuffer schema — the .dsb document format
     dashc                  compiler CLI; also builds to wasm32-unknown-unknown
                           for the Deno importer
+    dashpack               asset packer — canonical payloads to per-profile
+                          derivations (RAW/HiFi/Lite), cold-bank assembly,
+                          derivation manifest; lands across slice v0.12
     dashscene-unity        Rust-side FFI bindings only — the Unity/C# project
                           itself is a separate, not-yet-created repo
     dashscene-web          wasm/tiny-skia painter — parked

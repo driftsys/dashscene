@@ -1,0 +1,17 @@
+[package]
+name = "dashpack"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Asset packer: encodes canonical payloads into per-profile derivations, assembles cold banks, and records every choice in the derivation manifest (docs/design/architecture.md, epic #345)."
+
+[lib]
+name = "dashpack"
+
+[[bin]]
+name = "dashpack"
+path = "src/main.rs"
+
+[dependencies]

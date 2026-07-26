@@ -58,6 +58,45 @@ v0 painter), and the shared validator (profiles/diagnostics/waivers).
 Names chosen and confirmed available on crates.io: `dashscene-typeset`,
 `dashscene-skia`, `dashscene-validator`.
 
+## `dashpack`, added at the v0.12 open (story #429, 2026-07-26)
+
+    dashpack             asset packer — encodes canonical payloads into
+                         per-profile derivations (RAW/HiFi/Lite), assembles
+                         cold banks onto the sectioned container, and records
+                         every choice in the derivation manifest
+
+A fourteenth crate, and the fourth name that was not among the 12
+reserved. It is added here rather than at the original mapping because
+the packer was not a v0 crate: the asset pipeline that needs it was
+designed in `docs/wip/2026-07-19-asset-pipeline-profiles-and-baking.md`
+and scheduled to v0.12.
+
+**Why it is a workspace crate and not a separate repo.** The recorded bar
+for a separate repo is toolchain incompatibility — the reason the Unity
+work got its own (`docs/decisions/unity-separate-repo-deferred.md`) — and
+the packer is plain cargo. Its coupling runs the other way: it compiles
+against `dashbuf`'s asset and manifest schemas, its band oracle reuses
+`goldens`' oracle, and its weld and profile-preview tests span packer
+output and the reference painter. The workspace already absorbs a heavier
+build than a vendored astcenc `-sys` crate, in `skia-bindings`.
+
+The requirement it has to satisfy is that the packer is a **standalone
+tool** (user requirement, 2026-07-19: no external CLIs anywhere in the
+pipeline). That is met by the binary artifact, `cargo build -p dashpack`,
+not by repo ownership.
+
+**Extraction bar, recorded now so it is not re-argued.** Revisit a
+separate repo only if an external consumer needs the source tree, not
+merely the binary. Publishing `dashpack` as its own crate happens at the
+staging-to-public promotion regardless, like every other crate here.
+
+**Availability.** Unlike the other three new names, `dashpack` is not
+reserved on crates.io. Nothing here is published yet
+(`docs/decisions/repo-staging-and-public-facade.md`), so the reservation
+belongs with the promotion rather than with this story — but the name can
+be squatted out from under the project in the meantime, which is the same
+exposure the original three had before they were reserved.
+
 ## Why
 
 - `dashscene-typeset` was chosen over `dashscene-text` (too generic — the
