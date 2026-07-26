@@ -321,3 +321,55 @@ fn image_map() -> BTreeMap<String, dashpaint::ImageAsset> {
     );
     images
 }
+
+/// The native `compile` API refuses an asset whose recorded metadata
+/// contradicts its bytes.
+///
+/// Story #400 gated the *Figma* path — `compile_figma` runs `identify` on every
+/// image in the `images` map. It did not gate this one: `compile` takes an
+/// `Asset`'s `format`, `width`, `height`, and `bytes` straight from the producer
+/// and verified none of them, so `dashlang` or any native producer could record
+/// anything at all and the file would emit clean. Story #437 closed that by
+/// running the load gate's asset half over what was just emitted.
+///
+/// Without the wiring in `emit_and_validate`, every assertion here fails —
+/// which is the point, because deleting it otherwise leaves the suite green.
+#[test]
+fn compile_refuses_an_asset_whose_metadata_contradicts_its_bytes() {
+    // The container is wrong: PNG bytes recorded as a JPEG. A painter
+    // dispatches its decoder on the recorded format, so this is the one that
+    // hands PNG bytes to a JPEG decoder.
+    let mut doc = Document::new();
+    let asset = doc.push_asset(Asset {
+        format: ImageFormat::Jpeg,
+        bytes: PAYLOAD_PNG.to_vec(),
+        width: 7,
+        height: 5,
+    });
+    doc.push(image_node("mistagged", asset));
+
+    let report = compile(&doc).expect_err("a mistagged asset must not compile");
+    assert!(
+        report.has(dashscene_validator::rule::ASSET_FORMAT_MISMATCH),
+        "expected asset.format-mismatch, got: {report}"
+    );
+    assert!(report.has_errors(), "it has to block, not merely warn");
+
+    // The extent is wrong: the right container, a lie about its size. Layout
+    // runs on the recorded extent before the payload is resident.
+    let mut doc = Document::new();
+    let asset = doc.push_asset(Asset {
+        format: ImageFormat::Png,
+        bytes: PAYLOAD_PNG.to_vec(),
+        width: 7,
+        height: 5000,
+    });
+    doc.push(image_node("wrong-extent", asset));
+
+    let report = compile(&doc).expect_err("a lying extent must not compile");
+    assert!(
+        report.has(dashscene_validator::rule::ASSET_EXTENT_MISMATCH),
+        "expected asset.extent-mismatch, got: {report}"
+    );
+    assert!(report.has_errors(), "it has to block, not merely warn");
+}

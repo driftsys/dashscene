@@ -780,6 +780,16 @@ fn check_asset_entry(report: &mut Report, asset: &AssetEntry<'_>, at: &Location)
 /// `dashbuf`'s enums are append-only, so a document produced by a newer
 /// writer can carry a format number this reader has no variant for. That is
 /// not the same as a wrong format, and the caller treats the two differently.
+///
+/// The `None` arm must stay reserved for values outside the schema's own enum.
+/// `flatc` generates `ImageFormat` as a newtype over `u8` rather than a Rust
+/// enum, so this match is not checked for exhaustiveness — when the schema
+/// appends a format, nothing here fails to compile, and every asset of that
+/// format would be skipped by this gate *and* pass `check_enum!`, which only
+/// fires on values the generated enum does not name. Two gates would go quiet
+/// at once, which is the silent drop P4 forbids, so
+/// `every_schema_image_format_maps_to_a_paint_format` fails at the append
+/// instead.
 fn as_paint_format(format: dashbuf::ImageFormat) -> Option<dashpaint::ImageFormat> {
     match format {
         dashbuf::ImageFormat::Png => Some(dashpaint::ImageFormat::Png),
@@ -1010,4 +1020,31 @@ fn node_path(
     }
     segments.reverse();
     NodePath::new(index, format!("/{}", segments.join("/")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every format the schema names must map to a `dashpaint` one.
+    ///
+    /// This is the guard on [`as_paint_format`]'s `_ => None` arm. `flatc`
+    /// generates `ImageFormat` as a newtype over `u8`, so appending `Webp` to
+    /// the schema would not make that match fail to compile — it would fall to
+    /// `None`, and `validate_asset_payloads` would skip every WebP asset while
+    /// `check_enum!` stayed quiet too, because the generated enum *does* name
+    /// the value. Two gates going silent at once is the failure this catches,
+    /// at the moment a human is editing the schema and can decide.
+    #[test]
+    fn every_schema_image_format_maps_to_a_paint_format() {
+        for &format in dashbuf::ImageFormat::ENUM_VALUES {
+            assert!(
+                as_paint_format(format).is_some(),
+                "the schema names {format:?}, but as_paint_format has no arm for it, so \
+                 validate_asset_payloads would silently skip every asset of that format \
+                 (P4). Add the arm — and the dashpaint::ImageFormat variant if it is \
+                 missing too."
+            );
+        }
+    }
 }

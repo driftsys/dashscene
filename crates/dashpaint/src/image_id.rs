@@ -575,27 +575,121 @@ mod tests {
     /// (`docs/decisions/image-header-parser-lives-in-dashpaint.md`).
     #[test]
     fn manifest_carries_no_third_party_dependencies() {
+        let breach = |what: &str| -> ! {
+            panic!(
+                "dashpaint declares {what}. This crate is depended on by dashc, so a \
+                 dependency here is reachable from the compiler, and a decoder dependency \
+                 would breach the boundary \
+                 docs/decisions/dashc-identifies-images-never-decodes.md draws. If the \
+                 dependency is genuinely not a decoder, widen this test deliberately and say \
+                 why in docs/decisions/image-header-parser-lives-in-dashpaint.md."
+            )
+        };
+
         let manifest = include_str!("../Cargo.toml");
         let mut in_dependencies = false;
         for line in manifest.lines() {
             let line = line.trim();
             if line.starts_with('[') {
-                // Every dependency table: `[dependencies]`,
+                let header = line.trim_start_matches('[').trim_end_matches(']');
+                // Cargo lets one dependency have its own table —
+                // `[dependencies.png]`, or `[target.'cfg(unix)'.dependencies.png]`.
+                // That header names a dependency directly, so it is a breach on
+                // sight; matching only the plain table headers below would let
+                // the `version = "..."` line inside it pass as ordinary key/value
+                // under no dependency table at all.
+                if header.contains("dependencies.") {
+                    breach(&format!("the dependency table `{line}`"));
+                }
+                // The plain dependency tables: `[dependencies]`,
                 // `[dev-dependencies]`, `[build-dependencies]`, and their
                 // `[target.'cfg(..)'.dependencies]` forms.
-                in_dependencies = line.trim_end_matches(']').ends_with("dependencies");
+                in_dependencies = header.ends_with("dependencies");
                 continue;
             }
             if !in_dependencies || line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            panic!(
-                "dashpaint declares the dependency `{line}`. This crate is depended on by \
-                 dashc, so a dependency here is reachable from the compiler, and a decoder \
-                 dependency would breach the boundary \
-                 docs/decisions/dashc-identifies-images-never-decodes.md draws. If the \
-                 dependency is genuinely not a decoder, widen this test deliberately and say \
-                 why in docs/decisions/image-header-parser-lives-in-dashpaint.md."
+            breach(&format!("the dependency `{line}`"));
+        }
+    }
+
+    /// The guard above has to fail on the shapes a dependency really arrives
+    /// in, not only the one shape someone thought of. A guard that passes on
+    /// `[dependencies.png]` is worse than no guard, because the decision record
+    /// leans on it — it is the reason the parser lives in this crate rather
+    /// than in one of its own.
+    ///
+    /// This drives the same scanner over synthetic manifests, so it pins the
+    /// detection without touching the real `Cargo.toml`.
+    #[test]
+    fn the_dependency_guard_catches_every_shape_a_dependency_arrives_in() {
+        // Mirrors the scanner above. Kept beside it deliberately: if one
+        // changes, this fails until both agree.
+        fn declares_a_dependency(manifest: &str) -> bool {
+            let mut in_dependencies = false;
+            for line in manifest.lines() {
+                let line = line.trim();
+                if line.starts_with('[') {
+                    let header = line.trim_start_matches('[').trim_end_matches(']');
+                    if header.contains("dependencies.") {
+                        return true;
+                    }
+                    in_dependencies = header.ends_with("dependencies");
+                    continue;
+                }
+                if !in_dependencies || line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                return true;
+            }
+            false
+        }
+
+        for (name, manifest) in [
+            ("plain table", "[dependencies]\npng = \"0.17\"\n"),
+            ("dev table", "[dev-dependencies]\npng = \"0.17\"\n"),
+            ("build table", "[build-dependencies]\ncc = \"1\"\n"),
+            (
+                "per-dependency table",
+                "[dependencies.png]\nversion = \"0.17\"\n",
+            ),
+            (
+                "target dependency",
+                "[target.'cfg(unix)'.dependencies]\npng = \"0.17\"\n",
+            ),
+            (
+                "target per-dependency table",
+                "[target.'cfg(unix)'.dependencies.png]\nversion = \"0.17\"\n",
+            ),
+        ] {
+            assert!(
+                declares_a_dependency(manifest),
+                "the guard misses a dependency declared as a {name}"
+            );
+        }
+
+        for (name, manifest) in [
+            (
+                "no dependencies at all",
+                "[package]\nname = \"dashpaint\"\n",
+            ),
+            (
+                "an empty dependency table",
+                "[package]\nname = \"dashpaint\"\n\n[dependencies]\n",
+            ),
+            (
+                "a commented-out dependency",
+                "[dependencies]\n# png = \"0.17\"\n",
+            ),
+            (
+                "a non-dependency table after one",
+                "[dependencies]\n\n[lib]\nname = \"dashpaint\"\n",
+            ),
+        ] {
+            assert!(
+                !declares_a_dependency(manifest),
+                "the guard falsely reports a dependency for {name}"
             );
         }
     }

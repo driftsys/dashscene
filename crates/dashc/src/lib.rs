@@ -175,6 +175,15 @@ fn emit_and_validate(doc: &Document) -> (Vec<u8>, Report) {
     // bake asked for, on a PNG this crate encodes. Those are two independent
     // derivations of one number, and this is what would notice them parting.
     let payloads: Vec<&[u8]> = doc.assets.iter().map(|a| a.bytes.as_slice()).collect();
+    // The pairing is positional, so a length disagreement means `emit` started
+    // reordering or dropping assets. That is an internal invariant break, and
+    // without this it would surface as false `asset.format-mismatch` errors
+    // blaming the document for comparing the wrong pairs.
+    debug_assert_eq!(
+        payloads.len(),
+        document.assets().map_or(0, |assets| assets.len()),
+        "emit must map one asset entry per doc.assets entry, in order"
+    );
     report.extend(
         dashscene_validator::validate_asset_payloads(&document, &payloads)
             .diagnostics()

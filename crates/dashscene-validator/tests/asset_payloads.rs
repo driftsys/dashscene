@@ -13,7 +13,7 @@
 //! bad bytes produce a `Report` rather than an unwind.
 
 use dashbuf::{AssetEntry, AssetEntryArgs, Document, DocumentArgs, ImageFormat, root_as_document};
-use dashscene_validator::{Location, rule, validate_asset_payloads, validate_document};
+use dashscene_validator::{Location, Severity, rule, validate_asset_payloads, validate_document};
 use flatbuffers::FlatBufferBuilder;
 
 // The same real, independently-dimensioned fixtures `dashpaint::image_id`'s
@@ -123,11 +123,18 @@ fn a_recorded_format_contradicting_the_payloads_signature_is_named() {
         "expected {}, got: {report}",
         rule::ASSET_FORMAT_MISMATCH
     );
+    let diagnostic = report.find(rule::ASSET_FORMAT_MISMATCH).unwrap();
     assert_eq!(
-        report.find(rule::ASSET_FORMAT_MISMATCH).unwrap().at,
+        diagnostic.at,
         Location::ImageAsset(0),
         "the diagnostic points at the entry that carries the wrong format"
     );
+    // Severity, not only the rule id. `Report::has` is severity-agnostic, so a
+    // gate quietly downgraded to `warning` would still satisfy every
+    // rule-id assertion in this file while no longer blocking anything —
+    // `compile` would emit the bad document and `dashc check` would exit 0.
+    assert_eq!(diagnostic.severity, Severity::Error);
+    assert!(report.has_errors(), "a lying entry must block the document");
 }
 
 /// The container is right and the extent is not. Layout runs on the recorded
@@ -152,6 +159,34 @@ fn a_recorded_extent_contradicting_the_payloads_header_is_named() {
         !report.has(rule::ASSET_FORMAT_MISMATCH),
         "the format agrees; only the extent should be named: {report}"
     );
+    assert_eq!(
+        report.find(rule::ASSET_EXTENT_MISMATCH).unwrap().severity,
+        Severity::Error,
+        "a lying extent must block the document, not merely warn"
+    );
+}
+
+/// Each axis is compared, not just one. The mismatch tests either side of this
+/// one differ on *both* axes, so a comparison that had dropped the height term
+/// would still pass them; these two isolate each term.
+#[test]
+fn a_mismatch_on_one_axis_alone_is_named() {
+    for (width, height, axis) in [(7, 9, "height"), (3, 5, "width")] {
+        let bytes = document_with(&[Entry {
+            format: ImageFormat::Png,
+            width,
+            height,
+        }]);
+        let doc = root_as_document(&bytes).expect("valid buffer");
+
+        // The fixture is 7x5, so exactly one axis disagrees in each case.
+        let report = validate_asset_payloads(&doc, &[SAMPLE_PNG]);
+        assert!(
+            report.has(rule::ASSET_EXTENT_MISMATCH),
+            "a 7x5 payload recorded as {width}x{height} disagrees on {axis} alone \
+             and must be named: {report}"
+        );
+    }
 }
 
 /// A width/height transposition is the mistake a square fixture cannot catch,
@@ -200,6 +235,14 @@ fn a_payload_that_is_not_an_image_is_named_rather_than_passed() {
         report.has(rule::ASSET_PAYLOAD_UNREADABLE),
         "expected {}, got: {report}",
         rule::ASSET_PAYLOAD_UNREADABLE
+    );
+    assert_eq!(
+        report
+            .find(rule::ASSET_PAYLOAD_UNREADABLE)
+            .unwrap()
+            .severity,
+        Severity::Error,
+        "a payload that is not an image must block the document"
     );
 }
 
@@ -267,11 +310,13 @@ fn fewer_payloads_than_entries_is_named_once_and_never_panics() {
         1,
         "one caller mistake is one diagnostic, not one per unchecked entry: {report}"
     );
+    let diagnostic = report.find(rule::ASSET_PAYLOAD_MISSING).unwrap();
     assert_eq!(
-        report.find(rule::ASSET_PAYLOAD_MISSING).unwrap().at,
+        diagnostic.at,
         Location::ImageAsset(1),
         "it points at the first entry that has no payload"
     );
+    assert_eq!(diagnostic.severity, Severity::Error);
 }
 
 /// No payloads at all — the shape a caller reaches by passing an empty slice.
@@ -335,7 +380,11 @@ fn an_unrecognized_recorded_format_is_left_to_the_unknown_enum_rule() {
     }]);
     let doc = root_as_document(&bytes).expect("valid buffer");
 
-    let payload_report = validate_asset_payloads(&doc, &[SAMPLE_PNG]);
+    // The payload deliberately *disagrees* with the recorded extent — an 11x8
+    // GIF against a recorded 7x5. A build that judged the unknown format would
+    // raise both mismatches here, so `is_empty` genuinely pins the skip. Handing
+    // it an agreeing payload would pass whether or not the skip existed.
+    let payload_report = validate_asset_payloads(&doc, &[SAMPLE_GIF]);
     assert!(
         payload_report.is_empty(),
         "this gate cannot judge a format it does not know: {payload_report}"
