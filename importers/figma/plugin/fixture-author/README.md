@@ -68,6 +68,10 @@ then run Plugins → Development → dashscene fixture author → _(name)_.
                                  one DROP_SHADOW card, sigma = blur/2 pinning
     inner-shadow                 E7 render-oracle shadow frame (v08-inner-shadow):
                                  one INNER_SHADOW card
+    backdrop-blur                v0.11: the backdrop-blur test vector — a
+                                 frosted panel over three hard-edged bands and
+                                 a circle, the first effect that requires a
+                                 painter to read the composited backdrop
     liga-text                    v0.10 A0: standard-ligatures test vector —
                                  "waffle finish office" in Noto Sans, twice;
                                  the first run needs a manual step (see below)
@@ -141,6 +145,16 @@ capture as below.
   to. Do not place an image through the UI: a second asset would put two
   images in the captured file and stop an image failure from bisecting
   to one construct.
+- **backdrop-blur**: fully scripted, no manual step. `BACKGROUND_BLUR` is
+  writable through the plugin API, unlike the ligature toggle below, so the
+  command leaves no `_manual-checklist` and the captured file carries no
+  authoring annotation that a render could pick up (debt #382). Two things
+  about the fixture are deliberate and should survive a re-author: the panel
+  is filled white at **0.2 alpha**, because Figma shows a background blur
+  through the layer's own transparency and an opaque panel would render a flat
+  rectangle measuring nothing; and the content beneath is hard-edged, because
+  a blur across a hard edge concentrates the residual exactly where the
+  reconstruction differs.
 - **liga-text**: the plugin API has no writable ligature/OpenType-feature
   toggle (`openTypeFeatures` is `readonly` on `TextNode`; only a getter,
   `getRangeOpenTypeFeatures`, exists — no setter). After running the

@@ -26,6 +26,7 @@
     { "name": "text-bold", "command": "text-bold" },
     { "name": "drop-shadow", "command": "drop-shadow" },
     { "name": "inner-shadow", "command": "inner-shadow" },
+    { "name": "backdrop-blur", "command": "backdrop-blur" },
     { "separator": true },
     { "name": "liga-text", "command": "liga-text" },
     { "name": "jpeg-fill", "command": "jpeg-fill" },

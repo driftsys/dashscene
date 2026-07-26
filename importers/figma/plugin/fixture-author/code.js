@@ -1139,6 +1139,87 @@ function innerShadow() {
     "shadow (offset 0, blur 6, black alpha 0.55) centered in a 96x96 light frame";
 }
 
+// -------------------------------------------------- backdrop-blur (v0.11)
+// The backdrop-blur test vector (epic #344,
+// docs/decisions/backdrop-blur-is-core-vocabulary.md). Backdrop blur is the
+// first effect that requires a painter to read the already-composited
+// backdrop, so the fixture has to make "what is underneath" unambiguous:
+// a blur that sampled the wrong thing, or nothing, must be visibly wrong
+// rather than subtly off.
+//
+// Hence three hard-edged vertical bands at high luminance contrast, plus an
+// ellipse crossing two of the seams. A Gaussian blur across a hard edge is
+// the sharpest available signal — the residual concentrates exactly where
+// the reconstruction differs — and the curve adds high-frequency content in
+// the other axis so a separable-blur bug cannot hide along one of them.
+//
+// The panel is filled white at 0.2 alpha rather than left unfilled. Figma
+// shows a background blur through the layer's own transparency, so an opaque
+// panel would render an unblurred flat rectangle and the frame would measure
+// nothing. Its corner radius puts the blurred region under a rounded clip,
+// which is the case a painter is most likely to get wrong.
+//
+// Unlike liga-text, this needs no `_manual-checklist`: BACKGROUND_BLUR is
+// fully writable through the plugin API, so the whole fixture is scripted and
+// the file carries no authoring annotation to leak into a render (debt #382).
+const BACKDROP_BLUR = {
+  type: "BACKGROUND_BLUR",
+  visible: true,
+  radius: 16, // Figma "radius" == dashc blur; painter sigma = radius/2
+};
+
+function backdropBlur() {
+  const root = baseFrame("backdrop-blur", 320, 180);
+  root.layoutMode = "NONE"; // every child is absolutely placed
+  root.clipsContent = true;
+
+  // Three full-height bands. Widths are exact thirds so the two seams land on
+  // integer columns and the blur is not measured across a half-pixel edge.
+  const bands = [
+    ["band-amber", { r: 0.98, g: 0.78, b: 0.2 }, 0, 107],
+    ["band-navy", { r: 0.05, g: 0.07, b: 0.12 }, 107, 106],
+    ["band-pale", { r: 0.92, g: 0.94, b: 0.98 }, 213, 107],
+  ];
+  for (const [name, color, x, w] of bands) {
+    const band = figma.createRectangle();
+    band.name = name;
+    band.resize(w, 180);
+    band.fills = [solid(color)];
+    band.strokes = [];
+    root.appendChild(band);
+    band.x = x;
+    band.y = 0;
+  }
+
+  // A circle straddling both seams: curved high-frequency content, so the
+  // frame does not only exercise vertical edges.
+  const dot = figma.createEllipse();
+  dot.name = "dot";
+  dot.resize(72, 72);
+  dot.fills = [solid({ r: 0.85, g: 0.24, b: 0.32 })];
+  dot.strokes = [];
+  root.appendChild(dot);
+  dot.x = 124; // centered horizontally: (320 - 72) / 2
+  dot.y = 18;
+
+  // The frosted panel, last so it composites over everything above.
+  const panel = figma.createFrame();
+  panel.name = "frosted-panel";
+  panel.resize(200, 90);
+  panel.cornerRadius = 16;
+  panel.clipsContent = true;
+  panel.strokes = [];
+  panel.fills = [solid(GRAY(1), 0.2)];
+  panel.effects = [BACKDROP_BLUR];
+  root.appendChild(panel);
+  panel.x = 60; // centered: (320 - 200) / 2
+  panel.y = 45; // centered: (180 - 90) / 2
+
+  return "backdrop-blur built: a 200x90 frosted panel (r=16, white at 0.2 " +
+    "alpha, BACKGROUND_BLUR radius 16) over three hard-edged bands and a " +
+    "circle, in a fixed 320x180 frame";
+}
+
 // ------------------------------------------------------ liga-text (v0.10 A0)
 // The standard-ligatures test vector (epic #343, story A0): a ligature-rich
 // ASCII run ("waffle" -> ffl, "office" -> ffi) with standard ligatures turned
@@ -1499,6 +1580,7 @@ const COMMANDS = {
   "text-bold": textBold,
   "drop-shadow": dropShadow,
   "inner-shadow": innerShadow,
+  "backdrop-blur": backdropBlur,
   "liga-text": ligaText,
   "jpeg-fill": jpegFill,
   "gif-fill": gifFill,
