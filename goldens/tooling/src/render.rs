@@ -11,6 +11,8 @@
 //! copy of the font/atlas resource loaders rather than moving them out of the
 //! live test file.
 
+use std::borrow::Cow;
+
 use dashpaint::{
     Atlas, AtlasGlyph, AtlasIndex, Color, GlyphQuad, GlyphRun, GlyphRunTable, ImageAsset,
     ImageFormat, Painter,
@@ -312,6 +314,121 @@ fn stage_text(arena: &Arena, ts: &mut Typesetter, atlases: &[AtlasIndex]) -> Vec
     out
 }
 
+/// One resident payload, in a container the reference painter's own codec
+/// reads.
+///
+/// Under RAW that is the canonical payload itself and nothing happens. Under a
+/// derived profile the payload is a block-compressed KTX2 file, which no image
+/// codec decodes, so it is software-decoded to texels here and re-wrapped as a
+/// PNG. The re-wrap is lossless and its only purpose is to hand the painter a
+/// container it already accepts, so the painter stays exactly as it is: it
+/// draws RGBA, it never measures, wraps, kerns or moves anything, and P2 holds
+/// (story #435).
+///
+/// The block decode is the same version-pinned astcenc that produced the
+/// payload — one pinned tool, both directions — and it recovers the block
+/// footprint and colour space from the file rather than being told them. The
+/// weld test (`goldens/tooling/tests/profile_preview_weld.rs`) holds this whole
+/// path byte-equal against the encoder's own reference decode.
+#[cfg(feature = "profile-preview")]
+fn paintable_payload(payload: &[u8]) -> Cow<'_, [u8]> {
+    if !dashpack::preview::is_ktx2(payload) {
+        // Borrowed, so RAW does not pay a copy for a capability it never uses.
+        return Cow::Borrowed(payload);
+    }
+    let preview = dashpack::preview::decode(payload)
+        .unwrap_or_else(|error| panic!("a derived asset payload does not preview: {error}"));
+    Cow::Owned(png_wrap(preview.width, preview.height, &preview.rgba))
+}
+
+/// The same seam in a build without the profile preview.
+///
+/// A block payload is refused by name rather than handed to a codec that would
+/// reject it with a less useful message — or, worse, than being drawn as
+/// whatever a lenient decoder made of it. P4: an out-of-profile construct is a
+/// named diagnostic, never a silent drop.
+#[cfg(not(feature = "profile-preview"))]
+fn paintable_payload(payload: &[u8]) -> Cow<'_, [u8]> {
+    // The first twelve bytes of every KTX2 file, from the specification's own
+    // table. Spelled out here rather than imported, because this build does not
+    // link `dashpack` at all — a refusal that needed the packer present would
+    // not exist in the build that needs to make it.
+    const KTX2_IDENTIFIER: [u8; 12] = [
+        0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32, 0x30, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A,
+    ];
+    assert!(
+        !payload.starts_with(&KTX2_IDENTIFIER),
+        "this asset payload is a KTX2 block payload, and this build of the goldens harness \
+         has no block decoder: rebuild with the `profile-preview` feature (on by default) \
+         to render a HiFi or Lite bank"
+    );
+    Cow::Borrowed(payload)
+}
+
+/// Wraps decoded texels as a PNG, in the unpremultiplied RGBA8888 comparison
+/// space the whole harness works in
+/// (`docs/decisions/golden-comparison-space.md`).
+///
+/// Lossless, and welded: the weld test's
+/// `leg_3_the_png_wrap_hands_the_painter_the_texels_unchanged` decodes the
+/// result back with [`png_texels`] and asserts byte equality, so the wrap cannot
+/// quietly premultiply, resample or drop alpha.
+#[cfg(feature = "profile-preview")]
+pub fn png_wrap(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
+    use skia_safe::{AlphaType, ColorType, Data, EncodedImageFormat, ImageInfo, images};
+
+    let info = ImageInfo::new(
+        (width as i32, height as i32),
+        ColorType::RGBA8888,
+        AlphaType::Unpremul,
+        None,
+    );
+    let image = images::raster_from_data(&info, Data::new_copy(rgba), width as usize * 4)
+        .expect("decoded texels form a raster image");
+    image
+        .encode(None, EncodedImageFormat::PNG, None)
+        .expect("a raster image PNG-encodes")
+        .as_bytes()
+        .to_vec()
+}
+
+/// The inverse of [`png_wrap`]: an encoded image decoded to
+/// `((width, height), unpremultiplied RGBA8888 rows)` through the reference
+/// painter's own codec.
+///
+/// Public because the profile-preview tests need exactly this decode and no
+/// other. Both arms of a profile diff have to start from one decode of the
+/// canonical bytes, and a second decoder anywhere in that path would put a
+/// library disagreement into every measurement where it would be
+/// indistinguishable from encoder loss.
+#[cfg(feature = "profile-preview")]
+pub fn png_texels(png_bytes: &[u8]) -> ((u32, u32), Vec<u8>) {
+    use skia_safe::{AlphaType, ColorType, Data, ImageInfo, images};
+
+    let image = images::deferred_from_encoded_data(Data::new_copy(png_bytes), None)
+        .expect("the bytes decode as an image the reference painter's codec reads");
+    let (width, height) = (image.width(), image.height());
+    let info = ImageInfo::new(
+        (width, height),
+        ColorType::RGBA8888,
+        AlphaType::Unpremul,
+        None,
+    );
+    let row_bytes = width as usize * 4;
+    let mut pixels = vec![0u8; row_bytes * height as usize];
+    assert!(
+        image.read_pixels(
+            &info,
+            &mut pixels,
+            row_bytes,
+            (0, 0),
+            skia_safe::image::CachingHint::Disallow,
+        ),
+        "the image has a readable header but its pixel data does not decode"
+    );
+    ((width as u32, height as u32), pixels)
+}
+
 /// Loads a committed `.dsb`, re-solves it through the one typesetter-backed
 /// `TaffySolver` (so TEXT nodes size to their shaped extent rather than
 /// collapsing to 0x0), stages a glyph run for every TEXT node, and renders the
@@ -325,11 +442,17 @@ fn stage_text(arena: &Arena, ts: &mut Typesetter, atlases: &[AtlasIndex]) -> Vec
 /// it does not provide resolves by coverage and is reported to stderr as
 /// `text.family-substituted`.
 pub fn render_dsb(dsb: &[u8]) -> Vec<u8> {
-    // One call runs the envelope check, the flatbuffer verifier, and the null
-    // binding that resolves each asset entry's hash to its blob section.
+    // One call runs the envelope check, the flatbuffer verifier, and the
+    // binding that resolves each asset entry's hash to its blob section —
+    // through the derivation manifest when the file carries one.
     let (document, payloads) = dashbuf::open(dsb).expect("a valid .dsb file");
+    // Under RAW every payload passes through untouched. Under HiFi or Lite the
+    // resident payload is a block-compressed KTX2 file, which is decoded here —
+    // in the loader, before any byte reaches the painter.
+    let paintable: Vec<Cow<'_, [u8]>> = payloads.iter().map(|p| paintable_payload(p)).collect();
+    let paintable: Vec<&[u8]> = paintable.iter().map(Cow::as_ref).collect();
     let mut arena = Arena::new();
-    load_document(&document, &payloads, &mut arena);
+    load_document(&document, &paintable, &mut arena);
     // `load_document` commits with the fixed solver, which measures a text node
     // to zero; re-commit an empty transaction through a typesetter-backed solver
     // so a full solve runs the measure seam (the pattern the text goldens use).

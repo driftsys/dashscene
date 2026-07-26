@@ -17,9 +17,12 @@
 //! lines against a published layout, and putting a third-party writer there
 //! would put a third-party's defaults into every bank. Parsing bytes back is
 //! the opposite — it is a check, and a check is worth more when someone else
-//! wrote it. So the [`ktx2`](https://crates.io/crates/ktx2) crate is a
-//! dev-dependency, used by this module's tests to read back what it wrote, and
-//! it never appears on the emit path.
+//! wrote it. So the [`ktx2`](https://crates.io/crates/ktx2) crate reads and this
+//! module writes: it is a dev-dependency for this module's own round-trip
+//! tests, and an optional dependency behind the `preview` feature for
+//! [`crate::preview`], which is a read path too (story #435). **It never
+//! appears on the emit path** — that is the line, rather than "it is only ever a
+//! dev-dependency", which stopped being true when the preview landed.
 //!
 //! # What "narrow" means
 //!
@@ -56,7 +59,11 @@ use crate::astc::{self, BlockSize, ColorSpace};
 /// mangled by a text-mode copy has its `\r\n` rewritten, and a truncating
 /// transfer loses the `\x1A`, so both corruptions are caught by the first
 /// twelve bytes instead of surfacing as a malformed header.
-const IDENTIFIER: [u8; 12] = [
+///
+/// Public because the preview load path sniffs it to tell a derived block
+/// payload from a canonical PNG, JPEG or GIF before choosing a decoder
+/// (`crate::preview::is_ktx2`).
+pub const IDENTIFIER: [u8; 12] = [
     0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32, 0x30, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A,
 ];
 
@@ -306,6 +313,45 @@ impl Format {
                 })
             }
         }
+    }
+
+    /// The format a `VkFormat` value names, or `None` for any value outside the
+    /// narrow set [`write`] emits.
+    ///
+    /// The exact inverse of [`Format::vk_format`], and the reason the preview
+    /// path can recover a payload's block footprint and colour space from the
+    /// file rather than being told them by its caller
+    /// (`crate::preview`). Being told is what a weld test cannot catch: a
+    /// preview that decodes at the footprint it was handed agrees with the
+    /// encoder even when the file says something else.
+    ///
+    /// `None` rather than an error, because a `VkFormat` this writer does not
+    /// emit is not a malformed value — it is a legal format the preview path
+    /// has no decoder for, and the caller names it in its own refusal.
+    pub fn from_vk_format(vk_format: u32) -> Option<Self> {
+        if vk_format == VK_FORMAT_R8G8B8A8_UNORM {
+            return Some(Self::Rgba8 {
+                color: ColorSpace::Linear,
+            });
+        }
+        if vk_format == VK_FORMAT_R8G8B8A8_SRGB {
+            return Some(Self::Rgba8 {
+                color: ColorSpace::Srgb,
+            });
+        }
+        ASTC_FOOTPRINTS.iter().find_map(|&(x, y, unorm, srgb)| {
+            let color = if vk_format == unorm {
+                ColorSpace::Linear
+            } else if vk_format == srgb {
+                ColorSpace::Srgb
+            } else {
+                return None;
+            };
+            Some(Self::Astc {
+                block: BlockSize { x, y },
+                color,
+            })
+        })
     }
 
     /// The exact payload length a `width` by `height` image occupies in this

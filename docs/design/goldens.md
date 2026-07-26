@@ -269,6 +269,141 @@ un-captured frame's `designSource` stays `null`. With all seven frames measured,
 E7 is **met** in `docs/specification/05-qualification.md`; the v0.9 exit gate (#49)
 asserts it in CI alongside `E1`–`E6`.
 
+## Profile-preview oracle (story #435)
+
+The third manifest in the same pattern, and the only one with **no external
+design source**: it renders each scene under RAW, then under HiFi and Lite, and
+diffs each production arm against RAW. Both arms are the same painter, the same
+solver, the same typesetter and the same canvas, so the only variable is which
+bytes the asset entries resolve to and a difference is the asset axis and
+nothing else. That is a purer measurement than any comparison against an export,
+which has to absorb rasterizer, resampling and gamma disagreement.
+
+It exists because the packer's per-asset bands
+(`crates/dashpack/tests/band_contract.rs`) measure texels in isolation and are
+blind to the asset **in context** — banding read behind a caption, a block
+boundary read against a stroke.
+
+    goldens/oracle/
+      profile-manifest.json     per scene: the canvas, the assets, and per
+                                profile the band, the rungs the escalation
+                                chose, the measured numbers, and the mutation
+                                that fails the band
+
+    goldens/tooling/tests/profile_preview_oracle.rs   the diff
+    goldens/tooling/tests/profile_preview_weld.rs     the weld
+    target/profile-preview/<scene>/                   the triptych and heatmaps
+
+### How a derived scene renders at all
+
+Under a production profile an asset's resident payload is a block-compressed
+KTX2 file, which no image codec decodes. `goldens::profile::derive` packs a
+document's assets under a profile and reassembles the file; `goldens::render`
+then software-decodes each block payload back to RGBA with the same
+version-pinned astcenc that encoded it, and re-wraps it losslessly as a PNG
+before the painter sees it. **The painter is unchanged** and still only draws
+RGBA, so P2 holds — the decode is the loader's, not the painter's
+(`docs/decisions/profile-preview-decodes-in-the-loader.md`).
+
+Both sides are behind the `profile-preview` feature, on by default so the
+workspace suite covers them. With it off the harness still renders RAW and
+refuses a block payload by name.
+
+### The two scene bands
+
+`PROFILE_HIFI_SCENE` and `PROFILE_LITE_SCENE` carry `dashpack::profile`'s own
+numbers exactly — 2 and 1 %, 8 and 5 % — and
+`the_scene_bands_are_the_packers_bands` asserts that equality, so retuning a
+pack band cannot silently leave the scene band behind. The profile's promise is
+a per-asset band, and this oracle asks whether the profile keeps that promise
+once the asset is composited.
+
+They are deliberately **not** reachable from `band_for`, and the three
+design-source bands are not reachable from `profile_band_for`
+(`the_two_band_families_do_not_share_a_name_space`). One name space would let a
+design-source frame be graded against a codec band, which at a threshold of 2
+fails every frame, or a scene be graded against `blur-falloff`, which at 24
+passes anything.
+
+The design-source thresholds are 24 to 50 because they compare a CPU rasterizer
+against a server-side export. Nothing here disagrees except the codec: HiFi's
+whole-scene residual on `profile-photo` has a maximum per-channel delta of 3, so
+every design-source threshold would report it as a perfect match.
+
+### Every band ships the mutation that fails it
+
+Issue #422 measured that a budget chosen in advance and never exercised is not a
+gate. Each row in the manifest therefore carries the measured defect that
+breaches its band — an escalation that stopped one rung early, built out of the
+same public API the packer uses — and the oracle re-measures it every run and
+asserts it **fails**:
+
+| scene            | profile | rungs        | measured | mutation     | mutation measures |
+| ---------------- | ------- | ------------ | -------- | ------------ | ----------------- |
+| `profile-photo`  | HiFi    | 6x6, 8x8     | 0.2043 % | force 8x8    | 2.6627 %          |
+| `profile-photo`  | Lite    | 12x12, 8x8   | 0.0000 % | none, stated | —                 |
+| `profile-stress` | HiFi    | uncompressed | 0.0000 % | force 4x4    | 51.8707 %         |
+| `profile-stress` | Lite    | 6x6          | 4.5166 % | force 8x8    | 9.7900 %          |
+
+`profile-photo`'s Lite row has no mutation and says so: that gradient survives
+the cheapest rung on the ladder, so Lite accepts 12x12 on its first attempt and
+there is no coarser rung to stop at. `every_band_is_exercised_by_at_least_one_scene`
+closes the loophole that would let every row make that excuse.
+
+Three numbers per row are asserted exactly — the differing count, the fraction,
+and the **maximum per-channel delta**. The last one is the knob an area budget
+cannot supply: a budget cannot see a small number of pixels going badly wrong,
+which is issue #422's finding in its general form. `profile-stress` under HiFi
+escalates to the lossless rung, so its recorded maximum is exactly 0 — the
+lossless identity proven through the whole chain, where any step altering one
+texel moves it off zero.
+
+The rungs the escalation chose are asserted too. A band says the scene still
+looks right; the rung list says it looks right _for the recorded reason_, so a
+packer that changed rung and happened to stay inside the band cannot pass with a
+manifest that has quietly become fiction.
+
+### Scenes are built in process
+
+Neither scene is a committed fixture. `goldens/dsb/v03-paint.dsb` is the only
+committed compiled document with an image, and that image is 16x16 — one ASTC
+block at every footprint on the ladder — so all three arms of its triptych render
+byte-identically and it cannot fail anything. `profile-photo` composes the
+committed 380x380 `import-image-fill` payload with a caption, a stroke and a
+second committed image as a badge, so no asset index in it is 0.
+`profile-stress` generates its content from a deterministic integer hash, for
+the reason story #432 recorded when it generated `detail-noise`: no committed
+payload separates the two profiles' area budgets. Its amplitude was chosen by
+measurement — at 4 the Lite ladder still bottoms out and at 16 both profiles go
+lossless.
+
+### The triptych
+
+Every run writes `raw.png`, `hifi.png`, `lite.png` and a `-heat.png` beside each
+production arm into `target/profile-preview/<scene>/`, and prints the banded
+numbers. `just triptych` runs exactly that. A heatmap is scaled so the largest
+delta present maps to white, with the scale factor printed beside it, because
+these residuals are small enough that an unscaled map is a black square.
+
+They are written rather than committed: a committed render of a scene whose
+purpose is to show codec loss would need re-baselining for every unrelated
+painter change, and the numbers above are the durable record.
+
+### `just render --profile`
+
+`render-dsb <in.dsb> <out.png> --profile raw|hifi|lite` gives a designer the
+same view of any imported file, and `just render <key> <root> <profile>` drives
+it live. An unrecognised profile name is reported with the set that is accepted
+and never resolved to a default.
+
+### What a desk preview cannot show
+
+Repeated wherever the preview is documented so a target bench confirms a short
+list rather than discovering quality: GPU filtering behaviour, driver-level
+effects (vendor bandwidth compression such as UBWC, and the NVIDIA case where
+ASTC is emulated rather than sampled natively — the pack-time probe's job), and
+where in a target pipeline the sRGB transfer function is applied.
+
 ## Testing
 
 Unit tests in `src/lib.rs` cover the tooling's edge behavior against a
@@ -293,11 +428,13 @@ against that image is the exit criterion itself.
   harness"), `docs/technotes/rendering-and-painters.md` (CPU painters
   generate their own goldens); issue #11's v0.2 flex goldens; issue
   #14's v0.3 golden; issue #97's clip golden; issue #284's design-source
-  render oracle tooling (exit criterion E7, guardrail G-11).
+  render oracle tooling (exit criterion E7, guardrail G-11); story #435's
+  profile-preview oracle and weld (epic #345).
 - Closes epic #1's story list (v0.1 walking skeleton, milestone 1).
 - Closes epic #7's story list (v0.2 flex core) — issue #11 was its last
   open story.
-- Related decisions: `docs/decisions/golden-comparison-space.md`
+- Related decisions: `docs/decisions/profile-preview-decodes-in-the-loader.md`,
+  `docs/decisions/golden-comparison-space.md`
   (comparison space; resolves debt #86);
   `docs/decisions/reference-painter-antialiasing.md` (sub-pixel
   geometry policy; resolves debt #85, story #14 — anti-aliasing is on

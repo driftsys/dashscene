@@ -563,10 +563,12 @@ dependencies = [
  "dashscene-typeset",
  "dashscene-validator",
  "flatbuffers",
+ "ktx2",
  "png",
  "serde_json",
  "skia-safe",
  "tempfile",
+ "zstd",
 ]
 
 [[package]]

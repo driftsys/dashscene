@@ -37,13 +37,19 @@
 //! ASTC encode and the matching reference decode, through a vendored,
 //! version-pinned astcenc linked in process. Story #431 adds [`ktx2`] — the
 //! container writer that wraps either an encoded payload or an uncompressed
-//! one. Nothing is packed yet: the band oracle and cold-bank assembly land
-//! across the rest of epic #345.
+//! one. Story #432 adds [`profile`] — the band contracts and the escalation
+//! that picks a rung — and story #434 adds [`bank`], which packs a whole
+//! document and assembles it into a `.dsb`. Story #435 adds [`preview`], the
+//! read-side inverse: a derived block payload decoded back to RGBA so the Skia
+//! reference painter can show what a profile costs, before any target bench
+//! exists.
 
 pub mod astc;
 pub mod band;
 pub mod bank;
 pub mod ktx2;
+#[cfg(feature = "preview")]
+pub mod preview;
 pub mod profile;
 
 /// The packer's version, as reported by the `dashpack` binary.
