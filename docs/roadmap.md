@@ -647,11 +647,24 @@ cold-bank assembly onto the v0.11 sections, the Gfx QA profile preview (the
 reference painter renders all three profiles), and the native-ASTC codec
 table for the SA8255/SA7255 + R-Car launch fleet (a proposed refinement to
 [`specification/03-target-hardware-rules.md`](specification/03-target-hardware-rules.md);
-Basis stays the mixed-fleet contingency). The oracle-harness consolidation
-(#338) lands here, after #49 lifts the `E7` freeze.
+Basis stays the mixed-fleet contingency).
 
 Depends on: v0.11 (sections and the asset table). Design capture:
 `docs/wip/2026-07-19-asset-pipeline-profiles-and-baking.md`.
+
+Broken into nine stories at the slice open (2026-07-26): #429 the `dashpack`
+crate, #430 vendored astcenc, #431 the KTX2 writer, #432 the band oracle and
+the three profile contracts, #433 cold-bank assembly (RAW only, no golden
+moves), #434 the first derived bank and the slice's one re-baseline, #435 the
+Gfx QA profile preview, #436 the codec table, #437 the second writer for the
+asset-header gate. Cold-bank assembly is split from the derived bank so the
+structural diff stays attributable, the way the envelope change was split from
+the schema change at the v0.11 close.
+
+An earlier version of this paragraph said the oracle-harness consolidation
+(#338) lands here once #49 lifts the `E7` freeze. Both closed before the slice
+opened — #49 as the v0 exit gate and #338 as completed on 2026-07-26 — so that
+consolidation is already delivered and is not part of this slice.
 
 Revised at the v0.11 close (2026-07-26): the scope above is unchanged, and one
 constraint is added to it. v0.12 delivers the RAW/HiFi/Lite profiles **as

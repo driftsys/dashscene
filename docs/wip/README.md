@@ -11,10 +11,10 @@ project's convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports five files
+## Why the WIP gate currently reports four files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-five and exits non-zero. All five are deliberate, accepted exceptions rather
+four and exits non-zero. All four are deliberate, accepted exceptions rather
 than ungardened debt, and they are recorded here so the gate's result is
 explained rather than merely tolerated.
 
@@ -23,6 +23,16 @@ one says so in its own `status` line — "Nothing here is implemented". Gardenin
 runs **after** tests are green by definition, so there is no as-built code to
 reconcile any of them against; promoting one now would put a plan into
 `docs/design/` describing a system that does not exist.
+
+One of those three no longer fits that description, and this paragraph should
+not be read as claiming it does. Backdrop blur landed in v0.11 (story #393), so
+`2026-07-19-backdrop-blur-v011.md` is spent in its decided half — the reversal,
+the contract shape and all four of its open questions are now in
+`docs/decisions/backdrop-blur-is-core-vocabulary.md` — while its per-painter
+capability table and two of its quality levers still describe painters that do
+not exist. Correcting it is a partial gardening, the same shape as the
+asset-pipeline capture below, and is tracked as **#427** rather than decided
+here.
 
 The fourth, the asset-pipeline capture, is **partly gardened**: v0.11 built the
 parts of it that this slice's scope covered, those parts are now as-built
@@ -37,15 +47,9 @@ rule models gardening as one atomic move because a capture spanning two slices i
 a case it does not name — the reading here is that the _implemented_ half is
 gardened, and the file leaves `docs/wip/` when its last half does.
 
-The fifth is a driver prompt: the brief a session is handed to carry out a named
-piece of work. Driver prompts are transient by construction — spent the moment
-their work lands — and the convention is to archive them verbatim rather than
-garden them into records, as the five now in `docs/archive/` were.
-
-`2026-07-26-v012-open-and-triage-DRIVER-PROMPT.md` is **live**: it opens v0.12
-(#411 first, then epic #345's story breakdown), triages the v0.13 backlog
-together with the v0.9 and v0.10 strays, and carries the three-stream isolation
-protocol. It is archived when that work lands.
+No driver prompt is live. Driver prompts are transient by construction — spent
+the moment their work lands — and the convention is to archive them verbatim
+rather than garden them into records, as the six now in `docs/archive/` were.
 
 | capture                                            | gardened when                                                                                                                                                 |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
