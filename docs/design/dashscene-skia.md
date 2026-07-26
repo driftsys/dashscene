@@ -112,6 +112,34 @@ All in `crates/dashscene-skia/src/lib.rs`:
   draw in `PaintEntry.shadows` order, which is Figma's back-to-front
   `effects` array order, so the last-listed shadow composites on top — no
   reversal.
+- Backdrop blur renders live (v0.11, story #393,
+  `docs/decisions/backdrop-blur-is-core-vocabulary.md`). Skia has it
+  natively: a `save_layer` whose `SaveLayerRec` carries a backdrop
+  `ImageFilter` initializes the new layer with the current layer's
+  contents passed through that filter. The painter clips to the node's
+  own rounded box, opens such a layer, and restores it immediately —
+  nothing is drawn into it, so its whole content is the blurred backdrop
+  and the restore composites that over the sharp original. Skia reads the
+  halo the kernel needs from outside the clip, so the blur is built from
+  the real backdrop rather than from a copy truncated at the node's box.
+  The sigma mapping is `sigma = radius / 2`, the same one the shadows use
+  (`blur_sigma`, stated once so the two cannot drift), and the filter
+  clamps at its input edge so a node frosting the canvas edge picks up
+  that edge's color instead of darkening. The blur draws **before** the
+  node's own shadows, fills and stroke: boundary B states the guarantee
+  over rects at a lower index, so the backdrop is what those composited,
+  not this node's own ink. `RectEntry.opacity` rides on the layer's paint
+  like every other draw, so a dimmed node frosts proportionally. A
+  baked-vector node (story B1) is confined to the field's coverage
+  instead of a box — the layer opens over the field's padded quad and
+  `BlendMode::DstIn` against the coverage shader clears it outside the
+  shape — because the live hero's frosted panel is exactly that: a Figma
+  VECTOR carrying `BACKGROUND_BLUR`. Inside a render-target
+  `GroupComposite` the sample reads that group's layer, not the canvas
+  beneath it: Skia filters the innermost open layer, which is the
+  backdrop-root reading the decision record settles. A `BlurKind::Layer`
+  blur is skipped by name — node-local, budgeted at v1, and nothing in
+  this tree emits one.
 
 ## Text — MSDF glyph runs (v0.5 Latin, story #30)
 

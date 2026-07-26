@@ -16,14 +16,15 @@
 use std::collections::HashMap;
 
 use dashpaint::{
-    Atlas, ClipTable, CornerRadii, GlyphRun, GlyphRunTable, Gradient, GradientKind, GroupComposite,
-    ImageAsset, ImageTable, MAX_GRADIENT_STOPS, PaintKind, PaintTable, Painter, RectEntry,
-    ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, VectorField,
+    Atlas, BlurKind, ClipTable, CornerRadii, GlyphRun, GlyphRunTable, Gradient, GradientKind,
+    GroupComposite, ImageAsset, ImageTable, MAX_GRADIENT_STOPS, PaintKind, PaintTable, Painter,
+    RectEntry, ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, VectorField,
 };
 use skia_safe::{
     AlphaType, BlendMode, BlurStyle, Canvas, ClipOp, Color4f, ColorType, Data, EncodedImageFormat,
-    FilterMode, Image, ImageInfo, MaskFilter, Matrix, MipmapMode, Path, PathFillType, Point, RRect,
-    Rect, RuntimeEffect, SamplingOptions, Shader, TileMode, gradient_shader, images, surfaces,
+    FilterMode, Image, ImageFilter, ImageInfo, MaskFilter, Matrix, MipmapMode, Path, PathFillType,
+    Point, RRect, Rect, RuntimeEffect, SamplingOptions, Shader, TileMode, canvas::SaveLayerRec,
+    gradient_shader, image_filters, images, surfaces,
 };
 
 /// How a painter treats the advisory dirty set.
@@ -206,6 +207,57 @@ impl Painter for SkiaPainter {
             // stroke by half, an inside stroke not at all. A drop shadow
             // casts from that silhouette, not the bare fill box (P1).
             let outset = stroke_outset(entry.stroke.as_ref());
+            // The backdrop blur runs before any of this node's own ink
+            // (story #393, `docs/decisions/backdrop-blur-is-core-vocabulary.md`).
+            // Boundary B states the guarantee over rects at a *lower index*,
+            // so the backdrop this node samples is what those rects
+            // composited — not this node's own drop shadow, which is part of
+            // how the node paints rather than part of what lies behind it.
+            // Painting in slice order satisfies the barrier for free: every
+            // lower-index rect is already on the canvas here.
+            //
+            // A `BlurKind::Layer` blur is skipped: it is node-local, budgeted
+            // at v1, and deliberately not part of this story
+            // (the decision record's "`LAYER_BLUR` does not ride along").
+            // Nothing in this tree emits one — `dashc` lowers only
+            // `BACKGROUND_BLUR` — so this is a named gap, not a silent drop.
+            //
+            // Several backdrop blurs on one node apply in list order, each
+            // over the result of the last, the same posture the shadow loops
+            // below use for Figma's back-to-front `effects` array.
+            for blur in entry
+                .blurs
+                .iter()
+                .filter(|blur| blur.kind == BlurKind::Backdrop)
+            {
+                match &entry.shape {
+                    // A baked-vector node's blur is confined to the field's
+                    // coverage, not to its box — the hero's own frosted panel
+                    // is exactly this shape, a VECTOR carrying
+                    // `BACKGROUND_BLUR` (`crates/dashc/src/figma/mod.rs`), so
+                    // blurring its whole box would frost a rectangle where the
+                    // design has a rounded shape.
+                    Some(field) => {
+                        let effect = field_effect.get_or_insert_with(|| {
+                            RuntimeEffect::make_for_shader(FIELD_MASK_SKSL, None)
+                                .expect("field-mask resolve SkSL compiles")
+                        });
+                        let atlas = field_atlases
+                            .entry(field.image)
+                            .or_insert_with(|| decode_image(images.resolve(field.image)));
+                        draw_backdrop_blur_field(
+                            canvas,
+                            rect,
+                            field,
+                            atlas,
+                            effect,
+                            blur.radius,
+                            rect.opacity,
+                        );
+                    }
+                    None => draw_backdrop_blur_box(canvas, &rrect, blur.radius, rect.opacity),
+                }
+            }
             // Drop shadows fall behind the fill (story #45,
             // `docs/decisions/effects-vocabulary-shadows.md`). They draw
             // inside this rect's clip-region save/restore, so an ancestor
@@ -476,35 +528,9 @@ fn draw_vector_field(
     let Some(fill) = fill else {
         return;
     };
-
-    let [left, top, right, bottom] = field.plane_bounds;
-    let dest = Rect::from_ltrb(rect.x + left, rect.y + top, rect.x + right, rect.y + bottom);
-    if dest.width() <= 0.0 || dest.height() <= 0.0 {
+    let Some((dest, coverage)) = field_coverage(rect, field, atlas, effect) else {
         return;
-    }
-
-    // texel -> device: the shape's atlas sub-rect maps onto the padded quad.
-    let [ax, ay, aw, ah] = field.atlas_rect;
-    let (sx, sy) = (dest.width() / aw as f32, dest.height() / ah as f32);
-    let mut local = Matrix::translate((-(ax as f32), -(ay as f32)));
-    local.post_scale((sx, sy), None);
-    local.post_translate((dest.left, dest.top));
-
-    // Linear filtering interpolates the distance field (MSDF's crisp edges);
-    // the raster surface carries no color space, so channels sample raw — the
-    // same sampling the glyph atlas uses.
-    let sampling = SamplingOptions::new(FilterMode::Linear, MipmapMode::None);
-    let field_shader = atlas
-        .to_shader((TileMode::Clamp, TileMode::Clamp), sampling, Some(&local))
-        .expect("field atlas shader");
-    // Screen-pixel range: the distance range (atlas texels) times device
-    // pixels per texel — the glyph-atlas metric, with unit shape->device
-    // scale, so `sx` is the pixels-per-texel factor.
-    let px_range = field.distance_range * sx;
-    let uniforms = field_mask_uniforms(effect, px_range);
-    let coverage = effect
-        .make_shader(uniforms, &[field_shader.into()], None)
-        .expect("field-mask resolve shader");
+    };
 
     // Draw the fill into a layer, then multiply its alpha by the coverage.
     // The layer composites (SrcOver) over whatever is behind, so the masked
@@ -535,6 +561,54 @@ fn draw_vector_field(
     canvas.restore();
 }
 
+/// The device quad a baked-vector shape occupies, and the shader that
+/// resolves its field into a coverage mask over that quad.
+///
+/// Both draws that mask by a baked shape use it: the masked fill
+/// ([`draw_vector_field`]) and the backdrop blur
+/// ([`draw_backdrop_blur_field`], story #393). Stated once so the two cannot
+/// disagree about where the shape is or how sharp its edge resolves.
+///
+/// The padded field quad (`plane_bounds`) maps to device space at unit scale,
+/// origin at the node box top-left. `None` for a degenerate quad (no area),
+/// which draws nothing rather than dividing by zero.
+fn field_coverage(
+    rect: &RectEntry,
+    field: &VectorField,
+    atlas: &Image,
+    effect: &RuntimeEffect,
+) -> Option<(Rect, Shader)> {
+    let [left, top, right, bottom] = field.plane_bounds;
+    let dest = Rect::from_ltrb(rect.x + left, rect.y + top, rect.x + right, rect.y + bottom);
+    if dest.width() <= 0.0 || dest.height() <= 0.0 {
+        return None;
+    }
+
+    // texel -> device: the shape's atlas sub-rect maps onto the padded quad.
+    let [ax, ay, aw, ah] = field.atlas_rect;
+    let (sx, sy) = (dest.width() / aw as f32, dest.height() / ah as f32);
+    let mut local = Matrix::translate((-(ax as f32), -(ay as f32)));
+    local.post_scale((sx, sy), None);
+    local.post_translate((dest.left, dest.top));
+
+    // Linear filtering interpolates the distance field (MSDF's crisp edges);
+    // the raster surface carries no color space, so channels sample raw — the
+    // same sampling the glyph atlas uses.
+    let sampling = SamplingOptions::new(FilterMode::Linear, MipmapMode::None);
+    let field_shader = atlas
+        .to_shader((TileMode::Clamp, TileMode::Clamp), sampling, Some(&local))
+        .expect("field atlas shader");
+    // Screen-pixel range: the distance range (atlas texels) times device
+    // pixels per texel — the glyph-atlas metric, with unit shape->device
+    // scale, so `sx` is the pixels-per-texel factor.
+    let px_range = field.distance_range * sx;
+    let uniforms = field_mask_uniforms(effect, px_range);
+    let coverage = effect
+        .make_shader(uniforms, &[field_shader.into()], None)
+        .expect("field-mask resolve shader");
+    Some((dest, coverage))
+}
+
 /// Packs the field-mask effect's one `px_range` uniform by the offset the
 /// compiled effect reports, so the byte layout cannot drift from the SkSL.
 fn field_mask_uniforms(effect: &RuntimeEffect, px_range: f32) -> Data {
@@ -562,14 +636,153 @@ fn apply_opacity(paint: &mut skia_safe::Paint, opacity: f32) {
     }
 }
 
-/// The Gaussian blur a shadow's `blur` radius applies. Skia takes a
-/// sigma, not a radius; the CSS/browser convention `sigma = radius / 2`
-/// is the one this reference painter defines (story #45). A zero-radius
+/// The Gaussian sigma a blur radius maps to. Skia takes a sigma, not a
+/// radius; the CSS/browser convention `sigma = radius / 2` is the one this
+/// reference painter defines (story #45), and it is what the `blur-falloff`
+/// tolerance band pins against Figma's own render. Stated once because a
+/// shadow's blur (story #45) and a backdrop blur (story #393) are the same
+/// mapping, and two copies of it could drift apart.
+fn blur_sigma(radius: f32) -> f32 {
+    radius / 2.0
+}
+
+/// The Gaussian blur a shadow's `blur` radius applies. A zero-radius
 /// shadow uses no mask filter — a hard edge, not a degenerate blur.
 fn blur_mask_filter(blur: f32) -> Option<MaskFilter> {
     (blur > 0.0)
-        .then(|| MaskFilter::blur(BlurStyle::Normal, blur / 2.0, false))
+        .then(|| MaskFilter::blur(BlurStyle::Normal, blur_sigma(blur), false))
         .flatten()
+}
+
+/// The image filter a backdrop blur of `radius` applies to the backdrop, or
+/// `None` when the radius is not positive (nothing to blur — not a
+/// degenerate filter, the same rule [`blur_mask_filter`] follows).
+///
+/// The guard is written as [`blur_mask_filter`]'s is — `radius > 0.0`, which
+/// is false for a NaN — rather than as a `<= 0.0` rejection, which a NaN
+/// passes. The document load path already refuses a non-finite radius
+/// (`paint.blur.invalid-radius`), but the producer API stores `Prop::Blurs`
+/// unchecked, so this is the last place the two can disagree, and a NaN
+/// sigma reaching Skia has no defined result.
+///
+/// `TileMode::Clamp` at the filter's input edge: where the kernel reaches
+/// past the backdrop Skia captured, the edge pixel extends rather than
+/// fading toward transparent black, so a node frosting the canvas edge picks
+/// up that edge's color instead of darkening. This is the edge-duplication
+/// rule CSS's `backdrop-filter` specifies, for the same reason.
+fn backdrop_blur_filter(radius: f32) -> Option<ImageFilter> {
+    (radius > 0.0)
+        .then(|| {
+            let sigma = blur_sigma(radius);
+            image_filters::blur((sigma, sigma), TileMode::Clamp, None, None)
+        })
+        .flatten()
+}
+
+/// The paint a backdrop-blur layer composites through: transparent-by-alpha
+/// only, carrying the rect's free-path group alpha
+/// (`docs/decisions/masks-and-group-opacity.md`) exactly as every other draw
+/// in this painter does. At `opacity = 1.0` the blurred copy fully replaces
+/// the region; below it, the copy composites over the sharp original, so a
+/// dimmed node frosts proportionally.
+fn backdrop_layer_paint(opacity: f32) -> skia_safe::Paint {
+    let mut paint = skia_safe::Paint::default();
+    apply_opacity(&mut paint, opacity);
+    paint
+}
+
+/// Replaces the region a parametric (rounded-box) node covers with a blurred
+/// copy of everything already composited beneath it — the backdrop blur of
+/// story #393 (`docs/decisions/backdrop-blur-is-core-vocabulary.md`).
+///
+/// Skia has this natively: a `save_layer` whose `SaveLayerRec` carries a
+/// backdrop [`ImageFilter`] initializes the new layer with the current
+/// layer's contents passed through that filter, respecting the current clip.
+/// Clipping to the node's own rounded box first is what confines the blurred
+/// copy to the node's shape; Skia still reads the halo the kernel needs from
+/// outside that clip, so the blur is built from the real backdrop rather than
+/// from a clip-truncated copy of it (pinned by
+/// `the_backdrop_blur_reads_past_the_node_box`).
+///
+/// Nothing is drawn into the layer, so its whole content is the blurred
+/// backdrop and the immediate `restore` composites that over the sharp
+/// original. The node's own shadows, fills and stroke then draw on top
+/// through the ordinary path: a backdrop blur changes what is behind a node,
+/// not how the node paints.
+///
+/// **Inside a [`GroupComposite`] the sample reads that group's layer, not the
+/// canvas beneath it.** The layer Skia filters is the innermost open one, so
+/// a render-target group is a backdrop root: a node inside it frosts its
+/// in-group siblings and nothing further down. That is the settled reading of
+/// the question boundary B left open, and the reason is in the decision
+/// record — sampling through the group would composite the backdrop twice,
+/// once directly and once inside the group's own alpha.
+fn draw_backdrop_blur_box(canvas: &Canvas, shape: &RRect, radius: f32, opacity: f32) {
+    let Some(filter) = backdrop_blur_filter(radius) else {
+        return;
+    };
+    let layer = backdrop_layer_paint(opacity);
+    canvas.save();
+    canvas.clip_rrect(*shape, ClipOp::Intersect, true);
+    canvas.save_layer(&SaveLayerRec::default().backdrop(&filter).paint(&layer));
+    canvas.restore();
+    canvas.restore();
+}
+
+/// [`draw_backdrop_blur_box`] for a baked-vector node (story B1): the blurred
+/// backdrop is confined to the field's coverage rather than to a box.
+///
+/// This is the shape the live hero's frosted panel actually has — a Figma
+/// VECTOR carrying `BACKGROUND_BLUR` (`crates/dashc/src/figma/mod.rs`) — so
+/// it is the path the story's fidelity number depends on, not a generality.
+///
+/// A rounded-rect clip cannot express a baked outline, so two things confine
+/// the blur rather than one. The canvas is clipped to the field's padded
+/// quad, which bounds the layer; inside it, `BlendMode::DstIn` against the
+/// coverage shader multiplies the layer's alpha by the shape's coverage,
+/// clearing it outside the outline; the restore then composites what is left
+/// over the sharp backdrop.
+///
+/// **The clip is load-bearing, not a duplicate of the mask.**
+/// `SaveLayerRec::bounds` is a hint to Skia, not a guarantee: with a backdrop
+/// filter the layer is allocated over the device clip, so without this clip
+/// every layer pixel the `DstIn` rect does not cover keeps a full-opacity
+/// blurred backdrop and composites on restore — one baked-vector node would
+/// blur the whole frame. `the_baked_vector_blur_is_confined_to_its_quad`
+/// pins it. The clip does not truncate the blur's input: Skia reads the halo
+/// the kernel needs from outside it, which is the same property the box path
+/// relies on.
+fn draw_backdrop_blur_field(
+    canvas: &Canvas,
+    rect: &RectEntry,
+    field: &VectorField,
+    atlas: &Image,
+    effect: &RuntimeEffect,
+    radius: f32,
+    opacity: f32,
+) {
+    let Some(filter) = backdrop_blur_filter(radius) else {
+        return;
+    };
+    let Some((dest, coverage)) = field_coverage(rect, field, atlas, effect) else {
+        return;
+    };
+    let layer = backdrop_layer_paint(opacity);
+    canvas.save();
+    canvas.clip_rect(dest, ClipOp::Intersect, false);
+    // No `bounds` on the rec: Skia discards it whenever a backdrop filter is
+    // set (`SkCanvas::internalSaveLayer` takes the user bounds as a hard
+    // layer extent only on the trivial-restore path, which a backdrop
+    // disables), so passing one would state a constraint that does not hold
+    // and invite the clip above being removed as a duplicate.
+    canvas.save_layer(&SaveLayerRec::default().backdrop(&filter).paint(&layer));
+    let mut mask = skia_safe::Paint::default();
+    mask.set_shader(coverage);
+    mask.set_blend_mode(BlendMode::DstIn);
+    mask.set_anti_alias(false);
+    canvas.draw_rect(dest, &mask);
+    canvas.restore();
+    canvas.restore();
 }
 
 /// Per-corner radii adjusted by a spread delta: a corner grows with

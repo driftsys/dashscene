@@ -104,6 +104,61 @@ table or union in `dashbuf`; the only effect a document can carry is a flat
 already anticipates this ("layer/backdrop blur stay LATER"). Backdrop blur is
 therefore the first effect that needs one.
 
+## What the sample reads inside a group
+
+The ordering guarantee above fixes order alone. It does not say which
+surface the sample reads when a backdrop-sampling rect falls inside a
+`GroupComposite` range, and stage B-2 left that open on purpose — in the
+`Painter` trait's contract and in `docs/design/dashpaint.md` — for the first
+painter that implements the sampling. Stage B-3 settles it.
+
+**A render-target group is a backdrop root.** A backdrop-sampling rect
+inside a `GroupComposite` range reads that group's offscreen layer — the
+group's own rects that are already composited into it — and not the canvas
+beneath the group. Outside such a range it reads the canvas, unchanged.
+
+Three reasons, in the order they carry weight.
+
+- **Sampling through the group would composite the backdrop twice.** The
+  group's layer blends over the canvas at the group's alpha. If a sample
+  inside the layer read the canvas, the canvas would reach the final pixel
+  by two routes: directly through `1 - alpha`, and again inside the blurred
+  copy the layer carries. That is the same defect one level up from the one
+  that produced `GroupComposite` — `docs/decisions/masks-and-group-opacity.md`
+  splits the render-target path off precisely because an overlapping subtree
+  at partial opacity would otherwise blend twice. CSS Filter Effects Level 2
+  makes an element with `opacity` below 1 a backdrop root for exactly this
+  reason, and Skia, which implements that model, gives the isolated reading
+  natively.
+- **It is what isolation already means here.** `docs/design/dashpaint.md`
+  describes a `GroupComposite` as writing an isolated layer and never
+  sampling one. A sample that read through the group would make that layer
+  not isolated, so a group would mean one thing or another depending on what
+  was placed inside it.
+- **The alternative is unmeasured.** No fixture in the corpus pairs a
+  backdrop blur with a render-target group, so "Figma samples through the
+  group" cannot be checked against anything here. Adopting it would record a
+  guess as though it were a measurement — the failure this project already
+  refuses for tolerance bands, and refuses for the same reason.
+
+The cost is disclosed rather than hidden. A group opacity crossing 1.0
+changes what a backdrop blur inside it samples, because that crossing is
+what creates the isolating layer. The discontinuity belongs to isolation
+rather than to this decision — it is present in CSS and in every compositor
+that isolates — and it is narrower here than in CSS, because
+`dashscene-core` produces the layer only when the group's painted subtree
+overlaps; a non-overlapping group takes the free path, emits no
+`GroupComposite`, and its backdrop samples reach the canvas.
+
+If a real file is ever measured against Figma and a difference is traced to
+this, the finding reopens this section rather than being absorbed into a
+tolerance band. `goldens/tooling/tests/v011_backdrop_blur.rs`
+(`a_render_target_group_is_a_backdrop_root`) pins the behaviour in both
+directions: a band painted outside the group cannot reach a pixel inside a
+frosted panel while the group isolates it, and the same band does reach the
+same pixel once the group is gone — so the test fails if the sampling
+silently stops happening, not only if it starts reading through.
+
 ## What a painter that cannot do it reports
 
 With core no longer an error, a painter that genuinely cannot sample the

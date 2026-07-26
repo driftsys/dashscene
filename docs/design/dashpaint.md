@@ -231,9 +231,17 @@ backdrop, so boundary B carries two things for it
   reorders pays for the barrier.
 
 The guarantee fixes order alone. Which surface the sample reads when a
-barrier rect falls inside a `GroupComposite` range is not settled here —
-it belongs to the first painter that implements the sampling
-(`dashscene-skia`). Glyph runs are outside the guarantee for the same
+barrier rect falls inside a `GroupComposite` range was left to the first
+painter that implements the sampling, and `dashscene-skia` settled it
+(story #393 stage B-3): **a render-target group is a backdrop root.** A
+barrier rect inside a `GroupComposite` range reads that group's offscreen
+layer, not the canvas beneath the group; outside such a range it reads
+the canvas. Sampling through the group would composite the backdrop
+twice — once directly through `1 - alpha` and once inside the layer's
+own blurred copy — which is the defect that produced `GroupComposite` in
+the first place, one level up. The reasoning and its disclosed cost are
+`docs/decisions/backdrop-blur-is-core-vocabulary.md`. Glyph runs are
+outside the guarantee for the same
 reason they are outside `groups`: the v0.5 subset composites every run
 over all rects, so no run is ever beneath a barrier and no run can enter
 a sampled backdrop — a named limitation, not a silent drop.
