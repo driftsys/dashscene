@@ -22,14 +22,15 @@ own render of the same scene.
 
     goldens/oracle/
       manifest.json     per-frame wiring: fixture -> design source -> band,
-                        plus the figmaFileKey + figmaNodeId capture inputs
+                        plus the figmaNodeId capture input
       design-source/    the committed Figma REST image exports (two captured)
 
 Each `manifest.json` frame carries: `frame` (name and design-source basename),
 `fixture` (the committed Figma fixture the oracle imports and renders, `null`
 when the frame has no renderable fixture yet), `band` (the tolerance rule),
-`figmaFileKey` and `figmaNodeId` (the capture inputs — the Figma file and node
-the design source is rendered from, `null` until authored), `designSource` (the
+`figmaNodeId` (the node the design source is rendered from, `null` until
+authored — the Figma file it lives in is not repeated here, see below),
+`designSource` (the
 committed export path, `null` until captured), `status` (`pending-265` until
 captured, then `captured`), and optionally `excludeRegions` (a list of
 `{ x, y, w, h }` rectangles whose pixels the diff drops from both the differing
@@ -125,17 +126,22 @@ The export step is `importers/figma/src/render_oracle.ts`, run as
 `deno task oracle-capture`. It fetches Figma's own render of each authored
 frame; it never draws one (G-11).
 
-1. Set the frame's `figmaFileKey` and `figmaNodeId` in `manifest.json` — the
-   Figma file the frame lives in and the node id rendered as the design source —
-   and its `fixture` to the committed Figma fixture the oracle imports and
-   renders.
+1. Set the frame's `figmaNodeId` in `manifest.json` — the node rendered as the
+   design source — and its `fixture` to the committed Figma fixture the oracle
+   imports and renders. The Figma file key is **not** set here: the capture tool
+   joins the fixture's name against `corpus/figma-fixtures/manifest.json` and
+   takes the key recorded there (debt #338). Recording it twice meant the
+   fixture JSON and the design-source PNG could come from different files and
+   the diff would be wrong by construction.
 2. From `importers/figma/`, with `FIGMA_TOKEN` exported, run
-   `deno task oracle-capture`. For each frame that names both keys it calls the
-   Figma REST render `GET /v1/images/:key?ids=<nodeId>&format=png&scale=1`,
+   `deno task oracle-capture`. For each frame that names a `figmaNodeId` and
+   whose fixture resolves to a file key it calls the Figma REST render
+   `GET /v1/images/:key?ids=<nodeId>&format=png&scale=1`,
    downloads the returned PNG into `goldens/oracle/design-source/<frame>.png`,
    and flips that frame's `designSource` to the committed path and its `status`
-   to `captured`. A frame with either key `null` is skipped and stays
-   `pending-265`; a non-200, a non-null `err`, a missing node, or a non-PNG
+   to `captured`. A frame with a null `figmaNodeId`, or whose fixture is absent
+   from the corpus manifest or still carries its placeholder key, is skipped and
+   stays `pending-265`; a non-200, a non-null `err`, a missing node, or a non-PNG
    download fails that frame and writes nothing. Commit the written PNG and the
    `manifest.json` update together.
 3. Run the assertion: `cargo test -p goldens --test render_oracle`.

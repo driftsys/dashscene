@@ -18,8 +18,8 @@
     "fmt": "deno fmt",
     "capture": "deno run --allow-env=FIGMA_TOKEN --allow-net=api.figma.com,s3-alpha-sig.figma.com --allow-read=../../corpus/figma-fixtures,../../target/wasm32-unknown-unknown/release --allow-write=../../corpus/figma-fixtures src/capture.ts",
     "import": "deno run --allow-env=FIGMA_TOKEN --allow-net=api.figma.com,s3-alpha-sig.figma.com --allow-read=../../target/wasm32-unknown-unknown/release --allow-write=. src/import.ts",
-    "oracle-capture": "deno run --allow-env=FIGMA_TOKEN --allow-net=api.figma.com,s3-alpha-sig.figma.com,figma-alpha-api.s3.us-west-2.amazonaws.com --allow-read=../../goldens/oracle --allow-write=../../goldens/oracle src/render_oracle.ts",
-    "import-oracle-capture": "deno run --allow-env=FIGMA_TOKEN --allow-net=api.figma.com,s3-alpha-sig.figma.com,figma-alpha-api.s3.us-west-2.amazonaws.com --allow-read=../../goldens/oracle --allow-write=../../goldens/oracle src/import_oracle_capture.ts"
+    "oracle-capture": "deno run --allow-env=FIGMA_TOKEN --allow-net=api.figma.com,s3-alpha-sig.figma.com,figma-alpha-api.s3.us-west-2.amazonaws.com --allow-read=../../goldens/oracle,../../corpus/figma-fixtures --allow-write=../../goldens/oracle src/render_oracle.ts",
+    "import-oracle-capture": "deno run --allow-env=FIGMA_TOKEN --allow-net=api.figma.com,s3-alpha-sig.figma.com,figma-alpha-api.s3.us-west-2.amazonaws.com --allow-read=../../goldens/oracle,../../corpus/figma-fixtures --allow-write=../../goldens/oracle src/import_oracle_capture.ts"
   },
 
   "fmt": {

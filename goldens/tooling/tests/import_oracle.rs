@@ -91,7 +91,9 @@ fn images_for(fixture: &Path) -> BTreeMap<String, ImageAsset> {
 }
 
 /// The Figma node id the frame's design source is an export of — the
-/// `figmaNodeId` the capture tool wrote beside `figmaFileKey`.
+/// `figmaNodeId` the capture tool wrote for it. The Figma file the node lives
+/// in is not repeated per frame: the capture tool joins the fixture's name
+/// against `corpus/figma-fixtures/manifest.json` for that (debt #338).
 ///
 /// Required on every frame that is **rendered**, because it is what
 /// [`scope_to_exported_node`] narrows the fixture to. It is not required of the

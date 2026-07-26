@@ -10,11 +10,16 @@
  * measure against. The diff half is built separately, against a captured
  * fixture.
  *
- * Only frames that name both a `figmaFileKey` and a `figmaNodeId` are
- * exported. A frame with either key null is unauthored — it stays
- * `pending-265` and its design source stays null, never fabricated (G-11: the
- * project's own render may not stand in for the design source). This tool only
- * fetches from Figma; it never draws a design source.
+ * A frame is exported once its fixture has a real Figma file key in
+ * corpus/figma-fixtures/manifest.json — joined by fixture name
+ * (`fixtureFileKeys`), not a `figmaFileKey` field duplicated onto the frame
+ * (issue #338: a duplicated field could disagree with the fixture manifest,
+ * and then the fixture JSON and the design-source PNG would come from
+ * different Figma files, making the diff wrong by construction) — and the
+ * frame itself names a `figmaNodeId`. A frame missing either is unauthored —
+ * it stays pending and its design source stays null, never fabricated (G-11:
+ * the project's own render may not stand in for the design source). This
+ * tool only fetches from Figma; it never draws a design source.
  *
  * For each exportable frame it calls
  * `GET /v1/images/:key?ids=<nodeId>&format=png&scale=1`, downloads the
@@ -26,15 +31,22 @@
  * writes nothing, so a partial or garbage export can never be committed or
  * silently marked captured.
  *
+ * The capture loop and the CLI runner (`runOracleCaptureCli`) are shared with
+ * the import-fidelity oracle in import_oracle_capture.ts (issue #332); that
+ * tool differs only in which manifest and design-source directory it names,
+ * and the tag its pending frames are reported under (issue #338 collapsed
+ * what was a byte-for-byte copy of this file's main block).
+ *
  * Run via `deno task oracle-capture` with FIGMA_TOKEN set to a PAT carrying the
  * scopes file_content:read, file_metadata:read, and library_content:read.
  * Never commit the token.
  */
 
+import { parseManifest, PLACEHOLDER_FILE_KEY } from "./capture.ts";
 import {
   createFigmaClient,
   type FigmaClient,
-  REQUIRED_SCOPES,
+  requireFigmaToken,
 } from "./fetch.ts";
 import { isPng } from "./images.ts";
 
@@ -42,17 +54,22 @@ import { isPng } from "./images.ts";
 export interface OracleFrame {
   /** The frame name; also the design-source file basename. */
   readonly frame: string;
+  /**
+   * The corpus fixture this frame renders — `corpus/figma-fixtures/<name>.json`
+   * — and the join key against corpus/figma-fixtures/manifest.json for this
+   * frame's Figma file key (issue #338): the basename minus its `.json`
+   * extension is the fixture name.
+   */
+  readonly fixture: string;
   /** The tolerance band governing this frame's diff (aa-edge, blur-falloff, msdf-text). */
   readonly band: string;
-  /** The Figma file the design source is rendered from, or null when unauthored. */
-  readonly figmaFileKey: string | null;
   /** The Figma node rendered as the design source, or null when unauthored. */
   readonly figmaNodeId: string | null;
   /** The committed design-source path, or null until this frame is captured. */
   designSource: string | null;
   /** `pending-265` until captured, then `captured`. */
   status: string;
-  /** fixture, note, and any other fields are preserved on write. */
+  /** note, and any other fields are preserved on write. */
   [key: string]: unknown;
 }
 
@@ -88,10 +105,12 @@ function validateFrame(frame: unknown, index: number): void {
       `oracle manifest frame at index ${index} has no frame name`,
     );
   }
+  if (typeof f.fixture !== "string" || f.fixture.length === 0) {
+    throw new Error(`oracle manifest frame "${name}" has no fixture`);
+  }
   if (typeof f.band !== "string" || f.band.length === 0) {
     throw new Error(`oracle manifest frame "${name}" has no band`);
   }
-  requireStringOrNull(f.figmaFileKey, name, "figmaFileKey");
   requireStringOrNull(f.figmaNodeId, name, "figmaNodeId");
   requireStringOrNull(f.designSource, name, "designSource");
   if (typeof f.status !== "string" || f.status.length === 0) {
@@ -102,8 +121,7 @@ function validateFrame(frame: unknown, index: number): void {
 /**
  * Parses and validates the render-oracle manifest text, preserving every
  * field so the parsed object can be re-serialized after a capture without
- * losing description, gate, fixture, excludeRegions, note, or any other
- * content.
+ * losing description, gate, note, excludeRegions, or any other content.
  *
  * @throws when the document is not an object, has no `design_source_base`, has
  * no non-empty `frames` array, or any frame is missing a required field.
@@ -129,6 +147,16 @@ export function parseOracleManifest(text: string): OracleManifest {
 /** The manifest-relative design-source path a captured frame records. */
 function designSourcePathFor(manifest: OracleManifest, frame: string): string {
   return `${manifest.design_source_base}/${frame}.png`;
+}
+
+/**
+ * The `corpus/figma-fixtures/<name>.json` fixture name a frame's `fixture`
+ * path names — the join key against corpus/figma-fixtures/manifest.json
+ * (issue #338).
+ */
+function fixtureNameOf(fixturePath: string): string {
+  const base = fixturePath.slice(fixturePath.lastIndexOf("/") + 1);
+  return base.endsWith(".json") ? base.slice(0, -".json".length) : base;
 }
 
 async function downloadPng(
@@ -177,6 +205,21 @@ export interface CaptureDesignSourcesOptions {
   /** Writes one frame's downloaded design-source PNG bytes to disk. */
   readonly writePng: (frame: string, bytes: Uint8Array) => Promise<void>;
   /**
+   * The Figma file key for each fixture, keyed by fixture name — joined from
+   * corpus/figma-fixtures/manifest.json (issue #338) instead of reading a
+   * `figmaFileKey` field duplicated onto the frame, so a frame's design
+   * source and its fixture JSON can never come from different Figma files by
+   * construction. A fixture absent here, or still on capture.ts's
+   * `PLACEHOLDER_FILE_KEY`, leaves every frame naming it pending.
+   */
+  readonly fixtureFileKeys: ReadonlyMap<string, string>;
+  /**
+   * Reported in the skip log for a frame that stays pending — "pending #265"
+   * for the E7 oracle, "pending #332" for the import oracle (issue #338:
+   * this capture loop is shared between the two).
+   */
+  readonly pendingTag: string;
+  /**
    * Injectable for tests; used for the presigned asset download. The download
    * does not go to `api.figma.com` — the URLs point at Figma's asset host — so
    * it does not run through the REST client's rate limiter.
@@ -186,28 +229,39 @@ export interface CaptureDesignSourcesOptions {
 }
 
 /**
- * Exports the design source for every frame that declares a `figmaFileKey`
- * and a `figmaNodeId`. Frames with either key null are skipped and stay
- * `pending-265`. A captured frame's `designSource` and `status` are updated on
- * the passed manifest object; a failed one writes nothing and leaves the frame
- * unchanged.
+ * Exports the design source for every frame whose fixture has a real Figma
+ * file key (joined from corpus/figma-fixtures/manifest.json by fixture name,
+ * `fixtureFileKeys`) and which itself names a `figmaNodeId`. A frame whose
+ * fixture has no key yet (absent from `fixtureFileKeys`, or still
+ * capture.ts's `PLACEHOLDER_FILE_KEY`), or which has no `figmaNodeId`, is
+ * skipped and stays pending — logged under `pendingTag`. A captured frame's
+ * `designSource` and `status` are updated on the passed manifest object; a
+ * failed one writes nothing and leaves the frame unchanged.
  */
 export async function captureDesignSources(
   options: CaptureDesignSourcesOptions,
 ): Promise<DesignSourceResult[]> {
-  const { manifest, client, writePng } = options;
+  const { manifest, client, writePng, fixtureFileKeys, pendingTag } = options;
   const fetchFn = options.fetchFn ?? fetch;
   const log = options.log ?? (() => {});
   const results: DesignSourceResult[] = [];
 
   for (const frame of manifest.frames) {
-    const { figmaFileKey, figmaNodeId } = frame;
-    // Both coordinates are required to render. A frame missing either is not
-    // authored yet — it stays pending #265, never fabricated (G-11).
-    if (figmaFileKey === null || figmaNodeId === null) {
+    const { figmaNodeId } = frame;
+    const fixtureName = fixtureNameOf(frame.fixture);
+    const figmaFileKey = fixtureFileKeys.get(fixtureName);
+    // A fixture with no authored Figma file yet (absent from the join, or
+    // still on capture.ts's PLACEHOLDER_FILE_KEY), or a frame with no
+    // figmaNodeId, is not ready to render — it stays pending, never
+    // fabricated (G-11).
+    if (
+      figmaFileKey === undefined || figmaFileKey === PLACEHOLDER_FILE_KEY ||
+      figmaNodeId === null
+    ) {
       log(
-        `${frame.frame}: skipped — no figmaFileKey/figmaNodeId ` +
-          "(pending #265, no design source fabricated)",
+        `${frame.frame}: skipped — fixture "${fixtureName}" has no ` +
+          `authored Figma file key, or the frame has no figmaNodeId ` +
+          `(${pendingTag}, no design source fabricated)`,
       );
       results.push({ frame: frame.frame, action: "skipped" });
       continue;
@@ -249,35 +303,93 @@ export async function captureDesignSources(
   return results;
 }
 
-if (import.meta.main) {
-  const token = Deno.env.get("FIGMA_TOKEN");
-  if (!token) {
-    console.error(
-      "FIGMA_TOKEN is not set. Create a Figma PAT with the scopes " +
-        REQUIRED_SCOPES +
-        " (docs/decisions/figma-access-plan-and-pat-policy.md) and export it. " +
-        "Never commit it.",
-    );
-    Deno.exit(1);
-  }
+export interface OracleCaptureRunOptions {
+  /** The oracle manifest file name, resolved against goldens/oracle/. */
+  readonly manifestFileName: string;
+  /**
+   * The directory captured design-source PNGs are written to, resolved
+   * against goldens/oracle/ (no trailing slash).
+   */
+  readonly designSourceDirName: string;
+  /**
+   * Reported for a frame that stays pending — "pending #265" for the E7
+   * oracle, "pending #332" for the import oracle.
+   */
+  readonly pendingTag: string;
+}
+
+/**
+ * The capture-tool entry point shared by the E7 design-source oracle (this
+ * file) and the import-fidelity oracle (import_oracle_capture.ts, issue
+ * #332) — the two differ only in which manifest they capture, which
+ * directory they write PNGs to, and the tag a pending frame is reported
+ * under (issue #338 collapsed what was a byte-for-byte copy of this
+ * function). Requires FIGMA_TOKEN; returns the process exit code.
+ */
+export async function runOracleCaptureCli(
+  options: OracleCaptureRunOptions,
+): Promise<number> {
+  const { manifestFileName, designSourceDirName, pendingTag } = options;
+  const token = requireFigmaToken();
+  if (!token) return 1;
+
   const oracleDir = new URL("../../../goldens/oracle/", import.meta.url);
-  const manifestUrl = new URL("manifest.json", oracleDir);
+  const manifestUrl = new URL(manifestFileName, oracleDir);
   const manifest = parseOracleManifest(await Deno.readTextFile(manifestUrl));
+
+  // The join half of issue #338: the Figma file key comes from
+  // corpus/figma-fixtures/manifest.json, keyed by fixture name, never from a
+  // field duplicated onto the oracle frame — so a frame's design source and
+  // its fixture JSON can never disagree about which Figma file they came from.
+  const fixturesManifest = parseManifest(
+    await Deno.readTextFile(
+      new URL(
+        "../../../corpus/figma-fixtures/manifest.json",
+        import.meta.url,
+      ),
+    ),
+  );
+  // Two fixtures sharing a name would collapse to one entry here, and the
+  // survivor's key would be used to fetch a design source for the other — the
+  // one failure mode of this join that fetches the wrong file rather than
+  // skipping. `manifest_test.ts` already asserts corpus fixture names are
+  // unique for its own reasons; this refuses to build the map at all if that
+  // ever stops holding, so the join cannot quietly inherit a collision.
+  const fixtureNames = fixturesManifest.fixtures.map((f) => f.name);
+  const duplicates = fixtureNames.filter(
+    (name, i) => fixtureNames.indexOf(name) !== i,
+  );
+  if (duplicates.length > 0) {
+    throw new Error(
+      `corpus/figma-fixtures/manifest.json has duplicate fixture name(s): ` +
+        `${[...new Set(duplicates)].join(", ")} — a design source would be ` +
+        `fetched from whichever entry came last`,
+    );
+  }
+  const fixtureFileKeys = new Map(
+    fixtureNames.map((name, i) =>
+      [name, fixturesManifest.fixtures[i].fileKey] as const
+    ),
+  );
+
   const results = await captureDesignSources({
     manifest,
     client: createFigmaClient({ token, log: (line) => console.log(line) }),
+    fixtureFileKeys,
+    pendingTag,
     writePng: async (frame, bytes) => {
-      const dir = new URL("design-source/", oracleDir);
+      const dir = new URL(`${designSourceDirName}/`, oracleDir);
       await Deno.mkdir(dir, { recursive: true });
       await Deno.writeFile(new URL(`${frame}.png`, dir), bytes);
     },
     log: (line) => console.log(line),
   });
+
   const captured = results.filter((r) => r.action === "captured").length;
   const failed = results.filter((r) => r.action === "failed").length;
   const skipped = results.filter((r) => r.action === "skipped").length;
   // Only rewrite the manifest when a frame was actually captured, so a run
-  // that captures nothing (every frame pending #265) leaves it byte-identical.
+  // that captures nothing leaves it byte-identical.
   if (captured > 0) {
     await Deno.writeTextFile(
       manifestUrl,
@@ -285,10 +397,18 @@ if (import.meta.main) {
     );
   }
   console.log(
-    `done: ${captured} captured, ${skipped} skipped (pending #265), ` +
+    `done: ${captured} captured, ${skipped} skipped (${pendingTag}), ` +
       `${failed} failed`,
   );
-  if (failed > 0) {
-    Deno.exit(1);
-  }
+  return failed > 0 ? 1 : 0;
+}
+
+if (import.meta.main) {
+  Deno.exit(
+    await runOracleCaptureCli({
+      manifestFileName: "manifest.json",
+      designSourceDirName: "design-source",
+      pendingTag: "pending #265",
+    }),
+  );
 }

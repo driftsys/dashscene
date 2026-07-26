@@ -6,9 +6,10 @@
  * exercise vocabulary the real-file import epic proved live but no E7 frame
  * covers — an image fill and the #310 text axes — against Figma's own
  * `GET /v1/images` render. This is the same export mechanism as the E7
- * design-source oracle, reused whole: the manifest parsing and the capture
- * loop are imported from `render_oracle.ts`, pointed at the **separate**
- * import-oracle wiring.
+ * design-source oracle: the manifest parsing, the capture loop, and the CLI
+ * runner all live in `render_oracle.ts` and are reused here, pointed at the
+ * **separate** import-oracle wiring (issue #338 collapsed what was a
+ * byte-for-byte copy of the runner).
  *
  * Separate on purpose: the E7 exit-gate surface
  * (`goldens/oracle/manifest.json`, `goldens/oracle/design-source/`) is the
@@ -21,49 +22,14 @@
  * library_content:read. Never commit the token.
  */
 
-import { createFigmaClient, REQUIRED_SCOPES } from "./fetch.ts";
-import { captureDesignSources, parseOracleManifest } from "./render_oracle.ts";
+import { runOracleCaptureCli } from "./render_oracle.ts";
 
 if (import.meta.main) {
-  const token = Deno.env.get("FIGMA_TOKEN");
-  if (!token) {
-    console.error(
-      "FIGMA_TOKEN is not set. Create a Figma PAT with the scopes " +
-        REQUIRED_SCOPES +
-        " (docs/decisions/figma-access-plan-and-pat-policy.md) and export it. " +
-        "Never commit it.",
-    );
-    Deno.exit(1);
-  }
-  const oracleDir = new URL("../../../goldens/oracle/", import.meta.url);
-  const manifestUrl = new URL("import-manifest.json", oracleDir);
-  const manifest = parseOracleManifest(await Deno.readTextFile(manifestUrl));
-  const results = await captureDesignSources({
-    manifest,
-    client: createFigmaClient({ token, log: (line) => console.log(line) }),
-    writePng: async (frame, bytes) => {
-      const dir = new URL("import-design-source/", oracleDir);
-      await Deno.mkdir(dir, { recursive: true });
-      await Deno.writeFile(new URL(`${frame}.png`, dir), bytes);
-    },
-    log: (line) => console.log(line),
-  });
-  const captured = results.filter((r) => r.action === "captured").length;
-  const failed = results.filter((r) => r.action === "failed").length;
-  const skipped = results.filter((r) => r.action === "skipped").length;
-  // Only rewrite the manifest when a frame was actually captured, so a run
-  // that captures nothing leaves it byte-identical.
-  if (captured > 0) {
-    await Deno.writeTextFile(
-      manifestUrl,
-      JSON.stringify(manifest, null, 2) + "\n",
-    );
-  }
-  console.log(
-    `done: ${captured} captured, ${skipped} skipped (pending #332), ` +
-      `${failed} failed`,
+  Deno.exit(
+    await runOracleCaptureCli({
+      manifestFileName: "import-manifest.json",
+      designSourceDirName: "import-design-source",
+      pendingTag: "pending #332",
+    }),
   );
-  if (failed > 0) {
-    Deno.exit(1);
-  }
 }
