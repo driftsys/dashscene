@@ -31,3 +31,19 @@ lossy-compress distance fields (block quantization mangles the
 field gradient exactly on glyph and icon edges) — validator error.
 Memory bandwidth is typically shared with everything else on the
 SoC — frugality is systemic, not a local KPI.
+
+Fixed-target refinement (v0.12): the rule above is written for an
+unknown-GPU or genuinely mixed fleet, and stays in force for that
+case. On a launch fleet whose GPUs are known at pack time —
+Qualcomm Adreno (SA8255 HiFi default, SA7255 Lite default) and
+Renesas R-Car (PowerVR/IMG cores) — assets ship as native ASTC
+directly, with no Basis and no transcode step of any kind. ASTC is
+a vendor-neutral bitstream, so Adreno and PowerVR/IMG share one
+byte-identical bank per profile. "No transcoder in the trusted load
+path" is satisfied by having no transcoder anywhere in the
+pipeline, not only by moving one outside the load path. The
+Basis/KTX2 path above is not replaced: it is the answer for a
+target whose GPU is not known at pack time, or for a fleet that
+must share one OTA image across GPU architectures with no common
+native format. Full per-target codec table and rationale:
+docs/decisions/native-astc-codec-table.md.

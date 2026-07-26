@@ -479,4 +479,18 @@ so each technote stops being the authority for the conclusion it reached:
   argument is untouched: a consumer still resolves its own graph. `--locked` is
   deliberately not adopted while CI cannot run (#263) (#411).
 
+- [native-astc-codec-table.md](native-astc-codec-table.md) — the launch
+  fleet (SA8255/SA7255 Adreno, Renesas R-Car PowerVR/IMG) ships native ASTC
+  directly, one byte-identical bank, no Basis and no transcoder at all
+  (Wave 1-2, committed); a future NVIDIA-BC7 row (Wave 3) stays proposed
+  only until a pack-time native-format probe confirms real GPU residency,
+  because capability bits are not evidence; adds a fixed-target refinement
+  to `docs/specification/03-target-hardware-rules.md` that keeps the
+  Basis/KTX2 path for the unknown-GPU and mixed-fleet case (story #436).
+- [asset-quality-profile-naming.md](asset-quality-profile-naming.md) — RAW
+  capitalized always names the quality profile, lowercase raw always names
+  an encoding concept (prefer "uncompressed"), and the retired profile
+  names (Lossless, Access, Master, Eco) stay out of the vocabulary (story
+  #436).
+
 See the `sdd-working-memory-lifecycle` rule.
