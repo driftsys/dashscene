@@ -54,6 +54,12 @@ backdrop blur (`profile:full` only, a v0.11 candidate) and fourteen remote
 component masters with no declared library, whose instances render from baked
 children.
 
+The figure has since moved again, for a reason unrelated to fonts: debt #395
+found that the arena's paint key omitted `extra_fills`, so the hero lost a
+stacked fill layer on load. Fixing it took the hero to **3.5691 %** at 5 % fuzz
+(2.6015 % at 10 %) on 2026-07-26. Recorded here so a reader does not take
+4.1618 % as current, nor credit the difference to Inter.
+
 Same limits as the figures above: a live measurement against a third-party
 Community file, recorded in prose because neither the file nor its render may be
 committed (`docs/decisions/figma-corpus-self-authored-only.md`).

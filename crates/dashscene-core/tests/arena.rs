@@ -6,8 +6,8 @@
 use std::mem::{align_of, size_of};
 
 use dashscene_core::{
-    Arena, ClipBox, ClipIndex, Color, CornerRadii, LayoutMode, PaintEntry, PaintIndex, Prop,
-    RectEntry, Stroke, StrokeAlign, TextAlign, TextAlignV, TextStyle,
+    Arena, ClipBox, ClipIndex, Color, CornerRadii, LayoutMode, PaintEntry, PaintIndex, PaintKind,
+    Prop, RectEntry, Stroke, StrokeAlign, TextAlign, TextAlignV, TextStyle,
 };
 
 const RED: Color = Color {
@@ -2206,6 +2206,71 @@ fn a_non_finite_opacity_is_refused_by_name() {
     let mut txn = arena.open();
     let node = boxed(&mut txn, None, 0.0, 0.0, 10.0, 10.0);
     txn.set_prop(node, Prop::Opacity(f32::NAN));
+}
+
+#[test]
+fn stacked_fills_commit_onto_the_paint_entry_and_dedup() {
+    // Debt #395. `paint_key` hashed every other field of the entry but not
+    // `extra_fills`, so a plain node and a stacked node sharing a base fill
+    // interned to ONE pool entry — and the survivor was whichever committed
+    // first, so the overlay was lost with no diagnostic. Measured on the
+    // Landify hero: its document carried one entry with one extra layer and
+    // the arena kept none.
+    let blue = PaintKind::Solid {
+        color: Color {
+            r: 0.0,
+            g: 0.0,
+            b: 1.0,
+            a: 1.0,
+        },
+    };
+
+    let boxed = |txn: &mut dashscene_core::Txn<'_>, name: &str, extra: Vec<PaintKind>| {
+        let node = txn.add_node(None, Some(name));
+        txn.set_prop(node, Prop::Width(10.0));
+        txn.set_prop(node, Prop::Height(10.0));
+        txn.set_prop(node, Prop::Fill(RED));
+        if !extra.is_empty() {
+            txn.set_prop(node, Prop::ExtraFills(extra));
+        }
+        node
+    };
+
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    // The plain node commits FIRST, which is the ordering that lost the
+    // overlay: the stacked node found the plain entry already interned.
+    boxed(&mut txn, "plain", Vec::new());
+    boxed(&mut txn, "stacked", vec![blue.clone()]);
+    boxed(&mut txn, "stacked-again", vec![blue.clone()]);
+    txn.commit();
+
+    let scene = arena.committed();
+    assert_ne!(
+        scene.rects()[0].paint,
+        scene.rects()[1].paint,
+        "a stacked fill earns a distinct entry from the same base fill alone"
+    );
+    assert_eq!(
+        scene.rects()[1].paint,
+        scene.rects()[2].paint,
+        "two identically stacked nodes still share one entry"
+    );
+    assert_eq!(scene.paints().len(), 2);
+
+    assert!(
+        scene
+            .paints()
+            .resolve(scene.rects()[0].paint)
+            .extra_fills
+            .is_empty(),
+        "the plain node keeps no overlay"
+    );
+    assert_eq!(
+        scene.paints().resolve(scene.rects()[1].paint).extra_fills,
+        vec![blue],
+        "the stacked node keeps its overlay through commit"
+    );
 }
 
 #[test]
