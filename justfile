@@ -257,10 +257,25 @@ reprobe key root="": wasm
 # Figma files are live-only: the .dsb and .png land in /tmp, never committed;
 # the in-scope scratch is cleaned on exit, like reprobe's.
 #
+# `profile` is the Gfx QA profile preview (story #435): raw, hifi or lite. RAW
+# is the null binding and renders the file unchanged, which is what makes it the
+# reference arm rather than a fourth thing; hifi and lite pack the document's
+# assets under that quality profile in memory, assemble the derived bank, and
+# software-decode its block payloads back to RGBA before the painter sees them.
+# The painter is unchanged and still only draws RGBA. The output PNG is named
+# after the profile, so the three can be compared side by side.
+#
+# What this view cannot show, so a target bench confirms a short list rather
+# than discovering quality: GPU filtering behaviour, driver-level effects
+# (vendor bandwidth compression such as UBWC, and the NVIDIA case where ASTC is
+# emulated rather than sampled natively), and where in a target pipeline the
+# sRGB transfer function is applied.
+#
 # Epic targets:
 #   just render MRk9I5cYY6yJa8JhljzkBn 2411:10795  # first-light
 #   just render S30AJmYfnDKGeSQmzuXEUk 1973:6580    # hero
-render key root="": wasm
+#   just render S30AJmYfnDKGeSQmzuXEUk 1973:6580 lite   # the same file under Lite
+render key root="" profile="raw": wasm
     #!/usr/bin/env bash
     set -euo pipefail
     token=$(security find-generic-password -a "$USER" -s figma-pat -w)
@@ -284,6 +299,26 @@ render key root="": wasm
     dsb_size=$(wc -c < /tmp/render.dsb | tr -d ' ')
     echo "render: imported /tmp/render.dsb (${dsb_size} bytes)" >&2
 
-    cargo run --quiet -p goldens --bin render-dsb -- /tmp/render.dsb /tmp/render.png
-    png_size=$(wc -c < /tmp/render.png | tr -d ' ')
-    echo "RENDERED — wrote /tmp/render.png (${png_size} bytes)"
+    out="/tmp/render-{{profile}}.png"
+    cargo run --quiet -p goldens --bin render-dsb -- \
+        /tmp/render.dsb "$out" --profile {{profile}}
+    png_size=$(wc -c < "$out" | tr -d ' ')
+    echo "RENDERED — wrote ${out} (${png_size} bytes, profile {{profile}})"
+
+# The Gfx QA triptych: every corpus scene rendered under RAW, HiFi and Lite,
+# with a diff heatmap per production arm and the banded numbers printed (story
+# #435). Runs the profile-preview oracle, which measures every arm against its
+# pinned scene band and writes the artifacts as it goes.
+#
+# The triptych is written rather than committed: a committed render of a scene
+# that exists to show codec loss would have to be re-baselined for every
+# unrelated painter change. The durable record is the measured numbers in
+# goldens/oracle/profile-manifest.json, which the oracle asserts.
+triptych:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo test -p goldens --test profile_preview_oracle -- --nocapture \
+        | grep -E "^PROFILE PREVIEW|^test result"
+    echo
+    echo "TRIPTYCH — wrote target/profile-preview/<scene>/{raw,hifi,lite}.png"
+    echo "           and {hifi,lite}-heat.png beside them"

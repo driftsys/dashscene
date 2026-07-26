@@ -14,6 +14,14 @@ name = "dashpack"
 name = "dashpack"
 path = "src/main.rs"
 
+[features]
+# The Gfx QA profile preview (story #435): software decode of a derived block
+# payload back to RGBA, so the Skia reference painter can render a HiFi or Lite
+# bank on a desk. Off by default, because the packer binary only ever writes
+# banks and pulling a reader onto its emit-side dependency list would put a
+# third party's parser in the shipping tool. `goldens` turns it on.
+preview = ["dep:ktx2"]
+
 [dependencies]
 # The asset schema. `dashpack::profile` reads `AssetEntry.kind` to apply its
 # hard rules before any measurement runs, which is the coupling the
@@ -28,11 +36,16 @@ zstd = { workspace = true }
 # canonical payload, computed here rather than taken from the caller, so a
 # derivation cannot be bound to an identity it does not belong to (story #434).
 blake3 = { workspace = true }
+# An independently written KTX2 parser. Optional, and reached only through the
+# `preview` feature: the writer is ours, and a check is worth more when someone
+# else wrote it (story #431), so the emit path never sees it. The preview path
+# is a *read* path, so it reads with this same independent parser rather than
+# with an inverse of our own writer (story #435).
+ktx2 = { workspace = true, optional = true }
 
 [dev-dependencies]
-# An independently written KTX2 parser, used only to read back what
-# `dashpack::ktx2` emits. It is a test dependency on purpose: the writer is
-# ours, and a check is worth more when someone else wrote it (story #431).
+# The same parser, unconditionally, for `dashpack::ktx2`'s own round-trip tests
+# — they read back what the writer emits whether or not `preview` is enabled.
 ktx2 = { workspace = true }
 # Decodes the committed corpus PNGs the band contracts are measured on. A test
 # dependency for now: the packer's canonical-to-RGBA ingest is a later story,

@@ -8,6 +8,16 @@ repository.workspace = true
 rust-version.workspace = true
 description = "Golden-image harness: renders scenes through the reference painter and compares them against checked-in PNGs (docs/design/architecture.md, docs/roadmap.md v0.1)."
 
+[features]
+# The Gfx QA profile preview (story #435): `goldens::profile` derives a
+# document under HiFi or Lite, and `goldens::render` software-decodes the
+# resulting block payloads so the reference painter can draw them. On by
+# default, so `cargo test --workspace` and `cargo clippy --all-targets` cover
+# it. A build with it off still loads and renders RAW; it refuses a block
+# payload by name rather than drawing it wrongly.
+default = ["profile-preview"]
+profile-preview = ["dep:dashpack"]
+
 [dependencies]
 skia-safe.workspace = true
 # render_dsb (src/render.rs) loads a committed `.dsb` and renders it through the
@@ -21,16 +31,25 @@ dashscene-core.workspace = true
 dashscene-engine.workspace = true
 dashscene-skia.workspace = true
 dashscene-typeset.workspace = true
+# The packer, and its `preview` feature — the block decoder the reference load
+# path needs to draw a derived bank (story #435). A real dependency rather than
+# a dev-dependency since `src/profile.rs` and `src/render.rs` reach it, and
+# optional so a consumer that only ever renders RAW does not link a packer.
+# It also still serves the two test-only uses it arrived for: the band-vocabulary
+# weld (`tests/asset_band_weld.rs`, story #432) and the derived-bank golden
+# (`tests/derived_bank.rs`, story #434).
+dashpack = { workspace = true, features = ["preview"], optional = true }
 
 [dev-dependencies]
 dashlang.workspace = true
 tempfile.workspace = true
-# The packer's per-asset band oracle. Test-only, and here for one reason: the
-# weld test (`tests/asset_band_weld.rs`) runs one image pair through both
-# `goldens::oracle::diff` and `dashpack::band::diff` and asserts they report the
-# same three numbers, so the pack bands are the same vocabulary as the render
-# bands rather than a second one that drifted (story #432).
-dashpack.workspace = true
+# The weld test (`tests/profile_preview_weld.rs`) reads the block payload back
+# out of an assembled `.dsb` with an independently written KTX2 parser and
+# libzstd, rather than with an inverse of `dashpack`'s own writer: the leg that
+# proves what ships is what the encoder made is worth more when someone else
+# wrote the reader (story #435).
+ktx2.workspace = true
+zstd.workspace = true
 # Decodes the committed corpus PNGs the derived-bank golden packs
 # (`tests/derived_bank.rs`), through the same crate `dashpack`'s own band tests
 # decode with: the golden is byte-exact over the encoder's output, so the

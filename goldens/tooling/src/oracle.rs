@@ -198,9 +198,15 @@ pub fn diff_excluding(
     })
 }
 
-/// Decodes a PNG to `((width, height), unpremultiplied RGBA8888 rows)`.
-/// `label` names the image in the error (reference vs design source).
-fn decode_rgba(png_bytes: &[u8], label: &str) -> Result<((i32, i32), Vec<u8>), String> {
+/// Decodes an encoded image to `((width, height), unpremultiplied RGBA8888
+/// rows)`. `label` names the image in the error (reference vs design source).
+///
+/// Crate-visible rather than private only so that [`crate::profile`] can decode
+/// a canonical asset payload through this exact function (story #435). The two
+/// arms of a profile diff have to start from one decode of the canonical bytes,
+/// and this is the reference painter's own codec — the one the RAW arm paints
+/// through. No behaviour changed when the visibility widened.
+pub(crate) fn decode_rgba(png_bytes: &[u8], label: &str) -> Result<((i32, i32), Vec<u8>), String> {
     let data = Data::new_copy(png_bytes);
     let image = images::deferred_from_encoded_data(data, None)
         .ok_or_else(|| format!("{label} is not a decodable PNG"))?;
@@ -283,6 +289,98 @@ pub const BANDS: [&ToleranceBand; 3] = [&AA_EDGE, &BLUR_FALLOFF, &MSDF_TEXT];
 
 /// The band a manifest frame's `band` name selects, or `None` if the name is
 /// not one of the three pinned rules.
+///
+/// The profile-preview bands below are deliberately **not** reachable from
+/// here. They measure a different kind of residual against a different
+/// reference, and a design-source frame that named one would be graded against
+/// a number chosen for something else.
 pub fn band_for(rule: &str) -> Option<&'static ToleranceBand> {
     BANDS.into_iter().find(|band| band.rule == rule)
+}
+
+// ------------------------------------------------- the profile-preview bands
+
+/// HiFi, measured over a whole rendered scene against the same scene under RAW
+/// (story #435).
+///
+/// # Why these are not the render bands' numbers
+///
+/// The three bands above are 24 to 50 because they compare a CPU rasterizer
+/// against Figma's server-side export and must absorb anti-aliasing, resampling
+/// and gamma disagreement. Here **both arms are the same painter, the same
+/// solver, the same typesetter and the same canvas**; the only variable is
+/// which bytes the asset entries resolve to. Nothing disagrees except the
+/// codec, so a threshold sized for a rasterizer disagreement would be blind to
+/// everything this oracle exists to see. Measured: on `profile-photo`, HiFi's
+/// whole-scene residual has a maximum per-channel delta of 3, so every render
+/// band's threshold reports it as a perfect match.
+///
+/// # Why they are the packer's numbers exactly
+///
+/// `dashpack::profile::HIFI_IMAGE_FILL` is 2 and 1 %, and this band is 2 and
+/// 1 %. The profile's promise is a per-asset band; this oracle asks whether the
+/// profile keeps that promise once the asset is composited into a scene, so the
+/// number to hold it to is the promise itself. `the_scene_bands_are_the_packers_
+/// bands` in the oracle test asserts the equality, so the two cannot drift
+/// apart silently — if they ever need to differ, that is a decision to record
+/// rather than a constant to edit.
+///
+/// The scene measurement is not merely the asset measurement repeated. Pixels
+/// covered by opaque ink — glyphs, strokes — contribute no difference and still
+/// count toward the total, so a scene dilutes; and a scaled image fill
+/// resamples, which can amplify. Measured on `profile-photo`: 0.2043 % at scene
+/// level against 0.2133 % for the same asset alone.
+///
+/// **The mutation that fails it**, measured, because a budget nothing can
+/// exceed is not a gate (issue #422): on `profile-photo`, an escalation that
+/// stopped one rung early at 8x8 instead of reaching 6x6 measures 2.6627 %,
+/// against this 1 % budget. On `profile-stress`, where the escalation must run
+/// all the way to the lossless rung, stopping at the finest lossy rung 4x4
+/// measures 51.8707 %. Both are recorded in `goldens/oracle/profile-manifest.json`
+/// and re-measured by the oracle on every run.
+pub const PROFILE_HIFI_SCENE: ToleranceBand = ToleranceBand {
+    rule: "profile-hifi-scene",
+    channel_delta: 2,
+    differing_fraction: 0.01,
+};
+
+/// Lite, measured over a whole rendered scene against the same scene under RAW
+/// (story #435).
+///
+/// `dashpack::profile::LITE_IMAGE_FILL`'s numbers — 8 and 5 % — for the reason
+/// [`PROFILE_HIFI_SCENE`] gives.
+///
+/// **The mutation that fails it**, measured: on `profile-stress`, Lite's
+/// escalation settles at 6x6 and the whole scene measures 4.5166 %; an
+/// escalation that stopped one rung early at 8x8 measures 9.7900 %, against
+/// this 5 % budget.
+///
+/// `profile-photo` does **not** exercise this budget and does not pretend to.
+/// That scene's gradient survives the cheapest rung on the ladder, so Lite
+/// settles at 12x12 with a whole-scene residual of 0.0000 % and there is no
+/// coarser rung for a mutation to stop at. The manifest records that with a
+/// stated reason rather than a mutation, and
+/// `every_band_is_exercised_by_at_least_one_scene` requires some scene to
+/// exercise every band that is declared.
+pub const PROFILE_LITE_SCENE: ToleranceBand = ToleranceBand {
+    rule: "profile-lite-scene",
+    channel_delta: 8,
+    differing_fraction: 0.05,
+};
+
+/// The profile-preview bands, keyed by their manifest `band` name.
+///
+/// Two, not three: RAW is the null binding and is the reference arm of the
+/// comparison, so it has nothing to be measured against. A band is only written
+/// where a measurement decides something.
+pub const PROFILE_BANDS: [&ToleranceBand; 2] = [&PROFILE_HIFI_SCENE, &PROFILE_LITE_SCENE];
+
+/// The profile-preview band a `rule` name selects, or `None` if it is not one
+/// of the two pinned scene contracts.
+///
+/// A separate lookup from [`band_for`] on purpose: the two families answer
+/// different questions against different references, and one name space would
+/// let a manifest in either family select a band from the other.
+pub fn profile_band_for(rule: &str) -> Option<&'static ToleranceBand> {
+    PROFILE_BANDS.into_iter().find(|band| band.rule == rule)
 }

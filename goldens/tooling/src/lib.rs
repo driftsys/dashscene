@@ -14,6 +14,16 @@ use std::path::Path;
 use skia_safe::{AlphaType, ColorType, Data, ImageInfo, images};
 
 pub mod oracle;
+/// Rendering a document under a quality profile — the Gfx QA profile preview.
+///
+/// Behind the `profile-preview` feature, which is on by default: it links the
+/// packer and the block decoder into this harness, and a build that does not
+/// want them (a trimmed consumer of the reference painter) turns it off. The
+/// reference painter itself is unchanged either way and never links a block
+/// decoder — the decode happens in the loader, before any byte reaches it, so
+/// P2 holds (story #435).
+#[cfg(feature = "profile-preview")]
+pub mod profile;
 pub mod render;
 
 /// Compares `png_bytes` against the checked-in golden `{name}.png`,

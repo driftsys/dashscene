@@ -148,6 +148,45 @@ frame; it never draws one (G-11).
    Tune nothing to make it pass — if a frame fails its band, that is a measured
    fidelity gap to fix in the painter or a band to re-pin with review.
 
+## The profile-preview oracle (story #435)
+
+The third manifest here, and the only one with **no design source**. The other
+two ask whether the reference painter agrees with Figma; this one asks what a
+quality profile costs, by rendering each scene under RAW, then under HiFi and
+Lite, and diffing each production arm against RAW.
+
+    goldens/oracle/
+      profile-manifest.json    per scene and profile: the band, the rungs the
+                               escalation chose, the measured numbers, and the
+                               mutation that fails the band
+
+Both arms are the same painter, the same solver, the same typesetter and the
+same canvas, so a difference is the asset axis and nothing else — no export
+pipeline and no resampling in the loop. It catches what the packer's per-asset
+bands cannot: the asset **in context**, banding read behind a caption and block
+boundaries read against a stroke.
+
+The E7 gate's files and the import oracle's files are never read or written by
+it. It reuses `goldens::oracle`'s diff and band **type**, and pins its own two
+bands — `profile-hifi-scene` and `profile-lite-scene` — which carry
+`dashpack::profile`'s numbers exactly. The two band families deliberately do not
+share a name space: a design-source frame graded against a codec band would fail
+at a threshold of 2, and a scene graded against `blur-falloff` would pass at 24.
+
+No frame is captured and there is no `status` field, because there is nothing to
+capture: the reference arm is produced in the same run. The scenes are compiled
+in process rather than committed — the only committed compiled document with an
+image has a 16x16 image, which is one ASTC block at every footprint, so its
+triptych renders byte-identically and could not fail anything.
+
+`goldens/tooling/tests/profile_preview_oracle.rs` is the diff, and it writes the
+triptych plus a diff heatmap per production arm to
+`target/profile-preview/<scene>/` on every run (`just triptych`).
+`goldens/tooling/tests/profile_preview_weld.rs` holds the premise the whole path
+rests on. Full detail, including the measured table and each band's failing
+mutation: `docs/design/goldens.md` and
+`docs/decisions/profile-preview-decodes-in-the-loader.md`.
+
 ## The import-fidelity oracle (issue #332)
 
 The full real-file-import epic ends at a quantitative question: does an

@@ -21,6 +21,17 @@
              fixed-target refinement is recorded in
              docs/specification/03-target-hardware-rules.md. This file is no
              longer their authority either.
+             GARDENED FURTHER 2026-07-27 (v0.12, story #435):
+             "Reference-painter profile preview (Gfx QA pre-validation)" in
+             full, and the dependency plan's dashscene-skia paragraph to the
+             extent it described that preview. They now live in
+             docs/decisions/profile-preview-decodes-in-the-loader.md and
+             docs/design/goldens.md. Two points of that paragraph were
+             deliberately not built as sketched, and the decision record says
+             why: the decode is the loader's rather than the painter's, and the
+             codec is the pinned astcenc in both directions rather than
+             texture2ddecoder welded to it. This file is no longer their
+             authority.
              GARDENED FURTHER 2026-07-26 (v0.12, story #432): "The kernel"
              points 2 and 3 in full — the RAW/HiFi/Lite band contracts, the
              per-asset encode-and-diff oracle, the escalation ladder, and the
