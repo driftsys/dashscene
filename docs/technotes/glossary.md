@@ -55,7 +55,8 @@ variants, FLIP, measure), `dashscene-typeset` (bidi/shaping/atlas), `dashbuf`
 (the `.dsb` schema), `dashpaint` (paint table + painter trait = boundary B),
 `dashscene-skia` (Skia reference painter), `dashcue` (descriptive animation
 vocabulary + scheduling), `dashlang` (Rust DSL + corpus generator), `dashc`
-(compiler), `dashpack` (asset packer — per-profile derivations and cold-bank
+(compiler), `dashpack-astcenc-sys` (raw bindings to the vendored astcenc C++
+sources), `dashpack` (asset packer — per-profile derivations and cold-bank
 assembly), `dashscene-unity` (Unity FFI bindings), `dashscene-web` /
 `dashscore` / `dashscene-compose` (parked).
 

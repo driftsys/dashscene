@@ -97,6 +97,7 @@ publish:
     cargo publish -p dashscene-skia
     cargo publish -p dashlang
     cargo publish -p dashc
+    cargo publish -p dashpack-astcenc-sys
     cargo publish -p dashpack
     cargo publish -p dashscene-unity
     cargo publish -p dashscene-web
