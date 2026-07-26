@@ -195,7 +195,10 @@ bench confirms exactly that short list, rather than discovering quality.
   different cadence — or migrate later via its decision record).
   Reproducible banks require pinned encoder versions — and version-locked
   _decoders_ too (JPEG decode output varies across implementations;
-  Cargo.lock is the mechanism on the crate side).
+  `Cargo.lock` is the mechanism on the crate side). When this was written
+  `Cargo.lock` was gitignored, so that mechanism did not exist; it was filed
+  as #411 and committed on 2026-07-26
+  (`docs/decisions/cargo-lock-is-committed.md`), so the claim now holds.
 - **Packer decode (canonical -> RGBA for encoding + the band oracle; GIF
   frames for the animation bake): the image-rs family** — `png`,
   `zune-jpeg`, `gif`, `image-webp` (or the umbrella `image` crate with
