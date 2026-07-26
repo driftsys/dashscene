@@ -16,9 +16,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::bindings::{Binding, Channel, ScalarTransform, SignalDecl, SignalId};
 use crate::committed::{
-    ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CommittedScene, CornerRadii, GroupComposite,
-    ImageAsset, ImageTable, PaintEntry, PaintIndex, PaintKind, PaintTable, RectEntry, Shadow,
-    Stroke, StrokeAlign, Vec2, VectorField,
+    Blur, ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CommittedScene, CornerRadii,
+    GroupComposite, ImageAsset, ImageTable, PaintEntry, PaintIndex, PaintKind, PaintTable,
+    RectEntry, Shadow, Stroke, StrokeAlign, Vec2, VectorField,
 };
 
 /// Stable handle to a node in one [`Arena`]. Returned by
@@ -261,6 +261,15 @@ pub enum Prop {
     /// entry with no cross-node resolution (unlike a mask or group
     /// opacity).
     Shadows(Vec<Shadow>),
+    /// The node's blurs (v0.11, story #393,
+    /// `docs/decisions/backdrop-blur-is-core-vocabulary.md`). Replaces the
+    /// whole list — an empty vec clears them. Paint intent like
+    /// [`Prop::Shadows`]: a blur depends only on the node itself, so commit
+    /// copies it straight onto the paint-pool entry with no cross-node
+    /// resolution, even though a backdrop blur's *painting* does depend on
+    /// what lies beneath. That dependency is the painter's contract at
+    /// boundary B, not a resolution this arena performs (P1/P2).
+    Blurs(Vec<Blur>),
     /// Fills stacked over the node's `Fill`/`FillWith` fill, bottom to top
     /// (story C1, debt #146). Replaces the whole list — an empty vec clears
     /// the node's stacked layers back to a single fill. Paint intent like
@@ -501,6 +510,9 @@ struct NodeData {
     /// #45). Beside the scalar paint fields rather than inside them — it
     /// is variable-length — the same split as `text`. Empty = no shadows.
     shadows: Vec<Shadow>,
+    /// The node's blurs (v0.11, story #393). Empty = no blur — the same
+    /// variable-length split as `shadows`.
+    blurs: Vec<Blur>,
     /// The node's baked-vector coverage mask (story B1). `Some` for a Figma
     /// VECTOR node: the fill is masked by the resolved field. `None` (the
     /// default) is the implicit parametric shape. Resolved at load
@@ -942,6 +954,7 @@ impl Txn<'_> {
             stroke: None,
             corners: CornerRadii::default(),
             shadows: Vec::new(),
+            blurs: Vec::new(),
             shape: None,
             clip: false,
             opacity: 1.0,
@@ -1091,6 +1104,7 @@ impl Txn<'_> {
                 }
             }
             Prop::Shadows(shadows) => data.shadows = shadows,
+            Prop::Blurs(blurs) => data.blurs = blurs,
             Prop::ExtraFills(fills) => data.extra_fills = fills,
             Prop::ShapeField(field) => data.shape = Some(field),
             Prop::Clip(v) => data.clip = v,
@@ -1557,6 +1571,7 @@ impl Txn<'_> {
                             // come straight from the node. Cloned in the
                             // cache-miss arm only, like the fill's stops.
                             shadows: node.shadows.clone(),
+                            blurs: node.blurs.clone(),
                             // The baked-vector coverage mask (story B1), not
                             // variant-overridable either — straight from the
                             // node. `VectorField` is `Copy`, so no clone.
@@ -1814,6 +1829,7 @@ fn prop_class(prop: &Prop) -> PropClass {
         | Prop::Stroke(_)
         | Prop::Corners { .. }
         | Prop::Shadows(_)
+        | Prop::Blurs(_)
         | Prop::ExtraFills(_)
         | Prop::ShapeField(_) => PropClass::Paint,
         Prop::Clip(_) => PropClass::ClipFlag,
@@ -1976,6 +1992,11 @@ fn paint_key(entry: &PaintEntry) -> PaintKey {
 
     key.extend(corner_key(entry.corners));
 
+    key.push(entry.blurs.len() as u32);
+    for b in &entry.blurs {
+        key.push(b.kind as u32);
+        key.push(b.radius.to_bits());
+    }
     key.push(entry.shadows.len() as u32);
     for shadow in &entry.shadows {
         key.push(shadow.kind as u32);

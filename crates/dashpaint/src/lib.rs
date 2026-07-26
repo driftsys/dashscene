@@ -427,6 +427,36 @@ pub struct Shadow {
     pub color: Color,
 }
 
+/// Which content a blur applies to (v0.11, story #393,
+/// `docs/decisions/backdrop-blur-is-core-vocabulary.md`).
+///
+/// The distinction is not cosmetic. `Layer` is node-local like every effect
+/// before it — the node's own composited content is blurred. `Backdrop` is
+/// the first effect that requires a painter to read what is *already*
+/// composited beneath the node, seen through the node's own transparency,
+/// which is why it carries an ordering guarantee the other effects do not
+/// (see [`Painter::paint`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlurKind {
+    Layer,
+    Backdrop,
+}
+
+/// One blur (v0.11, story #393). Authored intent: which content is blurred
+/// and by how much. `radius` is the Gaussian blur radius in document units,
+/// non-negative, carried verbatim from the document — the sigma mapping
+/// (`sigma = radius/2`) is per-painter math derived at draw time (P1),
+/// exactly as it is for [`Shadow::blur`].
+///
+/// Only `Backdrop` is produced today. Layer blur is budgeted at v1 and needs
+/// no change here when it lands, which is the reason the kind exists now
+/// rather than being inferred from context.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Blur {
+    pub kind: BlurKind,
+    pub radius: f32,
+}
+
 /// A resolved baked-vector coverage mask (story B1,
 /// `docs/wip/2026-07-19-B1-vector-msdf-design.md`) — the runtime form of a
 /// Figma VECTOR node's shape. A paint entry carrying `Some(VectorField)`
@@ -489,6 +519,16 @@ pub struct PaintEntry {
     /// (below) brought to the fill side (story C1, debt #146). `stroke`
     /// stays single-valued (the debt's stroke half is untouched).
     pub shadows: Vec<Shadow>,
+    /// The node's blurs (v0.11, story #393). Empty (the default) for a node
+    /// with no blur, so every pre-v0.11 entry is unchanged. Carried beside
+    /// `shadows` because a blur is an effect on the same node and dedups
+    /// with the rest of the entry the same way.
+    ///
+    /// A `BlurKind::Backdrop` entry here is also what declares that the node
+    /// samples the already-composited backdrop; there is deliberately no
+    /// separate flag saying so, because two records of one fact can
+    /// disagree.
+    pub blurs: Vec<Blur>,
     /// The baked-vector coverage mask (story B1). `Some` masks `fill` by the
     /// referenced field's coverage — a Figma VECTOR shape. `None` (the
     /// default) is the implicit parametric shape, so every pre-B1 entry is

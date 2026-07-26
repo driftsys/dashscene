@@ -119,6 +119,7 @@ fn a_full_entry_round_trips_through_the_table() {
         }],
         shape: None,
         extra_fills: Vec::new(),
+        blurs: Vec::new(),
     };
     let mut table = PaintTable::new();
     let index = table.push(entry.clone());

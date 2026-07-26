@@ -9,7 +9,6 @@ use dashscene_validator::{Construct, Location, NodePath, Profile, Report, Severi
 /// below cannot rot when a variant is added.
 const ALL: &[Construct] = &[
     Construct::LayerBlur,
-    Construct::BackdropBlur,
     Construct::AdvancedBlendMode,
     Construct::CornerSmoothing,
     Construct::LuminanceMask,
@@ -110,22 +109,24 @@ fn later_band_is_a_warning_in_both_profiles() {
 
 #[test]
 fn profile_full_only_constructs_block_a_core_target() {
-    // This is the one place the two profiles disagree at v0.3. DESIGN
-    // §10.1 annotates backdrop blur and advanced blend modes
-    // "(profile:full)": a lean painter never gets them, so under
-    // profile:core there is nothing to degrade to — it is an error.
-    for construct in [Construct::BackdropBlur, Construct::AdvancedBlendMode] {
-        assert_eq!(
-            triage(construct, Profile::Core, at(1)).severity,
-            Severity::Error,
-            "{construct:?} is profile:full-only, so profile:core must reject it"
-        );
-        assert_eq!(
-            triage(construct, Profile::Full, at(1)).severity,
-            Severity::Warning,
-            "{construct:?} is deferred vocabulary, not rejected, under profile:full"
-        );
-    }
+    // This is the one place the two profiles disagree. DESIGN §10.1
+    // annotated backdrop blur and advanced blend modes "(profile:full)": a
+    // lean painter never gets them, so under profile:core there is nothing to
+    // degrade to — it is an error. Backdrop blur left that set at story #393,
+    // which made it core vocabulary every painter honours
+    // (docs/decisions/backdrop-blur-is-core-vocabulary.md), so the advanced
+    // blend mode is the last member.
+    let construct = Construct::AdvancedBlendMode;
+    assert_eq!(
+        triage(construct, Profile::Core, at(1)).severity,
+        Severity::Error,
+        "{construct:?} is profile:full-only, so profile:core must reject it"
+    );
+    assert_eq!(
+        triage(construct, Profile::Full, at(1)).severity,
+        Severity::Warning,
+        "{construct:?} is deferred vocabulary, not rejected, under profile:full"
+    );
 }
 
 #[test]
@@ -170,9 +171,9 @@ fn the_rule_registry_is_unique_and_covers_every_construct() {
 
 #[test]
 fn diagnostic_display_names_severity_rule_and_path() {
-    let rendered = triage(Construct::BackdropBlur, Profile::Core, at(3)).to_string();
+    let rendered = triage(Construct::AdvancedBlendMode, Profile::Core, at(3)).to_string();
     assert!(
-        rendered.starts_with("error[profile.backdrop-blur] at /screen/card (#3): "),
+        rendered.starts_with("error[profile.advanced-blend-mode] at /screen/card (#3): "),
         "{rendered}"
     );
 }

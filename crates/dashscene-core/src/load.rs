@@ -36,8 +36,8 @@ use crate::arena::{
 };
 use crate::bindings::{Channel, ScalarTransform, SignalId};
 use crate::committed::{
-    Color, Gradient, GradientKind, GradientStop, ImageAsset, ImageFormat, Mat23, PaintKind,
-    ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, Vec2, VectorField,
+    Blur, BlurKind, Color, Gradient, GradientKind, GradientStop, ImageAsset, ImageFormat, Mat23,
+    PaintKind, ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, Vec2, VectorField,
 };
 
 /// Replays a validated `.dsb` document into `arena` and commits it,
@@ -564,6 +564,28 @@ fn load_paint(
         );
     }
 
+    // v0.11 blurs (story #393). Same shape as the shadows above: absent means
+    // none, and the prop replaces the whole list, so it is set only when the
+    // document carries a non-empty one. Loading it matters even before a
+    // painter draws it — a schema field the loader ignored would drop the
+    // node's blur silently, which is exactly what P4 forbids.
+    if let Some(blurs) = paint.blurs()
+        && !blurs.is_empty()
+    {
+        txn.set_prop(
+            id,
+            Prop::Blurs(
+                blurs
+                    .iter()
+                    .map(|b| Blur {
+                        kind: blur_kind(b.kind()),
+                        radius: b.radius(),
+                    })
+                    .collect(),
+            ),
+        );
+    }
+
     // The document pools clip with the paint entry; the arena carries it as
     // node intent (issue #97). Two nodes sharing a style but differing in
     // clip therefore need two pool entries in the document, which is what
@@ -645,6 +667,16 @@ fn stroke_align(a: dashbuf::StrokeAlign) -> StrokeAlign {
         dashbuf::StrokeAlign::Center => StrokeAlign::Center,
         dashbuf::StrokeAlign::Outside => StrokeAlign::Outside,
         other => unreachable!("unknown StrokeAlign {other:?}: rejected by the load gate (P4)"),
+    }
+}
+
+/// The document's blur kind as the arena's (story #393). An unknown
+/// discriminant cannot occur — flatbuffers validates the enum at read — so
+/// this is a total map, like [`shadow_kind`] below.
+fn blur_kind(k: dashbuf::BlurKind) -> BlurKind {
+    match k {
+        dashbuf::BlurKind::Layer => BlurKind::Layer,
+        _ => BlurKind::Backdrop,
     }
 }
 

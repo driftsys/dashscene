@@ -10,21 +10,22 @@
 use std::collections::HashMap;
 
 use dashbuf::{
-    AtlasRect, Binding as FbBinding, BindingArgs as FbBindingArgs, Color, CornerRadii,
-    Document as FbDocument, DocumentArgs as FbDocumentArgs, EdgeInsets as FbEdgeInsets,
-    FillLayer as FbFillLayer, FillLayerArgs as FbFillLayerArgs, FixedSizeLayout, Gradient,
-    GradientArgs, GradientStop, GridTrack as FbGridTrack, GridTrackArgs as FbGridTrackArgs, Image,
-    ImageArgs, ImageFill, ImageFillArgs, LayoutConstraints as FbLayoutConstraints,
-    LayoutConstraintsArgs, LayoutContainer as FbLayoutContainer, LayoutContainerArgs, Mat23,
-    NO_FIELD, NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE, Node as FbNode, NodeArgs as FbNodeArgs,
-    Paint as BufPaint, PaintArgs, PlaneBounds, Shadow as FbShadow, ShadowArgs,
-    ShadowKind as FbShadowKind, SignalDecl as FbSignalDecl, SignalDeclArgs as FbSignalDeclArgs,
-    SolidFill, SolidFillArgs, Stroke, StrokeArgs, TextStyle as FbTextStyle, TextStyleArgs,
-    TransformClamp, TransformClampArgs, TransformMapRange, TransformMapRangeArgs, TransformScale,
+    AtlasRect, Binding as FbBinding, BindingArgs as FbBindingArgs, Blur as FbBlur, BlurArgs,
+    BlurKind as FbBlurKind, Color, CornerRadii, Document as FbDocument,
+    DocumentArgs as FbDocumentArgs, EdgeInsets as FbEdgeInsets, FillLayer as FbFillLayer,
+    FillLayerArgs as FbFillLayerArgs, FixedSizeLayout, Gradient, GradientArgs, GradientStop,
+    GridTrack as FbGridTrack, GridTrackArgs as FbGridTrackArgs, Image, ImageArgs, ImageFill,
+    ImageFillArgs, LayoutConstraints as FbLayoutConstraints, LayoutConstraintsArgs,
+    LayoutContainer as FbLayoutContainer, LayoutContainerArgs, Mat23, NO_FIELD, NO_PAINT,
+    NO_PARENT, NO_TEXT, NO_TEXT_STYLE, Node as FbNode, NodeArgs as FbNodeArgs, Paint as BufPaint,
+    PaintArgs, PlaneBounds, Shadow as FbShadow, ShadowArgs, ShadowKind as FbShadowKind,
+    SignalDecl as FbSignalDecl, SignalDeclArgs as FbSignalDeclArgs, SolidFill, SolidFillArgs,
+    Stroke, StrokeArgs, TextStyle as FbTextStyle, TextStyleArgs, TransformClamp,
+    TransformClampArgs, TransformMapRange, TransformMapRangeArgs, TransformScale,
     TransformScaleArgs, Vec2, VectorAtlas as FbVectorAtlas, VectorAtlasArgs,
     VectorShape as FbVectorShape, VectorShapeArgs,
 };
-use dashpaint::{ImageAsset, PaintEntry, PaintKind, ShadowKind};
+use dashpaint::{BlurKind, ImageAsset, PaintEntry, PaintKind, ShadowKind};
 use flatbuffers::{FlatBufferBuilder, UnionWIPOffset, WIPOffset};
 
 use crate::document::{
@@ -631,6 +632,29 @@ fn build_paint<'a>(b: &mut FlatBufferBuilder<'a>, paint: &Paint) -> WIPOffset<Bu
         b.create_vector(&shadows)
     });
 
+    // Blurs (story #393). Same nesting order and same absent-is-empty rule as
+    // `shadows` above, so a blur-less entry round-trips byte-identically and
+    // no committed `.dsb` fixture changes (R7).
+    let blurs = (!entry.blurs.is_empty()).then(|| {
+        let blurs: Vec<_> = entry
+            .blurs
+            .iter()
+            .map(|bl| {
+                FbBlur::create(
+                    b,
+                    &BlurArgs {
+                        kind: match bl.kind {
+                            BlurKind::Layer => FbBlurKind::Layer,
+                            BlurKind::Backdrop => FbBlurKind::Backdrop,
+                        },
+                        radius: bl.radius,
+                    },
+                )
+            })
+            .collect();
+        b.create_vector(&blurs)
+    });
+
     BufPaint::create(
         b,
         &PaintArgs {
@@ -645,6 +669,7 @@ fn build_paint<'a>(b: &mut FlatBufferBuilder<'a>, paint: &Paint) -> WIPOffset<Bu
             // output byte-identical (R7).
             shape_field: paint.shape_field.unwrap_or(NO_FIELD),
             extra_fills,
+            blurs,
         },
     )
 }
@@ -794,6 +819,14 @@ fn entry_bits(entry: &PaintEntry) -> Vec<u32> {
         key.push(s.blur.to_bits());
         key.push(s.spread.to_bits());
         key.extend(color_bits(s.color));
+    }
+    // Blurs join the key on the same "count then each entry's bits" shape
+    // (story #393). Two nodes that differ only in their blur must not share a
+    // pool entry, and appending here leaves a blur-less entry's key unchanged.
+    key.push(entry.blurs.len() as u32);
+    for bl in &entry.blurs {
+        key.push(bl.kind as u32);
+        key.push(bl.radius.to_bits());
     }
     key
 }

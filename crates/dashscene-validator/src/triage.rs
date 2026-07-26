@@ -22,9 +22,12 @@ use crate::{Diagnostic, Location, NodePath, Profile, Severity, rule};
 pub enum Construct {
     // LATER (warn): deferred vocabulary with a designer-visible workaround.
     /// Budgeted at v1; a warning until the budget exists.
+    ///
+    /// Backdrop blur used to sit beside this as a `(profile:full)` construct.
+    /// Story #393 moved it into the NOW band — it lowers into the schema and
+    /// every painter honours it — so it is no longer a construct at all
+    /// (`docs/decisions/backdrop-blur-is-core-vocabulary.md`).
     LayerBlur,
-    /// `(profile:full)` — a lean painter never gets it.
-    BackdropBlur,
     /// Multiply, screen, overlay, … — `(profile:full)`, pending the
     /// `KHR_blend_equation_advanced` spike (Q-2).
     AdvancedBlendMode,
@@ -53,7 +56,6 @@ impl Construct {
     pub fn rule(self) -> &'static str {
         match self {
             Self::LayerBlur => rule::LAYER_BLUR,
-            Self::BackdropBlur => rule::BACKDROP_BLUR,
             Self::AdvancedBlendMode => rule::ADVANCED_BLEND_MODE,
             Self::CornerSmoothing => rule::CORNER_SMOOTHING,
             Self::LuminanceMask => rule::LUMINANCE_MASK,
@@ -81,7 +83,7 @@ impl Construct {
             | Self::AnimatedVariableFontAxis
             | Self::VariableWidthStroke => Severity::Error,
 
-            Self::BackdropBlur | Self::AdvancedBlendMode => match profile {
+            Self::AdvancedBlendMode => match profile {
                 Profile::Core => Severity::Error,
                 Profile::Full => Severity::Warning,
             },
@@ -98,7 +100,6 @@ impl Construct {
     fn message(self, profile: Profile) -> String {
         let name = match self {
             Self::LayerBlur => "layer blur",
-            Self::BackdropBlur => "backdrop blur",
             Self::AdvancedBlendMode => "an advanced blend mode",
             Self::CornerSmoothing => "corner smoothing (squircle)",
             Self::LuminanceMask => "a luminance mask",

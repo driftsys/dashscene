@@ -663,6 +663,11 @@ fn build_fixture() -> Vec<u8> {
             // the schema default, so flatc omits it and the committed bytes
             // are unchanged.
             extra_fills: None,
+            // Story #393: the frozen fixture predates blur effects. Absent is
+            // the schema default, so flatc omits the field and the committed
+            // bytes are unchanged — this test is the R7 evidence that adding
+            // the blur channel rewrote no existing document.
+            blurs: None,
         },
     );
 
