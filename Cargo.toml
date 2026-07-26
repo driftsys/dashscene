@@ -103,6 +103,25 @@ tempfile = "3"
 # (crates/dashpack-astcenc-sys/build.rs, story #430). Already in the tree via
 # skia-bindings, so no new transitive weight.
 cc = "1"
+# Zstd supercompression for the KTX2 level payloads (dashpack, story #431).
+# Default features off: `legacy` (decoding pre-0.8 zstd streams) and
+# `zdict_builder` (dictionary training) are both unreachable from the packer.
+# libzstd is compiled from the vendored C sources rather than linked from
+# whatever the build machine has installed, because the `pkg-config` feature
+# that would link a system library is opt-in and stays unselected — that is
+# zstd-sys's default, not something turning defaults off achieves.
+#
+# Reproducibility measured rather than assumed, the way story #430 established
+# for astcenc: the same payloads compressed by aarch64-apple-darwin and
+# x86_64-apple-darwin builds of this exact zstd-sys produced byte-identical
+# output at levels 3 and 19, for both an uncompressed-texel payload and an
+# incompressible block payload. `Cargo.lock` is what pins the version that
+# result belongs to.
+zstd = { version = "0.13", default-features = false }
+# An independently written KTX2 parser. `dashpack` takes it as a
+# dev-dependency only: it reads back what dashpack's own writer emits, and
+# never appears on the emit path (story #431).
+ktx2 = "0.5"
 # Pinned exactly: golden images are bit-exact only for one exact skia
 # build (goldens/README.md); a patch release changing rasterization or
 # PNG encoding must arrive as a deliberate, re-goldened bump.
