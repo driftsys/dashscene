@@ -880,8 +880,13 @@ pub trait Painter {
     /// back-to-front into one target; only a painter that reorders pays
     /// for the barrier. The guarantee fixes the order alone — which
     /// surface the sample reads when the barrier rect falls inside a
-    /// [`GroupComposite`] range is not settled here, and belongs to the
-    /// first painter that implements the sampling. Glyph runs are outside
+    /// [`GroupComposite`] range was left to the first painter that
+    /// implements the sampling, and `dashscene-skia` settled it (story
+    /// #393): **a render-target group is a backdrop root.** Such a rect
+    /// reads that group's offscreen layer, not the canvas beneath the
+    /// group; outside a group range it reads the canvas. Sampling through
+    /// the group would composite the backdrop twice, which is the defect
+    /// [`GroupComposite`] exists to prevent, one level up. Glyph runs are outside
     /// it for the same reason they are outside `groups` below: the v0.5
     /// subset composites every run over all rects, so no run is ever
     /// beneath a barrier and no run can enter a sampled backdrop (a named
