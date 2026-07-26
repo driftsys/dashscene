@@ -181,8 +181,11 @@ table Image {
 // geometry (the spread-expanded, offset, blurred shape) is a painter
 // result, never in the document (P1). Effects enter the schema here; the
 // NOW band is drop and inner shadows only — noise, texture, and
-// progressive blur stay REJECT (docs/specification/04-figma-vocabulary-profile.md),
-// and layer/backdrop blur stay LATER.
+// progressive blur stay REJECT (docs/specification/04-figma-vocabulary-profile.md).
+// Backdrop blur joined the NOW band at v0.11
+// (docs/decisions/backdrop-blur-is-core-vocabulary.md); layer blur stays
+// budgeted at v1 and needs no schema change when it lands, because `Blur`
+// below already carries the kind that distinguishes the two.
 enum ShadowKind : uint8 {
   Drop = 0,
   Inner = 1,
@@ -200,6 +203,36 @@ table Shadow {
   blur: float32;
   spread: float32;
   color: Color (required);
+}
+
+// A blur effect (v0.11, story #393,
+// docs/decisions/backdrop-blur-is-core-vocabulary.md).
+//
+// `Layer` blurs the node's own composited content; `Backdrop` blurs what is
+// already composited beneath the node, seen through the node's own
+// transparency. Only `Backdrop` is emitted today — layer blur is budgeted at
+// v1 — but the kind is in the schema from the start so that adding it later
+// is a lowering change and not a second schema break, which is the one
+// constraint the decision record places on this representation.
+//
+// The distinction matters far past naming: a layer blur is node-local, like
+// every effect before it, while a backdrop blur is the first effect that
+// requires a painter to read the already-composited backdrop. That
+// consequence is a boundary-B concern and is declared there, not here — the
+// document carries the authored intent, and what a painter must do about it
+// is the painter's contract (P1).
+enum BlurKind : uint8 {
+  Layer = 0,
+  Backdrop = 1,
+}
+
+// One blur. `radius` is the Gaussian blur radius in document units,
+// non-negative, and carries Figma's `radius` verbatim — the painter's sigma
+// mapping (sigma = radius/2) is a painter concern, exactly as it is for
+// `Shadow.blur` (docs/decisions/effects-vocabulary-shadows.md).
+table Blur {
+  kind: BlurKind;
+  radius: float32;
 }
 
 // One entry of the document's paint pool (docs/design/dashbuf.md's "dedup style
@@ -232,6 +265,11 @@ table Paint {
   // `children`). Absent (the pre-C1 default) means a single fill, so every
   // pre-C1 paint entry emits byte-identically (R7).
   extra_fills: [FillLayer];
+  // v0.11 blur effects (story #393). A node's blurs, absent (the pre-v0.11
+  // default) meaning none, so every earlier paint entry emits
+  // byte-identically and no committed `.dsb` fixture changes (R7). Blurs
+  // dedup with the rest of the entry, exactly as `shadows` do.
+  blurs: [Blur];
 }
 
 // Horizontal text alignment within the node box (Figma's

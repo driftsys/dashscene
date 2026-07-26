@@ -200,10 +200,11 @@ oracle is what caught the packer bug noted above.
   renders end to end (Landify logo, vector ribbons/circles/quote-mark, feature
   icons, app badges). Lowering the vectors also unmasked a pre-existing
   backdrop-blur node (previously hidden behind the VECTOR skip): a `VECTOR`
-  carrying `BACKGROUND_BLUR` on the hero. Under `EmitPolicy::Partial` only, a
-  backdrop blur with an Error verdict now joins the node's blockers and the node
-  is skipped whole with a named warning — a per-construct follow-up the refusal
-  decision already pre-named, recorded in place at
+  carrying `BACKGROUND_BLUR` on the hero. That node was skipped whole under
+  `EmitPolicy::Partial` until story #393 made backdrop blur core vocabulary; it
+  now lowers and keeps its blur, and the baked-vector paint entry carries it
+  (`docs/decisions/backdrop-blur-is-core-vocabulary.md`). The skip mechanism it
+  used to rely on is recorded at
   `docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`. Strict
   mode is unchanged.
 - **import oracle**: the `vector-shapes` fixture (`f0nG7azeYELWb9KZ2tLnu9`,

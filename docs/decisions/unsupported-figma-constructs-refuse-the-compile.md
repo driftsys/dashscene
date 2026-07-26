@@ -56,17 +56,24 @@ into the skip decision — is a per-construct follow-up, filed only if a real
 target needs it. The conservative "still refuses" is the faithful reading of
 "never approximate".
 
-_Follow-up executed for backdrop blur (story B1, 2026-07-19)._ B1's `VECTOR`
-lowering un-skipped the Landify hero's background vector; the node's backdrop
-blur — an error verdict under profile:core — then reached the triage on the
-success path and blocked the whole document, where before B1 the node skipped
-as an unsupported type and emitted with a warning. Under Partial, a backdrop
-blur whose verdict is an error now joins the skip decision: the node is
-omitted whole (never lowered minus its blur) and the gap is named as the
-policy-sensitive `figma.unsupported` omission, so the document still emits.
-Strict is unchanged: the node lowers and `profile.backdrop-blur` blocks the
-file. No other construct moved; each remaining one stays a per-construct
-follow-up under the same rule.
+_Follow-up executed for backdrop blur (story B1, 2026-07-19), and superseded
+at story #393 (2026-07-26)._ B1's `VECTOR` lowering un-skipped the Landify
+hero's background vector; the node's backdrop blur — an error verdict under
+profile:core — then reached the triage on the success path and blocked the
+whole document, where before B1 the node skipped as an unsupported type and
+emitted with a warning. Under Partial, a backdrop blur whose verdict was an
+error joined the skip decision: the node was omitted whole (never lowered
+minus its blur) and the gap named as the policy-sensitive `figma.unsupported`
+omission.
+
+That mechanism is gone. `docs/decisions/backdrop-blur-is-core-vocabulary.md`
+made backdrop blur core vocabulary that lowers into the schema, so there is
+no error verdict left to move into the skip decision, no
+`profile.backdrop-blur` rule, and no whole-node omission. The node lowers and
+keeps its blur under both policies. The reasoning above is kept because it is
+the worked example of this rule's per-construct follow-up, and it is the
+place to start if another construct ever needs the same treatment — no other
+construct has moved.
 
 ## Revised at #140: the refusal is a diagnostic, and the walk keeps going
 

@@ -427,6 +427,36 @@ pub struct Shadow {
     pub color: Color,
 }
 
+/// Which content a blur applies to (v0.11, story #393,
+/// `docs/decisions/backdrop-blur-is-core-vocabulary.md`).
+///
+/// The distinction is not cosmetic. `Layer` is node-local like every effect
+/// before it — the node's own composited content is blurred. `Backdrop` is
+/// the first effect that requires a painter to read what is *already*
+/// composited beneath the node, seen through the node's own transparency,
+/// which is why it carries an ordering guarantee the other effects do not
+/// (see [`Painter::paint`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlurKind {
+    Layer,
+    Backdrop,
+}
+
+/// One blur (v0.11, story #393). Authored intent: which content is blurred
+/// and by how much. `radius` is the Gaussian blur radius in document units,
+/// non-negative, carried verbatim from the document — the sigma mapping
+/// (`sigma = radius/2`) is per-painter math derived at draw time (P1),
+/// exactly as it is for [`Shadow::blur`].
+///
+/// Only `Backdrop` is produced today. Layer blur is budgeted at v1 and needs
+/// no change here when it lands, which is the reason the kind exists now
+/// rather than being inferred from context.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Blur {
+    pub kind: BlurKind,
+    pub radius: f32,
+}
+
 /// A resolved baked-vector coverage mask (story B1,
 /// `docs/wip/2026-07-19-B1-vector-msdf-design.md`) — the runtime form of a
 /// Figma VECTOR node's shape. A paint entry carrying `Some(VectorField)`
@@ -489,6 +519,16 @@ pub struct PaintEntry {
     /// (below) brought to the fill side (story C1, debt #146). `stroke`
     /// stays single-valued (the debt's stroke half is untouched).
     pub shadows: Vec<Shadow>,
+    /// The node's blurs (v0.11, story #393). Empty (the default) for a node
+    /// with no blur, so every pre-v0.11 entry is unchanged. Carried beside
+    /// `shadows` because a blur is an effect on the same node and dedups
+    /// with the rest of the entry the same way.
+    ///
+    /// A `BlurKind::Backdrop` entry here is also what declares that the node
+    /// samples the already-composited backdrop; there is deliberately no
+    /// separate flag saying so, because two records of one fact can
+    /// disagree.
+    pub blurs: Vec<Blur>,
     /// The baked-vector coverage mask (story B1). `Some` masks `fill` by the
     /// referenced field's coverage — a Figma VECTOR shape. `None` (the
     /// default) is the implicit parametric shape, so every pre-B1 entry is
@@ -511,6 +551,31 @@ impl PaintEntry {
             fill: Some(PaintKind::Solid { color }),
             ..Self::default()
         }
+    }
+
+    /// True when a rect painted from this entry reads the
+    /// already-composited backdrop beneath it, rather than being built
+    /// from the node's own geometry alone — that is, when any of
+    /// [`blurs`](Self::blurs) is a [`BlurKind::Backdrop`]
+    /// (`docs/decisions/backdrop-blur-is-core-vocabulary.md`). A
+    /// [`BlurKind::Layer`] blur is node-local and does not count.
+    ///
+    /// This is the property [`Painter::paint`]'s ordering guarantee is
+    /// stated over: every rect beneath a rect whose entry answers `true`
+    /// is composited before that rect is drawn. Nothing in boundary B
+    /// changes shape for it — a painter finds its barriers by resolving
+    /// the paint index it already resolves per rect.
+    ///
+    /// Derived rather than stored, deliberately. `blurs` already carries
+    /// whether a backdrop blur is present, so a flag beside it would be a
+    /// second copy of one fact, and a struct of public fields has nothing
+    /// that would keep the two agreeing. Deriving it also widens the
+    /// guarantee by itself: a further backdrop-sampling effect extends
+    /// this answer, and no painter's barrier handling changes.
+    pub fn samples_backdrop(&self) -> bool {
+        self.blurs
+            .iter()
+            .any(|blur| matches!(blur.kind, BlurKind::Backdrop))
     }
 }
 
@@ -800,7 +865,27 @@ pub trait Painter {
     /// earlier one (DFS order encodes document stacking). The composited
     /// result is the contract; iteration order is the implementation's
     /// choice (the lean painter draws opaque cores front-to-back,
-    /// docs/specification/03-target-hardware-rules.md R-T2).
+    /// docs/specification/03-target-hardware-rules.md R-T2) — with one
+    /// exception, below.
+    ///
+    /// **The backdrop barrier.** A rect whose paint entry answers
+    /// [`PaintEntry::samples_backdrop`] reads what is already composited
+    /// beneath it, so every rect at a lower index MUST be composited
+    /// before that rect is drawn
+    /// (`docs/decisions/backdrop-blur-is-core-vocabulary.md`). Such a
+    /// rect is a barrier in any reorder, and that is the whole of the
+    /// narrowing: the licence above still applies on either side of it. A
+    /// painter that iterates in slice order satisfies the guarantee
+    /// without doing anything, because it already composites
+    /// back-to-front into one target; only a painter that reorders pays
+    /// for the barrier. The guarantee fixes the order alone — which
+    /// surface the sample reads when the barrier rect falls inside a
+    /// [`GroupComposite`] range is not settled here, and belongs to the
+    /// first painter that implements the sampling. Glyph runs are outside
+    /// it for the same reason they are outside `groups` below: the v0.5
+    /// subset composites every run over all rects, so no run is ever
+    /// beneath a barrier and no run can enter a sampled backdrop (a named
+    /// limitation, not a silent drop).
     ///
     /// Each rect's paint alpha is modulated by [`RectEntry::opacity`], the
     /// resolved free-path group alpha (`1.0` when none applies). `groups`

@@ -28,15 +28,16 @@
 //!
 //! let scrim = NodePath::new(7, "/card/scrim");
 //!
-//! // Backdrop blur is profile:full-only (docs/specification/04-figma-vocabulary-profile.md): a lean painter
+//! // An advanced blend mode is profile:full-only
+//! // (docs/specification/04-figma-vocabulary-profile.md): a lean painter
 //! // never gets it, so under profile:core it blocks the document.
-//! let d = triage(Construct::BackdropBlur, Profile::Core, scrim.clone());
-//! assert_eq!(d.rule, rule::BACKDROP_BLUR);
+//! let d = triage(Construct::AdvancedBlendMode, Profile::Core, scrim.clone());
+//! assert_eq!(d.rule, rule::ADVANCED_BLEND_MODE);
 //! assert_eq!(d.severity, Severity::Error);
 //!
 //! // Under profile:full it is deferred vocabulary with a declared
 //! // degrade — a warning, which a strict build still refuses.
-//! let d = triage(Construct::BackdropBlur, Profile::Full, scrim);
+//! let d = triage(Construct::AdvancedBlendMode, Profile::Full, scrim);
 //! assert_eq!(d.severity, Severity::Warning);
 //! ```
 
@@ -58,7 +59,6 @@ use std::fmt;
 pub mod rule {
     // Import gate — docs/specification/04-figma-vocabulary-profile.md's LATER (warn) band.
     pub const LAYER_BLUR: &str = "profile.layer-blur";
-    pub const BACKDROP_BLUR: &str = "profile.backdrop-blur";
     pub const ADVANCED_BLEND_MODE: &str = "profile.advanced-blend-mode";
     pub const CORNER_SMOOTHING: &str = "profile.corner-smoothing";
     pub const LUMINANCE_MASK: &str = "profile.luminance-mask";
@@ -230,6 +230,8 @@ pub mod rule {
     /// the shadow geometry with the offset and spread, none of which tolerate
     /// NaN.
     pub const SHADOW_INVALID_GEOMETRY: &str = "paint.shadow.invalid-geometry";
+    /// A blur whose radius is not finite and non-negative (story #393).
+    pub const BLUR_INVALID_RADIUS: &str = "paint.blur.invalid-radius";
     /// A shadow color channel that is non-finite or outside `0..=1` (story
     /// #45). The painter multiplies the channel into a premultiplied surface,
     /// where an out-of-range channel misrasterizes.
@@ -263,7 +265,6 @@ pub mod rule {
     /// pins that every construct's rule is present, so the slice cannot rot.
     pub const ALL: &[&str] = &[
         LAYER_BLUR,
-        BACKDROP_BLUR,
         ADVANCED_BLEND_MODE,
         CORNER_SMOOTHING,
         LUMINANCE_MASK,
@@ -305,6 +306,7 @@ pub mod rule {
         RECT_INVALID_EXTENT,
         CORNER_RADIUS_INVALID,
         SHADOW_INVALID_GEOMETRY,
+        BLUR_INVALID_RADIUS,
         SHADOW_COLOR_OUT_OF_RANGE,
     ];
 
@@ -326,10 +328,6 @@ pub mod rule {
         let hint = match rule {
             LAYER_BLUR => {
                 "budgeted at v1; until then bake the blur into the layer's raster or omit it"
-            }
-            BACKDROP_BLUR => {
-                "profile:full only; on a lean target remove the backdrop blur or flatten it into \
-                 the layer"
             }
             ADVANCED_BLEND_MODE => {
                 "profile:full only; on a lean target bake the blended result into a flat fill"

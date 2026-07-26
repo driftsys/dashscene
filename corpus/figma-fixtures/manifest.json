@@ -143,8 +143,8 @@
       "name": "backdrop-blur",
       "fileKey": "dFD9yAtbAwPPEGaaXLTouM",
       "covers": "the BACKGROUND_BLUR construct for the v0.11 backdrop-blur story (docs/decisions/backdrop-blur-is-core-vocabulary.md): a 200x90 frosted panel (corner radius 16, white at 0.2 alpha, BACKGROUND_BLUR radius 16) over three hard-edged vertical bands and a circle, in a fixed 320x180 frame",
-      "emits": false,
-      "note": "Authored with the fixture-author plugin's backdrop-blur command; fully scripted, so the file carries no _manual-checklist annotation (debt #382). emits is false TODAY and flips to true when the blur story lands: BackdropBlur is still Profile::Core => Error in the validator, so under EmitPolicy::Partial dashc omits the frosted panel whole and the emitted document is the bands and the circle without it. That is the correct P4 posture until the decision record's profile reversal is implemented. The fixture is captured now, ahead of the implementation, because it is the design input the story needs and the authored file exists now; its oracle frame is deliberately NOT wired yet, because a frame's tolerance band is classified by measured residual and nothing can be measured until the panel renders."
+      "emits": true,
+      "note": "Authored with the fixture-author plugin's backdrop-blur command; fully scripted, so the file carries no _manual-checklist annotation (debt #382). Story #393 made backdrop blur core vocabulary that lowers into the schema, so the fixture emits with the frosted panel present and raises no diagnostic. Its oracle frame is wired by stage B-4, not here: a frame's tolerance band is classified by measured residual, and nothing can be measured until the Skia painter honours the blur (stage B-3)."
     },
     {
       "name": "import-image-fill",

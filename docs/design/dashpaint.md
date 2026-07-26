@@ -4,6 +4,7 @@
     covers   v0.1 walking skeleton (story #3) + v0.3 paint vocabulary
              (story #13) + resolved subtree clips (story #97) + v0.5
              glyph-run table (story #30) + v0.8 group opacity (story #44)
+             + v0.11 backdrop contract (story #393)
 
 ## Purpose
 
@@ -91,6 +92,14 @@ All types and the trait live in `crates/dashpaint/src/lib.rs`:
   whether a node clips its children is intent, and lives in the document
   and the arena, not in resolved painter input
   (`docs/decisions/resolved-clip-regions-at-commit.md`).
+- `PaintEntry::samples_backdrop()` — whether a rect painted from the
+  entry reads the already-composited backdrop beneath it, which is true
+  when any of its `blurs` is a `BlurKind::Backdrop` (v0.11, story #393).
+  Derived rather than stored: `blurs` already carries the fact, and a
+  flag beside it would be a second copy of it that nothing keeps in
+  agreement. It is the property the `Painter::paint` ordering guarantee
+  is stated over, and it widens by itself if a further
+  backdrop-sampling effect is added.
 - `Shadow` / `ShadowKind` — a drop or inner shadow (v0.8, story #45):
   `kind` (`Drop`/`Inner`), `offset: Vec2`, `blur: f32` (Gaussian radius,
   non-negative), `spread: f32`, `color: Color`. Authored intent — the
@@ -143,7 +152,8 @@ defines stacking — a later entry composites over an earlier one, since
 DFS order encodes document stacking. The composited result is the
 contract; iteration order is the implementation's choice (the lean
 painter draws opaque cores front-to-back,
-`docs/specification/03-target-hardware-rules.md`'s R-T2).
+`docs/specification/03-target-hardware-rules.md`'s R-T2) — with the one
+exception "Backdrop sampling" below states.
 An out-of-range paint index is a broken contract between crates;
 `PaintTable::resolve` centralizes the panic for that case, so no painter
 invents its own failure path (a silent skip would be the silent drop P4
@@ -159,8 +169,9 @@ both `resolve` panics and the reserved unclipped region), the
 `PaintEntry` composition (solid shorthand, paint-less entry, full
 gradient+stroke+corners entry, image fill), the recorded output of a
 `RecordingPainter` test double over a two-rect fixture — including the
-clip region it resolves per rect — and dyn-dispatch through
-`&mut dyn Painter`. The test file is
+clip region it resolves per rect — the backdrop declaration and the
+ordering barrier a painter reads out of the paint table for it, and
+dyn-dispatch through `&mut dyn Painter`. The test file is
 the executable statement of the boundary-B contract; this section
 deliberately does not restate its cases.
 
@@ -191,6 +202,42 @@ overlap rule: a non-overlapping subtree folds its alpha into each rect's
 model, the overlap rule, and the render-target budget are
 `docs/decisions/masks-and-group-opacity.md`.
 
+## Backdrop sampling
+
+Every effect before v0.11 is node-local: a shadow is built from the
+node's own rounded-rect geometry, and a `GroupComposite` flattens a
+subtree's **own** rects offscreen and composites that layer over what
+lies beneath — it writes an isolated layer and never samples one. A
+backdrop blur is the first effect that reads the already-composited
+backdrop, so boundary B carries two things for it
+(`docs/decisions/backdrop-blur-is-core-vocabulary.md`, story #393).
+
+- **The declaration.** `PaintEntry::samples_backdrop()` answers whether
+  a rect painted from the entry reads that backdrop. It sits in the
+  paint entry rather than in `RectEntry` for the reason corners already
+  do (`docs/decisions/paint-entry-composition.md`): `RectEntry`'s
+  layout is pinned and blittable, and this is a paint-side effect
+  parameter that shares the paint table's dedup pool. It is not a
+  parallel table either — a `GroupComposite` spans a rect **range** and
+  so cannot live on one entry, while a backdrop sample belongs to
+  exactly one rect and already has a per-node home.
+- **The ordering guarantee.** A painter still chooses its iteration
+  order, except that every rect at a lower index than a
+  backdrop-sampling rect is composited before that rect is drawn. The
+  sampling rect is a barrier in any reorder, and the licence holds
+  unchanged on either side of it. A painter that iterates in slice
+  order satisfies this without doing anything, because it already
+  composites back-to-front into one target; only a painter that
+  reorders pays for the barrier.
+
+The guarantee fixes order alone. Which surface the sample reads when a
+barrier rect falls inside a `GroupComposite` range is not settled here —
+it belongs to the first painter that implements the sampling
+(`dashscene-skia`). Glyph runs are outside the guarantee for the same
+reason they are outside `groups`: the v0.5 subset composites every run
+over all rects, so no run is ever beneath a barrier and no run can enter
+a sampled backdrop — a named limitation, not a silent drop.
+
 ## Trace
 
 - Satisfies: `docs/design/architecture.md` painter trait (boundary B)
@@ -204,4 +251,5 @@ model, the overlap rule, and the render-target budget are
   `docs/decisions/painter-trait-infallible-slice-input.md`,
   `docs/decisions/paint-entry-composition.md`,
   `docs/decisions/document-paint-pool-and-legacy-paint-field.md`,
-  `docs/decisions/resolved-clip-regions-at-commit.md`.
+  `docs/decisions/resolved-clip-regions-at-commit.md`,
+  `docs/decisions/backdrop-blur-is-core-vocabulary.md`.

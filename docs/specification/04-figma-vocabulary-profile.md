@@ -11,15 +11,18 @@ discovered") checkable. The validator that implements this triage is
 
     NOW (v0/v1)    all four gradient types (angular = gauges),
                    image fills + scale modes, baked drop/inner
-                   shadows, shape masks, group opacity (compiler
+                   shadows, backdrop blur (v0.11 — every painter
+                   honours it, see
+                   decisions/backdrop-blur-is-core-vocabulary.md),
+                   shape masks, group opacity (compiler
                    detects non-overlapping children → per-node
                    opacity free; overlapping → budgeted RT),
                    axis-aligned + rounded clip, full text stack,
                    static variable-font instances, full auto-layout
                    (R2). Renders ~95 % of real product design
                    files.
-    LATER (warn)   layer blur (budgeted), backdrop blur + advanced
-                   blend modes (profile:full; spike
+    LATER (warn)   layer blur (budgeted), advanced blend modes
+                   (profile:full; spike
                    KHR_blend_equation_advanced first — it may make
                    multiply/screen nearly free), corner smoothing
                    (squircle), luminance masks, clip-on-rotated,

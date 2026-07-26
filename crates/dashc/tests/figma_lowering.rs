@@ -2007,16 +2007,92 @@ fn partial_still_refuses_a_reject_band_construct() {
     );
 }
 
-/// A FRAME whose VECTOR child bakes cleanly but carries a backdrop blur —
-/// an error verdict under profile:core. Lowering the node without its blur
-/// would approximate, so under Partial the triage moves into the skip
-/// decision instead: the node is omitted whole and the gap is the
-/// policy-sensitive `figma.unsupported` omission. This is the per-construct
-/// follow-up `docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`
-/// names under "Consequence accepted at this gate"; the first real target
-/// needing it is the Landify hero's background vector (story B1).
-fn frame_with_backdrop_blur_vector_child() -> serde_json::Value {
+/// A FRAME whose FRAME child carries a backdrop blur — the shape the real
+/// corpus fixture has (`corpus/figma-fixtures/backdrop-blur.json`: a frosted
+/// panel over a background).
+///
+/// This used to hold a VECTOR child, because the case it pinned was the
+/// whole-node omission a backdrop blur forced under profile:core. Story #393
+/// made backdrop blur core vocabulary and removed that omission. The VECTOR
+/// case is covered too, by
+/// `a_backdrop_blur_on_a_baked_vector_is_kept_not_dropped` below — it is the
+/// shape the hero's frosted panel actually has, so it is the one that must not
+/// regress.
+fn frame_with_backdrop_blurred_child() -> serde_json::Value {
     document_json(serde_json::json!({
+        "name": "root",
+        "type": "FRAME",
+        "clipsContent": true,
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0 },
+        "children": [{
+            "name": "panel",
+            "type": "FRAME",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+            "fills": [{ "type": "SOLID", "color": { "r": 1.0, "g": 1.0, "b": 1.0, "a": 0.2 } }],
+            "effects": [{ "type": "BACKGROUND_BLUR", "visible": true, "radius": 100.0 }],
+        }],
+    }))
+}
+
+#[test]
+fn a_backdrop_blur_lowers_under_both_policies_and_keeps_its_radius() {
+    // Story #393 moved backdrop blur into the NOW band
+    // (docs/decisions/backdrop-blur-is-core-vocabulary.md). It used to be an
+    // error under Profile::Core, so Partial omitted the whole node and Strict
+    // refused the file; the two tests that pinned those behaviours lived here
+    // and this one replaces them. The construct lowers now, so neither policy
+    // has anything to report and the node keeps its blur.
+    for policy in [EmitPolicy::Partial, EmitPolicy::Strict] {
+        let json = frame_with_backdrop_blurred_child().to_string();
+        let images = BTreeMap::new();
+        let (bytes, report) =
+            compile_figma_with_bindings_and_policy(&json, Profile::Core, &images, &[], policy)
+                .expect("a backdrop blur is core vocabulary and compiles");
+        assert!(
+            !report.has(dashc_wasm::figma::rule::UNSUPPORTED),
+            "{policy:?}: nothing is omitted, so nothing is reported: {:?}",
+            report.diagnostics(),
+        );
+
+        // The radius survives the whole path: Figma effect -> dashc lowering
+        // -> paint pool -> document -> load. A blur that lowered to the right
+        // node with the wrong radius would render, and would be wrong.
+        let document = dashbuf::root_as_document(&bytes).expect("the emitted document loads");
+        let mut arena = Arena::new();
+        load_document(&document, &mut arena);
+        let scene = arena.committed();
+        assert_eq!(
+            scene.rects().len(),
+            2,
+            "{policy:?}: the frame and the blurred child both lower",
+        );
+        let blurs: Vec<_> = scene
+            .rects()
+            .iter()
+            .filter_map(|rect| scene.paints().get(rect.paint))
+            .flat_map(|entry| entry.blurs.iter())
+            .collect();
+        assert_eq!(
+            blurs.len(),
+            1,
+            "{policy:?}: exactly one blur, got {blurs:?}"
+        );
+        assert_eq!(blurs[0].kind, dashscene_core::BlurKind::Backdrop);
+        assert_eq!(blurs[0].radius, 100.0);
+    }
+}
+
+/// The hero's own shape: a baked VECTOR carrying `BACKGROUND_BLUR`.
+///
+/// This is a regression test with a specific history. Story #393's first draft
+/// hardcoded `blurs: Vec::new()` on the baked-vector paint entry, which made
+/// the blur vanish with no diagnostic — the silent drop P4 forbids — on the one
+/// node the story exists to fix. `docs/decisions/baked-vector-msdf-field.md`
+/// records that lowering the hero's vectors is what unmasked a `VECTOR`
+/// carrying `BACKGROUND_BLUR` radius 100 in the first place.
+#[test]
+fn a_backdrop_blur_on_a_baked_vector_is_kept_not_dropped() {
+    let json = document_json(serde_json::json!({
         "name": "root",
         "type": "FRAME",
         "clipsContent": true,
@@ -2025,7 +2101,7 @@ fn frame_with_backdrop_blur_vector_child() -> serde_json::Value {
             "name": "bg",
             "type": "VECTOR",
             "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
-            "fills": [{ "type": "SOLID", "color": { "r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0 } }],
+            "fills": [{ "type": "SOLID", "color": { "r": 1.0, "g": 1.0, "b": 1.0, "a": 0.7 } }],
             "fillGeometry": [{
                 "path": "M 0 0 L 10 0 L 10 10 L 0 10 Z",
                 "windingRule": "NONZERO",
@@ -2033,76 +2109,76 @@ fn frame_with_backdrop_blur_vector_child() -> serde_json::Value {
             "effects": [{ "type": "BACKGROUND_BLUR", "visible": true, "radius": 100.0 }],
         }],
     }))
-}
-
-#[test]
-fn partial_omits_a_node_whose_backdrop_blur_is_out_of_profile() {
-    let json = frame_with_backdrop_blur_vector_child().to_string();
+    .to_string();
     let images = BTreeMap::new();
     let (bytes, report) = compile_figma_with_bindings_and_policy(
         &json,
         Profile::Core,
         &images,
         &[],
-        EmitPolicy::Partial,
+        EmitPolicy::Strict,
     )
-    .expect("partial-emit omits the blurred node and returns a document");
-    assert!(!bytes.is_empty(), "a document is emitted");
-    // The omission is named (P4): one figma.unsupported warning naming the
-    // construct — never a silent drop.
-    let warnings: Vec<_> = report
-        .diagnostics()
-        .iter()
-        .filter(|d| d.rule == dashc_wasm::figma::rule::UNSUPPORTED)
-        .collect();
-    assert_eq!(
-        warnings.len(),
-        1,
-        "one figma.unsupported for the omitted vector",
-    );
-    assert_eq!(warnings[0].severity, Severity::Warning);
+    .expect("a blurred vector is core vocabulary and compiles");
     assert!(
-        warnings[0].message.contains("backdrop blur"),
-        "the warning names the construct: {}",
-        warnings[0].message,
+        !report.has(dashc_wasm::figma::rule::UNSUPPORTED),
+        "nothing is omitted: {:?}",
+        report.diagnostics(),
     );
-    // The construct's error verdict moved into the skip decision — the node
-    // never lowered, so no profile error is reported on it.
-    assert!(
-        !report.has(dashscene_validator::rule::BACKDROP_BLUR),
-        "an omitted node's backdrop blur is an omission, not a profile error",
-    );
-    // The frame is present, the vector omitted: exactly one node.
+
     let document = dashbuf::root_as_document(&bytes).expect("the emitted document loads");
     let mut arena = Arena::new();
     load_document(&document, &mut arena);
-    assert_eq!(
-        arena.committed().rects().len(),
-        1,
-        "the frame is present, the vector omitted",
-    );
+    let scene = arena.committed();
+    let blurs: Vec<_> = scene
+        .rects()
+        .iter()
+        .filter_map(|rect| scene.paints().get(rect.paint))
+        .flat_map(|entry| entry.blurs.iter())
+        .collect();
+    assert_eq!(blurs.len(), 1, "the vector keeps its blur, got {blurs:?}");
+    assert_eq!(blurs[0].kind, dashscene_core::BlurKind::Backdrop);
+    assert_eq!(blurs[0].radius, 100.0);
 }
 
+/// A blur on a TEXT node is named, not dropped. A text node builds no
+/// `PaintEntry`, so it has nowhere to carry one; before story #393 the
+/// construct's own error verdict caught this, and removing that verdict would
+/// have made it silent.
 #[test]
-fn strict_still_refuses_a_backdrop_blur_out_of_profile() {
-    // Strict is the original posture, unchanged: the node lowers and the
-    // profile verdict blocks the file.
-    let json = frame_with_backdrop_blur_vector_child().to_string();
+fn a_blur_on_a_text_node_is_a_named_blocker() {
+    let json = document_json(serde_json::json!({
+        "name": "root",
+        "type": "FRAME",
+        "clipsContent": true,
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0 },
+        "children": [{
+            "name": "label",
+            "type": "TEXT",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 40.0, "height": 10.0 },
+            "characters": "hi",
+            "style": { "fontFamily": "Inter", "fontSize": 12.0 },
+            "effects": [{ "type": "BACKGROUND_BLUR", "visible": true, "radius": 8.0 }],
+        }],
+    }))
+    .to_string();
     let images = BTreeMap::new();
-    let result = compile_figma_with_bindings_and_policy(
+    let (_bytes, report) = compile_figma_with_bindings_and_policy(
         &json,
         Profile::Core,
         &images,
         &[],
-        EmitPolicy::Strict,
+        EmitPolicy::Partial,
+    )
+    .expect("partial emit returns a document with the text node skipped");
+    let named = report
+        .diagnostics()
+        .iter()
+        .any(|d| d.rule == dashc_wasm::figma::rule::UNSUPPORTED && d.message.contains("blur"));
+    assert!(
+        named,
+        "the gap is named, never silent: {:?}",
+        report.diagnostics(),
     );
-    match result {
-        Err(CompileError::Diagnostics(report)) => assert!(
-            report.has(dashscene_validator::rule::BACKDROP_BLUR),
-            "Strict keeps the profile verdict on the lowered node",
-        ),
-        other => panic!("Strict refuses the file, got {other:?}"),
-    }
 }
 
 /// A canvas holding only a COMPONENT resolves to no paintable content:

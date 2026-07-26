@@ -37,10 +37,10 @@ use std::fmt;
 use serde::Deserialize;
 
 use dashpaint::{
-    Color, CornerRadii, Gradient, GradientKind, GradientStop, ImageAsset, Mat23, PaintEntry,
-    PaintKind, ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, Vec2,
+    Blur, BlurKind, Color, CornerRadii, Gradient, GradientKind, GradientStop, ImageAsset, Mat23,
+    PaintEntry, PaintKind, ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, Vec2,
 };
-use dashscene_validator::{Construct, Diagnostic, Location, NodePath, Profile, Report, Severity};
+use dashscene_validator::{Diagnostic, Location, NodePath, Profile, Report, Severity};
 
 // `Node` and `Paint` collide with `rest`'s Figma-vocabulary types of the same
 // name (imported below, unaliased, since they are what the rest of this
@@ -690,6 +690,15 @@ impl Walk<'_> {
             let (t, ts) = self.text_of(node, &mut blockers);
             text = t;
             text_style = ts;
+            // A TEXT node builds no `PaintEntry`, so it has nowhere to put a
+            // blur. Story #393 made backdrop blur lowered vocabulary, which
+            // removed the diagnostic it used to raise — so without this the
+            // blur would vanish with nothing reported, the silent drop P4
+            // forbids. Naming it keeps the gap visible until a text node can
+            // carry paint (no measured need has asked for one yet).
+            if !blurs_of(node).is_empty() {
+                blockers.push("a blur on a text node".to_string());
+            }
             // Outside auto-layout Figma sets no `layoutSizing*`, so
             // `textAutoResize` is the sizing source (a free-standing label
             // must hug, not fix-size from its resolved box).
@@ -739,30 +748,20 @@ impl Walk<'_> {
         // The import gate: the producer maps, the validator decides (P5).
         // Unmapped effects (a baked shadow, debt #144) have no Construct and
         // block the node instead.
-        let (mut constructs, effect_blockers) = triage::constructs_of(node);
+        let (constructs, effect_blockers) = triage::constructs_of(node);
         blockers.extend(effect_blockers);
 
-        // A backdrop blur whose verdict is an error (profile:core) cannot
-        // ship on a lowered node — that would approximate: the node minus
-        // its blur. Under Partial the triage moves into the skip decision
-        // instead: the node is omitted whole, and the gap is the
-        // policy-sensitive `figma.unsupported` omission, so the document
-        // still emits. This is the per-construct follow-up
+        // Story #393 removed the one construct this gate omitted whole. A
+        // backdrop blur used to be an error under profile:core, and shipping
+        // the node without its blur would have approximated, so under Partial
+        // the node was omitted entirely and the gap reported as
+        // `figma.unsupported`. Backdrop blur is now core vocabulary that
+        // lowers through `blurs_of`, so there is nothing left to omit and the
+        // whole-node skip is gone with it. The mechanism this replaced is
+        // described in
         // `docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`
-        // names under "Consequence accepted at this gate"; the first real
-        // target needing it is the Landify hero's background vector, which
-        // story B1's VECTOR lowering un-skipped (before B1 the node skipped
-        // as an unsupported type and its blur never reached the triage).
-        if self.policy == crate::EmitPolicy::Partial {
-            constructs.retain(|construct| {
-                let omit = *construct == Construct::BackdropBlur
-                    && construct.verdict(self.profile) == Severity::Error;
-                if omit {
-                    blockers.push("a backdrop blur (profile:full only)".to_string());
-                }
-                !omit
-            });
-        }
+        // under "Consequence accepted at this gate"; if another construct ever
+        // needs the same treatment, that is where the reasoning lives.
 
         if !blockers.is_empty() {
             // The index this node would have taken had it lowered. The node is
@@ -956,6 +955,7 @@ impl Walk<'_> {
             stroke: self.stroke_of(node, path)?,
             corners: corners_of(node),
             shadows: shadows_of(node, path)?,
+            blurs: blurs_of(node),
             // A parametric (rounded-box) node carries no baked shape; the
             // VECTOR arm is the only place a shape index is set.
             shape: None,
@@ -1057,12 +1057,20 @@ impl Walk<'_> {
                 bottom_left: radius,
             },
             shadows: shadows_of(node, path)?,
+            blurs: blurs_of(node),
             // An ellipse is a parametric (rounded-box) shape, not a baked one.
             shape: None,
         };
-        // A circle with neither fill, stroke, nor shadow draws nothing — the
-        // corners alone shape no ink. An ellipse is a leaf, so it never clips.
-        if entry.fill.is_none() && entry.stroke.is_none() && entry.shadows.is_empty() {
+        // A circle with neither fill, stroke, shadow nor blur draws nothing —
+        // the corners alone shape no ink. A backdrop blur counts as ink even
+        // with no fill of its own: it changes the pixels beneath it, which is
+        // the whole point of the effect.
+        // An ellipse is a leaf, so it never clips.
+        if entry.fill.is_none()
+            && entry.stroke.is_none()
+            && entry.shadows.is_empty()
+            && entry.blurs.is_empty()
+        {
             return Ok(None);
         }
         Ok(Some(DocPaint {
@@ -1188,6 +1196,16 @@ impl Walk<'_> {
             stroke: None,
             corners: CornerRadii::default(),
             shadows: Vec::new(),
+            // A baked vector DOES carry its blur. The hero's frosted panel is
+            // exactly this shape — a VECTOR with BACKGROUND_BLUR radius 100 —
+            // and `docs/decisions/baked-vector-msdf-field.md` records that
+            // lowering the hero's vectors is what unmasked it. Dropping it here
+            // would silently lose the one node story #393 exists to fix.
+            //
+            // Shadows are a different case and stay empty: no measured need has
+            // put one on a baked vector, and a silent drop there is pre-existing
+            // debt rather than something this story introduced.
+            blurs: blurs_of(node),
             // The resolved `VectorField` is a runtime form; the `.dsb` carries
             // the shape index, on `DocPaint::shape_field` below.
             shape: None,
@@ -2105,6 +2123,33 @@ fn shadows_of(node: &Node, path: &str) -> Result<Vec<Shadow>, CompileError> {
         });
     }
     Ok(shadows)
+}
+
+/// A node's blurs (story #393,
+/// `docs/decisions/backdrop-blur-is-core-vocabulary.md`), mirroring
+/// [`shadows_of`]: the same visible filter, the same skip-what-we-do-not-lower
+/// rule, in Figma's own effect order.
+///
+/// Only `BACKGROUND_BLUR` lowers. `LAYER_BLUR` is deliberately not handled
+/// here — it stays budgeted at v1 and its triage still raises a diagnostic, so
+/// falling through leaves that gap named rather than silently emitting a blur
+/// the runtime would treat as a backdrop one.
+///
+/// An absent `radius` lowers to 0.0, matching `shadows_of`'s treatment of an
+/// absent blur radius: a zero-radius blur is a no-op the painter can skip, not
+/// a malformed document.
+fn blurs_of(node: &Node) -> Vec<Blur> {
+    node.effects
+        .iter()
+        .filter(|e| e.visible != Some(false))
+        .filter_map(|effect| match effect.kind.as_str() {
+            "BACKGROUND_BLUR" => Some(Blur {
+                kind: BlurKind::Backdrop,
+                radius: effect.radius.unwrap_or(0.0),
+            }),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Figma's paint `opacity` multiplies the color's alpha. Ignoring it would be

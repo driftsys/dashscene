@@ -24,9 +24,11 @@ three things the validator must catch live on three different surfaces:
    puts the entire v0.3 vocabulary — all four gradient kinds,
    image fills and scale modes, axis-aligned + rounded clip, full
    auto-layout — in the **NOW** band. The constructs that are out of profile
-   (layer blur, backdrop blur, advanced blend modes, corner smoothing,
-   luminance masks, noise, animated boolean ops) have no representation in
-   the `.dsb` schema at all. By the time a construct is in the document, it
+   (layer blur, advanced blend modes, corner smoothing, luminance masks,
+   noise, animated boolean ops) have no representation in the `.dsb` schema at
+   all. Backdrop blur was in that list until story #393 gave it a schema
+   representation and moved it into the NOW band
+   (`docs/decisions/backdrop-blur-is-core-vocabulary.md`). By the time a construct is in the document, it
    is in the vocabulary. So this class is only catchable on the _producer's
    source_ vocabulary, at import.
 
@@ -95,8 +97,7 @@ gate, on the two constructs
 
 | construct                   | `profile:core`                                                          | `profile:full`                       |
 | --------------------------- | ----------------------------------------------------------------------- | ------------------------------------ |
-| backdrop blur               | Error — a lean painter never gets it, so there is nothing to degrade to | Warning — deferred, declared degrade |
-| advanced blend modes        | Error                                                                   | Warning                              |
+| advanced blend modes        | Error — a lean painter never gets it, so there is nothing to degrade to | Warning — deferred, declared degrade |
 | every other LATER construct | Warning                                                                 | Warning                              |
 | every REJECT construct      | Error                                                                   | Error                                |
 

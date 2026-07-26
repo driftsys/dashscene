@@ -60,8 +60,9 @@ pub(crate) fn constructs_of(node: &Node) -> (Vec<Construct>, Vec<String>) {
     (found, unsupported)
 }
 
-/// One effect's verdict: `None` when it lowers cleanly (a drop or inner
-/// shadow with no advanced blend), `Some(Ok(_))` for an out-of-profile
+/// One effect's verdict: `None` when it lowers cleanly (a backdrop blur, or a
+/// drop or inner shadow with no advanced blend), `Some(Ok(_))` for an
+/// out-of-profile
 /// construct the validator triages, `Some(Err(_))` for an effect the schema
 /// cannot carry at all.
 fn effect_construct(effect: &Effect) -> Option<Result<Construct, String>> {
@@ -74,11 +75,23 @@ fn effect_construct(effect: &Effect) -> Option<Result<Construct, String>> {
             Some("PROGRESSIVE") => Construct::ProgressiveBlur,
             _ => Construct::LayerBlur,
         })),
-        "BACKGROUND_BLUR" => Some(Ok(Construct::BackdropBlur)),
+        // Backdrop blur lowers into the schema at v0.11 (story #393,
+        // docs/decisions/backdrop-blur-is-core-vocabulary.md), so it joins the
+        // shadows here rather than naming a construct — `blurs_of` carries its
+        // radius. Layer blur above still names one: it stays budgeted at v1.
+        //
+        // It has to be listed explicitly, not left to fall through. The
+        // fall-through arm returns `Some(Err(_))`, which blocks the node as an
+        // effect the schema cannot carry (debt #144) — so an omitted case here
+        // reads as "unknown effect", not as "supported".
+        //
         // Drop and inner shadows lower into the schema (story #45), so they
         // are no diagnostic — the `shadows_of` lowering carries their
         // parameters. A non-NORMAL shadow blend mode still has no
-        // vocabulary; diagnose it like a paint blend mode.
+        // vocabulary; diagnose it like a paint blend mode. Backdrop blur has
+        // no blend mode of its own in Figma, so it takes no part in that
+        // check.
+        "BACKGROUND_BLUR" => None,
         "DROP_SHADOW" | "INNER_SHADOW" => {
             if is_plain_blend(effect.blend_mode.as_deref()) {
                 None
@@ -308,7 +321,7 @@ mod tests {
     }
 
     #[test]
-    fn a_background_blur_is_backdrop_blur() {
+    fn a_background_blur_is_lowered_vocabulary_not_a_diagnostic() {
         let node: Node = serde_json::from_value(serde_json::json!({
             "name": "backdrop-blur",
             "type": "FRAME",
@@ -316,6 +329,8 @@ mod tests {
         }))
         .unwrap();
 
-        assert_eq!(constructs_of(&node).0, vec![Construct::BackdropBlur],);
+        // Story #393 moved backdrop blur into the NOW band: it lowers
+        // through `blurs_of`, so triage must find nothing to report.
+        assert_eq!(constructs_of(&node).0, vec![]);
     }
 }

@@ -2,10 +2,10 @@
 //! no dashscene-core, no dashbuf — dashpaint's public API only.
 
 use dashpaint::{
-    ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CornerRadii, GlyphRunTable, Gradient,
-    GradientKind, GradientStop, GroupComposite, ImageAsset, ImageFormat, ImageTable, PaintEntry,
-    PaintIndex, PaintKind, PaintTable, Painter, RectEntry, ScaleMode, Shadow, ShadowKind, Stroke,
-    StrokeAlign, Vec2,
+    Blur, BlurKind, ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CornerRadii, GlyphRunTable,
+    Gradient, GradientKind, GradientStop, GroupComposite, ImageAsset, ImageFormat, ImageTable,
+    PaintEntry, PaintIndex, PaintKind, PaintTable, Painter, RectEntry, ScaleMode, Shadow,
+    ShadowKind, Stroke, StrokeAlign, Vec2,
 };
 
 const RED: Color = Color {
@@ -119,6 +119,7 @@ fn a_full_entry_round_trips_through_the_table() {
         }],
         shape: None,
         extra_fills: Vec::new(),
+        blurs: Vec::new(),
     };
     let mut table = PaintTable::new();
     let index = table.push(entry.clone());
@@ -487,4 +488,86 @@ fn group_opacity_crosses_as_per_rect_alpha_and_a_group_slice() {
     assert_eq!(painter.painted[0].0.opacity, 0.5);
     assert_eq!(painter.painted[1].0.opacity, 1.0);
     assert_eq!(painter.groups, groups);
+}
+
+/// A blurred entry over the half-blue fill, for the backdrop cases below.
+fn blurred(kind: BlurKind) -> PaintEntry {
+    PaintEntry {
+        blurs: vec![Blur { kind, radius: 16.0 }],
+        ..PaintEntry::solid(HALF_BLUE)
+    }
+}
+
+/// Whether an entry samples the backdrop is derived from its blurs
+/// (`docs/decisions/backdrop-blur-is-core-vocabulary.md`), so an entry
+/// that carries none — every entry written before v0.11 — samples
+/// nothing, and a layer blur is node-local rather than backdrop-reading.
+#[test]
+fn only_a_backdrop_blur_makes_an_entry_sample_the_backdrop() {
+    assert!(!PaintEntry::default().samples_backdrop());
+    assert!(!PaintEntry::solid(RED).samples_backdrop());
+    assert!(!blurred(BlurKind::Layer).samples_backdrop());
+    assert!(blurred(BlurKind::Backdrop).samples_backdrop());
+}
+
+/// Test double: records the rect indices that are ordering barriers. It
+/// reads them from the paint table it is already handed — `Painter::paint`
+/// grew no parameter for the backdrop contract, so the declaration
+/// reaches every existing painter through the signature it already has.
+#[derive(Default)]
+struct BarrierRecordingPainter {
+    barriers: Vec<usize>,
+}
+
+impl Painter for BarrierRecordingPainter {
+    fn paint(
+        &mut self,
+        rects: &[RectEntry],
+        paints: &PaintTable,
+        _images: &ImageTable,
+        _clips: &ClipTable,
+        _groups: &[GroupComposite],
+        _glyphs: &GlyphRunTable,
+        _dirty: Option<&[u32]>,
+    ) {
+        for (index, rect) in rects.iter().enumerate() {
+            if paints.resolve(rect.paint).samples_backdrop() {
+                self.barriers.push(index);
+            }
+        }
+    }
+}
+
+#[test]
+fn a_backdrop_sampling_rect_crosses_boundary_b_as_an_ordering_barrier() {
+    let mut paints = PaintTable::new();
+    let plain = paints.push(PaintEntry::solid(RED));
+    let frosted = paints.push(blurred(BlurKind::Backdrop));
+    let rects: Vec<RectEntry> = [plain, frosted, plain]
+        .into_iter()
+        .map(|paint| RectEntry {
+            x: 0.0,
+            y: 0.0,
+            w: 10.0,
+            h: 10.0,
+            paint,
+            clip: ClipIndex::UNCLIPPED,
+            opacity: 1.0,
+        })
+        .collect();
+
+    let mut painter = BarrierRecordingPainter::default();
+    painter.paint(
+        &rects,
+        &paints,
+        &ImageTable::new(),
+        &ClipTable::new(),
+        &[],
+        &GlyphRunTable::new(),
+        None,
+    );
+
+    // Only the middle rect samples: rect 0 lies beneath it and must be
+    // composited first, and rect 2 lies above it and is unconstrained.
+    assert_eq!(painter.barriers, vec![1]);
 }
