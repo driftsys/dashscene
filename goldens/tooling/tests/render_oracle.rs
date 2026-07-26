@@ -714,7 +714,8 @@ fn render_fixture(name: &str, fixture_json: &str) -> Vec<u8> {
         report.is_empty(),
         "frame {name} fixture lowers clean: {report}"
     );
-    let document = root_as_document(&bytes).expect("a valid buffer");
+    let document = root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
+        .expect("a valid buffer");
     let mut arena = Arena::new();
     load_document(&document, &mut arena);
     // `load_document` commits with the fixed solver, which measures a text node

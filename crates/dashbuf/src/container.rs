@@ -536,6 +536,10 @@ pub enum ContainerError {
     RootHashMismatch,
     /// A section's payload does not hash to its recorded content hash.
     SectionHashMismatch { index: usize },
+    /// The file does not hold exactly one ui-document section. A `.dsb` always
+    /// carries one: zero means the file is not a document, and more than one
+    /// means there is no single answer to which document it is.
+    NotOneUiSection { found: usize },
 }
 
 impl fmt::Display for ContainerError {
@@ -589,6 +593,10 @@ impl fmt::Display for ContainerError {
                     "section {index} does not match its recorded content hash"
                 )
             }
+            Self::NotOneUiSection { found } => write!(
+                f,
+                "a .dsb holds exactly one ui-document section; this file has {found}"
+            ),
         }
     }
 }
@@ -811,4 +819,42 @@ impl<'a> Container<'a> {
         }
         Ok(())
     }
+
+    /// The verified ui-document payload — the flatbuffer a `.dsb` exists to
+    /// carry.
+    ///
+    /// Requires exactly one ui section, and hash-verifies it before handing the
+    /// bytes over. Running the flatbuffers verifier on the result stays the
+    /// caller's step: this module checks that the bytes are the ones the file
+    /// claims, and `dashbuf::root_as_document` checks that they are a document.
+    pub fn ui_document(&self) -> Result<&'a [u8], ContainerError> {
+        let mut found = 0;
+        let mut at = 0;
+        for index in 0..self.count {
+            let entry = self.section(index);
+            if entry.kind == SectionKind::Structured as u16 && entry.flavor == FLAVOR_UI {
+                found += 1;
+                at = index;
+            }
+        }
+        if found != 1 {
+            return Err(ContainerError::NotOneUiSection { found });
+        }
+        self.verify_section(at)?;
+        Ok(self.section_bytes(at))
+    }
+}
+
+/// Parses a `.dsb` file and returns its verified ui-document payload.
+///
+/// The one call a reader that only wants the document needs, in place of the
+/// `Container::parse` then [`Container::ui_document`] pair. Every step the file
+/// format promises runs: magic, version, the section table against the root
+/// hash, the table's structural rules, and the ui section's own content hash.
+///
+/// A pre-envelope `.dsb` — a bare flatbuffer — fails here with
+/// [`ContainerError::BadMagic`]. That is deliberate: there is no transitional
+/// reader, because one would accept a stale file silently.
+pub fn ui_document(file: &[u8]) -> Result<&[u8], ContainerError> {
+    Container::parse(file)?.ui_document()
 }

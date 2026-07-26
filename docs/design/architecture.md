@@ -41,7 +41,7 @@ Term-by-term detail: [glossary.md](../technotes/glossary.md).
 Three stages, two boundaries:
 
     STAGE 1 — build time (dashc, offline)
-      Figma REST JSON --> dashc --> .dsb (flatbuffer) + assets
+      Figma REST JSON --> dashc --> .dsb (sectioned container) + assets
 
     STAGE 2 — common runtime (Rust, one instance)
       arena + variants + text stack + Taffy + FLIP

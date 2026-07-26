@@ -6,6 +6,7 @@
 //! still defeat the whole point of the format, which is that the hot region
 //! can be verified without faulting a cold page.
 
+use dashbuf::container;
 use dashbuf::container::{
     Container, ContainerError, FLAVOR_ASSET, FLAVOR_UI, HASH_LEN, HEADER_SIZE,
     LARGE_BLOB_THRESHOLD, MAGIC, PAGE_ALIGN, SECTION_ALIGN, SECTION_STRIDE, Section, SectionKind,
@@ -548,5 +549,78 @@ fn an_empty_payload_is_refused() {
             Section::blob(FLAVOR_ASSET, &[]),
         ]),
         Err(WriteError::EmptyPayload { index: 1 })
+    );
+}
+
+// ---------------------------------------------------------------------
+// The ui-document reader (story #401)
+// ---------------------------------------------------------------------
+
+#[test]
+fn ui_document_returns_the_verified_ui_payload() {
+    let ui = payload(1, 128);
+    let blob = payload(2, 128);
+    let bytes = write(&[
+        Section::structured(FLAVOR_UI, &ui),
+        Section::blob(FLAVOR_ASSET, &blob),
+    ])
+    .expect("writes");
+    assert_eq!(container::ui_document(&bytes).expect("resolves"), &ui[..]);
+}
+
+/// `ui_document` verifies, it does not merely locate. Without the hash check a
+/// corrupted document would load and the corruption would surface as wrong
+/// pixels, or as a panic inside the loader, rather than as a refusal here.
+#[test]
+fn ui_document_refuses_a_corrupted_payload() {
+    let ui = payload(1, 128);
+    let mut bytes = write(&[Section::structured(FLAVOR_UI, &ui)]).expect("writes");
+    let at = Container::parse(&bytes).expect("parses").section(0).offset as usize;
+    bytes[at] ^= 0xFF;
+    assert_eq!(
+        container::ui_document(&bytes).unwrap_err(),
+        ContainerError::SectionHashMismatch { index: 0 }
+    );
+}
+
+#[test]
+fn ui_document_refuses_zero_or_more_than_one_ui_section() {
+    let blob = payload(2, 8);
+    let only_blob = write(&[Section::blob(FLAVOR_ASSET, &blob)]).expect("writes");
+    assert_eq!(
+        container::ui_document(&only_blob).unwrap_err(),
+        ContainerError::NotOneUiSection { found: 0 }
+    );
+
+    let a = payload(1, 8);
+    let b = payload(3, 8);
+    let two = write(&[
+        Section::structured(FLAVOR_UI, &a),
+        Section::structured(FLAVOR_UI, &b),
+    ])
+    .expect("writes");
+    assert_eq!(
+        container::ui_document(&two).unwrap_err(),
+        ContainerError::NotOneUiSection { found: 2 }
+    );
+}
+
+/// A pre-envelope `.dsb` — a bare flatbuffer — is refused by name rather than
+/// read. This is the reverse of `a_bare_flatbuffer_is_refused_by_magic` above,
+/// through the entry point every reader actually calls.
+#[test]
+fn ui_document_refuses_a_pre_envelope_file() {
+    // A plausible bare flatbuffer: a little-endian root offset of 12, then
+    // padding. This is the shape every committed golden had before story #401.
+    let bare = [12u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    assert_eq!(
+        container::ui_document(&bare).unwrap_err(),
+        ContainerError::TooSmall { len: 16 }
+    );
+    let mut padded = bare.to_vec();
+    padded.resize(256, 0);
+    assert_eq!(
+        container::ui_document(&padded).unwrap_err(),
+        ContainerError::BadMagic
     );
 }

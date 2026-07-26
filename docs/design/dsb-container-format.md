@@ -236,5 +236,5 @@ deliberate, reviewed version bump.
     Related decisions:  docs/decisions/dsb-format-and-one-schema.md,
                         docs/decisions/dsb-frozen-fixture-r7-guard.md,
                         docs/decisions/remoting-two-transports.md
-    Blocks:             story #401 (the .dsb file becomes an envelope),
-                        story #107 (asset payloads become blob sections)
+    Enabled:            story #401 (the .dsb file became an envelope, done)
+    Blocks:             story #107 (asset payloads become blob sections)

@@ -161,6 +161,13 @@ into the records below. Per-story decisions land here directly:
 - [dsb-frozen-fixture-r7-guard.md](dsb-frozen-fixture-r7-guard.md) — a
   frozen, checked-in `.dsb` byte fixture guards R7's append-only schema
   evolution (debt #64); binds every edit to `dashbuf.fbs`.
+- [r7-survives-the-envelope-rebaseline.md](r7-survives-the-envelope-rebaseline.md)
+  — R7 is a property of the compiler, not of a particular byte string, so
+  the sectioned envelope may re-baseline the seven committed byte goldens
+  once: announced, argued, and attributed by checking that each new file's
+  section 0 equals the whole of the old file (story #401). The frozen
+  schema fixture is not regenerated — it is a section payload, and its
+  subject is field ids, which the envelope does not touch.
 - [image-assets-cross-boundary-b.md](image-assets-cross-boundary-b.md) —
   encoded, format-tagged image assets are part of the painter input
   (`Painter::paint` gains an `ImageTable`; story #14).

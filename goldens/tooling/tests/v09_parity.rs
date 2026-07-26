@@ -175,7 +175,8 @@ fn figma_arena() -> Arena {
     // no diagnostic blocks or accompanies the emission.
     assert!(report.is_empty(), "the Figma side lowers clean: {report}");
 
-    let document = root_as_document(&bytes).expect("a valid buffer");
+    let document = root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
+        .expect("a valid buffer");
     let mut arena = Arena::new();
     load_document(&document, &mut arena);
     // `load_document` commits with the fixed solver; the flex intent needs the

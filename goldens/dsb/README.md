@@ -7,6 +7,25 @@ once painted, compared with a pixel tolerance. These are goldens that are
 *bytes* — what the compiler emits, compared exactly. Emission is
 byte-reproducible for a given input (R7), so there is no tolerance to allow.
 
+## These are container files, not bare flatbuffers
+
+Since v0.11 (story #401) a `.dsb` is a sectioned container: a 64-byte header,
+then a table of 64-byte section entries, then the payloads
+(`docs/design/dsb-container-format.md`). A hex dump starts with the signature
+`89 44 53 42 0D 0A 1A 0A`, not with a flatbuffer root offset. Every golden here
+holds exactly one section — the ui document — because none of these fixtures
+has an asset payload yet.
+
+Reading one back means going through the envelope:
+`dashbuf::container::ui_document(&bytes)` returns the verified document
+payload, and `dashbuf::root_as_document` takes it from there.
+
+Each golden grew by exactly 128 bytes when the envelope landed — one header
+plus one section entry — and the document inside is byte-for-byte what the file
+held before. That was checked per golden before the regeneration was committed;
+`docs/decisions/r7-survives-the-envelope-rebaseline.md` records the argument and
+the numbers.
+
 ## v03-paint.dsb
 
 `corpus/figma-fixtures/v03-paint.json` plus the image bytes in

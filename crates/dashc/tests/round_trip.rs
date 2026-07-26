@@ -264,7 +264,9 @@ fn v03_by_hand(arena: &mut Arena) {
 /// Compiles, loads, and returns the arena the document produced.
 fn load(doc: &Document) -> Arena {
     let bytes = compile(doc).expect("the v0.3 document validates");
-    let document = dashbuf::root_as_document(&bytes).expect("valid buffer");
+    let document =
+        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
+            .expect("valid buffer");
     let mut arena = Arena::new();
     load_document(&document, &mut arena);
     arena
@@ -458,7 +460,9 @@ fn a_frosted_and_a_plain_entry_with_the_same_fill_are_two_pool_entries() {
     doc.push(blurred_node("plain", Vec::new()));
 
     let bytes = compile(&doc).expect("validates");
-    let document = dashbuf::root_as_document(&bytes).expect("valid buffer");
+    let document =
+        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
+            .expect("valid buffer");
     assert_eq!(
         document.paints().expect("a paint pool").len(),
         4,
@@ -502,7 +506,9 @@ fn a_blur_and_a_shadow_section_do_not_alias_each_other_in_the_pool_key() {
     doc.push(shadowed);
 
     let bytes = compile(&doc).expect("validates");
-    let document = dashbuf::root_as_document(&bytes).expect("valid buffer");
+    let document =
+        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
+            .expect("valid buffer");
     assert_eq!(document.paints().expect("a paint pool").len(), 2);
 }
 
@@ -529,7 +535,9 @@ fn emission_of_a_blurred_document_is_byte_reproducible_and_round_trips() {
 
     // The bytes carry the blurs, in order, rather than dropping them.
     let bytes = compile(&doc()).expect("validates");
-    let document = dashbuf::root_as_document(&bytes).expect("valid buffer");
+    let document =
+        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
+            .expect("valid buffer");
     let paints = document.paints().expect("paint pool present");
     let blurs = paints.get(0).blurs().expect("blurs present");
     assert_eq!(blurs.len(), 2);
@@ -565,7 +573,9 @@ fn a_blur_less_entry_omits_the_blurs_field_entirely() {
     // change the bytes of every document written before v0.11 — which is what
     // would have broken the frozen `.dsb` fixture and the committed goldens.
     let bytes = compile(&shadowed_document()).expect("validates");
-    let document = dashbuf::root_as_document(&bytes).expect("valid buffer");
+    let document =
+        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
+            .expect("valid buffer");
     let paint = document.paints().expect("paint pool present").get(0);
     assert!(
         paint.blurs().is_none(),
@@ -597,7 +607,9 @@ fn nodes_sharing_a_style_share_one_pool_entry() {
     }
 
     let bytes = compile(&doc).expect("validates");
-    let document = dashbuf::root_as_document(&bytes).expect("valid buffer");
+    let document =
+        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
+            .expect("valid buffer");
     assert_eq!(
         document.paints().expect("a paint pool").len(),
         1,
@@ -632,7 +644,9 @@ fn two_nodes_that_differ_only_in_clip_do_not_share_a_pool_entry() {
     }
 
     let bytes = compile(&doc).expect("validates");
-    let document = dashbuf::root_as_document(&bytes).expect("valid buffer");
+    let document =
+        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
+            .expect("valid buffer");
     assert_eq!(document.paints().expect("a paint pool").len(), 2);
 }
 
@@ -687,7 +701,9 @@ fn image_indices_are_remapped_when_loading_into_a_non_empty_arena() {
     let mut arena = Arena::new();
 
     let bytes = compile(&v03_document()).expect("validates");
-    let document = dashbuf::root_as_document(&bytes).expect("valid buffer");
+    let document =
+        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
+            .expect("valid buffer");
     load_document(&document, &mut arena);
     load_document(&document, &mut arena);
 
@@ -836,7 +852,9 @@ fn flex_intent_round_trips_through_the_document() {
     });
 
     let bytes = compile(&doc).expect("validates");
-    let document = dashbuf::root_as_document(&bytes).expect("valid buffer");
+    let document =
+        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
+            .expect("valid buffer");
     let mut arena = Arena::new();
     load_document(&document, &mut arena);
 

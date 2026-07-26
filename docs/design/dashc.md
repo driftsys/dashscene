@@ -34,15 +34,23 @@ what the documentation suggests — are in
 
 ## The pipeline
 
-    source              →  lower  →  Document  →  emit  →  validate  →  .dsb
-    (Figma REST JSON)                     (in-memory document)
+    source              →  lower  →  Document  →  emit  →  validate  →  package  →  .dsb
+    (Figma REST JSON)                     (in-memory document)                (envelope)
 
                                             ↓ (runtime)
-    .dsb  →  root_as_document  →  validate_document  →  load_document  →  Arena  →  Painter
+    .dsb  →  ui_document  →  root_as_document  →  validate_document  →  load_document  →  Arena  →  Painter
+             (envelope)
 
 `lower` is the `figma` module (below). `compile_figma` runs the whole top
 row — source through `.dsb` — in one call; `compile` runs everything from
 `Document` onward, for a document built by hand or by any other producer.
+
+`package` and `ui_document` are the two ends of the file envelope, added at
+v0.11 (`docs/design/dsb-container-format.md`). Everything between them works on
+the ui document as a bare flatbuffer, which is what a structured section
+carries; only the bytes crossing in or out of a file go through the envelope.
+`emit` returns a section payload, `compile` returns a file, and
+`root_as_document` is never called on `.dsb` file bytes directly.
 
 ## `Document` — the in-memory document
 

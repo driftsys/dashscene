@@ -1,10 +1,17 @@
 # .dsb becomes a thin sectioned container; each section is one flatbuffer
 
-    status   accepted (spike #56, 2026-07-12) — envelope lands with the
-             v1 loading-performance work; binds schema design now.
+    status   accepted (spike #56, 2026-07-12); binds schema design.
              Refined 2026-07-12 (design session): envelope form,
              section kinds, alignment policy, endianness — see
              "Refinements" below.
+             AS-BUILT 2026-07-26 (v0.11, stories #399 and #401): the
+             envelope was written in dashbuf (#399) and `.dsb` files
+             became containers (#401). The deferral below to "the v1
+             loading-performance work" no longer holds — the v0.10 close
+             moved that work into v0.11. Byte layout:
+             docs/design/dsb-container-format.md. The one-time golden
+             re-baseline it caused:
+             docs/decisions/r7-survives-the-envelope-rebaseline.md.
     scope    crates/dashbuf, the .dsb file format
 
 ## Context
@@ -32,9 +39,7 @@ Full evidence is on the issue
 
 Option 2: `.dsb` is a thin sectioned container. Each section is an
 independent flatbuffer with its own `root_type` and `file_identifier`.
-The envelope is deferred to the v1 loading-performance work; until
-then `.dsb` files stay single-flatbuffer. Two rules bind the schema
-stories (#8, #13, #20, #26) immediately:
+Two rules bind the schema stories (#8, #13, #20, #26) immediately:
 
 1. Cross-table references are integer indices, never flatbuffer
    offsets that reach into another future section.

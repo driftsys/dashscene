@@ -1505,7 +1505,9 @@ fn the_fixture_compiles_loads_and_renders() {
 
     assert!(report.is_empty(), "the paint fixture is entirely NOW-band");
 
-    let document = dashbuf::root_as_document(&bytes).expect("a valid buffer");
+    let document =
+        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
+            .expect("a valid buffer");
     let mut arena = Arena::new();
     load_document(&document, &mut arena);
 
@@ -1966,7 +1968,9 @@ fn partial_emits_the_frame_and_warns_on_the_skipped_vector() {
     assert_eq!(warnings.len(), 1, "one figma.unsupported for the VECTOR");
     assert_eq!(warnings[0].severity, Severity::Warning);
     // The frame is present, the VECTOR is omitted: exactly one node.
-    let document = dashbuf::root_as_document(&bytes).expect("the emitted document loads");
+    let document =
+        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
+            .expect("the emitted document loads");
     let mut arena = Arena::new();
     load_document(&document, &mut arena);
     assert_eq!(
@@ -2057,7 +2061,10 @@ fn a_backdrop_blur_lowers_under_both_policies_and_keeps_its_radius() {
         // The radius survives the whole path: Figma effect -> dashc lowering
         // -> paint pool -> document -> load. A blur that lowered to the right
         // node with the wrong radius would render, and would be wrong.
-        let document = dashbuf::root_as_document(&bytes).expect("the emitted document loads");
+        let document = dashbuf::root_as_document(
+            dashbuf::container::ui_document(&bytes).expect("a .dsb file"),
+        )
+        .expect("the emitted document loads");
         let mut arena = Arena::new();
         load_document(&document, &mut arena);
         let scene = arena.committed();
@@ -2125,7 +2132,9 @@ fn a_backdrop_blur_on_a_baked_vector_is_kept_not_dropped() {
         report.diagnostics(),
     );
 
-    let document = dashbuf::root_as_document(&bytes).expect("the emitted document loads");
+    let document =
+        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
+            .expect("the emitted document loads");
     let mut arena = Arena::new();
     load_document(&document, &mut arena);
     let scene = arena.committed();
