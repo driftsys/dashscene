@@ -552,6 +552,31 @@ impl PaintEntry {
             ..Self::default()
         }
     }
+
+    /// True when a rect painted from this entry reads the
+    /// already-composited backdrop beneath it, rather than being built
+    /// from the node's own geometry alone — that is, when any of
+    /// [`blurs`](Self::blurs) is a [`BlurKind::Backdrop`]
+    /// (`docs/decisions/backdrop-blur-is-core-vocabulary.md`). A
+    /// [`BlurKind::Layer`] blur is node-local and does not count.
+    ///
+    /// This is the property [`Painter::paint`]'s ordering guarantee is
+    /// stated over: every rect beneath a rect whose entry answers `true`
+    /// is composited before that rect is drawn. Nothing in boundary B
+    /// changes shape for it — a painter finds its barriers by resolving
+    /// the paint index it already resolves per rect.
+    ///
+    /// Derived rather than stored, deliberately. `blurs` already carries
+    /// whether a backdrop blur is present, so a flag beside it would be a
+    /// second copy of one fact, and a struct of public fields has nothing
+    /// that would keep the two agreeing. Deriving it also widens the
+    /// guarantee by itself: a further backdrop-sampling effect extends
+    /// this answer, and no painter's barrier handling changes.
+    pub fn samples_backdrop(&self) -> bool {
+        self.blurs
+            .iter()
+            .any(|blur| matches!(blur.kind, BlurKind::Backdrop))
+    }
 }
 
 /// The paint table (docs/design/dashbuf.md): dense, indexed by `RectEntry.paint`.
@@ -840,7 +865,27 @@ pub trait Painter {
     /// earlier one (DFS order encodes document stacking). The composited
     /// result is the contract; iteration order is the implementation's
     /// choice (the lean painter draws opaque cores front-to-back,
-    /// docs/specification/03-target-hardware-rules.md R-T2).
+    /// docs/specification/03-target-hardware-rules.md R-T2) — with one
+    /// exception, below.
+    ///
+    /// **The backdrop barrier.** A rect whose paint entry answers
+    /// [`PaintEntry::samples_backdrop`] reads what is already composited
+    /// beneath it, so every rect at a lower index MUST be composited
+    /// before that rect is drawn
+    /// (`docs/decisions/backdrop-blur-is-core-vocabulary.md`). Such a
+    /// rect is a barrier in any reorder, and that is the whole of the
+    /// narrowing: the licence above still applies on either side of it. A
+    /// painter that iterates in slice order satisfies the guarantee
+    /// without doing anything, because it already composites
+    /// back-to-front into one target; only a painter that reorders pays
+    /// for the barrier. The guarantee fixes the order alone — which
+    /// surface the sample reads when the barrier rect falls inside a
+    /// [`GroupComposite`] range is not settled here, and belongs to the
+    /// first painter that implements the sampling. Glyph runs are outside
+    /// it for the same reason they are outside `groups` below: the v0.5
+    /// subset composites every run over all rects, so no run is ever
+    /// beneath a barrier and no run can enter a sampled backdrop (a named
+    /// limitation, not a silent drop).
     ///
     /// Each rect's paint alpha is modulated by [`RectEntry::opacity`], the
     /// resolved free-path group alpha (`1.0` when none applies). `groups`
