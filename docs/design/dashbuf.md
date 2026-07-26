@@ -107,7 +107,16 @@ is enforced by a frozen byte fixture, not by convention alone — see
 
 ## Public interface
 
-All types are generated from `crates/dashbuf/schema/dashbuf.fbs`:
+The crate has two surfaces. The schema types below are generated from
+`crates/dashbuf/schema/dashbuf.fbs`. Alongside them, `dashbuf::container`
+is the hand-written `.dsb` file envelope — the sectioned container that
+carries one or more of these flatbuffers plus raw payload blobs in one
+file. It is deliberately not a flatbuffer, because it is validated
+before any parser is trusted; its byte layout, alignment policy, and
+loading model are in `docs/design/dsb-container-format.md`, and the
+reasoning behind it in `docs/decisions/dsb-sectioned-container.md`.
+
+All types below are generated from the schema:
 
 - `FixedSizeLayout` — `x`, `y`, `width`, `height: float32` (x/y are
   the authored offset relative to the parent; width/height double as

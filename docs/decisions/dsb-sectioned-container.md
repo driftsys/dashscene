@@ -121,6 +121,21 @@ reserves: "format doc (section table, hashes, reserved fields)"):
 - Layout hygiene: no implicit padding (every gap is a named reserved
   field) and a compile-time size assertion pins the struct size.
 
+Two narrowings, recorded when the envelope was built (story #399,
+2026-07-26; byte layout in `docs/design/dsb-container-format.md`):
+
+- The header carries one field beyond the list above: **`section_stride`**,
+  next to `header_size`. Both are recorded so the table is self-describing
+  and the external signing tool this record names can compute
+  `header_size + count * stride` without hardcoding either number. It is
+  not a forward-compatibility mechanism — the version rule above already
+  refuses a version this reader does not implement — but it turns a stride
+  mismatch into a named error instead of a misparse.
+- **`flavor` is an enumerated role, not flags.** A section has exactly one
+  role, and the reader compares the whole field for equality; two roles
+  would need two entries, not two bits. The wording above is narrowed
+  accordingly.
+
 ### Section kinds: structured vs blob
 
 The section table distinguishes two kinds:

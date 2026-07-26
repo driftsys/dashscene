@@ -77,6 +77,13 @@ ttf-parser = "0.25"
 # can change between flatc majors, so compiler and runtime crate must
 # match.
 flatbuffers = "=25.12.19"
+# The .dsb container's content hash (docs/design/dsb-container-format.md).
+# BLAKE3 rather than SHA-256 for the reason the asset-model decision named when
+# it left the algorithm open: its tree structure gives chunk-level verified
+# streaming when the remote asset channel lands (v2). Default features only —
+# `rayon` and `mmap` stay off so the portable implementation builds for
+# wasm32-unknown-unknown, which dashc requires.
+blake3 = "1"
 lyon = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

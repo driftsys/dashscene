@@ -22,6 +22,9 @@ directly:
 - [dashbuf.md](dashbuf.md) — boundary A: the `.dsb` document schema (v0.1
   walking skeleton; v0.3 paint vocabulary, story #13; v0.5 text
   vocabulary, story #26).
+- [dsb-container-format.md](dsb-container-format.md) — the `.dsb` file
+  envelope: header, section table, hashes, alignment, and the loading model
+  (v0.11, story #399).
 - [dashlang.md](dashlang.md) — the value-tree builder surface and its
   one-commit mapping onto `dashscene-core` (story #5).
 - [dashcue.md](dashcue.md) — the descriptive animation vocabulary and its

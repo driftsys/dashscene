@@ -75,6 +75,17 @@ maintained by the same edit that breaks it.
   needs its own frozen fixture; this one stays as the structured-section
   guard.
 
+  **Discharged (story #399, 2026-07-26.)** The envelope's frozen fixture is
+  `crates/dashbuf/tests/fixtures/v0_11_container.dsb`, guarded by
+  `crates/dashbuf/tests/container_frozen.rs` and regenerated under
+  `UPDATE_CONTAINER_FIXTURE=1`. It decodes at literal byte offsets against
+  literal values from `docs/design/dsb-container-format.md`, importing no
+  layout constant from the crate — the envelope's failure mode is a changed
+  constant, where the schema's is a shifted field id, so the guard is
+  written against the numbers rather than against the code. This record's
+  fixture is unchanged by that landing and keeps its own scope: it is a bare
+  flatbuffer, which is what a structured section's payload is.
+
 ## Trace
 
 - Satisfies: `docs/specification/01-goals-and-requirements.md` R7 (additive schema evolution); issue
