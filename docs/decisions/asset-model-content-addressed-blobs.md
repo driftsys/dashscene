@@ -52,10 +52,20 @@ asset _bytes_ — P1 ("intent, never results") applied to assets:
 - The client-side asset cache is a content-addressed store: blob on
   disk named by its hash.
 
-Left open deliberately: the hash algorithm (BLAKE3 is the candidate —
-it would give chunk-level verified streaming on the wire), and a
-one-to-many `AssetEntry → payload` extension so texture mip tiers can
-be separate blobs fetched by priority.
+**The hash algorithm is BLAKE3-256** (resolved 2026-07-26, story #399,
+when the container envelope was built and needed one). The candidate
+named here became the choice for the reason given here: BLAKE3's tree
+structure gives chunk-level verified streaming when the remote asset
+channel lands (v2), which SHA-256 cannot. It also builds for
+`wasm32-unknown-unknown` with no extra work, which `dashc` requires.
+What would reverse it: a target program that mandates a FIPS-validated
+digest. The same 32-byte hash will serve both roles in the file — a
+section's content hash, which the envelope already writes, and an
+asset's identity, when `AssetEntry` replaces the inline `Document.images`
+storage — so there is one algorithm in the format, not two.
+
+Left open deliberately: a one-to-many `AssetEntry → payload` extension
+so texture mip tiers can be separate blobs fetched by priority.
 
 ## Why
 

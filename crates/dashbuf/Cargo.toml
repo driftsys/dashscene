@@ -11,4 +11,5 @@ description = "The .dsb flatbuffer schema — document format shared by file and
 name = "dashbuf"
 
 [dependencies]
+blake3.workspace = true
 flatbuffers.workspace = true
