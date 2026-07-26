@@ -21,6 +21,29 @@ per-corner radii, and clip. The crate has no dependencies, including no
 `dashscene-core` and no `dashbuf` — see
 `docs/decisions/dashpaint-owns-boundary-b-types.md` for why.
 
+Since v0.12 that "no dependencies" is enforced by a test rather than only
+observed, because a second thing now lives here that depends on it.
+
+## `image_id` — the shared image header parser
+
+`crates/dashpaint/src/image_id.rs` identifies PNG, JPEG, and GIF by magic
+signature and parses just the header for the intrinsic width and height. It
+sits in this crate for a reason that is about publish order rather than about
+painting: every crate that writes an `AssetEntry` (`dashc`, `dashpack`) and the
+gate that checks them (`dashscene-validator`) must reach one implementation, and
+`dashpaint` publishes before all three. It already owns `ImageFormat`, which is
+the type the parser's answer is phrased in.
+
+It **never decodes**. That boundary matters more here than it did in `dashc`,
+because `dashc` depends on this crate — so anything reachable from `dashpaint`
+is reachable from the compiler, and `docs/decisions/dashc-identifies-images-never-decodes.md`
+keeps pixel reconstruction out of the compiler permanently. The guard is the
+dependency-free property above: no production-grade decoder is written without a
+dependency, so `manifest_carries_no_third_party_dependencies` fails on the
+manifest line that would introduce one. The packer's decode belongs in the
+packer, which publishes after everything here
+(`docs/decisions/image-header-parser-lives-in-dashpaint.md`).
+
 ## The boundary-B contract
 
 - The rect-table index is the document DFS node index

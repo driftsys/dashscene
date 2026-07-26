@@ -1,8 +1,8 @@
 //! The compile-gate wiring for story #400: every image entering the
 //! `images` map is verified against its producer-supplied tag before it
-//! becomes a document asset (`crates/dashc/src/image_id.rs`).
+//! becomes a document asset (`crates/dashpaint/src/image_id.rs`).
 //!
-//! `crates/dashc/src/image_id.rs`'s own unit tests cover `identify` in
+//! `crates/dashpaint/src/image_id.rs`'s own unit tests cover `identify` in
 //! isolation — the header math, the truncation robustness. These tests cover
 //! the four named diagnostics *at the compile gate*: that a bad image aborts
 //! `compile_figma` with the right rule, always as an error, and that the
@@ -17,8 +17,8 @@ use dashscene_validator::{Location, Profile, Severity};
 
 const IMAGE_REF: &str = "test-image";
 
-// The same real, independently-dimensioned fixtures `image_id`'s own unit
-// tests use (7x5 PNG, 9x6 JPEG, 11x8 GIF — see that module for how their
+// The same real, independently-dimensioned fixtures `dashpaint::image_id`'s own
+// unit tests use (7x5 PNG, 9x6 JPEG, 11x8 GIF — see that module for how their
 // sizes were confirmed).
 const SAMPLE_PNG: &[u8] = include_bytes!("fixtures/image_id/sample.png");
 const SAMPLE_GIF: &[u8] = include_bytes!("fixtures/image_id/sample.gif");

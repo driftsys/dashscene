@@ -1,12 +1,27 @@
 //! Magic-byte identification and header parse for PNG, JPEG, and GIF —
 //! **never decode**.
 //!
-//! This is the P4 gate a producer-tagged image passes before it becomes a
-//! document asset (story #400,
-//! `docs/wip/2026-07-19-asset-pipeline-profiles-and-baking.md`, "Dependency
-//! plan"): the bytes claim a format on the wire (`ImageAsset::format`), and
-//! [`identify`] answers whether the bytes themselves back that claim, without
-//! trusting it.
+//! [`identify`] answers one question about a byte slice: which of the three
+//! containers is this, and what intrinsic extent does its header report? It
+//! is the shared P4 primitive behind two different rules, in two different
+//! crates:
+//!
+//! - **`dashc`'s compile gate** — the bytes claim a format on the wire
+//!   (`ImageAsset::format`), and `identify` answers whether the bytes
+//!   themselves back that claim, without trusting it (story #400).
+//! - **`dashscene-validator`'s load gate** — an `AssetEntry` records a
+//!   `format`, `width`, and `height` for a payload stored elsewhere in the
+//!   file, and `identify` answers whether the payload agrees (story #437,
+//!   debt #416).
+//!
+//! # Why it lives in `dashpaint`
+//!
+//! Because both of those callers must reach it. `dashpaint` publishes second
+//! in the workspace order, before `dashscene-validator`, `dashc`, and
+//! `dashpack` alike, so one implementation serves every writer and the gate
+//! that checks them. It already owns [`ImageFormat`], which is the type this
+//! module's answer is phrased in. Recorded in
+//! `docs/decisions/image-header-parser-lives-in-dashpaint.md`.
 //!
 //! # The boundary this keeps
 //!
@@ -23,6 +38,13 @@
 //! behind the same trust boundary every other pixel decode already sits
 //! behind (docs/specification/03-target-hardware-rules.md).
 //!
+//! Living in a crate that `dashc` depends on makes that boundary load-bearing
+//! rather than advisory: anything added here reaches the compiler. The guard
+//! is that `dashpaint` carries no third-party dependencies at all — a decoder
+//! needs one, so a decode cannot arrive here without a manifest change that
+//! `manifest_carries_no_third_party_dependencies` fails. The packer's decode
+//! belongs in the packer, which publishes after everything here.
+//!
 //! # Scope
 //!
 //! Hand-rolled and scoped to exactly the PNG/JPEG/GIF closure — the three
@@ -32,7 +54,7 @@
 //! module's own, not a library's. Revisit only if the format closure widens
 //! beyond what one module can hold (the design capture's own caveat).
 
-use dashpaint::ImageFormat;
+use crate::ImageFormat;
 
 /// The intrinsic size and confirmed container format of an image's bytes.
 ///
@@ -339,6 +361,13 @@ mod tests {
     // PNG 7x5, JPEG 9x6, GIF 11x8. Deliberately non-square on both axes, so
     // a width/height swap in the parser would fail every one of these
     // assertions, not pass by coincidence.
+    //
+    // `crates/dashc/tests/fixtures/image_id/` and
+    // `crates/dashscene-validator/tests/fixtures/image_id/` carry
+    // byte-identical copies, because each crate's tests have to build from
+    // its own published tarball — a crate cannot reach into a sibling's
+    // `tests/` directory. Three files under 700 bytes total is the cheaper
+    // side of that trade.
     const SAMPLE_PNG: &[u8] = include_bytes!("../tests/fixtures/image_id/sample.png");
     const SAMPLE_JPEG: &[u8] = include_bytes!("../tests/fixtures/image_id/sample.jpg");
     const SAMPLE_GIF: &[u8] = include_bytes!("../tests/fixtures/image_id/sample.gif");
@@ -523,6 +552,51 @@ mod tests {
             for cut in 0..=fixture.len() {
                 let _ = identify(&fixture[..cut]);
             }
+        }
+    }
+
+    /// The decode boundary, enforced rather than asserted in prose.
+    ///
+    /// `dashc` depends on `dashpaint`, so anything reachable from this crate
+    /// is reachable from the compiler. `identify` is header-only by
+    /// construction, but the risk this test addresses is the *next* change:
+    /// a packer wanting real decode (entropy coding, pixel reconstruction —
+    /// the CVE-bearing part) and putting it here because the format types
+    /// are already here. That would hand the compiler a decoder through the
+    /// back door, which
+    /// `docs/decisions/dashc-identifies-images-never-decodes.md` forbids.
+    ///
+    /// No production-grade decoder is written without a dependency — `png`,
+    /// `zune-jpeg`, `gif`, or `image`. So "this crate has no third-party
+    /// dependencies" is a cheap, mechanical proxy for "no decoder lives
+    /// here", and it fails loudly at the manifest line that would introduce
+    /// one. Adding a dependency is then a deliberate act with a failing test
+    /// attached, not an unremarked edit
+    /// (`docs/decisions/image-header-parser-lives-in-dashpaint.md`).
+    #[test]
+    fn manifest_carries_no_third_party_dependencies() {
+        let manifest = include_str!("../Cargo.toml");
+        let mut in_dependencies = false;
+        for line in manifest.lines() {
+            let line = line.trim();
+            if line.starts_with('[') {
+                // Every dependency table: `[dependencies]`,
+                // `[dev-dependencies]`, `[build-dependencies]`, and their
+                // `[target.'cfg(..)'.dependencies]` forms.
+                in_dependencies = line.trim_end_matches(']').ends_with("dependencies");
+                continue;
+            }
+            if !in_dependencies || line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            panic!(
+                "dashpaint declares the dependency `{line}`. This crate is depended on by \
+                 dashc, so a dependency here is reachable from the compiler, and a decoder \
+                 dependency would breach the boundary \
+                 docs/decisions/dashc-identifies-images-never-decodes.md draws. If the \
+                 dependency is genuinely not a decoder, widen this test deliberately and say \
+                 why in docs/decisions/image-header-parser-lives-in-dashpaint.md."
+            );
         }
     }
 }

@@ -43,7 +43,6 @@
 
 mod document;
 mod emit;
-mod image_id;
 
 // Public because `tests/abi.rs` calls the exports directly: that native test is
 // what pins the wire format, so the module cannot be private.
@@ -162,7 +161,27 @@ fn emit_and_validate(doc: &Document) -> (Vec<u8>, Report) {
     let document = dashbuf::root_as_document(&bytes)
         .expect("the emitter always produces a structurally valid buffer");
 
-    let report = dashscene_validator::validate_document(&document);
+    let mut report = dashscene_validator::validate_document(&document);
+
+    // The load gate's asset half, run over what was just emitted (story #437,
+    // debt #416). `emit` builds the entry vector by mapping over `doc.assets`
+    // in order, so the payload list below pairs with the entries positionally,
+    // which is the pairing `validate_asset_payloads` documents.
+    //
+    // Running it here rather than only in `dashc check` makes the compiler
+    // check its own output before the bytes leave it, and it is not a
+    // tautology: the Figma image path records the extent `identify` read, but
+    // the MSDF vector atlas path (`figma::Lowering`) records the extent the
+    // bake asked for, on a PNG this crate encodes. Those are two independent
+    // derivations of one number, and this is what would notice them parting.
+    let payloads: Vec<&[u8]> = doc.assets.iter().map(|a| a.bytes.as_slice()).collect();
+    report.extend(
+        dashscene_validator::validate_asset_payloads(&document, &payloads)
+            .diagnostics()
+            .iter()
+            .cloned(),
+    );
+
     (bytes, report)
 }
 

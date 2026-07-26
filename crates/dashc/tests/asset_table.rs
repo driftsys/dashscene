@@ -24,12 +24,18 @@ use dashc_wasm::{Asset, Box2D, Document, Node, Paint, compile};
 use dashpaint::{ImageFormat, PaintEntry, PaintKind, ScaleMode};
 use dashscene_core::{Arena, load_document};
 
-/// Three payloads, of which the first and third are byte-identical. Each is
-/// distinguishable from the others by its first byte, so a mapping that
-/// resolves a fill to the wrong payload is visible rather than merely counted.
-fn payload(seed: u8) -> Vec<u8> {
-    (0..64u16).map(|i| seed.wrapping_add(i as u8)).collect()
-}
+/// The two distinct payloads every document here is built from.
+///
+/// Real images rather than synthetic bytes, because the load gate now checks
+/// that an entry's recorded format and extent agree with the header of the
+/// payload it names (story #437, closing debt #416) — and a run of counting
+/// bytes has no header to agree with. These are the same
+/// independently-dimensioned fixtures `dashpaint::image_id`'s own unit tests
+/// use: a 7x5 PNG and a 9x6 JPEG. They differ in container *and* in extent, so
+/// a mapping that resolves a fill to the wrong payload is visible in two
+/// independent ways rather than merely counted.
+const PAYLOAD_PNG: &[u8] = include_bytes!("fixtures/image_id/sample.png");
+const PAYLOAD_JPEG: &[u8] = include_bytes!("fixtures/image_id/sample.jpg");
 
 /// A node whose paint is an image fill naming `asset`.
 fn image_node(name: &str, asset: u32) -> Node {
@@ -70,13 +76,13 @@ fn document() -> Document {
     let mut doc = Document::new();
     let first = doc.push_asset(Asset {
         format: ImageFormat::Png,
-        bytes: payload(1),
+        bytes: PAYLOAD_PNG.to_vec(),
         width: 7,
         height: 5,
     });
     let second = doc.push_asset(Asset {
         format: ImageFormat::Jpeg,
-        bytes: payload(2),
+        bytes: PAYLOAD_JPEG.to_vec(),
         width: 9,
         height: 6,
     });
@@ -85,7 +91,7 @@ fn document() -> Document {
     // that reuses an image.
     let third = doc.push_asset(Asset {
         format: ImageFormat::Png,
-        bytes: payload(1),
+        bytes: PAYLOAD_PNG.to_vec(),
         width: 7,
         height: 5,
     });
@@ -123,8 +129,8 @@ fn identical_payloads_collapse_to_one_entry_and_one_blob() {
     assert_eq!(payloads.len(), 2, "one payload bound per entry");
 
     // Entry order is blob order, and each blob is the payload its entry names.
-    assert_eq!(payloads[0], &payload(1)[..]);
-    assert_eq!(payloads[1], &payload(2)[..]);
+    assert_eq!(payloads[0], PAYLOAD_PNG);
+    assert_eq!(payloads[1], PAYLOAD_JPEG);
 }
 
 /// The entry's hash is the section's hash — that identity is what makes the
@@ -189,12 +195,21 @@ fn every_node_resolves_to_the_payload_it_named() {
     let report = dashscene_validator::validate_document(&doc);
     assert!(!report.has_errors(), "the load gate accepts it: {report}");
 
+    // The load gate's asset half, over the payloads the file bound. A real
+    // compile output has to pass it, not only the hand-built documents in the
+    // validator's own tests (story #437).
+    let payload_report = dashscene_validator::validate_asset_payloads(&doc, &payloads);
+    assert!(
+        !payload_report.has_errors(),
+        "the asset payloads agree with their entries: {payload_report}"
+    );
+
     let mut arena = Arena::new();
     load_document(&doc, &payloads, &mut arena);
     let scene = arena.committed();
 
     // The three nodes are in DFS order, so rect 0/1/2 are first/second/third.
-    let expected = [payload(1), payload(2), payload(1)];
+    let expected = [PAYLOAD_PNG, PAYLOAD_JPEG, PAYLOAD_PNG];
     for (index, want) in expected.iter().enumerate() {
         let paint = scene.paints().resolve(scene.rects()[index].paint);
         let PaintKind::Image { image, .. } = paint
@@ -206,7 +221,8 @@ fn every_node_resolves_to_the_payload_it_named() {
         };
         let asset = scene.images().resolve(*image);
         assert_eq!(
-            &asset.bytes, want,
+            asset.bytes.as_slice(),
+            *want,
             "node {index} resolved to the wrong payload"
         );
     }

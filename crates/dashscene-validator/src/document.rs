@@ -744,9 +744,10 @@ fn check_paint_entry(report: &mut Report, paint: &Paint<'_>, at: &Location, size
 /// see the file — only the document. So what it can check is that the entry is
 /// self-consistent: a 32-byte hash to resolve through the binding, a format
 /// this build recognizes, and a non-zero extent for layout to use before the
-/// payload is resident. Whether the payload the hash names actually agrees with
-/// that recorded format and extent is a file-level cross-check, and it needs an
-/// image header parser this crate cannot reach — debt #416.
+/// payload is resident. Whether the payload the hash names actually agrees
+/// with that recorded format and extent needs the payload, so it lives in
+/// [`validate_asset_payloads`] — the load gate's other half (story #437,
+/// closing debt #416).
 fn check_asset_entry(report: &mut Report, asset: &AssetEntry<'_>, at: &Location) {
     check_enum!(report, at, "AssetEntry.format", asset.format());
 
@@ -770,6 +771,155 @@ fn check_asset_entry(report: &mut Report, asset: &AssetEntry<'_>, at: &Location)
             ),
         ));
     }
+}
+
+/// Maps a document's recorded container format onto the one
+/// [`dashpaint::image_id::identify`] answers in, or `None` for a value this
+/// build does not know.
+///
+/// `dashbuf`'s enums are append-only, so a document produced by a newer
+/// writer can carry a format number this reader has no variant for. That is
+/// not the same as a wrong format, and the caller treats the two differently.
+fn as_paint_format(format: dashbuf::ImageFormat) -> Option<dashpaint::ImageFormat> {
+    match format {
+        dashbuf::ImageFormat::Png => Some(dashpaint::ImageFormat::Png),
+        dashbuf::ImageFormat::Jpeg => Some(dashpaint::ImageFormat::Jpeg),
+        dashbuf::ImageFormat::Gif => Some(dashpaint::ImageFormat::Gif),
+        _ => None,
+    }
+}
+
+/// The load gate's second half: does the payload each `AssetEntry` names
+/// agree with what the entry records about it?
+///
+/// An `AssetEntry` says a payload is a PNG of 512x512 and names it by content
+/// hash; the payload itself lives in its own blob section. That is two places
+/// describing one asset, and until now nothing checked that they agree
+/// (debt #416). `dashc` derived both halves from a single header parse, so
+/// they could not disagree — the packer is the second writer, it re-derives
+/// payloads, and the rule earns its place the moment two independent code
+/// paths can produce the pair.
+///
+/// Three things can be wrong, and each is a named diagnostic rather than a
+/// silent pass or a panic (P4): the payload parses as no image this build
+/// knows ([`rule::ASSET_PAYLOAD_UNREADABLE`]), its signature names a
+/// different container than the entry does ([`rule::ASSET_FORMAT_MISMATCH`]),
+/// or its header reports a different intrinsic extent
+/// ([`rule::ASSET_EXTENT_MISMATCH`]). Each matters downstream: a painter
+/// dispatches its decoder on the recorded format, and layout runs on the
+/// recorded extent before the payload is resident, so a lie in either is
+/// discovered as a wrong picture rather than as a bad document.
+///
+/// The `hash` needs no rule here. `dashbuf::open` resolves each entry through
+/// the null binding and verifies the blob against its recorded content hash,
+/// so a payload that does not match its hash never reaches this function.
+///
+/// # What this deliberately does not do
+///
+/// It never decodes. [`dashpaint::image_id::identify`] reads container
+/// headers with bounds-checked slicing and returns; entropy coding and pixel
+/// reconstruction stay out of every crate a producer links
+/// (`docs/decisions/dashc-identifies-images-never-decodes.md`,
+/// `docs/decisions/image-header-parser-lives-in-dashpaint.md`). So this gate
+/// answers "does the header agree", never "do the pixels decode" — a payload
+/// truncated after its header passes here and fails in the painter, which is
+/// the correct division: only a decoder can find that, and a decoder is the
+/// component the target-hardware rules keep out of the trusted path.
+///
+/// An entry whose recorded format this build does not recognize is skipped
+/// rather than judged. The schema's enums are append-only, so such a document
+/// is newer than this reader, and its payload may be a container this build
+/// cannot identify either — calling that "unreadable" would report a stale
+/// reader as a broken file. [`validate_document`] already names it, as
+/// `rule::UNKNOWN_ENUM`, which is the honest diagnosis.
+///
+/// # Pairing
+///
+/// `payloads` must be in entry order, one per entry — exactly what
+/// `dashbuf::open` returns. Fewer payloads than entries is named once, at the
+/// first entry that has none, and the entries past it go unchecked; it means
+/// the caller paired a document with the wrong payload list, so repeating it
+/// per entry would bury the rest of the report. Surplus payloads are ignored
+/// without a diagnostic: a payload that no entry names describes nothing in
+/// the document, so there is no document defect to report, and P4 is about
+/// vocabulary the document carries.
+pub fn validate_asset_payloads(doc: &Document<'_>, payloads: &[&[u8]]) -> Report {
+    let mut report = Report::default();
+    let assets = doc.assets().unwrap_or_default();
+
+    if payloads.len() < assets.len() {
+        report.push(error(
+            rule::ASSET_PAYLOAD_MISSING,
+            &Location::ImageAsset(payloads.len() as u32),
+            format!(
+                "the document carries {} asset entries but {} payload(s) were supplied; \
+                 entries from index {} on were not checked against their bytes",
+                assets.len(),
+                payloads.len(),
+                payloads.len()
+            ),
+        ));
+    }
+
+    // `zip` stops at the shorter side, so a short `payloads` never indexes
+    // past its end — the count above is the diagnosis, not a bounds check.
+    for (i, (entry, payload)) in assets.iter().zip(payloads.iter()).enumerate() {
+        let at = Location::ImageAsset(i as u32);
+
+        let Some(recorded_format) = as_paint_format(entry.format()) else {
+            continue;
+        };
+
+        let header = match dashpaint::image_id::identify(payload) {
+            Ok(header) => header,
+            Err(e) => {
+                report.push(error(
+                    rule::ASSET_PAYLOAD_UNREADABLE,
+                    &at,
+                    format!(
+                        "asset records {recorded_format:?}, but its {} byte payload could not \
+                         be read as an image header: {e}",
+                        payload.len()
+                    ),
+                ));
+                continue;
+            }
+        };
+
+        // Format and extent are reported independently. A payload that is the
+        // wrong container still has a real extent, and knowing both facts is
+        // what tells a producer whether it swapped two assets or mis-recorded
+        // one.
+        if header.format != recorded_format {
+            report.push(error(
+                rule::ASSET_FORMAT_MISMATCH,
+                &at,
+                format!(
+                    "asset records format {recorded_format:?}, but its payload's own signature \
+                     is {:?}; a painter dispatches its decoder on the recorded format",
+                    header.format
+                ),
+            ));
+        }
+
+        if header.width != entry.width() || header.height != entry.height() {
+            report.push(error(
+                rule::ASSET_EXTENT_MISMATCH,
+                &at,
+                format!(
+                    "asset records an intrinsic extent of {}x{}, but its payload's header \
+                     reports {}x{}; layout uses the recorded extent before the payload is \
+                     resident",
+                    entry.width(),
+                    entry.height(),
+                    header.width,
+                    header.height
+                ),
+            ));
+        }
+    }
+
+    report
 }
 
 /// One variant set (v0.4, issue #20): the active-member index, and every

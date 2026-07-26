@@ -90,13 +90,13 @@ pub mod rule {
     // caller-contract failure over the same `images` map.
 
     /// The bytes an `imageRef` resolved to match none of the three
-    /// signatures `crate::image_id` knows (PNG, JPEG, GIF).
+    /// signatures `dashpaint::image_id` knows (PNG, JPEG, GIF).
     pub const IMAGE_UNKNOWN_SIGNATURE: &str = "figma.image-unknown-signature";
     /// The bytes' own signature names a format that contradicts the
     /// producer's tag on the `ImageAsset` — the asymmetry story #400 closes.
     pub const IMAGE_FORMAT_MISMATCH: &str = "figma.image-format-mismatch";
     /// The signature matched, but the header itself is truncated or
-    /// malformed for its declared format (`crate::image_id::ImageIdError::Malformed`).
+    /// malformed for its declared format (`dashpaint::image_id::ImageIdError::Malformed`).
     pub const IMAGE_HEADER_MALFORMED: &str = "figma.image-header-malformed";
     /// The header parsed cleanly but reports a zero width or height.
     pub const IMAGE_ZERO_DIMENSION: &str = "figma.image-zero-dimension";
@@ -1388,22 +1388,23 @@ impl Walk<'_> {
                         // would-be index is the same advisory locator
                         // `unsupported`/`unsupported_at` use.
                         let node_index = self.doc.nodes.len() as u32;
-                        let header = crate::image_id::identify(&asset.bytes).map_err(|error| {
-                            let rule = match &error {
-                                crate::image_id::ImageIdError::UnknownSignature => {
-                                    rule::IMAGE_UNKNOWN_SIGNATURE
-                                }
-                                crate::image_id::ImageIdError::Malformed { .. } => {
-                                    rule::IMAGE_HEADER_MALFORMED
-                                }
-                            };
-                            image_diagnostic(
-                                rule,
-                                node_index,
-                                path,
-                                format!("imageRef {image_ref}: {error}"),
-                            )
-                        })?;
+                        let header =
+                            dashpaint::image_id::identify(&asset.bytes).map_err(|error| {
+                                let rule = match &error {
+                                    dashpaint::image_id::ImageIdError::UnknownSignature => {
+                                        rule::IMAGE_UNKNOWN_SIGNATURE
+                                    }
+                                    dashpaint::image_id::ImageIdError::Malformed { .. } => {
+                                        rule::IMAGE_HEADER_MALFORMED
+                                    }
+                                };
+                                image_diagnostic(
+                                    rule,
+                                    node_index,
+                                    path,
+                                    format!("imageRef {image_ref}: {error}"),
+                                )
+                            })?;
                         if header.format != asset.format {
                             return Err(image_diagnostic(
                                 rule::IMAGE_FORMAT_MISMATCH,

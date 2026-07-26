@@ -47,30 +47,39 @@ fn check(path: &str) -> ExitCode {
     };
 
     // The envelope first: magic, version, the section table against the root
-    // hash, and the ui section's own content hash
-    // (`docs/design/dsb-container-format.md`). It is checked before any parser
-    // is trusted, so its failure has to be reported as itself rather than
-    // falling through to "not a valid buffer" — a pre-envelope `.dsb` lands
-    // here, and the message has to say so.
-    let ui = match dashbuf::container::ui_document(&bytes) {
-        Ok(ui) => ui,
-        Err(e) => {
+    // hash, the ui section's own content hash, then the flatbuffers verifier
+    // over that section, then the null binding that resolves each asset entry
+    // to its blob (`docs/design/dsb-container-format.md`). `dashbuf::open`
+    // runs all of it in that order and hands back both halves of the
+    // document — the entries and the payloads they name.
+    //
+    // The two failures are still reported apart. A pre-envelope `.dsb` is not
+    // the same complaint as a valid envelope carrying a bad buffer, and a
+    // person holding the wrong kind of broken file needs to be told which.
+    let (document, payloads) = match dashbuf::open(&bytes) {
+        Ok(opened) => opened,
+        Err(dashbuf::OpenError::Container(e)) => {
             eprintln!("dashc: {path} is not a valid .dsb file: {e}");
             return ExitCode::from(1);
         }
-    };
-
-    // Then the flatbuffer verifier: it checks structure, and the load gate
-    // assumes a structurally valid buffer.
-    let document = match dashbuf::root_as_document(ui) {
-        Ok(document) => document,
-        Err(e) => {
+        Err(dashbuf::OpenError::Document(e)) => {
             eprintln!("dashc: {path} does not carry a valid document: {e}");
             return ExitCode::from(1);
         }
     };
 
-    let report = dashscene_validator::validate_document(&document);
+    // Both halves of the load gate. The second needs the payloads, which is
+    // why it is a separate call and why this path opens the file rather than
+    // reading the ui section alone (story #437, debt #416): it is what
+    // catches an asset entry whose recorded format or extent disagrees with
+    // the bytes it names, whichever writer produced them.
+    let mut report = dashscene_validator::validate_document(&document);
+    report.extend(
+        dashscene_validator::validate_asset_payloads(&document, &payloads)
+            .diagnostics()
+            .iter()
+            .cloned(),
+    );
     print!("{report}");
 
     if report.has_errors() {

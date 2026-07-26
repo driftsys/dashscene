@@ -31,6 +31,28 @@ published earlier, and `CommittedScene`'s accessors already hand out
 They are not interchangeable — each of the three failure classes is
 invisible to the other two gates. See the decision record.
 
+The load gate has a second entry point:
+
+| half          | entry point                                              | input                              | catches                                                                      |
+| ------------- | -------------------------------------------------------- | ---------------------------------- | ---------------------------------------------------------------------------- |
+| load (assets) | `validate_asset_payloads(&Document, &[&[u8]]) -> Report` | a `.dsb` **and** its blob payloads | an entry whose recorded format or extent disagrees with the payload it names |
+
+It is separate because an `AssetEntry` describes bytes the document does not
+contain — the payload lives in its own section of the file. A caller holding
+only the document cannot check that the two agree, so the check takes the
+payloads explicitly rather than being folded into `validate_document` and
+silently doing nothing when they are absent. `dashbuf::open` returns exactly
+the pair both halves need, and `dashc` runs both — over a file it is checking,
+and over a document it has just emitted.
+
+The check needs an image header parser, which is why it did not exist before
+v0.12: this crate publishes before `dashc`, where the only parser lived.
+Story #437 moved the parser to `dashpaint`, which every writer and this crate reach
+(`docs/decisions/image-header-parser-lives-in-dashpaint.md`). It header-parses
+and never decodes, so a payload truncated after its header passes this gate and
+fails in the painter — the only component that can find it, and the one the
+target-hardware rules keep out of the trusted path.
+
 ## Diagnostic
 
 `docs/archive/2026-07-14-design-1-seed.md` §6.1's tuple:
@@ -170,6 +192,10 @@ Load gate — document referential integrity and schema evolution:
 | `binding.node-out-of-range`        | same bug class, for the row's node index (#167)                                                                                                                                                                                                                                                                                                                                                                |
 | `signal.name-duplicate`            | two signal declarations with one non-empty name; a runtime looks a document signal up by name (`dashlang::attach_live`), so a duplicate would silently shadow one declaration (#167)                                                                                                                                                                                                                           |
 | `asset.image-no-bytes`             | an image asset whose `bytes` vector is present but empty. The painter decodes behind `expect("image asset decodes (validated upstream, P4)")`, so reading the asset table only for its length would leave that `expect` with no upstream                                                                                                                                                                       |
+| `asset.payload-unreadable`         | an entry's payload matches no container signature the closure knows, or its header is malformed. Raised by `validate_asset_payloads`, so it needs the payloads; a painter would otherwise discover it inside its decoder (story #437)                                                                                                                                                                          |
+| `asset.format-mismatch`            | the payload's own signature names a different container than the entry's recorded `format`. A painter dispatches its decoder on the recorded format, so it would hand PNG bytes to a JPEG decoder (story #437, debt #416)                                                                                                                                                                                      |
+| `asset.extent-mismatch`            | the payload's header reports a different intrinsic extent than the entry's recorded `width`/`height`. Layout runs on the recorded extent before the payload is resident, so the frame would reflow once the real size arrived (story #437, debt #416)                                                                                                                                                          |
+| `asset.payload-missing`            | no payload was supplied for an entry. `dashbuf::open` returns one per entry, so this names a caller that paired a document with the wrong payload list rather than a defect in the document; reported once, at the first entry that has none                                                                                                                                                                   |
 | `grid.track-invalid-value`         | a `Fixed` track that is not finite and non-negative, or a `Fraction` weight that is not finite and positive — the same numeric-domain posture as `weight` and stroke width (story #43)                                                                                                                                                                                                                         |
 | `grid.span-zero`                   | a grid span of 0 spans no tracks and has no meaning; the engine floors it at 1 rather than inventing one, so the honest diagnosis is here (story #43)                                                                                                                                                                                                                                                          |
 | `grid.anchor-out-of-range`         | an anchor past its parent's declared track list on that axis — or, with no declared list, past 32766, the largest 0-based anchor whose 1-based line index fits the solver's `i16` lines (the engine saturates the conversion; story #43)                                                                                                                                                                       |

@@ -10,6 +10,14 @@
 //! | load | [`validate_document`] | is this `.dsb` internally consistent? |
 //! | paint | [`validate_scene`] | does this solved scene stay inside painter budgets? |
 //!
+//! The load gate has a second half, [`validate_asset_payloads`], because an
+//! `AssetEntry` describes bytes the document does not contain — the payload
+//! lives in its own section of the file. A caller holding only the document
+//! cannot check that the two agree, so the check takes the payloads
+//! explicitly rather than being folded into [`validate_document`] and
+//! silently doing nothing when they are absent. Both halves run over a file
+//! opened with `dashbuf::open`, which hands back exactly the pair they need.
+//!
 //! They are not interchangeable. A `.dsb` document cannot carry an
 //! out-of-profile construct — by the time a construct is in the schema it
 //! is in the vocabulary — so the triage runs on the *producer's* source
@@ -47,7 +55,7 @@ mod scene;
 mod triage;
 mod waiver;
 
-pub use document::validate_document;
+pub use document::{validate_asset_payloads, validate_document};
 pub use scene::validate_scene;
 pub use triage::{Construct, triage};
 pub use waiver::{StrictReport, Waiver};
@@ -175,6 +183,30 @@ pub mod rule {
     /// is resident; a zero one would resolve every dependent measurement to
     /// zero rather than to the asset's real size.
     pub const ASSET_ZERO_EXTENT: &str = "asset.zero-extent";
+
+    // The load gate's second half — the three rules that need the payload an
+    // entry names, not just the entry ([`crate::validate_asset_payloads`],
+    // story #437, debt #416). An `AssetEntry` describes bytes stored
+    // elsewhere in the file, and until the packer there was one writer
+    // deriving both halves from one header parse, so they could not disagree.
+    /// The payload an entry names matches none of the container signatures
+    /// the format closure knows, or its header is malformed. A painter would
+    /// discover this inside its decoder, which is the one place the
+    /// target-hardware rules keep out of the trusted path.
+    pub const ASSET_PAYLOAD_UNREADABLE: &str = "asset.payload-unreadable";
+    /// The payload's own signature names a different container than the
+    /// entry's recorded `format`. A painter dispatches its decoder on the
+    /// recorded format, so it would hand PNG bytes to a JPEG decoder.
+    pub const ASSET_FORMAT_MISMATCH: &str = "asset.format-mismatch";
+    /// The payload's header reports a different intrinsic extent than the
+    /// entry's recorded `width`/`height`. Layout runs on the recorded extent
+    /// before the payload is resident, so the frame would reflow once the
+    /// real size arrived.
+    pub const ASSET_EXTENT_MISMATCH: &str = "asset.extent-mismatch";
+    /// No payload was supplied for this entry. `dashbuf::open` returns one
+    /// payload per entry, so this names a caller that paired a document with
+    /// the wrong payload list rather than a defect in the document.
+    pub const ASSET_PAYLOAD_MISSING: &str = "asset.payload-missing";
 
     // Paint gate — needs the solved box, so it exists only on a scene.
     pub const STROKE_EXCEEDS_BOX: &str = "paint.stroke.exceeds-box";
@@ -311,6 +343,10 @@ pub mod rule {
         IMAGE_NO_BYTES,
         ASSET_HASH_LENGTH,
         ASSET_ZERO_EXTENT,
+        ASSET_PAYLOAD_UNREADABLE,
+        ASSET_FORMAT_MISMATCH,
+        ASSET_EXTENT_MISMATCH,
+        ASSET_PAYLOAD_MISSING,
         STROKE_EXCEEDS_BOX,
         CLIP_INDEX_OUT_OF_RANGE,
         RENDER_TARGET_BUDGET,

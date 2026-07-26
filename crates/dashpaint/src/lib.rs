@@ -11,6 +11,17 @@
 //! turns "this node clips its children" into a per-rect [`ClipRegion`]
 //! at commit (issue #97), because a flat rect table carries no ancestors
 //! for a painter to walk (P2).
+//!
+//! [`image_id`] sits here for a reason that is about publish order rather
+//! than about painting: identifying an image's container and reading its
+//! intrinsic extent is needed by every crate that writes an asset entry
+//! (`dashc`, `dashpack`) and by the gate that checks them
+//! (`dashscene-validator`), and this crate is the earliest one all of them
+//! share. It header-parses and never decodes — see the module's own
+//! documentation and
+//! `docs/decisions/image-header-parser-lives-in-dashpaint.md`.
+
+pub mod image_id;
 
 /// An RGBA color, 4×f32 — the same shape as `dashbuf`'s `Color` struct.
 ///
