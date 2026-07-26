@@ -208,7 +208,7 @@ fn emit_and_validate(doc: &Document) -> (Vec<u8>, Report) {
 /// so the bank below is the identity map over the canonical payloads and the
 /// file carries the imported bytes unchanged.
 ///
-/// The `expect` cannot fire, on any of [`bank::AssembleError`]'s four arms:
+/// The `expect` cannot fire, on any of [`bank::AssembleError`]'s five arms:
 ///
 /// - `Document` — `emit_and_validate` ran the flatbuffers verifier over these
 ///   same bytes and both callers return early on an error report;
@@ -216,9 +216,21 @@ fn emit_and_validate(doc: &Document) -> (Vec<u8>, Report) {
 ///   one entry per, hashed the same way, so every entry hash is in it;
 /// - `UnusedPayloads` — `Document::push_asset` deduplicates by content hash, so
 ///   `doc.assets` holds no repeated payload and every binding is named once;
+/// - `ContradictoryBinding` — [`bank::ColdBank::raw`] binds every payload to its
+///   own hash, so two bindings sharing a canonical hash are necessarily the same
+///   bytes and cannot contradict each other. This is structural, not a property
+///   of `dashc`'s input: no caller of `raw` can construct the shape;
 /// - `Write` — an empty payload is the only reachable arm, and `dashc`'s asset
 ///   gate refuses one before this point, with a named diagnostic rather than a
 ///   panic.
+///
+/// Re-audited at story #434, which added the fourth arm and a second caller
+/// that assembles derived banks. The conclusion held for this function and did
+/// not transfer: the second caller is `dashpack::bank::PackedBank::assemble`,
+/// and it **returns** the refusal instead, because none of the three
+/// document-versus-bank arms is unreachable for a bank whose payloads a packer
+/// chose. `dashc`'s `expect` is sound because it only ever builds the identity
+/// map, which is a narrower claim than "assembly does not fail".
 fn package(ui_section: &[u8], assets: &[document::Asset]) -> Vec<u8> {
     let cold = bank::ColdBank::raw(assets.iter().map(|asset| asset.bytes.as_slice()));
     bank::assemble(ui_section, &cold).expect(

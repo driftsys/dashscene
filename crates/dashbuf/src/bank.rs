@@ -33,6 +33,22 @@
 //! here is a hash lookup, not an index. [`crate::open`] is the read-side
 //! inverse: it resolves the same entry hashes back to the same blob sections.
 //!
+//! # The derivation manifest
+//!
+//! Under a derived binding an entry's canonical hash is not the hash of any
+//! payload in the file, so a reader cannot find the payload by that hash alone.
+//! The mapping that closes the gap is the **derivation manifest**: a
+//! `dashbuf::AssetBindings` flatbuffer in its own section, carrying one
+//! canonical-to-resident hash pair per non-identity binding
+//! (`docs/decisions/derivation-manifest-section.md`).
+//!
+//! Assembly emits it, and derives it from the bank rather than taking it as a
+//! second argument: a row is needed exactly where `blake3(resident)` differs
+//! from the canonical hash, which the bank alone already determines. RAW is the
+//! identity map, so a RAW assembly produces no rows and writes no manifest
+//! section at all — which is why the committed goldens did not move when this
+//! landed.
+//!
 //! # This module parses; [`crate::container`] does not
 //!
 //! `container` is deliberately parser-free — it exists to validate a file
@@ -44,8 +60,10 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::container::{self, FLAVOR_ASSET, FLAVOR_UI, HASH_LEN, Section, WriteError};
-use crate::root_as_document;
+use crate::container::{
+    self, FLAVOR_ASSET, FLAVOR_BINDINGS, FLAVOR_UI, HASH_LEN, Section, WriteError,
+};
+use crate::{AssetBinding, AssetBindingArgs, AssetBindings, AssetBindingsArgs, root_as_document};
 
 /// The payloads one profile binds a document's canonical asset hashes to.
 ///
@@ -103,20 +121,14 @@ impl<'a> ColdBank<'a> {
     /// the payload a profile derived from it.
     ///
     /// The general form — [`ColdBank::raw`] is this one with the identity map.
-    /// The pairing comes from the packer's derivation manifest, which is what
-    /// lets a reader resolve a canonical hash to bytes that are not its own
-    /// preimage.
+    /// The pairing is the packer's per-asset choice, and [`assemble`] records
+    /// it in the file's derivation manifest — which is what lets a reader
+    /// resolve a canonical hash to bytes that are not its own preimage.
     ///
-    /// # The read side is not built yet
-    ///
-    /// A file assembled from a bank whose payloads are **not** their own
-    /// preimage is well-formed, but [`crate::open`] cannot resolve its
-    /// payloads: [`crate::container::Container::blob_by_hash`] matches an
-    /// entry's canonical hash against the section's own content hash, and for a
-    /// derived payload those differ by definition. The derivation manifest that
-    /// closes the gap is story #434. Until then this constructor is for
-    /// assembling and inspecting a second bank, not for producing a file a
-    /// reader can load.
+    /// Nothing here has to say which pairs are derived and which are the
+    /// identity: `blake3(payload) == canonical` answers that per binding, so a
+    /// bank built with this constructor over canonical payloads is exactly
+    /// [`ColdBank::raw`] and assembles to the same bytes.
     pub fn derived<I>(bindings: I) -> Self
     where
         I: IntoIterator<Item = ([u8; HASH_LEN], &'a [u8])>,
@@ -142,15 +154,38 @@ impl<'a> ColdBank<'a> {
     /// The **first** such binding. A bank is conceptually a map from canonical
     /// hash to payload, so two bindings under one hash are either redundant
     /// (the same payload twice, which resolves identically either way) or
-    /// contradictory (two payloads claiming one canonical identity, which is a
-    /// manifest that disagrees with itself). Assembly resolves the first and
-    /// does not refuse the second case: only a derivation manifest can express
-    /// it, and refusing it belongs with the manifest that produced it — story
-    /// #434 — not here, where the two payloads are already indistinguishable.
+    /// contradictory. [`ColdBank::contradiction`] refuses the second case
+    /// before this is ever called, so "the first" is only ever a choice between
+    /// bindings that are the same bytes.
     fn position_of(&self, canonical: &[u8]) -> Option<usize> {
         self.bindings
             .iter()
             .position(|(hash, _)| hash.as_slice() == canonical)
+    }
+
+    /// The first canonical hash this bank binds to two payloads that are not
+    /// the same bytes, if it has one.
+    ///
+    /// Two payloads claiming one canonical identity is a manifest that
+    /// disagrees with itself: the file could carry only one of them under that
+    /// identity, so writing it would silently discard the other's claim. Under
+    /// [`ColdBank::raw`] this is unreachable by construction — every payload is
+    /// bound to its own hash, so two bindings sharing a hash are two identical
+    /// payloads — which is why it is checked here and not on the read side.
+    ///
+    /// The same O(bindings squared) shape as [`ColdBank::position_of`], and the
+    /// same 32-byte comparisons: the payload bytes are compared only when two
+    /// canonical hashes already match.
+    fn contradiction(&self) -> Option<[u8; HASH_LEN]> {
+        self.bindings
+            .iter()
+            .enumerate()
+            .find_map(|(at, (canonical, payload))| {
+                self.bindings[at + 1..]
+                    .iter()
+                    .any(|(other, other_payload)| other == canonical && other_payload != payload)
+                    .then_some(*canonical)
+            })
     }
 }
 
@@ -170,6 +205,12 @@ pub enum AssembleError {
     /// hash an entry carries and nothing else — a silent size regression rather
     /// than a broken file, which is why it is refused rather than trimmed.
     UnusedPayloads { count: usize },
+    /// The bank binds this canonical hash to two payloads that are not the same
+    /// bytes. One file cannot carry both under one identity, so assembling
+    /// would silently drop one claim — which P4 forbids. Only a derived bank
+    /// can express it: under the null binding a payload is bound to its own
+    /// hash, so two bindings sharing a hash are the same bytes.
+    ContradictoryBinding { canonical: [u8; HASH_LEN] },
     /// The section set the assembly produced is not writable. Reachable only
     /// through an empty payload or a section count past `u32`; the hot-before-
     /// cold order is this function's own construction.
@@ -190,6 +231,12 @@ impl fmt::Display for AssembleError {
                 f,
                 "the bank holds {count} payload(s) no asset entry names; nothing in the \
                  assembled file could reach them"
+            ),
+            Self::ContradictoryBinding { canonical } => write!(
+                f,
+                "the bank binds canonical hash {} to two different payloads; one file \
+                 cannot carry both under one identity",
+                blake3::Hash::from_bytes(*canonical).to_hex()
             ),
             Self::Write(error) => write!(f, "{error}"),
         }
@@ -217,36 +264,48 @@ impl From<WriteError> for AssembleError {
 /// sections at the tail, one mmap of the whole file, and untouched cold pages
 /// that never fault.
 ///
-/// One structured section — the ui document — then one blob section per asset
-/// entry, in entry order. The alignment, the page-aligned hot/cold boundary,
-/// and the zero-filled gaps are [`container::write`]'s; what this adds is the
-/// resolution from what the document names to what the file carries.
+/// The ui document, then the derivation manifest when the bank needs one, then
+/// one blob section per asset entry, in entry order. The alignment, the
+/// page-aligned hot/cold boundary, and the zero-filled gaps are
+/// [`container::write`]'s; what this adds is the resolution from what the
+/// document names to what the file carries, and the manifest that records it.
 ///
 /// Blob order is entry order rather than, for example, hash order, because
 /// entry order is the order the producer minted the entries in, and a
 /// re-ordering here would move bytes for no reader's benefit — every reader
 /// looks payloads up by hash.
 ///
-/// Two documents that differ only in their bank assemble to files whose hot
-/// section bytes are identical, and whose differences lie entirely in the
-/// envelope (the header's root hash and the section table) and in the cold
-/// payload bytes. The asset count fixes the section count, so even the ui
-/// section's offset is the same.
+/// Two assemblies of one document under different banks produce files whose ui
+/// **section bytes** are identical, and whose differences lie entirely in the
+/// envelope (the header's root hash and the section table), in the manifest
+/// section, and in the cold payload bytes. The ui section's *offset* is not
+/// part of that guarantee: a derived bank adds a manifest entry to the section
+/// table, so the payloads start one 64-byte stride later than under RAW. What
+/// the document promises is its content, not its address — an `AssetEntry`
+/// names a hash and never an offset, so no reader depends on where the ui
+/// section sits.
 ///
 /// The output is byte-reproducible for a given document and bank (R7): every
 /// step below is a pure function of its input.
 pub fn assemble(ui_section: &[u8], bank: &ColdBank<'_>) -> Result<Vec<u8>, AssembleError> {
+    // A property of the bank alone, so it is settled before the document is
+    // even parsed: no document makes a self-contradicting bank assemblable.
+    if let Some(canonical) = bank.contradiction() {
+        return Err(AssembleError::ContradictoryBinding { canonical });
+    }
+
     let document = root_as_document(ui_section)?;
     let entries = document.assets().unwrap_or_default();
 
-    let mut sections = Vec::with_capacity(1 + entries.len());
-    sections.push(Section::structured(FLAVOR_UI, ui_section));
-
+    // Every entry resolved before any section is built. The manifest is itself
+    // a section and sits ahead of the blobs, so it cannot be written until
+    // every resident payload is known.
+    let mut resolved = Vec::with_capacity(entries.len());
     for (index, entry) in entries.iter().enumerate() {
         let at = bank
             .position_of(entry.hash().bytes())
             .ok_or(AssembleError::Unbound { index })?;
-        sections.push(Section::blob(FLAVOR_ASSET, bank.bindings[at].1));
+        resolved.push(at);
     }
 
     // A binding is used when some entry names its hash.
@@ -272,5 +331,69 @@ pub fn assemble(ui_section: &[u8], bank: &ColdBank<'_>) -> Result<Vec<u8>, Assem
         return Err(AssembleError::UnusedPayloads { count: unused });
     }
 
+    let manifest = manifest(bank, &resolved);
+
+    let mut sections = Vec::with_capacity(2 + entries.len());
+    sections.push(Section::structured(FLAVOR_UI, ui_section));
+    if let Some(bytes) = &manifest {
+        sections.push(Section::structured(FLAVOR_BINDINGS, bytes));
+    }
+    for &at in &resolved {
+        sections.push(Section::blob(FLAVOR_ASSET, bank.bindings[at].1));
+    }
+
     Ok(container::write(&sections)?)
+}
+
+/// The derivation manifest for the bindings `resolved` names, or `None` when
+/// every one of them is the identity map.
+///
+/// One row per *distinct* canonical hash whose resident payload is not its own
+/// preimage, in entry order. Identity bindings are left out because a reader
+/// resolves them by the canonical hash directly — writing them would be bytes
+/// that change no answer, and it would make a RAW file differ from the RAW
+/// files already committed.
+///
+/// Row order is entry order and not, say, sorted hash order: it matches blob
+/// order, and it is already a pure function of the input, which is all R7 asks.
+fn manifest(bank: &ColdBank<'_>, resolved: &[usize]) -> Option<Vec<u8>> {
+    let mut rows: Vec<([u8; HASH_LEN], [u8; HASH_LEN])> = Vec::new();
+    for &at in resolved {
+        let (canonical, payload) = bank.bindings[at];
+        let resident: [u8; HASH_LEN] = blake3::hash(payload).into();
+        // The identity map needs no row, and one canonical hash needs no second
+        // row: two entries naming one asset resolve through the same binding.
+        if resident == canonical || rows.iter().any(|(seen, _)| *seen == canonical) {
+            continue;
+        }
+        rows.push((canonical, resident));
+    }
+    if rows.is_empty() {
+        return None;
+    }
+
+    let mut builder = flatbuffers::FlatBufferBuilder::new();
+    let bindings: Vec<_> = rows
+        .iter()
+        .map(|(canonical, resident)| {
+            let canonical = builder.create_vector(canonical);
+            let resident = builder.create_vector(resident);
+            AssetBinding::create(
+                &mut builder,
+                &AssetBindingArgs {
+                    canonical: Some(canonical),
+                    resident: Some(resident),
+                },
+            )
+        })
+        .collect();
+    let bindings = builder.create_vector(&bindings);
+    let manifest = AssetBindings::create(
+        &mut builder,
+        &AssetBindingsArgs {
+            bindings: Some(bindings),
+        },
+    );
+    builder.finish(manifest, None);
+    Some(builder.finished_data().to_vec())
 }

@@ -71,13 +71,30 @@ fn check(path: &str) -> ExitCode {
             eprintln!("dashc: {path} does not carry a valid document: {e}");
             return ExitCode::from(1);
         }
-        Err(dashbuf::OpenError::Container(e)) => {
+        // Every other failure leaves the ui section possibly readable, so they
+        // share one recovery. They are still reported apart: a broken envelope
+        // and a derivation manifest that does not resolve are different repairs
+        // for whoever is holding the file.
+        Err(
+            e @ (dashbuf::OpenError::Container(_)
+            | dashbuf::OpenError::Bindings(_)
+            | dashbuf::OpenError::BindingHashLength { .. }
+            | dashbuf::OpenError::BindingRepeated { .. }),
+        ) => {
             file_is_broken = true;
-            match e {
-                dashbuf::container::ContainerError::NoBlobForHash => eprintln!(
+            match &e {
+                dashbuf::OpenError::Container(
+                    dashbuf::container::ContainerError::NoBlobForHash,
+                ) => eprintln!(
                     "dashc: {path}: an asset entry names a payload the file does not carry: {e}"
                 ),
-                _ => eprintln!("dashc: {path} is not a valid .dsb file: {e}"),
+                dashbuf::OpenError::Container(_) => {
+                    eprintln!("dashc: {path} is not a valid .dsb file: {e}");
+                }
+                _ => eprintln!(
+                    "dashc: {path}: the derivation manifest does not bind this file's \
+                     assets: {e}"
+                ),
             }
             // The ui section may still be readable even though the file as a
             // whole is not, in which case every document rule can still report.

@@ -121,6 +121,15 @@ impl SectionKind {
 /// field. Two roles in one section would need a second entry, not a second bit.
 pub const FLAVOR_UI: u16 = 1;
 
+/// Flavor of a [`SectionKind::Structured`] section: the derivation manifest —
+/// the profile's binding from canonical asset identities to the payloads this
+/// file resides them as (`dashbuf::AssetBindings`, story #434,
+/// `docs/decisions/derivation-manifest-section.md`).
+///
+/// Present only when at least one binding is not the identity map. A RAW file
+/// derives nothing, so it carries no section with this flavor.
+pub const FLAVOR_BINDINGS: u16 = 2;
+
 /// Flavor of a [`SectionKind::Blob`] section: an asset payload referenced from
 /// the document's asset table.
 pub const FLAVOR_ASSET: u16 = 1;
@@ -544,6 +553,11 @@ pub enum ContainerError {
     /// carries one: zero means the file is not a document, and more than one
     /// means there is no single answer to which document it is.
     NotOneUiSection { found: usize },
+    /// The file holds more than one derivation-manifest section. Zero is
+    /// ordinary — that is every RAW file — but two manifests are two answers to
+    /// what one canonical hash resides as, and picking one of them would be the
+    /// silent choice P4 forbids.
+    NotOneBindingsSection { found: usize },
 }
 
 impl fmt::Display for ContainerError {
@@ -604,6 +618,10 @@ impl fmt::Display for ContainerError {
             Self::NotOneUiSection { found } => write!(
                 f,
                 "a .dsb holds exactly one ui-document section; this file has {found}"
+            ),
+            Self::NotOneBindingsSection { found } => write!(
+                f,
+                "a .dsb holds at most one derivation-manifest section; this file has {found}"
             ),
         }
     }
@@ -858,20 +876,49 @@ impl<'a> Container<'a> {
     /// caller's step: this module checks that the bytes are the ones the file
     /// claims, and `dashbuf::root_as_document` checks that they are a document.
     pub fn ui_document(&self) -> Result<&'a [u8], ContainerError> {
+        let at = self
+            .only_structured(FLAVOR_UI)
+            .map_err(|found| ContainerError::NotOneUiSection { found })?;
+        self.verify_section(at)?;
+        Ok(self.section_bytes(at))
+    }
+
+    /// The verified derivation-manifest payload, if this file carries one.
+    ///
+    /// `None` is the ordinary answer, not an error: RAW is the identity map, so
+    /// a RAW file has nothing to record and writes no manifest section
+    /// (`docs/decisions/derivation-manifest-section.md`). More than one is
+    /// refused, because two manifests are two answers to one question.
+    ///
+    /// Bytes, not a parsed manifest. This module is deliberately parser-free —
+    /// it exists to validate a file before any parser is trusted — so reading
+    /// the rows out of these bytes is [`crate::open`]'s step, one layer up.
+    /// What this call establishes is that the bytes are the ones the file's own
+    /// table vouches for.
+    pub fn bindings_manifest(&self) -> Result<Option<&'a [u8]>, ContainerError> {
+        match self.only_structured(FLAVOR_BINDINGS) {
+            Ok(at) => {
+                self.verify_section(at)?;
+                Ok(Some(self.section_bytes(at)))
+            }
+            Err(0) => Ok(None),
+            Err(found) => Err(ContainerError::NotOneBindingsSection { found }),
+        }
+    }
+
+    /// The index of the one [`SectionKind::Structured`] section carrying
+    /// `flavor`, or `Err` with how many there are when that is not one.
+    fn only_structured(&self, flavor: u16) -> Result<usize, usize> {
         let mut found = 0;
         let mut at = 0;
         for index in 0..self.count {
             let entry = self.section(index);
-            if entry.kind == SectionKind::Structured as u16 && entry.flavor == FLAVOR_UI {
+            if entry.kind == SectionKind::Structured as u16 && entry.flavor == flavor {
                 found += 1;
                 at = index;
             }
         }
-        if found != 1 {
-            return Err(ContainerError::NotOneUiSection { found });
-        }
-        self.verify_section(at)?;
-        Ok(self.section_bytes(at))
+        if found == 1 { Ok(at) } else { Err(found) }
     }
 }
 

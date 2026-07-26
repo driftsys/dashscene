@@ -42,6 +42,7 @@
 
 pub mod astc;
 pub mod band;
+pub mod bank;
 pub mod ktx2;
 pub mod profile;
 
