@@ -611,13 +611,19 @@ Depends on: v0.10 (the widened image vocabulary it carries into sections).
 Design capture: `docs/wip/2026-07-19-asset-pipeline-profiles-and-baking.md`.
 
 Revised at the v0.10 close (2026-07-19): v0.10's live hero diff surfaced three
-fidelity contributors that fold in here as provisional candidates, not
+fidelity contributors that folded in here as provisional candidates, not
 commitments, alongside the sections-and-asset-model core above — multi-weight
-font support (#368, weighted atlases plus a `(script, weight) → face` seam, the
-largest text residual and likely its own story), backdrop blur under
-profile:full, and the trailing letter-spacing metric (#336). The scope shape is
-otherwise unchanged; the candidates are prioritized at the v0.10→v0.11 grounding
-pass, and epic #344 carries the detail.
+font support (#368), backdrop blur (#393), and the trailing letter-spacing metric
+(#336).
+
+**All three landed, and so did the slice's own scope** (#399 the envelope, #401
+the file format, #400 the image gate, #107 the asset table). The riders carried
+the fidelity movement: the live hero went from 6.2514 % differing pixels at the
+v0.10 close to **1.8829 %**, with the largest single step being backdrop blur.
+The sections-and-asset-model core moved zero pixels, by design and by
+measurement. The whole series, its attribution, and the container's measured size
+cost are in
+[`technotes/2026-07-26-v011-sections-and-assets.md`](technotes/2026-07-26-v011-sections-and-assets.md).
 
 ### v0.12 — packer + quality profiles — provisional
 

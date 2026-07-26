@@ -60,6 +60,12 @@ stacked fill layer on load. Fixing it took the hero to **3.5691 %** at 5 % fuzz
 (2.6015 % at 10 %) on 2026-07-26. Recorded here so a reader does not take
 4.1618 % as current, nor credit the difference to Inter.
 
+It has since moved again, and again for a reason unrelated to fonts: backdrop
+blur landed (#393) and took the hero to **1.8829 %** at 5 % fuzz on the same day.
+`docs/technotes/2026-07-26-v011-sections-and-assets.md` carries the whole series
+and is the current figure's home; this record's own numbers are the ones Inter
+earned, and stop there.
+
 Same limits as the figures above: a live measurement against a third-party
 Community file, recorded in prose because neither the file nor its render may be
 committed (`docs/decisions/figma-corpus-self-authored-only.md`).

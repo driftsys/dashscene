@@ -2,7 +2,22 @@
 
     status   WIP — design-discussion capture (2026-07-19, user + Fable);
              feeds future decision records when the relevant slice opens.
-             Nothing here is implemented; v0 ships inline PNG bytes only.
+             PARTLY GARDENED 2026-07-26 (v0.11, epic #344). The parts v0.11
+             built are now as-built records and this file is no longer their
+             authority — kernel §1's canonical store and §4's one-file/one-mmap
+             assembly, to the extent v0.11 built them, and the dependency plan's
+             "dashc: identification + header parse — never decode" paragraph,
+             which is fully as-built. They live in
+             docs/decisions/asset-model-content-addressed-blobs.md,
+             docs/decisions/dsb-sectioned-container.md,
+             docs/decisions/dashc-identifies-images-never-decodes.md,
+             docs/design/dsb-container-format.md and
+             docs/technotes/2026-07-26-v011-sections-and-assets.md.
+             Everything gated on the packer — the quality profiles, the codec
+             waves, the vector bake's end-state fork, animated content, the
+             profile-preview oracle — is unbuilt and stays here as live input to
+             epic #345 (v0.12). Two of its open points are resolved; see "Open
+             points" at the end.
     scope    the asset pipeline from import to painter: image fills, baked
              vectors (MSDF), distance-field atlases; the .dsb cold sections;
              the packer and quality profiles; per-target GPU codecs
@@ -296,13 +311,30 @@ the same move — shape/format intelligence at build time, runtime consumes
 only what fixed-function GPU hardware natively understands — and each bake
 kept out of the painter is what keeps the painter small enough to qualify.
 
-## Open points (deliberately unresolved)
+## Open points
 
-- **AssetEntry hash semantics**: canonical identity vs resident-payload
-  hash — decides whether hot sections are assembly-invariant; couples to
-  signing and the derivation manifest. (The asset-model decision says "the
-  content hash of the payload"; the tier-neutral reading needs it to be
-  canonical + a signed derivation manifest.)
+Two were resolved at v0.11 (epic #344) and are recorded rather than deleted, so
+a reader of this file does not re-open them.
+
+- **RESOLVED — AssetEntry hash semantics** (story #107): the hash is the
+  **canonical** payload's identity, and it resolves to bytes through a
+  _binding_. v0.11's one profile, RAW, has the identity map as its binding, so
+  the resident payload is the canonical payload and the two readings coincide;
+  a later profile binds the same canonical hash to a derived payload through the
+  derivation manifest, and only the binding changes. Because an entry names a
+  hash and never a section index, hot sections are assembly-invariant by
+  construction — recorded as intent, since v0.11 ships one assembly. In
+  `docs/decisions/asset-model-content-addressed-blobs.md`.
+- **RESOLVED — AssetEntry placeholder colour** (story #107): not yet, and the
+  reasoning is recorded. Computing one needs pixel access `dashc` cannot have
+  and will not get; Figma's REST supplies none; a neutral grey invented at
+  compile time is a _result_ the document did not intend, which P1 forbids; and
+  packer back-fill would mutate hot data after compile. Its consumer —
+  placeholder activation while a payload is not resident — is v1. The field
+  lands with its consumer, producer-supplied. In the same record.
+
+Still open:
+
 - **Derivation-manifest signing** and its relation to the signed root.
 - **Unity ingest wrapping**: Unity consumes the packed set (runtime KTX2
   loader plugin vs build-time wrap into Unity textures) — invariant either
@@ -310,7 +342,6 @@ kept out of the painter is what keeps the painter small enough to qualify.
   export. Belongs to the deferred dashscene-unity design.
 - **Band values per class per profile**: pinned empirically by the packer
   oracle + review, never invented (the E7 band discipline).
-- **Bank size analysis**: HiFi/Lite/multi-bank growth on a real corpus.
 - **Lite profile activation**: ship HiFi first; turn Lite on when a
   measured budget/OTA constraint demands.
 - **Per-core verification at slice time**: PowerVR ASTC LDR on the actual
@@ -320,8 +351,7 @@ kept out of the painter is what keeps the painter small enough to qualify.
   in KTX2 vs EAC per-channel split) — the fields-never-lossy rule
   constrains but does not fully decide it.
 - **fadvise policy** for multi-bank files (fault only the bound bank).
-- **AssetEntry placeholder color**: computing it needs pixel access, which
-  dashc cannot have (identification-only line). Candidates:
-  producer-supplied (trivial for dashlang; importer-derived or default for
-  Figma), a neutral default, or packer back-fill (awkward: hot-section
-  data should not change after compile). Decide at the asset-model slice.
+- **Bank size analysis, beyond the container's own cost.** The container's
+  alignment cost is now measured on the hero: about 1 % of the imported file
+  (`docs/technotes/2026-07-26-v011-sections-and-assets.md`). The HiFi/Lite/multi
+  -bank growth question is untouched and belongs to the packer.

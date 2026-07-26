@@ -49,6 +49,12 @@ Notes:
   component-instance trim fix), the seven in-band import-oracle frames, and the
   Landify hero's fidelity state at the close (solves to Figma's 1440×4263 canvas,
   ~5–6 % edge-dominated live diff; #368 font weight, backdrop-blur, #336).
+- [2026-07-26-v011-sections-and-assets.md](2026-07-26-v011-sections-and-assets.md)
+  — what epic #344's own scope delivered (the sectioned `.dsb` envelope, the
+  content-addressed asset table, the shared image gate), the one-time R7 golden
+  re-baseline and how it was attributed, the container's size cost measured on
+  the hero, and the live hero at the close (1.8829 % at 5 % fuzz — the drop from
+  3.5691 % is #393's backdrop blur; sections and assets moved zero pixels).
 
 The four notes above were captured from a 2026-07-13 design discussion and
 carry DECISION / CANDIDATE / OPEN tags. Every `DECISION` and `DECISION
