@@ -37,6 +37,18 @@ It also matters now rather than later. With family substitution removed
 2026-07-26 names an unsupported backdrop blur as the largest remaining
 identified contributor to its 4.1618 % difference from Figma's own render.
 
+**Measured afterwards, that prediction was wrong about the size and right
+about the cause.** Lowering the blur at all (#394) was worth 1.6222 points of
+the hero difference, because before it the frosted panel was omitted entirely
+rather than rendered flat. Painting the blur (#393) was worth a further 0.0640.
+So the construct did carry the largest remaining step, but almost all of it
+came from the node becoming present, not from the effect being rendered — and
+the effect's own contribution is small in this metric because a blur moves many
+pixels a little, which `AE -fuzz 5%` mostly does not count
+(`docs/technotes/2026-07-26-v011-sections-and-assets.md`). Nothing in this
+record's reasoning depends on the size of that number; it is corrected here so
+the prediction is not read as confirmed.
+
 ## The reversal
 
 **Backdrop blur does not stay a `profile:full` feature.** The rule is that if a

@@ -60,8 +60,12 @@ stacked fill layer on load. Fixing it took the hero to **3.5691 %** at 5 % fuzz
 (2.6015 % at 10 %) on 2026-07-26. Recorded here so a reader does not take
 4.1618 % as current, nor credit the difference to Inter.
 
-It has since moved again, and again for a reason unrelated to fonts: backdrop
-blur landed (#393) and took the hero to **1.8829 %** at 5 % fuzz on the same day.
+It has since moved again, and again for reasons unrelated to fonts: the blur
+schema (#394) let the hero's frosted panel lower at all, worth 1.6222 points,
+and the painter that blurs it (#393) a further 0.0640, taking the hero to
+**1.8829 %** at 5 % fuzz on the same day. An earlier version of this sentence
+credited the whole step to #393; the decomposition was measured at the v0.11
+close and is in the technote below.
 `docs/technotes/2026-07-26-v011-sections-and-assets.md` carries the whole series
 and is the current figure's home; this record's own numbers are the ones Inter
 earned, and stop there.

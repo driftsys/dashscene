@@ -596,9 +596,9 @@ the baked-vector carrier:
 [`decisions/baked-vector-msdf-field.md`](decisions/baked-vector-msdf-field.md).
 The v0.11 breakdown is revised at this close — see v0.11 below.
 
-### v0.11 — document sections + asset model — open
+### v0.11 — document sections + asset model — closed
 
-**Epic #344.** The current slice.
+**Epic #344.**
 
 Delivers: the `.dsb` sectioned-container envelope
 ([`decisions/dsb-sectioned-container.md`](decisions/dsb-sectioned-container.md)
@@ -616,18 +616,29 @@ commitments, alongside the sections-and-asset-model core above — multi-weight
 font support (#368), backdrop blur (#393), and the trailing letter-spacing metric
 (#336).
 
-**All three landed, and so did the slice's own scope** (#399 the envelope, #401
-the file format, #400 the image gate, #107 the asset table). The riders carried
-the fidelity movement: the live hero went from 6.2514 % differing pixels at the
-v0.10 close to **1.8829 %**, with the largest single step being backdrop blur.
-The sections-and-asset-model core moved zero pixels, by design and by
-measurement. The whole series, its attribution, and the container's measured size
-cost are in
-[`technotes/2026-07-26-v011-sections-and-assets.md`](technotes/2026-07-26-v011-sections-and-assets.md).
+Closed 2026-07-26 — the slice's own scope landed (#399 the envelope, #401 the
+file format, #400 the image gate, #107 the asset table, #402 the gardening and
+re-measurement) and so did the three fidelity candidates carried in from v0.10
+(#368 weights, #393 backdrop blur, #336 letter-spacing, the last of which
+closed at the v0.10 boundary itself). The live hero went from 6.2514 %
+differing pixels at the v0.10 close to **1.8829 %**. The attribution inside
+that series was re-measured at this close and is not what the first draft
+recorded: the largest step is #394 letting the frosted panel lower at all
+(1.6222 points), then #397's arena paint-key fix (0.5927), then #393 painting
+the blur (0.0640). The sections-and-asset-model core moved zero pixels, by
+design and by measurement. The slice leaves 13 open `debt`-labelled issues for the v0.13 burn-down. Backdrop blur also became core vocabulary rather than a
+`profile:full` feature, and boundary B gained its first ordering guarantee
+([`decisions/backdrop-blur-is-core-vocabulary.md`](decisions/backdrop-blur-is-core-vocabulary.md)),
+which settled a render-target `GroupComposite` as a backdrop root. The whole
+series, its corrected attribution, and the container's measured size cost are in
+[`technotes/2026-07-26-v011-sections-and-assets.md`](technotes/2026-07-26-v011-sections-and-assets.md);
+what the slice learned about the tolerance bands themselves is in
+[`technotes/2026-07-26-tolerance-band-coverage.md`](technotes/2026-07-26-tolerance-band-coverage.md).
+The v0.12 breakdown is revised at this close — see v0.12 below.
 
-### v0.12 — packer + quality profiles — provisional
+### v0.12 — packer + quality profiles — open
 
-**Epic #345.** Provisional; revised at the v0.11 close.
+**Epic #345.** The current slice.
 
 Delivers: `dashpack` (an in-workspace standalone tool — vendored astcenc, an
 own KTX2 writer, no external CLIs), the RAW/HiFi/Lite quality profiles as
@@ -641,6 +652,20 @@ Basis stays the mixed-fleet contingency). The oracle-harness consolidation
 
 Depends on: v0.11 (sections and the asset table). Design capture:
 `docs/wip/2026-07-19-asset-pipeline-profiles-and-baking.md`.
+
+Revised at the v0.11 close (2026-07-26): the scope above is unchanged, and one
+constraint is added to it. v0.12 delivers the RAW/HiFi/Lite profiles **as
+per-asset-class band contracts with a per-asset encode-and-diff oracle** — that
+is, it designs a second family of tolerance bands. v0.11 measured a gap in the coverage of the
+first family: across six mutations of the two backdrop-blur frames, the
+`blur-falloff` band caught none, because a 12 % area budget cannot fail on a
+bounded-area defect that moves 2–9 % of a frame
+([`technotes/2026-07-26-tolerance-band-coverage.md`](technotes/2026-07-26-tolerance-band-coverage.md),
+issue #422). The finding is informative and #422 carries the decision, so it
+does not constrain v0.12 by itself. What it does recommend is testable: each
+profile's band should ship with the measured mutation that fails it, which is
+the discipline the import-oracle frames adopted at this close, rather than a
+budget chosen in advance and never exercised.
 
 ### v0.13 — pre-v1 hardening — provisional
 

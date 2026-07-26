@@ -53,8 +53,13 @@ Notes:
   — what epic #344's own scope delivered (the sectioned `.dsb` envelope, the
   content-addressed asset table, the shared image gate), the one-time R7 golden
   re-baseline and how it was attributed, the container's size cost measured on
-  the hero, and the live hero at the close (1.8829 % at 5 % fuzz — the drop from
-  3.5691 % is #393's backdrop blur; sections and assets moved zero pixels).
+  the hero, and the live hero at the close (1.8829 % at 5 % fuzz, decomposed:
+  #394 1.6222 points, #393 0.0640; sections and assets moved zero pixels).
+- [2026-07-26-tolerance-band-coverage.md](2026-07-26-tolerance-band-coverage.md)
+  — what the two v0.11 backdrop-blur frames measured about the render oracle's
+  three tolerance bands: `blur-falloff` cannot fail on a bounded-area blur
+  defect, `aa-edge` is blind to an amplitude one, and neither dominates the
+  other. Informative; the decision is #422.
 
 The four notes above were captured from a 2026-07-13 design discussion and
 carry DECISION / CANDIDATE / OPEN tags. Every `DECISION` and `DECISION

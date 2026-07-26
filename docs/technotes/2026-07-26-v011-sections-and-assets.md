@@ -70,21 +70,66 @@ Method, unchanged from the v0.10 close:
 | v0.10      | 6.2514 %                                  |
 | #368       | 6.1721 % (font weights)                   |
 | #385       | 4.1618 % (families — Inter)               |
-| #395       | 3.5691 % (a recovered stacked fill layer) |
+| #397       | 3.5691 % (a recovered stacked fill layer) |
+| #394       | 1.9469 % (the blur schema)                |
 | #393       | **1.8829 %** (backdrop blur)              |
 | #401, #107 | 1.8829 % (unchanged)                      |
 
 **115586 differing pixels of 6138720**, on a 1440x4263 canvas.
 
-Two things are worth separating, because a reader arriving at this table later
-would otherwise credit the wrong work.
+Three things are worth separating, because a reader arriving at this table
+later would otherwise credit the wrong work.
 
-**The drop from 3.5691 % to 1.8829 % is #393's backdrop blur**, not this slice.
-That story landed between the epic's handover and its close, and it is the
-largest single fidelity movement since Inter. Its own record
-(`docs/decisions/backdrop-blur-is-core-vocabulary.md`) named an unsupported
-backdrop blur as the largest remaining identified contributor before it landed,
-and the measurement agrees with that.
+**Backdrop blur is worth 0.0640 points, not 1.69.** An earlier draft of this
+note read the 3.5691 % to 1.8829 % gap as #393's, because those were the two
+adjacent rows recorded at the time. Two changes sit between them, and neither
+had been measured on its own.
+
+- **#397**, the arena paint-key fix, is the change that _produced_ the
+  3.5691 % row. It closed #395, and its own record publishes the step it
+  caused: 4.1618 % to 3.5691 %, **0.5927 points**. That row is labelled #397
+  above; labelling it #395 is what made the gap below it look like one story's.
+- **#394**, the blur schema, is what made the hero's frosted panel lower at
+  all. Before it, a core-profile node carrying `BACKGROUND_BLUR` was omitted
+  entirely, so the panel was absent from the document rather than present and
+  unblurred. It is worth 3.5691 % to 1.9469 %, **1.6222 points** — by a wide
+  margin the largest step in the slice.
+- **#393**, the painter, then blurs the panel #394 made present: 1.9469 % to
+  1.8829 %, **0.0640 points**.
+
+The series now closes with no unattributed remainder, which the earlier draft's
+"about 1.03 points were never isolated" did not.
+
+That decomposition rests on one assumption, stated because it is load-bearing:
+the 3.5691 % figure was measured by re-rendering a `.dsb` imported before #394
+landed, which is what #397's record describes doing. Had that import been
+fresh, 3.5691 % would already contain #394's panel and the split between the
+two would differ.
+
+Two of the three steps were re-measured directly at the v0.11 close, by
+rendering one imported `.dsb` three times and reverting only the files each
+change touched, so all three diff against a single Figma export on the same
+day:
+
+| render                                           | differing | of 6138720   |
+| ------------------------------------------------ | --------- | ------------ |
+| today's `.dsb`, pre-#397 arena, pre-#393 painter | 155898    | 2.5396 %     |
+| today's `.dsb`, `main` at the #393 handover      | 119515    | 1.9469 %     |
+| today's `.dsb`, with backdrop blur               | 115586    | **1.8829 %** |
+
+The first row is a counterfactual — #394's document rendered by an arena
+without #397 — so it is not a row of the chronological table above. It is a
+corroboration: on a different document from the one #397 measured, #397 is
+still worth 2.5396 % to 1.9469 %, **0.5927 points**, the same step its own
+record published. #393's 0.0640 is measured directly.
+
+**A small percentage here does not mean a small change.** Backdrop blur renders
+125696 pixels differently, 2.05 % of the canvas, but most of that change falls
+inside the 5 % fuzz threshold in both directions. Over exactly those changed
+pixels the mean max-channel distance to Figma falls from 5.93 to 2.32, and
+57.3 % of them move closer to Figma against 17.1 % moving further. The effect
+is right; `AE -fuzz 5%` is coarse relative to what a blur does. When the two
+disagree, report both.
 
 **The sections-and-assets work moved zero pixels, and that is the finding.**
 Stories #401 and #107 were each measured against `main` on the same reference
