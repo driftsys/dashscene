@@ -144,7 +144,7 @@
       "fileKey": "dFD9yAtbAwPPEGaaXLTouM",
       "covers": "the BACKGROUND_BLUR construct for the v0.11 backdrop-blur story (docs/decisions/backdrop-blur-is-core-vocabulary.md): a 200x90 frosted panel (corner radius 16, white at 0.2 alpha, BACKGROUND_BLUR radius 16) over three hard-edged vertical bands and a circle, in a fixed 320x180 frame",
       "emits": true,
-      "note": "Authored with the fixture-author plugin's backdrop-blur command; fully scripted, so the file carries no _manual-checklist annotation (debt #382). Story #393 made backdrop blur core vocabulary that lowers into the schema, so the fixture emits with the frosted panel present and raises no diagnostic. Its oracle frame is wired by stage B-4, not here: a frame's tolerance band is classified by measured residual, and nothing can be measured until the Skia painter honours the blur (stage B-3)."
+      "note": "Authored with the fixture-author plugin's backdrop-blur command; fully scripted, so the file carries no _manual-checklist annotation (debt #382). Story #393 made backdrop blur core vocabulary that lowers into the schema, so the fixture emits with the frosted panel present and raises no diagnostic. Stage B-4 wired its oracle frame (goldens/oracle/import-manifest.json, frame backdrop-blur, node 1:2), which measures 10/57600 px (0.017%) against Figma's own render and is classified aa-edge from that residual — every differing pixel is the ELLIPSE's anti-aliased edge, while the blurred region itself stays within a max delta of 16."
     },
     {
       "name": "import-image-fill",
