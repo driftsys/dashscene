@@ -1935,49 +1935,19 @@ type PaintKey = Vec<u32>;
 fn paint_key(entry: &PaintEntry) -> PaintKey {
     let mut key = Vec::new();
 
-    match &entry.fill {
-        None => key.push(0),
-        Some(PaintKind::Solid { color }) => {
-            key.push(1);
-            key.extend(color_key(*color));
-        }
-        Some(PaintKind::Gradient(gradient)) => {
-            key.push(2);
-            key.push(gradient.kind as u32);
-            key.extend(vec2_key(gradient.handle_origin));
-            key.extend(vec2_key(gradient.handle_primary));
-            key.extend(vec2_key(gradient.handle_secondary));
-            key.push(gradient.stops.len() as u32);
-            for stop in &gradient.stops {
-                key.push(stop.offset.to_bits());
-                key.extend(color_key(stop.color));
-            }
-        }
-        Some(PaintKind::Image {
-            image,
-            scale_mode,
-            transform,
-            tile_scale,
-        }) => {
-            key.push(3);
-            key.push(*image);
-            key.push(*scale_mode as u32);
-            key.push(tile_scale.to_bits());
-            match transform {
-                None => key.push(0),
-                Some(m) => {
-                    key.push(1);
-                    key.extend([
-                        m.a.to_bits(),
-                        m.b.to_bits(),
-                        m.c.to_bits(),
-                        m.d.to_bits(),
-                        m.tx.to_bits(),
-                        m.ty.to_bits(),
-                    ]);
-                }
-            }
-        }
+    push_fill_key(&mut key, entry.fill.as_ref());
+
+    // Stacked fills (story C1, debt #146). Omitted from this key until debt
+    // #395: `commit` copies `extra_fills` onto the entry, so two nodes sharing
+    // a base fill and differing only in their stacked layers interned to ONE
+    // pool entry and the overlay was lost on load — silently, with no
+    // diagnostic. Measured on the Landify hero: the document carried one entry
+    // with one extra layer and the arena kept none. Same "count then each
+    // element's bits" framing as the sections below, so the encoding stays
+    // prefix-free and no two distinct entries can collide.
+    key.push(entry.extra_fills.len() as u32);
+    for layer in &entry.extra_fills {
+        push_fill_key(&mut key, Some(layer));
     }
 
     match &entry.stroke {
@@ -2022,6 +1992,59 @@ fn paint_key(entry: &PaintEntry) -> PaintKey {
         }
     }
     key
+}
+
+/// One fill's bits, tag-dispatched so the encoding is self-delimiting: the
+/// leading tag determines how many words follow, which is what lets the base
+/// fill, each stacked layer, and every section after them concatenate without
+/// ambiguity.
+///
+/// `None` is the fill-less entry (tag 0). A stacked layer is always `Some`.
+fn push_fill_key(key: &mut Vec<u32>, fill: Option<&PaintKind>) {
+    match fill {
+        None => key.push(0),
+        Some(PaintKind::Solid { color }) => {
+            key.push(1);
+            key.extend(color_key(*color));
+        }
+        Some(PaintKind::Gradient(gradient)) => {
+            key.push(2);
+            key.push(gradient.kind as u32);
+            key.extend(vec2_key(gradient.handle_origin));
+            key.extend(vec2_key(gradient.handle_primary));
+            key.extend(vec2_key(gradient.handle_secondary));
+            key.push(gradient.stops.len() as u32);
+            for stop in &gradient.stops {
+                key.push(stop.offset.to_bits());
+                key.extend(color_key(stop.color));
+            }
+        }
+        Some(PaintKind::Image {
+            image,
+            scale_mode,
+            transform,
+            tile_scale,
+        }) => {
+            key.push(3);
+            key.push(*image);
+            key.push(*scale_mode as u32);
+            key.push(tile_scale.to_bits());
+            match transform {
+                None => key.push(0),
+                Some(m) => {
+                    key.push(1);
+                    key.extend([
+                        m.a.to_bits(),
+                        m.b.to_bits(),
+                        m.c.to_bits(),
+                        m.d.to_bits(),
+                        m.tx.to_bits(),
+                        m.ty.to_bits(),
+                    ]);
+                }
+            }
+        }
+    }
 }
 
 fn vec2_key(v: Vec2) -> [u32; 2] {
