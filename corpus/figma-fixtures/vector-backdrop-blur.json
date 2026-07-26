@@ -13,7 +13,7 @@
         "children": [
           {
             "id": "1:2",
-            "name": "backdrop-blur",
+            "name": "vector-backdrop-blur",
             "type": "FRAME",
             "scrollBehavior": "SCROLLS",
             "children": [
@@ -288,25 +288,10 @@
               },
               {
                 "id": "1:7",
-                "name": "frosted-panel",
-                "type": "FRAME",
+                "name": "frosted-ring",
+                "type": "VECTOR",
                 "scrollBehavior": "SCROLLS",
-                "children": [],
                 "blendMode": "PASS_THROUGH",
-                "clipsContent": true,
-                "background": [
-                  {
-                    "opacity": 0.20000000298023224,
-                    "blendMode": "NORMAL",
-                    "type": "SOLID",
-                    "color": {
-                      "r": 1,
-                      "g": 1,
-                      "b": 1,
-                      "a": 1
-                    }
-                  }
-                ],
                 "fills": [
                   {
                     "opacity": 0.20000000298023224,
@@ -320,35 +305,216 @@
                     }
                   }
                 ],
-                "strokes": [],
-                "cornerRadius": 16,
-                "cornerSmoothing": 0,
-                "strokeWeight": 1,
-                "strokeAlign": "INSIDE",
-                "backgroundColor": {
-                  "r": 1,
-                  "g": 1,
-                  "b": 1,
-                  "a": 0.20000000298023224
+                "fillOverrideTable": {
+                  "1": null
+                },
+                "vectorNetwork": {
+                  "vertices": [
+                    {
+                      "position": {
+                        "x": 64,
+                        "y": 0
+                      },
+                      "meta": 1
+                    },
+                    {
+                      "position": {
+                        "x": 128,
+                        "y": 64
+                      },
+                      "meta": 1
+                    },
+                    {
+                      "position": {
+                        "x": 64,
+                        "y": 128
+                      },
+                      "meta": 1
+                    },
+                    {
+                      "position": {
+                        "x": 0,
+                        "y": 64
+                      },
+                      "meta": 1
+                    },
+                    {
+                      "position": {
+                        "x": 64,
+                        "y": 32
+                      },
+                      "meta": 1
+                    },
+                    {
+                      "position": {
+                        "x": 96,
+                        "y": 64
+                      },
+                      "meta": 1
+                    },
+                    {
+                      "position": {
+                        "x": 64,
+                        "y": 96
+                      },
+                      "meta": 1
+                    },
+                    {
+                      "position": {
+                        "x": 32,
+                        "y": 64
+                      },
+                      "meta": 1
+                    }
+                  ],
+                  "segments": [
+                    {
+                      "start": 0,
+                      "startTangent": {
+                        "x": 35.349998474121094,
+                        "y": 0
+                      },
+                      "endTangent": {
+                        "x": 0,
+                        "y": -35.349998474121094
+                      },
+                      "end": 1,
+                      "meta": 0
+                    },
+                    {
+                      "start": 1,
+                      "startTangent": {
+                        "x": 0,
+                        "y": 35.349998474121094
+                      },
+                      "endTangent": {
+                        "x": 35.349998474121094,
+                        "y": 0
+                      },
+                      "end": 2,
+                      "meta": 0
+                    },
+                    {
+                      "start": 2,
+                      "startTangent": {
+                        "x": -35.349998474121094,
+                        "y": 0
+                      },
+                      "endTangent": {
+                        "x": 0,
+                        "y": 35.349998474121094
+                      },
+                      "end": 3,
+                      "meta": 0
+                    },
+                    {
+                      "start": 3,
+                      "startTangent": {
+                        "x": 0,
+                        "y": -35.349998474121094
+                      },
+                      "endTangent": {
+                        "x": -35.349998474121094,
+                        "y": 0
+                      },
+                      "end": 0,
+                      "meta": 0
+                    },
+                    {
+                      "start": 4,
+                      "startTangent": {
+                        "x": 17.670000076293945,
+                        "y": 0
+                      },
+                      "endTangent": {
+                        "x": 0,
+                        "y": -17.670000076293945
+                      },
+                      "end": 5,
+                      "meta": 0
+                    },
+                    {
+                      "start": 5,
+                      "startTangent": {
+                        "x": 0,
+                        "y": 17.670000076293945
+                      },
+                      "endTangent": {
+                        "x": 17.670000076293945,
+                        "y": 0
+                      },
+                      "end": 6,
+                      "meta": 0
+                    },
+                    {
+                      "start": 6,
+                      "startTangent": {
+                        "x": -17.670000076293945,
+                        "y": 0
+                      },
+                      "endTangent": {
+                        "x": 0,
+                        "y": 17.670000076293945
+                      },
+                      "end": 7,
+                      "meta": 0
+                    },
+                    {
+                      "start": 7,
+                      "startTangent": {
+                        "x": 0,
+                        "y": -17.670000076293945
+                      },
+                      "endTangent": {
+                        "x": -17.670000076293945,
+                        "y": 0
+                      },
+                      "end": 4,
+                      "meta": 0
+                    }
+                  ],
+                  "regions": [
+                    {
+                      "loops": [
+                        [
+                          0,
+                          1,
+                          2,
+                          3
+                        ],
+                        [
+                          4,
+                          5,
+                          6,
+                          7
+                        ]
+                      ],
+                      "windingRule": "odd",
+                      "meta": 0
+                    }
+                  ]
                 },
                 "fillGeometry": [
                   {
-                    "path": "M0 16C0 7.16344 7.16344 0 16 0L184 0C192.837 0 200 7.16344 200 16L200 74C200 82.8366 192.837 90 184 90L16 90C7.16344 90 0 82.8366 0 74L0 16Z",
-                    "windingRule": "NONZERO"
+                    "path": "M64 0C99.35 0 128 28.65 128 64C128 99.35 99.35 128 64 128C28.65 128 0 99.35 0 64C0 28.65 28.65 0 64 0ZM64 32C81.67 32 96 46.33 96 64C96 81.67 81.67 96 64 96C46.33 96 32 81.67 32 64C32 46.33 46.33 32 64 32Z",
+                    "windingRule": "EVENODD"
                   }
                 ],
+                "strokes": [],
+                "strokeWeight": 1,
+                "strokeAlign": "CENTER",
                 "strokeGeometry": [],
                 "absoluteBoundingBox": {
-                  "x": 60,
-                  "y": 45,
-                  "width": 200,
-                  "height": 90
+                  "x": 96,
+                  "y": 26,
+                  "width": 128,
+                  "height": 128
                 },
                 "absoluteRenderBounds": {
-                  "x": 60,
-                  "y": 45,
-                  "width": 200,
-                  "height": 90
+                  "x": 96,
+                  "y": 26,
+                  "width": 128,
+                  "height": 128
                 },
                 "constraints": {
                   "vertical": "TOP",
@@ -358,17 +524,17 @@
                   [
                     1,
                     0,
-                    60
+                    96
                   ],
                   [
                     0,
                     1,
-                    45
+                    26
                   ]
                 ],
                 "size": {
-                  "x": 200,
-                  "y": 90
+                  "x": 128,
+                  "y": 128
                 },
                 "effects": [
                   {
@@ -483,9 +649,9 @@
   "componentSets": {},
   "schemaVersion": 0,
   "styles": {},
-  "name": "backdrop-blur",
-  "lastModified": "2026-07-26T04:55:26Z",
-  "version": "2380351432391538017",
+  "name": "vector-backdrop-blur",
+  "lastModified": "2026-07-26T14:16:22Z",
+  "version": "2380519602457301418",
   "role": "owner",
   "editorType": "figma",
   "linkAccess": "inherit"
