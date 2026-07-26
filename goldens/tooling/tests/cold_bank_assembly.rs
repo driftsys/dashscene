@@ -57,8 +57,28 @@ fn goldens() -> Vec<PathBuf> {
 
 #[test]
 fn every_golden_reassembles_to_itself_under_a_raw_bank() {
-    for path in goldens() {
-        let name = path.file_name().expect("a file name").to_string_lossy();
+    // Which goldens this applies to, named rather than filtered in place. A
+    // `continue` inside the loop below would make the test pass by skipping
+    // everything if the discriminator ever broke; asserting the partition first
+    // means a misclassified golden fails here instead of disappearing.
+    let (raw, derived) = partition_by_binding();
+    assert_eq!(
+        derived,
+        vec!["v03-paint-hifi.dsb".to_owned()],
+        "the set of derived goldens changed. A derived golden's payloads are not their own \
+         preimage, so reassembling one under the identity map asserts the wrong thing — \
+         goldens/tooling/tests/derived_bank.rs is where those are pinned.",
+    );
+    assert!(
+        raw.len() >= 7,
+        "only {} RAW goldens found; this test would be measuring almost nothing",
+        raw.len(),
+    );
+
+    for name in raw {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../dsb")
+            .join(&name);
         let committed = std::fs::read(&path).expect("the golden is readable");
 
         // Take it apart. `open` runs the null binding: each asset entry's
@@ -92,6 +112,34 @@ fn every_golden_reassembles_to_itself_under_a_raw_bank() {
     }
 }
 
+/// The committed goldens split by whether they carry a derivation manifest,
+/// each list sorted by file name.
+///
+/// The manifest *is* the discriminator, not a naming convention: a file with no
+/// manifest section binds every canonical hash to itself, which is what RAW
+/// means (`docs/decisions/derivation-manifest-section.md`).
+fn partition_by_binding() -> (Vec<String>, Vec<String>) {
+    let mut raw = Vec::new();
+    let mut derived = Vec::new();
+    for path in goldens() {
+        let name = path
+            .file_name()
+            .expect("a file name")
+            .to_string_lossy()
+            .into_owned();
+        let bytes = std::fs::read(&path).expect("the golden is readable");
+        let container = Container::parse(&bytes).unwrap_or_else(|e| panic!("{name}: {e}"));
+        match container
+            .bindings_manifest()
+            .unwrap_or_else(|e| panic!("{name}: {e}"))
+        {
+            Some(_) => derived.push(name),
+            None => raw.push(name),
+        }
+    }
+    (raw, derived)
+}
+
 #[test]
 fn the_corpus_still_holds_exactly_one_asset_bearing_golden() {
     // Two things at once, both cheap. It pins the section counts
@@ -100,6 +148,12 @@ fn the_corpus_still_holds_exactly_one_asset_bearing_golden() {
     // the standing measurement behind the caveat in this file's header: the day
     // a second asset-bearing golden lands, this test fails, and whoever updates
     // it is told that the multi-asset gap it describes has just narrowed.
+    //
+    // It fired once, for story #434: `v03-paint-hifi.dsb` is the same one
+    // asset packed under HiFi. The gap did **not** narrow — a second file
+    // holding the same single asset still has every index at 0 — which is why
+    // the expectation below grew a row rather than the caveat above being
+    // deleted.
     let mut with_assets = Vec::new();
     for path in goldens() {
         let name = path
@@ -121,7 +175,10 @@ fn the_corpus_still_holds_exactly_one_asset_bearing_golden() {
     }
     assert_eq!(
         with_assets,
-        vec![("v03-paint.dsb".to_owned(), 1)],
+        vec![
+            ("v03-paint-hifi.dsb".to_owned(), 1),
+            ("v03-paint.dsb".to_owned(), 1),
+        ],
         "the committed corpus's asset-bearing goldens changed. If a fixture gained an \
          image, update this expectation and the note in goldens/dsb/README.md.",
     );

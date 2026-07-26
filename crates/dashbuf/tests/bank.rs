@@ -1,5 +1,6 @@
-//! Cold-bank assembly (story #433): what `dashbuf::bank::assemble` puts where,
-//! and the one invariant a single assembly could not test.
+//! Cold-bank assembly (stories #433 and #434): what `dashbuf::bank::assemble`
+//! puts where, the derivation manifest that makes a derived bank readable, and
+//! the one invariant a single assembly could not test.
 //!
 //! # The invariant, and why it needed a second assembly
 //!
@@ -14,14 +15,14 @@
 //!
 //! The derived payloads below are **stand-ins**, not packer output: arbitrary
 //! bytes bound to the document's canonical hashes. That is deliberate and it is
-//! enough for this property, which is about where assembly puts bytes and not
-//! about what a packer produces. It is *not* a loadable derived bank — resolving
-//! a canonical hash to a payload that is not its own preimage needs the
-//! derivation manifest, which is story #434's. A file assembled from the bank
-//! below is well-formed and its cold payloads cannot yet be resolved by
-//! `dashbuf::open`, which is the read-side half #434 completes.
+//! enough for the properties here, which are about where assembly puts bytes
+//! and what the manifest records — not about what a packer produces. The
+//! measurement against a real HiFi packing, over real compiler output, is
+//! `goldens/tooling/tests/derived_bank.rs`.
 //!
 //! # Three assets, not one
+//!
+//! This is the half of story #434's coverage that the golden cannot carry.
 //!
 //! Every document in the corpus has at most one asset (`goldens/dsb/README.md`:
 //! `v03-paint.dsb` is the only fixture with an image), and a one-asset document
@@ -32,8 +33,8 @@
 
 use dashbuf::bank::{AssembleError, ColdBank, assemble};
 use dashbuf::container::{
-    Container, FLAVOR_ASSET, FLAVOR_UI, HASH_LEN, HEADER_SIZE, LARGE_BLOB_THRESHOLD,
-    SECTION_STRIDE, SectionKind,
+    Container, FLAVOR_ASSET, FLAVOR_BINDINGS, FLAVOR_UI, HASH_LEN, HEADER_SIZE,
+    LARGE_BLOB_THRESHOLD, SECTION_STRIDE, SectionKind,
 };
 use dashbuf::{
     AssetEntry, AssetEntryArgs, AssetKind, Document, DocumentArgs, ImageFormat, Node, NodeArgs,
@@ -318,23 +319,51 @@ fn hot_sections_are_byte_identical_across_two_assemblies_of_one_document() {
         Container::parse(&hifi).expect("parses"),
     );
 
-    // The asset count fixes the section count, so the table is the same length
-    // and the ui section does not even move.
-    assert_eq!(a.len(), b.len());
-    assert_eq!(a.section(0).offset, b.section(0).offset);
-    assert_eq!(a.section(0).length, b.section(0).length);
-    assert_eq!(a.section(0).hash, b.section(0).hash);
+    // The invariant, in the terms the document actually promises: the ui
+    // section's *bytes*. An `AssetEntry` names a hash and never an offset, so
+    // nothing in the document depends on where the section sits.
     assert_eq!(
         a.ui_document().expect("a ui section"),
         b.ui_document().expect("a ui section"),
         "the hot section is byte-identical across the two assemblies",
     );
+    assert_eq!(a.section(0).length, b.section(0).length);
+    assert_eq!(a.section(0).hash, b.section(0).hash);
+
+    // What the derived assembly *does* add, stated exactly rather than left as
+    // "the files differ somewhere": one section, the derivation manifest, and
+    // the one 64-byte table stride it costs. A change that added a second
+    // section, or that moved the ui section for any other reason, fails here.
+    assert_eq!(
+        a.len() + 1,
+        b.len(),
+        "the manifest is the one added section"
+    );
+    assert!(
+        a.bindings_manifest().expect("a well-formed file").is_none(),
+        "the RAW assembly is the identity map, so it writes no manifest",
+    );
+    assert!(
+        b.bindings_manifest().expect("a well-formed file").is_some(),
+        "the derived assembly writes the manifest its payloads need",
+    );
+    assert_eq!(
+        b.section(0).offset,
+        a.section(0).offset + SECTION_STRIDE as u64,
+        "the ui section moves by exactly the manifest's table entry and nothing more",
+    );
 }
 
 #[test]
-fn every_difference_between_two_assemblies_is_envelope_or_cold_bytes() {
+fn every_difference_between_two_assemblies_is_envelope_manifest_or_cold_bytes() {
     // The invariant in its strongest form: not "the hot section survived", but
-    // "nothing outside the envelope and the cold payloads changed at all".
+    // "nothing outside the envelope, the manifest and the cold payloads changed
+    // at all".
+    //
+    // The derived file is the one measured against, because it is the one with
+    // the extra section: its envelope is a stride longer and its ui section a
+    // stride further in, so a range taken from the RAW file would put the
+    // manifest's own bytes outside every named region.
     let payloads = canonical_payloads();
     let ui = ui_section(&payloads);
     let derived = vec![vec![0x11; 40], vec![0x22; 4096], vec![0x33; 3]];
@@ -343,41 +372,367 @@ fn every_difference_between_two_assemblies_is_envelope_or_cold_bytes() {
         .expect("the RAW bank assembles");
     let hifi = assemble(&ui, &stand_in_derived_bank(&ui, &derived))
         .expect("the stand-in derived bank assembles");
-    let container = Container::parse(&raw).expect("parses");
+    let container = Container::parse(&hifi).expect("parses");
 
     // The envelope: the header and the whole section table. The header's root
     // hash covers the table, and the table records where the cold bytes are, so
     // both are expected to differ.
     let envelope_end = HEADER_SIZE + container.len() * SECTION_STRIDE;
+    // The manifest section: present only in the derived file, so every byte of
+    // it is a difference by construction.
+    let manifest = container.section(1);
+    let manifest_range = manifest.offset as usize..(manifest.offset + manifest.length) as usize;
     // The cold region: from the first blob's offset to the end of the longer
     // file. Nothing hot lives past it — the hot region is a contiguous prefix.
-    let first_cold = container.section(1).offset as usize;
+    let first_cold = container.section(2).offset as usize;
 
-    let common = raw.len().min(hifi.len());
-    for at in 0..common {
-        if raw[at] == hifi[at] {
+    // The ui section is the one region that must be equal, and in the derived
+    // file it sits one stride later than in the RAW one.
+    let ui_at = container.section(0).offset as usize;
+    assert_eq!(
+        &hifi[ui_at..ui_at + ui.len()],
+        &raw[ui_at - SECTION_STRIDE..ui_at - SECTION_STRIDE + ui.len()],
+        "the ui section is the same bytes at its shifted address",
+    );
+
+    // Everything else: compared at the derived file's own addresses, with the
+    // RAW file's bytes taken from a stride earlier, which is where the same
+    // hot byte lives there.
+    let hot = envelope_end..first_cold.min(hifi.len());
+    for (offset, (derived_byte, raw_byte)) in hifi[hot.clone()]
+        .iter()
+        .zip(&raw[envelope_end - SECTION_STRIDE..])
+        .enumerate()
+    {
+        let at = envelope_end + offset;
+        if manifest_range.contains(&at) {
             continue;
         }
-        assert!(
-            at < envelope_end || at >= first_cold,
-            "byte {at} differs between the two assemblies but lies in neither the \
-             envelope (0..{envelope_end}) nor the cold region ({first_cold}..)",
+        assert_eq!(
+            derived_byte,
+            raw_byte,
+            "byte {at} of the derived file differs from byte {} of the RAW one, \
+             and it lies in neither the envelope (0..{envelope_end}), the manifest \
+             ({manifest_range:?}), nor the cold region ({first_cold}..)",
+            at - SECTION_STRIDE,
         );
     }
-    // The loop above only compares the bytes both files have. That is enough
-    // only because the shorter file already reaches into the cold region: every
-    // offset past it is therefore a cold offset, so a length difference is a
-    // cold-region difference and needs no separate check.
+    // The mirror above only reaches into the RAW file's own hot region. It does
+    // so only because the RAW file is at least as long as the derived file's
+    // hot region minus the stride — assert it rather than trust it, or a
+    // shortened RAW file would make the loop compare nothing.
     assert!(
-        common >= first_cold,
-        "the shorter file ({common} bytes) stops before the cold region starts \
-         ({first_cold}), so the comparison above skipped hot bytes",
+        raw.len() >= first_cold - SECTION_STRIDE,
+        "the RAW file ({} bytes) is shorter than the hot region this compared \
+         against it ({}), so the loop above skipped bytes",
+        raw.len(),
+        first_cold - SECTION_STRIDE,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The derivation manifest
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_derived_assembly_round_trips_through_open() {
+    // The read side of a bank whose payloads are not their own preimage, which
+    // is the whole of story #434. Three assets with three distinct derived
+    // payloads, so a manifest that resolved every canonical hash to one payload,
+    // or that paired the rows off by one, comes back wrong rather than plausible.
+    let payloads = canonical_payloads();
+    let ui = ui_section(&payloads);
+    let derived = vec![vec![0x11; 40], vec![0x22; 4096], vec![0x33; 3]];
+
+    let file = assemble(&ui, &stand_in_derived_bank(&ui, &derived)).expect("assembles");
+
+    let (document, resident) = dashbuf::open(&file).expect("the derived file opens");
+    assert_eq!(document.assets().expect("assets").len(), payloads.len());
+    let expected: Vec<&[u8]> = derived.iter().map(Vec::as_slice).collect();
+    assert_eq!(
+        resident, expected,
+        "each entry resolves through the manifest to the payload bound to it, in entry order",
+    );
+    for (index, canonical) in payloads.iter().enumerate() {
+        assert_ne!(
+            resident[index],
+            canonical.as_slice(),
+            "asset {index} resolved to its canonical bytes, so nothing was derived",
+        );
+    }
+}
+
+#[test]
+fn the_manifest_carries_a_row_for_every_derived_binding_and_none_for_an_identity_one() {
+    // A mixed bank: entry 1 keeps its canonical payload while 0 and 2 are
+    // derived. The manifest must be exactly the two derived rows — a writer that
+    // recorded every binding would put an identity row in the file, and a writer
+    // that recorded none would leave the derived payloads unresolvable.
+    let payloads = canonical_payloads();
+    let ui = ui_section(&payloads);
+    let hashes = canonical_hashes(&ui);
+    let derived_0 = vec![0x11; 40];
+    let derived_2 = vec![0x33; 3];
+
+    let file = assemble(
+        &ui,
+        &ColdBank::derived([
+            (hashes[0], derived_0.as_slice()),
+            (hashes[1], payloads[1].as_slice()),
+            (hashes[2], derived_2.as_slice()),
+        ]),
+    )
+    .expect("assembles");
+
+    let container = Container::parse(&file).expect("parses");
+    let manifest = container
+        .bindings_manifest()
+        .expect("a well-formed file")
+        .expect("a mixed bank needs a manifest");
+    let rows = flatbuffers::root::<dashbuf::AssetBindings<'_>>(manifest)
+        .expect("a valid binding table")
+        .bindings()
+        .expect("rows");
+
+    assert_eq!(rows.len(), 2, "one row per derived binding, and no more");
+    assert_eq!(rows.get(0).canonical().bytes(), hashes[0]);
+    assert_eq!(
+        rows.get(0).resident().bytes(),
+        blake3::hash(&derived_0).as_bytes(),
+    );
+    assert_eq!(rows.get(1).canonical().bytes(), hashes[2]);
+    assert_eq!(
+        rows.get(1).resident().bytes(),
+        blake3::hash(&derived_2).as_bytes(),
+    );
+
+    // And the identity binding still resolves, through the absent row.
+    let (_, resident) = dashbuf::open(&file).expect("opens");
+    assert_eq!(resident[1], payloads[1].as_slice());
+}
+
+#[test]
+fn a_bank_that_is_the_identity_map_writes_no_manifest_at_all() {
+    // The property every committed golden depends on. `ColdBank::derived` over
+    // canonical payloads is the same bank as `ColdBank::raw`, so it must
+    // assemble to the same bytes — a manifest emitted here would have moved
+    // seven goldens for nothing.
+    let payloads = canonical_payloads();
+    let ui = ui_section(&payloads);
+    let hashes = canonical_hashes(&ui);
+
+    let raw = assemble(&ui, &ColdBank::raw(payloads.iter().map(Vec::as_slice)))
+        .expect("the RAW bank assembles");
+    let spelled_out = assemble(
+        &ui,
+        &ColdBank::derived(
+            hashes
+                .into_iter()
+                .zip(payloads.iter().map(Vec::as_slice))
+                .collect::<Vec<_>>(),
+        ),
+    )
+    .expect("assembles");
+
+    assert_eq!(
+        raw, spelled_out,
+        "a binding is derived when the payload is not its own preimage, and by no other \
+         signal: the two constructors describe the same bank here",
+    );
+    assert!(
+        Container::parse(&raw)
+            .expect("parses")
+            .bindings_manifest()
+            .expect("a well-formed file")
+            .is_none(),
+    );
+}
+
+#[test]
+fn tampering_with_a_manifest_row_is_caught_before_it_resolves_anything() {
+    // The manifest is a section, so its content hash is in the section table and
+    // the table is covered by the header's root hash. Redirecting a canonical
+    // hash at a different payload therefore cannot be done quietly, which is
+    // what lets a reader trust the mapping at all.
+    let payloads = canonical_payloads();
+    let ui = ui_section(&payloads);
+    let derived = vec![vec![0x11; 40], vec![0x22; 4096], vec![0x33; 3]];
+    let mut file = assemble(&ui, &stand_in_derived_bank(&ui, &derived)).expect("assembles");
+
+    let manifest = Container::parse(&file).expect("parses").section(1);
+    let at = manifest.offset as usize;
+    // Flip one bit inside a resident hash.
+    file[at + manifest.length as usize - 1] ^= 0x01;
+
+    let error = dashbuf::open(&file).expect_err("a tampered manifest is refused");
+    assert!(
+        matches!(
+            error,
+            dashbuf::OpenError::Container(
+                dashbuf::container::ContainerError::SectionHashMismatch { .. }
+            )
+        ),
+        "{error}",
+    );
+}
+
+/// A file carrying `ui` and hand-built manifest bytes, with no blob sections.
+///
+/// The manifest cases below are shapes `assemble` cannot produce, so they have
+/// to be written directly. The document names no assets, which keeps every
+/// failure below about the manifest and nothing else.
+fn file_with_manifest(manifest: &[u8]) -> Vec<u8> {
+    dashbuf::container::write(&[
+        dashbuf::container::Section::structured(FLAVOR_UI, &ui_section(&[])),
+        dashbuf::container::Section::structured(FLAVOR_BINDINGS, manifest),
+    ])
+    .expect("the hand-built sections are writable")
+}
+
+/// An `AssetBindings` buffer over `rows`, with no length rule applied.
+fn manifest_bytes(rows: &[(&[u8], &[u8])]) -> Vec<u8> {
+    let mut builder = FlatBufferBuilder::new();
+    let bindings: Vec<_> = rows
+        .iter()
+        .map(|(canonical, resident)| {
+            let canonical = builder.create_vector(canonical);
+            let resident = builder.create_vector(resident);
+            dashbuf::AssetBinding::create(
+                &mut builder,
+                &dashbuf::AssetBindingArgs {
+                    canonical: Some(canonical),
+                    resident: Some(resident),
+                },
+            )
+        })
+        .collect();
+    let bindings = builder.create_vector(&bindings);
+    let manifest = dashbuf::AssetBindings::create(
+        &mut builder,
+        &dashbuf::AssetBindingsArgs {
+            bindings: Some(bindings),
+        },
+    );
+    builder.finish(manifest, None);
+    builder.finished_data().to_vec()
+}
+
+#[test]
+fn a_manifest_row_whose_hash_is_the_wrong_length_is_refused() {
+    // It could never match an asset entry or a blob section, so tolerating it
+    // would be a claim that silently does nothing — the drop P4 forbids.
+    let file = file_with_manifest(&manifest_bytes(&[(&[0xAA; 8], &[0xBB; HASH_LEN])]));
+    let error = dashbuf::open(&file).expect_err("refused");
+    assert!(
+        matches!(
+            error,
+            dashbuf::OpenError::BindingHashLength {
+                row: 0,
+                canonical: 8,
+                resident: 32
+            }
+        ),
+        "{error}",
+    );
+}
+
+#[test]
+fn a_manifest_that_binds_one_canonical_hash_twice_is_refused() {
+    // Two rows are two answers to what one asset resides as, and resolving the
+    // first would be a silent choice between them.
+    let file = file_with_manifest(&manifest_bytes(&[
+        (&[0xAA; HASH_LEN], &[0xB1; HASH_LEN]),
+        (&[0xCC; HASH_LEN], &[0xB2; HASH_LEN]),
+        (&[0xAA; HASH_LEN], &[0xB3; HASH_LEN]),
+    ]));
+    let error = dashbuf::open(&file).expect_err("refused");
+    assert!(
+        matches!(error, dashbuf::OpenError::BindingRepeated { row: 2 }),
+        "{error}",
+    );
+}
+
+#[test]
+fn a_manifest_section_that_is_not_a_binding_table_is_refused() {
+    let file = file_with_manifest(b"not a flatbuffer at all");
+    let error = dashbuf::open(&file).expect_err("refused");
+    assert!(matches!(error, dashbuf::OpenError::Bindings(_)), "{error}");
+}
+
+#[test]
+fn two_manifest_sections_are_refused() {
+    let manifest = manifest_bytes(&[(&[0xAA; HASH_LEN], &[0xBB; HASH_LEN])]);
+    let ui = ui_section(&[]);
+    let file = dashbuf::container::write(&[
+        dashbuf::container::Section::structured(FLAVOR_UI, &ui),
+        dashbuf::container::Section::structured(FLAVOR_BINDINGS, &manifest),
+        dashbuf::container::Section::structured(FLAVOR_BINDINGS, &manifest),
+    ])
+    .expect("writable");
+
+    let error = dashbuf::open(&file).expect_err("refused");
+    assert!(
+        matches!(
+            error,
+            dashbuf::OpenError::Container(
+                dashbuf::container::ContainerError::NotOneBindingsSection { found: 2 }
+            )
+        ),
+        "{error}",
     );
 }
 
 // ---------------------------------------------------------------------------
 // Refusals
 // ---------------------------------------------------------------------------
+
+#[test]
+fn a_bank_binding_one_canonical_hash_to_two_payloads_is_refused() {
+    // One file cannot carry both under one identity, so assembling would drop a
+    // claim silently. Unreachable from `ColdBank::raw` by construction — a
+    // payload is bound to its own hash there — which is why this is checked on
+    // the bank and not on the file.
+    let payloads = canonical_payloads();
+    let ui = ui_section(&payloads);
+    let hashes = canonical_hashes(&ui);
+    let other = vec![0x44; 17];
+
+    let mut bindings: Vec<([u8; HASH_LEN], &[u8])> = hashes
+        .iter()
+        .copied()
+        .zip(payloads.iter().map(Vec::as_slice))
+        .collect();
+    bindings.push((hashes[1], other.as_slice()));
+
+    assert_eq!(
+        assemble(&ui, &ColdBank::derived(bindings)),
+        Err(AssembleError::ContradictoryBinding {
+            canonical: hashes[1]
+        }),
+    );
+}
+
+#[test]
+fn the_identity_map_cannot_produce_a_contradictory_bank() {
+    // The proof behind `dashc::package`'s `expect`, as a test rather than as a
+    // doc comment alone. `ColdBank::raw` binds every payload to its own hash, so
+    // two bindings under one canonical hash are two *identical* payloads no
+    // matter what the caller passes — the contradiction is unconstructible from
+    // that side, which is what makes a panic there sound and a panic in the
+    // packer's assembly path unsound.
+    let payloads = canonical_payloads();
+    let ui = ui_section(&payloads);
+
+    let mut repeated: Vec<&[u8]> = Vec::new();
+    for payload in &payloads {
+        repeated.push(payload);
+        repeated.push(payload);
+    }
+    repeated.push(payloads[0].as_slice());
+
+    assemble(&ui, &ColdBank::raw(repeated))
+        .expect("no sequence of canonical payloads makes a self-contradicting bank");
+}
 
 #[test]
 fn a_bank_missing_a_payload_is_refused_by_index() {

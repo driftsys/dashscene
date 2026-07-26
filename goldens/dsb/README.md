@@ -41,6 +41,46 @@ each golden here apart into its ui section and its payloads, reassembles it
 under a RAW bank, and requires the result to equal the committed file byte for
 byte. A failure there is an assembly bug, not a golden to regenerate.
 
+The derivation manifest (v0.12, story #434) moved none of them either, and
+**added one**: `v03-paint-hifi.dsb`. The manifest section is written only where
+a binding is not the identity, so a RAW file has no manifest and no byte of one
+(`docs/decisions/derivation-manifest-section.md`). That was verified per file by
+`git hash-object` before and after the change, across all 70 committed binary
+artifacts in the repository, not inferred from the suite passing.
+
+## v03-paint-hifi.dsb
+
+`v03-paint.dsb` repacked under the **HiFi** profile: the same document, the same
+canonical asset, and a cold payload the packer derived rather than the imported
+bytes. Pinned by `goldens/tooling/tests/derived_bank.rs`.
+
+It is the only golden here that is not the compiler's output. It is the
+*packer's*, and it is the repository's only byte-exact record of what
+`dashpack` emits — which is why it exists. Story #431 measured that a change to
+the zstd compression level is invisible to every test that asserts a constant
+equals itself; a byte-exact fixture over real encoder output is the only thing
+that catches one, and this is it. The same holds for an ASTC quality regression
+and for a band that quietly stopped rejecting a rung.
+
+Its one asset packs to the `astc-8x8` rung, 93 canonical bytes to 249 resident,
+so the file is 4345 bytes against the RAW golden's 4189. HiFi makes this
+particular asset *larger*: a 16x16 image is one ASTC block at every footprint on
+the ladder, and a block plus KTX2 framing has a floor a 93-byte PNG does not.
+The corpus-wide numbers, where the saving is real, are in
+`docs/technotes/2026-07-26-hifi-bank-size-analysis.md`.
+
+**What this golden cannot catch.** It has one asset, so every asset index in it
+is 0 and every manifest row count is 1. An ordering, deduplication, or
+wrong-index bug — in the blob sections or in the manifest — has nowhere to show.
+`crates/dashbuf/tests/bank.rs` carries those on hand-built three-asset
+documents. What this file carries that no hand-built document can is a real
+packer's bytes over a real compiler's output.
+
+Because its payloads are not their own preimage, it is **not** a RAW file and
+the reassembly check above does not apply to it. That test partitions the
+goldens by whether they carry a manifest and asserts the partition, so a golden
+landing on the wrong side fails rather than being skipped.
+
 That boundary is why `v03-paint.dsb` roughly doubled in size, from 2196 to 4189
 bytes: nearly all of the growth is the page alignment before the first cold
 byte. For a 2 KB document holding one 93-byte image, the padding dominates. For
@@ -138,6 +178,7 @@ text `.dsb` goldens above.
     UPDATE_GOLDENS=1 cargo test -p dashc --test flex_lowering
     UPDATE_GOLDENS=1 cargo test -p dashc --test text_lowering
     UPDATE_GOLDENS=1 cargo test -p dashc --test component_lowering
+    UPDATE_GOLDENS=1 cargo test -p goldens --test derived_bank
 
 A golden is reviewed truth: inspect the change before committing it. A missing
 golden never auto-creates on a normal run, so CI on a clean checkout fails

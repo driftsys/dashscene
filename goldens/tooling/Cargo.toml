@@ -31,6 +31,11 @@ tempfile.workspace = true
 # same three numbers, so the pack bands are the same vocabulary as the render
 # bands rather than a second one that drifted (story #432).
 dashpack.workspace = true
+# Decodes the committed corpus PNGs the derived-bank golden packs
+# (`tests/derived_bank.rs`), through the same crate `dashpack`'s own band tests
+# decode with: the golden is byte-exact over the encoder's output, so the
+# encoder's input has to come from one decode path and not two (story #434).
+png.workspace = true
 dashcue.workspace = true
 # The render_dsb unit test and the v0.7 text-lowering golden (#160) drive
 # `dashc`'s compile_figma to build a `.dsb` in-process; the `dashscene-validator`

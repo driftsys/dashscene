@@ -43,9 +43,9 @@
 //! The same payload, dimensions and format always produce the same bytes.
 //! libzstd is compiled from the vendored sources the `zstd` crate carries, and
 //! `Cargo.lock` is committed (`docs/decisions/cargo-lock-is-committed.md`), so
-//! the compressor is pinned the same way the ASTC encoder is. The one input
-//! that is not the caller's is the `KTXwriter` value, which carries this
-//! crate's version — see [`WRITER`].
+//! the compressor is pinned the same way the ASTC encoder is. Every input is
+//! either the caller's or a pinned constant, including the `KTXwriter` value —
+//! see [`WRITER`], which is deliberately not the crate version.
 
 use crate::astc::{self, BlockSize, ColorSpace};
 
@@ -92,16 +92,75 @@ const TYPE_SIZE: u32 = 1;
 /// deliberate re-baseline and not a tuning knob.
 pub const ZSTD_LEVEL: i32 = 19;
 
+/// The generation of this writer's own byte layout.
+///
+/// The handle for a deliberate re-baseline of everything that is this crate's
+/// choice rather than the caller's: the key/value set, the level layout,
+/// [`ZSTD_LEVEL`]. Bump it in the same commit that changes any of them, so a
+/// file says which layout produced it.
+///
+/// It is not the crate version, and the difference is the point — see
+/// [`WRITER`].
+pub const WRITER_GENERATION: u32 = 1;
+
 /// The `KTXwriter` value recorded in every file.
 ///
 /// The specification asks a writer to identify itself, and a bank is auditable
 /// only if the tool that produced it is named in the file — the same reason
 /// [`astc::vendored_astcenc`] pins the encoder.
 ///
-/// It carries the crate version, so a version bump changes every emitted file.
-/// That is intended: files written by two different versions of this crate are
-/// not claimed to be the same bytes.
-pub const WRITER: &str = concat!("dashpack ", env!("CARGO_PKG_VERSION"));
+/// # Why this is not the crate version
+///
+/// It was `concat!("dashpack ", env!("CARGO_PKG_VERSION"))` when this writer
+/// landed (story #431), which made every emitted byte a function of the release
+/// cadence. Two consequences, and the second is the one that settled it:
+///
+/// - A `git std bump` would move every byte-exact golden over packer output, so
+///   a routine release and a real encoder regression would produce the same
+///   signal. Story #434 is where committed artifacts began carrying KTX2
+///   output, so that stopped being hypothetical.
+/// - Every texture payload in every shipped cold bank would change on every
+///   release, whether or not a single texel differed. A cold bank is the large
+///   part of a `.dsb`, and the asset model budgets flash and OTA size
+///   explicitly (story #434), so a version string that invalidates every
+///   texture in an OTA delta is a cost paid for nothing.
+///
+/// What a texture file's provenance is *for* is answering which pipeline
+/// produced these bytes. That is the encoder pin and this writer's own layout
+/// generation — both of which change exactly when the output can — and not the
+/// release number, which changes when it cannot. Per-release provenance, if it
+/// is ever wanted, belongs once in the container envelope rather than repeated
+/// inside every texture.
+///
+/// Both the generation and the astcenc version appear here as one literal, so
+/// the emitted string can be read straight off this line. The two assertions
+/// below are what keep it welded to [`WRITER_GENERATION`] and to the vendored
+/// pin, so a bump that forgot this string fails the build rather than shipping
+/// a file that misnames its own encoder.
+pub const WRITER: &str = "dashpack gen1 astcenc 5.6.0";
+
+const _: () = assert!(WRITER_GENERATION == 1, "the gen in WRITER is written out");
+const _: () = assert!(
+    str_eq(dashpack_astcenc_sys::VENDORED_VERSION, "5.6.0"),
+    "the astcenc version in WRITER no longer matches the vendored pin"
+);
+
+/// `&str` equality in a const context, which the standard library does not yet
+/// offer. Exists only for the assertion above.
+const fn str_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut at = 0;
+    while at < a.len() {
+        if a[at] != b[at] {
+            return false;
+        }
+        at += 1;
+    }
+    true
+}
 
 /// The `KTXorientation` value recorded in every file: S increases to the right,
 /// T increases downwards.
@@ -1017,13 +1076,34 @@ mod tests {
                 ("KTXwriter", format!("{WRITER}\0").as_bytes()),
             ]
         );
-        assert_eq!(
-            reader.writer(),
-            Some(concat!("dashpack ", env!("CARGO_PKG_VERSION"), "\0"))
-        );
+        // The literal, spelled out rather than rebuilt from the constant: a
+        // change to `WRITER` moves every emitted file and must be a decision
+        // someone made, not one a `concat!` made for them.
+        assert_eq!(reader.writer(), Some("dashpack gen1 astcenc 5.6.0\0"));
         assert!(
             pairs[0].0 < pairs[1].0,
             "the specification requires keys sorted by code point"
+        );
+    }
+
+    #[test]
+    fn the_writer_does_not_carry_the_crate_version() {
+        // The guard on the regression story #434 recorded: while `WRITER`
+        // carried `CARGO_PKG_VERSION`, a `git std bump` moved every emitted
+        // byte, so a routine release and a real encoder regression produced one
+        // signal — and every texture in a shipped cold bank changed on every
+        // release, for an OTA delta to carry for nothing.
+        //
+        // The whole string is asserted above. This says why it is that string,
+        // so a change back to the crate version fails with the reason attached
+        // rather than only as a moved golden.
+        assert!(
+            !WRITER.contains(env!("CARGO_PKG_VERSION")),
+            "WRITER is {WRITER}, which carries the crate version {}. The emitted \
+             bytes must not depend on the release cadence — see the WRITER doc \
+             comment. If the crate version has merely grown into a substring of \
+             the encoder pin, widen this check rather than the string.",
+            env!("CARGO_PKG_VERSION"),
         );
     }
 

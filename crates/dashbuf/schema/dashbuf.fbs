@@ -240,6 +240,39 @@ table AssetEntry {
   kind: AssetKind;
 }
 
+// One row of the derivation manifest (v0.12, story #434,
+// docs/decisions/derivation-manifest-section.md): the canonical identity an
+// `AssetEntry` names, and the content hash of the payload this file actually
+// carries for it.
+//
+// Both sides are hashes. Neither is a section index, which is what keeps the
+// property docs/decisions/asset-model-content-addressed-blobs.md rests on: a
+// document never learns where a payload sits, so its hot sections do not vary
+// with the profile that packed the file.
+table AssetBinding {
+  // The `AssetEntry.hash` this row speaks for — the canonical payload's
+  // BLAKE3, which is the asset's identity and never changes with the profile.
+  canonical: [ubyte] (required);
+  // The BLAKE3 of the bytes the file carries for it, which is the blob
+  // section's own recorded content hash.
+  resident: [ubyte] (required);
+}
+
+// The derivation manifest: the profile's binding from canonical identities to
+// the payloads this file resides them as.
+//
+// Its own root type, carried in its own section rather than in `Document`
+// above. That is the whole point: a manifest inside the document would make
+// the hot section vary with the profile, and it would put a packer *result*
+// into a document that carries only intent (P1).
+//
+// Rows are written only where the binding is not the identity — RAW derives
+// nothing, so a RAW file carries no manifest section at all and no committed
+// `.dsb` byte moved when this landed.
+table AssetBindings {
+  bindings: [AssetBinding];
+}
+
 // A drop or inner shadow effect (v0.8, story #45,
 // docs/decisions/effects-vocabulary-shadows.md). Authored intent only —
 // offset, blur radius, spread, and color, per the shadow-spread math of

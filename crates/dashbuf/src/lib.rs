@@ -43,9 +43,14 @@ pub const NO_FIELD: u32 = u32::MAX;
 /// document together. It runs every check the format promises, in the order the
 /// container decision prescribes — magic, version, bounds, the section table
 /// against the root hash, the ui section's own content hash — then the
-/// flatbuffers verifier over that section, and finally the **null binding**:
-/// each `AssetEntry`'s hash resolved to the blob section whose content hash
+/// flatbuffers verifier over that section, and finally the **binding**: each
+/// `AssetEntry`'s canonical hash mapped through the file's derivation manifest
+/// to a resident hash, and that resolved to the blob section whose content hash
 /// equals it, verified.
+///
+/// A file with no manifest section is the **null binding**, which is every RAW
+/// file: a canonical hash resides as itself, and the mapping step is the
+/// identity (`docs/decisions/derivation-manifest-section.md`).
 ///
 /// The returned payloads are in entry order, one per entry, which is the shape
 /// `dashscene_core::load_document` takes. Nothing is copied: both the document
@@ -56,20 +61,76 @@ pub const NO_FIELD: u32 = u32::MAX;
 /// before loading.
 ///
 /// [`bank::assemble`] is the write-side inverse: it resolves the same entry
-/// hashes in the same order, in the other direction.
+/// hashes in the same order, in the other direction, and writes the manifest
+/// this reads.
 pub fn open(file: &[u8]) -> Result<(Document<'_>, Vec<&[u8]>), OpenError> {
     let container = container::Container::parse(file)?;
     let ui = container.ui_document()?;
     let document = root_as_document(ui)?;
+    let manifest = bindings(&container)?;
 
     let payloads = document
         .assets()
         .unwrap_or_default()
         .iter()
-        .map(|entry| container.blob_by_hash(entry.hash().bytes()))
+        .map(|entry| {
+            let canonical = entry.hash().bytes();
+            container.blob_by_hash(resident_of(&manifest, canonical))
+        })
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok((document, payloads))
+}
+
+/// One derivation-manifest row: the canonical hash an `AssetEntry` names, and
+/// the content hash of the payload the file carries for it.
+type BindingRow = ([u8; container::HASH_LEN], [u8; container::HASH_LEN]);
+
+/// The file's derivation-manifest rows, verified and checked, or an empty list
+/// when it carries no manifest section — the null binding.
+///
+/// Both hashes of every row are required to be [`container::HASH_LEN`] bytes,
+/// and no canonical hash may appear twice. Neither is a shape
+/// [`bank::assemble`] can produce, and both are refused rather than tolerated
+/// because a row that cannot match anything is a claim silently doing nothing,
+/// and a repeated canonical hash is two claims with no rule to choose between
+/// them (P4).
+fn bindings(container: &container::Container<'_>) -> Result<Vec<BindingRow>, OpenError> {
+    let Some(bytes) = container.bindings_manifest()? else {
+        return Ok(Vec::new());
+    };
+    let manifest = flatbuffers::root::<AssetBindings<'_>>(bytes).map_err(OpenError::Bindings)?;
+
+    let mut rows: Vec<BindingRow> = Vec::new();
+    for (row, binding) in manifest.bindings().unwrap_or_default().iter().enumerate() {
+        let pair = (binding.canonical().bytes(), binding.resident().bytes());
+        let (Ok(canonical), Ok(resident)) = (pair.0.try_into(), pair.1.try_into()) else {
+            return Err(OpenError::BindingHashLength {
+                row,
+                canonical: pair.0.len(),
+                resident: pair.1.len(),
+            });
+        };
+        if rows.iter().any(|(seen, _)| *seen == canonical) {
+            return Err(OpenError::BindingRepeated { row });
+        }
+        rows.push((canonical, resident));
+    }
+    Ok(rows)
+}
+
+/// The hash the file carries `canonical` as: the manifest's mapping, or
+/// `canonical` itself where the manifest has no row for it.
+///
+/// The absent row *is* the identity binding, which is what makes a RAW file and
+/// a derived file one read path rather than two. A manifest row naming a
+/// canonical hash no entry uses is inert by the same construction: resolution
+/// is keyed by the entry's hash, so a row nothing asks for answers nothing.
+fn resident_of<'a>(manifest: &'a [BindingRow], canonical: &'a [u8]) -> &'a [u8] {
+    manifest
+        .iter()
+        .find(|(row, _)| row.as_slice() == canonical)
+        .map_or(canonical, |(_, resident)| resident.as_slice())
 }
 
 /// Why a `.dsb` file could not be opened.
@@ -79,6 +140,19 @@ pub enum OpenError {
     Container(container::ContainerError),
     /// The ui section is not a structurally valid `Document`.
     Document(flatbuffers::InvalidFlatbuffer),
+    /// The derivation-manifest section is not a structurally valid
+    /// `AssetBindings`.
+    Bindings(flatbuffers::InvalidFlatbuffer),
+    /// A manifest row carries a hash that is not [`container::HASH_LEN`] bytes,
+    /// so it could never match either an asset entry or a blob section.
+    BindingHashLength {
+        row: usize,
+        canonical: usize,
+        resident: usize,
+    },
+    /// A manifest row repeats a canonical hash an earlier row already bound.
+    /// Two rows are two answers to what one asset resides as.
+    BindingRepeated { row: usize },
 }
 
 impl From<container::ContainerError> for OpenError {
@@ -98,6 +172,24 @@ impl std::fmt::Display for OpenError {
         match self {
             Self::Container(error) => write!(f, "{error}"),
             Self::Document(error) => write!(f, "the ui section is not a valid document: {error}"),
+            Self::Bindings(error) => write!(
+                f,
+                "the derivation-manifest section is not a valid binding table: {error}"
+            ),
+            Self::BindingHashLength {
+                row,
+                canonical,
+                resident,
+            } => write!(
+                f,
+                "derivation-manifest row {row} carries a {canonical}-byte canonical hash and \
+                 a {resident}-byte resident hash; both must be 32 bytes"
+            ),
+            Self::BindingRepeated { row } => write!(
+                f,
+                "derivation-manifest row {row} repeats a canonical hash an earlier row \
+                 already bound"
+            ),
         }
     }
 }

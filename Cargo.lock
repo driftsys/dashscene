@@ -242,6 +242,7 @@ dependencies = [
 name = "dashpack"
 version = "0.0.0"
 dependencies = [
+ "blake3",
  "dashbuf",
  "dashpack-astcenc-sys",
  "ktx2",
@@ -562,6 +563,7 @@ dependencies = [
  "dashscene-typeset",
  "dashscene-validator",
  "flatbuffers",
+ "png",
  "serde_json",
  "skia-safe",
  "tempfile",

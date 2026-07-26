@@ -231,6 +231,17 @@ const LOSSLESS: &str = "lossless";
 /// - The design capture expected HiFi to be "typically ASTC 4x4". On these
 ///   assets it measures 6x6, 8x8 and uncompressed, and never 4x4. The
 ///   measurement is what is recorded; the expectation is not.
+///
+/// # The one time `bytes` moved, and why
+///
+/// Story #434 changed `ktx2::WRITER` from the crate version to a pinned string
+/// naming the writer generation and the encoder pin, so that a release bump
+/// stops rewriting every texture in every shipped bank. The new string is 12
+/// bytes longer once the key/value entry is padded, and that section is not
+/// compressed, so **every** row's `bytes` grew by exactly 12 and nothing else
+/// changed: no rung, no accepted fraction, no rejected fraction. A uniform
+/// twelve is the signature of a writer-string change; a single row moving, or a
+/// row moving by anything else, is not and must be explained on its own terms.
 const TABLE: [Row; 15] = [
     Row {
         fixture: "import-image-fill",
@@ -250,7 +261,7 @@ const TABLE: [Row; 15] = [
             ("astc-10x10", "10.6115"),
             ("astc-8x8", "2.8012"),
         ],
-        bytes: 21014,
+        bytes: 21026,
     },
     Row {
         fixture: "import-image-fill",
@@ -258,7 +269,7 @@ const TABLE: [Row; 15] = [
         rung: "astc-12x12",
         accepted: "0.0000",
         rejected: &[],
-        bytes: 7949,
+        bytes: 7961,
     },
     Row {
         fixture: "v03-paint",
@@ -274,7 +285,7 @@ const TABLE: [Row; 15] = [
         rung: "astc-8x8",
         accepted: "0.0000",
         rejected: &[("astc-12x12", "51.5625"), ("astc-10x10", "100.0000")],
-        bytes: 237,
+        bytes: 249,
     },
     Row {
         fixture: "v03-paint",
@@ -282,7 +293,7 @@ const TABLE: [Row; 15] = [
         rung: "astc-8x8",
         accepted: "0.0000",
         rejected: &[("astc-12x12", "50.0000"), ("astc-10x10", "68.7500")],
-        bytes: 237,
+        bytes: 249,
     },
     Row {
         fixture: "detail-noise",
@@ -305,7 +316,7 @@ const TABLE: [Row; 15] = [
             ("astc-5x5", "76.1032"),
             ("astc-4x4", "54.4891"),
         ],
-        bytes: 196770,
+        bytes: 196782,
     },
     Row {
         fixture: "detail-noise",
@@ -317,7 +328,7 @@ const TABLE: [Row; 15] = [
             ("astc-10x10", "13.3896"),
             ("astc-8x8", "10.4401"),
         ],
-        bytes: 29169,
+        bytes: 29181,
     },
     Row {
         fixture: "inter-ascii-atlas",
@@ -333,7 +344,7 @@ const TABLE: [Row; 15] = [
         rung: "uncompressed",
         accepted: LOSSLESS,
         rejected: &[],
-        bytes: 73691,
+        bytes: 73703,
     },
     Row {
         fixture: "inter-ascii-atlas",
@@ -341,7 +352,7 @@ const TABLE: [Row; 15] = [
         rung: "uncompressed",
         accepted: LOSSLESS,
         rejected: &[],
-        bytes: 73691,
+        bytes: 73703,
     },
     Row {
         fixture: "arabic-atlas",
@@ -357,7 +368,7 @@ const TABLE: [Row; 15] = [
         rung: "uncompressed",
         accepted: LOSSLESS,
         rejected: &[],
-        bytes: 98526,
+        bytes: 98538,
     },
     Row {
         fixture: "arabic-atlas",
@@ -365,7 +376,7 @@ const TABLE: [Row; 15] = [
         rung: "uncompressed",
         accepted: LOSSLESS,
         rejected: &[],
-        bytes: 98526,
+        bytes: 98538,
     },
 ];
 

@@ -24,6 +24,10 @@ dashbuf = { workspace = true }
 dashpack-astcenc-sys = { workspace = true }
 # Zstd supercompression for the KTX2 level payloads (story #431).
 zstd = { workspace = true }
+# Content addressing. A packed asset's canonical identity is the BLAKE3 of its
+# canonical payload, computed here rather than taken from the caller, so a
+# derivation cannot be bound to an identity it does not belong to (story #434).
+blake3 = { workspace = true }
 
 [dev-dependencies]
 # An independently written KTX2 parser, used only to read back what
@@ -34,3 +38,4 @@ ktx2 = { workspace = true }
 # dependency for now: the packer's canonical-to-RGBA ingest is a later story,
 # and `dashpack::profile` takes texels rather than encoded bytes (story #432).
 png = { workspace = true }
+
