@@ -40,6 +40,25 @@ The launch fleet:
 | 1-2  | committed          | Adreno (Qualcomm) and PowerVR/IMG (Imagination) | SA8255, SA7255, Renesas R-Car | ASTC 4x4      | ASTC 6x6/8x8  | EAC-R11              | `astcenc`, version-pinned                 |
 | 3    | proposed ("maybe") | Ampere/Blackwell (NVIDIA, desktop architecture) | DRIVE Orin, DRIVE Thor        | BC7           | BC1           | BC4                  | not yet chosen — gated on the probe below |
 
+**Two clarifications from story #432**, which built the band contracts this
+table's columns describe (`asset-quality-profile-bands.md`):
+
+- The **HiFi and Lite encoding columns are the expected outcome of a band,
+  not a rule the packer applies.** A profile supplies a band; the asset
+  class supplies the ladder; the measurement chooses the footprint. On the
+  committed assets HiFi measures to 6x6, 8x8 and uncompressed, and never to
+  4x4 — so read those two columns as "typically", which is how the design
+  capture worded them.
+- The **`Field (SDF) encoding` column contradicts the fields-never-lossy
+  rule and is unresolved.** EAC-R11 and BC4 are lossy block formats, while
+  `asset-quality-profile-bands.md` gives a distance field no lossy rung
+  under any profile, on measured evidence: at 4x4, the finest ASTC rung, the
+  committed MSDF atlases still fail both bands. Until the repository owner
+  settles it, **the strict reading holds and these two cells are not
+  implemented** — its failure mode is a size regression rather than a silent
+  quality loss. Issue #453 owns the EAC-R11 encoder and carries the
+  question.
+
 Waves 1 and 2 collapse into one table row because they are one bank: ASTC
 is a vendor-neutral bitstream, so Adreno and PowerVR/IMG decode the
 identical byte stream. The packer runs once per profile for the whole

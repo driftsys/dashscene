@@ -41,7 +41,9 @@
 //! across the rest of epic #345.
 
 pub mod astc;
+pub mod band;
 pub mod ktx2;
+pub mod profile;
 
 /// The packer's version, as reported by the `dashpack` binary.
 pub fn version() -> &'static str {

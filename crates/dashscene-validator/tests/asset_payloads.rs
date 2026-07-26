@@ -49,6 +49,7 @@ fn document_with(entries: &[Entry]) -> Vec<u8> {
                 format: entry.format,
                 width: entry.width,
                 height: entry.height,
+                kind: dashbuf::AssetKind::Image,
             },
         ));
     }

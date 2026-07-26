@@ -79,6 +79,7 @@ fn png_asset(b: &mut FlatBufferBuilder<'static>) -> WIPOffset<AssetEntry<'static
             format: ImageFormat::Png,
             width: 4,
             height: 4,
+            kind: dashbuf::AssetKind::Image,
         },
     )
 }

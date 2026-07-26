@@ -242,8 +242,10 @@ dependencies = [
 name = "dashpack"
 version = "0.0.0"
 dependencies = [
+ "dashbuf",
  "dashpack-astcenc-sys",
  "ktx2",
+ "png",
  "zstd",
 ]
 
@@ -552,6 +554,7 @@ dependencies = [
  "dashc",
  "dashcue",
  "dashlang",
+ "dashpack",
  "dashpaint",
  "dashscene-core",
  "dashscene-engine",

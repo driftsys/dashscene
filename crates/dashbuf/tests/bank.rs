@@ -36,7 +36,7 @@ use dashbuf::container::{
     SECTION_STRIDE, SectionKind,
 };
 use dashbuf::{
-    AssetEntry, AssetEntryArgs, Document, DocumentArgs, ImageFormat, Node, NodeArgs,
+    AssetEntry, AssetEntryArgs, AssetKind, Document, DocumentArgs, ImageFormat, Node, NodeArgs,
     root_as_document,
 };
 use flatbuffers::FlatBufferBuilder;
@@ -69,6 +69,7 @@ fn ui_section(payloads: &[Vec<u8>]) -> Vec<u8> {
                 &AssetEntryArgs {
                     hash: Some(hash),
                     format: ImageFormat::Png,
+                    kind: AssetKind::Image,
                     width: 16 + index as u32,
                     height: 32 + index as u32,
                 },

@@ -122,6 +122,12 @@ zstd = { version = "0.13", default-features = false }
 # dev-dependency only: it reads back what dashpack's own writer emits, and
 # never appears on the emit path (story #431).
 ktx2 = "0.5"
+# Pure-Rust PNG decoding, the image-rs family member the asset-pipeline plan
+# names for the packer's canonical-to-RGBA step. `dashpack` takes it as a
+# dev-dependency only for now: the band contracts are measured on the committed
+# corpus PNGs, while `dashpack::profile` itself takes decoded texels (#432).
+# Already in the tree through `image`, so no new transitive weight.
+png = "0.18"
 # Pinned exactly: golden images are bit-exact only for one exact skia
 # build (goldens/README.md); a patch release changing rasterization or
 # PNG encoding must arrive as a deliberate, re-goldened bump.
@@ -131,3 +137,19 @@ skia-safe = "=0.81.0"
 lto = true
 strip = true
 codegen-units = 1
+
+# The vendored astcenc is C++ compiled by a build script, and `cc` takes its
+# optimisation level from the cargo profile of the package it is building. Left
+# at the dev profile's `opt-level = 0` the encoder runs about eighty times
+# slower than at release — measured at 597 s against 7.5 s for one band sweep —
+# which is the difference between `cargo test` taking seconds and taking ten
+# minutes, because `just test` builds the workspace at the dev profile.
+#
+# Optimising this one package under the dev profile costs nothing in
+# debuggability: the Rust side of the -sys crate is a generated FFI shim with no
+# logic to step through, and the C++ is vendored third-party source. It changes
+# no output: `crates/dashpack/tests/band_contract.rs` pins the exact measured
+# differing fractions, and both `cargo test` and `cargo test --release` have to
+# reproduce them, so a build-profile-dependent encoder would fail the suite.
+[profile.dev.package.dashpack-astcenc-sys]
+opt-level = 3

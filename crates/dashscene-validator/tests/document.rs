@@ -145,6 +145,7 @@ impl Doc {
                         format: spec.format,
                         width: spec.width,
                         height: spec.height,
+                        kind: dashbuf::AssetKind::Image,
                     },
                 )
             })

@@ -204,18 +204,40 @@ table Image {
 // entry and the blob are two places describing one asset, and that rule is what
 // keeps them from drifting apart.
 //
-// Three fields the asset-model record names are deliberately absent until they
-// have a producer and a consumer: `kind` (one variant today; it is added
-// with the packer's fields-never-lossy rule), a placeholder colour (computing
-// one needs pixel access dashc cannot have, and its consumer — placeholder
-// activation while a payload is not resident — is v1), and a flavor/locator bit
-// (every payload here is resident-raw, and the section table already says
-// where). All three are appends, which is the R7-cheap change.
+// What an asset's payload *is*, as opposed to how it is encoded. This is the
+// key the packer's hard rules read before any measurement: a distance field
+// never enters a lossy path, so the choice of encoding is settled by the kind
+// and never by a band (v0.12, story #432,
+// docs/decisions/asset-quality-profile-bands.md).
+//
+// `Image` is value 0 on purpose. Every entry written before this field existed
+// is an image, so the default reading is the correct one, and a writer that does
+// not set the field writes nothing — which is why appending it moved no
+// committed `.dsb` byte.
+enum AssetKind : uint8 {
+  // Displayed picture data: an image fill's PNG/JPEG/GIF payload. Lossy block
+  // encoding is admissible, subject to the profile's measured band.
+  Image = 0,
+  // A signed or multi-channel distance field — a baked vector's MSDF, a glyph
+  // atlas. Never lossy, whatever the profile
+  // (docs/decisions/baked-vector-msdf-field.md).
+  DistanceField = 1,
+}
+
+// Two fields the asset-model record names are deliberately absent until they
+// have a producer and a consumer: a placeholder colour (computing one needs
+// pixel access dashc cannot have, and its consumer — placeholder activation
+// while a payload is not resident — is v1), and a flavor/locator bit (every
+// payload here is resident-raw, and the section table already says where). Both
+// are appends, which is the R7-cheap change — the same change `kind` was.
 table AssetEntry {
   hash: [ubyte] (required);
   format: ImageFormat;
   width: uint32;
   height: uint32;
+  // Appended at v0.12. Defaults to `Image`, so `flatc` omits it for every
+  // entry dashc writes today and the committed goldens are unmoved.
+  kind: AssetKind;
 }
 
 // A drop or inner shadow effect (v0.8, story #45,

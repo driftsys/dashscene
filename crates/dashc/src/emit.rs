@@ -29,8 +29,8 @@ use dashpaint::{BlurKind, PaintEntry, PaintKind, ShadowKind};
 use flatbuffers::{FlatBufferBuilder, UnionWIPOffset, WIPOffset};
 
 use crate::document::{
-    Asset, AxisSizing, Binding, BindingChannel, BindingTransform, CrossAxisAlign, Document,
-    EdgeInsets, GridTrack, LayoutMode, MainAxisAlign, Node, Paint, SignalDecl, TextAlign,
+    Asset, AssetKind, AxisSizing, Binding, BindingChannel, BindingTransform, CrossAxisAlign,
+    Document, EdgeInsets, GridTrack, LayoutMode, MainAxisAlign, Node, Paint, SignalDecl, TextAlign,
     TextAlignV, TextStyle, VectorAtlas, VectorShape,
 };
 
@@ -444,6 +444,13 @@ fn build_asset<'a>(b: &mut FlatBufferBuilder<'a>, asset: &Asset) -> WIPOffset<As
                 dashpaint::ImageFormat::Png => dashbuf::ImageFormat::Png,
                 dashpaint::ImageFormat::Jpeg => dashbuf::ImageFormat::Jpeg,
                 dashpaint::ImageFormat::Gif => dashbuf::ImageFormat::Gif,
+            },
+            // `Image` is the schema default, so an image asset writes no slot
+            // for this field and the committed `.dsb` bytes are unmoved by its
+            // arrival (story #432).
+            kind: match asset.kind {
+                AssetKind::Image => dashbuf::AssetKind::Image,
+                AssetKind::DistanceField => dashbuf::AssetKind::DistanceField,
             },
             width: asset.width,
             height: asset.height,

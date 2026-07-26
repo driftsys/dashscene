@@ -25,6 +25,12 @@ dashscene-typeset.workspace = true
 [dev-dependencies]
 dashlang.workspace = true
 tempfile.workspace = true
+# The packer's per-asset band oracle. Test-only, and here for one reason: the
+# weld test (`tests/asset_band_weld.rs`) runs one image pair through both
+# `goldens::oracle::diff` and `dashpack::band::diff` and asserts they report the
+# same three numbers, so the pack bands are the same vocabulary as the render
+# bands rather than a second one that drifted (story #432).
+dashpack.workspace = true
 dashcue.workspace = true
 # The render_dsb unit test and the v0.7 text-lowering golden (#160) drive
 # `dashc`'s compile_figma to build a `.dsb` in-process; the `dashscene-validator`
