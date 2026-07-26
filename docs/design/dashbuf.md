@@ -118,7 +118,7 @@ is enforced by a frozen byte fixture, not by convention alone — see
 
 ## Public interface
 
-The crate has two surfaces. The schema types below are generated from
+The crate has three surfaces. The schema types below are generated from
 `crates/dashbuf/schema/dashbuf.fbs`. Alongside them, `dashbuf::container`
 is the hand-written `.dsb` file envelope — the sectioned container that
 carries one or more of these flatbuffers plus raw payload blobs in one
@@ -126,6 +126,13 @@ file. It is deliberately not a flatbuffer, because it is validated
 before any parser is trusted; its byte layout, alignment policy, and
 loading model are in `docs/design/dsb-container-format.md`, and the
 reasoning behind it in `docs/decisions/dsb-sectioned-container.md`.
+
+The third is `dashbuf::bank`: the assembly that fills a container, and
+the `ColdBank` that says which payloads go in it. `container` places
+bytes; `bank` decides which bytes a given quality profile places. It is
+a separate module because it parses the ui section — which `container`,
+standing outside every parser by design, must not
+(`docs/design/dsb-container-format.md`, "Assembly").
 
 All types below are generated from the schema:
 

@@ -33,6 +33,14 @@ asset entry, a net 36 bytes smaller, and a 93-byte blob section appeared at the
 page-aligned hot/cold boundary. The other six are byte-identical, because a
 document with no assets has no boundary and writes no blob.
 
+Cold-bank assembly (v0.12, story #433) then moved none of them. RAW is the
+null binding — the identity map — so a RAW assembly has nothing to derive and
+therefore nothing to move.
+`goldens/tooling/tests/cold_bank_assembly.rs` asserts exactly that: it takes
+each golden here apart into its ui section and its payloads, reassembles it
+under a RAW bank, and requires the result to equal the committed file byte for
+byte. A failure there is an assembly bug, not a golden to regenerate.
+
 That boundary is why `v03-paint.dsb` roughly doubled in size, from 2196 to 4189
 bytes: nearly all of the growth is the page alignment before the first cold
 byte. For a 2 KB document holding one 93-byte image, the padding dominates. For
