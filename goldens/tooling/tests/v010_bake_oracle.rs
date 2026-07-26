@@ -42,9 +42,9 @@
 //! them escalates; the ladder is exercised only by the barcode refusal.
 
 use dashbuf::{
-    AtlasRect, Color, Document, DocumentArgs, Fill, FixedSizeLayout, Image, ImageArgs, ImageFormat,
-    Node, NodeArgs, Paint, PaintArgs, PlaneBounds, SolidFill, SolidFillArgs, VectorAtlas,
-    VectorAtlasArgs, VectorShape, VectorShapeArgs, root_as_document,
+    AssetEntry, AssetEntryArgs, AtlasRect, Color, Document, DocumentArgs, Fill, FixedSizeLayout,
+    ImageFormat, Node, NodeArgs, Paint, PaintArgs, PlaneBounds, SolidFill, SolidFillArgs,
+    VectorAtlas, VectorAtlasArgs, VectorShape, VectorShapeArgs, root_as_document,
 };
 use dashc_wasm::figma::vector_field::{
     DEFAULT_DISTANCE_RANGE, DEFAULT_PX_PER_EM, VectorAtlasBaker, VectorPath, WindingRule,
@@ -163,12 +163,18 @@ fn render_bake(path: &str, winding: WindingRule, px_per_em: f64) -> Vec<u8> {
     let pb = placement.plane_bounds;
 
     let mut b = FlatBufferBuilder::new();
-    let bytes = b.create_vector(&out.image_png);
-    let image = Image::create(
+    // Since story #107 the document carries asset identity and metadata, never
+    // bytes: the hash is a filler (this test hands the real PNG bytes to
+    // `load_document` directly below, bypassing the hash-resolution
+    // `dashbuf::open` does for a real file), and the extent is the atlas's own.
+    let hash = b.create_vector(&[7u8; 32]);
+    let image = AssetEntry::create(
         &mut b,
-        &ImageArgs {
+        &AssetEntryArgs {
+            hash: Some(hash),
             format: ImageFormat::Png,
-            bytes: Some(bytes),
+            width: out.width,
+            height: out.height,
         },
     );
     let atlas = VectorAtlas::create(
@@ -216,7 +222,7 @@ fn render_bake(path: &str, winding: WindingRule, px_per_em: f64) -> Vec<u8> {
         },
     );
     let nodes = b.create_vector(&[node]);
-    let images = b.create_vector(&[image]);
+    let assets = b.create_vector(&[image]);
     let paints = b.create_vector(&[paint]);
     let vector_atlases = b.create_vector(&[atlas]);
     let vector_shapes = b.create_vector(&[shape]);
@@ -224,7 +230,7 @@ fn render_bake(path: &str, winding: WindingRule, px_per_em: f64) -> Vec<u8> {
         &mut b,
         &DocumentArgs {
             nodes: Some(nodes),
-            images: Some(images),
+            assets: Some(assets),
             paints: Some(paints),
             vector_atlases: Some(vector_atlases),
             vector_shapes: Some(vector_shapes),
@@ -236,7 +242,10 @@ fn render_bake(path: &str, winding: WindingRule, px_per_em: f64) -> Vec<u8> {
 
     let document = root_as_document(&dsb).expect("the hand-built .dsb is valid");
     let mut arena = Arena::new();
-    load_document(&document, &mut arena);
+    // The one asset entry resolves to the atlas PNG this function baked —
+    // `load_document`'s payload binding, done by hand here since this document
+    // is a hand-built section payload, not a `dashbuf::open`-read file.
+    load_document(&document, &[out.image_png.as_slice()], &mut arena);
     let scene = arena.committed();
     let mut painter = SkiaPainter::new(CANVAS, CANVAS);
     painter.paint(

@@ -114,7 +114,8 @@ All types and the trait live in `crates/dashpaint/src/lib.rs`:
   (the lookup painters use — panics on an out-of-range index), `len`,
   `is_empty`.
 - `ImageTable` / `ImageAsset` / `ImageFormat` — encoded, format-tagged
-  image assets (mirrors `dashbuf`'s `Document.images`), indexed by
+  image assets (the runtime side of `dashbuf`'s `Document.assets`, whose
+  payloads the loader bound from the file's blob sections), indexed by
   `PaintKind::Image`'s `image` field; same push/get/resolve contract as
   `PaintTable`. See
   `docs/decisions/image-assets-cross-boundary-b.md` (story #14).

@@ -34,7 +34,8 @@ is enforced by a frozen byte fixture, not by convention alone — see
 ## Schema shape
 
 - `Document` is the `root_type`: `nodes: [Node]` plus the v0.3
-  `paints: [Paint]` pool and `images: [Image]` assets.
+  `paints: [Paint]` pool and, since v0.11, the content-addressed
+  `assets: [AssetEntry]` table.
 - `Node`s are stored as a flattened DFS array — array index doubles as
   the rect-table index consumed at boundary B
   (`docs/archive/2026-07-14-design-1-seed.md` §5).
@@ -62,9 +63,19 @@ is enforced by a frozen byte fixture, not by convention alone — see
   `paint_entry` is set it supersedes `paint`. See
   `docs/decisions/document-paint-pool-and-legacy-paint-field.md` for
   why both exist and the condition under which `paint` is removed.
-- `Document.images: [Image]` holds embedded encoded image bytes;
-  `ImageFill.image` indexes into it. Decoded pixel data crossing boundary
-  B is out of scope here — see "Open for story #14" below.
+- `Document.assets: [AssetEntry]` holds asset _identity and metadata_ —
+  a BLAKE3-256 content hash, the container format, and the intrinsic
+  extent — and never bytes; `ImageFill.image` and `VectorAtlas.image`
+  index into it (v0.11, story #107,
+  `docs/decisions/asset-model-content-addressed-blobs.md`). The payloads
+  live in blob sections of the file's envelope, resolved by hash through
+  the null binding (`docs/design/dsb-container-format.md`), and
+  `dashbuf::open` returns the document and its bound payloads together.
+  The v0.3 `images: [Image]` pool that carried bytes inline is
+  **deprecated, not deleted**: deleting a field shifts every later field's
+  vtable slot and breaks every `.dsb` already written. Decoded pixel data
+  crossing boundary B is out of scope here — see "Open for story #14"
+  below.
 - Text (v0.5, story #26) mirrors the same dedup-pool pattern as paint —
   `docs/archive/2026-07-14-design-1-seed.md` §5's document table lists
   a `text` row: "strings + style
@@ -133,7 +144,7 @@ All types below are generated from the schema:
 - `StrokeAlign` (`uint8` enum) — `Inside`, `Center`, `Outside`.
 - `ScaleMode` (`uint8` enum) — `Fill`, `Fit`, `Crop`, `Tile` (Figma
   image-fill scale modes).
-- `ImageFormat` (`uint8` enum) — `Png` (only format for now).
+- `ImageFormat` (`uint8` enum) — `Png`, `Jpeg`, `Gif` (story #342).
 - `Gradient` (table) — `kind: GradientKind`, `handle_origin`,
   `handle_primary`, `handle_secondary: Vec2`, `stops: [GradientStop]`;
   handles and stops are `(required)`, so the flatbuffer verifier itself
@@ -141,7 +152,12 @@ All types below are generated from the schema:
   model (three named normalized handle positions) serves all four
   gradient kinds — Figma's own `gradientHandlePositions` model; see
   `docs/decisions/paint-entry-composition.md`'s sub-decisions.
-- `ImageFill` (table) — `image: uint32` (index into `Document.images`),
+- `AssetEntry` (table) — `hash: [ubyte] (required)` (BLAKE3-256 of the
+  canonical payload, and the key the null binding resolves through),
+  `format: ImageFormat`, `width`/`height: uint32` (the intrinsic extent
+  `dashc`'s image gate read from the payload's header). No bytes: P1
+  applied to assets.
+- `ImageFill` (table) — `image: uint32` (index into `Document.assets`),
   `scale_mode: ScaleMode`, `transform: Mat23` (normalized image-space
   crop transform, Figma's imageTransform; identity when absent),
   `tile_scale: float32 = 1.0` (Figma's scalingFactor; story #14).

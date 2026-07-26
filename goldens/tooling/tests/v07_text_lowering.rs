@@ -27,7 +27,6 @@
 
 use std::collections::BTreeMap;
 
-use dashbuf::root_as_document;
 use dashc_wasm::compile_figma;
 use dashpaint::{AtlasIndex, Color, GlyphQuad, GlyphRun, GlyphRunTable, ImageTable, Painter};
 use dashscene_core::{Arena, NodeId, load_document};
@@ -81,11 +80,10 @@ fn lower_and_solve(ts: &mut Typesetter) -> (Arena, NodeId) {
     let (bytes, report) =
         compile_figma(HUG_IN_FILL, Profile::Core, &BTreeMap::new()).expect("the fixture compiles");
     assert!(report.is_empty(), "the raw fixture lowers clean: {report}");
-    let document = root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
-        .expect("a valid buffer");
+    let (document, payloads) = dashbuf::open(&bytes).expect("a valid .dsb file");
 
     let mut arena = Arena::new();
-    load_document(&document, &mut arena);
+    load_document(&document, &payloads, &mut arena);
     // `load_document` commits with the fixed solver, which measures a text
     // node to zero; an empty transaction re-committed through a
     // typesetter-backed solver performs a full solve with the measure seam.

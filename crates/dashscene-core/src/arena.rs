@@ -542,7 +542,8 @@ pub struct Arena {
     nodes: Vec<NodeData>,
     /// The image assets `PaintKind::Image` fills reference by index.
     ///
-    /// The arena owns them because a `.dsb` carries them (`Document.images`),
+    /// The arena owns them because a `.dsb` names them (`Document.assets`, whose
+    /// payloads the loader binds from the file's blob sections),
     /// so a loaded scene must be self-contained — a painter is handed
     /// `scene.images()` alongside `scene.paints()` and `scene.clips()`, and
     /// there is nowhere else for a loaded document's assets to live.

@@ -4,10 +4,10 @@
 
 use dashbuf::NO_PAINT;
 use dashbuf::{
-    Color, Document, DocumentArgs, Fill, FillLayer, FillLayerArgs, Gradient, GradientArgs,
-    GradientKind, GradientStop, Image, ImageArgs, ImageFill, ImageFillArgs, ImageFormat, Mat23,
-    Node, NodeArgs, Paint, PaintArgs, ScaleMode, SolidFill, SolidFillArgs, Stroke, StrokeAlign,
-    StrokeArgs, Vec2, root_as_document,
+    AssetEntry, AssetEntryArgs, Color, Document, DocumentArgs, Fill, FillLayer, FillLayerArgs,
+    Gradient, GradientArgs, GradientKind, GradientStop, ImageFill, ImageFillArgs, ImageFormat,
+    Mat23, Node, NodeArgs, Paint, PaintArgs, ScaleMode, SolidFill, SolidFillArgs, Stroke,
+    StrokeAlign, StrokeArgs, Vec2, root_as_document,
 };
 use flatbuffers::{FlatBufferBuilder, WIPOffset};
 
@@ -19,22 +19,22 @@ fn half_blue() -> Color {
     Color::new(0.0, 0.0, 1.0, 0.5)
 }
 
-/// Finishes a document holding the given node, paint pool, and image
-/// assets, and returns the serialized buffer bytes.
+/// Finishes a document holding the given node, paint pool, and asset-table
+/// entries, and returns the serialized buffer bytes.
 fn finish_document(
     mut builder: FlatBufferBuilder<'static>,
     node: WIPOffset<Node<'static>>,
     paints: &[WIPOffset<Paint<'static>>],
-    images: &[WIPOffset<Image<'static>>],
+    assets: &[WIPOffset<AssetEntry<'static>>],
 ) -> Vec<u8> {
     let nodes = builder.create_vector(&[node]);
-    let images = (!images.is_empty()).then(|| builder.create_vector(images));
+    let assets = (!assets.is_empty()).then(|| builder.create_vector(assets));
     let paints = (!paints.is_empty()).then(|| builder.create_vector(paints));
     let document = Document::create(
         &mut builder,
         &DocumentArgs {
             nodes: Some(nodes),
-            images,
+            assets,
             paints,
             ..Default::default()
         },
@@ -111,23 +111,30 @@ fn gradient_fill_round_trips_all_four_kinds() {
 fn image_fill_round_trips_every_scale_mode() {
     for &scale_mode in ScaleMode::ENUM_VALUES {
         let mut builder = FlatBufferBuilder::new();
-        // Two assets, and the fill references index 1: a non-default
-        // index, so a fill whose `image` field never gets written
-        // (flatbuffers default 0) fails the assertion below.
-        let decoy_bytes = builder.create_vector(&[9u8]);
-        let decoy = Image::create(
+        // Two asset-table entries, and the fill references index 1: a
+        // non-default index, so a fill whose `image` field never gets
+        // written (flatbuffers default 0) fails the assertion below. Since
+        // story #107 the document carries asset identity and metadata, not
+        // bytes, so the two entries are distinguished by hash rather than
+        // by payload.
+        let decoy_hash = builder.create_vector(&[7u8; 32]);
+        let decoy = AssetEntry::create(
             &mut builder,
-            &ImageArgs {
+            &AssetEntryArgs {
+                hash: Some(decoy_hash),
                 format: ImageFormat::Png,
-                bytes: Some(decoy_bytes),
+                width: 1,
+                height: 1,
             },
         );
-        let real_bytes = builder.create_vector(&[1u8, 2, 3, 4]);
-        let real = Image::create(
+        let real_hash = builder.create_vector(&[8u8; 32]);
+        let real = AssetEntry::create(
             &mut builder,
-            &ImageArgs {
+            &AssetEntryArgs {
+                hash: Some(real_hash),
                 format: ImageFormat::Png,
-                bytes: Some(real_bytes),
+                width: 4,
+                height: 4,
             },
         );
         let transform = Mat23::new(1.0, 0.0, 0.0, 1.0, 0.25, 0.5);
@@ -170,12 +177,12 @@ fn image_fill_round_trips_every_scale_mode() {
         );
         assert_eq!((transform.tx(), transform.ty()), (0.25, 0.5));
         assert_eq!(fill.tile_scale(), 2.0);
-        let image = document
-            .images()
-            .expect("images present")
+        let asset = document
+            .assets()
+            .expect("assets present")
             .get(fill.image() as usize);
-        assert_eq!(image.format(), ImageFormat::Png);
-        assert_eq!(image.bytes().expect("bytes present").bytes(), [1, 2, 3, 4]);
+        assert_eq!(asset.format(), ImageFormat::Png);
+        assert_eq!(asset.hash().bytes(), [8u8; 32]);
     }
 }
 

@@ -95,10 +95,13 @@ decode already sits behind.
 - A real Figma file with a mistagged asset now fails at compile with a message
   naming the `imageRef`, instead of at paint time inside a decoder.
 - The intrinsic width and height the parse recovers have one consumer today, the
-  zero-dimension diagnostic. Story #107 makes them an `AssetEntry`'s metadata
-  and adds a validator rule that the recorded size agrees with the payload's own
-  header. There is one walk over image bytes in the compiler, and #107 calls
-  this one rather than adding a second.
+  zero-dimension diagnostic. Story #107 makes them an `AssetEntry`'s metadata.
+  It does **not** add a load-gate rule that the recorded size agrees with the
+  payload's own header: that check needs a header parser in a crate published
+  before `dashc`, which is a crate-boundary decision rather than a rule to add,
+  and debt #416 carries it. The two cannot disagree today, because one code path
+  writes both from one `identify` call. There is one walk over image bytes in the
+  compiler, and #107 calls this one rather than adding a second.
 - One path into `Document.images` is deliberately not gated: the MSDF vector
   atlas PNG the compiler generates itself. Its format is asserted by nobody, so
   there is no tag to verify — running the gate there would test our own encoder.

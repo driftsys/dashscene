@@ -10,12 +10,12 @@
 use std::collections::HashMap;
 
 use dashbuf::{
-    AtlasRect, Binding as FbBinding, BindingArgs as FbBindingArgs, Blur as FbBlur, BlurArgs,
-    BlurKind as FbBlurKind, Color, CornerRadii, Document as FbDocument,
+    AssetEntry, AssetEntryArgs, AtlasRect, Binding as FbBinding, BindingArgs as FbBindingArgs,
+    Blur as FbBlur, BlurArgs, BlurKind as FbBlurKind, Color, CornerRadii, Document as FbDocument,
     DocumentArgs as FbDocumentArgs, EdgeInsets as FbEdgeInsets, FillLayer as FbFillLayer,
     FillLayerArgs as FbFillLayerArgs, FixedSizeLayout, Gradient, GradientArgs, GradientStop,
-    GridTrack as FbGridTrack, GridTrackArgs as FbGridTrackArgs, Image, ImageArgs, ImageFill,
-    ImageFillArgs, LayoutConstraints as FbLayoutConstraints, LayoutConstraintsArgs,
+    GridTrack as FbGridTrack, GridTrackArgs as FbGridTrackArgs, ImageFill, ImageFillArgs,
+    LayoutConstraints as FbLayoutConstraints, LayoutConstraintsArgs,
     LayoutContainer as FbLayoutContainer, LayoutContainerArgs, Mat23, NO_FIELD, NO_PAINT,
     NO_PARENT, NO_TEXT, NO_TEXT_STYLE, Node as FbNode, NodeArgs as FbNodeArgs, Paint as BufPaint,
     PaintArgs, PlaneBounds, Shadow as FbShadow, ShadowArgs, ShadowKind as FbShadowKind,
@@ -25,13 +25,13 @@ use dashbuf::{
     TransformScaleArgs, Vec2, VectorAtlas as FbVectorAtlas, VectorAtlasArgs,
     VectorShape as FbVectorShape, VectorShapeArgs,
 };
-use dashpaint::{BlurKind, ImageAsset, PaintEntry, PaintKind, ShadowKind};
+use dashpaint::{BlurKind, PaintEntry, PaintKind, ShadowKind};
 use flatbuffers::{FlatBufferBuilder, UnionWIPOffset, WIPOffset};
 
 use crate::document::{
-    AxisSizing, Binding, BindingChannel, BindingTransform, CrossAxisAlign, Document, EdgeInsets,
-    GridTrack, LayoutMode, MainAxisAlign, Node, Paint, SignalDecl, TextAlign, TextAlignV,
-    TextStyle, VectorAtlas, VectorShape,
+    Asset, AxisSizing, Binding, BindingChannel, BindingTransform, CrossAxisAlign, Document,
+    EdgeInsets, GridTrack, LayoutMode, MainAxisAlign, Node, Paint, SignalDecl, TextAlign,
+    TextAlignV, TextStyle, VectorAtlas, VectorShape,
 };
 
 /// Serializes a document to `.dsb` bytes.
@@ -85,7 +85,8 @@ pub fn emit(doc: &Document) -> Vec<u8> {
         }));
     }
 
-    let images: Vec<WIPOffset<Image>> = doc.images.iter().map(|a| build_image(&mut b, a)).collect();
+    let assets: Vec<WIPOffset<AssetEntry>> =
+        doc.assets.iter().map(|a| build_asset(&mut b, a)).collect();
     let paints: Vec<WIPOffset<BufPaint>> = pool.iter().map(|p| build_paint(&mut b, p)).collect();
     let string_offsets: Vec<WIPOffset<&str>> = strings.iter().map(|s| b.create_string(s)).collect();
     let style_offsets: Vec<WIPOffset<FbTextStyle>> =
@@ -123,7 +124,7 @@ pub fn emit(doc: &Document) -> Vec<u8> {
         .collect();
 
     let nodes = b.create_vector(&nodes);
-    let images = (!images.is_empty()).then(|| b.create_vector(&images));
+    let assets = (!assets.is_empty()).then(|| b.create_vector(&assets));
     let paints = (!paints.is_empty()).then(|| b.create_vector(&paints));
     let strings = (!string_offsets.is_empty()).then(|| b.create_vector(&string_offsets));
     let text_styles = (!style_offsets.is_empty()).then(|| b.create_vector(&style_offsets));
@@ -138,7 +139,7 @@ pub fn emit(doc: &Document) -> Vec<u8> {
         &mut b,
         &FbDocumentArgs {
             nodes: Some(nodes),
-            images,
+            assets,
             paints,
             strings,
             text_styles,
@@ -430,17 +431,22 @@ fn build_grid_tracks<'a>(
     Some(b.create_vector(&offsets))
 }
 
-fn build_image<'a>(b: &mut FlatBufferBuilder<'a>, asset: &ImageAsset) -> WIPOffset<Image<'a>> {
-    let bytes = b.create_vector(&asset.bytes);
-    Image::create(
+/// Builds one `AssetEntry`: the payload's identity and the metadata a runtime
+/// needs before the payload is resident. The bytes themselves are not here —
+/// they leave as a blob section of the file's envelope (story #107).
+fn build_asset<'a>(b: &mut FlatBufferBuilder<'a>, asset: &Asset) -> WIPOffset<AssetEntry<'a>> {
+    let hash = b.create_vector(&asset.hash());
+    AssetEntry::create(
         b,
-        &ImageArgs {
+        &AssetEntryArgs {
+            hash: Some(hash),
             format: match asset.format {
                 dashpaint::ImageFormat::Png => dashbuf::ImageFormat::Png,
                 dashpaint::ImageFormat::Jpeg => dashbuf::ImageFormat::Jpeg,
                 dashpaint::ImageFormat::Gif => dashbuf::ImageFormat::Gif,
             },
-            bytes: Some(bytes),
+            width: asset.width,
+            height: asset.height,
         },
     )
 }

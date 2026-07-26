@@ -218,7 +218,11 @@ into the records below. Per-story decisions land here directly:
   — assets are content-addressed raw blobs referenced from a hot
   `AssetTable`; the ui document carries identity and metadata, never
   bytes; supersedes v0.3's inline `Document.images` (design session,
-  2026-07-12).
+  2026-07-12). **As built** at v0.11 (story #107): BLAKE3-256 resolves
+  through a binding whose v0.11 form is the identity map, `Document.images`
+  is deprecated rather than deleted so no field id shifts, and three of the
+  five named entry fields are deferred until each has a producer and a
+  consumer.
 - [id-model-strings-compile-to-indices.md](id-model-strings-compile-to-indices.md)
   — source strings compile to dense indices; content hashes for
   assets, session handles for mutation; opt-in exports table (design

@@ -183,7 +183,7 @@ has no approximation to degrade to, so there is nothing for
 `EmitPolicy::Partial` to soften. The importer's own `isPng`/`isJpeg`/`isGif` stay
 as a courtesy pre-flight.
 
-One path into `Document.images` is exempt, and says so at its call site: the
+One path into the asset table is exempt, and says so at its call site: the
 MSDF vector atlas PNG the compiler generates itself. Nobody asserts its format,
 so there is no tag to verify.
 

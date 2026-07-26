@@ -8,8 +8,8 @@
 //! from the producing bug, at paint time.
 
 use dashbuf::{
-    Color, CornerRadii, Document, DocumentArgs, Fill, FillLayer, FillLayerArgs, Gradient,
-    GradientArgs, GradientKind, GradientStop, Image, ImageArgs, ImageFill, ImageFillArgs,
+    AssetEntry, AssetEntryArgs, Color, CornerRadii, Document, DocumentArgs, Fill, FillLayer,
+    FillLayerArgs, Gradient, GradientArgs, GradientKind, GradientStop, ImageFill, ImageFillArgs,
     ImageFormat, NO_PAINT, Node, NodeArgs, Paint, PaintArgs, ScaleMode, SolidFill, SolidFillArgs,
     Stroke, StrokeAlign, StrokeArgs, TextStyle, TextStyleArgs, VariantMember, VariantMemberArgs,
     VariantOverride, VariantOverrideArgs, VariantPropValue, VariantSet, VariantSetArgs,
@@ -32,10 +32,15 @@ struct Doc {
     text_styles: usize,
 }
 
+/// Since story #107 the document carries asset identity and metadata, never
+/// bytes (P1 applied to assets) — `hash`/`width`/`height` stand in for the
+/// old `Image.bytes` payload the pre-#107 pool carried.
 #[derive(Clone)]
 struct ImageSpec {
+    hash: [u8; 32],
     format: ImageFormat,
-    byte_count: usize,
+    width: u32,
+    height: u32,
 }
 
 #[derive(Default, Clone)]
@@ -72,20 +77,27 @@ impl Doc {
         self
     }
 
-    /// `n` well-formed image assets.
+    /// `n` well-formed asset-table entries, each with a distinct filler hash
+    /// — a document-level test does not care about the payload, only that
+    /// each entry is self-consistent (a 32-byte hash, a non-zero extent).
     fn images(mut self, n: usize) -> Self {
-        self.images.extend((0..n).map(|_| ImageSpec {
+        let start = self.images.len();
+        self.images.extend((0..n).map(|i| ImageSpec {
+            hash: [(start + i) as u8 + 7; 32],
             format: ImageFormat::Png,
-            byte_count: 1,
+            width: 4,
+            height: 4,
         }));
         self
     }
 
-    /// One asset whose `bytes` vector is present but empty.
-    fn empty_image(mut self) -> Self {
+    /// One asset-table entry whose intrinsic extent is zero on both axes.
+    fn zero_extent_image(mut self) -> Self {
         self.images.push(ImageSpec {
+            hash: [9u8; 32],
             format: ImageFormat::Png,
-            byte_count: 0,
+            width: 0,
+            height: 0,
         });
         self
     }
@@ -94,8 +106,10 @@ impl Doc {
     /// know.
     fn image_with_format(mut self, format: ImageFormat) -> Self {
         self.images.push(ImageSpec {
+            hash: [10u8; 32],
             format,
-            byte_count: 1,
+            width: 4,
+            height: 4,
         });
         self
     }
@@ -119,16 +133,18 @@ impl Doc {
             .map(|spec| build_paint(&mut b, spec))
             .collect();
 
-        let images: Vec<WIPOffset<Image>> = self
+        let assets: Vec<WIPOffset<AssetEntry>> = self
             .images
             .iter()
             .map(|spec| {
-                let bytes = b.create_vector(&vec![0u8; spec.byte_count]);
-                Image::create(
+                let hash = b.create_vector(&spec.hash);
+                AssetEntry::create(
                     &mut b,
-                    &ImageArgs {
+                    &AssetEntryArgs {
+                        hash: Some(hash),
                         format: spec.format,
-                        bytes: Some(bytes),
+                        width: spec.width,
+                        height: spec.height,
                     },
                 )
             })
@@ -185,7 +201,7 @@ impl Doc {
 
         let nodes = b.create_vector(&nodes);
         let paints = (!paints.is_empty()).then(|| b.create_vector(&paints));
-        let images = (!images.is_empty()).then(|| b.create_vector(&images));
+        let assets = (!assets.is_empty()).then(|| b.create_vector(&assets));
         let strings = (!strings.is_empty()).then(|| b.create_vector(&strings));
         let text_styles = (!text_styles.is_empty()).then(|| b.create_vector(&text_styles));
 
@@ -193,7 +209,7 @@ impl Doc {
             &mut b,
             &DocumentArgs {
                 nodes: Some(nodes),
-                images,
+                assets,
                 paints,
                 strings,
                 text_styles,
@@ -737,11 +753,20 @@ fn a_pool_diagnostic_points_at_the_pool_entry_not_a_node() {
 }
 
 #[test]
-fn an_image_asset_with_no_bytes_is_named() {
-    // The painter decodes an asset behind `.expect("image asset decodes
-    // (validated upstream, P4)")`. Reading the asset table only for its
-    // length — which is all the index rules need — would leave that expect
-    // with no upstream.
+fn an_asset_with_zero_extent_is_named() {
+    // Since story #107 the document carries asset identity and metadata,
+    // never bytes (P1 applied to assets), so the document gate can no
+    // longer see "no bytes" at all — the bytes live in a blob section this
+    // gate does not read. That check now lives on the scene's `ImageTable`,
+    // which does carry bytes once a payload is resolved
+    // (`crates/dashscene-validator/tests/scene.rs`'s identically-named
+    // `an_image_asset_with_no_bytes_is_named`, unaffected by this
+    // migration).
+    //
+    // What the document gate checks instead is that the entry is
+    // self-consistent before any payload is resident: a non-zero intrinsic
+    // extent, so layout and first paint have something to measure against
+    // rather than resolving to nothing.
     let report = check(
         Doc::default()
             .node(NodeSpec {
@@ -753,11 +778,11 @@ fn an_image_asset_with_no_bytes_is_named() {
                 index: 0,
                 scale_mode: ScaleMode::Fill,
             })
-            .empty_image(),
+            .zero_extent_image(),
     );
-    assert!(report.has(rule::IMAGE_NO_BYTES), "{report}");
+    assert!(report.has(rule::ASSET_ZERO_EXTENT), "{report}");
     assert_eq!(
-        report.find(rule::IMAGE_NO_BYTES).unwrap().at,
+        report.find(rule::ASSET_ZERO_EXTENT).unwrap().at,
         Location::ImageAsset(0)
     );
 }

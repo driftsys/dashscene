@@ -1,25 +1,25 @@
 //! The load gate for the story B1 baked-vector index chain: a paint entry's
 //! `shape_field` into the vector-shape pool, a shape's `atlas` into the atlas
-//! pool, and an atlas's `image` into the image pool. The flatbuffer verifier
+//! pool, and an atlas's `image` into the asset table. The flatbuffer verifier
 //! accepts each dangling index — it checks buffer structure, not referential
 //! integrity — so an out-of-range one would otherwise fail far from the
 //! producing bug, at paint time.
 
 use dashbuf::{
-    AtlasRect, Color, Document, DocumentArgs, Fill, Image, ImageArgs, ImageFormat, Node, NodeArgs,
-    Paint, PaintArgs, PlaneBounds, SolidFill, SolidFillArgs, VectorAtlas, VectorAtlasArgs,
-    VectorShape, VectorShapeArgs, root_as_document,
+    AssetEntry, AssetEntryArgs, AtlasRect, Color, Document, DocumentArgs, Fill, ImageFormat, Node,
+    NodeArgs, Paint, PaintArgs, PlaneBounds, SolidFill, SolidFillArgs, VectorAtlas,
+    VectorAtlasArgs, VectorShape, VectorShapeArgs, root_as_document,
 };
 use dashscene_validator::{Location, rule, validate_document};
 use flatbuffers::{FlatBufferBuilder, WIPOffset};
 
-/// Builds a one-node document with the given paint pool, image assets, and
-/// vector pools, and returns the serialized bytes.
+/// Builds a one-node document with the given paint pool, asset-table
+/// entries, and vector pools, and returns the serialized bytes.
 #[allow(clippy::too_many_arguments)]
 fn finish(
     mut b: FlatBufferBuilder<'static>,
     paints: &[WIPOffset<Paint<'static>>],
-    images: &[WIPOffset<Image<'static>>],
+    assets: &[WIPOffset<AssetEntry<'static>>],
     vector_atlases: &[WIPOffset<VectorAtlas<'static>>],
     vector_shapes: &[WIPOffset<VectorShape<'static>>],
 ) -> Vec<u8> {
@@ -32,7 +32,7 @@ fn finish(
     );
     let nodes = b.create_vector(&[node]);
     let paints = (!paints.is_empty()).then(|| b.create_vector(paints));
-    let images = (!images.is_empty()).then(|| b.create_vector(images));
+    let assets = (!assets.is_empty()).then(|| b.create_vector(assets));
     let vector_atlases = (!vector_atlases.is_empty()).then(|| b.create_vector(vector_atlases));
     let vector_shapes = (!vector_shapes.is_empty()).then(|| b.create_vector(vector_shapes));
     let document = Document::create(
@@ -40,7 +40,7 @@ fn finish(
         &DocumentArgs {
             nodes: Some(nodes),
             paints,
-            images,
+            assets,
             vector_atlases,
             vector_shapes,
             ..Default::default()
@@ -68,13 +68,17 @@ fn solid_paint(b: &mut FlatBufferBuilder<'static>, shape_field: u32) -> WIPOffse
     )
 }
 
-fn png_image(b: &mut FlatBufferBuilder<'static>) -> WIPOffset<Image<'static>> {
-    let bytes = b.create_vector(&[1u8, 2, 3, 4]);
-    Image::create(
+/// A clean asset-table entry: a 32-byte filler hash and a non-zero extent,
+/// so it trips neither `asset.hash-wrong-length` nor `asset.zero-extent`.
+fn png_asset(b: &mut FlatBufferBuilder<'static>) -> WIPOffset<AssetEntry<'static>> {
+    let hash = b.create_vector(&[7u8; 32]);
+    AssetEntry::create(
         b,
-        &ImageArgs {
+        &AssetEntryArgs {
+            hash: Some(hash),
             format: ImageFormat::Png,
-            bytes: Some(bytes),
+            width: 4,
+            height: 4,
         },
     )
 }
@@ -157,7 +161,7 @@ fn vector_atlas_image_out_of_range_is_named() {
 #[test]
 fn a_consistent_vector_chain_is_clean() {
     let mut b = FlatBufferBuilder::new();
-    let image = png_image(&mut b);
+    let image = png_asset(&mut b);
     let atlas = VectorAtlas::create(
         &mut b,
         &VectorAtlasArgs {

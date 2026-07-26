@@ -57,15 +57,15 @@ use std::{env, fs};
 use dashbuf::{
     AxisSizing, Binding, BindingArgs, BindingChannel, BindingTransform, Color, CornerRadii,
     CrossAxisAlign, Document, DocumentArgs, EdgeInsets, Fill, FixedSizeLayout, Gradient,
-    GradientArgs, GradientKind, GradientStop, GridTrack, GridTrackArgs, GridTrackSizing, Image,
-    ImageArgs, ImageFill, ImageFillArgs, ImageFormat, LayoutConstraints, LayoutConstraintsArgs,
-    LayoutContainer, LayoutContainerArgs, LayoutMode, MainAxisAlign, Mat23, NO_FIELD, NO_PAINT,
-    NO_PARENT, NO_TEXT, NO_TEXT_STYLE, Node, NodeArgs, Paint, PaintArgs, ScaleMode, Shadow,
-    ShadowArgs, ShadowKind, SignalDecl, SignalDeclArgs, SolidFill, SolidFillArgs, Stroke,
-    StrokeAlign, StrokeArgs, TextStyle, TextStyleArgs, TransformScale, TransformScaleArgs,
-    VariantFill, VariantFillArgs, VariantMember, VariantMemberArgs, VariantOverride,
-    VariantOverrideArgs, VariantPropValue, VariantSet, VariantSetArgs, VariantVisible,
-    VariantVisibleArgs, VariantX, VariantXArgs, Vec2, root_as_document,
+    GradientArgs, GradientKind, GradientStop, GridTrack, GridTrackArgs, GridTrackSizing, ImageFill,
+    ImageFillArgs, LayoutConstraints, LayoutConstraintsArgs, LayoutContainer, LayoutContainerArgs,
+    LayoutMode, MainAxisAlign, Mat23, NO_FIELD, NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE, Node,
+    NodeArgs, Paint, PaintArgs, ScaleMode, Shadow, ShadowArgs, ShadowKind, SignalDecl,
+    SignalDeclArgs, SolidFill, SolidFillArgs, Stroke, StrokeAlign, StrokeArgs, TextStyle,
+    TextStyleArgs, TransformScale, TransformScaleArgs, VariantFill, VariantFillArgs, VariantMember,
+    VariantMemberArgs, VariantOverride, VariantOverrideArgs, VariantPropValue, VariantSet,
+    VariantSetArgs, VariantVisible, VariantVisibleArgs, VariantX, VariantXArgs, Vec2,
+    root_as_document,
 };
 use flatbuffers::FlatBufferBuilder;
 
@@ -88,10 +88,17 @@ fn fixture_bytes() -> &'static [u8] {
         let path = fixture_path();
         match env::var_os("UPDATE_DSB_FIXTURE") {
             None => {}
-            Some(value) if value == "1" => {
-                fs::write(&path, build_fixture()).expect("write .dsb fixture");
-                eprintln!("UPDATE_DSB_FIXTURE: wrote {}", path.display());
-            }
+            Some(value) if value == "1" => panic!(
+                "UPDATE_DSB_FIXTURE=1 can no longer regenerate this fixture, and running it \
+                 would destroy it.\n\nSince story #107 `Document.images` is a deprecated slot, \
+                 so `build_fixture` below cannot address the image pool the committed bytes \
+                 carry. Regenerating would write a fixture 48 bytes shorter, missing the only \
+                 pre-current-bindings image bytes in the repo — and every assertion in this \
+                 suite would still pass, which is what makes it dangerous rather than merely \
+                 wrong.\n\nA deliberate format-generation bump that really needs new frozen \
+                 bytes should add a new fixture beside this one rather than overwrite it. See \
+                 docs/decisions/dsb-frozen-fixture-r7-guard.md."
+            ),
             Some(other) => panic!(
                 "UPDATE_DSB_FIXTURE={} is not recognized — set \
                  UPDATE_DSB_FIXTURE=1 (regenerating destroys the frozen \
@@ -328,7 +335,8 @@ fn frozen_gradient_fill_entry_reads_back() {
 }
 
 /// Pool entry 2: an image fill, with every field written to a
-/// non-default value, and its asset resolved through `Document.images`.
+/// non-default value. Its asset used to resolve through `Document.images`;
+/// since story #107 that pool is deprecated (see the comment below).
 #[test]
 fn frozen_image_fill_entry_reads_back() {
     let entry = paint(2);
@@ -350,13 +358,20 @@ fn frozen_image_fill_entry_reads_back() {
         (1.0, 0.0, 0.0, 1.0, 0.25, 0.5)
     );
 
-    let images = document().images().expect("images present");
-    assert_eq!(images.len(), 2);
-    // The fill points at index 1, not the decoy at 0.
-    let image = images.get(fill.image() as usize);
-    assert_eq!(image.format(), ImageFormat::Png);
-    assert_eq!(image.bytes().expect("bytes present").bytes(), [1, 2, 3, 4]);
-    assert_eq!(images.get(0).bytes().expect("bytes present").bytes(), [9]);
+    // `Document.images` is deprecated at v0.11 (story #107): its bytes are
+    // still in the frozen fixture, but flatc generates no reader for a
+    // deprecated field, so the pool is no longer addressable here. What
+    // proves the deprecation shifted no other field id is that every field
+    // declared after it — paints, strings, text_styles, variant_sets,
+    // signals, bindings — still reads back its written value in the other
+    // tests in this file.
+    //
+    // `Document.assets` is the asset table that replaces it, appended at the
+    // schema's tail. The frozen fixture predates it, so — like the vector
+    // pools in `frozen_vector_fields_read_back_as_defaults` — it must read
+    // back absent, the R7 proof that the append disturbed nothing already
+    // written.
+    assert!(document().assets().is_none());
 }
 
 /// The container-side flex table.
@@ -611,30 +626,29 @@ fn frozen_node_masks_and_opacity_read_back() {
 // ---------------------------------------------------------------------
 
 /// Builds the fixture document: five nodes, three paint-pool entries
-/// (one per `Fill` union member), two images, both text pools, both
-/// flex tables, and the v0.8 layout appends (cross gap, grid tracks,
-/// grid placement, the Grid/Baseline enum tails) — every field written
-/// to a value distinguishable from its default.
+/// (one per `Fill` union member), both text pools, both flex tables, and the
+/// v0.8 layout appends (cross gap, grid tracks, grid placement, the
+/// Grid/Baseline enum tails) — every field written to a value
+/// distinguishable from its default.
+///
+/// Since story #107 deprecated `Document.images`, `DocumentArgs` no longer
+/// has an `images` field to write through, so this function can no longer
+/// reproduce the committed fixture bytes byte-for-byte (the committed file
+/// still carries the two images this function used to write). That is
+/// expected: this function only runs under `UPDATE_DSB_FIXTURE=1`, which is
+/// not a routine step (see the module docs), and the frozen fixture on disk
+/// — not this function — is what the decode assertions above pin against.
+///
+/// **Unreachable since story #107, and kept deliberately.** The update path
+/// above refuses to run, because this function can no longer address the
+/// deprecated `images` slot and would write a fixture missing the committed
+/// bytes' two inline images. It stays because it is the record of how those
+/// bytes were constructed — every value in them, and why each is non-default.
+/// Replacing it with prose would lose exactly the detail a future format bump
+/// needs when it adds a fixture beside this one.
+#[allow(dead_code)]
 fn build_fixture() -> Vec<u8> {
     let mut b = FlatBufferBuilder::new();
-
-    let decoy_bytes = b.create_vector(&[9u8]);
-    let decoy_image = Image::create(
-        &mut b,
-        &ImageArgs {
-            format: ImageFormat::Png,
-            bytes: Some(decoy_bytes),
-        },
-    );
-    let real_bytes = b.create_vector(&[1u8, 2, 3, 4]);
-    let real_image = Image::create(
-        &mut b,
-        &ImageArgs {
-            format: ImageFormat::Png,
-            bytes: Some(real_bytes),
-        },
-    );
-    let images = b.create_vector(&[decoy_image, real_image]);
 
     let solid = SolidFill::create(
         &mut b,
@@ -1068,7 +1082,6 @@ fn build_fixture() -> Vec<u8> {
         &mut b,
         &DocumentArgs {
             nodes: Some(nodes),
-            images: Some(images),
             paints: Some(paints),
             strings: Some(strings),
             text_styles: Some(text_styles),
@@ -1079,6 +1092,10 @@ fn build_fixture() -> Vec<u8> {
             // vectors write nothing, so the committed bytes are unchanged.
             vector_atlases: None,
             vector_shapes: None,
+            // Story #107: the frozen fixture predates the asset table, and
+            // `images` above is gone from `DocumentArgs` entirely (see this
+            // function's doc comment).
+            assets: None,
         },
     );
     b.finish(document, None);

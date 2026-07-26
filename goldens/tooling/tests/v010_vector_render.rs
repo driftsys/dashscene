@@ -13,10 +13,10 @@
 //! composition directly.
 
 use dashbuf::{
-    AtlasRect, Color, Document, DocumentArgs, Fill, FixedSizeLayout, Gradient, GradientArgs,
-    GradientKind, GradientStop, Image, ImageArgs, ImageFormat, Node, NodeArgs, Paint, PaintArgs,
-    PlaneBounds, SolidFill, SolidFillArgs, Vec2, VectorAtlas, VectorAtlasArgs, VectorShape,
-    VectorShapeArgs, root_as_document,
+    AssetEntry, AssetEntryArgs, AtlasRect, Color, Document, DocumentArgs, Fill, FixedSizeLayout,
+    Gradient, GradientArgs, GradientKind, GradientStop, ImageFormat, Node, NodeArgs, Paint,
+    PaintArgs, PlaneBounds, SolidFill, SolidFillArgs, Vec2, VectorAtlas, VectorAtlasArgs,
+    VectorShape, VectorShapeArgs, root_as_document,
 };
 use dashc_wasm::figma::vector_field::{VectorAtlasBaker, VectorPath, WindingRule};
 use dashpaint::{GlyphRunTable, ImageTable, Painter};
@@ -39,6 +39,8 @@ const BOX: f32 = 40.0;
 /// needs.
 struct Baked {
     png: Vec<u8>,
+    width: u32,
+    height: u32,
     px_per_em: f32,
     distance_range: f32,
     atlas_rect: [u32; 4],
@@ -56,6 +58,8 @@ fn bake(path: &str, winding: WindingRule) -> Baked {
     let p = placement.plane_bounds;
     Baked {
         png: out.image_png,
+        width: out.width,
+        height: out.height,
         px_per_em: out.px_per_em as f32,
         distance_range: out.distance_range as f32,
         atlas_rect: [r.x, r.y, r.width, r.height],
@@ -76,12 +80,18 @@ enum TestFill {
 fn vector_dsb(baked: &Baked, fill: TestFill) -> Vec<u8> {
     let mut b = FlatBufferBuilder::new();
 
-    let bytes = b.create_vector(&baked.png);
-    let image = Image::create(
+    // Since story #107 the document carries asset identity and metadata, never
+    // bytes: the hash is a filler (the caller hands the real PNG bytes to
+    // `load_document` directly, bypassing the hash-resolution `dashbuf::open`
+    // does for a real file), and the extent is the baked atlas's own.
+    let hash = b.create_vector(&[7u8; 32]);
+    let image = AssetEntry::create(
         &mut b,
-        &ImageArgs {
+        &AssetEntryArgs {
+            hash: Some(hash),
             format: ImageFormat::Png,
-            bytes: Some(bytes),
+            width: baked.width,
+            height: baked.height,
         },
     );
     let atlas = VectorAtlas::create(
@@ -150,7 +160,7 @@ fn vector_dsb(baked: &Baked, fill: TestFill) -> Vec<u8> {
     );
 
     let nodes = b.create_vector(&[node]);
-    let images = b.create_vector(&[image]);
+    let assets = b.create_vector(&[image]);
     let paints = b.create_vector(&[paint]);
     let vector_atlases = b.create_vector(&[atlas]);
     let vector_shapes = b.create_vector(&[shape]);
@@ -158,7 +168,7 @@ fn vector_dsb(baked: &Baked, fill: TestFill) -> Vec<u8> {
         &mut b,
         &DocumentArgs {
             nodes: Some(nodes),
-            images: Some(images),
+            assets: Some(assets),
             paints: Some(paints),
             vector_atlases: Some(vector_atlases),
             vector_shapes: Some(vector_shapes),
@@ -170,11 +180,14 @@ fn vector_dsb(baked: &Baked, fill: TestFill) -> Vec<u8> {
 }
 
 /// Renders a `.dsb` at [`SURFACE`]×[`SURFACE`] and returns unpremultiplied
-/// RGBA8888 rows.
-fn render(bytes: &[u8]) -> Vec<u8> {
+/// RGBA8888 rows. `payloads` binds the document's asset entries to their
+/// bytes, one per entry in entry order — this document is a hand-built
+/// section payload, not a `dashbuf::open`-read file, so the binding is done
+/// by hand.
+fn render(bytes: &[u8], payloads: &[&[u8]]) -> Vec<u8> {
     let doc = root_as_document(bytes).expect("valid dashbuf document");
     let mut arena = Arena::new();
-    load_document(&doc, &mut arena);
+    load_document(&doc, payloads, &mut arena);
     let scene = arena.committed();
     let mut painter = SkiaPainter::new(SURFACE, SURFACE);
     painter.paint(
@@ -201,7 +214,8 @@ fn a_solid_vector_renders_its_silhouette_with_the_hole_masked_out() {
     // through as transparent — which a plain box fill could never do, so this
     // proves the field, not the box, shapes the ink.
     let baked = bake(SQUARE_WITH_HOLE, WindingRule::EvenOdd);
-    let rgba = render(&vector_dsb(&baked, TestFill::Solid));
+    let dsb = vector_dsb(&baked, TestFill::Solid);
+    let rgba = render(&dsb, &[baked.png.as_slice()]);
 
     // A point in the left wall of the ring (shape ~(3, 20)) is opaque red.
     let ring = px(&rgba, 23, 40);
@@ -230,7 +244,8 @@ fn a_gradient_vector_renders_the_gradient_masked_by_the_field() {
     // proving the field masks the gradient rather than replacing it (the
     // hero's 12 gradient-filled vectors depend on exactly this).
     let baked = bake(SQUARE, WindingRule::NonZero);
-    let rgba = render(&vector_dsb(&baked, TestFill::Gradient));
+    let dsb = vector_dsb(&baked, TestFill::Gradient);
+    let rgba = render(&dsb, &[baked.png.as_slice()]);
 
     // Inside the square: opaque, and red on the left, blue on the right.
     let left = px(&rgba, 28, 40);
@@ -294,7 +309,7 @@ fn a_parametric_paint_without_a_field_fills_its_whole_box() {
     b.finish(document, None);
     let bytes = b.finished_data().to_vec();
 
-    let rgba = render(&bytes);
+    let rgba = render(&bytes, &[]);
     // Every corner of the box is filled — no shape carves it.
     for (x, y) in [(22, 22), (57, 22), (22, 57), (57, 57), (40, 40)] {
         let p = px(&rgba, x, y);
@@ -307,7 +322,7 @@ fn a_parametric_paint_without_a_field_fills_its_whole_box() {
     // none, so this really is the parametric path.
     let doc = root_as_document(&bytes).expect("valid document");
     let mut arena = Arena::new();
-    load_document(&doc, &mut arena);
+    load_document(&doc, &[], &mut arena);
     assert_eq!(
         arena.committed().images().len(),
         ImageTable::new().len(),

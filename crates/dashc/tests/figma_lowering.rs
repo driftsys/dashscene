@@ -671,7 +671,7 @@ fn an_image_fill_resolves_through_the_caller_supplied_map() {
     };
 
     assert_eq!(*scale_mode, ScaleMode::Fit);
-    assert_eq!(doc.images[*image as usize].bytes, IMAGE_PNG);
+    assert_eq!(doc.assets[*image as usize].bytes, IMAGE_PNG);
     // FIT carries neither a crop transform nor a tile scale.
     assert_eq!(*transform, None, "identity when Figma sends no transform");
     assert_eq!(*tile_scale, 1.0);
@@ -786,7 +786,7 @@ fn two_nodes_sharing_an_image_ref_share_one_asset() {
 
     let (doc, _) = lower(&file, Profile::Core, &images()).expect("the document lowers");
 
-    assert_eq!(doc.images.len(), 1, "one imageRef is one asset");
+    assert_eq!(doc.assets.len(), 1, "one imageRef is one asset");
     assert_eq!(image_index(&doc, "left"), 0);
     assert_eq!(
         image_index(&doc, "right"),
@@ -1505,11 +1505,9 @@ fn the_fixture_compiles_loads_and_renders() {
 
     assert!(report.is_empty(), "the paint fixture is entirely NOW-band");
 
-    let document =
-        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
-            .expect("a valid buffer");
+    let (document, payloads) = dashbuf::open(&bytes).expect("a valid .dsb file");
     let mut arena = Arena::new();
-    load_document(&document, &mut arena);
+    load_document(&document, &payloads, &mut arena);
 
     let scene = arena.committed();
     assert_eq!(scene.rects().len(), 14, "13 frames plus the root");
@@ -1970,11 +1968,9 @@ fn partial_emits_the_frame_and_warns_on_the_skipped_vector() {
     assert_eq!(warnings.len(), 1, "one figma.unsupported for the VECTOR");
     assert_eq!(warnings[0].severity, Severity::Warning);
     // The frame is present, the VECTOR is omitted: exactly one node.
-    let document =
-        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
-            .expect("the emitted document loads");
+    let (document, payloads) = dashbuf::open(&bytes).expect("a valid .dsb file");
     let mut arena = Arena::new();
-    load_document(&document, &mut arena);
+    load_document(&document, &payloads, &mut arena);
     assert_eq!(
         arena.committed().rects().len(),
         1,
@@ -2063,12 +2059,9 @@ fn a_backdrop_blur_lowers_under_both_policies_and_keeps_its_radius() {
         // The radius survives the whole path: Figma effect -> dashc lowering
         // -> paint pool -> document -> load. A blur that lowered to the right
         // node with the wrong radius would render, and would be wrong.
-        let document = dashbuf::root_as_document(
-            dashbuf::container::ui_document(&bytes).expect("a .dsb file"),
-        )
-        .expect("the emitted document loads");
+        let (document, payloads) = dashbuf::open(&bytes).expect("a valid .dsb file");
         let mut arena = Arena::new();
-        load_document(&document, &mut arena);
+        load_document(&document, &payloads, &mut arena);
         let scene = arena.committed();
         assert_eq!(
             scene.rects().len(),
@@ -2134,11 +2127,9 @@ fn a_backdrop_blur_on_a_baked_vector_is_kept_not_dropped() {
         report.diagnostics(),
     );
 
-    let document =
-        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
-            .expect("the emitted document loads");
+    let (document, payloads) = dashbuf::open(&bytes).expect("a valid .dsb file");
     let mut arena = Arena::new();
-    load_document(&document, &mut arena);
+    load_document(&document, &payloads, &mut arena);
     let scene = arena.committed();
     let blurs: Vec<_> = scene
         .rects()

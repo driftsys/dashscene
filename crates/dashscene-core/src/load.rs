@@ -15,10 +15,11 @@
 //! them:
 //!
 //! ```text
-//! let doc = dashbuf::root_as_document(bytes)?;   // flatbuffer verifier: structure
+//! // `dashbuf::open` runs the envelope check and binds the asset payloads.
+//! let (doc, payloads) = dashbuf::open(file_bytes)?;  // container + verifier
 //! let report = dashscene_validator::validate_document(&doc);  // load gate: references
 //! if report.has_errors() { /* refuse; never load */ }
-//! load_document(&doc, &mut arena);               // safe iff the gate passed
+//! load_document(&doc, &payloads, &mut arena);    // safe iff the gate passed
 //! ```
 //!
 //! `dashscene-validator` is published *after* `dashscene-core`, so this
@@ -43,6 +44,11 @@ use crate::committed::{
 /// Replays a validated `.dsb` document into `arena` and commits it,
 /// returning the commit's generation.
 ///
+/// `payloads` binds the document's asset entries to their bytes, one per entry
+/// in entry order. `dashbuf::open` produces exactly that from a `.dsb` file, and
+/// the panic below fires if the two lengths disagree — a caller that bound the
+/// wrong set would otherwise repaint nodes with another document's assets.
+///
 /// The document's nodes are appended to whatever the arena already holds —
 /// the loader is a producer, not an owner, matching `dashlang::Scene::build`.
 ///
@@ -52,7 +58,7 @@ use crate::committed::{
 /// an image asset, a string, a text style, a parent). Those are precisely
 /// what `dashscene_validator::validate_document` reports as errors, so a
 /// panic here means the caller skipped the gate.
-pub fn load_document(doc: &Document<'_>, arena: &mut Arena) -> u64 {
+pub fn load_document(doc: &Document<'_>, payloads: &[&[u8]], arena: &mut Arena) -> u64 {
     let nodes = doc.nodes().unwrap_or_default();
     let paints = doc.paints().unwrap_or_default();
     let strings = doc.strings().unwrap_or_default();
@@ -63,30 +69,42 @@ pub fn load_document(doc: &Document<'_>, arena: &mut Arena) -> u64 {
     // Assets first: a paint entry's image fill references them by index, so
     // they must exist before any paint prop is staged.
     //
+    // Since story #107 the document carries asset *identity and metadata*, not
+    // bytes (P1 applied to assets). `payloads` is the caller's binding of each
+    // entry's content hash to the bytes it names — resolved from the file's blob
+    // sections, which `dashbuf::open` does for the ordinary case. The arena is
+    // where the two rejoin.
+    //
     // The document's indices are 0..n, but the arena may already hold assets
     // from an earlier load, so the document's index is NOT the arena's. Keep
     // the mapping and rewrite every image fill through it — assuming they
     // coincide would silently repaint one document's nodes with another
     // document's assets.
-    let image_of: Vec<u32> = doc
-        .images()
-        .unwrap_or_default()
+    let entries = doc.assets().unwrap_or_default();
+    assert_eq!(
+        payloads.len(),
+        entries.len(),
+        "the caller bound {} payloads for {} asset entries: every entry's hash resolves to \
+         exactly one payload through the binding, and the null binding is the identity map \
+         (docs/decisions/asset-model-content-addressed-blobs.md)",
+        payloads.len(),
+        entries.len()
+    );
+    let image_of: Vec<u32> = entries
         .iter()
-        .map(|image| {
+        .zip(payloads)
+        .map(|(entry, payload)| {
             txn.add_image(ImageAsset {
-                format: image_format(image.format()),
-                bytes: image
-                    .bytes()
-                    .map(|b| b.iter().collect())
-                    .unwrap_or_default(),
+                format: image_format(entry.format()),
+                bytes: payload.to_vec(),
             })
         })
         .collect();
 
     // The baked-vector pools (story B1). Each `VectorShape` resolves to a
     // flat, self-contained `VectorField` the painter samples: its atlas's
-    // image index is rewritten through `image_of` (the atlas PNG is an
-    // ordinary `Document.images` entry), and the atlas's `px_per_em` /
+    // asset index is rewritten through `image_of` (the atlas PNG is an
+    // ordinary asset-table entry), and the atlas's `px_per_em` /
     // `distance_range` fold in beside the shape's own rect and plane bounds.
     // A paint entry's `shape_field` then indexes this vector directly. All
     // indices are validated upstream (P4), so a miss is a panic, matching the

@@ -10,7 +10,7 @@
 //! node list whose array index is the rect-table index (docs/design/dashbuf.md), layout
 //! intent (never results — P1), and the pools nodes reference by index.
 
-use dashpaint::{Color, ImageAsset, PaintEntry};
+use dashpaint::{Color, PaintEntry};
 
 /// A node's authored box. Intent, not a result (P1): under a flex parent the
 /// solver owns placement and these offsets are ignored, and the width/height
@@ -314,7 +314,7 @@ pub struct Paint {
 }
 
 /// One packed MSDF atlas (story B1) — the schema's `VectorAtlas` table as a
-/// plain type: which `Document::images` PNG holds the packed fields, and the
+/// plain type: which asset-table PNG holds the packed fields, and the
 /// two scalars the painter's screen-pixel range needs.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VectorAtlas {
@@ -400,8 +400,11 @@ pub struct Binding {
 pub struct Document {
     /// Flattened DFS node tree: array index = rect-table index (docs/design/dashbuf.md).
     pub nodes: Vec<Node>,
-    /// The image assets an image fill references by index.
-    pub images: Vec<ImageAsset>,
+    /// The assets an image fill or a vector atlas references by index —
+    /// content-addressed, so two references to the same bytes share one entry
+    /// (story #107). Emitted as `Document.assets` plus one blob section per
+    /// entry.
+    pub assets: Vec<Asset>,
     /// The signal declarations bindings reference by index (story #167).
     pub signals: Vec<SignalDecl>,
     /// The binding rows joining signals to node channels (story #167).
@@ -428,10 +431,62 @@ impl Document {
         index
     }
 
-    /// Appends an image asset and returns its index.
-    pub fn push_image(&mut self, asset: ImageAsset) -> u32 {
-        let index = u32::try_from(self.images.len()).expect("document exceeds u32::MAX images");
-        self.images.push(asset);
+    /// Appends an asset and returns its index, or returns the index of an
+    /// existing entry carrying the same bytes.
+    ///
+    /// Deduplication is by content hash, which is what content addressing buys:
+    /// two `imageRef`s resolving to identical bytes are one asset, one entry,
+    /// and one blob section. The comparison is on the hash rather than on the
+    /// byte vector so that the emitted entry's identity and the dedup key are
+    /// the same value — one source of truth, not two that could disagree.
+    ///
+    /// A caller passing the same bytes with different metadata would be a
+    /// producer bug: the hash is over the payload, and the payload determines
+    /// its own format and extent. The debug assertion says so rather than
+    /// letting the first writer silently win.
+    pub fn push_asset(&mut self, asset: Asset) -> u32 {
+        let hash = asset.hash();
+        if let Some(index) = self.assets.iter().position(|a| a.hash() == hash) {
+            debug_assert_eq!(
+                (
+                    self.assets[index].format,
+                    self.assets[index].width,
+                    self.assets[index].height
+                ),
+                (asset.format, asset.width, asset.height),
+                "two assets share a payload hash but disagree on its metadata"
+            );
+            return u32::try_from(index).expect("an existing index fits u32");
+        }
+        let index = u32::try_from(self.assets.len()).expect("document exceeds u32::MAX assets");
+        self.assets.push(asset);
         index
+    }
+}
+
+/// One asset the document references: the payload, plus the intrinsic metadata
+/// dashc's image gate read from its header (story #400).
+///
+/// The metadata travels with the bytes from the moment the gate parsed them, so
+/// the emitter never re-reads a header — there is one walk over image bytes in
+/// the compiler, not two that could drift apart (#396 is the live instance of
+/// what happens otherwise).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Asset {
+    pub format: dashpaint::ImageFormat,
+    pub bytes: Vec<u8>,
+    /// Intrinsic pixel extent, from the payload's own header.
+    pub width: u32,
+    pub height: u32,
+}
+
+impl Asset {
+    /// The asset's identity: BLAKE3-256 over the payload exactly as stored.
+    ///
+    /// The same value the envelope records as the blob section's content hash,
+    /// which is what makes the null binding an identity map — the entry's hash
+    /// *is* the section's hash (`docs/design/dsb-container-format.md`).
+    pub fn hash(&self) -> [u8; 32] {
+        blake3::hash(&self.bytes).into()
     }
 }

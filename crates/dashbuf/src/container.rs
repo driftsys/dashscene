@@ -536,6 +536,10 @@ pub enum ContainerError {
     RootHashMismatch,
     /// A section's payload does not hash to its recorded content hash.
     SectionHashMismatch { index: usize },
+    /// No blob section carries the content hash an asset entry names. Under the
+    /// null binding the entry's hash *is* the section's hash, so a miss means
+    /// the file names a payload it does not carry.
+    NoBlobForHash,
     /// The file does not hold exactly one ui-document section. A `.dsb` always
     /// carries one: zero means the file is not a document, and more than one
     /// means there is no single answer to which document it is.
@@ -593,6 +597,10 @@ impl fmt::Display for ContainerError {
                     "section {index} does not match its recorded content hash"
                 )
             }
+            Self::NoBlobForHash => write!(
+                f,
+                "an asset entry names a content hash no blob section in this file carries"
+            ),
             Self::NotOneUiSection { found } => write!(
                 f,
                 "a .dsb holds exactly one ui-document section; this file has {found}"
@@ -818,6 +826,28 @@ impl<'a> Container<'a> {
             }
         }
         Ok(())
+    }
+
+    /// The verified blob payload whose content hash is `hash`.
+    ///
+    /// This is the null binding's resolution step: v0.11 ships one profile, RAW,
+    /// whose binding is the identity map, so an asset's canonical hash is also
+    /// the hash of the section that holds it. A later profile resolves the same
+    /// canonical hash to a derived payload through a derivation manifest, and
+    /// only the binding changes — this lookup stays what "resident equals
+    /// canonical" means.
+    ///
+    /// Verifies before returning, so a caller never trusts bytes the file's own
+    /// table does not vouch for.
+    pub fn blob_by_hash(&self, hash: &[u8]) -> Result<&'a [u8], ContainerError> {
+        for index in 0..self.count {
+            let entry = self.section(index);
+            if entry.kind == SectionKind::Blob as u16 && entry.hash == hash {
+                self.verify_section(index)?;
+                return Ok(self.section_bytes(index));
+            }
+        }
+        Err(ContainerError::NoBlobForHash)
     }
 
     /// The verified ui-document payload — the flatbuffer a `.dsb` exists to

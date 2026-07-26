@@ -170,7 +170,6 @@ fn flex_and_constraint_fields_round_trip() {
         &mut builder,
         &DocumentArgs {
             nodes: Some(nodes),
-            images: None,
             paints: None,
             strings: None,
             text_styles: None,
@@ -314,7 +313,6 @@ fn a_node_without_flex_tables_reads_back_absent() {
         &mut builder,
         &DocumentArgs {
             nodes: Some(nodes),
-            images: None,
             paints: None,
             strings: None,
             text_styles: None,
@@ -363,7 +361,6 @@ fn empty_flex_tables_read_back_the_schema_defaults() {
         &mut builder,
         &DocumentArgs {
             nodes: Some(nodes),
-            images: None,
             paints: None,
             strings: None,
             text_styles: None,

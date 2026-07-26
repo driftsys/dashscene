@@ -50,7 +50,7 @@ use dashscene_validator::{Diagnostic, Location, NodePath, Profile, Report, Sever
 // in `emit.rs` the IR is the subject, so the flatbuffer types are aliased
 // (its `Node` stays bare and the flatbuffer's is `FbNode`).
 use crate::document::{
-    AxisSizing, Box2D, CrossAxisAlign, Document, EdgeInsets, GridTrack as DocGridTrack,
+    Asset, AxisSizing, Box2D, CrossAxisAlign, Document, EdgeInsets, GridTrack as DocGridTrack,
     LayoutConstraints, LayoutContainer as DocContainer, LayoutMode, MainAxisAlign, Node as DocNode,
     Paint as DocPaint, TextAlign as DocTextAlign, TextAlignV as DocTextAlignV,
     TextStyle as DocTextStyle, VectorAtlas as DocVectorAtlas, VectorShape as DocVectorShape,
@@ -365,7 +365,7 @@ pub fn lower_with_bindings_and_policy(
     }
 
     // Finish the baked-vector atlas (story B1): pack every unique field into
-    // one PNG, append it to the image pool, and record the atlas and each
+    // one PNG, append it to the asset table, and record the atlas and each
     // shape's placement. Skipped when no `VECTOR` node lowered, so a
     // vector-free document carries no atlas and emits byte-identically (R7).
     // The shape indices the walk stamped onto paint entries are the values
@@ -389,9 +389,14 @@ pub fn lower_with_bindings_and_policy(
         // never lowered, because two walks over the same data drifted apart.
         // The atlas's intrinsic size comes from the baker, which already knows
         // it, so story #107 does not need a header parse here either.
-        let image = walk.doc.push_image(ImageAsset {
+        let image = walk.doc.push_asset(Asset {
             format: dashpaint::ImageFormat::Png,
             bytes: bake.image_png,
+            // The baker already knows the sheet's extent, so this path needs no
+            // header parse — which is why the image gate's exemption below costs
+            // story #107 nothing.
+            width: bake.width,
+            height: bake.height,
         });
         walk.doc.vector_atlases.push(DocVectorAtlas {
             image,
@@ -584,7 +589,7 @@ struct Walk<'a> {
     /// The baked-vector atlas builder (story B1). Every `VECTOR` node's
     /// geometry bakes into this one shared atlas; identical geometry dedups by
     /// path hash. Finished after the walk into `Document.vector_atlases` /
-    /// `vector_shapes` and one packed atlas PNG in `Document.images`.
+    /// `vector_shapes` and one packed atlas PNG in the asset table.
     baker: VectorAtlasBaker,
 }
 
@@ -1423,7 +1428,12 @@ impl Walk<'_> {
                             ));
                         }
 
-                        let index = self.doc.push_image(asset.clone());
+                        let index = self.doc.push_asset(Asset {
+                            format: asset.format,
+                            bytes: asset.bytes.clone(),
+                            width: header.width,
+                            height: header.height,
+                        });
                         self.image_of.insert(image_ref.to_string(), index);
                         index
                     }

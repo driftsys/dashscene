@@ -29,7 +29,6 @@
 
 use std::collections::BTreeMap;
 
-use dashbuf::root_as_document;
 use dashc_wasm::compile_figma;
 use dashpaint::{GlyphRunTable, ImageTable, Painter};
 use dashscene_core::{Arena, load_document};
@@ -117,11 +116,10 @@ fn render(json: &str) -> Vec<u8> {
         report.is_empty(),
         "the derived fixture lowers clean: {report}"
     );
-    let document = root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
-        .expect("a valid buffer");
+    let (document, payloads) = dashbuf::open(&bytes).expect("a valid .dsb file");
 
     let mut arena = Arena::new();
-    load_document(&document, &mut arena);
+    load_document(&document, &payloads, &mut arena);
     // `load_document` commits with the fixed solver; an empty transaction
     // re-committed through a fresh `TaffySolver` performs a full flex solve so
     // the negative margins place the circles.

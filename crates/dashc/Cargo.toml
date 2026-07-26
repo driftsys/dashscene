@@ -22,6 +22,7 @@ name = "dashc"
 path = "src/main.rs"
 
 [dependencies]
+blake3.workspace = true
 dashbuf.workspace = true
 dashpaint.workspace = true
 dashscene-validator.workspace = true

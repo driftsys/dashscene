@@ -50,7 +50,7 @@ All appended at the tail of `crates/dashbuf/schema/dashbuf.fbs`; every existing
 `.dsb` decodes unchanged, and the frozen `tests/fixtures/v0_5_document.dsb`
 still round-trips (`docs/decisions/dsb-frozen-fixture-r7-guard.md`).
 
-    table  VectorAtlas  { image: uint32;        // index into Document.images (atlas PNG)
+    table  VectorAtlas  { image: uint32;        // index into Document.assets (atlas PNG)
                           px_per_em: float32;
                           distance_range: float32; }
     struct AtlasRect     { x, y, width, height: uint32; }   // sub-rect in atlas pixels
@@ -107,7 +107,7 @@ offline-bake / runtime-sample split the glyph atlas uses.
 - **Dedup by path hash.** Identical normalized geometry (the hero repeats icon
   vectors) is baked once and shares a `VectorShape` (structural hashing).
 - **Shelf packing.** Unique fields pack into one atlas sheet, the atlas PNG is
-  emitted into `Document.images`, and each shape records its `atlas_rect` +
+  emitted into `Document.assets`, and each shape records its `atlas_rect` +
   `plane_bounds`. (The bake oracle caught a real packer bug here: a lone field
   sized to its own width let the gutter push the blit off-edge; fixed by
   reserving `widest + 2 * gutter`.)
