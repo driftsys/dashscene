@@ -492,5 +492,15 @@ so each technote stops being the authority for the conclusion it reached:
   an encoding concept (prefer "uncompressed"), and the retired profile
   names (Lossless, Access, Master, Eco) stay out of the vocabulary (story
   #436).
+- [compress-raster-only.md](compress-raster-only.md) — only raster images
+  are block-compressed; glyph atlases and baked vector fields bind
+  canonical. Three asset classes rather than the packer's two, split by
+  resident cost against error tolerance: compress where consumption is high
+  **and** error tolerance is high, which today is raster alone. Text is
+  excluded because MSDF has already spent half the quality margin
+  (`q1-msdf-below-14px.md`) and because paging out unused coverage is a
+  larger, free saving; icons because the prize is tens of kilobytes.
+  Provisional for the field classes, pending a rendered-output measurement
+  and the residency question (#345).
 
 See the `sdd-working-memory-lifecycle` rule.
