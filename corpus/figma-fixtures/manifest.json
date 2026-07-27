@@ -21,6 +21,13 @@
       "note": "Lowers since #264 (the v0.8 grid un-pin): GRID -> LayoutMode::Grid with gridColumnGap/gridRowGap as the main/cross gaps, the gridColumnsSizing/gridRowsSizing strings as Fixed/Fraction track lists, and per-child anchors/spans as placement (docs/decisions/figma-flex-lowering.md D5, docs/decisions/v08-layout-vocabulary-shape.md). The raw capture emits (its one TEXT leaf lowers since #160); crates/dashc/tests/flex_lowering.rs solves it font-free (the TEXT leaf swapped for a FRAME fixed at its captured box) to the captured rects. #272 (a Fixed child larger than its Fraction cell) is not exercised: the one fixed child (140x60) is smaller than its 252x164 cell."
     },
     {
+      "name": "grid-fr-overflow",
+      "fileKey": "PASTE_THE_FIGMA_FILE_KEY_HERE",
+      "covers": "the one construct issue #271 needs Figma's answer for: a 100x100 GRID with two FLEX columns (50 each after zero gap and zero padding) holding a Fixed 80x40 child in column 0, plus a FILL neighbor in column 1 whose resolved x is the answer",
+      "emits": false,
+      "note": "Awaiting manual authoring: run the fixture-author plugin's grid-fr-overflow command in a blank Figma file, paste the file key here, and run `just deno-capture`. Read neighbor-fill's absoluteBoundingBox.x in the capture — 50 means Figma does NOT grow the track and the Fixed child overlaps its neighbor by 30, which is what dashscene does today (pinned by test at PR #267, disclosed as an E3 limit); 80 means Figma grows the track to fit its content, which makes #271 an engine-mapping change (the minmax minimum in template_track), not a schema change. The geometry is arithmetic on purpose so the capture reads without interpretation. grid-basic does not exercise this: its one fixed child (140x60) is smaller than its 252x164 cell."
+    },
+    {
       "name": "variables-bound",
       "fileKey": "VtbiQejcN6gYMmeWaaEy1b",
       "covers": "boundVariables on color + number props across light/dark modes; one subtree pinned to dark",

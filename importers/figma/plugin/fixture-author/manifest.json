@@ -8,6 +8,7 @@
     { "name": "v03-paint", "command": "v03-paint" },
     { "separator": true },
     { "name": "grid-basic", "command": "grid-basic" },
+    { "name": "grid-fr-overflow", "command": "grid-fr-overflow" },
     { "name": "variables-bound", "command": "variables-bound" },
     { "name": "effects-2025", "command": "effects-2025" },
     { "separator": true },

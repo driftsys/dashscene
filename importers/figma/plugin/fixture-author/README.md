@@ -25,6 +25,9 @@ then run Plugins → Development → dashscene fixture author → _(name)_.
                                  with an overflowing child
     grid-basic                   3x3 GRID, fixed+flex+hug tracks, spans,
                                  hug/fill/fixed/minmax children
+    grid-fr-overflow             100x100 GRID, [1fr,1fr], a Fixed 80x40 in
+                                 a 50-wide cell plus a FILL neighbor whose
+                                 resolved x answers issue #271
     variables-bound              fixture-tokens collection (light/dark),
                                  color + number bindings, one subtree
                                  pinned to dark mode
