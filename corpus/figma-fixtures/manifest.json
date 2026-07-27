@@ -22,10 +22,10 @@
     },
     {
       "name": "grid-fr-overflow",
-      "fileKey": "PASTE_THE_FIGMA_FILE_KEY_HERE",
+      "fileKey": "FwoFXgsyOkZ36UyVIYhhTM",
       "covers": "the one construct issue #271 needs Figma's answer for: a 100x100 GRID with two FLEX columns (50 each after zero gap and zero padding) holding a Fixed 80x40 child in column 0, plus a FILL neighbor in column 1 whose resolved x is the answer",
       "emits": false,
-      "note": "Awaiting manual authoring: run the fixture-author plugin's grid-fr-overflow command in a blank Figma file, paste the file key here, and run `just deno-capture`. Read neighbor-fill's absoluteBoundingBox.x in the capture — 50 means Figma does NOT grow the track and the Fixed child overlaps its neighbor by 30, which is what dashscene does today (pinned by test at PR #267, disclosed as an E3 limit); 80 means Figma grows the track to fit its content, which makes #271 an engine-mapping change (the minmax minimum in template_track), not a schema change. The geometry is arithmetic on purpose so the capture reads without interpretation. grid-basic does not exercise this: its one fixed child (140x60) is smaller than its 252x164 cell."
+      "note": "Authored and captured 2026-07-27. ANSWERED: neighbor-fill resolves to x=50 w=50 while fixed-80 resolves to x=0 w=80, so Figma does NOT grow the track — the oversized Fixed child overlaps its neighbor by 30, which is exactly what dashscene does today (pinned by test at PR #267). Figma serializes the tracks as `repeat(2,minmax(0,1fr))`, the same construct template_track maps a Fraction track to, so the mapping matches Figma by construction and not only by result. Issue #271 is a fidelity match rather than a defect."
     },
     {
       "name": "variables-bound",
@@ -99,17 +99,17 @@
     },
     {
       "name": "xfile-library",
-      "fileKey": "PASTE_THE_FIGMA_FILE_KEY_HERE",
+      "fileKey": "o2ku1XBJCxy07x9cLyYJa7",
       "covers": "cross-file library resolution (story #38), library half: a published component set (two variants) that xfile-consumer instances across files",
       "emits": false,
-      "note": "Awaiting manual authoring — this is a two-file pair and no plugin API publishes a library or instances a component across files, so both files are authored by hand (the real-file/trim-demo precedent). Step 1: in a blank file author a component set with two variants; PUBLISH it as a team library; paste its file key here. Step 2: author xfile-consumer (below) instancing this set. Then run `just deno-capture`. On its own this file carries only definitions (resolve-but-don't-paint); it exists so xfile-consumer's remote instance resolves against a real GET /file library response."
+      "note": "Authored and PUBLISHED as a team library 2026-07-27, then captured. Carries the component set `xfile-chip` (key 96e8d0f7...) with two local variants, state=on (key 362c61b5...) and state=off (key 922a7fc5...). On its own this file carries only definitions and does not paint; it exists so xfile-consumer's remote instance resolves against a real GET /file library response. Replayed in importers/figma/src/closure_test.ts."
     },
     {
       "name": "xfile-consumer",
-      "fileKey": "PASTE_THE_FIGMA_FILE_KEY_HERE",
+      "fileKey": "CzaSqOiLUhSDMtTi7ojP6i",
       "covers": "cross-file library resolution (story #38), consumer half: one declared root holding an INSTANCE of a REMOTE component published by xfile-library (its components map carries remote:true plus the library key)",
       "emits": false,
-      "note": "Awaiting manual authoring (see xfile-library step 2): in a second file, instance a variant of xfile-library's published set inside a frame, paste this file's key here, and run `just deno-capture`. Import with a manifest that declares the root and `libraries: [<xfile-library file key>]`; resolution splices the library definition in and the pair compiles end-to-end (docs/decisions/figma-cross-file-library-resolution.md). The resolution MECHANISM is covered offline by importers/figma/src/closure_test.ts and import_test.ts against synthetic and fixture-derived pairs; this captured pair replays remote-instance resolution against real ?plugin_data=shared responses."
+      "note": "Authored 2026-07-27 by dragging one variant of xfile-library's PUBLISHED set from the Assets panel — not copy-pasted, which would have produced a local component and captured cleanly while proving nothing. Verified: the components map carries 1:4 state=on with remote=true, and the componentSets map carries xfile-chip with remote=true. It names the component key 362c61b5... and NO source-file key, which is the REST shape that forces libraries to be declared rather than auto-discovered (docs/decisions/figma-cross-file-library-resolution.md). Replayed end to end in importers/figma/src/closure_test.ts: undeclared gives a named figma.closure.remote-master-unplaceable warning, declared resolves with zero diagnostics and splices the definition in under a file-key-namespaced id."
     },
     {
       "name": "text-latin",
