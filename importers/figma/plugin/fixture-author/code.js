@@ -331,6 +331,72 @@ async function gridBasic() {
   return "grid-basic built: 3x3 GRID, fixed+flex+hug tracks, col/row spans, hug/fill/fixed/minmax children";
 }
 
+// ----------------------------------------------------- grid-fr-overflow
+// The one construct issue #271 needs Figma's answer for, and nothing else.
+//
+// `template_track` maps a Fraction track to minmax(length(0), fr(w)), so the
+// track never grows for a Fixed child bigger than the resolved cell: the
+// child overflows into the adjacent cell. Our behavior is pinned by test at
+// PR #267 and disclosed as an E3 limit, because Figma's reference behavior
+// for the combination is uncaptured. This fixture captures it.
+//
+// The geometry is arithmetic on purpose, so the capture reads without
+// interpretation. 100 wide, two FLEX columns, zero gap and zero padding, so
+// each column resolves to exactly 50. The Fixed child is 80 wide, which is 30
+// more than its cell.
+//
+// The neighbor is what makes the answer observable. Read its
+// absoluteBoundingBox in the capture:
+//
+//   neighbor.x == 50  -> the track did NOT grow; the child overlaps it by 30,
+//                        which is what we do today.
+//   neighbor.x == 80  -> Figma grew the track to fit the content, and #271
+//                        becomes an engine-mapping change (the minmax
+//                        minimum), not a schema change.
+//
+// Gap and padding are set explicitly rather than left to the default: a
+// nonzero default would break the arithmetic above and make the capture
+// ambiguous, which is the whole value of the fixture.
+async function gridFrOverflow() {
+  const grid = baseFrame("grid-fr-overflow", 100, 100);
+  grid.layoutMode = "GRID";
+  // GRID roots ignore primaryAxisSizingMode/counterAxisSizingMode; fix the
+  // size through the general dropdowns and re-resize, as grid-basic does,
+  // so the FLEX tracks distribute a fixed 100x100 instead of hugging.
+  grid.layoutSizingHorizontal = "FIXED";
+  grid.layoutSizingVertical = "FIXED";
+  grid.resize(100, 100);
+  grid.gridRowCount = 1;
+  grid.gridColumnCount = 2;
+  grid.gridItemsPositioning = "MANUAL";
+  grid.gridColumnGap = 0;
+  grid.gridRowGap = 0;
+  grid.paddingLeft = grid.paddingRight = 0;
+  grid.paddingTop = grid.paddingBottom = 0;
+
+  // Two equal Fraction tracks: 100 / 2 = 50 each.
+  grid.gridColumnSizes[0].type = "FLEX";
+  grid.gridColumnSizes[1].type = "FLEX";
+  grid.gridRowSizes[0].type = "FLEX";
+
+  // The subject: Fixed 80x40 in a 50-wide cell.
+  const fixed = cell("fixed-80", { r: 0.95, g: 0.6, b: 0.6 });
+  grid.appendChild(fixed);
+  fixed.setGridChildPosition(0, 0);
+  fixed.resize(80, 40);
+
+  // The witness: whatever this one's x resolves to is the answer.
+  const neighbor = cell("neighbor-fill", { r: 0.6, g: 0.8, b: 0.95 });
+  grid.appendChild(neighbor);
+  neighbor.setGridChildPosition(0, 1);
+  neighbor.layoutSizingHorizontal = "FILL";
+  neighbor.layoutSizingVertical = "FILL";
+
+  return "grid-fr-overflow built: 100x100 GRID, [1fr,1fr], a Fixed 80x40 in " +
+    "a 50-wide cell. Read neighbor-fill's x in the capture — 50 means the " +
+    "track did not grow, 80 means it did (#271).";
+}
+
 // ----------------------------------------------------------- variables-bound
 // boundVariables on color + number props across light/dark modes (§8).
 // Designated input for token-resolution phases 1 and 2 (§13).
@@ -755,6 +821,12 @@ async function realFile() {
   };
   const on = await mkVariant("on", 0.85);
   const off = await mkVariant("off", 0.95);
+  // A created node is implicitly parented to figma.currentPage, which is
+  // page 1 here, while the variant set belongs on the definitions page.
+  // combineAsVariants requires the nodes and the parent to share a page, so
+  // move them before combining rather than after.
+  defs.appendChild(on);
+  defs.appendChild(off);
   const set = figma.combineAsVariants([on, off], defs);
   set.name = "real-file-chip";
 
@@ -1697,6 +1769,7 @@ function nodeFx() {
 const COMMANDS = {
   "v03-paint": v03Paint,
   "grid-basic": gridBasic,
+  "grid-fr-overflow": gridFrOverflow,
   "variables-bound": variablesBound,
   "effects-2025": effects2025,
   "lowering-wrap": loweringWrap,

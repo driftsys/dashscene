@@ -21,6 +21,13 @@
       "note": "Lowers since #264 (the v0.8 grid un-pin): GRID -> LayoutMode::Grid with gridColumnGap/gridRowGap as the main/cross gaps, the gridColumnsSizing/gridRowsSizing strings as Fixed/Fraction track lists, and per-child anchors/spans as placement (docs/decisions/figma-flex-lowering.md D5, docs/decisions/v08-layout-vocabulary-shape.md). The raw capture emits (its one TEXT leaf lowers since #160); crates/dashc/tests/flex_lowering.rs solves it font-free (the TEXT leaf swapped for a FRAME fixed at its captured box) to the captured rects. #272 (a Fixed child larger than its Fraction cell) is not exercised: the one fixed child (140x60) is smaller than its 252x164 cell."
     },
     {
+      "name": "grid-fr-overflow",
+      "fileKey": "PASTE_THE_FIGMA_FILE_KEY_HERE",
+      "covers": "the one construct issue #271 needs Figma's answer for: a 100x100 GRID with two FLEX columns (50 each after zero gap and zero padding) holding a Fixed 80x40 child in column 0, plus a FILL neighbor in column 1 whose resolved x is the answer",
+      "emits": false,
+      "note": "Awaiting manual authoring: run the fixture-author plugin's grid-fr-overflow command in a blank Figma file, paste the file key here, and run `just deno-capture`. Read neighbor-fill's absoluteBoundingBox.x in the capture — 50 means Figma does NOT grow the track and the Fixed child overlaps its neighbor by 30, which is what dashscene does today (pinned by test at PR #267, disclosed as an E3 limit); 80 means Figma grows the track to fit its content, which makes #271 an engine-mapping change (the minmax minimum in template_track), not a schema change. The geometry is arithmetic on purpose so the capture reads without interpretation. grid-basic does not exercise this: its one fixed child (140x60) is smaller than its 252x164 cell."
+    },
+    {
       "name": "variables-bound",
       "fileKey": "VtbiQejcN6gYMmeWaaEy1b",
       "covers": "boundVariables on color + number props across light/dark modes; one subtree pinned to dark",
@@ -78,17 +85,17 @@
     },
     {
       "name": "real-file",
-      "fileKey": "PASTE_THE_FIGMA_FILE_KEY_HERE",
+      "fileKey": "awsa7PB8sPSPVJ0DQ2czdQ",
       "covers": "production-shaped file for the v0.7 real-file import spike (story #37): two pages, extra top-level frames beside the export root, a component set with an instance, a hidden layer, an image fill",
       "emits": false,
-      "note": "Awaiting manual authoring: run the fixture-author plugin's real-file command in a blank Figma file, paste the file key here, and run `just deno-capture` (importers/figma/plugin/fixture-author/README.md). Raw compile will be refused until INSTANCE lowers; the fixture exists so the export closure (declared roots, per-set variant closure, exclusion naming) replays against a real multi-page response."
+      "note": "Authored 2026-07-27 with the fixture-author plugin's real-file command, and READY TO CAPTURE — run `just deno-capture` (importers/figma/plugin/fixture-author/README.md). The command failed on every earlier attempt with `combineAsVariants: Grouped nodes must be in the same page as the parent`, because the variant components were implicitly parented to figma.currentPage while the set was built on the second page; fixed by parenting them to the definitions page first. `emits` stays false until a capture proves otherwise rather than being flipped on the expectation that INSTANCE now lowers. The fixture exists so the export closure (declared roots, per-set variant closure, exclusion naming) replays against a real multi-page response."
     },
     {
       "name": "trim-demo",
-      "fileKey": "PASTE_THE_FIGMA_FILE_KEY_HERE",
+      "fileKey": "9H7ShXRkZVZRzF4KxSZ2l3",
       "covers": "trim-path exercise (story #39): one declared root holding a placeholder slot (with sample children), a redline overlay, a spec note, a `_`-prefixed scratch layer, and a hidden layer (hidden != trimmed)",
       "emits": false,
-      "note": "Awaiting manual authoring: run the fixture-author plugin's trim-demo command, then write the roles with the SEPARATE dashscene annotator plugin (importers/figma/plugin/README.md — the fixture author never writes roles), paste the file key here, and run `just deno-capture`. The trim rules themselves are covered offline by importers/figma/src/trim_test.ts and the import-level test; this fixture replays annotate -> trim -> named record against a real ?plugin_data=shared response."
+      "note": "STEP 1 OF 2 DONE — DO NOT CAPTURE YET. The scene was authored 2026-07-27 with the fixture-author plugin's trim-demo command, but the roles are not written: the fixture author never writes roles, by design. Step 2 is the SEPARATE dashscene annotator plugin (importers/figma/plugin/manifest.json, a sibling of fixture-author/ — issue #302), marking the placeholder, redline and spec nodes. Capturing before that step produces a fixture whose ?plugin_data=shared response carries no roles, so the annotate -> trim -> named record path it exists to replay would pass without exercising anything — the whole point of the fixture, silently lost. Only run `just deno-capture` once the roles are written. The trim rules themselves are covered offline by importers/figma/src/trim_test.ts and the import-level test."
     },
     {
       "name": "xfile-library",
