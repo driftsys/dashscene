@@ -11,10 +11,10 @@ project's convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports six files
+## Why the WIP gate currently reports seven files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-six and exits non-zero. All six are deliberate, accepted exceptions rather
+seven and exits non-zero. All seven are deliberate, accepted exceptions rather
 than ungardened debt, and they are recorded here so the gate's result is
 explained rather than merely tolerated.
 
@@ -47,9 +47,15 @@ rule models gardening as one atomic move because a capture spanning two slices i
 a case it does not name — the reading here is that the _implemented_ half is
 gardened, and the file leaves `docs/wip/` when its last half does.
 
-No driver prompt is live. Driver prompts are transient by construction — spent
-the moment their work lands — and the convention is to archive them verbatim
-rather than garden them into records, as the six now in `docs/archive/` were.
+The seventh is a driver prompt: the brief a session is handed to carry out a
+named piece of work. Driver prompts are transient by construction — spent the
+moment their work lands — and the convention is to archive them verbatim rather
+than garden them into records, as the six now in `docs/archive/` were.
+
+`2026-07-27-v013-open-DRIVER-PROMPT.md` is **live**: it closes epic #345, runs
+the plan revision that close triggers, re-triages a v0.13 backlog that grew from
+51 to 75 while v0.12 ran, and redraws the stream protocol against this slice's
+territory. It is archived when that work lands.
 
 | capture                                                | gardened when                                                                                                                                                                                                                                                                                             |
 | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
