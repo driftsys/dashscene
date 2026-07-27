@@ -28,6 +28,25 @@ pub mod image_id;
 /// `#[repr(C)]` fixes the layout now: solid-fill colors are per-frame
 /// painter input, and docs/specification/03-target-hardware-rules.md (R-T4) plans instance-buffer uploads
 /// of that input, even though nothing uploads it yet.
+///
+/// `PartialEq` is derived, so it compares each field with `f32`'s own
+/// `==` — IEEE 754 equality, not a comparison of the stored bits (debt
+/// #53). Two consequences follow, both confirmed by a runtime test
+/// (`tests/boundary_b.rs`) rather than asserted from the standard:
+///
+/// - A `NaN` channel makes the whole `Color` unequal to everything,
+///   including a bit-for-bit copy of itself — `PartialEq` is derived,
+///   so it inherits `f32`'s non-reflexivity (`NaN != NaN`).
+/// - `0.0` and `-0.0` compare equal channel-by-channel even though their
+///   bit patterns differ, so two `Color`s that compare equal are not
+///   guaranteed to be byte-identical.
+///
+/// Nothing in this crate relies on either behavior today: every equality
+/// check in the test suite is over finite constants. A future
+/// equality-based dedup or dirty-diff over colors (dashscene-core's
+/// dirty set, an R-T4 upload path) would need to choose its comparison
+/// deliberately rather than assume this `PartialEq` is a byte-equality
+/// proxy.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Color {
@@ -74,6 +93,14 @@ impl ClipIndex {
 ///
 /// `#[repr(C)]`: docs/design/architecture.md calls rect entries blittable, and R-T4
 /// plans dirty-range instance-buffer uploads straight from the rect table.
+///
+/// `PartialEq` is derived over `x`, `y`, `w`, `h` and `opacity` as `f32`
+/// (IEEE 754 `==`, not a bitwise compare), and over `paint`/`clip` as
+/// exact integer indices — the same NaN and -0.0 semantics documented on
+/// [`Color`] apply here for the same reason and with the same caveat: a
+/// NaN geometry field breaks reflexivity, and -0.0/0.0 compare equal
+/// despite differing bits, confirmed by a runtime test rather than
+/// assumed (debt #53).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RectEntry {

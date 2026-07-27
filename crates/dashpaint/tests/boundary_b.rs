@@ -571,3 +571,91 @@ fn a_backdrop_sampling_rect_crosses_boundary_b_as_an_ordering_barrier() {
     // composited first, and rect 2 lies above it and is unconstrained.
     assert_eq!(painter.barriers, vec![1]);
 }
+
+// Debt #53: `Color` and `RectEntry` derive `PartialEq` over `f32` fields.
+// The two tests below confirm, by running the comparison rather than by
+// reasoning about the IEEE 754 standard, what that derive actually does
+// with a NaN and with -0.0. Nothing in this crate depends on either
+// behavior today; these tests exist so a future change that relies on
+// this `PartialEq` (an equality-based dedup or dirty-diff) finds the
+// actual semantics recorded and verified, not merely asserted in a doc
+// comment.
+
+#[test]
+fn derived_partial_eq_is_not_reflexive_over_a_nan_field() {
+    let with_nan = Color {
+        r: f32::NAN,
+        g: 0.0,
+        b: 0.0,
+        a: 1.0,
+    };
+    // Not `assert_ne!`, deliberately: the point is that a value does not
+    // equal a bit-for-bit copy of itself, which is what `left == right`
+    // over identical operands would normally confirm rather than refute.
+    assert!(
+        with_nan != with_nan,
+        "IEEE 754 NaN != NaN, and a derived PartialEq inherits that: a \
+         Color carrying a NaN channel is not equal to itself",
+    );
+
+    let rect_with_nan = RectEntry {
+        x: f32::NAN,
+        y: 0.0,
+        w: 10.0,
+        h: 10.0,
+        paint: PaintIndex(0),
+        clip: ClipIndex::UNCLIPPED,
+        opacity: 1.0,
+    };
+    assert!(
+        rect_with_nan != rect_with_nan,
+        "the same non-reflexivity applies to RectEntry's f32 fields",
+    );
+}
+
+#[test]
+fn derived_partial_eq_treats_zero_and_negative_zero_as_equal() {
+    let zero = Color {
+        r: 0.0,
+        g: 0.0,
+        b: 0.0,
+        a: 1.0,
+    };
+    let negative_zero = Color {
+        r: -0.0,
+        g: 0.0,
+        b: 0.0,
+        a: 1.0,
+    };
+    // The bits genuinely differ...
+    assert_ne!(
+        zero.r.to_bits(),
+        negative_zero.r.to_bits(),
+        "0.0 and -0.0 must be different bit patterns, or this test proves nothing",
+    );
+    // ...but the derived PartialEq still calls them equal.
+    assert_eq!(
+        zero, negative_zero,
+        "IEEE 754 0.0 == -0.0, and a derived PartialEq inherits that: two \
+         Colors with differing bit patterns compare equal",
+    );
+
+    let rect_zero = RectEntry {
+        x: 0.0,
+        y: 0.0,
+        w: 10.0,
+        h: 10.0,
+        paint: PaintIndex(0),
+        clip: ClipIndex::UNCLIPPED,
+        opacity: 1.0,
+    };
+    let rect_negative_zero = RectEntry {
+        x: -0.0,
+        ..rect_zero
+    };
+    assert_ne!(rect_zero.x.to_bits(), rect_negative_zero.x.to_bits());
+    assert_eq!(
+        rect_zero, rect_negative_zero,
+        "the same 0.0/-0.0 equality applies to RectEntry's f32 fields",
+    );
+}
