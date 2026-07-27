@@ -519,6 +519,115 @@ fn a_shadow_with_no_color_is_refused() {
     assert_sole_unsupported(&doc, &diagnostics, "card", "a shadow with no color");
 }
 
+/// Every `figma.unsupported` construct reported at a node whose path contains
+/// `at`, sorted — the exhaustive counterpart to [`assert_sole_unsupported`],
+/// for the nodes that carry more than one blocker (debt #329).
+fn unsupported_constructs_at(
+    diagnostics: &[dashscene_validator::Diagnostic],
+    at: &str,
+) -> Vec<String> {
+    let mut found: Vec<String> = common::unsupported(diagnostics)
+        .into_iter()
+        .filter(|(path, _)| path.contains(at))
+        .map(|(_, what)| what)
+        .collect();
+    found.sort();
+    found
+}
+
+#[test]
+fn every_paint_blocker_on_one_node_is_named_not_just_the_first() {
+    // P4: every out-of-profile construct is a named diagnostic. A paint entry
+    // is built from a fill, a stroke and a shadow list; before debt #329 they
+    // were evaluated with `?` in struct-field order, so the first refusal
+    // short-circuited the rest and a designer had to fix one construct and
+    // recompile to see the next. This node carries one independent blocker in
+    // each of the three, and all three must be reported in one pass.
+    let file = document(serde_json::json!({
+        "name": "three-blockers",
+        "type": "FRAME",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 60.0 },
+        "fills": [{ "type": "PATTERN" }],
+        "strokes": [
+            { "type": "SOLID", "color": { "r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0 } },
+            { "type": "SOLID", "color": { "r": 0.0, "g": 1.0, "b": 0.0, "a": 1.0 } },
+        ],
+        "effects": [{ "type": "DROP_SHADOW", "visible": true, "radius": 8.0 }],
+    }));
+
+    let (_, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
+        .expect("an unsupported construct is diagnosed, not fatal");
+
+    assert_eq!(
+        unsupported_constructs_at(&diagnostics, "three-blockers"),
+        [
+            "a PATTERN paint",
+            "a shadow with no color",
+            "more than one visible stroke",
+        ],
+    );
+}
+
+#[test]
+fn a_stacked_fill_names_both_the_stack_and_the_kind_that_cannot_lower() {
+    // An ELLIPSE keeps the single-fill restriction, so a stack is itself a
+    // blocker there. Before debt #329 that stacking refusal returned before
+    // any fill's own kind was inspected, so a two-fill circle whose second
+    // fill is a PATTERN reported only the stack and never the PATTERN. Both
+    // are true reasons the node cannot lower, so both are named.
+    let file = document(serde_json::json!({
+        "name": "two-fill-circle",
+        "type": "ELLIPSE",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 40.0, "height": 40.0 },
+        "fills": [
+            { "type": "SOLID", "color": { "r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0 } },
+            { "type": "PATTERN" },
+        ],
+    }));
+
+    let (_, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
+        .expect("an unsupported construct is diagnosed, not fatal");
+
+    assert_eq!(
+        unsupported_constructs_at(&diagnostics, "two-fill-circle"),
+        ["a PATTERN paint", "more than one visible fill"],
+    );
+}
+
+#[test]
+fn every_stroke_blocker_on_one_node_is_named_not_just_the_first() {
+    // The same masking inside one lowering: the stroke gates ran in sequence
+    // and each returned, so a stroke that is dashed *and* non-solid *and*
+    // unknown-aligned named only whichever gate came first in the source.
+    let file = document(serde_json::json!({
+        "name": "four-stroke-blockers",
+        "type": "FRAME",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 60.0 },
+        "complexStrokeProperties": { "strokeType": "DASHED" },
+        "strokeDashes": [10.0, 5.0],
+        "strokeAlign": "MIDDLE",
+        "strokes": [{
+            "type": "GRADIENT_LINEAR",
+            "gradientHandlePositions": [
+                { "x": 0.0, "y": 0.0 }, { "x": 1.0, "y": 0.0 }, { "x": 0.0, "y": 1.0 },
+            ],
+        }],
+    }));
+
+    let (_, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
+        .expect("an unsupported construct is diagnosed, not fatal");
+
+    assert_eq!(
+        unsupported_constructs_at(&diagnostics, "four-stroke-blockers"),
+        [
+            "a DASHED stroke",
+            "a MIDDLE stroke alignment",
+            "a dashed stroke",
+            "a non-solid stroke",
+        ],
+    );
+}
+
 #[test]
 fn all_four_gradient_kinds_lower() {
     let doc = lowered();

@@ -782,41 +782,21 @@ impl Walk<'_> {
             // (a stacked fill, a dashed stroke), and the ellipse gate adds its
             // own (an arc, a ring, a non-circular or non-fixed ellipse); each
             // blocks the node like any other finding. `UnresolvedImage` aborts.
-            paint = match self.ellipse_paint_of(node, path, constraints, &mut blockers) {
-                Ok(paint) => paint,
-                Err(CompileError::Unsupported { what, .. }) => {
-                    blockers.push(what);
-                    None
-                }
-                Err(other) => return Err(other),
-            };
+            paint = self.ellipse_paint_of(node, path, constraints, &mut blockers)?;
         } else if node.kind == "VECTOR" {
             // A leaf: no container. Its geometry bakes into an MSDF field
             // carried on the paint entry as a coverage mask (story B1). The
             // field-input selection rule and the bake keep their own refusals;
             // each blocks the node like any other finding. `UnresolvedImage`
             // aborts (an image-filled vector defers to the caller's contract).
-            paint = match self.vector_paint_of(node, path, &mut blockers) {
-                Ok(paint) => paint,
-                Err(CompileError::Unsupported { what, .. }) => {
-                    blockers.push(what);
-                    None
-                }
-                Err(other) => return Err(other),
-            };
+            paint = self.vector_paint_of(node, path, &mut blockers)?;
         } else {
             container = container_of(node, &mut blockers);
-            // The paint lowering keeps its own refusals; an unsupported paint
-            // blocks the node like any other finding. `UnresolvedImage`
-            // aborts: it is the caller's contract, not the designer's file.
-            paint = match self.paint_of(node, path) {
-                Ok(paint) => paint,
-                Err(CompileError::Unsupported { what, .. }) => {
-                    blockers.push(what);
-                    None
-                }
-                Err(other) => return Err(other),
-            };
+            // The paint lowering keeps its own refusals; each unsupported
+            // paint construct blocks the node like any other finding.
+            // `UnresolvedImage` aborts: it is the caller's contract, not the
+            // designer's file.
+            paint = self.paint_of(node, path, &mut blockers)?;
         }
 
         // The import gate: the producer maps, the validator decides (P5).
@@ -1017,18 +997,33 @@ impl Walk<'_> {
         });
     }
 
-    fn paint_of(&mut self, node: &Node, path: &str) -> Result<Option<DocPaint>, CompileError> {
+    /// Lowers a parametric (rounded-box) node's paint, collecting the reasons
+    /// it cannot be lowered.
+    ///
+    /// The fill, the stroke and the shadows are three independent findings, so
+    /// all three are evaluated and each names its own refusal (debt #329). They
+    /// used to be built with `?` in struct-field order, which made Rust's
+    /// left-to-right field evaluation the reporting order: the first refusal
+    /// short-circuited the rest, and a designer had to fix one construct and
+    /// recompile to learn the next. P4 asks for every out-of-profile construct
+    /// to be named, so one pass now names them all.
+    fn paint_of(
+        &mut self,
+        node: &Node,
+        path: &str,
+        blockers: &mut Vec<String>,
+    ) -> Result<Option<DocPaint>, CompileError> {
         // Story C1 (debt #146): a node's visible fills lower as a stack — the
         // first (bottom) becomes `fill`, the rest (`extra_fills`) are painted
         // over it in the same array order.
-        let mut fills = self.fills_of(node, path)?;
+        let mut fills = self.fills_of(node, path, blockers)?;
         let fill = (!fills.is_empty()).then(|| fills.remove(0));
         let entry = PaintEntry {
             fill,
             extra_fills: fills,
-            stroke: self.stroke_of(node, path)?,
+            stroke: self.stroke_of(node, blockers),
             corners: corners_of(node),
-            shadows: shadows_of(node, path)?,
+            shadows: shadows_of(node, blockers),
             blurs: blurs_of(node),
             // A parametric (rounded-box) node carries no baked shape; the
             // VECTOR arm is the only place a shape index is set.
@@ -1115,22 +1110,22 @@ impl Walk<'_> {
 
         // The fill and stroke lower exactly as a frame's — only the corners
         // differ (a frame reads `cornerRadius`; an ellipse has none, so the
-        // circle radius stands in). A refused fill or stroke propagates as
-        // `Unsupported`, which the caller turns into a blocker.
+        // circle radius stands in). A refused fill, stroke or shadow adds its
+        // own blocker alongside the ellipse gates above (debt #329).
         let entry = PaintEntry {
-            fill: self.fill_of(node, path)?,
+            fill: self.fill_of(node, path, blockers)?,
             // An ellipse keeps the single-fill restriction (`fill_of`); the
             // stacked-fill vocabulary (story C1) widens `paint_of` only — no
             // stacked-fill ellipse is in the measured need.
             extra_fills: Vec::new(),
-            stroke: self.stroke_of(node, path)?,
+            stroke: self.stroke_of(node, blockers),
             corners: CornerRadii {
                 top_left: radius,
                 top_right: radius,
                 bottom_right: radius,
                 bottom_left: radius,
             },
-            shadows: shadows_of(node, path)?,
+            shadows: shadows_of(node, blockers),
             blurs: blurs_of(node),
             // An ellipse is a parametric (rounded-box) shape, not a baked one.
             shape: None,
@@ -1176,22 +1171,8 @@ impl Walk<'_> {
         // The fill and stroke lower through the shared paint path; their own
         // refusals (a stacked fill, a non-solid or dashed stroke) become
         // blockers, and `UnresolvedImage` aborts.
-        let fill = match self.fill_of(node, path) {
-            Ok(fill) => fill,
-            Err(CompileError::Unsupported { what, .. }) => {
-                blockers.push(what);
-                None
-            }
-            Err(other) => return Err(other),
-        };
-        let stroke = match self.stroke_of(node, path) {
-            Ok(stroke) => stroke,
-            Err(CompileError::Unsupported { what, .. }) => {
-                blockers.push(what);
-                None
-            }
-            Err(other) => return Err(other),
-        };
+        let fill = self.fill_of(node, path, blockers)?;
+        let stroke = self.stroke_of(node, blockers);
 
         // Select the field-input geometry and the fill that paints it.
         let (geometry, paint_fill): (Vec<Geometry>, PaintKind) = match (fill, stroke) {
@@ -1291,11 +1272,24 @@ impl Walk<'_> {
         }))
     }
 
-    fn fill_of(&mut self, node: &Node, path: &str) -> Result<Option<PaintKind>, CompileError> {
+    /// The single visible fill of a node whose paint entry carries exactly one
+    /// (an ellipse, a baked vector), or the reasons it has none.
+    ///
+    /// Every visible fill is lowered whatever the count, so a stack names both
+    /// its stacking refusal *and* each fill's own kind refusal (debt #329).
+    /// Before that, the stacking refusal returned first and a two-fill node
+    /// whose second fill was a `PATTERN` never mentioned the `PATTERN` at all.
+    fn fill_of(
+        &mut self,
+        node: &Node,
+        path: &str,
+        blockers: &mut Vec<String>,
+    ) -> Result<Option<PaintKind>, CompileError> {
+        let kinds = self.fills_of(node, path, blockers)?;
         match single_visible_paint(&node.fills) {
             // A layout-only frame with no fill draws nothing.
             OnePaint::None => Ok(None),
-            OnePaint::One(fill) => self.paint_kind(fill, path).map(Some),
+            OnePaint::One(_) => Ok(kinds.into_iter().next()),
             // PaintEntry.fill is one Option<PaintKind>; Figma's fills is an
             // array. Stacking is a Document expressiveness gap (debt #146), not
             // a triage gap — and a silent drop would violate P4. `paint_of`
@@ -1303,10 +1297,10 @@ impl Walk<'_> {
             // `fills_of`; an ellipse, a baked vector, and a text glyph color
             // keep refusing here — the measured need (the hero, the
             // stacked-fills fixture) is a plain frame/rectangle.
-            OnePaint::Many => Err(CompileError::Unsupported {
-                path: path.to_string(),
-                what: "more than one visible fill".to_string(),
-            }),
+            OnePaint::Many => {
+                blockers.push("more than one visible fill".to_string());
+                Ok(None)
+            }
         }
     }
 
@@ -1316,10 +1310,29 @@ impl Walk<'_> {
     /// `fill_of`, a stack of visible fills is not itself a blocker; a fill
     /// whose own kind has no lowering still refuses by name (P4), through
     /// `paint_kind`.
-    fn fills_of(&mut self, node: &Node, path: &str) -> Result<Vec<PaintKind>, CompileError> {
-        visible_paints(&node.fills)
-            .map(|fill| self.paint_kind(fill, path))
-            .collect()
+    ///
+    /// Every visible fill is inspected, not only those before the first
+    /// refusal (debt #329): two unlowerable fills in one stack are two
+    /// findings, and the second is not implied by the first. A fill that
+    /// refuses contributes a blocker and no `PaintKind`, so the returned list
+    /// is shorter than the visible-fill count exactly when `blockers` grew.
+    fn fills_of(
+        &mut self,
+        node: &Node,
+        path: &str,
+        blockers: &mut Vec<String>,
+    ) -> Result<Vec<PaintKind>, CompileError> {
+        let mut kinds = Vec::new();
+        for fill in visible_paints(&node.fills) {
+            match self.paint_kind(fill, path) {
+                Ok(kind) => kinds.push(kind),
+                Err(CompileError::Unsupported { what, .. }) => blockers.push(what),
+                // The image gate's verdicts and an unresolved `imageRef` are
+                // caller-contract failures, not vocabulary ones — they abort.
+                Err(other) => return Err(other),
+            }
+        }
+        Ok(kinds)
     }
 
     fn paint_kind(&mut self, paint: &Paint, path: &str) -> Result<PaintKind, CompileError> {
@@ -1483,23 +1496,30 @@ impl Walk<'_> {
         }
     }
 
-    fn stroke_of(&mut self, node: &Node, path: &str) -> Result<Option<Stroke>, CompileError> {
+    /// The node's single visible stroke, or the reasons it has none.
+    ///
+    /// The gates below — stacking, stroke type, dash pattern, paint kind and
+    /// alignment — are independent properties of the same stroke, so each
+    /// collects its own blocker and none returns (debt #329). A dashed
+    /// gradient stroke used to name only whichever gate the source listed
+    /// first.
+    fn stroke_of(&self, node: &Node, blockers: &mut Vec<String>) -> Option<Stroke> {
         // strokeWeight and strokeAlign are present even when `strokes` is
         // empty (pinned by the fixture), so the stroke is gated on the array,
-        // never on the weight.
+        // never on the weight. A node with no stroke has no stroke findings —
+        // the gates below would read fields Figma leaves set from an earlier
+        // edit.
         let stroke = match single_visible_paint(&node.strokes) {
-            OnePaint::None => return Ok(None),
+            OnePaint::None => return None,
             // PaintEntry.stroke is one Option<Stroke>; Figma's strokes is an
             // array. Stacking is a Document expressiveness gap (debt #146), not
             // a triage gap — and a silent drop would violate P4. Same rule
             // as `fill_of`.
             OnePaint::Many => {
-                return Err(CompileError::Unsupported {
-                    path: path.to_string(),
-                    what: "more than one visible stroke".to_string(),
-                });
+                blockers.push("more than one visible stroke".to_string());
+                None
             }
-            OnePaint::One(stroke) => stroke,
+            OnePaint::One(stroke) => Some(stroke),
         };
 
         // dashpaint::Stroke is solid and uniform: one color, one width, one
@@ -1516,49 +1536,49 @@ impl Walk<'_> {
             .and_then(|properties| properties.stroke_type.as_deref())
             && stroke_type != "BASIC"
         {
-            return Err(CompileError::Unsupported {
-                path: path.to_string(),
-                what: format!("a {stroke_type} stroke"),
-            });
+            blockers.push(format!("a {stroke_type} stroke"));
         }
         // Figma writes `strokeDashes: null` for a continuous stroke, and an
         // empty array means the same, so only a non-empty pattern is a drop.
         if node.stroke_dashes.as_ref().is_some_and(|d| !d.is_empty()) {
-            return Err(CompileError::Unsupported {
-                path: path.to_string(),
-                what: "a dashed stroke".to_string(),
-            });
+            blockers.push("a dashed stroke".to_string());
         }
 
-        let color = match stroke.kind.as_str() {
-            "SOLID" => stroke.color.ok_or_else(|| CompileError::Unsupported {
-                path: path.to_string(),
-                what: "a SOLID stroke with no color".to_string(),
-            })?,
+        let color = stroke.and_then(|stroke| match stroke.kind.as_str() {
+            "SOLID" => match stroke.color {
+                Some(color) => Some(color_of(color, stroke.opacity)),
+                None => {
+                    blockers.push("a SOLID stroke with no color".to_string());
+                    None
+                }
+            },
             // v0.3 strokes are solid-only (dashpaint::Stroke).
             _ => {
-                return Err(CompileError::Unsupported {
-                    path: path.to_string(),
-                    what: "a non-solid stroke".to_string(),
-                });
+                blockers.push("a non-solid stroke".to_string());
+                None
+            }
+        });
+
+        let align = match node.stroke_align.as_deref().unwrap_or("INSIDE") {
+            "INSIDE" => Some(StrokeAlign::Inside),
+            "CENTER" => Some(StrokeAlign::Center),
+            "OUTSIDE" => Some(StrokeAlign::Outside),
+            other => {
+                blockers.push(format!("a {other} stroke alignment"));
+                None
             }
         };
 
-        Ok(Some(Stroke {
-            width: node.stroke_weight.unwrap_or(1.0),
-            align: match node.stroke_align.as_deref().unwrap_or("INSIDE") {
-                "INSIDE" => StrokeAlign::Inside,
-                "CENTER" => StrokeAlign::Center,
-                "OUTSIDE" => StrokeAlign::Outside,
-                other => {
-                    return Err(CompileError::Unsupported {
-                        path: path.to_string(),
-                        what: format!("a {other} stroke alignment"),
-                    });
-                }
-            },
-            color: color_of(color, stroke.opacity),
-        }))
+        match (color, align) {
+            (Some(color), Some(align)) => Some(Stroke {
+                width: node.stroke_weight.unwrap_or(1.0),
+                align,
+                color,
+            }),
+            // Some gate above refused, so the caller skips the node; the
+            // half-built stroke it would carry is never emitted.
+            _ => None,
+        }
     }
 
     /// Lowers a `TEXT` node's characters and style, or collects the reasons it
@@ -1657,11 +1677,12 @@ impl Walk<'_> {
         // `WIDTH_AND_HEIGHT`/`HEIGHT`/`NONE` modes map to sizing (see
         // `text_sizing`); `TRUNCATE` is the one value that has no equivalent,
         // and an unrecognised value has no mapping at all — both are refused
-        // rather than fix-sized silently.
-        match style.text_auto_resize.as_deref() {
-            None | Some("WIDTH_AND_HEIGHT") | Some("HEIGHT") | Some("NONE") => {}
-            Some("TRUNCATE") => blockers.push("text truncation".to_string()),
-            Some(other) => blockers.push(format!("text auto-resize {other}")),
+        // rather than fix-sized silently. An absent field arrives here as
+        // `NONE`, normalized at the parse boundary (debt #339).
+        match style.text_auto_resize.as_str() {
+            "WIDTH_AND_HEIGHT" | "HEIGHT" | "NONE" => {}
+            "TRUNCATE" => blockers.push("text truncation".to_string()),
+            other => blockers.push(format!("text auto-resize {other}")),
         }
         // A hyperlink on the run.
         if style.hyperlink.is_some() {
@@ -2133,14 +2154,11 @@ fn text_sizing(
     if node.layout_sizing_horizontal.is_some() || node.layout_sizing_vertical.is_some() {
         return from_layout_sizing;
     }
-    let (sizing_h, sizing_v) = match node
-        .style
-        .as_ref()
-        .and_then(|s| s.text_auto_resize.as_deref())
-    {
+    let (sizing_h, sizing_v) = match node.style.as_ref().map(|s| s.text_auto_resize.as_str()) {
         Some("WIDTH_AND_HEIGHT") => (AxisSizing::Hug, AxisSizing::Hug),
         Some("HEIGHT") => (AxisSizing::Fixed, AxisSizing::Hug),
-        // `NONE` and an absent field alike: the box is fixed as authored.
+        // `NONE` — which an absent field parses as (debt #339) — and a node
+        // with no style at all: the box is fixed as authored.
         _ => (AxisSizing::Fixed, AxisSizing::Fixed),
     };
     let constraints = LayoutConstraints {
@@ -2219,13 +2237,14 @@ fn corners_of(node: &Node) -> CornerRadii {
 /// effects (noise, blur) are triaged in [`triage::constructs_of`], not here.
 /// A hidden effect is skipped, like a hidden paint. A shadow with no color has
 /// no meaning and is refused by name (P4) — the same posture as a `SOLID` with
-/// no color; `Unsupported` becomes a blocker at the caller.
+/// no color — as a collected blocker, so it masks neither the node's other
+/// shadows nor its fill and stroke (debt #329).
 ///
 /// Figma's `showShadowBehindNode` is not modeled: the REST subset is
 /// deliberately partial, and this painter always draws a drop shadow behind
 /// the node (the Figma default). That is a documented fidelity limitation, not
 /// a dropped field the schema could carry.
-fn shadows_of(node: &Node, path: &str) -> Result<Vec<Shadow>, CompileError> {
+fn shadows_of(node: &Node, blockers: &mut Vec<String>) -> Vec<Shadow> {
     let mut shadows = Vec::new();
     for effect in node.effects.iter().filter(|e| e.visible != Some(false)) {
         let kind = match effect.kind.as_str() {
@@ -2234,10 +2253,8 @@ fn shadows_of(node: &Node, path: &str) -> Result<Vec<Shadow>, CompileError> {
             _ => continue,
         };
         let Some(color) = effect.color else {
-            return Err(CompileError::Unsupported {
-                path: path.to_string(),
-                what: "a shadow with no color".to_string(),
-            });
+            blockers.push("a shadow with no color".to_string());
+            continue;
         };
         let offset = effect.offset.unwrap_or(rest::Vector { x: 0.0, y: 0.0 });
         shadows.push(Shadow {
@@ -2251,7 +2268,7 @@ fn shadows_of(node: &Node, path: &str) -> Result<Vec<Shadow>, CompileError> {
             color: color_of(color, None),
         });
     }
-    Ok(shadows)
+    shadows
 }
 
 /// A node's blurs (story #393,
