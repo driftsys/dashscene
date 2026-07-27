@@ -493,14 +493,18 @@ so each technote stops being the authority for the conclusion it reached:
   names (Lossless, Access, Master, Eco) stay out of the vocabulary (story
   #436).
 - [compress-raster-only.md](compress-raster-only.md) — only raster images
-  are block-compressed; glyph atlases and baked vector fields bind
-  canonical. Three asset classes rather than the packer's two, split by
-  resident cost against error tolerance: compress where consumption is high
-  **and** error tolerance is high, which today is raster alone. Text is
-  excluded because MSDF has already spent half the quality margin
-  (`q1-msdf-below-14px.md`) and because paging out unused coverage is a
-  larger, free saving; icons because the prize is tens of kilobytes.
-  Provisional for the field classes, pending a rendered-output measurement
-  and the residency question (#345).
+  are block-compressed. Three asset classes rather than the packer's two,
+  split by resident cost against error tolerance: compress where
+  consumption is high **and** error tolerance is high. The objective is
+  memory bandwidth, residency and load-time CPU — **not file size**, which
+  is a constraint. The two exclusions are rejected for opposite reasons:
+  text because **the risk is too high** (MSDF has already spent half the
+  quality margin, and illegibility is not an aesthetic failure), icons
+  because **the value is too low** (tens of kilobytes against a new lossy
+  stage in the field path). EAC-R11 is rejected on two independent grounds,
+  structural and lossy. Provisional on both sides — the field exclusion
+  pending a rendered-output measurement (#460), the raster inclusion
+  pending a measurement of how much static raster this domain has at all
+  (#462) (#345).
 
 See the `sdd-working-memory-lifecycle` rule.
