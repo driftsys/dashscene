@@ -11,8 +11,8 @@
 
 import { assert, assertEquals } from "@std/assert";
 
-import type { ClosureFile } from "./closure.ts";
-import { trimFile, type TrimReason } from "./trim.ts";
+import type { ClosureFile, ClosureNode } from "./closure.ts";
+import { trimFile, type TrimReason, type TrimResult } from "./trim.ts";
 
 /** A node with a dashscene role, in the capture's `sharedPluginData` shape. */
 function annotated(
@@ -344,4 +344,225 @@ Deno.test("records follow document order across the whole tree (R7 determinism)"
   const result = trimFile(file);
 
   assertEquals(result.trimmed.map((r) => r.id), ["1:1", "1:3", "1:4"]);
+});
+
+// ------------------------------------------- captured replay (#265, #479)
+
+/**
+ * The replay half: the same pass, driven by committed captures instead of the
+ * inline trees above.
+ *
+ * `trim-demo` is the annotate → trim → named record fixture. Its roles were
+ * written by the dashscene annotator plugin and returned by a real
+ * `?plugin_data=shared` response, and the scene is authored so the three trim
+ * mechanisms stay distinguishable: a node's own role, its parent's role, and
+ * the `_` name prefix. Each test below names one node and the mechanism that
+ * decided its fate, because an assertion over a total node count would pass
+ * while confusing all three.
+ */
+const CORPUS = new URL("../../../corpus/figma-fixtures/", import.meta.url);
+
+/** A node as a `?plugin_data=shared` capture returns it. */
+type CapturedNode = ClosureNode & {
+  readonly visible?: boolean;
+  readonly sharedPluginData?: Readonly<
+    Record<string, Readonly<Record<string, string>>>
+  >;
+};
+
+function fixture(name: string): ClosureFile {
+  return JSON.parse(
+    Deno.readTextFileSync(new URL(`${name}.json`, CORPUS)),
+  ) as ClosureFile;
+}
+
+/** Every node below the canvases, in document order. */
+function nodesOf(file: ClosureFile): CapturedNode[] {
+  const out: CapturedNode[] = [];
+  const visit = (node: ClosureNode) => {
+    out.push(node as CapturedNode);
+    for (const child of node.children ?? []) visit(child);
+  };
+  for (const canvas of file.document.children ?? []) {
+    for (const top of canvas.children ?? []) visit(top);
+  }
+  return out;
+}
+
+/** The one node carrying this name, or undefined when none does. */
+function named(file: ClosureFile, name: string): CapturedNode | undefined {
+  const matches = nodesOf(file).filter((n) => n.name === name);
+  assert(matches.length <= 1, `"${name}" names ${matches.length} nodes`);
+  return matches[0];
+}
+
+/** The dashscene role a captured node carries, or undefined when it has none. */
+function capturedRole(node: CapturedNode): string | undefined {
+  return node.sharedPluginData?.dashscene?.role;
+}
+
+/** Why the node with this name was trimmed, or undefined when it survived. */
+function reasonOf(result: TrimResult, name: string): TrimReason | undefined {
+  return result.trimmed.find((r) => r.name === name)?.reason;
+}
+
+Deno.test("trim-demo: the capture carries the annotator's roles, stamped v1", () => {
+  // The input guard for every test below. The fixture author writes the scene
+  // but never the roles; a capture taken before the annotator ran carries
+  // none, and then the whole trim path replays as a no-op that still passes.
+  // This names what the capture must contain for the replay to mean anything.
+  const annotations = nodesOf(fixture("trim-demo"))
+    .filter((n) => n.sharedPluginData !== undefined)
+    .map((n) => [n.name, n.sharedPluginData?.dashscene]);
+
+  assertEquals(annotations, [
+    ["slot", { v: "1", role: "placeholder" }],
+    ["redline-overlay", { v: "1", role: "redline" }],
+    ["spec-note", { v: "1", role: "spec" }],
+  ]);
+});
+
+Deno.test("trim-demo: real-content is kept — it carries no role", () => {
+  const capture = fixture("trim-demo");
+  const before = named(capture, "real-content");
+  assert(before !== undefined, "the fixture must carry real-content");
+  assertEquals(capturedRole(before), undefined);
+
+  const result = trimFile(capture);
+
+  assert(
+    named(result.file, "real-content") !== undefined,
+    "real-content must survive",
+  );
+  assertEquals(reasonOf(result, "real-content"), undefined);
+});
+
+Deno.test("trim-demo: the slot keeps its box; its samples go by the parent's role", () => {
+  const capture = fixture("trim-demo");
+  const result = trimFile(capture);
+
+  // The placeholder node itself is not trimmed: it keeps its own box, emptied
+  // of the sample content the runtime replaces.
+  const slot = named(result.file, "slot");
+  assert(slot !== undefined, "the placeholder keeps its own box");
+  assertEquals(slot.children, []);
+  assertEquals(reasonOf(result, "slot"), undefined);
+
+  // Both samples carry no role of their own, so the parent's placeholder role
+  // is the only thing that can have removed them.
+  for (const name of ["sample-a", "sample-b"]) {
+    const before = named(capture, name);
+    assert(before !== undefined, `the fixture must carry ${name}`);
+    assertEquals(capturedRole(before), undefined, `${name} has its own role`);
+    assertEquals(reasonOf(result, name), "slot-children");
+    assertEquals(named(result.file, name), undefined, `${name} still ships`);
+  }
+});
+
+Deno.test("trim-demo: redline-overlay is trimmed by its own redline role", () => {
+  const capture = fixture("trim-demo");
+  const before = named(capture, "redline-overlay");
+  assert(before !== undefined, "the fixture must carry redline-overlay");
+  assertEquals(capturedRole(before), "redline");
+
+  const result = trimFile(capture);
+
+  assertEquals(result.trimmed.find((r) => r.name === "redline-overlay"), {
+    id: "1:8",
+    name: "redline-overlay",
+    type: "FRAME",
+    reason: "role:redline",
+  });
+  assertEquals(named(result.file, "redline-overlay"), undefined);
+});
+
+Deno.test("trim-demo: spec-note is trimmed by its own spec role", () => {
+  const capture = fixture("trim-demo");
+  const before = named(capture, "spec-note");
+  assert(before !== undefined, "the fixture must carry spec-note");
+  assertEquals(capturedRole(before), "spec");
+
+  const result = trimFile(capture);
+
+  assertEquals(result.trimmed.find((r) => r.name === "spec-note"), {
+    id: "1:9",
+    name: "spec-note",
+    type: "TEXT",
+    reason: "role:spec",
+  });
+  assertEquals(named(result.file, "spec-note"), undefined);
+});
+
+Deno.test("trim-demo: _scratch is trimmed by its name prefix, carrying no role", () => {
+  const capture = fixture("trim-demo");
+  const before = named(capture, "_scratch");
+  assert(before !== undefined, "the fixture must carry _scratch");
+  // No role: the `_` prefix is the only mechanism that can trim this node.
+  assertEquals(capturedRole(before), undefined);
+
+  const result = trimFile(capture);
+
+  assertEquals(result.trimmed.find((r) => r.name === "_scratch"), {
+    id: "1:10",
+    name: "_scratch",
+    type: "FRAME",
+    reason: "name-prefix",
+  });
+  assertEquals(named(result.file, "_scratch"), undefined);
+});
+
+Deno.test("trim-demo: hidden-state ships — visible:false is not a trim", () => {
+  const capture = fixture("trim-demo");
+  const before = named(capture, "hidden-state");
+  assert(before !== undefined, "the fixture must carry hidden-state");
+  assertEquals(before.visible, false);
+  assertEquals(capturedRole(before), undefined);
+
+  const result = trimFile(capture);
+
+  const hidden = named(result.file, "hidden-state");
+  assert(hidden !== undefined, "a hidden node is not scaffolding");
+  assertEquals(hidden.visible, false);
+  assertEquals(reasonOf(result, "hidden-state"), undefined);
+});
+
+Deno.test("trim-demo: the three mechanisms stay distinguishable, in document order", () => {
+  const result = trimFile(fixture("trim-demo"));
+
+  // One record per removed subtree root, each naming its own mechanism.
+  assertEquals(
+    result.trimmed.map((r) => [r.name, r.reason]),
+    [
+      ["sample-a", "slot-children"],
+      ["sample-b", "slot-children"],
+      ["redline-overlay", "role:redline"],
+      ["spec-note", "role:spec"],
+      ["_scratch", "name-prefix"],
+    ],
+  );
+  assertEquals(result.diagnostics, []);
+  // And nothing else left: the survivors, in document order.
+  assertEquals(nodesOf(result.file).map((n) => n.name), [
+    "trim-demo",
+    "trim-demo",
+    "real-content",
+    "slot",
+    "hidden-state",
+  ]);
+});
+
+Deno.test("real-file: an unannotated capture trims nothing, hidden layer included", () => {
+  // The trim side of the hidden-is-not-trimmed rule, on the production-shaped
+  // capture: `wip-banner` is hidden and carries no role, so it stays in the
+  // document with `visible: false`. The closure side is in closure_test.ts.
+  const capture = fixture("real-file");
+
+  const result = trimFile(capture);
+
+  assertEquals(result.trimmed, []);
+  assertEquals(result.diagnostics, []);
+  assert(result.file === capture, "an untrimmed capture is not rebuilt");
+  const banner = named(result.file, "wip-banner");
+  assert(banner !== undefined, "wip-banner must stay in the document");
+  assertEquals(banner.visible, false);
 });

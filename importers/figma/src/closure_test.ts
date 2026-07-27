@@ -3,8 +3,9 @@
  *
  * The synthetic tests build minimal file shapes inline; the replay tests read
  * committed captures, so the closure is exercised against real `GET /file`
- * JSON — including the two fixtures that carry extra top-level nodes
- * (effects-2025) and a component set (lowering-variant-topology).
+ * JSON — the fixtures that carry extra top-level nodes (effects-2025), a
+ * component set (lowering-variant-topology), and a production-shaped
+ * multi-page file (real-file).
  */
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
@@ -16,6 +17,7 @@ import {
   parseExportManifest,
   resolveRemoteComponents,
 } from "./closure.ts";
+import { isPng } from "./images.ts";
 import { loadDashc } from "./wasm.ts";
 
 const CORPUS = new URL("../../../corpus/figma-fixtures/", import.meta.url);
@@ -887,6 +889,121 @@ Deno.test("the oracle names a definition's image fill, from both walks", async (
   assertEquals(closure.diagnostics, []);
   // Non-empty: the definition's fill reached the closure through the pulled set.
   assertEquals(closure.imageRefs, ["member-image"]);
+  assertEquals(
+    closure.imageRefs,
+    dashc.figmaImageRefs(JSON.stringify(closure.file)),
+  );
+});
+
+// ------------------------------------------- real-file replay (#265, #479)
+//
+// `real-file` is the production-shaped capture: two pages, an undeclared
+// sibling frame beside the export root, a component set on a definitions page,
+// a hidden layer, and an image fill. The tests below replay the closure
+// against it — the reason the fixture exists.
+
+/** The declared export root: the `home` frame on `Page 1`. */
+const REAL_FILE_ROOT = "1:18";
+/** The one image ref `home` carries, on the `hero` frame's IMAGE fill. */
+const REAL_FILE_IMAGE_REF = "390616a0e7321eddb464388366d9a2a1bcb7f4c3";
+
+/** The closure every real-file test below drives, from the same declaration. */
+function realFileClosure() {
+  return computeClosure(fixture("real-file"), { roots: [REAL_FILE_ROOT] });
+}
+
+Deno.test("real-file: only the declared root ships, and the undeclared sibling is named", () => {
+  const closure = realFileClosure();
+
+  assertEquals(closure.diagnostics, []);
+  // `Page 1` ships the declared root and nothing else. The definitions page
+  // ships nothing of its own either: `real-file-chip` is there because the
+  // variant closure requires it (the next test), not because the page is
+  // exported.
+  const canvases = closure.file.document.children ?? [];
+  assertEquals(
+    canvases.map((c) => [c.name, (c.children ?? []).map((n) => n.name)]),
+    [
+      ["Page 1", ["home"]],
+      ["real-file-components", ["real-file-chip"]],
+    ],
+  );
+  // `scratch` is undeclared: it does not ship, and it is named in `excluded`
+  // rather than dropped in silence (P4). Its text child goes with it.
+  assertEquals(closure.excluded, [
+    { id: "1:24", name: "scratch", type: "FRAME", canvas: "Page 1" },
+  ]);
+  assert(!closure.nodeIds.has("1:24"), "scratch must not ship");
+  assert(!closure.nodeIds.has("1:25"), "scratch's child must not ship");
+});
+
+Deno.test("real-file: the per-set variant closure pulls real-file-chip in", () => {
+  const closure = realFileClosure();
+
+  assertEquals(closure.diagnostics, []);
+  // `home` holds one instance of `state=on` (1:13). The closure is per SET, so
+  // the un-instanced `state=off` (1:15) ships too: the runtime can select
+  // either member.
+  assertEquals(closure.variantSets, [
+    {
+      setId: "1:17",
+      key: "39bab7c329f22eaac8daeaa25ad90a086eba28f7",
+      members: ["1:13", "1:15"],
+    },
+  ]);
+  assertEquals(closure.components, [
+    {
+      componentId: "1:13",
+      key: "453a44eb5b72bb62a7f3c2b30476bd4c5e3f7ce2",
+      remote: false,
+      setId: "1:17",
+    },
+  ]);
+  // The set node, both members, and both member subtrees ship.
+  for (const id of ["1:17", "1:13", "1:14", "1:15", "1:16"]) {
+    assert(closure.nodeIds.has(id), `${id} must ship`);
+  }
+});
+
+Deno.test("real-file: the hidden wip-banner ships as visible:false", () => {
+  // Hidden is not trimmed (docs/decisions/importer-trim-layers.md): a hidden
+  // node may be a variant state, so it exports with `visible: false` rather
+  // than leaving the document. The trim side of this is asserted in
+  // trim_test.ts; here the node must survive the closure with its flag intact.
+  const closure = realFileClosure();
+
+  const canvas = (closure.file.document.children ?? [])[0];
+  const home = (canvas.children ?? [])[0];
+  const banner = (home.children ?? []).find((n) => n.name === "wip-banner");
+  assert(banner !== undefined, "wip-banner must ship");
+  assertEquals(banner.id, "1:23");
+  assertEquals((banner as { visible?: boolean }).visible, false);
+  assert(closure.nodeIds.has("1:23"), "the hidden node is part of the export");
+});
+
+Deno.test("real-file: the image ref resolves against the committed blob, and dashc agrees", async () => {
+  const closure = realFileClosure();
+
+  assertEquals(closure.diagnostics, []);
+  assertEquals(closure.imageRefs, [REAL_FILE_IMAGE_REF]);
+  // The capture receipt records the refs the capture fetched bytes for. It
+  // must name exactly what the export requires, or the committed blob set is
+  // stale against the committed JSON.
+  const receipt = JSON.parse(
+    Deno.readTextFileSync(new URL("real-file.receipt.json", CORPUS)),
+  );
+  assertEquals(receipt.imageRefs, [...closure.imageRefs]);
+  // Every ref the closure names has committed bytes, and those bytes are the
+  // format the capture claims.
+  for (const ref of closure.imageRefs) {
+    const bytes = Deno.readFileSync(
+      new URL(`real-file.images/${ref}.png`, CORPUS),
+    );
+    assert(isPng(bytes), `${ref}: committed bytes are not a PNG`);
+  }
+  // The drift guard, over a two-canvas component-carrying file: dashc's own
+  // scan of the pruned document names the same refs the closure fetches.
+  const dashc = await loadDashc();
   assertEquals(
     closure.imageRefs,
     dashc.figmaImageRefs(JSON.stringify(closure.file)),
