@@ -78,17 +78,26 @@ The scheduler lives in `crates/dashcue/src/scheduler.rs`:
 - `start(&mut self, key, from, to, spec, delay)` — starts or retargets
   one track.
 - `start_transition(&mut self, transition: &VariantTransition, bind: impl
-  FnMut(PropKey) -> (f32, f32))` — binds a declared transition: one
-  `start` per track, in declaration order, with `delay = stagger *
+  FnMut(PropKey) -> Option<(f32, f32)>)` — binds a declared transition:
+  one `start` per track, in declaration order, with `delay = stagger *
   index`; `bind` supplies `(from, to)` per prop key. This is the entry
-  point story #22 calls at commit time.
+  point story #22 calls at commit time. `bind` returns `None` to decline
+  a track, which then does not start — the caller owns what counts as an
+  unchanged prop, and a declined prop would otherwise hold a live
+  constant-value track for the spec's whole duration and retarget any
+  concurrent `start` on that key (issue #74). Declining does not shift
+  the remaining tracks: `delay` follows the declaration index either way.
 - `advance(&mut self, dt: f32)` — advances every live track by `dt`
   seconds (the runtime clock's step); drops tracks that finished before
   this call.
 - `sample(&self, key: PropKey) -> Option<f32>` — current sampled value
   of a live track.
 - `samples(&self) -> impl Iterator<Item = (PropKey, f32)>` — live
-  tracks, in start order (a retarget re-enters at the back).
+  tracks, in start order (a retarget re-enters at the back). That order
+  is part of the contract, not an artifact of the current `Vec` storage
+  (issue #77): `dashlang`'s reactive drive and the engine's FLIP frame
+  output both emit in it, and the E5/E6 goldens need it deterministic, so
+  a later storage change must preserve insertion order.
 - `len(&self) -> usize`, `is_empty(&self) -> bool` — count live tracks,
   including one that finished this frame and will be dropped by the
   next `advance`.
@@ -105,15 +114,21 @@ frame contract is: `advance(dt)`, then read `sample`/`samples`.
 **Finishing.** A tween or keyframes track finishes when its elapsed
 time reaches `duration`. A spring finishes when both `|value − to|`
 and `|velocity|` are below rest thresholds; it then snaps to exactly
-`to`. Each threshold is `max(REST_*, REST_REL · scale)`, where `scale`
-is the animation's characteristic magnitude `max(|to − from|, |to|)`:
-an absolute floor for small/normal springs, scaling up relative to
-magnitude for large ones so the joint rest test still trips at any
-scale (an absolute-only threshold never reaches rest for a
-large-magnitude target, because the f32 ulp of `to` exceeds the floor —
-issue #68). The constants are crate-level at v0.4 (pixel-scaled for
-FLIP rects); promoting them to per-prop spec data is deferred until
-non-pixel props animate.
+`to`. The position threshold is `max(REST_DELTA, REST_REL · scale)`,
+where `scale` is the animation's characteristic magnitude
+`max(|to − from|, |to|)`: an absolute floor for small/normal springs,
+scaling up relative to magnitude for large ones so the joint rest test
+still trips at any scale (an absolute-only threshold never reaches rest
+for a large-magnitude target, because the f32 ulp of `to` exceeds the
+floor — issue #68). The velocity threshold is
+`max(REST_VELOCITY, REST_REL · ω · scale)` — the same relative fraction
+of the spring's characteristic velocity `ω · scale`, so the threshold is
+sized in velocity units. Taken against the position magnitude instead it
+became the binding condition for a large-magnitude spring and held the
+track open past the point the position gate was satisfied, the longer
+the stiffer (issue #214). The constants are crate-level at v0.4
+(pixel-scaled for FLIP rects); promoting them to per-prop spec data is
+deferred until non-pixel props animate.
 
 **Retarget (R4).** Calling `start` for a key that already has a live
 track retargets it. One uniform rule: the new track's `from` is the old
@@ -147,15 +162,33 @@ spring track advances in O(substeps), proportional to `dt` over the
 spec's stability bound and cut short as soon as the spring reaches
 rest. No track allocates during `advance`; one frame costs O(live
 tracks). Track storage is a `Vec` scanned
-linearly by key — fine at v0.4 scale, revisit with the v0.8 stress
-corpus.
+linearly by key — fine at v0.4 scale, revisit with the stress corpus; a
+replacement must keep tracks in insertion order (see `samples()` above).
 
 **Broken contracts panic (house rule, dashpaint precedent).** Specs are
 validated upstream eventually (P4); `start` centralizes the panic for a
 spec no valid document can contain: non-finite or non-positive
 `duration`/`stiffness`, negative `damping_ratio`/`delay`/`stagger`,
-non-finite `from`/`to`, keyframe `t` outside `(0, 1)` or not strictly
-increasing, non-finite keyframe values. `advance` panics on a negative
+non-finite `to`, keyframe `t` outside `(0, 1)` or not strictly
+increasing, non-finite keyframe values. Two further checks belong to the
+endpoints themselves:
+
+- `from` must be finite on a fresh start. On the retarget path the
+  caller's `from` is discarded, so it is not checked there — otherwise
+  the "`from` is ignored" contract would hold only for finite
+  placeholders (issue #71).
+- `to − from` must be finite. Two endpoints that each pass the finiteness
+  check can still span more than f32 holds; the span then overflows to
+  infinity and every interpolated sample is infinite or NaN until the
+  finish frame snaps to `to` (issue #70). The span is measured from the
+  value the track actually starts at, which on a retarget is the live
+  sample.
+
+`start_transition` panics when two tracks declare the same prop: the
+second `start` would take the retarget path and drop the first track's
+spec and stagger delay with no diagnostic (P4, issue #69). The whole
+declaration list is checked before any track starts, so a rejected
+transition leaves the scheduler untouched. `advance` panics on a negative
 or non-finite `dt`.
 
 ## Alternatives considered
@@ -193,16 +226,23 @@ precedent), fixed time steps throughout, across three files:
   toward the target when critically damped; keyframes interpolate
   through declared frames including overshoot and degrade to linear
   with no declared frames; the finished-track lifecycle (exact `to` on
-  the finishing frame, removed by the next `advance`); panics on
-  invalid specs and on a negative `dt`.
+  the finishing frame, removed by the next `advance`); `samples()` in
+  start order, with a retargeted track re-entering at the back; the
+  spring's position gate — not its velocity gate — binding a
+  large-magnitude spring at every stiffness; panics on invalid specs, on
+  a non-finite `from` at a fresh start, on a `from`/`to` span wider than
+  f32 holds, and on a negative `dt`.
 - `tests/retarget.rs` — mid-flight retarget: tween restarts from the
   current sample toward the new target and ignores the caller's
   `from`; spring keeps position and velocity (no discontinuity in the
   sample sequence, verified against a fresh spring at the same
   position); a tween-to-spring retarget hands off zero velocity;
-  retarget during the stagger delay re-arms from the held sample;
-  `start_transition` staggers tracks by declaration order and panics
-  on a negative stagger.
+  retarget during the stagger delay re-arms from the held sample; a
+  retarget accepts a non-finite `from` (it is ignored) but still rejects
+  a span the new target overflows; `start_transition` staggers tracks by
+  declaration order, skips a track its binding declines without shifting
+  the later tracks' delays, and panics on a negative stagger and on a
+  duplicate prop key.
 
 Story #22 consumes this API for FLIP; nothing here renders, so no
 goldens in this story (E5 goldens are #23).
