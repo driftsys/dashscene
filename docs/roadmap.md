@@ -623,8 +623,15 @@ replacing inline image bytes — existing documents remain the null-binding
 special case — and shared image identification in `dashc` for all producers
 (#400). Seeds the R5 loading-performance measurements.
 
-Depends on: v0.10 (the widened image vocabulary it carries into sections).
-Design capture: `docs/wip/2026-07-19-asset-pipeline-profiles-and-baking.md`.
+Depends on: v0.10 (the widened image vocabulary it carries into sections). The
+design input was `docs/wip/2026-07-19-asset-pipeline-profiles-and-baking.md`;
+what the slice built from it is now in
+[`decisions/asset-model-content-addressed-blobs.md`](decisions/asset-model-content-addressed-blobs.md),
+[`decisions/dsb-sectioned-container.md`](decisions/dsb-sectioned-container.md),
+[`decisions/dashc-identifies-images-never-decodes.md`](decisions/dashc-identifies-images-never-decodes.md),
+[`design/dsb-container-format.md`](design/dsb-container-format.md) and
+[`technotes/2026-07-26-v011-sections-and-assets.md`](technotes/2026-07-26-v011-sections-and-assets.md),
+which are what to read.
 
 Revised at the v0.10 close (2026-07-19): v0.10's live hero diff surfaced three
 fidelity contributors that folded in here as provisional candidates, not
@@ -673,9 +680,9 @@ built from it is now in
 [`decisions/native-astc-codec-table.md`](decisions/native-astc-codec-table.md)
 and
 [`decisions/asset-quality-profile-naming.md`](decisions/asset-quality-profile-naming.md),
-which are what to read. Pointing a shipped record at working memory is the
-pattern #424 raises; this entry no longer does it, the v0.11 entry above still
-does.
+which are what to read. Pointing a shipped record at working memory was the
+pattern #424 raised; neither this entry nor the v0.11 entry above does it now,
+both corrected in the same gardening pass.
 
 Broken into nine stories at the slice open (2026-07-26): #429 the `dashpack`
 crate, #430 vendored astcenc, #431 the KTX2 writer, #432 the band oracle and

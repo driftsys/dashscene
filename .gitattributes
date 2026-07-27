@@ -1,0 +1,5 @@
+# Vendored third-party source: excluded from GitHub's language statistics
+# and from its diff/search heuristics. Provenance, license, and
+# re-derivation steps are at
+# crates/dashpack-astcenc-sys/vendor/VENDOR.md.
+crates/dashpack-astcenc-sys/vendor/astcenc/* linguist-vendored

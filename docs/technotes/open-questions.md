@@ -41,3 +41,21 @@ example, `Q-4` still resolves once `specs/` is gone. It decides nothing.
 - **Q-6** — the group-opacity render-target budget value on target
   hardware. Tracked by story #44, "masks + group opacity", which uses a
   placeholder budget in profile config until this is measured.
+
+## Later-raised questions
+
+Not part of the seed document's six above; indexed here as later design work
+raised further standing questions worth tracking centrally.
+
+| question                                                                          | status                                                                                                                                                                                                                    |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Should the reference painter blend blur in linear light or in sRGB-encoded space? | open — tracked by #412 / #474; blocks the backdrop-blur sigma retune. Full analysis at `docs/wip/2026-07-19-color-space-blur-and-msdf.md`, which stays in `docs/wip/` until this settles, per #412's own resolution order |
+
+- **Blur colour space** — the reference painter's surface carries no colour
+  space, which is why MSDF sampling reads the distance channels correctly
+  (`docs/wip/2026-07-19-color-space-blur-and-msdf.md`), but it also means
+  blur blends in sRGB-encoded space rather than linear light. That did not
+  matter for single-colour shadow blur; it starts mattering at backdrop blur,
+  which averages multi-coloured content. Settling it needs a backdrop-blur
+  oracle fixture over multi-coloured content, which does not exist yet
+  (#412, #474).

@@ -19,8 +19,9 @@ assemble:
 test:
     cargo test --workspace
 
-# Rust + markdown lint gate: clippy, cargo fmt check, dprint check, markdownlint.
-lint:
+# Rust + markdown + Deno lint gate: clippy, cargo fmt check, dprint check,
+# markdownlint, deno fmt check.
+lint: deno-fmt-check
     cargo clippy --workspace --all-targets -- -D warnings
     cargo fmt --all -- --check
     dprint check
@@ -132,6 +133,12 @@ deno-test: wasm
 # Format the Deno importer sources.
 deno-fmt:
     cd importers/figma && deno task fmt
+
+# Check the Deno importer sources are already formatted, without rewriting
+# them. Matches the CI deno job's formatting gate (.github/workflows/ci.yml);
+# `deno-fmt` alone cannot fail, so this is the recipe that actually gates it.
+deno-fmt-check:
+    cd importers/figma && deno task fmt --check
 
 # Capture the Figma fixture corpus, image-fill bytes included. Needs
 # FIGMA_TOKEN (docs/decisions/figma-access-plan-and-pat-policy.md). Never commit the token.
