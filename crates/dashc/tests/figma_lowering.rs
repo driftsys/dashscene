@@ -1335,9 +1335,40 @@ fn a_rotated_node_fails_loudly_rather_than_silently_dropping_the_rotation() {
 }
 
 #[test]
-fn a_box_outline_mask_lowers_to_a_mask() {
+fn a_box_vector_mask_lowers_to_a_mask() {
     // v0.8 (story #44) un-pinned box outline masks (debt #143): a geometry
-    // mask on a box shape lowers into `Node.mask`.
+    // mask on a box shape lowers into `Node.mask`. "VECTOR" is the value
+    // measured against the live Figma REST API (issue #517, file
+    // OAXcoWO5j5NghXV3ZKw9QV, `GET /v1/files/:key`) and is what the
+    // committed capture `corpus/figma-fixtures/node-fx.json` carries on its
+    // `mask-shape` node — this is the contract a real capture exercises.
+    let file = document(serde_json::json!({
+        "name": "masked",
+        "type": "FRAME",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+        "isMask": true,
+        "maskType": "VECTOR",
+    }));
+
+    let (doc, diagnostics) =
+        lower(&file, Profile::Core, &BTreeMap::new()).expect("the mask lowers");
+    assert!(
+        diagnostics.iter().all(|d| d.rule != "figma.unsupported"),
+        "a box vector mask is no longer refused: {diagnostics:?}",
+    );
+    let (_, n) = node(&doc, "masked");
+    assert!(n.mask, "the mask node lowered as a mask");
+}
+
+#[test]
+fn a_box_outline_mask_lowers_to_a_mask() {
+    // Defensive, not measured (issue #517): no capture has ever shown the
+    // REST API emitting "OUTLINE" — the one measurement on file
+    // OAXcoWO5j5NghXV3ZKw9QV reports "VECTOR" (see
+    // `a_box_vector_mask_lowers_to_a_mask`, the measured case). This case
+    // pins the lowering's catch-all against the older name in case some
+    // other file or API version still emits it; it does not stand in for a
+    // measurement.
     let file = document(serde_json::json!({
         "name": "masked",
         "type": "FRAME",

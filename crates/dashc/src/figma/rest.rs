@@ -256,10 +256,12 @@ pub struct Node {
     pub is_mask: Option<bool>,
     /// A mask node's compositing type — Figma's `maskType`: `ALPHA`
     /// (the masking layer's alpha channel), `LUMINANCE` (its brightness),
-    /// or `OUTLINE` (its vector geometry). Only a geometry/outline mask
-    /// lowers to a hard box clip; alpha and luminance are soft masks the
-    /// clip-region vocabulary cannot express (story #44 M6). Absent on a
-    /// synthetic node, which lowers as the geometric default.
+    /// or `VECTOR` (its vector geometry) — measured against the live REST
+    /// API on file OAXcoWO5j5NghXV3ZKw9QV (issue #517); `OUTLINE` is not a
+    /// value the REST API has been observed to emit. Only a geometry/vector
+    /// mask lowers to a hard box clip; alpha and luminance are soft masks
+    /// the clip-region vocabulary cannot express (story #44 M6). Absent on
+    /// a synthetic node, which lowers as the geometric default.
     #[serde(default)]
     pub mask_type: Option<String>,
     /// Whether a `SECTION`'s children are hidden (#309). The document has no
