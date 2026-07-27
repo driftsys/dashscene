@@ -29,6 +29,15 @@ export interface ResolveImagesOptions {
   readonly fetchFn?: typeof fetch;
 }
 
+/**
+ * Whether `bytes` opens with the exact byte sequence `signature` (issue
+ * #351: `isPng`/`isJpeg`/`isGif` each repeated this check inline).
+ */
+function hasMagic(bytes: Uint8Array, signature: Uint8Array): boolean {
+  return bytes.length >= signature.length &&
+    signature.every((byte, at) => bytes[at] === byte);
+}
+
 /** The eight bytes that open every PNG (RFC 2083 §3.1). */
 const PNG_SIGNATURE = Uint8Array.from([
   0x89,
@@ -43,8 +52,7 @@ const PNG_SIGNATURE = Uint8Array.from([
 
 /** Whether `bytes` opens with the eight-byte PNG signature. */
 export function isPng(bytes: Uint8Array): boolean {
-  return bytes.length >= PNG_SIGNATURE.length &&
-    PNG_SIGNATURE.every((byte, at) => bytes[at] === byte);
+  return hasMagic(bytes, PNG_SIGNATURE);
 }
 
 /**
@@ -55,8 +63,7 @@ const JPEG_SIGNATURE = Uint8Array.from([0xff, 0xd8, 0xff]);
 
 /** Whether `bytes` opens with the three-byte JPEG start-of-image signature. */
 export function isJpeg(bytes: Uint8Array): boolean {
-  return bytes.length >= JPEG_SIGNATURE.length &&
-    JPEG_SIGNATURE.every((byte, at) => bytes[at] === byte);
+  return hasMagic(bytes, JPEG_SIGNATURE);
 }
 
 /** The two bytes every JPEG stream ends with: the End Of Image marker. */
@@ -84,8 +91,7 @@ const GIF_SIGNATURE = Uint8Array.from([0x47, 0x49, 0x46, 0x38]);
 
 /** Whether `bytes` opens with the four-byte GIF signature. */
 export function isGif(bytes: Uint8Array): boolean {
-  return bytes.length >= GIF_SIGNATURE.length &&
-    GIF_SIGNATURE.every((byte, at) => bytes[at] === byte);
+  return hasMagic(bytes, GIF_SIGNATURE);
 }
 
 /**
@@ -134,6 +140,18 @@ interface GifStructure {
  * image data can contain any byte, including the Image Separator's own
  * 0x2C — every jump is computed from a declared length, and bounds-checked
  * before it is taken.
+ *
+ * Reconsidered against a library (issue #352, e.g. `omggif`) and kept
+ * hand-rolled: `omggif`'s `GifReader` constructor runs the same single-pass,
+ * declared-length block walk this function does — it does not decode LZW
+ * pixel data either, so a library would not remove the block-walking logic,
+ * only move it out of this file. What we need from it is two numbers
+ * (`imageCount`, `netscapeLoop`), never the pixel data, the color tables, or
+ * the per-frame disposal/delay fields a general-purpose GIF decoder also
+ * carries. Taking on a dependency — with its own trust surface for bytes
+ * downloaded from a third party — buys us none of that, and this function's
+ * ~70 lines are already committed, read, and covered by images_test.ts.
+ * Revisit if a future story needs more of a GIF than these two facts.
  */
 function walkGif(bytes: Uint8Array): GifStructure | null {
   const HEADER_AND_SCREEN_DESCRIPTOR = 13;
