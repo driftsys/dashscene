@@ -575,9 +575,11 @@ pub struct Arena {
     /// stable table index it was first assigned. Kept across commits
     /// (issue #164) so an unchanged entry keeps its index and the dirty
     /// check is a bit compare. The table lives in the committed buffers;
-    /// this records only the key→index assignment, which never changes
-    /// once made. A changed entry earns a new index and the old one stays
-    /// (the table grows with the distinct entries seen, not per frame).
+    /// this records only the key→index assignment. A changed entry earns
+    /// a new index and the old one stays, so the table grows with the
+    /// distinct entries seen; a commit that finds most of the table
+    /// unreachable rebuilds it and re-keys this map onto the new indices
+    /// (issue #197, [`compact_paints`]).
     paint_map: FxHashMap<PaintKey, PaintIndex>,
     /// Retained clip interner, the clip-region analogue of `paint_map`.
     clip_map: FxHashMap<ClipKey, ClipIndex>,
@@ -677,7 +679,7 @@ impl Arena {
     /// another arena whose index happens to be in range is not detected
     /// — ids are only meaningful for the arena that produced them.
     pub fn layout(&self, node: NodeId) -> Layout {
-        let mut layout = self.node_data(node).layout;
+        let mut layout = self.base_layout(node);
         let overlay = self.overlay(node);
         if let Some(x) = overlay.x {
             layout.x = x;
@@ -695,6 +697,27 @@ impl Arena {
             layout.visible = visible;
         }
         layout
+    }
+
+    /// The node's authored layout intent with **no** variant overlay
+    /// applied — the base value [`Arena::layout`] folds the active
+    /// variant's `X`/`Y`/`Width`/`Height`/`Visible` override on top of
+    /// (issue #185).
+    ///
+    /// Read this only when the base authored geometry is the thing
+    /// wanted independently of variant state: a `.dsb` re-exporter
+    /// diffing an override against the base value, an inspector, or a
+    /// test pinning authored geometry. Every consumer that resolves
+    /// geometry — the solvers included — reads [`Arena::layout`]
+    /// instead, so that a variant switch reaches committed geometry
+    /// (`docs/decisions/variant-set-flat-index.md`).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `node` is out of range for this arena (same contract
+    /// as [`Arena::layout`]).
+    pub fn base_layout(&self, node: NodeId) -> Layout {
+        self.node_data(node).layout
     }
 
     /// The node's grid track lists (v0.8, story #43) — row tracks top
@@ -926,8 +949,10 @@ impl Txn<'_> {
     /// detected), or if the arena already holds `u32::MAX` nodes —
     /// node ids stay below the `u32::MAX` sentinel (`dashbuf`'s
     /// `NO_PARENT`), and every paint index stays representable (the
-    /// paint table never exceeds the node count plus the one shared
-    /// draws-nothing entry).
+    /// retained interner lets the paint table outgrow the node count
+    /// between rebuilds, but a rebuild brings it back to at most one
+    /// entry per rect, so it stays a small multiple of the node count —
+    /// issue #197).
     pub fn add_node(&mut self, parent: Option<NodeId>, name: Option<&str>) -> NodeId {
         if let Some(p) = parent {
             assert!(
@@ -1003,10 +1028,9 @@ impl Txn<'_> {
         );
         for member in &members {
             for (node, _) in &member.overrides {
-                assert!(
-                    node.index() < self.arena.nodes.len(),
-                    "{node:?} is not a node of this arena"
-                );
+                // The bounds check and its message live in `node_data`,
+                // which every other node read goes through (issue #186).
+                let _ = self.arena.node_data(*node);
             }
         }
         // Cannot truncate: add_node's guard already keeps the arena
@@ -1381,7 +1405,23 @@ impl Txn<'_> {
     /// invariant: a missing rect is a broken contract, never a silent
     /// default).
     pub fn commit_with(self, solver: &mut dyn LayoutSolver) -> u64 {
-        let arena = self.arena;
+        // Borrow the retained interners for the walk through a guard that
+        // puts them back however the walk ends (issue #196). They are
+        // taken out of the arena so the arena stays immutably borrowable
+        // (for `overlay`) while the maps are mutated.
+        let mut guard = InternerGuard::open(self.arena);
+        let InternerGuard {
+            arena,
+            paint_map,
+            clip_map,
+            paints_at_open,
+            clips_at_open,
+            ..
+        } = &mut guard;
+        // Reborrow the guard's arena field as the plain `&mut Arena` the
+        // rest of the walk uses. Borrowing the maps and the arena as
+        // separate fields of the guard is what keeps them usable at once.
+        let arena: &mut Arena = arena;
 
         // DFS document order (rect-table index order).
         let order = arena.dfs_order();
@@ -1430,12 +1470,6 @@ impl Txn<'_> {
         let mask_toggled_set: FxHashSet<usize> =
             arena.mask_toggled.iter().map(|n| n.index()).collect();
 
-        // Borrow the retained interners for the walk. Taken out so the
-        // arena stays immutably borrowable (for `overlay`) while the maps
-        // are mutated; restored below.
-        let mut paint_map = std::mem::take(&mut arena.paint_map);
-        let mut clip_map = std::mem::take(&mut arena.clip_map);
-
         let previous = &arena.buffers[arena.front];
         // A node was added since the previous commit iff the node count
         // grew (v0.4 never removes). A structural change re-indexes the
@@ -1451,7 +1485,10 @@ impl Txn<'_> {
         let mut back_clips = Arc::clone(&previous.clips);
         let mut rects: Vec<RectEntry> = Vec::with_capacity(order.len());
         let n = arena.nodes.len();
-        let mut region_out_index: Vec<ClipIndex> = vec![ClipIndex::UNCLIPPED; n];
+        // `None` until the node is visited, so a child that reads its
+        // parent's region before the parent resolved it fails by name
+        // rather than reading a silent `UNCLIPPED` (issue #198).
+        let mut region_out_index: Vec<Option<ClipIndex>> = vec![None; n];
         let mut region_out_changed: Vec<bool> = vec![false; n];
         let visible_toggled_set: FxHashSet<usize> =
             arena.visible_toggled.iter().map(|n| n.index()).collect();
@@ -1514,16 +1551,19 @@ impl Txn<'_> {
             // is unclipped. (A clipping or masking node does not clip
             // itself, only its descendants / following siblings.)
             let (region_in_index, region_in_changed) = match node.parent {
-                Some(parent) => match mask_region[parent.index()] {
-                    Some(masked) => (
-                        masked,
-                        region_out_changed[parent.index()] || mask_changed[parent.index()],
-                    ),
-                    None => (
-                        region_out_index[parent.index()],
-                        region_out_changed[parent.index()] || mask_changed[parent.index()],
-                    ),
-                },
+                Some(parent) => {
+                    // Read the parent's outgoing region through the guard
+                    // in both arms, so an order violation is caught even
+                    // when a mask supplies the region actually used
+                    // (issue #198).
+                    let parent_out = parent_region_out(&region_out_index, parent);
+                    let changed =
+                        region_out_changed[parent.index()] || mask_changed[parent.index()];
+                    match mask_region[parent.index()] {
+                        Some(masked) => (masked, changed),
+                        None => (parent_out, changed),
+                    }
+                }
                 None => (ClipIndex::UNCLIPPED, false),
             };
 
@@ -1583,20 +1623,9 @@ impl Txn<'_> {
                             extra_fills: node.extra_fills.clone(),
                         }
                     };
-                    intern_paint(&mut back_paints, &mut paint_map, entry)
+                    intern_paint(&mut back_paints, paint_map, entry)
                 }
             };
-
-            // The painted extent for the overlap test: the box grown by the
-            // stroke's outset (an outside or center stroke paints past the
-            // box), or `None` when the node draws nothing (M10).
-            if !draws_nothing
-                && (arena.overlay(id).fill.is_some()
-                    || node.fill.is_some()
-                    || node.stroke.is_some())
-            {
-                painted_extent[i] = Some(stroke_extent(geometry, node.stroke.as_ref()));
-            }
 
             // Clip: reuse the previous index unless the region reaching
             // this node changed (or it is new).
@@ -1604,6 +1633,22 @@ impl Txn<'_> {
                 Some(prev) if !region_in_changed => prev.clip,
                 _ => region_in_index,
             };
+
+            // The painted extent for the overlap test: the box grown by the
+            // stroke's outset (an outside or center stroke paints past the
+            // box), then cut down to where the rect's clip region lets it
+            // paint (issue #276). `None` when the node draws nothing (M10),
+            // or when the clip leaves it no area at all.
+            if !draws_nothing
+                && (arena.overlay(id).fill.is_some()
+                    || node.fill.is_some()
+                    || node.stroke.is_some())
+            {
+                painted_extent[i] = clipped_extent(
+                    stroke_extent(geometry, node.stroke.as_ref()),
+                    back_clips.resolve(clip),
+                );
+            }
 
             // `opacity` is a placeholder here; the group-opacity pass below
             // fills every rect's free-path alpha once subtree overlap is
@@ -1632,12 +1677,16 @@ impl Txn<'_> {
                     h: geometry.h,
                     corners: node.corners,
                 };
-                region_out_index[id.index()] =
-                    intern_region(&mut back_clips, &mut clip_map, region_in_index, node_box);
+                region_out_index[id.index()] = Some(intern_region(
+                    &mut back_clips,
+                    clip_map,
+                    region_in_index,
+                    node_box,
+                ));
                 region_out_changed[id.index()] =
                     region_in_changed || clip_toggled_set.contains(&id.index()) || box_changed;
             } else {
-                region_out_index[id.index()] = region_in_index;
+                region_out_index[id.index()] = Some(region_in_index);
                 region_out_changed[id.index()] =
                     region_in_changed || clip_toggled_set.contains(&id.index());
             }
@@ -1660,7 +1709,7 @@ impl Txn<'_> {
                     };
                     mask_region[parent.index()] = Some(intern_region(
                         &mut back_clips,
-                        &mut clip_map,
+                        clip_map,
                         region_in_index,
                         node_box,
                     ));
@@ -1728,10 +1777,37 @@ impl Txn<'_> {
             }
         }
 
+        // Reclaim the pooled entries nothing references any more (issue
+        // #197). Retaining an entry's index for the life of the arena is
+        // what makes the dirty check a bit compare (issue #164), but
+        // nothing ever released a slot: a changed paint or clip earned a
+        // new index and its old entry stayed. An animated fill therefore
+        // grew the paint table by one entry per frame, without bound, and
+        // a per-frame-resizing clip did the same to the clip table.
+        // Rebuilding a table from the entries this commit's rects
+        // reference bounds it again. It renumbers, so it runs only when
+        // most of what the table holds is already unreachable.
+        //
+        // A rebuild renumbers, so the watermark the guard's unwind path
+        // uses to tell entries that survive a failed walk from entries the
+        // walk added stops meaning anything: after a rebuild, no index in
+        // the map names a slot of the front buffer's table. Dropping the
+        // watermark to zero makes that path clear the map instead, which
+        // only costs a re-intern (issues #196 and #197 together).
+        if should_compact(back_paints.len(), rects.len()) {
+            *paints_at_open = 0;
+            compact_paints(&mut back_paints, paint_map, &mut rects);
+        }
+        if should_compact(back_clips.len(), rects.len()) {
+            *clips_at_open = 0;
+            compact_clips(&mut back_clips, clip_map, &mut rects);
+        }
+
         // Dirty is a bit compare against the previous commit at each index
         // (what a painter refreshes), computed once the rect entries —
-        // opacity included — are final. A shifted tail after a structural
-        // change reports dirty, as intended.
+        // opacity included, and any renumbering done — are final. A
+        // shifted tail after a structural change reports dirty, as
+        // intended.
         let mut dirty_set: FxHashSet<u32> = FxHashSet::default();
         for (i, entry) in rects.iter().enumerate() {
             if previous
@@ -1786,9 +1862,7 @@ impl Txn<'_> {
             rect_index,
         };
 
-        // Restore the retained interners and drain the change log.
-        arena.paint_map = paint_map;
-        arena.clip_map = clip_map;
+        // Publish the buffer and drain the change log.
         let back = 1 - arena.front;
         arena.buffers[back] = back_scene;
         arena.front = back;
@@ -1797,7 +1871,77 @@ impl Txn<'_> {
         arena.clip_toggled.clear();
         arena.mask_toggled.clear();
         arena.visible_toggled.clear();
+        // The tables the walk interned into are now the front buffer's, so
+        // every index the maps hold resolves. Until this point the guard
+        // rolls those entries back on the way out (issue #196).
+        guard.published = true;
         generation
+    }
+}
+
+/// Holds the retained interners for one commit walk and puts them back on
+/// the arena however the walk ends — normally or by unwinding (issue
+/// #196).
+///
+/// The walk mutates the two maps while the arena itself is borrowed
+/// immutably (for [`Arena::overlay`]), so the maps are moved out of the
+/// arena for its duration. Restoring them only on the success path left an
+/// arena that had caught a mid-commit panic holding two empty maps: the
+/// next commit would re-intern from index 0 while the committed buffers
+/// still referenced the entries at the old indices.
+///
+/// A failed walk drops the paint and clip tables it was building, so the
+/// entries it interned exist nowhere afterwards. Restoring the maps
+/// unchanged would therefore leave keys naming indices past the end of the
+/// live tables — worse than the empty maps, because such an index reaches
+/// a painter, which refuses an out-of-range index by panicking (P4). The
+/// rollback removes exactly the entries a failed walk added: indices are
+/// assigned by appending, so those are the ones at or past the table
+/// lengths recorded when the walk opened.
+struct InternerGuard<'a> {
+    arena: &'a mut Arena,
+    paint_map: FxHashMap<PaintKey, PaintIndex>,
+    clip_map: FxHashMap<ClipKey, ClipIndex>,
+    /// Paint and clip table lengths of the front buffer when the walk
+    /// opened — the boundary between entries that survive a failed walk
+    /// and entries that do not.
+    paints_at_open: usize,
+    clips_at_open: usize,
+    /// Set once the commit has published its buffer. Until then the guard
+    /// treats the walk as failed and rolls back.
+    published: bool,
+}
+
+impl<'a> InternerGuard<'a> {
+    fn open(arena: &'a mut Arena) -> Self {
+        let front = &arena.buffers[arena.front];
+        let paints_at_open = front.paints.len();
+        let clips_at_open = front.clips.len();
+        let paint_map = std::mem::take(&mut arena.paint_map);
+        let clip_map = std::mem::take(&mut arena.clip_map);
+        Self {
+            arena,
+            paint_map,
+            clip_map,
+            paints_at_open,
+            clips_at_open,
+            published: false,
+        }
+    }
+}
+
+impl Drop for InternerGuard<'_> {
+    fn drop(&mut self) {
+        if !self.published {
+            let paints_at_open = self.paints_at_open;
+            let clips_at_open = self.clips_at_open;
+            self.paint_map
+                .retain(|_, index| (index.0 as usize) < paints_at_open);
+            self.clip_map
+                .retain(|_, index| (index.0 as usize) < clips_at_open);
+        }
+        self.arena.paint_map = std::mem::take(&mut self.paint_map);
+        self.arena.clip_map = std::mem::take(&mut self.clip_map);
     }
 }
 
@@ -1881,12 +2025,144 @@ fn intern_paint(
     if let Some(&index) = interned.get(&key) {
         return index;
     }
-    // Cannot truncate: the paint table stays below u32::MAX (add_node's
-    // guard bounds the node count, and interned entries never outnumber
-    // the distinct entries ever staged).
+    // Cannot truncate: the paint table stays below u32::MAX. `add_node`
+    // bounds the node count, and the rebuild in `compact_paints` bounds
+    // the table at a small multiple of the rect count (issue #197).
     let index = Arc::make_mut(paints).push(entry);
     interned.insert(key, index);
     index
+}
+
+/// Table size below which a rebuild is not worth its bookkeeping. Small
+/// scenes stay untouched: a table this size costs less than the rebuild
+/// that would shrink it (issue #197).
+const COMPACT_FLOOR: usize = 256;
+
+/// Whether a pooled table holds enough unreachable entries to be worth
+/// rebuilding (issue #197).
+///
+/// Each rect references exactly one paint entry and one clip region, so
+/// the rect count bounds how many entries can still be reachable. A table
+/// more than twice that size therefore holds at least as many dead entries
+/// as live ones, and a rebuild at least halves it — which is what makes
+/// the rebuild's O(scene) cost amortize to a constant per commit.
+fn should_compact(table_len: usize, rect_count: usize) -> bool {
+    table_len > COMPACT_FLOOR && table_len > 2 * rect_count
+}
+
+/// Rebuild the paint table from the entries `rects` reference, renumber
+/// those rects, and re-key the retained interner onto the new indices
+/// (issue #197).
+///
+/// Every rect is renumbered, so the commit that runs this reports its
+/// whole rect table dirty and a painter re-uploads it. That is the price
+/// of reclaiming the slots, and why the caller runs this rarely.
+fn compact_paints(
+    paints: &mut Arc<PaintTable>,
+    interned: &mut FxHashMap<PaintKey, PaintIndex>,
+    rects: &mut [RectEntry],
+) {
+    let mut table = PaintTable::new();
+    let mut moved: FxHashMap<u32, PaintIndex> = FxHashMap::default();
+    for rect in rects.iter_mut() {
+        rect.paint = match moved.get(&rect.paint.0) {
+            Some(&index) => index,
+            None => {
+                let index = table.push(paints.resolve(rect.paint).clone());
+                moved.insert(rect.paint.0, index);
+                index
+            }
+        };
+    }
+    // Re-key from the rebuilt table rather than by translating the old
+    // map: the surviving entries are exactly the table's, and a key is
+    // derived from its entry, so there is nothing to carry over.
+    interned.clear();
+    for i in 0..table.len() {
+        // In range for u32: the table holds at most one entry per rect,
+        // and `add_node` keeps the node count below u32::MAX.
+        let index = PaintIndex(i as u32);
+        interned.insert(paint_key(table.resolve(index)), index);
+    }
+    *paints = Arc::new(table);
+}
+
+/// Rebuild the clip table the same way (issue #197).
+///
+/// A region is a list of clipping ancestor boxes and the interner names it
+/// by its prefix's index plus its last box, so the rebuild works in
+/// box-list space: every region a rect references contributes itself and
+/// each of its prefixes, and the list is rebuilt shortest first, so a
+/// region's prefix already has its new index when the region is pushed.
+fn compact_clips(
+    clips: &mut Arc<ClipTable>,
+    interned: &mut FxHashMap<ClipKey, ClipIndex>,
+    rects: &mut [RectEntry],
+) {
+    let bits_of =
+        |boxes: &[ClipBox]| -> Vec<[u32; 8]> { boxes.iter().map(clip_box_bits).collect() };
+
+    let mut live: Vec<Vec<ClipBox>> = Vec::new();
+    let mut seen: FxHashSet<Vec<[u32; 8]>> = FxHashSet::default();
+    for rect in rects.iter() {
+        let boxes = clips.resolve(rect.clip).boxes();
+        // The empty list is the unclipped region, which `ClipTable::new`
+        // already reserves at index 0, so the prefixes start at length 1.
+        for length in 1..=boxes.len() {
+            let prefix = &boxes[..length];
+            if seen.insert(bits_of(prefix)) {
+                live.push(prefix.to_vec());
+            }
+        }
+    }
+    live.sort_by_key(Vec::len);
+
+    let mut table = ClipTable::new();
+    let mut index_of: FxHashMap<Vec<[u32; 8]>, ClipIndex> = FxHashMap::default();
+    interned.clear();
+    for boxes in &live {
+        let bits = bits_of(boxes);
+        let (last, head) = bits.split_last().expect("a live region carries a box");
+        let parent = match head {
+            [] => ClipIndex::UNCLIPPED,
+            _ => *index_of
+                .get(head)
+                .expect("shorter prefixes are rebuilt before the regions that extend them"),
+        };
+        let index = table.push(ClipRegion::new(boxes.clone()));
+        interned.insert((parent.0, *last), index);
+        index_of.insert(bits, index);
+    }
+
+    for rect in rects.iter_mut() {
+        let bits = bits_of(clips.resolve(rect.clip).boxes());
+        rect.clip = match bits.is_empty() {
+            true => ClipIndex::UNCLIPPED,
+            false => *index_of
+                .get(&bits)
+                .expect("every region a rect references was rebuilt"),
+        };
+    }
+    *clips = Arc::new(table);
+}
+
+/// The clip region a parent hands its children, read while the child is
+/// visited. `None` means the commit walk reached a child before its
+/// parent: [`Arena::dfs_order`] is parent-before-child, so an unset slot
+/// is a broken traversal invariant, not a recoverable state.
+///
+/// The pre-#164 commit path stored these as `Option` for exactly this
+/// reason and panicked here; the incremental rewrite replaced them with a
+/// vector defaulting to `UNCLIPPED`, which would mis-clip the whole
+/// subtree in silence instead (issue #198). P4 — a violated invariant is
+/// a named failure, never a silent degrade.
+fn parent_region_out(region_out: &[Option<ClipIndex>], parent: NodeId) -> ClipIndex {
+    region_out[parent.index()].unwrap_or_else(|| {
+        panic!(
+            "commit reached a child of {parent:?} before {parent:?} itself: the clip cascade \
+             requires parent-before-child document order (P4)"
+        )
+    })
 }
 
 /// The interning key of one node's clip region: the region its parent
@@ -2122,6 +2398,35 @@ fn stroke_extent(geometry: SolvedRect, stroke: Option<&Stroke>) -> Extent {
     }
 }
 
+/// A painting rect's extent cut down to where its clip region lets it
+/// paint: the extent intersected with every box of the region. `None` when
+/// nothing is left — a rect the clip removes entirely paints no pixels and
+/// so cannot overlap anything (issue #276).
+///
+/// Corners are ignored, so a rounded clip box contributes its rectangle.
+/// That keeps the result a superset of the pixels the rect really covers,
+/// which is the direction the overlap test has to err in: judging two rects
+/// disjoint when they share a pixel would under-composite, a visible bug,
+/// while judging two disjoint rects overlapping only costs a render target.
+fn clipped_extent(extent: Extent, region: &ClipRegion) -> Option<Extent> {
+    let mut left = extent.x;
+    let mut top = extent.y;
+    let mut right = extent.x + extent.w;
+    let mut bottom = extent.y + extent.h;
+    for clip in region.boxes() {
+        left = left.max(clip.x);
+        top = top.max(clip.y);
+        right = right.min(clip.x + clip.w);
+        bottom = bottom.min(clip.y + clip.h);
+    }
+    (right > left && bottom > top).then_some(Extent {
+        x: left,
+        y: top,
+        w: right - left,
+        h: bottom - top,
+    })
+}
+
 /// Whether two painting extents in the range `[start, end)` overlap — the
 /// group-opacity overlap test
 /// (`docs/decisions/masks-and-group-opacity.md`). Non-overlap of the
@@ -2130,10 +2435,11 @@ fn stroke_extent(geometry: SolvedRect, stroke: Option<&Stroke>) -> Extent {
 /// nodes that actually paint (a mask, hidden, or layout-only node
 /// contributes `None`). Zero-area extents never overlap (strict comparison).
 ///
-/// The test is clip-blind: two extents whose clip regions make them
-/// visually disjoint are still judged overlapping, which over-composites
-/// (a needless render target) but never under-composites. That direction is
-/// a named debt candidate, not a correctness bug.
+/// Each extent arrives already cut down to its rect's clip region
+/// ([`clipped_extent`]), so content that two disjoint clips separate is no
+/// longer judged overlapping (issue #276). The region is reduced to its
+/// bounding box, so the test still errs towards reporting an overlap and
+/// never under-composites.
 fn subtree_overlaps(start: u32, end: u32, painted: &[Option<Extent>]) -> bool {
     let extents: Vec<&Extent> = (start..end)
         .filter_map(|i| painted[i as usize].as_ref())
@@ -2162,4 +2468,78 @@ fn clip_box_bits(clip: &ClipBox) -> [u32; 8] {
         corners[2],
         corners[3],
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The parent-before-child tripwire of the clip cascade (issue #198).
+    // `dfs_order` is parent-before-child, so no public API can present the
+    // walk with a violated order — the guard is unit-tested directly, on
+    // the state a violation would produce.
+
+    #[test]
+    fn parent_region_out_returns_a_resolved_parents_region() {
+        let region_out = vec![Some(ClipIndex(7)), None];
+        assert_eq!(parent_region_out(&region_out, NodeId(0)), ClipIndex(7));
+    }
+
+    #[test]
+    #[should_panic(expected = "requires parent-before-child document order")]
+    fn parent_region_out_panics_when_the_parent_is_unresolved() {
+        // What a child-before-parent traversal would hand the cascade: the
+        // parent's slot still unset. Reading `UNCLIPPED` there instead
+        // would mis-clip the whole subtree in silence.
+        let region_out = vec![None, Some(ClipIndex(1))];
+        let _ = parent_region_out(&region_out, NodeId(0));
+    }
+
+    // The interner guard's rollback rule (issue #196), exercised on the
+    // guard itself. The commit-level behaviour is covered from the public
+    // API in `tests/arena.rs`; these pin the watermark rule the rollback
+    // is built on, including the value `commit_with` sets after a pooled
+    // table is rebuilt (issue #197).
+
+    #[test]
+    fn a_failed_walk_keeps_the_interner_entries_below_the_watermark() {
+        let mut arena = Arena::new();
+        {
+            let mut guard = InternerGuard::open(&mut arena);
+            guard.paints_at_open = 1;
+            guard.clips_at_open = 2;
+            guard.paint_map.insert(vec![0], PaintIndex(0));
+            guard.paint_map.insert(vec![1], PaintIndex(1));
+            guard.clip_map.insert((0, [0; 8]), ClipIndex(1));
+            guard.clip_map.insert((1, [0; 8]), ClipIndex(2));
+        }
+        assert_eq!(
+            arena.paint_map.get(&vec![0]),
+            Some(&PaintIndex(0)),
+            "an entry the front buffer's table still holds survives",
+        );
+        assert_eq!(
+            arena.paint_map.len(),
+            1,
+            "the entry the failed walk added is gone",
+        );
+        assert_eq!(arena.clip_map.len(), 1);
+    }
+
+    #[test]
+    fn a_failed_walk_after_a_rebuild_clears_the_interner() {
+        // `commit_with` drops the watermark to zero when it rebuilds a
+        // pooled table: a rebuild renumbers, so no index in the map names a
+        // slot of the front buffer's table any more and none can be kept.
+        let mut arena = Arena::new();
+        {
+            let mut guard = InternerGuard::open(&mut arena);
+            guard.paints_at_open = 0;
+            guard.clips_at_open = 0;
+            guard.paint_map.insert(vec![0], PaintIndex(0));
+            guard.clip_map.insert((0, [0; 8]), ClipIndex(1));
+        }
+        assert!(arena.paint_map.is_empty());
+        assert!(arena.clip_map.is_empty());
+    }
 }

@@ -2490,3 +2490,621 @@ fn a_blur_and_a_shadow_section_do_not_alias_each_other_in_the_paint_key() {
     assert_ne!(scene.rects()[0].paint, scene.rects()[1].paint);
     assert_eq!(scene.paints().len(), 2);
 }
+
+// ---------------------------------------------------------------------
+// The retained pools stay bounded (issue #197). A changed paint or clip
+// earns a new index and leaves its old entry behind, so an animated fill
+// or a per-frame-resizing clip used to grow the pooled tables by one
+// entry per commit for the arena's life. A commit that finds most of a
+// table unreachable rebuilds it.
+// ---------------------------------------------------------------------
+
+/// Comfortably above the rebuild threshold and far below what unbounded
+/// growth would reach over the commit counts these tests run.
+const POOL_CEILING: usize = 300;
+
+#[test]
+fn a_fill_that_changes_every_commit_does_not_grow_the_paint_table_without_bound() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let node = boxed(&mut txn, None, 0.0, 0.0, 10.0, 10.0);
+    txn.set_prop(node, Prop::Fill(RED));
+    txn.commit();
+
+    for step in 0..2000u32 {
+        let mut txn = arena.open();
+        txn.set_prop(
+            node,
+            Prop::Fill(Color {
+                r: step as f32 / 2000.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0,
+            }),
+        );
+        txn.commit();
+        assert!(
+            arena.committed().paints().len() <= POOL_CEILING,
+            "paint table reached {} entries after {} commits of one animated fill",
+            arena.committed().paints().len(),
+            step + 1,
+        );
+    }
+}
+
+#[test]
+fn a_clip_that_resizes_every_commit_does_not_grow_the_clip_table_without_bound() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let pane = boxed(&mut txn, None, 0.0, 0.0, 50.0, 50.0);
+    txn.set_prop(pane, Prop::Clip(true));
+    let inner = boxed(&mut txn, Some(pane), 0.0, 0.0, 10.0, 10.0);
+    txn.set_prop(inner, Prop::Fill(RED));
+    txn.commit();
+
+    for step in 0..2000u32 {
+        let mut txn = arena.open();
+        txn.set_prop(pane, Prop::Width(50.0 + step as f32));
+        txn.commit();
+        assert!(
+            arena.committed().clips().len() <= POOL_CEILING,
+            "clip table reached {} regions after {} commits of one resizing clip",
+            arena.committed().clips().len(),
+            step + 1,
+        );
+    }
+}
+
+#[test]
+fn a_rebuilt_paint_table_still_resolves_every_rect_and_reports_them_dirty() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let animated = boxed(&mut txn, None, 0.0, 0.0, 10.0, 10.0);
+    txn.set_prop(animated, Prop::Fill(RED));
+    let still = boxed(&mut txn, None, 20.0, 0.0, 10.0, 10.0);
+    txn.set_prop(still, Prop::Fill(BLUE));
+    boxed(&mut txn, None, 40.0, 0.0, 10.0, 10.0); // unfilled
+    txn.commit();
+
+    let mut rebuilt = false;
+    for step in 0..2000u32 {
+        let before = arena.committed().paints().len();
+        let paint_before: Vec<_> = arena
+            .committed()
+            .rects()
+            .iter()
+            .map(|rect| rect.paint)
+            .collect();
+        let fill = Color {
+            r: step as f32 / 2000.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        };
+        let mut txn = arena.open();
+        txn.set_prop(animated, Prop::Fill(fill));
+        txn.commit();
+
+        let scene = arena.committed();
+        if scene.paints().len() >= before {
+            continue;
+        }
+        rebuilt = true;
+        assert_eq!(
+            scene.paints().resolve(scene.rects()[0].paint).fill,
+            Some(PaintKind::Solid { color: fill }),
+            "the animated node resolves to the fill it was just given",
+        );
+        assert_eq!(
+            scene.paints().resolve(scene.rects()[1].paint).fill,
+            Some(PaintKind::Solid { color: BLUE }),
+            "the untouched node still resolves to its own fill",
+        );
+        assert_eq!(
+            scene.paints().resolve(scene.rects()[2].paint),
+            &PaintEntry::default(),
+            "the unfilled node still resolves to the draws-nothing entry",
+        );
+        assert_eq!(
+            scene.paints().len(),
+            3,
+            "the rebuilt table holds one entry per distinct live paint",
+        );
+        for (i, was) in paint_before.iter().enumerate() {
+            if scene.rects()[i].paint != *was {
+                assert!(
+                    scene.dirty().contains(&(i as u32)),
+                    "rect {i} was renumbered, so a painter has to be told to refresh it",
+                );
+            }
+        }
+        break;
+    }
+    assert!(
+        rebuilt,
+        "2000 commits of an animated fill never rebuilt the paint table",
+    );
+
+    // Re-staging a colour the rebuild discarded must intern afresh. A
+    // retained interner still holding the old key would answer with an
+    // index the rebuilt table has since given to a different entry.
+    let mut txn = arena.open();
+    txn.set_prop(animated, Prop::Fill(RED));
+    txn.commit();
+    let scene = arena.committed();
+    assert_eq!(
+        scene.paints().resolve(scene.rects()[0].paint).fill,
+        Some(PaintKind::Solid { color: RED }),
+        "the discarded red is interned again, not resolved through a stale key",
+    );
+}
+
+#[test]
+fn a_rebuilt_clip_table_still_resolves_every_regions_ancestor_chain() {
+    // Two nesting levels, so the rebuild has to keep a region's prefix as
+    // well as the region itself.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let outer = boxed(&mut txn, None, 0.0, 0.0, 100.0, 100.0);
+    txn.set_prop(outer, Prop::Clip(true));
+    let middle = boxed(&mut txn, Some(outer), 5.0, 5.0, 60.0, 60.0);
+    txn.set_prop(middle, Prop::Clip(true));
+    let leaf = boxed(&mut txn, Some(middle), 0.0, 0.0, 10.0, 10.0);
+    txn.set_prop(leaf, Prop::Fill(RED));
+    txn.commit();
+
+    let mut rebuilt = false;
+    for step in 0..2000u32 {
+        let before = arena.committed().clips().len();
+        let width = 60.0 + step as f32;
+        let mut txn = arena.open();
+        txn.set_prop(middle, Prop::Width(width));
+        txn.commit();
+
+        let scene = arena.committed();
+        if scene.clips().len() >= before {
+            continue;
+        }
+        rebuilt = true;
+        assert_eq!(
+            scene.clips().resolve(scene.rects()[2].clip).boxes(),
+            &[
+                ClipBox {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 100.0,
+                    h: 100.0,
+                    corners: CornerRadii::default(),
+                },
+                ClipBox {
+                    x: 5.0,
+                    y: 5.0,
+                    w: width,
+                    h: 60.0,
+                    corners: CornerRadii::default(),
+                },
+            ],
+            "the leaf keeps its whole ancestor chain, outermost first",
+        );
+        assert_eq!(
+            scene.clips().resolve(scene.rects()[1].clip).boxes(),
+            &[ClipBox {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 100.0,
+                corners: CornerRadii::default(),
+            }],
+            "the middle node keeps the outer clip",
+        );
+        assert!(
+            scene.clips().resolve(scene.rects()[0].clip).is_unclipped(),
+            "the outer node does not clip itself",
+        );
+        break;
+    }
+    assert!(
+        rebuilt,
+        "2000 commits of a resizing clip never rebuilt the clip table",
+    );
+
+    // The clip-side analogue: the region the rebuild discarded is
+    // re-interned, not answered from a stale key.
+    let mut txn = arena.open();
+    txn.set_prop(middle, Prop::Width(60.0));
+    txn.commit();
+    let scene = arena.committed();
+    assert_eq!(
+        scene.clips().resolve(scene.rects()[2].clip).boxes(),
+        &[
+            ClipBox {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 100.0,
+                corners: CornerRadii::default(),
+            },
+            ClipBox {
+                x: 5.0,
+                y: 5.0,
+                w: 60.0,
+                h: 60.0,
+                corners: CornerRadii::default(),
+            },
+        ],
+        "the discarded region is interned again, not resolved through a stale key",
+    );
+}
+
+// ---------------------------------------------------------------------
+// The group-opacity overlap test reads each rect's clip region
+// (issue #276): content two disjoint clips separate is not overlapping,
+// so the group folds to per-rect alpha instead of forcing a render
+// target. The test still errs towards reporting an overlap — it reduces
+// each region to its bounding box — so it never under-composites.
+// ---------------------------------------------------------------------
+
+#[test]
+fn clip_disjoint_children_under_a_group_opacity_stay_on_the_free_path() {
+    // group(0.5)
+    // ├── left pane  (clip, x 0..50)   └── a (fill, x 0..100)
+    // └── right pane (clip, x 50..100) └── b (fill, x 50..150)
+    // The two fills' boxes overlap in x 50..100, but their clips leave
+    // them painting 0..50 and 50..100 — disjoint.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let group = boxed(&mut txn, None, 0.0, 0.0, 100.0, 40.0);
+    txn.set_prop(group, Prop::Opacity(0.5));
+    let left = boxed(&mut txn, Some(group), 0.0, 0.0, 50.0, 40.0);
+    txn.set_prop(left, Prop::Clip(true));
+    let a = boxed(&mut txn, Some(left), 0.0, 0.0, 100.0, 40.0);
+    txn.set_prop(a, Prop::Fill(RED));
+    let right = boxed(&mut txn, Some(group), 50.0, 0.0, 50.0, 40.0);
+    txn.set_prop(right, Prop::Clip(true));
+    let b = boxed(&mut txn, Some(right), 0.0, 0.0, 100.0, 40.0);
+    txn.set_prop(b, Prop::Fill(RED));
+    txn.commit();
+
+    let scene = arena.committed();
+    assert!(
+        scene.groups().is_empty(),
+        "clip-disjoint content needs no render target",
+    );
+    for (i, rect) in scene.rects().iter().enumerate() {
+        assert_eq!(rect.opacity, 0.5, "rect {i} carries the folded alpha");
+    }
+}
+
+#[test]
+fn children_sharing_one_clip_region_still_form_a_render_target() {
+    // The conservative direction, pinned: clipping both children to the
+    // same pane leaves their painted areas overlapping, so the group must
+    // still composite through a render target.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let group = boxed(&mut txn, None, 0.0, 0.0, 100.0, 40.0);
+    txn.set_prop(group, Prop::Opacity(0.5));
+    let pane = boxed(&mut txn, Some(group), 0.0, 0.0, 100.0, 40.0);
+    txn.set_prop(pane, Prop::Clip(true));
+    let a = boxed(&mut txn, Some(pane), 0.0, 0.0, 60.0, 40.0);
+    txn.set_prop(a, Prop::Fill(RED));
+    let b = boxed(&mut txn, Some(pane), 40.0, 0.0, 60.0, 40.0);
+    txn.set_prop(b, Prop::Fill(RED));
+    txn.commit();
+
+    let scene = arena.committed();
+    assert_eq!(
+        scene.groups().len(),
+        1,
+        "content that shares a clip and overlaps still needs the layer",
+    );
+}
+
+#[test]
+fn a_child_clipped_away_entirely_contributes_no_overlap() {
+    // A rect its clip removes completely paints nothing, so it cannot
+    // overlap the sibling whose box it covers.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let group = boxed(&mut txn, None, 0.0, 0.0, 200.0, 40.0);
+    txn.set_prop(group, Prop::Opacity(0.5));
+    let a = boxed(&mut txn, Some(group), 0.0, 0.0, 100.0, 40.0);
+    txn.set_prop(a, Prop::Fill(RED));
+    // A pane far to the right, with a child whose box covers `a`.
+    let pane = boxed(&mut txn, Some(group), 150.0, 0.0, 50.0, 40.0);
+    txn.set_prop(pane, Prop::Clip(true));
+    let hidden = boxed(&mut txn, Some(pane), -150.0, 0.0, 100.0, 40.0);
+    txn.set_prop(hidden, Prop::Fill(RED));
+    txn.commit();
+
+    let scene = arena.committed();
+    assert!(
+        scene.groups().is_empty(),
+        "a fully clipped-away rect contributes nothing to the overlap test",
+    );
+}
+
+// ---------------------------------------------------------------------
+// The retained interners across a failed commit (issue #196). The walk
+// moves `paint_map`/`clip_map` out of the arena; a panic mid-walk must
+// leave them describing the front buffer's tables — neither emptied, nor
+// carrying the entries the failed walk interned into tables it then threw
+// away.
+// ---------------------------------------------------------------------
+
+const BLUE: Color = Color {
+    r: 0.0,
+    g: 0.0,
+    b: 1.0,
+    a: 1.0,
+};
+
+/// Resolves every root at its authored box except one, which it leaves
+/// unresolved so `commit_with` trips the "every node has a rect"
+/// invariant part-way through the walk (P4).
+struct SolverSkipping(dashscene_core::NodeId);
+
+impl dashscene_core::LayoutSolver for SolverSkipping {
+    fn solve(
+        &mut self,
+        arena: &Arena,
+    ) -> Vec<(dashscene_core::NodeId, dashscene_core::SolvedRect)> {
+        arena
+            .roots()
+            .iter()
+            .copied()
+            .filter(|id| *id != self.0)
+            .map(|id| {
+                let layout = arena.layout(id);
+                (
+                    id,
+                    dashscene_core::SolvedRect {
+                        x: layout.x,
+                        y: layout.y,
+                        w: layout.width,
+                        h: layout.height,
+                    },
+                )
+            })
+            .collect()
+    }
+}
+
+/// Runs one commit that is expected to panic part-way through the walk,
+/// and returns once the arena is usable again.
+fn commit_expecting_a_panic(arena: &mut Arena, skip: dashscene_core::NodeId) {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        arena.open().commit_with(&mut SolverSkipping(skip));
+    }));
+    assert!(
+        result.is_err(),
+        "the unresolved node was supposed to trip the every-node-has-a-rect invariant",
+    );
+}
+
+#[test]
+fn a_caught_mid_commit_panic_keeps_the_interner_entries_the_front_buffer_uses() {
+    // Commit 1 interns one red entry. The failed commit 2 adds a second
+    // node with the same fill and never reaches it. Commit 3 must find
+    // red already interned: an emptied map would push a duplicate entry
+    // and give the new node a different index for the same paint.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let a = boxed(&mut txn, None, 0.0, 0.0, 10.0, 10.0);
+    txn.set_prop(a, Prop::Fill(RED));
+    txn.commit();
+    assert_eq!(arena.committed().paints().len(), 1);
+
+    // Staged, then left pending: the failing commit below publishes it.
+    let b = {
+        let mut txn = arena.open();
+        let b = boxed(&mut txn, None, 20.0, 0.0, 10.0, 10.0);
+        txn.set_prop(b, Prop::Fill(RED));
+        b
+    };
+    commit_expecting_a_panic(&mut arena, b);
+
+    arena.open().commit();
+
+    let scene = arena.committed();
+    assert_eq!(
+        scene.paints().len(),
+        1,
+        "the red entry was still interned, so no duplicate was pushed",
+    );
+    assert_eq!(
+        scene.rects()[0].paint,
+        scene.rects()[1].paint,
+        "both nodes resolve to the one red entry",
+    );
+}
+
+#[test]
+fn a_caught_mid_commit_panic_discards_the_entries_that_failed_commit_interned() {
+    // Commit 2 re-fills the first node blue — interned into a paint table
+    // that the panic at the second node then discards. Keeping that
+    // key-to-index pair would point commit 3's first rect at an index the
+    // live table gives to a different entry.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let a = boxed(&mut txn, None, 0.0, 0.0, 10.0, 10.0);
+    txn.set_prop(a, Prop::Fill(RED));
+    txn.commit();
+
+    let b = {
+        let mut txn = arena.open();
+        txn.set_prop(a, Prop::Fill(BLUE));
+        boxed(&mut txn, None, 20.0, 0.0, 10.0, 10.0)
+    };
+    commit_expecting_a_panic(&mut arena, b);
+
+    arena.open().commit();
+
+    let scene = arena.committed();
+    assert_eq!(
+        scene.paints().resolve(scene.rects()[0].paint).fill,
+        Some(PaintKind::Solid { color: BLUE }),
+        "the first node still resolves to its blue fill",
+    );
+    assert_eq!(
+        scene.paints().resolve(scene.rects()[1].paint),
+        &PaintEntry::default(),
+        "the unfilled node still resolves to the draws-nothing entry",
+    );
+}
+
+#[test]
+fn a_caught_mid_commit_panic_keeps_the_clip_interner_consistent() {
+    // The clip-region analogue: the failed commit re-resolves a clipping
+    // ancestor's region into a clip table it then discards.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let pane = boxed(&mut txn, None, 0.0, 0.0, 50.0, 50.0);
+    txn.set_prop(pane, Prop::Clip(true));
+    let inner = boxed(&mut txn, Some(pane), 0.0, 0.0, 10.0, 10.0);
+    txn.set_prop(inner, Prop::Fill(RED));
+    txn.commit();
+
+    let orphan = {
+        let mut txn = arena.open();
+        txn.set_prop(pane, Prop::Width(80.0));
+        boxed(&mut txn, None, 100.0, 0.0, 10.0, 10.0)
+    };
+    commit_expecting_a_panic(&mut arena, orphan);
+
+    arena.open().commit();
+
+    let scene = arena.committed();
+    assert_eq!(
+        scene.clips().resolve(scene.rects()[1].clip).boxes(),
+        &[ClipBox {
+            x: 0.0,
+            y: 0.0,
+            w: 80.0,
+            h: 50.0,
+            corners: CornerRadii::default(),
+        }],
+        "the inner node is clipped by the widened pane, not by a stale region",
+    );
+}
+
+// ---------------------------------------------------------------------
+// The base (un-overridden) layout accessor (issue #185).
+// ---------------------------------------------------------------------
+
+#[test]
+fn base_layout_reads_under_an_active_variant_override() {
+    use dashscene_core::{VariantMember, VariantValue};
+
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let node = boxed(&mut txn, None, 5.0, 6.0, 10.0, 20.0);
+    let set = txn.add_variant_set(vec![
+        VariantMember {
+            name: Some("base".into()),
+            overrides: vec![],
+        },
+        VariantMember {
+            name: Some("wide".into()),
+            overrides: vec![
+                (node, VariantValue::X(99.0)),
+                (node, VariantValue::Width(200.0)),
+            ],
+        },
+    ]);
+    txn.set_variant(set, 1);
+    txn.commit();
+
+    let overlaid = arena.layout(node);
+    assert_eq!((overlaid.x, overlaid.width), (99.0, 200.0));
+
+    let base = arena.base_layout(node);
+    assert_eq!(
+        (base.x, base.width),
+        (5.0, 10.0),
+        "the authored geometry, independent of the active variant",
+    );
+    assert_eq!(
+        (base.y, base.height),
+        (6.0, 20.0),
+        "the props the variant does not override read the same either way",
+    );
+}
+
+// ---------------------------------------------------------------------
+// Mask bounds are the tight mask-and-maskee intersection, never the
+// parent box (issue #287; the G-7 ruling in
+// docs/specification/04-figma-vocabulary-profile.md).
+// ---------------------------------------------------------------------
+
+#[test]
+fn a_maskee_smaller_than_its_mask_carries_the_mask_box_and_not_the_parent_box() {
+    // The case that distinguishes the two readings of the ruling: the
+    // maskee is smaller than the mask, so "the mask box" and "mask
+    // intersected with maskee" differ. The painted result is the
+    // intersection either way — the maskee's fill never leaves its own
+    // box — and the region carries the mask box alone, so an effect of
+    // the maskee that reaches past the maskee's edge still shows
+    // anywhere inside the mask shape, which is Figma's semantics.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let parent = boxed(&mut txn, None, 0.0, 0.0, 200.0, 200.0);
+    let mask = boxed(&mut txn, Some(parent), 10.0, 10.0, 100.0, 100.0);
+    txn.set_prop(mask, Prop::Mask(true));
+    let maskee = boxed(&mut txn, Some(parent), 20.0, 20.0, 30.0, 30.0);
+    txn.set_prop(maskee, Prop::Fill(RED));
+    txn.commit();
+
+    let scene = arena.committed();
+    assert_eq!(
+        scene.clips().resolve(scene.rects()[2].clip).boxes(),
+        &[ClipBox {
+            x: 10.0,
+            y: 10.0,
+            w: 100.0,
+            h: 100.0,
+            corners: CornerRadii::default(),
+        }],
+        "the maskee's clip is the mask box — not the 200x200 parent box, \
+         and not the mask box cut down to the maskee's own 30x30 extent",
+    );
+}
+
+#[test]
+fn a_maskee_under_a_clipping_parent_intersects_the_parent_clip_then_the_mask() {
+    // The mask box chains onto the region the maskee already had, so
+    // "not the parent box" holds for a clipping parent too: the parent's
+    // box is there because the parent clips, and the mask box is
+    // intersected on top of it, outermost first.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let parent = boxed(&mut txn, None, 0.0, 0.0, 200.0, 200.0);
+    txn.set_prop(parent, Prop::Clip(true));
+    let mask = boxed(&mut txn, Some(parent), 10.0, 10.0, 100.0, 100.0);
+    txn.set_prop(mask, Prop::Mask(true));
+    let maskee = boxed(&mut txn, Some(parent), 20.0, 20.0, 30.0, 30.0);
+    txn.set_prop(maskee, Prop::Fill(RED));
+    txn.commit();
+
+    let scene = arena.committed();
+    assert_eq!(
+        scene.clips().resolve(scene.rects()[2].clip).boxes(),
+        &[
+            ClipBox {
+                x: 0.0,
+                y: 0.0,
+                w: 200.0,
+                h: 200.0,
+                corners: CornerRadii::default(),
+            },
+            ClipBox {
+                x: 10.0,
+                y: 10.0,
+                w: 100.0,
+                h: 100.0,
+                corners: CornerRadii::default(),
+            },
+        ],
+        "the clipping parent first, then the mask box",
+    );
+}
