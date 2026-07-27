@@ -82,7 +82,7 @@ fn candidate(canonical: &[u8]) -> Vec<u8> {
 /// the two pinned pack bands, so the check covers the values actually in use.
 const THRESHOLDS: [u8; 5] = [
     2,  // dashpack HIFI_IMAGE_FILL
-    8,  // dashpack LITE_IMAGE_FILL
+    8,  // dashpack LOFI_IMAGE_FILL
     24, // goldens BLUR_FALLOFF
     40, // goldens AA_EDGE
     50, // goldens MSDF_TEXT

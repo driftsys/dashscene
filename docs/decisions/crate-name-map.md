@@ -61,7 +61,7 @@ Names chosen and confirmed available on crates.io: `dashscene-typeset`,
 ## `dashpack`, added at the v0.12 open (story #429, 2026-07-26)
 
     dashpack             asset packer — encodes canonical payloads into
-                         per-profile derivations (RAW/HiFi/Lite), assembles
+                         per-profile derivations (RAW/HiFi/LoFi), assembles
                          cold banks onto the sectioned container, and records
                          every choice in the derivation manifest
 

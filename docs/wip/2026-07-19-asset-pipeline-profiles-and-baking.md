@@ -15,7 +15,7 @@
              docs/technotes/2026-07-26-v011-sections-and-assets.md.
              GARDENED FURTHER 2026-07-26 (v0.12, story #436): "Targets and
              codec plan" in full — the per-target codec table, the Wave 3
-             NVIDIA-BC7 hedge, and the RAW/HiFi/Lite naming convention live
+             NVIDIA-BC7 hedge, and the RAW/HiFi/LoFi naming convention live
              in docs/decisions/native-astc-codec-table.md and
              docs/decisions/asset-quality-profile-naming.md; the
              fixed-target refinement is recorded in
@@ -33,7 +33,7 @@
              texture2ddecoder welded to it. This file is no longer their
              authority.
              GARDENED FURTHER 2026-07-26 (v0.12, story #432): "The kernel"
-             points 2 and 3 in full — the RAW/HiFi/Lite band contracts, the
+             points 2 and 3 in full — the RAW/HiFi/LoFi band contracts, the
              per-asset encode-and-diff oracle, the escalation ladder, and the
              fields-never-lossy rule now live in
              docs/decisions/asset-quality-profile-bands.md, which also
@@ -71,7 +71,7 @@
      manifest, no extra machinery. v0's inline-bytes `.dsb` is exactly this.
    - **HiFi** — premium production target (SA8255-class). Tight per-class
      bands; typically ASTC 4x4.
-   - **Lite** — entry production target (SA7255-class). Looser bands;
+   - **LoFi** — entry production target (SA7255-class). Looser bands;
      typically ASTC 6x6/8x8. Defined now, built when a measured budget or
      OTA constraint demands it (ship one production profile first).
      A profile is a set of per-asset-class tolerance bands. The packer
@@ -132,7 +132,7 @@ Format support follows GPU architecture, not market segment or API;
 capability bits are not evidence — the probe is.
 
 - **Wave 1-2 (committed): Adreno-ASTC + PowerVR-ASTC.** SA8255 (HiFi
-  default) / SA7255 (Lite default); Renesas R-Car (PowerVR/IMG cores).
+  default) / SA7255 (LoFi default); Renesas R-Car (PowerVR/IMG cores).
   ASTC is a vendor-neutral bitstream, so both vendors can share
   byte-identical banks: one packer output for the whole launch fleet.
   Encoder: astcenc, version-pinned (the msdf-atlas-gen precedent). No
@@ -144,7 +144,7 @@ capability bits are not evidence — the probe is.
   upload (silent 32 bpp — the exact trap the pack-time probe must catch:
   allocate the compressed texture, measure actual residency; 8 bpp proves
   native). Adding NVIDIA is a derivation, not a redesign: a BC codec-table
-  row (BC7 HiFi / BC1 Lite / BC4 fields), banks re-derived from canonical
+  row (BC7 HiFi / BC1 LoFi / BC4 fields), banks re-derived from canonical
   under the same bands, one new qualification column.
 - **No universal hardware codec exists** (ASTC = mobile IP universe;
   BC = desktop/NVIDIA; intersection empty). The shared standards live one
@@ -164,7 +164,7 @@ the vocabulary.
 
 The Skia reference backend renders all three profiles, so quality loss is
 validated on desk before any target bench exists. Premise: ASTC/BC decode
-is bit-exact by specification — a software decode of a HiFi/Lite bank
+is bit-exact by specification — a software decode of a HiFi/LoFi bank
 reconstructs the same texels the target GPU samples. Mechanism: the
 reference loader software-decodes block payloads to RGBA using the same
 version-pinned astcenc that encoded them (one pinned tool, both
@@ -172,7 +172,7 @@ directions); the painter is unchanged (it draws RGBA; P2 holds). RAW stays
 the null binding.
 
 Workflow: per corpus scene, render the triptych (Skia+RAW, Skia+HiFi,
-Skia+Lite) + diff heatmaps + banded numbers. Skia+profile vs Skia+RAW is
+Skia+LoFi) + diff heatmaps + banded numbers. Skia+profile vs Skia+RAW is
 the purest asset-axis measurement (no backend in the loop) and catches
 scene-level, in-context artifacts the per-asset pack bands cannot (banding
 behind text, block patterns against strokes). A "profile preview oracle"
@@ -277,7 +277,7 @@ shader multiply). Skia's role is verification, not baking: the reference
 painter draws the original path directly (truth) vs the MSDF quad (what
 products show) — a per-asset bake-fidelity oracle in the band vocabulary,
 with escalation on the field's px-per-em / distance range, per-profile
-resolution as a legitimate HiFi/Lite knob, and a named
+resolution as a legitimate HiFi/LoFi knob, and a named
 diagnostic + escape hatch (ThorVG texture) for shapes too detailed to
 field — never a silently degraded icon.
 
@@ -316,7 +316,7 @@ Two classes, deliberately opposite treatments:
 
 Costs and open points: an animated fill is N frames of texture budget —
 the pack-time budget check applies, frame dedup helps loops; the
-temporal axis may want its own profile knob (e.g. Lite decimates to
+temporal axis may want its own profile knob (e.g. LoFi decimates to
 15 fps) — but frame decimation is an _approximation_, so it needs an
 explicit decision against the skip-never-approximate line (a disclosed,
 banded temporal degrade vs refusal); the dashcue track kind targeting a
@@ -384,9 +384,9 @@ Still open:
   export. Belongs to the deferred dashscene-unity design.
 - **Band values per class per profile**: pinned empirically by the packer
   oracle + review, never invented (the E7 band discipline). Done for the
-  image-fill class at story #432 (`hifi-image-fill`, `lite-image-fill`);
+  image-fill class at story #432 (`hifi-image-fill`, `lofi-image-fill`);
   every later class still needs its own measurement.
-- **Lite profile activation**: ship HiFi first; turn Lite on when a
+- **LoFi profile activation**: ship HiFi first; turn LoFi on when a
   measured budget/OTA constraint demands.
 - **Per-core verification at slice time**: PowerVR ASTC LDR on the actual
   R-Car parts; Adreno UBWC interaction (expected non-issue for sampled
@@ -397,5 +397,5 @@ Still open:
 - **fadvise policy** for multi-bank files (fault only the bound bank).
 - **Bank size analysis, beyond the container's own cost.** The container's
   alignment cost is now measured on the hero: about 1 % of the imported file
-  (`docs/technotes/2026-07-26-v011-sections-and-assets.md`). The HiFi/Lite/multi
+  (`docs/technotes/2026-07-26-v011-sections-and-assets.md`). The HiFi/LoFi/multi
   -bank growth question is untouched and belongs to the packer.

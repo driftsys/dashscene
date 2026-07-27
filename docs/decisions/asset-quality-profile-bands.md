@@ -1,7 +1,7 @@
 # Decision: a quality profile is a measured band contract, and a distance field has no lossy rung
 
     status   accepted
-    scope    the RAW/HiFi/Lite band contracts, the per-asset encode-and-diff
+    scope    the RAW/HiFi/LoFi band contracts, the per-asset encode-and-diff
              oracle, and the escalation ladder — `dashpack::band`,
              `dashpack::profile`, and the `AssetEntry.kind` the hard rules read
              (v0.12, story #432)
@@ -70,7 +70,7 @@ the walk always ends inside the contract.
 | band              | per-texel threshold | area budget |
 | ----------------- | ------------------- | ----------- |
 | `hifi-image-fill` | 2                   | 1 %         |
-| `lite-image-fill` | 8                   | 5 %         |
+| `lofi-image-fill` | 8                   | 5 %         |
 
 **HiFi's threshold sits near the encoder's noise floor, not at a visibility
 threshold.** The failure mode HiFi exists to prevent on this class is
@@ -79,7 +79,7 @@ spread over a wide area, which a high per-texel threshold is blind to. That
 is #422's finding pointed the other way: one number cannot both size a
 residual and act as a gate. 2 of 255 is one quantisation step above
 bit-exact, and the 1 % budget then says "all but a hundredth of the texels
-are within one step". Lite is four times the threshold and five times the
+are within one step". LoFi is four times the threshold and five times the
 budget: 8 of 255 is roughly where a single texel's error stops being
 invisible on an 8-bit panel.
 
@@ -90,7 +90,7 @@ the defect the mechanism exists to prevent:
 | band              | fixture             | chosen | mutation | measured      | budget |
 | ----------------- | ------------------- | ------ | -------- | ------------- | ------ |
 | `hifi-image-fill` | `import-image-fill` | 6x6    | 8x8      | **2.8012 %**  | 1 %    |
-| `lite-image-fill` | `detail-noise`      | 6x6    | 8x8      | **10.4401 %** | 5 %    |
+| `lofi-image-fill` | `detail-noise`      | 6x6    | 8x8      | **10.4401 %** | 5 %    |
 
 Both are near misses on purpose — 2.8 and 2.1 times the budget, not fifty
 times it. A mutation that fails by two orders of magnitude shows a band is
@@ -151,7 +151,7 @@ now mints its atlas asset as `DistanceField`; its Figma image fills stay
   capture and `native-astc-codec-table.md` expect HiFi to be "typically ASTC
   4x4". On the committed assets it measures 6x6, 8x8 and uncompressed, and
   never 4x4. The measurement is what is recorded. The codec table's HiFi and
-  Lite columns are the expected _outcome_ of a band, not a rule the packer
+  LoFi columns are the expected _outcome_ of a band, not a rule the packer
   applies — a profile that named its footprint would be a format, which is
   the thing this design is explicitly not.
 - **A rule is safer than a check.** Expressing fields-never-lossy as an empty
@@ -179,7 +179,7 @@ now mints its atlas asset as `DistanceField`; its Figma image fills stay
   repository owner** and carried by issue #453, which owns the EAC-R11
   encoder. Until it is settled the strict reading holds, because its failure
   mode is a size regression rather than a silent quality loss.
-- Lite is defined and measured but not activated: HiFi ships first, and Lite
+- LoFi is defined and measured but not activated: HiFi ships first, and LoFi
   turns on when a measured budget or OTA constraint demands it.
 - `dashpack` now depends on `dashbuf`, which is the coupling the
   asset-pipeline plan named when it placed the packer in this workspace.
@@ -194,10 +194,10 @@ now mints its atlas asset as `DistanceField`; its Figma image fills stay
 Recorded because a green contract read as broader evidence than it is, is the
 failure #422 documents.
 
-- **Lite's budget is not exercised by any committed _real_ asset.** The two
+- **LoFi's budget is not exercised by any committed _real_ asset.** The two
   real image fills are a gradient with flat rectangles, which ASTC reproduces
   almost exactly at every footprint. `detail-noise` is generated rather than
-  committed precisely to make Lite's budget the binding term; without it the
+  committed precisely to make LoFi's budget the binding term; without it the
   number 5 % would be unexercised.
 - **No asset lands on 4x4 or 5x5.** Those two rungs are in the ladder and are
   walked, but no committed fixture stops at either, so nothing here says the

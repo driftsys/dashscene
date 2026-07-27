@@ -177,7 +177,7 @@ pub enum Profile {
     HiFi,
     /// The entry production target (SA7255 class). Looser bands. Defined now,
     /// activated when a measured budget or OTA constraint demands it.
-    Lite,
+    LoFi,
 }
 
 /// What one profile binds one asset class to.
@@ -202,12 +202,12 @@ pub enum Contract {
 pub fn contract(profile: Profile, class: AssetClass) -> Contract {
     match profile {
         Profile::Raw => Contract::NullBinding,
-        Profile::HiFi | Profile::Lite if !class.admits_lossy() => Contract::LosslessOnly,
+        Profile::HiFi | Profile::LoFi if !class.admits_lossy() => Contract::LosslessOnly,
         Profile::HiFi => Contract::Banded {
             band: &HIFI_IMAGE_FILL,
         },
-        Profile::Lite => Contract::Banded {
-            band: &LITE_IMAGE_FILL,
+        Profile::LoFi => Contract::Banded {
+            band: &LOFI_IMAGE_FILL,
         },
     }
 }
@@ -238,7 +238,7 @@ pub const HIFI_IMAGE_FILL: ToleranceBand = ToleranceBand {
     differing_fraction: 0.01,
 };
 
-/// Lite, image fills — the entry target's band.
+/// LoFi, image fills — the entry target's band.
 ///
 /// Four times HiFi's per-texel threshold and five times its budget. 8 of 255 is
 /// about 3 % of range, roughly where a single texel's error stops being
@@ -250,8 +250,8 @@ pub const HIFI_IMAGE_FILL: ToleranceBand = ToleranceBand {
 /// rejects 8x8 at 10.4401 % and accepts 6x6 at 4.8187 %, so the number 5 %
 /// itself is what chooses the rung — not the threshold, and not arithmetic that
 /// would have chosen the same rung for any budget.
-pub const LITE_IMAGE_FILL: ToleranceBand = ToleranceBand {
-    rule: "lite-image-fill",
+pub const LOFI_IMAGE_FILL: ToleranceBand = ToleranceBand {
+    rule: "lofi-image-fill",
     channel_delta: 8,
     differing_fraction: 0.05,
 };
@@ -261,7 +261,7 @@ pub const LITE_IMAGE_FILL: ToleranceBand = ToleranceBand {
 /// Two, not six: RAW derives nothing and the distance-field class has no rung
 /// to choose between, so neither has a band. A band is only written where a
 /// measurement decides something.
-pub const BANDS: [&ToleranceBand; 2] = [&HIFI_IMAGE_FILL, &LITE_IMAGE_FILL];
+pub const BANDS: [&ToleranceBand; 2] = [&HIFI_IMAGE_FILL, &LOFI_IMAGE_FILL];
 
 /// The band a `rule` name selects, or `None` if it is not one of the pinned
 /// contracts.
@@ -477,7 +477,7 @@ mod tests {
     fn a_distance_field_has_no_lossy_rung_under_any_profile() {
         assert!(!AssetClass::DistanceField.admits_lossy());
         assert_eq!(AssetClass::DistanceField.lossy_rungs(), &[]);
-        for profile in [Profile::Raw, Profile::HiFi, Profile::Lite] {
+        for profile in [Profile::Raw, Profile::HiFi, Profile::LoFi] {
             let contract = contract(profile, AssetClass::DistanceField);
             assert!(
                 !matches!(contract, Contract::Banded { .. }),
@@ -522,7 +522,7 @@ mod tests {
     fn a_band_exists_only_where_a_measurement_chooses_something() {
         // The #422 discipline in structural form: a pinned number that no
         // ladder can exercise is not written at all.
-        for profile in [Profile::Raw, Profile::HiFi, Profile::Lite] {
+        for profile in [Profile::Raw, Profile::HiFi, Profile::LoFi] {
             for class in [AssetClass::ImageFill, AssetClass::DistanceField] {
                 if let Contract::Banded { .. } = contract(profile, class) {
                     assert!(

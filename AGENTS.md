@@ -59,7 +59,7 @@ intentionally undecided until that point
                           the ASTC encoder and its in-process reference
                           decoder; no external CLI
     dashpack               asset packer — canonical payloads to per-profile
-                          derivations (RAW/HiFi/Lite), cold-bank assembly,
+                          derivations (RAW/HiFi/LoFi), cold-bank assembly,
                           derivation manifest; lands across slice v0.12
     dashscene-unity        Rust-side FFI bindings only — the Unity/C# project
                           itself is a separate, not-yet-created repo

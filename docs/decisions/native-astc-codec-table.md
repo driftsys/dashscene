@@ -10,7 +10,7 @@
     source   docs/wip/2026-07-19-asset-pipeline-profiles-and-baking.md,
              "Targets and codec plan"
     related  docs/decisions/asset-quality-profile-naming.md (the RAW/HiFi/
-             Lite vocabulary this table uses), docs/decisions/atlas-gen-
+             LoFi vocabulary this table uses), docs/decisions/atlas-gen-
              external-pinned-binary.md (shares the version-pinning
              principle; astcenc diverges on mechanism — see below),
              docs/decisions/crate-name-map.md (dashpack), epic #345
@@ -30,12 +30,12 @@ transcoding step at all.
 The launch fleet:
 
 - **SA8255** — the HiFi default target. Qualcomm Adreno GPU.
-- **SA7255** — the Lite default target. Qualcomm Adreno GPU.
+- **SA7255** — the LoFi default target. Qualcomm Adreno GPU.
 - **Renesas R-Car** — uses PowerVR/IMG (Imagination) cores.
 
 ## The codec table
 
-| Wave | Status             | GPU architecture                                | Targets                       | HiFi encoding | Lite encoding | Field (SDF) encoding | Encoder                                   |
+| Wave | Status             | GPU architecture                                | Targets                       | HiFi encoding | LoFi encoding | Field (SDF) encoding | Encoder                                   |
 | ---- | ------------------ | ----------------------------------------------- | ----------------------------- | ------------- | ------------- | -------------------- | ----------------------------------------- |
 | 1-2  | committed          | Adreno (Qualcomm) and PowerVR/IMG (Imagination) | SA8255, SA7255, Renesas R-Car | ASTC 4x4      | ASTC 6x6/8x8  | EAC-R11              | `astcenc`, version-pinned                 |
 | 3    | proposed ("maybe") | Ampere/Blackwell (NVIDIA, desktop architecture) | DRIVE Orin, DRIVE Thor        | BC7           | BC1           | BC4                  | not yet chosen — gated on the probe below |
@@ -43,7 +43,7 @@ The launch fleet:
 **Two clarifications from story #432**, which built the band contracts this
 table's columns describe (`asset-quality-profile-bands.md`):
 
-- The **HiFi and Lite encoding columns are the expected outcome of a band,
+- The **HiFi and LoFi encoding columns are the expected outcome of a band,
   not a rule the packer applies.** A profile supplies a band; the asset
   class supplies the ladder; the measurement chooses the footprint. On the
   committed assets HiFi measures to 6x6, 8x8 and uncompressed, and never to
@@ -121,7 +121,7 @@ and this record does not treat it as such.
 
 Adding NVIDIA, when it happens, is a derivation from the existing table,
 not a redesign of it: one new codec-table row (BC7 for HiFi, BC1 for
-Lite, BC4 for fields), the existing bands re-derived from the same
+LoFi, BC4 for fields), the existing bands re-derived from the same
 canonical payloads under the same per-asset-class tolerances, and one
 new qualification column. Nothing about the Wave 1-2 ASTC bank changes
 when Wave 3 lands.
