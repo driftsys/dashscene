@@ -1586,3 +1586,106 @@ Deno.test("parseExportManifest rejects a non-string library key", () => {
     "librar",
   );
 });
+
+// --------------------------------------------------------------------------
+// The captured cross-file pair (story #38, issue #265). Everything above
+// exercises the resolution mechanism against synthetic and fixture-derived
+// inputs; these replay it against the real `?plugin_data=shared` responses of
+// two Figma files, where `xfile-consumer` instances a variant of a component
+// set published as a team library by `xfile-library`. No Plugin API can
+// publish a library or instance across files, so this pair is authored by
+// hand and is the only place the real remote shape is proven.
+
+const XFILE_LIBRARY_KEY = "o2ku1XBJCxy07x9cLyYJa7";
+
+Deno.test("the captured consumer carries a genuinely remote instance", () => {
+  // The guard for the whole pair. A component copy-pasted between files
+  // instead of dragged from the library captures cleanly and carries
+  // `remote: false`, so every test below would pass while proving nothing.
+  const consumer = fixture("xfile-consumer");
+  const entries = Object.entries(
+    consumer.components as Record<string, { name: string; remote: boolean }>,
+  );
+  assertEquals(entries.length, 1);
+  const [nodeId, component] = entries[0];
+  assertEquals(nodeId, "1:4");
+  assertEquals(component.name, "state=on");
+  assertEquals(component.remote, true);
+
+  const sets = Object.values(
+    consumer.componentSets as Record<string, { name: string; remote: boolean }>,
+  );
+  assertEquals(sets.length, 1);
+  assertEquals(sets[0].name, "xfile-chip");
+  assertEquals(sets[0].remote, true);
+});
+
+Deno.test("the consumer's remote requirement names the key the library provides", () => {
+  // The consumer's `components` map carries the component's global key and no
+  // source-file key — the REST shape that forces libraries to be declared
+  // rather than auto-discovered
+  // (docs/decisions/figma-cross-file-library-resolution.md).
+  const consumer = fixture("xfile-consumer");
+  const library = fixture("xfile-library");
+  const root = consumer.document.children[0].children[0];
+  assertEquals(root.type, "INSTANCE");
+
+  const closure = computeClosure(consumer, { roots: [root.id] });
+  assertEquals(closure.diagnostics, []);
+  assertEquals(closure.components, [
+    {
+      componentId: "1:4",
+      key: "362c61b52efc2f937836171ff2f4937659e653ce",
+      remote: true,
+      setId: "1:2",
+    },
+  ]);
+
+  const provided = new Set(
+    Object.values(library.components as Record<string, { key: string }>).map(
+      (c) => c.key,
+    ),
+  );
+  assert(
+    provided.has(closure.components[0].key),
+    "the library must provide the key the consumer requires",
+  );
+});
+
+Deno.test("an undeclared library leaves the real remote instance named, not silent", () => {
+  const consumer = fixture("xfile-consumer");
+  const root = consumer.document.children[0].children[0];
+  const closure = computeClosure(consumer, { roots: [root.id] });
+
+  const resolution = resolveRemoteComponents(consumer, closure.components, []);
+
+  assertEquals(
+    resolution.diagnostics.map((d) => d.rule),
+    ["figma.closure.remote-master-unplaceable"],
+  );
+  assertEquals(resolution.diagnostics[0].severity, "warning");
+  assertEquals(resolution.diagnostics[0].nodeId, "1:4");
+});
+
+Deno.test("the declared library resolves the real remote instance with no diagnostic", () => {
+  const consumer = fixture("xfile-consumer");
+  const library = fixture("xfile-library");
+  const root = consumer.document.children[0].children[0];
+  const closure = computeClosure(consumer, { roots: [root.id] });
+
+  const resolution = resolveRemoteComponents(consumer, closure.components, [
+    { fileKey: XFILE_LIBRARY_KEY, file: library },
+  ]);
+
+  assertEquals(resolution.diagnostics, []);
+
+  // The library and the consumer have independent id spaces — both number
+  // from 0:0 — so a spliced definition is namespaced by its library file key.
+  const components = resolution.file.components;
+  assert(components !== undefined, "the resolved file must carry components");
+  const spliced = Object.keys(components);
+  assert(
+    spliced.some((id) => id.startsWith(`${XFILE_LIBRARY_KEY}~`)),
+    `expected a namespaced spliced id, got ${spliced.join(", ")}`,
+  );
+});

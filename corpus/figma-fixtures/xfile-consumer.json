@@ -1,0 +1,151 @@
+{
+  "document": {
+    "id": "0:0",
+    "name": "Document",
+    "type": "DOCUMENT",
+    "scrollBehavior": "SCROLLS",
+    "children": [
+      {
+        "id": "0:1",
+        "name": "Page 1",
+        "type": "CANVAS",
+        "scrollBehavior": "SCROLLS",
+        "children": [
+          {
+            "id": "1:6",
+            "name": "xfile-chip",
+            "type": "INSTANCE",
+            "scrollBehavior": "SCROLLS",
+            "componentId": "1:4",
+            "componentProperties": {
+              "state": {
+                "value": "on",
+                "type": "VARIANT",
+                "boundVariables": {}
+              }
+            },
+            "overrides": [],
+            "children": [],
+            "blendMode": "PASS_THROUGH",
+            "clipsContent": true,
+            "background": [
+              {
+                "blendMode": "NORMAL",
+                "type": "SOLID",
+                "color": {
+                  "r": 1,
+                  "g": 0.1764705926179886,
+                  "b": 0.3333333432674408,
+                  "a": 1
+                }
+              }
+            ],
+            "fills": [
+              {
+                "blendMode": "NORMAL",
+                "type": "SOLID",
+                "color": {
+                  "r": 1,
+                  "g": 0.1764705926179886,
+                  "b": 0.3333333432674408,
+                  "a": 1
+                }
+              }
+            ],
+            "strokes": [],
+            "strokeWeight": 1,
+            "strokeAlign": "INSIDE",
+            "backgroundColor": {
+              "r": 1,
+              "g": 0.1764705926179886,
+              "b": 0.3333333432674408,
+              "a": 1
+            },
+            "fillGeometry": [
+              {
+                "path": "M0 0L120 0L120 40L0 40L0 0Z",
+                "windingRule": "NONZERO"
+              }
+            ],
+            "strokeGeometry": [],
+            "absoluteBoundingBox": {
+              "x": -55,
+              "y": -226,
+              "width": 120,
+              "height": 40
+            },
+            "absoluteRenderBounds": {
+              "x": -55,
+              "y": -226,
+              "width": 120,
+              "height": 40
+            },
+            "constraints": {
+              "vertical": "TOP",
+              "horizontal": "LEFT"
+            },
+            "relativeTransform": [
+              [
+                1,
+                0,
+                -55
+              ],
+              [
+                0,
+                1,
+                -226
+              ]
+            ],
+            "size": {
+              "x": 120,
+              "y": 40
+            },
+            "effects": [],
+            "interactions": [],
+            "complexStrokeProperties": {
+              "strokeType": "BASIC"
+            }
+          }
+        ],
+        "backgroundColor": {
+          "r": 0.9607843160629272,
+          "g": 0.9607843160629272,
+          "b": 0.9607843160629272,
+          "a": 1
+        },
+        "prototypeStartNodeID": null,
+        "flowStartingPoints": [],
+        "prototypeDevice": {
+          "type": "NONE",
+          "rotation": "NONE"
+        }
+      }
+    ]
+  },
+  "components": {
+    "1:4": {
+      "key": "362c61b52efc2f937836171ff2f4937659e653ce",
+      "name": "state=on",
+      "description": "",
+      "remote": true,
+      "componentSetId": "1:2",
+      "documentationLinks": []
+    }
+  },
+  "componentSets": {
+    "1:2": {
+      "key": "96e8d0f7e5f65edcb5c9ea3236ed4c31ca840d4b",
+      "name": "xfile-chip",
+      "description": "",
+      "remote": true
+    }
+  },
+  "schemaVersion": 0,
+  "styles": {},
+  "name": "xfile-consumer",
+  "lastModified": "2026-07-27T12:55:36Z",
+  "version": "2380886288974647420",
+  "role": "owner",
+  "editorType": "figma",
+  "linkAccess": "inherit"
+}
