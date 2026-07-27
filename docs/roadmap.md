@@ -508,7 +508,8 @@ v0.13 (the 2026-07-19 plan revisions below), so the gate closes the
 qualification arc, not the version.
 
 Delivers: the same-screen-both-ways fixture, and the v0 exit gate — `E1`
-through `E7` asserted in CI.
+through `E7` asserted in CI. **The fixture landed; the gate did not** — see the
+close note below.
 
 Depends on: every prior epic, v0.1 through v0.8.
 
@@ -550,6 +551,21 @@ bands, two of them catching real engine bugs on first measurement (#314's
 line-height fix, #272's baseline correction). The remaining v0.9 work is the
 exit gate (#49) alone: it waits only on the restoration of Actions billing
 (#263) before it can assert all seven criteria in CI.
+
+Corrected at the v0.13 open (2026-07-27): **the exit gate is not built, and
+this slice is not finished.** Story #49 showed closed since 2026-07-25, but it
+was closed as a side effect of a pull request whose body contained the words
+"closes #49" in an ordinary sentence about a hypothetical future closer.
+Nothing was built, no commit references it, and the story's own last comment
+says it should stay open. There is no `E1`–`E7` job in
+`.github/workflows/ci.yml`, no `just` recipe, and no test asserting the
+criteria as a set. #49 is reopened and epic #47 stays open with it.
+
+The seven criteria are each met and each individually evidenced, which is why
+the gap went unnoticed: what is missing is not proof of any criterion, but the
+one mechanical assertion that they all hold on a given commit, so a regression
+in any of them fails a build rather than waiting for a person to notice. That
+assertion still cannot run while #263 holds.
 
 After `E7` was met, the full real-file-import epic ran outside the slice map
 (2026-07-18/19, [`technotes/2026-07-19-real-file-import.md`](technotes/2026-07-19-real-file-import.md)):

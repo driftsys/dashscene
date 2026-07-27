@@ -142,6 +142,14 @@ Story workflow — the definition of done for every story:
   complete, and all critical findings are resolved. A non-draft PR is a
   request to merge, so it must never carry an unreviewed diff
   (`docs/decisions/review-before-ready-not-before-open.md`).
+- **Never write "closes #N", "fixes #N" or "resolves #N" in PR prose.**
+  GitHub reads a closing keyword anywhere in the body, including inside an
+  ordinary sentence, and closes the issue on merge. Story #49 was closed
+  this way by a docs PR discussing "whoever closes #49" — the story was
+  never built, and two shipped documents then described its deliverable as
+  shipped. Write `Refs #N` when referring to an issue, and reserve a
+  closing keyword for the one issue the PR actually completes. When naming
+  an issue mid-sentence, write "issue #N" or restructure the sentence.
 - Merge only when the PR is out of draft and CI is green on the commit
   being merged. Marking a PR ready is a gate, not a promise: a later
   push, or a rebase onto a moved `main`, can turn it red again.

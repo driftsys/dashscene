@@ -16,15 +16,15 @@ missing proof must be visible.
 
 ## v0 exit criteria
 
-| Criterion                         | Verifies | Status                                                                                                                                                                                                                                                                                                                                                                                        |
-| --------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| E1 same screen authored both ways | G1       | **met** — layout + solid-fill rect/render parity (story #48); text-inclusive parity is a disclosed v1 follow-on (#299)                                                                                                                                                                                                                                                                        |
-| E2 Arabic golden-stable           | R1       | **met**                                                                                                                                                                                                                                                                                                                                                                                       |
-| E3 stress corpus green            | R2       | **met**                                                                                                                                                                                                                                                                                                                                                                                       |
-| E4 dirty Figma file → report      | R6       | **met**                                                                                                                                                                                                                                                                                                                                                                                       |
-| E5 variant switch via FLIP        | R4       | **met**                                                                                                                                                                                                                                                                                                                                                                                       |
-| E6 byte-identical `.dsb`          | R7       | **met**                                                                                                                                                                                                                                                                                                                                                                                       |
-| E7 design-source render oracle    | R6       | **met** — the oracle measures all 7 frames within band against real Figma renders (aa-edge: v08-wrap 0.00 %, v08-grid-spans 0.04 % after #385 committed Inter; blur-falloff: drop/inner-shadow 0.02 %/0.00 %; msdf-text: text-latin 0.03 %, text-arabic 1.41 % after the #314 line-height fix, v08-baseline 1.82 % after the #272 baseline fix); the v0.9 exit gate (#49) asserts E1–E7 in CI |
+| Criterion                         | Verifies | Status                                                                                                                                                                                                                                                                                                                                                                                                 |
+| --------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| E1 same screen authored both ways | G1       | **met** — layout + solid-fill rect/render parity (story #48); text-inclusive parity is a disclosed v1 follow-on (#299)                                                                                                                                                                                                                                                                                 |
+| E2 Arabic golden-stable           | R1       | **met**                                                                                                                                                                                                                                                                                                                                                                                                |
+| E3 stress corpus green            | R2       | **met**                                                                                                                                                                                                                                                                                                                                                                                                |
+| E4 dirty Figma file → report      | R6       | **met**                                                                                                                                                                                                                                                                                                                                                                                                |
+| E5 variant switch via FLIP        | R4       | **met**                                                                                                                                                                                                                                                                                                                                                                                                |
+| E6 byte-identical `.dsb`          | R7       | **met**                                                                                                                                                                                                                                                                                                                                                                                                |
+| E7 design-source render oracle    | R6       | **met** — the oracle measures all 7 frames within band against real Figma renders (aa-edge: v08-wrap 0.00 %, v08-grid-spans 0.04 % after #385 committed Inter; blur-falloff: drop/inner-shadow 0.02 %/0.00 %; msdf-text: text-latin 0.03 %, text-arabic 1.41 % after the #314 line-height fix, v08-baseline 1.82 % after the #272 baseline fix); the v0.9 exit gate (#49) is **not built** — see below |
 
 The file carries no version in its name. "v0 exit criteria" is a heading
 inside it; v1's criteria are a second heading below, not a second file.
@@ -476,7 +476,30 @@ resized its HUG root and could not be diffed). Measuring it exposed a real engin
 bug — a text leaf aligned on its box bottom, not its glyph baseline (#272) — that a
 post-solve glyph-baseline correction in `dashscene-engine` fixed, bringing the
 frame from 3.807 % to 1.816 % within the msdf-text band. With all seven frames
-measured, E7 is met; the v0.9 exit gate (#49) asserts `E1`–`E7` in CI.
+measured, E7 is met.
+
+### The exit gate itself is not built
+
+Every criterion above is met. **The gate that asserts them together is not.**
+
+Story #49 scopes a CI job asserting `E1`–`E7`. No such job exists:
+`.github/workflows/ci.yml` runs `changes`, `fmt`, `dprint`, `clippy`, `test`,
+`convco`, `deno`, `wasm-build`, `atlas-repro`, `render-oracle` and the `ci`
+fan-in, and the fan-in aggregates those jobs rather than asserting the
+criteria. No `just` recipe and no test asserts them as a set either. It could
+not run in any case while GitHub Actions billing is blocked (#263).
+
+Until 2026-07-27 this file stated in two places that the gate asserts `E1`–`E7`
+in CI, in the present tense. That was wrong. #49 had been closed on 2026-07-25
+as a side effect of a pull request whose body contained the words "closes #49"
+in prose, and the claim was written against that apparent close rather than
+against the workflow. #49 is reopened.
+
+What is true: each criterion is individually met and individually evidenced,
+above and in the records each row cites. What is not true, and what the gate
+would add, is a single mechanical assertion that they are **all** met on a
+given commit — so that a regression in any one of them fails a build rather
+than being noticed by a person.
 
 ## v1 exit criteria
 
