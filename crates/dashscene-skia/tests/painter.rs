@@ -866,11 +866,17 @@ fn two_rects(left_w: f32) -> (Vec<RectEntry>, PaintTable) {
 /// paint table, and the advisory dirty set for that commit.
 type Frame = (Vec<RectEntry>, PaintTable, Option<Vec<u32>>);
 
+/// The retained-mode tests' square surface. Named because
+/// `assert_modes_agree_after_every_frame` turns a flat pixel index back into
+/// a row and column with it, and would report the wrong coordinates if the two
+/// drifted apart.
+const RETAINED_SURFACE: i32 = 16;
+
 /// Renders a sequence of (rects, paints, dirty) frames through one painter
 /// in `mode`, returning the final surface. Named `render_frames` to avoid
 /// the single-frame `render` helper above.
 fn render_frames(mode: DirtyMode, frames: &[Frame]) -> Vec<u8> {
-    let mut painter = SkiaPainter::with_mode(16, 16, mode);
+    let mut painter = SkiaPainter::with_mode(RETAINED_SURFACE, RETAINED_SURFACE, mode);
     for (rects, paints, dirty) in frames {
         painter.paint(
             rects,
@@ -926,6 +932,144 @@ fn retained_mode_starves_on_an_incomplete_dirty_set() {
     assert_ne!(
         full, retained,
         "an incomplete dirty set must leave the retained buffer stale"
+    );
+}
+
+/// The same two side-by-side rects plus a third drawn over their seam, so a
+/// stale third entry is visible in the middle of the surface and a missing one
+/// is visible as the seam showing through.
+fn three_rects(left_w: f32) -> (Vec<RectEntry>, PaintTable) {
+    let (mut rects, mut paints) = two_rects(left_w);
+    let b = paints.push(PaintEntry::solid(BLUE));
+    rects.push(RectEntry {
+        x: 4.0,
+        y: 4.0,
+        w: 8.0,
+        h: 8.0,
+        paint: b,
+        clip: ClipIndex::UNCLIPPED,
+        opacity: 1.0,
+    });
+    (rects, paints)
+}
+
+/// Renders every prefix of `frames` in both modes and asserts the two agree
+/// after each one.
+///
+/// Comparing only the final surface would let a divergence in the middle of the
+/// sequence be papered over by a later full refresh, which is precisely the
+/// path under test: every frame here changes the node count, so every frame
+/// takes the full-refresh arm and a later one would repair an earlier one's
+/// damage.
+fn assert_modes_agree_after_every_frame(frames: &[Frame], what: &str) {
+    for n in 1..=frames.len() {
+        let prefix = &frames[..n];
+        let full = render_frames(DirtyMode::Full, prefix);
+        let retained = render_frames(DirtyMode::Retained, prefix);
+        if full == retained {
+            continue;
+        }
+        // Reported as a count plus the first disagreeing pixel rather than by
+        // `assert_eq!` on the buffers: the surface is 16x16, so the derived
+        // message would be two 1024-byte dumps and the reader would have to
+        // find the difference by eye.
+        let differing = full
+            .chunks_exact(4)
+            .zip(retained.chunks_exact(4))
+            .filter(|(a, b)| a != b)
+            .count();
+        let (at, a, b) = full
+            .chunks_exact(4)
+            .zip(retained.chunks_exact(4))
+            .enumerate()
+            .find(|(_, (a, b))| a != b)
+            .map(|(i, (a, b))| (i, a.to_vec(), b.to_vec()))
+            .expect("the buffers differ, so some pixel differs");
+        panic!(
+            "{what}: the retained buffer diverged from a full redraw after frame {}. \
+             {differing} of {} pixels differ; the first is ({}, {}), full {a:?} retained {b:?}",
+            n - 1,
+            full.len() / 4,
+            at % RETAINED_SURFACE as usize,
+            at / RETAINED_SURFACE as usize,
+        );
+    }
+}
+
+/// A node count that changes **mid-sequence** forces a full refresh of the
+/// retained buffer, in both directions.
+///
+/// `paint` takes the incremental arm only when `self.retained.len() ==
+/// rects.len()`; any other case clears the buffer and re-uploads. Until this
+/// test the `_` arm was reached only by the first frame, where the buffer is
+/// empty — so the guard's job on a *structural* change was never exercised, and
+/// narrowing it would have gone uncaught (debt #182).
+///
+/// The two directions fail differently, which is why both are here:
+///
+/// - **growing** the count with a guard that admits a shorter buffer indexes
+///   past the buffer's end, because `dirty` names an index it does not have
+///   yet;
+/// - **shrinking** it with a guard that admits a longer buffer is silent. The
+///   entries `dirty` names are refreshed, the surplus tail is not dropped, and
+///   the painter draws from a buffer longer than the caller's table — a node
+///   that no longer exists keeps rendering.
+///
+/// The shrinking frame keeps the three-entry paint table on purpose, holding
+/// only two rects. Core pools paint entries and reclaims them only when most of
+/// the table is unreachable, so a node going away does not necessarily shrink
+/// the table, and this is an ordinary scene. It also decides what the failure
+/// looks like: with the removed node's paint entry still resolvable, a surplus
+/// tail renders a stale rect rather than panicking on an out-of-range paint
+/// index, so the mutation is caught as the wrong picture — which is how it
+/// would reach a product.
+///
+/// That frame carries an **empty** dirty set, also on purpose. Nothing in it
+/// names the change, so the count itself is the only thing that can trigger the
+/// refresh, and the assertion cannot pass by way of the incremental arm
+/// happening to copy the right entries.
+#[test]
+fn retained_mode_refreshes_fully_when_the_node_count_changes() {
+    let (two, two_paints) = two_rects(8.0);
+    let (three, three_paints) = three_rects(8.0);
+    let (shrunk, shrunk_paints) = {
+        let (mut rects, paints) = three_rects(8.0);
+        rects.pop();
+        (rects, paints)
+    };
+
+    let frames = vec![
+        // First frame: no dirty information, buffer empty — the pre-existing
+        // route into the full-refresh arm.
+        (two, two_paints, None),
+        // The count grows. `dirty` names only the new index, which the
+        // two-entry buffer does not have.
+        (three, three_paints, Some(vec![2])),
+        // The count shrinks, and nothing says so.
+        (shrunk, shrunk_paints, Some(vec![])),
+    ];
+
+    assert_modes_agree_after_every_frame(&frames, "a node count changing mid-sequence");
+}
+
+/// The control for `retained_mode_refreshes_fully_when_the_node_count_changes`:
+/// the three frames it renders are not all the same picture.
+///
+/// Without this, a painter that drew nothing at all would satisfy every
+/// equality in that test. Here the two-rect and three-rect surfaces are
+/// required to differ, so agreement between the modes is agreement about
+/// something.
+#[test]
+fn the_node_count_change_frames_render_different_pictures() {
+    let (two, two_paints) = two_rects(8.0);
+    let (three, three_paints) = three_rects(8.0);
+
+    let two_only = render_frames(DirtyMode::Full, &[(two, two_paints, None)]);
+    let three_only = render_frames(DirtyMode::Full, &[(three, three_paints, None)]);
+    assert_ne!(
+        two_only, three_only,
+        "the third rect must change the surface, or the node-count-change test compares two \
+         identical pictures"
     );
 }
 
