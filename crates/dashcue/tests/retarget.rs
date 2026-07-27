@@ -34,6 +34,34 @@ fn tween_retarget_restarts_from_the_current_sample_and_ignores_from() {
 }
 
 #[test]
+fn retarget_accepts_a_non_finite_from_because_it_is_ignored() {
+    // The retarget path discards the caller-supplied `from` — the live
+    // track's current sample wins — so a placeholder must not be rejected
+    // there (issue #71).
+    let mut s = Scheduler::new();
+    s.start(K, 0.0, 100.0, linear_tween(1.0), 0.0);
+    s.advance(0.5);
+
+    s.start(K, f32::NAN, 0.0, linear_tween(1.0), 0.0);
+    assert_eq!(s.sample(K), Some(50.0)); // continuous at the retarget
+    s.advance(0.5);
+    assert_eq!(s.sample(K), Some(25.0));
+}
+
+#[test]
+#[should_panic(expected = "span must be finite")]
+fn retarget_panics_when_the_new_target_overflows_the_span() {
+    // The span is measured from the live sample the retarget starts from,
+    // not from the ignored `from` argument (issue #70).
+    let mut s = Scheduler::new();
+    s.start(K, 0.0, -3e38, linear_tween(1.0), 0.0);
+    s.advance(0.5);
+    assert_eq!(s.sample(K), Some(-1.5e38));
+
+    s.start(K, 0.0, 3e38, linear_tween(1.0), 0.0);
+}
+
+#[test]
 fn spring_retarget_keeps_position_and_velocity() {
     // A: launch toward 100, then retarget to 0 mid-flight.
     let mut a = Scheduler::new();
@@ -104,7 +132,7 @@ fn variant_transition_staggers_tracks_by_declaration_order() {
         stagger: 0.25,
     };
     let mut s = Scheduler::new();
-    s.start_transition(&transition, |_| (0.0, 100.0));
+    s.start_transition(&transition, |_| Some((0.0, 100.0)));
     assert_eq!(s.len(), 3);
 
     s.advance(0.25);
@@ -121,6 +149,91 @@ fn variant_transition_staggers_tracks_by_declaration_order() {
     assert_eq!(s.sample(PropKey(3)), Some(25.0));
 }
 
+// ---------------------------------------------------------------------
+// A binding may decline a track (issue #74): without that, a prop the
+// caller considers unchanged still starts a constant-value track that
+// stays live for the spec's whole duration and retargets any concurrent
+// start on that key.
+// ---------------------------------------------------------------------
+#[test]
+fn start_transition_skips_a_track_its_binding_declines() {
+    let transition = VariantTransition {
+        tracks: vec![
+            PropTransition {
+                prop: PropKey(1),
+                spec: linear_tween(1.0),
+            },
+            PropTransition {
+                prop: PropKey(2),
+                spec: linear_tween(1.0),
+            },
+        ],
+        stagger: 0.0,
+    };
+    let mut s = Scheduler::new();
+    s.start_transition(&transition, |prop| {
+        (prop == PropKey(2)).then_some((0.0, 100.0))
+    });
+
+    assert_eq!(s.len(), 1);
+    assert_eq!(
+        s.sample(PropKey(1)),
+        None,
+        "the declined track never starts"
+    );
+    assert_eq!(s.sample(PropKey(2)), Some(0.0));
+}
+
+#[test]
+fn a_declined_track_leaves_the_later_tracks_on_their_declared_stagger() {
+    // The delay is `stagger * declaration index`, so declining the first
+    // track must not pull the second one forward.
+    let transition = VariantTransition {
+        tracks: vec![
+            PropTransition {
+                prop: PropKey(1),
+                spec: linear_tween(1.0),
+            },
+            PropTransition {
+                prop: PropKey(2),
+                spec: linear_tween(1.0),
+            },
+        ],
+        stagger: 0.25,
+    };
+    let mut s = Scheduler::new();
+    s.start_transition(&transition, |prop| {
+        (prop == PropKey(2)).then_some((0.0, 100.0))
+    });
+
+    s.advance(0.25); // exactly the second track's declared delay
+    assert_eq!(s.sample(PropKey(2)), Some(0.0));
+    s.advance(0.25);
+    assert_eq!(s.sample(PropKey(2)), Some(25.0));
+}
+
+#[test]
+#[should_panic(expected = "duplicate prop key")]
+fn start_transition_panics_on_a_duplicate_prop_key() {
+    // Two tracks for one prop: the second `start` would take the retarget
+    // path and drop the first track's spec and stagger delay with no
+    // diagnostic (P4, issue #69).
+    let transition = VariantTransition {
+        tracks: vec![
+            PropTransition {
+                prop: K,
+                spec: linear_tween(1.0),
+            },
+            PropTransition {
+                prop: K,
+                spec: spring(),
+            },
+        ],
+        stagger: 0.0,
+    };
+    Scheduler::new().start_transition(&transition, |_| Some((0.0, 100.0)));
+}
+
 #[test]
 #[should_panic(expected = "stagger")]
 fn start_transition_panics_on_a_negative_stagger() {
@@ -128,5 +241,5 @@ fn start_transition_panics_on_a_negative_stagger() {
         tracks: vec![],
         stagger: -0.1,
     };
-    Scheduler::new().start_transition(&transition, |_| (0.0, 1.0));
+    Scheduler::new().start_transition(&transition, |_| Some((0.0, 1.0)));
 }

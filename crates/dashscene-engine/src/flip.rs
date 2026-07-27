@@ -150,7 +150,11 @@ impl VariantFlip {
             let to = after_val.get(&key).copied().unwrap_or_else(|| {
                 panic!("FLIP track {key:?} names a node absent from the after rects")
             });
-            (from, to)
+            // Every declared track starts. `dashcue` lets a binding decline
+            // a track (#74), but "unchanged" is the consumer's policy and
+            // FLIP does not define one: skipping a from == to channel would
+            // also drop its node from `sampled_rects` when no channel moved.
+            Some((from, to))
         });
         // Record each animated node's target rect so `sample` can rebuild a
         // full rect from the per-channel samples. `start_transition` has just

@@ -3,7 +3,7 @@
 //! the scheduler never reads a clock (P3), so a fixed step replays
 //! bit-identically (E5 goldens at t = 0 / 0.5 / 1, E6).
 
-use crate::vocabulary::{Keyframe, PropKey, TransitionSpec, VariantTransition};
+use crate::vocabulary::{Easing, Keyframe, PropKey, TransitionSpec, VariantTransition};
 
 /// Spring rest thresholds (crate constants at v0.4 — track values are
 /// pixel-scaled there; promoting them to spec data is deferred).
@@ -47,7 +47,8 @@ struct Track {
 /// samples at exactly its target until the next `advance` removes it.
 /// Each track advances in O(1) with no allocation (R4 bounded cost);
 /// storage is a linearly scanned `Vec` — fine at v0.4 scale, revisit
-/// with the v0.8 stress corpus.
+/// with the stress corpus. A replacement storage must keep tracks in
+/// insertion order: [`Scheduler::samples`] guarantees that order (#77).
 #[derive(Default)]
 pub struct Scheduler {
     tracks: Vec<Track>,
@@ -65,26 +66,45 @@ impl Scheduler {
     ///
     /// Panics on a spec no valid document can contain — specs are
     /// validated upstream eventually (P4); the panic for a broken
-    /// contract between crates is centralized here.
+    /// contract between crates is centralized here. `from` must be
+    /// finite on a fresh start; on the retarget path it is discarded and
+    /// therefore not checked (#71). The span the track actually runs
+    /// over must be finite too: two finite endpoints can still span more
+    /// than f32 holds (#70).
     pub fn start(&mut self, key: PropKey, from: f32, to: f32, spec: TransitionSpec, delay: f32) {
         validate_spec(&spec);
-        assert!(from.is_finite() && to.is_finite(), "from/to must be finite");
+        assert!(to.is_finite(), "to must be finite");
         assert!(
             delay.is_finite() && delay >= 0.0,
             "delay must be finite and >= 0"
         );
 
-        let (from, velocity) = match self.tracks.iter().position(|t| t.key == key) {
+        // The retarget path ignores the caller's `from`, so only a fresh
+        // start checks it (#71). The live track is read here and removed
+        // below, after the remaining checks, so a rejected `start` leaves
+        // it untouched.
+        let live = self.tracks.iter().position(|t| t.key == key);
+        let (from, velocity) = match live {
             Some(i) => {
-                let old = self.tracks.remove(i);
+                let old = &self.tracks[i];
                 let velocity = match (&old.spec, &spec) {
                     (TransitionSpec::Spring { .. }, TransitionSpec::Spring { .. }) => old.velocity,
                     _ => 0.0,
                 };
                 (old.position, velocity)
             }
-            None => (from, 0.0),
+            None => {
+                assert!(from.is_finite(), "from must be finite");
+                (from, 0.0)
+            }
         };
+        // Two finite endpoints can still span more than f32 holds: `to -
+        // from` overflows to infinity and every interpolated sample is
+        // infinite or NaN until the finish frame snaps to `to` (#70).
+        assert!((to - from).is_finite(), "the from/to span must be finite");
+        if let Some(i) = live {
+            self.tracks.remove(i);
+        }
         self.tracks.push(Track {
             key,
             from,
@@ -104,17 +124,43 @@ impl Scheduler {
     /// `(from, to)` — resolved values never live in the vocabulary
     /// (P1); the engine binds them from the variant switch (issue #22,
     /// docs/decisions/staged-mutation-v01-scope.md).
+    ///
+    /// `bind` returns `None` to decline a track, which then does not
+    /// start: the caller owns what counts as an unchanged prop, and a
+    /// declined prop would otherwise hold a live constant-value track for
+    /// the spec's whole duration (#74). Declining does not shift the
+    /// remaining tracks — `delay` follows the declaration index — so the
+    /// declared stagger describes the same schedule either way.
+    ///
+    /// Panics when two tracks declare the same prop: the second would
+    /// take the retarget path and drop the first track's spec and delay
+    /// with no diagnostic (P4, #69).
     pub fn start_transition(
         &mut self,
         transition: &VariantTransition,
-        mut bind: impl FnMut(PropKey) -> (f32, f32),
+        mut bind: impl FnMut(PropKey) -> Option<(f32, f32)>,
     ) {
         assert!(
             transition.stagger.is_finite() && transition.stagger >= 0.0,
             "stagger must be finite and >= 0"
         );
+        // Checked over the whole list before anything starts, so a
+        // rejected transition leaves the scheduler untouched. Linear scan
+        // per track, matching the scheduler's own storage — a transition
+        // declares a handful of tracks.
         for (index, track) in transition.tracks.iter().enumerate() {
-            let (from, to) = bind(track.prop);
+            assert!(
+                !transition.tracks[..index]
+                    .iter()
+                    .any(|earlier| earlier.prop == track.prop),
+                "duplicate prop key {:?} in one variant transition",
+                track.prop
+            );
+        }
+        for (index, track) in transition.tracks.iter().enumerate() {
+            let Some((from, to)) = bind(track.prop) else {
+                continue;
+            };
             let delay = transition.stagger * index as f32;
             self.start(track.prop, from, to, track.spec.clone(), delay);
         }
@@ -139,6 +185,9 @@ impl Scheduler {
     }
 
     /// Live tracks, in start order (a retarget re-enters at the back).
+    /// That order is part of the contract, not an artifact of the
+    /// current `Vec` storage (#77): consumers emit frame output in it,
+    /// and the goldens depend on it being deterministic (E5/E6).
     pub fn samples(&self) -> impl Iterator<Item = (PropKey, f32)> + '_ {
         self.tracks.iter().map(|t| (t.key, t.position))
     }
@@ -172,27 +221,24 @@ impl Track {
         if dt <= 0.0 && self.delay > 0.0 {
             return;
         }
+        // One path for both time-parameterised specs (#75): the elapsed
+        // accumulation, the finish-and-snap at `duration` and the
+        // `from -> to` interpolation are shared; only the progress
+        // function differs.
+        if let Some((duration, progress)) = timed(&self.spec) {
+            self.elapsed += dt;
+            if self.elapsed >= duration {
+                self.position = self.to;
+                self.finished = true;
+            } else {
+                let p = progress.at(self.elapsed / duration);
+                self.position = self.from + p * (self.to - self.from);
+            }
+            return;
+        }
         match &self.spec {
-            TransitionSpec::Tween { duration, easing } => {
-                self.elapsed += dt;
-                if self.elapsed >= *duration {
-                    self.position = self.to;
-                    self.finished = true;
-                } else {
-                    let p = easing.apply(self.elapsed / duration);
-                    self.position = self.from + p * (self.to - self.from);
-                }
-            }
-            TransitionSpec::Keyframes { duration, frames } => {
-                self.elapsed += dt;
-                if self.elapsed >= *duration {
-                    self.position = self.to;
-                    self.finished = true;
-                } else {
-                    let p = keyframes_progress(frames, self.elapsed / duration);
-                    self.position = self.from + p * (self.to - self.from);
-                }
-            }
+            // Handled by the timed path above.
+            TransitionSpec::Tween { .. } | TransitionSpec::Keyframes { .. } => {}
             TransitionSpec::Spring {
                 stiffness,
                 damping_ratio,
@@ -217,14 +263,16 @@ impl Track {
                 // a large target reached from near it; taking the max of the
                 // absolute floor and the relative term keeps small/normal
                 // springs on their existing absolute thresholds. The velocity
-                // threshold reuses the same magnitude scale — a relative
-                // rest-velocity heuristic, matching how spring runtimes size
-                // rest velocity against the animation distance (dashcue has no
-                // per-prop visibility threshold yet; that is deferred spec
-                // data).
+                // threshold takes the same relative fraction of the spring's
+                // characteristic velocity `ω · scale` rather than of the
+                // position scale, so it is sized in velocity units (#214);
+                // sized in position units it became the binding condition and
+                // held a large-magnitude track open past the point the
+                // position gate was satisfied. The absolute floors stay
+                // per-prop-threshold placeholders (deferred spec data).
                 let scale = (self.to - self.from).abs().max(self.to.abs());
                 let rest_delta = REST_DELTA.max(REST_REL * scale);
-                let rest_velocity = REST_VELOCITY.max(REST_REL * scale);
+                let rest_velocity = REST_VELOCITY.max(REST_REL * omega * scale);
                 for _ in 0..substeps {
                     let acceleration =
                         -stiffness * (self.position - self.to) - damping * self.velocity;
@@ -243,17 +291,53 @@ impl Track {
     }
 }
 
+/// How a timed spec turns the elapsed fraction into progress: the only
+/// thing the tween and keyframes paths differ in (#75).
+enum Progress<'a> {
+    Eased(Easing),
+    Frames(&'a [Keyframe]),
+}
+
+impl Progress<'_> {
+    /// Progress at elapsed fraction `t`, in [0, 1).
+    fn at(&self, t: f32) -> f32 {
+        match self {
+            Progress::Eased(easing) => easing.apply(t),
+            Progress::Frames(frames) => keyframes_progress(frames, t),
+        }
+    }
+}
+
+/// A time-parameterised spec's duration and progress function — `None`
+/// for a spring, which is integrated rather than sampled by elapsed
+/// fraction.
+fn timed(spec: &TransitionSpec) -> Option<(f32, Progress<'_>)> {
+    match spec {
+        TransitionSpec::Tween { duration, easing } => Some((*duration, Progress::Eased(*easing))),
+        TransitionSpec::Keyframes { duration, frames } => {
+            Some((*duration, Progress::Frames(frames)))
+        }
+        TransitionSpec::Spring { .. } => None,
+    }
+}
+
 /// Piecewise-linear progress through the declared frames, with the
 /// implicit endpoints (0, 0) and (1, 1). `t` is in [0, 1).
 fn keyframes_progress(frames: &[Keyframe], t: f32) -> f32 {
+    /// The implicit terminal endpoint, chained onto the declared frames
+    /// so the segment interpolation has one site (#76).
+    const END: Keyframe = Keyframe { t: 1.0, value: 1.0 };
+
     let (mut t0, mut v0) = (0.0, 0.0);
-    for frame in frames {
+    for frame in frames.iter().chain(std::iter::once(&END)) {
         if t < frame.t {
             return v0 + (t - t0) / (frame.t - t0) * (frame.value - v0);
         }
         (t0, v0) = (frame.t, frame.value);
     }
-    v0 + (t - t0) / (1.0 - t0) * (1.0 - v0)
+    // `t` is in [0, 1), so the chained endpoint always terminates the
+    // loop above; at or past it, progress holds the final value.
+    v0
 }
 
 fn validate_spec(spec: &TransitionSpec) {

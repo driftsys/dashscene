@@ -103,6 +103,16 @@ fn delayed_track_holds_at_from_until_the_delay_elapses() {
 }
 
 #[test]
+#[should_panic(expected = "span must be finite")]
+fn start_panics_on_a_from_to_span_wider_than_f32_holds() {
+    // Both endpoints are finite and pass their own checks, but `to - from`
+    // overflows to infinity, so every mid-flight sample would be infinite
+    // or NaN until the finish frame snapped to `to` (issue #70).
+    let mut s = Scheduler::new();
+    s.start(K, -3e38, 3e38, linear_tween(1.0), 0.0);
+}
+
+#[test]
 fn samples_iterates_live_tracks_in_start_order() {
     let mut s = Scheduler::new();
     s.start(PropKey(2), 0.0, 1.0, linear_tween(1.0), 0.0);
@@ -111,6 +121,30 @@ fn samples_iterates_live_tracks_in_start_order() {
     s.advance(0.5);
     let got: Vec<(PropKey, f32)> = s.samples().collect();
     assert_eq!(got, vec![(PropKey(2), 0.5), (PropKey(1), 5.5)]);
+}
+
+// ---------------------------------------------------------------------
+// Start order is a guarantee, not an artifact of the current storage
+// (issue #77): a retarget re-enters at the back, and consumers
+// (`dashlang`'s reactive drive, the engine's FLIP frame output) read
+// `samples()` in that order. Any future storage change must preserve it.
+// ---------------------------------------------------------------------
+#[test]
+fn a_retargeted_track_re_enters_samples_at_the_back() {
+    let mut s = Scheduler::new();
+    s.start(PropKey(1), 0.0, 100.0, linear_tween(1.0), 0.0);
+    s.start(PropKey(2), 0.0, 100.0, linear_tween(1.0), 0.0);
+    s.advance(0.5);
+    let keys: Vec<PropKey> = s.samples().map(|(key, _)| key).collect();
+    assert_eq!(keys, vec![PropKey(1), PropKey(2)], "start order");
+
+    s.start(PropKey(1), 0.0, 0.0, linear_tween(1.0), 0.0);
+    let keys: Vec<PropKey> = s.samples().map(|(key, _)| key).collect();
+    assert_eq!(
+        keys,
+        vec![PropKey(2), PropKey(1)],
+        "the retargeted track re-enters at the back"
+    );
 }
 
 const STEP: f32 = 1.0 / 120.0;
@@ -238,6 +272,55 @@ fn large_magnitude_spring_settles_and_finishes() {
     assert_eq!(s.sample(K), Some(to));
 }
 
+// ---------------------------------------------------------------------
+// The spring's two rest gates are dimensionally consistent (issue #214):
+// the velocity gate is sized against the spring's characteristic velocity
+// (omega * magnitude), not against the position magnitude. Sized against
+// the position magnitude it becomes the binding condition and holds a
+// large-magnitude track open past the point where the position gate is
+// already satisfied — the stiffer the spring, the longer the overhang.
+// ---------------------------------------------------------------------
+#[test]
+fn the_position_gate_binds_a_large_magnitude_spring() {
+    // The documented position gate (docs/design/dashcue.md, "Finishing")
+    // is |value - to| < max(REST_DELTA, REST_REL * scale) with
+    // scale = max(|to - from|, |to|); from 0 to 1e5 the relative term
+    // governs and the gate is 1.0.
+    const TO: f32 = 1e5;
+    const POSITION_GATE: f32 = 1e-5 * TO;
+
+    for stiffness in [100.0, 400.0, 1500.0, 10_000.0] {
+        let mut s = Scheduler::new();
+        s.start(
+            K,
+            0.0,
+            TO,
+            TransitionSpec::Spring {
+                stiffness,
+                damping_ratio: 1.0,
+            },
+            0.0,
+        );
+
+        let mut steps = 0;
+        let mut entered_gate = None;
+        while !s.is_settled() {
+            s.advance(STEP);
+            steps += 1;
+            assert!(steps < 10_000, "spring never reached rest at {stiffness}");
+            if entered_gate.is_none() && (s.sample(K).unwrap() - TO).abs() < POSITION_GATE {
+                entered_gate = Some(steps);
+            }
+        }
+        assert_eq!(
+            entered_gate,
+            Some(steps),
+            "at stiffness {stiffness} the spring finished at step {steps}, later than the step \
+             on which it entered the position gate — the velocity gate is the binding condition"
+        );
+    }
+}
+
 #[test]
 fn keyframes_interpolate_through_declared_frames_including_overshoot() {
     let mut s = Scheduler::new();
@@ -304,6 +387,15 @@ fn start_panics_on_unsorted_keyframes() {
 fn advance_panics_on_a_negative_dt() {
     let mut s = Scheduler::new();
     s.advance(-0.1);
+}
+
+#[test]
+#[should_panic(expected = "from must be finite")]
+fn a_fresh_start_panics_on_a_non_finite_from() {
+    // The caller-supplied `from` is only meaningful on a fresh start, and
+    // there it must be finite (issue #71).
+    let mut s = Scheduler::new();
+    s.start(K, f32::NAN, 1.0, linear_tween(1.0), 0.0);
 }
 
 #[test]
