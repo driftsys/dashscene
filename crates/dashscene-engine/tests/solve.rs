@@ -574,6 +574,137 @@ fn the_rebate_respects_an_authored_min_alongside_a_negative_margin() {
     assert_eq!(solve(-16.0), (110.0, 70.0));
 }
 
+/// A hug-sized container child of `parent`, sized by one fixed
+/// `inner_w` x 56 grandchild and carrying `margin` on its main-axis
+/// leading edge. `vertical` picks the column form of both axes. This is
+/// the #270 shape: the child's own flex basis is content-derived, so the
+/// #236 rebate has no authored size to work from.
+fn hug_child_with_margin(
+    txn: &mut dashscene_core::Txn<'_>,
+    parent: NodeId,
+    inner_w: f32,
+    margin: f32,
+    vertical: bool,
+) -> NodeId {
+    let child = txn.add_node(Some(parent), None);
+    txn.set_prop(child, Prop::Mode(LayoutMode::Horizontal));
+    if vertical {
+        txn.set_prop(child, Prop::SizingV(AxisSizing::Hug));
+        txn.set_prop(child, Prop::Width(inner_w));
+        txn.set_prop(
+            child,
+            Prop::Margin {
+                left: 0.0,
+                top: margin,
+                right: 0.0,
+                bottom: 0.0,
+            },
+        );
+        fixed(txn, child, inner_w, 56.0);
+    } else {
+        txn.set_prop(child, Prop::SizingH(AxisSizing::Hug));
+        txn.set_prop(child, Prop::Height(56.0));
+        margin_left(txn, child, margin);
+        fixed(txn, child, inner_w, 56.0);
+    }
+    child
+}
+
+#[test]
+fn a_hug_row_over_a_negative_margin_hug_child_sums_like_positive_ones() {
+    // Issue #270: the declared residual of the #236 rebate. The rebate
+    // folds a negative main-axis margin into a FIXED child's authored
+    // flex basis; a HUG child's basis is content-derived, so there is no
+    // authored size to fold into, and taffy 0.12's shrink-0 branch still
+    // amplifies the margin by the child's inner flex basis. The engine
+    // now maps such a child at flex_shrink 1, where the branch's two
+    // scaled-shrink expressions agree. The reproduction table mirrors
+    // the fixed-child one above: a 56-wide fixed sibling plus a hug
+    // container whose content is one fixed 56-wide grandchild.
+    for (margin, expected_width) in [(0.0, 112.0), (16.0, 128.0), (-1.0, 111.0), (-16.0, 96.0)] {
+        let mut arena = Arena::new();
+        let mut txn = arena.open();
+        let row = txn.add_node(None, None);
+        txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
+        txn.set_prop(row, Prop::SizingH(AxisSizing::Hug));
+        txn.set_prop(row, Prop::Height(56.0));
+        fixed(&mut txn, row, 56.0, 56.0);
+        hug_child_with_margin(&mut txn, row, 56.0, margin, false);
+        txn.commit_with(&mut TaffySolver::new());
+
+        assert_eq!(
+            rect(&arena, 0).2,
+            expected_width,
+            "hug width over a hug child with margin-left {margin}"
+        );
+        // The hug child keeps its content width and lands where the
+        // margin puts it — the shrink factor must not shrink it.
+        assert_eq!(rect(&arena, 1), (0.0, 0.0, 56.0, 56.0));
+        assert_eq!(rect(&arena, 2), (56.0 + margin, 0.0, 56.0, 56.0));
+        assert_eq!(rect(&arena, 3), (56.0 + margin, 0.0, 56.0, 56.0));
+    }
+}
+
+#[test]
+fn a_hug_column_over_a_negative_margin_hug_child_sums_on_the_vertical_axis() {
+    // #270 on the other axis: the mapping reads the parent's main axis,
+    // so a Vertical column must rebate margin.top + margin.bottom and
+    // consult the parent's vertical sizing, not the horizontal one.
+    for (margin, expected_height) in [(0.0, 112.0), (-16.0, 96.0)] {
+        let mut arena = Arena::new();
+        let mut txn = arena.open();
+        let col = txn.add_node(None, None);
+        txn.set_prop(col, Prop::Mode(LayoutMode::Vertical));
+        txn.set_prop(col, Prop::SizingV(AxisSizing::Hug));
+        txn.set_prop(col, Prop::Width(56.0));
+        fixed(&mut txn, col, 56.0, 56.0);
+        hug_child_with_margin(&mut txn, col, 56.0, margin, true);
+        txn.commit_with(&mut TaffySolver::new());
+
+        assert_eq!(
+            rect(&arena, 0).3,
+            expected_height,
+            "hug height over a hug child with margin-top {margin}"
+        );
+        assert_eq!(rect(&arena, 2), (0.0, 56.0 + margin, 56.0, 56.0));
+    }
+}
+
+#[test]
+fn a_negative_margin_hug_child_under_a_fixed_parent_still_never_shrinks() {
+    // The #270 shrink factor is confined to the pass it repairs. A
+    // parent with an authored main size never enters taffy's intrinsic
+    // branch, so the child keeps flex_shrink 0 there and overflows a
+    // too-narrow parent exactly as it did before this fix — a hug child
+    // is not a shrinkable one (P5: Figma's hug does not shrink).
+    let solve = |margin: f32| {
+        let mut arena = Arena::new();
+        let mut txn = arena.open();
+        let row = txn.add_node(None, None);
+        txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
+        txn.set_prop(row, Prop::Width(80.0));
+        txn.set_prop(row, Prop::Height(56.0));
+        // A WRAP child hugs to its max-content 112 but has a min-content
+        // of 56, so a shrink factor of 1 would visibly shrink it.
+        let child = txn.add_node(Some(row), None);
+        txn.set_prop(child, Prop::Mode(LayoutMode::Wrap));
+        txn.set_prop(child, Prop::SizingH(AxisSizing::Hug));
+        txn.set_prop(child, Prop::Height(56.0));
+        fixed(&mut txn, child, 56.0, 20.0);
+        fixed(&mut txn, child, 56.0, 20.0);
+        margin_left(&mut txn, child, margin);
+        txn.commit_with(&mut TaffySolver::new());
+        rect(&arena, 1)
+    };
+
+    assert_eq!(solve(0.0), (0.0, 0.0, 112.0, 56.0), "no margin, no shrink");
+    assert_eq!(
+        solve(-16.0),
+        (-16.0, 0.0, 112.0, 56.0),
+        "a negative margin under a fixed parent must not shrink the child"
+    );
+}
+
 /// Build a horizontal row of three fixed 30x20 children, letting
 /// `configure` set the container gap / margins. Returns the solved
 /// child x-positions.

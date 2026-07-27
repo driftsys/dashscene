@@ -85,6 +85,12 @@ struct TreeState {
     /// readback adds, which Taffy does not model, so a root move is
     /// detected here rather than in the tree.
     prev_root_origin: Vec<[u32; 2]>,
+    /// The cross-axis floors the #322 baseline pass has injected into the
+    /// Taffy styles, in tree order. Held so a later solve can tell a floor
+    /// that is still wanted from one that is stale: a row that stops
+    /// needing a floor must have it removed, and the row's own style is not
+    /// restyled when only a text child changed.
+    baseline_floors: Vec<(NodeId, f32)>,
     /// The node count when the tree was built. A mismatch is a structural
     /// change and forces a rebuild.
     node_count: usize,
@@ -146,6 +152,16 @@ impl LayoutSolver for TaffySolver<'_> {
     }
 }
 
+/// The `taffy_of` slot value that means "`build` has not written this
+/// node yet" (issue #200). Taffy hands out node ids from a slot map, so
+/// `u64::MAX` names no node any tree can allocate. An unwritten slot is
+/// caught by the `debug_assert` in [`rebuild`]; with assertions off it
+/// aborts at the first Taffy read instead, which is still a stop rather
+/// than the silent wrong answer the old zero placeholder gave — zero is
+/// the id of the first node built, so an unwritten slot read that node's
+/// rect and reported it as another node's.
+const UNBUILT: taffy::NodeId = taffy::NodeId::new(u64::MAX);
+
 /// Build the whole tree from scratch, solve it, and report every node —
 /// the first solve, or one after a structural change (issue #164).
 fn rebuild(
@@ -159,10 +175,10 @@ fn rebuild(
     // Taffy's default whole-pixel rounding is off.
     tree.disable_rounding();
 
-    // A placeholder for every slot; `build` overwrites each, since every
-    // node is reachable from a root.
-    let placeholder = taffy::NodeId::new(0);
-    let mut taffy_of: Vec<taffy::NodeId> = vec![placeholder; n];
+    // A sentinel for every slot; `build` overwrites each, since every node
+    // is reachable from a root (issue #200, and the `debug_assert` below
+    // says so out loud).
+    let mut taffy_of: Vec<taffy::NodeId> = vec![UNBUILT; n];
     let mut parent_of: Vec<Option<NodeId>> = vec![None; n];
     let mut roots = Vec::with_capacity(arena.roots().len());
     for &root in arena.roots() {
@@ -177,18 +193,31 @@ fn rebuild(
         );
         roots.push(taffy_root);
     }
+    // The tripwire itself: name the structural bug where it happened,
+    // rather than at whichever later read hits the unwritten slot.
+    debug_assert!(
+        !taffy_of.contains(&UNBUILT),
+        "every arena node is reachable from a root, so `build` must write every taffy_of slot"
+    );
 
     let typesetter = compute_all(&mut tree, &roots, typesetter, solves);
 
     // #272 baseline correction: re-place text children of baseline rows on
-    // their glyph baseline. Needs the typesetter — without it text nodes
-    // measure to zero and there is no baseline to correct.
-    let mut cross_offset = vec![None; n];
-    if let Some(ts) = typesetter {
-        for &root in arena.roots() {
-            collect_baseline_offsets(&tree, &taffy_of, arena, ts, root, &mut cross_offset);
-        }
-    }
+    // their glyph baseline, and (#322) re-solve when that placement needs a
+    // HUG row to be taller than Taffy made it. Needs the typesetter —
+    // without it text nodes measure to zero and there is no baseline to
+    // correct.
+    let mut baseline_floors = Vec::new();
+    let cross_offset = baseline_pass(
+        &mut tree,
+        &taffy_of,
+        &roots,
+        arena,
+        typesetter,
+        &mut baseline_floors,
+        n,
+        solves,
+    );
 
     let mut prev_rel = vec![[0u32; 4]; n];
     let mut prev_root_origin = Vec::with_capacity(roots.len());
@@ -217,6 +246,7 @@ fn rebuild(
         roots,
         prev_rel,
         prev_root_origin,
+        baseline_floors,
         node_count: n,
     };
     (state, out)
@@ -287,19 +317,16 @@ fn incremental(
     // children on their glyph baseline. The corrected y is folded into
     // `rel_bits`, so the pruned read-back re-emits a child whose baseline shift
     // moved it — including when a sibling changed the tallest baseline.
-    let mut cross_offset = vec![None; state.node_count];
-    if let Some(ts) = typesetter {
-        for &root in arena.roots() {
-            collect_baseline_offsets(
-                &state.tree,
-                &state.taffy_of,
-                arena,
-                ts,
-                root,
-                &mut cross_offset,
-            );
-        }
-    }
+    let cross_offset = baseline_pass(
+        &mut state.tree,
+        &state.taffy_of,
+        &roots,
+        arena,
+        typesetter,
+        &mut state.baseline_floors,
+        state.node_count,
+        solves,
+    );
 
     // A subtree can hold a changed node without moving at its own root
     // (a fixed-size frame with a shifted child): mark every dirty node and
@@ -732,7 +759,40 @@ fn style_for(
                 AxisSizing::Hug => {
                     style.flex_basis = Dimension::AUTO;
                     style.flex_grow = 0.0;
-                    style.flex_shrink = 0.0;
+                    // Issue #270, the residual the `Fixed` rebate above could
+                    // not cover: a `Hug` child's flex basis is content-derived,
+                    // so there is no authored size to rebate a negative margin
+                    // into. The same taffy 0.12 branch amplifies it — for a
+                    // shrink-0 item the branch divides the negative diff by
+                    // `max(1, 0 * inner_basis)` = 1 and multiplies it back by
+                    // `max(1, 0) * inner_basis`, so the item contributes
+                    // `basis + inner_basis * margin_sum` instead of
+                    // `basis + margin_sum`. At `flex_shrink = 1` the same two
+                    // expressions are `max(1, inner_basis)` and `inner_basis`,
+                    // which agree for any inner basis of 1 or more, so the
+                    // contribution is exact. The switch is confined to the
+                    // broken pass: it applies only when the parent hugs this
+                    // axis, and a hug parent is sized to its content sum, so
+                    // the definite pass has no negative free space for a
+                    // shrink factor to act on.
+                    let margin_sum = if mode == LayoutMode::Vertical {
+                        layout.margin.top + layout.margin.bottom
+                    } else {
+                        layout.margin.left + layout.margin.right
+                    };
+                    let parent_hugs_main = parent.is_some_and(|p| {
+                        let parent_main_sizing = if mode == LayoutMode::Vertical {
+                            p.sizing_v
+                        } else {
+                            p.sizing_h
+                        };
+                        parent_main_sizing == AxisSizing::Hug
+                    });
+                    style.flex_shrink = if margin_sum < 0.0 && parent_hugs_main {
+                        1.0
+                    } else {
+                        0.0
+                    };
                 }
                 AxisSizing::Fill => {
                     style.flex_basis = Dimension::length(0.0);
@@ -981,6 +1041,7 @@ fn collect_baseline_offsets(
     typesetter: &mut Typesetter,
     node: NodeId,
     offsets: &mut [Option<f32>],
+    floors: &mut Vec<(NodeId, f32)>,
 ) {
     let layout = arena.layout(node);
     let children = arena.children(node);
@@ -989,8 +1050,16 @@ fn collect_baseline_offsets(
         && !children.is_empty()
     {
         let mut has_text = false;
-        let mut baselines = Vec::with_capacity(children.len());
+        // The children that take part in baseline alignment, as
+        // `(child, baseline, cross size)`. A `Fill` cross-sized child is
+        // mapped `align_self: STRETCH`, and taffy excludes a stretched item
+        // from baseline alignment, so it keeps the place and the size taffy
+        // gave it and is not counted here either.
+        let mut participants = Vec::with_capacity(children.len());
         for &child in children {
+            if arena.layout(child).sizing_v == AxisSizing::Fill {
+                continue;
+            }
             let child_layout = tree
                 .layout(taffy_of[child.index()])
                 .expect("layout was computed for the whole tree");
@@ -1017,18 +1086,144 @@ fn collect_baseline_offsets(
                 // A non-text child keeps Taffy's leaf baseline: the box bottom.
                 _ => child_layout.size.height,
             };
-            baselines.push(baseline);
+            participants.push((child, baseline, child_layout.size.height));
         }
         if has_text {
-            let max_baseline = baselines.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-            for (&child, &baseline) in children.iter().zip(&baselines) {
+            let max_baseline = participants
+                .iter()
+                .map(|&(_, baseline, _)| baseline)
+                .fold(f32::NEG_INFINITY, f32::max);
+            // The cross extent the re-placed children need, as a border-box
+            // size: the lowest re-placed bottom edge plus the bottom padding.
+            let mut extent = f32::NEG_INFINITY;
+            for &(child, baseline, cross_size) in &participants {
                 // Local y within the row's border box: the content-box top
                 // plus the gap between this child's baseline and the tallest.
-                offsets[child.index()] = Some(layout.padding.top + (max_baseline - baseline));
+                let local_y = layout.padding.top + (max_baseline - baseline);
+                offsets[child.index()] = Some(local_y);
+                extent = extent.max(local_y + cross_size + layout.padding.bottom);
+            }
+            // #322: a HUG cross size was taken from the box bottoms taffy
+            // aligned, which is a descender short of where the glyph-aligned
+            // text now ends. Record the floor the row needs; `baseline_pass`
+            // feeds it back through the solver so the row's ancestors and
+            // following siblings re-place around the taller row.
+            if layout.sizing_v == AxisSizing::Hug {
+                floors.push((node, extent));
             }
         }
     }
     for &child in children {
-        collect_baseline_offsets(tree, taffy_of, arena, typesetter, child, offsets);
+        collect_baseline_offsets(tree, taffy_of, arena, typesetter, child, offsets, floors);
     }
+}
+
+/// Run the #272 baseline correction over a freshly solved tree, and give
+/// the solver a second turn when the correction needs a HUG row to be
+/// taller than Taffy sized it (#322). Returns each node's corrected
+/// cross-axis offset, `None` where the node keeps Taffy's.
+///
+/// The re-solve is what makes #322 a layout fix rather than a rect patch:
+/// the row's cross size feeds its own placement in its parent, its
+/// following siblings' offsets, and any hugging ancestor's size, and Taffy
+/// is the one solver that propagates all three (P2). The floor is injected
+/// as the row's Taffy `min_size` on the cross axis and recomputed every
+/// solve, so a row that stops needing it — smaller text, or no text left in
+/// it — gets it removed rather than carrying a stale one on the retained
+/// tree.
+///
+/// Exactly one extra solve is ever run. The floor is `max(baseline-aligned
+/// child bottoms)`, and neither a child's baseline nor its cross size
+/// depends on the row's own cross size, so the second solve computes the
+/// same floor the first one did and there is nothing left to iterate on.
+#[allow(clippy::too_many_arguments)]
+fn baseline_pass(
+    tree: &mut TaffyTree<TextContext>,
+    taffy_of: &[taffy::NodeId],
+    roots: &[taffy::NodeId],
+    arena: &Arena,
+    typesetter: Option<&mut Typesetter>,
+    floors: &mut Vec<(NodeId, f32)>,
+    node_count: usize,
+    solves: &mut u64,
+) -> Vec<Option<f32>> {
+    let mut cross_offset = vec![None; node_count];
+    // Without a typesetter every text node measures to zero, so there is no
+    // glyph baseline to correct and no row to grow.
+    let Some(ts) = typesetter else {
+        return cross_offset;
+    };
+
+    let mut wanted = Vec::new();
+    for &root in arena.roots() {
+        collect_baseline_offsets(
+            tree,
+            taffy_of,
+            arena,
+            ts,
+            root,
+            &mut cross_offset,
+            &mut wanted,
+        );
+    }
+    if wanted == *floors {
+        return cross_offset;
+    }
+
+    // Put every previously floored row back to its authored min size, then
+    // apply the floors this solve wants. Both lists hold only HUG baseline
+    // text rows, so they are short, and this path is only taken when they
+    // differ — which already costs a re-solve.
+    for &(node, _) in floors.iter() {
+        set_cross_floor(tree, taffy_of, arena, node, None);
+    }
+    for &(node, required) in &wanted {
+        set_cross_floor(tree, taffy_of, arena, node, Some(required));
+    }
+    floors.clone_from(&wanted);
+
+    let ts = compute_all(tree, roots, Some(ts), solves).expect("the typesetter was lent, not lost");
+    let mut cross_offset = vec![None; node_count];
+    let mut settled = Vec::new();
+    for &root in arena.roots() {
+        collect_baseline_offsets(
+            tree,
+            taffy_of,
+            arena,
+            ts,
+            root,
+            &mut cross_offset,
+            &mut settled,
+        );
+    }
+    debug_assert_eq!(
+        settled, wanted,
+        "the #322 cross-size floor must not depend on the row's own cross size"
+    );
+    cross_offset
+}
+
+/// Set — or, with `floor` of `None`, clear — one node's #322 cross-size
+/// floor on the retained tree. Clearing restores the authored min size,
+/// which is what [`style_for`] maps for the node.
+fn set_cross_floor(
+    tree: &mut TaffyTree<TextContext>,
+    taffy_of: &[taffy::NodeId],
+    arena: &Arena,
+    node: NodeId,
+    floor: Option<f32>,
+) {
+    let authored = arena.layout(node).min_height;
+    let min_height = match floor {
+        Some(required) => Dimension::length(authored.map_or(required, |m| required.max(m))),
+        None => authored.map_or(Dimension::AUTO, Dimension::length),
+    };
+    let taffy_node = taffy_of[node.index()];
+    let mut style = tree
+        .style(taffy_node)
+        .expect("a retained node always has a style")
+        .clone();
+    style.min_size.height = min_height;
+    tree.set_style(taffy_node, style)
+        .expect("restyling a retained node cannot fail");
 }

@@ -109,6 +109,13 @@ impl VariantFlip {
     /// scheduler: the caller-supplied `from` is ignored and the track resumes
     /// from its current sample, so nothing snaps.
     ///
+    /// A declared channel whose before and after values are equal starts no
+    /// track (debt #487): it has nothing to animate, and a declined track
+    /// leaves every other track's stagger delay where it was. A node whose
+    /// every declared channel sits still therefore does not enter the
+    /// animated set at all — see [`sampled_rects`](VariantFlip::sampled_rects)
+    /// for what that set is.
+    ///
     /// # Panics
     ///
     /// Panics if a transition track's prop key is not engine-packed — it
@@ -150,11 +157,24 @@ impl VariantFlip {
             let to = after_val.get(&key).copied().unwrap_or_else(|| {
                 panic!("FLIP track {key:?} names a node absent from the after rects")
             });
-            // Every declared track starts. `dashcue` lets a binding decline
-            // a track (#74), but "unchanged" is the consumer's policy and
-            // FLIP does not define one: skipping a from == to channel would
-            // also drop its node from `sampled_rects` when no channel moved.
-            Some((from, to))
+            // A channel whose resolved value did not change has nothing to
+            // animate, so it starts no track (debt #487). `dashcue` lets a
+            // binding decline a track (#74) and computes a track's stagger
+            // delay from its declared index, so declining one does not
+            // move any other track's delay.
+            //
+            // The contract this rests on: `targets` — and with it
+            // `sample` and `sampled_rects` — is the set of nodes that are
+            // *animating*, not the set the transition *declared*. That is
+            // already what `advance` enforces (it drops a node the moment
+            // its last channel finishes) and what a node with no declared
+            // track already gets (it is absent, and pops). A node whose
+            // every declared channel sits still is animating nothing and
+            // is absent by the same rule. Its consumers are unaffected:
+            // `compose` fills a channel with no live track from the after
+            // rect, so an absent node and a node sampled on every unmoved
+            // channel yield the same rect.
+            (from != to).then_some((from, to))
         });
         // Record each animated node's target rect so `sample` can rebuild a
         // full rect from the per-channel samples. `start_transition` has just
@@ -192,6 +212,14 @@ impl VariantFlip {
 
     /// Every animating node's current rect, in start order — the frame output
     /// #23 samples at t = 0 / 0.5 / 1.
+    ///
+    /// The set is the nodes that are **animating**, never the nodes a
+    /// transition **declared** (debt #487). A node with no declared track is
+    /// absent and pops; a node whose declared channels have all finished is
+    /// dropped by [`advance`](VariantFlip::advance); a node whose every
+    /// declared channel starts and ends at the same value never enters. In
+    /// every one of those cases the node's rect is its after rect, which is
+    /// what a consumer that composes this over the after layout already has.
     pub fn sampled_rects(&self) -> impl Iterator<Item = (NodeId, SolvedRect)> + '_ {
         self.targets
             .iter()

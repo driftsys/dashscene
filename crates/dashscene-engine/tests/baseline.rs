@@ -10,8 +10,8 @@
 //! Figma directly.
 
 use dashscene_core::{
-    Arena, AxisSizing, Color, CrossAxisAlign, LayoutMode, NodeId, Prop, TextAlign, TextAlignV,
-    TextStyle,
+    Arena, AxisSizing, Color, CrossAxisAlign, LayoutMode, MainAxisAlign, NodeId, Prop, TextAlign,
+    TextAlignV, TextStyle,
 };
 use dashscene_engine::TaffySolver;
 use dashscene_typeset::text::{Font, Typesetter};
@@ -63,6 +63,321 @@ fn text_leaf(txn: &mut dashscene_core::Txn<'_>, parent: NodeId, text: &str, size
 fn rect_at(arena: &Arena, i: usize) -> (f32, f32, f32, f32) {
     let r = arena.committed().rects()[i];
     (r.x, r.y, r.w, r.h)
+}
+
+/// A fixed-size non-text box under `parent`.
+fn box_leaf(txn: &mut dashscene_core::Txn<'_>, parent: NodeId, w: f32, h: f32) -> NodeId {
+    let n = txn.add_node(Some(parent), None);
+    txn.set_prop(n, Prop::Width(w));
+    txn.set_prop(n, Prop::Height(h));
+    n
+}
+
+/// The #322 row's asymmetric cross-axis padding, so a grown cross size
+/// pins both padding terms rather than only their sum.
+const PAD_TOP: f32 = 8.0;
+const PAD_BOTTOM: f32 = 6.0;
+
+/// A HUG-cross-sized `Baseline` row holding one tall non-text box and one
+/// text run — the #322 shape. Returns `(row, text run)`.
+fn hug_baseline_row(
+    txn: &mut dashscene_core::Txn<'_>,
+    parent: Option<NodeId>,
+    box_h: f32,
+    text_size: f32,
+) -> (NodeId, NodeId) {
+    let row = txn.add_node(parent, None);
+    txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
+    txn.set_prop(row, Prop::SizingH(AxisSizing::Hug));
+    txn.set_prop(row, Prop::SizingV(AxisSizing::Hug));
+    txn.set_prop(row, Prop::CrossAlign(CrossAxisAlign::Baseline));
+    txn.set_prop(
+        row,
+        Prop::Padding {
+            left: 0.0,
+            top: PAD_TOP,
+            right: 0.0,
+            bottom: PAD_BOTTOM,
+        },
+    );
+    box_leaf(txn, row, 40.0, box_h);
+    let text = text_leaf(txn, row, "LARGE", text_size);
+    (row, text)
+}
+
+#[test]
+fn a_hug_baseline_row_grows_to_hold_its_glyph_aligned_children() {
+    // Issue #322, the residual of #272's baseline correction. Taffy gives
+    // a baseline-less leaf its box bottom as its baseline, so the row's
+    // HUG cross size is sized from box bottoms: 100, the tall box. The
+    // #272 pass then drops the text run so its GLYPH baseline meets the
+    // box bottom, which pushes the run's own box bottom a descender past
+    // the row's height — the run clips. A HUG row must hold the children
+    // the correction placed in it.
+    let mut ts = typesetter();
+    let laid = ts.layout("LARGE", 40.0, None);
+    let text_h = laid.height;
+    let text_baseline = laid.lines[0].baseline_y;
+    let descender = text_h - text_baseline;
+    assert!(
+        descender > 0.5,
+        "the run's box bottom sits below its baseline, by {descender}"
+    );
+    let box_h = 100.0_f32;
+    assert!(
+        box_h > text_baseline,
+        "the box bottom is the tallest baseline in the row"
+    );
+
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    hug_baseline_row(&mut txn, None, box_h, 40.0); // row 0, box 1, text 2
+    txn.commit_with(&mut TaffySolver::with_typesetter(&mut ts));
+
+    let eps = 0.01;
+    let (_, _, _, row_h) = rect_at(&arena, 0);
+    let (_, box_y, _, _) = rect_at(&arena, 1);
+    let (_, text_y, _, _) = rect_at(&arena, 2);
+
+    // The tallest baseline anchors at the content top.
+    assert!(
+        (box_y - PAD_TOP).abs() < eps,
+        "the tallest baseline sits at the content top, got {box_y}"
+    );
+    // The two baselines still meet: the box bottom is the tallest.
+    assert!(
+        ((box_y + box_h) - (text_y + text_baseline)).abs() < eps,
+        "baselines off the line: {} vs {}",
+        box_y + box_h,
+        text_y + text_baseline
+    );
+    // And the row now holds both boxes: its height is the text run's
+    // bottom — a descender below the tallest baseline — plus its own
+    // cross-axis padding on both sides.
+    let want = PAD_TOP + box_h + descender + PAD_BOTTOM;
+    assert!(
+        (row_h - want).abs() < eps,
+        "hug row height {row_h}, want {want} (pad {PAD_TOP} + box {box_h} + \
+         descender {descender} + pad {PAD_BOTTOM})"
+    );
+    assert!(
+        text_y + text_h + PAD_BOTTOM <= row_h + eps,
+        "the run's bottom {} overflows the hug row's content box",
+        text_y + text_h
+    );
+}
+
+#[test]
+fn a_grown_hug_baseline_row_re_places_its_following_siblings() {
+    // The grown cross size must go back through the solver, not be
+    // patched onto the row's rect: everything placed after the row in its
+    // parent's flow moves by the growth, and the parent's own HUG height
+    // grows with it. A post-solve height patch would leave both behind.
+    let mut ts = typesetter();
+    let laid = ts.layout("LARGE", 40.0, None);
+    let descender = laid.height - laid.lines[0].baseline_y;
+    let box_h = 100.0_f32;
+
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let column = txn.add_node(None, None); // 0
+    txn.set_prop(column, Prop::Mode(LayoutMode::Vertical));
+    txn.set_prop(column, Prop::MainAlign(MainAxisAlign::Start));
+    txn.set_prop(column, Prop::SizingH(AxisSizing::Hug));
+    txn.set_prop(column, Prop::SizingV(AxisSizing::Hug));
+    hug_baseline_row(&mut txn, Some(column), box_h, 40.0); // row 1, box 2, text 3
+    let after = box_leaf(&mut txn, column, 40.0, 20.0); // 4
+    let _ = after;
+    txn.commit_with(&mut TaffySolver::with_typesetter(&mut ts));
+
+    let eps = 0.01;
+    let (_, _, _, column_h) = rect_at(&arena, 0);
+    let (_, _, _, row_h) = rect_at(&arena, 1);
+    let (_, after_y, _, _) = rect_at(&arena, 4);
+
+    let want_row = PAD_TOP + box_h + descender + PAD_BOTTOM;
+    assert!(
+        (row_h - want_row).abs() < eps,
+        "row height {row_h}, want {want_row}"
+    );
+    assert!(
+        (after_y - row_h).abs() < eps,
+        "the sibling after the row sits at {after_y}, want the row's bottom {row_h}"
+    );
+    assert!(
+        (column_h - (row_h + 20.0)).abs() < eps,
+        "the hug column's height {column_h}, want {}",
+        row_h + 20.0
+    );
+}
+
+#[test]
+fn a_fixed_height_baseline_row_keeps_its_authored_height() {
+    // The #322 growth is HUG-only: an authored cross size is the author's
+    // decision, and a run that overflows it clips exactly as it did.
+    let mut ts = typesetter();
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let row = txn.add_node(None, None);
+    txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
+    txn.set_prop(row, Prop::SizingH(AxisSizing::Hug));
+    txn.set_prop(row, Prop::Height(100.0));
+    txn.set_prop(row, Prop::CrossAlign(CrossAxisAlign::Baseline));
+    box_leaf(&mut txn, row, 40.0, 100.0);
+    text_leaf(&mut txn, row, "LARGE", 40.0);
+    txn.commit_with(&mut TaffySolver::with_typesetter(&mut ts));
+
+    assert_eq!(rect_at(&arena, 0).3, 100.0, "the authored height stands");
+}
+
+#[test]
+fn a_hug_baseline_row_re_shrinks_when_its_text_does_on_a_retained_solver() {
+    // The cross-size floor lives on the retained tree, so an incremental
+    // solve must recompute it rather than carry the previous frame's. A
+    // smaller run has a smaller descender, so the row must give the extra
+    // room back.
+    let mut ts = typesetter();
+    let big = ts.layout("LARGE", 40.0, None);
+    let big_descender = big.height - big.lines[0].baseline_y;
+    let small = ts.layout("LARGE", 12.0, None);
+    let small_descender = small.height - small.lines[0].baseline_y;
+    assert!(big_descender > small_descender);
+    let box_h = 100.0_f32;
+
+    let mut arena = Arena::new();
+    let mut solver = TaffySolver::with_typesetter(&mut ts);
+    let text = {
+        let mut txn = arena.open();
+        let (_, text) = hug_baseline_row(&mut txn, None, box_h, 40.0);
+        txn.commit_with(&mut solver);
+        text
+    };
+    let eps = 0.01;
+    let pad = PAD_TOP + PAD_BOTTOM;
+    assert!(
+        (rect_at(&arena, 0).3 - (pad + box_h + big_descender)).abs() < eps,
+        "grown for the 40px run"
+    );
+
+    let mut txn = arena.open();
+    styled(&mut txn, text, "LARGE", 12.0);
+    txn.commit_with(&mut solver);
+    assert!(
+        (rect_at(&arena, 0).3 - (pad + box_h + small_descender)).abs() < eps,
+        "the row height {} must fall back to {}",
+        rect_at(&arena, 0).3,
+        pad + box_h + small_descender
+    );
+}
+
+#[test]
+fn a_row_that_stops_needing_a_cross_floor_has_it_removed() {
+    // The floor is injected into the retained tree's style, and a row is
+    // restyled only when the row itself is dirty. Here the ROW never
+    // changes: its only text child takes a `Fill` cross size, which makes
+    // it a stretched child rather than a baseline-aligned one, so the row
+    // stops being a baseline TEXT row at all. Its floor must come off, or
+    // it keeps a height nothing in the scene asks for.
+    let mut ts = typesetter();
+    let laid = ts.layout("LARGE", 40.0, None);
+    let descender = laid.height - laid.lines[0].baseline_y;
+    assert!(descender > 0.5);
+    let box_h = 100.0_f32;
+
+    let mut arena = Arena::new();
+    let mut solver = TaffySolver::with_typesetter(&mut ts);
+    let text = {
+        let mut txn = arena.open();
+        let (_, text) = hug_baseline_row(&mut txn, None, box_h, 40.0);
+        txn.commit_with(&mut solver);
+        text
+    };
+    let eps = 0.01;
+    let floored = PAD_TOP + box_h + descender + PAD_BOTTOM;
+    assert!(
+        (rect_at(&arena, 0).3 - floored).abs() < eps,
+        "the row is floored at {floored} to start with, got {}",
+        rect_at(&arena, 0).3
+    );
+
+    let mut txn = arena.open();
+    txn.set_prop(text, Prop::SizingV(AxisSizing::Fill));
+    txn.commit_with(&mut solver);
+
+    // No baseline-aligned text child is left, so no correction and no
+    // floor: the row hugs the tall box plus its own padding.
+    let unfloored = PAD_TOP + box_h + PAD_BOTTOM;
+    assert!(
+        (rect_at(&arena, 0).3 - unfloored).abs() < eps,
+        "the row height {} must fall back to {unfloored}",
+        rect_at(&arena, 0).3
+    );
+}
+
+#[test]
+fn a_hug_baseline_rows_floor_never_beats_an_authored_min_height() {
+    // The #322 floor replaces the row's Taffy min cross size, so it has to
+    // carry the authored one: an authored min above the glyph-aligned
+    // extent must still win, exactly as it does for a row that needs no
+    // floor at all.
+    let mut ts = typesetter();
+    let laid = ts.layout("LARGE", 40.0, None);
+    let descender = laid.height - laid.lines[0].baseline_y;
+    let box_h = 100.0_f32;
+    let grown = PAD_TOP + box_h + descender + PAD_BOTTOM;
+    let authored_min = grown + 40.0;
+
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let (row, _) = hug_baseline_row(&mut txn, None, box_h, 40.0);
+    txn.set_prop(row, Prop::MinHeight(authored_min));
+    txn.commit_with(&mut TaffySolver::with_typesetter(&mut ts));
+
+    assert!(
+        (rect_at(&arena, 0).3 - authored_min).abs() < 0.01,
+        "the authored min height {authored_min} must beat the {grown} floor, got {}",
+        rect_at(&arena, 0).3
+    );
+}
+
+#[test]
+fn a_fill_cross_child_of_a_baseline_row_stretches_instead_of_aligning() {
+    // A `Fill` cross-sized child maps to `align_self: STRETCH`, and taffy
+    // excludes a stretched item from baseline alignment. The #272
+    // correction must exclude it too: re-placing it on a baseline would
+    // move a child taffy stretched over the whole content box, and
+    // counting its stretched height towards the #322 floor would feed the
+    // row's own cross size back into itself.
+    let mut ts = typesetter();
+    let laid = ts.layout("LARGE", 40.0, None);
+    let descender = laid.height - laid.lines[0].baseline_y;
+    let box_h = 100.0_f32;
+
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let (row, _) = hug_baseline_row(&mut txn, None, box_h, 40.0); // 0, 1, 2
+    let filler = txn.add_node(Some(row), None); // 3
+    txn.set_prop(filler, Prop::Width(10.0));
+    txn.set_prop(filler, Prop::SizingV(AxisSizing::Fill));
+    txn.commit_with(&mut TaffySolver::with_typesetter(&mut ts));
+
+    let eps = 0.01;
+    let (_, _, _, row_h) = rect_at(&arena, 0);
+    let (_, filler_y, _, filler_h) = rect_at(&arena, 3);
+    let want_row = PAD_TOP + box_h + descender + PAD_BOTTOM;
+    assert!(
+        (row_h - want_row).abs() < eps,
+        "the stretched child must not change the row height: {row_h}, want {want_row}"
+    );
+    assert!(
+        (filler_y - PAD_TOP).abs() < eps,
+        "the stretched child stays at the content top, got {filler_y}"
+    );
+    assert!(
+        (filler_h - (row_h - PAD_TOP - PAD_BOTTOM)).abs() < eps,
+        "the stretched child fills the content box: {filler_h}, want {}",
+        row_h - PAD_TOP - PAD_BOTTOM
+    );
 }
 
 #[test]
