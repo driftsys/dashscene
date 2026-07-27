@@ -11,7 +11,7 @@ decodes with its own machinery), `docs/decisions/boundary-b-unification.md`,
 
 ## The problem
 
-RAW, HiFi and Lite are band contracts, and the packer measures each asset's
+RAW, HiFi and LoFi are band contracts, and the packer measures each asset's
 texels against its band before choosing a rung. That gate is per asset and
 blind to the asset **in context**: banding read behind a caption, a block
 boundary read against a stroke. Both are what a designer actually looks at, and

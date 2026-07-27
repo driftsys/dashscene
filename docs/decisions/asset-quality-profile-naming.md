@@ -11,7 +11,7 @@
 
 ## Context
 
-The asset pipeline has three quality profiles — RAW, HiFi, Lite — and the
+The asset pipeline has three quality profiles — RAW, HiFi, LoFi — and the
 word "raw" also names an encoding concept (uncompressed pixel data, as
 opposed to a compressed encoding like ASTC or BC7). Using one spelling for
 both meanings makes a sentence like "the raw profile stores raw pixels"
@@ -31,6 +31,41 @@ and must not resurface from stale notes or habit.
 - **Lossless**, **Access**, **Master**, and **Eco** are retired names and
   stay out of the vocabulary entirely — not used as synonyms, aliases, or
   historical references in new prose.
+- **LoFi**, not **Lite** (renamed 2026-07-27, owner's call). **Lite** joins
+  the retired list on the same terms.
+
+## Why LoFi replaced Lite
+
+Recorded because the rename touched code identifiers and a measured number,
+so it should not be re-litigated as a matter of taste.
+
+**"Lite" names the wrong axis.** It reads as weight or size, and
+`docs/decisions/compress-raster-only.md` establishes that the objective is
+memory bandwidth, residency and load-time CPU, with **file size a
+constraint rather than the goal**. A profile is defined as a set of
+per-asset-class tolerance bands, so what actually varies between profiles
+is band width — a fidelity axis. `RAW / HiFi / LoFi` names that axis
+consistently; `RAW / HiFi / Lite` mixes two metaphors and points the second
+one at the axis the design deliberately does not optimise.
+
+**The objection considered and rejected.** "Lo-fi" was thought to risk
+implying deliberate degradation, which would misdescribe a profile whose
+central property is that over-compression is structurally impossible — the
+packer escalates until the band holds. That objection does not survive: in
+music and film, lo-fi does not mean failed fidelity. It means a fidelity
+envelope chosen on purpose, with the texture as part of the intent and
+usually meticulous work behind it. That connotation is the correct one
+here. LoFi is not the profile that fell short of HiFi; it is the profile
+that targets a different envelope deliberately, and the band contract is
+what guarantees it lands there.
+
+**A rendered measurement moved, and is recorded.** The
+`profile-stress` preview scene carries a text overlay labelling the band,
+so renaming the label changed the glyphs drawn and moved the measured
+mutation fractions — 51.8707 % to 51.8097 % under HiFi, and 9.7900 % to
+9.7733 % under LoFi. The oracle caught the change rather than absorbing it.
+The new figures are recorded in `goldens/oracle/profile-manifest.json` with
+the reason, and no golden moved.
 
 ## Why
 

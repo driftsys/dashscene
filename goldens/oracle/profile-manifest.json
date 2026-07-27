@@ -1,8 +1,8 @@
 {
-  "description": "The profile-preview oracle wiring (story #435, epic #345) — the third manifest in the E7/import-oracle pattern. The other two diff a reference render against Figma's GET /images export, an external design source. This one has no external source: it renders each scene under RAW, then under HiFi and Lite, and diffs profile against RAW. Both arms are the same painter, the same solver, the same typesetter and the same canvas, so the only variable is which bytes the asset entries resolve to and a difference is the asset axis and nothing else. That is what the per-asset pack bands (crates/dashpack/tests/band_contract.rs) cannot see: they measure texels in isolation, and this measures the same texels composited behind text and against strokes. Under a production profile the resident payload is a block-compressed KTX2 file, which the reference loader software-decodes with the same version-pinned astcenc that encoded it (dashpack::preview) before any byte reaches the painter — the painter is unchanged and still only draws RGBA, so P2 holds. The diff runs in goldens/tooling/tests/profile_preview_oracle.rs, which also writes the triptych and its diff heatmaps to target/profile-preview/ for review (`just triptych`). The bands are goldens::oracle::PROFILE_HIFI_SCENE and PROFILE_LITE_SCENE, which carry dashpack::profile's own numbers exactly; the test asserts that equality, so the two cannot drift apart silently. WHAT THIS CANNOT SHOW, stated so a target bench confirms a short list rather than discovering quality: GPU filtering behaviour (the texels are exact, what a sampler does between texel centres is the hardware's), driver-level effects (vendor bandwidth compression such as UBWC, and the NVIDIA case where ASTC is emulated rather than sampled natively with the residency cost that implies — the pack-time probe's job), and where in a target pipeline the sRGB transfer function is applied.",
+  "description": "The profile-preview oracle wiring (story #435, epic #345) — the third manifest in the E7/import-oracle pattern. The other two diff a reference render against Figma's GET /images export, an external design source. This one has no external source: it renders each scene under RAW, then under HiFi and LoFi, and diffs profile against RAW. Both arms are the same painter, the same solver, the same typesetter and the same canvas, so the only variable is which bytes the asset entries resolve to and a difference is the asset axis and nothing else. That is what the per-asset pack bands (crates/dashpack/tests/band_contract.rs) cannot see: they measure texels in isolation, and this measures the same texels composited behind text and against strokes. Under a production profile the resident payload is a block-compressed KTX2 file, which the reference loader software-decodes with the same version-pinned astcenc that encoded it (dashpack::preview) before any byte reaches the painter — the painter is unchanged and still only draws RGBA, so P2 holds. The diff runs in goldens/tooling/tests/profile_preview_oracle.rs, which also writes the triptych and its diff heatmaps to target/profile-preview/ for review (`just triptych`). The bands are goldens::oracle::PROFILE_HIFI_SCENE and PROFILE_LITE_SCENE, which carry dashpack::profile's own numbers exactly; the test asserts that equality, so the two cannot drift apart silently. WHAT THIS CANNOT SHOW, stated so a target bench confirms a short list rather than discovering quality: GPU filtering behaviour (the texels are exact, what a sampler does between texel centres is the hardware's), driver-level effects (vendor bandwidth compression such as UBWC, and the NVIDIA case where ASTC is emulated rather than sampled natively with the residency cost that implies — the pack-time probe's job), and where in a target pipeline the sRGB transfer function is applied.",
   "issue": 435,
   "output": "target/profile-preview",
-  "scenesAreBuiltInProcess": "Every scene here is compiled in process from an inline Figma REST document rather than from a committed corpus fixture. Two reasons, both measured rather than assumed. First, the only committed compiled document with an image is goldens/dsb/v03-paint.dsb, whose single image is 16x16 — one ASTC block at every footprint on the ladder — so all three arms of its triptych render byte-identically and it cannot fail anything (verified: RAW, HiFi and Lite all hash the same). Second, profile-stress needs content no committed asset supplies: story #432 recorded that the real corpus image fills are a gradient and flat rectangles, which ASTC reproduces almost exactly at every footprint, so it generated its detail-noise fixture rather than committing one. This manifest follows that precedent for the same reason and generates profile-stress the same way — a deterministic integer hash, no floating point and no randomness, so it is as reproducible as a committed file and costs no committed bytes. profile-photo does use committed corpus payloads, because for HiFi a real gradient is exactly the content the band is about.",
+  "scenesAreBuiltInProcess": "Every scene here is compiled in process from an inline Figma REST document rather than from a committed corpus fixture. Two reasons, both measured rather than assumed. First, the only committed compiled document with an image is goldens/dsb/v03-paint.dsb, whose single image is 16x16 — one ASTC block at every footprint on the ladder — so all three arms of its triptych render byte-identically and it cannot fail anything (verified: RAW, HiFi and LoFi all hash the same). Second, profile-stress needs content no committed asset supplies: story #432 recorded that the real corpus image fills are a gradient and flat rectangles, which ASTC reproduces almost exactly at every footprint, so it generated its detail-noise fixture rather than committing one. This manifest follows that precedent for the same reason and generates profile-stress the same way — a deterministic integer hash, no floating point and no randomness, so it is as reproducible as a committed file and costs no committed bytes. profile-photo does use committed corpus payloads, because for HiFi a real gradient is exactly the content the band is about.",
   "scenes": [
     {
       "scene": "profile-photo",
@@ -28,15 +28,15 @@
           }
         },
         {
-          "profile": "lite",
-          "band": "profile-lite-scene",
+          "profile": "lofi",
+          "band": "profile-lofi-scene",
           "rungs": ["astc-12x12", "astc-8x8"],
           "measured": "0.0000",
           "measuredDiffering": 0,
           "measuredTotal": 144400,
           "maxChannelDelta": 7,
           "mutation": null,
-          "mutationNote": "This scene cannot exercise the Lite budget, stated rather than left to be discovered. The gradient survives the cheapest rung on the ladder — Lite accepts 12x12 on its first attempt, rejecting nothing — so there is no coarser rung for a mutation to stop at, and the whole-scene residual is 0.0000 % at the band's threshold of 8. The number is still recorded and still re-measured every run, and maxChannelDelta of 7 is the part of this row that can actually move. profile-stress is the scene that exercises this band, and every_band_is_exercised_by_at_least_one_scene requires that some scene does."
+          "mutationNote": "This scene cannot exercise the LoFi budget, stated rather than left to be discovered. The gradient survives the cheapest rung on the ladder — LoFi accepts 12x12 on its first attempt, rejecting nothing — so there is no coarser rung for a mutation to stop at, and the whole-scene residual is 0.0000 % at the band's threshold of 8. The number is still recorded and still re-measured every run, and maxChannelDelta of 7 is the part of this row that can actually move. profile-stress is the scene that exercises this band, and every_band_is_exercised_by_at_least_one_scene requires that some scene does."
         }
       ]
     },
@@ -44,7 +44,7 @@
       "scene": "profile-stress",
       "canvas": [256, 256],
       "assets": ["generated: block-stress 256x256, amplitude 8"],
-      "note": "A 256x256 FRAME filled with generated block-stress content — a smooth three-channel gradient carrying a bounded per-texel perturbation of amplitude 8 — with the same in-context caption and stroked rectangle over it. Low-amplitude, high-spatial-frequency content is what block compression is worst at, and it is what a real photograph would supply if the corpus held one. The amplitude was chosen by measurement, not by analogy: at 4 the Lite ladder still bottoms out, and at 16 both profiles escalate all the way to the lossless rung and neither budget binds. At 8 the two profiles land on genuinely different rungs and both bands have something to say, which is the same value story #432 measured for its detail-noise fixture at the same amplitude.",
+      "note": "A 256x256 FRAME filled with generated block-stress content — a smooth three-channel gradient carrying a bounded per-texel perturbation of amplitude 8 — with the same in-context caption and stroked rectangle over it. Low-amplitude, high-spatial-frequency content is what block compression is worst at, and it is what a real photograph would supply if the corpus held one. The amplitude was chosen by measurement, not by analogy: at 4 the LoFi ladder still bottoms out, and at 16 both profiles escalate all the way to the lossless rung and neither budget binds. At 8 the two profiles land on genuinely different rungs and both bands have something to say, which is the same value story #432 measured for its detail-noise fixture at the same amplitude.",
       "profiles": [
         {
           "profile": "hifi",
@@ -56,13 +56,13 @@
           "maxChannelDelta": 0,
           "mutation": {
             "forceBlock": [4, 4],
-            "measured": "51.8707",
-            "note": "HiFi rejects all six lossy rungs on this content and escalates to the lossless rung, so the mutation is a walk that stopped at the finest lossy rung it could reach. 51.8707 % against the 1 % budget. The unmutated row is worth as much as the mutation: a maxChannelDelta of exactly 0 over the whole scene is the lossless rung's identity property proven through the entire preview chain — pack, KTX2 write, Zstd, cold-bank assembly, dashbuf::open resolving the canonical hash through the derivation manifest, the independent KTX2 parse, the inflate, the PNG re-wrap and Skia's own decode. Any one of those steps altering a single texel would move it off 0, and the assertion is written as an equality to 0 rather than as a band for that reason."
+            "measured": "51.8097",
+            "note": "HiFi rejects all six lossy rungs on this content and escalates to the lossless rung, so the mutation is a walk that stopped at the finest lossy rung it could reach. 51.8097 % against the 1 % budget. (This figure moved from 51.8707 % when the profile was renamed Lite to LoFi: the scene carries a rendered text overlay labelling the band, so the label's glyphs are part of what is measured. The oracle caught the change rather than absorbing it, which is the property the recorded number exists to have.) The unmutated row is worth as much as the mutation: a maxChannelDelta of exactly 0 over the whole scene is the lossless rung's identity property proven through the entire preview chain — pack, KTX2 write, Zstd, cold-bank assembly, dashbuf::open resolving the canonical hash through the derivation manifest, the independent KTX2 parse, the inflate, the PNG re-wrap and Skia's own decode. Any one of those steps altering a single texel would move it off 0, and the assertion is written as an equality to 0 rather than as a band for that reason."
           }
         },
         {
-          "profile": "lite",
-          "band": "profile-lite-scene",
+          "profile": "lofi",
+          "band": "profile-lofi-scene",
           "rungs": ["astc-6x6"],
           "measured": "4.5166",
           "measuredDiffering": 2960,
@@ -70,8 +70,8 @@
           "maxChannelDelta": 14,
           "mutation": {
             "forceBlock": [8, 8],
-            "measured": "9.7900",
-            "note": "Lite's ladder walk rejects 12x12, 10x10 and 8x8 on this content and settles at 6x6 at 4.5166 %; forcing 8x8 is the rung it refused, and it measures 9.7900 % against the 5 % budget. The budget is the binding term here rather than the threshold, which is the property issue #422 found the render bands lacked: 4.5166 % and 9.7900 % sit either side of 5 %, so the number 5 itself is what separates a pass from a failure."
+            "measured": "9.7733",
+            "note": "LoFi's ladder walk rejects 12x12, 10x10 and 8x8 on this content and settles at 6x6 at 4.5166 %; forcing 8x8 is the rung it refused, and it measures 9.7733 % against the 5 % budget. The budget is the binding term here rather than the threshold, which is the property issue #422 found the render bands lacked: 4.5166 % and 9.7733 % sit either side of 5 %, so the number 5 itself is what separates a pass from a failure."
           }
         }
       ]

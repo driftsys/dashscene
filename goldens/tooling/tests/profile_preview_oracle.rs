@@ -1,5 +1,5 @@
 //! The profile-preview oracle (story #435, epic #345): every corpus scene
-//! rendered under RAW, HiFi and Lite, with the two production arms diffed
+//! rendered under RAW, HiFi and LoFi, with the two production arms diffed
 //! against RAW inside a pinned scene band.
 //!
 //! # Why this measures a scene and not only an asset
@@ -86,7 +86,7 @@ const BADGE_PATH: &str = "corpus/figma-fixtures/v03-paint.images/\
 /// profiles' area budgets, because the real image fills are a gradient and flat
 /// rectangles that ASTC reproduces almost exactly at every footprint.
 ///
-/// The amplitude was chosen by measurement. At 4 the Lite ladder still bottoms
+/// The amplitude was chosen by measurement. At 4 the LoFi ladder still bottoms
 /// out at 12x12 and no mutation can fail its budget; at 16 both profiles
 /// escalate to the lossless rung and neither budget binds; at 8 the two
 /// profiles land on different rungs and both bands have something to say.
@@ -238,7 +238,7 @@ fn scenes() -> Vec<Scene> {
         },
         "fills": [{ "blendMode": "NORMAL", "type": "IMAGE",
                     "scaleMode": "FILL", "imageRef": STRESS_REF }],
-        "children": overlays(stress_canvas, "2", "Lite band", 30.0),
+        "children": overlays(stress_canvas, "2", "LoFi band", 30.0),
     }));
     let stress_images = BTreeMap::from([(
         STRESS_REF.to_string(),
@@ -692,8 +692,8 @@ fn the_scene_bands_are_the_packers_bands() {
             &dashpack::profile::HIFI_IMAGE_FILL,
         ),
         (
-            &oracle::PROFILE_LITE_SCENE,
-            &dashpack::profile::LITE_IMAGE_FILL,
+            &oracle::PROFILE_LOFI_SCENE,
+            &dashpack::profile::LOFI_IMAGE_FILL,
         ),
     ] {
         assert_eq!(

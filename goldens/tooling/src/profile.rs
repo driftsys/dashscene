@@ -152,22 +152,22 @@ pub fn render_under(dsb: &[u8], profile: Profile) -> Result<Vec<u8>, DeriveError
 }
 
 /// Parses a profile name as `just render --profile` and the oracle manifest
-/// spell it: `raw`, `hifi`, `lite`. Case-insensitive.
+/// spell it: `raw`, `hifi`, `lofi`. Case-insensitive.
 ///
 /// `None` for anything else, so a caller reports the name it was given rather
 /// than falling back to a default — silently rendering RAW when the user asked
-/// for Lite is the one wrong answer this tool must not give.
+/// for LoFi is the one wrong answer this tool must not give.
 pub fn profile_named(name: &str) -> Option<Profile> {
     match name.to_ascii_lowercase().as_str() {
         "raw" => Some(Profile::Raw),
         "hifi" => Some(Profile::HiFi),
-        "lite" => Some(Profile::Lite),
+        "lofi" => Some(Profile::LoFi),
         _ => None,
     }
 }
 
 /// The three profile names, in triptych order, for a usage message.
-pub const PROFILE_NAMES: [&str; 3] = ["raw", "hifi", "lite"];
+pub const PROFILE_NAMES: [&str; 3] = ["raw", "hifi", "lofi"];
 
 #[cfg(test)]
 mod tests {

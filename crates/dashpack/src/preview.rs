@@ -1,5 +1,5 @@
 //! Software decode of a derived block payload back to RGBA, so the Skia
-//! reference painter can render a HiFi or Lite bank on a desk (story #435).
+//! reference painter can render a HiFi or LoFi bank on a desk (story #435).
 //!
 //! # The premise, and what it is worth
 //!

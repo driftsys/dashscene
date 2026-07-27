@@ -360,7 +360,7 @@ fn paintable_payload(payload: &[u8]) -> Cow<'_, [u8]> {
         !payload.starts_with(&KTX2_IDENTIFIER),
         "this asset payload is a KTX2 block payload, and this build of the goldens harness \
          has no block decoder: rebuild with the `profile-preview` feature (on by default) \
-         to render a HiFi or Lite bank"
+         to render a HiFi or LoFi bank"
     );
     Cow::Borrowed(payload)
 }
@@ -446,7 +446,7 @@ pub fn render_dsb(dsb: &[u8]) -> Vec<u8> {
     // binding that resolves each asset entry's hash to its blob section —
     // through the derivation manifest when the file carries one.
     let (document, payloads) = dashbuf::open(dsb).expect("a valid .dsb file");
-    // Under RAW every payload passes through untouched. Under HiFi or Lite the
+    // Under RAW every payload passes through untouched. Under HiFi or LoFi the
     // resident payload is a block-compressed KTX2 file, which is decoded here —
     // in the loader, before any byte reaches the painter.
     let paintable: Vec<Cow<'_, [u8]>> = payloads.iter().map(|p| paintable_payload(p)).collect();

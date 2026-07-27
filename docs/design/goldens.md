@@ -272,7 +272,7 @@ asserts it in CI alongside `E1`–`E6`.
 ## Profile-preview oracle (story #435)
 
 The third manifest in the same pattern, and the only one with **no external
-design source**: it renders each scene under RAW, then under HiFi and Lite, and
+design source**: it renders each scene under RAW, then under HiFi and LoFi, and
 diffs each production arm against RAW. Both arms are the same painter, the same
 solver, the same typesetter and the same canvas, so the only variable is which
 bytes the asset entries resolve to and a difference is the asset axis and
@@ -311,7 +311,7 @@ refuses a block payload by name.
 
 ### The two scene bands
 
-`PROFILE_HIFI_SCENE` and `PROFILE_LITE_SCENE` carry `dashpack::profile`'s own
+`PROFILE_HIFI_SCENE` and `PROFILE_LOFI_SCENE` carry `dashpack::profile`'s own
 numbers exactly — 2 and 1 %, 8 and 5 % — and
 `the_scene_bands_are_the_packers_bands` asserts that equality, so retuning a
 pack band cannot silently leave the scene band behind. The profile's promise is
@@ -341,12 +341,12 @@ asserts it **fails**:
 | scene            | profile | rungs        | measured | mutation     | mutation measures |
 | ---------------- | ------- | ------------ | -------- | ------------ | ----------------- |
 | `profile-photo`  | HiFi    | 6x6, 8x8     | 0.2043 % | force 8x8    | 2.6627 %          |
-| `profile-photo`  | Lite    | 12x12, 8x8   | 0.0000 % | none, stated | —                 |
-| `profile-stress` | HiFi    | uncompressed | 0.0000 % | force 4x4    | 51.8707 %         |
-| `profile-stress` | Lite    | 6x6          | 4.5166 % | force 8x8    | 9.7900 %          |
+| `profile-photo`  | LoFi    | 12x12, 8x8   | 0.0000 % | none, stated | —                 |
+| `profile-stress` | HiFi    | uncompressed | 0.0000 % | force 4x4    | 51.8097 %         |
+| `profile-stress` | LoFi    | 6x6          | 4.5166 % | force 8x8    | 9.7733 %          |
 
-`profile-photo`'s Lite row has no mutation and says so: that gradient survives
-the cheapest rung on the ladder, so Lite accepts 12x12 on its first attempt and
+`profile-photo`'s LoFi row has no mutation and says so: that gradient survives
+the cheapest rung on the ladder, so LoFi accepts 12x12 on its first attempt and
 there is no coarser rung to stop at. `every_band_is_exercised_by_at_least_one_scene`
 closes the loophole that would let every row make that excuse.
 
@@ -374,12 +374,12 @@ second committed image as a badge, so no asset index in it is 0.
 `profile-stress` generates its content from a deterministic integer hash, for
 the reason story #432 recorded when it generated `detail-noise`: no committed
 payload separates the two profiles' area budgets. Its amplitude was chosen by
-measurement — at 4 the Lite ladder still bottoms out and at 16 both profiles go
+measurement — at 4 the LoFi ladder still bottoms out and at 16 both profiles go
 lossless.
 
 ### The triptych
 
-Every run writes `raw.png`, `hifi.png`, `lite.png` and a `-heat.png` beside each
+Every run writes `raw.png`, `hifi.png`, `lofi.png` and a `-heat.png` beside each
 production arm into `target/profile-preview/<scene>/`, and prints the banded
 numbers. `just triptych` runs exactly that. A heatmap is scaled so the largest
 delta present maps to white, with the scale factor printed beside it, because
@@ -391,7 +391,7 @@ painter change, and the numbers above are the durable record.
 
 ### `just render --profile`
 
-`render-dsb <in.dsb> <out.png> --profile raw|hifi|lite` gives a designer the
+`render-dsb <in.dsb> <out.png> --profile raw|hifi|lofi` gives a designer the
 same view of any imported file, and `just render <key> <root> <profile>` drives
 it live. An unrecognised profile name is reported with the set that is accepted
 and never resolved to a default.

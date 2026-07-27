@@ -14,7 +14,7 @@
 //!
 //! # A quality profile is a band contract, not a format
 //!
-//! RAW, HiFi and Lite are sets of per-asset-class tolerance bands. The packer
+//! RAW, HiFi and LoFi are sets of per-asset-class tolerance bands. The packer
 //! escalates per asset — cheap, then better, then lossless — until the band
 //! holds, so over-compression is structurally impossible and entry hardware
 //! never silently shows banding. RAW is the *null binding*: a regular `.dsb`

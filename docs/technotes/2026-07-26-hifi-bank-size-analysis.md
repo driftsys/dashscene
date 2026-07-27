@@ -7,7 +7,7 @@ record, and because one of them is a finding rather than a confirmation.
 ## What was measured
 
 Every PNG-decodable asset in the committed corpus, packed through
-`dashpack::bank::pack_bank` under HiFi and under Lite. Canonical size is the
+`dashpack::bank::pack_bank` under HiFi and under LoFi. Canonical size is the
 committed file on disk; resident size is the complete KTX2 file the packer
 produced, before container alignment. Release build, arm64.
 
@@ -25,7 +25,7 @@ in tests today.
 | `atlas/arabic`      | 512x256 | distance field | uncompressed |      96 675 |      98 538 |     1.019 |
 | **total**           |         |                |              | **332 264** | **193 516** | **0.582** |
 
-### Lite
+### LoFi
 
 | asset               | rung         |   canonical |    resident |     ratio |
 | ------------------- | ------------ | ----------: | ----------: | --------: |
@@ -38,9 +38,9 @@ in tests today.
 ## Three things the numbers say
 
 **The saving is real and it is concentrated in the large image.** HiFi takes
-`import-image-fill` to 12.3 % of its canonical size, Lite to 4.6 %. This is what
+`import-image-fill` to 12.3 % of its canonical size, LoFi to 4.6 %. This is what
 the profiles are for, and the escalation earns its keep: HiFi rejected three
-rungs before 6x6 held at 0.2133 % differing, while Lite's looser band accepted
+rungs before 6x6 held at 0.2133 % differing, while LoFi's looser band accepted
 the cheapest rung on the ladder at 0.0000 %. The bands are what chose, not
 arithmetic that would have chosen the same rung either way.
 

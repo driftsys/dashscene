@@ -336,7 +336,7 @@ pub fn band_for(rule: &str) -> Option<&'static ToleranceBand> {
 /// stopped one rung early at 8x8 instead of reaching 6x6 measures 2.6627 %,
 /// against this 1 % budget. On `profile-stress`, where the escalation must run
 /// all the way to the lossless rung, stopping at the finest lossy rung 4x4
-/// measures 51.8707 %. Both are recorded in `goldens/oracle/profile-manifest.json`
+/// measures 51.8097 %. Both are recorded in `goldens/oracle/profile-manifest.json`
 /// and re-measured by the oracle on every run.
 pub const PROFILE_HIFI_SCENE: ToleranceBand = ToleranceBand {
     rule: "profile-hifi-scene",
@@ -344,26 +344,26 @@ pub const PROFILE_HIFI_SCENE: ToleranceBand = ToleranceBand {
     differing_fraction: 0.01,
 };
 
-/// Lite, measured over a whole rendered scene against the same scene under RAW
+/// LoFi, measured over a whole rendered scene against the same scene under RAW
 /// (story #435).
 ///
-/// `dashpack::profile::LITE_IMAGE_FILL`'s numbers — 8 and 5 % — for the reason
+/// `dashpack::profile::LOFI_IMAGE_FILL`'s numbers — 8 and 5 % — for the reason
 /// [`PROFILE_HIFI_SCENE`] gives.
 ///
-/// **The mutation that fails it**, measured: on `profile-stress`, Lite's
+/// **The mutation that fails it**, measured: on `profile-stress`, LoFi's
 /// escalation settles at 6x6 and the whole scene measures 4.5166 %; an
-/// escalation that stopped one rung early at 8x8 measures 9.7900 %, against
+/// escalation that stopped one rung early at 8x8 measures 9.7733 %, against
 /// this 5 % budget.
 ///
 /// `profile-photo` does **not** exercise this budget and does not pretend to.
-/// That scene's gradient survives the cheapest rung on the ladder, so Lite
+/// That scene's gradient survives the cheapest rung on the ladder, so LoFi
 /// settles at 12x12 with a whole-scene residual of 0.0000 % and there is no
 /// coarser rung for a mutation to stop at. The manifest records that with a
 /// stated reason rather than a mutation, and
 /// `every_band_is_exercised_by_at_least_one_scene` requires some scene to
 /// exercise every band that is declared.
-pub const PROFILE_LITE_SCENE: ToleranceBand = ToleranceBand {
-    rule: "profile-lite-scene",
+pub const PROFILE_LOFI_SCENE: ToleranceBand = ToleranceBand {
+    rule: "profile-lofi-scene",
     channel_delta: 8,
     differing_fraction: 0.05,
 };
@@ -373,7 +373,7 @@ pub const PROFILE_LITE_SCENE: ToleranceBand = ToleranceBand {
 /// Two, not three: RAW is the null binding and is the reference arm of the
 /// comparison, so it has nothing to be measured against. A band is only written
 /// where a measurement decides something.
-pub const PROFILE_BANDS: [&ToleranceBand; 2] = [&PROFILE_HIFI_SCENE, &PROFILE_LITE_SCENE];
+pub const PROFILE_BANDS: [&ToleranceBand; 2] = [&PROFILE_HIFI_SCENE, &PROFILE_LOFI_SCENE];
 
 /// The profile-preview band a `rule` name selects, or `None` if it is not one
 /// of the two pinned scene contracts.

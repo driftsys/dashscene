@@ -1,4 +1,4 @@
-//! `render-dsb <in.dsb> <out.png> [--profile raw|hifi|lite]` — load a committed
+//! `render-dsb <in.dsb> <out.png> [--profile raw|hifi|lofi]` — load a committed
 //! `.dsb` and render it through the v0 Skia reference painter to a PNG. A thin
 //! wrapper over [`goldens::render::render_dsb`]; the live entry point is
 //! `just render` (story Sf-1, docs/wip/2026-07-18-render-dsb-design.md).
@@ -20,7 +20,7 @@ use std::process::ExitCode;
 
 /// The usage line, in one place so every way of getting the arguments wrong
 /// prints the same text.
-const USAGE: &str = "usage: render-dsb <in.dsb> <out.png> [--profile raw|hifi|lite]";
+const USAGE: &str = "usage: render-dsb <in.dsb> <out.png> [--profile raw|hifi|lofi]";
 
 fn main() -> ExitCode {
     let mut positional: Vec<String> = Vec::new();
@@ -76,7 +76,7 @@ fn main() -> ExitCode {
 ///
 /// An unrecognised name is reported alongside the set that is accepted, and
 /// never resolved to a default: silently rendering RAW when the caller asked
-/// for Lite would answer a question nobody asked.
+/// for LoFi would answer a question nobody asked.
 #[cfg(feature = "profile-preview")]
 fn render(dsb: &[u8], profile_name: Option<&str>) -> Result<Vec<u8>, String> {
     let Some(name) = profile_name else {

@@ -153,7 +153,7 @@ frame; it never draws one (G-11).
 The third manifest here, and the only one with **no design source**. The other
 two ask whether the reference painter agrees with Figma; this one asks what a
 quality profile costs, by rendering each scene under RAW, then under HiFi and
-Lite, and diffing each production arm against RAW.
+LoFi, and diffing each production arm against RAW.
 
     goldens/oracle/
       profile-manifest.json    per scene and profile: the band, the rungs the
@@ -168,7 +168,7 @@ boundaries read against a stroke.
 
 The E7 gate's files and the import oracle's files are never read or written by
 it. It reuses `goldens::oracle`'s diff and band **type**, and pins its own two
-bands — `profile-hifi-scene` and `profile-lite-scene` — which carry
+bands — `profile-hifi-scene` and `profile-lofi-scene` — which carry
 `dashpack::profile`'s numbers exactly. The two band families deliberately do not
 share a name space: a design-source frame graded against a codec band would fail
 at a threshold of 2, and a scene graded against `blur-falloff` would pass at 24.

@@ -117,7 +117,7 @@ Whether `blur-falloff` should be rescoped, split into a residual band and a
 gate, or left as it is with the gate expressed per frame. That is a decision, it changes a pinned rule the whole
 oracle depends on, and it needs the repository owner. Issue #422 carries it.
 
-It matters beyond the existing frames: v0.12 delivers the RAW/HiFi/Lite quality
+It matters beyond the existing frames: v0.12 delivers the RAW/HiFi/LoFi quality
 profiles **as per-asset-class band contracts with a per-asset encode-and-diff
 oracle**, which is a second family of tolerance bands designed on the model of
 the first. The roadmap's v0.11-close revision records that those contracts

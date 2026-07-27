@@ -641,7 +641,7 @@ The v0.12 breakdown is revised at this close — see v0.12 below.
 **Epic #345.** The current slice.
 
 Delivers: `dashpack` (an in-workspace standalone tool — vendored astcenc, an
-own KTX2 writer, no external CLIs), the RAW/HiFi/Lite quality profiles as
+own KTX2 writer, no external CLIs), the RAW/HiFi/LoFi quality profiles as
 per-asset-class band contracts with a per-asset encode-and-diff oracle,
 cold-bank assembly onto the v0.11 sections, the Gfx QA profile preview (the
 reference painter renders all three profiles), and the native-ASTC codec
@@ -667,7 +667,7 @@ opened — #49 as the v0 exit gate and #338 as completed on 2026-07-26 — so th
 consolidation is already delivered and is not part of this slice.
 
 Revised at the v0.11 close (2026-07-26): the scope above is unchanged, and one
-constraint is added to it. v0.12 delivers the RAW/HiFi/Lite profiles **as
+constraint is added to it. v0.12 delivers the RAW/HiFi/LoFi profiles **as
 per-asset-class band contracts with a per-asset encode-and-diff oracle** — that
 is, it designs a second family of tolerance bands. v0.11 measured a gap in the coverage of the
 first family: across six mutations of the two backdrop-blur frames, the

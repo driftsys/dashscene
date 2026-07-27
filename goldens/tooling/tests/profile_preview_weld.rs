@@ -145,7 +145,7 @@ fn format_of(rung: profile::Rung) -> Format {
 #[test]
 fn leg_1_the_blocks_that_ship_are_the_blocks_the_encoder_made() {
     let (width, height, texels) = corpus_texels();
-    for profile in [Profile::HiFi, Profile::Lite] {
+    for profile in [Profile::HiFi, Profile::LoFi] {
         let shipped = ship(profile, width, height, &texels);
         let Format::Astc { block, color } = format_of(shipped.rung) else {
             panic!(
@@ -174,7 +174,7 @@ fn leg_1_the_blocks_that_ship_are_the_blocks_the_encoder_made() {
 #[test]
 fn leg_2_the_preview_reconstructs_the_encoders_own_reference_decode() {
     let (width, height, texels) = corpus_texels();
-    for profile in [Profile::HiFi, Profile::Lite] {
+    for profile in [Profile::HiFi, Profile::LoFi] {
         let shipped = ship(profile, width, height, &texels);
         let Format::Astc { block, color } = format_of(shipped.rung) else {
             panic!("{profile:?} chose {}, no blocks to decode", shipped.rung)
