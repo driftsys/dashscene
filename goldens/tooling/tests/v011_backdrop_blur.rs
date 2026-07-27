@@ -809,3 +809,315 @@ fn a_non_finite_blur_radius_renders_as_no_blur() {
         );
     }
 }
+
+/// The blurred panel's box. Named because the scenes build the panel from it
+/// and one assertion picks that rect back out of the scene's five.
+///
+/// Picking it positionally would not fail if it picked a mark instead: every
+/// rect the group holds carries the same free-path alpha, so the opacity
+/// assertion below passes on any of them. Matching on geometry is what makes
+/// the rect being asserted about the one the assertion names. The assertion's
+/// own teeth are elsewhere — it fails when the group takes the render-target
+/// path, or when the alpha is not folded at all.
+const PANEL: (f32, f32, f32, f32) = (32.0, 8.0, 24.0, 40.0);
+
+/// A band, a fill-less panel carrying `blurs`, and a partial-opacity ancestor
+/// holding the panel plus two marks that do not overlap each other.
+///
+///   bg white 64×64
+///     └── band black (0,0) 32×64
+///     └── group (0,0) 64×64, opacity `alpha`
+///           ├── mark green (0,56) 8×8
+///           ├── mark green (56,56) 8×8
+///           └── panel (32,8) 24×40, no fill, `blurs`
+///
+/// The two marks are what make the group's painted subtree real: they are the
+/// pair `subtree_overlaps` tests, and they are disjoint, so the group takes the
+/// free path and `alpha` folds into every subtree rect's `RectEntry::opacity`
+/// (`docs/decisions/masks-and-group-opacity.md`). Were they to overlap, the
+/// group would become a `GroupComposite` instead and
+/// `the_backdrop_layer_carries_the_free_path_group_alpha` would say so.
+///
+/// The panel carries no fill, so the only ink it contributes is the blurred
+/// backdrop itself. That is what lets the alpha claim be measured as
+/// arithmetic on one composite rather than inferred through a frost fill.
+fn dimmed_scene(alpha: f32, blurs: &[f32]) -> Arena {
+    let (px, py, pw, ph) = PANEL;
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let bg = boxed(&mut txn, None, 0.0, 0.0, 64.0, 64.0);
+    txn.set_prop(bg, Prop::Fill(WHITE));
+
+    let band = boxed(&mut txn, Some(bg), 0.0, 0.0, 32.0, 64.0);
+    txn.set_prop(band, Prop::Fill(BLACK));
+
+    let group = boxed(&mut txn, Some(bg), 0.0, 0.0, 64.0, 64.0);
+    txn.set_prop(group, Prop::Opacity(alpha));
+    for x in [0.0, 56.0] {
+        let mark = boxed(&mut txn, Some(group), x, 56.0, 8.0, 8.0);
+        txn.set_prop(mark, Prop::Fill(GREEN));
+    }
+
+    let panel = boxed(&mut txn, Some(group), px, py, pw, ph);
+    txn.set_prop(
+        panel,
+        Prop::Blurs(
+            blurs
+                .iter()
+                .map(|&radius| Blur {
+                    kind: BlurKind::Backdrop,
+                    radius,
+                })
+                .collect(),
+        ),
+    );
+    txn.commit();
+    arena
+}
+
+/// The row the blur is measured along: y = 28 is the panel's vertical middle,
+/// far from its top and bottom edges and from the marks, so every pixel in it
+/// moves for one reason only — the backdrop read across the seam at x = 32.
+const PROBE_ROW: usize = 28;
+
+/// The panel's own columns, x = 32 through 55.
+fn probe_row(bytes: &[u8]) -> Vec<u8> {
+    (32..56)
+        .map(|x| goldens::pixel(bytes, SIZE, x, PROBE_ROW)[0])
+        .collect()
+}
+
+fn dimmed_render(alpha: f32, blurs: &[f32]) -> Vec<u8> {
+    let arena = dimmed_scene(alpha, blurs);
+    let mut painter = SkiaPainter::new(SIZE as i32, SIZE as i32);
+    render(&arena, &mut painter)
+}
+
+/// The blurred-backdrop layer composites at the rect's **free-path group
+/// alpha**, not at full opacity.
+///
+/// `backdrop_layer_paint` folds `RectEntry::opacity` into the paint the layer
+/// composites through, and every scene above it in this file has
+/// `rect.opacity == 1.0` — the grouped scene's panel included, because it sits
+/// inside a render-target group and `dashscene-core` resets the rect's own
+/// opacity to 1.0 there, the alpha being carried by the `GroupComposite`
+/// instead. Deleting the fold therefore left all seven of them green (debt
+/// #406).
+///
+/// The claim measured here is the CSS model `backdrop_layer_paint` documents:
+/// below `alpha = 1.0` the filtered backdrop composites **at the element's
+/// alpha over the unfiltered one**. So each pixel of the dimmed render must be
+/// the alpha-weighted mix of the same pixel in the full-opacity blurred render
+/// and in the unblurred one — an equality with no free parameter, which a
+/// layer composited at any other opacity fails.
+#[test]
+fn the_backdrop_layer_carries_the_free_path_group_alpha() {
+    const ALPHA: f32 = 0.5;
+    const BLUR: [f32; 1] = [12.0];
+
+    // The free path, asserted rather than assumed: no render-target group, and
+    // the alpha landed on the panel's own rect. The panel is the last rect the
+    // scene emits.
+    let dimmed_arena = dimmed_scene(ALPHA, &BLUR);
+    let scene = dimmed_arena.committed();
+    assert!(
+        scene.groups().is_empty(),
+        "the group's painted subtree does not overlap, so it must take the free path rather \
+         than becoming a GroupComposite — this test measures the free path only"
+    );
+    let panel_rect = scene
+        .rects()
+        .iter()
+        .find(|r| (r.x, r.y, r.w, r.h) == PANEL)
+        .expect("the blurred panel's own rect, matched on its box");
+    assert_eq!(
+        panel_rect.opacity, ALPHA,
+        "the free path folds the ancestor's alpha into the blurred panel's own rect"
+    );
+
+    let dimmed = probe_row(&dimmed_render(ALPHA, &BLUR));
+    let opaque = probe_row(&dimmed_render(1.0, &BLUR));
+    let sharp = probe_row(&dimmed_render(1.0, &[]));
+
+    // The control: at full opacity the blur moves this row a long way, so the
+    // mix below is being checked over pixels that actually differ.
+    let moved = opaque.iter().zip(&sharp).filter(|(a, b)| a != b).count();
+    assert!(
+        moved >= 10,
+        "the blur must move a large part of the probe row at full opacity, or the mix proves \
+         nothing: only {moved} of {} columns moved",
+        opaque.len()
+    );
+
+    for (x, ((&got, &blurred), &plain)) in dimmed.iter().zip(&opaque).zip(&sharp).enumerate() {
+        let want = (ALPHA * f32::from(blurred) + (1.0 - ALPHA) * f32::from(plain)).round() as i32;
+        assert!(
+            (i32::from(got) - want).abs() <= 2,
+            "the blurred backdrop composites at the rect's free-path alpha: column x={} is \
+             {got}, but {ALPHA} of the blurred value {blurred} over the unblurred {plain} is \
+             {want}. Full row: dimmed {dimmed:?} opaque {opaque:?}",
+            x + 32
+        );
+    }
+}
+
+/// Several backdrop blurs on one node apply **in list order, each over the
+/// result of the last** — the posture the painter's loop states in a comment
+/// and the shadow loops share for Figma's back-to-front `effects` array.
+///
+/// No scene above puts two backdrop blurs on one node, so `.take(1)` on the
+/// blur loop left all seven green (debt #407). Three claims separate the real
+/// behaviour from the ways a loop can go wrong:
+///
+/// - the compounded render is **darker than either radius alone** at every
+///   column, because two passes spread the band further than one. A loop that
+///   keeps only the first entry, or lets the last win, matches a single-radius
+///   render exactly;
+/// - the two orders **render differently**, so the list order is load-bearing
+///   rather than incidental;
+/// - **which** order is darker at the panel's left edge follows from "each
+///   over the result of the last": both orders read the same sharp band
+///   through their final pass, and what differs is the already-blurred inside
+///   content that pass mixes in. After a radius-12 first pass the inside is
+///   darker than after a radius-4 one, so applying the larger radius first
+///   stays darker. A reversed loop inverts this.
+#[test]
+fn several_backdrop_blurs_compound_in_list_order() {
+    const BIG: f32 = 12.0;
+    const SMALL: f32 = 4.0;
+
+    let big_first = probe_row(&dimmed_render(1.0, &[BIG, SMALL]));
+    let small_first = probe_row(&dimmed_render(1.0, &[SMALL, BIG]));
+    let big_only = probe_row(&dimmed_render(1.0, &[BIG]));
+    let small_only = probe_row(&dimmed_render(1.0, &[SMALL]));
+
+    // Compounding: never lighter than either single blur, and strictly darker
+    // across the columns the second pass can still reach. `SMALL` alone has
+    // fallen back to white by column 6, so the strict window stops there.
+    const STRICT_COLUMNS: usize = 6;
+    for (label, single) in [
+        ("the larger radius", &big_only),
+        ("the smaller", &small_only),
+    ] {
+        for (x, (&got, &alone)) in big_first.iter().zip(single).enumerate() {
+            assert!(
+                got <= alone,
+                "two backdrop blurs must spread the band at least as far as one: column x={} \
+                 is {got} compounded but {alone} under {label} alone. \
+                 compounded {big_first:?} single {single:?}",
+                x + 32
+            );
+            assert!(
+                x >= STRICT_COLUMNS || got < alone,
+                "two backdrop blurs must spread the band strictly further than one near the \
+                 seam: column x={} is {got} both compounded and under {label} alone. \
+                 compounded {big_first:?} single {single:?}",
+                x + 32
+            );
+        }
+    }
+
+    // List order is load-bearing: the same two radii in the other order do not
+    // render the same pixels.
+    assert_ne!(
+        big_first, small_first,
+        "applying the two radii in the other order must not render identically, or nothing \
+         distinguishes 'in list order' from 'in any order'"
+    );
+
+    // And it is the documented order that is applied. The left edge is where
+    // the two differ most, both having the same sharp band outside it.
+    assert!(
+        big_first[0] + 8 < small_first[0],
+        "each blur applies over the result of the last, so the larger radius applied first \
+         leaves the panel's left edge darker: {} with {BIG} first, {} with {SMALL} first",
+        big_first[0],
+        small_first[0]
+    );
+}
+
+/// A `BlurKind::Layer` blur renders **nothing**, and does not disturb a
+/// backdrop blur sharing the list with it.
+///
+/// The painter's blur loop filters on `BlurKind::Backdrop`, so a layer blur
+/// draws nothing at all. That is deliberate — layer blur is node-local,
+/// budgeted at v1, and
+/// `docs/decisions/backdrop-blur-is-core-vocabulary.md` records why it does not
+/// ride along — and nothing in this tree emits one, because `dashc` lowers only
+/// `BACKGROUND_BLUR`. It was still an unasserted claim (debt #408).
+///
+/// Pinning it keeps the gap a named gap: implementing layer blur has to update
+/// this test deliberately, rather than changing the render unnoticed. The
+/// mixed-list cases are what make the assertion about the **filter** rather
+/// than about the first entry winning — dropping the filter would turn a layer
+/// blur into a second backdrop blur, which
+/// `several_backdrop_blurs_compound_in_list_order` shows is plainly visible.
+#[test]
+fn a_layer_blur_renders_as_no_blur() {
+    const RADIUS: f32 = 12.0;
+
+    // One `(kind, radius)` list per render, rather than two parallel slices: a
+    // zip of two slices truncates to the shorter one, so a mismatched pair
+    // would quietly render fewer blurs than the call site asked for.
+    let render_blurs = |blurs: &[(BlurKind, f32)]| -> Vec<u8> {
+        let (px, py, pw, ph) = PANEL;
+        let mut arena = Arena::new();
+        {
+            let mut txn = arena.open();
+            let bg = boxed(&mut txn, None, 0.0, 0.0, 64.0, 64.0);
+            txn.set_prop(bg, Prop::Fill(WHITE));
+            let band = boxed(&mut txn, Some(bg), 0.0, 0.0, 32.0, 64.0);
+            txn.set_prop(band, Prop::Fill(BLACK));
+            let panel = boxed(&mut txn, Some(bg), px, py, pw, ph);
+            txn.set_prop(
+                panel,
+                Prop::Blurs(
+                    blurs
+                        .iter()
+                        .map(|&(kind, radius)| Blur { kind, radius })
+                        .collect(),
+                ),
+            );
+            txn.commit();
+        }
+        let mut painter = SkiaPainter::new(SIZE as i32, SIZE as i32);
+        render(&arena, &mut painter)
+    };
+
+    let none = render_blurs(&[]);
+    let layer = render_blurs(&[(BlurKind::Layer, RADIUS)]);
+    let backdrop = render_blurs(&[(BlurKind::Backdrop, RADIUS)]);
+
+    assert_eq!(
+        differing(&layer, &none),
+        0,
+        "a BlurKind::Layer blur renders nothing: the reference painter implements backdrop \
+         blur only, and layer blur is a named gap"
+    );
+
+    // The control: the same radius as a backdrop blur moves the render a long
+    // way, so the equality above is the kind filter and not a scene that
+    // cannot show a blur at all.
+    let moved = differing(&backdrop, &none);
+    assert!(
+        moved > SENSITIVITY_FLOOR,
+        "the same radius as a backdrop blur must move the render, or the equality above proves \
+         nothing: only {moved} px differ (floor {SENSITIVITY_FLOOR})"
+    );
+
+    // A layer blur beside a backdrop blur changes neither the backdrop blur's
+    // result nor its position in the list. Both orders, because a filter that
+    // was really a `first()` would pass one of them.
+    for mixed_list in [
+        [(BlurKind::Layer, RADIUS), (BlurKind::Backdrop, RADIUS)],
+        [(BlurKind::Backdrop, RADIUS), (BlurKind::Layer, RADIUS)],
+    ] {
+        let mixed = render_blurs(&mixed_list);
+        assert_eq!(
+            differing(&mixed, &backdrop),
+            0,
+            "a BlurKind::Layer entry beside a backdrop blur is skipped, not applied and not \
+             counted: {mixed_list:?} must render exactly as the backdrop blur alone"
+        );
+    }
+}
