@@ -37,8 +37,8 @@ The launch fleet:
 
 | Wave | Status             | GPU architecture                                | Targets                       | HiFi encoding | LoFi encoding | Field (SDF) encoding | Encoder                                   |
 | ---- | ------------------ | ----------------------------------------------- | ----------------------------- | ------------- | ------------- | -------------------- | ----------------------------------------- |
-| 1-2  | committed          | Adreno (Qualcomm) and PowerVR/IMG (Imagination) | SA8255, SA7255, Renesas R-Car | ASTC 4x4      | ASTC 6x6/8x8  | EAC-R11              | `astcenc`, version-pinned                 |
-| 3    | proposed ("maybe") | Ampere/Blackwell (NVIDIA, desktop architecture) | DRIVE Orin, DRIVE Thor        | BC7           | BC1           | BC4                  | not yet chosen — gated on the probe below |
+| 1-2  | committed          | Adreno (Qualcomm) and PowerVR/IMG (Imagination) | SA8255, SA7255, Renesas R-Car | ASTC 4x4      | ASTC 6x6/8x8  | none — canonical     | `astcenc`, version-pinned                 |
+| 3    | proposed ("maybe") | Ampere/Blackwell (NVIDIA, desktop architecture) | DRIVE Orin, DRIVE Thor        | BC7           | BC1           | none — canonical     | not yet chosen — gated on the probe below |
 
 **Two clarifications from story #432**, which built the band contracts this
 table's columns describe (`asset-quality-profile-bands.md`):
@@ -49,15 +49,29 @@ table's columns describe (`asset-quality-profile-bands.md`):
   committed assets HiFi measures to 6x6, 8x8 and uncompressed, and never to
   4x4 — so read those two columns as "typically", which is how the design
   capture worded them.
-- The **`Field (SDF) encoding` column contradicts the fields-never-lossy
-  rule and is unresolved.** EAC-R11 and BC4 are lossy block formats, while
-  `asset-quality-profile-bands.md` gives a distance field no lossy rung
-  under any profile, on measured evidence: at 4x4, the finest ASTC rung, the
-  committed MSDF atlases still fail both bands. Until the repository owner
-  settles it, **the strict reading holds and these two cells are not
-  implemented** — its failure mode is a size regression rather than a silent
-  quality loss. Issue #453 owns the EAC-R11 encoder and carries the
-  question.
+- The **`Field (SDF) encoding` column is settled: distance fields are not
+  block-compressed on any target.** It read EAC-R11 and BC4 until
+  2026-07-27. Both are lossy block formats, and
+  `docs/decisions/compress-raster-only.md` gives a distance field no lossy
+  rung under any profile, so the cells contradicted the rule the same
+  document set.
+
+  Two independent grounds settle it, either sufficient alone:
+
+  - **Structural.** EAC-R11 is single-channel — one 11-bit red channel —
+    and these fields are **multi-channel** MSDF
+    (`baked-vector-msdf-field.md`); the committed atlases are RGB. EAC-R11
+    has nowhere to put two of the three channels. BC4 is single-channel for
+    the same reason.
+  - **Measured.** At 4x4, the finest ASTC rung, the committed MSDF atlases
+    still put 8.60 % and 8.88 % of texels beyond delta 8 (story #432). No
+    lossy rung holds a field band, so the format question does not arise.
+
+  The design capture's sentence — "distance fields never enter a lossy path
+  (validator rule); single-channel fields ride EAC-R11" — contained both
+  halves of the contradiction. The first clause is the one that survives,
+  and the second described a plain single-channel SDF design that the
+  project replaced with MSDF.
 
 Waves 1 and 2 collapse into one table row because they are one bank: ASTC
 is a vendor-neutral bitstream, so Adreno and PowerVR/IMG decode the
