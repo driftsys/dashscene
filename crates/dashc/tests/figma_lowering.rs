@@ -1216,6 +1216,107 @@ fn an_unsupported_fill_within_a_stack_is_still_refused_by_name() {
 }
 
 #[test]
+fn an_image_fill_stacked_with_an_unsupported_fill_does_not_orphan_the_asset() {
+    // Debt #485. `fills_of` inspects every visible fill regardless of order
+    // (debt #329), so the IMAGE fill below gets identified and registered
+    // into the asset table before the PATTERN fill is reached and blocks the
+    // whole node. The node is then skipped along with its paint entry, and
+    // nothing in the document names the asset that was registered on its way
+    // past — an orphan the asset table must not be able to hold.
+    let file = document(serde_json::json!({
+        "name": "image-stacked-with-a-pattern",
+        "type": "FRAME",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+        "fills": [
+            { "type": "IMAGE", "scaleMode": "FILL", "imageRef": IMAGE_REF },
+            { "type": "PATTERN" },
+        ],
+    }));
+
+    let (doc, diagnostics) = lower(&file, Profile::Core, &images())
+        .expect("an unsupported construct is diagnosed, not fatal");
+    assert_sole_unsupported(
+        &doc,
+        &diagnostics,
+        "image-stacked-with-a-pattern",
+        "a PATTERN paint",
+    );
+
+    assert!(
+        doc.assets.is_empty(),
+        "the node whose image was inspected never lowers, so nothing may \
+         name the asset: the asset table must stay empty, found {:?}",
+        doc.assets,
+    );
+}
+
+/// A second, distinct payload — a 7x5 PNG, independently dimensioned from
+/// `IMAGE_PNG`'s 16x16 — so a mapping that resolves the wrong bytes shows up
+/// on sight rather than merely on count.
+const IMAGE_PNG_2: &[u8] = include_bytes!("fixtures/image_id/sample.png");
+const IMAGE_REF_2: &str = "second-image-ref";
+
+#[test]
+fn a_rolled_back_image_registration_does_not_leave_a_stale_cache_entry() {
+    // Debt #485, continued. The rollback undoes two things: the asset-table
+    // entry, and the `image_of` cache entry that points at it. If only the
+    // table were undone, the cache would still answer a later lookup for the
+    // rolled-back imageRef with the index it used to have — an index a
+    // wholly unrelated later image can now legitimately occupy. `blocked`
+    // registers IMAGE_REF and then gets rolled back; `other` then takes the
+    // index `blocked`'s registration vacated; `reused` names IMAGE_REF again
+    // and must decode its own bytes, not cache-hit `other`'s.
+    let file = document(serde_json::json!({
+        "name": "root",
+        "type": "FRAME",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0 },
+        "children": [
+            {
+                "name": "blocked",
+                "type": "FRAME",
+                "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+                "fills": [
+                    { "type": "IMAGE", "scaleMode": "FILL", "imageRef": IMAGE_REF },
+                    { "type": "PATTERN" },
+                ],
+            },
+            {
+                "name": "other",
+                "type": "FRAME",
+                "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+                "fills": [{ "type": "IMAGE", "scaleMode": "FILL", "imageRef": IMAGE_REF_2 }],
+            },
+            {
+                "name": "reused",
+                "type": "FRAME",
+                "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+                "fills": [{ "type": "IMAGE", "scaleMode": "FILL", "imageRef": IMAGE_REF }],
+            },
+        ],
+    }));
+
+    let mut both_images = images();
+    both_images.insert(
+        IMAGE_REF_2.to_string(),
+        ImageAsset {
+            format: ImageFormat::Png,
+            bytes: IMAGE_PNG_2.to_vec(),
+        },
+    );
+
+    let (doc, diagnostics) =
+        lower(&file, Profile::Core, &both_images).expect("the document lowers");
+    assert_sole_unsupported(&doc, &diagnostics, "blocked", "a PATTERN paint");
+
+    let reused_index = image_index(&doc, "reused");
+    assert_eq!(
+        doc.assets[reused_index as usize].bytes, IMAGE_PNG,
+        "the reused imageRef must resolve to its own bytes, not a stale cache \
+         entry pointing at whatever now occupies its old index",
+    );
+}
+
+#[test]
 fn a_rotated_node_fails_loudly_rather_than_silently_dropping_the_rotation() {
     // Document has no rotation vocabulary and no Construct variant for it, so a
     // rotated node cannot become a diagnostic — P4 forbids lowering it as

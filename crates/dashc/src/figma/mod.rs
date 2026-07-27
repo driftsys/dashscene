@@ -760,6 +760,16 @@ impl Walk<'_> {
         let mut paint: Option<DocPaint> = None;
         let mut text: Option<String> = None;
         let mut text_style: Option<DocTextStyle> = None;
+
+        // Debt #485. An IMAGE fill registers its asset as a side effect of
+        // `paint_kind` inspecting it, before this node's blockers are fully
+        // known — a later blocker (a sibling fill, a stroke, an effect) can
+        // still skip the node whole. Recording the table length here and
+        // truncating back to it below, whenever this node turns out blocked,
+        // undoes exactly the registrations this node's own inspection made:
+        // nothing else can have referenced an index this node just minted,
+        // since a node's children are only visited after it returns.
+        let assets_before = self.doc.assets.len();
         if node.kind == "TEXT" {
             let (t, ts) = self.text_of(node, &mut blockers);
             text = t;
@@ -818,6 +828,17 @@ impl Walk<'_> {
         // needs the same treatment, that is where the reasoning lives.
 
         if !blockers.is_empty() {
+            // Undo any asset this node's own paint lowering registered above
+            // (debt #485): the node never enters the document, so nothing is
+            // left to name an asset that reached the table only because this
+            // node's fill happened to be inspected before its blocker was
+            // found. `image_of` also drops its entries for those indices, or
+            // a later node reusing the same imageRef would cache-hit an
+            // index that no longer names what it used to.
+            self.doc.assets.truncate(assets_before);
+            self.image_of
+                .retain(|_, index| (*index as usize) < assets_before);
+
             // The index this node would have taken had it lowered. The node is
             // skipped either way — refused under Strict, omitted with a warning
             // under Partial — so it never enters the document; the index is an
