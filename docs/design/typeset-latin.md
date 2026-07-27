@@ -380,9 +380,14 @@ returning the flat slot list in slot order, because that is the contract
 `PositionedGlyph::font` indexes.
 
 `Font` is public — the measure callback
-(#29) and the painter (#30) both need the font handle and its metrics,
-including `Font::line_advance()` (the baseline-to-baseline distance
-layout uses, from the primary font). `Font::metrics()` returns the
+(#29) and the painter (#30) both need the font handle and its metrics.
+This paragraph also named `Font::line_advance()` as one of those
+metrics until 2026-07-27, when the method was removed as dead code
+(issue 315). Neither consumer ever called it: the per-run line-height
+fix (issue 314) took its last real caller. Taking a
+baseline-to-baseline distance from the primary font is what that defect
+was — the cascade's primary font is not necessarily the font a given
+run shapes with. `Font::metrics()` returns the
 same `atlas::FontMetrics` type the blob records, extracted through the
 same shared function, so the runtime and the build-time artifacts
 cannot disagree. `ShapedText`/`ShapedGlyph`/`RunContext` stay
