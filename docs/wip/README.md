@@ -11,10 +11,10 @@ project's convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports nine files
+## Why the WIP gate currently reports eight files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-nine and exits non-zero. All nine are deliberate, accepted exceptions rather
+eight and exits non-zero. All eight are deliberate, accepted exceptions rather
 than ungardened debt, and they are recorded here so the gate's result is
 explained rather than merely tolerated.
 
@@ -22,20 +22,17 @@ Six are design captures, described below. **One is a design spike** —
 `2026-07-27-glyph-runs-from-commit-SPIKE.md`, which answers whether glyph runs
 should become a commit output (issue #505) and carries the measured feasibility
 work behind that answer. It is archived when the design lands or is rejected.
-**Two are driver prompts**, the brief
+**One is a driver prompt**, the brief
 a session is handed to carry out a named piece of work. Driver prompts are
 transient by construction — spent the moment their work lands — and the
 convention is to archive them verbatim rather than garden them into records, as
-the seven now in `docs/archive/` were.
+the eight now in `docs/archive/` were.
 
-- `2026-07-27-vector-backdrop-blur-DRIVER-PROMPT.md` — issue #503, the baked-vector
-  half of the backdrop-blur replacement that PR #504 fixed only for the
-  parametric path. Carries the measurement that rules out the obvious fix.
 - `2026-07-27-t2-checks-that-cannot-fail-DRIVER-PROMPT.md` — v0.13's
   `t2-check-has-no-teeth` tier, 19 items whose common property is an assertion
   that cannot distinguish right from wrong.
 
-Each is archived when its work lands.
+It is archived when its work lands.
 
 Five are forward-looking design captures for work that has not started. Every
 one says so in its own `status` line — "Nothing here is implemented". Gardening
