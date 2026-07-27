@@ -14,7 +14,7 @@
 //! this file's only pattern — parse never refuses on a value it does not
 //! recognize.
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 /// A `GET /v1/files/:key` response. Only `document` is read.
 #[derive(Debug, Deserialize)]
@@ -341,8 +341,6 @@ pub struct ComplexStrokeProperties {
 #[serde(rename_all = "camelCase")]
 pub struct TextStyle {
     pub font_family: String,
-    #[serde(default)]
-    pub font_post_script_name: Option<String>,
     /// `Regular`, `Bold`, `Italic`, `Bold Italic`, … The document font
     /// reference is family + weight; an italic style has no vocabulary and is
     /// diagnosed.
@@ -366,8 +364,19 @@ pub struct TextStyle {
     /// per-axis pair, `docs/decisions/figma-flex-lowering.md` D1);
     /// `TRUNCATE` is the one value that pair cannot express — an ellipsis has
     /// no vocabulary, so it is diagnosed.
-    #[serde(default)]
-    pub text_auto_resize: Option<String>,
+    ///
+    /// Absent and `null` both normalize to `NONE` here, at the parse boundary
+    /// (debt #339): `NONE` is the REST default and Figma omits the field for a
+    /// fixed-box label, so absent *is* `NONE`
+    /// (`docs/decisions/figma-text-lowering.md` D2). Reading that default once,
+    /// where the field enters the compiler, is what keeps a later consumer from
+    /// treating absent as some other mode — the #332 bug class, where absent
+    /// was mapped to auto-size and a fixed label collapsed to its content.
+    #[serde(
+        default = "text_auto_resize_none",
+        deserialize_with = "text_auto_resize_or_none"
+    )]
+    pub text_auto_resize: String,
     /// `NONE` (default), `UNDERLINE`, or `STRIKETHROUGH`.
     #[serde(default)]
     pub text_decoration: Option<String>,
@@ -402,6 +411,26 @@ pub struct TextStyle {
     /// diagnosed.
     #[serde(default)]
     pub opentype_flags: serde_json::Map<String, serde_json::Value>,
+}
+
+/// The `textAutoResize` value of a style that carries none: Figma's own REST
+/// default (see [`TextStyle::text_auto_resize`]).
+fn text_auto_resize_none() -> String {
+    "NONE".to_string()
+}
+
+/// A present `textAutoResize`, with JSON `null` normalized to `NONE`.
+///
+/// `serde(default)` covers an absent field; this covers the other spelling of
+/// the same absence. Figma writes `null` for an unset optional field
+/// (`strokeDashes` and `fontPostScriptName` both arrive that way in the
+/// captures), and refusing the whole file over one would be a far worse
+/// failure than the mode it stands for.
+fn text_auto_resize_or_none<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_else(text_auto_resize_none))
 }
 
 /// One fill or stroke.

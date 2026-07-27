@@ -283,6 +283,57 @@ fn layout_sizing_wins_when_it_and_text_auto_resize_disagree() {
     assert_eq!(c.sizing_v, AxisSizing::Hug);
 }
 
+/// `base_style()` parsed into the REST subset, with `textAutoResize` written
+/// as `value` says: `None` leaves the field out of the JSON entirely, and
+/// `Some(v)` writes `v` (a string, or JSON `null`).
+fn parsed_style(value: Option<serde_json::Value>) -> dashc_wasm::figma::rest::TextStyle {
+    let mut style = base_style();
+    if let Some(value) = value {
+        style
+            .as_object_mut()
+            .expect("base_style is a JSON object")
+            .insert("textAutoResize".to_string(), value);
+    }
+    serde_json::from_value(style).expect("the style parses into the REST subset")
+}
+
+#[test]
+fn an_absent_text_auto_resize_parses_the_same_as_an_explicit_none() {
+    // `NONE` is the REST default and Figma omits it, so absent and explicit
+    // `NONE` are the same authored intent (`docs/decisions/figma-text-lowering.md`
+    // D2). Normalizing at the parse boundary is what makes them the same
+    // *value*, so no later consumer can branch on the difference and
+    // reintroduce the #332 bug class (debt #339). The two parses are compared
+    // against each other rather than against a literal, so the assertion does
+    // not depend on how the field is spelled.
+    assert_eq!(
+        parsed_style(None).text_auto_resize,
+        parsed_style(Some("NONE".into())).text_auto_resize,
+        "an absent textAutoResize must parse to the same value as an explicit NONE",
+    );
+    // Normalizing absent to `NONE` must not flatten the other modes onto it:
+    // an authored `WIDTH_AND_HEIGHT` still has to arrive distinguishable, or
+    // the assertion above would hold for a boundary that erased every value.
+    assert_ne!(
+        parsed_style(None).text_auto_resize,
+        parsed_style(Some("WIDTH_AND_HEIGHT".into())).text_auto_resize,
+        "normalizing must not collapse a real mode onto the default",
+    );
+}
+
+#[test]
+fn a_null_text_auto_resize_parses_the_same_as_an_explicit_none() {
+    // Figma writes JSON `null` for an unset optional field (`strokeDashes`
+    // and `fontPostScriptName` both arrive that way in the captures), so a
+    // null `textAutoResize` is a shape the parse boundary must normalize too
+    // rather than refuse the whole file over.
+    assert_eq!(
+        parsed_style(Some(serde_json::Value::Null)).text_auto_resize,
+        parsed_style(Some("NONE".into())).text_auto_resize,
+        "a null textAutoResize must parse to the same value as an explicit NONE",
+    );
+}
+
 // ---------------------------------------------------------------------------
 // The strings and styles round-trip through dashscene-core (the acceptance
 // criterion: "round-trip through dashscene-core").
