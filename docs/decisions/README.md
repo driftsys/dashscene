@@ -509,4 +509,16 @@ so each technote stops being the authority for the conclusion it reached:
   backgrounds and welcome sequences, not the 380x380 photograph they were
   pinned on (#462) (#345).
 
+- [glyph-coverage-is-declared-at-build-time.md](glyph-coverage-is-declared-at-build-time.md)
+  — an atlas learns its glyphs at build time, by closing the document's own
+  text over the font's substitution rules, the way web font subsetting does.
+  Dynamic runtime generation is deferred, and when it lands it is a
+  **painter capability** rather than a profile property: coverage stays a
+  document fact identical everywhere, because coverage feeds shaping and
+  shaping decides advance widths, so a profile that generated glyphs would
+  lay out the same document differently. Follows backdrop blur's posture —
+  incapacity is a render-time report, not a compile-time refusal. Carries a
+  stated reopening condition and three constraints, including that a dynamic
+  generator must be this project's own or the divergence measured (#463).
+
 See the `sdd-working-memory-lifecycle` rule.
