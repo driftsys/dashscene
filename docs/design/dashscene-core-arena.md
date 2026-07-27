@@ -333,9 +333,21 @@ the change, so the per-frame update path (`dashlang`'s reactive layer,
 FLIP) is affordable at ~1000 live nodes:
 
 - **Retained interners.** `paint_map` and `clip_map` persist on the
-  `Arena` (taken with `mem::take` for the commit, restored after), so
-  paint and clip indices are stable across commits. This is what
-  collapses the dirty check to a bit compare (step 3).
+  `Arena` (taken with `mem::take` for the commit and put back by a scope
+  guard, so a commit that panics part-way through leaves them describing
+  the front buffer's tables rather than empty — issue #196), so paint and
+  clip indices are stable across commits. This is what collapses the
+  dirty check to a bit compare (step 3).
+- **Bounded pools.** Retaining an index means a changed entry earns a new
+  one and leaves its old entry behind, which grew the paint and clip
+  tables by one entry per commit under an animated fill or a resizing
+  clip, without bound (issue #197). A commit whose table has grown past
+  both a small floor and twice the rect count rebuilds that table from
+  the entries its rects reference, renumbering them and re-keying the
+  interner. Each rebuild at least halves the table, so its `O(scene)`
+  cost amortizes to a constant per commit; the commit that rebuilds
+  reports every renumbered rect dirty, which is what a painter needs to
+  re-upload them.
 - **Copy-on-write tables.** The back buffer's paint and clip tables, and
   the `node_of`/`rect_index` maps, start as `Arc` clones of the previous
   commit's and are `make_mut`-copied only when a genuinely new entry is

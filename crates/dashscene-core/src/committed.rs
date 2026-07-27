@@ -32,6 +32,15 @@ use crate::arena::NodeId;
 /// slot), and the two index maps are shared outright unless the tree
 /// structure changed. A geometry-only or no-op commit therefore touches
 /// no table allocation at all.
+///
+/// A changed entry earns a new index and leaves its old entry behind, so
+/// the pooled tables grow with the distinct entries seen. A commit that
+/// finds most of a table unreachable from its rects rebuilds that table
+/// and renumbers the rects, which bounds the growth (issue #197); such a
+/// commit reports every renumbered rect dirty. Indices are therefore
+/// stable between rebuilds, not for the arena's life — a consumer must
+/// resolve them against the same scene it read them from, never cache
+/// them across commits.
 #[derive(Debug, Default)]
 pub struct CommittedScene {
     pub(crate) rects: Vec<RectEntry>,
