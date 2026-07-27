@@ -3,17 +3,20 @@
 //! decoded fields (docs/specification/05-qualification.md).
 
 use dashbuf::{
-    Color, Document, DocumentArgs, FixedSizeLayout, Node, NodeArgs, SolidFill, SolidFillArgs,
+    Document, DocumentArgs, FixedSizeLayout, Node, NodeArgs, SolidFill, SolidFillArgs,
     root_as_document,
 };
 use flatbuffers::FlatBufferBuilder;
+
+mod common;
+use common::red;
 
 #[test]
 fn node_round_trips_through_a_document_buffer() {
     let mut builder = FlatBufferBuilder::new();
 
     let name = builder.create_string("root");
-    let color = Color::new(1.0, 0.0, 0.0, 1.0);
+    let color = red();
     let paint = SolidFill::create(
         &mut builder,
         &SolidFillArgs {
