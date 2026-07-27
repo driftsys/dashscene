@@ -173,6 +173,51 @@ Deno.test("an unresolved imageRef is a named failure", () => {
   assertEquals(detail.imageRef, IMAGE_REF);
 });
 
+Deno.test("strict: false reaches the real wasm and partial-emits with a figma.unsupported warning", () => {
+  // Issue #321: the Partial path (wire flag 0) was only unit-tested on each
+  // side (Rust: crates/dashc/tests/figma_lowering.rs::partial_emits_the_frame_and_warns_on_the_skipped_vector;
+  // TS: the flag write in wasm.ts) and exercised end to end through a stub
+  // dashc in import_test.ts, never through the real compiled dashc.wasm. This
+  // mirrors the Rust fixture (`frame_with_vector_child`): a FRAME whose only
+  // problem is a VECTOR child with no fillGeometry — an omission-class gap.
+  const file = JSON.stringify({
+    document: {
+      name: "Document",
+      type: "DOCUMENT",
+      children: [{
+        name: "Page 1",
+        type: "CANVAS",
+        children: [{
+          name: "root",
+          type: "FRAME",
+          clipsContent: true,
+          absoluteBoundingBox: { x: 0, y: 0, width: 100, height: 100 },
+          children: [{
+            name: "glyph",
+            type: "VECTOR",
+            absoluteBoundingBox: { x: 0, y: 0, width: 10, height: 10 },
+            fills: [{ type: "SOLID", color: { r: 1, g: 0, b: 0, a: 1 } }],
+          }],
+        }],
+      }],
+    },
+  });
+
+  // strict: true (the default) refuses the same file outright — the other
+  // half of the same story, already covered by the REJECT-band and
+  // unresolved-image tests above at the default. Here the same file is sent
+  // once with strict: false: no throw, a document, and the gap named as a
+  // warning rather than dropped (P4).
+  const result = dashc.compileFigma(file, "core", new Map(), [], false);
+
+  assert(result.bytes.length > 0, "a document is emitted");
+  const warnings = result.diagnostics.filter((d) =>
+    d.rule === "figma.unsupported"
+  );
+  assertEquals(warnings.length, 1);
+  assertEquals(warnings[0].severity, "warning");
+});
+
 Deno.test("a module that is not dashc is refused by name", async () => {
   await assertRejects(
     () => loadDashc(new URL("./wasm.ts", import.meta.url)),

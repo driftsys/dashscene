@@ -1,3 +1,6 @@
+// @ts-check
+/// <reference path="../figma-env.d.ts" />
+
 // dashscene fixture author — development plugin, never published.
 // Builds one tier-1 corpus fixture (corpus/figma-fixtures/README.md) into the CURRENT
 // file. Run the menu command matching the file you have open:
@@ -5,7 +8,9 @@
 // Re-running a command replaces the previously generated frame, so
 // fixtures are regenerable, not hand-built.
 //
-// Plain JS on purpose: no build step, manifest points straight here.
+// Plain JS on purpose: no build step, manifest points straight here. Type-checked
+// against @figma/plugin-typings by `deno task check` (issue #246, the #93
+// remainder scoped out of story #39 for the annotator plugin only).
 
 const INTER = { family: "Inter", style: "Regular" };
 const INTER_BOLD = { family: "Inter", style: "Bold" };
@@ -27,19 +32,32 @@ const NOTO = { family: "Noto Sans", style: "Regular" };
 const NOTO_SEMIBOLD = { family: "Noto Sans", style: "SemiBold" };
 const NOTO_BOLD = { family: "Noto Sans", style: "Bold" };
 
+/** @param {number} v @returns {RGB} */
 const GRAY = (v) => ({ r: v, g: v, b: v });
+/**
+ * @param {RGB} color
+ * @param {number} [opacity]
+ * @returns {SolidPaint}
+ */
 const solid = (color, opacity) => ({
   type: "SOLID",
   color,
   opacity: opacity === undefined ? 1 : opacity,
 });
 
+/** @param {string} name */
 function removePrevious(name) {
   for (const n of figma.currentPage.children) {
     if (n.name === name) n.remove();
   }
 }
 
+/**
+ * @param {string} name
+ * @param {number} w
+ * @param {number} h
+ * @returns {FrameNode}
+ */
 function baseFrame(name, w, h) {
   removePrevious(name);
   const f = figma.createFrame();
@@ -50,6 +68,12 @@ function baseFrame(name, w, h) {
   return f;
 }
 
+/**
+ * @param {string} text
+ * @param {FontName} [font]
+ * @param {number} [size]
+ * @returns {TextNode}
+ */
 function label(text, font, size) {
   const t = figma.createText();
   t.fontName = font || INTER;
@@ -59,6 +83,11 @@ function label(text, font, size) {
   return t;
 }
 
+/**
+ * @param {string} name
+ * @param {RGB} color
+ * @returns {FrameNode}
+ */
 function cell(name, color) {
   const c = figma.createFrame();
   c.name = name;
@@ -70,6 +99,18 @@ function cell(name, color) {
 // Shared by lowering-variant-topology and real-file: the scaffold of one
 // variant COMPONENT, named "state=<name>", with auto-layout, uniform
 // padding, and a solid fill. Each command appends its own children.
+/**
+ * @param {string} stateName
+ * @param {{
+ *   layoutMode: "HORIZONTAL" | "VERTICAL",
+ *   itemSpacing: number,
+ *   paddingX: number,
+ *   paddingY: number,
+ *   fill: RGB,
+ *   cornerRadius?: number,
+ * }} opts
+ * @returns {ComponentNode}
+ */
 function variantShell(stateName, opts) {
   const comp = figma.createComponent();
   comp.name = "state=" + stateName;
@@ -107,20 +148,29 @@ const CHECKER_PNG_HEX =
   "36000000244944415478da637816600347721a6e70844b9c61106a204611b2f8" +
   "60d4301a0f83420300d2eaff01d0b08f690000000049454e44ae426082";
 const CHECKER_PNG = new Uint8Array(
-  CHECKER_PNG_HEX.match(/../g).map((byte) => parseInt(byte, 16)),
+  /** @type {string[]} */ (CHECKER_PNG_HEX.match(/../g)).map((byte) =>
+    parseInt(byte, 16)
+  ),
 );
 
 // Gradient geometry: Figma's plugin API takes a 2x3 gradientTransform (the
 // REST capture reports the same geometry as gradientHandlePositions, which
 // is what dashbuf's Gradient.handle_* fields mirror). The identity matrix
 // runs the gradient left to right across the node's box.
+/** @type {Transform} */
 const GRADIENT_TRANSFORM = [[1, 0, 0], [0, 1, 0]];
 
+/** @param {number} position @param {RGBA} color @returns {ColorStop} */
 const stop = (position, color) => ({ position, color });
 
+/**
+ * @param {"LINEAR" | "RADIAL" | "ANGULAR" | "DIAMOND"} kind
+ * @param {ReadonlyArray<ColorStop>} stops
+ * @returns {GradientPaint}
+ */
 function gradient(kind, stops) {
   return {
-    type: "GRADIENT_" + kind,
+    type: `GRADIENT_${kind}`,
     gradientTransform: GRADIENT_TRANSFORM,
     gradientStops: stops,
     visible: true,
@@ -135,6 +185,7 @@ function v03Paint() {
 
   const CELL_W = 200;
   const CELL_H = 140;
+  /** @param {FrameNode} node @param {number} col @param {number} row */
   const place = (node, col, row) => {
     root.appendChild(node);
     node.x = 32 + col * (CELL_W + 24);
@@ -143,6 +194,7 @@ function v03Paint() {
 
   // A paint swatch that carries ONE construct: no radius, no stroke, no
   // clip, unless the cell under construction adds it back.
+  /** @param {string} name @returns {FrameNode} */
   const swatch = (name) => {
     const s = figma.createFrame();
     s.name = name;
@@ -174,7 +226,9 @@ function v03Paint() {
     CENTER: [3, 1],
     OUTSIDE: [0, 2],
   };
-  for (const kind of ["LINEAR", "RADIAL", "ANGULAR", "DIAMOND"]) {
+  /** @type {ReadonlyArray<"LINEAR" | "RADIAL" | "ANGULAR" | "DIAMOND">} */
+  const GRADIENT_KINDS = ["LINEAR", "RADIAL", "ANGULAR", "DIAMOND"];
+  for (const kind of GRADIENT_KINDS) {
     const g = swatch("gradient-" + kind.toLowerCase());
     g.fills = [gradient(kind, ramp)];
     place(g, SLOT[kind][0], SLOT[kind][1]);
@@ -196,7 +250,9 @@ function v03Paint() {
   place(img, 1, 1);
 
   // --- the three stroke aligns, one cell each
-  for (const align of ["INSIDE", "CENTER", "OUTSIDE"]) {
+  /** @type {ReadonlyArray<"INSIDE" | "CENTER" | "OUTSIDE">} */
+  const STROKE_ALIGNS = ["INSIDE", "CENTER", "OUTSIDE"];
+  for (const align of STROKE_ALIGNS) {
     const s = swatch("stroke-" + align.toLowerCase());
     s.fills = [solid(GRAY(0.93))];
     s.strokes = [solid({ r: 0.85, g: 0.25, b: 0.35 })];
@@ -413,6 +469,13 @@ async function variablesBound() {
   col.renameMode(light, "light");
   const dark = col.addMode("dark");
 
+  /**
+   * @param {string} name
+   * @param {VariableResolvedDataType} type
+   * @param {VariableValue} lightVal
+   * @param {VariableValue} darkVal
+   * @returns {Variable}
+   */
   const mk = (name, type, lightVal, darkVal) => {
     const v = figma.variables.createVariable(name, col, type);
     v.setValueForMode(light, lightVal);
@@ -444,6 +507,7 @@ async function variablesBound() {
   root.paddingTop = root.paddingBottom = 24;
   root.itemSpacing = 24;
 
+  /** @param {string} name @returns {Promise<FrameNode>} */
   const makeCard = async (name) => {
     const card = figma.createFrame();
     card.name = name;
@@ -514,10 +578,19 @@ async function effects2025() {
   const oldRoot = figma.currentPage.findChild(
     (n) => n.type === "FRAME" && n.name === "effects-2025",
   );
+  /** @type {Record<string, readonly Effect[]>} */
   const harvestedEffects = {}; // cell name -> effects array from the old run
+  /** @type {SceneNode[]} */
   const foreignChildren = []; // nodes the plugin did not create
   if (oldRoot) {
-    for (const child of [...oldRoot.children]) {
+    // findChild's predicate checks n.type === "FRAME" but does not narrow the
+    // return type, so oldRoot is still SceneNode here; the check above means
+    // it is really a FrameNode, and every one of ITS children is one of the
+    // FrameNode cells `cell()` built (or a foreign, still-a-SceneNode, child).
+    const oldChildren = /** @type {FrameNode[]} */ (
+      [...(/** @type {FrameNode} */ (oldRoot)).children]
+    );
+    for (const child of oldChildren) {
       if (PLUGIN_CELLS.includes(child.name)) {
         harvestedEffects[child.name] = child.effects;
       } else {
@@ -541,6 +614,11 @@ async function effects2025() {
   root.paddingTop = root.paddingBottom = 24;
 
   const manual = [];
+  /**
+   * @param {string} name
+   * @param {RGB} color
+   * @param {Effect} effect
+   */
   const tryEffect = (name, color, effect) => {
     const r = cell(name, color);
     root.appendChild(r);
@@ -751,6 +829,11 @@ async function loweringVariantTopology() {
   removePrevious("lowering-variant-topology");
   removePrevious("instance-collapsed"); // the instance is a separate page child
 
+  /**
+   * @param {string} stateName
+   * @param {number} childCount
+   * @returns {Promise<ComponentNode>}
+   */
   const mkVariant = async (stateName, childCount) => {
     const comp = variantShell(stateName, {
       layoutMode: "VERTICAL",
@@ -807,6 +890,11 @@ async function realFile() {
   }
   for (const n of [...defs.children]) n.remove();
 
+  /**
+   * @param {string} stateName
+   * @param {number} fillValue
+   * @returns {Promise<ComponentNode>}
+   */
   const mkVariant = async (stateName, fillValue) => {
     const comp = variantShell(stateName, {
       layoutMode: "HORIZONTAL",
@@ -1047,6 +1135,7 @@ async function textArabic() {
 const LADDER_TEXT = "Sphinx of quartz 123";
 
 async function textBold() {
+  /** @type {Array<[string, FontName, string]>} */
   const ROWS = [
     ["regular-400", NOTO, "Regular"],
     ["semibold-600", NOTO_SEMIBOLD, "SemiBold"],
@@ -1161,6 +1250,7 @@ async function textBaseline() {
 // background so a dark shadow's falloff is observable. Fixed frame box, so our
 // render and Figma's GET /images export are the same size.
 const SHADOW_INK = { r: 0, g: 0, b: 0, a: 0.55 };
+/** @type {DropShadowEffect} */
 const DROP_SHADOW = {
   type: "DROP_SHADOW",
   visible: true,
@@ -1171,6 +1261,7 @@ const DROP_SHADOW = {
   spread: 0,
   showShadowBehindNode: false, // required by the plugin API; dashc ignores it
 };
+/** @type {InnerShadowEffect} */
 const INNER_SHADOW = {
   type: "INNER_SHADOW",
   visible: true,
@@ -1181,6 +1272,12 @@ const INNER_SHADOW = {
   spread: 0,
 };
 
+/**
+ * @param {string} name
+ * @param {RGB} cardFill
+ * @param {Effect} effect
+ * @returns {FrameNode}
+ */
 function shadowScene(name, cardFill, effect) {
   const root = baseFrame(name, 96, 96);
   root.layoutMode = "NONE"; // the card is absolutely placed, not laid out
@@ -1234,8 +1331,10 @@ function innerShadow() {
 // Unlike liga-text, this needs no `_manual-checklist`: BACKGROUND_BLUR is
 // fully writable through the plugin API, so the whole fixture is scripted and
 // the file carries no authoring annotation to leak into a render (debt #382).
+/** @type {BlurEffect} */
 const BACKDROP_BLUR = {
   type: "BACKGROUND_BLUR",
+  blurType: "NORMAL",
   visible: true,
   radius: 16, // Figma "radius" == dashc blur; painter sigma = radius/2
 };
@@ -1248,6 +1347,10 @@ const BACKDROP_BLUR = {
 // its own frosting node afterwards, so this returns the frame.
 //
 // The two seams are at x = 107 and x = 213.
+/**
+ * @param {string} name
+ * @returns {FrameNode}
+ */
 function blurBackdrop(name) {
   const root = baseFrame(name, 320, 180);
   root.layoutMode = "NONE"; // every child is absolutely placed
@@ -1255,6 +1358,7 @@ function blurBackdrop(name) {
 
   // Widths are exact thirds so the two seams land on integer columns and the
   // blur is not measured across a half-pixel edge.
+  /** @type {Array<[string, RGB, number, number]>} */
   const bands = [
     ["band-amber", { r: 0.98, g: 0.78, b: 0.2 }, 0, 107],
     ["band-navy", { r: 0.05, g: 0.07, b: 0.12 }, 107, 106],
@@ -1373,8 +1477,15 @@ const RING_CY = 90;
 // `k` is the standard circle-to-Bézier constant: the control points sit
 // 4/3*(sqrt(2)-1) of the radius along each tangent, which reproduces a circle
 // to about one part in 2000 — far inside the tolerance any band here applies.
+/**
+ * @param {number} cx
+ * @param {number} cy
+ * @param {number} r
+ * @returns {string}
+ */
 function circlePathData(cx, cy, r) {
   const k = 0.5522847498 * r;
+  /** @param {number} v */
   const n = (v) => v.toFixed(2);
   return [
     "M " + n(cx) + " " + n(cy - r),
@@ -1499,13 +1610,22 @@ const JPEG_FILL_HEX =
   "00000000000708ffc40014110100000000000000000000000000000000ffda000c03" +
   "010002110311003f002e6cd800003fffd9";
 const JPEG_FILL_BYTES = new Uint8Array(
-  JPEG_FILL_HEX.match(/../g).map((byte) => parseInt(byte, 16)),
+  /** @type {string[]} */ (JPEG_FILL_HEX.match(/../g)).map((byte) =>
+    parseInt(byte, 16)
+  ),
 );
 
-function jpegFill() {
-  const root = baseFrame("jpeg-fill", 160, 160);
+// Shared by jpeg-fill and gif-fill (issue #348): a fixed-layout root frame
+// filled edge to edge with one opaque IMAGE paint built from the given bytes.
+/**
+ * @param {string} name
+ * @param {Uint8Array} bytes
+ * @returns {FrameNode}
+ */
+function imageFillFrame(name, bytes) {
+  const root = baseFrame(name, 160, 160);
   root.layoutMode = "NONE"; // fixed layout: the fill is the only construct
-  const image = figma.createImage(JPEG_FILL_BYTES);
+  const image = figma.createImage(bytes);
   root.fills = [{
     type: "IMAGE",
     scaleMode: "FILL",
@@ -1514,6 +1634,11 @@ function jpegFill() {
     opacity: 1,
     blendMode: "NORMAL",
   }];
+  return root;
+}
+
+function jpegFill() {
+  imageFillFrame("jpeg-fill", JPEG_FILL_BYTES);
   return "jpeg-fill built: root frame filled with a 16x16 opaque baseline " +
     "JPEG image fill (magic FF D8 FF, " + JPEG_FILL_BYTES.length + " bytes)";
 }
@@ -1526,21 +1651,13 @@ const GIF_FILL_HEX =
   "47494638396110001000f0000033cc6600000021f90400000000002c000000001000" +
   "100000020e848fa9cbed0fa39cb4da8bb33e05003b";
 const GIF_FILL_BYTES = new Uint8Array(
-  GIF_FILL_HEX.match(/../g).map((byte) => parseInt(byte, 16)),
+  /** @type {string[]} */ (GIF_FILL_HEX.match(/../g)).map((byte) =>
+    parseInt(byte, 16)
+  ),
 );
 
 function gifFill() {
-  const root = baseFrame("gif-fill", 160, 160);
-  root.layoutMode = "NONE"; // fixed layout: the fill is the only construct
-  const image = figma.createImage(GIF_FILL_BYTES);
-  root.fills = [{
-    type: "IMAGE",
-    scaleMode: "FILL",
-    imageHash: image.hash,
-    visible: true,
-    opacity: 1,
-    blendMode: "NORMAL",
-  }];
+  imageFillFrame("gif-fill", GIF_FILL_BYTES);
   return "gif-fill built: root frame filled with a 16x16 opaque static GIF " +
     "image fill (magic GIF89a, " + GIF_FILL_BYTES.length + " bytes)";
 }
@@ -1553,6 +1670,14 @@ function gifFill() {
 // vectorPaths entry, windingRule "EVENODD" — the fill-rule case: a point
 // under an odd number of subpaths is filled, under an even number is not, so
 // the inner subpath punches a hole regardless of its winding direction).
+/**
+ * @param {number} cx
+ * @param {number} cy
+ * @param {number} points
+ * @param {number} outerR
+ * @param {number} innerR
+ * @returns {string}
+ */
 function starPathData(cx, cy, points, outerR, innerR) {
   const cmds = [];
   for (let i = 0; i < points * 2; i++) {
@@ -1573,6 +1698,7 @@ function vectorShapes() {
   const CELL = 80;
   const GAP = 24;
   const MARGIN = 24;
+  /** @param {number} i */
   const slotX = (i) => MARGIN + i * (CELL + GAP);
 
   // figma.createVector() gives a new vector a default 1px black stroke; these
@@ -1649,11 +1775,15 @@ function stackedFills() {
   rect.resize(140, 140);
 
   const bottom = solid({ r: 0.25, g: 0.45, b: 0.85 });
-  const top = gradient("LINEAR", [
-    stop(0, { r: 1, g: 1, b: 1, a: 1 }),
-    stop(1, { r: 1, g: 0.3, b: 0.5, a: 1 }),
-  ]);
-  top.opacity = 0.55; // semi-transparent: the solid below stays visible
+  // opacity is set here, not by mutating the gradient afterward: Paint
+  // objects are readonly (semi-transparent: the solid below stays visible).
+  const top = {
+    ...gradient("LINEAR", [
+      stop(0, { r: 1, g: 1, b: 1, a: 1 }),
+      stop(1, { r: 1, g: 0.3, b: 0.5, a: 1 }),
+    ]),
+    opacity: 0.55,
+  };
   rect.fills = [bottom, top];
 
   root.appendChild(rect);
@@ -1691,6 +1821,7 @@ function nodeFx() {
   const GAP = 24;
   const MARGIN = 30;
   const Y0 = 30;
+  /** @param {number} i */
   const slotX = (i) => MARGIN + i * (CELL + GAP);
 
   // (a) rotation
@@ -1766,6 +1897,7 @@ function nodeFx() {
 }
 
 // ------------------------------------------------------------------ dispatch
+/** @type {Record<string, () => string | Promise<string>>} */
 const COMMANDS = {
   "v03-paint": v03Paint,
   "grid-basic": gridBasic,
@@ -1807,6 +1939,7 @@ const COMMANDS = {
     figma.closePlugin(msg);
   } catch (e) {
     console.error(e);
-    figma.closePlugin("FAILED: " + (e && e.message ? e.message : String(e)));
+    const message = e instanceof Error ? e.message : String(e);
+    figma.closePlugin("FAILED: " + message);
   }
 })();

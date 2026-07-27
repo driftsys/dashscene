@@ -738,6 +738,100 @@ Deno.test("a buried component set is auto-pulled, transitively, and the drift or
   );
 });
 
+Deno.test("a buried, frozen component set narrows before recording refs, and the drift oracle holds", async () => {
+  // Issue #326: `walk(setNode)` records the set's image refs and the pruned
+  // file lifts `narrowTree(setNode)` separately (closure.ts's `pulled.map`
+  // step). If a buried set's variants carried different image refs and the
+  // two steps ever disagreed about which member survives, `closure.imageRefs`
+  // (from `walk`) would diverge from what `dashc.figmaImageRefs` scans on the
+  // narrowed, lifted subtree — a drift the oracle above does not exercise,
+  // since none of its sets there are both buried AND frozen with differing
+  // per-member refs. This is the same set from the previous test, buried the
+  // same way, but with two members, one frozen out, and each carrying a
+  // DIFFERENT image ref.
+  const file = {
+    document: {
+      id: "0:0",
+      name: "Document",
+      type: "DOCUMENT",
+      children: [
+        {
+          id: "0:1",
+          name: "Page 1",
+          type: "CANVAS",
+          children: [
+            {
+              id: "1:30",
+              name: "set-scratch",
+              type: "FRAME",
+              children: [
+                {
+                  id: "1:11",
+                  name: "outer",
+                  type: "COMPONENT_SET",
+                  children: [
+                    {
+                      id: "1:2",
+                      name: "state=default",
+                      type: "COMPONENT",
+                      fills: [{ type: "IMAGE", imageRef: "default-image" }],
+                    },
+                    {
+                      id: "1:5",
+                      name: "state=alt",
+                      type: "COMPONENT",
+                      fills: [{ type: "IMAGE", imageRef: "alt-image" }],
+                    },
+                  ],
+                },
+              ],
+            },
+            {
+              id: "1:20",
+              name: "home",
+              type: "FRAME",
+              children: [
+                {
+                  id: "1:21",
+                  name: "chip-instance",
+                  type: "INSTANCE",
+                  componentId: "1:2",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    components: {
+      "1:2": { key: "key-default", remote: false, componentSetId: "1:11" },
+      "1:5": { key: "key-alt", remote: false, componentSetId: "1:11" },
+    },
+    componentSets: { "1:11": { key: "key-set" } },
+  };
+
+  const closure = computeClosure(file, {
+    roots: ["1:20"],
+    frozenVariants: { "1:11": ["1:2"] },
+  });
+
+  assertEquals(closure.diagnostics, []);
+  assert(closure.nodeIds.has("1:11"));
+  assert(closure.nodeIds.has("1:2"));
+  assert(!closure.nodeIds.has("1:5"), "the frozen-out member must not ship");
+  // Only the kept member's ref reaches the closure — the withdrawn member's
+  // ref must never leak in from the buried set's own paint scan.
+  assertEquals(closure.imageRefs, ["default-image"]);
+
+  // The drift oracle: dashc's own scan of the narrowed, lifted subtree must
+  // name the same refs, not the withdrawn member's.
+  const dashc = await loadDashc();
+  assertEquals(
+    closure.imageRefs,
+    dashc.figmaImageRefs(JSON.stringify(closure.file)),
+  );
+});
+
 Deno.test("exportableRoots lists every top-level node per canvas", () => {
   assertEquals(exportableRoots(twoCanvasFile()), [
     { canvas: "Page 1", id: "1:1", name: "home", type: "FRAME" },
