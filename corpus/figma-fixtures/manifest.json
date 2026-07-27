@@ -78,17 +78,17 @@
     },
     {
       "name": "real-file",
-      "fileKey": "PASTE_THE_FIGMA_FILE_KEY_HERE",
+      "fileKey": "awsa7PB8sPSPVJ0DQ2czdQ",
       "covers": "production-shaped file for the v0.7 real-file import spike (story #37): two pages, extra top-level frames beside the export root, a component set with an instance, a hidden layer, an image fill",
       "emits": false,
-      "note": "Awaiting manual authoring: run the fixture-author plugin's real-file command in a blank Figma file, paste the file key here, and run `just deno-capture` (importers/figma/plugin/fixture-author/README.md). Raw compile will be refused until INSTANCE lowers; the fixture exists so the export closure (declared roots, per-set variant closure, exclusion naming) replays against a real multi-page response."
+      "note": "Authored 2026-07-27 with the fixture-author plugin's real-file command, and READY TO CAPTURE — run `just deno-capture` (importers/figma/plugin/fixture-author/README.md). The command failed on every earlier attempt with `combineAsVariants: Grouped nodes must be in the same page as the parent`, because the variant components were implicitly parented to figma.currentPage while the set was built on the second page; fixed by parenting them to the definitions page first. `emits` stays false until a capture proves otherwise rather than being flipped on the expectation that INSTANCE now lowers. The fixture exists so the export closure (declared roots, per-set variant closure, exclusion naming) replays against a real multi-page response."
     },
     {
       "name": "trim-demo",
-      "fileKey": "PASTE_THE_FIGMA_FILE_KEY_HERE",
+      "fileKey": "9H7ShXRkZVZRzF4KxSZ2l3",
       "covers": "trim-path exercise (story #39): one declared root holding a placeholder slot (with sample children), a redline overlay, a spec note, a `_`-prefixed scratch layer, and a hidden layer (hidden != trimmed)",
       "emits": false,
-      "note": "Awaiting manual authoring: run the fixture-author plugin's trim-demo command, then write the roles with the SEPARATE dashscene annotator plugin (importers/figma/plugin/README.md — the fixture author never writes roles), paste the file key here, and run `just deno-capture`. The trim rules themselves are covered offline by importers/figma/src/trim_test.ts and the import-level test; this fixture replays annotate -> trim -> named record against a real ?plugin_data=shared response."
+      "note": "STEP 1 OF 2 DONE — DO NOT CAPTURE YET. The scene was authored 2026-07-27 with the fixture-author plugin's trim-demo command, but the roles are not written: the fixture author never writes roles, by design. Step 2 is the SEPARATE dashscene annotator plugin (importers/figma/plugin/manifest.json, a sibling of fixture-author/ — issue #302), marking the placeholder, redline and spec nodes. Capturing before that step produces a fixture whose ?plugin_data=shared response carries no roles, so the annotate -> trim -> named record path it exists to replay would pass without exercising anything — the whole point of the fixture, silently lost. Only run `just deno-capture` once the roles are written. The trim rules themselves are covered offline by importers/figma/src/trim_test.ts and the import-level test."
     },
     {
       "name": "xfile-library",
