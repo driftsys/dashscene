@@ -716,6 +716,21 @@ in advance); and the production toolchain — `dashc` as a shipped product, with
 a stable CLI, versioned diagnostics, a waiver workflow, linter rule packs, and
 golden/report tooling for design review.
 
+Full script coverage (v1, epic #463): v0 ships Latin and Arabic, which v0.6
+delivered, and that is the whole of v0's language scope. Everything beyond it
+is v1 — Arabic weight parity (one face today against Latin's four), a CJK
+scope decision (CJK appears nowhere in the specification, so it has never been
+ruled in or out), Indic support for the commercially load-bearing scripts, and
+the glyph-atlas residency design all three depend on.
+
+They are one epic rather than four because they cannot be solved separately:
+CJK cannot ship without residency, residency cannot be designed without
+knowing which scripts it must hold, and Indic constrains the same closure that
+residency needs — text-driven rather than charset-driven
+([`decisions/glyph-coverage-is-declared-at-build-time.md`](decisions/glyph-coverage-is-declared-at-build-time.md)).
+Designing residency against Latin and Arabic alone would mean designing it
+twice.
+
 Open spike (v1): platform-font provisioning — resolve and hash-pin target
 fonts at build time so a platform-provided font is baked through the same atlas
 pipeline as a bundled one (guardrail G-2) — plus a target-hardware benchmark of
