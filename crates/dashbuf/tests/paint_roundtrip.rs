@@ -4,54 +4,15 @@
 
 use dashbuf::NO_PAINT;
 use dashbuf::{
-    AssetEntry, AssetEntryArgs, AssetKind, Color, Document, DocumentArgs, Fill, FillLayer,
-    FillLayerArgs, Gradient, GradientArgs, GradientKind, GradientStop, ImageFill, ImageFillArgs,
-    ImageFormat, Mat23, Node, NodeArgs, Paint, PaintArgs, ScaleMode, SolidFill, SolidFillArgs,
-    Stroke, StrokeAlign, StrokeArgs, Vec2, root_as_document,
+    AssetEntry, AssetEntryArgs, AssetKind, Document, DocumentArgs, Fill, FillLayer, FillLayerArgs,
+    Gradient, GradientArgs, GradientKind, GradientStop, ImageFill, ImageFillArgs, ImageFormat,
+    Mat23, Node, NodeArgs, Paint, PaintArgs, ScaleMode, SolidFill, SolidFillArgs, Stroke,
+    StrokeAlign, StrokeArgs, Vec2, root_as_document,
 };
-use flatbuffers::{FlatBufferBuilder, WIPOffset};
+use flatbuffers::FlatBufferBuilder;
 
-fn red() -> Color {
-    Color::new(1.0, 0.0, 0.0, 1.0)
-}
-
-fn half_blue() -> Color {
-    Color::new(0.0, 0.0, 1.0, 0.5)
-}
-
-/// Finishes a document holding the given node, paint pool, and asset-table
-/// entries, and returns the serialized buffer bytes.
-fn finish_document(
-    mut builder: FlatBufferBuilder<'static>,
-    node: WIPOffset<Node<'static>>,
-    paints: &[WIPOffset<Paint<'static>>],
-    assets: &[WIPOffset<AssetEntry<'static>>],
-) -> Vec<u8> {
-    let nodes = builder.create_vector(&[node]);
-    let assets = (!assets.is_empty()).then(|| builder.create_vector(assets));
-    let paints = (!paints.is_empty()).then(|| builder.create_vector(paints));
-    let document = Document::create(
-        &mut builder,
-        &DocumentArgs {
-            nodes: Some(nodes),
-            assets,
-            paints,
-            ..Default::default()
-        },
-    );
-    builder.finish(document, None);
-    builder.finished_data().to_vec()
-}
-
-/// Decodes the buffer and resolves the single node's paint-pool entry.
-fn single_node_paint(bytes: &[u8]) -> Paint<'_> {
-    let document = root_as_document(bytes).expect("valid dashbuf document");
-    let node = document.nodes().expect("nodes present").get(0);
-    document
-        .paints()
-        .expect("paint pool present")
-        .get(node.paint_entry() as usize)
-}
+mod common;
+use common::{finish_document, half_blue, red, single_node_paint};
 
 #[test]
 fn gradient_fill_round_trips_all_four_kinds() {
