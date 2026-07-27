@@ -1,0 +1,11 @@
+This repository is MIT licensed — see LICENSE — except for one vendored
+source tree:
+
+- `crates/dashpack-astcenc-sys/vendor/astcenc/` — Arm's ASTC encoder,
+  Apache License 2.0. Every vendored file keeps its own SPDX header and
+  Arm copyright notice; none is modified. The full provenance, the
+  license text, and the steps to re-derive the copy are recorded at
+  `crates/dashpack-astcenc-sys/vendor/VENDOR.md`.
+
+Upstream ships no NOTICE file of its own, so this file adds nothing beyond
+the pointer above.

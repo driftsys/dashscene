@@ -40,11 +40,19 @@
              resolves the EAC-R11 contradiction below in favour of the strict
              reading and records the residual question for the repository
              owner. This file is no longer their authority.
-             Everything else gated on the packer — the vector bake's
-             end-state fork, animated content, the profile-preview oracle,
-             cold-bank multi-bank assembly — is unbuilt and stays here as
-             live input to epic #345 (v0.12). Three of its open points are
-             resolved; see "Open points" at the end.
+             GARDENED FURTHER 2026-07-26 (v0.12, stories #433, #434): the
+             rest of kernel §4 — cold-bank assembly onto the v0.11 envelope,
+             first the RAW-only bank with every golden byte-identical, then
+             the first derived (HiFi) bank bound through a manifest — now
+             live in docs/design/dsb-container-format.md (the assembly
+             mechanics) and docs/decisions/derivation-manifest-section.md
+             (the canonical-to-resident binding). This file is no longer
+             their authority.
+             Epic #345 (v0.12) has since closed. What is genuinely still
+             unbuilt, and why this file stays here: the vector bake's
+             end-state fork and animated content, neither scheduled to a
+             slice yet. Three of the open points below are resolved; see
+             "Open points" at the end.
     scope    the asset pipeline from import to painter: image fills, baked
              vectors (MSDF), distance-field atlases; the .dsb cold sections;
              the packer and quality profiles; per-target GPU codecs
