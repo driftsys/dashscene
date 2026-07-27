@@ -1,7 +1,8 @@
 # Negative main-axis margins rebate into the flex basis (debt #236)
 
     status   accepted (story #43, 2026-07-17; arithmetic revised in the
-             same story's review pass, findings R1-R3)
+             same story's review pass, findings R1-R3; extended to Hug
+             children 2026-07-27, debt #270)
     scope    crates/dashscene-engine (the style mapping)
     binds    #46 (E3's negative-gap case), every hug-sized container over
              the negative-gap lowering's output
@@ -81,14 +82,60 @@ Why not the others:
   the two formulas agreeing only at shrink = 1 — a wider blast radius
   for the same effect.
 
+## The `Hug` child: a shrink factor of 1, not a rebate (debt #270)
+
+A `Hug`-sized child has no authored main-axis size, so there is no
+constant to rebate into its flex basis — the basis taffy gives it is
+its own content size, measured during the same pass that mis-sums. The
+rebate above therefore cannot reach it, and story #43 declared it a
+residual.
+
+The second agreement point closes it. The broken branch divides by
+`f32_max(1.0, flex_shrink * inner_flex_basis)` and multiplies back by
+`f32_max(1.0, flex_shrink) * inner_flex_basis`. At `flex_shrink = 0`
+those are `1` and `inner_flex_basis` — the disagreement the rebate
+works around. At `flex_shrink = 1` they are
+`f32_max(1.0, inner_flex_basis)` and `inner_flex_basis`, which are
+equal for every inner flex basis of 1 or more. The item then
+contributes exactly `flex_basis + margin_sum`, which is the arithmetic
+the hug sum wants.
+
+So a flex-flow child whose main-axis sizing is `Hug` and whose
+main-axis margin sum is negative maps at `flex_shrink = 1` instead of
+`0`. Two conditions keep the switch inside the pass it repairs:
+
+- The margin sum must be negative. A positive margin takes the
+  `diff > 0` path, whose two formulas already agree.
+- The **parent must hug the same axis**. Taffy only enters the broken
+  `MinContent | MaxContent` branch when the container's main size is
+  indefinite; a container with an authored main size takes the
+  `Definite` branch, where the two formulas never appear. A hugging
+  container is sized to its own content sum, so the definite pass that
+  follows has no negative free space for a shrink factor to act on and
+  the child never actually shrinks. Under any other parent sizing the
+  child keeps `flex_shrink = 0` and solves exactly as it did before.
+
+Why not option 3's blanket `flex_shrink: 1`: story #43 rejected it for
+`Fixed` children because it restyles every child everywhere. The
+narrowed form here restyles only the children that reach the defect,
+and only where a shrink factor is inert.
+
 ## Residual gaps, declared
 
-- A **`Hug`-sized child** with a negative main-axis margin still
-  mis-sums: its flex basis is content-derived, so no static rebate
-  exists. The captured negative-gap scene
-  (`lowering-negative-gap.json`) and E3's case use fixed-size children,
-  so nothing shipped hits it; it is reported as a debt candidate
-  alongside the upstream taffy report.
+- A `Hug` child whose **inner flex basis is below 1** — its content
+  size minus its own padding — still mis-sums under a negative margin.
+  Below 1 the divisor `f32_max(1.0, 1 * inner_flex_basis)` floors at 1
+  while the multiplier stays at `inner_flex_basis`, so the two
+  expressions part company again. A container whose padding leaves it
+  under one document unit of content is a degenerate intent, and the
+  same corner is already declared below for `Fixed` children.
+- A `Hug` child under a **`Fill`-on-main parent** still mis-sums when a
+  hugging ancestor measures that parent intrinsically. The switch is
+  gated on the parent hugging, and a `Fill` parent's main size is
+  indefinite during that measurement without its sizing saying so.
+  Widening the gate to `Fill` would let the child shrink in the
+  definite pass, which is a real layout change; it is left for the
+  upstream fix (#269) to remove instead.
 - A child whose **authored size is smaller than its own padding sum**
   renders one unit wider under a negative margin (the anchor sits at
   `padding + 1`, above the authored size). The intent is
@@ -104,11 +151,17 @@ Why not the others:
 
 ## Trace
 
-- Satisfies: debt #236 (folded into story #43); prerequisite of #46's
-  E3 negative-gap case; review findings R1, R2, R3 on PR #267.
+- Satisfies: debt #236 (folded into story #43); debt #270 (the `Hug`
+  child); prerequisite of #46's E3 negative-gap case; review findings
+  R1, R2, R3 on PR #267.
 - Verified by `crates/dashscene-engine/tests/solve.rs`:
   `a_hug_row_over_negative_child_margins_sums_like_positive_ones` (the
   issue's reproduction table),
+  `a_hug_row_over_a_negative_margin_hug_child_sums_like_positive_ones`
+  and `a_hug_column_over_a_negative_margin_hug_child_sums_on_the_vertical_axis`
+  (#270, both axes),
+  `a_negative_margin_hug_child_under_a_fixed_parent_still_never_shrinks`
+  (#270's gate — the shrink factor stays out of the definite pass),
   `the_rebate_respects_an_authored_max_alongside_a_negative_margin`
   (R1), `the_rebate_survives_a_padded_childs_basis_floor` (R2 — both
   sides of taffy's padding floor),

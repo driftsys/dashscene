@@ -732,7 +732,40 @@ fn style_for(
                 AxisSizing::Hug => {
                     style.flex_basis = Dimension::AUTO;
                     style.flex_grow = 0.0;
-                    style.flex_shrink = 0.0;
+                    // Issue #270, the residual the `Fixed` rebate above could
+                    // not cover: a `Hug` child's flex basis is content-derived,
+                    // so there is no authored size to rebate a negative margin
+                    // into. The same taffy 0.12 branch amplifies it — for a
+                    // shrink-0 item the branch divides the negative diff by
+                    // `max(1, 0 * inner_basis)` = 1 and multiplies it back by
+                    // `max(1, 0) * inner_basis`, so the item contributes
+                    // `basis + inner_basis * margin_sum` instead of
+                    // `basis + margin_sum`. At `flex_shrink = 1` the same two
+                    // expressions are `max(1, inner_basis)` and `inner_basis`,
+                    // which agree for any inner basis of 1 or more, so the
+                    // contribution is exact. The switch is confined to the
+                    // broken pass: it applies only when the parent hugs this
+                    // axis, and a hug parent is sized to its content sum, so
+                    // the definite pass has no negative free space for a
+                    // shrink factor to act on.
+                    let margin_sum = if mode == LayoutMode::Vertical {
+                        layout.margin.top + layout.margin.bottom
+                    } else {
+                        layout.margin.left + layout.margin.right
+                    };
+                    let parent_hugs_main = parent.is_some_and(|p| {
+                        let parent_main_sizing = if mode == LayoutMode::Vertical {
+                            p.sizing_v
+                        } else {
+                            p.sizing_h
+                        };
+                        parent_main_sizing == AxisSizing::Hug
+                    });
+                    style.flex_shrink = if margin_sum < 0.0 && parent_hugs_main {
+                        1.0
+                    } else {
+                        0.0
+                    };
                 }
                 AxisSizing::Fill => {
                     style.flex_basis = Dimension::length(0.0);
