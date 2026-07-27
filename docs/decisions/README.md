@@ -504,7 +504,9 @@ so each technote stops being the authority for the conclusion it reached:
   stage in the field path). EAC-R11 is rejected on two independent grounds,
   structural and lossy. Provisional on both sides — the field exclusion
   pending a rendered-output measurement (#460), the raster inclusion
-  pending a measurement of how much static raster this domain has at all
-  (#462) (#345).
+  pending a memory budget the profiles can be checked against, and raster
+  band values set on the content class that will dominate — full-screen
+  backgrounds and welcome sequences, not the 380x380 photograph they were
+  pinned on (#462) (#345).
 
 See the `sdd-working-memory-lifecycle` rule.

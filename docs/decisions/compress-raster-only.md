@@ -3,8 +3,8 @@
     status   accepted (2026-07-27, owner's call). Provisional on both
              sides: the field exclusion is revisited when text residency
              is answered (issue #460), and the raster inclusion is
-             revisited when the addressable raster in a real target UI is
-             measured (issue #462).
+             revisited when a memory budget and the raster band values
+             are set against real content (issue #462).
     scope    dashpack's per-class escalation ladders — which asset classes
              a quality profile may re-encode, and which it may not
     related  docs/decisions/native-astc-codec-table.md (the formats),
@@ -203,30 +203,44 @@ and it has not been measured. Issue #457 recommends binding canonical but
 argues it from file size — the axis this record opens by setting aside. It
 should be re-argued on decode cost before it is implemented.
 
-**2. Whether raster packing is worth it in this domain at all.** The
-per-asset win is not in doubt: `import-image-fill` goes from 171 556 bytes
-canonical to 21 026 resident, and from 577 600 bytes of VRAM to 65 536 —
-8.8x residency, plus no decode at load. What is unmeasured is how much
-static authored raster a real target UI actually contains.
+**2. What the raster band values should be, once there is a budget to set
+them against.** Not whether to compress raster — that is settled, and for
+the largest class in the system.
 
-Three reasons to think it may be little:
+An earlier version of this record asked whether raster packing was worth it
+at all, reasoning from the committed corpus, which holds one real raster
+image. **That was the wrong evidence.** The corpus is a fixture corpus,
+built to exercise vocabulary rather than to represent product content. The
+intended content includes full-screen backgrounds, welcome sequences, and
+animated product renders.
 
-- The entire corpus this packer was measured against contains **one** real
-  raster image. Of the two raster assets in the size analysis, the other
-  (`v03-paint`, 16x16) is a net loss.
-- An automotive HMI is mostly vector, text, and solid fills. That is
-  precisely why this project has an MSDF text stack and bakes vectors.
-- The raster that does dominate an HMI at runtime — album art, contact
-  photos, map tiles, camera feeds — **bypasses the packer entirely**. It is
-  decode, upload, bind at runtime
-  (`docs/decisions/downloaded-raster-needs-no-vector-engine.md`). The
-  packer only ever sees static authored assets.
+At 1920x1080, one full-screen background is **8.29 MB resident** as decoded
+RGBA, against 0.92 MB at ASTC 6x6 and 0.52 MB at 8x8 — and it carries a
+10-41 ms PNG decode on the boot-critical path. All eight glyph atlases
+together are 3.33 MB, so **one background is 2.5x the entire text stack**.
 
-This does not reverse the decision — where static raster exists, the trade
-is right, and the bank, manifest and profile machinery are needed for any
-per-target asset variation regardless of compression. It marks the
-escalation ladder and band contracts as the part whose value in this domain
-is assumed rather than shown. Issue #462 is the measurement.
+A welcome sequence settles it. Three seconds at 30 fps is 90 frames:
+746 MB resident uncompressed against 47 MB at ASTC 8x8, and 0.9-3.7 s of
+pure frame decode against none. For that class packing is not an
+optimisation, it is the difference between shipping and not, and the
+capture already designed for it — frames baked at pack time, identical
+frames deduplicated by hash, `dashcue` stepping the frame index on the
+runtime clock so nothing producer-side runs in the frame loop.
+
+What remains open is narrower and more urgent. **No memory or bandwidth
+budget exists in `docs/specification/`, and neither does a target display
+resolution.** The capture requires that "a profile must fit the target's
+memory/bandwidth budget at pack time (validator error, never a silent
+quality cut)" — a loop with no number in it. Until that budget is recorded,
+a profile cannot fail, and a profile that cannot fail is not a contract.
+
+The band values follow from it. `hifi-image-fill` was pinned on a 380x380
+photograph, and a full-screen gradient background is precisely where ASTC
+banding shows. The band has never been exercised on the content class that
+will dominate. Issue #462 covers the budget and the re-measurement.
+
+The size floor above still stands, but it is a small-asset exclusion rather
+than evidence about the class.
 
 ## Why this is provisional for the field classes
 
