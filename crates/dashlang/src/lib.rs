@@ -86,9 +86,14 @@ pub fn scene(roots: impl IntoIterator<Item = Node>) -> Scene {
 }
 
 /// One node's description: authored offset, fixed size, optional
-/// solid fill, children in declaration order. Inert until
+/// solid fill, children in declaration order, and the v0.2 flex
+/// vocabulary (issue #118) — `mode`, `gap`, `padding`, `margin`,
+/// `main_align`, `cross_align`, `sizing_h`, `sizing_v`, `min_width`,
+/// `max_width`, `min_height`, `max_height`. Inert until
 /// [`Scene::build`] — constructing and combining descriptions stages
-/// nothing.
+/// nothing. Each setter's own doc comment covers what it sets; the full
+/// vocabulary, including the later v0.8 grid/wrap additions, is also
+/// listed in `docs/design/dashlang.md`'s "Value-tree surface" section.
 ///
 /// Unset values keep `dashscene-core`'s defaults: zero offset and
 /// size, no fill.
@@ -102,7 +107,7 @@ pub struct Node {
     grid_rows: Vec<GridTrack>,
     grid_columns: Vec<GridTrack>,
     fill: Option<Color>,
-    children: Vec<Node>,
+    children: Children,
     // Reactive declarations (issue #166), resolved to targets at build.
     // Inert for the non-live `build`/`build_with` paths.
     scalar_bindings: Vec<(Channel, ScalarExpr)>,
@@ -275,6 +280,70 @@ impl Node {
     }
 }
 
+/// A node's owned children, wrapped so [`Node`] itself stays free of a
+/// custom `Drop` impl. Rust forbids moving a field out of a value whose
+/// own type implements `Drop`, and two existing call sites rely on
+/// moving `Node`'s fields: [`node`]'s `..Node::default()` struct update,
+/// and the reactive build path's field-move destructuring
+/// (`stage_live` in `reactive.rs`). Neither needs to change, because the
+/// type that needs the iterative drop (issue #79) is this wrapper, not
+/// `Node`.
+#[derive(Debug, Default)]
+struct Children(Vec<Node>);
+
+impl std::ops::Deref for Children {
+    type Target = Vec<Node>;
+
+    fn deref(&self) -> &Vec<Node> {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Children {
+    fn deref_mut(&mut self) -> &mut Vec<Node> {
+        &mut self.0
+    }
+}
+
+impl Children {
+    /// Takes the child vector, leaving an empty one behind. A plain
+    /// `self.0` move is not available here: `Children` implements
+    /// `Drop`, and Rust forbids moving a field out of a value that does.
+    /// Going through `&mut self` instead is allowed, because `self`
+    /// itself never becomes partially moved.
+    fn take(&mut self) -> Vec<Node> {
+        std::mem::take(&mut self.0)
+    }
+}
+
+impl IntoIterator for Children {
+    type Item = Node;
+    type IntoIter = std::vec::IntoIter<Node>;
+
+    fn into_iter(mut self) -> Self::IntoIter {
+        self.take().into_iter()
+    }
+}
+
+/// Drops a node's children without recursing per tree level (issue
+/// #79). The derived drop of `Vec<Node>` recurses once per level, which
+/// overflows the stack on a deep enough chain (a corpus-generator shape,
+/// `docs/design/architecture.md` §6.2). This moves every child onto one
+/// heap work-stack before it is allowed to drop, so no `Node` ever
+/// reaches its own field drop with a non-empty `children`: each pop
+/// drops in O(1) stack depth, in the same order the derived drop would
+/// have used.
+impl Drop for Children {
+    fn drop(&mut self) {
+        let mut pending: Vec<Node> = self.take();
+        while let Some(mut node) = pending.pop() {
+            pending.extend(node.children.take());
+            // `node` drops here with an empty `children`, so the `Drop`
+            // above runs on an already-empty vector — no recursion.
+        }
+    }
+}
+
 /// A scene description, built from [`scene`] or the [`Scene::new`]
 /// builder. Carries the signal declarations the reactive layer (issue
 /// #166) resolves at [`Scene::build_live`]; empty for the non-live
@@ -356,11 +425,23 @@ impl Scene {
     }
 }
 
+// Explicit-stack depth-first walk (issue #79): the equivalent recursive
+// form calls itself once per tree level, which overflows the stack on a
+// deep enough chain (a corpus-generator shape, `docs/design/
+// architecture.md` §6.2). `pending` holds the same (parent, node) pairs
+// a recursive call's stack frames would, so this stages nodes in the
+// identical document (DFS, declaration) order: pushing a node's children
+// in reverse means the next pop is always its first child, so a whole
+// subtree is staged before the next sibling, exactly as the recursive
+// form would.
 fn add(txn: &mut Txn<'_>, parent: Option<NodeId>, node: &Node) {
-    let id = txn.add_node(parent, node.name.as_deref());
-    set_base_props(txn, id, node);
-    for child in &node.children {
-        add(txn, Some(id), child);
+    let mut pending: Vec<(Option<NodeId>, &Node)> = vec![(parent, node)];
+    while let Some((parent, node)) = pending.pop() {
+        let id = txn.add_node(parent, node.name.as_deref());
+        set_base_props(txn, id, node);
+        for child in node.children.iter().rev() {
+            pending.push((Some(id), child));
+        }
     }
 }
 
