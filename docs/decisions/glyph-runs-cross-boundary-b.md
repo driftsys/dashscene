@@ -1,7 +1,10 @@
 # Glyph runs cross boundary B as a run table plus a plain-data atlas
 
-    status   accepted (story #30, 2026-07-16)
-    scope    dashpaint, dashscene-skia, goldens;
+    status   accepted (story #30, 2026-07-16). Extended 2026-07-28: the
+             "later producer story" this record deferred is now decided —
+             glyph runs become a commit output (issue #505). See "The
+             producer story, decided" below.
+    scope    dashpaint, dashscene-skia, goldens, dashscene-core;
              docs/design/dashpaint.md, docs/design/dashscene-skia.md
 
 ## Context
@@ -123,7 +126,8 @@ font's `AtlasIndex`. The boundary-B `GlyphQuad` stays
 `{ glyph_id, x, y }`: the font-to-atlas mapping is resolved on the
 producer side of the boundary, exactly as absolute positions are, so
 the painter still only draws quads (P2). A future commit-time stager
-(#160) reads `PositionedGlyph::font` the same way the goldens'
+(issue #505; this record previously cited #160, which is dashc text
+lowering and unrelated) reads `PositionedGlyph::font` the same way the goldens'
 staging helpers do now (`goldens/tooling/tests/v07_fallback.rs`).
 
 Per-fallback-font atlases follow the committed-fixture convention
@@ -148,3 +152,67 @@ paint gate names the combination (`paint.text-outside-group`), so a text
 node inside an overlapping partial-opacity group is a named limitation, not
 a silent wrong pixel. Compositing runs into group layers and clipping runs
 to clip/mask regions are debt candidates.
+
+## The producer story, decided
+
+Recorded 2026-07-28, resolving the "later producer story" the consequence
+above deferred. The design and its measured feasibility work are in
+`docs/wip/2026-07-27-glyph-runs-from-commit-SPIKE.md`; this section is the
+decision that spike was run to inform.
+
+**`dashscene-core`'s commit becomes the producer of the glyph-run table.**
+Runs stop being staged by whoever calls the painter.
+
+### Why
+
+Everything else the painter consumes comes from commit — the rect table, the
+paint table, the clip table, the group list. Runs were the one exception, and
+this record shows why: it was a **sequencing** decision taken when the only
+consumers were painter tests and the goldens harness, not a constraint.
+
+The cost of leaving it is two named defects that cannot be fixed anywhere else.
+A run carries no clip region, so text inside a clipping subtree paints outside
+it (issue #275); and it carries no group membership, so text inside a
+render-target group escapes the layer and paints at full strength over the
+composited result (issue #274). Both are painter-side symptoms of a producer
+that does not exist. Neither is fixable in the painter, because the painter has
+nothing to clip to and nothing to interleave against.
+
+### What core does, and what it does not
+
+Core **stamps** runs; it does not **build** them. It depends only on `dashbuf`,
+`dashpaint` and `rustc-hash`, and `dashbuf`'s schema carries no glyph atlas —
+atlases are build artifacts read by the caller. That is unchanged. A stager is
+handed to commit, the way a solver already is
+(`docs/decisions/layout-solver-seam.md` established that seam shape), and core
+stamps each returned run with the geometry it alone resolves.
+
+One field carries what a run needs: a reference to the rect it belongs to,
+which yields the clip region, the group membership, and the z-order together. A
+separate clip index mirroring `RectEntry::clip` was considered and rejected as
+redundant — it is derivable, and two fields can disagree.
+
+### The alternative, and why it loses
+
+Runs could stay caller-side with the staging contract written down: whoever
+stages text must also supply the clip and the group.
+
+Rejected because a stager that omits either produces **silently wrong output**
+rather than a diagnostic — text painting outside its clip looks like a layout
+bug, not a missing field. **P4** exists to prevent exactly that, and a contract
+enforced only by documentation is the shape this project declines elsewhere.
+
+### What this obliges, and what is not yet settled
+
+- **It moves pixels, and that is not yet measured.** Interleaving takes text
+  out of unconditional foreground, so a later rect now covers earlier text.
+  That is correct z-order and a rendered change wherever it occurs. The
+  movement is measured before the work is scheduled, not during it.
+- **The E7 oracle cannot keep its own text staging.** `render_oracle.rs` stages
+  without a wrap width while the measure seam wraps at the solved width (issue
+  #306). The divergence is inert today only because every committed text
+  fixture is HUG, where the two agree. One producer means the oracle adopts it;
+  keeping a second stager would reintroduce, inside the instrument that judges
+  fidelity, the very measure-and-paint divergence this record's original
+  consequence was written to avoid.
+- Issue #306 is therefore subsumed by this work if it is not fixed first.
