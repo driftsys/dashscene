@@ -755,6 +755,12 @@ async function realFile() {
   };
   const on = await mkVariant("on", 0.85);
   const off = await mkVariant("off", 0.95);
+  // A created node is implicitly parented to figma.currentPage, which is
+  // page 1 here, while the variant set belongs on the definitions page.
+  // combineAsVariants requires the nodes and the parent to share a page, so
+  // move them before combining rather than after.
+  defs.appendChild(on);
+  defs.appendChild(off);
   const set = figma.combineAsVariants([on, off], defs);
   set.name = "real-file-chip";
 
