@@ -413,7 +413,7 @@ async function gridBasic() {
 // Gap and padding are set explicitly rather than left to the default: a
 // nonzero default would break the arithmetic above and make the capture
 // ambiguous, which is the whole value of the fixture.
-async function gridFrOverflow() {
+function gridFrOverflow() {
   const grid = baseFrame("grid-fr-overflow", 100, 100);
   grid.layoutMode = "GRID";
   // GRID roots ignore primaryAxisSizingMode/counterAxisSizingMode; fix the
