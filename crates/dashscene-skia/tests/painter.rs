@@ -1549,3 +1549,112 @@ fn an_off_canvas_shadow_paints_nothing_without_error() {
         "the off-canvas shadow leaves the surface clear"
     );
 }
+
+// --------------------------------------------------------------------------
+// Free-path folded opacity: a fill and its own stroke (debt #277).
+//
+// On the free path `RectEntry::opacity` is folded into each draw separately
+// (`docs/decisions/masks-and-group-opacity.md`). Where an Inside- or
+// Center-aligned stroke lies over its own fill, that means the fill is dimmed,
+// and then the dimmed stroke composites *over* the already-dimmed fill —
+// alpha over alpha. The composite path flattens the node first and dims once,
+// so the two paths disagree in the overlap band.
+//
+// The scene is chosen so the arithmetic is exact and readable: an opaque fill
+// and an opaque stroke of the same colour, at opacity 0.5. Flattening first
+// gives a half-transparent node, alpha 128. Compositing twice gives
+// 128 + 128*(128/255) = 192.
+
+fn fill_and_stroke_at_half_opacity() -> (Vec<RectEntry>, PaintTable) {
+    let mut paints = PaintTable::new();
+    let paint = paints.push(PaintEntry {
+        fill: Some(PaintKind::Solid { color: RED }),
+        stroke: Some(Stroke {
+            width: 8.0,
+            align: StrokeAlign::Inside,
+            color: RED,
+        }),
+        ..PaintEntry::default()
+    });
+    (
+        vec![RectEntry {
+            x: 16.0,
+            y: 16.0,
+            w: 32.0,
+            h: 32.0,
+            paint,
+            clip: ClipIndex::UNCLIPPED,
+            opacity: 0.5,
+        }],
+        paints,
+    )
+}
+
+#[test]
+fn a_stroke_over_its_own_fill_is_dimmed_once_not_twice() {
+    let (rects, paints) = fill_and_stroke_at_half_opacity();
+    let bytes = render(&rects, &paints, &ImageTable::new(), 64);
+
+    // (20, 32) sits inside the 8px Inside stroke band, which covers x in
+    // [16, 24), and therefore over the fill as well.
+    let i = ((32 * 64) + 20) * 4;
+    let alpha = bytes[i + 3];
+
+    // The node is opaque before its group alpha, so the whole node — stroke
+    // band included — must read the group alpha exactly once.
+    assert_eq!(
+        alpha, 128,
+        "the stroke band read alpha {alpha}, so the fill and its own stroke \
+         were each dimmed and then composited (alpha over alpha) instead of \
+         the node being flattened and dimmed once",
+    );
+
+    // The fill-only interior is the control: it has always been correct, so a
+    // regression here would mean the fix broke the ordinary path.
+    let interior = ((32 * 64) + 32) * 4;
+    assert_eq!(
+        bytes[interior + 3],
+        128,
+        "the fill-only interior must be unchanged"
+    );
+}
+
+#[test]
+fn a_stroke_with_no_fill_is_correct_at_partial_opacity() {
+    // The companion to the test above, and the reason its `has_fill` guard is
+    // an optimisation rather than a correctness gate: with no fill underneath,
+    // there is only one draw in the band, so folding the group alpha into it
+    // and flattening the node both give the same answer. Removing the guard
+    // does not change any rendered result — it only opens an offscreen layer
+    // that cannot matter.
+    //
+    // Pinned so that stays true. If a later change makes the two paths differ
+    // for a stroke-only node, this fails and the guard becomes a real gate
+    // that needs its own reasoning.
+    let mut paints = PaintTable::new();
+    let paint = paints.push(PaintEntry {
+        stroke: Some(Stroke {
+            width: 8.0,
+            align: StrokeAlign::Inside,
+            color: RED,
+        }),
+        ..PaintEntry::default()
+    });
+    let rects = vec![RectEntry {
+        x: 16.0,
+        y: 16.0,
+        w: 32.0,
+        h: 32.0,
+        paint,
+        clip: ClipIndex::UNCLIPPED,
+        opacity: 0.5,
+    }];
+    let bytes = render(&rects, &paints, &ImageTable::new(), 64);
+
+    let band = ((32 * 64) + 20) * 4;
+    assert_eq!(
+        bytes[band + 3],
+        128,
+        "a stroke with no fill under it must read the group alpha exactly once",
+    );
+}

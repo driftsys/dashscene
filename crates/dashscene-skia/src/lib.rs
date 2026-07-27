@@ -298,14 +298,44 @@ impl Painter for SkiaPainter {
                 // fill-specific blend logic is needed beyond drawing in
                 // order. Empty `extra_fills` (every pre-C1 entry) draws
                 // exactly the one fill it always has.
+                // A stroke that lies over its own fill must not be dimmed
+                // separately from it (debt #277). Folding `rect.opacity` into
+                // each draw would composite a dimmed stroke over an
+                // already-dimmed fill — alpha over alpha — where an Inside or
+                // Center aligned stroke overlaps, while the composite path
+                // flattens the node and dims once. Flatten this node the same
+                // way: one layer at the group alpha, its contents drawn
+                // opaque.
+                //
+                // Narrow on purpose. The layer costs an offscreen, so it is
+                // opened only for the shape that actually disagrees — a node
+                // carrying both a stroke and at least one fill, below full
+                // opacity. Everything else keeps the folded path unchanged.
+                let has_fill = entry.fill.is_some() || !entry.extra_fills.is_empty();
+                let flatten = has_fill && entry.stroke.is_some() && rect.opacity != 1.0;
+                let (draw_rect, layered) = if flatten {
+                    canvas.save_layer_alpha_f(None, rect.opacity);
+                    (
+                        &RectEntry {
+                            opacity: 1.0,
+                            ..*rect
+                        },
+                        true,
+                    )
+                } else {
+                    (rect, false)
+                };
                 if let Some(kind) = &entry.fill {
-                    draw_fill_kind(canvas, rrect, rect, images, kind);
+                    draw_fill_kind(canvas, rrect, draw_rect, images, kind);
                 }
                 for kind in &entry.extra_fills {
-                    draw_fill_kind(canvas, rrect, rect, images, kind);
+                    draw_fill_kind(canvas, rrect, draw_rect, images, kind);
                 }
                 if let Some(stroke) = &entry.stroke {
-                    draw_stroke(canvas, &rrect, stroke, rect.opacity);
+                    draw_stroke(canvas, &rrect, stroke, draw_rect.opacity);
+                }
+                if layered {
+                    canvas.restore();
                 }
             }
             // Inner shadows sit on top of the fill and stroke, clipped to
