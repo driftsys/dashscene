@@ -543,6 +543,16 @@ fn a_baked_vector_blurs_only_inside_its_field() {
 /// the quad, and its seam is vertical and full-height, so the leak was
 /// loudest exactly where nothing was probed. Asserting over the whole canvas
 /// rather than at chosen points is what makes that unrepeatable.
+///
+/// **Since debt #503 this no longer pins the rect clip.** The coverage now
+/// enters as a clip shader rather than as a `DstIn` mask inside the layer, and
+/// an uncovered pixel resolves to `lerp(dst, blurred, 0)` — the destination
+/// unchanged — whether or not the rect clip bounds the layer. Deleting
+/// `clip_rect` from `draw_backdrop_blur_field` leaves this test green, which
+/// was measured rather than assumed. The rect stays as a bound on how much
+/// Skia allocates and blurs, which is a cost this test cannot see; the claim
+/// asserted below is confinement itself, and that is still real and still
+/// worth pinning against a coverage or clip-shader regression.
 #[test]
 fn the_baked_vector_blur_is_confined_to_its_quad() {
     const SEAM: f32 = 40.0;
@@ -629,6 +639,123 @@ fn the_baked_vector_blur_reads_past_its_quad() {
         probe(40, 40),
         quantized(WHITE),
         "the hole keeps the sharp backdrop"
+    );
+}
+
+/// A baked-vector node over a **transparent** canvas, with an opaque band
+/// covering everything left of `TRANSPARENT_SEAM` — the scene
+/// `a_baked_vector_blur_over_a_transparent_backdrop_softens_its_alpha_edge`
+/// reads.
+///
+///   canvas 100×100, cleared to transparent
+///     └── root, no fill
+///           ├── band black opaque (0,0) 40×100
+///           └── vector (20,20) 40×40, the square-with-hole field, no fill,
+///               backdrop blur radius 12
+///
+/// [`vector_scene`] cannot serve here: its white background makes the backdrop
+/// opaque everywhere, which is exactly the case that hides the defect.
+fn transparent_vector_scene(field: VectorField) -> Arena {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let root = boxed(
+        &mut txn,
+        None,
+        0.0,
+        0.0,
+        VEC_SURFACE as f32,
+        VEC_SURFACE as f32,
+    );
+    let band = boxed(
+        &mut txn,
+        Some(root),
+        0.0,
+        0.0,
+        TRANSPARENT_SEAM,
+        VEC_SURFACE as f32,
+    );
+    txn.set_prop(band, Prop::Fill(BLACK));
+    let vector = boxed(
+        &mut txn,
+        Some(root),
+        VEC_ORIGIN,
+        VEC_ORIGIN,
+        VEC_BOX,
+        VEC_BOX,
+    );
+    txn.set_prop(vector, Prop::ShapeField(field));
+    txn.set_prop(vector, backdrop_blur(12.0));
+    txn.commit();
+    arena
+}
+
+/// The band's right edge, run down the middle of the shape so the seam
+/// crosses both the solid body and the hole.
+const TRANSPARENT_SEAM: f32 = 40.0;
+
+/// A baked-vector backdrop blur **replaces** the region its field covers
+/// rather than compositing over it (debt #503) — the baked-vector twin of
+/// `a_backdrop_blur_over_a_transparent_backdrop_softens_its_alpha_edge` in
+/// `crates/dashscene-skia/tests/painter.rs`, which pins the parametric path.
+///
+/// The defect is invisible over an opaque backdrop, because an opaque blurred
+/// copy hides the original, and every other scene in this file has one. Over a
+/// partially transparent backdrop the blurred copy is also partially
+/// transparent, so compositing it `SrcOver` leaves the sharp original showing
+/// through underneath: the blur's alpha falloff is lost and the alpha edge
+/// stays hard at a flat 255. RGB is correct either way; only alpha moves.
+///
+/// The second half of the test is the trap the naive fix springs. Setting
+/// `BlendMode::Src` on the layer paint — which is what fixed the parametric
+/// path — replaces the whole clip, and this path's clip is the field's padded
+/// bounding box rather than its outline. That writes transparent wherever the
+/// coverage is zero and erases the real backdrop in the box around the shape,
+/// which the hole probes here catch. Both halves must hold at once.
+#[test]
+fn a_baked_vector_blur_over_a_transparent_backdrop_softens_its_alpha_edge() {
+    let (images, field) = baked_square_with_hole();
+    let bytes = vector_render(&transparent_vector_scene(field), &images);
+    let probe = |x: usize, y: usize| goldens::pixel(&bytes, VEC_SURFACE as usize, x, y);
+    let alpha_at = |x: usize| probe(x, BODY_ROW)[3];
+
+    /// Five pixels below the shape's top edge at y = 20 and five above the
+    /// hole's at y = 30, so the field covers this row fully and the only
+    /// structure the blur sees along it is the seam.
+    const BODY_ROW: usize = 25;
+
+    // Deep inside the band the blur has not yet pulled in any transparency.
+    assert!(
+        alpha_at(22) >= 250,
+        "deep inside the band the blur should stay near-opaque, got {}",
+        alpha_at(22),
+    );
+
+    // Approaching the seam at x = 40, the blurred copy must carry
+    // progressively less alpha. Compositing over the sharp original instead
+    // pins every one of these at 255.
+    let (a32, a36, a39) = (alpha_at(32), alpha_at(36), alpha_at(39));
+    assert!(
+        a32 < 250 && a36 < a32 && a39 < a36,
+        "the alpha edge must soften across the blur: got {a32} at x=32, {a36} at x=36, \
+         {a39} at x=39 — a flat 255 means the layer composited over the sharp backdrop \
+         instead of replacing it",
+    );
+
+    // The hole spans device (30,30)–(50,50) and is outside the field's
+    // coverage, so the backdrop inside it must survive exactly: opaque black
+    // left of the seam, fully transparent right of it. Replacing the whole
+    // clip instead of the coverage erases both.
+    assert_eq!(
+        probe(34, 40),
+        quantized(BLACK),
+        "the hole is outside the field's coverage, so the band beneath it must survive \
+         the replacement untouched"
+    );
+    assert_eq!(
+        probe(46, 40),
+        [0, 0, 0, 0],
+        "the hole is outside the field's coverage, so the transparent canvas beneath it \
+         must survive the replacement untouched"
     );
 }
 
