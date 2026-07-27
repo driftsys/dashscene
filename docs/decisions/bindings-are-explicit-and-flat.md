@@ -69,3 +69,48 @@ This is what makes containment provable and R4 a check a machine can run
 (once the binding table is in core, v0.7): a channel is bound, it sits under
 N hug ancestors, so a write to it reflows M nodes, and a 60 Hz binding under
 a hug ancestor becomes a named diagnostic.
+
+## As built — the containment check (issue #257)
+
+The load gate carries the check, as `binding.reflow-not-contained`
+(`crates/dashscene-validator/src/document.rs`). For every binding row whose
+channel reaches the solver it walks the target node's parent chain and names
+any ancestor that hugs. It runs in the validator rather than the engine
+because the binding loop and the hug predicate both already live there, and
+one implementation of containment is worth more than a second that can
+disagree with it.
+
+Three things the promise above left open, decided here.
+
+- **Which channels count.** `X`, `Y`, `Width`, `Height` and `Gap` reach the
+  solver; `FillR`–`FillA` and `Opacity` are paint-only
+  (`docs/decisions/visible-is-layout-opacity-is-paint.md`). That is the same
+  split `dashlang::reactive::classify` already makes for
+  `WriteClass::PaintOnly`, so the gate and the runtime read one line rather
+  than two. A channel appended to `BindingChannel` that the split does not
+  name fails `every_binding_channel_is_classified` instead of being treated
+  as paint-only in silence (P4).
+- **The threshold is one hug ancestor, not a depth.** A hug ancestor resizes
+  with its content, so the write travels up to the nearest fixed ancestor and
+  back down through everything under it — the reflow leaves the bound node's
+  subtree at the first hug, and every further hug only widens it. A depth
+  threshold would have to name a number nothing has measured.
+- **A hug on either axis breaks containment, not only the bound axis.** A
+  width change becomes a height change wherever text rewraps or a `Wrap`
+  container relines, so the two axes are not independent and a per-axis test
+  would under-report. This is the same either-axis predicate
+  `dashlang::reactive::ancestor_contained` already applies to decide whether
+  a write may skip the solve.
+
+The diagnostic is a warning, not an error: the document renders correctly and
+the reflow is authored intent, so a target that accepts the cost declares a
+waiver. An error is never waivable, which would leave no way to accept it.
+
+What the check does not prove. It answers "does this write's reflow leave the
+bound node's subtree", not "how many nodes reflow" — the M in the promise
+above is still uncounted, and counting it needs the solver, not the document.
+It says nothing about how often a binding is written: the flat table records
+that a signal drives a channel, never the write rate, so a "60 Hz binding" is
+not a document construct and the check treats every binding alike. And it is
+a static check on authored structure, so it cannot see a reflow that only a
+particular signal value produces.
