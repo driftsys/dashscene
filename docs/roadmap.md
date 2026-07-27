@@ -636,9 +636,9 @@ what the slice learned about the tolerance bands themselves is in
 [`technotes/2026-07-26-tolerance-band-coverage.md`](technotes/2026-07-26-tolerance-band-coverage.md).
 The v0.12 breakdown is revised at this close — see v0.12 below.
 
-### v0.12 — packer + quality profiles — open
+### v0.12 — packer + quality profiles — closed
 
-**Epic #345.** The current slice.
+**Epic #345.**
 
 Delivers: `dashpack` (an in-workspace standalone tool — vendored astcenc, an
 own KTX2 writer, no external CLIs), the RAW/HiFi/LoFi quality profiles as
@@ -649,8 +649,17 @@ table for the SA8255/SA7255 + R-Car launch fleet (a proposed refinement to
 [`specification/03-target-hardware-rules.md`](specification/03-target-hardware-rules.md);
 Basis stays the mixed-fleet contingency).
 
-Depends on: v0.11 (sections and the asset table). Design capture:
-`docs/wip/2026-07-19-asset-pipeline-profiles-and-baking.md`.
+Depends on: v0.11 (sections and the asset table). The design input was
+`docs/wip/2026-07-19-asset-pipeline-profiles-and-baking.md`; what the slice
+built from it is now in
+[`decisions/compress-raster-only.md`](decisions/compress-raster-only.md),
+[`decisions/derivation-manifest-section.md`](decisions/derivation-manifest-section.md),
+[`decisions/native-astc-codec-table.md`](decisions/native-astc-codec-table.md)
+and
+[`decisions/asset-quality-profile-naming.md`](decisions/asset-quality-profile-naming.md),
+which are what to read. Pointing a shipped record at working memory is the
+pattern #424 raises; this entry no longer does it, the v0.11 entry above still
+does.
 
 Broken into nine stories at the slice open (2026-07-26): #429 the `dashpack`
 crate, #430 vendored astcenc, #431 the KTX2 writer, #432 the band oracle and
@@ -680,24 +689,116 @@ profile's band should ship with the measured mutation that fails it, which is
 the discipline the import-oracle frames adopted at this close, rather than a
 budget chosen in advance and never exercised.
 
-### v0.13 — pre-v1 hardening — provisional
+Closed 2026-07-27 — all nine stories merged, plus #448 repairing the crate
+registry after #430 and #453 closed as unnecessary. A `.dsb` now ships as a
+thin container with hot sections at the head and page-aligned cold payloads at
+the tail; the packer picks a per-asset encoding by measured band with
+cheap-to-lossless escalation; derived banks assemble **and load** through a
+derivation-manifest section; and the reference painter renders all three
+profiles without the painter changing at all.
 
-**Epic #362.** A debt burn-down; provisional, revised at the v0.12 close.
+**Zero committed goldens moved across all nine stories**, verified per file
+with `git hash-object` rather than inferred from a green suite. #434 held the
+slice's only re-baseline permit and used none of it: a manifest row is written
+only where the resident payload differs from the canonical one, so a RAW
+assembly emits no manifest section and assembles to bytes identical to the
+canonical bank. One file was added; nothing was rewritten. The one change that
+did move a rendered measurement — the LoFi rename altering a text overlay in
+the `profile-stress` scene — the oracle caught rather than absorbed, and both
+figures were re-recorded with the reason.
+
+The slice designed its second family of tolerance bands against #422's finding
+rather than by analogy with the first: two bands, not six, each shipping the
+measured mutation that fails it, and both near misses (2.8012 % against a 1 %
+budget; 10.4401 % against 5 %) so the recorded number binds. Four decisions came
+out of it —
+[`decisions/compress-raster-only.md`](decisions/compress-raster-only.md) (three
+asset classes, not two: compress raster only, text because the risk is too high
+and icons because the value is too low, and the objective is bandwidth and
+residency rather than file size),
+[`decisions/derivation-manifest-section.md`](decisions/derivation-manifest-section.md),
+[`decisions/glyph-coverage-is-declared-at-build-time.md`](decisions/glyph-coverage-is-declared-at-build-time.md)
+(dynamic generation deferred as a painter capability, never a profile
+property), and the `Lite` → `LoFi` rename
+([`decisions/asset-quality-profile-naming.md`](decisions/asset-quality-profile-naming.md)).
+Full script coverage moved to v1 as epic #463, taking #460, #467, #468 and #470
+with it. What the slice cost to learn: **every one of its nine stories had a
+real defect found in review**, several of which no test could have
+distinguished from correct behaviour — mutation testing found them, reading did
+not. The v0.13 breakdown is revised at this close — see v0.13 below.
+
+### v0.13 — pre-v1 hardening — open
+
+**Epics #362 (the burn-down) and #474 (the decisions track).** Revised at the
+v0.12 close (2026-07-27); the current slice.
 
 Delivers: the independent code-debt that accumulated across v0.1–v0.12 and is
 resolvable before v1 — perf and allocation micro-debt, cleanup, test-gaps, and
 latent-correctness guards, across the `dashcue`, `dashlang`, `dashscene-core`,
-`dashscene-engine`, `dashscene-typeset`, paint, goldens, and repo/importers
-clusters (the items on milestone #14). This slice exists so that debt gets a
-focused pass instead of sitting under v1's Unity-and-toolchain scope, where it
-never surfaces. Feature scope gated on a specific v1 consumer stays on v1 — it
-unlocks with its consumer, so it is not burn-down-able early. The dividing line
-and the item split are recorded in
+`dashscene-engine`, `dashscene-typeset`, paint, packer, goldens, oracle, and
+repo/importers clusters (the items on milestone #14). This slice exists so that
+debt gets a focused pass instead of sitting under v1's Unity-and-toolchain
+scope, where it never surfaces. Feature scope gated on a specific v1 consumer
+stays on v1 — it unlocks with its consumer, so it is not burn-down-able early.
+The dividing line is recorded in
 [`decisions/pre-v1-hardening-slice.md`](decisions/pre-v1-hardening-slice.md).
 
-Depends on: nothing in particular — the items are independent by construction
-and parallelize across crates, one PR per crate cluster. Runs after v0.12,
-before v1.
+Depends on: nothing in particular — the items are independent by construction.
+Runs after v0.12, before v1.
+
+Revised at the v0.12 close (2026-07-27). The 2026-07-19 breakdown described 54
+items; the re-triage found **102**, and that correction was mostly a counting
+one rather than a re-scoping: 23 open issues carried no milestone at all and so
+were in nobody's count, 22 more had been re-anchored from the closed v0.9 and
+v0.10 milestones, and five were stragglers left on v0.11 and v0.12 after those
+slices closed. A milestone sweep for un-anchored issues is now part of the
+phase-end ritual rather than assumed. Four things changed in substance:
+
+- **The slice runs as two tracks.** Nine of the items are not code debt: seven
+  need a ruling from the repository owner or an input only the owner can
+  supply, and two are blocked on GitHub Actions billing. They were filed as
+  `debt` at the first triage and counted as burn-down, which meant they were
+  picked up, analysed, and put back down repeatedly. The seven now have their
+  own track (epic #474), and the dividing line gains a third term to name them.
+  Two are specification gaps mistaken for code debt — **#462**, where `dashpack`
+  treats exceeding the target memory budget as a validator error while no memory
+  budget exists anywhere in `docs/specification/`, so a profile that cannot fail
+  is not a contract; and **#373**, where the MSDF legibility floor is checked at
+  import time against the authored size while animation can cross it at runtime.
+- **The burn-down runs as three streams split by artifact class**, not by crate:
+  #475 owns the painter and every committed artifact, #439 owns the runtime and
+  with it the layout assertions, #438 owns producers and vocabulary and moves
+  nothing committed. The rationale, and why v0.12's slice-wide "zero goldens
+  moved" assertion becomes a per-story one, is in
+  [`decisions/debt-streams-own-artifact-classes.md`](decisions/debt-streams-own-artifact-classes.md).
+- **`dashscene-core` is released.** All 12 of its items were held back during
+  v0.12 because core's commit and allocation cluster was where bank assembly
+  might land. Cold-bank assembly and the derived bank both landed without
+  taking that seam, so the hold is lifted.
+- **The burn-down is tiered, and 20 items left for v1.** A backlog of 93 is a
+  list, not a plan, so the items carry a tier that says what order to work
+  them in: 23 `t1-correctness` (wrong output, crash, silent drop), 20
+  `t2-check-has-no-teeth` (test gaps and checks that cannot fail), 33
+  `t3-cleanup`. The middle tier is the one v0.12 earned — every one of its nine
+  stories had a real defect found in review, and the recurring kind was a check
+  that could not fail. Separately, 20 perf and allocation items moved to v1's
+  measured performance pass (epic #476): each is real, none has a frame budget
+  or a target-hardware measurement behind it, and fixing one now yields a change
+  whose only success criterion is that the tests still pass. **Resolvable is not
+  the same as measurable** — the same argument #462 makes about the packer's
+  budget, applied to optimisation. The burn-down is 76 and the milestone holds
+  81.
+
+The seven items that needed a ruling or an owner-supplied input were worked
+immediately, and **four were settled the same day** — which is the argument for
+having separated them at all. #462 is deferred to v1 (see below); the MSDF floor
+moves to a validator check against the _reachable_ minimum scale rather than the
+authored size (#373); the `blur-falloff` band splits into a residual and a gate
+(#422); and the astcenc record is corrected in place rather than spawning a new
+one (#446). The last three became ordinary burn-down work. What remains in the
+track is blocked on an input rather than a decision: two items need a Figma
+capture that does not exist, and one is blocked on the painter's working colour
+space.
 
 ## v1 — Unity, full feature set, performance, production toolchain
 
@@ -715,6 +816,31 @@ lean native painter lands here or later is decided on those measurements, not
 in advance); and the production toolchain — `dashc` as a shipped product, with
 a stable CLI, versioned diagnostics, a waiver workflow, linter rule packs, and
 golden/report tooling for design review.
+
+Two things were added to v1 at the v0.13 open (2026-07-27), both because they
+need a number only target hardware can supply:
+
+- **The perf and allocation debt, selected against the measured performance
+  pass (epic #476, 20 items).** Deferred out of v0.13's burn-down because none
+  has a measurement behind it. The epic states its own entry condition — the
+  performance pass runs first and produces a profile, then these are selected,
+  ordered and validated against it, and an item the profile shows is not on a
+  hot path is closed as measured-and-not-worth-it. Held as an epic rather than
+  loose on the milestone precisely so they do not repeat the "buried under v1"
+  failure that
+  [`decisions/pre-v1-hardening-slice.md`](decisions/pre-v1-hardening-slice.md)
+  exists to fix.
+- **The packer's memory budget and the target display resolution (#462),** set
+  alongside #170's measurable-requirements work. Neither exists anywhere in
+  `docs/specification/` today —
+  [`specification/03-target-hardware-rules.md`](specification/03-target-hardware-rules.md)
+  carries R-T1 to R-T4 and no number. `dashpack` treats a profile exceeding the
+  budget as a validator error, so **for the whole of v0 that error is
+  unreachable**: a document can pack successfully and still not fit the target,
+  and nothing detects it. The per-asset bands still bind — each is measured and
+  ships the mutation that fails it — but the aggregate residency contract does
+  not. That is an accepted gap from the 2026-07-27 ruling, recorded here so it
+  is visible rather than implied.
 
 Full script coverage (v1, epic #463): v0 ships Latin and Arabic, which v0.6
 delivered, and that is the whole of v0's language scope. Everything beyond it

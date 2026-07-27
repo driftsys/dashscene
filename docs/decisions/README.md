@@ -460,6 +460,20 @@ so each technote stops being the authority for the conclusion it reached:
 - [pre-v1-hardening-slice.md](pre-v1-hardening-slice.md) — the 2026-07-19 debt
   triage splits the independent code-debt into a pre-v1 hardening slice (v0.13,
   milestone #14, epic #362); feature scope gated on a v1 consumer stays on v1.
+  Revised at the v0.12 close (2026-07-27), where the dividing line grew from
+  two terms to four: **resolvable and measurable now** is the burn-down;
+  **needs a ruling or an owner-supplied input** is v0.13 but not burn-down work
+  (epic #474); **real but not yet measurable** goes to v1's performance pass
+  (epic #476), because resolvable is not the same as measurable and an
+  optimisation with no frame budget behind it cannot be shown to have worked;
+  and **unlocks with a v1 consumer** stays on v1 as before. The third term was
+  written for two specification gaps that had been mistaken for code debt —
+  #462, where the packer's memory budget has no number so a profile cannot
+  fail, and #373, where the MSDF legibility floor is checked at import time
+  while animation can cross it at runtime. It named seven items and four were
+  settled the day it was written, which is its own best argument: they were not
+  hard, they were unasked. #462 is deferred to v1 with the resulting gap stated
+  rather than implied.
 - [backdrop-blur-is-core-vocabulary.md](backdrop-blur-is-core-vocabulary.md) —
   backdrop blur stops being `profile:full` and every painter honours
   it; the static bake is rejected because it would pass the render oracle while
@@ -520,5 +534,19 @@ so each technote stops being the authority for the conclusion it reached:
   incapacity is a render-time report, not a compile-time refusal. Carries a
   stated reopening condition and three constraints, including that a dynamic
   generator must be this project's own or the divergence measured (#463).
+
+- [debt-streams-own-artifact-classes.md](debt-streams-own-artifact-classes.md)
+  — a debt slice's parallel streams are drawn around **artifact classes**, not
+  crates: one stream owns the painter and every committed artifact, one owns
+  the runtime and with it the layout assertions, one owns producers and moves
+  nothing committed. An item's stream follows the artifact it can move, so
+  `dashc` splits across two. v0.12's slice-wide "zero goldens moved" assertion
+  becomes a per-story one, because v0.13 contains fixes whose whole purpose is
+  to change output — the default is still zero movement asserted per file with
+  `git hash-object`, a story that moves an artifact declares it up front and
+  lands alone, and **the permit does not travel with the item**: a stream that
+  discovers it must move one hands the item over rather than acquiring the
+  right. Three streams stays the ceiling, because review is the bottleneck
+  (#362, #475, #438, #439).
 
 See the `sdd-working-memory-lifecycle` rule.
