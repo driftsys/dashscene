@@ -471,3 +471,147 @@ fn a_non_rect_channel_track_is_refused_by_name() {
     };
     VariantFlip::new().start(&[], &[], &transition);
 }
+
+/// A one-second linear tween — the spec every #487 test below declares, so
+/// t = 0.5 lands on a midpoint exactly.
+fn linear_second() -> TransitionSpec {
+    TransitionSpec::Tween {
+        duration: 1.0,
+        easing: Easing::Linear,
+    }
+}
+
+/// A node with one committed rect, for a FLIP that needs no real solve.
+fn lone_node() -> (Arena, NodeId) {
+    let mut arena = Arena::new();
+    let node = {
+        let mut txn = arena.open();
+        let node = txn.add_node(None, None);
+        txn.commit();
+        node
+    };
+    (arena, node)
+}
+
+#[test]
+fn a_switch_where_no_declared_channel_moved_animates_nothing() {
+    // Debt #487. Every rect channel is declared, and the switch moves none
+    // of them. Each track would sample the value the node already holds for
+    // a whole second. The engine declines all four, so nothing is scheduled
+    // and the node never enters the animated set — which is the same place
+    // a node with no declared track already sits.
+    let (_arena, node) = lone_node();
+    let rect = SolvedRect {
+        x: 10.0,
+        y: 20.0,
+        w: 30.0,
+        h: 40.0,
+    };
+    let transition = VariantTransition {
+        tracks: [Channel::X, Channel::Y, Channel::Width, Channel::Height]
+            .into_iter()
+            .map(|channel| PropTransition {
+                prop: prop_key(node, channel),
+                spec: linear_second(),
+            })
+            .collect(),
+        stagger: 0.0,
+    };
+
+    let mut flip = VariantFlip::new();
+    flip.start(&[(node, rect)], &[(node, rect)], &transition);
+
+    assert!(
+        flip.is_empty(),
+        "a switch that moved nothing animates nothing"
+    );
+    assert!(flip.sample(node).is_none(), "the node is not animating");
+    assert_eq!(flip.sampled_rects().count(), 0, "and yields no frame rect");
+}
+
+#[test]
+fn an_unmoved_channel_of_a_moving_node_still_samples_its_after_value() {
+    // The other half of #487's contract: declining a channel must not change
+    // what a consumer reads. The node's X moves and its width does not, so
+    // the node stays in the animated set and the declined width channel
+    // samples the after value at every step — exactly what a live track
+    // pinned at from == to would have produced.
+    let (_arena, node) = lone_node();
+    let before = SolvedRect {
+        x: 10.0,
+        y: 20.0,
+        w: 30.0,
+        h: 40.0,
+    };
+    let after = SolvedRect { x: 110.0, ..before };
+    let transition = VariantTransition {
+        tracks: vec![
+            PropTransition {
+                prop: prop_key(node, Channel::X),
+                spec: linear_second(),
+            },
+            PropTransition {
+                prop: prop_key(node, Channel::Width),
+                spec: linear_second(),
+            },
+        ],
+        stagger: 0.0,
+    };
+
+    let mut flip = VariantFlip::new();
+    flip.start(&[(node, before)], &[(node, after)], &transition);
+    assert_rect(
+        flip.sample(node).expect("x is animating"),
+        (10.0, 20.0, 30.0, 40.0),
+    );
+    flip.advance(0.5);
+    assert_rect(
+        flip.sample(node).expect("x is animating"),
+        (60.0, 20.0, 30.0, 40.0),
+    );
+    flip.advance(0.5);
+    assert_rect(
+        flip.sample(node).expect("x is animating"),
+        (110.0, 20.0, 30.0, 40.0),
+    );
+}
+
+#[test]
+fn declining_an_unmoved_channel_leaves_the_later_tracks_stagger_alone() {
+    // #487 rests on `dashcue` computing a track's delay from its DECLARED
+    // index (#74), so a declined track leaves the rest of the switch on the
+    // schedule the author wrote. Width is declared first and does not move;
+    // X is declared second and does. X must still wait one stagger step, as
+    // it would if the width track had started.
+    let (_arena, node) = lone_node();
+    let before = SolvedRect {
+        x: 10.0,
+        y: 20.0,
+        w: 30.0,
+        h: 40.0,
+    };
+    let after = SolvedRect { x: 110.0, ..before };
+    let transition = VariantTransition {
+        tracks: vec![
+            PropTransition {
+                prop: prop_key(node, Channel::Width),
+                spec: linear_second(),
+            },
+            PropTransition {
+                prop: prop_key(node, Channel::X),
+                spec: linear_second(),
+            },
+        ],
+        stagger: 0.5,
+    };
+
+    let mut flip = VariantFlip::new();
+    flip.start(&[(node, before)], &[(node, after)], &transition);
+
+    // Still inside X's 0.5-second delay: it holds its `from`.
+    flip.advance(0.25);
+    assert_eq!(flip.sample(node).expect("x is animating").x, 10.0);
+    // The delay is spent; a further half second is half of X's tween.
+    flip.advance(0.75);
+    assert_eq!(flip.sample(node).expect("x is animating").x, 60.0);
+}

@@ -7,8 +7,12 @@
              lowering (story #165), the v0.4 variant-switch FLIP
              (story #22), and the v0.8 layout fidelity — wrap, grid
              with spans, baseline, and the negative-margin hug rebate
-             (story #43), and the v0.11 weight-aware measure (story
-             F1/#368 — the measure context carries the CSS weight)
+             (story #43), the v0.11 weight-aware measure (story
+             F1/#368 — the measure context carries the CSS weight), and
+             the v0.13 correctness burn-down (#270 the hug-child
+             negative margin, #322 the hug baseline row's cross size,
+             #200 the taffy_of fill tripwire, #487 the FLIP animated-set
+             contract)
 
 ## Purpose
 
@@ -20,6 +24,13 @@ scenes through `txn.commit_with(&mut TaffySolver::new())`.
 
 Source: `crates/dashscene-engine/src/lib.rs`. Acceptance path:
 `crates/dashscene-engine/tests/solve.rs` (hand-computed rects).
+
+`crates/dashscene-engine/tests/taffy_upstream.rs` is not an acceptance test:
+it reproduces the taffy 0.12 defect the negative-margin workarounds exist for
+(debt #269), in plain taffy with no dashscene types, and asserts taffy's
+current wrong answers. A taffy upgrade that fixes the defect turns those
+assertions red, which is the signal to retire both workarounds. The report
+text is `docs/technotes/taffy-scaled-shrink-report.md`.
 
 ## The solve
 
@@ -40,10 +51,18 @@ solves; #164 realizes it. The first solve builds the tree; every later
 solve reuses it. `TaffySolver` holds a `TreeState` — the persistent
 `TaffyTree`, a `taffy_of: Vec<taffy::NodeId>` map keyed by arena `NodeId`
 slot (so a `NodeId` maps to a stable Taffy node across solves),
-`parent_of`, the roots, and the previous relative layouts and root
-origins for the readback prune. A `solves` counter is exposed
-(`solves()`) so a test can assert that a paint-only commit performed no
-solve.
+`parent_of`, the roots, the previous relative layouts and root
+origins for the readback prune, and the #322 cross-size floors. A `solves`
+counter is exposed (`solves()`) so a test can assert that a paint-only commit
+performed no solve.
+
+`taffy_of` is seeded with `NodeId::new(u64::MAX)`, which names no node taffy
+can allocate, and a `debug_assert` after the build says every slot was
+overwritten (v0.13, debt #200). The seed used to be `NodeId::new(0)` — the id
+of the first node built — so a structural bug that left a slot unwritten
+would read that node's layout and report it as another node's rect. There is
+no such bug: every arena node is reachable from a root. The point is that if
+one ever appears it stops rather than answers.
 
 `solve` dispatches on whether the tree is structurally current — a
 **grown** arena node count forces a full `rebuild` returning every node;
@@ -146,10 +165,21 @@ broken branch's two formulas agree exactly and the reconstruction is
 `size + margin_sum` for any overlap depth. The main-axis `min_size`
 floors at the authored size, clamped by an authored max, maxed with an
 authored min, so the definite pass restores the real size — positions
-and sizes are unchanged everywhere else. A `Hug` child with a negative
-margin still mis-sums (its basis is content-derived; no static rebate
-exists) — a known residual. Full arithmetic, alternatives, and the
-declared corner cases: `docs/decisions/negative-margin-hug-rebate.md`.
+and sizes are unchanged everywhere else.
+
+A `Hug` child has no authored size to rebate into, so it takes the same
+branch's other agreement point (v0.13, debt #270): at `flex_shrink = 1`
+the divisor `max(1, shrink × inner_basis)` and the multiplier
+`max(1, shrink) × inner_basis` are equal for every inner basis of 1 or
+more, and the item contributes exactly `basis + margin_sum`. The switch
+needs a negative margin sum and a **parent that hugs the same axis**,
+which keeps it inside the pass it repairs: taffy enters the broken
+branch only for an indefinite container main size, and a hugging
+container is sized to its own content sum, so the definite pass has no
+negative free space for the shrink factor to act on. Under any other
+parent sizing the child keeps `flex_shrink = 0`. Full arithmetic,
+alternatives, and the declared corner cases:
+`docs/decisions/negative-margin-hug-rebate.md`.
 
 Degenerate constructs, all pinned by test and named here for the
 validator slice to diagnose (P4):
@@ -221,6 +251,43 @@ has already fixed. The measure seam carries no glyph baseline, so under
 baseline alignment a text leaf aligns by its box bottom (Q-4,
 `docs/technotes/open-questions.md`).
 
+### The post-solve baseline pass (v0.8 #272, v0.13 #322)
+
+Because the measure seam carries no baseline, Taffy aligns a
+`CrossAxisAlign::Baseline` row on its children's box bottoms. `#272`
+corrects that after the solve: `collect_baseline_offsets` walks the
+tree, and for every `Horizontal` `Baseline` row holding at least one
+text child it re-places each participating child so its first line's
+`baseline_y` — the placed baseline the typesetter reports, half-leading
+included — meets one line. A non-text child keeps its box bottom. A
+`Fill` cross-sized child is mapped `align_self: STRETCH`, which taffy
+excludes from baseline alignment, so it is excluded here too and keeps
+the place and the size taffy gave it.
+
+The re-placed children can end lower than the row's own cross size,
+because that size came from the box bottoms taffy aligned and the text
+now ends a descender further down. A row that hugs its cross axis must
+hold them (v0.13, debt #322). The pass therefore records the cross
+extent its own placement needs, injects it as the row's Taffy
+`min_size` on the cross axis, and runs the solver a second time. The
+re-solve — rather than a patch to the row's rect — is what makes the
+row's ancestors, its following siblings and any hugging ancestor
+re-place around it, and it keeps Taffy the one solver (P2). A row with
+an authored cross size is never floored: an authored size is the
+author's decision, and a run that overflows it clips as before.
+
+The floors live on the retained tree and are recomputed every solve, so
+a row that stops needing one has it removed rather than carrying a
+stale height — the row itself is not restyled when only a text child
+changed. Exactly one extra solve is ever run: the floor is the lowest
+re-placed child bottom, and neither a child's baseline nor its cross
+size depends on the row's own cross size, so the second solve settles
+on the floor the first one computed (a `debug_assert` pins that).
+
+The nested case stays open: a container inside a baseline text row is
+taken by its box bottom, because Taffy's `Layout` does not expose the
+computed baseline of a subtree.
+
 ### One cache, borrowed not owned
 
 The typesetter is passed in, never constructed here.
@@ -272,6 +339,22 @@ switch (or any re-solve) produces. It is a thin engine-side binder onto
 - `advance(dt)`, then `sample(node)` / `sampled_rects()` reassemble a full
   `SolvedRect` per node by overlaying the live per-channel scheduler samples
   on the `after` target.
+
+**The animated set is the nodes that are animating, never the nodes a
+transition declared** (v0.13, debt #487). Three cases put a node outside it,
+and they are one rule: a node with no declared track, a node whose declared
+channels have all finished (`advance` drops it), and a node whose every
+declared channel starts and ends at the same value. In all three the node's
+rect is its `after` rect, which is what a consumer composing the animated set
+over the `after` layout already holds — so the set's membership is a
+statement about motion, not a table of everything the author named.
+
+That contract is what lets `start` decline a channel whose `from` equals its
+`to`. `dashcue`'s binding callback may return `None` (issue #74), and it
+computes a track's stagger delay from the track's **declared** index, so
+declining one leaves every other track on the schedule the author wrote. A
+switch that changes one channel of a many-channel declaration now pays for
+the one channel, not for the declaration.
 
 The two snapshots need no new bookkeeping: `commit` writes the back buffer
 while the previous generation's rects are still live in the front buffer,

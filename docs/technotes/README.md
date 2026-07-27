@@ -60,6 +60,12 @@ Notes:
   three tolerance bands: `blur-falloff` cannot fail on a bounded-area blur
   defect, `aa-edge` is blind to an amplitude one, and neither dominates the
   other. Informative; the decision is #422.
+- [taffy-scaled-shrink-report.md](taffy-scaled-shrink-report.md) — the upstream
+  report for the taffy 0.12 defect the negative-margin workarounds exist for
+  (debt #269): where the two scaled-shrink expressions disagree, the minimal
+  plain-taffy reproduction, the margin sweep, and the suggested fix. The
+  reproduction also lives as a canary test, so a taffy upgrade that fixes the
+  defect names the workarounds to retire.
 
 The four notes above were captured from a 2026-07-13 design discussion and
 carry DECISION / CANDIDATE / OPEN tags. Every `DECISION` and `DECISION
