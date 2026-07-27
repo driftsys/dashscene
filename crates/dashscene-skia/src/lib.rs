@@ -729,9 +729,14 @@ fn backdrop_blur_filter(radius: f32) -> Option<ImageFilter> {
 /// `docs/decisions/backdrop-blur-is-core-vocabulary.md` settles the
 /// surrounding question — an opacity below 1 makes a group a backdrop root, so
 /// the isolating case is handled by isolation rather than by this blend mode.
-fn backdrop_layer_paint(opacity: f32, replaces: bool) -> skia_safe::Paint {
+///
+/// Both blur paths share this paint. `Src` replaces whatever the draw's
+/// coverage reaches, so each path is responsible for making that coverage the
+/// region it means to replace — a rounded-rect clip on the parametric path, a
+/// clip shader carrying the field coverage on the baked-vector one.
+fn backdrop_layer_paint(opacity: f32) -> skia_safe::Paint {
     let mut paint = skia_safe::Paint::default();
-    if replaces && opacity == 1.0 {
+    if opacity == 1.0 {
         paint.set_blend_mode(BlendMode::Src);
     } else {
         apply_opacity(&mut paint, opacity);
@@ -769,7 +774,7 @@ fn draw_backdrop_blur_box(canvas: &Canvas, shape: &RRect, radius: f32, opacity: 
     let Some(filter) = backdrop_blur_filter(radius) else {
         return;
     };
-    let layer = backdrop_layer_paint(opacity, true);
+    let layer = backdrop_layer_paint(opacity);
     canvas.save();
     canvas.clip_rrect(*shape, ClipOp::Intersect, true);
     canvas.save_layer(&SaveLayerRec::default().backdrop(&filter).paint(&layer));
@@ -784,22 +789,55 @@ fn draw_backdrop_blur_box(canvas: &Canvas, shape: &RRect, radius: f32, opacity: 
 /// VECTOR carrying `BACKGROUND_BLUR` (`crates/dashc/src/figma/mod.rs`) — so
 /// it is the path the story's fidelity number depends on, not a generality.
 ///
-/// A rounded-rect clip cannot express a baked outline, so two things confine
-/// the blur rather than one. The canvas is clipped to the field's padded
-/// quad, which bounds the layer; inside it, `BlendMode::DstIn` against the
-/// coverage shader multiplies the layer's alpha by the shape's coverage,
-/// clearing it outside the outline; the restore then composites what is left
-/// over the sharp backdrop.
+/// A rounded-rect clip cannot express a baked outline, so the field coverage
+/// enters as a **clip shader** instead. Skia carries a clip shader as draw
+/// coverage rather than as a mask over the drawn pixels, and it applies
+/// coverage to a blend as `lerp(dst, blend(src, dst), coverage)`. With `Src`
+/// on the layer paint that resolves to `lerp(dst, blurred, coverage)`: the
+/// covered region is replaced, the uncovered region keeps the original
+/// backdrop exactly, and the shape's antialiased edge crossfades between them.
+/// The parametric path's rounded-rect clip does the same job by the same
+/// mechanism, so the two paths now have the same structure and differ only in
+/// which clip carries the coverage.
 ///
-/// **The clip is load-bearing, not a duplicate of the mask.**
-/// `SaveLayerRec::bounds` is a hint to Skia, not a guarantee: with a backdrop
-/// filter the layer is allocated over the device clip, so without this clip
-/// every layer pixel the `DstIn` rect does not cover keeps a full-opacity
-/// blurred backdrop and composites on restore — one baked-vector node would
-/// blur the whole frame. `the_baked_vector_blur_is_confined_to_its_quad`
-/// pins it. The clip does not truncate the blur's input: Skia reads the halo
-/// the kernel needs from outside it, which is the same property the box path
-/// relies on.
+/// **Masking inside the layer instead is what made this path composite rather
+/// than replace** (debt #503). `BlendMode::DstIn` against the coverage shader
+/// clears the layer outside the outline, but the restore then still has to
+/// composite what is left, and `SrcOver` leaves the destination weighted
+/// `1 - blurred_alpha × coverage` where a replacement weights it
+/// `1 - coverage`. Those agree only where the backdrop is opaque, which every
+/// scene measured before debt #503 was. Promoting the mask to a clip is what
+/// moves the coverage into the term that the blend already lerps by.
+///
+/// **`BlendMode::Src` alone does not transfer from the box path.** `Src`
+/// replaces everything the coverage reaches, and the rect clip's coverage is
+/// the field's padded bounding box, so setting it without the clip shader
+/// writes transparent around the shape and erases the real backdrop there —
+/// measured at 22.6 % differing on the `vector-backdrop-blur` import frame
+/// against a 2 % band. `Src` is sound only where the coverage equals the
+/// region being replaced, which is precisely what the clip shader arranges.
+///
+/// **The rect clip is now an allocation bound, not a correctness gate.** It
+/// used to be one: while the coverage was applied as a `DstIn` mask inside the
+/// layer, every layer pixel that mask did not cover kept a full-opacity
+/// blurred backdrop and composited on restore, so without the rect one
+/// baked-vector node blurred the whole frame — the leak
+/// `the_baked_vector_blur_is_confined_to_its_quad` was written for. The clip
+/// shader prevents that leak by construction, because `lerp(dst, blurred, 0)`
+/// is `dst`, so removing the rect now renders every scene in that test
+/// identically, whole-canvas, rather than turning it red. It stays because
+/// `SaveLayerRec::bounds` is a hint to Skia rather than a guarantee — with a
+/// backdrop filter the layer is allocated over the device clip, and a clip
+/// shader does not tighten device clip bounds — so the rect is what keeps a
+/// frosted node from allocating and blurring a frame-sized layer. That is a
+/// cost bound, and no pixel test can pin it; the same standing as the
+/// `has_fill` guard in `draw_rects`.
+///
+/// Neither clip truncates the blur's input: Skia reads the halo the kernel
+/// needs from outside both, which `the_baked_vector_blur_reads_past_its_quad`
+/// pins for the rect and now for the clip shader with it — the property the
+/// box path relies on holds for a shader clip too, which is what made the
+/// nested-layer alternative unnecessary.
 fn draw_backdrop_blur_field(
     canvas: &Canvas,
     rect: &RectEntry,
@@ -815,20 +853,16 @@ fn draw_backdrop_blur_field(
     let Some((dest, coverage)) = field_coverage(rect, field, atlas, effect) else {
         return;
     };
-    let layer = backdrop_layer_paint(opacity, false);
+    let layer = backdrop_layer_paint(opacity);
     canvas.save();
     canvas.clip_rect(dest, ClipOp::Intersect, false);
+    canvas.clip_shader(coverage, ClipOp::Intersect);
     // No `bounds` on the rec: Skia discards it whenever a backdrop filter is
     // set (`SkCanvas::internalSaveLayer` takes the user bounds as a hard
     // layer extent only on the trivial-restore path, which a backdrop
     // disables), so passing one would state a constraint that does not hold
     // and invite the clip above being removed as a duplicate.
     canvas.save_layer(&SaveLayerRec::default().backdrop(&filter).paint(&layer));
-    let mut mask = skia_safe::Paint::default();
-    mask.set_shader(coverage);
-    mask.set_blend_mode(BlendMode::DstIn);
-    mask.set_anti_alias(false);
-    canvas.draw_rect(dest, &mask);
     canvas.restore();
     canvas.restore();
 }
