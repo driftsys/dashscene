@@ -460,14 +460,20 @@ so each technote stops being the authority for the conclusion it reached:
 - [pre-v1-hardening-slice.md](pre-v1-hardening-slice.md) — the 2026-07-19 debt
   triage splits the independent code-debt into a pre-v1 hardening slice (v0.13,
   milestone #14, epic #362); feature scope gated on a v1 consumer stays on v1.
-  Revised at the v0.12 close (2026-07-27): the dividing line gains a third
-  term — **needs a decision or an owner-supplied input is v0.13, but is not
-  burn-down work** — and the seven items it names get their own track (epic
-  #474) beside the burn-down. Two of them are specification gaps that were
-  mistaken for code debt: #462, where the packer's memory budget has no number
-  in `docs/specification/` so a profile cannot fail, and #373, where the MSDF
-  legibility floor is checked at import time while animation can cross it at
-  runtime.
+  Revised at the v0.12 close (2026-07-27), where the dividing line grew from
+  two terms to four: **resolvable and measurable now** is the burn-down;
+  **needs a ruling or an owner-supplied input** is v0.13 but not burn-down work
+  (epic #474); **real but not yet measurable** goes to v1's performance pass
+  (epic #476), because resolvable is not the same as measurable and an
+  optimisation with no frame budget behind it cannot be shown to have worked;
+  and **unlocks with a v1 consumer** stays on v1 as before. The third term was
+  written for two specification gaps that had been mistaken for code debt —
+  #462, where the packer's memory budget has no number so a profile cannot
+  fail, and #373, where the MSDF legibility floor is checked at import time
+  while animation can cross it at runtime. It named seven items and four were
+  settled the day it was written, which is its own best argument: they were not
+  hard, they were unasked. #462 is deferred to v1 with the resulting gap stated
+  rather than implied.
 - [backdrop-blur-is-core-vocabulary.md](backdrop-blur-is-core-vocabulary.md) —
   backdrop blur stops being `profile:full` and every painter honours
   it; the static bake is rejected because it would pass the render oracle while

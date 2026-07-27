@@ -747,12 +747,12 @@ Depends on: nothing in particular — the items are independent by construction.
 Runs after v0.12, before v1.
 
 Revised at the v0.12 close (2026-07-27). The 2026-07-19 breakdown described 54
-items; the milestone now holds **102**, and the correction is mostly a counting
+items; the re-triage found **102**, and that correction was mostly a counting
 one rather than a re-scoping: 23 open issues carried no milestone at all and so
 were in nobody's count, 22 more had been re-anchored from the closed v0.9 and
 v0.10 milestones, and five were stragglers left on v0.11 and v0.12 after those
 slices closed. A milestone sweep for un-anchored issues is now part of the
-phase-end ritual rather than assumed. Three things changed in substance:
+phase-end ritual rather than assumed. Four things changed in substance:
 
 - **The slice runs as two tracks.** Nine of the items are not code debt: seven
   need a ruling from the repository owner or an input only the owner can
@@ -775,6 +775,30 @@ phase-end ritual rather than assumed. Three things changed in substance:
   v0.12 because core's commit and allocation cluster was where bank assembly
   might land. Cold-bank assembly and the derived bank both landed without
   taking that seam, so the hold is lifted.
+- **The burn-down is tiered, and 20 items left for v1.** A backlog of 93 is a
+  list, not a plan, so the items carry a tier that says what order to work
+  them in: 23 `t1-correctness` (wrong output, crash, silent drop), 20
+  `t2-check-has-no-teeth` (test gaps and checks that cannot fail), 33
+  `t3-cleanup`. The middle tier is the one v0.12 earned — every one of its nine
+  stories had a real defect found in review, and the recurring kind was a check
+  that could not fail. Separately, 20 perf and allocation items moved to v1's
+  measured performance pass (epic #476): each is real, none has a frame budget
+  or a target-hardware measurement behind it, and fixing one now yields a change
+  whose only success criterion is that the tests still pass. **Resolvable is not
+  the same as measurable** — the same argument #462 makes about the packer's
+  budget, applied to optimisation. The burn-down is 76 and the milestone holds
+  81.
+
+The seven items that needed a ruling or an owner-supplied input were worked
+immediately, and **four were settled the same day** — which is the argument for
+having separated them at all. #462 is deferred to v1 (see below); the MSDF floor
+moves to a validator check against the _reachable_ minimum scale rather than the
+authored size (#373); the `blur-falloff` band splits into a residual and a gate
+(#422); and the astcenc record is corrected in place rather than spawning a new
+one (#446). The last three became ordinary burn-down work. What remains in the
+track is blocked on an input rather than a decision: two items need a Figma
+capture that does not exist, and one is blocked on the painter's working colour
+space.
 
 ## v1 — Unity, full feature set, performance, production toolchain
 
@@ -792,6 +816,31 @@ lean native painter lands here or later is decided on those measurements, not
 in advance); and the production toolchain — `dashc` as a shipped product, with
 a stable CLI, versioned diagnostics, a waiver workflow, linter rule packs, and
 golden/report tooling for design review.
+
+Two things were added to v1 at the v0.13 open (2026-07-27), both because they
+need a number only target hardware can supply:
+
+- **The perf and allocation debt, selected against the measured performance
+  pass (epic #476, 20 items).** Deferred out of v0.13's burn-down because none
+  has a measurement behind it. The epic states its own entry condition — the
+  performance pass runs first and produces a profile, then these are selected,
+  ordered and validated against it, and an item the profile shows is not on a
+  hot path is closed as measured-and-not-worth-it. Held as an epic rather than
+  loose on the milestone precisely so they do not repeat the "buried under v1"
+  failure that
+  [`decisions/pre-v1-hardening-slice.md`](decisions/pre-v1-hardening-slice.md)
+  exists to fix.
+- **The packer's memory budget and the target display resolution (#462),** set
+  alongside #170's measurable-requirements work. Neither exists anywhere in
+  `docs/specification/` today —
+  [`specification/03-target-hardware-rules.md`](specification/03-target-hardware-rules.md)
+  carries R-T1 to R-T4 and no number. `dashpack` treats a profile exceeding the
+  budget as a validator error, so **for the whole of v0 that error is
+  unreachable**: a document can pack successfully and still not fit the target,
+  and nothing detects it. The per-asset bands still bind — each is measured and
+  ships the mutation that fails it — but the aggregate residency contract does
+  not. That is an accepted gap from the 2026-07-27 ruling, recorded here so it
+  is visible rather than implied.
 
 Full script coverage (v1, epic #463): v0 ships Latin and Arabic, which v0.6
 delivered, and that is the whole of v0's language scope. Everything beyond it
