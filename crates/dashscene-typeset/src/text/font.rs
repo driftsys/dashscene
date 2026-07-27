@@ -73,13 +73,6 @@ impl Font {
         self.metrics.line_gap
     }
 
-    /// Baseline-to-baseline distance, font units — the line metric
-    /// layout uses and the measure callback (#29) needs.
-    pub fn line_advance(&self) -> i32 {
-        i32::from(self.metrics.ascender) - i32::from(self.metrics.descender)
-            + i32::from(self.metrics.line_gap)
-    }
-
     /// A shaping face over the owned bytes.
     pub(crate) fn face(&self) -> rustybuzz::Face<'_> {
         rustybuzz::Face::from_slice(&self.data, self.index).expect("validated at construction")
@@ -190,11 +183,6 @@ mod tests {
         assert_eq!(font.line_gap(), direct.line_gap());
         assert!(font.ascender() > 0);
         assert!(font.descender() < 0);
-        assert_eq!(
-            font.line_advance(),
-            i32::from(direct.ascender()) - i32::from(direct.descender())
-                + i32::from(direct.line_gap())
-        );
     }
 
     #[test]

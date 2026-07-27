@@ -10,7 +10,7 @@
 use std::collections::BTreeSet;
 
 use dashscene_typeset::atlas::charset_closure;
-use dashscene_typeset::text::{Line, Typesetter};
+use dashscene_typeset::text::{Line, TextShape, Typesetter};
 
 mod common;
 
@@ -258,6 +258,62 @@ fn production_shaped_output_stays_within_declared_charset_coverage() {
                     covered.contains(&g.glyph_id),
                     "{text:?} lays out glyph id {} outside the declared \
                      charset's coverage",
+                    g.glyph_id
+                );
+            }
+        }
+    }
+}
+
+/// Debt issue #353: the #33 coupling pin above never exercised
+/// `ligatures_off=true` under an Arabic `RunContext`, through the real
+/// bidi/font-fallback production path (`Typesetter::layout_with`), only
+/// through the charset closure itself (which always shapes with
+/// ligatures on) and through a direct, non-production `shape_with_face`
+/// call in `text::shape`'s own unit tests. Two review passes on PR #350
+/// argued this is safe by construction: `charset_closure` already shapes
+/// every character and joined pair with the full default feature set
+/// (`liga`/`clig` included), so the glyph ids a ligature produces are
+/// already in the closure's coverage, and turning `liga`/`clig` off can
+/// only make a run fall back to its already-covered, non-ligated
+/// components — never reach an uncovered glyph id. This test exercises
+/// that path directly rather than leaving it an argument.
+#[test]
+fn ligatures_off_arabic_output_stays_within_declared_charset_coverage() {
+    // Same corpus as the coupling pin above, so the coverage set is
+    // identical and only the shaping knob differs.
+    let corpus = [
+        "كتاب",
+        "سلام",
+        "لا",
+        "سَلَامٌ",
+        "سرعة ١٢٣",
+        "سرعة 123",
+        "123 سرعة",
+        "پ 123",
+        "٤٥",
+    ];
+    let charset: BTreeSet<char> = corpus.iter().flat_map(|s| s.chars()).collect();
+
+    let data = font_data();
+    let face = rustybuzz::Face::from_slice(&data, 0).expect("parses");
+    let closure = charset_closure(&face, &charset, &BTreeSet::new());
+    assert!(closure.missing_codepoints.is_empty());
+    let covered: BTreeSet<u16> = closure.glyph_ids.iter().copied().collect();
+
+    let shape = TextShape {
+        ligatures_off: true,
+        ..Default::default()
+    };
+    let mut ts = typesetter();
+    for text in corpus {
+        let l = ts.layout_with(text, 16.0, None, shape);
+        for line in &l.lines {
+            for g in &line.glyphs {
+                assert!(
+                    covered.contains(&g.glyph_id),
+                    "{text:?} with ligatures_off lays out glyph id {} outside \
+                     the declared charset's coverage",
                     g.glyph_id
                 );
             }
