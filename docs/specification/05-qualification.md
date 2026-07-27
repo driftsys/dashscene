@@ -221,15 +221,38 @@ wrap/grid/baseline pixel goldens (`goldens/tooling/tests/v08_fidelity.rs`,
 story #43). The variant switch's animated form is proven end to end by E5
 (`goldens/tooling/tests/v04_flip.rs`), except for the appearing or
 disappearing node itself, which pops rather than tweening (disclosed below).
-Three disclosed limits, tracked as debt rather than hidden: the grid case does
-not yet make `minmax(0, 1fr)`'s zero minimum load-bearing, because a fraction
-track holding oversized content entangles with the open fixed-child-overflow
-question (issue #272); a leaf's baseline is its bottom edge, not a glyph
-baseline (issue #273); and a variant-driven `Visible` toggle is not tweened by
-FLIP — the toggled node pops while its reflowing siblings animate, because the
-FLIP path animates rect channels only and carries no visibility or opacity
-channel (`crates/dashscene-engine/src/flip.rs`, issue #293). All cases run in
-the workspace CI job (`just build`).
+Two disclosed limits, tracked as debt rather than hidden: a leaf's baseline is
+its bottom edge, not a glyph baseline (issue #272); and a variant-driven
+`Visible` toggle is not tweened by FLIP — the toggled node pops while its
+reflowing siblings animate, because the FLIP path animates rect channels only
+and carries no visibility or opacity channel
+(`crates/dashscene-engine/src/flip.rs`, issue #293). All cases run in the
+workspace CI job (`just build`).
+
+A third limit was disclosed here until 2026-07-27 and is now withdrawn, because
+the question it deferred to is answered. It read that the grid case did not make
+`minmax(0, 1fr)`'s zero minimum load-bearing, because a fraction track holding
+oversized content entangled with the **open** fixed-child-overflow question
+(issue #271). That question was open only for want of a capture. The
+`grid-fr-overflow` fixture now carries one: a 100-wide frame with two Fraction
+columns resolving to 50 each, holding a Fixed 80x40 child in column 0. Figma
+solves the child to `x=0 w=80` and its neighbour to `x=50 w=50` — it does **not**
+grow the track, and the oversized child overlaps its neighbour by 30, which is
+what this engine does. Figma also serialises the tracks as
+`repeat(2,minmax(0,1fr))`, the construct `template_track` maps a Fraction track
+to, so the mapping agrees with Figma by construction rather than only by result
+on one fixture. The behaviour is a fidelity match, not a limit.
+
+The two issue numbers above are also corrected here, which is issue #296. This
+section cited the wrong issue for both of the limits it named:
+
+| limit                           | was cited | is really |
+| ------------------------------- | --------- | --------- |
+| fixed-child-overflow question   | #272      | #271      |
+| a leaf's baseline is its bottom | #273      | #272      |
+
+The correction is stated rather than made silently, so a reader comparing
+against an older copy does not see numbers change without an explanation.
 
 ### E4 — met
 
