@@ -150,8 +150,8 @@ fn encodes_png() {
 // with anti-aliasing on.
 
 use dashpaint::{
-    ClipBox, ClipRegion, CornerRadii, GradientStop, ImageAsset, ImageFormat, Mat23, PaintTable,
-    ScaleMode, Stroke, StrokeAlign,
+    Blur, BlurKind, ClipBox, ClipRegion, CornerRadii, GradientStop, ImageAsset, ImageFormat, Mat23,
+    PaintTable, ScaleMode, Stroke, StrokeAlign,
 };
 
 const GREEN: Color = Color {
@@ -1656,5 +1656,86 @@ fn a_stroke_with_no_fill_is_correct_at_partial_opacity() {
         bytes[band + 3],
         128,
         "a stroke with no fill under it must read the group alpha exactly once",
+    );
+}
+
+// --------------------------------------------------------------------------
+// A backdrop blur replaces its region (debt #405).
+//
+// `draw_backdrop_blur_box` opens a `save_layer` carrying the blurred backdrop
+// and restores it, so the layer composited SrcOver over the *unmodified*
+// backdrop. A real backdrop filter replaces the region. When the backdrop is
+// opaque the two are indistinguishable — `alpha = 1` replaces — which is every
+// case measured before this test. When the backdrop is partially transparent
+// the blurred copy also has `alpha < 1`, so the sharp original showed through
+// underneath and the blur's alpha falloff was lost: the alpha edge stayed
+// hard.
+//
+// The scene is the one issue #405 measured: a 64x64 canvas cleared to
+// transparent, an opaque red band covering x < 32, and a fill-less panel at
+// (16,16)-(48,48) carrying a backdrop blur of radius 12. Row y = 32 crosses
+// the band's edge inside the panel, so it is where the falloff must appear.
+
+fn transparent_backdrop_blur_scene() -> (Vec<RectEntry>, PaintTable) {
+    let mut paints = PaintTable::new();
+    let band = paints.push(PaintEntry {
+        fill: Some(PaintKind::Solid { color: RED }),
+        ..PaintEntry::default()
+    });
+    let panel = paints.push(PaintEntry {
+        blurs: vec![Blur {
+            kind: BlurKind::Backdrop,
+            radius: 12.0,
+        }],
+        ..PaintEntry::default()
+    });
+    (
+        vec![
+            RectEntry {
+                x: 0.0,
+                y: 0.0,
+                w: 32.0,
+                h: 64.0,
+                paint: band,
+                clip: ClipIndex::UNCLIPPED,
+                opacity: 1.0,
+            },
+            RectEntry {
+                x: 16.0,
+                y: 16.0,
+                w: 32.0,
+                h: 32.0,
+                paint: panel,
+                clip: ClipIndex::UNCLIPPED,
+                opacity: 1.0,
+            },
+        ],
+        paints,
+    )
+}
+
+#[test]
+fn a_backdrop_blur_over_a_transparent_backdrop_softens_its_alpha_edge() {
+    let (rects, paints) = transparent_backdrop_blur_scene();
+    let bytes = render(&rects, &paints, &ImageTable::new(), 64);
+    let alpha_at = |x: usize| bytes[(((32 * 64) + x) * 4) + 3];
+
+    // Inside the panel and inside the opaque band: still essentially opaque,
+    // because the blur only starts pulling in transparency near the edge.
+    assert!(
+        alpha_at(18) >= 250,
+        "deep inside the band the blur should stay near-opaque, got {}",
+        alpha_at(18),
+    );
+
+    // Approaching the band's edge at x = 32, the blurred copy must carry
+    // progressively less alpha. Compositing over the sharp original instead
+    // pins every one of these at 255.
+    let (a24, a28, a31) = (alpha_at(24), alpha_at(28), alpha_at(31));
+    assert!(
+        a24 < 250 && a28 < a24 && a31 < a28,
+        "the alpha edge must soften across the blur: got {a24} at x=24, \
+         {a28} at x=28, {a31} at x=31 — a flat 255 means the layer \
+         composited over the sharp backdrop instead of replacing it",
     );
 }

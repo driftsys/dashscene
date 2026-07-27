@@ -709,15 +709,33 @@ fn backdrop_blur_filter(radius: f32) -> Option<ImageFilter> {
         .flatten()
 }
 
-/// The paint a backdrop-blur layer composites through: transparent-by-alpha
-/// only, carrying the rect's free-path group alpha
-/// (`docs/decisions/masks-and-group-opacity.md`) exactly as every other draw
-/// in this painter does. At `opacity = 1.0` the blurred copy fully replaces
-/// the region; below it, the copy composites over the sharp original, so a
-/// dimmed node frosts proportionally.
-fn backdrop_layer_paint(opacity: f32) -> skia_safe::Paint {
+/// The paint a backdrop-blur layer composites through, carrying the rect's
+/// free-path group alpha (`docs/decisions/masks-and-group-opacity.md`) exactly
+/// as every other draw in this painter does.
+///
+/// **At `opacity = 1.0` the layer replaces the region rather than compositing
+/// over it** (`BlendMode::Src`), which is what a backdrop filter means. The
+/// default `SrcOver` was indistinguishable from replacement for an opaque
+/// backdrop — an opaque blurred copy hides the original — and wrong for a
+/// partially transparent one, because the blurred copy is then also partially
+/// transparent and the sharp original showed through beneath it. The blur's
+/// alpha falloff was lost and its alpha edge stayed hard (debt #405). RGB was
+/// correct throughout; only alpha was affected.
+///
+/// Below `1.0` the copy still composites over the sharp original, so a dimmed
+/// node frosts proportionally. That is deliberate and is the CSS model this
+/// project follows: the filtered backdrop is composited at the element's alpha
+/// over the unfiltered one, of which replacement is the `alpha = 1` case.
+/// `docs/decisions/backdrop-blur-is-core-vocabulary.md` settles the
+/// surrounding question — an opacity below 1 makes a group a backdrop root, so
+/// the isolating case is handled by isolation rather than by this blend mode.
+fn backdrop_layer_paint(opacity: f32, replaces: bool) -> skia_safe::Paint {
     let mut paint = skia_safe::Paint::default();
-    apply_opacity(&mut paint, opacity);
+    if replaces && opacity == 1.0 {
+        paint.set_blend_mode(BlendMode::Src);
+    } else {
+        apply_opacity(&mut paint, opacity);
+    }
     paint
 }
 
@@ -751,7 +769,7 @@ fn draw_backdrop_blur_box(canvas: &Canvas, shape: &RRect, radius: f32, opacity: 
     let Some(filter) = backdrop_blur_filter(radius) else {
         return;
     };
-    let layer = backdrop_layer_paint(opacity);
+    let layer = backdrop_layer_paint(opacity, true);
     canvas.save();
     canvas.clip_rrect(*shape, ClipOp::Intersect, true);
     canvas.save_layer(&SaveLayerRec::default().backdrop(&filter).paint(&layer));
@@ -797,7 +815,7 @@ fn draw_backdrop_blur_field(
     let Some((dest, coverage)) = field_coverage(rect, field, atlas, effect) else {
         return;
     };
-    let layer = backdrop_layer_paint(opacity);
+    let layer = backdrop_layer_paint(opacity, false);
     canvas.save();
     canvas.clip_rect(dest, ClipOp::Intersect, false);
     // No `bounds` on the rec: Skia discards it whenever a backdrop filter is
