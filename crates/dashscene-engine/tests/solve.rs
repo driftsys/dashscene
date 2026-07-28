@@ -9,9 +9,15 @@ use dashscene_core::{
 };
 use dashscene_engine::TaffySolver;
 
-/// Shorthand: rect (x, y, w, h) of the DFS index `i`.
-fn rect(arena: &Arena, i: usize) -> (f32, f32, f32, f32) {
-    let r = arena.committed().rects()[i];
+/// Rect (x, y, w, h) of a committed node, addressed by identity rather
+/// than a positional DFS index (debt #119): each assertion names the box
+/// it checks, so inserting a node earlier cannot silently renumber it.
+fn rect_of(arena: &Arena, node: NodeId) -> (f32, f32, f32, f32) {
+    let scene = arena.committed();
+    let index = scene
+        .rect_index_of(node)
+        .expect("the node is committed in this generation");
+    let r = scene.rects()[index as usize];
     (r.x, r.y, r.w, r.h)
 }
 
@@ -56,13 +62,13 @@ fn a_horizontal_row_places_fixed_children_with_gap_and_padding() {
             bottom: 10.0,
         },
     );
-    fixed(&mut txn, row, 30.0, 20.0);
-    fixed(&mut txn, row, 50.0, 20.0);
+    let a = fixed(&mut txn, row, 30.0, 20.0);
+    let b = fixed(&mut txn, row, 50.0, 20.0);
     txn.commit_with(&mut TaffySolver::new());
 
-    assert_eq!(rect(&arena, 0), (0.0, 0.0, 200.0, 40.0));
-    assert_eq!(rect(&arena, 1), (10.0, 10.0, 30.0, 20.0));
-    assert_eq!(rect(&arena, 2), (45.0, 10.0, 50.0, 20.0));
+    assert_eq!(rect_of(&arena, row), (0.0, 0.0, 200.0, 40.0));
+    assert_eq!(rect_of(&arena, a), (10.0, 10.0, 30.0, 20.0));
+    assert_eq!(rect_of(&arena, b), (45.0, 10.0, 50.0, 20.0));
 }
 
 #[test]
@@ -119,10 +125,9 @@ fn fill_children_split_free_space_and_a_fixed_sibling_keeps_its_size() {
     txn.set_prop(c, Prop::Height(30.0));
     txn.commit_with(&mut TaffySolver::new());
 
-    let _ = (a, b, c);
-    assert_eq!(rect(&arena, 1), (0.0, 0.0, 40.0, 30.0));
-    assert_eq!(rect(&arena, 2), (40.0, 0.0, 80.0, 30.0));
-    assert_eq!(rect(&arena, 3), (120.0, 0.0, 80.0, 30.0));
+    assert_eq!(rect_of(&arena, a), (0.0, 0.0, 40.0, 30.0));
+    assert_eq!(rect_of(&arena, b), (40.0, 0.0, 80.0, 30.0));
+    assert_eq!(rect_of(&arena, c), (120.0, 0.0, 80.0, 30.0));
 }
 
 #[test]
@@ -140,18 +145,29 @@ fn a_hug_container_sizes_to_its_children_not_the_free_space() {
     txn.set_prop(hug, Prop::Mode(LayoutMode::Vertical));
     txn.set_prop(hug, Prop::SizingH(AxisSizing::Hug));
     txn.set_prop(hug, Prop::SizingV(AxisSizing::Hug));
-    fixed(&mut txn, hug, 40.0, 10.0);
-    fixed(&mut txn, hug, 25.0, 10.0);
+    let first = fixed(&mut txn, hug, 40.0, 10.0);
+    let second = fixed(&mut txn, hug, 25.0, 10.0);
     let fill = txn.add_node(Some(row), None);
     txn.set_prop(fill, Prop::SizingH(AxisSizing::Fill));
     txn.set_prop(fill, Prop::Height(50.0));
     txn.commit_with(&mut TaffySolver::new());
 
-    let _ = fill;
-    assert_eq!(rect(&arena, 1), (0.0, 0.0, 40.0, 20.0), "hug column");
-    assert_eq!(rect(&arena, 2), (0.0, 0.0, 40.0, 10.0), "first fixed");
-    assert_eq!(rect(&arena, 3), (0.0, 10.0, 25.0, 10.0), "second fixed");
-    assert_eq!(rect(&arena, 4), (40.0, 0.0, 260.0, 50.0), "fill sibling");
+    assert_eq!(rect_of(&arena, hug), (0.0, 0.0, 40.0, 20.0), "hug column");
+    assert_eq!(
+        rect_of(&arena, first),
+        (0.0, 0.0, 40.0, 10.0),
+        "first fixed"
+    );
+    assert_eq!(
+        rect_of(&arena, second),
+        (0.0, 10.0, 25.0, 10.0),
+        "second fixed"
+    );
+    assert_eq!(
+        rect_of(&arena, fill),
+        (40.0, 0.0, 260.0, 50.0),
+        "fill sibling"
+    );
 }
 
 #[test]
@@ -166,12 +182,12 @@ fn a_column_spreads_with_space_between_and_centers_cross_axis() {
     txn.set_prop(col, Prop::Mode(LayoutMode::Vertical));
     txn.set_prop(col, Prop::MainAlign(MainAxisAlign::SpaceBetween));
     txn.set_prop(col, Prop::CrossAlign(CrossAxisAlign::Center));
-    fixed(&mut txn, col, 20.0, 20.0);
-    fixed(&mut txn, col, 20.0, 20.0);
+    let a = fixed(&mut txn, col, 20.0, 20.0);
+    let b = fixed(&mut txn, col, 20.0, 20.0);
     txn.commit_with(&mut TaffySolver::new());
 
-    assert_eq!(rect(&arena, 1), (40.0, 0.0, 20.0, 20.0));
-    assert_eq!(rect(&arena, 2), (40.0, 70.0, 20.0, 20.0));
+    assert_eq!(rect_of(&arena, a), (40.0, 0.0, 20.0, 20.0));
+    assert_eq!(rect_of(&arena, b), (40.0, 70.0, 20.0, 20.0));
 }
 
 #[test]
@@ -193,9 +209,16 @@ fn min_and_max_constraints_clamp_fill_and_hug() {
     txn.set_prop(rest, Prop::Height(30.0));
     txn.commit_with(&mut TaffySolver::new());
 
-    let _ = (capped, rest);
-    assert_eq!(rect(&arena, 1), (0.0, 0.0, 50.0, 30.0), "capped fill");
-    assert_eq!(rect(&arena, 2), (50.0, 0.0, 150.0, 30.0), "remaining fill");
+    assert_eq!(
+        rect_of(&arena, capped),
+        (0.0, 0.0, 50.0, 30.0),
+        "capped fill"
+    );
+    assert_eq!(
+        rect_of(&arena, rest),
+        (50.0, 0.0, 150.0, 30.0),
+        "remaining fill"
+    );
 
     // A Hug column floored by min_height: one 10-high child, min 25.
     let mut arena = Arena::new();
@@ -212,7 +235,7 @@ fn min_and_max_constraints_clamp_fill_and_hug() {
     fixed(&mut txn, hug, 10.0, 10.0);
     txn.commit_with(&mut TaffySolver::new());
 
-    assert_eq!(rect(&arena, 1).3, 25.0, "hug floored by min_height");
+    assert_eq!(rect_of(&arena, hug).3, 25.0, "hug floored by min_height");
 }
 
 #[test]
@@ -234,8 +257,8 @@ fn fractional_geometry_passes_through_unrounded() {
     txn.set_prop(child, Prop::Height(40.25));
     txn.commit_with(&mut TaffySolver::new());
 
-    assert_eq!(rect(&arena, 0), (10.5, 20.25, 300.5, 200.25));
-    assert_eq!(rect(&arena, 1), (16.0, 26.5, 50.5, 40.25));
+    assert_eq!(rect_of(&arena, root), (10.5, 20.25, 300.5, 200.25));
+    assert_eq!(rect_of(&arena, child), (16.0, 26.5, 50.5, 40.25));
 
     // Three Fill children split 100 into exact thirds, not 33/34/33.
     let mut arena = Arena::new();
@@ -244,15 +267,17 @@ fn fractional_geometry_passes_through_unrounded() {
     txn.set_prop(row, Prop::Width(100.0));
     txn.set_prop(row, Prop::Height(10.0));
     txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
+    let mut children = Vec::new();
     for _ in 0..3 {
         let c = txn.add_node(Some(row), None);
         txn.set_prop(c, Prop::SizingH(AxisSizing::Fill));
         txn.set_prop(c, Prop::Height(10.0));
+        children.push(c);
     }
     txn.commit_with(&mut TaffySolver::new());
     // The exact bits depend on Taffy's evaluation order; the contract
     // is that the split is unrounded (not 33/34/33) and lossless.
-    let widths: Vec<f32> = (1..4).map(|i| rect(&arena, i).2).collect();
+    let widths: Vec<f32> = children.iter().map(|&c| rect_of(&arena, c).2).collect();
     for w in &widths {
         assert!((w - 100.0 / 3.0).abs() < 1e-3, "unrounded third, got {w}");
         assert_ne!(w.fract(), 0.0, "must not round to whole pixels");
@@ -283,7 +308,11 @@ fn hug_under_a_none_parent_wraps_content_not_the_authored_size() {
     fixed(&mut txn, hug, 40.0, 10.0);
     txn.commit_with(&mut TaffySolver::new());
 
-    assert_eq!(rect(&arena, 1), (5.0, 6.0, 40.0, 10.0), "hug wraps content");
+    assert_eq!(
+        rect_of(&arena, hug),
+        (5.0, 6.0, 40.0, 10.0),
+        "hug wraps content"
+    );
 }
 
 #[test]
@@ -304,20 +333,19 @@ fn hiding_a_child_collapses_a_hug_container_and_reflows_its_siblings() {
     txn.set_prop(b, Prop::Visible(false));
     txn.commit_with(&mut TaffySolver::new());
 
-    let _ = (a, b, c);
     assert_eq!(
-        rect(&arena, 0).2,
+        rect_of(&arena, row).2,
         60.0,
         "container collapses by the hidden child's width"
     );
-    assert_eq!(rect(&arena, 1), (0.0, 0.0, 30.0, 20.0), "a unaffected");
+    assert_eq!(rect_of(&arena, a), (0.0, 0.0, 30.0, 20.0), "a unaffected");
     assert_eq!(
-        rect(&arena, 2),
+        rect_of(&arena, b),
         (0.0, 0.0, 0.0, 0.0),
         "hidden child resolves to a degenerate rect"
     );
     assert_eq!(
-        rect(&arena, 3),
+        rect_of(&arena, c),
         (30.0, 0.0, 30.0, 20.0),
         "c reflows into b's place"
     );
@@ -344,19 +372,19 @@ fn hiding_a_container_hides_its_whole_subtree_regardless_of_a_descendants_own_vi
     let grandchild = fixed(&mut txn, hidden, 10.0, 10.0);
     txn.commit_with(&mut TaffySolver::new());
 
-    let _ = (a, grandchild);
+    let _ = a;
     assert_eq!(
-        rect(&arena, 0).2,
+        rect_of(&arena, row).2,
         30.0,
         "container collapses; the hidden subtree contributes nothing"
     );
     assert_eq!(
-        rect(&arena, 2),
+        rect_of(&arena, hidden),
         (0.0, 0.0, 0.0, 0.0),
         "hidden container resolves to a degenerate rect"
     );
     assert_eq!(
-        rect(&arena, 3),
+        rect_of(&arena, grandchild),
         (0.0, 0.0, 0.0, 0.0),
         "grandchild is hidden by its ancestor despite its own Visible defaulting to true"
     );
@@ -396,8 +424,14 @@ fn a_hidden_mask_does_not_mask_under_the_taffy_solver() {
     txn.commit_with(&mut TaffySolver::new());
 
     let scene = arena.committed();
+    let after_index = scene
+        .rect_index_of(after)
+        .expect("after is committed in this generation");
     assert!(
-        scene.clips().resolve(scene.rects()[2].clip).is_unclipped(),
+        scene
+            .clips()
+            .resolve(scene.rects()[after_index as usize].clip)
+            .is_unclipped(),
         "M2: a hidden mask does not stencil its siblings under the Taffy solver",
     );
 }
@@ -416,8 +450,8 @@ fn multiple_roots_keep_their_authored_origins() {
     txn.set_prop(second, Prop::Height(60.0));
     txn.commit_with(&mut TaffySolver::new());
 
-    assert_eq!(rect(&arena, 0), (0.0, 0.0, 50.0, 50.0));
-    assert_eq!(rect(&arena, 1), (400.0, 300.0, 60.0, 60.0));
+    assert_eq!(rect_of(&arena, first), (0.0, 0.0, 50.0, 50.0));
+    assert_eq!(rect_of(&arena, second), (400.0, 300.0, 60.0, 60.0));
 }
 
 #[test]
@@ -437,19 +471,19 @@ fn a_hug_row_over_negative_child_margins_sums_like_positive_ones() {
         txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
         txn.set_prop(row, Prop::SizingH(AxisSizing::Hug));
         txn.set_prop(row, Prop::Height(56.0));
-        fixed(&mut txn, row, 56.0, 56.0);
+        let a = fixed(&mut txn, row, 56.0, 56.0);
         let b = fixed(&mut txn, row, 56.0, 56.0);
         margin_left(&mut txn, b, left);
         txn.commit_with(&mut TaffySolver::new());
 
         assert_eq!(
-            rect(&arena, 0).2,
+            rect_of(&arena, row).2,
             expected_width,
             "hug width with margin-left {left}"
         );
         // The children land where the margin puts them in both cases.
-        assert_eq!(rect(&arena, 1), (0.0, 0.0, 56.0, 56.0));
-        assert_eq!(rect(&arena, 2), (56.0 + left, 0.0, 56.0, 56.0));
+        assert_eq!(rect_of(&arena, a), (0.0, 0.0, 56.0, 56.0));
+        assert_eq!(rect_of(&arena, b), (56.0 + left, 0.0, 56.0, 56.0));
     }
 }
 
@@ -471,7 +505,7 @@ fn the_rebate_respects_an_authored_max_alongside_a_negative_margin() {
         txn.set_prop(b, Prop::MaxWidth(40.0));
         margin_left(&mut txn, b, left);
         txn.commit_with(&mut TaffySolver::new());
-        rect(&arena, 2).2
+        rect_of(&arena, b).2
     };
 
     assert_eq!(solve(0.0), 40.0, "the max clamps without a margin");
@@ -511,7 +545,7 @@ fn the_rebate_survives_a_padded_childs_basis_floor() {
         );
         margin_left(&mut txn, card, left);
         txn.commit_with(&mut TaffySolver::new());
-        (rect(&arena, 0).2, rect(&arena, 2))
+        (rect_of(&arena, row).2, rect_of(&arena, card))
     };
 
     // At the old floor boundary (margin −6: 30 − 6 = 24 = the padding
@@ -539,7 +573,7 @@ fn a_deep_overlap_beyond_the_childs_own_width_still_sums_exactly() {
         let b = fixed(&mut txn, row, 10.0, 56.0);
         margin_left(&mut txn, b, left);
         txn.commit_with(&mut TaffySolver::new());
-        (rect(&arena, 0).2, rect(&arena, 2))
+        (rect_of(&arena, row).2, rect_of(&arena, b))
     };
 
     // 56 + 10 − 12 = 54; the child sits at 56 − 12 = 44.
@@ -565,7 +599,7 @@ fn the_rebate_respects_an_authored_min_alongside_a_negative_margin() {
         txn.set_prop(b, Prop::MinWidth(70.0));
         margin_left(&mut txn, b, left);
         txn.commit_with(&mut TaffySolver::new());
-        (rect(&arena, 0).2, rect(&arena, 2).2)
+        (rect_of(&arena, row).2, rect_of(&arena, b).2)
     };
 
     // The min widens the child to 70, margin or no: 56 + 70 = 126 flat,
@@ -578,17 +612,18 @@ fn the_rebate_respects_an_authored_min_alongside_a_negative_margin() {
 /// `inner_w` x 56 grandchild and carrying `margin` on its main-axis
 /// leading edge. `vertical` picks the column form of both axes. This is
 /// the #270 shape: the child's own flex basis is content-derived, so the
-/// #236 rebate has no authored size to work from.
+/// #236 rebate has no authored size to work from. Returns `(container,
+/// grandchild)` so a caller can name either box (debt #119).
 fn hug_child_with_margin(
     txn: &mut dashscene_core::Txn<'_>,
     parent: NodeId,
     inner_w: f32,
     margin: f32,
     vertical: bool,
-) -> NodeId {
+) -> (NodeId, NodeId) {
     let child = txn.add_node(Some(parent), None);
     txn.set_prop(child, Prop::Mode(LayoutMode::Horizontal));
-    if vertical {
+    let grandchild = if vertical {
         txn.set_prop(child, Prop::SizingV(AxisSizing::Hug));
         txn.set_prop(child, Prop::Width(inner_w));
         txn.set_prop(
@@ -600,14 +635,14 @@ fn hug_child_with_margin(
                 bottom: 0.0,
             },
         );
-        fixed(txn, child, inner_w, 56.0);
+        fixed(txn, child, inner_w, 56.0)
     } else {
         txn.set_prop(child, Prop::SizingH(AxisSizing::Hug));
         txn.set_prop(child, Prop::Height(56.0));
         margin_left(txn, child, margin);
-        fixed(txn, child, inner_w, 56.0);
-    }
-    child
+        fixed(txn, child, inner_w, 56.0)
+    };
+    (child, grandchild)
 }
 
 #[test]
@@ -628,20 +663,23 @@ fn a_hug_row_over_a_negative_margin_hug_child_sums_like_positive_ones() {
         txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
         txn.set_prop(row, Prop::SizingH(AxisSizing::Hug));
         txn.set_prop(row, Prop::Height(56.0));
-        fixed(&mut txn, row, 56.0, 56.0);
-        hug_child_with_margin(&mut txn, row, 56.0, margin, false);
+        let a = fixed(&mut txn, row, 56.0, 56.0);
+        let (container, grandchild) = hug_child_with_margin(&mut txn, row, 56.0, margin, false);
         txn.commit_with(&mut TaffySolver::new());
 
         assert_eq!(
-            rect(&arena, 0).2,
+            rect_of(&arena, row).2,
             expected_width,
             "hug width over a hug child with margin-left {margin}"
         );
         // The hug child keeps its content width and lands where the
         // margin puts it — the shrink factor must not shrink it.
-        assert_eq!(rect(&arena, 1), (0.0, 0.0, 56.0, 56.0));
-        assert_eq!(rect(&arena, 2), (56.0 + margin, 0.0, 56.0, 56.0));
-        assert_eq!(rect(&arena, 3), (56.0 + margin, 0.0, 56.0, 56.0));
+        assert_eq!(rect_of(&arena, a), (0.0, 0.0, 56.0, 56.0));
+        assert_eq!(rect_of(&arena, container), (56.0 + margin, 0.0, 56.0, 56.0));
+        assert_eq!(
+            rect_of(&arena, grandchild),
+            (56.0 + margin, 0.0, 56.0, 56.0)
+        );
     }
 }
 
@@ -658,15 +696,15 @@ fn a_hug_column_over_a_negative_margin_hug_child_sums_on_the_vertical_axis() {
         txn.set_prop(col, Prop::SizingV(AxisSizing::Hug));
         txn.set_prop(col, Prop::Width(56.0));
         fixed(&mut txn, col, 56.0, 56.0);
-        hug_child_with_margin(&mut txn, col, 56.0, margin, true);
+        let (container, _grandchild) = hug_child_with_margin(&mut txn, col, 56.0, margin, true);
         txn.commit_with(&mut TaffySolver::new());
 
         assert_eq!(
-            rect(&arena, 0).3,
+            rect_of(&arena, col).3,
             expected_height,
             "hug height over a hug child with margin-top {margin}"
         );
-        assert_eq!(rect(&arena, 2), (0.0, 56.0 + margin, 56.0, 56.0));
+        assert_eq!(rect_of(&arena, container), (0.0, 56.0 + margin, 56.0, 56.0));
     }
 }
 
@@ -694,7 +732,7 @@ fn a_negative_margin_hug_child_under_a_fixed_parent_still_never_shrinks() {
         fixed(&mut txn, child, 56.0, 20.0);
         margin_left(&mut txn, child, margin);
         txn.commit_with(&mut TaffySolver::new());
-        rect(&arena, 1)
+        rect_of(&arena, child)
     };
 
     assert_eq!(solve(0.0), (0.0, 0.0, 112.0, 56.0), "no margin, no shrink");
@@ -722,7 +760,10 @@ fn row_child_xs(
     let c = fixed(&mut txn, row, 30.0, 20.0);
     configure(&mut txn, row, [a, b, c]);
     txn.commit_with(&mut TaffySolver::new());
-    (1..4).map(|i| rect(&arena, i).0).collect()
+    [a, b, c]
+        .into_iter()
+        .map(|n| rect_of(&arena, n).0)
+        .collect()
 }
 
 #[test]
@@ -763,14 +804,14 @@ fn a_vertical_negative_gap_column_overlaps_on_the_main_axis() {
     txn.set_prop(col, Prop::Height(200.0));
     txn.set_prop(col, Prop::Mode(LayoutMode::Vertical));
     txn.set_prop(col, Prop::Gap(-5.0));
-    fixed(&mut txn, col, 30.0, 20.0);
-    fixed(&mut txn, col, 30.0, 20.0);
+    let a = fixed(&mut txn, col, 30.0, 20.0);
+    let b = fixed(&mut txn, col, 30.0, 20.0);
     txn.lower_negative_gaps();
     txn.commit_with(&mut TaffySolver::new());
 
     // y: 0, then 20-5=15.
-    assert_eq!(rect(&arena, 1).1, 0.0);
-    assert_eq!(rect(&arena, 2).1, 15.0);
+    assert_eq!(rect_of(&arena, a).1, 0.0);
+    assert_eq!(rect_of(&arena, b).1, 15.0);
 }
 
 #[test]
@@ -783,14 +824,14 @@ fn authored_margins_solve_without_any_lowering() {
     txn.set_prop(row, Prop::Width(200.0));
     txn.set_prop(row, Prop::Height(20.0));
     txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
-    fixed(&mut txn, row, 30.0, 20.0);
+    let a = fixed(&mut txn, row, 30.0, 20.0);
     let b = fixed(&mut txn, row, 30.0, 20.0);
     margin_left(&mut txn, b, 10.0);
     txn.commit_with(&mut TaffySolver::new());
 
     // a at 0..30; b pushed by margin-left 10 to x=40.
-    assert_eq!(rect(&arena, 1).0, 0.0);
-    assert_eq!(rect(&arena, 2).0, 40.0);
+    assert_eq!(rect_of(&arena, a).0, 0.0);
+    assert_eq!(rect_of(&arena, b).0, 40.0);
 }
 
 #[test]
@@ -800,7 +841,7 @@ fn a_margin_under_a_passthrough_parent_does_not_shift_the_child() {
     // so TaffySolver must agree with commit()'s FixedSolver, which
     // ignores margin. (The lowering never margins passthrough
     // children, but a producer may author one directly.)
-    let build = |arena: &mut Arena, taffy: bool| {
+    let build = |arena: &mut Arena, taffy: bool| -> NodeId {
         let mut txn = arena.open();
         let root = txn.add_node(None, None);
         txn.set_prop(root, Prop::Width(300.0));
@@ -825,21 +866,23 @@ fn a_margin_under_a_passthrough_parent_does_not_shift_the_child() {
         } else {
             txn.commit();
         }
+        child
     };
     let mut via_taffy = Arena::new();
-    build(&mut via_taffy, true);
+    let child = build(&mut via_taffy, true);
     let mut via_fixed = Arena::new();
     build(&mut via_fixed, false);
 
     assert_eq!(via_taffy.committed().rects(), via_fixed.committed().rects());
     // The child sits at its authored offset, margin ignored.
-    assert_eq!(rect(&via_taffy, 1), (10.0, 10.0, 40.0, 30.0));
+    assert_eq!(rect_of(&via_taffy, child), (10.0, 10.0, 40.0, 30.0));
 }
 
 /// Build the nested scene: an outer row of two inner rows, each inner
 /// row holding two fixed children. `configure` receives the outer row
 /// and, per inner row, the row and its two children. Returns the solved
-/// absolute x of every node, in DFS order.
+/// absolute x of every node, named by identity in DFS order (debt #119)
+/// rather than by an index into the committed rect table.
 fn nested_row_xs(
     configure: impl FnOnce(&mut dashscene_core::Txn<'_>, NodeId, [(NodeId, [NodeId; 2]); 2]),
 ) -> Vec<f32> {
@@ -861,9 +904,14 @@ fn nested_row_xs(
     });
     configure(&mut txn, outer, inners);
     txn.commit_with(&mut TaffySolver::new());
-    (0..arena.committed().rects().len())
-        .map(|i| rect(&arena, i).0)
-        .collect()
+
+    let mut nodes = vec![outer];
+    for (inner, [a, b]) in inners {
+        nodes.push(inner);
+        nodes.push(a);
+        nodes.push(b);
+    }
+    nodes.into_iter().map(|n| rect_of(&arena, n).0).collect()
 }
 
 #[test]
@@ -921,8 +969,9 @@ fn lowered_margins_compose_through_nesting() {
 /// Build the wrap scene of `corpus/figma-fixtures/lowering-wrap.json` in
 /// core vocabulary: a fixed-width, hug-height wrapping row of seven
 /// fixed-size chips. `cross_gap` is the authored line spacing; `None`
-/// leaves it following `gap`.
-fn wrap_scene(cross_gap: Option<f32>) -> Arena {
+/// leaves it following `gap`. Returns `(arena, row, chips)` so a caller
+/// can name each box (debt #119).
+fn wrap_scene(cross_gap: Option<f32>) -> (Arena, NodeId, [NodeId; 7]) {
     let mut arena = Arena::new();
     let mut txn = arena.open();
     let row = txn.add_node(None, None);
@@ -942,11 +991,10 @@ fn wrap_scene(cross_gap: Option<f32>) -> Arena {
             bottom: 16.0,
         },
     );
-    for w in [120.0, 80.0, 160.0, 100.0, 140.0, 90.0, 110.0] {
-        fixed(&mut txn, row, w, 40.0);
-    }
+    let chips =
+        [120.0, 80.0, 160.0, 100.0, 140.0, 90.0, 110.0].map(|w| fixed(&mut txn, row, w, 40.0));
     txn.commit_with(&mut TaffySolver::new());
-    arena
+    (arena, row, chips)
 }
 
 #[test]
@@ -957,9 +1005,9 @@ fn a_wrap_row_breaks_lines_and_hugs_to_them_like_figmas_capture() {
     // authored cross gap 16 between them, so the hug height is
     // 16+40+16+40+16+40+16 = 184. Every box equals the capture's
     // absoluteBoundingBox.
-    let arena = wrap_scene(Some(16.0));
-    assert_eq!(rect(&arena, 0), (0.0, 0.0, 420.0, 184.0), "hug root");
-    let chips: [(f32, f32, f32); 7] = [
+    let (arena, row, chips) = wrap_scene(Some(16.0));
+    assert_eq!(rect_of(&arena, row), (0.0, 0.0, 420.0, 184.0), "hug root");
+    let expected: [(f32, f32, f32); 7] = [
         (16.0, 16.0, 120.0),
         (148.0, 16.0, 80.0),
         (240.0, 16.0, 160.0),
@@ -968,8 +1016,8 @@ fn a_wrap_row_breaks_lines_and_hugs_to_them_like_figmas_capture() {
         (280.0, 72.0, 90.0),
         (16.0, 128.0, 110.0),
     ];
-    for (i, (x, y, w)) in chips.into_iter().enumerate() {
-        assert_eq!(rect(&arena, i + 1), (x, y, w, 40.0), "chip {i}");
+    for (i, (x, y, w)) in expected.into_iter().enumerate() {
+        assert_eq!(rect_of(&arena, chips[i]), (x, y, w, 40.0), "chip {i}");
     }
 }
 
@@ -978,10 +1026,14 @@ fn an_unset_cross_gap_follows_the_main_gap() {
     // Without an authored cross gap the line spacing is the main gap
     // (the v0.2 both-axes mapping, kept for wrap): lines at y = 16,
     // 16+40+12 = 68, 120; hug height 176.
-    let arena = wrap_scene(None);
-    assert_eq!(rect(&arena, 0).3, 176.0, "hug height at gap-spaced lines");
-    assert_eq!(rect(&arena, 4).1, 68.0, "second line");
-    assert_eq!(rect(&arena, 7).1, 120.0, "third line");
+    let (arena, row, chips) = wrap_scene(None);
+    assert_eq!(
+        rect_of(&arena, row).3,
+        176.0,
+        "hug height at gap-spaced lines"
+    );
+    assert_eq!(rect_of(&arena, chips[3]).1, 68.0, "second line");
+    assert_eq!(rect_of(&arena, chips[6]).1, 120.0, "third line");
 }
 
 #[test]
@@ -1066,20 +1118,48 @@ fn a_grid_with_spans_solves_to_figmas_captured_rects() {
         },
     );
     place(&mut txn, hug, 1, 2);
-    fixed(&mut txn, hug, 50.0, 17.0);
+    let hug_me = fixed(&mut txn, hug, 50.0, 17.0);
     // fixed-size: keeps its authored size at its cell origin.
     let fixed_child = fixed(&mut txn, grid, 140.0, 60.0);
     place(&mut txn, fixed_child, 2, 1);
     txn.commit_with(&mut TaffySolver::new());
 
-    assert_eq!(rect(&arena, 0), (0.0, 0.0, 720.0, 480.0), "grid root");
-    assert_eq!(rect(&arena, 1), (16.0, 16.0, 688.0, 96.0), "span-3-cols");
-    assert_eq!(rect(&arena, 2), (16.0, 124.0, 160.0, 340.0), "span-2-rows");
-    assert_eq!(rect(&arena, 3), (188.0, 124.0, 252.0, 164.0), "fill-minmax");
-    assert_eq!(rect(&arena, 4), (452.0, 300.0, 252.0, 164.0), "fill-plain");
-    assert_eq!(rect(&arena, 5), (452.0, 124.0, 74.0, 33.0), "hug-content");
-    assert_eq!(rect(&arena, 6), (464.0, 132.0, 50.0, 17.0), "hug me");
-    assert_eq!(rect(&arena, 7), (188.0, 300.0, 140.0, 60.0), "fixed-size");
+    assert_eq!(rect_of(&arena, grid), (0.0, 0.0, 720.0, 480.0), "grid root");
+    assert_eq!(
+        rect_of(&arena, span_cols),
+        (16.0, 16.0, 688.0, 96.0),
+        "span-3-cols"
+    );
+    assert_eq!(
+        rect_of(&arena, span_rows),
+        (16.0, 124.0, 160.0, 340.0),
+        "span-2-rows"
+    );
+    assert_eq!(
+        rect_of(&arena, fill_a),
+        (188.0, 124.0, 252.0, 164.0),
+        "fill-minmax"
+    );
+    assert_eq!(
+        rect_of(&arena, fill_b),
+        (452.0, 300.0, 252.0, 164.0),
+        "fill-plain"
+    );
+    assert_eq!(
+        rect_of(&arena, hug),
+        (452.0, 124.0, 74.0, 33.0),
+        "hug-content"
+    );
+    assert_eq!(
+        rect_of(&arena, hug_me),
+        (464.0, 132.0, 50.0, 17.0),
+        "hug me"
+    );
+    assert_eq!(
+        rect_of(&arena, fixed_child),
+        (188.0, 300.0, 140.0, 60.0),
+        "fixed-size"
+    );
 }
 
 #[test]
@@ -1105,8 +1185,8 @@ fn a_mixed_size_baseline_row_aligns_on_flex_baselines() {
     txn.set_prop(row, Prop::Height(80.0));
     txn.set_prop(row, Prop::Gap(10.0));
     txn.set_prop(row, Prop::CrossAlign(CrossAxisAlign::Baseline));
-    fixed(&mut txn, row, 30.0, 20.0);
-    fixed(&mut txn, row, 40.0, 48.0);
+    let short = fixed(&mut txn, row, 30.0, 20.0);
+    let tall = fixed(&mut txn, row, 40.0, 48.0);
     let nested = txn.add_node(Some(row), None);
     txn.set_prop(nested, Prop::Mode(LayoutMode::Horizontal));
     txn.set_prop(nested, Prop::Width(60.0));
@@ -1120,13 +1200,25 @@ fn a_mixed_size_baseline_row_aligns_on_flex_baselines() {
             bottom: 0.0,
         },
     );
-    fixed(&mut txn, nested, 20.0, 10.0);
+    let nested_leaf = fixed(&mut txn, nested, 20.0, 10.0);
     txn.commit_with(&mut TaffySolver::new());
 
-    assert_eq!(rect(&arena, 1), (0.0, 28.0, 30.0, 20.0), "short leaf");
-    assert_eq!(rect(&arena, 2), (40.0, 0.0, 40.0, 48.0), "tall leaf");
-    assert_eq!(rect(&arena, 3), (90.0, 34.0, 60.0, 40.0), "nested row");
-    assert_eq!(rect(&arena, 4), (90.0, 38.0, 20.0, 10.0), "nested leaf");
+    assert_eq!(
+        rect_of(&arena, short),
+        (0.0, 28.0, 30.0, 20.0),
+        "short leaf"
+    );
+    assert_eq!(rect_of(&arena, tall), (40.0, 0.0, 40.0, 48.0), "tall leaf");
+    assert_eq!(
+        rect_of(&arena, nested),
+        (90.0, 34.0, 60.0, 40.0),
+        "nested row"
+    );
+    assert_eq!(
+        rect_of(&arena, nested_leaf),
+        (90.0, 38.0, 20.0, 10.0),
+        "nested leaf"
+    );
 }
 
 #[test]
@@ -1141,12 +1233,12 @@ fn baseline_in_a_vertical_container_degrades_to_start() {
     txn.set_prop(col, Prop::Width(40.0));
     txn.set_prop(col, Prop::Height(100.0));
     txn.set_prop(col, Prop::CrossAlign(CrossAxisAlign::Baseline));
-    fixed(&mut txn, col, 20.0, 20.0);
-    fixed(&mut txn, col, 30.0, 20.0);
+    let a = fixed(&mut txn, col, 20.0, 20.0);
+    let b = fixed(&mut txn, col, 30.0, 20.0);
     txn.commit_with(&mut TaffySolver::new());
 
-    assert_eq!(rect(&arena, 1).0, 0.0, "start-aligned");
-    assert_eq!(rect(&arena, 2).0, 0.0, "start-aligned");
+    assert_eq!(rect_of(&arena, a).0, 0.0, "start-aligned");
+    assert_eq!(rect_of(&arena, b).0, 0.0, "start-aligned");
 }
 
 #[test]
@@ -1177,8 +1269,8 @@ fn an_out_of_range_grid_anchor_does_not_panic() {
         // the solved placement of a saturated anchor is degenerate by
         // construction, and the load gate refuses it for documents.
         txn.commit_with(&mut TaffySolver::new());
-        let r = arena.committed().rects()[1];
-        assert!(r.x.is_finite() && r.y.is_finite(), "finite at {anchor}");
+        let (x, y, _, _) = rect_of(&arena, child);
+        assert!(x.is_finite() && y.is_finite(), "finite at {anchor}");
     }
 }
 
@@ -1206,7 +1298,11 @@ fn a_zero_span_is_saturated_to_one() {
     txn.set_prop(child, Prop::GridColumnSpan(0));
     txn.commit_with(&mut TaffySolver::new());
 
-    assert_eq!(rect(&arena, 1), (0.0, 0.0, 50.0, 40.0), "spans one cell");
+    assert_eq!(
+        rect_of(&arena, child),
+        (0.0, 0.0, 50.0, 40.0),
+        "spans one cell"
+    );
 }
 
 #[test]
@@ -1235,7 +1331,7 @@ fn a_fixed_child_larger_than_its_fraction_cell_overflows_it() {
 
     // Each fraction column is 50 wide; the 80-wide child overflows 30
     // into the second column rather than growing its track.
-    assert_eq!(rect(&arena, 1), (0.0, 0.0, 80.0, 40.0));
+    assert_eq!(rect_of(&arena, big), (0.0, 0.0, 80.0, 40.0));
 }
 
 #[test]
@@ -1282,9 +1378,9 @@ fn distinct_gaps_and_asymmetric_sizing_map_to_their_own_grid_axes() {
     txn.commit_with(&mut TaffySolver::new());
 
     // Column x runs 0, 30+8 = 38; row y runs 0, 20+20 = 40.
-    assert_eq!(rect(&arena, 1), (0.0, 0.0, 30.0, 10.0), "fill across");
-    assert_eq!(rect(&arena, 2), (38.0, 0.0, 15.0, 20.0), "fill down");
-    assert_eq!(rect(&arena, 3), (38.0, 40.0, 40.0, 25.0), "fill both");
+    assert_eq!(rect_of(&arena, wide), (0.0, 0.0, 30.0, 10.0), "fill across");
+    assert_eq!(rect_of(&arena, tall), (38.0, 0.0, 15.0, 20.0), "fill down");
+    assert_eq!(rect_of(&arena, both), (38.0, 40.0, 40.0, 25.0), "fill both");
 }
 
 #[test]
@@ -1301,13 +1397,13 @@ fn a_fixed_height_wrap_container_packs_its_lines_at_the_cross_start() {
     txn.set_prop(row, Prop::Width(100.0));
     txn.set_prop(row, Prop::Height(200.0));
     txn.set_prop(row, Prop::CrossGap(10.0));
-    fixed(&mut txn, row, 60.0, 30.0);
-    fixed(&mut txn, row, 60.0, 30.0);
+    let first = fixed(&mut txn, row, 60.0, 30.0);
+    let second = fixed(&mut txn, row, 60.0, 30.0);
     txn.commit_with(&mut TaffySolver::new());
 
-    assert_eq!(rect(&arena, 1), (0.0, 0.0, 60.0, 30.0), "first line");
+    assert_eq!(rect_of(&arena, first), (0.0, 0.0, 60.0, 30.0), "first line");
     assert_eq!(
-        rect(&arena, 2),
+        rect_of(&arena, second),
         (0.0, 40.0, 60.0, 30.0),
         "packed, not spread"
     );
