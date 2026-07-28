@@ -164,9 +164,11 @@ third-party payload is a defect regardless of how it is licensed.
 | payload | fixture | source URL | licence as stated at source | retrieved | what it is |
 | ------- | ------- | ---------- | --------------------------- | --------- | ---------- |
 
-The table is empty: every raster payload in `corpus/` today was produced
-by this project. Adding a row is part of the change that adds the
-asset, never a follow-up.
+The table is empty: no CC0 payload sits inside a Figma fixture yet. The
+provenance row lives beside the payload, so a payload in another `corpus/`
+subdirectory is listed in that directory's own README — `corpus/photo/`
+holds the first four (issue #455). Adding a row is part of the change that
+adds the asset, never a follow-up.
 
 Three things CC0 does not cover, confirmed per asset before it is
 committed: trademark, rights held by third parties depicted _in_ the
