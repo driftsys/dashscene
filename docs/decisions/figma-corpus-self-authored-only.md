@@ -49,9 +49,57 @@ it is the owner exporting their own design from their own account, the
 same self-authored-only basis. Only self-authored fixtures' exports are
 committed; no third-party file's render enters the repo.
 
+### The rule scopes to the Figma document, not to every byte inside it
+
+    ruled 2026-07-28 by the repository owner, raised by issue #455
+
+**A raster payload placed inside a self-authored fixture is governed by its
+own licence, not by this rule**, provided that licence is CC0. The Figma
+document stays self-authored; a CC0 image sitting in one of its image fills
+is not a Figma Community asset and the licence this record routes around
+does not reach it.
+
+Nothing above is relaxed. No third-party Figma file's JSON enters `corpus/`,
+and no third-party file's render enters the repo, whatever licence is
+claimed for it. What is clarified is a boundary the original ruling did not
+address because the question had not come up: the difference between the
+_document_ and the _pixels a designer drops into it_.
+
+**CC0 only, and CC0 specifically.** Not CC-BY, which obliges attribution
+this repository would then have to carry and keep accurate. Not the
+Unsplash or Pexels licences, which are similar in effect but are each a
+bespoke instrument rather than CC0 — and a bespoke instrument is the exact
+shape of ambiguity this record exists to avoid. Wikimedia Commons and Poly
+Haven publish genuine CC0.
+
+**Provenance is recorded or the asset does not enter.** Every such payload
+carries, in `corpus/figma-fixtures/README.md`: the source URL, the licence
+as stated at the source, the retrieval date, and what the asset is. CC0
+obliges no attribution, so this is not a licence condition — it is this
+repository's own audit trail, and it is what makes the claim checkable
+later rather than taken on trust.
+
+**Three limits CC0 does not cover**, to be confirmed per asset before it is
+committed. CC0 waives copyright and neighbouring rights only: it does not
+clear trademark, it does not clear rights held by third parties depicted
+_in_ the work (a recognisable person needs a release; a copyrighted artwork
+or, in some jurisdictions, a building carries separate rights), and it is
+only as sound as the uploader's right to have applied it.
+
 ## Why
 
 Not a legal opinion — an ambiguity being routed around rather than
 resolved. Revisit (ask Figma, or a specific creator, for explicit
 permission) only if a real need for a specific third-party file
 appears; the default stays self-authored-only until then.
+
+The 2026-07-28 clarification does not meet that revisit test and does not
+claim to: issue #455 needs _any_ image with dense high-frequency detail, not
+a particular file. It was ruled on because the boundary between a document
+and its raster contents was genuinely unaddressed, and leaving it unstated
+would have had each future asset re-argue it. The owner considered
+self-authoring the content instead — photographing and rendering it, which
+needs no amendment at all — and chose the CC0 route for the breadth of
+content it reaches. That choice buys a provenance discipline as its cost,
+which is why the discipline is written as a condition of entry rather than
+as advice.

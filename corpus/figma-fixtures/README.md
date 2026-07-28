@@ -3,7 +3,9 @@
 Self-authored Figma fixtures for the dashscene importer. Every fixture
 here is authored in the project's own Figma account — nothing captured
 from a third-party file ever enters this directory
-(`docs/decisions/figma-corpus-self-authored-only.md`).
+(`docs/decisions/figma-corpus-self-authored-only.md`). A CC0 raster
+payload may sit inside such a fixture, under the conditions in
+"Licensing" below.
 
 `manifest.json` is the source of truth: it maps each fixture name to its
 Figma file key and describes what it covers. This file is the narrative
@@ -142,3 +144,32 @@ this tier is committed here. Not yet wired into any CI job.
 Nothing in either tier is a third-party Figma file's captured JSON —
 see `docs/decisions/figma-corpus-self-authored-only.md` for the ruling
 and why the corpus is shaped this way.
+
+### Third-party raster payloads
+
+The rule scopes to the Figma document, not to every byte inside it
+(ruled 2026-07-28, raised by issue #455). A **CC0** image may sit in a
+self-authored fixture's image fill, because the Figma licence the ruling
+routes around does not reach a raster payload that carries its own.
+
+CC0 only — not CC-BY, and not the Unsplash or Pexels licences, which are
+bespoke instruments rather than CC0. Wikimedia Commons and Poly Haven
+publish genuine CC0.
+
+**Every such payload is listed in the table below before it is
+committed.** CC0 obliges no attribution, so this table is not a licence
+condition; it is this repository's audit trail, and an unlisted
+third-party payload is a defect regardless of how it is licensed.
+
+| payload | fixture | source URL | licence as stated at source | retrieved | what it is |
+| ------- | ------- | ---------- | --------------------------- | --------- | ---------- |
+
+The table is empty: every raster payload in `corpus/` today was produced
+by this project. Adding a row is part of the change that adds the
+asset, never a follow-up.
+
+Three things CC0 does not cover, confirmed per asset before it is
+committed: trademark, rights held by third parties depicted _in_ the
+work (a recognisable person needs a release; artworks and some
+buildings carry separate rights), and whether the uploader had the right
+to apply CC0 at all.
