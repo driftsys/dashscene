@@ -204,15 +204,127 @@ enforced only by documentation is the shape this project declines elsewhere.
 
 ### What this obliges, and what is not yet settled
 
-- **It moves pixels, and that is not yet measured.** Interleaving takes text
-  out of unconditional foreground, so a later rect now covers earlier text.
-  That is correct z-order and a rendered change wherever it occurs. The
-  movement is measured before the work is scheduled, not during it.
-- **The E7 oracle cannot keep its own text staging.** `render_oracle.rs` stages
-  without a wrap width while the measure seam wraps at the solved width (issue
-  #306). The divergence is inert today only because every committed text
-  fixture is HUG, where the two agree. One producer means the oracle adopts it;
-  keeping a second stager would reintroduce, inside the instrument that judges
-  fidelity, the very measure-and-paint divergence this record's original
-  consequence was written to avoid.
-- Issue #306 is therefore subsumed by this work if it is not fixed first.
+- **It moves no committed pixel today.** Measured 2026-07-28 against `70b8ef1`,
+  before scheduling the work, as the paragraph this one replaces required. See
+  "The movement, measured" below.
+- **The E7 oracle cannot keep its own text staging.** One producer means the
+  oracle adopts it; keeping a second stager would reintroduce, inside the
+  instrument that judges fidelity, the very measure-and-paint divergence this
+  record's original consequence was written to avoid.
+
+  This bullet first named the wrong divergence, and the correction is worth
+  keeping rather than overwriting. It cited the wrap width and issue #306.
+  That divergence is gone: #306 was fixed in PR #530, and
+  `goldens/tooling/tests/render_oracle.rs` now passes the node's solved width.
+  The divergence that remains is the **text axes**. The oracle stages under
+  `TextShape::default()` while `goldens/tooling/src/render.rs` stages under the
+  node's lowered `line_height_px`, `letter_spacing`, `text_align` and
+  `ligatures_off`, and the oracle applies no vertical alignment at all — it is
+  not handed the box height. The oracle discloses this itself, and
+  `docs/design/goldens.md` records it; this record was the outlier.
+
+## The movement, measured
+
+Measured 2026-07-28 against `70b8ef1`. The section above required this before
+the work was scheduled rather than during it, and this section discharges that.
+
+The measuring branch is kept rather than reverted: `spike/glyph-runs-golden-movement`
+(`eb58a30`, no PR — a measurement artifact, not a merge candidate). The 2026-07-27
+spike deliberately reverted its own prototype, which left its numbers
+unreproducible; this one does not repeat that.
+
+**Zero of the 33 committed golden images move. Zero of the 10 `.dsb` goldens
+move. All seven E7 oracle frames hold their residual to three decimals, and no
+band was retuned.**
+
+### What was measured, and how it was made falsifiable
+
+The shim was the smallest thing that produces the number: `GlyphRun` gained the
+anchor field, all twelve construction sites stamped it caller-side, and the
+painter drew each run at its anchor's index inside that rect's clip, with
+`draw_glyph_runs` deleted. The whole goldens suite was then re-recorded under
+`UPDATE_GOLDENS=1 ... --test-threads=1`.
+
+A zero result is worthless unless the instrument could have reported a
+non-zero one, so the measurement was mutation-tested: with the run's fill alpha
+halved and nothing else changed, the same command moved **exactly the six
+goldens that carry glyph runs** — `v05-text-latin`, `v06-text-arabic`,
+`v07-text-fallback`, `v07-text-lowering`, `v07-variant-topology`,
+`v013-baseline-hug-cross` — and turned both the render oracle and the import
+oracle red. The instrument has teeth; the zero is a measurement rather than a
+silence.
+
+### Why it is zero
+
+Not luck, and not a property that will hold forever. Instrumenting the painter
+to report, per staged run, its anchor index, its ink bounds, every later rect
+overlapping that ink, its resolved clip, and any enclosing group shows that in
+all six text-carrying goldens and all seven oracle frames:
+
+- **no run has a later overlapping rect**, so the z-interleave never fires;
+- **no scene carries both a run and a `GroupComposite`**, so #274's case never
+  fires;
+- **one anchor is clipped and the clip cuts nothing** — `v07-text-lowering`'s
+  ink lies inside its clip box. In the oracle, `v06-text-arabic`'s descender
+  crosses its clip bottom, but that bottom is also the canvas bottom, so the
+  clipped pixels were never visible.
+
+So the spike's §3.3 warning — that interleaving "is a behavior change for every
+scene, not only for scenes with groups" — is true as a statement about the
+drawing rule and false as a prediction about this corpus. The behaviour change
+is real and was reproduced on synthetic scenes; it is invisible on everything
+committed. **The corpus does not yet contain the cases this work exists to fix**,
+which is the honest reading of a zero here, and the reason the implementing
+story must add fixtures that do rather than treating a green suite as proof.
+
+### The oracle's axis divergence costs nothing today
+
+The spike left this as an open question and called it "a decision, not a
+detail". Unifying the oracle onto the lowered axes was measured: all seven
+frames hold their residual exactly, because every TEXT node in every committed
+fixture authors `INTRINSIC_%` line height, zero letter spacing, LEFT horizontal
+and TOP vertical alignment. `dashc` lowers `INTRINSIC_%` to a
+`line_height_px` of `None`, so those nodes' lowered axes **are**
+`TextShape::default()` and the
+`Top` vertical offset is unconditionally zero. The two policies are provably
+the same function on today's fixtures.
+
+The decision therefore stands but costs no re-baseline: the oracle adopts the
+one producer. A future fixture authoring a fixed line height, letter spacing,
+or a non-Top vertical alignment would move its frame, and that is the point at
+which the cost would have appeared had it not been taken now.
+
+One thing found while measuring strengthens it: `dashscene-engine`'s measure
+callback already uses the lowered axes (`text_shape(style)`), so the oracle's
+default-axis staging is **already** inconsistent with the solve it re-runs. The
+divergence is one-sided, on the staging half. Unifying removes an inconsistency
+rather than creating one.
+
+### What the per-frame question actually costs
+
+Not benchmarked; the shape is now known from the code rather than assumed.
+`Typesetter` caches `shape::shape_paragraph` — the rustybuzz pass — in a
+per-posture `HashMap<Box<str>, Arc<ShapedText>>`, unbounded and never evicted.
+Everything else re-runs per call, and the spike understated the residue by
+naming only line breaking and positioning: **the UAX #9 bidi resolution runs
+before the cache lookup and outside it**, along with slot resolution, per-font
+scaling, line breaking, letter spacing, per-line metrics and half-leading,
+per-line bidi reordering, alignment, and a fresh `TextLayout` allocation per
+call.
+
+That does not change the recommendation — land full re-staging, measure against
+the hero, make it incremental only if the measurement demands it, since the
+seam's shape is identical either way — but it does mean the thing to measure is
+bidi plus layout, not layout alone.
+
+### What this does not license
+
+The zero is measured against a corpus, not against the design. It says the
+migration can land without re-baselining a golden; it does not say the change
+is invisible, and the implementing story is still a declared mover under
+epic #475 until its own re-record comes back clean.
+
+One thing the measurement did surface and this work did not cause:
+`goldens/images/v011-backdrop-blur.png` re-records differently on an unmodified
+tree. That is the pre-existing staleness tracked as #538, still live on `main`,
+and it is named here so a future reader does not attribute it to this change.
