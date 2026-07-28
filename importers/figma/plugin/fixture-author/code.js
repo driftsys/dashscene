@@ -1806,13 +1806,14 @@ function stackedFills() {
 // propagation scoped to that pair and out of the other three constructs.
 //
 // story C2 (#143) fix: the mask shape is a full circle (not an oblong
-// ellipse) with maskType explicitly "VECTOR" — the Plugin API's name for
-// the REST API's "OUTLINE" — so it exercises dashc's box-outline mask
-// lowering rather than the default ALPHA mask type, which dashc refuses by
-// name (a soft mask has no hard box-clip lowering). A file captured before
-// this fix carries the old ALPHA/oblong mask shape and needs this command
-// re-run in Figma, then a re-capture, before its mask exercises the
-// lowering.
+// ellipse) with maskType explicitly "VECTOR" — the value both the Plugin
+// API and the REST API report for a geometry mask (issue #517 measured the
+// REST API's value on file OAXcoWO5j5NghXV3ZKw9QV) — so it exercises
+// dashc's box-outline mask lowering rather than the default ALPHA mask
+// type, which dashc refuses by name (a soft mask has no hard box-clip
+// lowering). A file captured before this fix carries the old ALPHA/oblong
+// mask shape and needs this command re-run in Figma, then a re-capture,
+// before its mask exercises the lowering.
 function nodeFx() {
   const root = baseFrame("node-fx", 540, 160);
   root.layoutMode = "NONE";
@@ -1871,8 +1872,9 @@ function nodeFx() {
   // ellipse refuses regardless of masking. `maskType` defaults to `"ALPHA"`
   // (the Plugin API's `MaskType`), which dashc refuses by name (a soft mask
   // has no hard box-clip lowering, docs/decisions/masks-and-group-opacity.md);
-  // `"VECTOR"` is the Plugin API's name for what the REST API reports as
-  // `"OUTLINE"` — the box-outline mask dashc's lowering accepts.
+  // `"VECTOR"` is the value both the Plugin API and the REST API report for
+  // a geometry mask (issue #517 measured the REST API's value) — the
+  // box-outline mask dashc's lowering accepts.
   const maskShape = figma.createEllipse();
   maskShape.name = "mask-shape";
   maskShape.resize(CELL, CELL);
