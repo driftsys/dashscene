@@ -238,6 +238,33 @@ pub fn validate_document(doc: &Document<'_>) -> Report {
         // joins at v0.8); the verifier accepts an unknown tag with a
         // payload, and the loader resolves the tag unchecked.
         check_enum!(report, &at, "Binding.transform", binding.transform_type());
+
+        // R4's containment check (issue #257). A layout binding whose
+        // target sits under a hug ancestor reflows past its own subtree,
+        // so its frame cost is not statically bounded. A channel this
+        // build does not classify is already named by `check_enum!`
+        // above, and a dangling node index by the rule above that; both
+        // skip the walk rather than guessing at it.
+        if channel_effect(binding.channel()) == Some(ChannelEffect::Layout)
+            && (node as usize) < sizes.nodes
+        {
+            let (count, nearest) = hug_ancestors(&nodes, node);
+            if let Some(nearest) = nearest {
+                report.push(warning(
+                    rule::BINDING_REFLOW_NOT_CONTAINED,
+                    &at,
+                    format!(
+                        "binding writes {} on {}, which sits under {count} hug ancestor(s), the \
+                         nearest being {}; a hug ancestor resizes with its content, so the write \
+                         reflows past the bound node's own subtree and its frame cost is not \
+                         statically bounded (R4)",
+                        binding.channel().variant_name().unwrap_or("unknown"),
+                        node_path(&nodes, node),
+                        node_path(&nodes, nearest),
+                    ),
+                ));
+            }
+        }
     }
 
     // A text style's color is optional in the schema, so a producer can omit
@@ -987,6 +1014,91 @@ fn check_variant_set(report: &mut Report, set: &VariantSet<'_>, index: u32, size
     }
 }
 
+/// What a write to one binding channel reaches.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ChannelEffect {
+    /// The solver reads this channel, so a write to it costs a reflow.
+    Layout,
+    /// The channel changes color only; it never reaches the solver
+    /// (`docs/decisions/visible-is-layout-opacity-is-paint.md`).
+    PaintOnly,
+}
+
+/// Classifies one binding channel, or `None` for a value this build does
+/// not know.
+///
+/// The split is `dashlang::reactive::classify`'s: the fill channels and
+/// `Opacity` are paint-only, and every other channel reaches the solver.
+/// The gate and the runtime therefore read one line rather than two, which
+/// matters because the runtime's `WriteClass::PaintOnly` is what actually
+/// decides whether a write skips the solve.
+///
+/// The `None` arm must stay reserved for values outside the schema's own
+/// enum, for the reason [`as_paint_format`] documents: `flatc` generates
+/// `BindingChannel` as a newtype over `u8` rather than a Rust enum, so this
+/// match is not checked for exhaustiveness. A channel appended to the schema
+/// would fall to `None`, be treated as not-layout-affecting by the
+/// containment rule, and pass `check_enum!` too — the same two-gates-go-quiet
+/// silent drop P4 forbids. `every_binding_channel_is_classified` fails at the
+/// append instead.
+fn channel_effect(channel: dashbuf::BindingChannel) -> Option<ChannelEffect> {
+    use dashbuf::BindingChannel as Channel;
+    match channel {
+        Channel::X | Channel::Y | Channel::Width | Channel::Height | Channel::Gap => {
+            Some(ChannelEffect::Layout)
+        }
+        Channel::FillR | Channel::FillG | Channel::FillB | Channel::FillA | Channel::Opacity => {
+            Some(ChannelEffect::PaintOnly)
+        }
+        _ => None,
+    }
+}
+
+/// How many of `node`'s ancestors hug their content, and the nearest one.
+///
+/// An ancestor that hugs on *either* axis counts, not only the axis the
+/// bound channel names: a width change becomes a height change wherever text
+/// rewraps or a `Wrap` container relines, so the two axes are not
+/// independent and a per-axis test would under-report. This is the same
+/// either-axis predicate `dashlang::reactive::ancestor_contained` applies to
+/// decide whether a write may skip the solve.
+///
+/// The walk starts at the parent — the bound node's own sizing is not an
+/// ancestor's, and a node that hugs the axis its channel names has the write
+/// overridden by the solver rather than escaping upward.
+///
+/// Safe against a malformed parent link by construction, the same guard
+/// [`node_path`] uses: a parent index that is not strictly lower than the
+/// child's ends the walk and is reported separately by
+/// `node.parent-not-before-child` or `node.parent-out-of-range`. Each
+/// followed link strictly decreases the index, so the walk terminates on any
+/// input, and `nodes.get` stays in range because the caller has already
+/// checked `node`.
+fn hug_ancestors(
+    nodes: &flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<Node<'_>>>,
+    node: u32,
+) -> (usize, Option<u32>) {
+    let mut count = 0;
+    let mut nearest = None;
+    let mut i = node as usize;
+    loop {
+        let parent = nodes.get(i).parent();
+        if parent == NO_PARENT || parent as usize >= i {
+            break;
+        }
+        i = parent as usize;
+        // Absent constraints leave the schema default, `Fixed`.
+        let hugs = nodes.get(i).constraints().is_some_and(|c| {
+            c.sizing_h() == dashbuf::AxisSizing::Hug || c.sizing_v() == dashbuf::AxisSizing::Hug
+        });
+        if hugs {
+            count += 1;
+            nearest.get_or_insert(i as u32);
+        }
+    }
+    (count, nearest)
+}
+
 /// One node's slash-joined name path, walked up the parent chain on demand.
 ///
 /// Built only when a diagnostic actually points at this node, so a clean
@@ -1044,6 +1156,26 @@ mod tests {
                  validate_asset_payloads would silently skip every asset of that format \
                  (P4). Add the arm — and the dashpaint::ImageFormat variant if it is \
                  missing too."
+            );
+        }
+    }
+
+    /// Every channel the schema names must be classified as layout or paint.
+    ///
+    /// The guard on [`channel_effect`]'s `_ => None` arm, and the same trap
+    /// as the format test above: appending a channel to `BindingChannel`
+    /// would not make that match fail to compile — it would fall to `None`,
+    /// and the R4 containment rule would silently stop checking every
+    /// binding of that channel while `check_enum!` stayed quiet too, because
+    /// the generated enum *does* name the value.
+    #[test]
+    fn every_binding_channel_is_classified() {
+        for &channel in dashbuf::BindingChannel::ENUM_VALUES {
+            assert!(
+                channel_effect(channel).is_some(),
+                "the schema names {channel:?}, but channel_effect has no arm for it, so the R4 \
+                 containment rule would silently skip every binding of that channel (P4). Add \
+                 the arm — Layout if the solver reads the channel, PaintOnly if it does not."
             );
         }
     }

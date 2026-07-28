@@ -15,7 +15,7 @@ use dashbuf::{
     VariantOverride, VariantOverrideArgs, VariantPropValue, VariantSet, VariantSetArgs,
     VariantVisible, VariantVisibleArgs, VariantX, VariantXArgs, Vec2, root_as_document,
 };
-use dashscene_validator::{Location, NodePath, rule, validate_document};
+use dashscene_validator::{Location, NodePath, Severity, rule, validate_document};
 use flatbuffers::{FlatBufferBuilder, WIPOffset};
 
 fn red() -> Color {
@@ -1396,6 +1396,238 @@ fn a_binding_transform_this_build_does_not_know_is_named() {
             .any(|d| d.rule == rule::UNKNOWN_ENUM && d.message.contains("Binding.transform")),
         "the unknown union tag is named, not defaulted:\n{report}"
     );
+}
+
+// ---------------------------------------------------------------------
+// R4's containment check (issue #257,
+// `docs/decisions/bindings-are-explicit-and-flat.md`). R4 requires a
+// statically provable frame cost; a hug ancestor resizes with its content,
+// so a layout write under one reflows past the bound node's own subtree and
+// the cost is no longer bounded by that subtree.
+// ---------------------------------------------------------------------
+
+/// The axis sizing of one node in a chain: `None` writes no constraints
+/// table at all, which leaves the schema's `Fixed` defaults on both axes.
+type Sizing = Option<(dashbuf::AxisSizing, dashbuf::AxisSizing)>;
+
+const FIXED: Sizing = None;
+
+fn hug_h() -> Sizing {
+    Some((dashbuf::AxisSizing::Hug, dashbuf::AxisSizing::Fixed))
+}
+
+fn hug_v() -> Sizing {
+    Some((dashbuf::AxisSizing::Fixed, dashbuf::AxisSizing::Hug))
+}
+
+/// One document whose nodes form a chain — `chain[0]` is the root and every
+/// later node is the child of the one before — carrying a single binding on
+/// the last node. A chain is enough: containment is a property of the parent
+/// walk, and siblings never enter it.
+fn document_with_chain(chain: &[(&str, Sizing)], channel: dashbuf::BindingChannel) -> Vec<u8> {
+    use dashbuf::{
+        Binding, BindingArgs, BindingTransform, LayoutConstraints, LayoutConstraintsArgs, Node,
+        NodeArgs, SignalDecl, SignalDeclArgs,
+    };
+
+    let mut b = FlatBufferBuilder::new();
+    let mut nodes = Vec::new();
+    for (i, (name, sizing)) in chain.iter().enumerate() {
+        let name = b.create_string(name);
+        let constraints = sizing.map(|(sizing_h, sizing_v)| {
+            LayoutConstraints::create(
+                &mut b,
+                &LayoutConstraintsArgs {
+                    sizing_h,
+                    sizing_v,
+                    ..Default::default()
+                },
+            )
+        });
+        nodes.push(Node::create(
+            &mut b,
+            &NodeArgs {
+                name: Some(name),
+                parent: if i == 0 {
+                    dashbuf::NO_PARENT
+                } else {
+                    i as u32 - 1
+                },
+                constraints,
+                ..Default::default()
+            },
+        ));
+    }
+    let bound = nodes.len() as u32 - 1;
+    let nodes = b.create_vector(&nodes);
+
+    let signal_name = b.create_string("size/width");
+    let signal = SignalDecl::create(
+        &mut b,
+        &SignalDeclArgs {
+            name: Some(signal_name),
+            initial: 1.0,
+        },
+    );
+    let signals = b.create_vector(&[signal]);
+    let row = Binding::create(
+        &mut b,
+        &BindingArgs {
+            signal: 0,
+            node: bound,
+            channel,
+            transform_type: BindingTransform::NONE,
+            transform: None,
+        },
+    );
+    let bindings = b.create_vector(&[row]);
+
+    let document = Document::create(
+        &mut b,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            signals: Some(signals),
+            bindings: Some(bindings),
+            ..Default::default()
+        },
+    );
+    b.finish(document, None);
+    b.finished_data().to_vec()
+}
+
+/// The violating scene: a bound `Width` under a parent that hugs.
+#[test]
+fn a_layout_binding_under_a_hug_ancestor_is_named() {
+    let bytes = document_with_chain(
+        &[("root", FIXED), ("panel", hug_h()), ("bar", FIXED)],
+        dashbuf::BindingChannel::Width,
+    );
+    let report = validate_bytes(&bytes);
+    let diagnostic = report
+        .find(rule::BINDING_REFLOW_NOT_CONTAINED)
+        .unwrap_or_else(|| panic!("the uncontained binding is named:\n{report}"));
+    assert_eq!(diagnostic.at, Location::Binding(0));
+    // A cost bound, not a defect: the document renders correctly, so the
+    // target that accepts the reflow declares a waiver — and only a warning
+    // is ever waivable.
+    assert_eq!(diagnostic.severity, Severity::Warning);
+    // …and a warning is only waivable while its id is in `rule::ALL`; an
+    // unregistered one is diagnosed as an unknown rule instead, which would
+    // leave the strict gate no way to accept the cost.
+    assert!(rule::is_known(rule::BINDING_REFLOW_NOT_CONTAINED));
+    assert!(
+        diagnostic.message.contains("/root/panel"),
+        "the diagnostic names the ancestor to fix: {}",
+        diagnostic.message
+    );
+}
+
+/// The satisfying scene: the same chain with every ancestor fixed.
+#[test]
+fn a_layout_binding_with_no_hug_ancestor_is_contained() {
+    let bytes = document_with_chain(
+        &[("root", FIXED), ("panel", FIXED), ("bar", FIXED)],
+        dashbuf::BindingChannel::Width,
+    );
+    let report = validate_bytes(&bytes);
+    assert!(report.is_empty(), "unexpected diagnostics:\n{report}");
+}
+
+/// A hug on the axis the channel does *not* name still breaks containment:
+/// a width change becomes a height change wherever text rewraps or a `Wrap`
+/// container relines, so the two axes are not independent and a per-axis
+/// test would under-report.
+#[test]
+fn a_hug_on_the_other_axis_also_breaks_containment() {
+    let bytes = document_with_chain(
+        &[("root", FIXED), ("panel", hug_v()), ("bar", FIXED)],
+        dashbuf::BindingChannel::Width,
+    );
+    let report = validate_bytes(&bytes);
+    assert!(
+        report.has(rule::BINDING_REFLOW_NOT_CONTAINED),
+        "a vertical hug still escapes a width write:\n{report}"
+    );
+}
+
+/// Containment is the whole parent chain, not the parent: a fixed parent
+/// under a hug grandparent still lets the reflow out.
+#[test]
+fn a_hug_grandparent_is_found_by_the_ancestor_walk() {
+    let bytes = document_with_chain(
+        &[("root", hug_h()), ("panel", FIXED), ("bar", FIXED)],
+        dashbuf::BindingChannel::Height,
+    );
+    let report = validate_bytes(&bytes);
+    let diagnostic = report
+        .find(rule::BINDING_REFLOW_NOT_CONTAINED)
+        .unwrap_or_else(|| panic!("the walk does not stop at the parent:\n{report}"));
+    assert!(
+        diagnostic
+            .message
+            .contains("1 hug ancestor(s), the nearest being /root "),
+        "one hug ancestor, and it is the root: {}",
+        diagnostic.message
+    );
+}
+
+/// The walk counts every hug ancestor and names the nearest one — the
+/// nearest is the one an author changes to contain the write.
+#[test]
+fn every_hug_ancestor_is_counted_and_the_nearest_is_named() {
+    let bytes = document_with_chain(
+        &[("root", hug_h()), ("panel", hug_v()), ("bar", FIXED)],
+        dashbuf::BindingChannel::Gap,
+    );
+    let report = validate_bytes(&bytes);
+    let diagnostic = report
+        .find(rule::BINDING_REFLOW_NOT_CONTAINED)
+        .unwrap_or_else(|| panic!("the uncontained binding is named:\n{report}"));
+    assert!(
+        diagnostic
+            .message
+            .contains("2 hug ancestor(s), the nearest being /root/panel "),
+        "both ancestors counted, the nearer one named: {}",
+        diagnostic.message
+    );
+}
+
+/// The bound node's own sizing is not an ancestor's. A node that hugs the
+/// axis it binds has its write overridden by the solver rather than
+/// escaping upward, which is a different problem from an uncontained
+/// reflow.
+#[test]
+fn a_hug_on_the_bound_node_itself_is_not_an_ancestor() {
+    let bytes = document_with_chain(
+        &[("root", FIXED), ("bar", hug_h())],
+        dashbuf::BindingChannel::Width,
+    );
+    let report = validate_bytes(&bytes);
+    assert!(report.is_empty(), "unexpected diagnostics:\n{report}");
+}
+
+/// A paint-only channel never reaches the solver, so no ancestor can make
+/// its write reflow anything — the split `dashlang::reactive::classify`
+/// already makes for `WriteClass::PaintOnly`.
+#[test]
+fn a_paint_only_binding_under_a_hug_ancestor_is_not_named() {
+    for channel in [
+        dashbuf::BindingChannel::FillR,
+        dashbuf::BindingChannel::FillG,
+        dashbuf::BindingChannel::FillB,
+        dashbuf::BindingChannel::FillA,
+        dashbuf::BindingChannel::Opacity,
+    ] {
+        let bytes = document_with_chain(
+            &[("root", hug_h()), ("panel", hug_v()), ("bar", FIXED)],
+            channel,
+        );
+        let report = validate_bytes(&bytes);
+        assert!(
+            !report.has(rule::BINDING_REFLOW_NOT_CONTAINED),
+            "{channel:?} is paint-only:\n{report}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

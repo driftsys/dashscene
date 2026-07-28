@@ -117,6 +117,19 @@ pub mod rule {
     /// lookup ambiguous — one declaration would shadow the other
     /// silently (P4).
     pub const SIGNAL_NAME_DUPLICATE: &str = "signal.name-duplicate";
+    /// A binding on a layout channel whose target node sits under an
+    /// ancestor that hugs its content. The hug ancestor resizes with what
+    /// it contains, so the write travels up to the nearest fixed ancestor
+    /// and back down through everything under it — the reflow escapes the
+    /// bound node's own subtree, and R4's "statically provable frame cost"
+    /// no longer holds (issue #257,
+    /// `docs/decisions/bindings-are-explicit-and-flat.md`).
+    ///
+    /// A warning, not an error: the document renders correctly and the
+    /// reflow is authored intent, so a target that accepts the cost
+    /// declares a waiver rather than being blocked. An error is never
+    /// waivable, which would leave no way to accept it.
+    pub const BINDING_REFLOW_NOT_CONTAINED: &str = "binding.reflow-not-contained";
 
     // Load gate — the v0.8 grid vocabulary (story #43). The engine
     // saturates rather than panics on these, so the honest diagnosis
@@ -332,6 +345,7 @@ pub mod rule {
         VARIANT_ACTIVE_MEMBER_OUT_OF_RANGE,
         BINDING_SIGNAL_OUT_OF_RANGE,
         BINDING_NODE_OUT_OF_RANGE,
+        BINDING_REFLOW_NOT_CONTAINED,
         SIGNAL_NAME_DUPLICATE,
         UNKNOWN_ENUM,
         GRADIENT_NO_STOPS,
