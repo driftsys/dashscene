@@ -7,7 +7,10 @@
              flex goldens — see "Flex goldens are exact-match by
              construction" below), and story #35 (an absolute-pixel
              budget for sparse text goldens — see "Text goldens use an
-             absolute-pixel budget" below).
+             absolute-pixel budget" below), and issue #233 (a text
+             budget is calibrated against the scene's smallest
+             regression, not its total erase — see "A text budget is
+             calibrated against a partial regression" below).
     scope    goldens/ tooling; binds golden authoring for every painter
 
 ## Context
@@ -139,7 +142,53 @@ edge count rather than the canvas:
 `Budget` (the `Fraction`/`Pixels` choice) is the one comparison model;
 `assert_matches_golden` (exact), `assert_matches_golden_within`
 (fraction), and `assert_matches_golden_max_pixels` (absolute) select it.
-The v0.5 Latin text golden keeps its 5 % fraction: at 8.95 % ink it is
-above its own budget, so a text-erasing regression already fails it; a
-tighter budget for its partial-regression sensitivity is deferred debt,
-not blocked here.
+
+## A text budget is calibrated against a partial regression (issue #233)
+
+Story #35 left the v0.5 Latin text golden on its 5 % fraction, on the
+argument that at 8.95 % ink it is above its own budget, so a text-erasing
+regression already fails it. That argument covers only the total erase.
+Issue #233 named the case it does not cover: the scene has two strings,
+and either one vanishing on its own is a smaller difference than the
+budget. Measured on the scene as it stands, the heading alone is 1,823 px
+and the chip's string 1,943 px, against the 2,240-px fraction — so both
+passed.
+
+So the calibration standard for a text budget is the **smallest
+regression the scene can express**, not the total erase. Where a scene
+has one text run those are the same number; where it has several they are
+not, and the total erase is the weakest of them. The v0.5 golden moves to
+`assert_matches_golden_max_pixels` at 1,200 px — two thirds of its
+smallest measured break, rounded down — and commits the measurement as a
+test (`dropping_either_string_exceeds_the_budget`), the same shape
+`v07-text-fallback` already uses. A budget stated in a comment is an
+estimate; a budget with a committed break is a gate.
+
+Three facts about the numbers, recorded so a later reader does not treat
+them as fixed:
+
+- **They drift.** The v0.5 ink measured 4,008 px at the story #35 review
+  and 3,763 px on this branch; the v0.6 ink measured 2,820 px then and
+  2,421 px now. Text rendering changed underneath both (the #314
+  line-height fix, the #272 baseline correction). A recorded ink figure is
+  a measurement with a date, so re-measure before reusing one.
+- **The committed v0.5 image itself has drifted.** A fresh render of the
+  scene differs from `v05-text-latin.png` by 3 of 44,800 px on one
+  machine, where the v0.6 golden renders bit-exact. A 2,240-px budget had
+  ample room to hide that; the 1,200-px one still does, which is why the
+  drift is recorded here rather than re-goldened away.
+- **The v0.6 budget has the same blind spot at its own scale.** Its
+  1,000 px catches the total erase (2,421 px today) but not one of its
+  three strings vanishing: the banner is 934 px, the harakat word 671 px,
+  the speed chip 816 px, each measured against the committed golden.
+  Retuning it is out of scope here — it is the live E7 frame, and the
+  number is CI-proven at its current value — but it is a real gap and not
+  a residual of #233.
+
+The v0.6 golden's own `~400-px edge population` figure could not be
+reproduced by this work: the stated instrument (pixels that shift by one
+code point on a premultiply round-trip) is the identity on an opaque
+canvas, and these scenes are opaque. The v0.5 calibration therefore does
+not use it. It bounds the budget from below by the only cross-machine
+difference this project has actually measured — 32 px on the v0.3 paint
+golden — and from above by the scene's smallest break.

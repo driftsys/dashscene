@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 
 use dashc_wasm::compile_figma;
 use dashpaint::{AtlasIndex, GlyphQuad, GlyphRun, GlyphRunTable, Painter};
-use dashscene_core::{Arena, NodeId, load_document};
+use dashscene_core::{Arena, AxisSizing, LayoutMode, NodeId, Prop, TextStyle, load_document};
 use dashscene_engine::TaffySolver;
 use dashscene_skia::SkiaPainter;
 use dashscene_typeset::text::{Font, FontFamily, TextShape, Typesetter, WeightedFont};
@@ -33,7 +33,7 @@ use skia_safe::{Color, Color4f, EncodedImageFormat, Paint, Rect, surfaces};
 
 mod common;
 use common::manifest;
-use common::{load_atlas, origin_of};
+use common::{load_atlas, origin_of, size_of};
 
 /// A `w`×`h` opaque PNG cleared to `base`, optionally with one axis-aligned
 /// integer `patch` rect painted over it with anti-aliasing off — so every
@@ -628,21 +628,39 @@ fn oracle_typesetter() -> Typesetter {
 /// glyph ids at another face's advances. This cascade declares one face per
 /// family, so every request resolves to that face and neither argument can
 /// change what renders today — they are passed so that widening the cascade
-/// later cannot silently split staging from the measure. The other text axes
-/// stay at their defaults, which is a separate, disclosed limitation of this
-/// oracle (debt #306).
+/// later cannot silently split staging from the measure.
+///
+/// `box_width` is the node's solved box width, and it is the width the layout
+/// wraps at — the same width the measure seam (`measure_text`) wrapped at when
+/// it sized the node (issue #306). Staging at `None` never wraps, so a
+/// width-fixed TEXT node whose text is wider than its box would be measured as
+/// N lines and staged as one overflowing line. Every TEXT node in this oracle's
+/// frames hugs both axes, where the solved width is the shaped width and the
+/// two agree, so passing it moves no measured frame today; it is passed so that
+/// adding a width-fixed frame cannot silently split staging from the measure.
+/// The remaining text axes (line height, letter spacing, alignment) stay at
+/// their defaults, which is a separate, disclosed limitation of this oracle —
+/// `goldens::render` is the stager that honours them.
 #[allow(clippy::too_many_arguments)]
 fn text_runs(
     ts: &mut Typesetter,
     atlases: &[AtlasIndex],
     origin: (f32, f32),
+    box_width: f32,
     text: &str,
     size: f32,
     color: dashpaint::Color,
     family: &str,
     weight: u16,
 ) -> Vec<GlyphRun> {
-    let laid = ts.layout_styled(text, size, None, TextShape::default(), weight, family);
+    let laid = ts.layout_styled(
+        text,
+        size,
+        Some(box_width),
+        TextShape::default(),
+        weight,
+        family,
+    );
     let mut runs: Vec<GlyphRun> = Vec::new();
     for line in &laid.lines {
         for g in &line.glyphs {
@@ -668,10 +686,10 @@ fn text_runs(
 }
 
 /// Walks the committed arena and stages glyph runs for every TEXT node — one
-/// or more runs per node, at the node's resolved box origin. A node is a text
-/// leaf exactly when it carries both authored characters and a text style
-/// (`dashscene_engine::text_context`); its style's `size` and `color` drive the
-/// run. Non-text fixtures produce no runs.
+/// or more runs per node, at the node's resolved box origin and wrapped at its
+/// resolved box width. A node is a text leaf exactly when it carries both
+/// authored characters and a text style (`dashscene_engine::text_context`); its
+/// style's `size` and `color` drive the run. Non-text fixtures produce no runs.
 fn stage_text(arena: &Arena, ts: &mut Typesetter, atlases: &[AtlasIndex]) -> Vec<GlyphRun> {
     fn walk(
         arena: &Arena,
@@ -682,10 +700,12 @@ fn stage_text(arena: &Arena, ts: &mut Typesetter, atlases: &[AtlasIndex]) -> Vec
     ) {
         if let (Some(text), Some(style)) = (arena.text(node), arena.text_style(node)) {
             let origin = origin_of(arena, node);
+            let (box_width, _) = size_of(arena, node);
             out.extend(text_runs(
                 ts,
                 atlases,
                 origin,
+                box_width,
                 text,
                 style.size,
                 style.color,
@@ -702,6 +722,107 @@ fn stage_text(arena: &Arena, ts: &mut Typesetter, atlases: &[AtlasIndex]) -> Vec
         walk(arena, root, ts, atlases, &mut out);
     }
     out
+}
+
+/// [`stage_text`] wraps a width-fixed TEXT node at the width the measure seam
+/// sized it against, so the staged glyphs are the lines the solve counted
+/// (issue #306).
+///
+/// No committed frame of this oracle exercises this: every TEXT node in the
+/// seven fixtures hugs both axes, where the solved width is the shaped width
+/// and wrapping at it changes nothing. The seam is pinned here instead, on a
+/// scene authored directly against `dashscene-core`, because the alternative —
+/// a width-fixed wrapping Figma frame — needs a hand-authored Figma file and a
+/// captured design source, which is a human step (`corpus/figma-fixtures/README.md`)
+/// and cannot be fabricated (G-11).
+///
+/// With the width dropped, the same node measures as two lines and stages as
+/// one line running past its own box, which is the divergence #306 named. Both
+/// assertions below fail in that state.
+#[test]
+fn a_width_fixed_text_node_stages_the_lines_the_measure_seam_wrapped() {
+    const BOX_WIDTH: f32 = 90.0;
+    const TEXT: &str = "wrap onto two lines";
+    const SIZE: f32 = 20.0;
+
+    let mut ts = oracle_typesetter();
+    let mut arena = Arena::new();
+    let label = {
+        let mut solver = TaffySolver::with_typesetter(&mut ts);
+        let mut txn = arena.open();
+        let root = txn.add_node(None, Some("frame"));
+        txn.set_prop(root, Prop::Width(200.0));
+        txn.set_prop(root, Prop::Height(200.0));
+        txn.set_prop(root, Prop::Mode(LayoutMode::None));
+
+        let label = txn.add_node(Some(root), Some("label"));
+        txn.set_prop(label, Prop::SizingH(AxisSizing::Fixed));
+        txn.set_prop(label, Prop::Width(BOX_WIDTH));
+        txn.set_prop(label, Prop::SizingV(AxisSizing::Hug));
+        txn.set_prop(label, Prop::Text(TEXT.to_string()));
+        txn.set_prop(
+            label,
+            Prop::TextStyle(TextStyle {
+                family: "Noto Sans".to_string(),
+                size: SIZE,
+                weight: 400,
+                color: dashpaint::Color {
+                    r: 1.0,
+                    g: 1.0,
+                    b: 1.0,
+                    a: 1.0,
+                },
+                line_height_px: None,
+                letter_spacing: 0.0,
+                text_align: dashscene_core::TextAlign::Left,
+                text_align_v: dashscene_core::TextAlignV::Top,
+                ligatures_off: false,
+            }),
+        );
+        txn.commit_with(&mut solver);
+        label
+    };
+
+    // The fixture only tests anything if the box really is narrower than the
+    // text: the measure seam must have wrapped it.
+    let measured = ts.layout(TEXT, SIZE, Some(BOX_WIDTH));
+    assert!(
+        measured.lines.len() > 1,
+        "fixture: {TEXT:?} at {SIZE} must not fit {BOX_WIDTH} px on one line \
+         (measured {} line(s)) — widen the string if the font changed",
+        measured.lines.len()
+    );
+    let (solved_w, _) = size_of(&arena, label);
+    assert_eq!(solved_w, BOX_WIDTH, "the label keeps its fixed width");
+
+    let mut glyphs = GlyphRunTable::new();
+    let ascii = glyphs.push_atlas(load_atlas(ATLAS_ASCII_DIR));
+    let inter = glyphs.push_atlas(load_atlas(ATLAS_INTER_ASCII_DIR));
+    let arabic = glyphs.push_atlas(load_atlas(ATLAS_ARABIC_DIR));
+    let staged = stage_text(&arena, &mut ts, &[ascii, inter, arabic]);
+
+    let quads: Vec<&GlyphQuad> = staged.iter().flat_map(|run| run.glyphs.iter()).collect();
+    assert!(!quads.is_empty(), "the label staged glyphs");
+
+    let (origin_x, _) = origin_of(&arena, label);
+    let overflow = quads.iter().filter(|q| q.x > origin_x + BOX_WIDTH).count();
+    assert_eq!(
+        overflow,
+        0,
+        "no staged glyph may start past the node's own {BOX_WIDTH} px box, \
+         {overflow} of {} did",
+        quads.len()
+    );
+
+    let rows: std::collections::BTreeSet<u32> = quads.iter().map(|q| q.y.to_bits()).collect();
+    assert_eq!(
+        rows.len(),
+        measured.lines.len(),
+        "the staged glyphs must occupy the {} baseline row(s) the measure seam \
+         counted, not {}",
+        measured.lines.len(),
+        rows.len()
+    );
 }
 
 /// Imports a committed Figma fixture the way a real producer does — compile
