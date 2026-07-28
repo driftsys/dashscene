@@ -287,6 +287,22 @@ job (`.github/workflows/ci.yml`) re-runs the suite with `--nocapture` so
 the measured per-frame numbers show in the log, and is wired into the `ci`
 aggregate `needs`.
 
+The oracle's own text stager (`stage_text`) wraps each TEXT node at the
+node's solved box width — the width the measure seam sized it against —
+rather than at no width at all (issue #233's sibling, issue #306). Staging
+at no width would let a width-fixed node be measured as N lines and staged
+as one overflowing line. No committed frame shows the difference: every
+TEXT node in the seven fixtures hugs both axes, where the solved width is
+the shaped width, and the change moved none of the seven measured numbers.
+The seam is pinned instead by
+`a_width_fixed_text_node_stages_the_lines_the_measure_seam_wrapped`, on a
+scene authored directly against `dashscene-core`, because a width-fixed
+wrapping Figma frame would need a hand-authored file and a captured design
+source, which G-11 does not allow to be fabricated. The remaining text axes
+(line height, letter spacing, alignment) still stay at their defaults in
+this oracle; `goldens::render` is the stager that honours them, and it is
+what the import-fidelity oracle below renders through.
+
 All seven frames are measured today, each within its band. `v08-grid-spans` declares no
 exclusion: with the text render path wired (#303) its `hug me` TEXT leaf sizes to
 the shaped text instead of collapsing to 0x0, so the grid solves as Figma laid it
