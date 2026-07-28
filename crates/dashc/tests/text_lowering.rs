@@ -816,7 +816,18 @@ fn the_text_fixtures_emit_their_golden_dsbs() {
     ] {
         let (bytes, report) =
             compile_figma(&json, Profile::Core, &BTreeMap::new()).expect("compiles");
-        assert!(report.is_empty(), "{name}: {report}");
+        // The derived baseline carries a 12 px per em row — the mixed-size
+        // stack is what the fixture is for — so the load gate's MSDF floor
+        // warns on it (debt #373). It is a legibility threshold, not a
+        // lowering defect, and it changes no emitted byte: the golden
+        // comparison below is what proves that.
+        assert!(
+            report
+                .diagnostics()
+                .iter()
+                .all(|d| d.rule == dashscene_validator::rule::TEXT_STYLE_BELOW_MSDF_FLOOR),
+            "{name}: {report}"
+        );
 
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../goldens/dsb")

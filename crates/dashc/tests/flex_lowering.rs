@@ -826,10 +826,21 @@ fn the_baseline_fixture_lowers_onto_baseline_cross_align_and_compiles() {
         assert!(n.text.is_some(), "{name} lowered its characters");
     }
 
-    // The whole capture compiles end to end (emit plus the load gate).
+    // The whole capture compiles end to end (emit plus the load gate). The
+    // "small" row is authored at 12 px per em — the mixed-size stack is what
+    // this fixture is for — so the load gate's MSDF floor warns on it (debt
+    // #373). That is a legibility threshold, not a lowering defect: it
+    // changes no emitted byte, so every *other* diagnostic still has to be
+    // absent.
     let (bytes, report) = compile_figma(BASELINE, Profile::Core, &BTreeMap::new())
         .expect("the baseline capture compiles now that BASELINE lowers");
-    assert!(report.is_empty(), "{report}");
+    assert!(
+        report
+            .diagnostics()
+            .iter()
+            .all(|d| d.rule == dashscene_validator::rule::TEXT_STYLE_BELOW_MSDF_FLOOR),
+        "{report}"
+    );
     assert!(!bytes.is_empty());
 }
 

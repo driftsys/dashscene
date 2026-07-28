@@ -101,6 +101,17 @@ pub mod rule {
     /// otherwise clamp silently or pick an unintended face — the silent
     /// vocabulary drop P4 forbids (issue #129).
     pub const TEXT_STYLE_WEIGHT_OUT_OF_RANGE: &str = "text.style-weight-out-of-range";
+    /// A text style whose reachable em size is under
+    /// [`crate::MSDF_MIN_PX_PER_EM`]. v0 rasterizes every glyph from one MSDF
+    /// atlas and bakes no per-size bitmap page, so under the floor the field
+    /// smears — dots and harakat first
+    /// (`docs/decisions/q1-msdf-below-14px.md`, debt #373).
+    ///
+    /// A warning, not an error: the text renders, and the floor is a
+    /// measured legibility threshold rather than a schema range, so a target
+    /// that accepts the degrade declares a waiver. An error is never
+    /// waivable, which would leave no way to accept it.
+    pub const TEXT_STYLE_BELOW_MSDF_FLOOR: &str = "text.style-below-msdf-floor";
 
     // Load gate — the v0.4 variant table (issue #20).
     pub const VARIANT_OVERRIDE_NODE_OUT_OF_RANGE: &str = "variant.override-node-out-of-range";
@@ -340,6 +351,7 @@ pub mod rule {
         TEXT_STYLE_OUT_OF_RANGE,
         TEXT_STYLE_NO_COLOR,
         TEXT_STYLE_WEIGHT_OUT_OF_RANGE,
+        TEXT_STYLE_BELOW_MSDF_FLOOR,
         VARIANT_OVERRIDE_NODE_OUT_OF_RANGE,
         VARIANT_SET_NO_MEMBERS,
         VARIANT_ACTIVE_MEMBER_OUT_OF_RANGE,
@@ -384,9 +396,10 @@ pub mod rule {
     ///
     /// docs/specification/04-figma-vocabulary-profile.md's REJECT and LATER
     /// bands each carry a documented workaround ("bake it, slot it, design
-    /// without it"). The import gate is where that guidance belongs — the
-    /// referential-integrity and geometry rules stand in front of producer
-    /// bugs, not designer choices, so they carry no workaround and answer
+    /// without it"). The split is what the designer can act on, not which
+    /// gate found it: those bands and the MSDF size floor are design
+    /// choices, while the referential-integrity and geometry rules stand in
+    /// front of producer bugs, so those carry no workaround and answer
     /// `None`.
     pub fn workaround(rule: &str) -> Option<&'static str> {
         let hint = match rule {
@@ -410,6 +423,10 @@ pub mod rule {
             }
             VARIABLE_WIDTH_STROKE => {
                 "bake the variable-width stroke into a filled shape and import it"
+            }
+            TEXT_STYLE_BELOW_MSDF_FLOOR => {
+                "raise the style to the floor the message names or above; v0 bakes no per-size \
+                 bitmap page to fall back to"
             }
             _ => return None,
         };
@@ -437,6 +454,17 @@ pub use dashpaint::MAX_GRADIENT_STOPS;
 /// contract without a fabricated hard limit
 /// (`docs/decisions/masks-and-group-opacity.md`).
 pub const RENDER_TARGET_BUDGET_PLACEHOLDER: usize = 8;
+
+/// The smallest em size v0's MSDF text rendering stays legible at, in
+/// document units (px per em).
+///
+/// Measured, not assumed: the spike behind
+/// `docs/decisions/q1-msdf-below-14px.md` found MSDF matches direct
+/// rasterization at 14 px per em and above, stays acceptable at 12, and
+/// smears dots and harakat under that. The validator owns the number — not
+/// the schema — so v1 can revise it from target-hardware measurements
+/// without a format change.
+pub const MSDF_MIN_PX_PER_EM: f32 = 14.0;
 
 /// A named paint-vocabulary subset a target honors (docs/design/architecture.md, R6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
