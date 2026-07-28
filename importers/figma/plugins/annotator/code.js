@@ -1,7 +1,7 @@
 // @ts-check
 /// <reference path="./figma-env.d.ts" />
 
-// dashscene sharedPluginData annotator — the REAL plugin, distinct from the
+// dashscene annotator — the REAL plugin, distinct from the
 // fixture-author dev tool (../fixture-author/). It is unpublished and
 // run from a checkout ("import plugin from manifest"), the same distribution
 // the fixture-author uses (docs/decisions/annotator-plugin-contract-frozen.md).
