@@ -191,6 +191,20 @@ deliberate, reviewed change rather than a silent drift:
   pixel identity. Governs the drop- and inner-shadow frames, and is the
   band that will pin `sigma = blur / 2` against a real capture once #265
   lands.
+
+  **It is the one band that also carries a gate** — `channel_delta = 40`,
+  `differing_fraction = 0.01` — added at the ruling on issue #422. Its
+  12 % budget is sound as a residual and could not work as a gate: a blur
+  defect is a bounded-area error, so removing the effect outright still
+  measured only 4.351 % (`v08-drop-shadow`) and 3.570 %
+  (`v08-inner-shadow`), and both passed. The gate is on a different axis —
+  a high threshold with a narrow budget, because a removed effect leaves
+  few pixels but grossly wrong ones, where a falloff approximation leaves
+  many pixels slightly wrong. Both terms bind and neither is redundant:
+  the amplitude mutation recorded in
+  `docs/technotes/2026-07-26-tolerance-band-coverage.md` fails the
+  residual at 23.559 % while measuring 0.422 % at the gate's threshold.
+  A frame passes only when it is inside both.
 - **`MSDF_TEXT`** — `channel_delta = 50`, `differing_fraction = 0.03`. MSDF
   glyph edges are sharp, high-contrast transitions; the reference
   painter's MSDF resolve and Figma's font rasterizer disagree at glyph
@@ -204,7 +218,9 @@ now confirmed by real captures, none retuned: `AA_EDGE` (`v08-wrap`
 0.000 %, `v08-grid-spans` 0.037 %), `BLUR_FALLOFF` (`v08-drop-shadow`
 0.022 %, `v08-inner-shadow` 0.000 %), and `MSDF_TEXT` (`v05-text-latin`
 0.033 %, `v06-text-arabic` 1.405 %) — every measured frame inside its
-budget.
+budget. Both `BLUR_FALLOFF` frames also measure 0.000 % at the gate's
+threshold, so the gate added at #422 has its whole budget as headroom
+rather than a share of an existing residual.
 
 ### The corpus-frame ↔ design-source manifest
 

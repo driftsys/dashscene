@@ -24,10 +24,36 @@
 
 use skia_safe::{AlphaType, ColorType, Data, ImageInfo, images};
 
+/// A second, tighter measurement a band's frames must also pass, beside the
+/// band's own residual.
+///
+/// A single (threshold, budget) pair does two jobs at once: it sizes an
+/// acceptable **residual**, and it acts as a pass/fail **gate**. Those want
+/// different values, and when one number tries to be both, one of the two jobs
+/// is done badly. Issue #422 recorded exactly that against `blur-falloff`,
+/// where a budget sized for a wide falloff could not fail on any bounded-area
+/// defect of the frames it governs.
+///
+/// The two measurements are deliberately on **different axes**, not the same
+/// axis twice. The residual is a low threshold with a wide budget — many pixels
+/// off by a little, which is what a soft falloff legitimately looks like. The
+/// gate is a high threshold with a narrow budget — almost no pixel may be
+/// grossly wrong, which is what removing or misplacing the effect looks like.
+/// A tighter budget at the *same* threshold would not add a second job; it
+/// would replace the first one and leave the residual dead.
+#[derive(Debug, PartialEq)]
+pub struct BandGate {
+    /// The gate's per-pixel threshold, above the band's own.
+    pub channel_delta: u8,
+    /// The fraction of pixels allowed to exceed [`Self::channel_delta`].
+    pub differing_fraction: f64,
+}
+
 /// A per-rule perceptual tolerance band. A pixel counts as differing only
 /// when its largest per-channel absolute delta (0..=255) exceeds
 /// `channel_delta`; a frame passes when the differing fraction is at or
-/// below `differing_fraction`.
+/// below `differing_fraction` **and** it is within [`Self::gate`], if the band
+/// declares one.
 #[derive(Debug, PartialEq)]
 pub struct ToleranceBand {
     /// The construct this band governs, matching a manifest frame's `band`.
@@ -39,6 +65,14 @@ pub struct ToleranceBand {
     /// The pass ceiling: the fraction of pixels (0.0..=1.0) allowed to
     /// exceed `channel_delta`.
     pub differing_fraction: f64,
+    /// A second measurement the frame must also pass, or `None` when the
+    /// band's own budget is the whole verdict.
+    ///
+    /// Only `blur-falloff` declares one. A band earns a gate when its residual
+    /// is wide enough that a defect it exists to catch can hide under the
+    /// budget — which is a property to measure, not to assume, so the other
+    /// bands stay single-number until a measurement says otherwise.
+    pub gate: Option<BandGate>,
 }
 
 /// An axis-aligned rectangle of pixels excluded from a frame's diff, in the
@@ -82,6 +116,12 @@ impl ExcludeRegion {
 pub struct OracleDiff {
     /// Pixels whose max per-channel delta exceeded the band's `channel_delta`.
     pub differing: usize,
+    /// Pixels whose max per-channel delta exceeded the band's
+    /// [`BandGate::channel_delta`], or 0 when the band declares no gate.
+    ///
+    /// Measured in the same pass as `differing` — one walk of the pixels
+    /// counts both — so the two figures can never come from different renders.
+    pub gate_differing: usize,
     /// Total pixels compared.
     pub total: usize,
     /// The largest per-channel absolute delta seen at any pixel — reports
@@ -103,12 +143,47 @@ impl OracleDiff {
         }
     }
 
-    /// Whether the measured difference is within the area budget of the band
-    /// [`diff`] was called with. The band is carried on the diff (`self.band`),
-    /// so the differing count and the budget it is graded against always come
-    /// from the same rule (#291).
-    pub fn passes(&self) -> bool {
+    /// The share of pixels that exceeded the band gate's threshold, or 0.0
+    /// when the band declares no gate.
+    pub fn gate_fraction(&self) -> f64 {
+        if self.total == 0 {
+            0.0
+        } else {
+            self.gate_differing as f64 / self.total as f64
+        }
+    }
+
+    /// Whether the frame is within its band's **residual** budget — the band's
+    /// own `differing_fraction` at its own threshold.
+    ///
+    /// This is not the whole verdict when the band declares a gate; see
+    /// [`Self::passes`].
+    pub fn within_residual(&self) -> bool {
         self.fraction() <= self.band.differing_fraction
+    }
+
+    /// Whether the frame is within its band's gate, or `true` when the band
+    /// declares none.
+    pub fn within_gate(&self) -> bool {
+        match &self.band.gate {
+            Some(gate) => self.gate_fraction() <= gate.differing_fraction,
+            None => true,
+        }
+    }
+
+    /// Whether the measured difference is within **both** the area budget of
+    /// the band [`diff`] was called with and that band's gate, if it declares
+    /// one. The band is carried on the diff (`self.band`), so the differing
+    /// counts and the budgets they are graded against always come from the
+    /// same rule (#291).
+    ///
+    /// Both terms bind, and they bind on different defect classes — a wide,
+    /// low-amplitude error trips the residual while passing the gate, and a
+    /// narrow, high-amplitude one trips the gate while passing the residual.
+    /// Neither is redundant, which is the whole point of there being two
+    /// (issue #422).
+    pub fn passes(&self) -> bool {
+        self.within_residual() && self.within_gate()
     }
 }
 
@@ -161,6 +236,7 @@ pub fn diff_excluding(
 
     let width = reference_size.0;
     let mut differing = 0usize;
+    let mut gate_differing = 0usize;
     let mut total = 0usize;
     let mut max_channel_delta = 0u8;
     for (i, (a, b)) in reference
@@ -188,10 +264,21 @@ pub fn diff_excluding(
         if pixel_delta > band.channel_delta {
             differing += 1;
         }
+        // The gate is counted in this same walk rather than in a second pass:
+        // two walks could only ever agree, and one walk makes it impossible for
+        // the two figures to describe different renders.
+        if band
+            .gate
+            .as_ref()
+            .is_some_and(|g| pixel_delta > g.channel_delta)
+        {
+            gate_differing += 1;
+        }
     }
 
     Ok(OracleDiff {
         differing,
+        gate_differing,
         total,
         max_channel_delta,
         band,
@@ -252,6 +339,9 @@ pub const AA_EDGE: ToleranceBand = ToleranceBand {
     rule: "aa-edge",
     channel_delta: 40,
     differing_fraction: 0.02,
+    // No gate: nothing measured on this band's frames hides under its
+    // budget, so a second number would pin something no evidence chose.
+    gate: None,
 };
 
 /// A blurred shadow's soft falloff (the `sigma = blur/2` mapping, story #45).
@@ -263,10 +353,52 @@ pub const AA_EDGE: ToleranceBand = ToleranceBand {
 /// threshold pins "the falloff shape is close" without demanding pixel
 /// identity. This is the band that will pin `sigma = blur/2` against a real
 /// capture once #265 lands (`docs/decisions/effects-vocabulary-shadows.md`).
+///
+/// # Why this band has a gate and the others do not (issue #422)
+///
+/// The 12 % budget above is sound as a **residual** and cannot work as a
+/// **gate**. A blur defect is a bounded-area error: it moves the region the
+/// effect covers and leaves the rest alone, and on the frames this band governs
+/// that region is a few percent of the canvas. So destroying the effect
+/// entirely still cannot reach 12 %, measured:
+///
+/// | mutation                       | frame              | at 24 | at 40 |
+/// | ------------------------------ | ------------------ | ----- | ----- |
+/// | healthy                        | `v08-drop-shadow`  | 0.022 % | 0.000 % |
+/// | healthy                        | `v08-inner-shadow` | 0.000 % | 0.000 % |
+/// | the drop shadow removed        | `v08-drop-shadow`  | 4.351 % | 2.930 % |
+/// | the inner shadow removed       | `v08-inner-shadow` | 3.570 % | 2.018 % |
+///
+/// Both removals sit far under 12 % and would have passed. The gate is the
+/// second number the owner's ruling on #422 added, and it is on a different
+/// axis: a **high threshold with a narrow budget**, because removing an effect
+/// leaves few pixels but grossly wrong ones, while a falloff approximation
+/// leaves many pixels slightly wrong.
+///
+/// **Why 40 and 1 %.** At threshold 40 both healthy frames measure exactly
+/// 0.000 %, so the gate has the whole budget as headroom rather than a share of
+/// it. The budget is set by the smallest defect it must catch: the layer-clip
+/// removal recorded at 1.585 % in
+/// `docs/technotes/2026-07-26-tolerance-band-coverage.md`. The gate must sit
+/// below that, so 1 % — the round number under it — and the two shadow
+/// removals then fail at 2.9x and 2.0x. The number binds: at 2 % the
+/// layer-clip figure passes, and at 3 % the inner-shadow removal passes too.
+///
+/// **Both numbers bind, on different defects.** The residual is not left
+/// dead by the gate. The one mutation that exceeds 12 % — the panel fill alpha
+/// moved from 0.20 to 0.35, measured at 23.559 % — is an *amplitude* error
+/// across the whole blurred area, and it measures only 0.422 % at threshold 40,
+/// so the gate passes it and the residual is the only term that catches it.
+/// Removal and confinement defects are the mirror image. Neither number is
+/// redundant.
 pub const BLUR_FALLOFF: ToleranceBand = ToleranceBand {
     rule: "blur-falloff",
     channel_delta: 24,
     differing_fraction: 0.12,
+    gate: Some(BandGate {
+        channel_delta: 40,
+        differing_fraction: 0.01,
+    }),
 };
 
 /// MSDF glyph edges (the text frames: v05-text-latin, v06-text-arabic, and
@@ -282,6 +414,9 @@ pub const MSDF_TEXT: ToleranceBand = ToleranceBand {
     rule: "msdf-text",
     channel_delta: 50,
     differing_fraction: 0.03,
+    // No gate: nothing measured on this band's frames hides under its
+    // budget, so a second number would pin something no evidence chose.
+    gate: None,
 };
 
 /// The pinned bands, keyed by their manifest `rule` name.
@@ -342,6 +477,9 @@ pub const PROFILE_HIFI_SCENE: ToleranceBand = ToleranceBand {
     rule: "profile-hifi-scene",
     channel_delta: 2,
     differing_fraction: 0.01,
+    // No gate: nothing measured on this band's frames hides under its
+    // budget, so a second number would pin something no evidence chose.
+    gate: None,
 };
 
 /// LoFi, measured over a whole rendered scene against the same scene under RAW
@@ -366,6 +504,9 @@ pub const PROFILE_LOFI_SCENE: ToleranceBand = ToleranceBand {
     rule: "profile-lofi-scene",
     channel_delta: 8,
     differing_fraction: 0.05,
+    // No gate: nothing measured on this band's frames hides under its
+    // budget, so a second number would pin something no evidence chose.
+    gate: None,
 };
 
 /// The profile-preview bands, keyed by their manifest `band` name.

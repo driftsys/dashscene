@@ -307,6 +307,13 @@ fn each_band_enforces_its_own_budget_above_fails_below_passes() {
     // strip pixel is 70 above the base — over every band's `channel_delta`
     // (the largest is MSDF_TEXT's 50) — so it counts as differing under any
     // band, isolating the fraction budget as the deciding factor.
+    //
+    // This asserts `within_residual`, not `passes`: the property under test is
+    // that each band applies its own `channel_delta` and `differing_fraction`.
+    // A gated band's `passes` is the conjunction of that budget and a second
+    // one, and a 70 delta is over `blur-falloff`'s gate threshold too, so
+    // grading through `passes` here would measure the gate rather than the
+    // budget this test names. The gate has its own tests below.
     const W: i32 = 100;
     const H: i32 = 100;
     const BASE: u8 = 120;
@@ -331,7 +338,7 @@ fn each_band_enforces_its_own_budget_above_fails_below_passes() {
         assert_eq!(above.differing, ((budget_rows + 1) * W) as usize);
         assert_eq!(above.max_channel_delta, 70);
         assert!(
-            !above.passes(),
+            !above.within_residual(),
             "{}: {} rows differ ({:.3}) over the {:.3} budget must fail",
             band.rule,
             budget_rows + 1,
@@ -344,7 +351,7 @@ fn each_band_enforces_its_own_budget_above_fails_below_passes() {
         assert_eq!(below.differing, ((budget_rows - 1) * W) as usize);
         assert_eq!(below.max_channel_delta, 70);
         assert!(
-            below.passes(),
+            below.within_residual(),
             "{}: {} rows differ ({:.3}) under the {:.3} budget must pass",
             band.rule,
             budget_rows - 1,
@@ -388,8 +395,17 @@ fn passes_grades_against_the_band_diff_was_computed_with() {
     assert_eq!(lax.band.rule, "blur-falloff");
 
     // … and the verdict follows that band's budget, not a re-supplied one.
-    assert!(!strict.passes(), "5% over AA_EDGE's 2% budget must fail");
-    assert!(lax.passes(), "5% under BLUR_FALLOFF's 12% budget must pass");
+    // Graded on the residual: `blur-falloff` also carries a gate, and a 70
+    // delta is over the gate's threshold, so `passes` would report the gate's
+    // verdict rather than the budget-selection property this test is about.
+    assert!(
+        !strict.within_residual(),
+        "5% over AA_EDGE's 2% budget must fail"
+    );
+    assert!(
+        lax.within_residual(),
+        "5% under BLUR_FALLOFF's 12% budget must pass"
+    );
 }
 
 #[test]
@@ -800,4 +816,142 @@ fn the_reference_renders_match_their_design_source() {
             .unwrap_or_else(|e| panic!("frame {name} fixture {fixture}: {e}"));
         render_fixture(name, &fixture_json)
     });
+}
+
+/// `blur-falloff` is the only band that declares a gate, and its numbers are
+/// pinned like the bands' own (issue #422).
+///
+/// A gate is not a default. A band earns one when a measurement shows its
+/// residual is wide enough to hide a defect the band exists to catch; nothing
+/// measured on the other bands' frames does that, so writing a second number
+/// for them would pin something no evidence chose — the same mistake in the
+/// other direction.
+#[test]
+fn only_blur_falloff_declares_a_gate_and_its_numbers_are_pinned() {
+    let gate = BLUR_FALLOFF
+        .gate
+        .as_ref()
+        .expect("blur-falloff declares a gate");
+    assert_eq!((gate.channel_delta, gate.differing_fraction), (40, 0.01));
+
+    assert!(AA_EDGE.gate.is_none(), "aa-edge is deliberately ungated");
+    assert!(
+        MSDF_TEXT.gate.is_none(),
+        "msdf-text is deliberately ungated"
+    );
+
+    // The gate is on a different axis from the residual, in both terms: a
+    // higher per-pixel threshold and a narrower area budget. A gate that was
+    // merely a tighter budget at the same threshold would replace the residual
+    // rather than add a second job, which is the failure #422 named.
+    const _: () = assert!(match &BLUR_FALLOFF.gate {
+        Some(gate) =>
+            gate.channel_delta > BLUR_FALLOFF.channel_delta
+                && gate.differing_fraction < BLUR_FALLOFF.differing_fraction,
+        None => false,
+    });
+}
+
+/// The gate binds: a difference above it fails and one below it passes, with
+/// the residual satisfied in both cases.
+///
+/// Both patches are far inside `blur-falloff`'s 12 % residual, so the residual
+/// cannot be what decides either verdict. Only the gate can, which is what
+/// makes this a test of the gate rather than of the band.
+#[test]
+fn the_blur_falloff_gate_binds_independently_of_the_residual() {
+    const W: i32 = 100;
+    const H: i32 = 100;
+    const BASE: u8 = 120;
+    // Delta 70: over the gate's 40 threshold, so these pixels count for it.
+    const PATCH: u8 = 190;
+
+    let reference = png(W, H, BASE, None);
+    // 150 of 10000 pixels: 1.5 %, over the gate's 1 %.
+    let over = png(
+        W,
+        H,
+        BASE,
+        Some((Rect::from_xywh(0.0, 0.0, 50.0, 3.0), PATCH)),
+    );
+    // 50 of 10000 pixels: 0.5 %, under it.
+    let under = png(
+        W,
+        H,
+        BASE,
+        Some((Rect::from_xywh(0.0, 0.0, 50.0, 1.0), PATCH)),
+    );
+
+    let d = oracle::diff(&reference, &over, &BLUR_FALLOFF).expect("same size");
+    assert_eq!(d.gate_differing, 150);
+    assert_eq!(d.gate_fraction(), 0.015);
+    assert!(
+        d.within_residual(),
+        "1.5% is far inside the 12% residual, so the residual is not what fails this"
+    );
+    assert!(!d.within_gate(), "1.5% is over the gate's 1% budget");
+    assert!(!d.passes(), "a frame outside the gate does not pass");
+
+    let d = oracle::diff(&reference, &under, &BLUR_FALLOFF).expect("same size");
+    assert_eq!(d.gate_differing, 50);
+    assert!(d.within_gate(), "0.5% is under the gate's 1% budget");
+    assert!(d.passes());
+}
+
+/// Neither number is redundant: each catches a defect class the other passes.
+///
+/// This is the whole argument for there being two, and it is measurable rather
+/// than rhetorical. The two synthetic defects below mirror the two real ones
+/// recorded in `docs/technotes/2026-07-26-tolerance-band-coverage.md`:
+///
+/// - a **wide, low-amplitude** error is what moving the panel fill alpha from
+///   0.20 to 0.35 produced — 23.559 % on this band's residual, 0.422 % at
+///   threshold 40. The residual catches it; a gate never would.
+/// - a **narrow, high-amplitude** error is what removing the effect produced —
+///   the two shadow removals measured 4.351 % and 3.570 % on the residual,
+///   nowhere near 12 %, while measuring 2.930 % and 2.018 % at threshold 40.
+///   The gate catches those; the residual never would.
+#[test]
+fn the_residual_and_the_gate_each_catch_what_the_other_passes() {
+    const W: i32 = 100;
+    const H: i32 = 100;
+    const BASE: u8 = 120;
+
+    let reference = png(W, H, BASE, None);
+
+    // Wide and low-amplitude: delta 30 is over the residual's 24 threshold and
+    // under the gate's 40, across 20 % of the canvas.
+    let wide = png(
+        W,
+        H,
+        BASE,
+        Some((Rect::from_xywh(0.0, 0.0, W as f32, 20.0), BASE + 30)),
+    );
+    let d = oracle::diff(&reference, &wide, &BLUR_FALLOFF).expect("same size");
+    assert_eq!(d.differing, 2000, "20% of pixels exceed the 24 threshold");
+    assert_eq!(d.gate_differing, 0, "none exceeds the gate's 40 threshold");
+    assert!(!d.within_residual(), "20% is over the 12% residual");
+    assert!(
+        d.within_gate(),
+        "the gate is blind to this defect — it is the residual's job"
+    );
+    assert!(!d.passes());
+
+    // Narrow and high-amplitude: delta 70 is over both thresholds, across 2 %
+    // of the canvas.
+    let narrow = png(
+        W,
+        H,
+        BASE,
+        Some((Rect::from_xywh(0.0, 0.0, W as f32, 2.0), BASE + 70)),
+    );
+    let d = oracle::diff(&reference, &narrow, &BLUR_FALLOFF).expect("same size");
+    assert_eq!(d.differing, 200);
+    assert_eq!(d.gate_differing, 200);
+    assert!(
+        d.within_residual(),
+        "2% is far inside the 12% residual — the residual is blind to this defect"
+    );
+    assert!(!d.within_gate(), "2% is over the gate's 1% budget");
+    assert!(!d.passes());
 }

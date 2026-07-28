@@ -226,8 +226,23 @@ impl OracleManifest {
             } else {
                 format!(" [{} region(s) excluded]", exclude.len())
             };
+            // A gated band reports both terms, always — not only the one that
+            // failed. A report that showed the gate only when it fired would
+            // leave a reader unable to tell a frame with no gate from one
+            // comfortably inside it, and the gate's headroom is the number that
+            // says whether it still binds (issue #422).
+            let gate_note = match &band.gate {
+                Some(gate) => format!(
+                    ", gate {}/{} px ({:.3}%) vs {:.1}%",
+                    d.gate_differing,
+                    d.total,
+                    d.gate_fraction() * 100.0,
+                    gate.differing_fraction * 100.0,
+                ),
+                None => String::new(),
+            };
             let line = format!(
-                "{name}: {}/{} px differ ({:.3}%, max Δ {}) vs the {} band's {:.1}% budget{excluded_note}",
+                "{name}: {}/{} px differ ({:.3}%, max Δ {}) vs the {} band's {:.1}% budget{gate_note}{excluded_note}",
                 d.differing,
                 d.total,
                 d.fraction() * 100.0,

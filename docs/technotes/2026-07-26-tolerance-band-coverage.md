@@ -111,11 +111,83 @@ Adopted at the v0.11 close, in the notes of both frames:
   against radius 16), and neither pins paint order. Recording the blind spot is
   what keeps a green frame from being read as broader evidence than it is.
 
+## Settled: the band was split into a residual and a gate (issue #422)
+
+The repository owner ruled on 2026-07-27: `blur-falloff` is neither retired nor
+left as it was. It keeps the 12 % budget as its **residual** and gains a second,
+tighter **gate**, chosen so that a destroyed effect fails it. That is now built
+(`goldens/tooling/src/oracle.rs`, `BandGate`).
+
+### The evidence this note was missing
+
+Every measurement above was taken on `backdrop-blur` and `vector-backdrop-blur`,
+and both are classified `aa-edge`. So the `blur-falloff` column above is a
+hypothetical — what the band _would_ have reported. The two frames the band
+actually governs, `v08-drop-shadow` and `v08-inner-shadow`, had never had a
+mutation measured against them at all. Measured now, by the same harness:
+
+| mutation                 | frame              | at 24   | at 40   |
+| ------------------------ | ------------------ | ------- | ------- |
+| healthy                  | `v08-drop-shadow`  | 0.022 % | 0.000 % |
+| healthy                  | `v08-inner-shadow` | 0.000 % | 0.000 % |
+| the drop shadow removed  | `v08-drop-shadow`  | 4.351 % | 2.930 % |
+| the inner shadow removed | `v08-inner-shadow` | 3.570 % | 2.018 % |
+
+The finding holds on the band's own frames, and more sharply than the
+hypothetical suggested: **removing a shadow outright leaves the frame at a
+third of its budget.** Both mutations were green before this change and are red
+after it.
+
+### Why 40 and 1 %
+
+At threshold 40 both healthy frames measure exactly 0.000 %, so the gate's
+budget is headroom rather than a share of an existing residual. The budget is
+then set by the smallest defect it must catch — the layer-clip removal recorded
+at 1.585 % in the table above — so the gate sits below that at 1 %, and the two
+shadow removals fail at 2.9x and 2.0x. The number binds in both directions: at
+2 % the layer-clip figure passes, and at 3 % the inner-shadow removal passes.
+
+### Both numbers bind, on different defects
+
+The residual is not left dead. The alpha sweep — the seventh row above, at
+23.559 % on the residual and 0.422 % at threshold 40 — is an amplitude error
+across the whole blurred region, and the gate is blind to it by construction.
+Removal and confinement defects are the mirror image. `the_residual_and_the_
+gate_each_catch_what_the_other_passes` pins both directions.
+
+### The layer-clip mutation no longer reproduces
+
+The ruling asked for this case to be stated explicitly rather than finessed, and
+the honest statement is that it is gone. Removing the rect clip from
+`draw_backdrop_blur_field` today changes **zero pixels** on either blur frame,
+and leaves every test in `v011_backdrop_blur.rs` and `painter.rs` green — including
+`the_baked_vector_blur_is_confined_to_its_quad`, which was written for exactly
+that leak. This is correct rather than a lost check: PR #510 moved the field
+coverage from a `DstIn` mask inside the layer to a clip shader, and its own
+record says so — "the rect clip is now an allocation bound, not a correctness
+gate". So the 1.585 % figure is a historical measurement of a defect the code
+can no longer express. It still sets the gate's budget, because a future defect
+of that _class_ would land near it.
+
 ## What is not settled here
 
-Whether `blur-falloff` should be rescoped, split into a residual band and a
-gate, or left as it is with the gate expressed per frame. That is a decision, it changes a pinned rule the whole
-oracle depends on, and it needs the repository owner. Issue #422 carries it.
+The sigma mapping. Both blur frames remain blind to it across a wide range, and
+the shadow frames are close to blind: measured here, doubling the shadow sigma
+moves `v08-inner-shadow` to 4.536 % on the residual and only 0.206 % at the
+gate's threshold, while halving it moves both frames under 0.2 % on the
+residual. The gate does not pin it and was not chosen to. Issue #412 carries
+that question and is on hold behind the painter's working colour space.
+
+One measurement is worth recording for #412 while it waits, because it was
+taken on a different effect from the one #412 was raised about. Dividing the
+shadow radius by 2.4 rather than 2 — that is, `sigma` near `0.42 x radius` —
+drops `v08-drop-shadow` from 7.617 % to 0.347 % differing at a threshold of 4,
+and `v08-inner-shadow` from 7.357 % to 0.304 %. #412 measured Figma's
+`BACKGROUND_BLUR` at nearer `0.42-0.45 x radius`; the drop and inner shadows
+prefer the same region independently. That is evidence the offset is systematic
+across effects rather than a backdrop-blur-specific compensation, which is one
+of the risks #412's ruling named. **Nothing was changed on the strength of it** —
+the constant stays `radius / 2` until #412 is decided.
 
 It matters beyond the existing frames: v0.12 delivers the RAW/HiFi/LoFi quality
 profiles **as per-asset-class band contracts with a per-asset encode-and-diff
@@ -129,5 +201,6 @@ should be designed against this finding rather than by analogy.
   `vector-backdrop-blur`); the bands: `goldens/tooling/src/oracle.rs`.
 - Related: [`decisions/backdrop-blur-is-core-vocabulary.md`](../decisions/backdrop-blur-is-core-vocabulary.md),
   [`technotes/2026-07-26-v011-sections-and-assets.md`](2026-07-26-v011-sections-and-assets.md).
-- Open: #422 (the band decision), #412 (the sigma mapping, which these frames
-  are blind to and which a narrower gate would help pin).
+- Closed: #422 (the band decision — the residual/gate split, built).
+- Open: #412 (the sigma mapping, which these frames are blind to; see the
+  cross-effect measurement recorded above).
