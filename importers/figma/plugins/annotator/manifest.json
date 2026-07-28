@@ -1,5 +1,5 @@
 {
-  "name": "dashscene sharedPluginData annotator",
+  "name": "dashscene annotator",
   "id": "dashscene-annotator",
   "api": "1.0.0",
   "main": "code.js",

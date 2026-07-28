@@ -16,7 +16,7 @@ your checkout, the same as the fixture author.
 ## Annotate: mark roles
 
 Select one or more layers, then run
-Plugins → Development → **dashscene sharedPluginData annotator** → one of:
+Plugins → Development → **dashscene annotator** → one of:
 
     Mark placeholder      role = placeholder     (a slot; its sample
                                                  children are auto-replaced
