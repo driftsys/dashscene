@@ -964,3 +964,58 @@ const _: () = assert!(
     LOFI_IMAGE_FILL.differing_fraction > HIFI_IMAGE_FILL.differing_fraction,
     "LoFi's area budget must be looser than HiFi's"
 );
+
+/// Every fixture is recorded under every profile.
+///
+/// `the_recorded_contract_table` walks [`TABLE`], so it grades the rows that
+/// exist and cannot notice a row that does not. A fixture added to
+/// [`FIXTURES`] without its rows is therefore packed by
+/// `raw_derives_nothing_for_any_asset` — which only checks that RAW is the
+/// identity map — and measured by nothing else, while the suite reports green
+/// (debt #535).
+///
+/// That failure mode is forward-looking rather than a defect today: all five
+/// fixtures are fully recorded. It matters because the next person to add one
+/// can believe it is covered when it is not, and the recorded table is the
+/// whole instrument this file exists to keep honest.
+///
+/// The relation is asserted in **both** directions. A row naming a fixture
+/// that no longer exists is the same defect seen from the other side: it
+/// records numbers nothing produces any more, and `fixture()` would panic on
+/// it — a panic in a helper rather than a named failure saying what is wrong.
+#[test]
+fn every_fixture_is_recorded_under_every_profile() {
+    const PROFILES: [Profile; 3] = [Profile::Raw, Profile::HiFi, Profile::LoFi];
+
+    for fixture in &FIXTURES {
+        for profile in PROFILES {
+            assert!(
+                TABLE
+                    .iter()
+                    .any(|row| row.fixture == fixture.name && row.profile == profile),
+                "fixture {} has no recorded row under {profile:?}, so its behaviour under that \
+                 profile is measured by nothing while this file reports green",
+                fixture.name,
+            );
+        }
+    }
+
+    for row in &TABLE {
+        assert!(
+            FIXTURES.iter().any(|fixture| fixture.name == row.fixture),
+            "the table records {} under {:?}, but no such fixture exists — the row's numbers \
+             describe nothing that is still produced",
+            row.fixture,
+            row.profile,
+        );
+    }
+
+    // The counts agree, so neither loop above can be satisfied by duplicates
+    // standing in for a missing pair.
+    assert_eq!(
+        TABLE.len(),
+        FIXTURES.len() * PROFILES.len(),
+        "the table holds one row per fixture per profile, so a duplicate row cannot cover for \
+         an absent one",
+    );
+}
