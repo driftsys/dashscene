@@ -77,9 +77,12 @@ pixels between machines. Two comparison functions handle this:
   to `max_pixels` to differ, an absolute count; use it for sparse
   content (text). A canvas fraction wide enough to clear the jitter can
   exceed the whole inked footprint of sparse text, so a text-erasing
-  regression would pass; the absolute budget is sized to the scene's
-  anti-aliased edge count instead. The v0.6 Arabic golden uses 1,000 px
-  and pairs it with a glyph-id-level guard test. See
+  regression would pass; the absolute budget is calibrated against the
+  smallest regression the scene can express — for a scene with several
+  text runs, one run vanishing, not the total erase. The v0.6 Arabic
+  golden uses 440 px (issue #532) and pairs it with a glyph-id-level
+  guard test. Commit the calibration as a test beside the golden, so the
+  budget is a gate rather than an estimate. See
   `docs/decisions/golden-comparison-space.md`, "Text goldens".
 
 Per-kind correctness is pinned separately by the painter's

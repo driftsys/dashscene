@@ -70,6 +70,12 @@ const LABEL_SIZE: f32 = 34.0;
 /// scales to 528 px at this scene's 1,491 px), and it sits well below the
 /// 714-px smaller segment — so a dropped font fails, proven by
 /// `dropping_either_fonts_runs_exceeds_the_budget`.
+///
+/// That v0.6 comparison records the story #219 measurement; it is not a live
+/// cross-reference. Issue #532 has since recalibrated the v0.6 golden to 440 px
+/// against its own smallest break, and that scene's ink measures 2,421 px
+/// today. This budget does not depend on either figure: it is gated on this
+/// scene's own 714-px smaller segment, which is unchanged.
 const BUDGET: usize = 500;
 
 /// Stages `text` at `size` as one or more glyph runs, splitting where the

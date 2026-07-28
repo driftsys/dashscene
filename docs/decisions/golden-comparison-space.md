@@ -10,10 +10,13 @@
              absolute-pixel budget" below), issue #233 (a text
              budget is calibrated against the scene's smallest
              regression, not its total erase — see "A text budget is
-             calibrated against a partial regression" below), and issue
+             calibrated against a partial regression" below), issue
              #533 (regenerating a committed atlas fixture restates every
              golden that samples it — see "Regenerating an atlas fixture
-             restates every golden that samples it" below).
+             restates every golden that samples it" below), and issue
+             #532 (the same calibration applied to the v0.6 Arabic
+             golden — see "The v0.6 Arabic budget takes the same
+             calibration" below).
     scope    goldens/ tooling; binds golden authoring for every painter
 
 ## Context
@@ -130,11 +133,13 @@ edge count rather than the canvas:
 - The budget is set a few times the scene's anti-aliased edge
   population, so it clears cross-machine jitter, while staying well below
   the scene's inked footprint, so a text-erasing regression exceeds it.
-  For the v0.6 Arabic golden the budget is 1,000 px: ~2.5x the ~400-px
-  edge population (measured as the pixels that shift by one code point on
-  a premultiply round-trip), and well under the 2,818-px text-erase and
-  4,633-px form-isolation breaks it must catch (both demonstrated failing
-  in the story #35 review).
+  Story #35 set the v0.6 Arabic golden's budget to 1,000 px on that
+  reasoning: ~2.5x the ~400-px edge population (measured as the pixels
+  that shift by one code point on a premultiply round-trip), and well
+  under the 2,818-px text-erase and 4,633-px form-isolation breaks it must
+  catch (both demonstrated failing in the story #35 review). Issue #532
+  recalibrated it to 440 px against the smaller break the section below
+  defines; the model is unchanged, only the number.
 - The pixel golden stays a coarse full-frame check. A text golden pairs
   it with a glyph-id-level guard test (shaped output compared to expected
   forms, machine-independent and exact), which pins the shaping features
@@ -185,13 +190,13 @@ them as fixed:
   and re-recorded the image; the section below carries the result, and the
   1,822/1,941 figures above are the post-re-record measurement (they read
   1,823/1,943 against the stale image).
-- **The v0.6 budget has the same blind spot at its own scale.** Its
-  1,000 px catches the total erase (2,421 px today) but not one of its
-  three strings vanishing: the banner is 934 px, the harakat word 671 px,
-  the speed chip 816 px, each measured against the committed golden.
-  Retuning it is out of scope here — it is the live E7 frame, and the
-  number is CI-proven at its current value — but it is a real gap and not
-  a residual of #233.
+- **The v0.6 budget failed to catch the same case at its own scale.** Its
+  1,000 px caught the total erase (2,421 px) but not one of its three
+  strings vanishing: the banner is 934 px, the harakat word 671 px, the
+  speed chip 816 px, each measured against the committed golden. Retuning
+  it was out of scope for #233 — it is the live E7 frame, and the number
+  was CI-proven at its current value — so it was filed as #532 and closed
+  separately, below.
 
 The v0.6 golden's own `~400-px edge population` figure could not be
 reproduced by this work: the stated instrument (pixels that shift by one
@@ -246,3 +251,53 @@ one `ascii/` fixture directory. The project has since adopted one
 directory per (script, weight) precisely so an added weight never rewrites
 an existing fixture — that convention prevents the recurrence this issue
 found, and predates it.
+
+## The v0.6 Arabic budget takes the same calibration (issue #532)
+
+Issue #532 applied the standard above to the golden the #233 measurement
+found sharing the defect. The v0.6 Arabic screen has three text runs, so
+its smallest expressible regression is one run vanishing, not the total
+erase its 1,000-px budget was sized against. Re-measured on the scene as
+it stands — the same figures #532 records, reproduced before retuning:
+
+| quantity                               | pixels                       |
+| -------------------------------------- | ---------------------------- |
+| canvas                                 | 71,400 (340x210)             |
+| healthy render vs the committed golden | 0                            |
+| whole text erased                      | 2,421 (3.39 %)               |
+| the banner vanishes                    | 934                          |
+| the harakat word vanishes              | **671** — the smallest break |
+| the speed chip vanishes                | 816                          |
+
+The budget moves to **440 px**, two thirds of 671 rounded down, and the
+measurement is committed as `dropping_any_string_exceeds_the_budget` — the
+same shape the v0.5 golden and `v07-text-fallback` already use.
+
+Two notes on the number:
+
+- **The rounding differs from v0.5's on purpose.** The v0.5 calibration
+  rounded its two thirds down to the nearest hundred (1,215 to 1,200).
+  Here that lands on 400, which collides numerically with the discredited
+  `~400-px edge population` figure above, so this rounds to the nearest
+  ten instead. The provenance of a budget should be readable from the
+  number.
+- **It is tighter per inked pixel than either budget calibrated the same
+  way**, at 0.18 px of tolerance against v0.5's 0.32 and
+  `v07-text-fallback`'s 0.34. This scene renders bit-exact against its
+  golden (0 px of 71,400), and 440 px is about 13.75x the only
+  cross-machine difference this project has measured — but that 32-px
+  figure comes from the v0.3 paint golden, a gradient-and-stroke scene on
+  Skia's own rasteriser rather than the MSDF path, and the ratio it
+  replaces was 31.25x. No text golden has been diffed across
+  architectures at all, because CI has been billing-blocked since
+  2026-07-17 (#263). The multiplier is therefore an extrapolation, and
+  #539 tracks measuring it. Raising the budget instead would spend the
+  drift margin the two-thirds rule provides: anything above about 600 px
+  is within 71 px of the 671-px break.
+
+This closes the last of the text goldens sized against a total erase.
+Story #219 had already recalibrated `v07-text-fallback` the same way, and
+that budget is unaffected: it is gated on its own 714-px break, not on the
+v0.6 number. Its stated comparison to "the CI-proven v0.6 Arabic golden"
+quotes the 1,000-px value and is left unedited as the historical note it
+now is.

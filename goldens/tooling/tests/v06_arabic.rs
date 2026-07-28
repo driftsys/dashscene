@@ -40,7 +40,9 @@ use dashscene_typeset::text::{Font, Typesetter};
 
 mod common;
 
-use common::{AMBER, INK, NAVY, NEAR_WHITE, PANEL, load_atlas, origin_of, size_of};
+use common::{
+    AMBER, INK, NAVY, NEAR_WHITE, PANEL, decode_golden, diff_vs, load_atlas, origin_of, size_of,
+};
 
 const FONT: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -70,6 +72,81 @@ const BANNER_WIDTH: f32 = 300.0;
 const BANNER_SIZE: f32 = 26.0;
 const WORD_SIZE: f32 = 34.0;
 const SPEED_SIZE: f32 = 34.0;
+
+/// The golden's absolute-pixel budget (issue #532).
+///
+/// Story #35 set this to 1,000 px, sized against the total erase. Issue #532
+/// named the case that does not cover: this scene has three text runs, and any
+/// one of them vanishing on its own is a smaller difference than 1,000 — so the
+/// same partial-text regression #233 found in the v0.5 golden passed here too.
+///
+/// The calibration standard is the **smallest regression the scene can
+/// express** (`docs/decisions/golden-comparison-space.md`, "A text budget is
+/// calibrated against a partial regression"). Measured on this scene, on this
+/// branch, every number the golden's own compare reported:
+///
+/// - the healthy render matches the committed golden exactly — 0 px of 71,400,
+///   so this scene is bit-exact on this machine;
+/// - the whole text inks 2,421 px of the 71,400-px canvas (3.39 %);
+/// - the banner vanishing differs by 934 px, the harakat word by 671 px, the
+///   speed chip by 816 px — all three above this budget, proven by
+///   `dropping_any_string_exceeds_the_budget`.
+///
+/// 440 px is two thirds of the smallest measured break (671 px), rounded down.
+/// The v0.5 calibration rounded its two thirds down to the nearest hundred;
+/// here that would land on 400, which collides numerically with story #35's
+/// `~400-px edge population` figure that PR #530 could not reproduce, so this
+/// rounds to the nearest ten instead to keep the provenance unambiguous.
+///
+/// Per inked pixel it is tighter than either committed text budget calibrated
+/// the same way — 0.18 px of tolerance per inked pixel, against
+/// v05-text-latin's 0.32 (1,200 over 3,763) and v07-text-fallback's 0.34 (500
+/// over 1,491) — which is the direction #532 asks for.
+///
+/// **The cross-machine margin here is an extrapolation, not a measurement.**
+/// The only cross-architecture difference this project has ever measured is 32
+/// px, on the v0.3 paint golden — a gradient-and-stroke scene drawn by Skia's
+/// own rasteriser, not by the MSDF resolve this scene uses. 440 px is about
+/// 13.75x that number, against 31.25x for the 1,000 px it replaces and 37.5x
+/// for v0.5's 1,200 px, so this budget cuts the established ratio to roughly a
+/// third while resting on an anchor from a different rendering path. No text
+/// golden has been diffed across architectures at all: CI has been
+/// billing-blocked since 2026-07-17 (issue #263), which predates both this
+/// calibration and v0.5's.
+///
+/// That is accepted deliberately rather than overlooked. Raising the budget to
+/// increase the cross-machine margin would reduce the drift margin the
+/// two-thirds rule exists to provide — anything above about 600 px is within 71
+/// px of the 671-px break, and this record states that ink figures move as text
+/// rendering changes. The failure mode if 440 px proves too tight on Linux is a golden
+/// that fails without a regression behind it, which is visible and fixable by
+/// re-measuring; the failure mode of a budget above the smallest break is a
+/// regression that passes silently, which is what #532 exists to prevent.
+/// Re-check this against the first full CI run after #263 is resolved.
+const BUDGET: usize = 440;
+
+/// One of the screen's three text runs. Naming them lets the sensitivity
+/// guard drop exactly one and say which, the way #532 asks: the
+/// calibration standard is the smallest regression the scene can express,
+/// and with three runs that is a single run vanishing, not the total
+/// erase.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Run {
+    Banner,
+    Word,
+    Chip,
+}
+
+impl Run {
+    /// The run's name, for the guard's failure message.
+    fn name(self) -> &'static str {
+        match self {
+            Run::Banner => "banner",
+            Run::Word => "harakat word",
+            Run::Chip => "speed chip",
+        }
+    }
+}
 
 /// Shapes `text` at `size` within `max_width` and places every glyph in
 /// absolute document space by adding the node's resolved box origin. For
@@ -220,47 +297,53 @@ fn author_scene(ts: &mut Typesetter) -> (Arena, NodeId, NodeId, NodeId) {
     (arena, nodes.0, nodes.1, nodes.2)
 }
 
-#[test]
-fn arabic_screen_matches_its_golden() {
-    let font = Font::from_bytes(std::fs::read(FONT).expect("corpus font present"), 0)
-        .expect("Noto Sans Arabic parses");
-    let mut ts = Typesetter::new(font);
-    let (arena, banner, word, chip) = author_scene(&mut ts);
-
-    // Stage the positioned glyph runs at boundary B, sampling the atlas.
-    // The banner passes its fixed box width as the wrap width, so its
-    // paragraph is flush-right; the hug nodes pass None (one line at the
-    // shaped natural width).
+/// Stages the scene's three glyph runs at boundary B, omitting the one
+/// named by `skip`. Omitting one is what the sensitivity guard renders;
+/// the golden keeps all three.
+///
+/// The banner passes its fixed box width as the wrap width, so its
+/// paragraph is flush-right; the hug nodes pass `None` (one line at the
+/// shaped natural width).
+fn staged(
+    ts: &mut Typesetter,
+    arena: &Arena,
+    nodes: (NodeId, NodeId, NodeId),
+    skip: Option<Run>,
+) -> GlyphRunTable {
+    let (banner, word, chip) = nodes;
     let mut glyphs = GlyphRunTable::new();
     let atlas = glyphs.push_atlas(load_atlas(ATLAS_DIR));
-    glyphs.push_run(text_run(
-        &mut ts,
-        atlas,
-        origin_of(&arena, banner),
-        BANNER,
-        BANNER_SIZE,
-        NEAR_WHITE,
-        Some(BANNER_WIDTH),
-    ));
-    glyphs.push_run(text_run(
-        &mut ts,
-        atlas,
-        origin_of(&arena, word),
-        HARAKAT_WORD,
-        WORD_SIZE,
-        NEAR_WHITE,
-        None,
-    ));
-    glyphs.push_run(text_run(
-        &mut ts,
-        atlas,
-        origin_of(&arena, chip),
-        SPEED,
-        SPEED_SIZE,
-        INK,
-        None,
-    ));
+    let runs = [
+        (
+            Run::Banner,
+            banner,
+            BANNER,
+            BANNER_SIZE,
+            NEAR_WHITE,
+            Some(BANNER_WIDTH),
+        ),
+        (Run::Word, word, HARAKAT_WORD, WORD_SIZE, NEAR_WHITE, None),
+        (Run::Chip, chip, SPEED, SPEED_SIZE, INK, None),
+    ];
+    for (which, node, text, size, color, max_width) in runs {
+        if skip == Some(which) {
+            continue;
+        }
+        glyphs.push_run(text_run(
+            ts,
+            atlas,
+            origin_of(arena, node),
+            text,
+            size,
+            color,
+            max_width,
+        ));
+    }
+    glyphs
+}
 
+/// Paints the committed scene with `glyphs` and returns the PNG bytes.
+fn render(arena: &Arena, glyphs: &GlyphRunTable) -> Vec<u8> {
     let scene = arena.committed();
     let root = scene.rects()[0];
     let mut painter = SkiaPainter::new(root.w as i32, root.h as i32);
@@ -270,25 +353,60 @@ fn arabic_screen_matches_its_golden() {
         &ImageTable::new(),
         scene.clips(),
         scene.groups(),
-        &glyphs,
+        glyphs,
         None,
     );
+    painter.png_bytes()
+}
 
-    // The inked text is only ~2,820 px of this 71,400-px canvas (3.95%),
-    // so a canvas-fraction budget wide enough to clear anti-aliasing
-    // jitter would exceed the whole footprint and pass a render that drew
-    // no text at all. An absolute pixel budget avoids that (see
-    // `docs/decisions/golden-comparison-space.md`, "Text goldens").
-    //
-    // 1,000 px is ~2.5x the scene's anti-aliased edge population (the
-    // ~400 px that shift by one code point on a premultiply round-trip),
-    // so it clears cross-machine coverage jitter, while staying well under
-    // the measured breaks it must catch: erasing the text differs by
-    // 2,818 px, and a shaping regression that isolates the joined forms
-    // differs by 4,633 px. The `..._is_laid_out_and_shaped...` guard pins
-    // the shaping features exactly (glyph-id level, machine-independent);
-    // this golden is the coarse full-frame check.
-    goldens::assert_matches_golden_max_pixels("v06-text-arabic", &painter.png_bytes(), 1_000);
+#[test]
+fn arabic_screen_matches_its_golden() {
+    let font = Font::from_bytes(std::fs::read(FONT).expect("corpus font present"), 0)
+        .expect("Noto Sans Arabic parses");
+    let mut ts = Typesetter::new(font);
+    let (arena, banner, word, chip) = author_scene(&mut ts);
+
+    let glyphs = staged(&mut ts, &arena, (banner, word, chip), None);
+    let png = render(&arena, &glyphs);
+
+    // Sparse text on a large canvas, so an absolute-pixel budget — not a
+    // canvas fraction — is the right tolerance: a fraction wide enough to
+    // clear cross-machine MSDF edge jitter reaches past a single run's
+    // whole footprint, so one string vanishing passes
+    // (`docs/decisions/golden-comparison-space.md`, "Text goldens").
+    // `BUDGET` is calibrated on this scene so any one of its three runs
+    // vanishing fails, proven by `dropping_any_string_exceeds_the_budget`.
+    // The `..._is_laid_out_and_shaped...` guard pins the shaping features
+    // exactly (glyph-id level, machine-independent); this golden is the
+    // coarse full-frame check.
+    goldens::assert_matches_golden_max_pixels("v06-text-arabic", &png, BUDGET);
+}
+
+/// The budget's sensitivity guard (issue #532): a partial text
+/// regression — any one of the scene's three strings vanishing — must
+/// exceed the budget.
+///
+/// This is the case the 1,000-px budget did not catch, and the reason it
+/// was recalibrated. Each broken render is diffed against the committed
+/// golden, so the number this asserts is the one the golden's own compare
+/// would see.
+#[test]
+fn dropping_any_string_exceeds_the_budget() {
+    let font = Font::from_bytes(std::fs::read(FONT).expect("corpus font present"), 0)
+        .expect("Noto Sans Arabic parses");
+    let mut ts = Typesetter::new(font);
+    let (arena, banner, word, chip) = author_scene(&mut ts);
+    let golden = decode_golden("v06-text-arabic");
+
+    for which in [Run::Banner, Run::Word, Run::Chip] {
+        let glyphs = staged(&mut ts, &arena, (banner, word, chip), Some(which));
+        let differed = diff_vs(&golden, &common::decode_rgba(&render(&arena, &glyphs)));
+        assert!(
+            differed > BUDGET,
+            "the {} string vanishing must exceed the {BUDGET}px budget, differed by {differed}",
+            which.name()
+        );
+    }
 }
 
 /// A layout-and-shaping guard independent of the golden image, pinning at
