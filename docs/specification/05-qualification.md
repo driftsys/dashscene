@@ -126,13 +126,18 @@ time; the fixture is byte-reproduced on the CI atlas-repro runner
 (`committed_arabic_fixture_is_reproducible`). MSDF resolve is
 anti-aliased at every glyph edge, so the pixel comparison is
 tolerance-based, not bit-exact. Because the inked text is sparse, the
-golden uses an absolute 1,000-px differing-pixel budget rather than a
-canvas fraction (a fraction wide enough to clear the anti-aliasing
-jitter would exceed the whole inked footprint, so a text-erasing
-regression would pass): the budget is a few times the scene's
-anti-aliased edge count, well below the 2,818-px text-erase and 4,633-px
-form-isolation breaks it must catch
-(`docs/decisions/golden-comparison-space.md`, "Text goldens").
+golden uses an absolute differing-pixel budget rather than a canvas
+fraction (a fraction wide enough to clear the anti-aliasing jitter would
+exceed the whole inked footprint, so a text-erasing regression would
+pass). The budget is **440 px**, calibrated by issue #532 against the
+smallest regression this scene can express: it has three text runs, and
+the smallest of them vanishing differs by 671 px (the banner is 934 px,
+the speed chip 816 px), against a 2,421-px total erase. Story #35 set it
+to 1,000 px against the total erase alone, which left every single-run
+regression under budget. The measurement is committed as
+`dropping_any_string_exceeds_the_budget`
+(`docs/decisions/golden-comparison-space.md`, "Text goldens" and "The
+v0.6 Arabic budget takes the same calibration").
 
 ### E3 — met
 
