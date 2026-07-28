@@ -5,12 +5,15 @@
              anti-aliased content — see "Cross-machine anti-aliasing"
              below), story #11 (the exact-match constraint on v0.2
              flex goldens — see "Flex goldens are exact-match by
-             construction" below), and story #35 (an absolute-pixel
+             construction" below), story #35 (an absolute-pixel
              budget for sparse text goldens — see "Text goldens use an
-             absolute-pixel budget" below), and issue #233 (a text
+             absolute-pixel budget" below), issue #233 (a text
              budget is calibrated against the scene's smallest
              regression, not its total erase — see "A text budget is
-             calibrated against a partial regression" below).
+             calibrated against a partial regression" below), and issue
+             #533 (regenerating a committed atlas fixture restates every
+             golden that samples it — see "Regenerating an atlas fixture
+             restates every golden that samples it" below).
     scope    goldens/ tooling; binds golden authoring for every painter
 
 ## Context
@@ -150,8 +153,8 @@ argument that at 8.95 % ink it is above its own budget, so a text-erasing
 regression already fails it. That argument covers only the total erase.
 Issue #233 named the case it does not cover: the scene has two strings,
 and either one vanishing on its own is a smaller difference than the
-budget. Measured on the scene as it stands, the heading alone is 1,823 px
-and the chip's string 1,943 px, against the 2,240-px fraction — so both
+budget. Measured on the scene as it stands, the heading alone is 1,822 px
+and the chip's string 1,941 px, against the 2,240-px fraction — so both
 passed.
 
 So the calibration standard for a text budget is the **smallest
@@ -159,7 +162,8 @@ regression the scene can express**, not the total erase. Where a scene
 has one text run those are the same number; where it has several they are
 not, and the total erase is the weakest of them. The v0.5 golden moves to
 `assert_matches_golden_max_pixels` at 1,200 px — two thirds of its
-smallest measured break, rounded down — and commits the measurement as a
+smallest measured break (1,214), rounded down to the nearest hundred — and
+commits the measurement as a
 test (`dropping_either_string_exceeds_the_budget`), the same shape
 `v07-text-fallback` already uses. A budget stated in a comment is an
 estimate; a budget with a committed break is a gate.
@@ -172,11 +176,15 @@ them as fixed:
   2,421 px now. Text rendering changed underneath both (the #314
   line-height fix, the #272 baseline correction). A recorded ink figure is
   a measurement with a date, so re-measure before reusing one.
-- **The committed v0.5 image itself has drifted.** A fresh render of the
-  scene differs from `v05-text-latin.png` by 3 of 44,800 px on one
-  machine, where the v0.6 golden renders bit-exact. A 2,240-px budget had
-  ample room to hide that; the 1,200-px one still does, which is why the
-  drift is recorded here rather than re-goldened away.
+- **The committed v0.5 image itself had drifted.** A fresh render of the
+  scene differed from `v05-text-latin.png` by 3 of 44,800 px, where the
+  v0.6 golden renders bit-exact. A 2,240-px budget had ample room to hide
+  that, and so did the 1,200-px one, which is why the drift was recorded
+  rather than folded into an unrelated recalibration. Issue #533 then
+  found its cause
+  and re-recorded the image; the section below carries the result, and the
+  1,822/1,941 figures above are the post-re-record measurement (they read
+  1,823/1,943 against the stale image).
 - **The v0.6 budget has the same blind spot at its own scale.** Its
   1,000 px catches the total erase (2,421 px today) but not one of its
   three strings vanishing: the banner is 934 px, the harakat word 671 px,
@@ -192,3 +200,49 @@ canvas, and these scenes are opaque. The v0.5 calibration therefore does
 not use it. It bounds the budget from below by the only cross-machine
 difference this project has actually measured — 32 px on the v0.3 paint
 golden — and from above by the scene's smallest break.
+
+## Regenerating an atlas fixture restates every golden that samples it (issue #533)
+
+The 3-px drift recorded above was neither non-determinism nor an unknown:
+the render is deterministic, and the golden was stale. Both halves were
+measured rather than argued.
+
+- **Deterministic.** Five renders in one process and three separate
+  processes produce byte-identical output, and the three differing pixels
+  are each ±1 in a single channel at an anti-aliased glyph edge.
+- **Stale, with a named cause.** `git bisect` over `9412e7a..main`, using
+  "does re-recording reproduce the committed bytes" as the test, returns
+  `48b721b` — _feat(dashscene-typeset): compute GSUB charset closure for
+  Arabic_. That commit regenerated the committed ASCII atlas fixture
+  (`atlas.png` 56,335 to 58,002 bytes, `atlas.metrics` 3,715 to 3,829),
+  and the v0.5 Latin golden samples that atlas. Confirmed directly at
+  `main`: rendering today's scene against the pre-`48b721b` atlas bytes
+  reproduces the committed golden exactly, 0 px. Every other change in the
+  render path since is pixel-neutral for this scene.
+
+So the image was re-recorded, and the scene is bit-exact against it again.
+
+The general rule this makes explicit: **a committed atlas fixture is an
+input to every golden that loads it, so regenerating one is a change to
+those goldens.** Regenerating an atlas and leaving its goldens alone does
+not fail anything — a tolerance budget absorbs the difference silently,
+and the images go stale without a signal. `corpus/atlas/README.md` states
+the obligation at the point of regeneration, and lists each atlas's
+consumers as the set to re-record.
+
+That list has to be complete to be worth anything, and it was not: it
+named two of the seven files that load `corpus/atlas/ascii`, so a
+regeneration that followed it literally would have repeated this defect on
+the five it omitted. Completed there, with the command that regenerates it
+(`grep -rl 'corpus/atlas/ascii"' goldens/`) recorded beside it, because a
+hand-maintained list of consumers drifts the same way a hand-maintained
+budget does. Committed images are also not the whole obligation: ink-pixel
+counts quoted in a budget's rationale, and the oracle's per-frame
+residuals, are measured against the atlas bytes and go stale with no test
+failing.
+
+An Arabic-closure commit moved a Latin golden because both scripts shared
+one `ascii/` fixture directory. The project has since adopted one
+directory per (script, weight) precisely so an added weight never rewrites
+an existing fixture — that convention prevents the recurrence this issue
+found, and predates it.

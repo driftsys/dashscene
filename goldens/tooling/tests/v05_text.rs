@@ -56,21 +56,24 @@ const CHIP_SIZE: f32 = 44.0;
 /// This golden compared against 5 % of its canvas until #233. At 320x140 that
 /// is 2,240 px, while the whole inked text is only 3,763 px: erasing all the
 /// text failed, but either single string vanishing did not — the heading alone
-/// is 1,823 px and the chip's string 1,943 px, both under 2,240. A canvas
+/// is 1,822 px and the chip's string 1,941 px, both under 2,240. A canvas
 /// fraction is the wrong model for sparse content
 /// (`docs/decisions/golden-comparison-space.md`, "Text goldens"), so this scene
 /// moves to an absolute count sized to the ink, not to the canvas.
 ///
-/// 1,200 px is two thirds of the smallest regression it must catch (1,823 px),
-/// rounded down. Measured on this scene, on this branch, every number the
-/// golden's own compare reported:
+/// 1,200 px is two thirds of the smallest regression it must catch (1,822 px),
+/// rounded down to the nearest hundred — two thirds of 1,822 is 1,214.
+/// Measured on this scene, on this branch, every number the golden's own
+/// compare reported:
 ///
-/// - the healthy render differs from the committed golden by 3 px. This golden
-///   is not bit-exact against a fresh render, unlike the v0.6 Arabic one, which
-///   is exactly 0 — a small drift the 5 % fraction had room to hide;
+/// - the healthy render matches the committed golden exactly — 0 px. It did
+///   not until #533: the committed image had drifted by 3 px, because
+///   `48b721b` regenerated the ASCII atlas this scene samples and did not
+///   re-record the goldens that load it. The image was re-recorded there, so
+///   this scene is bit-exact again;
 /// - the whole text inks 3,763 px of the 44,800-px canvas (8.40 %);
-/// - dropping the heading differs by 1,823 px, dropping the chip's string by
-///   1,943 px, both above this budget — proven by
+/// - dropping the heading differs by 1,822 px, dropping the chip's string by
+///   1,941 px, both above this budget — proven by
 ///   `dropping_either_string_exceeds_the_budget`.
 ///
 /// It leaves ample room for cross-machine anti-aliasing jitter: the one

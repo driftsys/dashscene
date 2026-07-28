@@ -18,10 +18,27 @@ across into `dashscene-typeset`'s test directory (debt #217).
 ## Fixtures
 
 - `ascii/` — from `corpus/fonts/noto-sans`, charset printable ASCII
-  (0x20..=0x7e) plus the Latin ligatures the GSUB closure adds. Consumed
-  by the v0.5 Latin text golden (`goldens/tooling/tests/v05_text.rs`) and,
-  as the Latin fallback atlas, by the v0.7 multi-font golden
-  (`goldens/tooling/tests/v07_fallback.rs`).
+  (0x20..=0x7e) plus the Latin ligatures the GSUB closure adds. Seven
+  files load it, and all seven are what a regeneration must re-record
+  (issue #533 found this list naming only the first two):
+
+      goldens/tooling/tests/v05_text.rs            v05-text-latin
+      goldens/tooling/tests/v07_fallback.rs        v07-text-fallback
+                                                   (the Latin fallback atlas)
+      goldens/tooling/tests/v07_text_lowering.rs   v07-text-lowering
+      goldens/tooling/tests/v07_variant_topology.rs
+                                                   v07-variant-topology
+      goldens/tooling/tests/v013_uncovered_shapes.rs
+                                                   v013-baseline-hug-cross
+      goldens/tooling/tests/render_oracle.rs       no committed PNG — the E7
+                                                   oracle's measured residuals
+      goldens/tooling/src/render.rs                no committed PNG — the
+                                                   production render walk, used
+                                                   by the import and
+                                                   profile-preview oracles
+
+  Regenerate the list rather than trusting it:
+  `grep -rl 'corpus/atlas/ascii"' goldens/`.
 - `ascii-semibold/`, `ascii-bold/` — from `corpus/fonts/noto-sans`'s
   SemiBold and Bold faces, over the same charset as `ascii/` (story #368).
   One atlas directory per (script, weight): the Regular fixtures are never
@@ -87,6 +104,30 @@ one `AtlasSpec` per fixture so the writer and the checker cannot drift:
 Run a regenerator only after a deliberate parameter or toolchain change,
 then commit the result with a note recording why. Do not hand-edit the
 files.
+
+A regenerated fixture changes every golden that samples it. The goldens
+compare within a pixel budget, so a regenerated atlas does not fail them —
+it moves them a few pixels and leaves the committed images stale, with no
+signal. Re-record every consumer listed with the fixture above in the same
+commit, and state in the message that the atlas moved them.
+
+Committed images are not the only thing to restate. Two kinds of derived
+number are measured against the atlas bytes and go stale the same way,
+with no test failing:
+
+- the ink-pixel counts a golden's budget rationale quotes — for `ascii/`,
+  `v07_text_lowering.rs` ("the lowered text inks 484 px") and
+  `v07_variant_topology.rs` ("the resolved instance's label inks 480 px");
+- the per-frame residuals recorded in `goldens/oracle/README.md`, which
+  `render_oracle.rs` and `goldens/tooling/src/render.rs` measure.
+
+Re-measure both, in the same commit.
+
+This rule is drawn from issue #533: commit `48b721b` regenerated `ascii/`
+on 2026-07-16, about eight hours after `9412e7a` recorded the v0.5 Latin
+golden against the previous bytes, and
+`goldens/images/v05-text-latin.png` then remained 3 px stale until #533
+found it (`docs/decisions/golden-comparison-space.md`).
 
 ## Cross-machine byte-identity
 
