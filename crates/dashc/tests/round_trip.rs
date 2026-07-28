@@ -919,3 +919,94 @@ fn flex_intent_round_trips_through_the_document() {
     assert_eq!(placed_layout.grid_row_span, 2);
     assert_eq!(placed_layout.grid_column_span, 3);
 }
+
+/// A one-node document whose only container carries the padding given, for
+/// the byte-presence test below.
+fn container_document(padding: dashc_wasm::EdgeInsets) -> Document {
+    let mut doc = Document::new();
+    doc.push(Node {
+        name: Some("row".to_owned()),
+        parent: None,
+        box2d: Box2D {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 50.0,
+        },
+        container: Some(dashc_wasm::LayoutContainer {
+            mode: dashc_wasm::LayoutMode::Horizontal,
+            gap: 0.0,
+            padding,
+            main_align: dashc_wasm::MainAxisAlign::Start,
+            cross_align: dashc_wasm::CrossAxisAlign::Start,
+            cross_gap: None,
+            grid_rows: Vec::new(),
+            grid_columns: Vec::new(),
+        }),
+        ..Node::default()
+    });
+    doc
+}
+
+#[test]
+fn a_default_padding_container_omits_the_field_a_non_default_one_writes_it() {
+    // The other half of the "absent means zero insets" contract the schema
+    // comment states for `LayoutContainer.padding` (issue #522): emit.rs
+    // writes the field only when it differs from `EdgeInsets::default()`,
+    // the same shape `a_blur_less_entry_omits_the_blurs_field_entirely`
+    // above pins for the blur list. No committed corpus fixture reaches the
+    // omit branch — every auto-layout container captured or lowered so far
+    // carries non-default padding (measured across the whole corpus, not
+    // only the fixtures with a `.dsb` golden) — and authoring a new Figma
+    // capture needs a human step this cannot take
+    // (docs/decisions/figma-corpus-self-authored-only.md). Going through the
+    // loader cannot tell the two settings apart either:
+    // `dashscene-core::load.rs` sets `Prop::Padding` only when
+    // `flex.padding()` is `Some`, and the arena's own unset default is
+    // already all zero, so a solved scene is identical either way. Only a
+    // check on the raw flatbuffer accessor sees the difference, hence no
+    // golden here — no `.dsb` byte diff would say anything a reviewer could
+    // read either.
+    use dashc_wasm::EdgeInsets;
+
+    let default_bytes = compile(&container_document(EdgeInsets::default())).expect("validates");
+    let default_document = dashbuf::root_as_document(
+        dashbuf::container::ui_document(&default_bytes).expect("a .dsb file"),
+    )
+    .expect("valid buffer");
+    let default_flex = default_document
+        .nodes()
+        .expect("nodes present")
+        .get(0)
+        .flex()
+        .expect("a container node");
+    assert!(
+        default_flex.padding().is_none(),
+        "a default-padding container must write no padding field, not an all-zero one"
+    );
+
+    let nonzero = EdgeInsets {
+        left: 8.0,
+        top: 0.0,
+        right: 0.0,
+        bottom: 0.0,
+    };
+    let nonzero_bytes = compile(&container_document(nonzero)).expect("validates");
+    let nonzero_document = dashbuf::root_as_document(
+        dashbuf::container::ui_document(&nonzero_bytes).expect("a .dsb file"),
+    )
+    .expect("valid buffer");
+    let nonzero_flex = nonzero_document
+        .nodes()
+        .expect("nodes present")
+        .get(0)
+        .flex()
+        .expect("a container node");
+    let p = nonzero_flex
+        .padding()
+        .expect("a non-default-padding container must write the field");
+    assert_eq!(
+        (p.left(), p.top(), p.right(), p.bottom()),
+        (8.0, 0.0, 0.0, 0.0)
+    );
+}
