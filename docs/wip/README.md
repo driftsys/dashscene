@@ -11,14 +11,14 @@ project's convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports eight files
+## Why the WIP gate currently reports nine files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-eight and exits non-zero. All eight are deliberate, accepted exceptions rather
+nine and exits non-zero. All nine are deliberate, accepted exceptions rather
 than ungardened debt, and they are recorded here so the gate's result is
 explained rather than merely tolerated.
 
-Six are design captures, described below. **One is a design spike** —
+Seven are design captures, described below. **One is a design spike** —
 `2026-07-27-glyph-runs-from-commit-SPIKE.md`, which answers whether glyph runs
 should become a commit output (issue #505) and carries the measured feasibility
 work behind that answer. It is archived when the design lands or is rejected.
@@ -100,6 +100,7 @@ the v0.13 plan revision landed.
 | `2026-07-19-backdrop-blur-v011.md`                     | partly gardened at the v0.11 close (story #393): the profile-policy reversal, the schema `Effect` representation, and the boundary-B contract now live in `docs/decisions/backdrop-blur-is-core-vocabulary.md`; the rest when a second painter (Unity, tiny-skia web, or a future wgpu painter) needs the per-painter capability table or its two remaining quality levers |
 | `2026-07-19-color-space-blur-and-msdf.md`              | the painter's working colour space is settled — one question in it is genuinely open, indexed at `docs/technotes/open-questions.md` and tracked by #412/#474; stays here until that question resolves                                                                                                                                                                      |
 | `2026-07-19-wgpu-painter-direction.md`                 | a wgpu painter is actually chosen. Explicitly a direction, not a commitment; it exists so the question is not researched from scratch when that slice opens                                                                                                                                                                                                                |
+| `2026-07-28-photorealistic-3d-content.md`              | each question it traces is ruled on. It records an input rather than a plan: photorealistic 3D renders are target product content, and every number in the asset pipeline was chosen against content that is not representative of it. Its first measurable consequence is #455's fixture                                                                                  |
 | `2026-07-27-indic-script-support.md`                   | Indic support is designed: the closure becomes text-driven and the unformed-cluster fallback is built. Its decided half — coverage is declared at build time, dynamic generation is a deferred painter capability — is already gardened into `docs/decisions/glyph-coverage-is-declared-at-build-time.md`                                                                  |
 | `2026-07-27-glyph-coverage-sets-and-text-residency.md` | glyph-atlas residency is designed: the unit of residency is chosen and the runtime-supplied-string case is answered. Its decided half — that only raster is block-compressed — is already gardened into `docs/decisions/compress-raster-only.md`                                                                                                                           |
 
