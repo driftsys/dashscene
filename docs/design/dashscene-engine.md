@@ -181,6 +181,12 @@ parent sizing the child keeps `flex_shrink = 0`. Full arithmetic,
 alternatives, and the declared corner cases:
 `docs/decisions/negative-margin-hug-rebate.md`.
 
+End-to-end coverage: `goldens/images/v013-hug-negative-margin.png`
+(`goldens/tooling/tests/v013_uncovered_shapes.rs`, issue #501) carries
+both the negative-margin `Hug` rows and the fixed-parent guard row, so a
+regression fails a committed frame rather than only the engine's own unit
+tests. No Figma fixture has this shape.
+
 Degenerate constructs, all pinned by test and named here for the
 validator slice to diagnose (P4):
 
@@ -287,6 +293,15 @@ on the floor the first one computed (a `debug_assert` pins that).
 The nested case stays open: a container inside a baseline text row is
 taken by its box bottom, because Taffy's `Layout` does not expose the
 computed baseline of a subtree.
+
+End-to-end coverage: `goldens/images/v013-baseline-hug-cross.png`
+(`goldens/tooling/tests/v013_uncovered_shapes.rs`, issue #501) is a HUG
+cross-axis `Baseline` row holding a tall box, a text run and a `Fill`
+cross-sized child, with a following sibling under it — so the floor, the
+`Fill` exclusion, the re-solve and the sibling's re-placement all reach a
+committed frame. The two Figma baseline fixtures are both
+`counterAxisSizingMode: FIXED`, so none of this shape exists in the
+corpus.
 
 ### One cache, borrowed not owned
 
