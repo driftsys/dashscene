@@ -1,10 +1,20 @@
 # Glyph runs as a commit output — feasibility spike
 
-    status   SPIKE (2026-07-27). Nothing here is implemented, and no crate
-             changed on this branch. A throwaway prototype was built inside a
-             worktree to measure the risky claims, then reverted; the branch
-             carries this document and nothing else. Tracked as issue #505;
-             the two symptoms are #274 and #275.
+    status   SPIKE (2026-07-27). PARTLY GARDENED 2026-07-28. Its decided
+             half — that `dashscene-core`'s commit becomes the producer of
+             the glyph-run table, the reasoning behind that choice, the
+             rejected caller-side alternative, and the obligations it
+             carries — is gardened into
+             docs/decisions/glyph-runs-cross-boundary-b.md, section "The
+             producer story, decided", which is now its authority. The
+             design is not: §3 (the seam, the run's one field, ordering,
+             the dirty set, per-frame cost), §4 (the migration), §5 (what
+             it unblocks) and §7 (the open questions for the owner) stay
+             here, because none of it is implemented, no crate has changed,
+             and the implementing story does not exist yet. A throwaway
+             prototype was built inside a worktree to measure the risky
+             claims, then reverted; nothing reproduces it. Tracked as issue
+             #505; the two symptoms are #274 and #275.
     scope    whether `dashscene-core`'s commit can produce glyph runs, what a
              run would carry, how run order composes with rect order, what the
              migration costs, and what it unblocks.
@@ -17,6 +27,44 @@
              docs/decisions/resolved-clip-regions-at-commit.md,
              docs/design/dashpaint.md, docs/design/typeset-latin.md,
              docs/specification/02-principles.md
+
+## Corrections and answers since 2026-07-27
+
+The body below is left as it was written, because a dated capture that gets
+edited to match later findings stops being evidence of what was known when.
+What changed is collected here instead.
+
+**§7's five open questions are answered**, and the record named above is where
+the answers are authoritative:
+
+1. _Incremental or full re-staging?_ Full first, measure against the hero, make
+   it incremental only if the measurement demands it. What §3.5 says is cached
+   is understated: the UAX #9 bidi resolution runs before the shaping cache is
+   consulted and outside it, so what re-runs per commit is bidi plus layout,
+   not layout alone.
+2. _How much golden movement?_ **Zero** of 33 committed images and zero of 10
+   `.dsb` goldens, measured 2026-07-28 against `70b8ef1` and mutation-tested.
+   §3.3's warning that interleaving changes "every scene" is true of the
+   drawing rule and false of this corpus: nothing committed has a later
+   overlapping rect, a run inside a group, or a clip that cuts ink.
+3. _Does `GlyphRun::opacity` go in the same change?_ After, as recommended.
+4. _Is the oracle's axis divergence preserved?_ No — the oracle adopts the one
+   producer, and doing so costs nothing measurable today, because every
+   committed fixture's lowered axes are already `TextShape::default()`. Note
+   also that the divergence is one-sided: the measure callback already uses the
+   lowered axes, so unification removes an inconsistency rather than making one.
+5. _Whose issue?_ Its own story, with #274, #275 and #307 as dependents.
+
+**§2.4 and §4's census is one low.** There are **twelve** `GlyphRun`
+construction sites across ten files, not eleven across nine.
+`goldens/tooling/tests/v013_uncovered_shapes.rs` arrived after this was
+written. Every other claim in §4 holds: one non-test site, zero in a shipped
+crate's `src/`, no `.dsb` byte moved.
+
+**§1.3's account of the oracle divergence is right and the decision record's
+first account of it was wrong.** This document says the oracle "deliberately
+stays on the default axes", which is correct. The wrap-width divergence it
+might be confused with was a separate issue, #306, since fixed.
 
 ## Summary
 
