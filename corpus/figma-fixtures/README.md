@@ -34,7 +34,7 @@ as-built compiler:
 Small, focused files rather than one mega-file: a failure should
 implicate one construct, not "the fixture". Each is authored with the
 `fixture-author` development plugin
-(`importers/figma/plugin/fixture-author/`) — one menu command per
+(`importers/figma/plugins/fixture-author/`) — one menu command per
 fixture, so a fixture is regenerable rather than hand-built — and
 captured as its `GET /file` JSON (`?plugin_data=shared`) via `deno task
 capture` in `importers/figma/`.
@@ -118,7 +118,7 @@ as captured.
 every node in the captured file is `strokeType: "BASIC"`. It must be
 drawn by hand (a line with a variable-width profile via the Draw
 tools) and re-captured; see
-`importers/figma/plugin/fixture-author/README.md` for the step-by-step.
+`importers/figma/plugins/fixture-author/README.md` for the step-by-step.
 
 ## Tier 2 — live-only validation, never captured or committed
 

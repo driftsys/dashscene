@@ -1,5 +1,5 @@
 // @ts-check
-/// <reference path="../figma-env.d.ts" />
+/// <reference path="../annotator/figma-env.d.ts" />
 
 // dashscene fixture author — development plugin, never published.
 // Builds one tier-1 corpus fixture (corpus/figma-fixtures/README.md) into the CURRENT
@@ -955,7 +955,7 @@ async function realFile() {
 // The trim-path exercise (story #39): one declared root frame holding a node
 // for each trim case, so a capture replays annotate -> trim -> named record
 // against a real response. This command builds the SCENE only; the roles are
-// written by the SEPARATE annotator plugin (importers/figma/plugin/), which is
+// written by the SEPARATE annotator plugin (importers/figma/plugins/annotator/), which is
 // the only tool that writes sharedPluginData roles
 // (docs/decisions/annotator-plugin-contract-frozen.md). After building, follow
 // the annotate step in this folder's README, then capture.

@@ -132,7 +132,7 @@ is the join input, one mechanism, two consumers. The dark-mode pin
 
 ## Phase 2, token export as-built (#39)
 
-The annotator plugin (`importers/figma/plugin/`) now ships the token-export
+The annotator plugin (`importers/figma/plugins/annotator/`) now ships the token-export
 command — the first of phase 2's two pieces. It reads every local variable
 through the Plugin API and emits the vartable. The **`.dsb`-to-token-ref
 switch stays with #167**; this half only produces the join table.

@@ -1,6 +1,6 @@
 /**
  * The token-export vartable: the id -> name/collection/mode table the annotator
- * plugin (../plugin/) produces and phase-2 token resolution / #167 join the
+ * plugin (../plugins/annotator/) produces and phase-2 token resolution / #167 join the
  * phase-1 sidecar against (docs/decisions/token-resolution-phase-split.md).
  *
  * This module is the importer-side load guard. It does not perform the #167

@@ -134,8 +134,12 @@ frame; it never draws one (G-11).
    fixture JSON and the design-source PNG could come from different files and
    the diff would be wrong by construction.
 2. From `importers/figma/`, with `FIGMA_TOKEN` exported, run
-   `deno task oracle-capture`. For each frame that names a `figmaNodeId` and
-   whose fixture resolves to a file key it calls the Figma REST render
+   `deno task oracle-capture`. It considers every frame that is not already
+   `captured` (issue #378: a frame whose design source is already pinned is
+   left alone by default, so authoring one new frame cannot silently re-fetch
+   and move an unrelated one whose Figma file changed upstream since it was
+   captured). For each frame it considers that names a `figmaNodeId` and whose
+   fixture resolves to a file key, it calls the Figma REST render
    `GET /v1/images/:key?ids=<nodeId>&format=png&scale=1`,
    downloads the returned PNG into `goldens/oracle/design-source/<frame>.png`,
    and flips that frame's `designSource` to the committed path and its `status`
@@ -143,7 +147,10 @@ frame; it never draws one (G-11).
    from the corpus manifest or still carries its placeholder key, is skipped and
    stays `pending-265`; a non-200, a non-null `err`, a missing node, or a non-PNG
    download fails that frame and writes nothing. Commit the written PNG and the
-   `manifest.json` update together.
+   `manifest.json` update together. To deliberately re-capture one already-
+   `captured` frame, name it: `deno task oracle-capture <frame>`. To
+   re-capture every frame regardless of status — the old, unconditional
+   behavior — pass `--force`.
 3. Run the assertion: `cargo test -p goldens --test render_oracle`.
    Tune nothing to make it pass — if a frame fails its band, that is a measured
    fidelity gap to fix in the painter or a band to re-pin with review.
@@ -216,8 +223,13 @@ assertion is `goldens/tooling/tests/import_oracle.rs`; the capture step is
 `deno task import-oracle-capture` (the same export mechanism as
 `oracle-capture`, pointed at the import manifest).
 
-Two self-authored frames cover the two vocabulary paths the real import
-proved live but no E7 frame measures, both measured within their band:
+Self-authored frames cover the vocabulary paths the real import proved live
+but no E7 frame measures, each measured within its band. The frame count,
+and every frame's specific vocabulary path, band, and measured result, are
+documented in that frame's own `note` in `import-manifest.json` — the
+source of truth `import_oracle.rs` reads — rather than duplicated here,
+where a fixed count and a partial per-frame list have each already gone
+stale once (issue #377).
 
 One vocabulary path deliberately has **no** frame, and cannot get one:
 `gif-fill`. Figma's `GET /images` renders a GIF-backed image fill as fully
@@ -231,29 +243,3 @@ measurement). Static GIF decode is still proven end to end, by
 `dashscene_skia::tests::decode_image_handles_a_real_static_gif` and by direct
 pixel inspection of the compiled render; what is missing is only the
 against-Figma half. Re-checking costs one `GET /v1/images` call.
-
-- `import-image-fill` (`import-image-fill.json`, node `1:2`, 400x200) —
-  **0.329 %** on `aa-edge`. One frame whose only paint is an IMAGE fill
-  (scaleMode `FILL`) of a self-generated 380x380 PNG — gradients, two
-  hard-edged rectangles, and a semi-transparent square — embedded into the
-  `.dsb` at compile and decoded by the painter. The 380x380 image in the
-  400x200 box means `FILL` scales the paint up to cover and crops it, so the
-  measurement includes the scale-and-crop path. The first committed
-  measurement of the image decode -> embed -> paint path against Figma; the
-  residual is rect-edge anti-aliasing and sub-threshold resampling noise.
-- `import-text-axes` (`import-text-axes.json`, node `2:2`, 400x200) —
-  **1.029 %** on `msdf-text` (1.829 % until #336 dropped the trailing
-  letter-spacing step from the measured width, PR #372). One Noto Sans
-  Regular 24 TEXT node exercising
-  the #310 axes end-to-end: PIXELS line height 18, letter spacing 1.2, RIGHT +
-  BOTTOM alignment in a fixed box larger than its content. This frame caught
-  two real bugs on first measurement (the G-11 pattern finding real bugs
-  again, after #314 and #272): an absent `textAutoResize` mis-lowered as
-  auto-size
-  (`dashc`), and a fixed line height placing the baseline at the full
-  intrinsic ascent instead of centering the intrinsic box (half-leading,
-  `dashscene-typeset`) — together first measured 2.822 %, structurally
-  misplaced. Fixed, the run lands where Figma renders it. The residual was
-  then glyph edges plus ~1 px of horizontal placement from the trailing
-  letter-spacing step Figma excludes from the measured width (#336); once
-  that step was dropped (PR #372) the residual is glyph edges alone.

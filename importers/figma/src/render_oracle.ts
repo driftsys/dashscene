@@ -220,6 +220,23 @@ export interface CaptureDesignSourcesOptions {
    */
   readonly pendingTag: string;
   /**
+   * Capture only this frame, regardless of its status — an explicit,
+   * deliberate re-capture (issue #378). Every other frame is left untouched:
+   * no request, no write, no manifest mutation. Unset captures every frame
+   * that is not already `captured` (the default), or, with `force`, every
+   * frame regardless of status.
+   */
+  readonly only?: string;
+  /**
+   * Re-fetches an already-`captured` frame's design source too (issue #378).
+   * Without it, a frame whose `status` is already `captured` and whose
+   * `designSource` is already set is left alone: its Figma file is not
+   * re-fetched, so a run that captures one new frame cannot silently move
+   * the pinned design source of an unrelated one whose Figma file changed
+   * upstream since it was captured.
+   */
+  readonly force?: boolean;
+  /**
    * Injectable for tests; used for the presigned asset download. The download
    * does not go to `api.figma.com` — the URLs point at Figma's asset host — so
    * it does not run through the REST client's rate limiter.
@@ -237,16 +254,40 @@ export interface CaptureDesignSourcesOptions {
  * skipped and stays pending — logged under `pendingTag`. A captured frame's
  * `designSource` and `status` are updated on the passed manifest object; a
  * failed one writes nothing and leaves the frame unchanged.
+ *
+ * A frame already `captured` is left alone unless `only` names it or `force`
+ * is set (issue #378): the design source it was pinned against does not move
+ * just because an unrelated frame was added or re-authored. `only` restricts
+ * the whole run to one named frame — every other frame is skipped without a
+ * request; `force` re-fetches every frame the run does consider, captured or
+ * not.
  */
 export async function captureDesignSources(
   options: CaptureDesignSourcesOptions,
 ): Promise<DesignSourceResult[]> {
-  const { manifest, client, writePng, fixtureFileKeys, pendingTag } = options;
+  const { manifest, client, writePng, fixtureFileKeys, pendingTag, only } =
+    options;
+  const force = options.force ?? false;
   const fetchFn = options.fetchFn ?? fetch;
   const log = options.log ?? (() => {});
   const results: DesignSourceResult[] = [];
 
   for (const frame of manifest.frames) {
+    if (only !== undefined && frame.frame !== only) {
+      log(`${frame.frame}: skipped — only capturing "${only}"`);
+      results.push({ frame: frame.frame, action: "skipped" });
+      continue;
+    }
+    const alreadyCaptured = frame.status === "captured" &&
+      frame.designSource !== null;
+    if (alreadyCaptured && !force && only === undefined) {
+      log(
+        `${frame.frame}: skipped — already captured; pass its name or ` +
+          "--force to re-capture",
+      );
+      results.push({ frame: frame.frame, action: "skipped" });
+      continue;
+    }
     const { figmaNodeId } = frame;
     const fixtureName = fixtureNameOf(frame.fixture);
     const figmaFileKey = fixtureFileKeys.get(fixtureName);
@@ -325,11 +366,25 @@ export interface OracleCaptureRunOptions {
  * directory they write PNGs to, and the tag a pending frame is reported
  * under (issue #338 collapsed what was a byte-for-byte copy of this
  * function). Requires FIGMA_TOKEN; returns the process exit code.
+ *
+ * `argv` (issue #378): with no arguments, captures only frames that are not
+ * already `captured` — the safe default, so authoring one new frame cannot
+ * silently re-fetch and move every already-pinned design source. A bare
+ * positional argument names one frame to capture regardless of its status,
+ * for a deliberate single re-capture. `--force` re-captures every frame the
+ * run considers (every frame, or, combined with a name, just that one)
+ * regardless of status — the previous, unconditional behavior, now opt-in.
  */
 export async function runOracleCaptureCli(
+  argv: readonly string[],
   options: OracleCaptureRunOptions,
 ): Promise<number> {
   const { manifestFileName, designSourceDirName, pendingTag } = options;
+  const args = [...argv];
+  const force = args.includes("--force");
+  if (force) args.splice(args.indexOf("--force"), 1);
+  const [only] = args;
+
   const token = requireFigmaToken();
   if (!token) return 1;
 
@@ -377,6 +432,8 @@ export async function runOracleCaptureCli(
     client: createFigmaClient({ token, log: (line) => console.log(line) }),
     fixtureFileKeys,
     pendingTag,
+    only,
+    force,
     writePng: async (frame, bytes) => {
       const dir = new URL(`${designSourceDirName}/`, oracleDir);
       await Deno.mkdir(dir, { recursive: true });
@@ -405,7 +462,7 @@ export async function runOracleCaptureCli(
 
 if (import.meta.main) {
   Deno.exit(
-    await runOracleCaptureCli({
+    await runOracleCaptureCli(Deno.args, {
       manifestFileName: "manifest.json",
       designSourceDirName: "design-source",
       pendingTag: "pending #265",

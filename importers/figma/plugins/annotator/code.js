@@ -2,7 +2,7 @@
 /// <reference path="./figma-env.d.ts" />
 
 // dashscene sharedPluginData annotator — the REAL plugin, distinct from the
-// fixture-author dev tool (../plugin/fixture-author/). It is unpublished and
+// fixture-author dev tool (../fixture-author/). It is unpublished and
 // run from a checkout ("import plugin from manifest"), the same distribution
 // the fixture-author uses (docs/decisions/annotator-plugin-contract-frozen.md).
 //
@@ -11,7 +11,7 @@
 //   1. Annotate: write `role = placeholder | sample-content | redline | spec`
 //      as sharedPluginData under the `dashscene` namespace, stamped `v = "1"`,
 //      onto every selected layer. The REST API returns these via
-//      `?plugin_data=shared`; the importer's trim pass (../src/trim.ts) treats
+//      `?plugin_data=shared`; the importer's trim pass (../../src/trim.ts) treats
 //      them as machine truth.
 //
 //   2. Token export: read every local variable through the Plugin API and emit
@@ -31,7 +31,7 @@ const ROLE_KEY = "role";
 const VERSION_KEY = "v";
 const CONTRACT_VERSION = "1";
 
-/** The vartable contract version (../src/tokens.ts / #167 read this stamp). */
+/** The vartable contract version (../../src/tokens.ts / #167 read this stamp). */
 const VARTABLE_CONTRACT = 1;
 
 /**

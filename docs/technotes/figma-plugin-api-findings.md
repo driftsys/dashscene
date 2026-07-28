@@ -3,13 +3,13 @@
     status   informative
     date     2026-07-12
     source   docs/archive/2026-07-14-scope-decisions.md §8;
-             importers/figma/plugin/fixture-author/
+             importers/figma/plugins/fixture-author/
     informs  any future fixture authored programmatically through the Figma
              Plugin API
 
 This note records three Figma Plugin API shapes found while building the
 `fixture-author` development plugin
-(`importers/figma/plugin/fixture-author/`), which programmatically
+(`importers/figma/plugins/fixture-author/`), which programmatically
 authors the tier-1 corpus fixtures
 (`corpus/figma-fixtures/README.md`). Each cost real debugging time
 because the field name or the sizing-mode default is not what the

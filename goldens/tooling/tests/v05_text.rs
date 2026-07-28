@@ -21,9 +21,7 @@
 //! Regeneration and diff workflow: goldens/README.md.
 
 use dashpaint::{AtlasIndex, Color, GlyphQuad, GlyphRun, GlyphRunTable, ImageTable, Painter};
-use dashscene_core::{
-    Arena, AxisSizing, LayoutMode, NodeId, Prop, TextAlign, TextAlignV, TextStyle,
-};
+use dashscene_core::{Arena, AxisSizing, LayoutMode, NodeId, Prop};
 use dashscene_engine::TaffySolver;
 use dashscene_skia::SkiaPainter;
 use dashscene_typeset::text::{Font, Typesetter};
@@ -32,6 +30,7 @@ mod common;
 
 use common::{
     AMBER, INK, NAVY, NEAR_WHITE, decode_golden, diff_vs, load_atlas, origin_of, size_of,
+    text_style,
 };
 
 const FONT: &str = concat!(
@@ -146,17 +145,7 @@ fn author_scene(ts: &mut Typesetter) -> (Arena, NodeId, NodeId) {
         txn.set_prop(heading, Prop::Text(HEADING.to_string()));
         txn.set_prop(
             heading,
-            Prop::TextStyle(TextStyle {
-                family: "Noto Sans".to_string(),
-                size: HEADING_SIZE,
-                weight: 400,
-                color: NEAR_WHITE,
-                line_height_px: None,
-                letter_spacing: 0.0,
-                text_align: TextAlign::Left,
-                text_align_v: TextAlignV::Top,
-                ligatures_off: false,
-            }),
+            Prop::TextStyle(text_style("Noto Sans", HEADING_SIZE, NEAR_WHITE)),
         );
 
         let chip = txn.add_node(Some(root), Some("chip"));
@@ -177,17 +166,7 @@ fn author_scene(ts: &mut Typesetter) -> (Arena, NodeId, NodeId) {
         txn.set_prop(chip, Prop::Text(CHIP.to_string()));
         txn.set_prop(
             chip,
-            Prop::TextStyle(TextStyle {
-                family: "Noto Sans".to_string(),
-                size: CHIP_SIZE,
-                weight: 400,
-                color: INK,
-                line_height_px: None,
-                letter_spacing: 0.0,
-                text_align: TextAlign::Left,
-                text_align_v: TextAlignV::Top,
-                ligatures_off: false,
-            }),
+            Prop::TextStyle(text_style("Noto Sans", CHIP_SIZE, INK)),
         );
 
         txn.commit_with(&mut solver);

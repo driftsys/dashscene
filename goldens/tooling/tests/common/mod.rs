@@ -21,7 +21,7 @@ use dashpaint::{
     Atlas, AtlasGlyph, ClipIndex, ClipTable, Color, GlyphRunTable, ImageAsset, ImageFormat,
     ImageTable, PaintEntry, PaintTable, Painter, RectEntry,
 };
-use dashscene_core::{Arena, NodeId};
+use dashscene_core::{Arena, NodeId, TextAlign, TextAlignV, TextStyle};
 use dashscene_skia::SkiaPainter;
 use dashscene_typeset::atlas::AtlasBundle;
 
@@ -108,6 +108,27 @@ pub fn checker_asset(dark: Color) -> ImageAsset {
     ImageAsset {
         format: ImageFormat::Png,
         bytes: painter.png_bytes(),
+    }
+}
+
+/// A `TextStyle` at `size`/`color` in `family`, with every other axis at its
+/// authoring default: weight 400, no explicit line height, no letter
+/// spacing, left/top alignment, ligatures on. This is the shape every text
+/// golden scene authors repeatedly (debt #354); mirrors
+/// `dashscene-engine`'s own `tests/measure.rs::styled()`, widened for
+/// family and colour since the goldens mix fonts and inking colours where
+/// the engine tests do not.
+pub fn text_style(family: &str, size: f32, color: Color) -> TextStyle {
+    TextStyle {
+        family: family.to_string(),
+        size,
+        weight: 400,
+        color,
+        line_height_px: None,
+        letter_spacing: 0.0,
+        text_align: TextAlign::Left,
+        text_align_v: TextAlignV::Top,
+        ligatures_off: false,
     }
 }
 

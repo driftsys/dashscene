@@ -3,7 +3,7 @@
  * Figma file before the export closure walks it (docs/archive/2026-07-14-design-1-seed.md
  * §6.1). Three channels, machine truth first:
  *
- *   1. sharedPluginData roles — the annotator plugin (../plugin/) writes
+ *   1. sharedPluginData roles — the annotator plugin (../plugins/annotator/) writes
  *      `role = placeholder | sample-content | redline | spec` under the
  *      `dashscene` namespace, stamped `v = "1"`
  *      (docs/decisions/annotator-plugin-contract-frozen.md). The REST API

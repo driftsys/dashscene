@@ -2,7 +2,7 @@
 
     status   accepted
     date     2026-07-12
-    scope    the sharedPluginData annotator plugin (importers/figma/plugin/)
+    scope    the sharedPluginData annotator plugin (importers/figma/plugins/annotator/)
     binds    the Deno importer and any capture written before the plugin
              exists
 
@@ -67,7 +67,7 @@ before any externally authored file needs it.
 
 ## As-built (#39)
 
-Trigger (b) fired: story #39 built the plugin (`importers/figma/plugin/`).
+Trigger (b) fired: story #39 built the plugin (`importers/figma/plugins/annotator/`).
 It honors this contract unchanged — the `dashscene` namespace, the
 `role` = `placeholder | sample-content | redline | spec` values, and the
 `v = "1"` stamp are exactly what the annotate commands write, and the
@@ -80,3 +80,13 @@ the role-writing commands. The reserved keys (`contribution-id`,
 The vartable shape token export produces is recorded in
 `docs/decisions/token-resolution-phase-split.md`, not here, since it is the
 token-resolution decision's concern.
+
+## As-built (#302)
+
+Story #39 placed the plugin directly under `importers/figma/plugin/`, one
+level up from the fixture-author dev plugin nested at
+`importers/figma/plugin/fixture-author/` — the two plugins sat at different
+depths despite being independent siblings. Issue #302 moved them to sibling
+directories: `importers/figma/plugins/annotator/` and
+`importers/figma/plugins/fixture-author/`. Config, comments, and docs were
+updated to match; no compiled or runtime code depended on the old paths.
