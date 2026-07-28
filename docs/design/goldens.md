@@ -140,6 +140,42 @@ back-to-front `effects` order, so the probe flips and fails if the draw
 loop reverses — the golden pins the stacking order, not just the presence
 of a shadow.
 
+`goldens/tooling/tests/v013_uncovered_shapes.rs` (issues #501, #495) adds
+three v0.13 frames for behaviours that had no committed artifact at all —
+each was a landed fix that changed real output while the whole golden and
+oracle suite stayed green, because the shape appeared in no scene.
+
+- `v013-hug-negative-margin.png` — a `Hug` column of four rows: three
+  `Hug` rows over a `Hug` child with a negative main-axis margin (`0` as
+  the control, then `-1` and `-16`), plus a fixed-width guard row where
+  the #270 shrink factor must not apply. Integer-dimensioned, so it
+  compares exact-match.
+- `v013-baseline-hug-cross.png` — a HUG cross-axis `Baseline` row holding
+  a 100-tall box, a 40 px text run and a `Fill` cross-sized child, with a
+  following sibling underneath (#322). The text is anti-aliased MSDF, so
+  it compares against a 400 px absolute budget.
+- `v013-mask-effect-bleed.png` — two panels, each a mask larger than its
+  maskee and a maskee whose hard-edged drop shadow reaches past the
+  maskee's own box (#495). That overhang is where the two readings of the
+  G-7 mask-bounds ruling produce different pixels: the landed reading
+  shows it, the rejected one cuts it at the maskee edge. The left panel's
+  parent does not clip; the right panel's does, and its box bounds x while
+  the mask bounds y, so both boxes are visible in the picture.
+
+Two of the three carry their sensitivity structurally: the canvas is sized
+from the solved root, so reverting either layout fix renders a differently
+sized image and the golden fails on its dimension check before any budget
+applies. The mask frame compares exact-match and adds the explicit
+sensitivity guard — a twin scene built as the rejected reading, asserted to
+move far more than jitter could hide (measured: 1280 px of 18 432).
+
+These are self-oracle frames, so they cover the producer surface, the
+solver, commit-time resolution and paint — not the Figma lowering or the
+`.dsb` round trip. Covering those as well would need a captured fixture per
+shape, and authoring one is a manual Figma step
+(`corpus/figma-fixtures/README.md`), so it is a separate, human-gated piece
+of work rather than a residual of these frames.
+
 ## Design-source render oracle (E7 / G-11)
 
 Every golden above diffs `dashscene-skia`'s render against the project's
