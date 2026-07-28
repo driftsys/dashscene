@@ -359,16 +359,21 @@ impl Format {
     /// whole blocks.
     ///
     /// The footprint is checked first, so this never divides by a zero block
-    /// dimension.
+    /// dimension. The block-grid arithmetic itself is
+    /// [`astc::block_grid_bytes`], shared with [`BlockSize::payload_len`]
+    /// (debt #452) — this format's own part is picking the texel block an
+    /// uncompressed or an ASTC payload stores.
     pub fn payload_len(self, width: u32, height: u32) -> Result<usize, Ktx2Error> {
         self.vk_format()?;
         let block = self.texel_block();
-        let columns = width.div_ceil(block.width) as usize;
-        let rows = height.div_ceil(block.height) as usize;
-        columns
-            .checked_mul(rows)
-            .and_then(|blocks| blocks.checked_mul(block.bytes as usize))
-            .ok_or(Ktx2Error::ImageTooLarge { width, height })
+        astc::block_grid_bytes(
+            width,
+            height,
+            block.width,
+            block.height,
+            block.bytes as usize,
+        )
+        .ok_or(Ktx2Error::ImageTooLarge { width, height })
     }
 
     /// The texel block this format stores.

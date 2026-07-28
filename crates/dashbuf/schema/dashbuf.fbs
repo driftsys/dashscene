@@ -233,6 +233,15 @@ enum AssetKind : uint8 {
 table AssetEntry {
   hash: [ubyte] (required);
   format: ImageFormat;
+  // width and height are the container's own reported extent — the PNG IHDR,
+  // the JPEG SOF frame header, or the GIF logical screen descriptor
+  // (dashpaint::image_id::identify) — never a decoder-reported extent. For
+  // GIF that is the logical screen, not a frame's own, smaller image
+  // descriptor; for JPEG it is the stored SOF dimensions, with no EXIF
+  // Orientation transform applied even where Orientation is 5-8, which
+  // transposes what a decoder displays. Every writer today derives both
+  // fields through the same header parse a decoding writer might not use, so
+  // pin this before one does (debt #449).
   width: uint32;
   height: uint32;
   // Appended at v0.12. Defaults to `Image`, so `flatc` omits it for every

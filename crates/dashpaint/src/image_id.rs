@@ -45,6 +45,28 @@
 //! `manifest_carries_no_third_party_dependencies` fails. The packer's decode
 //! belongs in the packer, which publishes after everything here.
 //!
+//! # The extent this reports is the container's, never a decoder's (debt #449)
+//!
+//! [`ImageHeader::width`]/[`ImageHeader::height`] are read straight from the
+//! header — the GIF logical screen descriptor, the JPEG SOF frame header —
+//! and are pinned to stay that way, because two of the three containers have
+//! a header-level extent a real decoder can legally disagree with:
+//!
+//! - **GIF** — [`identify_gif`] reads the logical screen descriptor. A
+//!   single frame smaller than its logical screen is legal GIF, and a
+//!   decoder reports the frame's own image descriptor, not the screen.
+//! - **JPEG** — [`identify_jpeg`] reads the SOF frame header. An EXIF
+//!   `Orientation` of 5-8 transposes width and height on display, and a
+//!   decoder that applies it reports the transposed pair; this module never
+//!   reads EXIF and always reports the stored SOF pair.
+//!
+//! `crates/dashbuf/schema/dashbuf.fbs`'s `AssetEntry` comment pins the same
+//! choice on the writing side, so both halves of
+//! `dashscene_validator::validate_asset_payloads`'s extent comparison are
+//! held to one definition. Every writer today derives an entry's recorded
+//! extent through this same function, so the two cannot disagree yet — the
+//! point is to say so before a decoding writer assumes the other extent.
+//!
 //! # Scope
 //!
 //! Hand-rolled and scoped to exactly the PNG/JPEG/GIF closure — the three
@@ -168,7 +190,10 @@ fn identify_png(bytes: &[u8]) -> Result<ImageHeader, ImageIdError> {
 /// `GIF87a`/`GIF89a`, then the logical screen descriptor's little-endian
 /// `u16` width and height, immediately after the 6-byte signature. Nothing
 /// past byte 10 is read — the descriptor's packed fields, background index,
-/// and pixel aspect ratio carry no size information.
+/// and pixel aspect ratio carry no size information, and neither does any
+/// image descriptor further in: a single frame smaller than its logical
+/// screen is legal GIF, and this always reports the screen, never a frame's
+/// own extent (module doc, debt #449).
 fn identify_gif(bytes: &[u8]) -> Result<ImageHeader, ImageIdError> {
     let malformed = |detail: &str| ImageIdError::Malformed {
         format: ImageFormat::Gif,
@@ -203,6 +228,11 @@ fn identify_gif(bytes: &[u8]) -> Result<ImageHeader, ImageIdError> {
 /// lossless/differential with a different payload shape; SOF9/10/11/13/14/15
 /// are the arithmetic-coded variants of the same; `FFF7` is JPEG-LS, an
 /// unrelated ISO extension that reuses the marker range).
+///
+/// Any `APP1` EXIF segment is skipped like any other unrecognized marker,
+/// never read. The returned width and height are always the SOF's stored
+/// pair, unswapped, even where an EXIF `Orientation` of 5-8 would have a
+/// decoder display the transpose (module doc, debt #449).
 fn identify_jpeg(bytes: &[u8]) -> Result<ImageHeader, ImageIdError> {
     let malformed = |detail: String| ImageIdError::Malformed {
         format: ImageFormat::Jpeg,
@@ -405,6 +435,122 @@ mod tests {
                 width: 11,
                 height: 8,
             })
+        );
+    }
+
+    /// A hand-assembled, structurally complete GIF89a whose single frame is
+    /// smaller than its logical screen — legal per the GIF89a specification —
+    /// so that a real decoder's frame extent (4x3) and the container's own
+    /// logical screen descriptor (10x8) genuinely differ. Global color table
+    /// of 2 entries, one image with no local color table, a one-byte LZW
+    /// stream, and a trailer: complete enough to be a real GIF, not merely
+    /// bytes that satisfy this parser.
+    fn gif_with_frame_smaller_than_its_screen() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"GIF89a");
+        // Logical screen descriptor: 10x8, a global color table of 2 entries.
+        bytes.extend_from_slice(&10u16.to_le_bytes());
+        bytes.extend_from_slice(&8u16.to_le_bytes());
+        bytes.push(0x80); // GCT flag set, color resolution 0, sort 0, GCT size 0 (2 entries).
+        bytes.push(0); // Background color index.
+        bytes.push(0); // Pixel aspect ratio.
+        bytes.extend_from_slice(&[0, 0, 0, 255, 255, 255]); // The 2-entry GCT.
+        // Image descriptor: a 4x3 frame, no local color table.
+        bytes.push(0x2C);
+        bytes.extend_from_slice(&0u16.to_le_bytes()); // Left.
+        bytes.extend_from_slice(&0u16.to_le_bytes()); // Top.
+        bytes.extend_from_slice(&4u16.to_le_bytes()); // Frame width — smaller than the screen.
+        bytes.extend_from_slice(&3u16.to_le_bytes()); // Frame height — smaller than the screen.
+        bytes.push(0x00); // No local color table, not interlaced.
+        // Image data: LZW minimum code size, one sub-block, block terminator.
+        bytes.push(2);
+        bytes.push(1);
+        bytes.push(0x84);
+        bytes.push(0x00);
+        bytes.push(0x3B); // Trailer.
+        bytes
+    }
+
+    /// Pins debt #449's decided semantics: a GIF's reported extent is the
+    /// logical screen descriptor, never a frame's own image descriptor, even
+    /// when a real decoder would report a genuinely different, smaller
+    /// extent for the frame. No code path in this module reads the image
+    /// descriptor today, so this test cannot yet fail on its own — its job is
+    /// to fail the day `identify_gif` is changed to read one, which is
+    /// exactly the drift debt #449 says must not happen silently.
+    #[test]
+    fn a_gif_reports_the_logical_screen_not_a_smaller_frame_extent() {
+        let bytes = gif_with_frame_smaller_than_its_screen();
+        assert_eq!(
+            identify(&bytes),
+            Ok(ImageHeader {
+                format: ImageFormat::Gif,
+                width: 10,
+                height: 8,
+            }),
+            "the logical screen is 10x8; the frame inside it is a smaller 4x3 and must not \
+             be what is reported"
+        );
+    }
+
+    /// A hand-assembled JPEG carrying a real `APP1` EXIF segment with
+    /// `Orientation` 6 (rotate 90 degrees, which a decoder that honors it
+    /// displays as height-by-width rather than width-by-height), followed by
+    /// a baseline SOF0 naming a 9x6 frame. Built field by field against the
+    /// TIFF 6.0 layout (Intel byte order) rather than copied from a real
+    /// camera file, so every byte here is accounted for.
+    fn jpeg_with_exif_orientation_six(width: u16, height: u16) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&[0xFF, 0xD8]); // SOI.
+
+        // APP1: "Exif\0\0", then a TIFF header, then one IFD entry naming
+        // Orientation = 6.
+        let mut app1_payload = Vec::new();
+        app1_payload.extend_from_slice(b"Exif\0\0");
+        app1_payload.extend_from_slice(b"II"); // Intel (little-endian) byte order.
+        app1_payload.extend_from_slice(&42u16.to_le_bytes()); // TIFF magic.
+        app1_payload.extend_from_slice(&8u32.to_le_bytes()); // Offset to IFD0, right after this header.
+        app1_payload.extend_from_slice(&1u16.to_le_bytes()); // One directory entry.
+        app1_payload.extend_from_slice(&0x0112u16.to_le_bytes()); // Tag: Orientation.
+        app1_payload.extend_from_slice(&3u16.to_le_bytes()); // Type: SHORT.
+        app1_payload.extend_from_slice(&1u32.to_le_bytes()); // Count: 1.
+        app1_payload.extend_from_slice(&6u16.to_le_bytes()); // Value: 6 (rotate 90 CW).
+        app1_payload.extend_from_slice(&[0, 0]); // Padding out to the 4-byte value field.
+        app1_payload.extend_from_slice(&0u32.to_le_bytes()); // No next IFD.
+        bytes.extend_from_slice(&[0xFF, 0xE1]);
+        let app1_length = (app1_payload.len() + 2) as u16;
+        bytes.extend_from_slice(&app1_length.to_be_bytes());
+        bytes.extend_from_slice(&app1_payload);
+
+        // SOF0: baseline, 8-bit precision, one component.
+        bytes.extend_from_slice(&[0xFF, 0xC0]);
+        bytes.extend_from_slice(&11u16.to_be_bytes()); // Segment length, itself included.
+        bytes.push(8); // Precision.
+        bytes.extend_from_slice(&height.to_be_bytes());
+        bytes.extend_from_slice(&width.to_be_bytes());
+        bytes.push(1); // One component.
+        bytes.extend_from_slice(&[1, 0x11, 0]); // Component id, sampling factors, quant table.
+
+        bytes
+    }
+
+    /// Pins debt #449's decided semantics on the JPEG side: the reported
+    /// extent is always the SOF's stored width and height, never
+    /// orientation-corrected. `Orientation` 6 would have a decoder display
+    /// this frame transposed (6x9, not 9x6); asserting the stored pair
+    /// catches the day this module is changed to read EXIF and apply it,
+    /// which would silently change what every `AssetEntry` records.
+    #[test]
+    fn a_jpegs_reported_extent_ignores_exif_orientation() {
+        let bytes = jpeg_with_exif_orientation_six(9, 6);
+        assert_eq!(
+            identify(&bytes),
+            Ok(ImageHeader {
+                format: ImageFormat::Jpeg,
+                width: 9,
+                height: 6,
+            }),
+            "Orientation 6 must not transpose the reported extent"
         );
     }
 

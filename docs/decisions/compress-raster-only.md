@@ -203,6 +203,41 @@ and it has not been measured. Issue #457 recommends binding canonical but
 argues it from file size — the axis this record opens by setting aside. It
 should be re-argued on decode cost before it is implemented.
 
+**Re-argued on decode cost (2026-07-28, issue #457): keep the uncompressed
+rung, do not bind canonical.** Two reasons, and either is sufficient alone.
+
+- **Trusted-path surface, structurally.** Under a shipping profile — HiFi or
+  LoFi — no asset today ever resolves to a canonical PNG/JPEG/GIF payload:
+  every class either block-compresses or lands on the uncompressed-in-KTX2
+  rung, both of which a target decodes with a Zstd inflate and no per-pixel
+  image codec. RAW is the one profile that ships canonical containers, and
+  RAW is explicitly not a shipping profile (`docs/decisions/asset-quality-profile-naming.md`)
+  — it is the qualification baseline. Binding canonical for a lossless-only
+  class whenever it happens to be smaller would put a real PNG decoder in a
+  shipping bank's resident payload for the first time, which is exactly the
+  dependency `docs/decisions/image-assets-cross-boundary-b.md` keeps out of
+  "the lean painter" and `docs/decisions/profile-preview-decodes-in-the-loader.md`
+  keeps out of the painter entirely ("never re-decoded RGBA"). That is a
+  one-way door for every future field asset, not only the two committed
+  atlases.
+- **The saving is small in absolute terms.** At the design capture's own
+  "order 5-20 ms/megapixel on embedded cores" figure, decoding
+  `inter-ascii-atlas` and `arabic-atlas` (512x256, 0.131 megapixels each)
+  costs on the order of 0.7-2.6 ms each — negligible next to the 10-41 ms a
+  single full-screen background already costs on the same boot-critical
+  path, per this record's own numbers below. What canonical binding buys
+  back is 9 763 bytes on `inter-ascii-atlas` (73 703 to 63 940) and 1 863
+  bytes on `arabic-atlas` (98 538 to 96 675) of OTA/flash size — real, but
+  small next to the cost of a new decoder class in a resource-constrained,
+  safety-relevant runtime.
+
+Revisit if either premise changes: if issue #462's memory/OTA budget is set
+and these bytes are shown to bind against it, or if a production painter
+ever needs an image-container decoder for an unrelated reason, so that
+adding one here is marginal rather than a first instance. Until then,
+`dashpack::profile::pack`'s lossless-only path stays as built — the
+uncompressed rung, unconditionally.
+
 **2. What the raster band values should be, once there is a budget to set
 them against.** Not whether to compress raster — that is settled, and for
 the largest class in the system.

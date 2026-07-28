@@ -78,13 +78,34 @@ impl BlockSize {
                 y: self.y,
             });
         }
-        let columns = width.div_ceil(self.x) as usize;
-        let rows = height.div_ceil(self.y) as usize;
-        columns
-            .checked_mul(rows)
-            .and_then(|blocks| blocks.checked_mul(BLOCK_BYTES))
+        block_grid_bytes(width, height, self.x, self.y, BLOCK_BYTES)
             .ok_or(AstcError::ImageTooLarge { width, height })
     }
+}
+
+/// The block-grid arithmetic behind every payload length this crate computes:
+/// how many bytes a `width` by `height` image occupies at a `block_width` by
+/// `block_height` block footprint, `bytes_per_block` each, with a partial
+/// block at the right or bottom edge counted as a whole block — because that
+/// is what every format here stores, compressed or not.
+///
+/// Shared by [`BlockSize::payload_len`] and `crate::ktx2::Format::payload_len`
+/// (debt #452): the two callers differ in their own zero-footprint handling
+/// and their own error type, not in this formula, so only the formula moved
+/// here. A caller must have already refused a zero `block_width` or
+/// `block_height` — this divides by both without checking, because each
+/// caller's own zero-refusal already ran first and names that case in its own
+/// error type.
+pub(crate) fn block_grid_bytes(
+    width: u32,
+    height: u32,
+    block_width: u32,
+    block_height: u32,
+    bytes_per_block: usize,
+) -> Option<usize> {
+    let columns = width.div_ceil(block_width) as usize;
+    let rows = height.div_ceil(block_height) as usize;
+    columns.checked_mul(rows)?.checked_mul(bytes_per_block)
 }
 
 /// The length of an 8-bit RGBA buffer for a `width` by `height` image.
@@ -536,6 +557,31 @@ mod tests {
         assert_eq!(payload_len(block, 5, 4), 32);
         assert_eq!(payload_len(block, 1, 1), 16);
         assert_eq!(payload_len(BlockSize { x: 6, y: 6 }, 12, 7), 2 * 2 * 16);
+    }
+
+    /// An asymmetric footprint against a non-square image — the one
+    /// combination that can tell "width divides by block width, height by
+    /// block height" apart from "the axes swapped". Every other footprint
+    /// test in this crate pairs an asymmetric block with a *square* image
+    /// (where the two assignments multiply to the same block count) or pairs
+    /// a non-square image with a *symmetric* block (where there is only one
+    /// block dimension to divide by either way), so neither shape of test can
+    /// catch the axes swapping. This one can: 18x11 at 6x5 is 3 columns (18
+    /// div 6) by 3 rows (11 div 5, rounded up) — 9 blocks; swapped, it would
+    /// be 4 columns by 2 rows — 8 blocks.
+    ///
+    /// Measured: this is not a hypothetical gap. Deliberately swapping the
+    /// axes in `block_grid_bytes` (debt #452's shared formula) passes every
+    /// other test in `dashpack`'s unit and integration suites, because none
+    /// of them happens to combine an asymmetric footprint with a non-square
+    /// image — the production ladder's rungs are all square footprints
+    /// (`crate::profile::IMAGE_FILL_RUNGS`), so this shape only arises for a
+    /// caller reaching `ktx2::Format::Astc` with a non-square footprint
+    /// directly.
+    #[test]
+    fn an_asymmetric_footprint_divides_each_axis_by_its_own_block_dimension() {
+        let block = BlockSize { x: 6, y: 5 };
+        assert_eq!(payload_len(block, 18, 11), 3 * 3 * BLOCK_BYTES);
     }
 
     /// The overflow guard. `2^31 * 2^31 * 4` is exactly `2^64`, so the

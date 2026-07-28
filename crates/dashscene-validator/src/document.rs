@@ -863,6 +863,15 @@ fn as_paint_format(format: dashbuf::ImageFormat) -> Option<dashpaint::ImageForma
 /// the correct division: only a decoder can find that, and a decoder is the
 /// component the target-hardware rules keep out of the trusted path.
 ///
+/// A consequence pinned rather than left implicit (debt #449): the extent
+/// [`rule::ASSET_EXTENT_MISMATCH`] compares against is the container's own
+/// header-reported extent — GIF's logical screen, JPEG's stored SOF pair,
+/// with no EXIF `Orientation` applied — never a decoder's. `AssetEntry`'s
+/// schema comment (`crates/dashbuf/schema/dashbuf.fbs`) and
+/// `dashpaint::image_id`'s module doc pin the same choice on the recording
+/// side, so the two sides of this comparison stay held to one definition
+/// even once the packer's decoding writer reaches this path.
+///
 /// An entry whose recorded format this build does not recognize is skipped
 /// rather than judged. The schema's enums are append-only, so such a document
 /// is newer than this reader, and its payload may be a container this build
