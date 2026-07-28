@@ -99,10 +99,14 @@ fn the_two_band_implementations_report_the_same_numbers() {
         // The same two knobs on both sides. `differing_fraction` is deliberately
         // set so neither side can pass, because `passes` is graded separately
         // below and the counts are what this test welds.
+        // No gate: this test welds the two crates' *counting* against each
+        // other, and the packer's band has no gate to weld one against. A gate
+        // here would add a term only one side can compute.
         let render: &'static oracle::ToleranceBand = Box::leak(Box::new(oracle::ToleranceBand {
             rule: "weld",
             channel_delta: threshold,
             differing_fraction: 0.5,
+            gate: None,
         }));
         let packer: &'static pack_band::ToleranceBand =
             Box::leak(Box::new(pack_band::ToleranceBand {
