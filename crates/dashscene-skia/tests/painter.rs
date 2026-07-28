@@ -1107,6 +1107,26 @@ fn solid_atlas_png(n: i32) -> Vec<u8> {
     painter.png_bytes()
 }
 
+/// A draws-nothing anchor rect and the paint table that resolves it (issue
+/// #505 measurement shim). A run now draws at its anchor rect's index, so a
+/// hand-built table with runs but no rects never reaches the run at all. The
+/// entry carries no fill and no stroke, so the rect itself inks nothing and
+/// the pixels a glyph test asserts are the run's alone.
+fn anchor_only_scene() -> (Vec<RectEntry>, PaintTable) {
+    let mut paints = PaintTable::new();
+    let paint = paints.push(PaintEntry::default());
+    let rects = vec![RectEntry {
+        x: 0.0,
+        y: 0.0,
+        w: 32.0,
+        h: 32.0,
+        paint,
+        clip: ClipIndex::UNCLIPPED,
+        opacity: 1.0,
+    }];
+    (rects, paints)
+}
+
 /// A one-glyph atlas placing the whole image over one em, all "inside".
 fn inside_atlas() -> (GlyphRunTable, AtlasIndex) {
     let mut glyphs = GlyphRunTable::new();
@@ -1135,6 +1155,7 @@ fn a_glyph_quad_fills_its_box_with_the_text_color() {
     // atlas sampling, and colour modulation, without AA in the way.
     let (mut glyphs, atlas) = inside_atlas();
     glyphs.push_run(GlyphRun {
+        rect: 0,
         atlas,
         size: 16.0,
         color: RED,
@@ -1146,10 +1167,11 @@ fn a_glyph_quad_fills_its_box_with_the_text_color() {
         opacity: 1.0,
     });
 
+    let (rects, paints) = anchor_only_scene();
     let mut painter = SkiaPainter::new(32, 32);
     painter.paint(
-        &[],
-        &PaintTable::new(),
+        &rects,
+        &paints,
         &ImageTable::new(),
         &ClipTable::new(),
         &[],
@@ -1176,6 +1198,7 @@ fn a_glyph_absent_from_the_atlas_draws_nothing() {
     // glyph outside the charset): it paints nothing rather than panicking.
     let (mut glyphs, atlas) = inside_atlas();
     glyphs.push_run(GlyphRun {
+        rect: 0,
         atlas,
         size: 16.0,
         color: RED,
@@ -1187,10 +1210,11 @@ fn a_glyph_absent_from_the_atlas_draws_nothing() {
         opacity: 1.0,
     });
 
+    let (rects, paints) = anchor_only_scene();
     let mut painter = SkiaPainter::new(32, 32);
     painter.paint(
-        &[],
-        &PaintTable::new(),
+        &rects,
+        &paints,
         &ImageTable::new(),
         &ClipTable::new(),
         &[],
@@ -1307,6 +1331,7 @@ fn a_glyph_runs_free_path_opacity_dims_the_text() {
     fn inked(opacity: f32) -> usize {
         let (mut glyphs, atlas) = inside_atlas();
         glyphs.push_run(GlyphRun {
+            rect: 0,
             atlas,
             size: 16.0,
             color: RED,
@@ -1317,10 +1342,11 @@ fn a_glyph_runs_free_path_opacity_dims_the_text() {
             }],
             opacity,
         });
+        let (rects, paints) = anchor_only_scene();
         let mut painter = SkiaPainter::new(32, 32);
         painter.paint(
-            &[],
-            &PaintTable::new(),
+            &rects,
+            &paints,
             &ImageTable::new(),
             &ClipTable::new(),
             &[],

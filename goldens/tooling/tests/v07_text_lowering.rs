@@ -36,7 +36,7 @@ use dashscene_typeset::text::{Font, Typesetter};
 use dashscene_validator::Profile;
 
 mod common;
-use common::{decode_golden, decode_rgba, diff_vs, load_atlas, origin_of, size_of};
+use common::{anchor_of, decode_golden, decode_rgba, diff_vs, load_atlas, origin_of, size_of};
 
 const HUG_IN_FILL: &str = include_str!("../../../corpus/figma-fixtures/lowering-hug-in-fill.json");
 const FONT: &str = concat!(
@@ -100,6 +100,7 @@ fn lower_and_solve(ts: &mut Typesetter) -> (Arena, NodeId) {
 fn text_run(
     ts: &mut Typesetter,
     atlas: AtlasIndex,
+    anchor: u32,
     origin: (f32, f32),
     text: &str,
     size: f32,
@@ -117,6 +118,7 @@ fn text_run(
         })
         .collect();
     GlyphRun {
+        rect: anchor,
         atlas,
         size,
         color,
@@ -146,6 +148,7 @@ fn lowered_text_solves_and_paints_to_its_golden() {
     glyphs.push_run(text_run(
         &mut ts,
         atlas,
+        anchor_of(&arena, text),
         origin_of(&arena, text),
         TEXT,
         TEXT_SIZE,

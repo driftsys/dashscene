@@ -31,7 +31,7 @@ use dashscene_typeset::text::{Font, Typesetter};
 mod common;
 
 use common::{
-    AMBER, INK, NAVY, NEAR_WHITE, decode_golden, diff_vs, load_atlas, origin_of, size_of,
+    AMBER, INK, NAVY, NEAR_WHITE, anchor_of, decode_golden, diff_vs, load_atlas, origin_of, size_of,
 };
 
 const FONT: &str = concat!(
@@ -92,6 +92,7 @@ const BUDGET: usize = 1_200;
 fn text_run(
     ts: &mut Typesetter,
     atlas: AtlasIndex,
+    anchor: u32,
     origin: (f32, f32),
     text: &str,
     size: f32,
@@ -109,6 +110,7 @@ fn text_run(
         }
     }
     GlyphRun {
+        rect: anchor,
         atlas,
         size,
         color,
@@ -213,6 +215,7 @@ fn staged(
         glyphs.push_run(text_run(
             ts,
             atlas,
+            anchor_of(arena, heading),
             origin_of(arena, heading),
             HEADING,
             HEADING_SIZE,
@@ -223,6 +226,7 @@ fn staged(
         glyphs.push_run(text_run(
             ts,
             atlas,
+            anchor_of(arena, chip),
             origin_of(arena, chip),
             CHIP,
             CHIP_SIZE,

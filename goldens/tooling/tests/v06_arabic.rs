@@ -41,7 +41,8 @@ use dashscene_typeset::text::{Font, Typesetter};
 mod common;
 
 use common::{
-    AMBER, INK, NAVY, NEAR_WHITE, PANEL, decode_golden, diff_vs, load_atlas, origin_of, size_of,
+    AMBER, INK, NAVY, NEAR_WHITE, PANEL, anchor_of, decode_golden, diff_vs, load_atlas, origin_of,
+    size_of,
 };
 
 const FONT: &str = concat!(
@@ -153,9 +154,11 @@ impl Run {
 /// a fixed-width RTL box `max_width` is the box width, so the paragraph's
 /// flush-right shift is already in each glyph's `x` when it crosses
 /// boundary B; the painter never moves anything (P2).
+#[allow(clippy::too_many_arguments)]
 fn text_run(
     ts: &mut Typesetter,
     atlas: AtlasIndex,
+    anchor: u32,
     origin: (f32, f32),
     text: &str,
     size: f32,
@@ -174,6 +177,7 @@ fn text_run(
         }
     }
     GlyphRun {
+        rect: anchor,
         atlas,
         size,
         color,
@@ -332,6 +336,7 @@ fn staged(
         glyphs.push_run(text_run(
             ts,
             atlas,
+            anchor_of(arena, node),
             origin_of(arena, node),
             text,
             size,

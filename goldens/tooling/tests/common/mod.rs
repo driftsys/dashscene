@@ -118,6 +118,16 @@ pub fn origin_of(arena: &Arena, node: NodeId) -> (f32, f32) {
     (rect.x, rect.y)
 }
 
+/// The rect-table index a committed node resolved to — a staged glyph run's
+/// anchor (`GlyphRun::rect`, issue #505 measurement shim). Staged caller-side
+/// here; the real design stamps it inside `commit`.
+pub fn anchor_of(arena: &Arena, node: NodeId) -> u32 {
+    arena
+        .committed()
+        .rect_index_of(node)
+        .expect("the node is committed")
+}
+
 /// The resolved box size of a committed node.
 pub fn size_of(arena: &Arena, node: NodeId) -> (f32, f32) {
     let scene = arena.committed();

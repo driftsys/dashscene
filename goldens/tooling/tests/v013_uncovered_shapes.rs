@@ -39,7 +39,9 @@ use dashscene_typeset::text::{Font, Typesetter};
 
 mod common;
 
-use common::{AMBER, NAVY, NEAR_WHITE, PANEL, decode_golden, decode_rgba, diff_vs, load_atlas};
+use common::{
+    AMBER, NAVY, NEAR_WHITE, PANEL, anchor_of, decode_golden, decode_rgba, diff_vs, load_atlas,
+};
 
 const fn rgb(r: f32, g: f32, b: f32) -> Color {
     Color { r, g, b, a: 1.0 }
@@ -354,6 +356,7 @@ fn baseline_glyphs(arena: &Arena, typesetter: &mut Typesetter, run: NodeId) -> G
         }
     }
     table.push_run(GlyphRun {
+        rect: anchor_of(arena, run),
         atlas,
         size: RUN_SIZE,
         color: NEAR_WHITE,

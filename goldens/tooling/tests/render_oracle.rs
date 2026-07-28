@@ -645,6 +645,7 @@ fn oracle_typesetter() -> Typesetter {
 fn text_runs(
     ts: &mut Typesetter,
     atlases: &[AtlasIndex],
+    anchor: u32,
     origin: (f32, f32),
     box_width: f32,
     text: &str,
@@ -673,6 +674,7 @@ fn text_runs(
             match runs.last_mut() {
                 Some(run) if run.atlas == atlas => run.glyphs.push(quad),
                 _ => runs.push(GlyphRun {
+                    rect: anchor,
                     atlas,
                     size,
                     color,
@@ -701,9 +703,15 @@ fn stage_text(arena: &Arena, ts: &mut Typesetter, atlases: &[AtlasIndex]) -> Vec
         if let (Some(text), Some(style)) = (arena.text(node), arena.text_style(node)) {
             let origin = origin_of(arena, node);
             let (box_width, _) = size_of(arena, node);
+            // The staged run's anchor rect (issue #505 measurement shim).
+            let anchor = arena
+                .committed()
+                .rect_index_of(node)
+                .expect("the node is committed");
             out.extend(text_runs(
                 ts,
                 atlases,
+                anchor,
                 origin,
                 box_width,
                 text,

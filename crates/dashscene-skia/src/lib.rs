@@ -170,6 +170,15 @@ impl Painter for SkiaPainter {
         // decodes once (the hero repeats one atlas across ~148 vectors).
         let mut field_effect: Option<RuntimeEffect> = None;
         let mut field_atlases: HashMap<u32, Image> = HashMap::new();
+        // Measurement shim (issue #505): glyph runs draw at their anchor
+        // rect's index rather than as unconditional foreground. The per-frame
+        // MSDF setup (the SkSL compile and the atlas decodes) is built once
+        // here, not once per rect; a text-free scene builds nothing.
+        let msdf = MsdfFrame::new(glyphs);
+        let mut runs_by_rect: HashMap<u32, Vec<usize>> = HashMap::new();
+        for (index, run) in glyphs.runs().iter().enumerate() {
+            runs_by_rect.entry(run.rect).or_default().push(index);
+        }
         for (i, rect) in source.iter().enumerate() {
             // Open every group that starts at this rect (at most one per
             // index — one opacity per node). `save_layer_alpha` begins the
@@ -343,6 +352,16 @@ impl Painter for SkiaPainter {
             for shadow in entry.shadows.iter().filter(|s| s.kind == ShadowKind::Inner) {
                 draw_inner_shadow(canvas, &rrect, rect, &entry.corners, shadow, rect.opacity);
             }
+            // Every run anchored at this rect, in table order: after the
+            // rect's own ink, still inside its clip save, and still inside
+            // every group layer that encloses it (the group closes below).
+            if let Some(anchored) = runs_by_rect.get(&(i as u32))
+                && let Some(msdf) = msdf.as_ref()
+            {
+                for &run_index in anchored {
+                    msdf.draw_run(canvas, glyphs, &glyphs.runs()[run_index]);
+                }
+            }
             if clipped {
                 canvas.restore();
             }
@@ -355,12 +374,6 @@ impl Painter for SkiaPainter {
                 open_group_ends.pop();
             }
         }
-
-        // Text is drawn after every rect: the v0.5 Latin subset composites
-        // glyph runs over the rect table as foreground (boundary B's
-        // paint contract). Runs arrive already shaped and positioned (P2),
-        // and each glyph is one textured MSDF atlas quad.
-        draw_glyph_runs(canvas, glyphs);
     }
 }
 
@@ -384,25 +397,40 @@ const MSDF_SKSL: &str = r"
     }
 ";
 
-/// Draws every glyph run's quads. Each atlas image is decoded once (not
-/// once per run that samples it); the resolve effect compiles once.
-fn draw_glyph_runs(canvas: &Canvas, glyphs: &GlyphRunTable) {
-    if glyphs.is_empty() {
-        return;
+/// The per-frame MSDF setup, hoisted out of the per-run path so the SkSL
+/// compile and the atlas decodes happen once per frame rather than once per
+/// rect that anchors a run (issue #505 measurement shim).
+struct MsdfFrame {
+    effect: RuntimeEffect,
+    decoded: Vec<Image>,
+}
+
+impl MsdfFrame {
+    /// `None` for a text-free scene, which then compiles nothing and decodes
+    /// nothing — the posture the old lazy entry point had.
+    fn new(glyphs: &GlyphRunTable) -> Option<Self> {
+        if glyphs.is_empty() {
+            return None;
+        }
+        let effect =
+            RuntimeEffect::make_for_shader(MSDF_SKSL, None).expect("MSDF resolve SkSL compiles");
+        let decoded: Vec<Image> = glyphs
+            .atlases()
+            .iter()
+            .map(|atlas| {
+                images::deferred_from_encoded_data(Data::new_copy(&atlas.image.bytes), None)
+                    .expect("atlas image decodes (a build artifact, validated upstream P4)")
+            })
+            .collect();
+        Some(Self { effect, decoded })
     }
-    let effect =
-        RuntimeEffect::make_for_shader(MSDF_SKSL, None).expect("MSDF resolve SkSL compiles");
-    let decoded: Vec<Image> = glyphs
-        .atlases()
-        .iter()
-        .map(|atlas| {
-            images::deferred_from_encoded_data(Data::new_copy(&atlas.image.bytes), None)
-                .expect("atlas image decodes (a build artifact, validated upstream P4)")
-        })
-        .collect();
-    for run in glyphs.runs() {
+
+    /// Draws one run's quads at the canvas's current clip and layer state —
+    /// the caller places it, which is what puts a run inside its anchor
+    /// rect's clip and group layer.
+    fn draw_run(&self, canvas: &Canvas, glyphs: &GlyphRunTable, run: &GlyphRun) {
         let atlas = glyphs.atlas(run.atlas);
-        let image = &decoded[run.atlas.0 as usize];
+        let image = &self.decoded[run.atlas.0 as usize];
         // The MSDF field is a distance, not a color: linear filtering
         // interpolates the field (the point of MSDF's crisp edges);
         // nearest would step it. The surface carries no color space
@@ -415,14 +443,12 @@ fn draw_glyph_runs(canvas: &Canvas, glyphs: &GlyphRunTable) {
         let px_range = atlas.distance_range_px * run.size / f32::from(atlas.px_per_em);
         // Fold the run's free-path group alpha into the fill (story #44):
         // the MSDF resolve modulates coverage by `color.a`, so multiplying
-        // the alpha dims the whole run. The render-target group path and
-        // clip/mask regions are not applied to runs (a documented
-        // limitation on `GlyphRun::opacity`).
+        // the alpha dims the whole run.
         let color = dashpaint::Color {
             a: run.color.a * run.opacity,
             ..run.color
         };
-        let uniforms = msdf_uniforms(&effect, color, px_range);
+        let uniforms = msdf_uniforms(&self.effect, color, px_range);
         for quad in &run.glyphs {
             let Some(g) = atlas.glyph(quad.glyph_id) else {
                 // No quad for this glyph id — an empty outline (space) or
@@ -432,7 +458,15 @@ fn draw_glyph_runs(canvas: &Canvas, glyphs: &GlyphRunTable) {
                 continue;
             };
             draw_glyph_quad(
-                canvas, image, atlas, g, quad, run, &effect, &uniforms, sampling,
+                canvas,
+                image,
+                atlas,
+                g,
+                quad,
+                run,
+                &self.effect,
+                &uniforms,
+                sampling,
             );
         }
     }

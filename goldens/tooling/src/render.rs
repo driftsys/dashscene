@@ -196,6 +196,16 @@ fn box_of(arena: &Arena, node: NodeId) -> (f32, f32, f32, f32) {
     (rect.x, rect.y, rect.w, rect.h)
 }
 
+/// The rect-table index a committed node resolved to — a staged run's anchor
+/// (`GlyphRun::rect`, issue #505 measurement shim). Caller-side here; the real
+/// design stamps it inside `commit`.
+fn rect_index_of(arena: &Arena, node: NodeId) -> u32 {
+    arena
+        .committed()
+        .rect_index_of(node)
+        .expect("the node is committed")
+}
+
 /// The `TextShape` for a node's text style (story #327, #341): the fixed line
 /// height, letter spacing, horizontal alignment, and standard-ligatures-off
 /// bit the stager lays the run out under.
@@ -234,6 +244,7 @@ fn vertical_align(align: dashscene_core::TextAlignV) -> crate::VerticalAlign {
 fn text_runs(
     ts: &mut Typesetter,
     atlases: &[AtlasIndex],
+    anchor: u32,
     origin: (f32, f32),
     box_size: (f32, f32),
     text: &str,
@@ -261,6 +272,7 @@ fn text_runs(
             match runs.last_mut() {
                 Some(run) if run.atlas == atlas => run.glyphs.push(quad),
                 _ => runs.push(GlyphRun {
+                    rect: anchor,
                     atlas,
                     size,
                     color,
@@ -292,6 +304,7 @@ fn stage_text(arena: &Arena, ts: &mut Typesetter, atlases: &[AtlasIndex]) -> Vec
             out.extend(text_runs(
                 ts,
                 atlases,
+                rect_index_of(arena, node),
                 (x, y),
                 (w, h),
                 text,
@@ -577,6 +590,7 @@ mod tests {
         let left = text_runs(
             &mut ts,
             &atlases,
+            0,
             origin,
             box_size,
             text,
@@ -590,6 +604,7 @@ mod tests {
         let center = text_runs(
             &mut ts,
             &atlases,
+            0,
             origin,
             box_size,
             text,
@@ -661,6 +676,7 @@ mod tests {
             text_runs(
                 ts,
                 &atlases,
+                0,
                 (0.0, 0.0),
                 (400.0, 100.0),
                 "Sphinx of quartz 123",

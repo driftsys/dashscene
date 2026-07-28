@@ -779,6 +779,16 @@ impl Atlas {
 /// the v0.5 Latin subset — `docs/design/architecture.md` §7.2).
 #[derive(Debug, Clone, PartialEq)]
 pub struct GlyphRun {
+    /// **Measurement shim (issue #505).** The rect-table index of the text
+    /// node this run was shaped from — the run's anchor. The painter draws
+    /// the run immediately after the rect at this index, inside that rect's
+    /// resolved clip, so the anchor carries the run's clip, its group
+    /// membership and its z position at once.
+    ///
+    /// Staged caller-side here, exactly as the rest of the run is. The real
+    /// design stamps it at commit; this field exists so the golden movement
+    /// that change causes can be measured before the change is scheduled.
+    pub rect: u32,
     /// The atlas the glyphs are sampled from.
     pub atlas: AtlasIndex,
     /// Render size in document units (px per em).

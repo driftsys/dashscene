@@ -37,7 +37,7 @@ use dashscene_typeset::text::{Font, Typesetter};
 use dashscene_validator::Profile;
 
 mod common;
-use common::{decode_golden, decode_rgba, diff_vs, load_atlas, origin_of};
+use common::{anchor_of, decode_golden, decode_rgba, diff_vs, load_atlas, origin_of};
 
 const VARIANT_TOPOLOGY: &str =
     include_str!("../../../corpus/figma-fixtures/lowering-variant-topology.json");
@@ -99,7 +99,7 @@ fn lower_and_solve(ts: &mut Typesetter) -> (Arena, NodeId) {
 
 /// Shapes `text` and places every glyph in absolute document space by adding the
 /// node's resolved box origin (the painter moves nothing, P2).
-fn text_run(ts: &mut Typesetter, atlas: AtlasIndex, origin: (f32, f32)) -> GlyphRun {
+fn text_run(ts: &mut Typesetter, atlas: AtlasIndex, anchor: u32, origin: (f32, f32)) -> GlyphRun {
     let laid = ts.layout(TEXT, TEXT_SIZE, None);
     let glyphs = laid
         .lines
@@ -112,6 +112,7 @@ fn text_run(ts: &mut Typesetter, atlas: AtlasIndex, origin: (f32, f32)) -> Glyph
         })
         .collect();
     GlyphRun {
+        rect: anchor,
         atlas,
         size: TEXT_SIZE,
         color: INK,
@@ -135,7 +136,12 @@ fn the_resolved_instance_solves_and_paints_to_its_golden() {
 
     let mut glyphs = GlyphRunTable::new();
     let atlas = glyphs.push_atlas(load_atlas(ATLAS_DIR));
-    glyphs.push_run(text_run(&mut ts, atlas, origin_of(&arena, text)));
+    glyphs.push_run(text_run(
+        &mut ts,
+        atlas,
+        anchor_of(&arena, text),
+        origin_of(&arena, text),
+    ));
 
     let png = render(&arena, &glyphs);
     goldens::assert_matches_golden_max_pixels("v07-variant-topology", &png, BUDGET);

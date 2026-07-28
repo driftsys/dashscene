@@ -36,7 +36,7 @@ use dashscene_typeset::text::{Font, Typesetter};
 
 mod common;
 
-use common::{NAVY, NEAR_WHITE, decode_golden, diff_vs, load_atlas, origin_of};
+use common::{NAVY, NEAR_WHITE, anchor_of, decode_golden, diff_vs, load_atlas, origin_of};
 
 const FONT_ARABIC: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -87,6 +87,7 @@ const BUDGET: usize = 500;
 fn text_runs(
     ts: &mut Typesetter,
     atlases: &[AtlasIndex],
+    anchor: u32,
     origin: (f32, f32),
     text: &str,
     size: f32,
@@ -107,6 +108,7 @@ fn text_runs(
                 // a font switch starts a new run against the other atlas.
                 Some(run) if run.atlas == atlas => run.glyphs.push(quad),
                 _ => runs.push(GlyphRun {
+                    rect: anchor,
                     atlas,
                     size,
                     color,
@@ -187,6 +189,7 @@ fn mixed_script_fallback_matches_its_golden() {
     for run in text_runs(
         &mut ts,
         &[arabic, latin],
+        anchor_of(&arena, label),
         origin_of(&arena, label),
         LABEL,
         LABEL_SIZE,
@@ -236,6 +239,7 @@ fn the_label_cascades_across_both_atlases() {
     let runs = text_runs(
         &mut ts,
         &[arabic, latin],
+        anchor_of(&arena, label),
         origin_of(&arena, label),
         LABEL,
         LABEL_SIZE,
@@ -310,6 +314,7 @@ fn dropping_either_fonts_runs_exceeds_the_budget() {
         for run in text_runs(
             ts,
             &[arabic, latin],
+            anchor_of(&arena, label),
             origin_of(&arena, label),
             LABEL,
             LABEL_SIZE,

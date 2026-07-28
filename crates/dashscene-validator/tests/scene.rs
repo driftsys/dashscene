@@ -576,6 +576,8 @@ fn text_alongside_a_render_target_group_is_named_a_limitation() {
         vec![],
     ));
     glyphs.push_run(GlyphRun {
+        // The scene's one rect (issue #505 measurement shim).
+        rect: 0,
         atlas,
         size: 16.0,
         color: red(),
