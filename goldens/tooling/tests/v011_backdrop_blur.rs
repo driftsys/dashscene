@@ -263,6 +263,15 @@ fn the_frosted_panel_scene_matches_its_golden() {
 /// Everything beneath the panel is white. The only way a pixel just inside
 /// the panel can darken is if the blur read the black band, which lies
 /// entirely *outside* the panel's box.
+///
+/// **These probes bound the blur's shape, not its width** (issue #409). The
+/// edge probe's band has no upper bound on sigma — as sigma grows that pixel
+/// tends to 127.5, which stays inside it — and the deep probe passes on a
+/// render where the blur does nothing at all, the no-blur value there being
+/// 255; it is a falloff guard only because the edge probe is paired with it.
+/// Neither is evidence about the radius-to-sigma mapping.
+/// `the_backdrop_blur_spreads_at_the_mapped_sigma` is the only place in this
+/// tree that measures the mapping outside the golden image.
 #[test]
 fn the_backdrop_blur_reads_past_the_node_box() {
     let mut arena = Arena::new();
@@ -308,6 +317,170 @@ fn the_backdrop_blur_reads_past_the_node_box() {
         quantized(WHITE),
         "the seam outside the panel is hard"
     );
+}
+
+/// The canvas the sigma measurement renders, and the panel and row it reads.
+const SIGMA_SURFACE: i32 = 192;
+const SIGMA_HEIGHT: i32 = 64;
+/// The band's right edge, which the panel is centred on.
+const SIGMA_SEAM: f64 = 96.0;
+const SIGMA_PANEL_X: usize = 32;
+const SIGMA_PANEL_W: usize = 128;
+/// The panel's vertical middle, far from its top and bottom edges.
+const SIGMA_ROW: usize = 32;
+
+/// The standard deviation, in device pixels, of the blur kernel the painter
+/// actually applied at `radius`.
+///
+///   bg white 192×64
+///     └── band black (0,0) 96×64            — a hard seam down x = 96
+///     └── panel (32,8) 128×48, no fill, backdrop blur radius `radius`
+///
+/// The panel is centred on the seam and carries no fill, so along
+/// [`SIGMA_ROW`] the render *is* the blurred backdrop. Both panel edges sit
+/// 64 px from the seam, well past four sigma at the radii measured, so the row
+/// starts at pure black and ends at pure white and the profile is complete.
+/// Where the kernel reaches past the canvas the painter's `TileMode::Clamp`
+/// extends the edge column, which is the band on the left and the background
+/// on the right — the same values an unbounded canvas would supply, so the
+/// canvas edges contribute no error.
+///
+/// A blurred step edge is the kernel's cumulative distribution scaled to the
+/// step's height, so the differences between neighbouring columns are the
+/// kernel itself and their second moment about the seam is its variance. That
+/// makes the measurement independent of the kernel's *shape*: Skia
+/// approximates a Gaussian with three box passes, and a fit against an erf
+/// profile would charge that approximation to sigma, while a second moment
+/// does not.
+fn measured_blur_sigma(radius: f32) -> f64 {
+    let mut arena = Arena::new();
+    {
+        let mut txn = arena.open();
+        let bg = boxed(
+            &mut txn,
+            None,
+            0.0,
+            0.0,
+            SIGMA_SURFACE as f32,
+            SIGMA_HEIGHT as f32,
+        );
+        txn.set_prop(bg, Prop::Fill(WHITE));
+        let band = boxed(
+            &mut txn,
+            Some(bg),
+            0.0,
+            0.0,
+            SIGMA_SEAM as f32,
+            SIGMA_HEIGHT as f32,
+        );
+        txn.set_prop(band, Prop::Fill(BLACK));
+        let panel = boxed(
+            &mut txn,
+            Some(bg),
+            SIGMA_PANEL_X as f32,
+            8.0,
+            SIGMA_PANEL_W as f32,
+            48.0,
+        );
+        txn.set_prop(panel, backdrop_blur(radius));
+        txn.commit();
+    }
+    let mut painter = SkiaPainter::new(SIGMA_SURFACE, SIGMA_HEIGHT);
+    let bytes = render(&arena, &mut painter);
+    let row: Vec<f64> = (SIGMA_PANEL_X..SIGMA_PANEL_X + SIGMA_PANEL_W)
+        .map(|x| f64::from(goldens::pixel(&bytes, SIGMA_SURFACE as usize, x, SIGMA_ROW)[0]))
+        .collect();
+
+    // The profile must be complete inside the panel, or the moments below
+    // are taken over a truncated kernel and read low.
+    assert_eq!(
+        (row[0], row[row.len() - 1]),
+        (0.0, 255.0),
+        "the blurred edge must reach both flats inside the panel at radius {radius}, or the \
+         second moment is measured over a truncated kernel: {row:?}"
+    );
+
+    let (mut mass, mut first, mut second) = (0.0f64, 0.0f64, 0.0f64);
+    for (i, pair) in row.windows(2).enumerate() {
+        let weight = pair[1] - pair[0];
+        // The difference between columns x and x+1 belongs at their shared
+        // boundary, x + 1, measured from the seam.
+        let u = (SIGMA_PANEL_X + i + 1) as f64 - SIGMA_SEAM;
+        mass += weight;
+        first += u * weight;
+        second += u * u * weight;
+    }
+    let mean = first / mass;
+    // A symmetric kernel leaves the edge where it found it. An asymmetric one
+    // would move it, and would also make the variance below mean less.
+    assert!(
+        mean.abs() <= 0.05,
+        "the blur must be centred on the seam it blurs: the kernel's mean is {mean} px off at \
+         radius {radius}"
+    );
+    (second / mass - mean * mean).sqrt()
+}
+
+/// The blur the painter applies is the width `blur_sigma` asks for.
+///
+/// Everything else in this file measures the blur's *shape* — that it reads
+/// past the node's box, that it stops at a group, that it follows a field's
+/// coverage. None of it constrains how wide the blur is, so before this test
+/// the `sigma = radius / 2` mapping was pinned by the `v011-backdrop-blur`
+/// golden image alone, and the non-golden probes admitted roughly any sigma in
+/// (1.9, 13.3) against a true 6 (issue #409).
+///
+/// Measured here instead, as the second moment of the rendered step edge at
+/// two radii. The two are not redundant: each pins the mapping to the interval
+/// of sigmas that Skia quantises onto the same box-blur window, and the two
+/// intervals are different, so their intersection is much narrower than
+/// either.
+///
+/// | authored radius | `radius / 2` | rendered sigma | mapping constants that render the same |
+/// | --------------- | ------------ | -------------- | -------------------------------------- |
+/// | 12              | 6            | 5.4937         | 0.4658 … 0.5092                        |
+/// | 24              | 12           | 11.4867        | 0.4988 … 0.5208                        |
+///
+/// **What stays unpinned: the mapping constant anywhere in 0.4988 … 0.5092**,
+/// about −0.25 % / +1.8 % around the shipped 0.5. That floor is Skia's, not
+/// this test's: the raster blur converts sigma to an integer box-blur window,
+/// so every constant in one of those intervals renders byte-identical pixels
+/// and no pixel measurement can separate them. Measured — building the painter
+/// with `sigma = radius * 0.505` leaves every test in the workspace green,
+/// including the goldens, because not one pixel moves. Narrowing the window
+/// further needs more radii, each contributing its own interval. Before this
+/// test `radius * 0.4967` passed the whole workspace in silence as well, which
+/// is the gap it closes.
+///
+/// The rendered sigma runs below `radius / 2` for the same reason — the window
+/// Skia selects is the one below what the requested sigma names — so the
+/// expectations are the measured values rather than the nominal ones. Pinning
+/// to the nominal 6 and 12 would need a tolerance wide enough to readmit the
+/// neighbouring windows, which is the upper bound this test exists to supply.
+///
+/// This test is one of the figures the deferred sigma refit (issue #412) has
+/// to re-record: it holds the mapping to 0.5, and that refit's candidate
+/// range, 0.42 … 0.45, fails it. That is the intended signal — the refit is a
+/// cross-effect change that moves the shadow goldens too, so it must not be
+/// able to land quietly.
+#[test]
+fn the_backdrop_blur_spreads_at_the_mapped_sigma() {
+    /// Well under half a box-blur window at these radii: wide enough that
+    /// 8-bit rounding cannot reach it, narrow enough that the neighbouring
+    /// windows (5.1373 and 6.1523; 11.1478 and 12.1307) stay out. Named apart
+    /// from this file's golden-area `TOLERANCE`, which it has nothing to do
+    /// with.
+    const SIGMA_TOLERANCE: f64 = 0.15;
+
+    for (radius, expected) in [(12.0f32, 5.4937f64), (24.0, 11.4867)] {
+        let got = measured_blur_sigma(radius);
+        assert!(
+            (got - expected).abs() <= SIGMA_TOLERANCE,
+            "a backdrop blur of radius {radius} must render at sigma {expected} \
+             ± {SIGMA_TOLERANCE}, the width `sigma = radius / 2` asks for once Skia has \
+             quantised it onto a box-blur window; got {got}"
+        );
+    }
 }
 
 /// The scene the [`GroupComposite`] decision is pinned on.
@@ -517,6 +690,12 @@ fn a_baked_vector_blurs_only_inside_its_field() {
 
     // The solid body above the hole (y = 25 sits between the shape's top
     // edge at 20 and the hole's at 30) is blurred across the same seam.
+    //
+    // The band is a coverage claim — the body blurs where the hole does not —
+    // and not a sigma one: it has no upper bound, since a wider blur only
+    // carries these two pixels further toward the 127.5 they meet at. The
+    // mapping is measured in `the_backdrop_blur_spreads_at_the_mapped_sigma`
+    // (issue #409).
     for x in [38usize, 42] {
         let body = probe(x, 25);
         assert!(
