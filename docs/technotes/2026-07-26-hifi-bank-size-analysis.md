@@ -45,11 +45,14 @@ the cheapest rung on the ladder at 0.0000 %. The bands are what chose, not
 arithmetic that would have chosen the same rung either way.
 
 **A small asset costs more under a profile than under RAW.** `v03-paint`'s image
-is 16x16 — one ASTC block at every footprint the ladder offers — so its resident
-payload is a block plus KTX2 framing, against a 93-byte PNG that carries
-neither. The ratio is 2.677 and it is a property of the format, not a defect. It
-is asserted in `goldens/tooling/tests/derived_bank.rs` so that a change making
-it accidentally smaller is explained rather than welcomed.
+is 16x16 — 4 blocks at the 8x8 rung it ships at — so its resident payload is 64
+bytes of blocks, which Zstd stores in 33, under 216 bytes of KTX2 framing,
+against a 93-byte PNG that carries neither. The ratio is 2.677 and it is a
+property of the format, not a defect. It is asserted in
+`goldens/tooling/tests/derived_bank.rs` so that a change making it accidentally
+smaller is explained rather than welcomed. An earlier version of this paragraph
+said 16x16 was one block at every footprint; issue #458 measured that it is 16
+blocks at 4x4, 9 at 6x6 and 4 at 8x8, 10x10 and 12x12.
 
 **The lossless path currently makes distance fields bigger, and that is a
 finding.** An MSDF atlas may never be encoded lossily

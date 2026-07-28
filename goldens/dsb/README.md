@@ -78,26 +78,39 @@ canonical asset, and a cold payload the packer derived rather than the imported
 bytes. Pinned by `goldens/tooling/tests/derived_bank.rs`.
 
 It is the only golden here that is not the compiler's output. It is the
-*packer's*, and it is the repository's only byte-exact record of what
-`dashpack` emits — which is why it exists. Story #431 measured that a change to
+*packer's*, and it is the repository's only byte-exact record of an **assembled**
+`dashpack` bank — which is why it exists. Story #431 measured that a change to
 the zstd compression level is invisible to every test that asserts a constant
-equals itself; a byte-exact fixture over real encoder output is the only thing
-that catches one, and this is it. The same holds for an ASTC quality regression
-and for a band that quietly stopped rejecting a rung.
+equals itself, and this file catches one. Since issue #458 the recorded table in
+`crates/dashpack/tests/band_contract.rs` also pins a BLAKE3 per derived KTX2
+file, so byte identity over the packer's *payloads* is no longer this golden's
+alone. What remains unique to it is the container around them — the section
+table, the derivation manifest, the page alignment.
 
 Its one asset packs to the `astc-8x8` rung, 93 canonical bytes to 249 resident,
 so the file is 4345 bytes against the RAW golden's 4189. HiFi makes this
-particular asset *larger*: a 16x16 image is one ASTC block at every footprint on
-the ladder, and a block plus KTX2 framing has a floor a 93-byte PNG does not.
-The corpus-wide numbers, where the saving is real, are in
+particular asset *larger*: 256 texels are 4 blocks at 8x8, 64 bytes that Zstd
+stores in 33, and the 216 bytes of KTX2 framing around them have a floor a
+93-byte PNG does not. The corpus-wide numbers, where the saving is real, are in
 `docs/technotes/2026-07-26-hifi-bank-size-analysis.md`.
 
 **What this golden cannot catch.** It has one asset, so every asset index in it
 is 0 and every manifest row count is 1. An ordering, deduplication, or
 wrong-index bug — in the blob sections or in the manifest — has nowhere to show.
 `crates/dashbuf/tests/bank.rs` carries those on hand-built three-asset
-documents. What this file carries that no hand-built document can is a real
-packer's bytes over a real compiler's output.
+documents.
+
+It also cannot catch an ASTC encoder-effort regression, and issue #458 measured
+why. Its asset encodes to the same 64 bytes at `Quality::Fastest` as at
+`Quality::Thorough`, because a small flat figure gives every search effort the
+same answer at the rung that ships. That is a property of the image content, not
+of its size: 16x16 is 4 blocks at 8x8, not one. Effort regressions are caught by
+the recorded table in `crates/dashpack/tests/band_contract.rs`, on the 380x380
+`import-image-fill` fixture where 51570 of 65536 payload bytes move between the
+two presets.
+
+What this file carries that no hand-built document can is a real packer's bytes
+over a real compiler's output.
 
 Because its payloads are not their own preimage, it is **not** a RAW file and
 the reassembly check above does not apply to it. That test partitions the

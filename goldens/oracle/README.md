@@ -176,8 +176,10 @@ at a threshold of 2, and a scene graded against `blur-falloff` would pass at 24.
 No frame is captured and there is no `status` field, because there is nothing to
 capture: the reference arm is produced in the same run. The scenes are compiled
 in process rather than committed — the only committed compiled document with an
-image has a 16x16 image, which is one ASTC block at every footprint, so its
-triptych renders byte-identically and could not fail anything.
+image has a 16x16 image that its chosen rung reproduces exactly (0.0000 %
+differing, `crates/dashpack/tests/band_contract.rs`), so its triptych renders
+byte-identically and could not fail anything. The reason is the content, not the
+extent: issue #458 measured 16x16 as 4 blocks at that rung, not one.
 
 `goldens/tooling/tests/profile_preview_oracle.rs` is the diff, and it writes the
 triptych plus a diff heatmap per production arm to
