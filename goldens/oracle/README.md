@@ -219,6 +219,19 @@ assertion is `goldens/tooling/tests/import_oracle.rs`; the capture step is
 Two self-authored frames cover the two vocabulary paths the real import
 proved live but no E7 frame measures, both measured within their band:
 
+One vocabulary path deliberately has **no** frame, and cannot get one:
+`gif-fill`. Figma's `GET /images` renders a GIF-backed image fill as fully
+transparent rather than as the source colour, so the design source an oracle
+frame would diff against carries no ink. Re-measured 2026-07-28 against the
+live API: the render of node `1:2` comes back a 255-byte 160x160 PNG in which 0
+of 25600 pixels carry non-zero alpha and 0 carry non-zero RGB. That is a
+property of Figma's renderer, not of the fixture or of this harness, so it is a
+permanent disclosed limit rather than open debt (issue #355, closed with that
+measurement). Static GIF decode is still proven end to end, by
+`dashscene_skia::tests::decode_image_handles_a_real_static_gif` and by direct
+pixel inspection of the compiled render; what is missing is only the
+against-Figma half. Re-checking costs one `GET /v1/images` call.
+
 - `import-image-fill` (`import-image-fill.json`, node `1:2`, 400x200) —
   **0.329 %** on `aa-edge`. One frame whose only paint is an IMAGE fill
   (scaleMode `FILL`) of a self-generated 380x380 PNG — gradients, two
