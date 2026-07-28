@@ -30,9 +30,7 @@
 use std::collections::BTreeSet;
 
 use dashpaint::{AtlasIndex, Color, GlyphQuad, GlyphRun, GlyphRunTable, ImageTable, Painter};
-use dashscene_core::{
-    Arena, AxisSizing, LayoutMode, NodeId, Prop, TextAlign, TextAlignV, TextStyle,
-};
+use dashscene_core::{Arena, AxisSizing, LayoutMode, NodeId, Prop};
 use dashscene_engine::TaffySolver;
 use dashscene_skia::SkiaPainter;
 use dashscene_typeset::atlas::AtlasBundle;
@@ -42,6 +40,7 @@ mod common;
 
 use common::{
     AMBER, INK, NAVY, NEAR_WHITE, PANEL, decode_golden, diff_vs, load_atlas, origin_of, size_of,
+    text_style,
 };
 
 const FONT: &str = concat!(
@@ -222,17 +221,7 @@ fn author_scene(ts: &mut Typesetter) -> (Arena, NodeId, NodeId, NodeId) {
         txn.set_prop(banner, Prop::Text(BANNER.to_string()));
         txn.set_prop(
             banner,
-            Prop::TextStyle(TextStyle {
-                family: "Noto Sans Arabic".to_string(),
-                size: BANNER_SIZE,
-                weight: 400,
-                color: NEAR_WHITE,
-                line_height_px: None,
-                letter_spacing: 0.0,
-                text_align: TextAlign::Left,
-                text_align_v: TextAlignV::Top,
-                ligatures_off: false,
-            }),
+            Prop::TextStyle(text_style("Noto Sans Arabic", BANNER_SIZE, NEAR_WHITE)),
         );
 
         // The harakat word: hug-sized, so the measure callback (#29)
@@ -245,17 +234,7 @@ fn author_scene(ts: &mut Typesetter) -> (Arena, NodeId, NodeId, NodeId) {
         txn.set_prop(word, Prop::Text(HARAKAT_WORD.to_string()));
         txn.set_prop(
             word,
-            Prop::TextStyle(TextStyle {
-                family: "Noto Sans Arabic".to_string(),
-                size: WORD_SIZE,
-                weight: 400,
-                color: NEAR_WHITE,
-                line_height_px: None,
-                letter_spacing: 0.0,
-                text_align: TextAlign::Left,
-                text_align_v: TextAlignV::Top,
-                ligatures_off: false,
-            }),
+            Prop::TextStyle(text_style("Noto Sans Arabic", WORD_SIZE, NEAR_WHITE)),
         );
 
         // The speed chip: hug-sized, an amber rounded box behind the
@@ -278,17 +257,7 @@ fn author_scene(ts: &mut Typesetter) -> (Arena, NodeId, NodeId, NodeId) {
         txn.set_prop(chip, Prop::Text(SPEED.to_string()));
         txn.set_prop(
             chip,
-            Prop::TextStyle(TextStyle {
-                family: "Noto Sans Arabic".to_string(),
-                size: SPEED_SIZE,
-                weight: 400,
-                color: INK,
-                line_height_px: None,
-                letter_spacing: 0.0,
-                text_align: TextAlign::Left,
-                text_align_v: TextAlignV::Top,
-                ligatures_off: false,
-            }),
+            Prop::TextStyle(text_style("Noto Sans Arabic", SPEED_SIZE, INK)),
         );
 
         txn.commit_with(&mut solver);

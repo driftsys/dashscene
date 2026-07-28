@@ -2,14 +2,16 @@
  * Design-source render export for the import-fidelity oracle (issue #332,
  * story Sf-2 of the full real-file-import epic; goldens/oracle/README.md).
  *
- * The import-fidelity oracle measures the two self-authored fixtures that
- * exercise vocabulary the real-file import epic proved live but no E7 frame
- * covers — an image fill and the #310 text axes — against Figma's own
- * `GET /v1/images` render. This is the same export mechanism as the E7
- * design-source oracle: the manifest parsing, the capture loop, and the CLI
- * runner all live in `render_oracle.ts` and are reused here, pointed at the
- * **separate** import-oracle wiring (issue #338 collapsed what was a
- * byte-for-byte copy of the runner).
+ * The import-fidelity oracle measures self-authored fixtures that exercise
+ * vocabulary the real-file import epic proved live but no E7 frame covers —
+ * seeded with an image fill and the #310 text axes, grown with each
+ * vocabulary path added since (goldens/oracle/import-manifest.json carries
+ * the current count; issue #377 found a hardcoded "two" here stale). Each is
+ * measured against Figma's own `GET /v1/images` render. This is the same
+ * export mechanism as the E7 design-source oracle: the manifest parsing, the
+ * capture loop, and the CLI runner all live in `render_oracle.ts` and are
+ * reused here, pointed at the **separate** import-oracle wiring (issue #338
+ * collapsed what was a byte-for-byte copy of the runner).
  *
  * Separate on purpose: the E7 exit-gate surface
  * (`goldens/oracle/manifest.json`, `goldens/oracle/design-source/`) is the
@@ -26,7 +28,7 @@ import { runOracleCaptureCli } from "./render_oracle.ts";
 
 if (import.meta.main) {
   Deno.exit(
-    await runOracleCaptureCli({
+    await runOracleCaptureCli(Deno.args, {
       manifestFileName: "import-manifest.json",
       designSourceDirName: "import-design-source",
       pendingTag: "pending #332",

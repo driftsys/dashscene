@@ -107,6 +107,7 @@ function fixtureFileKeysFrom(frames: FrameSpec[]): Map<string, string> {
 async function run(
   frames: FrameSpec[],
   routes: Record<string, () => Response>,
+  opts: { readonly force?: boolean; readonly only?: string } = {},
 ): Promise<{
   manifest: OracleManifest;
   results: DesignSourceResult[];
@@ -122,6 +123,8 @@ async function run(
     client: createFigmaClient({ token: "test-token", fetchFn }),
     fixtureFileKeys: fixtureFileKeysFrom(frames),
     pendingTag: "pending #265",
+    force: opts.force,
+    only: opts.only,
     writePng: (frame, bytes) => {
       writes.push({ frame, bytes });
       return Promise.resolve();
@@ -280,6 +283,96 @@ Deno.test("one frame's failure does not stop the others", async () => {
   assertEquals(results.map((r) => r.action), ["failed", "captured", "skipped"]);
   assertEquals(writes.map((w) => w.frame), ["good"]);
   assertEquals(manifest.frames[1].status, "captured");
+});
+
+// issue #378: a frame already captured is not re-fetched just because
+// another frame in the same manifest is being captured.
+
+Deno.test("an already-captured frame is not re-fetched by default", async () => {
+  const { manifest, results, requested, writes } = await run([
+    {
+      frame: "v08-wrap",
+      figmaFileKey: KEY,
+      figmaNodeId: NODE,
+      status: "captured",
+      designSource: "oracle/design-source/v08-wrap.png",
+    },
+  ], {
+    [RENDER_URL]: () =>
+      Response.json({ err: null, images: { [NODE]: ASSET_URL } }),
+    [ASSET_URL]: () => new Response(PNG),
+  });
+
+  assertEquals(results[0].action, "skipped");
+  assertEquals(
+    requested.length,
+    0,
+    "an already-captured frame makes no request",
+  );
+  assertEquals(writes.length, 0);
+  assertEquals(
+    manifest.frames[0].designSource,
+    "oracle/design-source/v08-wrap.png",
+  );
+});
+
+Deno.test("--force re-fetches an already-captured frame", async () => {
+  const { manifest, results, requested, writes } = await run([
+    {
+      frame: "v08-wrap",
+      figmaFileKey: KEY,
+      figmaNodeId: NODE,
+      status: "captured",
+      designSource: "oracle/design-source/v08-wrap.png",
+    },
+  ], {
+    [RENDER_URL]: () =>
+      Response.json({ err: null, images: { [NODE]: ASSET_URL } }),
+    [ASSET_URL]: () => new Response(PNG),
+  }, { force: true });
+
+  assertEquals(results[0].action, "captured");
+  assert(requested.includes(RENDER_URL), "force re-issues the render request");
+  assertEquals(writes.length, 1);
+  assertEquals(manifest.frames[0].status, "captured");
+});
+
+Deno.test("naming a frame captures only that frame, even if already captured", async () => {
+  const OTHER_NODE = "56:78";
+  const OTHER_RENDER = `https://api.figma.com/v1/images/${KEY}?ids=${
+    encodeURIComponent(OTHER_NODE)
+  }&format=png&scale=1`;
+  const { manifest, results, requested, writes } = await run([
+    {
+      frame: "already-captured",
+      figmaFileKey: KEY,
+      figmaNodeId: NODE,
+      status: "captured",
+      designSource: "oracle/design-source/already-captured.png",
+    },
+    {
+      frame: "pending-but-not-named",
+      figmaFileKey: KEY,
+      figmaNodeId: OTHER_NODE,
+    },
+  ], {
+    [RENDER_URL]: () =>
+      Response.json({ err: null, images: { [NODE]: ASSET_URL } }),
+    [ASSET_URL]: () => new Response(PNG),
+    [OTHER_RENDER]: () =>
+      Response.json({ err: null, images: { [OTHER_NODE]: ASSET_URL } }),
+  }, { only: "already-captured" });
+
+  assertEquals(
+    results.map((r) => r.action),
+    ["captured", "skipped"],
+  );
+  assertEquals(writes.map((w) => w.frame), ["already-captured"]);
+  assert(
+    !requested.includes(OTHER_RENDER),
+    "the frame not named by --only is never requested, even though it is pending",
+  );
+  assertEquals(manifest.frames[1].status, "pending-265");
 });
 
 Deno.test("parseOracleManifest returns the frames", () => {

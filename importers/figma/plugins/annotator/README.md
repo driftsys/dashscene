@@ -11,7 +11,7 @@ your checkout, the same as the fixture author.
 
 1. Open the **Figma desktop app** (dev plugins don't load in the browser).
 2. Menu → Plugins → Development → **Import plugin from manifest…**
-3. Pick `importers/figma/plugin/manifest.json` from your checkout.
+3. Pick `importers/figma/plugins/annotator/manifest.json` from your checkout.
 
 ## Annotate: mark roles
 
@@ -29,7 +29,7 @@ Plugins → Development → **dashscene sharedPluginData annotator** → one of:
 Each command writes the role plus the contract stamp `v = "1"` under the
 `dashscene` namespace on every selected layer. The REST API returns these
 via `?plugin_data=shared`; the importer's trim pass
-(`../src/trim.ts`) treats them as machine truth. A hidden layer
+(`../../src/trim.ts`) treats them as machine truth. A hidden layer
 (`visible: false`) is **not** trimmed — do not mark variant states.
 
 ## Export tokens: the vartable

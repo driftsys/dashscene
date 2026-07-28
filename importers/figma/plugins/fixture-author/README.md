@@ -9,7 +9,7 @@ channel (§12).
 
 1. Open the **Figma desktop app** (dev plugins don't load in the browser).
 2. Menu → Plugins → Development → **Import plugin from manifest…**
-3. Pick `importers/figma/plugin/fixture-author/manifest.json` from your
+3. Pick `importers/figma/plugins/fixture-author/manifest.json` from your
    checkout.
 
 ## Authoring the fixtures
@@ -107,7 +107,7 @@ Re-running a command deletes and rebuilds its frame — safe to iterate.
 never writes `sharedPluginData` roles
 (docs/decisions/annotator-plugin-contract-frozen.md). The roles are
 written by the **dashscene annotator** plugin
-(`importers/figma/plugin/`, its own `README.md`). After running
+(`importers/figma/plugins/annotator/`, its own `README.md`). After running
 `trim-demo`:
 
 1. Import and run the annotator (see its README).
