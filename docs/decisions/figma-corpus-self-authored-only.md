@@ -73,11 +73,26 @@ shape of ambiguity this record exists to avoid. Wikimedia Commons and Poly
 Haven publish genuine CC0.
 
 **Provenance is recorded or the asset does not enter.** Every such payload
-carries, in `corpus/figma-fixtures/README.md`: the source URL, the licence
-as stated at the source, the retrieval date, and what the asset is. CC0
-obliges no attribution, so this is not a licence condition — it is this
-repository's own audit trail, and it is what makes the claim checkable
-later rather than taken on trust.
+carries the source URL, the licence as stated at the source, the retrieval
+date, and what the asset is — in the `README.md` of the `corpus/`
+subdirectory holding it, beside the payload rather than in one central
+list. CC0 obliges no attribution, so this is not a licence condition — it
+is this repository's own audit trail, and it is what makes the claim
+checkable later rather than taken on trust.
+
+    corrected 2026-07-29: this first read "in
+    `corpus/figma-fixtures/README.md`", which assumed such a payload would
+    only ever sit inside a Figma fixture. The first four to arrive do not
+    (`corpus/photo/`, issue #455) — they are measured directly, the way
+    `corpus/atlas/*/atlas.png` is, because the licence question is about
+    the payload and not about any document around it.
+
+**The preparation is part of the payload.** How an original was cropped,
+scaled or converted is recorded beside the provenance, because it changes
+what is measured: scaling a photograph down averages away the
+high-frequency detail block compression is worst at, and it moves which
+rung the packer selects. A payload whose preparation is unrecorded cannot
+be reproduced from its source.
 
 **Three limits CC0 does not cover**, to be confirmed per asset before it is
 committed. CC0 waives copyright and neighbouring rights only: it does not

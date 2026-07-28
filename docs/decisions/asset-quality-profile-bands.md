@@ -15,7 +15,11 @@
              #422 (what a band has to be able to fail), issue #544 and
              goldens/tooling/tests/perceptual_calibration.rs (section 5 —
              where these bands land on SSIMULACRA2 and FLIP), issue #549
-             (the display geometry section 5 has to assume)
+             (the display geometry section 5 has to assume), issue #455 and
+             corpus/photo/README.md (section 6 — the four real photographic
+             payloads, their provenance and their preparation), issue #553
+             (HiFi ships uncompressed for that content, which section 6
+             measured and does not fix)
 
 ## Context
 
@@ -233,6 +237,68 @@ and 92.86 on a 16 px one — is recorded in
 figures come from that probe rather than from any check in this repository, and
 are cited here on that footing: no test reproduces them.
 
+### 6. What real photographic content did to these numbers
+
+    measured 2026-07-29, issue #455, on the four payloads in `corpus/photo/`
+
+Sections 2 and 5 were measured on a gradient with flat rectangles, a 16x16
+near-solid, two MSDF atlases and generated noise.
+`docs/wip/2026-07-28-photorealistic-3d-content.md` records that the target
+content is photorealistic 3D renders and background photographs, which none of
+those resemble. Four CC0 payloads now measure that class directly.
+
+| payload                 | LoFi rung  | accepted | SSIMULACRA2 | HiFi rung    | SSIMULACRA2 |
+| ----------------------- | ---------- | -------- | ----------- | ------------ | ----------- |
+| `photo-interior-render` | astc-6x6   | 4.2152 % | 80.31       | uncompressed | 100.00      |
+| `photo-coast-forest`    | astc-4x4   | 4.3911 % | 90.64       | uncompressed | 100.00      |
+| `photo-snowy-forest`    | astc-5x5   | 2.2385 % | 86.76       | uncompressed | 100.00      |
+| `photo-dawn-mountains`  | astc-12x12 | 1.0078 % | 78.38       | astc-4x4     | 93.08       |
+
+**Both floors hold.** HiFi stays at or above 90 and LoFi at or above 70 on
+every one, so section 5's claim survives contact with the content it had never
+been measured against. That is the single most important line here, and it was
+not a foregone conclusion.
+
+**LoFi behaves as designed and is now exercised by real content.** Its budget
+is the binding term on all four, two of them within a percentage point of the
+5 % ceiling, and the four between them reach 12x12, 6x6, 5x5 and 4x4 — closing
+both of the "does not pin" entries above.
+
+**HiFi does not compress photographs.** On three of the four it rejects every
+lossy rung and escalates to the terminal one, and a wider sweep of fourteen
+candidate payloads put that at twelve of fourteen. A profile that ships
+uncompressed 8-bit RGBA for the target content class saves no memory at all on
+it, which is a fact about the band rather than about the encoder: HiFi's
+threshold of 2 with a 1 % budget is close to unsatisfiable by any ASTC
+footprint on photographic content.
+
+**That is recorded, not fixed here.** The reasoning in section 2 chose the
+threshold of 2 for a specific failure mode — banding across a smooth gradient,
+a structured low-amplitude error spread wide. A photograph has no smooth
+gradient to band and its own detail masks quantisation, so the number that is
+right for one is not obviously right for the other. The suspicion this raises
+is that `AssetClass::ImageFill` is too coarse — it puts a Figma gradient and a
+photograph in one class under one band — and that is a design question with its
+own record, not a number to adjust inside a fixture change. Issue #553 carries
+it.
+
+**A near-miss worth stating precisely.** A native-resolution crop of
+`dawn-mountains`, prepared differently from the payload committed, makes HiFi
+select astc-8x8 scoring 89.34 against the floor of 90. That is 0.66 points on a
+100-point scale and SSIMULACRA2's own guidance says "roughly 90", so it is not
+a perceptual finding and is not evidence the band is wrong. It is recorded
+because it shows what a bright-line floor does: it fails on a margin no
+observer could see. The floor stays where the published scale puts it, because
+a floor moved toward whatever passed is the defect issue #422 documents.
+
+**Preparation is part of the fixture.** Whole-frame scaling and
+native-resolution cropping select different rungs for the same photograph —
+`wilderness` moves between 10x10 and 12x12, `forest-lake` between 5x5 and 6x6 —
+because downscaling averages away the high-frequency detail block compression
+is worst at. Each payload's preparation is recorded with its provenance in
+`corpus/photo/README.md`, and a payload whose preparation is unrecorded cannot
+be reproduced from its source.
+
 ## Why
 
 - **The band has to be able to fail, and the number has to be the thing that
@@ -287,21 +353,29 @@ are cited here on that footing: no test reproduces them.
 Recorded because a green contract read as broader evidence than it is, is the
 failure #422 documents.
 
-- **LoFi's budget is not exercised by any committed _real_ asset.** The two
-  real image fills are a gradient with flat rectangles, which ASTC reproduces
-  almost exactly at every footprint. `detail-noise` is generated rather than
-  committed precisely to make LoFi's budget the binding term; without it the
-  number 5 % would be unexercised.
-- **No asset lands on 4x4 or 5x5.** Those two rungs are in the ladder and are
-  walked, but no committed fixture stops at either, so nothing here says the
-  ladder's fine end behaves correctly in a case that matters.
-- **Nothing measures a photograph.** The corpus has none. `detail-noise`
-  stands in for high-frequency content and is honest about being synthetic.
-  Section 5's perceptual figures inherit this exactly: they are measured on a
-  gradient, two MSDF atlases and generated stress content, so they are a
-  baseline that #455's representative fixtures will move. That the harness
-  landed first is deliberate — the movement is then attributable to the
-  content rather than to a new measurement.
+- ~~**LoFi's budget is not exercised by any committed _real_ asset.**~~
+  **Closed 2026-07-29 (issue #455).** All four `corpus/photo/` payloads have
+  LoFi's budget as the binding term, at accepted fractions of 4.2152 %,
+  4.3911 %, 2.2385 % and 1.0078 % against the 5 % ceiling. Two of them sit
+  within a percentage point of it, so the number chooses the rung on real
+  content and not only on a generated one.
+- ~~**No asset lands on 4x4 or 5x5.**~~ **Closed 2026-07-29 (issue #455).**
+  `photo-coast-forest` stops at 4x4 under LoFi and `photo-snowy-forest` at
+  5x5, so every rung of the ladder is now the terminal choice for some
+  committed fixture.
+- ~~**Nothing measures a photograph.**~~ **Closed 2026-07-29 (issue #455).**
+  `corpus/photo/` now holds four real payloads — a photorealistic 3D interior
+  render and three landscape photographs, CC0 from Wikimedia Commons — and
+  section 6 records what they measured. `detail-noise` stays: a generated
+  fixture is still the only one whose content is exactly reproducible from
+  code, and it remains the fixture the mutation in section 2 is measured on.
+- **No scene measures photographic content in context.** Section 6's payloads
+  are measured per asset only. The profile-preview oracle's two scenes still
+  composite the gradient image fill and the generated stress payload behind
+  their caption and stroke, so banding read behind text and block boundaries
+  read against a stroke — the effects that oracle exists for — have never been
+  measured on a photograph. The per-asset figures answer what issue #455 asked;
+  this is the part they do not reach.
 - **Section 5's figures are not confirmed on a second architecture.** They are
   pinned at a fixed precision, which is what would make a disagreement visible,
   and every figure recorded so far was measured on aarch64-apple-darwin. A
