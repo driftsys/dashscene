@@ -1497,13 +1497,60 @@ fn the_negative_gap_fixture_emits_its_golden_dsb() {
         .expect("the raw capture compiles");
     assert!(report.is_empty(), "{report}");
 
+    assert_dsb_golden(&bytes, "v07-negative-gap.dsb");
+}
+
+/// The `grid-basic` capture's emitted bytes, pinned.
+///
+/// Story #264 (PR #279) lowered this fixture and asserted its solved rects,
+/// but pinned its emission with `assert!(!bytes.is_empty())` — a check that
+/// passes for any output at all, including one with the wrong field order or a
+/// dropped table (debt #286). The v0.2 per-construct rule
+/// (`docs/decisions/v02-flex-goldens-per-construct.md`) is that each construct
+/// pins its own bytes, and GRID had none.
+///
+/// Same golden contract as every other `.dsb` here: emission is
+/// byte-reproducible for a given input (R7), so the comparison is exact, not
+/// toleranced. Regenerate with `UPDATE_GOLDENS=1`, review the diff, commit
+/// (`goldens/dsb/README.md`).
+#[test]
+fn the_grid_basic_fixture_emits_its_golden_dsb() {
+    let (bytes, report) = compile_figma(GRID_BASIC, Profile::Core, &BTreeMap::new())
+        .expect("the grid capture compiles");
+    assert!(report.is_empty(), "{report}");
+    assert_dsb_golden(&bytes, "v08-grid-basic.dsb");
+}
+
+/// The `lowering-wrap` capture's emitted bytes, pinned — the WRAP twin of
+/// [`the_grid_basic_fixture_emits_its_golden_dsb`], and unpinned for the same
+/// reason (debt #286).
+///
+/// Wrap carries two distinct gaps through emission — `gap` from `itemSpacing`
+/// and `cross_gap` from `counterAxisSpacing` (v0.8 D4) — which the lowering
+/// tests assert as values. A byte golden is what catches the pair being
+/// emitted in the wrong order or one of them being written into the other's
+/// slot, which reads identically at the `Document` level.
+#[test]
+fn the_wrap_fixture_emits_its_golden_dsb() {
+    let (bytes, report) =
+        compile_figma(WRAP, Profile::Core, &BTreeMap::new()).expect("the wrap capture compiles");
+    assert!(report.is_empty(), "{report}");
+    assert_dsb_golden(&bytes, "v08-lowering-wrap.dsb");
+}
+
+/// Byte-compares `bytes` against `goldens/dsb/<name>`, or writes it when
+/// `UPDATE_GOLDENS` is set. Factored out because three emit-goldens in this
+/// file now follow the identical contract and a copied block is where the
+/// three would drift apart.
+fn assert_dsb_golden(bytes: &[u8], name: &str) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../goldens/dsb/v07-negative-gap.dsb");
+        .join("../../goldens/dsb")
+        .join(name);
 
     if std::env::var_os("UPDATE_GOLDENS").is_some() {
         std::fs::create_dir_all(path.parent().expect("the golden has a parent"))
             .expect("the goldens directory is writable");
-        std::fs::write(&path, &bytes).expect("the golden is writable");
+        std::fs::write(&path, bytes).expect("the golden is writable");
         return;
     }
 
@@ -1515,6 +1562,6 @@ fn the_negative_gap_fixture_emits_its_golden_dsb() {
     });
     assert_eq!(
         bytes, golden,
-        "v07-negative-gap.dsb drifted. If this is intended, regenerate with UPDATE_GOLDENS=1, review the diff, and commit.",
+        "{name} drifted. If this is intended, regenerate with UPDATE_GOLDENS=1, review the diff, and commit.",
     );
 }
