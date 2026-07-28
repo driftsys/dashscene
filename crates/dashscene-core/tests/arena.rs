@@ -2561,8 +2561,15 @@ fn a_rebuilt_paint_table_still_resolves_every_rect_and_reports_them_dirty() {
     let mut txn = arena.open();
     let animated = boxed(&mut txn, None, 0.0, 0.0, 10.0, 10.0);
     txn.set_prop(animated, Prop::Fill(RED));
+    // `still` is given the *same* fill as `animated` on purpose. Interning
+    // dedups them onto one entry, so the recolour below moves `animated` off
+    // that entry and leaves `still` holding it — and the rebuild, which packs
+    // in rect order, then hands slot 0 to `animated` and pushes `still` and the
+    // unfilled node down one each. Without the sharing, every live entry packs
+    // back to the index it already had, no untouched rect is renumbered, and
+    // the renumbering assertion below is unreachable (debt #527).
     let still = boxed(&mut txn, None, 20.0, 0.0, 10.0, 10.0);
-    txn.set_prop(still, Prop::Fill(BLUE));
+    txn.set_prop(still, Prop::Fill(RED));
     boxed(&mut txn, None, 40.0, 0.0, 10.0, 10.0); // unfilled
     txn.commit();
 
@@ -2597,7 +2604,7 @@ fn a_rebuilt_paint_table_still_resolves_every_rect_and_reports_them_dirty() {
         );
         assert_eq!(
             scene.paints().resolve(scene.rects()[1].paint).fill,
-            Some(PaintKind::Solid { color: BLUE }),
+            Some(PaintKind::Solid { color: RED }),
             "the untouched node still resolves to its own fill",
         );
         assert_eq!(
@@ -2610,14 +2617,32 @@ fn a_rebuilt_paint_table_still_resolves_every_rect_and_reports_them_dirty() {
             3,
             "the rebuilt table holds one entry per distinct live paint",
         );
+        let mut renumbered_untouched = 0;
         for (i, was) in paint_before.iter().enumerate() {
             if scene.rects()[i].paint != *was {
                 assert!(
                     scene.dirty().contains(&(i as u32)),
                     "rect {i} was renumbered, so a painter has to be told to refresh it",
                 );
+                if i != 0 {
+                    renumbered_untouched += 1;
+                }
             }
         }
+        // The loop above is the whole point of this test, and for the scene it
+        // used to build it never ran on an untouched rect: only `animated`'s
+        // index moved, and `animated` is dirty whatever the rebuild does. So
+        // the guarantee — a renumbered rect is reported dirty — was asserted
+        // exclusively about a rect that could not have failed it (debt #527).
+        // Requiring a renumbering here is what keeps the assertion above
+        // reachable; without it, a scene change could quietly make it vacuous
+        // again and nothing would say so.
+        assert!(
+            renumbered_untouched > 0,
+            "the rebuild must renumber at least one rect the commit did not \
+             touch, or the dirty assertion above grades only the recoloured \
+             node and cannot fail",
+        );
         break;
     }
     assert!(
@@ -2628,14 +2653,24 @@ fn a_rebuilt_paint_table_still_resolves_every_rect_and_reports_them_dirty() {
     // Re-staging a colour the rebuild discarded must intern afresh. A
     // retained interner still holding the old key would answer with an
     // index the rebuilt table has since given to a different entry.
+    // Step 0's fill, which the loop above staged and then abandoned, so the
+    // rebuild discarded it. RED is deliberately not used here any more: it is
+    // live on `still`, so re-staging it would exercise a hit on a retained key
+    // rather than the fresh intern this check is about.
+    let discarded = Color {
+        r: 0.0,
+        g: 0.0,
+        b: 0.0,
+        a: 1.0,
+    };
     let mut txn = arena.open();
-    txn.set_prop(animated, Prop::Fill(RED));
+    txn.set_prop(animated, Prop::Fill(discarded));
     txn.commit();
     let scene = arena.committed();
     assert_eq!(
         scene.paints().resolve(scene.rects()[0].paint).fill,
-        Some(PaintKind::Solid { color: RED }),
-        "the discarded red is interned again, not resolved through a stale key",
+        Some(PaintKind::Solid { color: discarded }),
+        "a discarded colour is interned again, not resolved through a stale key",
     );
 }
 
