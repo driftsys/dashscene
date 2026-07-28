@@ -48,6 +48,29 @@ a binding is not the identity, so a RAW file has no manifest and no byte of one
 `git hash-object` before and after the change, across all 70 committed binary
 artifacts in the repository, not inferred from the suite passing.
 
+## v08-grid-basic.dsb and v08-lowering-wrap.dsb
+
+`corpus/figma-fixtures/grid-basic.json` and `corpus/figma-fixtures/lowering-wrap.json`
+compiled raw under `Profile::Core`. Story #264 lowered both fixtures and asserted
+their solved rects, but pinned emission with `assert!(!bytes.is_empty())`, which
+passes for any output at all (debt #286). The v0.2 per-construct rule
+(`docs/decisions/v02-flex-goldens-per-construct.md`) is that each construct pins
+its own bytes, and GRID and WRAP had none.
+
+Neither fixture carries an image, so each holds exactly one section — the ui
+document — like the other non-`v03-paint` goldens here.
+
+What they add is per-construct bisection rather than a new defect class. The
+byte-only mutation they were checked against — writing an empty grid-track
+vector where the emitter leaves the field absent — turns the pre-existing
+goldens red too. The value is that when GRID or WRAP emission drifts, the golden
+that fails names the construct.
+
+What they do **not** pin: a container with default padding. Every container in
+every fixture with an emit-golden has non-default padding, so `emit.rs`'s
+omit-the-default branch is unreachable from here and a mutation that always
+writes padding stays green (issue #522).
+
 ## v03-paint-hifi.dsb
 
 `v03-paint.dsb` repacked under the **HiFi** profile: the same document, the same
