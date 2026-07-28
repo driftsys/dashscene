@@ -11,10 +11,10 @@ project's convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports nine files
+## Why the WIP gate currently reports ten files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-nine and exits non-zero. All nine are deliberate, accepted exceptions rather
+ten and exits non-zero. All ten are deliberate, accepted exceptions rather
 than ungardened debt, and they are recorded here so the gate's result is
 explained rather than merely tolerated.
 
@@ -33,6 +33,10 @@ the eight now in `docs/archive/` were.
 - `2026-07-27-t2-checks-that-cannot-fail-DRIVER-PROMPT.md` — v0.13's
   `t2-check-has-no-teeth` tier, 19 items whose common property is an assertion
   that cannot distinguish right from wrong.
+- `2026-07-29-glyph-runs-from-commit-DRIVER-PROMPT.md` — story #542 and the two
+  issues it unblocks, written against a measured golden-movement bound: six
+  text-bearing goldens with per-frame ceilings, and 27 of 33 that must not move
+  at all.
 
 It is archived when its work lands.
 
