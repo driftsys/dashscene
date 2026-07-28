@@ -24,7 +24,7 @@ use crate::paint::{
     check_corners, check_gradient_stops, check_image_index, check_shadow, check_stroke_width,
     error, warning,
 };
-use crate::{Location, NodePath, Report, rule};
+use crate::{Location, MSDF_MIN_PX_PER_EM, NodePath, Report, rule};
 
 /// The document's pool sizes, so the index rules cannot be handed the wrong
 /// count. Four bare `usize` parameters would be positionally
@@ -267,6 +267,12 @@ pub fn validate_document(doc: &Document<'_>) -> Report {
         }
     }
 
+    // The MSDF floor is checked against the smallest em size the document can
+    // reach at runtime, not the authored one, so the scale every runtime
+    // construct can drive text to is computed once for the whole pool
+    // (debt #373).
+    let (text_scale, scaled_by) = min_text_scale(doc);
+
     // A text style's color is optional in the schema, so a producer can omit
     // it. Nothing downstream may invent one: the loader would have to pick a
     // default, and a silently-defaulted color is discovered vocabulary (P4).
@@ -296,6 +302,33 @@ pub fn validate_document(doc: &Document<'_>) -> Report {
                 format!(
                     "text style weight is {weight}; the schema pins it to the CSS scale, 100 to \
                      900 inclusive"
+                ),
+            ));
+        }
+        // The MSDF floor (`docs/decisions/q1-msdf-below-14px.md`). What
+        // smears is the size the painter rasterizes, so the floor is checked
+        // against the smallest size the document can reach, not the authored
+        // one — today those coincide, by the classification `min_text_scale`
+        // performs rather than by assumption.
+        let authored = style.size();
+        let reached = authored * text_scale;
+        if reached < MSDF_MIN_PX_PER_EM {
+            // Name the construct that reaches the size whenever one does; a
+            // style nothing scales is diagnosed at its authored size and
+            // needs no such clause.
+            let via = match &scaled_by {
+                Some(construct) => {
+                    format!(", reached from {authored} px per em through {construct}")
+                }
+                None => String::new(),
+            };
+            report.push(warning(
+                rule::TEXT_STYLE_BELOW_MSDF_FLOOR,
+                &at,
+                format!(
+                    "text style renders at {reached} px per em{via}, under the \
+                     {MSDF_MIN_PX_PER_EM} px per em MSDF floor; v0 bakes no per-size bitmap \
+                     page, so the field smears — dots and harakat first"
                 ),
             ));
         }
@@ -1063,6 +1096,123 @@ fn channel_effect(channel: dashbuf::BindingChannel) -> Option<ChannelEffect> {
     }
 }
 
+/// The scale a text run keeps when nothing drives it — the identity, and the
+/// answer every construct in the v0 vocabulary gives.
+const NO_TEXT_SCALING: f32 = 1.0;
+
+/// The smallest scale a runtime construct in `doc` can drive text to, and the
+/// construct that reaches it.
+///
+/// The MSDF floor is checked against `TextStyle.size * scale`, not against the
+/// authored size alone: what smears at 12 px per em is what the painter
+/// rasterizes, so a construct that shrinks the text under its authored size
+/// belongs in the number (the ruling on debt #373).
+///
+/// The answer is `(NO_TEXT_SCALING, None)` for every document the v0 format
+/// can express, and that is a classification rather than an assumption. A
+/// `.dsb` changes a node's state at runtime through exactly two constructs,
+/// each carrying a closed vocabulary this walk classifies: a binding row
+/// writes one `BindingChannel`, and a variant member overrides one
+/// `VariantPropValue` arm. Neither vocabulary names `TextStyle.size` — the em
+/// size is a pooled document value with no channel and no override arm. It
+/// loads into the arena verbatim (`crates/dashscene-core/src/load.rs`), the
+/// typesetter shapes at it, and it is the `GlyphRun.size` the painter
+/// rasterizes from (`crates/dashscene-skia/src/lib.rs`), so nothing between
+/// the document and the pixel re-scales a run. `dashcue`'s transition specs are
+/// absent for the same reason: a spec says how a prop travels between two
+/// resolved endpoints, the endpoints come from these two constructs, and no
+/// `.dsb` table carries a spec at all.
+///
+/// [`channel_text_scale`] and [`variant_arm_text_scale`] are the seam.
+/// Appending a scale-affecting channel or override arm fails their registry
+/// tests, and the arm that adds it supplies the scale it reaches — the floor
+/// check then tightens with no change at the call site. The scale is
+/// document-wide, so such an arm would give every style the same lower bound
+/// rather than only the styles it targets; narrowing it to the targeted nodes
+/// is that arm's work too.
+fn min_text_scale(doc: &Document<'_>) -> (f32, Option<String>) {
+    let mut min = (NO_TEXT_SCALING, None);
+
+    for (i, binding) in doc.bindings().unwrap_or_default().iter().enumerate() {
+        let Some(scale) = channel_text_scale(binding.channel()) else {
+            continue;
+        };
+        if scale < min.0 {
+            min = (scale, Some(Location::Binding(i as u32).to_string()));
+        }
+    }
+
+    for (i, set) in doc.variant_sets().unwrap_or_default().iter().enumerate() {
+        for member in set.members().unwrap_or_default().iter() {
+            for override_ in member.overrides().unwrap_or_default().iter() {
+                let Some(scale) = variant_arm_text_scale(override_.value_type()) else {
+                    continue;
+                };
+                if scale < min.0 {
+                    min = (scale, Some(Location::VariantSet(i as u32).to_string()));
+                }
+            }
+        }
+    }
+
+    min
+}
+
+/// The smallest scale a write to `channel` can drive a text run's em size to,
+/// or `None` for a value this build does not know.
+///
+/// The `None` arm stays reserved for a value outside the schema's own enum,
+/// for the reason [`channel_effect`] documents: `flatc` generates
+/// `BindingChannel` as a newtype over `u8`, so this match is not checked for
+/// exhaustiveness, and a channel appended to the schema would fall to `None`
+/// and be skipped silently. `every_binding_channel_carries_a_text_scale`
+/// fails at the append instead.
+fn channel_text_scale(channel: dashbuf::BindingChannel) -> Option<f32> {
+    use dashbuf::BindingChannel as Channel;
+    match channel {
+        // The layout channels move and resize the node's box. The em size is
+        // `TextStyle.size`, which no channel names: the typesetter shapes at
+        // it and `GlyphRun.size` carries it to the painter verbatim, so a box
+        // write rewraps the paragraph without re-scaling one glyph.
+        Channel::X | Channel::Y | Channel::Width | Channel::Height | Channel::Gap => {
+            Some(NO_TEXT_SCALING)
+        }
+        // The paint channels change color and alpha only — the same side of
+        // boundary B as `Opacity`, and neither reaches a size.
+        Channel::FillR | Channel::FillG | Channel::FillB | Channel::FillA | Channel::Opacity => {
+            Some(NO_TEXT_SCALING)
+        }
+        _ => None,
+    }
+}
+
+/// The smallest scale a variant override of `arm` can drive a text run's em
+/// size to, or `None` for a union tag this build does not know.
+///
+/// The same reserved-`None` contract as [`channel_text_scale`]:
+/// `VariantPropValue` is a `u8` newtype too, so
+/// `every_variant_override_arm_carries_a_text_scale` is what fails when the
+/// union grows an arm.
+fn variant_arm_text_scale(arm: dashbuf::VariantPropValue) -> Option<f32> {
+    use dashbuf::VariantPropValue as Arm;
+    match arm {
+        // A member overrides a node's box, its solid fill, or whether the
+        // node is laid out at all. None of the arms carries a text style, so
+        // a variant switch cannot change the size a run rasterizes at — it
+        // can only stop the run rendering (`VariantVisible`). `NONE` is the
+        // absent-value tag, which never reaches this gate: `value` is
+        // `(required)`, so the flatbuffer verifier refuses the buffer first.
+        Arm::NONE
+        | Arm::VariantX
+        | Arm::VariantY
+        | Arm::VariantWidth
+        | Arm::VariantHeight
+        | Arm::VariantFill
+        | Arm::VariantVisible => Some(NO_TEXT_SCALING),
+        _ => None,
+    }
+}
+
 /// How many of `node`'s ancestors hug their content, and the nearest one.
 ///
 /// An ancestor that hugs on *either* axis counts, not only the axis the
@@ -1185,6 +1335,44 @@ mod tests {
                 "the schema names {channel:?}, but channel_effect has no arm for it, so the R4 \
                  containment rule would silently skip every binding of that channel (P4). Add \
                  the arm — Layout if the solver reads the channel, PaintOnly if it does not."
+            );
+        }
+    }
+
+    /// Every binding channel the schema names must declare what it does to a
+    /// text run's em size.
+    ///
+    /// The guard on [`channel_text_scale`]'s `_ => None` arm, and the seam
+    /// the ruling on debt #373 asked for. A channel appended to the schema
+    /// falls to `None`, [`min_text_scale`] skips it, and the MSDF floor would
+    /// go on being checked against the authored size while that channel drove
+    /// the text under it — the silent degrade P4 forbids. Adding the arm is
+    /// the moment to decide: `NO_TEXT_SCALING` if the channel leaves the em
+    /// size alone, the reachable scale if it does not.
+    #[test]
+    fn every_binding_channel_carries_a_text_scale() {
+        for &channel in dashbuf::BindingChannel::ENUM_VALUES {
+            assert!(
+                channel_text_scale(channel).is_some(),
+                "the schema names {channel:?}, but channel_text_scale has no arm for it, so the \
+                 MSDF floor would be checked against the authored size even where that channel \
+                 drives the text under it (P4). Add the arm — NO_TEXT_SCALING if the channel \
+                 leaves the em size alone, the reachable scale if it does not."
+            );
+        }
+    }
+
+    /// Every variant override arm the schema names must declare the same
+    /// thing — the union half of the seam above.
+    #[test]
+    fn every_variant_override_arm_carries_a_text_scale() {
+        for &arm in dashbuf::VariantPropValue::ENUM_VALUES {
+            assert!(
+                variant_arm_text_scale(arm).is_some(),
+                "the schema names {arm:?}, but variant_arm_text_scale has no arm for it, so the \
+                 MSDF floor would be checked against the authored size even where that override \
+                 drives the text under it (P4). Add the arm — NO_TEXT_SCALING if the override \
+                 leaves the em size alone, the reachable scale if it does not."
             );
         }
     }

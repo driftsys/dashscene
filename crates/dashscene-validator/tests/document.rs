@@ -8,12 +8,14 @@
 //! from the producing bug, at paint time.
 
 use dashbuf::{
-    AssetEntry, AssetEntryArgs, Color, CornerRadii, Document, DocumentArgs, Fill, FillLayer,
-    FillLayerArgs, Gradient, GradientArgs, GradientKind, GradientStop, ImageFill, ImageFillArgs,
-    ImageFormat, NO_PAINT, Node, NodeArgs, Paint, PaintArgs, ScaleMode, SolidFill, SolidFillArgs,
-    Stroke, StrokeAlign, StrokeArgs, TextStyle, TextStyleArgs, VariantMember, VariantMemberArgs,
-    VariantOverride, VariantOverrideArgs, VariantPropValue, VariantSet, VariantSetArgs,
-    VariantVisible, VariantVisibleArgs, VariantX, VariantXArgs, Vec2, root_as_document,
+    AssetEntry, AssetEntryArgs, Binding, BindingArgs, BindingChannel, BindingTransform, Color,
+    CornerRadii, Document, DocumentArgs, Fill, FillLayer, FillLayerArgs, Gradient, GradientArgs,
+    GradientKind, GradientStop, ImageFill, ImageFillArgs, ImageFormat, NO_PAINT, Node, NodeArgs,
+    Paint, PaintArgs, ScaleMode, SignalDecl, SignalDeclArgs, SolidFill, SolidFillArgs, Stroke,
+    StrokeAlign, StrokeArgs, TextStyle, TextStyleArgs, TransformScale, TransformScaleArgs,
+    VariantMember, VariantMemberArgs, VariantOverride, VariantOverrideArgs, VariantPropValue,
+    VariantSet, VariantSetArgs, VariantVisible, VariantVisibleArgs, VariantWidth, VariantWidthArgs,
+    VariantX, VariantXArgs, Vec2, root_as_document,
 };
 use dashscene_validator::{Location, NodePath, Severity, rule, validate_document};
 use flatbuffers::{FlatBufferBuilder, WIPOffset};
@@ -1143,6 +1145,184 @@ fn text_style_weights_at_the_boundaries_are_allowed() {
             "weight {weight} is in range:\n{report}"
         );
     }
+}
+
+// ---------------------------------------------------------------------
+// The MSDF em-size floor (`docs/decisions/q1-msdf-below-14px.md`, debt
+// #373). The floor is checked against the smallest size the document can
+// reach at runtime, so these documents carry the runtime constructs a
+// `.dsb` can express — a binding through a scale transform, a variant
+// override — alongside the text style, and pin that none of them moves the
+// number.
+// ---------------------------------------------------------------------
+
+/// One text node and its style, at em size `size`. When `animated`, the
+/// document also carries the two constructs that change a node's state at
+/// runtime, both aimed at that same node: a signal bound to its `Width`
+/// through a 0.8 scale transform, and a variant member overriding its
+/// width. Neither reaches `TextStyle.size`, which is the point.
+fn document_with_text_style_size(size: f32, animated: bool) -> Vec<u8> {
+    let mut b = FlatBufferBuilder::new();
+    let text = b.create_string("hi");
+    let strings = b.create_vector(&[text]);
+    let family = b.create_string("Inter");
+    let style = TextStyle::create(
+        &mut b,
+        &TextStyleArgs {
+            family: Some(family),
+            size,
+            weight: 400,
+            color: Some(&red()),
+            ..Default::default()
+        },
+    );
+    let text_styles = b.create_vector(&[style]);
+    let node = Node::create(
+        &mut b,
+        &NodeArgs {
+            text: 0,
+            text_style: 0,
+            ..Default::default()
+        },
+    );
+    let nodes = b.create_vector(&[node]);
+
+    let (signals, bindings, variant_sets) = if animated {
+        let name = b.create_string("progress");
+        let signal = SignalDecl::create(
+            &mut b,
+            &SignalDeclArgs {
+                name: Some(name),
+                initial: 1.0,
+            },
+        );
+        let signals = b.create_vector(&[signal]);
+        let scale = TransformScale::create(&mut b, &TransformScaleArgs { factor: 0.8 });
+        let binding = Binding::create(
+            &mut b,
+            &BindingArgs {
+                signal: 0,
+                node: 0,
+                channel: BindingChannel::Width,
+                transform_type: BindingTransform::TransformScale,
+                transform: Some(scale.as_union_value()),
+            },
+        );
+        let bindings = b.create_vector(&[binding]);
+
+        let width = VariantWidth::create(&mut b, &VariantWidthArgs { value: 10.0 });
+        let override_ = VariantOverride::create(
+            &mut b,
+            &VariantOverrideArgs {
+                node: 0,
+                value_type: VariantPropValue::VariantWidth,
+                value: Some(width.as_union_value()),
+            },
+        );
+        let overrides = b.create_vector(&[override_]);
+        let member = VariantMember::create(
+            &mut b,
+            &VariantMemberArgs {
+                overrides: Some(overrides),
+                ..Default::default()
+            },
+        );
+        let members = b.create_vector(&[member]);
+        let set = VariantSet::create(
+            &mut b,
+            &VariantSetArgs {
+                members: Some(members),
+                ..Default::default()
+            },
+        );
+        (Some(signals), Some(bindings), Some(b.create_vector(&[set])))
+    } else {
+        (None, None, None)
+    };
+
+    let document = Document::create(
+        &mut b,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            strings: Some(strings),
+            text_styles: Some(text_styles),
+            signals,
+            bindings,
+            variant_sets,
+            ..Default::default()
+        },
+    );
+    b.finish(document, None);
+    b.finished_data().to_vec()
+}
+
+#[test]
+fn a_text_style_under_the_msdf_floor_is_named() {
+    let report = validate(&document_with_text_style_size(12.0, false));
+    let diagnostic = report
+        .find(rule::TEXT_STYLE_BELOW_MSDF_FLOOR)
+        .unwrap_or_else(|| panic!("the floor is not diagnosed:\n{report}"));
+    // A warning, not an error: the text renders, and a target that accepts
+    // the degrade declares a waiver — which an error would forbid.
+    assert_eq!(diagnostic.severity, Severity::Warning);
+    assert!(!report.has_errors(), "{report}");
+    // A text style is a pooled surface, so the diagnostic points at its pool
+    // index, never a Node index that would resolve to an unrelated layer.
+    assert_eq!(diagnostic.at, Location::TextStyle(0));
+    // The message names the size reached, not just the node.
+    assert!(
+        diagnostic.message.contains("12 px per em"),
+        "the reached size is named: {diagnostic}"
+    );
+    // Nothing in this document scales the text, so the reached size *is* the
+    // authored one and there is no construct to name.
+    assert!(
+        !diagnostic.message.contains("reached from"),
+        "an unscaled style names no construct: {diagnostic}"
+    );
+    assert!(
+        diagnostic.workaround().is_some(),
+        "the floor is a design choice, so it carries a workaround: {diagnostic}"
+    );
+}
+
+#[test]
+fn a_text_style_at_the_msdf_floor_is_allowed() {
+    // The spike measured MSDF as matching direct rasterization *at* 14 px per
+    // em, so the floor is inclusive: 14 passes, and so does anything above.
+    for size in [14.0, 16.0, 48.0] {
+        let report = validate(&document_with_text_style_size(size, false));
+        assert!(
+            !report.has(rule::TEXT_STYLE_BELOW_MSDF_FLOOR),
+            "{size} px per em is on or above the floor:\n{report}"
+        );
+    }
+}
+
+#[test]
+fn a_document_whose_constructs_do_not_scale_text_is_diagnosed_at_its_authored_size() {
+    // The ruling on debt #373 checks the floor against the smallest size the
+    // document can reach, so a document carrying the runtime constructs a
+    // `.dsb` can express — a binding through a 0.8 scale transform, a variant
+    // override, both on the text node — must land exactly where the same
+    // document without them lands. A scale transform scales the *signal*
+    // feeding a channel, and no channel reaches `TextStyle.size`.
+    let animated = validate(&document_with_text_style_size(16.0, true));
+    assert!(
+        !animated.has(rule::TEXT_STYLE_BELOW_MSDF_FLOOR),
+        "a 16 px per em style is not dragged under the floor by constructs that do not scale \
+         text:\n{animated}"
+    );
+    assert!(animated.is_empty(), "unexpected diagnostics:\n{animated}");
+
+    let animated = validate(&document_with_text_style_size(12.0, true));
+    let diagnostic = animated
+        .find(rule::TEXT_STYLE_BELOW_MSDF_FLOOR)
+        .unwrap_or_else(|| panic!("the floor is not diagnosed:\n{animated}"));
+    assert!(
+        diagnostic.message.contains("12 px per em") && !diagnostic.message.contains("reached from"),
+        "the reached size is the authored one, and no construct is named: {diagnostic}"
+    );
 }
 
 /// One node painted by a paint entry whose corner radii are `radii`

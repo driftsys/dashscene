@@ -840,14 +840,23 @@ fn a_width_fixed_text_node_stages_the_lines_the_measure_seam_wrapped() {
 fn render_fixture(name: &str, fixture_json: &str) -> Vec<u8> {
     let (bytes, report) = compile_figma(fixture_json, Profile::Core, &BTreeMap::new())
         .unwrap_or_else(|e| panic!("frame {name} fixture compiles: {e:?}"));
-    // A clean fixture lowers with an empty report; a diagnostic would mean the
-    // fixture is not renderable and must not be wired as a measured frame. This
-    // guards only *lowering* diagnostics — an empty report does not certify the
-    // render is faithful. Render-time fidelity (glyph shape and advance under
-    // font substitution, atlas coverage) is caught by the diff against the
-    // design source, and disclosed per frame in the manifest — not here.
+    // A clean fixture lowers with no diagnostic that says it is unrenderable;
+    // one that does must not be wired as a measured frame. This guards only
+    // *lowering* diagnostics — a clean report does not certify the render is
+    // faithful. Render-time fidelity (glyph shape and advance under font
+    // substitution, atlas coverage) is caught by the diff against the design
+    // source, and disclosed per frame in the manifest — not here.
+    //
+    // The MSDF floor is the one exception (debt #373): `v08-baseline` carries a
+    // 12 px per em row on purpose, and the floor warns that MSDF smears there.
+    // That is a legibility finding about the fixture's own design, not a
+    // lowering defect — the frame renders, and how far its render lands from
+    // Figma's is exactly what this oracle measures.
     assert!(
-        report.is_empty(),
+        report
+            .diagnostics()
+            .iter()
+            .all(|d| d.rule == dashscene_validator::rule::TEXT_STYLE_BELOW_MSDF_FLOOR),
         "frame {name} fixture lowers clean: {report}"
     );
     let (document, payloads) = dashbuf::open(&bytes).expect("a valid .dsb file");
