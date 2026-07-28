@@ -27,26 +27,35 @@
 //! # What the frozen file is actually worth, measured
 //!
 //! Story #431 predicted that a byte-exact fixture would be "the only thing"
-//! that catches a silent compressor regression. Three mutations were run
+//! that catches a silent compressor regression. Five mutations are recorded
 //! against this golden and against `crates/dashpack/tests/band_contract.rs`,
-//! whose recorded table pins each rung's KTX2 file *length*:
+//! whose recorded table pins each derived rung's KTX2 file. Issue #458
+//! remeasured the first three and added the last two; the `digest` column of
+//! that table arrived with the same issue, so "before" is what the recorded
+//! table caught when it held lengths alone:
 //!
-//! | mutation | recorded table | this golden |
-//! | --- | --- | --- |
-//! | `ZSTD_LEVEL` 19 to 1 | caught | caught |
-//! | `PACK_QUALITY` Thorough to Fastest | caught | **survives** |
-//! | a same-length byte change (`KTXorientation`) | **survives** | caught |
+//! | mutation | table, before | table, now | this golden |
+//! | --- | --- | --- | --- |
+//! | `ZSTD_LEVEL` 19 to 1 | caught | caught | caught |
+//! | `PACK_QUALITY` Thorough to Fastest | caught | caught | **survives** |
+//! | same-length byte change (`KTXorientation`) | **survives** | caught | caught |
+//! | `Quality::Fastest` hard-coded at `pack`'s call site | caught | caught | **survives** |
+//! | vendored `THOROUGH` mid-bandwidth tune limit 94 to 93 | caught | caught | **survives** |
+//!
+//! The fourth is the second regression arriving one line lower. It is measured
+//! because two tests pin `PACK_QUALITY == Quality::Thorough` — one in
+//! `band_contract.rs` and one in `profile_preview_weld.rs` — and both survive
+//! it: pinning the constant is not the same as pinning what the encoder does.
+//! The fifth is the same regression again, arriving inside the vendored encoder
+//! rather than in our source, which is the shape a revendoring would take.
 //!
 //! So the prediction was half right, and the half that was wrong matters. The
 //! recorded table catches a compressor regression too, because a level change
-//! moves the length. What this golden adds is **byte** identity where that
-//! table has only length, and it is the sole check over the *assembled file* —
-//! the section table, the manifest bytes, the page alignment — none of which
-//! the packer's own tests touch.
-//!
-//! And it does not catch an encoder-effort regression, because of the limit
-//! below. That is covered by the recorded table, on fixtures large enough for
-//! the effort to change the answer.
+//! moves the length. What this golden still adds is that it is the sole check
+//! over the *assembled file* — the section table, the manifest bytes, the page
+//! alignment — none of which the packer's own tests touch. Byte identity over
+//! the packer's KTX2 output is no longer unique to it: since #458 the recorded
+//! table pins a BLAKE3 per derived row.
 //!
 //! # The limit of this fixture, stated rather than left to be discovered
 //!
@@ -57,13 +66,23 @@
 //! the code did. `crates/dashbuf/tests/bank.rs` carries the multi-asset
 //! manifest cases on hand-built documents for exactly that reason.
 //!
-//! The image is also 16x16, which is **one ASTC block at every footprint on the
-//! ladder**. An encoder given more or less search effort returns the same
-//! single block, which is why the quality mutation above survives here. A
-//! golden over a larger asset would close that, at the cost of committing a
-//! payload two orders of magnitude bigger; the recorded table already covers it
-//! on the 380x380 fixture, so this is recorded as a known limit rather than
-//! paid for twice.
+//! The image is 16x16, and the reason the quality mutations survive here is
+//! **not** the block count. Issue #458 measured it: at the 8x8 rung the packer
+//! chooses, 16x16 is 2 by 2 blocks, and encoding it at `Quality::Thorough` and
+//! at `Quality::Fastest` produces the same 64 bytes — 0 of 64 differ. The
+//! earlier claim in this comment, that 16x16 is one block at every footprint,
+//! was wrong: it is 16 blocks at 4x4, 9 at 6x6 and 4 at 8x8, 10x10 and 12x12.
+//! What makes the asset effort-insensitive is its content. It is a small flat
+//! figure, so every search effort converges on the same blocks at the rung that
+//! ships. The two rungs where effort does change the bytes, 6x6 and 12x12, are
+//! rejected by the band and never reach the file.
+//!
+//! That is why a golden over a merely *larger* asset was not the fix issue #458
+//! settled on. Block count is not the property that matters; content complexity
+//! is. `import-image-fill` at 380x380 has 4096 blocks at its 6x6 rung and 51570
+//! of its 65536 payload bytes move between Thorough and Fastest, and it is
+//! covered by digest in the recorded table at 64 hex characters rather than by
+//! a second committed 21 KB payload.
 //!
 //! What this file carries that no hand-built document and no recorded number
 //! can is a real packer's bytes over a real compiler's output, in the container
@@ -300,11 +319,12 @@ fn the_packer_report_measures_what_the_profile_cost() {
             .map(|a| a.resident().len())
             .sum::<usize>(),
     );
-    // v03-paint's image is 93 bytes: 16 texels, one ASTC block at any footprint
-    // this ladder offers. HiFi therefore makes it *larger*, because a block plus
-    // KTX2 framing has a floor a 93-byte PNG does not. That is a real property
-    // of small assets and not a defect — asserted so that a change which made
-    // it accidentally smaller is noticed and explained rather than welcomed.
+    // v03-paint's image is 256 texels in a 93-byte PNG, and packs to 4 blocks at
+    // the 8x8 rung: 64 bytes of blocks, which Zstd stores in 33, under 216 bytes
+    // of KTX2 framing. HiFi therefore makes it *larger*, because the framing has
+    // a floor a 93-byte PNG does not. That is a real property of small assets
+    // and not a defect — asserted so that a change which made it accidentally
+    // smaller is noticed and explained rather than welcomed.
     assert!(
         report.resident_bytes() > report.canonical_bytes(),
         "HiFi is expected to cost more than canonical on this fixture, whose one image is \

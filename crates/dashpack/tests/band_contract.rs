@@ -24,6 +24,59 @@
 //! assets: one image, so no dedup, ordering or wrong-index bug could show. This
 //! file carries three image fills and two distance fields, and
 //! `more_than_one_asset_per_class_and_one_that_escalates` holds it to that.
+//!
+//! # Why a digest and not only a length (issue #458)
+//!
+//! Story #434 recorded each chosen rung's KTX2 file *length* and measured what
+//! that misses: a change that rewrites the file without resizing it survives.
+//! It also measured that the byte-exact golden `goldens/dsb/v03-paint-hifi.dsb`
+//! survives an encoder-effort regression, because the one asset that golden
+//! carries encodes identically at every effort. Issue #458 proposed closing
+//! that with a second byte-exact golden over `import-image-fill`, whose HiFi
+//! payload is about 21 KB.
+//!
+//! `TABLE` records a BLAKE3 digest per derived row instead. A digest is
+//! byte-exactness — the same property a committed payload pins — over ten
+//! derived files spanning 249 to 196782 bytes, at 64 hex characters a row
+//! rather than one 21 KB binary that has to be regenerated whenever the
+//! encoder, the compressor or the writer string moves. What a committed
+//! payload would add over a digest is the ability to inspect the difference,
+//! and a Zstd-compressed block payload is not inspectable by diff.
+//!
+//! Measured on this branch, the digest is the assertion in this file that fails
+//! when the `KTXorientation` value changes to another two-byte string: the file
+//! keeps its length, every fraction holds, every rung holds, and the digests
+//! move. Before #458 the whole file stayed green on that change.
+//!
+//! **What it still does not cover.** A digest says the bytes moved, never which
+//! ones; the `bytes` column beside it separates a resize from a rewrite, and
+//! nothing here narrows it further. It covers the packer's own KTX2 files and
+//! not the assembled `.dsb` container around them — the section table, the
+//! derivation manifest, the page alignment — which is
+//! `goldens/tooling/tests/derived_bank.rs`'s golden, and that golden carries
+//! one 249-byte asset. No check in the repository pins assembled-container
+//! bytes over a multi-block asset.
+//!
+//! **No mutation is caught by the digest alone**, and that is stated rather
+//! than left to be assumed. Six were run for #458, and each one that reaches
+//! this file also moves a rung, a fraction or a length. The one class that
+//! would need the digest on its own — a multi-block ASTC payload whose blocks
+//! change while the Zstd-compressed length and the 4-decimal differing fraction
+//! both hold — is reachable by revendoring astcenc, not by editing our own
+//! source, so it could not be synthesised. Two of the six are recorded: a
+//! `tune_block_mode_limit` change in the vendored medium-bandwidth `THOROUGH`
+//! preset moved the `import-image-fill` accepted fraction from 0.2133 % to
+//! 0.2181 %, and the same change left the assembled golden green because
+//! `v03-paint` ships at 8x8, out of that preset table's range. The digest is
+//! defence in depth over the columns beside it, not a new class of coverage.
+//!
+//! **It is also the first check that can fail the invariance claim.**
+//! `crates/dashpack-astcenc-sys/build.rs` argues that an invariant astcenc
+//! build emits bit-identical output on any CPU and any compiler, and nothing
+//! measured it. A length can agree across two architectures while the bytes
+//! differ; a digest cannot. If a run on another architecture disagrees with a
+//! digest here, that is the invariance claim failing and it must be
+//! investigated, not re-recorded.
 
 use dashbuf::AssetKind;
 use dashpack::astc::{BlockSize, ColorSpace, Quality, Rgba8, decode, encode};
@@ -207,6 +260,10 @@ struct Row {
     rejected: &'static [(&'static str, &'static str)],
     /// The length of the chosen rung's KTX2 file, in bytes. Zero under RAW.
     bytes: usize,
+    /// The BLAKE3 of the chosen rung's KTX2 file, hex, or `CANONICAL` under
+    /// RAW, whose binding produces no file to hash. See "Why a digest and not
+    /// only a length" above.
+    digest: &'static str,
 }
 
 const CANONICAL: &str = "canonical";
@@ -242,6 +299,17 @@ const LOSSLESS: &str = "lossless";
 /// changed: no rung, no accepted fraction, no rejected fraction. A uniform
 /// twelve is the signature of a writer-string change; a single row moving, or a
 /// row moving by anything else, is not and must be explained on its own terms.
+/// Since #458 every `digest` moves with it too, so that signature is now "a
+/// uniform twelve and ten new digests" rather than a length change alone.
+///
+/// # Reading the digests
+///
+/// Three pairs of rows share a digest — `v03-paint`, `inter-ascii-atlas` and
+/// `arabic-atlas` each under HiFi and LoFi. That is the two profiles reaching
+/// the same rung for the same asset, which must produce the same file: the
+/// binding differs only in which rung it stops at, and nothing downstream of
+/// the rung depends on the profile. A shared rung whose digests diverged would
+/// mean the profile leaked into the encoding.
 const TABLE: [Row; 15] = [
     Row {
         fixture: "import-image-fill",
@@ -250,6 +318,7 @@ const TABLE: [Row; 15] = [
         accepted: CANONICAL,
         rejected: &[],
         bytes: 0,
+        digest: CANONICAL,
     },
     Row {
         fixture: "import-image-fill",
@@ -262,6 +331,7 @@ const TABLE: [Row; 15] = [
             ("astc-8x8", "2.8012"),
         ],
         bytes: 21026,
+        digest: "a73ce67df7aa4382d085c3ceea24256ca11c878d3e7c60f04b866154faab319b",
     },
     Row {
         fixture: "import-image-fill",
@@ -270,6 +340,7 @@ const TABLE: [Row; 15] = [
         accepted: "0.0000",
         rejected: &[],
         bytes: 7961,
+        digest: "2f13049640c364b75a6039b5147867d39e1ac5fbffecd39d0db5028fc678d78c",
     },
     Row {
         fixture: "v03-paint",
@@ -278,6 +349,7 @@ const TABLE: [Row; 15] = [
         accepted: CANONICAL,
         rejected: &[],
         bytes: 0,
+        digest: CANONICAL,
     },
     Row {
         fixture: "v03-paint",
@@ -286,6 +358,7 @@ const TABLE: [Row; 15] = [
         accepted: "0.0000",
         rejected: &[("astc-12x12", "51.5625"), ("astc-10x10", "100.0000")],
         bytes: 249,
+        digest: "8ff1116963b8d320b8ab061d03aceb256723a2effc88ee2d0b3ccd1b5db43377",
     },
     Row {
         fixture: "v03-paint",
@@ -294,6 +367,7 @@ const TABLE: [Row; 15] = [
         accepted: "0.0000",
         rejected: &[("astc-12x12", "50.0000"), ("astc-10x10", "68.7500")],
         bytes: 249,
+        digest: "8ff1116963b8d320b8ab061d03aceb256723a2effc88ee2d0b3ccd1b5db43377",
     },
     Row {
         fixture: "detail-noise",
@@ -302,6 +376,7 @@ const TABLE: [Row; 15] = [
         accepted: CANONICAL,
         rejected: &[],
         bytes: 0,
+        digest: CANONICAL,
     },
     Row {
         fixture: "detail-noise",
@@ -317,6 +392,7 @@ const TABLE: [Row; 15] = [
             ("astc-4x4", "54.4891"),
         ],
         bytes: 196782,
+        digest: "e1a0f6ba373eaf79a5d10b423863b0edf2ba0cadedd70bb506bb4fa4b77dfbc6",
     },
     Row {
         fixture: "detail-noise",
@@ -329,6 +405,7 @@ const TABLE: [Row; 15] = [
             ("astc-8x8", "10.4401"),
         ],
         bytes: 29181,
+        digest: "bd8568cbca85a8288beaf04db6b3ae3da317b9c11bf1b9b48110411709145d1b",
     },
     Row {
         fixture: "inter-ascii-atlas",
@@ -337,6 +414,7 @@ const TABLE: [Row; 15] = [
         accepted: CANONICAL,
         rejected: &[],
         bytes: 0,
+        digest: CANONICAL,
     },
     Row {
         fixture: "inter-ascii-atlas",
@@ -345,6 +423,7 @@ const TABLE: [Row; 15] = [
         accepted: LOSSLESS,
         rejected: &[],
         bytes: 73703,
+        digest: "8faf218894227208fe82b49989fd884ab0e6fbf461e387f1df63a1d2edf4476d",
     },
     Row {
         fixture: "inter-ascii-atlas",
@@ -353,6 +432,7 @@ const TABLE: [Row; 15] = [
         accepted: LOSSLESS,
         rejected: &[],
         bytes: 73703,
+        digest: "8faf218894227208fe82b49989fd884ab0e6fbf461e387f1df63a1d2edf4476d",
     },
     Row {
         fixture: "arabic-atlas",
@@ -361,6 +441,7 @@ const TABLE: [Row; 15] = [
         accepted: CANONICAL,
         rejected: &[],
         bytes: 0,
+        digest: CANONICAL,
     },
     Row {
         fixture: "arabic-atlas",
@@ -369,6 +450,7 @@ const TABLE: [Row; 15] = [
         accepted: LOSSLESS,
         rejected: &[],
         bytes: 98538,
+        digest: "ea0f7d6489186edf7feb6edd2d4af1bc3576759a7c4a91b8523679942f61ff9b",
     },
     Row {
         fixture: "arabic-atlas",
@@ -377,6 +459,7 @@ const TABLE: [Row; 15] = [
         accepted: LOSSLESS,
         rejected: &[],
         bytes: 98538,
+        digest: "ea0f7d6489186edf7feb6edd2d4af1bc3576759a7c4a91b8523679942f61ff9b",
     },
 ];
 
@@ -393,6 +476,11 @@ fn the_recorded_contract_table() {
         let derivation = match binding {
             Binding::Canonical => {
                 assert_eq!(row.rung, CANONICAL, "{context}: RAW derives nothing");
+                assert_eq!(
+                    row.digest, CANONICAL,
+                    "{context}: a row that derives nothing has no file to hash, so recording a \
+                     digest for it would record a number nothing produced"
+                );
                 continue;
             }
             Binding::Derived(derivation) => derivation,
@@ -432,6 +520,14 @@ fn the_recorded_contract_table() {
             derivation.file.len(),
             row.bytes,
             "{context}: the chosen rung's container is a different size"
+        );
+        assert_eq!(
+            blake3::hash(&derivation.file).to_hex().as_str(),
+            row.digest,
+            "{context}: the chosen rung's container is {} bytes as recorded but not the \
+             recorded bytes, so this is a rewrite rather than a resize — an encoder, \
+             compressor or writer change, not a band change (issue #458)",
+            row.bytes
         );
     }
 }
