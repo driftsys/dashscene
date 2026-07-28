@@ -56,7 +56,7 @@ use crate::document::{
     TextAlignV as DocTextAlignV, TextStyle as DocTextStyle, VectorAtlas as DocVectorAtlas,
     VectorShape as DocVectorShape,
 };
-use crate::figma::rest::{FigmaFile, Geometry, Node, Paint};
+use crate::figma::rest::{Effect, FigmaFile, Geometry, Node, Paint};
 use crate::figma::vector_field::{VectorAtlasBaker, VectorFieldError, VectorPath, WindingRule};
 
 /// The diagnostic rules this producer assembles itself — constructs with no
@@ -760,6 +760,12 @@ impl Walk<'_> {
         let mut paint: Option<DocPaint> = None;
         let mut text: Option<String> = None;
         let mut text_style: Option<DocTextStyle> = None;
+        // Whether the type-specific lowering below ran `shadows_of`, so the
+        // guard after the chain knows whether this node's shadows reached the
+        // document (debt #396). It starts false on purpose: a lowering path
+        // added later that forgets to lower shadows names the gap instead of
+        // dropping it, which is the direction P4 requires the mistake to fall.
+        let mut shadows_lowered = false;
 
         // Debt #485. An IMAGE fill registers its asset as a side effect of
         // `paint_kind` inspecting it, before this node's blockers are fully
@@ -770,6 +776,12 @@ impl Walk<'_> {
         // nothing else can have referenced an index this node just minted,
         // since a node's children are only visited after it returns.
         let assets_before = self.doc.assets.len();
+        // Debt #356, the same shape as the asset table above. `vector_paint_of`
+        // registers a VECTOR's geometry with the baker before this node's
+        // blockers are all known — the effect triage and the shadow carrier
+        // guard both run after it — so a node skipped afterwards used to leave
+        // its baked tile in the packed atlas with no paint entry referencing it.
+        let shapes_before = self.baker.len();
         if node.kind == "TEXT" {
             let (t, ts) = self.text_of(node, &mut blockers);
             text = t;
@@ -793,6 +805,7 @@ impl Walk<'_> {
             // own (an arc, a ring, a non-circular or non-fixed ellipse); each
             // blocks the node like any other finding. `UnresolvedImage` aborts.
             paint = self.ellipse_paint_of(node, path, constraints, &mut blockers)?;
+            shadows_lowered = true;
         } else if node.kind == "VECTOR" {
             // A leaf: no container. Its geometry bakes into an MSDF field
             // carried on the paint entry as a coverage mask (story B1). The
@@ -807,6 +820,32 @@ impl Walk<'_> {
             // `UnresolvedImage` aborts: it is the caller's contract, not the
             // designer's file.
             paint = self.paint_of(node, path, &mut blockers)?;
+            shadows_lowered = true;
+        }
+
+        // The P4 coupling guard for shadows (debt #396). `constructs_of` and
+        // `shadows_of` are two independent walks over `node.effects`:
+        // `effect_construct` returns `None` for a drop or inner shadow
+        // *because* `shadows_of` lowers it, so "triage has nothing to say"
+        // equals "lowers cleanly" only where the lowering actually ran. It
+        // does not run on a TEXT node, which builds no `PaintEntry`, nor on a
+        // baked VECTOR, whose silhouette is its MSDF field rather than the
+        // parametric box the painter's shadow draws use. Without this the
+        // effect reaches neither walk and vanishes with nothing reported —
+        // the silent drop P4 forbids.
+        //
+        // The guard is stated over the *carrier*, not per node kind, so a
+        // path added later cannot re-open the same gap silently.
+        if !shadows_lowered
+            && node
+                .effects
+                .iter()
+                .any(|e| visible_shadow_kind(e).is_some())
+        {
+            blockers.push(format!(
+                "a shadow on a {} node",
+                node.kind.to_ascii_lowercase()
+            ));
         }
 
         // The import gate: the producer maps, the validator decides (P5).
@@ -838,6 +877,11 @@ impl Walk<'_> {
             self.doc.assets.truncate(assets_before);
             self.image_of
                 .retain(|_, index| (*index as usize) < assets_before);
+            // And any field this node's own geometry baked (debt #356). A
+            // dedup hit registered nothing, so this is a no-op for a repeated
+            // icon — only a shape this node was the first to bake goes away,
+            // which is exactly the one nothing else can reference.
+            self.baker.truncate(shapes_before);
 
             // The index this node would have taken had it lowered. The node is
             // skipped either way — refused under Strict, omitted with a warning
@@ -1177,8 +1221,9 @@ impl Walk<'_> {
     /// The field-input selection rule widens by exactly the measured census:
     /// a filled node bakes its `fillGeometry`; a stroke-only node bakes
     /// Figma's already-expanded `strokeGeometry`; a same-colour fill+stroke
-    /// unions both into one field; a differently-coloured fill+stroke is
-    /// refused by name (v0.11 candidate, in neither live target); and a node
+    /// unions both into one field; a differently-coloured fill+stroke, and a
+    /// non-solid fill carrying a stroke, are each refused under their own name
+    /// (v0.11 candidates, in neither live target); and a node
     /// with no fieldable geometry — or a path outside the `M`/`L`/`C`/`Z`
     /// census, or a degenerate extent — is refused by name (P4), preserving
     /// the node rather than approximating it. The winding rule (NONZERO /
@@ -1209,12 +1254,24 @@ impl Walk<'_> {
             ),
             // Both: only a same-colour fill+stroke (the hero's white/white
             // hairlines) unions cleanly into one field painted that colour.
+            //
+            // The two ways that can fail are named apart (debt #358). One
+            // message used to cover both, and it described only the second:
+            // a gradient- or image-filled vector with a stroke was refused as
+            // "differently-coloured", which is not why it cannot lower — the
+            // union is one field painted by one `PaintKind`, and a non-solid
+            // fill has no colour to compare with the stroke's in the first
+            // place. The refusal was correct either way; the cause was not.
             (Some(fill), Some(stroke)) => {
-                let same_colour =
-                    matches!(&fill, PaintKind::Solid { color } if *color == stroke.color);
-                if !same_colour {
-                    blockers
-                        .push("a vector with a differently-coloured fill and stroke".to_string());
+                let refusal = match &fill {
+                    PaintKind::Solid { color } if *color == stroke.color => None,
+                    PaintKind::Solid { .. } => {
+                        Some("a vector with a differently-coloured fill and stroke")
+                    }
+                    _ => Some("a vector with a non-solid fill and a stroke"),
+                };
+                if let Some(what) = refusal {
+                    blockers.push(what.to_string());
                     return Ok(None);
                 }
                 let mut geometry = node.fill_geometry.clone();
@@ -1278,9 +1335,16 @@ impl Walk<'_> {
             // lowering the hero's vectors is what unmasked it. Dropping it here
             // would silently lose the one node story #393 exists to fix.
             //
-            // Shadows are a different case and stay empty: no measured need has
-            // put one on a baked vector, and a silent drop there is pre-existing
-            // debt rather than something this story introduced.
+            // Shadows stay empty, and the node is refused whenever it has one
+            // (the carrier guard in `visit`, debt #396). The asymmetry with the
+            // blur above is the painter's, not a gap: `draw_backdrop_blur_field`
+            // confines a blur to the baked coverage, but `draw_drop_shadow` and
+            // `draw_inner_shadow` build their geometry from the node's
+            // parametric box and corners. A baked vector's silhouette is its
+            // field, so lowering a shadow here would cast a rectangle behind a
+            // star — an approximation, where B1's rule is to skip and name
+            // (`docs/decisions/baked-vector-msdf-field.md`). Refusing keeps the
+            // gap visible until the painter can cast from a field.
             blurs: blurs_of(node),
             // The resolved `VectorField` is a runtime form; the `.dsb` carries
             // the shape index, on `DocPaint::shape_field` below.
@@ -2267,11 +2331,9 @@ fn corners_of(node: &Node) -> CornerRadii {
 /// a dropped field the schema could carry.
 fn shadows_of(node: &Node, blockers: &mut Vec<String>) -> Vec<Shadow> {
     let mut shadows = Vec::new();
-    for effect in node.effects.iter().filter(|e| e.visible != Some(false)) {
-        let kind = match effect.kind.as_str() {
-            "DROP_SHADOW" => ShadowKind::Drop,
-            "INNER_SHADOW" => ShadowKind::Inner,
-            _ => continue,
+    for effect in &node.effects {
+        let Some(kind) = visible_shadow_kind(effect) else {
+            continue;
         };
         let Some(color) = effect.color else {
             blockers.push("a shadow with no color".to_string());
@@ -2290,6 +2352,27 @@ fn shadows_of(node: &Node, blockers: &mut Vec<String>) -> Vec<Shadow> {
         });
     }
     shadows
+}
+
+/// The [`ShadowKind`] a visible `DROP_SHADOW`/`INNER_SHADOW` effect lowers to,
+/// or `None` for anything else.
+///
+/// One function answers both questions that must agree: what [`shadows_of`]
+/// lowers, and what the `visit` carrier guard requires a lowering for (debt
+/// #396). Returning the kind rather than a boolean is what makes them agree by
+/// construction — the guard cannot come to recognize a shadow the lowering
+/// does not, because there is one list and the lowering reads its result. A
+/// hidden effect is not one, exactly as it is not for the lowering: it casts
+/// nothing in Figma.
+fn visible_shadow_kind(effect: &Effect) -> Option<ShadowKind> {
+    if effect.visible == Some(false) {
+        return None;
+    }
+    match effect.kind.as_str() {
+        "DROP_SHADOW" => Some(ShadowKind::Drop),
+        "INNER_SHADOW" => Some(ShadowKind::Inner),
+        _ => None,
+    }
 }
 
 /// A node's blurs (story #393,

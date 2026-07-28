@@ -2083,6 +2083,154 @@ fn a_vector_with_geometry_lowers_to_a_baked_field() {
     );
 }
 
+/// A fill+stroke vector names the reason it cannot union, and the two reasons
+/// are different reasons (debt #358).
+///
+/// One message used to cover both: a gradient-filled vector with a stroke was
+/// refused as "differently-coloured", which is not why it cannot lower — a
+/// gradient has no single colour to compare with the stroke's. The refusal was
+/// right, the cause it named was not, and a designer reading it would go
+/// looking for a colour to match.
+#[test]
+fn a_fill_plus_stroke_vector_names_which_union_it_cannot_do() {
+    let vector = |fill: serde_json::Value| {
+        document(serde_json::json!({
+            "name": "vec",
+            "type": "VECTOR",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+            "fills": [fill],
+            "strokes": [{
+                "type": "SOLID",
+                "color": { "r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0 },
+            }],
+            "strokeWeight": 1.0,
+            "strokeAlign": "CENTER",
+            "fillGeometry": [{
+                "path": "M 0 0 L 10 0 L 10 10 L 0 10 Z",
+                "windingRule": "NONZERO",
+            }],
+            "strokeGeometry": [{
+                "path": "M 0 0 L 10 0 L 10 10 L 0 10 Z",
+                "windingRule": "NONZERO",
+            }],
+        }))
+    };
+
+    // A solid fill in a different colour: the colours genuinely disagree.
+    let (_doc, diagnostics) = lower(
+        &vector(serde_json::json!({
+            "type": "SOLID",
+            "color": { "r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0 },
+        })),
+        Profile::Core,
+        &BTreeMap::new(),
+    )
+    .expect("lowering returns the doc plus diagnostics");
+    assert!(
+        common::unsupported(&diagnostics)
+            .iter()
+            .any(|(_, what)| what == "a vector with a differently-coloured fill and stroke"),
+        "two solid colours that disagree are named as such: {:?}",
+        common::unsupported(&diagnostics),
+    );
+
+    // A gradient fill: there is no colour to disagree about.
+    let (_doc, diagnostics) = lower(
+        &vector(serde_json::json!({
+            "type": "GRADIENT_LINEAR",
+            "gradientHandlePositions": [
+                { "x": 0.0, "y": 0.0 }, { "x": 1.0, "y": 0.0 }, { "x": 0.0, "y": 1.0 },
+            ],
+            "gradientStops": [
+                { "position": 0.0, "color": { "r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0 } },
+                { "position": 1.0, "color": { "r": 0.0, "g": 0.0, "b": 1.0, "a": 1.0 } },
+            ],
+        })),
+        Profile::Core,
+        &BTreeMap::new(),
+    )
+    .expect("lowering returns the doc plus diagnostics");
+    assert!(
+        common::unsupported(&diagnostics)
+            .iter()
+            .any(|(_, what)| what == "a vector with a non-solid fill and a stroke"),
+        "a non-solid fill is named for being non-solid, not for its colour: {:?}",
+        common::unsupported(&diagnostics),
+    );
+}
+
+/// A skipped vector leaves no shape behind in the packed atlas (debt #356).
+///
+/// `vector_paint_of` registers the geometry with the baker before the node's
+/// blockers are all known — the effect triage, and the shadow carrier guard,
+/// both run after it. A node that is skipped after baking used to leave its
+/// tile in the atlas image with nothing referencing it: deterministic, but
+/// wasted sheet area, and an index nothing can reach.
+///
+/// The two vectors here differ in geometry on purpose. Identical geometry
+/// would dedup onto one field, and the rollback would then have to be a no-op
+/// for the right reason rather than for the wrong one; distinct paths make the
+/// skipped node's own field the only thing that can be left over.
+#[test]
+fn a_skipped_vector_leaves_no_shape_in_the_atlas() {
+    let vector = |name: &str, path: &str, extra_effect: bool| {
+        let mut node = serde_json::json!({
+            "name": name,
+            "type": "VECTOR",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+            "fills": [{ "type": "SOLID", "color": { "r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0 } }],
+            "fillGeometry": [{ "path": path, "windingRule": "NONZERO" }],
+        });
+        if extra_effect {
+            // An effect kind the schema cannot carry at all: `effect_construct`
+            // returns `Some(Err(_))`, which the walk turns into a blocker —
+            // after `vector_paint_of` has already baked the geometry.
+            node["effects"] = serde_json::json!([{ "type": "GLASS", "visible": true }]);
+        }
+        node
+    };
+    let file = document(serde_json::json!({
+        "name": "root",
+        "type": "FRAME",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0 },
+        "children": [
+            vector("kept", "M 0 0 L 10 0 L 10 10 L 0 10 Z", false),
+            vector("skipped", "M 0 0 L 7 0 L 7 13 L 0 13 Z", true),
+        ],
+    }));
+
+    let (doc, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
+        .expect("lowering returns the doc plus diagnostics");
+
+    assert!(
+        common::unsupported(&diagnostics)
+            .iter()
+            .any(|(_, what)| what.contains("GLASS")),
+        "the skipped vector is refused by name: {:?}",
+        common::unsupported(&diagnostics),
+    );
+    assert_eq!(
+        doc.vector_shapes.len(),
+        1,
+        "only the vector that lowered may hold a shape in the atlas",
+    );
+    // The kept node's index must still be the one it was handed. A rollback
+    // that renumbered surviving shapes would point this at the wrong tile.
+    let kept = doc
+        .nodes
+        .iter()
+        .find(|n| n.name.as_deref() == Some("kept"))
+        .expect("the clean vector lowered");
+    assert_eq!(
+        kept.paint
+            .as_ref()
+            .expect("the kept vector carries a paint entry")
+            .shape_field,
+        Some(0),
+        "the surviving vector keeps the shape index it was given",
+    );
+}
+
 #[test]
 fn a_vector_without_geometry_is_refused_by_name() {
     // A VECTOR with ink but no path geometry (a geometry-free fetch, or a
@@ -2420,6 +2568,100 @@ fn a_blur_on_a_text_node_is_a_named_blocker() {
     assert!(
         named,
         "the gap is named, never silent: {:?}",
+        report.diagnostics(),
+    );
+}
+
+/// The two lowering paths that build no shadow-carrying paint entry, and the
+/// shadow effect that would vanish on each (debt #396). A TEXT node builds no
+/// `PaintEntry` at all; a baked VECTOR hardcodes an empty shadow list because
+/// its silhouette is the MSDF field and the painter's shadow draws are
+/// parametric — a box shadow behind a star is an approximation, and B1 skips
+/// rather than approximates.
+fn node_with_a_drop_shadow(kind: &str) -> serde_json::Value {
+    let shadow = serde_json::json!({
+        "type": "DROP_SHADOW",
+        "visible": true,
+        "color": { "r": 0.0, "g": 0.0, "b": 0.0, "a": 0.25 },
+        "offset": { "x": 0.0, "y": 4.0 },
+        "radius": 8.0,
+    });
+    let mut child = serde_json::json!({
+        "name": "shadowed",
+        "type": kind,
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 40.0, "height": 10.0 },
+        "fills": [{ "type": "SOLID", "color": { "r": 1.0, "g": 1.0, "b": 1.0, "a": 1.0 } }],
+        "effects": [shadow],
+    });
+    if kind == "TEXT" {
+        child["characters"] = serde_json::json!("hi");
+        child["style"] = serde_json::json!({ "fontFamily": "Inter", "fontSize": 12.0 });
+    } else {
+        child["fillGeometry"] = serde_json::json!([{
+            "path": "M 0 0 L 40 0 L 40 10 L 0 10 Z",
+            "windingRule": "NONZERO",
+        }]);
+    }
+    document_json(serde_json::json!({
+        "name": "root",
+        "type": "FRAME",
+        "clipsContent": true,
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0 },
+        "children": [child],
+    }))
+}
+
+/// A shadow on a node whose lowering carries no shadows is named, never
+/// dropped in silence (debt #396, P4).
+///
+/// `triage::constructs_of` returns `None` for `DROP_SHADOW`/`INNER_SHADOW`
+/// because `shadows_of` lowers them — but only the paths that call
+/// `shadows_of` do. TEXT and VECTOR do not, so before this guard the effect
+/// reached neither walk and no diagnostic named it.
+#[test]
+fn a_shadow_on_a_node_that_carries_none_is_a_named_blocker() {
+    for kind in ["TEXT", "VECTOR"] {
+        let json = node_with_a_drop_shadow(kind).to_string();
+        let images = BTreeMap::new();
+        let (_bytes, report) = compile_figma_with_bindings_and_policy(
+            &json,
+            Profile::Core,
+            &images,
+            &[],
+            EmitPolicy::Partial,
+        )
+        .expect("partial emit returns a document with the shadowed node skipped");
+        let named = report.diagnostics().iter().any(|d| {
+            d.rule == dashc_wasm::figma::rule::UNSUPPORTED && d.message.contains("shadow")
+        });
+        assert!(
+            named,
+            "{kind}: the gap is named, never silent: {:?}",
+            report.diagnostics(),
+        );
+    }
+}
+
+/// The other half of the guard: it must fire on the node that drops the
+/// shadow, not on every node that has one. A FRAME lowers its shadows through
+/// `shadows_of`, so the guard must stay silent there — otherwise
+/// `a_shadow_on_a_node_that_carries_none_is_a_named_blocker` would pass for a
+/// guard that refuses every shadow in the file.
+#[test]
+fn a_shadow_on_a_frame_stays_free_of_the_carrier_guard() {
+    let json = node_with_a_drop_shadow("FRAME").to_string();
+    let images = BTreeMap::new();
+    let (_bytes, report) = compile_figma_with_bindings_and_policy(
+        &json,
+        Profile::Core,
+        &images,
+        &[],
+        EmitPolicy::Strict,
+    )
+    .expect("a shadowed frame lowers");
+    assert!(
+        !report.has(dashc_wasm::figma::rule::UNSUPPORTED),
+        "a frame carries its own shadows, so nothing is reported: {:?}",
         report.diagnostics(),
     );
 }

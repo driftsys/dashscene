@@ -40,7 +40,33 @@ use nalgebra::{Affine2, Similarity2, Vector2};
 /// The per-shape px-per-em escalation ladder and the unfieldable-ceiling
 /// refusal live only in the bake oracle
 /// (`goldens/tooling/tests/v010_bake_oracle.rs`, B1.5); wiring escalation into
-/// the lowering is deferred (debt #357).
+/// the lowering stays deferred (debt #357), and the reason is now measured
+/// rather than assumed.
+///
+/// Escalating needs a per-shape verdict on whether the baked field represents
+/// the shape. The oracle gets one by rendering the field as a quad and
+/// diffing it against Skia's exact fill of the same path. This crate compiles
+/// to `wasm32-unknown-unknown` for the Deno importer and cannot link Skia, so
+/// that verdict is not available here, and `fdsm` carries no substitute:
+/// counting the texels whose raw MSDF median sign disagrees with `fdsm`'s own
+/// exact scanline fill — the quantity `correct_sign_msdf` acts on, and the
+/// only fidelity-shaped signal the generator exposes — separates nothing. On
+/// the oracle's census shapes plus its synthetic sub-texel barcode, at every
+/// rung of the ladder, that count reads 0.000 % for the barcode, which is the
+/// one shape the oracle refuses at every rung, and 0.000–0.040 % for the
+/// shapes it accepts. It measures reconstruction artifacts, not resolution
+/// loss: a field of a sub-texel feature is internally consistent, it simply
+/// encodes geometry the sampling grid never saw.
+///
+/// Reproducing the oracle's measurement here instead would mean
+/// reimplementing both halves — a supersampled scanline rasterizer for the
+/// truth and Skia's bilinear sampling plus the `FIELD_MASK_SKSL` resolve for
+/// the bake. The census's worst measured residual is about 2.2 % of footprint
+/// against a 3 % tolerance, so such a reimplementation would have to agree
+/// with Skia to well inside 0.8 percentage points to avoid escalating a shape
+/// that fields correctly today — and escalation changes the bake, so a wrong
+/// verdict moves committed atlas bytes. That margin is not measurable without
+/// the oracle it is standing in for.
 pub const DEFAULT_PX_PER_EM: f64 = 48.0;
 
 /// MSDF spread in texels (the msdfgen `-pxrange`), aligned with the glyph
@@ -231,6 +257,10 @@ pub struct VectorAtlasBaker {
     px_per_em: f64,
     distance_range: f64,
     seen: HashMap<u64, u32>,
+    /// The normalized geometry behind each baked field, parallel to `fields`.
+    /// [`add`](VectorAtlasBaker::add) compares it on a hash hit, so a hash
+    /// collision cannot hand back another shape's field (debt #358).
+    keys: Vec<GeometryKey>,
     fields: Vec<BakedField>,
 }
 
@@ -246,6 +276,7 @@ impl VectorAtlasBaker {
             px_per_em,
             distance_range,
             seen: HashMap::new(),
+            keys: Vec::new(),
             fields: Vec::new(),
         }
     }
@@ -255,19 +286,59 @@ impl VectorAtlasBaker {
         self.fields.is_empty()
     }
 
+    /// How many unique shapes have been baked — the value the next
+    /// [`add`](Self::add) of new geometry would return.
+    pub fn len(&self) -> usize {
+        self.fields.len()
+    }
+
+    /// Drops every shape baked at or after `len`, so a caller that baked a
+    /// node's geometry and then found the node unlowerable can undo exactly
+    /// its own registration (debt #356).
+    ///
+    /// The dedup index is pruned with the fields. Leaving it would let a later
+    /// identical path hit a cached index for a field that no longer exists,
+    /// which is worse than the orphan this removes. Indices below `len` are
+    /// untouched, so every shape index already handed out stays valid — the
+    /// same contract `Document::assets.truncate` relies on for skipped image
+    /// fills (debt #485).
+    ///
+    /// A `len` at or past the end is a no-op, so a caller does not have to
+    /// know whether its own `add` baked a field or hit the dedup.
+    pub fn truncate(&mut self, len: usize) {
+        self.fields.truncate(len);
+        self.keys.truncate(len);
+        self.seen.retain(|_, index| (*index as usize) < len);
+    }
+
     /// Bakes `path` and returns its shape index, or returns the existing
-    /// index when identical geometry was already baked (path-hash dedup:
+    /// index when identical geometry was already baked (path-geometry dedup:
     /// the hero repeats icon vectors, which then share one field).
+    ///
+    /// The hash only selects a candidate; the geometry itself decides (debt
+    /// #358). Dedup used to trust the 64-bit hash alone, so a collision — rare,
+    /// but silent and unbounded in effect — would have painted one shape with
+    /// another's field. A colliding second shape bakes its own field and
+    /// leaves the bucket to the first: it simply stops deduplicating, which
+    /// costs one tile and can never render the wrong outline.
     pub fn add(&mut self, path: &VectorPath<'_>) -> Result<u32, VectorFieldError> {
         let contours = parse_path(path.path)?;
-        let hash = geometry_hash(&contours, path.winding);
-        if let Some(&index) = self.seen.get(&hash) {
-            return Ok(index);
-        }
+        let key = geometry_key(&contours, path.winding);
+        let hash = key_hash(&key);
+        let collided = match self.seen.get(&hash) {
+            Some(&index) if self.keys[index as usize] == key => return Ok(index),
+            Some(_) => true,
+            None => false,
+        };
+        // Bake before registering: a refusal must leave the baker exactly as
+        // it was, or `seen` would name an index `fields` never gains.
         let field = bake_field(&contours, path.winding, self.px_per_em, self.distance_range)?;
         let index = self.fields.len() as u32;
         self.fields.push(field);
-        self.seen.insert(hash, index);
+        self.keys.push(key);
+        if !collided {
+            self.seen.insert(hash, index);
+        }
         Ok(index)
     }
 
@@ -620,24 +691,56 @@ impl<'a> Tokenizer<'a> {
 
 // --- dedup + packing ------------------------------------------------------
 
-/// A stable hash of the normalized geometry (segment control points and the
-/// winding rule). Two paths with the same geometry hash to the same value
-/// and share one baked field.
-fn geometry_hash(contours: &[Vec<Segment>], winding: WindingRule) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    winding.hash(&mut hasher);
-    contours.len().hash(&mut hasher);
+/// The normalized geometry two paths are compared on: the winding rule, the
+/// contour and segment structure, and every control point's coordinates.
+///
+/// This is the dedup decision itself, not a digest of it — [`key_hash`] only
+/// picks the candidate to compare against (debt #358).
+type GeometryKey = Vec<u64>;
+
+/// Flattens a parsed path into its [`GeometryKey`].
+fn geometry_key(contours: &[Vec<Segment>], winding: WindingRule) -> GeometryKey {
+    let mut key = vec![
+        match winding {
+            WindingRule::NonZero => 0,
+            WindingRule::EvenOdd => 1,
+        },
+        contours.len() as u64,
+    ];
     for contour in contours {
-        contour.len().hash(&mut hasher);
+        key.push(contour.len() as u64);
         for segment in contour {
-            (segment.order() as usize).hash(&mut hasher);
+            key.push(segment.order() as u64);
             for i in 0..control_point_count(segment.order()) {
                 let p = segment.control_point(i);
-                p.x.to_bits().hash(&mut hasher);
-                p.y.to_bits().hash(&mut hasher);
+                key.push(coordinate_bits(p.x));
+                key.push(coordinate_bits(p.y));
             }
         }
     }
+    key
+}
+
+/// A coordinate as bits, with `-0.0` folded onto `+0.0` (debt #358).
+///
+/// The two compare equal and place the same point, but their bit patterns
+/// differ, so keying on the raw bits made two geometrically identical paths
+/// miss a valid dedup and bake the same outline twice. A NaN keeps its own
+/// bits — it never compares equal to anything, and a path carrying one is
+/// refused as degenerate before it can be baked.
+fn coordinate_bits(v: f64) -> u64 {
+    if v == 0.0 {
+        0.0_f64.to_bits()
+    } else {
+        v.to_bits()
+    }
+}
+
+/// A stable hash of a [`GeometryKey`] — the bucket a candidate is looked up
+/// in, never the answer on its own.
+fn key_hash(key: &GeometryKey) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    key.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -903,6 +1006,131 @@ mod tests {
             })
             .unwrap();
         assert_ne!(a, c);
+    }
+
+    /// `-0.0` and `+0.0` place the same point, so two paths differing only in
+    /// the sign of a zero coordinate are the same shape and must share one
+    /// field (debt #358). Keying on the raw bits baked the outline twice.
+    #[test]
+    fn a_negative_zero_coordinate_dedups_with_a_positive_zero() {
+        let mut baker = VectorAtlasBaker::new();
+        let plus = baker
+            .add(&VectorPath {
+                path: "M 0 0 L 40 0 L 40 40 L 0 40 Z",
+                winding: WindingRule::NonZero,
+            })
+            .unwrap();
+        let minus = baker
+            .add(&VectorPath {
+                path: "M -0 -0 L 40 -0 L 40 40 L -0 40 Z",
+                winding: WindingRule::NonZero,
+            })
+            .unwrap();
+        assert_eq!(minus, plus, "a signed zero is the same point");
+        assert_eq!(baker.len(), 1, "and so bakes one field, not two");
+    }
+
+    /// A hash collision must never hand back another shape's field (debt
+    /// #358). The hash picks a candidate; the geometry decides.
+    ///
+    /// A real 64-bit collision cannot be constructed on demand, so the
+    /// collision is injected: two distinct shapes are baked, then the first's
+    /// bucket is pointed at by the second's hash, which is exactly the state a
+    /// collision produces. Asking for the second shape again must still return
+    /// the second shape.
+    #[test]
+    fn a_hash_collision_does_not_return_the_other_shapes_field() {
+        let mut baker = VectorAtlasBaker::new();
+        let square = VectorPath {
+            path: SQUARE,
+            winding: WindingRule::NonZero,
+        };
+        // A different extent, so the two fields are told apart by their plane
+        // bounds — `SQUARE_WITH_HOLE` shares the square's bounding box and
+        // would make the check pass against the wrong field.
+        let wide = VectorPath {
+            path: "M 0 0 L 100 0 L 100 60 L 0 60 Z",
+            winding: WindingRule::NonZero,
+        };
+        assert_eq!(baker.add(&square).unwrap(), 0);
+        assert_eq!(baker.add(&wide).unwrap(), 1);
+
+        // Force the wide shape's hash to select the square's field.
+        let wide_key = geometry_key(&parse_path(wide.path).unwrap(), wide.winding);
+        baker.seen.insert(key_hash(&wide_key), 0);
+
+        assert_eq!(
+            baker.add(&wide).unwrap(),
+            2,
+            "a colliding shape bakes its own field rather than borrowing one",
+        );
+        let bake = baker.finish().expect("packs");
+        assert_eq!(
+            bake.shapes[2].plane_bounds, bake.shapes[1].plane_bounds,
+            "and that field is the wide shape's own",
+        );
+        assert_ne!(
+            bake.shapes[2].plane_bounds, bake.shapes[0].plane_bounds,
+            "not the square's, which the collided bucket pointed at",
+        );
+    }
+
+    /// Rolling a shape back also forgets its dedup entry (debt #356).
+    ///
+    /// Truncating the fields alone would leave `seen` mapping that geometry to
+    /// an index the baker no longer has, so the next node with the same path
+    /// would be handed a shape index past the end of the packed list — a
+    /// dangling reference, strictly worse than the orphan tile the rollback
+    /// exists to remove.
+    #[test]
+    fn truncate_forgets_the_dedup_entry_for_the_rolled_back_shape() {
+        let mut baker = VectorAtlasBaker::new();
+        let square = VectorPath {
+            path: SQUARE,
+            winding: WindingRule::NonZero,
+        };
+        let hole = VectorPath {
+            path: SQUARE_WITH_HOLE,
+            winding: WindingRule::EvenOdd,
+        };
+        assert_eq!(baker.add(&square).unwrap(), 0);
+        let before = baker.len();
+        assert_eq!(baker.add(&hole).unwrap(), 1);
+        baker.truncate(before);
+        assert_eq!(baker.len(), 1, "the rolled-back field is gone");
+
+        // The same geometry again must bake afresh at the reclaimed index,
+        // not return the stale 1.
+        assert_eq!(baker.add(&hole).unwrap(), 1);
+        let bake = baker.finish().expect("packs");
+        assert_eq!(bake.shapes.len(), 2, "every index names a packed shape");
+
+        // A shape index handed out before the rollback still names its own
+        // field: the rollback only drops the tail.
+        assert_eq!(baker_index_of(SQUARE, WindingRule::NonZero), 0);
+    }
+
+    /// The index a fresh baker gives `path` — the first-shape case, stated as a
+    /// function so the assertion above reads as the invariant it checks.
+    fn baker_index_of(path: &str, winding: WindingRule) -> u32 {
+        VectorAtlasBaker::new()
+            .add(&VectorPath { path, winding })
+            .expect("bakes")
+    }
+
+    /// Truncating to a length the baker has not reached is a no-op, so the
+    /// caller does not have to know whether its `add` deduped.
+    #[test]
+    fn truncate_past_the_end_keeps_every_shape() {
+        let mut baker = VectorAtlasBaker::new();
+        baker
+            .add(&VectorPath {
+                path: SQUARE,
+                winding: WindingRule::NonZero,
+            })
+            .unwrap();
+        baker.truncate(5);
+        assert_eq!(baker.len(), 1);
     }
 
     #[test]

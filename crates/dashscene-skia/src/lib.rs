@@ -41,6 +41,15 @@ pub enum DirtyMode {
     /// that omits a changed rect leaves a stale entry and renders a stale
     /// pixel — which is what makes the two modes a differential test of the
     /// dirty set (`goldens/tooling/tests/dirty_oracle.rs`).
+    ///
+    /// A dirty index the rect table does not have is skipped, not a panic
+    /// (debt #181). `Painter::paint` states no precondition on the set's
+    /// indices — it calls the set advisory and says ignoring it is always
+    /// correct — so a caller honoring that contract can hand over a stale
+    /// index, and the only reading of "advisory" that stays true of a
+    /// surplus one is to ignore it. Skipping cannot change the picture
+    /// either: an index past the end names no rect, so there is nothing it
+    /// could have refreshed.
     Retained,
 }
 
@@ -137,9 +146,15 @@ impl Painter for SkiaPainter {
         if self.mode == DirtyMode::Retained {
             match dirty {
                 Some(indices) if self.retained.len() == rects.len() => {
+                    // An index past the end of the table names no rect, so
+                    // it is skipped rather than indexed (debt #181) — see
+                    // `DirtyMode::Retained`. The two lengths are equal in
+                    // this arm, so one bound covers both reads.
                     for &i in indices {
                         let i = i as usize;
-                        self.retained[i] = rects[i];
+                        if let Some(entry) = rects.get(i) {
+                            self.retained[i] = *entry;
+                        }
                     }
                 }
                 _ => {
@@ -566,7 +581,15 @@ fn draw_vector_field(
     // The layer composites (SrcOver) over whatever is behind, so the masked
     // shape stacks correctly. `rect.opacity` is the free-path group alpha,
     // folded into the fill.
-    canvas.save_layer_alpha(None, 255);
+    //
+    // The layer is bounded to `dest` (debt #358). Both draws inside it are
+    // `draw_rect(dest)`, so nothing outside that quad can be written, and an
+    // unbounded layer allocated the whole surface per shape — about 148 of
+    // them on the hero. This is an allocation bound on a CPU reference
+    // painter, not a correctness gate: with no backdrop filter on the rec,
+    // Skia takes the bounds as the layer extent and clips to it, and the
+    // clip is one every draw already respects.
+    canvas.save_layer(&SaveLayerRec::default().bounds(&dest));
     match fill {
         PaintKind::Solid { color } => {
             let mut paint = solid_paint(*color);
