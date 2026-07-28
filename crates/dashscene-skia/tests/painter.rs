@@ -935,6 +935,34 @@ fn retained_mode_starves_on_an_incomplete_dirty_set() {
     );
 }
 
+/// An index the rect table does not have is advisory noise, not a crash
+/// (debt #181). The trait calls `dirty` advisory and says ignoring it is
+/// always correct, so a caller honoring that contract may hand over a stale
+/// index — a product painter carrying last frame's set across a shrink, for
+/// one. The refresh used to index `rects[i]` directly and panic on it.
+///
+/// The in-range indices in the same set must still refresh, so the surface
+/// stays equal to a full redraw: skipping the surplus index must not degrade
+/// into skipping the whole set.
+#[test]
+fn retained_mode_ignores_an_out_of_range_dirty_index() {
+    let (r0, p0) = two_rects(8.0);
+    let (r1, p1) = two_rects(4.0); // rect 0's width changed: its bits differ
+
+    let frames = vec![
+        (r0, p0, None),
+        // Both real indices, plus one the two-entry table does not have.
+        (r1, p1, Some(vec![0, 1, 7])),
+    ];
+
+    let full = render_frames(DirtyMode::Full, &frames);
+    let retained = render_frames(DirtyMode::Retained, &frames);
+    assert_eq!(
+        full, retained,
+        "an out-of-range dirty index must be skipped, and the valid ones still applied"
+    );
+}
+
 /// The same two side-by-side rects plus a third drawn over their seam, so a
 /// stale third entry is visible in the middle of the surface and a missing one
 /// is visible as the seam showing through.
