@@ -20,6 +20,12 @@ profile-preview = ["dep:dashpack"]
 
 [dependencies]
 skia-safe.workspace = true
+# The two published perceptual scales the profile bands are calibrated against
+# (issue #544). Real dependencies rather than dev-only because `src/metric.rs`
+# is a library module both test binaries reach; this crate is `publish = false`,
+# so nothing shipped links either.
+ssimulacra2.workspace = true
+nv-flip.workspace = true
 # render_dsb (src/render.rs) loads a committed `.dsb` and renders it through the
 # full stack, so the render-pipeline crates are real dependencies now, not
 # dev-only: dashbuf parses the buffer, dashscene-core loads it, dashscene-engine

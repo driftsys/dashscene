@@ -11,11 +11,14 @@
 //! dependencies. This module fixes only the within-directory half.
 //!
 //! [`manifest`] is the second shared home: the design-source oracle harness
-//! both oracle binaries walk their manifests with (debt #338).
+//! both oracle binaries walk their manifests with (debt #338). [`stress`] is
+//! the third: the generated block-stress payload the profile-preview oracle
+//! and the perceptual calibration both measure (issue #544).
 
 #![allow(dead_code)]
 
 pub mod manifest;
+pub mod stress;
 
 use dashpaint::{
     Atlas, AtlasGlyph, ClipIndex, ClipTable, Color, GlyphRunTable, ImageAsset, ImageFormat,

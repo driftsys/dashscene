@@ -128,6 +128,22 @@ ktx2 = "0.5"
 # corpus PNGs, while `dashpack::profile` itself takes decoded texels (#432).
 # Already in the tree through `image`, so no new transitive weight.
 png = "0.18"
+# The two published perceptual scales the quality profiles are calibrated
+# against (issue #544). Test tooling only: `goldens` takes both, `goldens` is
+# `publish = false`, and nothing in a shipped crate reaches either.
+#
+# SSIMULACRA2 is the JPEG XL project's still-image metric, on a published
+# scale — roughly 90 and above visually lossless, 70 and above high quality.
+# This is the rust-av port rather than a binding to libjxl, so it needs no C++
+# toolchain and no vendored tree.
+ssimulacra2 = "0.5"
+# FLIP is NVIDIA's metric for comparing *rendered* images: it models what a
+# viewer notices alternating between two of them. Half the target content is 3D
+# renders (docs/wip/2026-07-28-photorealistic-3d-content.md), which makes it the
+# matched metric rather than a generic one. The crate vendors the CPU
+# implementation inside its own `-sys` package, so it is an ordinary dependency
+# and not a vendored tree NOTICE has to cover.
+nv-flip = "0.1"
 # Pinned exactly: golden images are bit-exact only for one exact skia
 # build (goldens/README.md); a patch release changing rasterization or
 # PNG encoding must arrive as a deliberate, re-goldened bump.

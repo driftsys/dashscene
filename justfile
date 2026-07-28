@@ -312,20 +312,44 @@ render key root="" profile="raw": wasm
     png_size=$(wc -c < "$out" | tr -d ' ')
     echo "RENDERED — wrote ${out} (${png_size} bytes, profile {{profile}})"
 
-# The Gfx QA triptych: every corpus scene rendered under RAW, HiFi and Lite,
+# The Gfx QA triptych: every corpus scene rendered under RAW, HiFi and LoFi,
 # with a diff heatmap per production arm and the banded numbers printed (story
 # #435). Runs the profile-preview oracle, which measures every arm against its
-# pinned scene band and writes the artifacts as it goes.
+# pinned scene band and writes the artifacts as it goes. Each arm also carries
+# its SSIMULACRA2, FLIP and PSNR figures (issue #544).
 #
 # The triptych is written rather than committed: a committed render of a scene
 # that exists to show codec loss would have to be re-baselined for every
 # unrelated painter change. The durable record is the measured numbers in
 # goldens/oracle/profile-manifest.json, which the oracle asserts.
+#
+# VIEWING CONDITIONS. If a person is shown these images, the viewing conditions
+# decide the answer as much as the codec does, so they are stated here rather
+# than left to whoever opens the files.
+#
+#   - Native pixels. No browser zoom, no display scaling, no window that
+#     resizes the image. Smooth scaling averages block artifacts away, so a
+#     viewer who rescales is reporting on the resampler and not on the codec.
+#   - Integer nearest-neighbour if any zoom is needed at all.
+#   - Blind and randomised order if the opinion is to mean anything. A reviewer
+#     who knows which arm is LoFi is not answering the question being asked.
+#   - The full ladder rather than three points. The useful question is where
+#     loss becomes visible, not whether three named arms differ; the per-rung
+#     figures are in goldens/tooling/tests/perceptual_calibration.rs.
+#   - ITU-R BT.500 and ITU-T P.910 are the standard protocols for running this
+#     properly. Nothing here implements one.
 triptych:
     #!/usr/bin/env bash
     set -euo pipefail
     cargo test -p goldens --test profile_preview_oracle -- --nocapture \
         | grep -E "^PROFILE PREVIEW|^test result"
     echo
-    echo "TRIPTYCH — wrote target/profile-preview/<scene>/{raw,hifi,lite}.png"
-    echo "           and {hifi,lite}-heat.png beside them"
+    echo "TRIPTYCH — wrote target/profile-preview/<scene>/{raw,hifi,lofi}.png"
+    echo "           and {hifi,lofi}-heat.png beside them"
+    echo
+    echo "VIEWING CONDITIONS — native pixels, no browser or display scaling."
+    echo "  Smooth scaling averages block artifacts away, so a rescaled view"
+    echo "  reports on the resampler rather than on the codec. Nearest-neighbour"
+    echo "  at integer factors if zoom is needed. Blind, randomised order if the"
+    echo "  opinion is to mean anything. See the recipe comment for the full"
+    echo "  rules and for ITU-R BT.500 / ITU-T P.910."

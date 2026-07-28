@@ -13,6 +13,12 @@ use std::path::Path;
 
 use skia_safe::{AlphaType, ColorType, Data, ImageInfo, images};
 
+/// Two published perceptual scales, and PSNR for comparability — the
+/// calibration behind `dashpack`'s tolerance bands (issue #544).
+///
+/// Unconditional, unlike [`profile`]: these are image mathematics over plain
+/// RGBA8 buffers and reach neither the packer nor the block decoder.
+pub mod metric;
 pub mod oracle;
 /// Rendering a document under a quality profile — the Gfx QA profile preview.
 ///
