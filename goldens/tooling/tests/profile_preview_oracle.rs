@@ -41,6 +41,25 @@
 //! committed render of a scene that exists to show codec loss would have to be
 //! re-baselined for every unrelated painter change, and the numbers below are
 //! the durable record.
+//!
+//! # Viewing conditions, if a person is shown these images
+//!
+//! The viewing conditions decide the answer as much as the codec does, so they
+//! are stated where the artifacts are produced rather than left to whoever
+//! opens the files. `just triptych` prints the short form beside the paths.
+//!
+//! - **Native pixels.** No browser zoom, no display scaling, no window that
+//!   resizes the image. Smooth scaling averages block artifacts away, so a
+//!   viewer who rescales is reporting on the resampler and not on the codec.
+//! - **Integer nearest-neighbour** if any zoom is needed at all.
+//! - **Blind and randomised order** if the opinion is to mean anything. A
+//!   reviewer who knows which arm is LoFi is not answering the question.
+//! - **The full ladder rather than three points.** The useful question is where
+//!   loss becomes visible; the per-rung figures are in
+//!   `goldens/tooling/tests/perceptual_calibration.rs`.
+//! - **ITU-R BT.500 and ITU-T P.910** are the standard protocols for running
+//!   this properly. Nothing here implements one, and the scores this file
+//!   records are models of perception rather than observers.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -52,12 +71,14 @@ use dashpack::ktx2;
 use dashpack::profile::{Binding, PACK_QUALITY, Profile};
 use dashpaint::{ImageAsset, ImageFormat};
 use dashscene_validator::Profile as CompileProfile;
+use goldens::metric::{self, Scores};
 use goldens::oracle::{self, OracleDiff, ToleranceBand};
 use goldens::render::{png_texels, png_wrap, render_dsb};
 use serde_json::Value;
 
 mod common;
 use common::manifest::repo_root;
+use common::stress::{STRESS_AMPLITUDE, STRESS_EXTENT, STRESS_REF, block_stress};
 
 /// The manifest this oracle is wired by.
 const MANIFEST: &str = "goldens/oracle/profile-manifest.json";
@@ -78,55 +99,6 @@ const PHOTO_PATH: &str = "corpus/figma-fixtures/import-image-fill.images/\
 const BADGE_REF: &str = "390616a0e7321eddb464388366d9a2a1bcb7f4c3";
 const BADGE_PATH: &str = "corpus/figma-fixtures/v03-paint.images/\
                           390616a0e7321eddb464388366d9a2a1bcb7f4c3.png";
-
-/// The generated fixture's `imageRef`, extent and detail amplitude.
-///
-/// Generated rather than committed, for the reason story #432 recorded when it
-/// generated `detail-noise`: no committed corpus payload separates the two
-/// profiles' area budgets, because the real image fills are a gradient and flat
-/// rectangles that ASTC reproduces almost exactly at every footprint.
-///
-/// The amplitude was chosen by measurement. At 4 the LoFi ladder still bottoms
-/// out at 12x12 and no mutation can fail its budget; at 16 both profiles
-/// escalate to the lossless rung and neither budget binds; at 8 the two
-/// profiles land on different rungs and both bands have something to say.
-const STRESS_REF: &str = "block-stress";
-const STRESS_EXTENT: u32 = 256;
-const STRESS_AMPLITUDE: i32 = 8;
-
-/// A deterministic integer hash — no floating point and no randomness, so the
-/// generated fixture is identical on every machine and every build profile.
-/// The same mixer story #432 uses, for the same reason.
-fn splitmix(x: u32, y: u32, salt: u32) -> u32 {
-    let mut h = x.wrapping_mul(0x9E37_79B9) ^ y.wrapping_mul(0x85EB_CA6B) ^ salt;
-    h ^= h >> 15;
-    h = h.wrapping_mul(0x2545_F491);
-    h ^= h >> 13;
-    h
-}
-
-/// A smooth three-channel gradient carrying a bounded per-texel perturbation —
-/// the low-amplitude, high-spatial-frequency content block compression is worst
-/// at.
-fn block_stress(width: u32, height: u32, amplitude: i32) -> Vec<u8> {
-    let mut out = Vec::with_capacity((width * height * 4) as usize);
-    for y in 0..height {
-        for x in 0..width {
-            let base = [
-                (x * 255 / width.max(1)) as i32,
-                (y * 255 / height.max(1)) as i32,
-                ((x + y) * 255 / (width + height).max(1)) as i32,
-            ];
-            for (channel, value) in base.iter().enumerate() {
-                let span = 2 * amplitude as u32 + 1;
-                let noise = (splitmix(x, y, channel as u32) % span) as i32 - amplitude;
-                out.push((value + noise).clamp(0, 255) as u8);
-            }
-            out.push(255);
-        }
-    }
-    out
-}
 
 /// A caption and a stroked rectangle over an image fill — the two in-context
 /// constructs this oracle exists to measure against, sized to `canvas`.
@@ -478,8 +450,18 @@ fn every_scene_renders_within_its_profile_band() {
             std::fs::write(dir.join(format!("{name}-heat.png")), &map)
                 .expect("the heatmap is writable");
 
-            report(scene.name, name, &diff, peak);
+            // The same two arms the diff above measured, scored on the two
+            // published perceptual scales (issue #544). Skia's decode here and
+            // not the `png` crate's: both arms are Skia renders, so the
+            // comparison has to start from the decode that produced them.
+            let ((width, height), profile_texels) = png_texels(&png);
+            let (_, raw_texels) = png_texels(&raw);
+            let scores = goldens::metric::score(width, height, &raw_texels, &profile_texels)
+                .expect("both arms render at the scene's canvas extent");
+
+            report(scene.name, name, &diff, peak, &scores);
             assert_measurement(scene.name, name, &diff, profile_row, band);
+            assert_scores(scene.name, name, &scores, profile_row);
             assert_mutation(scene, name, profile_row, band);
         }
     }
@@ -488,7 +470,7 @@ fn every_scene_renders_within_its_profile_band() {
 /// Prints one measured row, so a run reports the numbers rather than only
 /// whether they passed. Fidelity is a measured value, not a bare pass or fail
 /// (guardrail G-11).
-fn report(scene: &str, profile: &str, diff: &OracleDiff, peak: u8) {
+fn report(scene: &str, profile: &str, diff: &OracleDiff, peak: u8, scores: &Scores) {
     eprintln!(
         "PROFILE PREVIEW  {scene:<15} {profile:<5} {:>7}/{} = {:>8}%  max delta {:>3}  \
          (band {} <= {}%, heatmap scaled x{})",
@@ -500,6 +482,65 @@ fn report(scene: &str, profile: &str, diff: &OracleDiff, peak: u8) {
         percent(diff.band.differing_fraction),
         if peak == 0 { 1 } else { 255 / peak as u32 },
     );
+    eprintln!(
+        "PROFILE PREVIEW  {:<15} {profile:<5} ssimulacra2 {:>8}  flip {:>6} desk / {:>6} panel  \
+         psnr {:>8} rgb / {:>8} alpha",
+        "",
+        scores
+            .ssimulacra2
+            .map(|v| metric::fixed(v, 2))
+            .unwrap_or_else(|| "withheld".to_string()),
+        metric::fixed(scores.flip_desk, 4),
+        metric::fixed(scores.flip_panel, 4),
+        metric::fixed(scores.psnr_rgb, 2),
+        metric::fixed(scores.psnr_alpha, 2),
+    );
+}
+
+/// The two published perceptual scales for one scene arm, against the values
+/// the manifest records (issue #544).
+///
+/// These calibrate rather than gate. The band above is what decides whether the
+/// arm passes; these say where the arm's residual sits on a scale a reader
+/// outside this repository recognises, and they are pinned so that a change to
+/// the codec, the painter or the scene cannot move them silently.
+fn assert_scores(scene: &str, name: &str, scores: &Scores, row: &Value) {
+    let recorded = |key: &str| -> String {
+        row[key]
+            .as_str()
+            .unwrap_or_else(|| panic!("{scene}/{name}: the row records {key}"))
+            .to_string()
+    };
+    let measured = [
+        (
+            "ssimulacra2",
+            scores
+                .ssimulacra2
+                .map(|v| metric::fixed(v, 2))
+                .unwrap_or_else(|| "withheld".to_string()),
+        ),
+        ("flipDesk", metric::fixed(scores.flip_desk, 4)),
+        ("flipPanel", metric::fixed(scores.flip_panel, 4)),
+        ("psnrRgb", metric::fixed(scores.psnr_rgb, 2)),
+        ("psnrAlpha", metric::fixed(scores.psnr_alpha, 2)),
+    ];
+
+    if updating() {
+        let fields: Vec<String> = measured
+            .iter()
+            .map(|(key, value)| format!("\"{key}\": \"{value}\""))
+            .collect();
+        eprintln!("REBASELINE {scene}/{name}: {}", fields.join(", "));
+        return;
+    }
+
+    for (key, value) in measured {
+        assert_eq!(
+            value,
+            recorded(key),
+            "{scene}/{name}: the recorded {key} moved",
+        );
+    }
 }
 
 /// The rungs the escalation chose for this scene under this profile, checked

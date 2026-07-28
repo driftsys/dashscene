@@ -1,5 +1,5 @@
 {
-  "description": "The profile-preview oracle wiring (story #435, epic #345) — the third manifest in the E7/import-oracle pattern. The other two diff a reference render against Figma's GET /images export, an external design source. This one has no external source: it renders each scene under RAW, then under HiFi and LoFi, and diffs profile against RAW. Both arms are the same painter, the same solver, the same typesetter and the same canvas, so the only variable is which bytes the asset entries resolve to and a difference is the asset axis and nothing else. That is what the per-asset pack bands (crates/dashpack/tests/band_contract.rs) cannot see: they measure texels in isolation, and this measures the same texels composited behind text and against strokes. Under a production profile the resident payload is a block-compressed KTX2 file, which the reference loader software-decodes with the same version-pinned astcenc that encoded it (dashpack::preview) before any byte reaches the painter — the painter is unchanged and still only draws RGBA, so P2 holds. The diff runs in goldens/tooling/tests/profile_preview_oracle.rs, which also writes the triptych and its diff heatmaps to target/profile-preview/ for review (`just triptych`). The bands are goldens::oracle::PROFILE_HIFI_SCENE and PROFILE_LITE_SCENE, which carry dashpack::profile's own numbers exactly; the test asserts that equality, so the two cannot drift apart silently. WHAT THIS CANNOT SHOW, stated so a target bench confirms a short list rather than discovering quality: GPU filtering behaviour (the texels are exact, what a sampler does between texel centres is the hardware's), driver-level effects (vendor bandwidth compression such as UBWC, and the NVIDIA case where ASTC is emulated rather than sampled natively with the residency cost that implies — the pack-time probe's job), and where in a target pipeline the sRGB transfer function is applied.",
+  "description": "The profile-preview oracle wiring (story #435, epic #345) — the third manifest in the E7/import-oracle pattern. The other two diff a reference render against Figma's GET /images export, an external design source. This one has no external source: it renders each scene under RAW, then under HiFi and LoFi, and diffs profile against RAW. Both arms are the same painter, the same solver, the same typesetter and the same canvas, so the only variable is which bytes the asset entries resolve to and a difference is the asset axis and nothing else. That is what the per-asset pack bands (crates/dashpack/tests/band_contract.rs) cannot see: they measure texels in isolation, and this measures the same texels composited behind text and against strokes. Under a production profile the resident payload is a block-compressed KTX2 file, which the reference loader software-decodes with the same version-pinned astcenc that encoded it (dashpack::preview) before any byte reaches the painter — the painter is unchanged and still only draws RGBA, so P2 holds. The diff runs in goldens/tooling/tests/profile_preview_oracle.rs, which also writes the triptych and its diff heatmaps to target/profile-preview/ for review (`just triptych`). The bands are goldens::oracle::PROFILE_HIFI_SCENE and PROFILE_LITE_SCENE, which carry dashpack::profile's own numbers exactly; the test asserts that equality, so the two cannot drift apart silently. WHAT THIS CANNOT SHOW, stated so a target bench confirms a short list rather than discovering quality: GPU filtering behaviour (the texels are exact, what a sampler does between texel centres is the hardware's), driver-level effects (vendor bandwidth compression such as UBWC, and the NVIDIA case where ASTC is emulated rather than sampled natively with the residency cost that implies — the pack-time probe's job), and where in a target pipeline the sRGB transfer function is applied. THE PERCEPTUAL COLUMNS (issue #544): beside each row's band numbers, every arm also carries ssimulacra2, flipDesk, flipPanel, psnrRgb and psnrAlpha. These calibrate rather than gate — the band is what decides whether an arm passes, and these say where the arm's residual sits on a scale a reader outside this repository recognises: SSIMULACRA2 from the JPEG XL work (roughly 90 and above visually lossless, 70 and above high quality) and NVIDIA's FLIP, which models what a viewer notices alternating between two rendered images (0 identical, 1 maximally different). FLIP's error depends on pixels per degree, so it is reported at two viewing conditions: flipDesk at FLIP's shipped default of 67, and flipPanel at 107.71, derived from an automotive centre display at 0.9 m from a 1920 px, 0.28 m wide panel. That panel geometry is a stated assumption of the calibration and not a specified value — docs/specification/03-target-hardware-rules.md pins no display geometry at all — and the two conditions disagree by 14 % to 32 % on real block-compression error, so the choice is load-bearing rather than cosmetic. psnrAlpha exists because neither perceptual metric reads an alpha channel while the band does; it is the only column that can see a codec dropping coverage. The per-asset counterpart, which walks every rung of the ladder rather than the two the packer selected, is goldens/tooling/tests/perceptual_calibration.rs.",
   "issue": 435,
   "output": "target/profile-preview",
   "scenesAreBuiltInProcess": "Every scene here is compiled in process from an inline Figma REST document rather than from a committed corpus fixture. Two reasons, both measured rather than assumed. First, the only committed compiled document with an image is goldens/dsb/v03-paint.dsb, whose single image is 16x16 — one ASTC block at every footprint on the ladder — so all three arms of its triptych render byte-identically and it cannot fail anything (verified: RAW, HiFi and LoFi all hash the same). Second, profile-stress needs content no committed asset supplies: story #432 recorded that the real corpus image fills are a gradient and flat rectangles, which ASTC reproduces almost exactly at every footprint, so it generated its detail-noise fixture rather than committing one. This manifest follows that precedent for the same reason and generates profile-stress the same way — a deterministic integer hash, no floating point and no randomness, so it is as reproducible as a committed file and costs no committed bytes. profile-photo does use committed corpus payloads, because for HiFi a real gradient is exactly the content the band is about.",
@@ -21,6 +21,11 @@
           "measuredDiffering": 295,
           "measuredTotal": 144400,
           "maxChannelDelta": 3,
+          "ssimulacra2": "93.34",
+          "flipDesk": "0.0161",
+          "flipPanel": "0.0114",
+          "psnrRgb": "51.55",
+          "psnrAlpha": "lossless",
           "mutation": {
             "forceBlock": [8, 8],
             "measured": "2.6627",
@@ -35,8 +40,13 @@
           "measuredDiffering": 0,
           "measuredTotal": 144400,
           "maxChannelDelta": 7,
+          "ssimulacra2": "81.17",
+          "flipDesk": "0.0374",
+          "flipPanel": "0.0300",
+          "psnrRgb": "45.87",
+          "psnrAlpha": "75.64",
           "mutation": null,
-          "mutationNote": "This scene cannot exercise the LoFi budget, stated rather than left to be discovered. The gradient survives the cheapest rung on the ladder — LoFi accepts 12x12 on its first attempt, rejecting nothing — so there is no coarser rung for a mutation to stop at, and the whole-scene residual is 0.0000 % at the band's threshold of 8. The number is still recorded and still re-measured every run, and maxChannelDelta of 7 is the part of this row that can actually move. profile-stress is the scene that exercises this band, and every_band_is_exercised_by_at_least_one_scene requires that some scene does."
+          "mutationNote": "This scene cannot exercise the LoFi budget, stated rather than left to be discovered. The gradient survives the cheapest rung on the ladder — LoFi accepts 12x12 on its first attempt, rejecting nothing — so there is no coarser rung for a mutation to stop at, and the whole-scene residual is 0.0000 % at the band's threshold of 8. The number is still recorded and still re-measured every run, and maxChannelDelta of 7 is the part of this row that can actually move. Issue #544 added a second, more sensitive one: this arm scores 81.17 on SSIMULACRA2 and 75.64 dB on psnrAlpha, so a row whose band reads 0.0000 % is carrying real, measurable loss that the band's threshold of 8 is blind to by construction. That is the clearest case in this manifest for why the perceptual columns are recorded beside the bands rather than instead of them. profile-stress is the scene that exercises this band, and every_band_is_exercised_by_at_least_one_scene requires that some scene does."
         }
       ]
     },
@@ -54,6 +64,11 @@
           "measuredDiffering": 0,
           "measuredTotal": 65536,
           "maxChannelDelta": 0,
+          "ssimulacra2": "100.00",
+          "flipDesk": "0.0000",
+          "flipPanel": "0.0000",
+          "psnrRgb": "lossless",
+          "psnrAlpha": "lossless",
           "mutation": {
             "forceBlock": [4, 4],
             "measured": "51.8097",
@@ -68,6 +83,11 @@
           "measuredDiffering": 2960,
           "measuredTotal": 65536,
           "maxChannelDelta": 14,
+          "ssimulacra2": "80.99",
+          "flipDesk": "0.0351",
+          "flipPanel": "0.0244",
+          "psnrRgb": "37.13",
+          "psnrAlpha": "lossless",
           "mutation": {
             "forceBlock": [8, 8],
             "measured": "9.7733",

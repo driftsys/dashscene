@@ -77,6 +77,21 @@
 //! differ; a digest cannot. If a run on another architecture disagrees with a
 //! digest here, that is the invariance claim failing and it must be
 //! investigated, not re-recorded.
+//!
+//! # Where these numbers sit on a scale outside this repository (issue #544)
+//!
+//! Every band below is a per-texel threshold and an area budget, and both are
+//! this project's own units. Nothing here says whether the rung a band chooses
+//! is *good*. `goldens/tooling/tests/perceptual_calibration.rs` records that:
+//! it walks the same ladder over the same five fixtures and scores every rung
+//! on SSIMULACRA2 and FLIP, so the rung a band accepted can be read beside the
+//! rung it rejected.
+//!
+//! It walks the whole ladder rather than only the selected rung, because the
+//! selected rung alone cannot say whether the cut is in the right place. It
+//! lives in `goldens` rather than here so that one metric implementation serves
+//! both the per-asset ladder and the scene arms of the profile-preview oracle;
+//! nothing in that file gates this one, and no number below depends on it.
 
 use dashbuf::AssetKind;
 use dashpack::astc::{BlockSize, ColorSpace, Quality, Rgba8, decode, encode};

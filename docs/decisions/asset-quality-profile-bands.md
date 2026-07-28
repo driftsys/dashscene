@@ -12,7 +12,10 @@
              docs/decisions/asset-model-content-addressed-blobs.md (what a
              binding is), docs/decisions/baked-vector-msdf-field.md,
              docs/technotes/2026-07-26-tolerance-band-coverage.md and issue
-             #422 (what a band has to be able to fail)
+             #422 (what a band has to be able to fail), issue #544 and
+             goldens/tooling/tests/perceptual_calibration.rs (section 5 —
+             where these bands land on SSIMULACRA2 and FLIP), issue #549
+             (the display geometry section 5 has to assume)
 
 ## Context
 
@@ -140,6 +143,96 @@ downstream can tell them apart by inspecting the bytes. `dashc`'s vector bake
 now mints its atlas asset as `DistanceField`; its Figma image fills stay
 `Image`.
 
+### 5. Where these bands land on two published perceptual scales
+
+Every number in sections 1 to 4 is a per-texel threshold or an area budget, and
+both are this project's own units. They say a band is a gate; they do not say
+whether the rung a band chooses is _good_. Issue #544 measured that against two
+published scales — **SSIMULACRA2** (JPEG XL; roughly 90 and above visually
+lossless, 70 and above high quality, 50 medium, 30 low) and **FLIP** (NVIDIA;
+mean error over the image, 0 identical, 1 maximally different), with PSNR
+recorded for comparability and deciding nothing.
+
+The whole ladder is walked rather than only the selected rung, because the
+selected rung alone cannot say whether the cut is in the right place. The full
+35-row table is `goldens/tooling/tests/perceptual_calibration.rs`, which pins
+every figure; what follows is what it says.
+
+**Both bands land on the published rung their name implies.**
+
+| fixture             | LoFi took  | scores    | HiFi took    | scores     | HiFi rejected | scores |
+| ------------------- | ---------- | --------- | ------------ | ---------- | ------------- | ------ |
+| `import-image-fill` | astc-12x12 | **78.35** | astc-6x6     | **92.87**  | astc-8x8      | 87.82  |
+| `block-stress`      | astc-6x6   | **78.57** | uncompressed | **100.00** | astc-4x4      | 87.69  |
+
+HiFi's cut falls between a rejected 87.82 and an accepted 92.87 on the real
+image fill, and between a rejected 87.69 and the lossless rung on the stress
+fixture. SSIMULACRA2's visually-lossless threshold is 90, and the band brackets
+it from both sides on both fixtures. That is worth stating plainly because it
+was not designed: the threshold of 2 and the budget of 1 % were chosen from
+texel deltas, with no knowledge of this scale. LoFi's selected rungs measure
+78.35 and 78.57 against a high-quality threshold of 70.
+
+The floors asserted are the **published** thresholds — HiFi at 90, LoFi at 70 —
+not the measured values. A floor set to whatever the current fixtures happen to
+score would be one more number internal to this project, which is the thing this
+calibration exists to stop doing. Measured headroom is 2.87 and 8.35.
+
+**The counterfactual for a distance field.** The ladder is walked for the two
+MSDF atlases as well, as what the packer refuses rather than as a rung it could
+select. At the _finest_ footprint the ladder offers, 4x4 at 8 bits per texel,
+neither atlas reaches even HiFi's floor:
+
+| atlas               | at astc-12x12 | at astc-4x4 | selected     |
+| ------------------- | ------------- | ----------- | ------------ |
+| `inter-ascii-atlas` | 17.91         | 86.12       | uncompressed |
+| `arabic-atlas`      | 21.22         | 86.88       | uncompressed |
+
+This is a second direction of evidence for section 3, and it is weaker than the
+texel measurements beside it rather than stronger. SSIMULACRA2 and FLIP model
+_colour_ perception, and an MSDF atlas carries signed distances — which is why
+the class encodes in `ColorSpace::Linear`. Scoring one says how visible the loss
+would be if those distances were colours. Nobody looks at the atlas; what is
+looked at is the glyph a shader derives from it. The figures are recorded as
+comparability, never as a perceptual claim about a rendered glyph — and the
+caveat is part of the argument, because a per-asset perceptual metric being
+unable to evaluate a distance field is one more reason the rule is structural.
+
+**Three findings the measurement produced that were not being looked for.**
+
+- **A band reading 0.0000 % can carry real loss.** The profile-preview oracle's
+  `profile-photo` LoFi arm measures 0.0000 % differing, and the manifest already
+  recorded that this scene cannot exercise the LoFi budget. The same arm scores
+  81.17 on SSIMULACRA2 and 75.64 dB on alpha PSNR. A threshold of 8 is blind to
+  it by construction. This is the clearest case for recording the perceptual
+  columns beside the bands rather than instead of them.
+- **FLIP depends on the viewing condition more than expected.** Reported at
+  FLIP's shipped default of 67 pixels per degree and at 107.71 (an automotive
+  centre display, 0.9 m from a 1920 px, 0.28 m wide panel), the two disagree by
+  14 % to 32 % on real block-compression error — not the ~3 % an early
+  bit-quantisation probe suggested. The panel geometry is a stated assumption
+  and not a specified value, because
+  `docs/specification/03-target-hardware-rules.md` pins no display geometry at
+  all. Issue #549 carries that gap.
+- **The ladder is not monotonic in quality when the footprint does not divide
+  the extent.** `v03-paint` is 16x16: at astc-8x8 and finer it is exactly
+  lossless, while astc-10x10 measures _worse_ than astc-12x12 (FLIP 0.1543
+  against 0.1169). Both of the coarser footprints pad to partial blocks. Quality
+  follows block alignment there, not bitrate.
+
+**What is excluded, and why.** `v03-paint` has no SSIMULACRA2 figure. The metric
+is multi-scale and refuses anything below 8x8; at 16x16 only two of its six
+scales survive, and the score stops meaning what it means elsewhere. It keeps
+its FLIP and PSNR columns, which have no such floor.
+
+The floor is set at 64, above the metric's own 8x8, because a score that is
+_produced_ is not the same as a score that is _comparable_. The probe behind
+that judgement — the same 4-bit quantisation scoring 12.59 on a 380 px payload
+and 92.86 on a 16 px one — is recorded in
+`docs/archive/2026-07-28-perceptual-band-calibration-design.md`. Those two
+figures come from that probe rather than from any check in this repository, and
+are cited here on that footing: no test reproduces them.
+
 ## Why
 
 - **The band has to be able to fail, and the number has to be the thing that
@@ -204,6 +297,22 @@ failure #422 documents.
   ladder's fine end behaves correctly in a case that matters.
 - **Nothing measures a photograph.** The corpus has none. `detail-noise`
   stands in for high-frequency content and is honest about being synthetic.
+  Section 5's perceptual figures inherit this exactly: they are measured on a
+  gradient, two MSDF atlases and generated stress content, so they are a
+  baseline that #455's representative fixtures will move. That the harness
+  landed first is deliberate — the movement is then attributable to the
+  content rather than to a new measurement.
+- **Section 5's figures are not confirmed on a second architecture.** They are
+  pinned at a fixed precision, which is what would make a disagreement visible,
+  and every figure recorded so far was measured on aarch64-apple-darwin. A
+  disagreement beyond the pinned precision is a finding to investigate rather
+  than a number to re-record — the same standing this record's sibling
+  measurements have, and the same argument
+  `crates/dashpack/tests/band_contract.rs` makes for its digests.
+- **No perceptual metric evaluates a rendered glyph.** Section 5's
+  distance-field figures score an atlas of signed distances as if they were
+  colours. What a reader would actually judge is the glyph a shader derives
+  from that atlas, and nothing here measures it.
 - **Nothing here measures in-context quality.** These are per-asset bands.
   Banding behind text, or block patterns against a stroke, are scene-level
   effects the per-asset oracle cannot see; that is the profile-preview
