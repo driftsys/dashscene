@@ -16,7 +16,11 @@
              restates every golden that samples it" below), and issue
              #532 (the same calibration applied to the v0.6 Arabic
              golden — see "The v0.6 Arabic budget takes the same
-             calibration" below).
+             calibration" below), and issue #539 (closed as a documented
+             limitation, not a mechanism — no text golden has been
+             diffed across architectures, and none can be from inside
+             this project while #263 stands; see "Cross-architecture
+             text-golden measurement stays unavailable" below).
     scope    goldens/ tooling; binds golden authoring for every painter
 
 ## Context
@@ -301,3 +305,62 @@ that budget is unaffected: it is gated on its own 714-px break, not on the
 v0.6 number. Its stated comparison to "the CI-proven v0.6 Arabic golden"
 quotes the 1,000-px value and is left unedited as the historical note it
 now is.
+
+## Cross-architecture text-golden measurement stays unavailable (issue #539)
+
+Every text budget above is set against one number: **32 px**, measured
+once on `v03-paint.png` (story #14, "Cross-machine anti-aliasing"
+above) — a gradient-and-stroke scene drawn by Skia's own path
+rasteriser. No text golden has ever been diffed across architectures at
+all: the MSDF resolve is a different rendering path, and CI has been
+billing-blocked since 2026-07-17 (#263), which predates every text-budget
+calibration made so far (#233, #532). So each text budget's multiplier
+against the 32-px anchor is an extrapolation from a path other than the
+one it guards, not a measurement of that path:
+
+| golden                  | budget (px) | ratio to the 32-px vector-AA anchor | cross-architecture measurement |
+| ----------------------- | ----------- | ----------------------------------- | ------------------------------ |
+| v05-text-latin          | 1,200       | 37.5x                               | not measured (#539)            |
+| v06-text-arabic         | 440         | 13.75x                              | not measured (#539)            |
+| v07-text-fallback       | 500         | 15.6x                               | not measured (#539)            |
+| v07-text-lowering       | 200         | 6.25x                               | not measured (#539)            |
+| v07-variant-topology    | 200         | 6.25x                               | not measured (#539)            |
+| v013-baseline-hug-cross | 400         | 12.5x                               | not measured (#539)            |
+
+Issue #539 asked whether MSDF edge coverage is more or less stable
+across architectures than the gradient AA the 32-px figure actually
+measured. That question is not answerable from inside this project
+today: answering it needs a second architecture in CI, and CI cannot
+run at all while #263 stands. Closing #539 here therefore records a
+**documented limitation, not a mechanism** — no code was written to try
+to measure this, because there is nothing in reach to measure it with.
+
+One data point narrows the question without answering it, recorded
+during PR #536's review rather than left there: re-recording
+`v05-text-latin`, `v06-text-arabic`, and `v07-text-fallback` from a
+`--release` build — which reorders and vectorises the same float
+arithmetic — rewrote nothing; all three stayed byte-identical to the
+committed, debug-generated images. Optimisation-level codegen on one
+target is a much weaker perturbation than a different CPU architecture
+and a different libc, so this does not close the measurement gap above.
+It says only that the MSDF resolve is not sitting on a float-rounding
+knife-edge on this target — so if a text golden ever fails on Linux at
+its current budget, the more likely cause is Skia's coverage
+rasterisation, not the MSDF distance maths.
+
+**What would turn the "not measured" column above into a number**, and
+the condition for reopening this question once #263 resolves:
+
+1. run the golden suite on the Linux runner and record the actual
+   differing-pixel count for every row in the table above;
+2. replace "not measured" with the recorded count in this table;
+3. re-derive each text budget's margin against the measured number
+   instead of the extrapolated one, and retune any budget the
+   measurement contradicts.
+
+Until then the failure mode stays the one #539 named as acceptable in
+the meantime: if a budget above is too tight for real macOS-to-Linux
+MSDF jitter, its golden fails without a regression behind it —
+diagnosable and fixable by re-measuring. A budget wide enough to hide a
+real regression is the opposite failure, and the one #233 and #532 both
+exist to prevent.

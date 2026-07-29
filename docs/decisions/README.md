@@ -549,4 +549,12 @@ so each technote stops being the authority for the conclusion it reached:
   right. Three streams stays the ceiling, because review is the bottleneck
   (#362, #475, #438, #439).
 
+- [dashcue-scheduler-storage-stays-vec.md](dashcue-scheduler-storage-stays-vec.md)
+  — `Scheduler`'s track storage keeps its linearly scanned `Vec` rather
+  than a four-slice-stale "revisit at v0.8" pointer: no measurement has
+  ever shown the scan to cost anything (unmeasured perf debt belongs on
+  #476, not here), and the realistic order-preserving replacements do not
+  clear the #77 start-order guarantee for free — `Vec`'s own push/remove
+  is what gives `samples()` that guarantee today (debt #488).
+
 See the `sdd-working-memory-lifecycle` rule.

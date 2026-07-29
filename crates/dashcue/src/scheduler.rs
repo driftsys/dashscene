@@ -46,9 +46,11 @@ struct Track {
 /// [`Scheduler::samples`]. A track that finishes during an `advance`
 /// samples at exactly its target until the next `advance` removes it.
 /// Each track advances in O(1) with no allocation (R4 bounded cost);
-/// storage is a linearly scanned `Vec` — fine at v0.4 scale, revisit
-/// with the stress corpus. A replacement storage must keep tracks in
-/// insertion order: [`Scheduler::samples`] guarantees that order (#77).
+/// storage is a linearly scanned `Vec`, the deliberate choice recorded
+/// in `docs/decisions/dashcue-scheduler-storage-stays-vec.md` (debt
+/// #488) rather than a deferred revisit: no measurement has ever shown
+/// the scan to cost anything, and `Vec`'s push/remove is what gives
+/// [`Scheduler::samples`] its insertion-order guarantee (#77) for free.
 #[derive(Default)]
 pub struct Scheduler {
     tracks: Vec<Track>,

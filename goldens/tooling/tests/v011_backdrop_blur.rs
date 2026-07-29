@@ -624,7 +624,6 @@ fn baked_square_with_hole() -> (ImageTable, VectorField) {
             placement.plane_bounds.right as f32,
             placement.plane_bounds.bottom as f32,
         ],
-        px_per_em: baked.px_per_em as f32,
         distance_range: baked.distance_range as f32,
     };
     (images, field)

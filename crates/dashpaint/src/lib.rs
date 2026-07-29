@@ -517,9 +517,16 @@ pub struct Blur {
 /// it to device space by `device = rect_origin + plane_bounds` (unit scale).
 ///
 /// Plain mirror of `dashbuf`'s `VectorAtlas` + `VectorShape` tables, resolved
-/// (atlas → image index, `px_per_em`/`distance_range` folded in) at load
-/// time, so the painter needs no pool walk — the same shape the glyph
-/// [`Atlas`] takes.
+/// (atlas → image index, `distance_range` folded in) at load time, so the
+/// painter needs no pool walk.
+///
+/// Carries no `px_per_em`, unlike the glyph [`Atlas`] (debt #358). A glyph
+/// run renders at a size the bake resolution cannot imply — the same atlas
+/// serves many run sizes — so the painter divides by `Atlas::px_per_em` to
+/// find the scale. A vector field has no equivalent free variable: its
+/// `atlas_rect`-to-device-quad ratio already is the scale, so a bake
+/// resolution carried alongside it would be redundant for every reader that
+/// only paints.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VectorField {
     /// Index into the [`ImageTable`] — the packed MSDF atlas PNG.
@@ -530,9 +537,6 @@ pub struct VectorField {
     /// The padded field quad in shape space, node-box-relative, y-down:
     /// `[left, top, right, bottom]`.
     pub plane_bounds: [f32; 4],
-    /// Atlas texels per shape em (the em is the shape's longer bounding-box
-    /// side) — the bake resolution.
-    pub px_per_em: f32,
     /// The MSDF distance range in atlas texels (msdfgen `-pxrange`).
     pub distance_range: f32,
 }

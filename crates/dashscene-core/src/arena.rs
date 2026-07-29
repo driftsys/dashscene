@@ -2425,7 +2425,6 @@ fn paint_key(entry: &PaintEntry) -> PaintKey {
             key.push(field.image);
             key.extend(field.atlas_rect);
             key.extend(field.plane_bounds.iter().map(|v| v.to_bits()));
-            key.push(field.px_per_em.to_bits());
             key.push(field.distance_range.to_bits());
         }
     }
