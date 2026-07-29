@@ -101,6 +101,16 @@ pub mod rule {
     /// otherwise clamp silently or pick an unintended face — the silent
     /// vocabulary drop P4 forbids (issue #129).
     pub const TEXT_STYLE_WEIGHT_OUT_OF_RANGE: &str = "text.style-weight-out-of-range";
+    /// A text style whose `size` is not finite and strictly positive
+    /// (`dashbuf.fbs`, `TextStyle.size`). Neither the loader nor the
+    /// typesetter defaults or clamps it, so a NaN, negative, or infinite
+    /// size loads clean and reaches the arena verbatim (issue #557). NaN
+    /// specifically also defeats [`crate::TEXT_STYLE_BELOW_MSDF_FLOOR`]:
+    /// that check compares the reached size against
+    /// [`crate::MSDF_MIN_PX_PER_EM`] with `<`, and a NaN comparison is
+    /// `false` on both sides, so a NaN size passed neither check before
+    /// this one existed.
+    pub const TEXT_STYLE_SIZE_OUT_OF_RANGE: &str = "text.style-size-out-of-range";
     /// A text style whose reachable em size is under
     /// [`crate::MSDF_MIN_PX_PER_EM`]. v0 rasterizes every glyph from one MSDF
     /// atlas and bakes no per-size bitmap page, so under the floor the field
@@ -344,6 +354,7 @@ pub mod rule {
         TEXT_STYLE_OUT_OF_RANGE,
         TEXT_STYLE_NO_COLOR,
         TEXT_STYLE_WEIGHT_OUT_OF_RANGE,
+        TEXT_STYLE_SIZE_OUT_OF_RANGE,
         TEXT_STYLE_BELOW_MSDF_FLOOR,
         VARIANT_OVERRIDE_NODE_OUT_OF_RANGE,
         VARIANT_SET_NO_MEMBERS,
