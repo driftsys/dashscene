@@ -104,10 +104,13 @@ pub fn load_document(doc: &Document<'_>, payloads: &[&[u8]], arena: &mut Arena) 
     // The baked-vector pools (story B1). Each `VectorShape` resolves to a
     // flat, self-contained `VectorField` the painter samples: its atlas's
     // asset index is rewritten through `image_of` (the atlas PNG is an
-    // ordinary asset-table entry), and the atlas's `px_per_em` /
-    // `distance_range` fold in beside the shape's own rect and plane bounds.
-    // A paint entry's `shape_field` then indexes this vector directly. All
-    // indices are validated upstream (P4), so a miss is a panic, matching the
+    // ordinary asset-table entry), and the atlas's `distance_range` folds in
+    // beside the shape's own rect and plane bounds. The atlas's `px_per_em`
+    // does not — the painter derives scale from the rect/bounds ratio
+    // directly, so carrying the bake resolution past load time would be
+    // dead weight on the boundary-B struct (debt #358). A paint entry's
+    // `shape_field` then indexes this vector directly. All indices are
+    // validated upstream (P4), so a miss is a panic, matching the
     // paint/image resolution above.
     let vector_atlases = doc.vector_atlases().unwrap_or_default();
     let shape_of: Vec<VectorField> = doc
@@ -126,7 +129,6 @@ pub fn load_document(doc: &Document<'_>, payloads: &[&[u8]], arena: &mut Arena) 
                 image: image_of[atlas.image() as usize],
                 atlas_rect: [rect.x(), rect.y(), rect.width(), rect.height()],
                 plane_bounds: [plane.left(), plane.top(), plane.right(), plane.bottom()],
-                px_per_em: atlas.px_per_em(),
                 distance_range: atlas.distance_range(),
             }
         })

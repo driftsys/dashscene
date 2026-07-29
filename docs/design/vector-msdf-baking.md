@@ -70,10 +70,16 @@ still round-trips (`docs/decisions/dsb-frozen-fixture-r7-guard.md`).
   loads byte-identically to a pre-B1 `Paint`, so a document with no vectors is
   unchanged end to end.
 - **`VectorAtlas`** carries the atlas resolution (`px_per_em`, atlas pixels per
-  shape em) and the MSDF spread (`distance_range`, in atlas pixels). Both feed
-  the painter's screen-pixel-range computation
-  (`distance_range * screen_px_per_em / px_per_em`), the same metric the glyph
-  atlas uses (`docs/design/atlas-pipeline.md`).
+  shape em) and the MSDF spread (`distance_range`, in atlas pixels). Only
+  `distance_range` reaches the painter's screen-pixel-range computation
+  (`distance_range * device_px_per_texel`, the same metric the glyph atlas
+  uses, `docs/design/atlas-pipeline.md`): `device_px_per_texel` is the
+  `atlas_rect`-to-device-quad ratio, which already bakes in `px_per_em`, so
+  the painter never divides by it directly — unlike a glyph run, which can
+  render at any size and so does need `Atlas::px_per_em` to relate that size
+  to the bake resolution. `px_per_em` stays document-level provenance (the
+  input the escalation ladder in #357 would drive); the boundary-B
+  `VectorField` mirror does not carry it (debt #358).
 - **`PlaneBounds`** is the padded quad — the field extends
   `distance_range / px_per_em` beyond the geometry edge, so these bounds are
   larger than the tight geometry box (msdfgen's `planeBounds` vs. the em box).
@@ -156,8 +162,13 @@ re-bakes — the census found zero shapes that need more, so the DoD is met at a
 single resolution ("widen by exactly what is measured"). The per-shape
 escalation ladder (re-bake at a higher `px_per_em` on a bake-band failure) and
 the unfieldable-ceiling refusal exist **only** in the bake oracle
-(`goldens/tooling/tests/v010_bake_oracle.rs`); wiring them into the production
-lowering is deferred to debt **#357**. The named refusal is emitted through the
+(`goldens/tooling/tests/v010_bake_oracle.rs`). Debt **#357** asked whether to
+wire them into production and closed on a measurement instead: escalation
+needs a per-shape fidelity verdict, and the only signal `fdsm` exposes (its
+own reconstruction-vs-scanline disagreement) measures reconstruction noise,
+not resolution loss, so driving escalation from it would be driving it from
+noise. Fixed-48 stays the deliberate default; reopen #357 only if a shape is
+ever measured that it cannot field. The named refusal is emitted through the
 generic `figma.unsupported` rule, not a dedicated `figma.vector-unfieldable`
 code. ThorVG-to-texture (`docs/decisions/runtime-vector-via-thorvg-to-texture.md`)
 remains the v1 escape hatch for genuinely non-bakeable content; B1 does not
@@ -167,7 +178,10 @@ build it.
 
 - **Boundary B (dashpaint).** The resolved paint entry mirrors the shape
   channel: a parametric box, or a resolved field reference (atlas texture
-  handle + `atlas_rect` + `plane_bounds` + `px_per_em` + `distance_range`). The
+  handle + `atlas_rect` + `plane_bounds` + `distance_range`). `px_per_em`
+  stops at the document layer — the painter derives scale from the
+  `atlas_rect`/`plane_bounds` geometry directly, so carrying the bake
+  resolution past load time would be a redundant field (debt #358). The
   atlas PNG crosses boundary B on the existing `ImageTable` parameter of
   `Painter::paint` (`docs/decisions/image-assets-cross-boundary-b.md`).
 - **Sampling reuses the glyph MSDF resolve.** dashscene-skia decodes the atlas
@@ -223,9 +237,12 @@ oracle is what caught the packer bug noted above.
   ceil'd atlas extent divided by the scale, not the un-ceil'd geometry extent,
   or the field renders ~1 texel small anisotropically; fixed with a
   non-integer-width regression test.
-- **Debts.** #356 (a skipped vector can leave an orphan atlas tile), #357
-  (wire the escalation ladder into production, currently oracle-only), #358
-  (review minors).
+- **Debts, all closed.** #356 (a skipped vector could leave an orphan atlas
+  tile) and four of #358's five B1 review minors landed in PR #547; #358's
+  fifth (the painter's unused `px_per_em`) is resolved by dropping the field
+  from `dashpaint::VectorField` rather than reading it. #357 (wire the
+  escalation ladder into production) closed on the measurement above —
+  fixed-48 stands as the recorded decision, not a deferral.
 
 ## Trace
 

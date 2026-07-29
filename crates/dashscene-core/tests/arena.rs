@@ -5,6 +5,7 @@
 
 use std::mem::{align_of, size_of};
 
+use dashpaint::VectorField;
 use dashscene_core::{
     Arena, ClipBox, ClipIndex, Color, CornerRadii, LayoutMode, PaintEntry, PaintIndex, PaintKind,
     Prop, RectEntry, Stroke, StrokeAlign, TextAlign, TextAlignV, TextStyle,
@@ -1199,6 +1200,143 @@ fn same_fill_different_corners_are_different_paint_entries() {
             bottom_right: 4.0,
             bottom_left: 4.0,
         },
+    );
+    txn.commit();
+
+    let scene = arena.committed();
+    assert_eq!(scene.paints().len(), 2);
+    assert_ne!(scene.rects()[0].paint, scene.rects()[1].paint);
+}
+
+#[test]
+fn identical_vector_fields_share_one_paint_entry() {
+    // The pool key encodes the field's own resolved geometry (image,
+    // atlas_rect, plane_bounds, distance_range), so two nodes carrying
+    // byte-identical fields still collapse into one paint entry — the
+    // painter's `VectorField` no longer carries `px_per_em` (debt #358),
+    // and this pins that the key still pools correctly without it.
+    let field = VectorField {
+        image: 0,
+        atlas_rect: [0, 0, 10, 10],
+        plane_bounds: [0.0, 0.0, 10.0, 10.0],
+        distance_range: 4.0,
+    };
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let a = boxed(&mut txn, None, 0.0, 0.0, 10.0, 10.0);
+    txn.set_prop(a, Prop::Fill(RED));
+    txn.set_prop(a, Prop::ShapeField(field));
+    let b = boxed(&mut txn, None, 0.0, 0.0, 10.0, 10.0);
+    txn.set_prop(b, Prop::Fill(RED));
+    txn.set_prop(b, Prop::ShapeField(field));
+    txn.commit();
+
+    let scene = arena.committed();
+    assert_eq!(scene.paints().len(), 1);
+    assert_eq!(scene.rects()[0].paint, scene.rects()[1].paint);
+}
+
+#[test]
+fn same_fill_different_atlas_rect_are_different_paint_entries() {
+    // Two nodes sharing a fill and every field scalar except the atlas
+    // sub-rect must not collapse into one pool entry: the pool key must
+    // keep discriminating on the field's geometry now that `px_per_em` no
+    // longer rides along (debt #358).
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let a = boxed(&mut txn, None, 0.0, 0.0, 10.0, 10.0);
+    txn.set_prop(a, Prop::Fill(RED));
+    txn.set_prop(
+        a,
+        Prop::ShapeField(VectorField {
+            image: 0,
+            atlas_rect: [0, 0, 10, 10],
+            plane_bounds: [0.0, 0.0, 10.0, 10.0],
+            distance_range: 4.0,
+        }),
+    );
+    let b = boxed(&mut txn, None, 0.0, 0.0, 10.0, 10.0);
+    txn.set_prop(b, Prop::Fill(RED));
+    txn.set_prop(
+        b,
+        Prop::ShapeField(VectorField {
+            image: 0,
+            atlas_rect: [0, 0, 20, 20],
+            plane_bounds: [0.0, 0.0, 10.0, 10.0],
+            distance_range: 4.0,
+        }),
+    );
+    txn.commit();
+
+    let scene = arena.committed();
+    assert_eq!(scene.paints().len(), 2);
+    assert_ne!(scene.rects()[0].paint, scene.rects()[1].paint);
+}
+
+#[test]
+fn same_fill_different_plane_bounds_are_different_paint_entries() {
+    // `plane_bounds` sat directly beside `px_per_em` in the field before
+    // debt #358 dropped it: this pins that the field immediately adjacent
+    // to the deleted line still discriminates on its own.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let a = boxed(&mut txn, None, 0.0, 0.0, 10.0, 10.0);
+    txn.set_prop(a, Prop::Fill(RED));
+    txn.set_prop(
+        a,
+        Prop::ShapeField(VectorField {
+            image: 0,
+            atlas_rect: [0, 0, 10, 10],
+            plane_bounds: [0.0, 0.0, 10.0, 10.0],
+            distance_range: 4.0,
+        }),
+    );
+    let b = boxed(&mut txn, None, 0.0, 0.0, 10.0, 10.0);
+    txn.set_prop(b, Prop::Fill(RED));
+    txn.set_prop(
+        b,
+        Prop::ShapeField(VectorField {
+            image: 0,
+            atlas_rect: [0, 0, 10, 10],
+            plane_bounds: [-1.0, -1.0, 11.0, 11.0],
+            distance_range: 4.0,
+        }),
+    );
+    txn.commit();
+
+    let scene = arena.committed();
+    assert_eq!(scene.paints().len(), 2);
+    assert_ne!(scene.rects()[0].paint, scene.rects()[1].paint);
+}
+
+#[test]
+fn same_fill_and_geometry_different_distance_range_are_different_paint_entries() {
+    // `distance_range` is the last scalar the pool key still reads off the
+    // field (`px_per_em` was the one debt #358 dropped): this pins that it
+    // still discriminates two otherwise-identical fields on its own.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let a = boxed(&mut txn, None, 0.0, 0.0, 10.0, 10.0);
+    txn.set_prop(a, Prop::Fill(RED));
+    txn.set_prop(
+        a,
+        Prop::ShapeField(VectorField {
+            image: 0,
+            atlas_rect: [0, 0, 10, 10],
+            plane_bounds: [0.0, 0.0, 10.0, 10.0],
+            distance_range: 4.0,
+        }),
+    );
+    let b = boxed(&mut txn, None, 0.0, 0.0, 10.0, 10.0);
+    txn.set_prop(b, Prop::Fill(RED));
+    txn.set_prop(
+        b,
+        Prop::ShapeField(VectorField {
+            image: 0,
+            atlas_rect: [0, 0, 10, 10],
+            plane_bounds: [0.0, 0.0, 10.0, 10.0],
+            distance_range: 8.0,
+        }),
     );
     txn.commit();
 

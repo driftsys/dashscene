@@ -161,9 +161,12 @@ for E5 goldens at t = 0 / 0.5 / 1 and E6).
 spring track advances in O(substeps), proportional to `dt` over the
 spec's stability bound and cut short as soon as the spring reaches
 rest. No track allocates during `advance`; one frame costs O(live
-tracks). Track storage is a `Vec` scanned
-linearly by key — fine at v0.4 scale, revisit with the stress corpus; a
-replacement must keep tracks in insertion order (see `samples()` above).
+tracks). Track storage is a `Vec` scanned linearly by key — the
+deliberate choice recorded in
+`docs/decisions/dashcue-scheduler-storage-stays-vec.md` (debt #488), not
+a deferred revisit: no measurement has ever shown the scan to cost
+anything, and the ordinary `Vec` push/remove is what gives `samples()`
+its insertion-order guarantee (see above) without extra bookkeeping.
 
 **Broken contracts panic (house rule, dashpaint precedent).** Specs are
 validated upstream eventually (P4); `start` centralizes the panic for a
@@ -257,4 +260,5 @@ goldens in this story (E5 goldens are #23).
   work for persisting transition specs.
 - Related decisions:
   `docs/decisions/dashcue-spring-uses-semi-implicit-euler.md`,
-  `docs/decisions/dashcue-keyframe-values-are-progress-fractions.md`.
+  `docs/decisions/dashcue-keyframe-values-are-progress-fractions.md`,
+  `docs/decisions/dashcue-scheduler-storage-stays-vec.md`.
