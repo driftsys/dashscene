@@ -270,8 +270,15 @@ pub fn validate_document(doc: &Document<'_>) -> Report {
     // The MSDF floor is checked against the smallest em size the document can
     // reach at runtime, not the authored one, so the scale every runtime
     // construct can drive text to is computed once for the whole pool
-    // (debt #373).
-    let (text_scale, scaled_by) = min_text_scale(doc);
+    // (debt #373). Skipped when the pool is empty (debt #556): the walk
+    // costs O(bindings + overrides) whether or not there is a text style to
+    // check it against, and most corpus documents carry no text styles at
+    // all.
+    let (text_scale, scaled_by) = if sizes.text_styles == 0 {
+        (NO_TEXT_SCALING, None)
+    } else {
+        min_text_scale(doc)
+    };
 
     // A text style's color is optional in the schema, so a producer can omit
     // it. Nothing downstream may invent one: the loader would have to pick a
@@ -305,32 +312,52 @@ pub fn validate_document(doc: &Document<'_>) -> Report {
                 ),
             ));
         }
-        // The MSDF floor (`docs/decisions/q1-msdf-below-14px.md`). What
-        // smears is the size the painter rasterizes, so the floor is checked
-        // against the smallest size the document can reach, not the authored
-        // one — today those coincide, by the classification `min_text_scale`
-        // performs rather than by assumption.
+        // TextStyle.size's numeric domain (issue #557): finite and strictly
+        // positive. Nothing downstream defaults or clamps it — the loader
+        // carries it into the arena verbatim
+        // (`crates/dashscene-core/src/load.rs`) and the typesetter shapes at
+        // it — so a NaN, negative, or infinite size otherwise loads clean.
+        // Checked before the MSDF floor below, which only makes sense to ask
+        // of a size already in domain: "is this legible" presumes a real
+        // number to measure, and a NaN authored size defeats the floor's own
+        // `reached < MSDF_MIN_PX_PER_EM` comparison either way it is written
+        // (`NaN` compares `false` on both sides), so it needs its own named
+        // diagnostic rather than relying on that comparison to catch it.
         let authored = style.size();
-        let reached = authored * text_scale;
-        if reached < MSDF_MIN_PX_PER_EM {
-            // Name the construct that reaches the size whenever one does; a
-            // style nothing scales is diagnosed at its authored size and
-            // needs no such clause.
-            let via = match &scaled_by {
-                Some(construct) => {
-                    format!(", reached from {authored} px per em through {construct}")
-                }
-                None => String::new(),
-            };
-            report.push(warning(
-                rule::TEXT_STYLE_BELOW_MSDF_FLOOR,
+        if !authored.is_finite() || authored <= 0.0 {
+            report.push(error(
+                rule::TEXT_STYLE_SIZE_OUT_OF_RANGE,
                 &at,
-                format!(
-                    "text style renders at {reached} px per em{via}, under the \
-                     {MSDF_MIN_PX_PER_EM} px per em MSDF floor; v0 bakes no per-size bitmap \
-                     page, so the field smears — dots and harakat first"
-                ),
+                format!("text style size is {authored}; it must be finite and strictly positive"),
             ));
+        } else {
+            // The MSDF floor (`docs/decisions/q1-msdf-below-14px.md`). What
+            // smears is the size the painter rasterizes, so the floor is
+            // checked against the smallest size the document can reach, not
+            // the authored one — today those coincide, by the
+            // classification `min_text_scale` performs rather than by
+            // assumption.
+            let reached = authored * text_scale;
+            if reached < MSDF_MIN_PX_PER_EM {
+                // Name the construct that reaches the size whenever one
+                // does; a style nothing scales is diagnosed at its authored
+                // size and needs no such clause.
+                let via = match &scaled_by {
+                    Some(construct) => {
+                        format!(", reached from {authored} px per em through {construct}")
+                    }
+                    None => String::new(),
+                };
+                report.push(warning(
+                    rule::TEXT_STYLE_BELOW_MSDF_FLOOR,
+                    &at,
+                    format!(
+                        "text style renders at {reached} px per em{via}, under the \
+                         {MSDF_MIN_PX_PER_EM} px per em MSDF floor; v0 bakes no per-size bitmap \
+                         page, so the field smears — dots and harakat first"
+                    ),
+                ));
+            }
         }
     }
 

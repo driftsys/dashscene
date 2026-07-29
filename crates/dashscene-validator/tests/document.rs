@@ -1148,6 +1148,58 @@ fn text_style_weights_at_the_boundaries_are_allowed() {
 }
 
 // ---------------------------------------------------------------------
+// TextStyle.size's numeric domain (issue #557). Each bad value gets its own
+// test, named so a mutation that only breaks one of them is identifiable —
+// the NaN case matters most, because a naive `size < MIN || size > MAX`
+// range check does not catch it (`NaN` compares `false` on both sides).
+// ---------------------------------------------------------------------
+
+#[test]
+fn a_text_style_size_of_nan_is_named() {
+    let report = validate(&document_with_text_style_size(f32::NAN, false));
+    assert!(report.has(rule::TEXT_STYLE_SIZE_OUT_OF_RANGE), "{report}");
+    // A text style is a pooled surface, so the diagnostic points at its pool
+    // index, never a Node index that would resolve to an unrelated layer.
+    assert_eq!(
+        report.find(rule::TEXT_STYLE_SIZE_OUT_OF_RANGE).unwrap().at,
+        Location::TextStyle(0),
+    );
+}
+
+#[test]
+fn a_negative_text_style_size_is_named() {
+    let report = validate(&document_with_text_style_size(-12.0, false));
+    assert!(report.has(rule::TEXT_STYLE_SIZE_OUT_OF_RANGE), "{report}");
+}
+
+#[test]
+fn an_infinite_text_style_size_is_named() {
+    let report = validate(&document_with_text_style_size(f32::INFINITY, false));
+    assert!(report.has(rule::TEXT_STYLE_SIZE_OUT_OF_RANGE), "{report}");
+}
+
+#[test]
+fn a_text_style_size_of_zero_is_named() {
+    // Zero has no meaning for an em size the way a zero corner radius (no
+    // rounding) or a zero stroke width (no stroke) does, and nothing in the
+    // corpus authors one — so the domain is strictly positive, not merely
+    // non-negative.
+    let report = validate(&document_with_text_style_size(0.0, false));
+    assert!(report.has(rule::TEXT_STYLE_SIZE_OUT_OF_RANGE), "{report}");
+}
+
+#[test]
+fn text_style_sizes_above_zero_are_allowed() {
+    for size in [0.001, 12.0, 14.0, 16.0, 48.0] {
+        let report = validate(&document_with_text_style_size(size, false));
+        assert!(
+            !report.has(rule::TEXT_STYLE_SIZE_OUT_OF_RANGE),
+            "size {size} is in range:\n{report}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------
 // The MSDF em-size floor (`docs/decisions/q1-msdf-below-14px.md`, debt
 // #373). The floor is checked against the smallest size the document can
 // reach at runtime, so these documents carry the runtime constructs a
