@@ -587,18 +587,39 @@ fn assert_measurement(
     row: &Value,
     band: &'static ToleranceBand,
 ) {
-    assert!(
-        diff.passes(),
-        "{scene}/{name}: {}/{} = {}% of pixels exceed a per-channel delta of {}, over the \
-         {} band's {}% budget (max delta seen {})",
-        diff.differing,
-        diff.total,
-        percent(diff.fraction()),
-        band.channel_delta,
-        band.rule,
-        percent(band.differing_fraction),
-        diff.max_channel_delta,
-    );
+    // A row may declare that its arm ships *outside* the scene band, because
+    // its profile's contract permits it: `dashpack::profile::Terminal::
+    // FinestLossy` accepts the finest lossy rung with the exceedance disclosed
+    // rather than escalating past it (section 7 of the band decision record,
+    // issue #553). Where that is declared, the assertion is inverted rather
+    // than dropped — the exceedance must still be *there*, so a change that
+    // silently brought the arm back inside its band fails here and has to be
+    // re-recorded deliberately.
+    let declared = row["bandExceeded"].as_bool().unwrap_or(false);
+    if declared {
+        assert!(
+            !diff.passes(),
+            "{scene}/{name}: the row declares bandExceeded, but the arm is inside the {} band \
+             at {}% against a {}% budget. The declaration is now false and must be removed \
+             rather than left standing.",
+            band.rule,
+            percent(diff.fraction()),
+            percent(band.differing_fraction),
+        );
+    } else {
+        assert!(
+            diff.passes(),
+            "{scene}/{name}: {}/{} = {}% of pixels exceed a per-channel delta of {}, over the \
+             {} band's {}% budget (max delta seen {})",
+            diff.differing,
+            diff.total,
+            percent(diff.fraction()),
+            band.channel_delta,
+            band.rule,
+            percent(band.differing_fraction),
+            diff.max_channel_delta,
+        );
+    }
     if updating() {
         eprintln!(
             "REBASELINE {scene}/{name}: \"measured\": \"{}\", \"measuredDiffering\": {}, \

@@ -72,6 +72,11 @@ The terminal rung is what makes over-compression impossible rather than
 unlikely: its payload _is_ the canonical texels, so it cannot fail a band and
 the walk always ends inside the contract.
 
+**Section 7 qualifies this for one contract.** HiFi on image fills now ends at
+the finest _lossy_ rung instead, because on photographic content the terminal
+rung meant shipping four times the residency. RAW, LoFi and every distance
+field keep the property as stated above.
+
 ### 2. The two bands, and the mutation that fails each
 
 | band              | per-texel threshold | area budget |
@@ -298,6 +303,89 @@ because downscaling averages away the high-frequency detail block compression
 is worst at. Each payload's preparation is recorded with its provenance in
 `corpus/photo/README.md`, and a payload whose preparation is unrecorded cannot
 be reproduced from its source.
+
+### 7. HiFi's image-fill walk ends at the finest lossy rung, provisionally
+
+    decided 2026-07-29 by the repository owner, raised by section 6 and issue #553
+    provisional: to be replaced by the class split, not to stand indefinitely
+
+Section 6 measured that HiFi rejects every ASTC footprint on photographic
+content and escalates to the uncompressed rung, so it saves no memory at all on
+the content class the product ships. **HiFi's image-fill contract now ends at
+the finest lossy rung** — `dashpack::profile::Terminal::FinestLossy` — accepting
+astc-4x4 with its measured exceedance disclosed rather than escalating past it.
+
+**First, what was ruled out.** The obvious fix is to retune HiFi's threshold and
+budget, and a sweep of every threshold from 0 to 24 against thirteen budgets
+found **no pair that works**. The reason is structural rather than a search that
+gave up:
+
+| fixture              | rung                   | t=2         | t=4    | t=6     | t=8    |
+| -------------------- | ---------------------- | ----------- | ------ | ------- | ------ |
+| `import-image-fill`  | astc-6x6 (accept)      | 0.2133      | 0.0000 | 0.0000  | 0.0000 |
+| `import-image-fill`  | astc-8x8 (must reject) | 2.8012      | 0.0000 | 0.0000  | 0.0000 |
+| `photo-coast-forest` | astc-4x4 (accept)      | **46.2559** | 23.042 | 10.2917 | 4.3911 |
+
+Above a threshold of 2 the gradient's 6x6 and 8x8 are indistinguishable at
+0.0000 %, so the walk takes the cheaper rung and can never land on 6x6. At a
+threshold of 2 a photograph needs a 46 % budget to accept 4x4, which would
+accept 12x12 for everything. **A gradient needs a tight threshold to rank its
+rungs; a photograph needs a loose one to accept any lossy rung at all.** One
+band cannot be both — which is the class-split argument of #553, now measured
+rather than suspected.
+
+**What the floor rung changes, and what it does not.**
+
+| fixture                 | before       | after        | SSIMULACRA2 |
+| ----------------------- | ------------ | ------------ | ----------- |
+| `import-image-fill`     | astc-6x6     | astc-6x6     | 92.87       |
+| `v03-paint`             | astc-8x8     | astc-8x8     | withheld    |
+| `photo-interior-render` | uncompressed | **astc-4x4** | 90.72       |
+| `photo-coast-forest`    | uncompressed | **astc-4x4** | 90.64       |
+| `photo-snowy-forest`    | uncompressed | **astc-4x4** | 93.21       |
+| `photo-dawn-mountains`  | astc-4x4     | astc-4x4     | 93.08       |
+| `detail-noise`          | uncompressed | **astc-4x4** | **87.69**   |
+
+Every real payload holds at or above the 90 the published scale calls visually
+lossless, and the three photographs go from 1 MiB resident each to 256 KiB.
+Both distance fields are untouched — they never had a lossy ladder to floor.
+LoFi is untouched, and deliberately: its band accepts a lossy rung on every
+committed asset, so it keeps the lossless terminal and keeps over-compression
+structurally impossible for the profile that does not need the trade.
+
+**The cost, in full.** Two things, both measured rather than argued away.
+
+The generated `detail-noise` payload now ships at 87.69, below the floor. It is
+excluded from the floor assertion by being generated rather than by name, and
+the exclusion is argued in the test: the floor is a claim about **product
+content**, and holding deliberately adversarial synthetic content to it would
+either block this trade or force the published threshold down to what the
+synthetic case allows — and lowering a published threshold to fit a measurement
+is the defect #422 documents.
+
+At scene level the same content is worse. `profile-stress` under HiFi renders
+51.8097 % of its pixels beyond a per-channel delta of 2 against a 1 % scene
+budget, peak delta 12. The oracle now carries `bandExceeded` on that row and
+**inverts** its assertion rather than dropping it: the exceedance must still be
+there, so a change that quietly brought the arm back inside its band fails and
+has to be re-recorded on purpose. `profile-photo`, whose content is real, stays
+inside at 0.2043 %.
+
+**What this weakens, stated plainly.** Over-compression is no longer
+structurally impossible for HiFi on image fills. It remains so for RAW, for
+LoFi, and for every distance field. The weakening is bounded — the walk still
+tries every rung and still stops at the finest, so the worst case is one
+specific, measured, disclosed encoding rather than an open-ended one — but it is
+a real reduction in a guarantee section 1 states, and it is why this section
+says _provisional_ in its own status line.
+
+One proof moved rather than vanished. The lossless terminal used to be
+demonstrated by `profile-stress` escalating to it; now no committed fixture
+does. It is exercised directly instead, by
+`lofi_escalates_to_the_lossless_terminal_when_the_band_never_holds`, which
+generates content hard enough to force it. What is no longer covered is that
+terminal through the full preview chain end to end, and that is recorded in the
+manifest rather than left to be discovered.
 
 ## Why
 
