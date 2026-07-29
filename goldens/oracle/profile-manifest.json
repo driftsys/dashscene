@@ -59,20 +59,22 @@
         {
           "profile": "hifi",
           "band": "profile-hifi-scene",
-          "rungs": ["uncompressed"],
-          "measured": "0.0000",
-          "measuredDiffering": 0,
+          "rungs": ["astc-4x4"],
+          "bandExceeded": true,
+          "bandExceededNote": "This arm ships OUTSIDE the profile-hifi-scene band, by contract rather than by defect. HiFi image fills end at dashpack::profile::Terminal::FinestLossy: on content its band cannot hold at any footprint they accept astc-4x4 with the exceedance disclosed, rather than escalating to uncompressed and shipping four times the residency (section 7 of docs/decisions/asset-quality-profile-bands.md, issue #553). This scene is generated to be pathological, so it is the case where the trade costs the most: 51.8097 % of pixels beyond a per-channel delta of 2, peak delta 12, against a 1 % budget. The asset itself scores 87.69 on SSIMULACRA2 — below the 90 the floor calls visually lossless, which is the single measured cost of the trade and is recorded rather than absorbed. profile-photo, whose content is real, stays inside the band at 0.2043 %. The assertion here is inverted rather than dropped: the exceedance must still be present, so a change that quietly brought this arm back inside its band fails and has to be re-recorded on purpose.",
+          "measured": "51.8097",
+          "measuredDiffering": 33954,
           "measuredTotal": 65536,
-          "maxChannelDelta": 0,
-          "ssimulacra2": "100.00",
-          "flipDesk": "0.0000",
-          "flipPanel": "0.0000",
-          "psnrRgb": "lossless",
+          "maxChannelDelta": 12,
+          "ssimulacra2": "88.46",
+          "flipDesk": "0.0246",
+          "flipPanel": "0.0166",
+          "psnrRgb": "40.91",
           "psnrAlpha": "lossless",
           "mutation": {
-            "forceBlock": [4, 4],
-            "measured": "51.8097",
-            "note": "HiFi rejects all six lossy rungs on this content and escalates to the lossless rung, so the mutation is a walk that stopped at the finest lossy rung it could reach. 51.8097 % against the 1 % budget. (This figure moved from 51.8707 % when the profile was renamed Lite to LoFi: the scene carries a rendered text overlay labelling the band, so the label's glyphs are part of what is measured. The oracle caught the change rather than absorbing it, which is the property the recorded number exists to have.) The unmutated row is worth as much as the mutation: a maxChannelDelta of exactly 0 over the whole scene is the lossless rung's identity property proven through the entire preview chain — pack, KTX2 write, Zstd, cold-bank assembly, dashbuf::open resolving the canonical hash through the derivation manifest, the independent KTX2 parse, the inflate, the PNG re-wrap and Skia's own decode. Any one of those steps altering a single texel would move it off 0, and the assertion is written as an equality to 0 rather than as a band for that reason."
+            "forceBlock": [5, 5],
+            "measured": "72.6303",
+            "note": "HiFi rejects all six lossy rungs on this content, so under Terminal::FinestLossy it accepts the finest of them, astc-4x4, with the exceedance disclosed. The mutation is therefore a walk that stopped one rung EARLIER than the contract's floor: astc-5x5, measuring 72.6303 % against the 1 % budget where the accepted rung measures 51.8097 %. Both are outside the band — that is what bandExceeded declares — so what this mutation proves is not that the band refuses 5x5 but that the FLOOR is the binding choice: moving it one rung coarser makes the scene measurably worse, by 20.8 percentage points, and the recorded pair is what would catch a floor that silently moved. Before issue #553's trade this row read differently: HiFi escalated to the lossless rung, the unmutated arm measured 0.0000 % with a maxChannelDelta of exactly 0, and that zero was the lossless rung's identity property proven through the whole preview chain — pack, KTX2 write, Zstd, cold-bank assembly, dashbuf::open resolving the canonical hash through the derivation manifest, the independent KTX2 parse, the inflate, the PNG re-wrap and Skia's own decode. That proof is not lost: it moved to crates/dashpack/tests/band_contract.rs::lofi_escalates_to_the_lossless_terminal_when_the_band_never_holds, which forces the terminal directly rather than relying on a fixture that happened to be hard enough. What this scene no longer covers is that chain end-to-end at the lossless rung, and that is stated here rather than left to be discovered."
           }
         },
         {

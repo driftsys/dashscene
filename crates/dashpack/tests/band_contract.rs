@@ -424,18 +424,17 @@ const TABLE: [Row; 27] = [
     Row {
         fixture: "detail-noise",
         profile: Profile::HiFi,
-        rung: "uncompressed",
-        accepted: "0.0000",
+        rung: "astc-4x4",
+        accepted: "54.4891",
         rejected: &[
             ("astc-12x12", "96.2921"),
             ("astc-10x10", "95.5338"),
             ("astc-8x8", "93.5471"),
             ("astc-6x6", "87.6099"),
             ("astc-5x5", "76.1032"),
-            ("astc-4x4", "54.4891"),
         ],
-        bytes: 196782,
-        digest: "e1a0f6ba373eaf79a5d10b423863b0edf2ba0cadedd70bb506bb4fa4b77dfbc6",
+        bytes: 63220,
+        digest: "3d141b550b03aee6bc5ede7daa41c6b2e686874af73c9c45d51aadeb2a59131e",
     },
     Row {
         fixture: "detail-noise",
@@ -462,18 +461,17 @@ const TABLE: [Row; 27] = [
     Row {
         fixture: "photo-interior-render",
         profile: Profile::HiFi,
-        rung: "uncompressed",
-        accepted: "0.0000",
+        rung: "astc-4x4",
+        accepted: "7.6714",
         rejected: &[
             ("astc-12x12", "37.6316"),
             ("astc-10x10", "32.8083"),
             ("astc-8x8", "26.6972"),
             ("astc-6x6", "18.5814"),
             ("astc-5x5", "13.3068"),
-            ("astc-4x4", "7.6714"),
         ],
-        bytes: 387069,
-        digest: "f4c58e3920fd13d47285019a5930e0008e214cc791d86f3db7d2bdd53fe70341",
+        bytes: 210102,
+        digest: "aa32016024ab2abb71ac40a5aa127cf811cac66f15b00fee2603a1ace4172684",
     },
     Row {
         fixture: "photo-interior-render",
@@ -500,18 +498,17 @@ const TABLE: [Row; 27] = [
     Row {
         fixture: "photo-coast-forest",
         profile: Profile::HiFi,
-        rung: "uncompressed",
-        accepted: "0.0000",
+        rung: "astc-4x4",
+        accepted: "46.2559",
         rejected: &[
             ("astc-12x12", "71.5351"),
             ("astc-10x10", "68.7553"),
             ("astc-8x8", "66.7664"),
             ("astc-6x6", "62.6858"),
             ("astc-5x5", "58.0051"),
-            ("astc-4x4", "46.2559"),
         ],
-        bytes: 668010,
-        digest: "29487bc4c38f2735a392e2ebeea40009db058de1c01acafb7407122410dc725b",
+        bytes: 249238,
+        digest: "acf93ae0a98de0276c6768a4fcc0bd9905123dfe1847221a9e864a567ba82efa",
     },
     Row {
         fixture: "photo-coast-forest",
@@ -540,18 +537,17 @@ const TABLE: [Row; 27] = [
     Row {
         fixture: "photo-snowy-forest",
         profile: Profile::HiFi,
-        rung: "uncompressed",
-        accepted: "0.0000",
+        rung: "astc-4x4",
+        accepted: "21.5595",
         rejected: &[
             ("astc-12x12", "90.4366"),
             ("astc-10x10", "88.4422"),
             ("astc-8x8", "85.1051"),
             ("astc-6x6", "75.0023"),
             ("astc-5x5", "55.4966"),
-            ("astc-4x4", "21.5595"),
         ],
-        bytes: 649628,
-        digest: "52008f157fab7d3ddcb1f200eb00fa350d08f1187f9801f27513e9394a9553fe",
+        bytes: 248781,
+        digest: "82e390d1a76f204607245336af7500f13fb674046adcf02a13c053b0637d03cc",
     },
     Row {
         fixture: "photo-snowy-forest",
@@ -1067,13 +1063,67 @@ fn more_than_one_asset_per_class_and_one_that_escalates() {
         "no recorded row escalates; a band oracle where nothing escalates tests none of the \
          escalation mechanism"
     );
-    // And at least one must reach the terminal rung, which is the claim that
-    // over-compression is impossible rather than merely unlikely.
+    // Reaching the lossless rung *by escalation* is no longer something any
+    // committed fixture does, and that is a deliberate consequence rather than
+    // an oversight: HiFi's image-fill contract now ends at
+    // `Terminal::FinestLossy` (section 7 of the band decision record), and
+    // LoFi's band accepts a lossy rung on every committed asset. The rows that
+    // sit at `uncompressed` are the two distance fields, which reach it under
+    // `Contract::LosslessOnly` without walking a ladder at all.
+    //
+    // So the claim "over-compression is impossible rather than merely unlikely"
+    // is proven by `lofi_escalates_to_the_lossless_terminal_when_the_band_never
+    // _holds` below, on content generated to be hard enough to force it, rather
+    // than by a committed fixture that happens to be that hard.
     assert!(
         TABLE
             .iter()
-            .any(|row| row.rung == "uncompressed" && !row.rejected.is_empty()),
-        "no recorded row escalates all the way to the lossless rung"
+            .any(|row| row.rung == "uncompressed" && row.rejected.is_empty()),
+        "no recorded row sits at the lossless rung at all"
+    );
+}
+
+/// The lossless terminal, still reachable and still lossless.
+///
+/// `Terminal::Lossless` is what makes over-compression impossible for every
+/// contract that keeps it — RAW, LoFi, and every distance field. Capping HiFi
+/// at the finest lossy rung left that path with no committed fixture exercising
+/// it, so it is exercised here directly: content generated to defeat every rung
+/// of the ladder, packed under LoFi, must arrive at `Rung::Uncompressed` having
+/// rejected all six lossy rungs, and must be bit-exact when it does.
+///
+/// The amplitude is 16 rather than the fixture's 8 for the reason `FIXTURES`
+/// records: at 8 both budgets bind partway up the ladder, which is what makes
+/// it a good band fixture and a useless terminal one.
+#[test]
+fn lofi_escalates_to_the_lossless_terminal_when_the_band_never_holds() {
+    let texels = detail_noise(NOISE_EXTENT, NOISE_EXTENT, 16);
+    let image = Rgba8::new(NOISE_EXTENT, NOISE_EXTENT, &texels).expect("the extent matches");
+    let Binding::Derived(derived) = pack(Profile::LoFi, AssetKind::Image, image).expect("it packs")
+    else {
+        panic!("only RAW binds canonically");
+    };
+
+    assert_eq!(
+        derived.rung,
+        Rung::Uncompressed,
+        "content this hard must escalate past every lossy rung, or the terminal is unreachable          and over-compression is only unlikely rather than impossible",
+    );
+    assert_eq!(
+        derived.rejected.len(),
+        AssetClass::ImageFill.lossy_rungs().len(),
+        "every lossy rung must have been tried and named before the terminal was taken",
+    );
+    let accepted = derived
+        .accepted
+        .expect("a banded contract measures what it accepted");
+    assert!(
+        accepted.is_lossless(),
+        "the terminal rung's payload is the canonical texels, so it cannot differ from them",
+    );
+    assert!(
+        accepted.passes(),
+        "and being lossless, it satisfies any band — which is the whole point of it",
     );
 }
 

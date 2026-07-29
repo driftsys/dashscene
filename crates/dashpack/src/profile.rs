@@ -16,12 +16,24 @@
 //!    vocabulary ([`crate::band`]). The first rung whose measurement holds
 //!    wins. Every rejected rung is kept with the number that rejected it.
 //!
-//! # Why over-compression is impossible rather than unlikely
+//! # Where a walk ends, and the one place fidelity is traded
 //!
-//! The last rung of every ladder is [`Rung::Uncompressed`], whose payload *is*
-//! the canonical texels. It cannot fail a band, so the loop always terminates
-//! with a payload that satisfies the contract. A profile can therefore only ever
-//! make a file bigger than the packer's first guess, never worse than its band.
+//! Under [`Terminal::Lossless`] the last rung is [`Rung::Uncompressed`], whose
+//! payload *is* the canonical texels. It cannot fail a band, so the walk always
+//! terminates with a payload that satisfies the contract: over-compression is
+//! impossible rather than unlikely, and a profile can only ever make a file
+//! bigger than the packer's first guess, never worse than its band. RAW and
+//! LoFi are both this, as is every distance field.
+//!
+//! **HiFi on image fills is not.** It ends at [`Terminal::FinestLossy`], which
+//! ships the finest lossy rung with its measured exceedance disclosed rather
+//! than escalating past it. That is a deliberate, provisional trade: on
+//! photographic content HiFi's band rejects every ASTC footprint, so the
+//! lossless terminal shipped four times the residency for the content class the
+//! product actually ships. The exceedance is never silent — it is in
+//! [`Derivation::accepted`], and [`crate::band::BandDiff::passes`] returns false
+//! on it. `docs/decisions/asset-quality-profile-bands.md` section 7 carries the
+//! trade; issue #553 carries the class split that would remove the need for it.
 //!
 //! # Where the numbers came from
 //!
@@ -194,8 +206,39 @@ pub enum Contract {
     /// fail is exactly the defect issue #422 recorded against `blur-falloff`,
     /// and the fix is to not write the number.
     LosslessOnly,
-    /// A lossy ladder, every rung of which is graded against `band`.
-    Banded { band: &'static ToleranceBand },
+    /// A lossy ladder, every rung of which is graded against `band`, and where
+    /// a walk that exhausts the ladder ends.
+    Banded {
+        band: &'static ToleranceBand,
+        terminal: Terminal,
+    },
+}
+
+/// Where an escalation that exhausts every lossy rung ends.
+///
+/// This is the one place a profile may trade fidelity for residency, and it is
+/// expressed as its own value rather than as a branch inside [`pack`] so that
+/// the trade is visible in the contract a caller reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Terminal {
+    /// The uncompressed rung. Its payload *is* the canonical texels, so no band
+    /// can refuse it and over-compression is structurally impossible.
+    Lossless,
+    /// The finest lossy rung, accepted with its measured exceedance disclosed
+    /// rather than escalated past.
+    ///
+    /// **This is the one case where a derivation ships outside its band**, and
+    /// it exists because the alternative measured worse in practice: on
+    /// photographic content HiFi's band rejects every ASTC footprint, so
+    /// [`Terminal::Lossless`] shipped uncompressed 8-bit RGBA — four times the
+    /// residency — for a class the product actually ships
+    /// (`docs/decisions/asset-quality-profile-bands.md` section 7, issue #553).
+    ///
+    /// A caller cannot mistake it for a pass: [`Derivation::accepted`] carries
+    /// the measurement, and [`crate::band::BandDiff::passes`] returns false on
+    /// it. It is a **provisional** answer pending the class split that would
+    /// let a photographic band be graded on its own terms.
+    FinestLossy,
 }
 
 /// The contract `profile` gives `class`.
@@ -203,11 +246,24 @@ pub fn contract(profile: Profile, class: AssetClass) -> Contract {
     match profile {
         Profile::Raw => Contract::NullBinding,
         Profile::HiFi | Profile::LoFi if !class.admits_lossy() => Contract::LosslessOnly,
+        // HiFi stops at the finest lossy rung rather than escalating past it.
+        // Measured: on all three committed photographs its band rejects every
+        // footprint, so the lossless terminal shipped 1 MiB per 512x512 asset
+        // where 4x4 ships 256 KiB and still measures at or above 90 on
+        // SSIMULACRA2 — visually lossless on the published scale. Section 7 of
+        // the band decision record carries the trade and its one disclosed
+        // cost; issue #553 carries the class split that would replace it.
         Profile::HiFi => Contract::Banded {
             band: &HIFI_IMAGE_FILL,
+            terminal: Terminal::FinestLossy,
         },
+        // LoFi keeps the lossless terminal. Its band already accepts a lossy
+        // rung on every committed asset, so the terminal is unreached and
+        // costs nothing; leaving it in place keeps over-compression
+        // structurally impossible for the profile that does not need the trade.
         Profile::LoFi => Contract::Banded {
             band: &LOFI_IMAGE_FILL,
+            terminal: Terminal::Lossless,
         },
     }
 }
@@ -376,7 +432,7 @@ pub fn pack(profile: Profile, kind: AssetKind, image: Rgba8<'_>) -> Result<Bindi
     let class = AssetClass::of(kind)?;
     // Each of the three contracts leaves by its own path, so nothing below
     // carries a value that means two different things.
-    let band = match contract(profile, class) {
+    let (band, terminal) = match contract(profile, class) {
         // RAW derives nothing at all.
         Contract::NullBinding => return Ok(Binding::Canonical),
         // No lossy rung to choose between, so no band and nothing to measure:
@@ -391,10 +447,15 @@ pub fn pack(profile: Profile, kind: AssetKind, image: Rgba8<'_>) -> Result<Bindi
                 None,
             )?));
         }
-        Contract::Banded { band } => band,
+        Contract::Banded { band, terminal } => (band, terminal),
     };
 
     let mut rejected = Vec::new();
+    // The finest rung walked so far that did not pass, held rather than
+    // discarded because [`Terminal::FinestLossy`] ships it. Under
+    // [`Terminal::Lossless`] it joins `rejected` on the next iteration and
+    // nothing else changes.
+    let mut finest: Option<(Rung, Vec<u8>, band::BandDiff)> = None;
     for &block in class.lossy_rungs() {
         let rung = Rung::Astc(block);
         let payload = astc::encode(image, block, class.color_space(), PACK_QUALITY)?;
@@ -410,6 +471,9 @@ pub fn pack(profile: Profile, kind: AssetKind, image: Rgba8<'_>) -> Result<Bindi
         )?;
         let measured = band::diff(image.texels(), &decoded, band)?;
         if measured.passes() {
+            if let Some((rung, _, diff)) = finest {
+                rejected.push(Attempt { rung, diff });
+            }
             return Ok(Binding::Derived(finish(
                 class,
                 rung,
@@ -419,15 +483,33 @@ pub fn pack(profile: Profile, kind: AssetKind, image: Rgba8<'_>) -> Result<Bindi
                 Some(measured),
             )?));
         }
-        rejected.push(Attempt {
-            rung,
-            diff: measured,
-        });
+        if let Some((rung, _, diff)) = finest.replace((rung, payload, measured)) {
+            rejected.push(Attempt { rung, diff });
+        }
     }
 
-    // The terminal rung. Its payload is the canonical texels, so it is lossless
-    // by construction and no band can refuse it — which is what makes
-    // over-compression impossible rather than merely unlikely. It is measured
+    // The ladder is exhausted. Where the walk ends is the contract's to say.
+    if terminal == Terminal::FinestLossy
+        && let Some((rung, payload, measured)) = finest
+    {
+        // Ships outside the band, with the exceedance measured and carried in
+        // `accepted` rather than dropped. See [`Terminal::FinestLossy`].
+        return Ok(Binding::Derived(finish(
+            class,
+            rung,
+            &payload,
+            image,
+            rejected,
+            Some(measured),
+        )?));
+    }
+    if let Some((rung, _, diff)) = finest {
+        rejected.push(Attempt { rung, diff });
+    }
+
+    // The lossless terminal. Its payload is the canonical texels, so no band
+    // can refuse it — which is what makes over-compression impossible rather
+    // than merely unlikely for a contract that reaches here. It is measured
     // anyway, because a report that says 0.0000 % is worth more than one that
     // says the code did not look.
     let accepted = band::diff(image.texels(), image.texels(), band)?;
