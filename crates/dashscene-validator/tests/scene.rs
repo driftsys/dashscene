@@ -555,67 +555,6 @@ fn too_many_render_target_groups_warn_but_never_error() {
     );
 }
 
-#[test]
-fn text_alongside_a_render_target_group_is_named_a_limitation() {
-    // Story #44 M4: glyph runs are not composited into render-target group
-    // layers, so a scene with both is named — a warning, never an error.
-    use dashpaint::{Atlas, GlyphRun, ImageAsset, ImageFormat};
-
-    let mut paints = PaintTable::new();
-    let paint = paints.push(PaintEntry::solid(red()));
-    let mut glyphs = GlyphRunTable::new();
-    let atlas = glyphs.push_atlas(Atlas::new(
-        ImageAsset {
-            format: ImageFormat::Png,
-            bytes: vec![0],
-        },
-        1,
-        1,
-        16,
-        2.0,
-        vec![],
-    ));
-    glyphs.push_run(GlyphRun {
-        // The scene's one rect, which is also the group's whole range.
-        rect: 0,
-        atlas,
-        size: 16.0,
-        color: red(),
-        glyphs: vec![],
-        opacity: 1.0,
-    });
-    let groups = [GroupComposite {
-        start: 0,
-        end: 1,
-        alpha: 0.5,
-    }];
-
-    let report = validate_scene(
-        &[rect(10.0, 10.0, paint.0)],
-        &paints,
-        &ImageTable::new(),
-        &ClipTable::new(),
-        &groups,
-        &glyphs,
-    );
-    assert!(report.has(rule::TEXT_OUTSIDE_GROUP), "{report}");
-    assert!(
-        !report.has_errors(),
-        "the limitation is a warning, not an error"
-    );
-
-    // No glyph runs, no warning.
-    let quiet = validate_scene(
-        &[rect(10.0, 10.0, paint.0)],
-        &paints,
-        &ImageTable::new(),
-        &ClipTable::new(),
-        &groups,
-        &GlyphRunTable::new(),
-    );
-    assert!(!quiet.has(rule::TEXT_OUTSIDE_GROUP), "{quiet}");
-}
-
 /// A paint entry carrying one shadow, over a plain red fill.
 fn shadowed(shadow: Shadow) -> PaintEntry {
     PaintEntry {

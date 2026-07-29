@@ -812,13 +812,17 @@ pub struct GlyphRun {
     /// run's fill alpha by it. `1.0` when no free-path group opacity
     /// applies.
     ///
-    /// Clip and mask regions **are** applied to runs (issue #275): a run is
-    /// drawn inside the region its [`rect`](Self::rect) anchor carries, the
-    /// same region that rect draws under. **The render-target group path is
-    /// not** — a run inside an overlapping partial-opacity group still
-    /// draws as foreground at this alpha rather than compositing into the
-    /// group's offscreen layer (issue #274; a named limitation reported by
-    /// the `paint.text-outside-group` gate, not a silent drop).
+    /// This is the **free** path's alpha only. A run now draws at its
+    /// [`rect`](Self::rect) anchor's index, inside that rect's clip region
+    /// (issue #275) and inside every render-target group layer enclosing it
+    /// (issue #274), so the render-target path reaches a run through the
+    /// layer rather than through this field. Both limitations this field's
+    /// documentation used to name are gone, and the
+    /// `paint.text-outside-group` gate that reported the second is retired.
+    ///
+    /// The field is now derivable from `rects[rect].opacity` and is kept
+    /// only until that fold-in lands
+    /// (`docs/decisions/glyph-runs-cross-boundary-b.md`).
     pub opacity: f32,
 }
 

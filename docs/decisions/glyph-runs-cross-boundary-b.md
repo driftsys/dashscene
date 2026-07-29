@@ -432,3 +432,62 @@ Two consequences follow, both of which the story issue had folded in here:
 Issue #275 (clip the run to its anchor's region) and issue #274 (draw the run
 inside the rect loop, in its group's layer) are now each a painter change
 against information that is present at boundary B.
+
+## Resolution (issues #275 and #274, 2026-07-29) — the painter, as built
+
+Both landed as spike §5 predicted, each as its own step so each kept its own
+falsifiable expectation.
+
+**#275** resolves `rects[run.rect].clip` and draws inside it. Masks needed
+nothing further, because a mask already resolves into a clip region. An anchor
+naming no rect panics rather than drawing the run unclipped (P4).
+
+**#274** moves the draw inside the rect loop: each run is drawn immediately
+after the rect at its anchor's index, before that rect's clip save is restored
+and before any enclosing group layer closes. The clip therefore comes from the
+loop rather than from a per-run save, and group compositing falls out with no
+change to how `GroupComposite` ranges open or close. The per-frame MSDF setup —
+the SkSL compile and the atlas decodes — is hoisted into a struct built once per
+`paint`, so interleaving does not turn it into per-rect work.
+
+Two consequences the design named, both now true:
+
+- **Text is no longer unconditional foreground.** A run anchored at rect `i` is
+  covered by any overlapping rect at a higher index.
+- **The backdrop barrier now includes runs.** `Painter::paint`'s text said runs
+  were outside it "because no run is ever beneath a barrier", which stops being
+  true the moment runs interleave; the contract is corrected rather than left
+  false. A painter that reorders must count runs in its barrier accounting.
+
+`paint.text-outside-group` is **retired**: it warned that a scene carrying both
+runs and groups rendered text at full strength, which is no longer what happens.
+Removing an accurate diagnostic early would have been worse than keeping it, so
+it stayed through #542 and #275 and was deleted only here, in the change that
+made it false.
+
+### Both steps moved zero committed goldens, and that is the finding
+
+Neither #275 nor #274 moved a single committed image, `.dsb` golden or oracle
+frame. That is not evidence of safety — it is the same corpus gap this record
+already named, confirmed twice more. Measured directly:
+
+- No committed scene has a clip whose box cuts glyph ink. `v07-text-lowering` is
+  the only one with a clipped text node and its ink lies inside the box.
+- No committed scene carries a glyph run and a `GroupComposite` together at all.
+- No committed scene has a rect that both follows a run in DFS order and
+  overlaps its ink, so the z-interleave never fires.
+
+The six per-golden ceilings the implementing story was scheduled against were
+therefore all met by moving **zero**, exactly as the measurement predicted for
+the real interleave — the ceilings came from a shim that drew every run before
+every rect, the maximum possible disagreement, and the real ordering is a strict
+subset of it.
+
+So each step added the fixture its corpus lacked, in
+`goldens/tooling/tests/v013_uncovered_shapes.rs` — the file that exists for
+shapes a landed fix changed where nothing moved: `v013-text-clipped` for #275
+and `v013-text-in-group` for #274. Each carries a demonstrated-sensitivity
+guard that renders the pre-fix behaviour and asserts it moves far more than the
+budget, and `v013-text-in-group` additionally pins the property exactly and
+machine-independently: no pixel may carry the run's full-strength colour,
+because every text pixel went through the group's 0.5 layer.

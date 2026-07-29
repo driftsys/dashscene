@@ -271,13 +271,6 @@ pub mod rule {
     /// likely a mistake (story #44 M13).
     pub const INERT_MASK: &str = "paint.inert-mask";
 
-    /// A scene carries glyph runs and render-target group composites
-    /// together. The painter does not composite glyph runs into group
-    /// layers yet (a deferred z-interleave), so text inside an overlapping
-    /// partial-opacity group renders at full strength. A warning naming a
-    /// known limitation (story #44 M4), not an error.
-    pub const TEXT_OUTSIDE_GROUP: &str = "paint.text-outside-group";
-
     pub const RECT_INVALID_EXTENT: &str = "geometry.rect-invalid-extent";
     /// A corner radius that is negative or non-finite. Geometry-free authored
     /// intent (like a stroke width), so it is checked on both a document
@@ -378,7 +371,6 @@ pub mod rule {
         RENDER_TARGET_BUDGET,
         NODE_OPACITY_OUT_OF_RANGE,
         INERT_MASK,
-        TEXT_OUTSIDE_GROUP,
         RECT_INVALID_EXTENT,
         CORNER_RADIUS_INVALID,
         SHADOW_INVALID_GEOMETRY,

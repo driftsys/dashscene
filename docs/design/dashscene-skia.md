@@ -143,8 +143,14 @@ All in `crates/dashscene-skia/src/lib.rs`:
 
 ## Text — MSDF glyph runs (v0.5 Latin, story #30)
 
-After the rect pass, the painter draws the `GlyphRunTable` (boundary B's
-text half, `docs/decisions/glyph-runs-cross-boundary-b.md`). Each glyph is
+The painter draws the `GlyphRunTable` (boundary B's text half,
+`docs/decisions/glyph-runs-cross-boundary-b.md`) **inside** the rect pass:
+each run is drawn immediately after the rect at its `GlyphRun::rect` anchor,
+before that rect's clip save is restored and before any enclosing group
+layer closes (issues #275 and #274). Placing the draw there is the whole of
+both fixes — the run inherits the anchor's clip region, lands inside every
+`GroupComposite` layer around it, and takes the anchor's z position, with no
+change to how group layers open or close. Each glyph is
 one textured MSDF atlas quad: the glyph's `plane_em` bounds map to a
 device quad at the run's render size (y-up ems to y-down document space),
 and its `atlas_px` bounds map to the atlas texels. An SkSL runtime effect
@@ -153,7 +159,20 @@ distance channels, and resolves coverage over the screen-pixel range
 (`distance_range_px * render_size / px_per_em`), modulating the run's
 fill color. The reference painter uses the atlas as the product path;
 Skia's native text (`SkTextBlob`) is a debug overlay only (`DESIGN_1.md`
-§7.2). Runs composite over every rect (text foreground) in v0.5.
+§7.2).
+
+Runs composited over every rect as unconditional foreground through v0.12.
+Two consequences of ending that: text is now covered by an overlapping rect
+at a higher index, which is the correct reading of DFS stacking; and a run
+is now inside the backdrop barrier, so a painter that reorders must count
+runs in its barrier accounting rather than only rects.
+
+The per-frame MSDF setup — the SkSL compile and one decode per atlas — is
+built once per `paint` in `MsdfFrame`, not once per rect that anchors a run,
+and a text-free scene builds none of it. `MsdfFrame::new` also checks every
+anchor against the rect table up front: under the interleave, a run bucketed
+at an index the loop never visits would simply never be drawn, so the check
+turns a silent drop into a named panic (P4).
 
 ## Testing
 
