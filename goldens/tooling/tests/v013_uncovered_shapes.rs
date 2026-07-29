@@ -1,7 +1,7 @@
-//! v0.13 Stream A (#475): end-to-end frames for three behaviours that had
-//! none. Each scene here exists because a landed fix changed real output and
-//! **no committed artifact moved** — the shape appeared nowhere in the corpus,
-//! so the whole golden and oracle suite stayed green either way (issues #501,
+//! v0.13 Stream A (#475): end-to-end frames for behaviours that had none.
+//! Each scene here exists because a landed fix changed real output and **no
+//! committed artifact moved** — the shape appeared nowhere in the corpus, so
+//! the whole golden and oracle suite stayed green either way (issues #501,
 //! #495).
 //!
 //! - `v013-hug-negative-margin` — a Hug row over a Hug child with a negative
@@ -11,6 +11,14 @@
 //! - `v013-mask-effect-bleed` — a maskee whose drop shadow reaches past its own
 //!   box, which is where the two readings of the G-7 mask-bounds ruling produce
 //!   different pixels (issue #495, ruling confirmed by #287/PR #494).
+//! - `v013-text-clipped` — a clipping frame narrower than the text inside it,
+//!   so the clip actually cuts glyph ink (issue #275). The one committed scene
+//!   with a clipped text node, `v07-text-lowering`, has ink that lies inside
+//!   its clip box and renders the same either way.
+//! - `v013-text-in-group` — text inside an overlapping partial-opacity group,
+//!   so the run has to composite into the group's offscreen layer (issue
+//!   #274). No committed scene carried a glyph run and a `GroupComposite` at
+//!   all; the combination was a named paint-gate warning instead.
 //!
 //! Every scene is authored through `dashscene-core`'s producer API, solved by
 //! `dashscene-engine`'s `TaffySolver` and painted by the reference painter, so
@@ -650,5 +658,161 @@ fn dropping_the_clip_flag_moves_far_more_than_the_golden_can_absorb() {
         differing > 200,
         "an unclipped run must move far more than the golden's budget \
          (moved {differing} px)",
+    );
+}
+
+const GROUP_CANVAS_W: f32 = 120.0;
+const GROUP_CANVAS_H: f32 = 72.0;
+/// The group's alpha. Below 1, and over an overlapping subtree, so commit
+/// resolves it to a `GroupComposite` (the render-target path) rather than
+/// folding it per rect (the free path).
+const GROUP_ALPHA: f32 = 0.5;
+
+/// Builds the #274 scene: a render-target group holding two overlapping
+/// boxes and a text label, so the label must composite *into* the group's
+/// offscreen layer rather than draw over the composited result.
+///
+/// The overlap is what forces the render-target path: a non-overlapping
+/// subtree takes the free path, where the alpha rides on each rect and text
+/// was already correct (story #44).
+fn text_in_render_target_group_scene(arena: &mut Arena, typesetter: &mut Typesetter) -> NodeId {
+    let mut solver = TaffySolver::with_text(typesetter, vec![load_atlas(ATLAS_DIR)]);
+    let mut txn = arena.open();
+
+    let root = txn.add_node(None, Some("backdrop"));
+    txn.set_prop(root, Prop::Width(GROUP_CANVAS_W));
+    txn.set_prop(root, Prop::Height(GROUP_CANVAS_H));
+    txn.set_prop(root, Prop::Mode(LayoutMode::None));
+    txn.set_prop(root, Prop::Fill(NEAR_WHITE));
+
+    let group = placed(
+        &mut txn,
+        Some(root),
+        0.0,
+        0.0,
+        GROUP_CANVAS_W,
+        GROUP_CANVAS_H,
+    );
+    txn.set_prop(group, Prop::Opacity(GROUP_ALPHA));
+
+    // Two overlapping opaque boxes: the overlap is what sends this group
+    // down the render-target path instead of the free one.
+    let back = placed(&mut txn, Some(group), 12.0, 12.0, 64.0, 48.0);
+    txn.set_prop(back, Prop::Fill(BLUE));
+    let front = placed(&mut txn, Some(group), 44.0, 12.0, 64.0, 48.0);
+    txn.set_prop(front, Prop::Fill(AMBER));
+
+    // The label sits inside the group, over the boxes.
+    let label = txn.add_node(Some(group), Some("label"));
+    txn.set_prop(label, Prop::X(16.0));
+    txn.set_prop(label, Prop::Y(14.0));
+    txn.set_prop(label, Prop::SizingH(AxisSizing::Hug));
+    txn.set_prop(label, Prop::SizingV(AxisSizing::Hug));
+    txn.set_prop(label, Prop::Text(RUN.to_string()));
+    txn.set_prop(label, Prop::TextStyle(text_style(RED)));
+
+    txn.commit_with(&mut solver);
+    label
+}
+
+/// Issue #274: a glyph run inside a render-target group composites into that
+/// group's layer, not over the composited result.
+///
+/// The corpus had no scene carrying both a glyph run and a `GroupComposite`
+/// at all — `paint.text-outside-group` warned about the combination and
+/// nothing exercised it — so the whole suite stayed green either way. That is
+/// why this frame exists.
+#[test]
+fn text_inside_a_render_target_group_composites_in_its_layer() {
+    let font = Font::from_bytes(std::fs::read(FONT).expect("corpus font present"), 0)
+        .expect("Noto Sans parses");
+    let mut ts = Typesetter::new(font);
+    let mut arena = Arena::new();
+    text_in_render_target_group_scene(&mut arena, &mut ts);
+
+    // The fixture only tests anything if commit actually took the
+    // render-target path: the free path carries its alpha per rect and
+    // produces no `GroupComposite` at all.
+    let scene = arena.committed();
+    assert_eq!(
+        scene.groups().len(),
+        1,
+        "fixture: the overlapping subtree must resolve to one render-target \
+         group, or this frame does not exercise issue #274",
+    );
+    assert!(
+        !scene.glyphs().is_empty(),
+        "fixture: the scene must carry glyph runs",
+    );
+
+    let png = render(&arena, scene.glyphs());
+
+    // The distinguishing property, stated exactly rather than through the
+    // image's tolerance: text composited *into* a 0.5 layer can never reach
+    // the run's own full-strength colour, while text drawn over the
+    // composited result inks it directly. So the scene must be visibly red
+    // somewhere, and nowhere fully red.
+    let rgba = decode_rgba(&png);
+    let full_strength = [
+        (RED.r * 255.0).round() as u8,
+        (RED.g * 255.0).round() as u8,
+        (RED.b * 255.0).round() as u8,
+        255,
+    ];
+    let reddish = rgba
+        .chunks_exact(4)
+        .filter(|p| p[0] > u16::from(p[1]).saturating_add(40) as u8)
+        .count();
+    let exact = rgba
+        .chunks_exact(4)
+        .filter(|p| p[..] == full_strength[..])
+        .count();
+    assert!(reddish > 0, "the label is visible");
+    assert_eq!(
+        exact, 0,
+        "no pixel may carry the run's full-strength colour: every text pixel \
+         went through the group's {GROUP_ALPHA} layer",
+    );
+
+    goldens::assert_matches_golden_max_pixels("v013-text-in-group", &png, 200);
+}
+
+/// The demonstrated-sensitivity guard: text drawn at full strength over the
+/// composited layer — which is exactly how the painter behaved before issue
+/// #274 — must move far more than any jitter budget could hide.
+///
+/// The pre-#274 painter is reproduced by handing the painter an empty group
+/// list, so the layer never opens and the run draws over flat colour. That
+/// changes the boxes too, so this measures a lower bound on the text's own
+/// contribution rather than isolating it; the golden above is what pins the
+/// text pixel exactly.
+#[test]
+fn text_outside_the_group_layer_moves_far_more_than_the_golden_can_absorb() {
+    let font = Font::from_bytes(std::fs::read(FONT).expect("corpus font present"), 0)
+        .expect("Noto Sans parses");
+    let mut ts = Typesetter::new(font);
+    let mut arena = Arena::new();
+    text_in_render_target_group_scene(&mut arena, &mut ts);
+    let scene = arena.committed();
+
+    let root = scene.rects()[0];
+    let mut painter = SkiaPainter::new(root.w as i32, root.h as i32);
+    painter.paint(
+        scene.rects(),
+        scene.paints(),
+        &ImageTable::new(),
+        scene.clips(),
+        &[],
+        scene.glyphs(),
+        None,
+    );
+    let differing = diff_vs(
+        &decode_rgba(&painter.png_bytes()),
+        &decode_golden("v013-text-in-group"),
+    );
+    assert!(
+        differing > 200,
+        "text escaping the group layer must move far more than the golden's \
+         budget (moved {differing} px)",
     );
 }

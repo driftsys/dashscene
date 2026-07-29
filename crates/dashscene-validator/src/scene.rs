@@ -34,8 +34,14 @@ use crate::{Location, NodePath, RENDER_TARGET_BUDGET_PLACEHOLDER, Report, rule};
 
 /// Validates boundary-B input: the paint pool's vocabulary, the image
 /// assets, the resolved clip regions, the render-target group-opacity
-/// budget, the text-in-group limitation, and the geometry budgets that need
-/// each rect's solved box.
+/// budget, and the geometry budgets that need each rect's solved box.
+///
+/// `glyphs` carries no rule today. It had one — `paint.text-outside-group`,
+/// which named the combination of runs and render-target groups as a
+/// limitation — and that was retired when the painter began compositing
+/// runs into group layers (issue #274). The parameter stays because this
+/// gate's contract is "validate a boundary-B scene", which is all five
+/// tables, not the subset a rule happens to read this slice.
 pub fn validate_scene(
     rects: &[RectEntry],
     paints: &PaintTable,
@@ -44,6 +50,7 @@ pub fn validate_scene(
     groups: &[GroupComposite],
     glyphs: &GlyphRunTable,
 ) -> Report {
+    let _ = glyphs;
     let mut report = Report::default();
 
     // The render-target group-opacity budget (story #44). Each overlapping
@@ -61,23 +68,6 @@ pub fn validate_scene(
                 groups.len(),
                 RENDER_TARGET_BUDGET_PLACEHOLDER
             ),
-        ));
-    }
-
-    // A glyph run's free-path alpha rides on `GlyphRun::opacity`, but the
-    // painter does not composite runs into render-target group layers yet
-    // (the z-interleave is deferred, `glyph-runs-cross-boundary-b.md`). So a
-    // text node inside an overlapping partial-opacity group draws as
-    // foreground at full strength — named here rather than left as a silent
-    // wrong pixel (story #44 M4). A debt candidate, so a warning.
-    if !groups.is_empty() && !glyphs.is_empty() {
-        report.push(warning(
-            rule::TEXT_OUTSIDE_GROUP,
-            &Location::Node(NodePath::unnamed(0)),
-            "scene carries both glyph runs and render-target group composites; glyph runs are \
-             drawn as foreground, not composited into a group's layer, so text inside an \
-             overlapping partial-opacity group renders at full strength (a known limitation)"
-                .to_owned(),
         ));
     }
 

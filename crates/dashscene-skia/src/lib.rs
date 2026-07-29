@@ -185,6 +185,9 @@ impl Painter for SkiaPainter {
         // decodes once (the hero repeats one atlas across ~148 vectors).
         let mut field_effect: Option<RuntimeEffect> = None;
         let mut field_atlases: HashMap<u32, Image> = HashMap::new();
+        // The per-frame MSDF setup (SkSL compile + atlas decodes) and the
+        // run-by-anchor index, built once. A text-free scene builds nothing.
+        let msdf = MsdfFrame::new(glyphs, source);
         for (i, rect) in source.iter().enumerate() {
             // Open every group that starts at this rect (at most one per
             // index — one opacity per node). `save_layer_alpha` begins the
@@ -358,6 +361,13 @@ impl Painter for SkiaPainter {
             for shadow in entry.shadows.iter().filter(|s| s.kind == ShadowKind::Inner) {
                 draw_inner_shadow(canvas, &rrect, rect, &entry.corners, shadow, rect.opacity);
             }
+            // Every run anchored to this rect, in table order: after the
+            // rect's own ink, still inside its clip save, and still inside
+            // every group layer enclosing it — the group closes below. That
+            // placement is the whole of issues #274 and #275.
+            if let Some(msdf) = msdf.as_ref() {
+                msdf.draw_anchored(canvas, glyphs, i as u32);
+            }
             if clipped {
                 canvas.restore();
             }
@@ -370,14 +380,6 @@ impl Painter for SkiaPainter {
                 open_group_ends.pop();
             }
         }
-
-        // Text is drawn after every rect: glyph runs still composite over
-        // the rect table as foreground (boundary B's paint contract; the
-        // z-interleave is issue #274). Runs arrive already shaped and
-        // positioned (P2), and each glyph is one textured MSDF atlas quad.
-        // Each run is clipped to the region its anchor rect carries
-        // (issue #275).
-        draw_glyph_runs(canvas, glyphs, source, clips);
     }
 }
 
@@ -401,67 +403,82 @@ const MSDF_SKSL: &str = r"
     }
 ";
 
-/// Draws every glyph run's quads, each clipped to the region its anchor
-/// rect carries (issue #275). Each atlas image is decoded once (not once
-/// per run that samples it); the resolve effect compiles once.
+/// The per-frame MSDF setup, built once per `paint` rather than once per
+/// rect that anchors a run: the SkSL compile and the atlas decodes are the
+/// expensive parts and neither depends on the run.
 ///
-/// A run's clip is `rects[run.rect].clip` — the region `dashscene-core`
-/// already resolved from the text node's clipping ancestors, the same
-/// region the anchor rect itself draws under. The painter reads it the way
-/// it reads a rect's: intersect the boxes, draw, restore. Which node each
-/// box came from is not the painter's business (P2).
-///
-/// # Panics
-///
-/// Panics if a run's anchor is out of range for `rects`. A run and the rect
-/// table it is read against come from one commit, so a miss is a broken
-/// contract between crates rather than a scene to draw unclipped — the same
-/// posture [`GlyphRunTable::atlas`] takes (P4).
-fn draw_glyph_runs(
-    canvas: &Canvas,
-    glyphs: &GlyphRunTable,
-    rects: &[RectEntry],
-    clips: &ClipTable,
-) {
-    if glyphs.is_empty() {
-        return;
-    }
-    let effect =
-        RuntimeEffect::make_for_shader(MSDF_SKSL, None).expect("MSDF resolve SkSL compiles");
-    let decoded: Vec<Image> = glyphs
-        .atlases()
-        .iter()
-        .map(|atlas| {
-            images::deferred_from_encoded_data(Data::new_copy(&atlas.image.bytes), None)
-                .expect("atlas image decodes (a build artifact, validated upstream P4)")
-        })
-        .collect();
-    for run in glyphs.runs() {
-        let anchor = rects.get(run.rect as usize).unwrap_or_else(|| {
-            panic!(
+/// `None` for a text-free scene, which then compiles nothing and decodes
+/// nothing — the posture the old lazy entry point had.
+struct MsdfFrame {
+    effect: RuntimeEffect,
+    decoded: Vec<Image>,
+    /// Run indices by anchor rect. Built once so the rect loop can ask for
+    /// "the runs at index i" without scanning the table per rect.
+    by_anchor: HashMap<u32, Vec<usize>>,
+}
+
+impl MsdfFrame {
+    /// # Panics
+    ///
+    /// Panics if a run's anchor is out of range for `rects`. A run and the
+    /// rect table it is read against come from one commit, so a miss is a
+    /// broken contract between crates (P4) — and under the z-interleave the
+    /// alternative is worse than a wrong clip: a run bucketed at an index
+    /// the loop never visits would simply never be drawn, which is exactly
+    /// the silent drop P4 forbids. Checked here, once, rather than at the
+    /// draw site, so an unreachable run cannot hide behind a rect table that
+    /// merely happens to be short.
+    fn new(glyphs: &GlyphRunTable, rects: &[RectEntry]) -> Option<Self> {
+        if glyphs.is_empty() {
+            return None;
+        }
+        let mut by_anchor: HashMap<u32, Vec<usize>> = HashMap::new();
+        for (index, run) in glyphs.runs().iter().enumerate() {
+            assert!(
+                (run.rect as usize) < rects.len(),
                 "glyph run anchored at rect {} out of range ({} rects): a run and the rect table \
                  it is read against come from one commit (P4)",
                 run.rect,
                 rects.len()
-            )
-        });
-        let region = clips.resolve(anchor.clip);
-        let clipped = !region.is_unclipped();
-        if clipped {
-            canvas.save();
-            for clip_box in region.boxes() {
-                let rrect = rrect_of(
-                    clip_box.x,
-                    clip_box.y,
-                    clip_box.w,
-                    clip_box.h,
-                    &clip_box.corners,
-                );
-                canvas.clip_rrect(rrect, ClipOp::Intersect, true);
-            }
+            );
+            by_anchor.entry(run.rect).or_default().push(index);
         }
+        let effect =
+            RuntimeEffect::make_for_shader(MSDF_SKSL, None).expect("MSDF resolve SkSL compiles");
+        let decoded: Vec<Image> = glyphs
+            .atlases()
+            .iter()
+            .map(|atlas| {
+                images::deferred_from_encoded_data(Data::new_copy(&atlas.image.bytes), None)
+                    .expect("atlas image decodes (a build artifact, validated upstream P4)")
+            })
+            .collect();
+        Some(Self {
+            effect,
+            decoded,
+            by_anchor,
+        })
+    }
+
+    /// Draws every run anchored at rect `index`, in table order, at the
+    /// canvas's current clip and layer state.
+    ///
+    /// The caller places it, and that placement is the whole of issues #274
+    /// and #275: called from inside the rect loop after the rect's own ink,
+    /// the run lands inside that rect's clip save and inside every group
+    /// layer still open around it, at the right z position.
+    fn draw_anchored(&self, canvas: &Canvas, glyphs: &GlyphRunTable, index: u32) {
+        let Some(anchored) = self.by_anchor.get(&index) else {
+            return;
+        };
+        for &run_index in anchored {
+            self.draw_run(canvas, glyphs, &glyphs.runs()[run_index]);
+        }
+    }
+
+    fn draw_run(&self, canvas: &Canvas, glyphs: &GlyphRunTable, run: &GlyphRun) {
         let atlas = glyphs.atlas(run.atlas);
-        let image = &decoded[run.atlas.0 as usize];
+        let image = &self.decoded[run.atlas.0 as usize];
         // The MSDF field is a distance, not a color: linear filtering
         // interpolates the field (the point of MSDF's crisp edges);
         // nearest would step it. The surface carries no color space
@@ -474,14 +491,12 @@ fn draw_glyph_runs(
         let px_range = atlas.distance_range_px * run.size / f32::from(atlas.px_per_em);
         // Fold the run's free-path group alpha into the fill (story #44):
         // the MSDF resolve modulates coverage by `color.a`, so multiplying
-        // the alpha dims the whole run. The render-target group path is
-        // still not applied to runs (issue #274); the clip/mask region now
-        // is, above.
+        // the alpha dims the whole run.
         let color = dashpaint::Color {
             a: run.color.a * run.opacity,
             ..run.color
         };
-        let uniforms = msdf_uniforms(&effect, color, px_range);
+        let uniforms = msdf_uniforms(&self.effect, color, px_range);
         for quad in &run.glyphs {
             let Some(g) = atlas.glyph(quad.glyph_id) else {
                 // No quad for this glyph id — an empty outline (space) or
@@ -491,11 +506,16 @@ fn draw_glyph_runs(
                 continue;
             };
             draw_glyph_quad(
-                canvas, image, atlas, g, quad, run, &effect, &uniforms, sampling,
+                canvas,
+                image,
+                atlas,
+                g,
+                quad,
+                run,
+                &self.effect,
+                &uniforms,
+                sampling,
             );
-        }
-        if clipped {
-            canvas.restore();
         }
     }
 }
