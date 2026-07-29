@@ -326,5 +326,109 @@ epic #475 until its own re-record comes back clean.
 
 One thing the measurement did surface and this work did not cause:
 `goldens/images/v011-backdrop-blur.png` re-records differently on an unmodified
-tree. That is the pre-existing staleness tracked as #538, still live on `main`,
-and it is named here so a future reader does not attribute it to this change.
+tree. That is the pre-existing staleness tracked as #538, and it was re-recorded
+alone, before this work, in PR #559 — so its 23 px are attributable to #538 and
+not to any part of this chain.
+
+## Resolution (story #542, 2026-07-29) — the producer, as built
+
+`dashscene-core`'s commit now produces the glyph-run table. The seam is two
+**defaulted** methods on the existing `LayoutSolver` — `atlases` and
+`stage_text` — so every existing implementer compiles untouched and a text-free
+scene stages nothing. `dashscene-engine`'s `TaffySolver::with_text` is the one
+stager; it replaced nine caller-side helpers across seven files, including the
+E7 oracle's.
+
+Three things were decided while building it that the design above did not
+settle.
+
+**The atlas set is shared, not returned by value.** `atlases` returns
+`Arc<Vec<Atlas>>` and `GlyphRunTable` holds the same, because commit rebuilds
+the run table every frame while the atlas set behind it is a build artifact that
+does not change. The goldens' eight atlases are about 460 KB together; copying
+them per commit would be exactly the per-frame cost R-T4 bounds to the
+dirty-range upload and submission. This is the posture `CommittedScene` already
+takes with its paint and clip tables.
+
+**The dirty rule is a run diff, not prop plumbing.** The obligation was to
+dirty a text node whose string changed inside an unchanged box. Rather than
+route `Prop::Text`/`Prop::TextStyle` into a new dirty list, commit compares this
+commit's staged runs against the previous commit's, per anchor, and dirties
+every anchor whose runs differ. It needs no new plumbing and covers a changed
+string, a changed style, a variant switch and a fallback that picked a different
+font at once — because the runs are what actually reached the painter.
+
+**Commit orders the table by anchor.** A DFS-walking stager already returns
+ascending anchors, so sorting is a no-op for the real stager; doing it in commit
+makes the invariant true by construction rather than by contract, which is what
+lets a painter walk runs and rects with one cursor. The sort is stable, so the
+font-fallback split order within one text node is preserved.
+
+### What moved, and why the measured ceilings did not apply
+
+**One committed image moved: `v07-variant-topology.png`, by 637 of 10,600 px
+(6.009 %).** 32 of 33 images, all 10 `.dsb` goldens and all seven E7 oracle
+frames are byte-identical to `origin/main`, confirmed per file with
+`git hash-object` rather than inferred from a green suite.
+
+That 6.009 % is above the 4.528 % ceiling this story was scheduled against, and
+**the ceiling did not apply to this step**. The measuring branch
+(`spike/glyph-runs-golden-movement`) kept staging caller-side and changed only
+the anchor field and the painter interleave, so its ceilings bound the
+_z-interleave_, which this story does not contain. Nothing measured the staging
+unification, which is what moved this frame.
+
+The move is a correction, and the evidence is in the picture. The instance
+container solves to a fixed 100 px wide; the label inside it solves to
+62.09 x 38.136 — **two lines**, which is what the measure callback already
+sized it as. Until now `v07_variant_topology.rs` staged the label itself with
+`ts.layout(TEXT, SIZE, None)`, no wrap width, producing one 102 px line from
+x = 16 that ran off the 100 px canvas and was clipped at its right edge. The
+committed golden pinned that. The production `.dsb` render path
+(`goldens::render`) already wrapped at the solved width and would never have
+produced it — the two stagers had diverged, and the golden pinned the wrong one.
+Measured on the images: the old golden's dark ink spans columns 17–99 in one
+band; the new one spans 17–76 in two bands.
+
+This is the concrete instance of the cost §1.3 of the spike described as "a
+duplication, not a boundary violation". The duplication was not free; it had
+been pinning a wrong picture.
+
+### Per-frame cost, measured
+
+Full re-staging costs about **1.5 µs per text node per commit** with a warm
+shaping cache, measured in release mode on synthetic screens of 1 to 250 labels:
+0.0023 ms at one label, 0.147 ms at 100 (0.9 % of a 16.67 ms frame), 0.366 ms at
+250 (2.2 %). The cost is linear in text nodes and the per-node figure is flat.
+
+**Full re-staging stays.** The recommendation was to make it incremental only if
+the measurement demanded it, and at these numbers it does not: a screen would
+need roughly a thousand text nodes before staging reached 9 % of a frame. That
+count is the trigger to revisit.
+
+The hero itself could not be measured: it is a live Figma fetch
+(`just render S30AJmYfnDKGeSQmzuXEUk`), not a committed fixture, and
+`corpus/figma-fixtures/real-file.json` is a 16-node import fixture rather than
+the hero screen. The synthetic sweep answers the same question — cost per text
+node — and is reproducible offline, which the hero is not.
+
+### What this story deliberately did not do
+
+The painter is **unchanged**. Runs still draw as unconditional foreground, and
+`GlyphRun::rect` reaches the painter without being read. That is what makes this
+step's expectation falsifiable — a pure producer change should move pixels only
+where the two stagers disagreed, and exactly one frame did.
+
+Two consequences follow, both of which the story issue had folded in here:
+
+- **`paint.text-outside-group` stays.** The gate warns that runs are drawn as
+  foreground rather than composited into a group's layer. With the painter
+  unchanged that statement is still true, so retiring it now would delete an
+  accurate P4 diagnostic. It is retired by #274, which makes it false.
+- **`GlyphRun::opacity` stays 1.0 from the stager**, exactly as the caller-side
+  stagers set it. Folding it into `rects[run.rect].opacity` is derivable and
+  remains the follow-up this record already scheduled after the migration.
+
+Issue #275 (clip the run to its anchor's region) and issue #274 (draw the run
+inside the rect loop, in its group's layer) are now each a painter change
+against information that is present at boundary B.

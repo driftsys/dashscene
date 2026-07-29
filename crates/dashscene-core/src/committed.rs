@@ -8,10 +8,10 @@
 //! draws-nothing entry (`PaintEntry::default()`), not a sentinel.
 
 pub use dashpaint::{
-    Blur, BlurKind, ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CornerRadii, Gradient,
-    GradientKind, GradientStop, GroupComposite, ImageAsset, ImageFormat, ImageTable, Mat23,
-    PaintEntry, PaintIndex, PaintKind, PaintTable, RectEntry, ScaleMode, Shadow, ShadowKind,
-    Stroke, StrokeAlign, Vec2, VectorField,
+    Atlas, AtlasGlyph, AtlasIndex, Blur, BlurKind, ClipBox, ClipIndex, ClipRegion, ClipTable,
+    Color, CornerRadii, GlyphQuad, GlyphRun, GlyphRunTable, Gradient, GradientKind, GradientStop,
+    GroupComposite, ImageAsset, ImageFormat, ImageTable, Mat23, PaintEntry, PaintIndex, PaintKind,
+    PaintTable, RectEntry, ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, Vec2, VectorField,
 };
 
 use std::sync::Arc;
@@ -51,6 +51,13 @@ pub struct CommittedScene {
     /// pre-order). Recomputed each commit — small and structural, unlike
     /// the pooled paint and clip tables.
     pub(crate) groups: Vec<GroupComposite>,
+    /// The positioned glyph runs and the atlases they sample — the text
+    /// half of the painter input. Staged by the solver's `stage_text` and
+    /// stamped with each run's anchor rect here, so a run reaches a
+    /// painter carrying its clip, its group membership and its z position
+    /// (`docs/decisions/glyph-runs-cross-boundary-b.md`). Empty for a
+    /// text-free scene, and for any commit whose solver stages no text.
+    pub(crate) glyphs: GlyphRunTable,
     pub(crate) generation: u64,
     pub(crate) dirty: Vec<u32>,
     /// Rect index → NodeId (DFS order of the commit).
@@ -93,6 +100,23 @@ impl CommittedScene {
     /// group opacity has an empty slice here.
     pub fn groups(&self) -> &[GroupComposite] {
         &self.groups
+    }
+
+    /// The positioned glyph runs a painter draws, and the atlases they
+    /// sample — the text half of the painter input, a sibling of the rect
+    /// table (`docs/design/architecture.md` §7.3).
+    ///
+    /// Each run carries the rect-table index of the text node it was
+    /// shaped from ([`GlyphRun::rect`]), which resolves against
+    /// [`rects`](Self::rects) — so like every other index this scene
+    /// hands out, it is meaningful only against the commit it came from.
+    ///
+    /// Empty unless the solver this scene was committed through stages
+    /// text: `dashscene-engine`'s `TaffySolver` does when it is given a
+    /// typesetter and an atlas set, and core's internal fixed-geometry
+    /// resolution never does.
+    pub fn glyphs(&self) -> &GlyphRunTable {
+        &self.glyphs
     }
 
     /// Commit counter: 0 before the first commit, +1 per commit —

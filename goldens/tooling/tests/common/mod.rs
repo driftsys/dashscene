@@ -21,8 +21,8 @@ pub mod manifest;
 pub mod stress;
 
 use dashpaint::{
-    Atlas, AtlasGlyph, ClipIndex, ClipTable, Color, GlyphRunTable, ImageAsset, ImageFormat,
-    ImageTable, PaintEntry, PaintTable, Painter, RectEntry,
+    Atlas, AtlasGlyph, ClipIndex, ClipTable, Color, GlyphRun, GlyphRunTable, ImageAsset,
+    ImageFormat, ImageTable, PaintEntry, PaintTable, Painter, RectEntry,
 };
 use dashscene_core::{Arena, NodeId, TextAlign, TextAlignV, TextStyle};
 use dashscene_skia::SkiaPainter;
@@ -133,6 +133,40 @@ pub fn text_style(family: &str, size: f32, color: Color) -> TextStyle {
         text_align_v: TextAlignV::Top,
         ligatures_off: false,
     }
+}
+
+/// A copy of `table` keeping only the runs `keep` accepts, with the atlas set
+/// — and therefore every `GlyphRun::atlas` index — unchanged.
+///
+/// This is how a text golden's sensitivity guard drops part of the scene's
+/// ink now that runs come from commit rather than from the test: the scene is
+/// staged once, for real, and the guard renders a subset of it. Previously
+/// each guard re-staged by hand, which let the broken render drift from the
+/// one the golden itself drew.
+pub fn runs_where(table: &GlyphRunTable, keep: impl Fn(&GlyphRun) -> bool) -> GlyphRunTable {
+    let mut out = GlyphRunTable::new();
+    for atlas in table.atlases() {
+        out.push_atlas(atlas.clone());
+    }
+    for run in table.runs().iter().filter(|r| keep(r)) {
+        out.push_run(run.clone());
+    }
+    out
+}
+
+/// A copy of `table` keeping only the runs anchored to one of `keep` — the
+/// per-text-node case of [`runs_where`].
+pub fn runs_anchored_to(table: &GlyphRunTable, keep: &[u32]) -> GlyphRunTable {
+    runs_where(table, |run| keep.contains(&run.rect))
+}
+
+/// The rect-table index of a committed node — the value its glyph runs carry
+/// as their anchor.
+pub fn rect_index_of(arena: &Arena, node: NodeId) -> u32 {
+    arena
+        .committed()
+        .rect_index_of(node)
+        .expect("the node is committed")
 }
 
 /// The resolved box origin of a committed node.

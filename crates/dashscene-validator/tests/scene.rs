@@ -576,6 +576,8 @@ fn text_alongside_a_render_target_group_is_named_a_limitation() {
         vec![],
     ));
     glyphs.push_run(GlyphRun {
+        // The scene's one rect, which is also the group's whole range.
+        rect: 0,
         atlas,
         size: 16.0,
         color: red(),

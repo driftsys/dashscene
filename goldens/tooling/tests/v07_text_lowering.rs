@@ -28,7 +28,7 @@
 use std::collections::BTreeMap;
 
 use dashc_wasm::compile_figma;
-use dashpaint::{AtlasIndex, Color, GlyphQuad, GlyphRun, GlyphRunTable, ImageTable, Painter};
+use dashpaint::{Color, GlyphRunTable, ImageTable, Painter};
 use dashscene_core::{Arena, NodeId, load_document};
 use dashscene_engine::TaffySolver;
 use dashscene_skia::SkiaPainter;
@@ -36,7 +36,7 @@ use dashscene_typeset::text::{Font, Typesetter};
 use dashscene_validator::Profile;
 
 mod common;
-use common::{decode_golden, decode_rgba, diff_vs, load_atlas, origin_of, size_of};
+use common::{decode_golden, decode_rgba, diff_vs, load_atlas, size_of};
 
 const HUG_IN_FILL: &str = include_str!("../../../corpus/figma-fixtures/lowering-hug-in-fill.json");
 const FONT: &str = concat!(
@@ -86,43 +86,15 @@ fn lower_and_solve(ts: &mut Typesetter) -> (Arena, NodeId) {
     load_document(&document, &payloads, &mut arena);
     // `load_document` commits with the fixed solver, which measures a text
     // node to zero; an empty transaction re-committed through a
-    // typesetter-backed solver performs a full solve with the measure seam.
+    // typesetter-backed solver performs a full solve with the measure seam,
+    // and — since the solver carries the atlas — stages the text leaf's glyph
+    // runs in the same commit.
     {
-        let mut solver = TaffySolver::with_typesetter(ts);
+        let mut solver = TaffySolver::with_text(ts, vec![load_atlas(ATLAS_DIR)]);
         arena.open().commit_with(&mut solver);
     }
     let text = find_text(&arena, TEXT);
     (arena, text)
-}
-
-/// Shapes `text` and places every glyph in absolute document space by adding
-/// the node's resolved box origin (the painter moves nothing, P2).
-fn text_run(
-    ts: &mut Typesetter,
-    atlas: AtlasIndex,
-    origin: (f32, f32),
-    text: &str,
-    size: f32,
-    color: Color,
-) -> GlyphRun {
-    let laid = ts.layout(text, size, None);
-    let glyphs = laid
-        .lines
-        .iter()
-        .flat_map(|line| &line.glyphs)
-        .map(|g| GlyphQuad {
-            glyph_id: g.glyph_id,
-            x: origin.0 + g.x,
-            y: origin.1 + g.y,
-        })
-        .collect();
-    GlyphRun {
-        atlas,
-        size,
-        color,
-        glyphs,
-        opacity: 1.0,
-    }
 }
 
 #[test]
@@ -141,18 +113,15 @@ fn lowered_text_solves_and_paints_to_its_golden() {
     );
     assert!((th - expected.height).abs() < 0.01 && th > 1.0);
 
-    let mut glyphs = GlyphRunTable::new();
-    let atlas = glyphs.push_atlas(load_atlas(ATLAS_DIR));
-    glyphs.push_run(text_run(
-        &mut ts,
-        atlas,
-        origin_of(&arena, text),
-        TEXT,
-        TEXT_SIZE,
-        INK,
-    ));
+    // The run's size and fill now come from the lowered text style rather than
+    // from constants this test repeats, so asserting them here pins what
+    // `dashc` lowered instead of restating it.
+    let runs = arena.committed().glyphs().runs();
+    assert_eq!(runs.len(), 1, "the fixture has exactly one text leaf");
+    assert_eq!(runs[0].size, TEXT_SIZE, "the run is at the lowered size");
+    assert_eq!(runs[0].color, INK, "the run inks the lowered colour");
 
-    let png = render(&arena, &glyphs);
+    let png = render(&arena, arena.committed().glyphs());
     goldens::assert_matches_golden_max_pixels("v07-text-lowering", &png, BUDGET);
 }
 

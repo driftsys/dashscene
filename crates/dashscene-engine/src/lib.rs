@@ -27,8 +27,11 @@ pub mod flip;
 pub use dashscene_core::Channel;
 pub use flip::{VariantFlip, decode_prop_key, prop_key};
 
+use std::sync::Arc;
+
 use dashscene_core::{
-    Arena, AxisSizing, GridTrack, Layout, LayoutMode, LayoutSolver, NodeId, SolvedRect,
+    Arena, Atlas, AtlasIndex, AxisSizing, GlyphQuad, GlyphRun, GridTrack, Layout, LayoutMode,
+    LayoutSolver, NodeId, SolvedRect, TextAlignV, TextStyle,
 };
 use dashscene_typeset::text::{TextShape, Typesetter};
 use rustc_hash::FxHashSet;
@@ -53,6 +56,11 @@ use taffy::{AlignContent, AlignItems, AlignSelf, GridPlacement, JustifyContent, 
 #[non_exhaustive]
 pub struct TaffySolver<'a> {
     typesetter: Option<&'a mut Typesetter>,
+    /// The atlases staged runs sample, in the cascade's font-slot order.
+    /// Empty for a solver that stages no text. Shared rather than copied,
+    /// because commit rebuilds the run table every frame and the atlas set
+    /// behind it does not change.
+    atlases: Arc<Vec<Atlas>>,
     /// The retained tree and its per-node bookkeeping. `None` until the
     /// first solve builds it.
     state: Option<TreeState>,
@@ -103,6 +111,7 @@ impl<'a> TaffySolver<'a> {
     pub fn new() -> Self {
         Self {
             typesetter: None,
+            atlases: Arc::new(Vec::new()),
             state: None,
             solves: 0,
         }
@@ -112,9 +121,36 @@ impl<'a> TaffySolver<'a> {
     /// shaped-run cache. The borrow keeps the cache single-sourced: the
     /// same `Typesetter` the caller lends here is the one the painter
     /// reads at paint time (#30).
+    ///
+    /// It carries no atlases, so it measures text and stages none —
+    /// layout without paint. A caller that wants the committed scene to
+    /// carry drawable glyph runs builds the solver with
+    /// [`with_text`](TaffySolver::with_text) instead.
     pub fn with_typesetter(typesetter: &'a mut Typesetter) -> Self {
         Self {
             typesetter: Some(typesetter),
+            atlases: Arc::new(Vec::new()),
+            state: None,
+            solves: 0,
+        }
+    }
+
+    /// A solver that measures text nodes *and* stages their glyph runs at
+    /// commit — the one text producer (P2). The runs it stages are laid
+    /// out under each node's lowered text axes, which is the same
+    /// `TextShape` the measure callback sizes the node with, so the lines
+    /// a painter draws are the lines the solve measured.
+    ///
+    /// `atlases` are the atlases those runs sample, **in the cascade's
+    /// font-slot order**: a shaped glyph carries the slot of the face that
+    /// shaped it, and that slot indexes this list directly. A list in any
+    /// other order samples the wrong face rather than failing, so it is
+    /// built next to the typesetter's own font list and from the same
+    /// order.
+    pub fn with_text(typesetter: &'a mut Typesetter, atlases: Vec<Atlas>) -> Self {
+        Self {
+            typesetter: Some(typesetter),
+            atlases: Arc::new(atlases),
             state: None,
             solves: 0,
         }
@@ -135,6 +171,7 @@ impl LayoutSolver for TaffySolver<'_> {
             typesetter,
             state,
             solves,
+            ..
         } = self;
         // A grown node count means the arena's DFS indices shifted under
         // the retained tree; rebuild rather than patch.
@@ -149,6 +186,141 @@ impl LayoutSolver for TaffySolver<'_> {
             let state = state.as_mut().expect("non-structural implies a built tree");
             incremental(state, typesetter.as_deref_mut(), arena, solves)
         }
+    }
+
+    fn atlases(&mut self) -> Arc<Vec<Atlas>> {
+        Arc::clone(&self.atlases)
+    }
+
+    fn stage_text(
+        &mut self,
+        arena: &Arena,
+        geometry: &dyn Fn(NodeId) -> SolvedRect,
+    ) -> Vec<(NodeId, GlyphRun)> {
+        // A solver with no atlas set stages nothing. A run whose atlas
+        // index resolves against an empty table is not a run any painter
+        // can draw, so producing one would be worse than producing none:
+        // `TaffySolver::with_typesetter` is deliberately that solver, and
+        // it measures text without painting it.
+        if self.atlases.is_empty() {
+            return Vec::new();
+        }
+        let Some(ts) = self.typesetter.as_deref_mut() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for &root in arena.roots() {
+            stage_subtree(arena, root, ts, geometry, &mut out);
+        }
+        out
+    }
+}
+
+/// Stages every text node in `node`'s subtree, parent before child, so the
+/// runs come back in document DFS order — which is rect-table index order.
+fn stage_subtree(
+    arena: &Arena,
+    node: NodeId,
+    ts: &mut Typesetter,
+    geometry: &dyn Fn(NodeId) -> SolvedRect,
+    out: &mut Vec<(NodeId, GlyphRun)>,
+) {
+    // A node is a text leaf exactly when it carries both authored
+    // characters and a text style; either alone is a plain node, the same
+    // test the measure seam applies.
+    if let (Some(text), Some(style)) = (arena.text(node), arena.text_style(node)) {
+        for run in text_runs(ts, geometry(node), text, style) {
+            out.push((node, run));
+        }
+    }
+    for &child in arena.children(node) {
+        stage_subtree(arena, child, ts, geometry, out);
+    }
+}
+
+/// Shapes one text node and places every glyph in absolute document space,
+/// starting a new run wherever the fallback cascade switched fonts so each
+/// run samples the atlas of the face that actually shaped it (story #219).
+///
+/// The painter moves nothing (P2), so the node's box origin is added here
+/// and the block is shifted down by the vertical alignment's share of the
+/// box's free space. The layout runs within the solved box width, so the
+/// line breaks are the ones the solve measured.
+fn text_runs(ts: &mut Typesetter, r: SolvedRect, text: &str, style: &TextStyle) -> Vec<GlyphRun> {
+    let laid = ts.layout_styled(
+        text,
+        style.size,
+        Some(r.w),
+        text_shape(style),
+        style.weight,
+        &style.family,
+    );
+    let voff = vertical_offset(r.h, laid.height, style.text_align_v);
+    let mut runs: Vec<GlyphRun> = Vec::new();
+    for line in &laid.lines {
+        for g in &line.glyphs {
+            let atlas = AtlasIndex(u32::from(g.font));
+            let quad = GlyphQuad {
+                glyph_id: g.glyph_id,
+                x: r.x + g.x,
+                y: r.y + voff + g.y,
+            };
+            match runs.last_mut() {
+                Some(run) if run.atlas == atlas => run.glyphs.push(quad),
+                _ => runs.push(GlyphRun {
+                    // Commit stamps the anchor from the node this run was
+                    // staged for; whatever is written here is overwritten.
+                    rect: 0,
+                    atlas,
+                    size: style.size,
+                    color: style.color,
+                    glyphs: vec![quad],
+                    opacity: 1.0,
+                }),
+            }
+        }
+    }
+    runs
+}
+
+/// The y-offset that places a text block of height `content_height` within
+/// a node box of height `box_height` under `align` (story #310).
+///
+/// Vertical alignment is block placement, not paint (P2) and not a measured
+/// extent (P1) — the document carries the intent as an enum and the stager
+/// resolves it here. `Top` is the zero-offset default; `Center` and
+/// `Bottom` distribute the box's free space, which goes negative when the
+/// text overflows its box, mirroring the overflow horizontal placement
+/// already allows.
+fn vertical_offset(box_height: f32, content_height: f32, align: TextAlignV) -> f32 {
+    let slack = box_height - content_height;
+    match align {
+        TextAlignV::Top => 0.0,
+        TextAlignV::Center => slack / 2.0,
+        TextAlignV::Bottom => slack,
+    }
+}
+
+#[cfg(test)]
+mod stager_tests {
+    use super::{TextAlignV, vertical_offset};
+
+    /// Story #310: the stager offsets a text block within its node box by the
+    /// vertical alignment. `Top` sits at the origin; `Center` and `Bottom`
+    /// distribute the box's free space (100 − 40 = 60).
+    #[test]
+    fn vertical_offset_places_the_block_within_the_box() {
+        assert_eq!(vertical_offset(100.0, 40.0, TextAlignV::Top), 0.0);
+        assert_eq!(vertical_offset(100.0, 40.0, TextAlignV::Center), 30.0);
+        assert_eq!(vertical_offset(100.0, 40.0, TextAlignV::Bottom), 60.0);
+    }
+
+    /// Text taller than its box overflows rather than clamping, the same way
+    /// horizontal placement already allows overflow: the offset goes negative.
+    #[test]
+    fn an_overflowing_block_offsets_negative() {
+        assert_eq!(vertical_offset(40.0, 100.0, TextAlignV::Center), -30.0);
+        assert_eq!(vertical_offset(40.0, 100.0, TextAlignV::Bottom), -60.0);
     }
 }
 

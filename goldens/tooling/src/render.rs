@@ -13,15 +13,12 @@
 
 use std::borrow::Cow;
 
-use dashpaint::{
-    Atlas, AtlasGlyph, AtlasIndex, Color, GlyphQuad, GlyphRun, GlyphRunTable, ImageAsset,
-    ImageFormat, Painter,
-};
-use dashscene_core::{Arena, NodeId, load_document};
+use dashpaint::{Atlas, AtlasGlyph, ImageAsset, ImageFormat, Painter};
+use dashscene_core::{Arena, load_document};
 use dashscene_engine::TaffySolver;
 use dashscene_skia::SkiaPainter;
 use dashscene_typeset::atlas::AtlasBundle;
-use dashscene_typeset::text::{Font, FontFamily, TextShape, Typesetter, WeightedFont};
+use dashscene_typeset::text::{Font, FontFamily, Typesetter, WeightedFont};
 
 const FONT_LATIN: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -189,129 +186,25 @@ pub fn load_atlas(dir: &str) -> Atlas {
     )
 }
 
-/// The resolved box of a committed node: origin (x, y) and size (w, h).
-fn box_of(arena: &Arena, node: NodeId) -> (f32, f32, f32, f32) {
-    let scene = arena.committed();
-    let rect = scene.rects()[scene.rect_index_of(node).expect("the node is committed") as usize];
-    (rect.x, rect.y, rect.w, rect.h)
-}
-
-/// The `TextShape` for a node's text style (story #327, #341): the fixed line
-/// height, letter spacing, horizontal alignment, and standard-ligatures-off
-/// bit the stager lays the run out under.
-fn text_shape(style: &dashscene_core::TextStyle) -> TextShape {
-    TextShape {
-        line_height_px: style.line_height_px,
-        letter_spacing: style.letter_spacing,
-        align: match style.text_align {
-            dashscene_core::TextAlign::Left => dashscene_typeset::text::TextAlign::Left,
-            dashscene_core::TextAlign::Center => dashscene_typeset::text::TextAlign::Center,
-            dashscene_core::TextAlign::Right => dashscene_typeset::text::TextAlign::Right,
-        },
-        ligatures_off: style.ligatures_off,
-    }
-}
-
-/// The stager's vertical alignment for a node's text style (story #327).
-fn vertical_align(align: dashscene_core::TextAlignV) -> crate::VerticalAlign {
-    match align {
-        dashscene_core::TextAlignV::Top => crate::VerticalAlign::Top,
-        dashscene_core::TextAlignV::Center => crate::VerticalAlign::Center,
-        dashscene_core::TextAlignV::Bottom => crate::VerticalAlign::Bottom,
-    }
-}
-
-/// Shapes `text` at `size` and places every glyph in absolute document space
-/// (the painter moves nothing, P2: the node's box origin is added here),
-/// splitting a new run wherever the cascade switched fonts so each run samples
-/// the atlas of its own font. Unlike the E7 oracle's `text_runs` (default axes),
-/// this honors the node's lowered text axes (story #327): it lays out under
-/// `shape` (fixed line height, letter spacing, horizontal align) within the
-/// resolved box width `box_size.0` — so horizontal alignment centers within the
-/// box, and the line breaks match the box the engine measured — and offsets the
-/// whole block down by the vertical alignment over `box_size.1`.
-#[allow(clippy::too_many_arguments)]
-fn text_runs(
-    ts: &mut Typesetter,
-    atlases: &[AtlasIndex],
-    origin: (f32, f32),
-    box_size: (f32, f32),
-    text: &str,
-    size: f32,
-    color: Color,
-    shape: TextShape,
-    valign: crate::VerticalAlign,
-    weight: u16,
-    family: &str,
-) -> Vec<GlyphRun> {
-    let (box_w, box_h) = box_size;
-    let laid = ts.layout_styled(text, size, Some(box_w), shape, weight, family);
-    // Vertical alignment is block placement, not paint (P2) and not a measured
-    // extent (P1): shift every glyph down by the box's free space above the block.
-    let voff = crate::vertical_offset(box_h, laid.height, valign);
-    let mut runs: Vec<GlyphRun> = Vec::new();
-    for line in &laid.lines {
-        for g in &line.glyphs {
-            let atlas = atlases[g.font as usize];
-            let quad = GlyphQuad {
-                glyph_id: g.glyph_id,
-                x: origin.0 + g.x,
-                y: origin.1 + voff + g.y,
-            };
-            match runs.last_mut() {
-                Some(run) if run.atlas == atlas => run.glyphs.push(quad),
-                _ => runs.push(GlyphRun {
-                    atlas,
-                    size,
-                    color,
-                    glyphs: vec![quad],
-                    opacity: 1.0,
-                }),
-            }
-        }
-    }
-    runs
-}
-
-/// Walks the committed arena and stages glyph runs for every TEXT node — one or
-/// more runs per node, placed within the node's resolved box. A node is a text
-/// leaf exactly when it carries both authored characters and a text style; its
-/// style's `size`, `color`, and the lowered text axes (line height, letter
-/// spacing, horizontal and vertical align) drive the run (story #327). Based on
-/// the E7 oracle's `stage_text`, which stays on default axes.
-fn stage_text(arena: &Arena, ts: &mut Typesetter, atlases: &[AtlasIndex]) -> Vec<GlyphRun> {
-    fn walk(
-        arena: &Arena,
-        node: NodeId,
-        ts: &mut Typesetter,
-        atlases: &[AtlasIndex],
-        out: &mut Vec<GlyphRun>,
-    ) {
-        if let (Some(text), Some(style)) = (arena.text(node), arena.text_style(node)) {
-            let (x, y, w, h) = box_of(arena, node);
-            out.extend(text_runs(
-                ts,
-                atlases,
-                (x, y),
-                (w, h),
-                text,
-                style.size,
-                style.color,
-                text_shape(style),
-                vertical_align(style.text_align_v),
-                style.weight,
-                &style.family,
-            ));
-        }
-        for &child in arena.children(node) {
-            walk(arena, child, ts, atlases, out);
-        }
-    }
-    let mut out = Vec::new();
-    for &root in arena.roots() {
-        walk(arena, root, ts, atlases, &mut out);
-    }
-    out
+/// The atlases the staged runs sample, in the cascade's font-slot order —
+/// family-major over Noto Sans, Inter and Noto Sans Arabic, exactly as
+/// [`oracle_typesetter`] declares them, so the slot a shaped glyph carries
+/// selects the atlas of the face that actually shaped it.
+///
+/// The order is the contract between this list and the typesetter beside it
+/// (`TaffySolver::with_text`): getting it wrong samples the wrong face rather
+/// than failing, which is why both are built here, together.
+fn cascade_atlases() -> Vec<Atlas> {
+    vec![
+        load_atlas(ATLAS_ASCII_DIR),
+        load_atlas(ATLAS_ASCII_SEMIBOLD_DIR),
+        load_atlas(ATLAS_ASCII_BOLD_DIR),
+        load_atlas(ATLAS_INTER_ASCII_DIR),
+        load_atlas(ATLAS_INTER_ASCII_MEDIUM_DIR),
+        load_atlas(ATLAS_INTER_ASCII_SEMIBOLD_DIR),
+        load_atlas(ATLAS_INTER_ASCII_BOLD_DIR),
+        load_atlas(ATLAS_ARABIC_DIR),
+    ]
 }
 
 /// One resident payload, in a container the reference painter's own codec
@@ -455,47 +348,19 @@ pub fn render_dsb(dsb: &[u8]) -> Vec<u8> {
     load_document(&document, &paintable, &mut arena);
     // `load_document` commits with the fixed solver, which measures a text node
     // to zero; re-commit an empty transaction through a typesetter-backed solver
-    // so a full solve runs the measure seam (the pattern the text goldens use).
+    // so a full solve runs the measure seam — and, since the solver carries the
+    // atlas set, so the same commit stages every TEXT node's glyph runs. Measure
+    // and paint agree by construction: one typesetter, asked once, at commit.
     let mut ts = oracle_typesetter();
     arena
         .open()
-        .commit_with(&mut TaffySolver::with_typesetter(&mut ts));
-
-    // Stage glyph runs for every TEXT node. The atlases are pushed in the
-    // cascade's slot order — family-major over Noto Sans, Inter and Noto Sans
-    // Arabic, see `oracle_typesetter` — so the slot index a shaped glyph
-    // carries selects the atlas of the face that actually shaped it.
-    let mut glyphs = GlyphRunTable::new();
-    let ascii = glyphs.push_atlas(load_atlas(ATLAS_ASCII_DIR));
-    let ascii_semibold = glyphs.push_atlas(load_atlas(ATLAS_ASCII_SEMIBOLD_DIR));
-    let ascii_bold = glyphs.push_atlas(load_atlas(ATLAS_ASCII_BOLD_DIR));
-    let inter = glyphs.push_atlas(load_atlas(ATLAS_INTER_ASCII_DIR));
-    let inter_medium = glyphs.push_atlas(load_atlas(ATLAS_INTER_ASCII_MEDIUM_DIR));
-    let inter_semibold = glyphs.push_atlas(load_atlas(ATLAS_INTER_ASCII_SEMIBOLD_DIR));
-    let inter_bold = glyphs.push_atlas(load_atlas(ATLAS_INTER_ASCII_BOLD_DIR));
-    let arabic = glyphs.push_atlas(load_atlas(ATLAS_ARABIC_DIR));
-    for run in stage_text(
-        &arena,
-        &mut ts,
-        &[
-            ascii,
-            ascii_semibold,
-            ascii_bold,
-            inter,
-            inter_medium,
-            inter_semibold,
-            inter_bold,
-            arabic,
-        ],
-    ) {
-        glyphs.push_run(run);
-    }
+        .commit_with(&mut TaffySolver::with_text(&mut ts, cascade_atlases()));
 
     // P4: a weight the corpus cannot supply exactly is a named diagnostic,
-    // never a silent drop. Staging is finished, so every substitution that
-    // actually rendered glyphs is now recorded (story #368). Reported to
-    // stderr because this is the render path's only caller-visible surface —
-    // the return value is the PNG.
+    // never a silent drop. The commit above both measured and staged, so every
+    // substitution that actually rendered glyphs is now recorded (story #368).
+    // Reported to stderr because this is the render path's only caller-visible
+    // surface — the return value is the PNG.
     for report in ts.weight_substitutions() {
         eprintln!("warning: {report}");
     }
@@ -514,7 +379,7 @@ pub fn render_dsb(dsb: &[u8]) -> Vec<u8> {
         scene.images(),
         scene.clips(),
         scene.groups(),
-        &glyphs,
+        scene.glyphs(),
         None,
     );
     painter.png_bytes()
@@ -525,9 +390,10 @@ mod tests {
     use std::collections::BTreeMap;
 
     use dashc_wasm::compile_figma;
+    use dashpaint::{AtlasIndex, Color, GlyphRun};
     use dashscene_validator::Profile;
 
-    use super::render_dsb;
+    use super::{Arena, TaffySolver, Typesetter, cascade_atlases, oracle_typesetter, render_dsb};
 
     /// A one-page Figma REST document whose root FRAME is `root`.
     fn document_json(root: serde_json::Value) -> serde_json::Value {
@@ -544,66 +410,68 @@ mod tests {
         })
     }
 
+    /// A one-text-node scene in a fixed `box_size` box, committed through the
+    /// one stager, returning the runs it staged. Everything these two tests
+    /// vary is a text-style field, so the scene itself is shared.
+    fn staged_runs(
+        ts: &mut Typesetter,
+        box_size: (f32, f32),
+        text: &str,
+        style: dashscene_core::TextStyle,
+    ) -> Vec<GlyphRun> {
+        use dashscene_core::Prop;
+
+        let mut arena = Arena::new();
+        {
+            let mut txn = arena.open();
+            let node = txn.add_node(None, Some("label"));
+            txn.set_prop(node, Prop::Width(box_size.0));
+            txn.set_prop(node, Prop::Height(box_size.1));
+            txn.set_prop(node, Prop::Text(text.to_string()));
+            txn.set_prop(node, Prop::TextStyle(style));
+            txn.commit_with(&mut TaffySolver::with_text(ts, cascade_atlases()));
+        }
+        arena.committed().glyphs().runs().to_vec()
+    }
+
+    /// The text style the tests vary from: the lowered defaults every
+    /// committed fixture authors — auto line height, no tracking, left and
+    /// top aligned, ligatures on.
+    fn plain_style(size: f32, weight: u16) -> dashscene_core::TextStyle {
+        dashscene_core::TextStyle {
+            family: String::new(),
+            size,
+            weight,
+            color: Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0,
+            },
+            line_height_px: None,
+            letter_spacing: 0.0,
+            text_align: dashscene_core::TextAlign::Left,
+            text_align_v: dashscene_core::TextAlignV::Top,
+            ligatures_off: false,
+        }
+    }
+
     #[test]
     fn the_stager_shifts_glyphs_for_center_and_vertical_center_alignment() {
-        use dashpaint::{AtlasIndex, Color};
-        use dashscene_typeset::text::{TextAlign, TextShape};
-
-        use crate::VerticalAlign;
-
-        use super::{oracle_typesetter, text_runs};
-
         let mut ts = oracle_typesetter();
-        // The atlas index only tags a run; it does not affect placement, so a
-        // bare index pair is enough (font 0 = Latin, font 1 = Arabic).
-        // One index per cascade slot, in the flattened family-major order
-        // `oracle_typesetter` declares. This test's text is Latin at weight
-        // 400 with no family requested, so it only ever reaches slot 0, but
-        // the array has to be as long as the cascade for the slot lookup to
-        // be in bounds at all.
-        let atlases: Vec<AtlasIndex> = (0..8).map(AtlasIndex).collect();
-        let text = "Hi";
-        let size = 32.0;
-        let black = Color {
-            r: 0.0,
-            g: 0.0,
-            b: 0.0,
-            a: 1.0,
-        };
-        let origin = (0.0, 0.0);
         // A box much wider and taller than "Hi", so centering has slack.
         let box_size = (400.0, 200.0);
 
-        let left = text_runs(
+        let left = staged_runs(&mut ts, box_size, "Hi", plain_style(32.0, 400));
+        let center = staged_runs(
             &mut ts,
-            &atlases,
-            origin,
             box_size,
-            text,
-            size,
-            black,
-            TextShape::default(),
-            VerticalAlign::Top,
-            400,
-            "",
-        );
-        let center = text_runs(
-            &mut ts,
-            &atlases,
-            origin,
-            box_size,
-            text,
-            size,
-            black,
-            TextShape {
-                line_height_px: None,
-                letter_spacing: 0.0,
-                align: TextAlign::Center,
-                ligatures_off: false,
+            "Hi",
+            dashscene_core::TextStyle {
+                text_align: dashscene_core::TextAlign::Center,
+                text_align_v: dashscene_core::TextAlignV::Center,
+                ..plain_style(32.0, 400)
             },
-            VerticalAlign::Center,
-            400,
-            "",
         );
 
         let left_glyph = left[0].glyphs[0];
@@ -624,52 +492,21 @@ mod tests {
         );
     }
 
-    /// Story #368: the render walk stages a weighted run against the atlas
-    /// of the face that actually shaped it. The cascade flattens
-    /// family-major, so Latin 400/600/700 are slots 0/1/2 and the atlas list
-    /// `[ascii, ascii-semibold, ascii-bold, arabic]` is indexed by the slot
-    /// a shaped glyph carries. Before this story the walk never read
-    /// `style.weight`, so all three rows staged from slot 0 and rendered
-    /// Regular.
+    /// Story #368: the stager stages a weighted run against the atlas of the
+    /// face that actually shaped it. The cascade flattens family-major, so
+    /// Latin 400/600/700 are slots 0/1/2 and the atlas list `cascade_atlases`
+    /// builds is indexed by the slot a shaped glyph carries. Before that story
+    /// the walk never read `style.weight`, so all three rows staged from slot 0
+    /// and rendered Regular.
     #[test]
     fn the_stager_selects_an_atlas_by_the_nodes_weight() {
-        use dashpaint::{AtlasIndex, Color};
-        use dashscene_typeset::text::TextShape;
-
-        use crate::VerticalAlign;
-
-        use super::{oracle_typesetter, text_runs};
-
         let mut ts = oracle_typesetter();
-        let atlases = [
-            AtlasIndex(0), // ascii (Noto Regular)
-            AtlasIndex(1), // ascii-semibold
-            AtlasIndex(2), // ascii-bold
-            AtlasIndex(3), // inter-ascii
-            AtlasIndex(4), // inter-ascii-medium
-            AtlasIndex(5), // inter-ascii-semibold
-            AtlasIndex(6), // inter-ascii-bold
-            AtlasIndex(7), // arabic
-        ];
-        let black = Color {
-            r: 0.0,
-            g: 0.0,
-            b: 0.0,
-            a: 1.0,
-        };
-        let staged = |ts: &mut _, weight| {
-            text_runs(
+        let staged = |ts: &mut Typesetter, weight| {
+            staged_runs(
                 ts,
-                &atlases,
-                (0.0, 0.0),
                 (400.0, 100.0),
                 "Sphinx of quartz 123",
-                28.0,
-                black,
-                TextShape::default(),
-                VerticalAlign::Top,
-                weight,
-                "",
+                plain_style(28.0, weight),
             )
         };
         for (weight, expected) in [(400u16, 0u32), (600, 1), (700, 2)] {
@@ -681,8 +518,9 @@ mod tests {
                 "weight {weight} must stage against atlas {expected}"
             );
         }
-        // Weight 500 has no committed face: the CSS Fonts 4 rule resolves it
-        // to Regular, and the substitution is reported rather than silent.
+        // Weight 500 has no committed Noto Sans face: the CSS Fonts 4 rule
+        // resolves it to Regular, and the substitution is reported rather than
+        // silent.
         let at_500 = staged(&mut ts, 500);
         assert_eq!(at_500[0].atlas, AtlasIndex(0));
         assert!(
@@ -694,23 +532,68 @@ mod tests {
         );
         // The rows are not merely tagged differently — they are placed
         // differently, because the heavier faces advance wider.
-        let regular_end = staged(&mut ts, 400)
-            .last()
-            .unwrap()
-            .glyphs
-            .last()
-            .unwrap()
-            .x;
-        let bold_end = staged(&mut ts, 700)
-            .last()
-            .unwrap()
-            .glyphs
-            .last()
-            .unwrap()
-            .x;
+        let end_x = |ts: &mut Typesetter, weight| {
+            staged(ts, weight).last().unwrap().glyphs.last().unwrap().x
+        };
+        let regular_end = end_x(&mut ts, 400);
+        let bold_end = end_x(&mut ts, 700);
         assert!(
             bold_end > regular_end,
             "the bold row must run wider (regular {regular_end}, bold {bold_end})"
+        );
+    }
+
+    /// Commit stamps every run with the rect index of the text node it was
+    /// shaped from, so a painter can resolve the run's clip, its group and its
+    /// z position without being told them separately
+    /// (`docs/decisions/glyph-runs-cross-boundary-b.md`).
+    #[test]
+    fn commit_stamps_each_run_with_its_text_nodes_rect_index() {
+        use dashscene_core::Prop;
+
+        let mut ts = oracle_typesetter();
+        let mut arena = Arena::new();
+        let (first, second) = {
+            let mut txn = arena.open();
+            let root = txn.add_node(None, Some("root"));
+            txn.set_prop(root, Prop::Width(400.0));
+            txn.set_prop(root, Prop::Height(200.0));
+
+            let spacer = txn.add_node(Some(root), Some("spacer"));
+            txn.set_prop(spacer, Prop::Width(10.0));
+            txn.set_prop(spacer, Prop::Height(10.0));
+
+            let first = txn.add_node(Some(root), Some("first"));
+            txn.set_prop(first, Prop::Width(200.0));
+            txn.set_prop(first, Prop::Height(40.0));
+            txn.set_prop(first, Prop::Text("one".to_string()));
+            txn.set_prop(first, Prop::TextStyle(plain_style(20.0, 400)));
+
+            let second = txn.add_node(Some(root), Some("second"));
+            txn.set_prop(second, Prop::Width(200.0));
+            txn.set_prop(second, Prop::Height(40.0));
+            txn.set_prop(second, Prop::Text("two".to_string()));
+            txn.set_prop(second, Prop::TextStyle(plain_style(20.0, 400)));
+
+            txn.commit_with(&mut TaffySolver::with_text(&mut ts, cascade_atlases()));
+            (first, second)
+        };
+
+        let scene = arena.committed();
+        let anchors: Vec<u32> = scene.glyphs().runs().iter().map(|r| r.rect).collect();
+        // Rect indices are document DFS order, so the anchors are the two text
+        // nodes' own indices — 2 and 3 here, past the root and the spacer.
+        let expected = [
+            scene.rect_index_of(first).expect("first is committed"),
+            scene.rect_index_of(second).expect("second is committed"),
+        ];
+        assert_eq!(
+            anchors, expected,
+            "each run is anchored to its own text node"
+        );
+        assert!(
+            anchors.windows(2).all(|w| w[0] <= w[1]),
+            "the run table is ordered by anchor: {anchors:?}"
         );
     }
 

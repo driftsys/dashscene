@@ -20,7 +20,7 @@
 //!
 //! Regeneration and diff workflow: goldens/README.md.
 
-use dashpaint::{AtlasIndex, Color, GlyphQuad, GlyphRun, GlyphRunTable, ImageTable, Painter};
+use dashpaint::{GlyphRunTable, ImageTable, Painter};
 use dashscene_core::{Arena, AxisSizing, LayoutMode, NodeId, Prop};
 use dashscene_engine::TaffySolver;
 use dashscene_skia::SkiaPainter;
@@ -29,8 +29,8 @@ use dashscene_typeset::text::{Font, Typesetter};
 mod common;
 
 use common::{
-    AMBER, INK, NAVY, NEAR_WHITE, decode_golden, diff_vs, load_atlas, origin_of, size_of,
-    text_style,
+    AMBER, INK, NAVY, NEAR_WHITE, decode_golden, diff_vs, load_atlas, origin_of, rect_index_of,
+    runs_anchored_to, size_of, text_style,
 };
 
 const FONT: &str = concat!(
@@ -84,42 +84,15 @@ const CHIP_SIZE: f32 = 44.0;
 /// for.
 const BUDGET: usize = 1_200;
 
-/// Shapes `text` at `size` (single line — the labels are hug-sized) and
-/// places every glyph in absolute document space by adding the node's
-/// resolved box origin. The painter never moves anything (P2): the
-/// positions cross boundary B already absolute.
-fn text_run(
-    ts: &mut Typesetter,
-    atlas: AtlasIndex,
-    origin: (f32, f32),
-    text: &str,
-    size: f32,
-    color: Color,
-) -> GlyphRun {
-    let laid = ts.layout(text, size, None);
-    let mut glyphs = Vec::new();
-    for line in &laid.lines {
-        for g in &line.glyphs {
-            glyphs.push(GlyphQuad {
-                glyph_id: g.glyph_id,
-                x: origin.0 + g.x,
-                y: origin.1 + g.y,
-            });
-        }
-    }
-    GlyphRun {
-        atlas,
-        size,
-        color,
-        glyphs,
-        opacity: 1.0,
-    }
-}
-
 /// Authors the Latin screen and commits it through the one typesetter,
 /// returning the arena and the two text nodes. Shared by the golden, the
 /// layout guard, and the budget's sensitivity guard so all three pin the same
 /// scene.
+///
+/// The commit both measures the hug boxes and stages their glyph runs, so the
+/// runs the golden draws are the committed scene's own
+/// (`docs/decisions/glyph-runs-cross-boundary-b.md`) rather than a second
+/// staging this file performs beside it.
 ///
 /// A 320x140 navy backdrop (mode None: children place by their authored
 /// offset). A plain white heading, and a hug-sized amber chip — the chip's
@@ -128,7 +101,7 @@ fn text_run(
 fn author_scene(ts: &mut Typesetter) -> (Arena, NodeId, NodeId) {
     let mut arena = Arena::new();
     let nodes = {
-        let mut solver = TaffySolver::with_typesetter(ts);
+        let mut solver = TaffySolver::with_text(ts, vec![load_atlas(ATLAS_DIR)]);
         let mut txn = arena.open();
 
         let root = txn.add_node(None, Some("backdrop"));
@@ -175,40 +148,27 @@ fn author_scene(ts: &mut Typesetter) -> (Arena, NodeId, NodeId) {
     (arena, nodes.0, nodes.1)
 }
 
-/// Stages the scene's glyph runs at boundary B, keeping the heading's run only
-/// when `keep_heading` and the chip's only when `keep_chip`. Dropping one is
-/// what the sensitivity guard renders; the golden keeps both.
+/// The scene's committed glyph runs, keeping the heading's only when
+/// `keep_heading` and the chip's only when `keep_chip`. Dropping one is what
+/// the sensitivity guard renders; the golden keeps both.
+///
+/// Both are filtered out of the one staged table by anchor, so a dropped run
+/// is exactly the run the golden would otherwise have drawn.
 fn staged(
-    ts: &mut Typesetter,
     arena: &Arena,
     heading: NodeId,
     chip: NodeId,
     keep_heading: bool,
     keep_chip: bool,
 ) -> GlyphRunTable {
-    let mut glyphs = GlyphRunTable::new();
-    let atlas = glyphs.push_atlas(load_atlas(ATLAS_DIR));
+    let mut keep = Vec::new();
     if keep_heading {
-        glyphs.push_run(text_run(
-            ts,
-            atlas,
-            origin_of(arena, heading),
-            HEADING,
-            HEADING_SIZE,
-            NEAR_WHITE,
-        ));
+        keep.push(rect_index_of(arena, heading));
     }
     if keep_chip {
-        glyphs.push_run(text_run(
-            ts,
-            atlas,
-            origin_of(arena, chip),
-            CHIP,
-            CHIP_SIZE,
-            INK,
-        ));
+        keep.push(rect_index_of(arena, chip));
     }
-    glyphs
+    runs_anchored_to(arena.committed().glyphs(), &keep)
 }
 
 /// Paints the committed scene with `glyphs` and returns the PNG bytes.
@@ -259,7 +219,7 @@ fn latin_text_and_a_hug_label_match_their_golden() {
     );
     assert!((ch - chip_expected.height).abs() < 0.01);
 
-    let glyphs = staged(&mut ts, &arena, heading, chip, true, true);
+    let glyphs = staged(&arena, heading, chip, true, true);
     let png = render(&arena, &glyphs);
 
     // Sparse text on a large canvas, so an absolute-pixel budget — not a
@@ -287,13 +247,13 @@ fn dropping_either_string_exceeds_the_budget() {
     let (arena, heading, chip) = author_scene(&mut ts);
     let golden = decode_golden("v05-text-latin");
 
-    let broken = |ts: &mut Typesetter, keep_heading: bool, keep_chip: bool| {
-        let glyphs = staged(ts, &arena, heading, chip, keep_heading, keep_chip);
+    let broken = |keep_heading: bool, keep_chip: bool| {
+        let glyphs = staged(&arena, heading, chip, keep_heading, keep_chip);
         diff_vs(&golden, &common::decode_rgba(&render(&arena, &glyphs)))
     };
 
-    let no_heading = broken(&mut ts, false, true);
-    let no_chip = broken(&mut ts, true, false);
+    let no_heading = broken(false, true);
+    let no_chip = broken(true, false);
     assert!(
         no_heading > BUDGET,
         "the heading vanishing must exceed the {BUDGET}px budget, differed by {no_heading}"

@@ -1163,6 +1163,7 @@ fn a_glyph_quad_fills_its_box_with_the_text_color() {
     // atlas sampling, and colour modulation, without AA in the way.
     let (mut glyphs, atlas) = inside_atlas();
     glyphs.push_run(GlyphRun {
+        rect: 0,
         atlas,
         size: 16.0,
         color: RED,
@@ -1204,6 +1205,7 @@ fn a_glyph_absent_from_the_atlas_draws_nothing() {
     // glyph outside the charset): it paints nothing rather than panicking.
     let (mut glyphs, atlas) = inside_atlas();
     glyphs.push_run(GlyphRun {
+        rect: 0,
         atlas,
         size: 16.0,
         color: RED,
@@ -1335,6 +1337,7 @@ fn a_glyph_runs_free_path_opacity_dims_the_text() {
     fn inked(opacity: f32) -> usize {
         let (mut glyphs, atlas) = inside_atlas();
         glyphs.push_run(GlyphRun {
+            rect: 0,
             atlas,
             size: 16.0,
             color: RED,
