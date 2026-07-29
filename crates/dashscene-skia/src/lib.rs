@@ -371,11 +371,13 @@ impl Painter for SkiaPainter {
             }
         }
 
-        // Text is drawn after every rect: the v0.5 Latin subset composites
-        // glyph runs over the rect table as foreground (boundary B's
-        // paint contract). Runs arrive already shaped and positioned (P2),
-        // and each glyph is one textured MSDF atlas quad.
-        draw_glyph_runs(canvas, glyphs);
+        // Text is drawn after every rect: glyph runs still composite over
+        // the rect table as foreground (boundary B's paint contract; the
+        // z-interleave is issue #274). Runs arrive already shaped and
+        // positioned (P2), and each glyph is one textured MSDF atlas quad.
+        // Each run is clipped to the region its anchor rect carries
+        // (issue #275).
+        draw_glyph_runs(canvas, glyphs, source, clips);
     }
 }
 
@@ -399,9 +401,28 @@ const MSDF_SKSL: &str = r"
     }
 ";
 
-/// Draws every glyph run's quads. Each atlas image is decoded once (not
-/// once per run that samples it); the resolve effect compiles once.
-fn draw_glyph_runs(canvas: &Canvas, glyphs: &GlyphRunTable) {
+/// Draws every glyph run's quads, each clipped to the region its anchor
+/// rect carries (issue #275). Each atlas image is decoded once (not once
+/// per run that samples it); the resolve effect compiles once.
+///
+/// A run's clip is `rects[run.rect].clip` — the region `dashscene-core`
+/// already resolved from the text node's clipping ancestors, the same
+/// region the anchor rect itself draws under. The painter reads it the way
+/// it reads a rect's: intersect the boxes, draw, restore. Which node each
+/// box came from is not the painter's business (P2).
+///
+/// # Panics
+///
+/// Panics if a run's anchor is out of range for `rects`. A run and the rect
+/// table it is read against come from one commit, so a miss is a broken
+/// contract between crates rather than a scene to draw unclipped — the same
+/// posture [`GlyphRunTable::atlas`] takes (P4).
+fn draw_glyph_runs(
+    canvas: &Canvas,
+    glyphs: &GlyphRunTable,
+    rects: &[RectEntry],
+    clips: &ClipTable,
+) {
     if glyphs.is_empty() {
         return;
     }
@@ -416,6 +437,29 @@ fn draw_glyph_runs(canvas: &Canvas, glyphs: &GlyphRunTable) {
         })
         .collect();
     for run in glyphs.runs() {
+        let anchor = rects.get(run.rect as usize).unwrap_or_else(|| {
+            panic!(
+                "glyph run anchored at rect {} out of range ({} rects): a run and the rect table \
+                 it is read against come from one commit (P4)",
+                run.rect,
+                rects.len()
+            )
+        });
+        let region = clips.resolve(anchor.clip);
+        let clipped = !region.is_unclipped();
+        if clipped {
+            canvas.save();
+            for clip_box in region.boxes() {
+                let rrect = rrect_of(
+                    clip_box.x,
+                    clip_box.y,
+                    clip_box.w,
+                    clip_box.h,
+                    &clip_box.corners,
+                );
+                canvas.clip_rrect(rrect, ClipOp::Intersect, true);
+            }
+        }
         let atlas = glyphs.atlas(run.atlas);
         let image = &decoded[run.atlas.0 as usize];
         // The MSDF field is a distance, not a color: linear filtering
@@ -430,9 +474,9 @@ fn draw_glyph_runs(canvas: &Canvas, glyphs: &GlyphRunTable) {
         let px_range = atlas.distance_range_px * run.size / f32::from(atlas.px_per_em);
         // Fold the run's free-path group alpha into the fill (story #44):
         // the MSDF resolve modulates coverage by `color.a`, so multiplying
-        // the alpha dims the whole run. The render-target group path and
-        // clip/mask regions are not applied to runs (a documented
-        // limitation on `GlyphRun::opacity`).
+        // the alpha dims the whole run. The render-target group path is
+        // still not applied to runs (issue #274); the clip/mask region now
+        // is, above.
         let color = dashpaint::Color {
             a: run.color.a * run.opacity,
             ..run.color
@@ -449,6 +493,9 @@ fn draw_glyph_runs(canvas: &Canvas, glyphs: &GlyphRunTable) {
             draw_glyph_quad(
                 canvas, image, atlas, g, quad, run, &effect, &uniforms, sampling,
             );
+        }
+        if clipped {
+            canvas.restore();
         }
     }
 }

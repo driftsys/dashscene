@@ -562,3 +562,93 @@ fn the_rejected_mask_reading_moves_far_more_than_the_golden_can_absorb() {
          cross-machine jitter budget could hide (moved {differing} px)",
     );
 }
+
+/// The clipping frame's inner width — narrower than "Ag" at `RUN_SIZE`, so
+/// the clip cuts the second glyph rather than merely bounding the text.
+const CLIP_W: f32 = 44.0;
+const CLIP_CANVAS_W: f32 = 120.0;
+const CLIP_CANVAS_H: f32 = 80.0;
+
+/// Builds the #275 scene: a clipping frame holding a text child whose ink is
+/// wider than the frame, so the frame's clip region actually cuts glyphs.
+///
+/// `clip` is the frame's clip flag — `false` renders the broken twin the
+/// sensitivity guard measures, which is also exactly how this scene rendered
+/// before the painter honoured a run's clip.
+fn text_clipped_scene(arena: &mut Arena, typesetter: &mut Typesetter, clip: bool) -> NodeId {
+    let mut solver = TaffySolver::with_text(typesetter, vec![load_atlas(ATLAS_DIR)]);
+    let mut txn = arena.open();
+
+    let root = txn.add_node(None, Some("backdrop"));
+    txn.set_prop(root, Prop::Width(CLIP_CANVAS_W));
+    txn.set_prop(root, Prop::Height(CLIP_CANVAS_H));
+    txn.set_prop(root, Prop::Mode(LayoutMode::None));
+    txn.set_prop(root, Prop::Fill(NAVY));
+
+    // The clipping frame: fixed and narrower than the text it holds.
+    let frame = placed(&mut txn, Some(root), 16.0, 16.0, CLIP_W, 48.0);
+    txn.set_prop(frame, Prop::Fill(PANEL));
+    txn.set_prop(frame, Prop::Clip(clip));
+
+    // The text: hug-sized, so it takes its own shaped width and overflows the
+    // frame. A clipping ancestor is what turns that overflow into a cut.
+    let label = txn.add_node(Some(frame), Some("label"));
+    txn.set_prop(label, Prop::X(4.0));
+    txn.set_prop(label, Prop::Y(2.0));
+    txn.set_prop(label, Prop::SizingH(AxisSizing::Hug));
+    txn.set_prop(label, Prop::SizingV(AxisSizing::Hug));
+    txn.set_prop(label, Prop::Text(RUN.to_string()));
+    txn.set_prop(label, Prop::TextStyle(text_style(NEAR_WHITE)));
+
+    txn.commit_with(&mut solver);
+    label
+}
+
+/// Issue #275: a glyph run is clipped to the region its anchor rect carries.
+///
+/// The corpus had no scene where a clip cuts glyph ink — `v07-text-lowering`
+/// has a clip whose box contains its text, so it renders identically clipped
+/// or not. That is why the whole suite stayed green while runs ignored the
+/// clip table entirely, and why this frame exists.
+#[test]
+fn text_inside_a_clipping_frame_is_cut_by_it() {
+    let font = Font::from_bytes(std::fs::read(FONT).expect("corpus font present"), 0)
+        .expect("Noto Sans parses");
+    let mut ts = Typesetter::new(font);
+    let mut arena = Arena::new();
+    let label = text_clipped_scene(&mut arena, &mut ts, true);
+
+    // The fixture only tests anything if the text really does overflow: a
+    // label narrower than the frame would render the same either way.
+    let (_, _, label_w, _) = rect_of(&arena, label);
+    assert!(
+        label_w > CLIP_W,
+        "fixture: the label ({label_w} px) must be wider than the {CLIP_W} px \
+         frame, or the clip cuts nothing — widen the string if the font changed",
+    );
+
+    let png = render(&arena, arena.committed().glyphs());
+    goldens::assert_matches_golden_max_pixels("v013-text-clipped", &png, 200);
+}
+
+/// The demonstrated-sensitivity guard: rendering the same scene with the
+/// frame's clip flag off — which is precisely how the painter behaved before
+/// issue #275 — must move far more than any jitter budget could hide.
+#[test]
+fn dropping_the_clip_flag_moves_far_more_than_the_golden_can_absorb() {
+    let font = Font::from_bytes(std::fs::read(FONT).expect("corpus font present"), 0)
+        .expect("Noto Sans parses");
+    let mut ts = Typesetter::new(font);
+    let mut unclipped = Arena::new();
+    text_clipped_scene(&mut unclipped, &mut ts, false);
+
+    let differing = diff_vs(
+        &decode_rgba(&render(&unclipped, unclipped.committed().glyphs())),
+        &decode_golden("v013-text-clipped"),
+    );
+    assert!(
+        differing > 200,
+        "an unclipped run must move far more than the golden's budget \
+         (moved {differing} px)",
+    );
+}
