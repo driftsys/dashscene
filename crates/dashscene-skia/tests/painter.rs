@@ -5,8 +5,8 @@
 
 use dashpaint::{
     Atlas, AtlasGlyph, AtlasIndex, ClipIndex, ClipTable, Color, GlyphQuad, GlyphRun, GlyphRunTable,
-    Gradient, GradientKind, ImageTable, MAX_GRADIENT_STOPS, PaintEntry, PaintKind, Painter,
-    RectEntry, Vec2,
+    Gradient, GradientKind, ImageTable, MAX_GRADIENT_STOPS, PaintEntry, PaintIndex, PaintKind,
+    Painter, RectEntry, Vec2,
 };
 use dashscene_core::{Arena, Prop};
 use dashscene_skia::{DirtyMode, SkiaPainter};
@@ -1135,6 +1135,35 @@ fn solid_atlas_png(n: i32) -> Vec<u8> {
     painter.png_bytes()
 }
 
+/// The anchor rect a hand-staged glyph run needs: one draws-nothing entry at
+/// index 0, so `GlyphRun::rect` resolves.
+///
+/// A run is read against the rect table of the commit it came from, and the
+/// painter now reaches through the anchor for the run's clip (issue #275). A
+/// table with runs but no rects is not a scene commit can produce, so these
+/// tests supply the rect rather than the painter tolerating its absence — a
+/// run with no rect is a run with no clip and no group, which is the state
+/// issue #505 exists to end.
+fn anchor_rect() -> [RectEntry; 1] {
+    [RectEntry {
+        x: 0.0,
+        y: 0.0,
+        w: 0.0,
+        h: 0.0,
+        paint: PaintIndex(0),
+        clip: ClipIndex::UNCLIPPED,
+        opacity: 1.0,
+    }]
+}
+
+/// The paint table [`anchor_rect`] indexes: one draws-nothing entry, the
+/// same shared entry commit resolves an unfilled node to.
+fn anchor_paints() -> PaintTable {
+    let mut paints = PaintTable::new();
+    paints.push(PaintEntry::default());
+    paints
+}
+
 /// A one-glyph atlas placing the whole image over one em, all "inside".
 fn inside_atlas() -> (GlyphRunTable, AtlasIndex) {
     let mut glyphs = GlyphRunTable::new();
@@ -1177,8 +1206,8 @@ fn a_glyph_quad_fills_its_box_with_the_text_color() {
 
     let mut painter = SkiaPainter::new(32, 32);
     painter.paint(
-        &[],
-        &PaintTable::new(),
+        &anchor_rect(),
+        &anchor_paints(),
         &ImageTable::new(),
         &ClipTable::new(),
         &[],
@@ -1219,8 +1248,8 @@ fn a_glyph_absent_from_the_atlas_draws_nothing() {
 
     let mut painter = SkiaPainter::new(32, 32);
     painter.paint(
-        &[],
-        &PaintTable::new(),
+        &anchor_rect(),
+        &anchor_paints(),
         &ImageTable::new(),
         &ClipTable::new(),
         &[],
@@ -1350,8 +1379,8 @@ fn a_glyph_runs_free_path_opacity_dims_the_text() {
         });
         let mut painter = SkiaPainter::new(32, 32);
         painter.paint(
-            &[],
-            &PaintTable::new(),
+            &anchor_rect(),
+            &anchor_paints(),
             &ImageTable::new(),
             &ClipTable::new(),
             &[],
@@ -1374,6 +1403,198 @@ fn a_glyph_runs_free_path_opacity_dims_the_text() {
     assert!(
         half < full,
         "the 0.5 run inks fewer near-opaque pixels ({half} vs {full})",
+    );
+}
+
+/// Issue #275: a run draws only inside the region its anchor rect carries.
+///
+/// The atlas is all-"inside", so the glyph fills its whole box — (8, 8) to
+/// (24, 24) at a 16 px em — with no anti-aliased edge to blur the reading.
+/// The anchor's clip stops at x = 16, so the glyph's left half must ink and
+/// its right half must not. Before this, `draw_glyph_runs` ignored the clip
+/// table entirely and the whole box inked.
+#[test]
+fn a_glyph_run_is_clipped_to_the_region_its_anchor_rect_carries() {
+    let (mut glyphs, atlas) = inside_atlas();
+    glyphs.push_run(GlyphRun {
+        rect: 0,
+        atlas,
+        size: 16.0,
+        color: RED,
+        glyphs: vec![GlyphQuad {
+            glyph_id: 1,
+            x: 8.0,
+            y: 24.0,
+        }],
+        opacity: 1.0,
+    });
+
+    let mut clips = ClipTable::new();
+    let clip = clips.push(ClipRegion::new(vec![ClipBox {
+        x: 0.0,
+        y: 0.0,
+        w: 16.0,
+        h: 32.0,
+        corners: CornerRadii::default(),
+    }]));
+    let rects = [RectEntry {
+        clip,
+        ..anchor_rect()[0]
+    }];
+
+    let mut painter = SkiaPainter::new(32, 32);
+    painter.paint(
+        &rects,
+        &anchor_paints(),
+        &ImageTable::new(),
+        &clips,
+        &[],
+        &glyphs,
+        None,
+    );
+    let rgba = painter.rgba_bytes();
+
+    assert_eq!(
+        pixel(&rgba, 32, 12, 16),
+        RED_RGBA,
+        "inside the clip: the glyph's left half inks"
+    );
+    assert_eq!(
+        pixel(&rgba, 32, 20, 16),
+        TRANSPARENT_RGBA,
+        "outside the clip: the glyph's right half is cut, not drawn"
+    );
+}
+
+/// The other half of issue #275: an unclipped anchor leaves the run
+/// untouched, so clipping is applied where a region exists rather than
+/// shrinking every run.
+#[test]
+fn a_run_whose_anchor_is_unclipped_draws_in_full() {
+    let (mut glyphs, atlas) = inside_atlas();
+    glyphs.push_run(GlyphRun {
+        rect: 0,
+        atlas,
+        size: 16.0,
+        color: RED,
+        glyphs: vec![GlyphQuad {
+            glyph_id: 1,
+            x: 8.0,
+            y: 24.0,
+        }],
+        opacity: 1.0,
+    });
+
+    let mut painter = SkiaPainter::new(32, 32);
+    painter.paint(
+        &anchor_rect(),
+        &anchor_paints(),
+        &ImageTable::new(),
+        &ClipTable::new(),
+        &[],
+        &glyphs,
+        None,
+    );
+    let rgba = painter.rgba_bytes();
+
+    assert_eq!(pixel(&rgba, 32, 12, 16), RED_RGBA, "left half inks");
+    assert_eq!(pixel(&rgba, 32, 20, 16), RED_RGBA, "right half inks too");
+}
+
+/// One run's clip must not leak onto the next. Found by mutation testing
+/// issue #275: dropping the `canvas.restore()` after a clipped run left
+/// every test green, because no fixture drew a second run behind a clipped
+/// one — the fixture could not express the difference, so it was the
+/// fixture that was wrong.
+///
+/// Two runs, both inking the same right-hand pixel. The first is anchored
+/// to a rect clipped to the left half; the second is unclipped and must
+/// draw in full.
+#[test]
+fn a_clipped_runs_region_does_not_leak_onto_the_next_run() {
+    let (mut glyphs, atlas) = inside_atlas();
+    let quad = |x: f32| GlyphQuad {
+        glyph_id: 1,
+        x,
+        y: 24.0,
+    };
+    let run = |rect: u32, x: f32| GlyphRun {
+        rect,
+        atlas,
+        size: 16.0,
+        color: RED,
+        glyphs: vec![quad(x)],
+        opacity: 1.0,
+    };
+    // Rect 0 is clipped to x < 16; rect 1 is unclipped.
+    glyphs.push_run(run(0, 8.0));
+    glyphs.push_run(run(1, 8.0));
+
+    let mut clips = ClipTable::new();
+    let clip = clips.push(ClipRegion::new(vec![ClipBox {
+        x: 0.0,
+        y: 0.0,
+        w: 16.0,
+        h: 32.0,
+        corners: CornerRadii::default(),
+    }]));
+    let rects = [
+        RectEntry {
+            clip,
+            ..anchor_rect()[0]
+        },
+        anchor_rect()[0],
+    ];
+
+    let mut painter = SkiaPainter::new(32, 32);
+    painter.paint(
+        &rects,
+        &anchor_paints(),
+        &ImageTable::new(),
+        &clips,
+        &[],
+        &glyphs,
+        None,
+    );
+    let rgba = painter.rgba_bytes();
+
+    assert_eq!(
+        pixel(&rgba, 32, 20, 16),
+        RED_RGBA,
+        "the second run is unclipped: the first run's clip was restored"
+    );
+}
+
+/// A run whose anchor names no rect is a broken contract between crates,
+/// not a scene to draw unclipped: a run and the rect table it is read
+/// against come from one commit (P4). Drawing it as foreground would be the
+/// silent-wrong-pixel outcome issue #505 exists to end.
+#[test]
+#[should_panic(expected = "out of range")]
+fn a_run_anchored_past_the_rect_table_is_named_rather_than_drawn_unclipped() {
+    let (mut glyphs, atlas) = inside_atlas();
+    glyphs.push_run(GlyphRun {
+        rect: 7,
+        atlas,
+        size: 16.0,
+        color: RED,
+        glyphs: vec![GlyphQuad {
+            glyph_id: 1,
+            x: 8.0,
+            y: 24.0,
+        }],
+        opacity: 1.0,
+    });
+
+    let mut painter = SkiaPainter::new(32, 32);
+    painter.paint(
+        &anchor_rect(),
+        &anchor_paints(),
+        &ImageTable::new(),
+        &ClipTable::new(),
+        &[],
+        &glyphs,
+        None,
     );
 }
 

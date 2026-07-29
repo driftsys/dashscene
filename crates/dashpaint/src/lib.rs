@@ -810,11 +810,15 @@ pub struct GlyphRun {
     /// `docs/decisions/masks-and-group-opacity.md`): a group opacity that
     /// took the free path folds into it, and the painter multiplies the
     /// run's fill alpha by it. `1.0` when no free-path group opacity
-    /// applies. **The render-target group path and clip/mask regions are
-    /// not applied to glyph runs yet** — a run inside such a construct
-    /// draws as foreground at this alpha, not composited into the layer or
-    /// clipped to the region (a named limitation, a debt candidate, not a
-    /// silent drop).
+    /// applies.
+    ///
+    /// Clip and mask regions **are** applied to runs (issue #275): a run is
+    /// drawn inside the region its [`rect`](Self::rect) anchor carries, the
+    /// same region that rect draws under. **The render-target group path is
+    /// not** — a run inside an overlapping partial-opacity group still
+    /// draws as foreground at this alpha rather than compositing into the
+    /// group's offscreen layer (issue #274; a named limitation reported by
+    /// the `paint.text-outside-group` gate, not a silent drop).
     pub opacity: f32,
 }
 
