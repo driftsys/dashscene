@@ -16,9 +16,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::bindings::{Binding, Channel, ScalarTransform, SignalDecl, SignalId};
 use crate::committed::{
-    Blur, ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CommittedScene, CornerRadii,
-    GroupComposite, ImageAsset, ImageTable, PaintEntry, PaintIndex, PaintKind, PaintTable,
-    RectEntry, Shadow, Stroke, StrokeAlign, Vec2, VectorField,
+    Atlas, Blur, ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CommittedScene, CornerRadii,
+    GlyphRun, GlyphRunTable, GroupComposite, ImageAsset, ImageTable, PaintEntry, PaintIndex,
+    PaintKind, PaintTable, RectEntry, Shadow, Stroke, StrokeAlign, Vec2, VectorField,
 };
 
 /// Stable handle to a node in one [`Arena`]. Returned by
@@ -71,6 +71,59 @@ pub trait LayoutSolver {
     /// `dashscene-engine`'s `TaffySolver` keeps its Taffy tree so an
     /// unchanged frame costs no re-solve.
     fn solve(&mut self, arena: &Arena) -> Vec<(NodeId, SolvedRect)>;
+
+    /// The atlases every run [`stage_text`](Self::stage_text) returns
+    /// samples, in [`AtlasIndex`] order — the set commit hands the painter
+    /// alongside the runs, because a run's glyph ids mean nothing without
+    /// the atlas that places them.
+    ///
+    /// Shared rather than copied: commit rebuilds the run table each
+    /// frame, but the atlas set behind it is a build artifact that does
+    /// not change, and copying it per commit would be per-frame cost R-T4
+    /// bounds away.
+    ///
+    /// The default is the empty set, which is what a text-free scene and
+    /// every solver that stages no text need.
+    fn atlases(&mut self) -> Arc<Vec<Atlas>> {
+        Arc::new(Vec::new())
+    }
+
+    /// Stage the glyph runs for every text node of `arena` — one or more
+    /// runs per node — placed against `geometry`.
+    ///
+    /// This is the text half of the geometry seam, and it exists for the
+    /// same reason (P2 — one typesetter): commit asks exactly one stager
+    /// for every text node's placed glyphs and shapes nothing itself.
+    /// `dashscene-core` has no typesetter, no fonts and no atlas, and
+    /// needs none — it *stamps* runs rather than building them.
+    ///
+    /// `geometry` resolves a node to the rect **this commit just solved**,
+    /// not the previous commit's. A stager that reads
+    /// [`Arena::committed`] instead would place glyphs at last frame's
+    /// boxes, which is only correct for a stager that runs after the
+    /// commit has published.
+    ///
+    /// [`GlyphRun::rect`] on a returned run is ignored: commit stamps it
+    /// from the [`NodeId`] beside it, so a stager cannot get the anchor
+    /// wrong and no run can disagree with the rect table it is read
+    /// against.
+    ///
+    /// The default stages nothing, so every existing implementer keeps
+    /// compiling untouched and a text-free scene costs nothing.
+    ///
+    /// # Panics
+    ///
+    /// [`Txn::commit_with`] panics if a returned id is not a node of this
+    /// arena — the same index-integrity contract [`solve`](Self::solve)
+    /// carries (P4).
+    fn stage_text(
+        &mut self,
+        arena: &Arena,
+        geometry: &dyn Fn(NodeId) -> SolvedRect,
+    ) -> Vec<(NodeId, GlyphRun)> {
+        let _ = (arena, geometry);
+        Vec::new()
+    }
 }
 
 /// Layout mode of a container node. `None` = passthrough (children
@@ -1803,6 +1856,46 @@ impl Txn<'_> {
             compact_clips(&mut back_clips, clip_map, &mut rects);
         }
 
+        // Text staging — the text half of the geometry seam (P2: one
+        // typesetter, asked exactly once, computing nothing here). The
+        // rect table is final at this point, so the `geometry` a stager
+        // places glyphs against is a lookup into what this commit solved
+        // rather than new work, and the anchor each run is stamped with is
+        // the index that run will be read against.
+        //
+        // Core stamps runs; it does not build them. It has no typesetter,
+        // no fonts and no atlas, and needs none — the stager supplies the
+        // placed glyphs exactly as the solver supplies the rects.
+        let glyphs = {
+            let geometry = |id: NodeId| {
+                let i = rect_of_slot_checked(&rect_of_slot, id, "asked for the geometry of");
+                let r = rects[i as usize];
+                SolvedRect {
+                    x: r.x,
+                    y: r.y,
+                    w: r.w,
+                    h: r.h,
+                }
+            };
+            let mut staged = solver.stage_text(arena, &geometry);
+            // Stamp each run with its node's rect index, then order the
+            // table by anchor. A stager walking DFS already returns them in
+            // this order; sorting makes the invariant true by construction
+            // rather than by contract, which is what lets a painter walk
+            // runs and rects together with one cursor. The sort is stable,
+            // so the run order *within* one text node — the font-fallback
+            // split — is preserved.
+            for (id, run) in &mut staged {
+                run.rect = rect_of_slot_checked(&rect_of_slot, *id, "returned a run for");
+            }
+            staged.sort_by_key(|(_, run)| run.rect);
+            let mut table = GlyphRunTable::with_atlases(solver.atlases());
+            for (_, run) in staged {
+                table.push_run(run);
+            }
+            table
+        };
+
         // Dirty is a bit compare against the previous commit at each index
         // (what a painter refreshes), computed once the rect entries —
         // opacity included, and any renumbering done — are final. A
@@ -1827,6 +1920,21 @@ impl Txn<'_> {
             let on_both = groups.contains(group) && previous.groups.contains(group);
             if !on_both {
                 dirty_set.extend(group.start..group.end.min(rects.len() as u32));
+            }
+        }
+        // A text node's glyph runs live outside its rect entry bits, the
+        // same way a render-target group's alpha does. A node whose string
+        // or text style changed inside a box that did not move or resize
+        // produces identical bits, so the compare above would report it
+        // clean and a retained painter would redraw nothing and keep last
+        // frame's glyphs. Every anchor whose staged runs differ from the
+        // previous commit's is dirtied here, which covers a changed string,
+        // a changed style, a variant switch, and a fallback that picked a
+        // different font — none of which need their own rule, because the
+        // runs are what actually reached the painter.
+        for anchor in changed_anchors(&glyphs, &previous.glyphs) {
+            if anchor < rects.len() as u32 {
+                dirty_set.insert(anchor);
             }
         }
         let mut dirty: Vec<u32> = dirty_set.into_iter().collect();
@@ -1856,6 +1964,7 @@ impl Txn<'_> {
             images,
             clips: back_clips,
             groups,
+            glyphs,
             generation,
             dirty,
             node_ids,
@@ -1877,6 +1986,58 @@ impl Txn<'_> {
         guard.published = true;
         generation
     }
+}
+
+/// The rect index a node resolved to in the walk that built `rect_of_slot`.
+///
+/// # Panics
+///
+/// Panics if `id` is not a node of the arena being committed — the same
+/// index-integrity contract malformed [`LayoutSolver::solve`] output is
+/// held to (P4). `did` is the whole verb clause, so the message names
+/// which of the stager's two calls was wrong rather than reading as one
+/// generic failure.
+fn rect_of_slot_checked(rect_of_slot: &[u32], id: NodeId, did: &str) -> u32 {
+    *rect_of_slot
+        .get(id.index())
+        .unwrap_or_else(|| panic!("the stager {did} {id:?}, which is not a node of this arena"))
+}
+
+/// The anchors whose runs differ between two commits' glyph tables —
+/// present in one and not the other, or present in both with different
+/// runs.
+///
+/// Both tables are ordered by anchor, so each anchor's runs form one
+/// contiguous slice and the comparison is a merge walk over the two.
+fn changed_anchors(new: &GlyphRunTable, old: &GlyphRunTable) -> Vec<u32> {
+    let mut changed = Vec::new();
+    let (new, old) = (new.runs(), old.runs());
+    let (mut i, mut j) = (0usize, 0usize);
+    while i < new.len() || j < old.len() {
+        // Settle the lower of the two leading anchors; when one side is
+        // exhausted, the other's anchor is the one to settle.
+        let anchor = match (new.get(i).map(|r| r.rect), old.get(j).map(|r| r.rect)) {
+            (Some(n), Some(o)) => n.min(o),
+            (Some(n), None) => n,
+            (None, Some(o)) => o,
+            (None, None) => break,
+        };
+        let ni = i;
+        while new.get(i).is_some_and(|r| r.rect == anchor) {
+            i += 1;
+        }
+        let oj = j;
+        while old.get(j).is_some_and(|r| r.rect == anchor) {
+            j += 1;
+        }
+        // An anchor present on only one side has an empty slice on the
+        // other, so "appeared" and "disappeared" fall out of the same
+        // comparison as "changed".
+        if new[ni..i] != old[oj..j] {
+            changed.push(anchor);
+        }
+    }
+    changed
 }
 
 /// Holds the retained interners for one commit walk and puts them back on

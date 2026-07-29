@@ -47,8 +47,9 @@ pub use bindings::{
     Binding, Channel, ScalarTransform, SignalDecl, SignalId, decode_prop_key, prop_key,
 };
 pub use committed::{
-    Blur, BlurKind, ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CommittedScene, CornerRadii,
-    GroupComposite, PaintEntry, PaintIndex, PaintKind, PaintTable, RectEntry, Shadow, ShadowKind,
-    Stroke, StrokeAlign,
+    Atlas, AtlasGlyph, AtlasIndex, Blur, BlurKind, ClipBox, ClipIndex, ClipRegion, ClipTable,
+    Color, CommittedScene, CornerRadii, GlyphQuad, GlyphRun, GlyphRunTable, GroupComposite,
+    PaintEntry, PaintIndex, PaintKind, PaintTable, RectEntry, Shadow, ShadowKind, Stroke,
+    StrokeAlign,
 };
 pub use load::load_document;

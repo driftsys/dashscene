@@ -22,11 +22,11 @@
 use std::collections::BTreeMap;
 
 use dashc_wasm::compile_figma;
-use dashpaint::{AtlasIndex, GlyphQuad, GlyphRun, GlyphRunTable, Painter};
-use dashscene_core::{Arena, AxisSizing, LayoutMode, NodeId, Prop, TextStyle, load_document};
+use dashpaint::{Atlas, GlyphQuad, Painter};
+use dashscene_core::{Arena, AxisSizing, LayoutMode, Prop, TextStyle, load_document};
 use dashscene_engine::TaffySolver;
 use dashscene_skia::SkiaPainter;
-use dashscene_typeset::text::{Font, FontFamily, TextShape, Typesetter, WeightedFont};
+use dashscene_typeset::text::{Font, FontFamily, Typesetter, WeightedFont};
 use dashscene_validator::Profile;
 use goldens::oracle::{self, AA_EDGE, BLUR_FALLOFF, MSDF_TEXT, ToleranceBand};
 use skia_safe::{Color, Color4f, EncodedImageFormat, Paint, Rect, surfaces};
@@ -616,117 +616,22 @@ fn oracle_typesetter() -> Typesetter {
     ])
 }
 
-/// Shapes `text` at `size` and places every glyph in absolute document space
-/// (the painter moves nothing, P2: the node's box origin is added here),
-/// splitting a new run wherever the cascade switched fonts so each run samples
-/// the atlas of its own font. `atlases` is built in font-list order, so the
-/// font index a glyph carries selects its atlas.
-///
-/// `family` and `weight` are the node's own (story #385). Both have to be
-/// passed here and not only to the measure callback: the solve resolves a
-/// family and a weight, so staging that ignored either would place one face's
-/// glyph ids at another face's advances. This cascade declares one face per
-/// family, so every request resolves to that face and neither argument can
-/// change what renders today — they are passed so that widening the cascade
-/// later cannot silently split staging from the measure.
-///
-/// `box_width` is the node's solved box width, and it is the width the layout
-/// wraps at — the same width the measure seam (`measure_text`) wrapped at when
-/// it sized the node (issue #306). Staging at `None` never wraps, so a
-/// width-fixed TEXT node whose text is wider than its box would be measured as
-/// N lines and staged as one overflowing line. Every TEXT node in this oracle's
-/// frames hugs both axes, where the solved width is the shaped width and the
-/// two agree, so passing it moves no measured frame today; it is passed so that
-/// adding a width-fixed frame cannot silently split staging from the measure.
-/// The remaining text axes (line height, letter spacing, alignment) stay at
-/// their defaults, which is a separate, disclosed limitation of this oracle —
-/// `goldens::render` is the stager that honours them.
-#[allow(clippy::too_many_arguments)]
-fn text_runs(
-    ts: &mut Typesetter,
-    atlases: &[AtlasIndex],
-    origin: (f32, f32),
-    box_width: f32,
-    text: &str,
-    size: f32,
-    color: dashpaint::Color,
-    family: &str,
-    weight: u16,
-) -> Vec<GlyphRun> {
-    let laid = ts.layout_styled(
-        text,
-        size,
-        Some(box_width),
-        TextShape::default(),
-        weight,
-        family,
-    );
-    let mut runs: Vec<GlyphRun> = Vec::new();
-    for line in &laid.lines {
-        for g in &line.glyphs {
-            let atlas = atlases[g.font as usize];
-            let quad = GlyphQuad {
-                glyph_id: g.glyph_id,
-                x: origin.0 + g.x,
-                y: origin.1 + g.y,
-            };
-            match runs.last_mut() {
-                Some(run) if run.atlas == atlas => run.glyphs.push(quad),
-                _ => runs.push(GlyphRun {
-                    atlas,
-                    size,
-                    color,
-                    glyphs: vec![quad],
-                    opacity: 1.0,
-                }),
-            }
-        }
-    }
-    runs
+/// The atlases the staged runs sample, in the cascade's font-slot order —
+/// Noto Sans, Inter, Noto Sans Arabic, exactly as `oracle_typesetter` declares
+/// them, so the slot a shaped glyph carries selects the atlas of the face that
+/// shaped it.
+fn cascade_atlases() -> Vec<Atlas> {
+    vec![
+        load_atlas(ATLAS_ASCII_DIR),
+        load_atlas(ATLAS_INTER_ASCII_DIR),
+        load_atlas(ATLAS_ARABIC_DIR),
+    ]
 }
 
-/// Walks the committed arena and stages glyph runs for every TEXT node — one
-/// or more runs per node, at the node's resolved box origin and wrapped at its
-/// resolved box width. A node is a text leaf exactly when it carries both
-/// authored characters and a text style (`dashscene_engine::text_context`); its
-/// style's `size` and `color` drive the run. Non-text fixtures produce no runs.
-fn stage_text(arena: &Arena, ts: &mut Typesetter, atlases: &[AtlasIndex]) -> Vec<GlyphRun> {
-    fn walk(
-        arena: &Arena,
-        node: NodeId,
-        ts: &mut Typesetter,
-        atlases: &[AtlasIndex],
-        out: &mut Vec<GlyphRun>,
-    ) {
-        if let (Some(text), Some(style)) = (arena.text(node), arena.text_style(node)) {
-            let origin = origin_of(arena, node);
-            let (box_width, _) = size_of(arena, node);
-            out.extend(text_runs(
-                ts,
-                atlases,
-                origin,
-                box_width,
-                text,
-                style.size,
-                style.color,
-                &style.family,
-                style.weight,
-            ));
-        }
-        for &child in arena.children(node) {
-            walk(arena, child, ts, atlases, out);
-        }
-    }
-    let mut out = Vec::new();
-    for &root in arena.roots() {
-        walk(arena, root, ts, atlases, &mut out);
-    }
-    out
-}
-
-/// [`stage_text`] wraps a width-fixed TEXT node at the width the measure seam
+/// The one stager wraps a width-fixed TEXT node at the width the measure seam
 /// sized it against, so the staged glyphs are the lines the solve counted
-/// (issue #306).
+/// (issue #306). Commit asks the same solver for both, so the two cannot
+/// diverge by construction; this pins that they do not.
 ///
 /// No committed frame of this oracle exercises this: every TEXT node in the
 /// seven fixtures hugs both axes, where the solved width is the shaped width
@@ -736,9 +641,9 @@ fn stage_text(arena: &Arena, ts: &mut Typesetter, atlases: &[AtlasIndex]) -> Vec
 /// captured design source, which is a human step (`corpus/figma-fixtures/README.md`)
 /// and cannot be fabricated (G-11).
 ///
-/// With the width dropped, the same node measures as two lines and stages as
-/// one line running past its own box, which is the divergence #306 named. Both
-/// assertions below fail in that state.
+/// With the width dropped from the stager, the same node measures as two lines
+/// and stages as one line running past its own box, which is the divergence
+/// #306 named. Both assertions below fail in that state.
 #[test]
 fn a_width_fixed_text_node_stages_the_lines_the_measure_seam_wrapped() {
     const BOX_WIDTH: f32 = 90.0;
@@ -748,7 +653,7 @@ fn a_width_fixed_text_node_stages_the_lines_the_measure_seam_wrapped() {
     let mut ts = oracle_typesetter();
     let mut arena = Arena::new();
     let label = {
-        let mut solver = TaffySolver::with_typesetter(&mut ts);
+        let mut solver = TaffySolver::with_text(&mut ts, cascade_atlases());
         let mut txn = arena.open();
         let root = txn.add_node(None, Some("frame"));
         txn.set_prop(root, Prop::Width(200.0));
@@ -795,11 +700,7 @@ fn a_width_fixed_text_node_stages_the_lines_the_measure_seam_wrapped() {
     let (solved_w, _) = size_of(&arena, label);
     assert_eq!(solved_w, BOX_WIDTH, "the label keeps its fixed width");
 
-    let mut glyphs = GlyphRunTable::new();
-    let ascii = glyphs.push_atlas(load_atlas(ATLAS_ASCII_DIR));
-    let inter = glyphs.push_atlas(load_atlas(ATLAS_INTER_ASCII_DIR));
-    let arabic = glyphs.push_atlas(load_atlas(ATLAS_ARABIC_DIR));
-    let staged = stage_text(&arena, &mut ts, &[ascii, inter, arabic]);
+    let staged = arena.committed().glyphs().runs();
 
     let quads: Vec<&GlyphQuad> = staged.iter().flat_map(|run| run.glyphs.iter()).collect();
     assert!(!quads.is_empty(), "the label staged glyphs");
@@ -868,18 +769,11 @@ fn render_fixture(name: &str, fixture_json: &str) -> Vec<u8> {
     let mut ts = oracle_typesetter();
     arena
         .open()
-        .commit_with(&mut TaffySolver::with_typesetter(&mut ts));
+        .commit_with(&mut TaffySolver::with_text(&mut ts, cascade_atlases()));
 
     // Stage glyph runs for every TEXT node. The atlases are pushed in the
     // cascade's font order (`[ascii, inter-ascii, arabic]`), so the font index
     // a shaped glyph carries selects its atlas.
-    let mut glyphs = GlyphRunTable::new();
-    let ascii = glyphs.push_atlas(load_atlas(ATLAS_ASCII_DIR));
-    let inter = glyphs.push_atlas(load_atlas(ATLAS_INTER_ASCII_DIR));
-    let arabic = glyphs.push_atlas(load_atlas(ATLAS_ARABIC_DIR));
-    for run in stage_text(&arena, &mut ts, &[ascii, inter, arabic]) {
-        glyphs.push_run(run);
-    }
 
     let scene = arena.committed();
     let root = scene.rects()[0];
@@ -890,7 +784,7 @@ fn render_fixture(name: &str, fixture_json: &str) -> Vec<u8> {
         scene.images(),
         scene.clips(),
         scene.groups(),
-        &glyphs,
+        scene.glyphs(),
         None,
     );
     painter.png_bytes()

@@ -29,7 +29,7 @@
 use std::collections::BTreeMap;
 
 use dashc_wasm::compile_figma;
-use dashpaint::{AtlasIndex, Color, GlyphQuad, GlyphRun, GlyphRunTable, ImageTable, Painter};
+use dashpaint::{Color, GlyphRunTable, ImageTable, Painter};
 use dashscene_core::{Arena, NodeId, load_document};
 use dashscene_engine::TaffySolver;
 use dashscene_skia::SkiaPainter;
@@ -37,7 +37,7 @@ use dashscene_typeset::text::{Font, Typesetter};
 use dashscene_validator::Profile;
 
 mod common;
-use common::{decode_golden, decode_rgba, diff_vs, load_atlas, origin_of};
+use common::{decode_golden, decode_rgba, diff_vs, load_atlas, rect_index_of};
 
 const VARIANT_TOPOLOGY: &str =
     include_str!("../../../corpus/figma-fixtures/lowering-variant-topology.json");
@@ -59,13 +59,28 @@ const INK: Color = Color {
 
 /// The golden's absolute-pixel budget, calibrated for this scene (the #232/#235
 /// lesson: a budget must sit below the inked footprint, or a regression that
-/// erases the content passes). Measured on this scene: the healthy render
-/// matches the committed golden exactly (0 px, same-machine determinism); the
-/// resolved instance's label inks 480 px. 200 px (≈ 0.42× the footprint) leaves
-/// headroom for cross-machine MSDF edge jitter along the label's glyph edges —
-/// the same per-pixel jitter budget the 14px v0.7 text golden uses — while
-/// staying well under that footprint, so dropping the label fails by a 280 px
-/// margin, proven by `dropping_the_instance_label_exceeds_the_budget`.
+/// erases the content passes). Re-measured on this scene after story #542: the
+/// healthy render matches the committed golden exactly (0 px, same-machine
+/// determinism); the resolved instance's label inks **593 px**. 200 px
+/// (≈ 0.34× the footprint) leaves headroom for cross-machine MSDF edge jitter
+/// along the label's glyph edges — the same per-pixel jitter budget the 14px
+/// v0.7 text golden uses — while staying well under that footprint, so dropping
+/// the label fails by a 393 px margin, proven by
+/// `dropping_the_instance_label_exceeds_the_budget`.
+///
+/// The footprint grew from 480 px because the golden itself was re-recorded in
+/// story #542, and the budget is deliberately left where it was: the change
+/// widened the margin rather than narrowing it, so no recalibration is owed.
+///
+/// **Why the golden moved.** Until #542 this file staged the label itself, with
+/// `ts.layout(TEXT, TEXT_SIZE, None)` — no wrap width. The instance container
+/// solves to a fixed 100 px, so the label's own box measures 62.09 x 38.136:
+/// two lines. The old staging drew one 102 px line from x = 16, which ran off
+/// the 100 px canvas and was clipped at its right edge. The committed image
+/// pinned that, even though the production `.dsb` render path
+/// (`goldens::render`) already wrapped at the solved width and would never have
+/// produced it. Commit is now the one producer, so the picture is the two-line
+/// label the solve measured, ending inside the box.
 const BUDGET: usize = 200;
 
 fn typesetter() -> Typesetter {
@@ -88,36 +103,14 @@ fn lower_and_solve(ts: &mut Typesetter) -> (Arena, NodeId) {
     load_document(&document, &payloads, &mut arena);
     // `load_document` commits with the fixed solver, which measures a text node
     // to zero; an empty transaction re-committed through a typesetter-backed
-    // solver performs a full solve with the measure seam.
+    // solver performs a full solve with the measure seam, and — since the solver
+    // carries the atlas — stages the label's glyph runs in the same commit.
     {
-        let mut solver = TaffySolver::with_typesetter(ts);
+        let mut solver = TaffySolver::with_text(ts, vec![load_atlas(ATLAS_DIR)]);
         arena.open().commit_with(&mut solver);
     }
     let text = find_text(&arena, TEXT);
     (arena, text)
-}
-
-/// Shapes `text` and places every glyph in absolute document space by adding the
-/// node's resolved box origin (the painter moves nothing, P2).
-fn text_run(ts: &mut Typesetter, atlas: AtlasIndex, origin: (f32, f32)) -> GlyphRun {
-    let laid = ts.layout(TEXT, TEXT_SIZE, None);
-    let glyphs = laid
-        .lines
-        .iter()
-        .flat_map(|line| &line.glyphs)
-        .map(|g| GlyphQuad {
-            glyph_id: g.glyph_id,
-            x: origin.0 + g.x,
-            y: origin.1 + g.y,
-        })
-        .collect();
-    GlyphRun {
-        atlas,
-        size: TEXT_SIZE,
-        color: INK,
-        glyphs,
-        opacity: 1.0,
-    }
 }
 
 #[test]
@@ -133,11 +126,15 @@ fn the_resolved_instance_solves_and_paints_to_its_golden() {
         "the instance is the one document root; the definitions do not paint",
     );
 
-    let mut glyphs = GlyphRunTable::new();
-    let atlas = glyphs.push_atlas(load_atlas(ATLAS_DIR));
-    glyphs.push_run(text_run(&mut ts, atlas, origin_of(&arena, text)));
+    // The label's run comes from the commit, so its anchor, size and ink are
+    // what the resolved instance actually lowered to.
+    let runs = arena.committed().glyphs().runs();
+    assert_eq!(runs.len(), 1, "the resolved instance has one text leaf");
+    assert_eq!(runs[0].rect, rect_index_of(&arena, text));
+    assert_eq!(runs[0].size, TEXT_SIZE);
+    assert_eq!(runs[0].color, INK);
 
-    let png = render(&arena, &glyphs);
+    let png = render(&arena, arena.committed().glyphs());
     goldens::assert_matches_golden_max_pixels("v07-variant-topology", &png, BUDGET);
 }
 

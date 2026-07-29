@@ -287,21 +287,35 @@ job (`.github/workflows/ci.yml`) re-runs the suite with `--nocapture` so
 the measured per-frame numbers show in the log, and is wired into the `ci`
 aggregate `needs`.
 
-The oracle's own text stager (`stage_text`) wraps each TEXT node at the
-node's solved box width — the width the measure seam sized it against —
-rather than at no width at all (issue #233's sibling, issue #306). Staging
-at no width would let a width-fixed node be measured as N lines and staged
-as one overflowing line. No committed frame shows the difference: every
-TEXT node in the seven fixtures hugs both axes, where the solved width is
-the shaped width, and the change moved none of the seven measured numbers.
-The seam is pinned instead by
+The oracle has **no text stager of its own** (story #542). It commits
+through `TaffySolver::with_text`, so its glyph runs are the committed
+scene's own — the one producer every other render path uses
+(`docs/decisions/glyph-runs-cross-boundary-b.md`, "The producer story,
+decided"). Measure and paint cannot diverge inside the instrument that
+judges fidelity, because one commit does both.
+
+That closed two divergences this file previously recorded. Runs now wrap at
+the node's solved box width rather than at no width at all (issue #306):
+staging at no width lets a width-fixed node be measured as N lines and
+staged as one overflowing line. And the oracle no longer stages under
+`TextShape::default()` while `goldens::render` staged under the node's
+lowered axes — there is one policy, the lowered one, which is also what the
+measure callback already used.
+
+Neither move cost a re-baseline: **all seven frames hold their residual to
+three decimals**, because every TEXT node in the seven fixtures hugs both
+axes and authors `INTRINSIC_%` line height, zero letter spacing, and
+LEFT/TOP alignment — so its lowered axes already _are_ the defaults and its
+solved width already _is_ its shaped width. A future fixture authoring a
+fixed line height, letter spacing, a non-Top vertical alignment, or a
+width-fixed wrapping frame would move its frame, and that is the point at
+which the cost would have appeared had it not been taken here.
+
+The width-fixed case is pinned by
 `a_width_fixed_text_node_stages_the_lines_the_measure_seam_wrapped`, on a
 scene authored directly against `dashscene-core`, because a width-fixed
 wrapping Figma frame would need a hand-authored file and a captured design
-source, which G-11 does not allow to be fabricated. The remaining text axes
-(line height, letter spacing, alignment) still stay at their defaults in
-this oracle; `goldens::render` is the stager that honours them, and it is
-what the import-fidelity oracle below renders through.
+source, which G-11 does not allow to be fabricated.
 
 All seven frames are measured today, each within its band. `v08-grid-spans` declares no
 exclusion: with the text render path wired (#303) its `hug me` TEXT leaf sizes to

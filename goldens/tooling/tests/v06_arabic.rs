@@ -29,7 +29,7 @@
 
 use std::collections::BTreeSet;
 
-use dashpaint::{AtlasIndex, Color, GlyphQuad, GlyphRun, GlyphRunTable, ImageTable, Painter};
+use dashpaint::{GlyphRunTable, ImageTable, Painter};
 use dashscene_core::{Arena, AxisSizing, LayoutMode, NodeId, Prop};
 use dashscene_engine::TaffySolver;
 use dashscene_skia::SkiaPainter;
@@ -39,8 +39,8 @@ use dashscene_typeset::text::{Font, Typesetter};
 mod common;
 
 use common::{
-    AMBER, INK, NAVY, NEAR_WHITE, PANEL, decode_golden, diff_vs, load_atlas, origin_of, size_of,
-    text_style,
+    AMBER, INK, NAVY, NEAR_WHITE, PANEL, decode_golden, diff_vs, load_atlas, origin_of,
+    rect_index_of, runs_anchored_to, size_of, text_style,
 };
 
 const FONT: &str = concat!(
@@ -147,47 +147,18 @@ impl Run {
     }
 }
 
-/// Shapes `text` at `size` within `max_width` and places every glyph in
-/// absolute document space by adding the node's resolved box origin. For
-/// a fixed-width RTL box `max_width` is the box width, so the paragraph's
-/// flush-right shift is already in each glyph's `x` when it crosses
-/// boundary B; the painter never moves anything (P2).
-fn text_run(
-    ts: &mut Typesetter,
-    atlas: AtlasIndex,
-    origin: (f32, f32),
-    text: &str,
-    size: f32,
-    color: Color,
-    max_width: Option<f32>,
-) -> GlyphRun {
-    let laid = ts.layout(text, size, max_width);
-    let mut glyphs = Vec::new();
-    for line in &laid.lines {
-        for g in &line.glyphs {
-            glyphs.push(GlyphQuad {
-                glyph_id: g.glyph_id,
-                x: origin.0 + g.x,
-                y: origin.1 + g.y,
-            });
-        }
-    }
-    GlyphRun {
-        atlas,
-        size,
-        color,
-        glyphs,
-        opacity: 1.0,
-    }
-}
-
 /// Authors the Arabic screen and commits it through the one typesetter,
 /// returning the arena and the three text nodes. Shared by the golden and
 /// the layout guard so both pin the same scene.
+///
+/// The commit measures and stages in one pass, so each node's paragraph is
+/// laid out within the box the same commit solved: the banner's fixed width
+/// is the wrap width that puts its right-to-left paragraph flush-right, and
+/// the hug nodes wrap at their own shaped width, which is one line.
 fn author_scene(ts: &mut Typesetter) -> (Arena, NodeId, NodeId, NodeId) {
     let mut arena = Arena::new();
     let nodes = {
-        let mut solver = TaffySolver::with_typesetter(ts);
+        let mut solver = TaffySolver::with_text(ts, vec![load_atlas(ATLAS_DIR)]);
         let mut txn = arena.open();
 
         // A 340x210 navy backdrop; children place by their authored
@@ -266,49 +237,18 @@ fn author_scene(ts: &mut Typesetter) -> (Arena, NodeId, NodeId, NodeId) {
     (arena, nodes.0, nodes.1, nodes.2)
 }
 
-/// Stages the scene's three glyph runs at boundary B, omitting the one
-/// named by `skip`. Omitting one is what the sensitivity guard renders;
-/// the golden keeps all three.
-///
-/// The banner passes its fixed box width as the wrap width, so its
-/// paragraph is flush-right; the hug nodes pass `None` (one line at the
-/// shaped natural width).
-fn staged(
-    ts: &mut Typesetter,
-    arena: &Arena,
-    nodes: (NodeId, NodeId, NodeId),
-    skip: Option<Run>,
-) -> GlyphRunTable {
+/// The scene's committed glyph runs, omitting the one named by `skip`.
+/// Omitting one is what the sensitivity guard renders; the golden keeps all
+/// three. The runs are filtered out of the one staged table by anchor, so a
+/// dropped run is exactly the run the golden would otherwise have drawn.
+fn staged(arena: &Arena, nodes: (NodeId, NodeId, NodeId), skip: Option<Run>) -> GlyphRunTable {
     let (banner, word, chip) = nodes;
-    let mut glyphs = GlyphRunTable::new();
-    let atlas = glyphs.push_atlas(load_atlas(ATLAS_DIR));
-    let runs = [
-        (
-            Run::Banner,
-            banner,
-            BANNER,
-            BANNER_SIZE,
-            NEAR_WHITE,
-            Some(BANNER_WIDTH),
-        ),
-        (Run::Word, word, HARAKAT_WORD, WORD_SIZE, NEAR_WHITE, None),
-        (Run::Chip, chip, SPEED, SPEED_SIZE, INK, None),
-    ];
-    for (which, node, text, size, color, max_width) in runs {
-        if skip == Some(which) {
-            continue;
-        }
-        glyphs.push_run(text_run(
-            ts,
-            atlas,
-            origin_of(arena, node),
-            text,
-            size,
-            color,
-            max_width,
-        ));
-    }
-    glyphs
+    let keep: Vec<u32> = [(Run::Banner, banner), (Run::Word, word), (Run::Chip, chip)]
+        .into_iter()
+        .filter(|(which, _)| skip != Some(*which))
+        .map(|(_, node)| rect_index_of(arena, node))
+        .collect();
+    runs_anchored_to(arena.committed().glyphs(), &keep)
 }
 
 /// Paints the committed scene with `glyphs` and returns the PNG bytes.
@@ -335,7 +275,7 @@ fn arabic_screen_matches_its_golden() {
     let mut ts = Typesetter::new(font);
     let (arena, banner, word, chip) = author_scene(&mut ts);
 
-    let glyphs = staged(&mut ts, &arena, (banner, word, chip), None);
+    let glyphs = staged(&arena, (banner, word, chip), None);
     let png = render(&arena, &glyphs);
 
     // Sparse text on a large canvas, so an absolute-pixel budget — not a
@@ -368,7 +308,7 @@ fn dropping_any_string_exceeds_the_budget() {
     let golden = decode_golden("v06-text-arabic");
 
     for which in [Run::Banner, Run::Word, Run::Chip] {
-        let glyphs = staged(&mut ts, &arena, (banner, word, chip), Some(which));
+        let glyphs = staged(&arena, (banner, word, chip), Some(which));
         let differed = diff_vs(&golden, &common::decode_rgba(&render(&arena, &glyphs)));
         assert!(
             differed > BUDGET,

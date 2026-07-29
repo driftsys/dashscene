@@ -72,6 +72,17 @@ packer, which publishes after everything here
   never moves anything (P2). The atlas is a plain mirror of the
   `dashscene-typeset` metrics blob, so `dashpaint` still depends on no
   crate.
+
+  Each run carries `rect: u32`, the rect-table index of the text node it
+  was shaped from — its **anchor**, stamped by `dashscene-core`'s commit
+  (story #542). One field carries three facts a painter cannot otherwise
+  recover: the run's clip is `rects[run.rect].clip`, its group membership
+  is the `GroupComposite` whose range contains `run.rect`, and its z
+  position is immediately after that rect. Like `RectEntry::paint` and
+  `RectEntry::clip`, it resolves only against the rect table of the commit
+  it came from. The table's atlases are held behind an `Arc`, because
+  commit rebuilds the runs every frame while the atlas set behind them does
+  not change.
 - Solid-fill color is 4×f32 RGBA — the same shape as `dashbuf`'s `Color`
   struct (`crates/dashbuf/schema/dashbuf.fbs`), reproduced here as a
   plain type rather than shared by dependency.

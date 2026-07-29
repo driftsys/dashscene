@@ -23,6 +23,8 @@
 
 pub mod image_id;
 
+use std::sync::Arc;
+
 /// An RGBA color, 4×f32 — the same shape as `dashbuf`'s `Color` struct.
 ///
 /// `#[repr(C)]` fixes the layout now: solid-fill colors are per-frame
@@ -779,6 +781,22 @@ impl Atlas {
 /// the v0.5 Latin subset — `docs/design/architecture.md` §7.2).
 #[derive(Debug, Clone, PartialEq)]
 pub struct GlyphRun {
+    /// The rect-table index of the text node this run was shaped from —
+    /// the run's *anchor*, stamped by commit
+    /// (`docs/decisions/glyph-runs-cross-boundary-b.md`, "The producer
+    /// story, decided").
+    ///
+    /// One field carries three facts a painter cannot otherwise recover:
+    /// the run's clip is `rects[run.rect].clip`, its group membership is
+    /// the [`GroupComposite`] whose `[start, end)` range contains
+    /// `run.rect`, and its z position is immediately after that rect. A
+    /// separate clip index mirroring [`RectEntry::clip`] was considered
+    /// and rejected: it is derivable, and two fields can disagree.
+    ///
+    /// Like [`RectEntry::paint`] and [`RectEntry::clip`], this is
+    /// meaningful only against the rect table of the commit it came from
+    /// — never cached across commits.
+    pub rect: u32,
     /// The atlas the glyphs are sampled from.
     pub atlas: AtlasIndex,
     /// Render size in document units (px per em).
@@ -811,9 +829,16 @@ pub struct GlyphRun {
 /// (P2). The atlases are carried with the runs because a run's glyph ids
 /// are meaningless without the atlas that places them, the same way an
 /// image fill needs its [`ImageTable`] entry.
+///
+/// The atlases are held behind an [`Arc`] because commit rebuilds this
+/// table every frame while the atlas set behind it is a build artifact
+/// that does not change: the eight atlases the goldens harness loads are
+/// about 460 KB together, and copying them per commit would be per-frame
+/// cost that R-T4 bounds to the dirty-range upload and submission. The
+/// same posture `CommittedScene` takes with its paint and clip tables.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct GlyphRunTable {
-    atlases: Vec<Atlas>,
+    atlases: Arc<Vec<Atlas>>,
     runs: Vec<GlyphRun>,
 }
 
@@ -823,12 +848,26 @@ impl GlyphRunTable {
         Self::default()
     }
 
+    /// A table over an existing atlas set, sharing it rather than copying
+    /// it — how commit builds the table from the atlases its solver
+    /// supplies once.
+    pub fn with_atlases(atlases: Arc<Vec<Atlas>>) -> Self {
+        Self {
+            atlases,
+            runs: Vec::new(),
+        }
+    }
+
     /// Appends an atlas and returns its index — the value a
     /// [`GlyphRun::atlas`] field holds to reference it.
+    ///
+    /// Copies the atlas set first when it is shared with another table
+    /// ([`Arc::make_mut`]), so a caller building a table by hand is
+    /// unaffected by the sharing.
     pub fn push_atlas(&mut self, atlas: Atlas) -> AtlasIndex {
-        let index =
-            u32::try_from(self.atlases.len()).expect("glyph-run table exceeds u32::MAX atlases");
-        self.atlases.push(atlas);
+        let atlases = Arc::make_mut(&mut self.atlases);
+        let index = u32::try_from(atlases.len()).expect("glyph-run table exceeds u32::MAX atlases");
+        atlases.push(atlas);
         AtlasIndex(index)
     }
 
@@ -859,7 +898,7 @@ impl GlyphRunTable {
     /// painter can prepare each atlas (decode, upload) once, rather than
     /// once per run that samples it.
     pub fn atlases(&self) -> &[Atlas] {
-        &self.atlases
+        self.atlases.as_slice()
     }
 
     /// True when the table carries no runs.

@@ -309,7 +309,9 @@ The typesetter is passed in, never constructed here.
 `TaffySolver::with_typesetter(&mut Typesetter)` borrows the caller's
 single `Typesetter` for the solve; `TaffySolver::new()` carries none —
 the text-free path, and what every non-text solve and the fixed-commit
-equivalence tests use. The borrow is the single-source discipline:
+equivalence tests use.
+`TaffySolver::with_text(&mut Typesetter, Vec<Atlas>)` is the third form:
+it measures text _and_ stages it (see "The one text stager" below). The borrow is the single-source discipline:
 layout measures text against the same shaped-run cache the painter
 reads at paint time (#30), so the two cannot disagree about a glyph's
 size (P2 — one typesetter). The shaped-run cache stores font-unit,
@@ -317,6 +319,34 @@ unpositioned runs keyed by paragraph text within one shaping posture
 (`docs/decisions/shaped-run-cache-font-units.md`), so one entry serves
 every render size and re-measuring unchanged text costs a lookup, not a
 re-shape.
+
+### The one text stager
+
+`TaffySolver` also implements the text half of the solver seam — the two
+defaulted `LayoutSolver` methods `atlases` and `stage_text` (story #542,
+`docs/decisions/glyph-runs-cross-boundary-b.md`). Commit asks it for every
+text node's placed glyphs exactly as it asks for every node's rect, and
+stamps each returned run with its node's rect index. This crate is the
+right home for the same reason it is the right home for the measure
+callback: it is the one crate holding both `dashscene-core` and
+`dashscene-typeset`, and it already borrows the caller's `Typesetter`.
+
+Staging lays each node out under its **lowered text axes** — the same
+`text_shape(style)` the measure callback uses — within the box _this_
+commit solved, and offsets the block by the vertical alignment's share of
+the box's free space. Measure and paint therefore agree by construction:
+one typesetter, one axis policy, one commit. The `geometry` closure commit
+supplies is what makes "this commit's box" available; a stager reading
+`Arena::committed()` would place glyphs at the previous front buffer's
+boxes.
+
+`with_text` takes the atlases in the cascade's font-slot order, because a
+shaped glyph carries the slot of the face that shaped it and that slot
+indexes the list directly. A solver built with `with_typesetter` carries no
+atlases and therefore stages nothing — it measures text without painting
+it, which is what a caller wanting layout alone asks for. Runs are re-staged
+in full on every commit; the measured cost is about 1.5 µs per text node,
+and the decision record carries the sweep behind that figure.
 
 The `TextContext` owns its text so the Taffy tree can outlive the arena
 borrow. Shaping itself is not repeated across solves, because the cache

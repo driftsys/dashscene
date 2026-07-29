@@ -26,7 +26,7 @@
 
 use std::collections::BTreeSet;
 
-use dashpaint::{AtlasIndex, Color, GlyphQuad, GlyphRun, GlyphRunTable, ImageTable, Painter};
+use dashpaint::{Atlas, AtlasIndex, GlyphRunTable, ImageTable, Painter};
 use dashscene_core::{
     Arena, AxisSizing, LayoutMode, NodeId, Prop, TextAlign, TextAlignV, TextStyle,
 };
@@ -36,7 +36,7 @@ use dashscene_typeset::text::{Font, Typesetter};
 
 mod common;
 
-use common::{NAVY, NEAR_WHITE, decode_golden, diff_vs, load_atlas, origin_of};
+use common::{NAVY, NEAR_WHITE, decode_golden, diff_vs, load_atlas, rect_index_of, runs_where};
 
 const FONT_ARABIC: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -78,54 +78,28 @@ const LABEL_SIZE: f32 = 34.0;
 /// scene's own 714-px smaller segment, which is unchanged.
 const BUDGET: usize = 500;
 
-/// Stages `text` at `size` as one or more glyph runs, splitting where the
-/// cascade switched fonts so each run samples the atlas of its own font.
-/// The font index a glyph carries indexes `atlases` (built in font-list
-/// order), so font 0 samples the primary atlas and font 1 the fallback.
-/// Positions cross boundary B already absolute (P2): the node's box origin
-/// is added here, the painter moves nothing.
-fn text_runs(
-    ts: &mut Typesetter,
-    atlases: &[AtlasIndex],
-    origin: (f32, f32),
-    text: &str,
-    size: f32,
-    color: Color,
-) -> Vec<GlyphRun> {
-    let laid = ts.layout(text, size, None);
-    let mut runs: Vec<GlyphRun> = Vec::new();
-    for line in &laid.lines {
-        for g in &line.glyphs {
-            let atlas = atlases[g.font as usize];
-            let quad = GlyphQuad {
-                glyph_id: g.glyph_id,
-                x: origin.0 + g.x,
-                y: origin.1 + g.y,
-            };
-            match runs.last_mut() {
-                // Consecutive glyphs of the same font extend the run;
-                // a font switch starts a new run against the other atlas.
-                Some(run) if run.atlas == atlas => run.glyphs.push(quad),
-                _ => runs.push(GlyphRun {
-                    atlas,
-                    size,
-                    color,
-                    glyphs: vec![quad],
-                    opacity: 1.0,
-                }),
-            }
-        }
-    }
-    runs
+/// The atlas each font of the cascade samples, in font-list order — the
+/// Arabic primary at index 0, the Latin fallback at index 1, matching
+/// `typesetter`'s own font list. The slot a shaped glyph carries indexes
+/// this list, so a run's atlas names the face that actually shaped it.
+const ARABIC: AtlasIndex = AtlasIndex(0);
+const LATIN: AtlasIndex = AtlasIndex(1);
+
+fn cascade_atlases() -> Vec<Atlas> {
+    vec![load_atlas(ATLAS_ARABIC_DIR), load_atlas(ATLAS_ASCII_DIR)]
 }
 
 /// Authors the mixed-script scene and commits it through the multi-font
 /// typesetter, returning the arena and the text node. Shared by the golden
 /// and the staging guard so both pin the same scene.
+///
+/// The commit both measures the hug box and stages the label's glyph runs,
+/// splitting a run wherever the cascade switched fonts, so the runs the
+/// golden draws are the committed scene's own.
 fn author_scene(ts: &mut Typesetter) -> (Arena, NodeId) {
     let mut arena = Arena::new();
     let label = {
-        let mut solver = TaffySolver::with_typesetter(ts);
+        let mut solver = TaffySolver::with_text(ts, cascade_atlases());
         let mut txn = arena.open();
 
         // A 360x96 navy backdrop; children place by their authored offset.
@@ -177,25 +151,10 @@ fn typesetter() -> Typesetter {
 #[test]
 fn mixed_script_fallback_matches_its_golden() {
     let mut ts = typesetter();
-    let (arena, label) = author_scene(&mut ts);
-
-    // Stage the two atlases in font-list order: the Arabic primary at
-    // index 0, the Latin fallback at index 1.
-    let mut glyphs = GlyphRunTable::new();
-    let arabic = glyphs.push_atlas(load_atlas(ATLAS_ARABIC_DIR));
-    let latin = glyphs.push_atlas(load_atlas(ATLAS_ASCII_DIR));
-    for run in text_runs(
-        &mut ts,
-        &[arabic, latin],
-        origin_of(&arena, label),
-        LABEL,
-        LABEL_SIZE,
-        NEAR_WHITE,
-    ) {
-        glyphs.push_run(run);
-    }
+    let (arena, _label) = author_scene(&mut ts);
 
     let scene = arena.committed();
+    let glyphs = scene.glyphs();
     let root = scene.rects()[0];
     let mut painter = SkiaPainter::new(root.w as i32, root.h as i32);
     painter.paint(
@@ -204,7 +163,7 @@ fn mixed_script_fallback_matches_its_golden() {
         &ImageTable::new(),
         scene.clips(),
         scene.groups(),
-        &glyphs,
+        glyphs,
         None,
     );
 
@@ -230,25 +189,24 @@ fn the_label_cascades_across_both_atlases() {
     let mut ts = typesetter();
     let (arena, label) = author_scene(&mut ts);
 
-    let mut glyphs = GlyphRunTable::new();
-    let arabic = glyphs.push_atlas(load_atlas(ATLAS_ARABIC_DIR));
-    let latin = glyphs.push_atlas(load_atlas(ATLAS_ASCII_DIR));
-    let runs = text_runs(
-        &mut ts,
-        &[arabic, latin],
-        origin_of(&arena, label),
-        LABEL,
-        LABEL_SIZE,
-        NEAR_WHITE,
+    let scene = arena.committed();
+    let runs = scene.glyphs().runs();
+
+    // Every run belongs to the one text node, so the cascade split the label
+    // rather than the walk picking up something else.
+    let anchor = rect_index_of(&arena, label);
+    assert!(
+        runs.iter().all(|r| r.rect == anchor),
+        "every run is anchored to the label"
     );
 
     // Both atlases are referenced — the label did not collapse to one font.
     assert!(
-        runs.iter().any(|r| r.atlas == arabic),
+        runs.iter().any(|r| r.atlas == ARABIC),
         "the Arabic word and numerals must sample the primary atlas"
     );
     assert!(
-        runs.iter().any(|r| r.atlas == latin),
+        runs.iter().any(|r| r.atlas == LATIN),
         "the Latin unit must sample the fallback atlas"
     );
 
@@ -259,8 +217,8 @@ fn the_label_cascades_across_both_atlases() {
     // "covered".
     let arabic_covered = atlas_glyph_ids(ATLAS_ARABIC_DIR);
     let ascii_covered = atlas_glyph_ids(ATLAS_ASCII_DIR);
-    for run in &runs {
-        let covered = if run.atlas == arabic {
+    for run in runs {
+        let covered = if run.atlas == ARABIC {
             &arabic_covered
         } else {
             &ascii_covered
@@ -297,35 +255,18 @@ fn atlas_glyph_ids(dir: &str) -> BTreeSet<u16> {
 #[test]
 fn dropping_either_fonts_runs_exceeds_the_budget() {
     let mut ts = typesetter();
-    let (arena, label) = author_scene(&mut ts);
+    let (arena, _label) = author_scene(&mut ts);
     let scene = arena.committed();
     let root = scene.rects()[0];
     let (w, h) = (root.w as i32, root.h as i32);
     let golden = decode_golden("v07-text-fallback");
 
-    let staged = |ts: &mut Typesetter, keep_fallback: bool| {
-        let mut g = GlyphRunTable::new();
-        let arabic = g.push_atlas(load_atlas(ATLAS_ARABIC_DIR));
-        let latin = g.push_atlas(load_atlas(ATLAS_ASCII_DIR));
-        for run in text_runs(
-            ts,
-            &[arabic, latin],
-            origin_of(&arena, label),
-            LABEL,
-            LABEL_SIZE,
-            NEAR_WHITE,
-        ) {
-            // Drop the fallback (Latin) runs, or drop the primary (Arabic).
-            let is_fallback = run.atlas == latin;
-            if is_fallback == keep_fallback {
-                g.push_run(run);
-            }
-        }
-        g
-    };
+    // Keep one font's runs out of the scene's own staged table, so the broken
+    // render differs from the golden by exactly that font's ink.
+    let only = |atlas| runs_where(scene.glyphs(), |run| run.atlas == atlas);
 
-    let no_arabic = diff_vs(&golden, &render_rgba(&staged(&mut ts, true), w, h, scene));
-    let no_latin = diff_vs(&golden, &render_rgba(&staged(&mut ts, false), w, h, scene));
+    let no_arabic = diff_vs(&golden, &render_rgba(&only(LATIN), w, h, scene));
+    let no_latin = diff_vs(&golden, &render_rgba(&only(ARABIC), w, h, scene));
     assert!(
         no_arabic > BUDGET,
         "dropping the Arabic segment must exceed the {BUDGET}px budget, differed by {no_arabic}"

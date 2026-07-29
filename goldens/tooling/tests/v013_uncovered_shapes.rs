@@ -26,9 +26,7 @@
 //! third renders a deliberately broken twin and asserts the differing-pixel
 //! count sits far above the golden's budget.
 
-use dashpaint::{
-    Color, GlyphQuad, GlyphRun, GlyphRunTable, ImageTable, Painter, Shadow, ShadowKind, Vec2,
-};
+use dashpaint::{Color, GlyphRunTable, ImageTable, Painter, Shadow, ShadowKind, Vec2};
 use dashscene_core::{
     Arena, AxisSizing, CrossAxisAlign, LayoutMode, NodeId, Prop, TextAlign, TextAlignV, TextStyle,
     Txn,
@@ -279,7 +277,7 @@ fn baseline_hug_cross_scene(
     arena: &mut Arena,
     typesetter: &mut Typesetter,
 ) -> (NodeId, NodeId, NodeId, NodeId) {
-    let mut solver = TaffySolver::with_typesetter(typesetter);
+    let mut solver = TaffySolver::with_text(typesetter, vec![load_atlas(ATLAS_DIR)]);
     let mut txn = arena.open();
 
     let column = txn.add_node(None, Some("column"));
@@ -334,33 +332,6 @@ fn baseline_hug_cross_scene(
 
     txn.commit_with(&mut solver);
     (row, run, stretched, follower)
-}
-
-/// Stages the scene's one glyph run at boundary B, at the box origin the
-/// solve resolved — the painter never moves anything (P2).
-fn baseline_glyphs(arena: &Arena, typesetter: &mut Typesetter, run: NodeId) -> GlyphRunTable {
-    let mut table = GlyphRunTable::new();
-    let atlas = table.push_atlas(load_atlas(ATLAS_DIR));
-    let (x, y, _, _) = rect_of(arena, run);
-    let laid = typesetter.layout(RUN, RUN_SIZE, None);
-    let mut glyphs = Vec::new();
-    for line in &laid.lines {
-        for g in &line.glyphs {
-            glyphs.push(GlyphQuad {
-                glyph_id: g.glyph_id,
-                x: x + g.x,
-                y: y + g.y,
-            });
-        }
-    }
-    table.push_run(GlyphRun {
-        atlas,
-        size: RUN_SIZE,
-        color: NEAR_WHITE,
-        glyphs,
-        opacity: 1.0,
-    });
-    table
 }
 
 #[test]
@@ -421,8 +392,8 @@ fn a_hug_cross_baseline_row_with_text_matches_its_golden() {
         "the follower starts where the corrected row ends",
     );
 
-    let glyphs = baseline_glyphs(&arena, &mut ts, run);
-    let png = render(&arena, &glyphs);
+    let glyphs = arena.committed().glyphs();
+    let png = render(&arena, glyphs);
 
     // The canvas is the column's own hug height, so reverting #322 renders a
     // shorter image and the golden fails on its dimension check — before any

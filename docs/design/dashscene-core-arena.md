@@ -166,6 +166,20 @@ data (P1 — boundary B gains positioned glyph runs at #28/#30). A
 text-only change therefore produces no dirty entry — there is nothing
 in `CommittedScene` for a text edit to change.
 
+**Superseded by story #542.** Both halves of that last paragraph are now
+false, and deliberately so. `CommittedScene` carries a `GlyphRunTable`
+(`glyphs()`), produced at commit through two defaulted `LayoutSolver`
+methods — `atlases` and `stage_text` — and each run is stamped with the
+rect index of the text node it was shaped from. P1 still holds: a run is
+committed _output_, the same category as a `RectEntry`, and appears
+nowhere in the `.dsb`. A text-only change now does produce a dirty entry:
+commit compares this commit's staged runs against the previous commit's
+per anchor and dirties any anchor whose runs differ, because a string that
+changes inside an unchanged box leaves the rect entry bits identical and
+would otherwise leave a retained painter drawing stale glyphs. The seam,
+the anchor field, and the measured consequences are
+`docs/decisions/glyph-runs-cross-boundary-b.md`.
+
 Interning styles into a committed style table at commit time (the
 paint-pool precedent — see "Commit resolution pipeline" below) was
 considered and deferred, not rejected outright: no consumer exists
