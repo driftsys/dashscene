@@ -11,32 +11,22 @@ project's convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports ten files
+## Why the WIP gate currently reports eight files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-ten and exits non-zero. All ten are deliberate, accepted exceptions rather
+eight and exits non-zero. All eight are deliberate, accepted exceptions rather
 than ungardened debt, and they are recorded here so the gate's result is
 explained rather than merely tolerated.
 
-Seven are design captures, described below. **One is a design spike** —
-`2026-07-27-glyph-runs-from-commit-SPIKE.md`, which answers whether glyph runs
-should become a commit output (issue #505) and carries the measured feasibility
-work behind that answer. It is **partly gardened** — the answer has landed as a
-decision record, the design behind it has not been built — and the paragraph
-below says which half is which.
-**One is a driver prompt**, the brief
-a session is handed to carry out a named piece of work. Driver prompts are
+Seven are design captures, described below. **One is a driver prompt**, the
+brief a session is handed to carry out a named piece of work. Driver prompts are
 transient by construction — spent the moment their work lands — and the
 convention is to archive them verbatim rather than garden them into records, as
-the eight now in `docs/archive/` were.
+the ten now in `docs/archive/` were.
 
 - `2026-07-27-t2-checks-that-cannot-fail-DRIVER-PROMPT.md` — v0.13's
   `t2-check-has-no-teeth` tier, 19 items whose common property is an assertion
   that cannot distinguish right from wrong.
-- `2026-07-29-glyph-runs-from-commit-DRIVER-PROMPT.md` — story #542 and the two
-  issues it unblocks, written against a measured golden-movement bound: six
-  text-bearing goldens with per-frame ceilings, and 27 of 33 that must not move
-  at all.
 
 It is archived when its work lands.
 
@@ -96,25 +86,26 @@ sigma-retune decision is blocked on, and #412 stays blocked until the question
 settles, so the file is not archived, only made easier to find. The other half
 of **#424**.
 
-The design spike, `2026-07-27-glyph-runs-from-commit-SPIKE.md`, is **partly
-gardened** for the same reason, and it is the case where the distinction has to
-be drawn most carefully. Its decided half landed on 2026-07-28:
-`dashscene-core`'s commit becomes the producer of the glyph-run table, and that
-choice, its reasoning, the rejected caller-side alternative and the obligations
-it carries are now in `docs/decisions/glyph-runs-cross-boundary-b.md` under "The
-producer story, decided", which is their authority. What stays here is the
-design that record does not contain — the seam's shape, what a run carries, the
-ordering rule, the dirty-set change, the per-frame cost question, the migration
-count, and the five open questions for the owner. None of it is built: no crate
-has changed and the implementing story does not exist yet, so promoting §3 into
-`docs/design/` now would put a plan there describing a system that does not
-exist. This entry previously read "archived when the design lands or is
-rejected". A decision landing and a design being built are two events, and it is
-the second that empties this file.
+The glyph-run design spike is **no longer here**, and the reason is the
+distinction this section draws throughout. It was partly gardened from
+2026-07-28, when its decided half became
+`docs/decisions/glyph-runs-cross-boundary-b.md`; the design it also carried —
+the seam's shape, what a run carries, the ordering rule, the dirty-set change,
+the per-frame cost question and the migration count — stayed, because a
+decision landing and a design being **built** are two events and only the
+second empties the file. The second happened on 2026-07-29: story #542 built
+the commit-time seam and the anchor field, issue #275 the clipping and
+issue #274 the z-interleave, and the as-built records now carry all of it
+(`docs/design/dashscene-engine.md`, `docs/design/dashscene-skia.md`,
+`docs/design/dashpaint.md`, `docs/design/dashscene-core-arena.md`, and the
+decision record's two resolution sections). Both it and the driver prompt that
+carried out its design are archived verbatim in `docs/archive/`.
 
-The two driver prompts are listed at the top of this section rather than here.
-The most recent one archived was `2026-07-27-v013-open-DRIVER-PROMPT.md`, when
-the v0.13 plan revision landed.
+The driver prompt still here is listed at the top of this section rather than
+here. The most recent ones archived were
+`2026-07-27-glyph-runs-from-commit-SPIKE.md` and
+`2026-07-29-glyph-runs-from-commit-DRIVER-PROMPT.md`, when the glyph-run
+producer chain landed.
 
 | capture                                                | gardened when                                                                                                                                                                                                                                                                                                                                                              |
 | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -125,7 +116,6 @@ the v0.13 plan revision landed.
 | `2026-07-28-photorealistic-3d-content.md`              | each question it traces is ruled on. It records an input rather than a plan: photorealistic 3D renders are target product content, and every number in the asset pipeline was chosen against content that is not representative of it. Its first measurable consequence is #455's fixture                                                                                  |
 | `2026-07-27-indic-script-support.md`                   | Indic support is designed: the closure becomes text-driven and the unformed-cluster fallback is built. Its decided half — coverage is declared at build time, dynamic generation is a deferred painter capability — is already gardened into `docs/decisions/glyph-coverage-is-declared-at-build-time.md`                                                                  |
 | `2026-07-27-glyph-coverage-sets-and-text-residency.md` | glyph-atlas residency is designed: the unit of residency is chosen and the runtime-supplied-string case is answered. Its decided half — that only raster is block-compressed — is already gardened into `docs/decisions/compress-raster-only.md`                                                                                                                           |
-| `2026-07-27-glyph-runs-from-commit-SPIKE.md`           | the design in it is built: the commit-time seam, the run's anchor field, the z-interleave and the dirty-set rule (issues #274, #275). Its decided half — that `dashscene-core`'s commit becomes the producer of the glyph-run table — is already gardened into `docs/decisions/glyph-runs-cross-boundary-b.md`                                                             |
 
 Each row's entry is removed when its capture is gardened.
 
