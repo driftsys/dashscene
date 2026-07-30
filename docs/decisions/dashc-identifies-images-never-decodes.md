@@ -116,3 +116,79 @@ decode already sits behind.
   atlas PNG the compiler generates itself. Its format is asserted by nobody, so
   there is no tag to verify — running the gate there would test our own encoder.
   The exemption is stated at the call site so it reads as a decision.
+
+## Ruling on issue #484: the emit policy decides, and nothing is hidden either way
+
+Repository owner, 2026-07-29. Story #329 made `fills_of` collect every fill in
+a node's array before deciding, so an unlowerable fill and a `PATTERN` fill in
+the same stack are both named instead of the first hiding the second. That
+change reached `CompileError::UnresolvedImage` too: before story #329, a fill
+array of `[ an unlowerable fill , an IMAGE fill with an unresolved imageRef ]`
+never reached the image, because the first fill's refusal stopped the loop,
+so the node was skipped and (under partial-emit) the compile still succeeded.
+After story #329 the image fill is reached regardless of its position in the
+array, and `CompileError::UnresolvedImage` still propagated through `?` and
+aborted the whole compile — turning a document that used to build into one
+that no longer does, for a node that was going to be skipped either way.
+
+The unresolved-`imageRef` check is a caller-contract failure over the same
+`images` map this record covers, not a vocabulary verdict, so it belongs here
+rather than in `docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`.
+
+**The ruling: the existing `EmitPolicy` axis decides, not a new flag.**
+`EmitPolicy` is already plumbed through the wasm ABI as `1 = strict, 0 =
+partial` (`importers/figma/src/wasm.ts`, `crates/dashc/src/abi/wire.rs`), with
+`Strict` the Rust library default.
+
+- **`EmitPolicy::Strict` (default): abort, unchanged.** The caller asked for
+  all-or-nothing, so an unresolved `imageRef` refuses the compile exactly as
+  it always has, whatever else on the node is or is not a blocker.
+- **`EmitPolicy::Partial`: do not abort a node that is already blocked for
+  another reason.** The node is being skipped regardless, so its image is
+  never fetched, decoded, or referenced — validating a reference nothing
+  consumes has no consumer. A node with no other blocker still aborts even
+  under `Partial`: it would actually reference the image once lowered, so the
+  caller's contract failure stands.
+- **Under `Partial`, the diagnostic names both the unlowerable fill and the
+  unresolved image**, not whichever the array happened to collect first.
+  Reporting only one would reintroduce the exact defect #329 was filed to
+  fix — a real blocker hidden behind an earlier one — one level further out.
+
+This removes the accidental order-dependence in both modes: before this
+ruling, an unresolved image aborted only when it happened to come first in
+the fill array, which nobody designed. It also puts the choice where the
+caller already made it — a caller who wants a missing asset to be fatal
+passes `Strict`, the default; a caller who has opted into `Partial` has
+already said an unlowerable node costs a diagnostic and nothing more, and
+this makes that true for one more case rather than carving out an exception.
+
+**Alternatives considered** (both rejected in favor of the ruling above):
+
+1. Keep the abort unconditionally, in both policies, and record the widening
+   as accepted. Simpler, but it makes `Strict`'s all-or-nothing posture leak
+   into `Partial`, which exists precisely so one bad node does not cost the
+   whole file.
+2. Never abort on an already-blocked node, in both policies (i.e., make this
+   `Partial`'s behavior the default rather than an alternative to `Strict`).
+   Rejected because it erases the axis the caller already controls: a caller
+   that explicitly asked for all-or-nothing should still get it.
+
+**Implemented in `Walk::fills_of`** (`crates/dashc/src/figma/mod.rs`): an
+`Err(CompileError::UnresolvedImage)` from `paint_kind` is deferred into a
+`pending_images` list, rather than returned immediately, whenever the policy
+is `Partial`. Deferring past the whole fill array (not just past the one
+fill) is what keeps the verdict independent of the array's order in both
+directions. Once every fill is known: a node with no other blocker returns
+the deferred error (aborting, matching `Strict`); a node with another
+blocker instead folds each pending image into that node's existing
+`blockers`, named as `"an IMAGE fill with an unresolved imageRef {ref}"`.
+Under `Strict`, the deferral never triggers, so the existing immediate-abort
+path is untouched.
+
+The scope of the deferral is the fill array a single `fills_of` call
+processes. A blocker that a later step of the same node's lowering finds
+(the stroke, a shadow, the effect triage — each evaluated after `fills_of`
+returns) is not visible to this decision, so an unresolved image whose only
+sibling blocker is one of those still aborts even under `Partial`. No
+measured case has needed that wider scope; it is a known boundary, not an
+oversight, and it may be widened if a real document reaches it.

@@ -40,8 +40,13 @@ vocabulary diagnostic already exist, and Partial treats them oppositely:
   without the rejected feature, so shipping it would render a picture the
   designer never authored. Stays a fatal error in both modes.
 
-`figma.no-content` (a zero-node `.dsb` a downstream loader panics on), a parse
-failure, and an unresolved image ref also stay fatal in both modes.
+`figma.no-content` (a zero-node `.dsb` a downstream loader panics on) and a
+parse failure also stay fatal in both modes. An unresolved image ref did too,
+until issue #484 (2026-07-29) narrowed that: under Partial it is now fatal
+only for a node that has no other blocker — a node already headed for the
+skip over another blocker gets the unresolved ref folded into that same skip
+instead, named alongside it. See
+`docs/decisions/dashc-identifies-images-never-decodes.md` for the ruling.
 
 This is within R6, which permits a vocabulary gap to be a warning
 (`docs/specification/01-goals-and-requirements.md`), and it strengthens P4

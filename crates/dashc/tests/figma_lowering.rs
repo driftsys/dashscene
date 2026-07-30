@@ -2880,3 +2880,148 @@ fn partial_skips_and_warns_on_an_unknown_stroke_align_naming_it() {
         "the diagnostic must name the actual value (P4)",
     );
 }
+
+// -- #484: an unresolved imageRef behind an earlier blocked fill (the emit
+// policy decides, and the diagnostic names both) --------------------------
+//
+// Debt #329 made every fill in one array independent: each is inspected and
+// each unlowerable fill names its own reason, rather than the first refusal
+// hiding the rest. That widened `CompileError::UnresolvedImage` too — an
+// unresolved ref used to abort only when the image fill happened to be first
+// in the array (the only fill `fills_of` ever reached before returning); once
+// every fill is reached regardless of position, the same ref aborts whatever
+// its position, which turned a node that used to compile under Partial (a
+// leading unlowerable fill hid the image behind it) into an abort for the
+// whole file.
+//
+// The repository owner's ruling (issue #484): the existing `EmitPolicy` axis
+// decides. Strict aborts, unchanged. Partial does not abort a node that is
+// already headed for the skip over another blocker — its image is never
+// fetched, decoded, or referenced — and the diagnostic names both the
+// unlowerable fill and the unresolved image, not whichever the array happened
+// to collect first (the same defect #329 was filed to fix, one level
+// further out).
+
+/// A ref no `images()` map in this file resolves, purpose-built for the tests
+/// below.
+const UNRESOLVED_IMAGE_REF: &str = "story-484-unresolved-ref";
+
+/// A child FRAME whose fill array is `[ an unlowerable fill , an IMAGE fill
+/// with an unresolved imageRef ]` — the exact shape issue #484 names. Nested
+/// one level under a valid root, mirroring `frame_with_pattern_fill_child`:
+/// the root must still lower, or Partial's `figma.no-content` gate would fire
+/// instead of the two warnings under test.
+fn frame_with_pattern_fill_then_unresolved_image() -> serde_json::Value {
+    document_json(serde_json::json!({
+        "name": "root",
+        "type": "FRAME",
+        "clipsContent": true,
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0 },
+        "children": [{
+            "name": "blocked",
+            "type": "FRAME",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+            "fills": [
+                { "type": "PATTERN" },
+                { "type": "IMAGE", "scaleMode": "FILL", "imageRef": UNRESOLVED_IMAGE_REF },
+            ],
+        }],
+    }))
+}
+
+#[test]
+fn strict_aborts_on_an_unresolved_image_behind_an_earlier_blocked_fill() {
+    let json = frame_with_pattern_fill_then_unresolved_image().to_string();
+    let images = BTreeMap::new();
+    let result = compile_figma_with_bindings_and_policy(
+        &json,
+        Profile::Core,
+        &images,
+        &[],
+        EmitPolicy::Strict,
+    );
+    let Err(CompileError::UnresolvedImage { image_ref, .. }) = result else {
+        panic!("expected an UnresolvedImage abort, got {result:?}");
+    };
+    assert_eq!(
+        image_ref, UNRESOLVED_IMAGE_REF,
+        "strict mode aborts on the unresolved image regardless of the earlier blocker",
+    );
+}
+
+#[test]
+fn partial_skips_the_node_and_names_both_the_pattern_and_the_unresolved_image() {
+    let json = frame_with_pattern_fill_then_unresolved_image().to_string();
+    let images = BTreeMap::new();
+    let (bytes, report) = compile_figma_with_bindings_and_policy(
+        &json,
+        Profile::Core,
+        &images,
+        &[],
+        EmitPolicy::Partial,
+    )
+    .expect("partial-emit skips the already-blocked node and still emits");
+    assert!(!bytes.is_empty(), "a document is emitted");
+
+    let warnings: Vec<_> = report
+        .diagnostics()
+        .iter()
+        .filter(|d| d.rule == dashc_wasm::figma::rule::UNSUPPORTED)
+        .collect();
+    let mut messages: Vec<String> = warnings.iter().map(|d| d.message.clone()).collect();
+    messages.sort();
+    let mut expected = vec![
+        "a PATTERN paint is not in the document vocabulary yet".to_string(),
+        format!(
+            "an IMAGE fill with an unresolved imageRef {UNRESOLVED_IMAGE_REF} is not in \
+             the document vocabulary yet"
+        ),
+    ];
+    expected.sort();
+    assert_eq!(
+        messages, expected,
+        "both the unlowerable fill and the unresolved image must be named — reporting \
+         only one would hide a real blocker behind the other, the defect #329 was filed \
+         to fix, one level further out",
+    );
+    assert!(
+        warnings.iter().all(|d| d.severity == Severity::Warning),
+        "the skip is a warning under Partial, never a silent drop",
+    );
+}
+
+#[test]
+fn partial_still_aborts_on_an_unresolved_image_with_no_other_blocker() {
+    // The ruling's condition is a node "already blocked" for another reason.
+    // A node whose only problem is the unresolved image would actually
+    // reference it once lowered, so Partial does not turn this into a soft
+    // skip too — this is the scope boundary of the fix, not a case #484
+    // asked to change.
+    let json = document_json(serde_json::json!({
+        "name": "root",
+        "type": "FRAME",
+        "clipsContent": true,
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 100.0 },
+        "children": [{
+            "name": "photo",
+            "type": "FRAME",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+            "fills": [
+                { "type": "IMAGE", "scaleMode": "FILL", "imageRef": UNRESOLVED_IMAGE_REF },
+            ],
+        }],
+    }))
+    .to_string();
+    let images = BTreeMap::new();
+    let result = compile_figma_with_bindings_and_policy(
+        &json,
+        Profile::Core,
+        &images,
+        &[],
+        EmitPolicy::Partial,
+    );
+    let Err(CompileError::UnresolvedImage { image_ref, .. }) = result else {
+        panic!("expected an UnresolvedImage abort, got {result:?}");
+    };
+    assert_eq!(image_ref, UNRESOLVED_IMAGE_REF);
+}

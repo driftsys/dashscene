@@ -86,9 +86,13 @@ pub mod rule {
     // given an intrinsic size, and #107's asset entry needs one — there is no
     // approximation to fall back to. That is also why these bypass the
     // `unsupported`/blockers mechanism entirely: they abort the compile via
-    // `CompileError::Diagnostics` the moment they are found, the same way
-    // `CompileError::UnresolvedImage` already does for a different
-    // caller-contract failure over the same `images` map.
+    // `CompileError::Diagnostics` the moment they are found, unconditionally
+    // in both emit policies. `CompileError::UnresolvedImage`, the other
+    // caller-contract failure over the same `images` map, no longer aborts
+    // quite so unconditionally: issue #484 folds it into a node's existing
+    // skip under `EmitPolicy::Partial` when the node has another blocker
+    // already (`fills_of`), and only aborts immediately the way these four
+    // always do when the node has none.
 
     /// The bytes an `imageRef` resolved to match none of the three
     /// signatures `dashpaint::image_id` knows (PNG, JPEG, GIF).
@@ -183,7 +187,13 @@ pub enum CompileError {
     Unsupported { path: String, what: String },
     /// An image fill whose `imageRef` the caller did not resolve. The load
     /// gate rejects a zero-byte asset, so no placeholder can be invented.
-    /// A caller-contract failure, not a vocabulary verdict — it aborts.
+    /// A caller-contract failure, not a vocabulary verdict — it aborts under
+    /// `EmitPolicy::Strict` always, and under `EmitPolicy::Partial` whenever
+    /// the carrying node has no other blocker (issue #484,
+    /// `docs/decisions/dashc-identifies-images-never-decodes.md`). When the
+    /// node already has another blocker under `Partial`, `fills_of` folds
+    /// this into that node's skip instead, named alongside its other
+    /// blocker(s), rather than returning this variant.
     UnresolvedImage { path: String, image_ref: String },
     /// The document carried at least one error-severity diagnostic, so R6
     /// blocks emission.
@@ -1401,6 +1411,22 @@ impl Walk<'_> {
     /// findings, and the second is not implied by the first. A fill that
     /// refuses contributes a blocker and no `PaintKind`, so the returned list
     /// is shorter than the visible-fill count exactly when `blockers` grew.
+    ///
+    /// An unresolved `imageRef` (issue #484) is deferred rather than aborting
+    /// the instant it is found: the array may carry another unlowerable fill
+    /// on either side of it, and #329 already made every other fill-array
+    /// finding order-independent by collecting the whole array before
+    /// deciding. Aborting here at the first unresolved ref would reopen that
+    /// same order-dependence one level further out — a real blocker hidden
+    /// behind an earlier one, the exact defect #329 was filed to fix — so the
+    /// verdict waits until every fill in the array is known. Once it is: a
+    /// node with no other blocker still aborts (its image would actually be
+    /// referenced once lowered, so the caller's contract failure stands,
+    /// whatever the emit policy); a node already headed for the skip over
+    /// another blocker gets the unresolved ref folded into that same skip,
+    /// named alongside it, under `EmitPolicy::Partial` only — `Strict` aborts
+    /// immediately, unchanged
+    /// (`docs/decisions/dashc-identifies-images-never-decodes.md`).
     fn fills_of(
         &mut self,
         node: &Node,
@@ -1408,15 +1434,49 @@ impl Walk<'_> {
         blockers: &mut Vec<String>,
     ) -> Result<Vec<PaintKind>, CompileError> {
         let mut kinds = Vec::new();
+        let mut pending_images: Vec<CompileError> = Vec::new();
         for fill in visible_paints(&node.fills) {
             match self.paint_kind(fill, path) {
                 Ok(kind) => kinds.push(kind),
                 Err(CompileError::Unsupported { what, .. }) => blockers.push(what),
-                // The image gate's verdicts and an unresolved `imageRef` are
-                // caller-contract failures, not vocabulary ones — they abort.
+                Err(err @ CompileError::UnresolvedImage { .. })
+                    if self.policy == crate::EmitPolicy::Partial =>
+                {
+                    pending_images.push(err);
+                }
+                // Under `Strict`, an unresolved ref aborts immediately, exactly
+                // as before. The image gate's own verdicts (`rule::IMAGE_*`)
+                // abort immediately in both modes too — they are not in scope
+                // of the deferral above (see the `rule` module doc).
                 Err(other) => return Err(other),
             }
         }
+
+        if !pending_images.is_empty() {
+            if blockers.is_empty() {
+                // Nothing else blocks this node, so it would actually
+                // reference the image once lowered: the caller's contract
+                // failure still aborts, the same verdict `Strict` reaches.
+                return Err(pending_images
+                    .into_iter()
+                    .next()
+                    .expect("checked non-empty"));
+            }
+            // The node is already headed for the skip over its other
+            // blocker(s) — the ruling on #484 — so each unresolved image
+            // joins them as a named reason instead of aborting the compile
+            // over an image the skipped node will never fetch, decode, or
+            // reference.
+            for err in pending_images {
+                let CompileError::UnresolvedImage { image_ref, .. } = err else {
+                    unreachable!("only UnresolvedImage is ever pushed onto pending_images");
+                };
+                blockers.push(format!(
+                    "an IMAGE fill with an unresolved imageRef {image_ref}"
+                ));
+            }
+        }
+
         Ok(kinds)
     }
 
