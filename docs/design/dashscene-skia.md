@@ -102,7 +102,7 @@ All in `crates/dashscene-skia/src/lib.rs`:
   before the fill: the node's rendered outline — its fill box grown by the
   stroke outset for an outside/center stroke — outset by `spread`, offset,
   filled with the shadow color under a Gaussian blur mask filter (`sigma =
-  blur / 2`; no filter at `blur = 0`). An inner shadow draws after the
+  0.4375 * blur`, Figma's measured constant; no filter at `blur = 0`). An inner shadow draws after the
   stroke: clip to the shape, then fill an even-odd path (outer rect minus
   the offset, spread-inset inner rounded rect) so the blur bleeds inward.
   Both draw inside the rect's clip-region `save`/`restore` and any open
@@ -122,8 +122,10 @@ All in `crates/dashscene-skia/src/lib.rs`:
   and the restore composites that over the sharp original. Skia reads the
   halo the kernel needs from outside the clip, so the blur is built from
   the real backdrop rather than from a copy truncated at the node's box.
-  The sigma mapping is `sigma = radius / 2`, the same one the shadows use
-  (`blur_sigma`, stated once so the two cannot drift), and the filter
+  The sigma mapping is `sigma = 0.4375 * radius`, the same one the shadows
+  use (`blur_sigma`, stated once so the two cannot drift — and measured to be
+  genuinely the same, `docs/decisions/blur-sigma-is-figmas-mapping.md`), and
+  the filter
   clamps at its input edge so a node frosting the canvas edge picks up
   that edge's color instead of darkening. The blur draws **before** the
   node's own shadows, fills and stroke: boundary B states the guarantee

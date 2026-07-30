@@ -488,8 +488,13 @@ pub enum BlurKind {
 /// One blur (v0.11, story #393). Authored intent: which content is blurred
 /// and by how much. `radius` is the Gaussian blur radius in document units,
 /// non-negative, carried verbatim from the document — the sigma mapping
-/// (`sigma = radius/2`) is per-painter math derived at draw time (P1),
-/// exactly as it is for [`Shadow::blur`].
+/// (`sigma = 0.4375 * radius`, Figma's measured constant —
+/// `docs/decisions/blur-sigma-is-figmas-mapping.md`) is derived at draw time
+/// rather than carried in the document (P1), exactly as it is for
+/// [`Shadow::blur`]. Unlike the blend space below, the constant is the
+/// reference painter's measured value rather than a contract term: a painter
+/// should match it where it reasonably can, and one approximating the blur on
+/// constrained hardware will not match it exactly.
 ///
 /// Only `Backdrop` is produced today. Layer blur is budgeted at v1 and needs
 /// no change here when it lands, which is the reason the kind exists now

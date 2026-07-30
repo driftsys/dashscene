@@ -59,7 +59,7 @@ The rationale for each value is in the module's rustdoc and in
 `docs/design/goldens.md`. The values are pinned so the harness is falsifiable.
 All three bands are now confirmed by real captures, none retuned: `aa-edge`
 (`v08-wrap` 0.000 %, `v08-grid-spans` 0.037 %), `blur-falloff` (`v08-drop-shadow`
-0.022 %, `v08-inner-shadow` 0.000 %), and `msdf-text` (`v05-text-latin` 0.033 %,
+0.043 %, `v08-inner-shadow` 0.000 %), and `msdf-text` (`v05-text-latin` 0.033 %,
 `v06-text-arabic` 1.405 %) — every measured frame inside its budget. A retune is a
 deliberate, reviewed change — the band values are asserted in
 `goldens/tooling/tests/render_oracle.rs`
@@ -85,7 +85,7 @@ All seven frames are measured today, each within its band:
   the cell is authored in `Inter`, so until then it rendered in Noto Sans and the
   substituted letterforms were most of the difference. This is the frame that
   measures Inter fidelity against Figma's own render.
-- `v08-drop-shadow` (`drop-shadow.json`, node `1:2`, 96x96) — 0.022 %, and
+- `v08-drop-shadow` (`drop-shadow.json`, node `1:2`, 96x96) — 0.043 %, and
   `v08-inner-shadow` (`inner-shadow.json`, node `1:2`, 96x96) — 0.000 %. One
   shadowed card each (fixtures authored by the fixture-author plugin, #304); the
   first real measurement of `sigma = blur/2` against Figma, near-pixel-exact —

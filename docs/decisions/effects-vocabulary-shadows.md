@@ -98,8 +98,11 @@ drop shadow's box is the node box outset by `spread`, its corners
 `r > 0 ? max(0, r + spread) : 0`; an inner shadow's lit hole is the node
 box inset by `spread`, corners `r > 0 ? max(0, r - spread) : 0`; both
 translated by the offset. The blur radius maps to a Skia mask-filter
-sigma as `sigma = blur / 2` (the CSS/browser convention); a zero-blur
-shadow uses no mask filter.
+sigma as `sigma = 0.4375 * blur`; a zero-blur shadow uses no mask filter.
+**This was `blur / 2`, the CSS/browser convention, until issue #412 measured
+Figma's own mapping and found it nearer `0.4375`
+(`docs/decisions/blur-sigma-is-figmas-mapping.md`, which supersedes the
+constant below).**
 
 **Placement — option 1.** `dashscene-core` gains `Prop::Shadows(Vec<Shadow>)`,
 stored on the node, classified paint-affecting, emitted into
@@ -219,14 +222,14 @@ posture for blend modes, not a shadow-specific rule.
   enforcement (v1); debt #146 (stacked fills/strokes, still unexercised).
 - Debt candidates (reported, not filed): a zero-alpha or zero-opacity
   shadow is drawn (blurred and rasterized) rather than skipped early — a
-  wasted per-frame cost the painter could short-circuit; and `sigma =
-  blur / 2` is the CSS/browser convention, still not measured against a
-  real Figma capture. Story #284 (`docs/design/goldens.md`, exit criterion
-  E7) built the mechanism that will do that measuring — the
-  `blur-falloff` tolerance band (`goldens/tooling/src/oracle.rs`) and the
-  `v08-drop-shadow` / `v08-inner-shadow` slots in
-  `goldens/oracle/manifest.json` that will pin `sigma = blur / 2` against
-  a real design-source capture — but both slots are still
-  `status: pending-265`: the real Figma REST exports have not landed, so
-  `sigma = blur / 2` remains unmeasured, not retired (issue #265, the
-  manual Figma fixture authorings).
+  wasted per-frame cost the painter could short-circuit.
+
+- **The sigma mapping is no longer a debt candidate: it was measured, and it
+  changed.** This paragraph previously read that `sigma = blur / 2` was the
+  CSS/browser convention, "still not measured against a real Figma capture",
+  with both oracle slots at `status: pending-265`. Those slots were captured,
+  and the measurement (issue #412, 2026-07-31) found the shadow frames fit
+  Figma at `0.4375 * blur` rather than `blur / 2` — by 7.1x on mean for the
+  drop shadow and 5.3x for the inner shadow. The constant is now
+  `0.4375 * blur`; see `docs/decisions/blur-sigma-is-figmas-mapping.md`, which
+  is the authority for it.

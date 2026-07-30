@@ -772,14 +772,41 @@ fn apply_opacity(paint: &mut skia_safe::Paint, opacity: f32) {
     }
 }
 
+/// Sigma per unit of blur radius — Figma's measured constant.
+///
+/// Named so the value has one home and one place to cite; the mapping it
+/// belongs to is documented on [`blur_sigma`].
+const FIGMA_BLUR_SIGMA_PER_RADIUS: f32 = 0.4375;
+
 /// The Gaussian sigma a blur radius maps to. Skia takes a sigma, not a
-/// radius; the CSS/browser convention `sigma = radius / 2` is the one this
-/// reference painter defines (story #45), and it is what the `blur-falloff`
-/// tolerance band pins against Figma's own render. Stated once because a
-/// shadow's blur (story #45) and a backdrop blur (story #393) are the same
-/// mapping, and two copies of it could drift apart.
+/// radius, so a painter has to choose the mapping.
+///
+/// **This is Figma's mapping, measured against Figma's own renders, not the
+/// CSS/browser `radius / 2` convention** (issue #412,
+/// `docs/decisions/blur-sigma-is-figmas-mapping.md`). Every frame this
+/// project measures blur on fits better here than at `radius / 2`, by mean
+/// per-pixel delta against Figma's `GET /images` export:
+///
+/// | frame                        | at 0.4375 | at 0.5 |
+/// | ---------------------------- | --------- | ------ |
+/// | `v08-drop-shadow`, outside   | 0.1016    | 0.7264 |
+/// | `v08-inner-shadow`, inside   | 0.6937    | 3.6956 |
+/// | `backdrop-blur`, panel       | 1.187     | 2.704  |
+///
+/// Stated once because a shadow's blur (story #45) and a backdrop blur
+/// (story #393) are the same mapping, and two copies of it could drift
+/// apart. That single-mapping claim is now measured rather than assumed:
+/// the shadow frames and the backdrop frame agree on the same value, so
+/// nothing here needs to split per effect.
+///
+/// Skia quantises sigma into integer box-blur windows, so this constant is
+/// only as precise as the radii it was fitted against. At the shadow
+/// fixtures' radius 6 every scale in `[0.40, 0.475]` renders identically;
+/// the backdrop fixture's radius 16 is what resolves the value, where
+/// 0.4375 is a distinct minimum against 0.40 (1.622) and 0.45 (1.930).
+/// Two radii, both self-authored — a third would need a new fixture.
 fn blur_sigma(radius: f32) -> f32 {
-    radius / 2.0
+    radius * FIGMA_BLUR_SIGMA_PER_RADIUS
 }
 
 /// The Gaussian blur a shadow's `blur` radius applies. A zero-radius

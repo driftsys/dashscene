@@ -121,7 +121,7 @@ multi-pass blur before it is trusted.
 **Do not copy iced's shadow.** It is `1.0 - smoothstep(-blur, blur,
 max(dist, 0.0))` — a smoothstep ramp, not a gaussian approximation.
 Given our render oracle measures shadow falloff against Figma
-(`blur-falloff` band, currently 0.022% and 0.000%), iced's shadow would
+(`blur-falloff` band, currently 0.043% and 0.000%), iced's shadow would
 very likely not hold the band.
 
 **Do not copy GPUI's group opacity.** GPUI multiplies each primitive's

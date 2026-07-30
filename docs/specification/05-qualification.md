@@ -433,10 +433,15 @@ All seven frames are measured, each within its band, confirming all three bands:
   MSDF edges. It measured 0.116 % until story #385 committed Inter and matched
   the family by name, removing the `Inter`-to-Noto-Sans substitution that made
   up most of it — the cell is authored in `Inter`.
-- `v08-drop-shadow` (`drop-shadow.json`, node `1:2`, 96x96) — 0.022 %, and
+- `v08-drop-shadow` (`drop-shadow.json`, node `1:2`, 96x96) — 0.043 %, and
   `v08-inner-shadow` (`inner-shadow.json`, node `1:2`, 96x96) — 0.000 %
   (blur-falloff). One shadowed card each (#304); the first real measurement of
-  the `sigma = blur/2` mapping against Figma, near-pixel-exact.
+  the sigma mapping against Figma. **It did not confirm `sigma = blur/2`, and
+  an earlier version of this line saying "near-pixel-exact" should not have
+  been read as confirmation** — passing a band is not the same as being the
+  best fit. Re-measured at issue #412, both frames fit Figma markedly better at
+  `0.4375 * blur`, which is now the shipped constant
+  (`docs/decisions/blur-sigma-is-figmas-mapping.md`).
 - `v05-text-latin` (`text-latin.json`, node `1:2`, 480x200) — 0.033 %, and
   `v06-text-arabic` (`text-arabic.json`, node `1:2`, 520x240) — 1.405 %
   (msdf-text). Noto text authored in the committed atlas fonts (#304), rendered
@@ -468,8 +473,8 @@ The parts that make this checkable:
   0.02`) for hard rect edges, where a thin anti-aliased edge band can swing
   far per pixel but covers little of the canvas; `BLUR_FALLOFF`
   (`channel_delta = 24`, `differing_fraction = 0.12`) for a blurred shadow's
-  soft falloff — including the `sigma = blur / 2` mapping,
-  `docs/decisions/effects-vocabulary-shadows.md` — where many pixels
+  soft falloff — including the sigma mapping,
+  `docs/decisions/blur-sigma-is-figmas-mapping.md` — where many pixels
   disagree by a little across a wide region; `MSDF_TEXT` (`channel_delta =
   50`, `differing_fraction = 0.03`) for MSDF glyph edges, sparse but
   high-contrast. All three bands are now confirmed by real captures, none
