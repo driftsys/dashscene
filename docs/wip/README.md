@@ -22,7 +22,9 @@ Six are design captures, described below. **One is a driver prompt**, the
 brief a session is handed to carry out a named piece of work. Driver prompts are
 transient by construction — spent the moment their work lands — and the
 convention is to archive them verbatim rather than garden them into records, as
-the ten now in `docs/archive/` were.
+the eleven now in `docs/archive/` were — ten `*-DRIVER-PROMPT.md` plus the one
+`*-SPIKE.md`, which is counted here because it was archived verbatim beside the
+prompt that carried out its design rather than gardened.
 
 - `2026-07-27-t2-checks-that-cannot-fail-DRIVER-PROMPT.md` — v0.13's
   `t2-check-has-no-teeth` tier, 19 items whose common property is an assertion
@@ -105,10 +107,26 @@ decision record's two resolution sections). Both it and the driver prompt that
 carried out its design are archived verbatim in `docs/archive/`.
 
 The driver prompt still here is listed at the top of this section rather than
-here. The most recent ones archived were
-`2026-07-27-glyph-runs-from-commit-SPIKE.md` and
+here. The most recent one archived is
+`2026-07-30-blur-colour-space-DRIVER-PROMPT.md`, when the blur colour space
+was settled; before it, `2026-07-27-glyph-runs-from-commit-SPIKE.md` and
 `2026-07-29-glyph-runs-from-commit-DRIVER-PROMPT.md`, when the glyph-run
 producer chain landed.
+
+**The blur-colour-space prompt never entered this directory, and that is
+deliberate.** Its work was already done when it was archived, so staging it
+here first would have added a file to the gate for the length of one merge and
+changed the count twice for no reader's benefit. A driver prompt whose work has
+landed goes straight to `docs/archive/`.
+
+Read that one as a historical brief rather than as a description of the
+repository. **Its central premise was false** — it directs a session to author
+a multi-coloured backdrop-blur fixture "which does not exist yet", and one had
+existed since story #393 committed the `backdrop-blur` frame on 2026-07-26. It
+is kept verbatim anyway, as every archived driver prompt is, because the
+archive records what was actually asked for rather than a corrected version of
+it. What was actually true is in
+`docs/decisions/blur-blends-in-srgb-encoded-space.md`.
 
 | capture                                                | gardened when                                                                                                                                                                                                                                                                                                                                                              |
 | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
