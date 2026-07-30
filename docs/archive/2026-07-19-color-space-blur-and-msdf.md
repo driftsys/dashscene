@@ -1,10 +1,33 @@
 # Colour space in the paint path: blur blending and MSDF sampling are coupled
 
-    status   WIP — design-discussion capture (2026-07-19, user + Opus);
-             feeds a decision record when v0.11 opens. Nothing here is
-             implemented and no code was changed. One question below is
-             genuinely open; the rest is a record of what is already
-             settled, so it is not re-investigated.
+    status   archived 2026-07-30, gardened. Design-discussion capture
+             (2026-07-19, user + Opus), kept verbatim below the line. Its
+             one open question — §"What is open", whether blur should
+             blend in linear light or in sRGB-encoded space — is settled:
+             sRGB-encoded, measured against Figma's own render. The
+             durable record is
+             docs/decisions/blur-blends-in-srgb-encoded-space.md, which is
+             the authority.
+
+             ONE CLAIM BELOW WENT STALE AND IS CORRECTED HERE, so this
+             file is not read as accurate. §"What is open" states that "a
+             backdrop-blur oracle frame over multi-coloured content ...
+             does not exist yet", and §"Suggested order of work" opens by
+             asking for one to be authored. That was true on 2026-07-19
+             and false from 2026-07-26, when story #393 committed the
+             `backdrop-blur` frame — three hard-edged bands at high chroma
+             and luminance contrast, with the frosted panel placed to
+             straddle both seams — followed by `vector-backdrop-blur`. The
+             fixture the question was said to need already existed, and
+             both frames fail a linear-light blend by more than double
+             their tolerance budget. The question stood for two further
+             slices because this sentence was copied forward as a
+             statement of the present rather than re-checked.
+
+             The rest of the analysis held. The MSDF coupling it identifies
+             is real, and it resolved in the direction the file's closing
+             paragraph advised: the no-colour-space surface is correct for
+             both blur and MSDF, so nothing had to be traded off.
     scope    the working colour space of the reference painter's surface,
              and the two behaviours that depend on it — blur blending and
              MSDF distance sampling

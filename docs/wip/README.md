@@ -11,14 +11,14 @@ project's convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports eight files
+## Why the WIP gate currently reports seven files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-eight and exits non-zero. All eight are deliberate, accepted exceptions rather
+seven and exits non-zero. All seven are deliberate, accepted exceptions rather
 than ungardened debt, and they are recorded here so the gate's result is
 explained rather than merely tolerated.
 
-Seven are design captures, described below. **One is a driver prompt**, the
+Six are design captures, described below. **One is a driver prompt**, the
 brief a session is handed to carry out a named piece of work. Driver prompts are
 transient by construction — spent the moment their work lands — and the
 convention is to archive them verbatim rather than garden them into records, as
@@ -72,19 +72,22 @@ content, neither scheduled to a slice yet, which is why the file stays.
 Reconciling the line — and the backdrop-blur capture's above — is the
 **#424 / #427** gardening pass this paragraph now records as done.
 
-The colour-space capture, `2026-07-19-color-space-blur-and-msdf.md`, is
-different in kind from the rest. Most of it is not a plan awaiting a build —
-it confirms decisions already made elsewhere (MSDF sampling correctness,
-already documented in code and in `docs/decisions/q1-msdf-below-14px.md`) —
-plus one genuinely open question: whether the reference painter should blend
-blur in linear light or in sRGB-encoded space. That question now has an index
-entry at `docs/technotes/open-questions.md`, alongside the seed document's
-original six, so it is discoverable without hunting through `docs/wip/`. The
-full analysis, code references, and suggested order of work stay in this file
-rather than moving: issue #412 names this exact path as the dependency its own
-sigma-retune decision is blocked on, and #412 stays blocked until the question
-settles, so the file is not archived, only made easier to find. The other half
-of **#424**.
+The colour-space capture, `2026-07-19-color-space-blur-and-msdf.md`, is **no
+longer here**. It stayed while one genuinely open question in it stood —
+whether the reference painter should blend blur in linear light or in
+sRGB-encoded space — because issue #412 named that question as the dependency
+its own sigma retune was blocked on. It was settled by measurement on
+2026-07-30 and the file is archived verbatim: blur blends in sRGB-encoded
+space, which is what Figma does, recorded in
+`docs/decisions/blur-blends-in-srgb-encoded-space.md`.
+
+Its last paragraph is worth keeping in view here, because this section is
+where the cost of leaving a capture in place is paid. The question was held
+for two slices on the capture's own sentence that a backdrop-blur frame over
+multi-coloured content did not exist. That was true the day it was written and
+false six days later, when story #393 committed exactly such a frame — and
+nothing re-read it. A capture that sits here is not inert; its stale claims get
+copied forward as fact. The other half of **#424**.
 
 The glyph-run design spike is **no longer here**, and the reason is the
 distinction this section draws throughout. It was partly gardened from
@@ -111,7 +114,6 @@ producer chain landed.
 | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `2026-07-19-asset-pipeline-profiles-and-baking.md`     | partly gardened at the v0.11 close (epic #344) and again across v0.12 (epic #345, stories #432, #433, #434, #435, #436); the rest when the vector bake's end-state fork and animated content are built — its `status` line says which half is which                                                                                                                        |
 | `2026-07-19-backdrop-blur-v011.md`                     | partly gardened at the v0.11 close (story #393): the profile-policy reversal, the schema `Effect` representation, and the boundary-B contract now live in `docs/decisions/backdrop-blur-is-core-vocabulary.md`; the rest when a second painter (Unity, tiny-skia web, or a future wgpu painter) needs the per-painter capability table or its two remaining quality levers |
-| `2026-07-19-color-space-blur-and-msdf.md`              | the painter's working colour space is settled — one question in it is genuinely open, indexed at `docs/technotes/open-questions.md` and tracked by #412/#474; stays here until that question resolves                                                                                                                                                                      |
 | `2026-07-19-wgpu-painter-direction.md`                 | a wgpu painter is actually chosen. Explicitly a direction, not a commitment; it exists so the question is not researched from scratch when that slice opens                                                                                                                                                                                                                |
 | `2026-07-28-photorealistic-3d-content.md`              | each question it traces is ruled on. It records an input rather than a plan: photorealistic 3D renders are target product content, and every number in the asset pipeline was chosen against content that is not representative of it. Its first measurable consequence is #455's fixture                                                                                  |
 | `2026-07-27-indic-script-support.md`                   | Indic support is designed: the closure becomes text-driven and the unformed-cluster fallback is built. Its decided half — coverage is declared at build time, dynamic generation is a deferred painter capability — is already gardened into `docs/decisions/glyph-coverage-is-declared-at-build-time.md`                                                                  |

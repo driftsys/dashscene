@@ -74,6 +74,22 @@ impl SkiaPainter {
 
     /// A CPU raster surface of the given pixel size, in `mode`.
     ///
+    /// **The surface carries no colour space, and that is decided rather than
+    /// incidental.** Two independent requirements need it, and they agree:
+    ///
+    /// - MSDF distance channels sample raw, with no sRGB transfer applied to
+    ///   what is a distance rather than a colour
+    ///   (`docs/decisions/q1-msdf-below-14px.md`, and the comment at the
+    ///   sampling site below).
+    /// - Blur therefore averages raw sRGB-encoded channel values rather than
+    ///   linear light, which is what Figma's own `BACKGROUND_BLUR` does —
+    ///   measured, not assumed
+    ///   (`docs/decisions/blur-blends-in-srgb-encoded-space.md`).
+    ///
+    /// Attaching a linear working colour space would break both at once. Both
+    /// `backdrop-blur` oracle frames fail on that change, at 5.429 % and
+    /// 4.866 % against a 2 % budget.
+    ///
     /// # Panics
     ///
     /// Panics if `width` or `height` is not positive.

@@ -47,15 +47,24 @@ example, `Q-4` still resolves once `specs/` is gone. It decides nothing.
 Not part of the seed document's six above; indexed here as later design work
 raised further standing questions worth tracking centrally.
 
-| question                                                                          | status                                                                                                                                                                                                                    |
-| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Should the reference painter blend blur in linear light or in sRGB-encoded space? | open — tracked by #412 / #474; blocks the backdrop-blur sigma retune. Full analysis at `docs/wip/2026-07-19-color-space-blur-and-msdf.md`, which stays in `docs/wip/` until this settles, per #412's own resolution order |
+| question                                                                          | status                                                                                                       |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Should the reference painter blend blur in linear light or in sRGB-encoded space? | **resolved** 2026-07-30 — sRGB-encoded, `docs/decisions/blur-blends-in-srgb-encoded-space.md`; unblocks #412 |
 
-- **Blur colour space** — the reference painter's surface carries no colour
-  space, which is why MSDF sampling reads the distance channels correctly
-  (`docs/wip/2026-07-19-color-space-blur-and-msdf.md`), but it also means
-  blur blends in sRGB-encoded space rather than linear light. That did not
-  matter for single-colour shadow blur; it starts mattering at backdrop blur,
-  which averages multi-coloured content. Settling it needs a backdrop-blur
-  oracle fixture over multi-coloured content, which does not exist yet
-  (#412, #474).
+- **Blur colour space** — resolved by measurement against Figma's own render,
+  not by preference. The reference painter's surface carries no colour space,
+  so blur averages raw sRGB-encoded channel values rather than linear light.
+  Measured on the committed `backdrop-blur` frame, that is what Figma does
+  too: over the frosted panel, sRGB-encoded blending sits a mean of 1.187
+  code points from Figma's export at its best-fitting sigma, against 10.363
+  for linear light at its best, and sRGB-encoded wins at every sigma from
+  0.20 to 0.60 · radius. Both blur frames already fail on a linear-light
+  mutation, by 5.429 % and 4.866 % against a 2 % budget. The surface stays as
+  it is, and the same allocation remains what makes MSDF sampling correct
+  (`docs/decisions/q1-msdf-below-14px.md`) — the two requirements agree.
+
+  The question stood for two slices on a premise that was true when written
+  and stale six days later: that no backdrop-blur frame over multi-coloured
+  content existed. Story #393 committed one on 2026-07-26. Full record,
+  including that account, in the decision; the original analysis is archived
+  at `docs/archive/2026-07-19-color-space-blur-and-msdf.md` (#412, #474).

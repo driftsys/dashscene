@@ -15,7 +15,8 @@
              docs/decisions/weight-substitution-is-a-render-time-diagnostic.md,
              docs/decisions/font-resolution-order.md,
              docs/technotes/rendering-and-painters.md,
-             docs/wip/2026-07-19-color-space-blur-and-msdf.md
+             docs/decisions/blur-blends-in-srgb-encoded-space.md,
+             docs/archive/2026-07-19-color-space-blur-and-msdf.md
     supersedes the `profile:full` gating of `profile.backdrop-blur` in
              crates/dashscene-validator
 
@@ -224,8 +225,10 @@ falls back without saying so.
   of them reopens this decision: the blur algorithm (true gaussian, as Skia and
   Figma do it, or dual-Kawase downsampling on constrained hardware), the working
   colour space (blur is a weighted average of neighbours, and averaging in
-  sRGB-encoded space differs visibly from averaging in linear light — a shared
-  question, tracked in `docs/wip/2026-07-19-color-space-blur-and-msdf.md`), and
+  sRGB-encoded space differs visibly from averaging in linear light — **settled
+  2026-07-30 and no longer a lever that could reopen this decision**:
+  sRGB-encoded, measured against Figma,
+  `docs/decisions/blur-blends-in-srgb-encoded-space.md`), and
   the re-blur cadence (the painter already receives a dirty set, so a frosted
   node re-blurs only when its backdrop region is dirty, which is what makes a
   per-frame effect affordable).
