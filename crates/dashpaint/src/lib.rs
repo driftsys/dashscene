@@ -494,6 +494,31 @@ pub enum BlurKind {
 /// Only `Backdrop` is produced today. Layer blur is budgeted at v1 and needs
 /// no change here when it lands, which is the reason the kind exists now
 /// rather than being inferred from context.
+///
+/// # The blend space is part of this contract
+///
+/// **A painter must average the blur kernel over raw sRGB-encoded channel
+/// values, not over linear light**
+/// (`docs/decisions/blur-blends-in-srgb-encoded-space.md`). Unlike the sigma
+/// mapping above, this is *not* per-painter math: two painters that blur in
+/// different spaces produce visibly different pixels from the same document,
+/// so leaving it free would break the premise that this boundary is a
+/// contract. The divergence is large, not marginal — across a saturated
+/// colour seam the two spaces disagree by roughly 50 code points at the
+/// midpoint of the transition.
+///
+/// The value is Figma's, measured rather than chosen: over the
+/// `backdrop-blur` oracle frame, sRGB-encoded blending sits a mean of 1.187
+/// code points from Figma's own render at its best-fitting sigma against
+/// 10.363 for linear light, and it fits better at every sigma from 0.20 to
+/// 0.60 · radius than linear light does at its own best. Both blur oracle
+/// frames fail a linear-light blend, at 5.429 % and 4.866 % against a 2 %
+/// budget.
+///
+/// For the reference painter this falls out of allocating a surface with no
+/// colour space attached, which is also what keeps MSDF distance channels
+/// sampling raw — one allocation, two requirements, no conflict. A painter
+/// built on a pipeline that is linear by default has to convert deliberately.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Blur {
     pub kind: BlurKind,

@@ -20,8 +20,9 @@
              contract, not whether Skia does. The capability table's
              Skia row is corrected below: PR #403 wired the capability
              this note scoped as unwired. The third lever, colour
-             space, stays its own open question at
-             docs/wip/2026-07-19-color-space-blur-and-msdf.md.
+             space, is no longer open: settled 2026-07-30 as
+             sRGB-encoded, measured against Figma, at
+             docs/decisions/blur-blends-in-srgb-encoded-space.md.
     scope    the Figma BACKGROUND_BLUR construct end to end: profile
              status, schema effect representation, the boundary-B paint
              contract, per-painter capability, and the oracle frame it
@@ -144,8 +145,10 @@ Three independent axes, all inside the dynamic implementation:
    the contract rather than being unable to.
 2. **Colour space.** Blur is a weighted average of neighbouring pixels,
    and averaging in sRGB-encoded space differs visibly from averaging in
-   linear light. See `docs/wip/2026-07-19-color-space-blur-and-msdf.md`
-   — this is a shared decision, not a blur-only concern.
+   linear light. **Settled 2026-07-30 — sRGB-encoded, measured against
+   Figma's own render:** `docs/decisions/blur-blends-in-srgb-encoded-space.md`.
+   It was a shared decision, not a blur-only concern, so it binds every
+   painter this table lists.
 3. **Re-blur cadence.** The painter already receives a `dirty` set, so a
    frosted node only needs to re-blur when its backdrop region is dirty.
    This is what makes a per-frame effect affordable.
