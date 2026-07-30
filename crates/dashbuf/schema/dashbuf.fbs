@@ -336,8 +336,9 @@ enum BlurKind : uint8 {
 
 // One blur. `radius` is the Gaussian blur radius in document units,
 // non-negative, and carries Figma's `radius` verbatim — the painter's sigma
-// mapping (sigma = radius/2) is a painter concern, exactly as it is for
-// `Shadow.blur` (docs/decisions/effects-vocabulary-shadows.md).
+// mapping (sigma = 0.4375 * radius, Figma's measured constant) is a painter
+// concern, exactly as it is for `Shadow.blur`
+// (docs/decisions/blur-sigma-is-figmas-mapping.md).
 table Blur {
   kind: BlurKind;
   radius: float32;

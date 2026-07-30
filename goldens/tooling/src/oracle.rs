@@ -344,15 +344,27 @@ pub const AA_EDGE: ToleranceBand = ToleranceBand {
     gate: None,
 };
 
-/// A blurred shadow's soft falloff (the `sigma = blur/2` mapping, story #45).
+/// A blurred shadow's soft falloff (the sigma mapping, story #45 and issue
+/// #412 — `docs/decisions/blur-sigma-is-figmas-mapping.md`).
 ///
 /// A blur spreads a small per-pixel disagreement across a wide falloff
-/// region — many pixels off by a little. The `sigma = blur/2` mapping is an
+/// region — many pixels off by a little. The sigma mapping is an
 /// approximation of Figma's blur, so the whole falloff can be systematically
 /// off by a small amount; a wider area budget with a moderate per-pixel
 /// threshold pins "the falloff shape is close" without demanding pixel
-/// identity. This is the band that will pin `sigma = blur/2` against a real
-/// capture once #265 lands (`docs/decisions/effects-vocabulary-shadows.md`).
+/// identity.
+///
+/// **This band did not pin the sigma mapping, and cannot.** It was written
+/// expecting to, once #265 landed a real capture. The captures landed, the
+/// mapping was re-fitted at issue #412 — from `blur/2` to `0.4375 * blur` —
+/// and this band saw almost none of it: the inner-shadow count stayed at
+/// 0/9216 across the whole sweep and the drop-shadow count went *up*, from 2
+/// to 4 px, while the mean delta over each frame's falloff improved by 5.3x
+/// and 7.1x. A per-pixel threshold cannot see a wide low-amplitude falloff
+/// difference, which is the same reason this band needs a separate gate
+/// (below). The refit was decided on the fit against Figma's export
+/// (`docs/decisions/blur-sigma-is-figmas-mapping.md`), and no band or gate
+/// number was retuned to suit it.
 ///
 /// # Why this band has a gate and the others do not (issue #422)
 ///
@@ -364,7 +376,7 @@ pub const AA_EDGE: ToleranceBand = ToleranceBand {
 ///
 /// | mutation                       | frame              | at 24 | at 40 |
 /// | ------------------------------ | ------------------ | ----- | ----- |
-/// | healthy                        | `v08-drop-shadow`  | 0.022 % | 0.000 % |
+/// | healthy                        | `v08-drop-shadow`  | 0.043 % | 0.000 % |
 /// | healthy                        | `v08-inner-shadow` | 0.000 % | 0.000 % |
 /// | the drop shadow removed        | `v08-drop-shadow`  | 4.351 % | 2.930 % |
 /// | the inner shadow removed       | `v08-inner-shadow` | 3.570 % | 2.018 % |

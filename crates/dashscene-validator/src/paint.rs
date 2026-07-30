@@ -123,9 +123,9 @@ pub(crate) fn check_corners(report: &mut Report, at: &Location, radii: [f32; 4])
 /// document (`Paint.shadows`) as much as on a solved scene
 /// (`PaintEntry.shadows`), and runs on both gates.
 ///
-/// The painter offsets and spread-adjusts the shadow geometry and feeds
-/// `blur / 2` to Skia as a mask-filter sigma; a NaN or negative blur produces
-/// a degenerate or missing filter, and an out-of-range color channel
+/// The painter offsets and spread-adjusts the shadow geometry and derives a
+/// mask-filter sigma from `blur`; a NaN or negative blur produces a
+/// degenerate or missing filter, and an out-of-range color channel
 /// misrasterizes against the premultiplied surface. `offset` is `[x, y]`;
 /// `color` is `[r, g, b, a]`.
 pub(crate) fn check_shadow(

@@ -219,14 +219,19 @@ deliberate, reviewed change rather than a silent drift:
   Governs the E3 exact-layout frames (wrap, grid spans, baseline).
 - **`BLUR_FALLOFF`** — `channel_delta = 24`, `differing_fraction = 0.12`. A
   blurred shadow spreads a small per-pixel disagreement across a wide
-  falloff region — many pixels off by a little. The `sigma = blur / 2`
-  mapping (`docs/decisions/effects-vocabulary-shadows.md`) is an
-  approximation of Figma's blur, so the whole falloff can be
-  systematically off by a small amount; a wider fraction with a moderate
-  per-pixel threshold pins "the falloff shape is close" without demanding
-  pixel identity. Governs the drop- and inner-shadow frames, and is the
-  band that will pin `sigma = blur / 2` against a real capture once #265
-  lands.
+  falloff region — many pixels off by a little. The sigma mapping
+  (`docs/decisions/blur-sigma-is-figmas-mapping.md`) is an approximation of
+  Figma's blur, so the whole falloff can be systematically off by a small
+  amount; a wider fraction with a moderate per-pixel threshold pins "the
+  falloff shape is close" without demanding pixel identity. Governs the drop-
+  and inner-shadow frames.
+
+  **This band did not decide the mapping, and could not have.** Its counts
+  threshold per pixel, so a wide low-amplitude falloff difference is invisible
+  to them: when issue #412 moved the constant from `blur / 2` to
+  `0.4375 * blur`, the inner-shadow count stayed at 0 and the drop-shadow
+  count went _up_, from 2 px to 4 px, while the mean delta over the shadow
+  region improved 7-fold. The refit was decided on that fit, not here.
 
   **It is the one band that also carries a gate** — `channel_delta = 40`,
   `differing_fraction = 0.01` — added at the ruling on issue #422. Its
@@ -252,7 +257,7 @@ These are engineering estimates from the AA/blur/MSDF edge
 characteristics, pinned so the harness is falsifiable. All three bands are
 now confirmed by real captures, none retuned: `AA_EDGE` (`v08-wrap`
 0.000 %, `v08-grid-spans` 0.037 %), `BLUR_FALLOFF` (`v08-drop-shadow`
-0.022 %, `v08-inner-shadow` 0.000 %), and `MSDF_TEXT` (`v05-text-latin`
+0.043 %, `v08-inner-shadow` 0.000 %), and `MSDF_TEXT` (`v05-text-latin`
 0.033 %, `v06-text-arabic` 1.405 %) — every measured frame inside its
 budget. Both `BLUR_FALLOFF` frames also measure 0.000 % at the gate's
 threshold, so the gate added at #422 has its whole budget as headroom
@@ -322,10 +327,10 @@ exclusion: with the text render path wired (#303) its `hug me` TEXT leaf sizes t
 the shaped text instead of collapsing to 0x0, so the grid solves as Figma laid it
 out — the whole 720x480 frame diffs 0.037 % (0.116 % before story #385 committed
 Inter and matched the family by name; the cell is authored in `Inter`). The two shadow frames
-(`v08-drop-shadow` 0.022 %, `v08-inner-shadow` 0.000 %) and the two text frames
+(`v08-drop-shadow` 0.043 %, `v08-inner-shadow` 0.000 %) and the two text frames
 (`v05-text-latin` 0.033 %, `v06-text-arabic` 1.405 %) render from fixtures the
-fixture-author plugin builds (#304): the shadows pin `sigma = blur/2` against
-Figma's own render, and the Noto text renders through the text path (#303).
+fixture-author plugin builds (#304): the shadows measure the sigma mapping
+against Figma's own render — and re-fitted it at issue #412 — and the Noto text renders through the text path (#303).
 `v06-text-arabic` caught a real line-height bug — the typesetter took a line's
 height from the cascade's primary font — that story #314 fixed, bringing it from
 3.300 % to 1.405 %. The `excludeRegions` mechanism (`oracle::diff_excluding`,

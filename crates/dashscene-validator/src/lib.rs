@@ -297,8 +297,8 @@ pub mod rule {
     /// non-negative (a negative Gaussian is meaningless). Geometry-free
     /// authored intent (like a corner radius), so it is checked on both a
     /// document (`Paint.shadows`) and a solved scene (`PaintEntry.shadows`);
-    /// the painter feeds `blur / 2` to Skia as a mask-filter sigma and offsets
-    /// the shadow geometry with the offset and spread, none of which tolerate
+    /// the painter derives a mask-filter sigma from `blur` and offsets the
+    /// shadow geometry with the offset and spread, none of which tolerate
     /// NaN.
     pub const SHADOW_INVALID_GEOMETRY: &str = "paint.shadow.invalid-geometry";
     /// A blur whose radius is not finite and non-negative (story #393).

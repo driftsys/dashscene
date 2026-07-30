@@ -68,7 +68,7 @@ productionization). 4 — un-gated assertion once a real capture exists
   estimates from the AA/blur/MSDF edge characteristics. All three bands are
   now confirmed by real captures, none retuned: `AA_EDGE` (`v08-wrap`
   0.000 %, `v08-grid-spans` 0.037 %), `BLUR_FALLOFF` (`v08-drop-shadow`
-  0.022 %, `v08-inner-shadow` 0.000 %), and `MSDF_TEXT` (`v05-text-latin`
+  0.043 %, `v08-inner-shadow` 0.000 %), and `MSDF_TEXT` (`v05-text-latin`
   0.033 %, `v06-text-arabic` 1.405 % after the #314 line-height fix) — every
   measured frame inside its budget (`goldens/oracle/manifest.json`,
   `goldens/oracle/README.md`).
@@ -77,10 +77,12 @@ productionization). 4 — un-gated assertion once a real capture exists
   exact self-oracle fidelity failure G-11 forbids — a renderer graded
   against itself cannot measure its own drift. So the diff runs against a
   real Figma REST export, and until a frame is captured its `designSource`
-  is `null` with status `pending-265`. The `sigma = blur/2` mapping
-  (`docs/decisions/effects-vocabulary-shadows.md`) stays a self-oracle
-  constant, not retired against a real capture, until the `BLUR_FALLOFF`
-  band measures it.
+  is `null` with status `pending-265`. The sigma mapping was a self-oracle
+  constant when this was written; it has since been captured and measured
+  against Figma, and re-fitted from `blur/2` to `0.4375 * blur`
+  (`docs/decisions/blur-sigma-is-figmas-mapping.md`). Note that the
+  `BLUR_FALLOFF` band did **not** decide it — the fit did, because the band's
+  per-pixel thresholds cannot see a wide low-amplitude falloff difference.
 - **Import and render the fixture (3a).** The reference is our own fresh
   render of the imported fixture, not a pre-committed corpus golden. A
   committed golden is itself a self-oracle artifact, so diffing it against

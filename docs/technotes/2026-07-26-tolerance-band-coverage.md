@@ -128,7 +128,7 @@ mutation measured against them at all. Measured now, by the same harness:
 
 | mutation                 | frame              | at 24   | at 40   |
 | ------------------------ | ------------------ | ------- | ------- |
-| healthy                  | `v08-drop-shadow`  | 0.022 % | 0.000 % |
+| healthy                  | `v08-drop-shadow`  | 0.043 % | 0.000 % |
 | healthy                  | `v08-inner-shadow` | 0.000 % | 0.000 % |
 | the drop shadow removed  | `v08-drop-shadow`  | 4.351 % | 2.930 % |
 | the inner shadow removed | `v08-inner-shadow` | 3.570 % | 2.018 % |
@@ -186,8 +186,12 @@ and `v08-inner-shadow` from 7.357 % to 0.304 %. #412 measured Figma's
 `BACKGROUND_BLUR` at nearer `0.42-0.45 x radius`; the drop and inner shadows
 prefer the same region independently. That is evidence the offset is systematic
 across effects rather than a backdrop-blur-specific compensation, which is one
-of the risks #412's ruling named. **Nothing was changed on the strength of it** —
-the constant stays `radius / 2` until #412 is decided.
+of the risks #412's ruling named. Nothing was changed on the strength of it at
+the time. **#412 was decided on 2026-07-31 and the constant is now
+`0.4375 * radius`** — the shadow frames were swept the same way and prefer the
+same window, confirming this note's reading that the offset is systematic across
+effects rather than backdrop-blur-specific
+(`docs/decisions/blur-sigma-is-figmas-mapping.md`).
 
 It matters beyond the existing frames: v0.12 delivers the RAW/HiFi/LoFi quality
 profiles **as per-asset-class band contracts with a per-asset encode-and-diff

@@ -436,49 +436,56 @@ fn measured_blur_sigma(radius: f32) -> f64 {
 /// intervals are different, so their intersection is much narrower than
 /// either.
 ///
-/// | authored radius | `radius / 2` | rendered sigma | mapping constants that render the same |
-/// | --------------- | ------------ | -------------- | -------------------------------------- |
-/// | 12              | 6            | 5.4937         | 0.4658 … 0.5092                        |
-/// | 24              | 12           | 11.4867        | 0.4988 … 0.5208                        |
+/// | authored radius | `radius * 0.4375` | rendered sigma | mapping constants that render the same |
+/// | --------------- | ----------------- | -------------- | -------------------------------------- |
+/// | 12              | 5.25              | 5.1373         | 0.4212 … 0.4654                        |
+/// | 24              | 10.5              | 10.1869        | 0.4322 … 0.4543                        |
 ///
-/// **What stays unpinned: the mapping constant anywhere in 0.4988 … 0.5092**,
-/// about −0.25 % / +1.8 % around the shipped 0.5. That floor is Skia's, not
+/// **What stays unpinned: the mapping constant anywhere in 0.4322 … 0.4543**,
+/// about −1.2 % / +3.8 % around the shipped 0.4375. That floor is Skia's, not
 /// this test's: the raster blur converts sigma to an integer box-blur window,
 /// so every constant in one of those intervals renders byte-identical pixels
-/// and no pixel measurement can separate them. Measured — building the painter
-/// with `sigma = radius * 0.505` leaves every test in the workspace green,
-/// including the goldens, because not one pixel moves. Narrowing the window
-/// further needs more radii, each contributing its own interval. Before this
-/// test `radius * 0.4967` passed the whole workspace in silence as well, which
-/// is the gap it closes.
+/// and no pixel measurement can separate them. Narrowing the window further
+/// needs more radii, each contributing its own interval.
 ///
-/// The rendered sigma runs below `radius / 2` for the same reason — the window
+/// The intersection is wider than the one this test carried while the constant
+/// was 0.5 (0.4988 … 0.5092, about ±1 %), because the box-blur windows these
+/// two radii land on at the lower constant are themselves wider relative to
+/// it. The test is correspondingly weaker as a pin, and saying so is the point:
+/// it is a *measured* upper bound on precision, not a claim of accuracy.
+///
+/// The rendered sigma runs below the nominal for the usual reason — the window
 /// Skia selects is the one below what the requested sigma names — so the
 /// expectations are the measured values rather than the nominal ones. Pinning
-/// to the nominal 6 and 12 would need a tolerance wide enough to readmit the
-/// neighbouring windows, which is the upper bound this test exists to supply.
+/// to the nominal 5.25 and 10.5 would need a tolerance wide enough to readmit
+/// the neighbouring windows, which is the upper bound this test exists to
+/// supply.
 ///
-/// This test is one of the figures the deferred sigma refit (issue #412) has
-/// to re-record: it holds the mapping to 0.5, and that refit's candidate
-/// range, 0.42 … 0.45, fails it. That is the intended signal — the refit is a
-/// cross-effect change that moves the shadow goldens too, so it must not be
-/// able to land quietly.
+/// **This test previously held the mapping to 0.5 so that the refit could not
+/// land quietly.** It did its job: issue #412's refit is the change that
+/// re-recorded it, and the numbers above are that re-recording
+/// (`docs/decisions/blur-sigma-is-figmas-mapping.md`). It now holds the
+/// mapping to Figma's measured value, and `radius / 2` fails it — which is the
+/// same guard pointing the other way, so a silent revert to the CSS convention
+/// is caught too.
 #[test]
 fn the_backdrop_blur_spreads_at_the_mapped_sigma() {
     /// Well under half a box-blur window at these radii: wide enough that
     /// 8-bit rounding cannot reach it, narrow enough that the neighbouring
-    /// windows (5.1373 and 6.1523; 11.1478 and 12.1307) stay out. Named apart
+    /// windows (4.4502 and 5.4937; 9.4549 and 10.4986) stay out — the tighter
+    /// side is radius 24's upper neighbour at +0.3117, so 0.15 clears it with
+    /// room to spare but not by much. Named apart
     /// from this file's golden-area `TOLERANCE`, which it has nothing to do
     /// with.
     const SIGMA_TOLERANCE: f64 = 0.15;
 
-    for (radius, expected) in [(12.0f32, 5.4937f64), (24.0, 11.4867)] {
+    for (radius, expected) in [(12.0f32, 5.1373f64), (24.0, 10.1869)] {
         let got = measured_blur_sigma(radius);
         assert!(
             (got - expected).abs() <= SIGMA_TOLERANCE,
             "a backdrop blur of radius {radius} must render at sigma {expected} \
-             ± {SIGMA_TOLERANCE}, the width `sigma = radius / 2` asks for once Skia has \
-             quantised it onto a box-blur window; got {got}"
+             ± {SIGMA_TOLERANCE}, the width `sigma = radius * 0.4375` asks for once Skia \
+             has quantised it onto a box-blur window; got {got}"
         );
     }
 }
