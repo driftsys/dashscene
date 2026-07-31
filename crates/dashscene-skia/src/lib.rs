@@ -13,6 +13,8 @@
 //! clipping ancestors at commit (issue #97), and the painter only
 //! intersects it.
 
+pub mod retention;
+
 use std::collections::HashMap;
 
 use dashpaint::{
@@ -42,6 +44,13 @@ pub enum DirtyMode {
     /// pixel — which is what makes the two modes a differential test of the
     /// dirty set (`goldens/tooling/tests/dirty_oracle.rs`).
     ///
+    /// Render-target group composites are retained the same way (issue
+    /// #278): a group whose rect range no dirty index touches blends last
+    /// frame's layer again instead of redrawing its subtree. The rule is
+    /// [`retention::GroupCache`]'s, and it extends the differential test — a dirty
+    /// set that misses a rect inside a group now leaves a stale *layer*,
+    /// not only a stale entry.
+    ///
     /// A dirty index the rect table does not have is skipped, not a panic
     /// (debt #181). `Painter::paint` states no precondition on the set's
     /// indices — it calls the set advisory and says ignoring it is always
@@ -60,6 +69,12 @@ pub struct SkiaPainter {
     mode: DirtyMode,
     /// The simulated instance buffer. Empty in `Full` mode.
     retained: Vec<RectEntry>,
+    /// The retained render-target group composites (issue #278). The layer
+    /// handle is a raster [`Image`] snapshotted from the offscreen surface
+    /// the group's subtree drew into; the rule for when one may be blended
+    /// again is [`retention`]'s and names no Skia type. Always empty in
+    /// `Full` mode, which rebuilds every layer by construction.
+    group_layers: retention::GroupCache<Image>,
 }
 
 impl SkiaPainter {
@@ -104,7 +119,21 @@ impl SkiaPainter {
             surface,
             mode,
             retained: Vec::new(),
+            group_layers: retention::GroupCache::new(),
         }
+    }
+
+    /// How many render-target group composites this painter has built since
+    /// it was created (issue #278).
+    ///
+    /// In [`DirtyMode::Retained`] a group whose range stays clean is built
+    /// once and blended on every later frame, so a scene with one stable
+    /// group reads `1` after any number of frames. In [`DirtyMode::Full`]
+    /// this stays `0`: that mode composites through Skia's own
+    /// `save_layer` and retains nothing, which is what keeps it correct
+    /// without consulting the dirty set.
+    pub fn group_composites_built(&self) -> u64 {
+        self.group_layers.builds()
     }
 
     /// The current surface contents, PNG-encoded.
@@ -159,9 +188,16 @@ impl Painter for SkiaPainter {
         // refresh when the caller has no dirty set, or when the node count
         // changed (every index is new, so the whole buffer re-uploads —
         // the first-frame and structural-change path).
+        //
+        // `incremental` records which arm ran, because the group cache asks
+        // the same question one level up: on the full-refresh arm the dirty
+        // set does not describe the difference between the two tables, so
+        // no group composite may be reused either.
+        let mut incremental = false;
         if self.mode == DirtyMode::Retained {
             match dirty {
                 Some(indices) if self.retained.len() == rects.len() => {
+                    incremental = true;
                     // An index past the end of the table names no rect, so
                     // it is skipped rather than indexed (debt #181) — see
                     // `DirtyMode::Retained`. The two lengths are equal in
@@ -179,23 +215,44 @@ impl Painter for SkiaPainter {
                 }
             }
         }
+        // `None` outside the incremental arm — and always in `Full` mode,
+        // which retains nothing and so never stores a layer to reuse.
+        self.group_layers
+            .begin_frame(groups, if incremental { dirty } else { None });
 
-        // Disjoint field borrows: `retained` is read while `surface` is
-        // borrowed mutably.
+        // Disjoint field borrows: `retained` and `group_layers` are read
+        // while `surface` is borrowed mutably.
         let source: &[RectEntry] = match self.mode {
             DirtyMode::Full => rects,
             DirtyMode::Retained => &self.retained,
         };
+        let retain_groups = self.mode == DirtyMode::Retained;
+        let (layer_width, layer_height) = (self.surface.width(), self.surface.height());
+        let group_layers = &mut self.group_layers;
 
-        let canvas = self.surface.canvas();
-        canvas.clear(skia_safe::colors::TRANSPARENT);
+        let base_canvas = self.surface.canvas();
+        base_canvas.clear(skia_safe::colors::TRANSPARENT);
         // The render-target group opacities (`masks-and-group-opacity.md`):
         // a group's rect range `[start, end)` composites offscreen and the
         // layer blends at `alpha`. Groups arrive in ascending `start` order
         // (DFS pre-order) and nest, so one pointer walks the starts and a
-        // stack of pending `end` indices closes the layers innermost first.
+        // stack of pending layers closes them innermost first.
+        //
+        // Two realisations of the same composite, one per mode:
+        //
+        // - `Full` uses Skia's `save_layer_alpha`, which owns the layer and
+        //   discards it at `restore`. Nothing is retained and nothing can
+        //   be, which is exactly why that mode is correct without reading
+        //   the dirty set — it is the reference and the goldens' renderer.
+        // - `Retained` draws each group's subtree into its own offscreen
+        //   surface, blends the snapshot, and keeps it (issue #278). A
+        //   later frame whose dirty set leaves the group's range alone
+        //   blends the same snapshot again and skips the subtree entirely.
+        //
+        // Only one of the two stacks is ever non-empty.
         let mut next_group = 0usize;
         let mut open_group_ends: Vec<u32> = Vec::new();
+        let mut open_layers: Vec<OpenLayer> = Vec::new();
         // Baked-vector shapes (story B1): the MSDF resolve effect compiles
         // once (lazily — a vector-free scene pays nothing), and each atlas PNG
         // decodes once (the hero repeats one atlas across ~148 vectors).
@@ -211,18 +268,58 @@ impl Painter for SkiaPainter {
         // The per-frame MSDF setup (SkSL compile + atlas decodes) and the
         // run-by-anchor index, built once. A text-free scene builds nothing.
         let msdf = MsdfFrame::new(glyphs, source);
-        for (i, rect) in source.iter().enumerate() {
+        // A manual index rather than `enumerate`, because a reused group
+        // composite advances it past the whole subtree it covers.
+        let mut i = 0usize;
+        while i < source.len() {
             // Open every group that starts at this rect (at most one per
-            // index — one opacity per node). `save_layer_alpha` begins the
-            // offscreen composite.
+            // index — one opacity per node), and begin its offscreen
+            // composite.
+            let mut reused_through: Option<usize> = None;
             while next_group < groups.len() && groups[next_group].start == i as u32 {
                 let group = groups[next_group];
-                let alpha = (group.alpha.clamp(0.0, 1.0) * 255.0).round() as u32;
-                canvas.save_layer_alpha(None, alpha);
-                open_group_ends.push(group.end);
                 next_group += 1;
+                if !retain_groups {
+                    base_canvas.save_layer_alpha(None, u32::from(layer_alpha(group.alpha)));
+                    open_group_ends.push(group.end);
+                    continue;
+                }
+                if let Some(layer) = group_layers.reuse(&group) {
+                    blend_layer(
+                        target_canvas(base_canvas, &mut open_layers),
+                        layer,
+                        group.alpha,
+                    );
+                    reused_through = Some(group.end as usize);
+                    break;
+                }
+                open_layers.push(OpenLayer {
+                    surface: offscreen_layer(layer_width, layer_height),
+                    group,
+                });
             }
+            if let Some(end) = reused_through {
+                // The reused layer already holds everything its range drew,
+                // nested groups and anchored glyph runs included, so the
+                // whole range is skipped and every group inside it with it.
+                //
+                // A composite is only ever stored by the closing arm below,
+                // which runs at rect `end - 1`, so a stored range always has
+                // `end > start`. The loop therefore advances; the assertion
+                // states that rather than leaving the reader to derive it.
+                debug_assert!(end > i, "a reused composite must advance the walk");
+                while next_group < groups.len() && (groups[next_group].start as usize) < end {
+                    next_group += 1;
+                }
+                i = end;
+                continue;
+            }
+            // The surface this rect draws into: the innermost open group's
+            // offscreen in `Retained` mode, the base surface otherwise
+            // (`Full` mode keeps its layers on the base canvas itself).
+            let canvas = target_canvas(base_canvas, &mut open_layers);
 
+            let rect = &source[i];
             let entry = paints.resolve(rect.paint);
             let region = clips.resolve(rect.clip);
             // The region is already ancestor-resolved (core, at commit —
@@ -397,13 +494,78 @@ impl Painter for SkiaPainter {
 
             // Close every group whose subtree ends after this rect,
             // innermost first (`end` values on the stack are non-increasing
-            // from the top by the nesting).
+            // from the top by the nesting). In `Retained` mode closing a
+            // group snapshots its offscreen, blends the snapshot into
+            // whatever encloses it, and stores it for the next frame.
             while open_group_ends.last() == Some(&(i as u32 + 1)) {
-                canvas.restore();
+                base_canvas.restore();
                 open_group_ends.pop();
             }
+            while open_layers
+                .last()
+                .is_some_and(|layer| layer.group.end == i as u32 + 1)
+            {
+                let mut layer = open_layers.pop().expect("checked by the loop condition");
+                let composite = layer.surface.image_snapshot();
+                blend_layer(
+                    target_canvas(base_canvas, &mut open_layers),
+                    &composite,
+                    layer.group.alpha,
+                );
+                group_layers.store(&layer.group, composite);
+            }
+            i += 1;
         }
     }
+}
+
+/// A render-target group whose subtree is still being drawn, in
+/// [`DirtyMode::Retained`] (issue #278).
+struct OpenLayer {
+    /// The offscreen the group's rect range draws into, at full alpha.
+    surface: skia_safe::Surface,
+    group: GroupComposite,
+}
+
+/// The surface draws go to: the innermost open group's offscreen, or the
+/// base surface when none is open.
+fn target_canvas<'a>(base: &'a Canvas, open: &'a mut [OpenLayer]) -> &'a Canvas {
+    match open.last_mut() {
+        Some(layer) => layer.surface.canvas(),
+        None => base,
+    }
+}
+
+/// An offscreen for one group composite, at the full surface size.
+///
+/// Full size rather than the group's device bounds, so the snapshot blends
+/// back at the origin with no transform and no resampling — a group's ink
+/// reaches past its rect range through shadows and blurs, so a tight bound
+/// would have to be derived from the effects rather than from the geometry,
+/// and getting it wrong moves pixels. `raster_n32_premul` hands back
+/// zero-initialised (fully transparent) pixels, which is the state
+/// `save_layer` starts a layer in.
+fn offscreen_layer(width: i32, height: i32) -> skia_safe::Surface {
+    surfaces::raster_n32_premul((width, height)).expect("raster surface allocation")
+}
+
+/// Blends a group composite onto `canvas` at the group's alpha.
+///
+/// The device-aligned counterpart of what `save_layer_alpha`'s `restore`
+/// does: one source-over draw of the layer at the origin, modulated by the
+/// same 8-bit alpha. Nearest sampling and no antialiasing, because the draw
+/// is a 1:1 pixel copy — there is no geometry to smooth and no scale to
+/// filter.
+fn blend_layer(canvas: &Canvas, composite: &Image, alpha: f32) {
+    let mut paint = skia_safe::Paint::default();
+    paint.set_anti_alias(false);
+    paint.set_alpha(layer_alpha(alpha));
+    canvas.draw_image(composite, (0, 0), Some(&paint));
+}
+
+/// A group's alpha as the 8-bit value the composite blends at.
+fn layer_alpha(alpha: f32) -> u8 {
+    (alpha.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
 /// The MSDF resolve shader. Samples the atlas (RGB distance channels),
