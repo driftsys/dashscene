@@ -31,25 +31,34 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Every crate that can execute inside `LiveScene::tick`.
+/// Every workspace member that can execute inside `LiveScene::tick`, as a path
+/// relative to the workspace root.
 ///
 /// **Maintain this list by hand.** It cannot be derived from Cargo's
-/// dependency graph, because the two crates the graph would miss are exactly
-/// the ones the rule most needs: `dashscene-engine` reaches `tick` as an
-/// injected `Box<dyn LayoutSolver>` and `dashscene-typeset` through the
-/// engine's measure callback, and neither is a library dependency of
-/// `dashlang`. Add a crate here when it becomes reachable from `tick`.
-const RUNTIME_CRATES: [&str; 5] = [
+/// dependency graph, because the entries the graph would miss are exactly the
+/// ones the rule most needs: `dashscene-engine` reaches `tick` as an injected
+/// `Box<dyn LayoutSolver>`, `dashscene-typeset` through the engine's measure
+/// callback, and `showcase` supplies the injected solver itself — none of the
+/// three is a library dependency of `dashlang`. Add an entry here when it
+/// becomes reachable from `tick`.
+///
+/// Paths rather than crate names, because not every member lives under
+/// `crates/`: the showcase scenes are a workspace member under `corpus/`
+/// (story #574).
+const RUNTIME_CRATES: [&str; 6] = [
     // `LiveScene` itself: the per-frame binding flush.
-    "dashlang",
+    "crates/dashlang",
     // The scheduler `tick` advances.
-    "dashcue",
+    "crates/dashcue",
     // `Txn`, `commit`, the double buffer and the generation stamp.
-    "dashscene-core",
+    "crates/dashscene-core",
     // The injected layout solver.
-    "dashscene-engine",
+    "crates/dashscene-engine",
     // Shaping and measurement, reached through the engine.
-    "dashscene-typeset",
+    "crates/dashscene-typeset",
+    // The showcase scenes' own `LayoutSolver`, which is what a scene injects
+    // into its `LiveScene` and therefore what runs inside every solving tick.
+    "corpus/showcase",
 ];
 
 /// How a clock read is spelled.
@@ -70,8 +79,8 @@ fn no_crate_at_or_below_livescene_reads_a_clock() {
     let mut offences: Vec<String> = Vec::new();
     let mut scanned = 0usize;
 
-    for name in RUNTIME_CRATES {
-        let src = workspace.join("crates").join(name).join("src");
+    for member in RUNTIME_CRATES {
+        let src = workspace.join(member).join("src");
         let sources = rust_sources(&src);
         // A scan that scans nothing passes for free. That is the
         // `t2-check-has-no-teeth` failure the v0.13 test tiering exists to

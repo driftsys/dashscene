@@ -599,8 +599,8 @@ dependencies = [
  "dashlang",
  "dashpaint",
  "dashscene-core",
- "dashscene-engine",
  "dashscene-skia",
+ "showcase",
  "softbuffer",
  "winit",
 ]
@@ -2223,6 +2223,19 @@ name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
+
+[[package]]
+name = "showcase"
+version = "0.0.0"
+dependencies = [
+ "dashc",
+ "dashlang",
+ "dashpaint",
+ "dashscene-core",
+ "dashscene-engine",
+ "dashscene-skia",
+ "dashscene-typeset",
+]
 
 [[package]]
 name = "simba"
