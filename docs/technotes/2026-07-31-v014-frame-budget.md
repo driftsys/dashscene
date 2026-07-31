@@ -76,10 +76,20 @@ frames.
 | typography |              6.31 |    15.2 |  8.9 |              59.2 |
 | surfaces   |             17.92 |    27.0 |  9.1 |              37.3 |
 
-**The blit costs about 9.1 ms and does not vary with scene content.** It is a
-flat per-frame tax of roughly 4 ms per megapixel, paid twice over because every
-pixel is unpremultiplied and then re-premultiplied around a window-sized
-allocation (issue #603).
+**The blit costs about 9.1 ms and does not vary with scene content.**
+
+**Amended after issue #603 was fixed:** this note originally attributed the
+whole 9.1 ms to the premultiply round trip. That was wrong, and measuring the
+fix is what showed it. Removing the round trip is worth about **2.2 ms**. The
+per-step split on `layout` — readback 1.847 to 0.191, shuffle 0.816 to 0.337,
+`buffer_mut` 0.423 to 0.402, `softbuffer::Buffer::present` 5.699 to 5.646 —
+puts **86 % of the remainder inside softbuffer's own post to the window
+server**, which is a compositor handoff rather than a conversion and which no
+pixel-format change reaches. Issue #641 records that `Surface::new_raster_direct`
+would reach 0.53 ms of the remaining 6.58 ms.
+
+So the blit is still the largest single term for `layout`, and most of it is not
+work this project performs.
 
 For `layout` that is **95 % of the frame**: 0.51 ms of painting inside 9.4 ms of
 copying. The repository owner reported that `layout` felt slow before this was
@@ -93,8 +103,13 @@ So the answer to "why is this not 60 Hz" is two costs, not one:
   megapixel from the extent sweep below — the per-megapixel term being the shape
   a backdrop blur has
 
-With the blit removed, `layout` and `typography` clear 60 Hz on this machine
-comfortably. `surfaces` would still be marginal at about 17.9 ms of paint alone.
+`layout` and `typography` are already at the loop's 60 Hz pacing rather than
+work-bound, so removing blit cost does not raise their frame rate — only
+`surfaces` gained, from 38.1 to 41.2 frames per second. With issue #639's
+per-frame image decode also removed, `surfaces` would sit near 20.4 ms, about
+49 frames per second. **It does not reach 60 Hz on this painter**, and the
+remaining terms are the compositor post, the blur and the gradients rather than
+anything identified as waste.
 
 Worth weighing before anyone spends on #603: `dashscene-wgpu` (v0.15) has no
 blit at all, because it presents to its own surface rather than handing pixels
