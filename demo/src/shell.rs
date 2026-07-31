@@ -85,10 +85,12 @@ use dashlang::LiveScene;
 use dashscene_core::Arena;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::{StartCause, WindowEvent};
+use winit::event::{ElementState, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
+use winit::keyboard::PhysicalKey;
 use winit::window::{Window, WindowId};
 
+use crate::input::InputState;
 use crate::present::{Present, PresentError, SkiaPresenter};
 
 /// Builds a scene into `arena` for a drawable of `width` x `height` physical
@@ -178,6 +180,7 @@ pub fn run(
         presenter: None,
         arena: Arena::new(),
         live: None,
+        input: InputState::new(),
         extent: (0, 0),
         previous_frame: None,
         shown: None,
@@ -229,6 +232,11 @@ struct Host {
     presenter: Option<Box<dyn Present>>,
     arena: Arena,
     live: Option<LiveScene>,
+    /// The cursor and keyboard mapping onto `live`'s signals and its variant
+    /// set (story #573). Rebuilt alongside `arena` — see
+    /// [`Host::rebuild`] — since its variant set is a handle into that
+    /// specific arena.
+    input: InputState,
     /// The drawable extent the host last acted on, in physical pixels. A
     /// `Resized` that repeats it changes nothing and is dropped here, before
     /// it costs a scene rebuild.
@@ -405,6 +413,11 @@ impl Host {
         // Generations count from a new arena, so the number the window shows
         // no longer names anything in this scene.
         self.shown = None;
+        // After the scene builder, not before: the node this retargets
+        // (`crate::VARIANT_SWATCH`) only exists once the scene above has
+        // committed it. Restores whichever member was active, the same
+        // "restore the phase" reason `pulse` above does.
+        self.input.attach(&mut self.arena);
     }
 }
 
@@ -515,6 +528,36 @@ impl ApplicationHandler<Wake> for Host {
             // Not every platform preserves the contents of an occluded
             // surface, and the generation cannot report that they were lost.
             WindowEvent::Occluded(false) => self.force("re-exposure after occlusion"),
+            // Story #573: the cursor drives `sweep` directly. No wake proxy
+            // is needed for it — this event already reaches a parked loop,
+            // exactly as story #572 anticipated.
+            WindowEvent::CursorMoved { position, .. } => {
+                let width = self.extent.0;
+                let changed = match self.live.as_mut() {
+                    Some(live) => crate::input::cursor_moved(live, position.x, width),
+                    None => false,
+                };
+                if changed {
+                    self.force("a pointer move");
+                }
+            }
+            // Story #573: two keys nudge `sweep` to either end of its range,
+            // and one cycles `input`'s variant set. `repeat` is excluded so
+            // holding a key does not flood the signal or spin the variant.
+            WindowEvent::KeyboardInput { event, .. } => {
+                if event.state == ElementState::Pressed
+                    && !event.repeat
+                    && let PhysicalKey::Code(code) = event.physical_key
+                {
+                    let changed = match self.live.as_mut() {
+                        Some(live) => self.input.key(&mut self.arena, live, code),
+                        None => false,
+                    };
+                    if changed {
+                        self.force("a key press");
+                    }
+                }
+            }
             WindowEvent::RedrawRequested => self.frame(event_loop),
             _ => {}
         }

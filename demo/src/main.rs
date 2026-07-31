@@ -1,15 +1,18 @@
 //! `cargo run -p demo` — the showcase host (v0.14, epic #568).
 //!
-//! This is the first thing in the repository that draws into a window, and
-//! since story #572 the first thing that animates one.
+//! This is the first thing in the repository that draws into a window, since
+//! story #572 the first thing that animates one, and since story #573 the
+//! first thing that takes input.
 //!
 //! Scene selection and `.dsb` loading live here. Today there is one scene and
 //! it is a placeholder: story #574 authors the showcase scenes under
 //! `corpus/showcase/`, and story #575 points this host at a compiled document
 //! instead. What story #571 delivered is the [`present`] seam and the Skia
-//! implementation behind it; what story #572 adds is the [`shell`] frame loop
-//! that drives it.
+//! implementation behind it; story #572 added the [`shell`] frame loop that
+//! drives it; story #573's [`input`] maps `winit` events onto this scene's
+//! signal and a variant set it builds for the purpose.
 
+mod input;
 mod present;
 mod shell;
 
@@ -49,7 +52,34 @@ fn report(error: &dyn Error) {
 /// [`placeholder_pulse`] can find it in a scene it did not build — which is
 /// what lets the host rebuild the scene for a new extent without carrying the
 /// signal handles across the rebuild.
-const SWEEP: &str = "sweep";
+///
+/// `pub(crate)` rather than private: `input.rs` looks it up the same way
+/// (story #573), so the cursor and the two sweep-nudge keys drive the exact
+/// signal the scripted pulse already does.
+pub(crate) const SWEEP: &str = "sweep";
+
+/// The node `input.rs`'s variant-cycle key retargets: the "band" bar's own
+/// name, looked up in the committed arena after this scene has built rather
+/// than held as a handle, for the same reason [`SWEEP`] is named rather than
+/// held (`input::InputState::attach`, story #573).
+///
+/// Not a new node: the band is already unbound by any signal, so overriding
+/// its fill through a variant set costs nothing this scene did not already
+/// have, and the key becomes visible against the same bar every showcase
+/// scene would have somewhere.
+pub(crate) const VARIANT_SWATCH: &str = "band";
+
+/// The band's authored fill — [`VARIANT_SWATCH`]'s member-0 color, so that
+/// declaring the variant set does not itself change what the scene shows on
+/// the first frame. `input.rs` needs the exact same value to build that
+/// member, so it is named here rather than duplicated as a second literal
+/// that could drift from this one.
+pub(crate) const BAND_FILL: Color = Color {
+    r: 0.13,
+    g: 0.17,
+    b: 0.27,
+    a: 1.0,
+};
 
 /// A placeholder scene, sized to the drawable in physical pixels, with one
 /// signal driving three kinds of animated write.
@@ -77,7 +107,6 @@ fn placeholder_scene(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
     let height = height as f32;
 
     let ink = rgba(0.05, 0.07, 0.12, 1.0);
-    let band = rgba(0.13, 0.17, 0.27, 1.0);
     let rule = rgba(0.36, 0.71, 0.94, 1.0);
     let veil = rgba(1.0, 1.0, 1.0, 0.18);
     let tiles: [Color; 5] = [
@@ -103,7 +132,11 @@ fn placeholder_scene(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
     let mut root = node("root")
         .size(width, height)
         .child(node("backdrop").size(width, height).fill(ink))
-        .child(node("band").size(width, band_height).fill(band))
+        .child(
+            node(VARIANT_SWATCH)
+                .size(width, band_height)
+                .fill(BAND_FILL),
+        )
         .child(
             node("rule")
                 .at(margin, band_height - band_height / 6.0)
