@@ -102,6 +102,7 @@ publish:
     cargo publish -p dashpack
     cargo publish -p dashscene-unity
     cargo publish -p dashscene-web
+    cargo publish -p dashscene-gpu
     cargo publish -p dashscene
 
 # Install local toolchain bits (git hooks, git-std, dprint, markdownlint-cli).

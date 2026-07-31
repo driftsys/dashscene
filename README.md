@@ -130,9 +130,11 @@ Not built:
 
 - **The Unity painter.** `crates/dashscene-unity` is a stub; the Unity and C#
   project it will bind to is a separate repository that does not exist yet.
-- **`dashscene-wgpu`**, the GPU painter for native and web. Planned as the v0.15
-  slice. No crate exists.
-- **The web painter.** `crates/dashscene-web` is a stub, parked.
+- **`dashscene-gpu`**, the lean painter for native and web. The v0.15 slice
+  (epic #569). The crate exists and draws nothing — the `Painter` seam
+  compiles, and no pixel path is built yet.
+- **The web painter.** `crates/dashscene-web` is a stub, retired: `dashscene-gpu`
+  reaches the browser from the same codebase as native.
 - **The umbrella crate.** `crates/dashscene` is a stub; code in this repository
   depends on the individual crates, not on a facade.
 
@@ -170,7 +172,8 @@ scenes it draws), and `goldens/tooling/` (the golden-image harness).
 | `dashpack-astcenc-sys` | bindings to the vendored astcenc encoder and reference decoder |
 | `dashscene`            | the umbrella crate — a stub                                    |
 | `dashscene-unity`      | Rust FFI bindings for the Unity painter — a stub               |
-| `dashscene-web`        | the wasm and tiny-skia painter — a stub, parked                |
+| `dashscene-web`        | the wasm and tiny-skia painter — a stub, retired               |
+| `dashscene-gpu`        | the lean painter over wgpu — the seam only, draws nothing      |
 
 Beside them: `importers/figma/` (the Deno and TypeScript Figma REST importer and
 its annotator plugin), `corpus/` (the stress corpus, fonts, glyph atlases and

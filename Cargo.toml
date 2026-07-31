@@ -16,6 +16,7 @@ members = [
   "crates/dashpack-astcenc-sys",
   "crates/dashscene-unity",
   "crates/dashscene-web",
+  "crates/dashscene-gpu",
   "goldens/tooling",
   # The showcase scenes the demonstration draws (v0.14, story #574). Under
   # `corpus/` rather than `demo/` because they exercise the full v0 paint
@@ -44,7 +45,7 @@ rust-version = "1.88"
 #   dashbuf -> dashpaint -> dashscene-core -> dashscene-typeset ->
 #   dashcue -> dashscene-engine -> dashscene-validator -> dashscene-skia -> dashlang ->
 #   dashc -> dashpack-astcenc-sys -> dashpack -> dashscene-unity ->
-#   dashscene-web -> dashscene
+#   dashscene-web -> dashscene-gpu -> dashscene
 # dashcue precedes dashscene-engine: the engine's FLIP (story #22) consumes it.
 # dashpack follows dashc: it will compile against dashbuf's asset and manifest
 # schemas, and nothing in the workspace depends on it (epic #345).
@@ -67,6 +68,7 @@ dashpack = { path = "crates/dashpack", version = "0.0.0" }
 dashpack-astcenc-sys = { path = "crates/dashpack-astcenc-sys", version = "0.0.0" }
 dashscene-unity = { path = "crates/dashscene-unity", version = "0.0.0" }
 dashscene-web = { path = "crates/dashscene-web", version = "0.0.0" }
+dashscene-gpu = { path = "crates/dashscene-gpu", version = "0.0.0" }
 
 # Stack per docs/design/architecture.md — reserved here for crates to opt into as
 # implementation lands; not every crate depends on every entry.

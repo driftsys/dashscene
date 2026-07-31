@@ -437,7 +437,12 @@ so each technote stops being the authority for the conclusion it reached:
   are a `fixed-region` validator check (`docs/technotes/producers-and-ir.md` §6).
 - [backend-tiering-unity-skia-lean.md](backend-tiering-unity-skia-lean.md) —
   Unity for high-end, trimmed Skia for entry, the lean painter gated on
-  measurement (`docs/technotes/rendering-and-painters.md` §5).
+  measurement (`docs/technotes/rendering-and-painters.md` §5). **Amended** by
+  `wgpu-is-the-lean-painter.md` below, which reverses the entry-tier bridge.
+- [wgpu-is-the-lean-painter.md](wgpu-is-the-lean-painter.md) — `dashscene-gpu`
+  over wgpu is the lean painter, covering native and web from one codebase;
+  Skia-GPU is **not planned**, and Skia stays permanently as the bit-exact CPU
+  oracle (story #577, amends the record above).
 - [unity-painter-uses-brg.md](unity-painter-uses-brg.md) — **proposed**:
   BatchRendererGroup over GameObject-per-node for the Unity painter, pending a
   lit-BRG shader spike and a GLES 3.2 platform check

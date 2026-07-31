@@ -939,17 +939,19 @@ resolving before v0.14 starts rather than discovering it at the close.
 Depends on: v0.13 (a burnt-down base). Independent of v0.15 — the showcase runs
 on the Skia reference painter.
 
-### v0.15 — the wgpu painter — open
+### v0.15 — the lean painter — open
 
 **Epic #569.** Closes no `E` criterion. Design capture: the same work breakdown,
 plus
 `docs/wip/2026-07-19-wgpu-painter-direction.md` for the ecosystem research and
 the pinned helper stack.
 
-Delivers: `dashscene-wgpu` behind boundary B, covering native and web. Four
+Delivers: `dashscene-gpu` behind boundary B, covering native and web. Four
 drivers, all selected at the design session: web reach, the entry-tier candidate
 slot, retiring the Skia trim profile, and `R-T5` single-sourced SDF math shared
-with the future Unity painter.
+with the future Unity painter. The crate is named for the role rather than for
+`wgpu`, its backend — `docs/decisions/wgpu-is-the-lean-painter.md`, which also
+records Skia-GPU as **not planned** rather than as a fallback.
 
 **This slice does not switch the entry tier.** Skia stays the entry-tier bridge
 until wgpu is measured on a real entry SoC, and no such hardware is in the loop

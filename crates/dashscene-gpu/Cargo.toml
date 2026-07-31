@@ -1,0 +1,18 @@
+[package]
+name = "dashscene-gpu"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "The lean painter: instanced quads and analytic SDF over wgpu, covering native and web from one codebase (docs/decisions/wgpu-is-the-lean-painter.md)."
+
+[lib]
+name = "dashscene_gpu"
+
+[dependencies]
+# Boundary B — the `Painter` trait this crate implements, and the only
+# dependency it has until story #578 brings the instance buffer and `wgpu`
+# itself. Deliberately not `wgpu` yet: this story reserves the name and
+# compiles the seam, and a device-owning painter is #580's.
+dashpaint.workspace = true

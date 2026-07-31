@@ -43,6 +43,7 @@ scopes = [
     "dashpack-astcenc-sys",
     "dashscene-unity",
     "dashscene-web",
+    "dashscene-gpu",
     "goldens",
     "corpus",
     "importers",
@@ -122,6 +123,10 @@ regex = 'version = "([^"]+)"'
 
 [[version_files]]
 path = "crates/dashscene-web/Cargo.toml"
+regex = 'version = "([^"]+)"'
+
+[[version_files]]
+path = "crates/dashscene-gpu/Cargo.toml"
 regex = 'version = "([^"]+)"'
 
 [versioning]
