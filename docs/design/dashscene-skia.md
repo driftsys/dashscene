@@ -97,11 +97,33 @@ All in `crates/dashscene-skia/src/lib.rs`:
   `RectEntry.opacity`: each draw's paint alpha is multiplied by it
   (`set_alpha_f` modulates a shader paint's output, so one path covers
   solid, gradient, and image fills). The render-target path is the
-  `groups` slice: the painter opens a `save_layer_alpha` at each
-  `GroupComposite`'s `start` and closes it (`restore`) when the innermost
-  open group's `end` is reached, so an overlapping group at partial
-  opacity flattens before its alpha applies. The groups nest by range, so
-  a stack of pending end indices closes them innermost-first.
+  `groups` slice: the painter begins an offscreen composite at each
+  `GroupComposite`'s `start` and blends it at the group's alpha when the
+  innermost open group's `end` is reached, so an overlapping group at
+  partial opacity flattens before its alpha applies. The groups nest by
+  range, so a stack of pending layers closes them innermost-first.
+
+  There are two realisations of that composite, one per `DirtyMode`
+  (issue #278). `Full` uses Skia's own `save_layer_alpha` / `restore`,
+  which owns the layer and discards it — nothing is retained, which is
+  what lets that mode be correct without reading the dirty set, and it is
+  the mode every golden renders through. `Retained` draws each group's
+  subtree into its own raster surface, blends the snapshot at the origin
+  with the same 8-bit alpha, and keeps the snapshot; a later frame whose
+  dirty set leaves the group's rect range alone blends the same snapshot
+  again and skips the subtree entirely. The two are pixel-identical,
+  asserted frame by frame in `crates/dashscene-skia/tests/painter.rs`
+  over nested groups with anti-aliased corners and an anchored glyph run.
+
+  The rule for when a composite may be blended again lives in
+  `crates/dashscene-skia/src/retention.rs` and is generic over the
+  backend's layer handle: it is expressed in rect indices and the dirty
+  set only, and names no Skia type, so a GPU painter can implement it
+  against its own render targets. A composite is invalidated by any dirty
+  index inside `[start, end)`, by its range moving or disappearing, and
+  by a frame the painter could not treat incrementally at all. Alpha is
+  not part of the identity — the layer is built at full alpha and the
+  group's alpha applies at the blend.
 - Shadows render live (v0.8, story #45,
   `docs/decisions/effects-vocabulary-shadows.md`). A drop shadow draws
   before the fill: the node's rendered outline — its fill box grown by the

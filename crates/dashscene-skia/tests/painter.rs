@@ -2135,3 +2135,322 @@ fn a_backdrop_blur_over_a_transparent_backdrop_softens_its_alpha_edge() {
          composited over the sharp backdrop instead of replacing it",
     );
 }
+
+// ---------------------------------------------------------------------
+// Retained group composition (issue #278): in `DirtyMode::Retained` a
+// group whose rect range no dirty index touches blends the previous
+// frame's composite again instead of redrawing its subtree.
+//
+// Two things have to hold at once, and a test of only one of them would
+// pass on an obviously broken painter. A cache that never invalidates
+// composites once and renders stale pixels forever; a cache that always
+// invalidates renders correctly and saves nothing. So the counter is
+// asserted in both directions — stable groups build once, a touched group
+// builds again — and the pixels are compared against `DirtyMode::Full`
+// after every frame, which is the boundary-B rule that a painter honoring
+// the dirty set must render what one ignoring it renders.
+// ---------------------------------------------------------------------
+
+/// The retention tests' square surface.
+const GROUP_SURFACE: i32 = 24;
+
+/// One frame of a retention sequence: the rect table, the render-target
+/// groups, and the advisory dirty set for that commit.
+struct GroupFrame {
+    rects: Vec<RectEntry>,
+    groups: Vec<dashpaint::GroupComposite>,
+    dirty: Option<Vec<u32>>,
+}
+
+/// Two nested render-target groups over overlapping rounded rects, with a
+/// glyph run anchored inside the inner one.
+///
+/// Every ingredient is deliberate. **Overlap** is what makes a render
+/// target necessary at all — without it the alpha would ride on each rect.
+/// **Rounded corners** put anti-aliased edges inside the layer, where a
+/// composite blended even slightly differently from `save_layer_alpha`
+/// shows up first. **Nesting** exercises a layer blended into another
+/// layer rather than onto the base surface. The **glyph run** is there
+/// because runs draw inside the group layers enclosing their anchor
+/// (issues #274 and #275), so a reused composite has to carry them; a
+/// painter that skipped the range but drew its runs anyway would show the
+/// text twice over.
+///
+/// `inner_y` moves the innermost rect, which is the mutation the sequences
+/// below apply.
+fn nested_group_scene(
+    inner_y: f32,
+) -> (Vec<RectEntry>, PaintTable, Vec<dashpaint::GroupComposite>) {
+    let mut paints = PaintTable::new();
+    let rounded = |color| PaintEntry {
+        corners: CornerRadii {
+            top_left: 3.0,
+            top_right: 3.0,
+            bottom_right: 3.0,
+            bottom_left: 3.0,
+        },
+        ..PaintEntry::solid(color)
+    };
+    let backdrop = paints.push(PaintEntry::solid(BLUE));
+    let outer = paints.push(rounded(RED));
+    let middle = paints.push(rounded(GREEN));
+    let inner = paints.push(rounded(BLUE));
+
+    let rect = |x: f32, y: f32, w: f32, h: f32, paint| RectEntry {
+        x,
+        y,
+        w,
+        h,
+        paint,
+        clip: ClipIndex::UNCLIPPED,
+        opacity: 1.0,
+    };
+    let rects = vec![
+        // 0: outside every group — the surface the composites blend onto.
+        rect(0.0, 0.0, 24.0, 24.0, backdrop),
+        // 1: the outer group's own node.
+        rect(2.0, 2.0, 14.0, 14.0, outer),
+        // 2: the inner group's own node, overlapping rect 1.
+        rect(8.0, 6.0, 12.0, 12.0, middle),
+        // 3: inside the inner group, overlapping rect 2.
+        rect(10.0, inner_y, 10.0, 8.0, inner),
+    ];
+    let groups = vec![
+        dashpaint::GroupComposite {
+            start: 1,
+            end: 4,
+            alpha: 0.5,
+        },
+        dashpaint::GroupComposite {
+            start: 2,
+            end: 4,
+            alpha: 0.75,
+        },
+    ];
+    (rects, paints, groups)
+}
+
+/// A glyph run anchored at rect 2 — inside both groups.
+fn group_glyphs() -> GlyphRunTable {
+    let (mut glyphs, atlas) = inside_atlas();
+    glyphs.push_run(GlyphRun {
+        rect: 2,
+        atlas,
+        size: 6.0,
+        color: RED,
+        glyphs: vec![GlyphQuad {
+            glyph_id: 1,
+            x: 9.0,
+            y: 12.0,
+        }],
+        opacity: 1.0,
+    });
+    glyphs
+}
+
+/// Renders a sequence of frames through one painter in `mode`, returning
+/// the surface after **every** frame and the painter's composite-build
+/// count at the end.
+///
+/// Every frame's surface is kept rather than only the last, because a
+/// stale composite that a later frame happens to rebuild would otherwise
+/// be invisible — the same reason `assert_modes_agree_after_every_frame`
+/// renders prefixes.
+fn render_group_frames(mode: DirtyMode, frames: &[GroupFrame]) -> (Vec<Vec<u8>>, u64) {
+    let mut painter = SkiaPainter::with_mode(GROUP_SURFACE, GROUP_SURFACE, mode);
+    let glyphs = group_glyphs();
+    // The paint table does not depend on `inner_y` — only rect 3's position
+    // does — so one table serves every frame, and the `PaintIndex` values in
+    // each frame's rects resolve against it.
+    let (_, paints, _) = nested_group_scene(0.0);
+    let mut surfaces = Vec::with_capacity(frames.len());
+    for frame in frames {
+        painter.paint(
+            &frame.rects,
+            &paints,
+            &ImageTable::new(),
+            &ClipTable::new(),
+            &frame.groups,
+            &glyphs,
+            frame.dirty.as_deref(),
+        );
+        surfaces.push(painter.rgba_bytes());
+    }
+    (surfaces, painter.group_composites_built())
+}
+
+/// A frame whose rect table and groups come from [`nested_group_scene`].
+fn group_frame(inner_y: f32, dirty: Option<Vec<u32>>) -> GroupFrame {
+    let (rects, _, groups) = nested_group_scene(inner_y);
+    GroupFrame {
+        rects,
+        groups,
+        dirty,
+    }
+}
+
+/// Asserts the two modes rendered the same pixels after every frame, and
+/// reports the first disagreement by coordinate rather than by dumping two
+/// buffers.
+fn assert_group_modes_agree(full: &[Vec<u8>], retained: &[Vec<u8>], what: &str) {
+    for (frame, (a, b)) in full.iter().zip(retained).enumerate() {
+        if a == b {
+            continue;
+        }
+        let differing = a
+            .chunks_exact(4)
+            .zip(b.chunks_exact(4))
+            .filter(|(x, y)| x != y)
+            .count();
+        let (at, x, y) = a
+            .chunks_exact(4)
+            .zip(b.chunks_exact(4))
+            .position(|(x, y)| x != y)
+            .map(|at| (at, &a[at * 4..at * 4 + 4], &b[at * 4..at * 4 + 4]))
+            .expect("the buffers differ, so some pixel does");
+        panic!(
+            "{what}: frame {frame} diverged from a full redraw at \
+             ({}, {}) — full {x:?}, retained {y:?}, {differing} pixels differ \
+             in all. A retained group composite must render what a full \
+             redraw renders.",
+            at % GROUP_SURFACE as usize,
+            at / GROUP_SURFACE as usize,
+        );
+    }
+}
+
+/// Direction one: across frames whose groups and rects are unchanged, each
+/// composite is built **once**, not once per frame.
+///
+/// Falsifiable: making `GroupCache::reuse` always return `None` (the
+/// pre-#278 behavior, which rebuilt every composite every commit) makes
+/// this read 10 instead of 2.
+#[test]
+fn a_stable_group_builds_its_composite_once_across_frames() {
+    let frames: Vec<GroupFrame> = std::iter::once(group_frame(10.0, None))
+        .chain((1..5).map(|_| group_frame(10.0, Some(Vec::new()))))
+        .collect();
+
+    let (retained, builds) = render_group_frames(DirtyMode::Retained, &frames);
+    assert_eq!(
+        builds, 2,
+        "two groups over five frames must build two composites — one each \
+         on the first frame, which has no dirty information — not two per \
+         frame"
+    );
+
+    let (full, full_builds) = render_group_frames(DirtyMode::Full, &frames);
+    assert_eq!(
+        full_builds, 0,
+        "DirtyMode::Full composites through save_layer and retains nothing"
+    );
+    assert_group_modes_agree(&full, &retained, "a stable group");
+}
+
+/// Direction two: a dirty rect inside a group's range rebuilds that
+/// group's composite, and the pixels follow.
+///
+/// Both halves matter. The count proves the cache noticed; the pixel
+/// comparison proves it noticed for the right reason — a cache that
+/// rebuilt on a timer would pass the count and still be wrong.
+///
+/// Falsifiable: making `GroupCache::begin_frame` ignore `dirty` entirely
+/// (keeping every entry whose range still exists) makes this read 2
+/// instead of 4, and the pixel comparison then fails on frame 3 as well.
+#[test]
+fn a_dirty_rect_inside_a_group_rebuilds_its_composite() {
+    // Frame 3 moves rect 3, which sits inside both group ranges, so both
+    // composites are rebuilt: two on the first frame plus two more.
+    let frames = vec![
+        group_frame(10.0, None),
+        group_frame(10.0, Some(Vec::new())),
+        group_frame(10.0, Some(Vec::new())),
+        group_frame(14.0, Some(vec![3])),
+        group_frame(14.0, Some(Vec::new())),
+    ];
+
+    let (retained, builds) = render_group_frames(DirtyMode::Retained, &frames);
+    assert_eq!(
+        builds, 4,
+        "a rect inside both ranges must rebuild both composites: two on the \
+         first frame, two on the frame that moved it, and none on the \
+         clean frames around them"
+    );
+
+    let (full, _) = render_group_frames(DirtyMode::Full, &frames);
+    assert_group_modes_agree(&full, &retained, "a dirty rect inside a group");
+
+    // The mutation has to be visible at all, or the comparison above holds
+    // trivially and the count assertion is measuring nothing.
+    assert_ne!(
+        full[2], full[3],
+        "moving rect 3 must change the picture, or this test proves nothing"
+    );
+}
+
+/// A rect that changed **outside** every group range leaves both
+/// composites alone: this is the case the retention exists for, and the
+/// one a cache keyed on "anything changed" would get wrong.
+#[test]
+fn a_dirty_rect_outside_every_group_keeps_both_composites() {
+    let mut moved = group_frame(10.0, Some(vec![0]));
+    moved.rects[0].w = 20.0;
+
+    let frames = vec![group_frame(10.0, None), moved];
+
+    let (retained, builds) = render_group_frames(DirtyMode::Retained, &frames);
+    assert_eq!(
+        builds, 2,
+        "rect 0 is outside [1, 4) and [2, 4), so neither composite is rebuilt"
+    );
+    let (full, _) = render_group_frames(DirtyMode::Full, &frames);
+    assert_group_modes_agree(&full, &retained, "a dirty rect outside every group");
+}
+
+/// A group that dissolves and one that re-forms both go through the cache
+/// without leaving a composite behind that no longer describes the scene.
+///
+/// `dashscene-core` dirties every rect a group covers when the group is
+/// present on only one side of a commit, so the sequence below hands over
+/// the dirty sets that commit would produce.
+#[test]
+fn a_group_that_dissolves_and_re_forms_rebuilds_its_composite() {
+    let base = group_frame(10.0, None);
+    let mut dissolved = group_frame(10.0, Some(vec![1, 2, 3]));
+    // Only the inner group survives; the outer one is gone, and core would
+    // have folded its alpha into the rects. The rect bits are left as they
+    // are: what is under test is the group set, not the alpha arithmetic.
+    dissolved.groups.remove(0);
+    let reformed = group_frame(10.0, Some(vec![1, 2, 3]));
+
+    let frames = vec![base, dissolved, reformed];
+    let (retained, builds) = render_group_frames(DirtyMode::Retained, &frames);
+    assert_eq!(
+        builds, 5,
+        "frame 1 builds both, frame 2 rebuilds the surviving inner one, and \
+         frame 3 rebuilds both"
+    );
+    let (full, _) = render_group_frames(DirtyMode::Full, &frames);
+    assert_group_modes_agree(&full, &retained, "a group that dissolves and re-forms");
+}
+
+/// A changed rect count takes the painter's full-refresh arm, on which the
+/// dirty set does not describe the difference between the two tables — so
+/// no composite may be reused either.
+#[test]
+fn a_changed_rect_count_rebuilds_every_composite() {
+    let mut shorter = group_frame(10.0, Some(Vec::new()));
+    shorter.rects.pop();
+    shorter.groups[0].end = 3;
+    shorter.groups[1].end = 3;
+
+    let frames = vec![group_frame(10.0, None), shorter];
+    let (retained, builds) = render_group_frames(DirtyMode::Retained, &frames);
+    assert_eq!(
+        builds, 4,
+        "the second frame's rect table is a different length, so its empty \
+         dirty set says nothing and both composites are rebuilt"
+    );
+    let (full, _) = render_group_frames(DirtyMode::Full, &frames);
+    assert_group_modes_agree(&full, &retained, "a changed rect count");
+}

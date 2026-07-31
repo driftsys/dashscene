@@ -50,6 +50,20 @@ in `goldens/tooling/tests/dirty_oracle.rs`.
   memory to repaint part of it is the flush-and-resolve R-T1 forbids. The
   GPU redraws every quad in one pass; what R-T4 removes is the CPU work and
   the upload.
+
+  **Amended (issue #278, v0.14):** the retained mode now also keeps the
+  **render-target group composites** across frames, and blends a stored
+  one again when no dirty index falls inside its rect range. This is not
+  the damage-region redraw the paragraph above rules out, and the
+  difference is which surface is being reloaded. A render-target group is
+  an offscreen pass the scene demanded — a group at partial opacity whose
+  subtree overlaps has to flatten before its alpha applies
+  (`masks-and-group-opacity.md`), so the pass, and its resolve, are paid
+  whether or not anything is retained. Reusing its resolved result skips a
+  pass that would produce identical pixels; it never loads the main
+  framebuffer back into tile memory, and every quad outside the group is
+  still redrawn in one pass. What is retained is a render target the
+  document asked for, not a cache of the frame.
 - The reference painter's second mode exists as a **test oracle**, not for
   speed. A dirty set that omits a changed rect is a stale instance-buffer
   entry on the product painter — intermittent, and diagnosed on target
