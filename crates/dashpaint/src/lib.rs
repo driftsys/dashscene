@@ -943,6 +943,32 @@ impl GlyphRunTable {
         self.atlases.as_slice()
     }
 
+    /// The shared handle behind [`atlases`](Self::atlases), for a painter
+    /// that keeps its prepared atlases across frames and needs to know
+    /// whether this frame's set is still the one it prepared (issue #644).
+    ///
+    /// Two properties follow from returning the handle rather than the
+    /// slice, and a painter needs both:
+    ///
+    /// - **Holding it costs nothing.** Commit rebuilds this table every
+    ///   frame, so a painter that kept a `Vec<Atlas>` copy to compare
+    ///   against would duplicate the whole set — the copy this field is an
+    ///   [`Arc`] to avoid in the first place.
+    /// - **[`Arc::ptr_eq`] against it is a sound identity test.** A shared
+    ///   set is immutable: [`push_atlas`](Self::push_atlas) goes through
+    ///   [`Arc::make_mut`], which copies while any other holder exists, so
+    ///   the holder's pointer cannot come to name different contents. Nor
+    ///   can a freed allocation be reused at the same address, because the
+    ///   holder is itself keeping it alive.
+    ///
+    /// Pointer inequality does **not** imply the contents differ — an
+    /// equal set rebuilt behind a fresh allocation compares unequal here —
+    /// so it is a fast path, not a verdict. Comparing contents is the
+    /// fallback.
+    pub fn atlas_set(&self) -> &Arc<Vec<Atlas>> {
+        &self.atlases
+    }
+
     /// True when the table carries no runs.
     pub fn is_empty(&self) -> bool {
         self.runs.is_empty()
