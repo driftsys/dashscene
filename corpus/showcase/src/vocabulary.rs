@@ -37,7 +37,10 @@ use dashpaint::{
     Blur, BlurKind, Color, Gradient, GradientKind, GradientStop, ImageAsset, Mat23, PaintKind,
     ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, Vec2, VectorField,
 };
-use dashscene_core::{Arena, LayoutSolver, NodeId, Prop, TextAlign, TextAlignV, TextStyle, Txn};
+use dashscene_core::{
+    Arena, LayoutSolver, NodeId, Prop, TextAlign, TextAlignV, TextStyle, Txn, VariantMember,
+    VariantSetId,
+};
 
 /// Every named node in `arena`, by name.
 ///
@@ -110,6 +113,30 @@ impl<'a> Painting<'a> {
         let id = self.id(name);
         self.txn.set_prop(id, prop);
         self
+    }
+
+    /// The node authored under `name`, for the constructs that address a
+    /// [`NodeId`] directly rather than through [`Painting::set`] — a variant
+    /// member's override list is the one this crate has.
+    ///
+    /// # Panics
+    ///
+    /// Panics when no node carries the name, for the reason [`Painting::set`]
+    /// does.
+    pub fn node(&self, name: &str) -> NodeId {
+        self.id(name)
+    }
+
+    /// Declares a variant set over this scene's nodes and returns the handle
+    /// `Txn::set_variant` switches it by (stories #573, #625).
+    ///
+    /// A variant set is not paint intent, and it is declared in this pass
+    /// rather than in a pass of its own only so that building a scene stays one
+    /// transaction and one solve rather than two. Declaring a set changes
+    /// nothing on its own: member 0 is active until a switch, so the frame this
+    /// pass publishes is the authored one either way.
+    pub fn add_variant_set(&mut self, members: Vec<VariantMember>) -> VariantSetId {
+        self.txn.add_variant_set(members)
     }
 
     /// Stages an image payload and returns the index a [`PaintKind::Image`] or

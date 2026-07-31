@@ -85,8 +85,9 @@ use dashlang::LiveScene;
 use dashscene_core::Arena;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::{StartCause, WindowEvent};
+use winit::event::{ElementState, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
+use winit::keyboard::PhysicalKey;
 use winit::window::{Window, WindowId};
 
 use crate::present::{Present, PresentError, SkiaPresenter};
@@ -111,6 +112,17 @@ pub type SceneBuilder = fn(&mut Arena, u32, u32) -> LiveScene;
 /// #573's input mapping does not go through here: input is a window event, and
 /// the host applies it directly.
 pub type ScenePulse = fn(&mut LiveScene, u64);
+
+/// Runs the scene's own variant switch (story #573). The one thing input does
+/// that a signal write cannot express, because `Txn::set_variant` needs the
+/// arena.
+///
+/// A scene owns the switch because a scene owns its content: it declares the
+/// variant set inside its own builder, where it holds the arena, and hands the
+/// host a function that switches it. The host holds no `VariantSetId`, no
+/// member list and no node name — see [`crate::input`], and issue #625 for the
+/// seam this closes.
+pub type SceneAction = fn(&mut LiveScene, &mut Arena);
 
 /// The window's requested size, in logical pixels.
 const WINDOW_SIZE: LogicalSize<u32> = LogicalSize::new(960, 600);
@@ -168,6 +180,13 @@ pub struct SceneEntry {
     pub name: &'static str,
     pub build: SceneBuilder,
     pub pulse: ScenePulse,
+    /// The name of the scalar signal this scene lets input drive. Opaque to
+    /// the host, which passes it to `LiveScene::signal_named` and never reads
+    /// it.
+    pub signal: &'static str,
+    /// What the variant key does in this scene, or `None` when the scene
+    /// declares no variant set.
+    pub action: Option<SceneAction>,
 }
 
 /// How long a scene is shown for before the host moves to the next one, when
@@ -622,6 +641,54 @@ impl ApplicationHandler<Wake> for Host {
             // Not every platform preserves the contents of an occluded
             // surface, and the generation cannot report that they were lost.
             WindowEvent::Occluded(false) => self.force("re-exposure after occlusion"),
+            // Story #573: the pointer drives the current scene's own named
+            // signal. No wake proxy is needed — this event already reaches a
+            // parked loop, exactly as story #572 anticipated.
+            WindowEvent::CursorMoved { position, .. } => {
+                let (signal, width) = (self.scenes[self.current].signal, self.extent.0);
+                let changed = match self.live.as_mut() {
+                    Some(live) => crate::input::cursor_moved(live, signal, position.x, width),
+                    None => false,
+                };
+                if changed {
+                    self.force("a pointer move");
+                }
+            }
+            // Story #573: two keys drive that same signal to either end of its
+            // range, and one runs the scene's own variant switch. `repeat` is
+            // excluded so holding a key neither floods the signal nor spins the
+            // variant.
+            WindowEvent::KeyboardInput { event, .. } => {
+                // A zero extent means there is no drawable, and that is the
+                // one state in which [`Host::advance_scene`] leaves `current`
+                // pointing at a scene the arena was not built from — where the
+                // incoming scene's action would run against the outgoing
+                // scene's arena and `Txn::set_variant` would panic on a handle
+                // that arena does not carry. A window with no drawable is
+                // minimised and receives no key events, so this guards a state
+                // rather than a case that fires.
+                let drawable = self.extent.0 > 0 && self.extent.1 > 0;
+                if drawable
+                    && event.state == ElementState::Pressed
+                    && !event.repeat
+                    && let PhysicalKey::Code(code) = event.physical_key
+                {
+                    // Copied out before the arena is borrowed: both are `Copy`,
+                    // and the alternative is holding a borrow of `self.scenes`
+                    // across the call.
+                    let entry = &self.scenes[self.current];
+                    let (signal, action) = (entry.signal, entry.action);
+                    let changed = match self.live.as_mut() {
+                        Some(live) => {
+                            crate::input::key(code, signal, action, live, &mut self.arena)
+                        }
+                        None => false,
+                    };
+                    if changed {
+                        self.force("a key press");
+                    }
+                }
+            }
             WindowEvent::RedrawRequested => self.frame(event_loop),
             _ => {}
         }

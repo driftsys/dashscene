@@ -1,21 +1,37 @@
-//! `layout` — the flex vocabulary, and a topology change that reflows.
+//! `layout` — the flex vocabulary, and two topology changes that reflow.
 //!
 //! Four panels: a vertical column that hugs its content, a row that splits its
 //! free space between `Fill` children, a wrapping row, and a grid with track
-//! sizing and spans. Below them a row whose gap animates and whose middle chip
-//! comes and goes, so the solver is seen redistributing rather than a rect
-//! being moved.
+//! sizing and spans. Below them a row whose gap animates, whose middle chip
+//! comes and goes, and whose rightmost chip is driven by a variant set — so the
+//! solver is seen redistributing rather than a rect being moved.
 //!
-//! # What this scene does not do
+//! # Two topology changes, one picture, two mechanisms
 //!
-//! The topology change here is driven by `Prop::Visible`, through
-//! `dashlang`'s `visible_when`. A **variant switch** — `Txn::set_variant` over
-//! a `VariantSet` — makes the same committed change, and `VariantFlip` is what
-//! animates the rect deltas it produces. Neither is reachable from a scene
-//! through the host's scene seam, which hands a scene builder an `&mut Arena`
-//! once and then hands the scripted phase only an `&mut LiveScene`. The gap is
-//! recorded in `README.md`; what is shown here is the committed effect a
-//! variant switch has, not the variant machinery that would produce it.
+//! The middle chip (`reflow-b`) leaves and rejoins the laid-out set through
+//! `Prop::Visible`, written by `dashlang`'s `visible_when` from the scripted
+//! phase. The rightmost chip (`reflow-d`) narrows, changes colour and then
+//! leaves entirely through [`switch_variant`], which is a real
+//! `Txn::set_variant` over a real `VariantSet` declared at build time. The two
+//! look alike on screen deliberately: that is the point the corpus already
+//! proves in `corpus/dsl-generated/variant-topology.md`, that a variant switch
+//! and a `Visible` write reach the same committed layout by different routes.
+//!
+//! Before the scene seam carried an action (stories #573, #625) only the first
+//! was reachable, because `Txn::set_variant` needs the arena and the scripted
+//! phase is handed only a `LiveScene`.
+//!
+//! # What this scene still does not do
+//!
+//! **`VariantFlip` does not animate the switch.** FLIP needs the before and
+//! after rect slices around the switch — which [`switch_variant`] has — plus an
+//! `advance(dt)` and a commit composing its samples over the after layout
+//! **once per frame**. The seam has no per-frame hook for a scene:
+//! `LiveScene::tick` is the only thing the host calls per frame and it owns the
+//! single commit, and an action is called once, on the key press. So the switch
+//! lands in one frame rather than easing, and the rect deltas it produces are
+//! not animated. Widening the seam to a per-frame scene driver is the change
+//! issue #625 sketched and this story did not make.
 
 use std::sync::OnceLock;
 
@@ -23,7 +39,7 @@ use dashlang::{
     AxisSizing, Channel, CrossAxisAlign, GridTrack, LayoutMode, LiveScene, MainAxisAlign, Scene,
     Signal, Spring, node,
 };
-use dashscene_core::{Arena, Prop};
+use dashscene_core::{Arena, Prop, VariantMember, VariantSetId, VariantValue};
 
 use crate::resources;
 use crate::solver::ShowcaseSolver;
@@ -46,6 +62,18 @@ pub const SPREAD: &str = "layout.spread";
 /// same order and produces the same index, so the handle stored by the first
 /// build addresses the same signal in every later scene.
 static SHOW_MIDDLE: OnceLock<Signal<bool>> = OnceLock::new();
+
+/// The variant set [`switch_variant`] cycles, kept here for the same reason
+/// [`SHOW_MIDDLE`] is: a `VariantSetId` is an index into the arena's variant
+/// table, assigned in declaration order, and this scene declares exactly one.
+/// Every rebuild the host performs runs the same builder in the same order and
+/// produces the same index, so the handle stored by the first build addresses
+/// the set of every later arena as well.
+static CHIP_SET: OnceLock<VariantSetId> = OnceLock::new();
+
+/// How many members [`CHIP_SET`] has, so [`switch_variant`] can wrap without
+/// asking the arena for a member list it already knows.
+const CHIP_MEMBERS: usize = 3;
 
 const DESIGN: (f32, f32) = (960.0, 600.0);
 
@@ -270,7 +298,98 @@ fn paint(arena: &mut Arena, radius: f32, unit: f32) {
         stroke(2.0 * unit, StrokeAlign::Inside, palette::NEAR_WHITE),
     );
 
+    declare_chip_variants(&mut painting, unit);
+
     painting.commit(&mut ShowcaseSolver::new(
+        resources::new_typesetter(),
+        resources::atlases(),
+    ));
+}
+
+/// Declares the three-member variant set on the reflow row's rightmost chip.
+///
+/// Member 0 has no overrides, so the set is inert until [`switch_variant`]
+/// moves it: the frame this build publishes is the authored one. The other two
+/// members between them cover three of the six `VariantValue` cases —
+/// `Width`, `Fill` and `Visible` — which is what makes this a variant switch
+/// and not a recoloured rect: `Width` reflows the row, `Visible` takes the chip
+/// out of the laid-out set entirely, and both are resolved through the arena's
+/// variant overlay rather than through a `set_prop`.
+fn declare_chip_variants(painting: &mut Painting<'_>, unit: f32) {
+    let chip = painting.node("reflow-d");
+    let members = vec![
+        VariantMember {
+            name: Some("wide".to_owned()),
+            overrides: Vec::new(),
+        },
+        VariantMember {
+            name: Some("narrow".to_owned()),
+            overrides: vec![
+                (chip, VariantValue::Width(48.0 * unit)),
+                (chip, VariantValue::Fill(palette::TEAL)),
+            ],
+        },
+        VariantMember {
+            name: Some("gone".to_owned()),
+            overrides: vec![(chip, VariantValue::Visible(false))],
+        },
+    ];
+    assert_eq!(
+        members.len(),
+        CHIP_MEMBERS,
+        "CHIP_MEMBERS is what switch_variant wraps on, so it has to count this list"
+    );
+    let _ = CHIP_SET.set(painting.add_variant_set(members));
+}
+
+/// The variant set this scene declares, once a build has declared one.
+///
+/// The host never needs it — that is the whole point of [`switch_variant`] —
+/// but it is the handle `Arena::active_variant` takes, so it is what lets
+/// anything outside this module ask which member is live.
+pub fn variant_set() -> Option<VariantSetId> {
+    CHIP_SET.get().copied()
+}
+
+/// The scene's own variant switch: advance the reflow row's rightmost chip to
+/// the next member of its variant set, wrapping.
+///
+/// This is the whole of what a key does. The host calls it and constructs
+/// nothing — it holds no `VariantSetId`, no member list, and no node name
+/// (stories #573, #625).
+///
+/// # Why it commits, and why that is safe against the retained rect cache
+///
+/// `LiveScene` assumes it solely owns its arena's committed geometry between
+/// ticks: a tick that solves nothing replays a retained rect cache, so a second
+/// producer that moved a node would have the move reverted at the next
+/// paint-only tick. This switch does move nodes, so the guarantee it relies on
+/// is the one this scene is already built around — **every signal here drives a
+/// layout-affecting channel**, so every tick that commits at all is a solving
+/// tick, and a solve reads the arena's live variant overlay. `spread` binds
+/// `Channel::Gap`, which `dashlang` always classifies as a solve, and
+/// `show_middle` is a visibility binding, which always forces one. There is
+/// therefore no tick that could replay a stale cache over this commit.
+///
+/// The active member is **not** carried across a scene rebuild. A resize
+/// rebuilds the arena from scratch and the set comes back with member 0 active,
+/// the same cost `demo`'s `Host::rebuild` already records for the scene's
+/// springs.
+///
+/// The parameters are the seam's, not this function's needs: nothing here
+/// touches `live`. A signal write and a variant switch go through one key
+/// handler in the host, so they take one shape.
+pub fn switch_variant(_live: &mut LiveScene, arena: &mut Arena) {
+    let Some(&set) = CHIP_SET.get() else {
+        // No build has run against any arena yet, so there is no set to
+        // switch. Unreachable through the host, which builds before it takes
+        // an event.
+        return;
+    };
+    let next = (arena.active_variant(set) + 1) % CHIP_MEMBERS;
+    let mut txn = arena.open();
+    txn.set_variant(set, next);
+    txn.commit_with(&mut ShowcaseSolver::new(
         resources::new_typesetter(),
         resources::atlases(),
     ));

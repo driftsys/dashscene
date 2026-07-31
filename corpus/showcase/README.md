@@ -31,6 +31,24 @@ The second line is the idle-frame skip reporting itself: nothing ran for the
 second the scene sat still. Every scene is tuned to settle inside the 2.5 s
 pulse interval so that gap exists to be seen.
 
+## Driving them by hand
+
+The scripted phase runs on its own, and three inputs drive the same scene at
+the same time (story #573):
+
+| input | what it does |
+| --- | --- |
+| pointer, left to right | scrubs the scene's own scalar signal across `0.0` to `1.0` |
+| Left Arrow / Right Arrow | snaps that signal to `0.0` / `1.0` |
+| Space | runs the scene's own variant switch, in the one scene that has one |
+
+The host knows none of this by name. A scene carries the **name** of the signal
+it wants driven and, optionally, a **function** the variant key calls, and the
+host passes both through without reading them — `Showcase::signal` and
+`Showcase::action` in `src/lib.rs`. That seam is what makes a variant switch
+reachable at all; the "what the scenes do not cover" section below records what
+it still does not reach.
+
 To take a still — the picture the entry-path documentation shows:
 
 ```text
@@ -57,7 +75,8 @@ project pins; these are frames it shows. The only automated claim this crate
 makes is that it compiles.
 
 So the coverage claim is the table below, and it is true when a person has run
-the three scenes and seen each line.
+the three scenes, driven them with the pointer and the keys above, and seen each
+line.
 
 | # | construct | scene | what to look for |
 | --- | --- | --- | --- |
@@ -91,23 +110,25 @@ the three scenes and seen each line.
 | 28 | flex, `Fill` split | `layout` | the second panel: one fixed chip, then two that share what is left equally |
 | 29 | flex, `Wrap` | `layout` | the third panel: seven chips over two lines, the line spacing wider than the spacing within a line |
 | 30 | grid, tracks and spans | `layout` | one fixed column and two fractional ones; the violet cell spans two rows, the crimson one spans two columns, and the last cell keeps its own fixed size at its cell origin instead of stretching |
-| 31 | reflow on a topology change | `layout` | the bottom row: the outlined middle chip leaves and rejoins, its siblings close up and re-open, and the gap between them animates |
+| 31 | reflow on a topology change, through `Prop::Visible` | `layout` | the bottom row: the outlined middle chip leaves and rejoins, its siblings close up and re-open, and the gap between them animates |
+| 32 | variant switch, through `Txn::set_variant` | `layout` | press **Space** in the bottom row: the rightmost chip narrows and turns teal, then leaves the laid-out set entirely, then comes back — three members overriding `Width`, `Fill` and `Visible`, and the row re-centres at each step. The same picture as line 31 by a different mechanism, which is the pairing `corpus/dsl-generated/variant-topology.md` already proves |
+| 33 | signal driven by input | all three | move the pointer left and right, or press Left Arrow and Right Arrow: the same signal the scripted phase drives moves under the pointer, through the same springs |
 
 ## What the scenes do not cover, and why
 
-Three items on the slice's list are **not** shown, and none of them is an
-oversight.
+Two items on the slice's list are **not** shown, and neither is an oversight.
 
-**A variant switch, and the FLIP that animates one.** `Txn::set_variant` needs
-the arena, and `VariantFlip` needs the before and after rects plus a per-frame
-`advance` and a composed commit. The host's scene seam hands a builder an
-`&mut Arena` once, at build time, and then hands the scripted phase only an
-`&mut LiveScene` — so neither is reachable from a scene. Line 31 above shows the
-committed *effect* a variant switch has (a child leaves the laid-out set and its
-siblings reflow), driven through `Prop::Visible`, which is the same change
-`corpus/dsl-generated/variant-topology.md` proves through a variant set. What is
-missing is the variant machinery, not the picture. Story #573 needs the same
-seam for "one key cycling a variant set", so this is one gap and not two.
+**`VariantFlip`, which animates a variant switch.** The switch itself is line 32
+above and is real. Animating it is not. FLIP needs the before and after rect
+slices around the switch — which `layout::switch_variant` has — plus an
+`advance(dt)` and a commit composing its samples over the after layout **once
+per frame** (`goldens/tooling/tests/v04_flip.rs` is the worked example). The
+scene seam has no per-frame hook: `LiveScene::tick` is the only thing the host
+calls each frame and it owns the single commit, while `Showcase::action` is
+called once, on the key press. So the switch lands in one frame rather than
+easing. Widening the seam to a per-frame scene driver — issue #625's own sketch,
+a third callback taking `dt`, or a small `Scene` trait — is the change that would
+reach it, and this slice did not make it.
 
 **`dashcue` keyframes and tweens.** `dashcue` carries `TransitionSpec::Tween`
 and `TransitionSpec::Keyframes`, and `dashlang::Node::smooth` accepts only a
@@ -135,6 +156,14 @@ its fill alpha, and why `typography`'s readout shares its signal with a bar that
 reflows. Replaying the host's loop over all three scenes for eight phases at
 both 960x600 and 1920x1200 — 1,200 ticks and around 700 commits each — the
 staged run count never falls below its starting value.
+
+That same property is what makes `layout`'s variant switch safe. The switch
+commits geometry from outside `LiveScene::tick`, and a tick that solves nothing
+replays the retained rect cache, which would revert it. It cannot here: no tick
+in `layout` commits without solving, because `spread` binds `Channel::Gap`
+(always a solve in `dashlang`) and `show_middle` is a visibility binding (always
+a reflow). `demo`'s `input.rs` asserts it against eight scripted phases of real
+ticks rather than leaving it as an argument.
 
 The fix belongs in `dashlang`: the rect replay should delegate `atlases` and
 `stage_text` to the solver the live scene already owns. It is filed rather than
