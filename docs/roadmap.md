@@ -11,7 +11,7 @@ is nothing to keep in sync between the two.
 
 | This file (shape)               | GitHub (state)                                |
 | ------------------------------- | --------------------------------------------- |
-| Which slices exist (v0.1-v0.13) | Which stories exist under each epic           |
+| Which slices exist (v0.1-v0.15) | Which stories exist under each epic           |
 | What each slice delivers        | Which stories are open, closed, who owns them |
 | Inter-slice dependency edges    | Story-level dependency edges                  |
 | Which E-criteria a slice closes | Debt triage and milestone assignment          |
@@ -866,6 +866,59 @@ crates, and why a slice-wide zero-movement assertion becomes a per-story one
 when the slice contains fixes whose purpose is to change output.
 
 The v1 breakdown is revised at this close — see v1 below.
+
+### v0.14 — the showcase runtime — open
+
+**Epic #568.** Design capture: `docs/wip/2026-07-29-v014-v015-showcase-and-wgpu-wbs.md`.
+
+Delivers: the first frame this project has ever drawn into a window, and the
+`README.md` it does not have.
+
+**Nothing here has ever drawn into a window.** There is no `winit` dependency,
+no event loop, no surface, no examples; the only binary targets are `dashc` and
+`dashpack`, both command-line tools. Every pixel produced so far is an offscreen
+raster compared against a PNG. Against that, the repo carries over 100 decision
+records and no entry path for anyone who does not already know it.
+
+The slice closes both gaps in that order — the demonstration first, because the
+best entry-path artifact is a moving picture of the system working, and a README
+written before one exists gets written twice.
+
+It is small because the runtime already exists: `dashlang::reactive::LiveScene`
+is already the per-frame driver, with `tick(dt, arena)`, signals, springs, the
+`bind`/`smooth`/`bind_text`/`visible_when` vocabulary and a `CachedSolver`. What
+is missing is a host — a window, an event loop and a surface — not a runtime.
+
+Also carries **epic #47**, the v0.9 parity epic, whose one remaining item is the
+v0 exit gate (#49). That gate asserts `E1`-`E7` together and cannot be built
+while GitHub Actions billing is blocked (#263); it moved here rather than
+staying on a closed slice's milestone.
+
+Depends on: v0.13 (a burnt-down base). Independent of v0.15 — the showcase runs
+on the Skia reference painter.
+
+### v0.15 — the wgpu painter — open
+
+**Epic #569.** Design capture: the same work breakdown, plus
+`docs/wip/2026-07-19-wgpu-painter-direction.md` for the ecosystem research and
+the pinned helper stack.
+
+Delivers: `dashscene-wgpu` behind boundary B, covering native and web. Four
+drivers, all selected at the design session: web reach, the entry-tier candidate
+slot, retiring the Skia trim profile, and `R-T5` single-sourced SDF math shared
+with the future Unity painter.
+
+**This slice does not switch the entry tier.** Skia stays the entry-tier bridge
+until wgpu is measured on a real entry SoC, and no such hardware is in the loop
+(epic #476 — no frame budget, no target-hardware measurement). That switch is a
+later, separate decision.
+
+**Skia does not leave the workspace either.** It is permanently the bit-exact
+CPU oracle, so `skia-safe` stays. What wgpu retires is the trim profile: the
+from-source GLES build, `skia_use_gl`, and the Ganesh-to-Graphite churn watch.
+
+Depends on: v0.13. Independent of v0.14, though the showcase is the obvious
+first consumer of a second painter.
 
 ## v1 — Unity, full feature set, performance, production toolchain
 
