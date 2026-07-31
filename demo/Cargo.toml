@@ -19,8 +19,16 @@ dashscene-skia.workspace = true
 dashlang.workspace = true
 # The showcase scenes themselves (story #574). A workspace member under
 # `corpus/`, not a published crate: the host holds the loop, the corpus holds
-# the content. Each scene injects its own solver, which is why the host no
-# longer names `dashscene-engine`.
+# the content. Each scene injects its own solver.
 showcase = { path = "../corpus/showcase" }
+# The product layout solver. `document.rs` (story #575) injects one for the
+# loaded document, which has no scene builder of its own to do it.
+dashscene-engine.workspace = true
+# The `.dsb` envelope reader (story #575): `dashbuf::open` for the compiled
+# document `document.rs` loads.
+dashbuf.workspace = true
+# The load gate `document.rs` runs before `dashscene_core::load_document`
+# (story #575).
+dashscene-validator.workspace = true
 winit.workspace = true
 softbuffer.workspace = true
