@@ -5,11 +5,18 @@
 //! first thing that draws the whole v0 paint vocabulary.
 //!
 //! What the host is: the [`present`] seam and the Skia implementation behind
-//! it (story #571), the [`shell`] frame loop that drives it (story #572), and
-//! [`scenes`], which chooses what it draws. What it is **not** is the content:
-//! the scenes live in `corpus/showcase/` (story #574), and story #575 points
-//! this host at a compiled `.dsb` document as a further source.
+//! it (story #571), the [`shell`] frame loop that drives it (story #572),
+//! [`scenes`], which chooses what it draws, and [`input`], which maps the
+//! pointer and three keys onto what the chosen scene declares (story #573).
+//! What it is **not** is the content: the scenes live in `corpus/showcase/`
+//! (story #574), and story #575 points this host at a compiled `.dsb` document
+//! as a further source.
+//!
+//! Nothing in this crate names a node, a signal or a colour. A scene carries
+//! the name of the signal input drives and the function a key runs, and the
+//! host passes both through without reading them (issue #625).
 
+mod input;
 mod present;
 mod scenes;
 mod shell;
@@ -38,6 +45,8 @@ fn main() -> ExitCode {
             name: scene.name,
             build: scene.build,
             pulse: scene.pulse,
+            signal: scene.signal,
+            action: scene.action,
         })
         .collect();
 

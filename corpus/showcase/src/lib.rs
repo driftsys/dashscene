@@ -7,16 +7,17 @@
 //!
 //! # What is here
 //!
-//! Three scenes, each a pair of plain functions matching the host's own
-//! [`SceneBuilder`] and [`ScenePulse`] shapes:
+//! Three scenes, each a builder and a scripted phase matching the host's own
+//! [`SceneBuilder`] and [`ScenePulse`] shapes, plus a [`SceneAction`] where the
+//! scene has a variant switch to offer:
 //!
 //! - [`surfaces`] — fills, strokes, corners, images, a baked vector field,
 //!   shadows, clips, masks, group opacity and a backdrop blur, in a wrapping
 //!   gallery under a sliding frosted panel;
 //! - [`typography`] — MSDF text in Latin and Arabic, with one string driven by
 //!   a signal;
-//! - [`layout`] — the flex vocabulary, a grid with spans, and a reflow driven
-//!   by a topology change.
+//! - [`layout`] — the flex vocabulary, a grid with spans, a reflow driven by a
+//!   topology change, and a variant switch a key runs.
 //!
 //! # Coverage is a checklist, not a test
 //!
@@ -38,6 +39,25 @@
 //! `dashlang`; the paint intent is staged onto the named nodes afterwards
 //! through `dashscene_core::Txn`. See [`vocabulary`] for why the second pass
 //! is safe to run against a live scene's arena.
+//!
+//! # What a scene tells the host about input
+//!
+//! Two fields on [`Showcase`], and no third mechanism (stories #573, #625).
+//!
+//! [`Showcase::signal`] names the one scalar signal the scene already declares,
+//! so the host's pointer and arrow keys can drive it through
+//! `LiveScene::signal_named` without knowing what it means. That half needs
+//! only the name.
+//!
+//! [`Showcase::action`] is the other half, and it exists because a **variant
+//! switch cannot be expressed as a signal write**. `Txn::set_variant` needs the
+//! arena, and the scene builder is handed one exactly once while the scripted
+//! phase ([`ScenePulse`]) is handed only a `LiveScene`. Before this seam the
+//! host had to author a variant set itself against a node it knew by name,
+//! which is the host authoring content — the thing the `demo/` and
+//! `corpus/showcase/` split exists to prevent. So the scene declares its own
+//! set at build time, where it has the arena, and owns the switch; the host
+//! binds a key to [`Showcase::action`] and constructs nothing.
 
 pub mod layout;
 pub mod resources;
@@ -57,6 +77,13 @@ pub type SceneBuilder = fn(&mut Arena, u32, u32) -> LiveScene;
 /// shape as the host's `ScenePulse`.
 pub type ScenePulse = fn(&mut LiveScene, u64);
 
+/// Runs the scene's own variant switch against the arena it was built into.
+/// The same shape as the host's `SceneAction`.
+///
+/// Takes the arena as well as the live scene because that is the whole point:
+/// `Txn::set_variant` is an arena mutation and has no signal equivalent.
+pub type SceneAction = fn(&mut LiveScene, &mut Arena);
+
 /// One selectable scene.
 pub struct Showcase {
     /// The name the host selects it by, on the command line.
@@ -65,6 +92,17 @@ pub struct Showcase {
     pub summary: &'static str,
     pub build: SceneBuilder,
     pub pulse: ScenePulse,
+    /// The scalar signal input drives, 0..1.
+    ///
+    /// The name the scene passed to `Scene::signal_named`, which is what
+    /// `LiveScene::signal_named` looks up at run time. Every scene declares
+    /// exactly one, so the host needs no signal vocabulary of its own.
+    pub signal: &'static str,
+    /// What a key does — the scene's own variant switch.
+    ///
+    /// `None` for a scene that declares no variant set, and the key then does
+    /// nothing rather than the host inventing a fallback.
+    pub action: Option<SceneAction>,
 }
 
 /// Every scene, in the order the checklist walks them.
@@ -75,18 +113,25 @@ pub const SCENES: &[Showcase] = &[
                   group opacity and a backdrop blur",
         build: surfaces::build,
         pulse: surfaces::pulse,
+        signal: surfaces::SWEEP,
+        action: None,
     },
     Showcase {
         name: "typography",
         summary: "MSDF text in Latin and Arabic, with one string driven by a signal",
         build: typography::build,
         pulse: typography::pulse,
+        signal: typography::LEVEL,
+        action: None,
     },
     Showcase {
         name: "layout",
-        summary: "the flex vocabulary, a grid with spans, and a reflow driven by a topology change",
+        summary: "the flex vocabulary, a grid with spans, a reflow driven by a topology change, \
+                  and a variant switch on a key",
         build: layout::build,
         pulse: layout::pulse,
+        signal: layout::SPREAD,
+        action: Some(layout::switch_variant),
     },
 ];
 
