@@ -75,6 +75,10 @@ pub struct SkiaPainter {
     /// again is [`retention`]'s and names no Skia type. Always empty in
     /// `Full` mode, which rebuilds every layer by construction.
     group_layers: retention::GroupCache<Image>,
+    /// The decoded image assets, kept for as long as this painter lives
+    /// (issue #639). Independent of [`DirtyMode`]: a decode is not a draw,
+    /// and both modes read the same table.
+    images: ImageCache,
 }
 
 impl SkiaPainter {
@@ -120,6 +124,7 @@ impl SkiaPainter {
             mode,
             retained: Vec::new(),
             group_layers: retention::GroupCache::new(),
+            images: ImageCache::default(),
         }
     }
 
@@ -211,6 +216,104 @@ impl SkiaPainter {
     }
 }
 
+/// The decoded image assets, keyed by [`ImageTable`] index, for as long as
+/// the painter lives (issue #639).
+///
+/// # Why the painter and not `paint()`
+///
+/// Issue #101's cache was a `paint()` local, which is right for the golden
+/// path where `paint()` runs once. A frame loop calls `paint()` sixty times a
+/// second, and a local cache inflates every PNG again on each of them —
+/// measured at 20.4 % of the `surfaces` frame
+/// (`docs/technotes/2026-07-31-v014-frame-budget.md`). Keeping the decodes on
+/// the painter is the other fix issue #101 named.
+///
+/// # Why the whole table is the key
+///
+/// An `ImageTable` index alone is **not** an identity. The host's scene reel
+/// rebuilds the arena on a scene change and keeps one painter across it
+/// (`demo/src/present.rs` owns `SkiaPainter`, `demo/src/shell.rs` replaces the
+/// `Arena`), so two unrelated documents both have an asset at index 0. A cache
+/// keyed on the index alone would draw the outgoing scene's picture in the
+/// incoming scene's box, silently.
+///
+/// A content hash would be the honest key, and the document has one —
+/// `dashbuf`'s `AssetEntry.hash`, BLAKE3-256 over the canonical payload. It
+/// does not reach here: the loader consumes it to bind each entry to its
+/// payload, and what crosses boundary B is [`ImageAsset`], which carries a
+/// format and bytes and no hash. So the identity is established the only other
+/// way available at this level — the painter keeps the table it decoded from
+/// and compares the incoming one against it by value, byte for byte. Equal
+/// tables hold the same payloads in the same order, so every decode still
+/// stands; any difference clears the lot.
+///
+/// # Memory
+///
+/// **This grows with the document and nothing evicts from it.** Every distinct
+/// asset the current table names is held until the table changes or the
+/// painter is dropped, and the retained bytes are two copies of each asset's
+/// **encoded** payload: one in `source`, one inside the [`Image`], which
+/// `decode_image` builds over its own `Data::new_copy`. The `surfaces`
+/// showcase scene measures 200 873 B of encoded assets and so retains
+/// 401 746 B here.
+///
+/// The **decoded** pixels are not held here. `decode_image` returns a lazy
+/// image, and Skia keeps the raster it produces in its own global resource
+/// cache, which is limited (33 554 432 B on this build,
+/// `skia_safe::graphics::resource_cache_total_bytes_limit`) and purges under
+/// pressure. `surfaces` decodes to 1 062 016 B, about 3 % of that limit, so
+/// its decodes survive between frames — a document whose images decode past
+/// the limit would still be re-inflated, and this cache cannot prevent that.
+///
+/// There is no memory budget anywhere in this project to size any of it
+/// against (issue #462), and issue #614 records the sibling risk on the
+/// retained group composites. Both are open; neither is decided here, and this
+/// cache deliberately invents neither a budget nor an eviction policy.
+#[derive(Default)]
+struct ImageCache {
+    /// The table the entries in `decoded` were decoded from — the painter's
+    /// own copy, so the comparison has something to compare against after the
+    /// caller's document is gone.
+    source: ImageTable,
+    decoded: HashMap<u32, Image>,
+}
+
+impl ImageCache {
+    /// Points the cache at this frame's table, dropping every decode if it is
+    /// not the table the decodes came from.
+    ///
+    /// The comparison walks the encoded payloads and is therefore not free:
+    /// 200 873 B for the `surfaces` showcase scene, once per frame, against
+    /// the 2.22 ms of decoding it removes there. It is linear in the table's
+    /// encoded size, so a document with far more asset bytes pays more for it.
+    fn begin_frame(&mut self, images: &ImageTable) {
+        if self.source == *images {
+            return;
+        }
+        self.decoded.clear();
+        self.source = images.clone();
+    }
+
+    /// The decoded asset at `index`, decoding it on the first request since
+    /// the table last changed.
+    ///
+    /// Resolves against the kept table rather than the caller's, which is
+    /// sound because [`ImageCache::begin_frame`] has already established that
+    /// the two are equal byte for byte — that is the whole point of keeping a
+    /// copy. `paint()` calls it first, before anything draws.
+    ///
+    /// # Panics
+    ///
+    /// Panics on an out-of-range index, exactly as [`ImageTable::resolve`]
+    /// does — indices are validated upstream (P4).
+    fn get(&mut self, index: u32) -> &Image {
+        let source = &self.source;
+        self.decoded
+            .entry(index)
+            .or_insert_with(|| decode_image(source.resolve(index)))
+    }
+}
+
 impl Painter for SkiaPainter {
     fn paint(
         &mut self,
@@ -257,9 +360,14 @@ impl Painter for SkiaPainter {
         // which retains nothing and so never stores a layer to reuse.
         self.group_layers
             .begin_frame(groups, if incremental { dirty } else { None });
+        // Keeps this frame's decodes if this frame's table is the one they
+        // came from, and drops all of them otherwise (issue #639). Called
+        // before anything draws, so no draw can read a decode the incoming
+        // table does not stand behind.
+        self.images.begin_frame(images);
 
-        // Disjoint field borrows: `retained` and `group_layers` are read
-        // while `surface` is borrowed mutably.
+        // Disjoint field borrows: `retained`, `group_layers` and `images` are
+        // read while `surface` is borrowed mutably.
         let source: &[RectEntry] = match self.mode {
             DirtyMode::Full => rects,
             DirtyMode::Retained => &self.retained,
@@ -267,6 +375,7 @@ impl Painter for SkiaPainter {
         let retain_groups = self.mode == DirtyMode::Retained;
         let (layer_width, layer_height) = (self.surface.width(), self.surface.height());
         let group_layers = &mut self.group_layers;
+        let image_cache = &mut self.images;
 
         let base_canvas = self.surface.canvas();
         base_canvas.clear(skia_safe::colors::TRANSPARENT);
@@ -292,17 +401,11 @@ impl Painter for SkiaPainter {
         let mut open_group_ends: Vec<u32> = Vec::new();
         let mut open_layers: Vec<OpenLayer> = Vec::new();
         // Baked-vector shapes (story B1): the MSDF resolve effect compiles
-        // once (lazily — a vector-free scene pays nothing), and each atlas PNG
-        // decodes once (the hero repeats one atlas across ~148 vectors).
+        // once (lazily — a vector-free scene pays nothing). The atlas PNG a
+        // field samples is an ordinary `ImageTable` entry, so it comes from
+        // `image_cache` along with every other asset — one cache, one key
+        // space, one decode per asset (issues #101 and #639).
         let mut field_effect: Option<RuntimeEffect> = None;
-        let mut field_atlases: HashMap<u32, Image> = HashMap::new();
-        // Each ImageTable index used by an ordinary (non-vector) fill decodes
-        // at most once per paint() call (issue #101): rects sharing one index
-        // — the v0.3 golden's checker asset among them — reuse the first
-        // decode instead of re-decoding per rect. This is the sibling cache
-        // to `field_atlases` above, for the ordinary-fill path rather than
-        // the baked-vector-field path.
-        let mut image_cache: HashMap<u32, Image> = HashMap::new();
         // The per-frame MSDF setup (SkSL compile + atlas decodes) and the
         // run-by-anchor index, built once. A text-free scene builds nothing.
         let msdf = MsdfFrame::new(glyphs, source);
@@ -418,9 +521,7 @@ impl Painter for SkiaPainter {
                             RuntimeEffect::make_for_shader(FIELD_MASK_SKSL, None)
                                 .expect("field-mask resolve SkSL compiles")
                         });
-                        let atlas = field_atlases
-                            .entry(field.image)
-                            .or_insert_with(|| decode_image(images.resolve(field.image)));
+                        let atlas = image_cache.get(field.image);
                         draw_backdrop_blur_field(
                             canvas,
                             rect,
@@ -460,9 +561,7 @@ impl Painter for SkiaPainter {
                     RuntimeEffect::make_for_shader(FIELD_MASK_SKSL, None)
                         .expect("field-mask resolve SkSL compiles")
                 });
-                let atlas = field_atlases
-                    .entry(field.image)
-                    .or_insert_with(|| decode_image(images.resolve(field.image)));
+                let atlas = image_cache.get(field.image);
                 draw_vector_field(canvas, rect, entry.fill.as_ref(), field, atlas, effect);
             } else {
                 // A fill-less entry draws nothing (a layout-only node, or a
@@ -502,10 +601,10 @@ impl Painter for SkiaPainter {
                     (rect, false)
                 };
                 if let Some(kind) = &entry.fill {
-                    draw_fill_kind(canvas, rrect, draw_rect, images, &mut image_cache, kind);
+                    draw_fill_kind(canvas, rrect, draw_rect, image_cache, kind);
                 }
                 for kind in &entry.extra_fills {
-                    draw_fill_kind(canvas, rrect, draw_rect, images, &mut image_cache, kind);
+                    draw_fill_kind(canvas, rrect, draw_rect, image_cache, kind);
                 }
                 if let Some(stroke) = &entry.stroke {
                     draw_stroke(canvas, &rrect, stroke, draw_rect.opacity);
@@ -1322,14 +1421,14 @@ fn draw_inner_shadow(
 /// on any fill is already refused upstream by name (the profile triage,
 /// before it ever reaches a paint entry).
 ///
-/// `image_cache` decodes each `ImageTable` index at most once per `paint()`
-/// call (issue #101): rects sharing one index reuse the first decode.
+/// `image_cache` decodes each `ImageTable` index at most once (issue #101 for
+/// rects sharing one index, issue #639 for frames sharing one table), and it
+/// carries the table the decodes came from, so nothing here needs one.
 fn draw_fill_kind(
     canvas: &Canvas,
     rrect: RRect,
     rect: &RectEntry,
-    images: &ImageTable,
-    image_cache: &mut HashMap<u32, Image>,
+    image_cache: &mut ImageCache,
     kind: &PaintKind,
 ) {
     match kind {
@@ -1351,9 +1450,7 @@ fn draw_fill_kind(
             transform,
             tile_scale,
         } => {
-            let decoded = image_cache
-                .entry(*image)
-                .or_insert_with(|| decode_image(images.resolve(*image)));
+            let decoded = image_cache.get(*image);
             draw_image_fill(
                 canvas,
                 &rrect,
@@ -1679,19 +1776,14 @@ mod tests {
         assert_eq!((image.width(), image.height()), (2, 2));
     }
 
-    /// A minimal real (decodable) 1x1 PNG, rendered through the painter
-    /// itself rather than a committed binary fixture — the same approach
-    /// `goldens/tooling/tests/common::checker_asset` uses for its 4x4
+    /// A minimal real (decodable) 1x1 PNG of `color`, rendered through the
+    /// painter itself rather than a committed binary fixture — the same
+    /// approach `goldens/tooling/tests/common::checker_asset` uses for its 4x4
     /// checker.
-    fn one_pixel_png() -> Vec<u8> {
+    fn one_pixel_png(color: dashpaint::Color) -> Vec<u8> {
         let mut painter = SkiaPainter::new(1, 1);
         let mut paints = PaintTable::new();
-        let solid = paints.push(dashpaint::PaintEntry::solid(dashpaint::Color {
-            r: 0.4,
-            g: 0.5,
-            b: 0.6,
-            a: 1.0,
-        }));
+        let solid = paints.push(dashpaint::PaintEntry::solid(color));
         let rects = [RectEntry {
             x: 0.0,
             y: 0.0,
@@ -1727,7 +1819,7 @@ mod tests {
         let mut images = ImageTable::new();
         let asset = images.push(ImageAsset {
             format: dashpaint::ImageFormat::Png,
-            bytes: one_pixel_png(),
+            bytes: one_pixel_png(GREY),
         });
 
         let mut paints = PaintTable::new();
@@ -1771,6 +1863,154 @@ mod tests {
             1,
             "two rects sharing one ImageTable index must decode its asset exactly once per \
              paint() call, not once per rect"
+        );
+    }
+
+    /// The colour the pre-issue-#639 fixture used. Named only so the two
+    /// tests below can pick colours that are obviously not it.
+    const GREY: dashpaint::Color = dashpaint::Color {
+        r: 0.4,
+        g: 0.5,
+        b: 0.6,
+        a: 1.0,
+    };
+    const RED: dashpaint::Color = dashpaint::Color {
+        r: 1.0,
+        g: 0.0,
+        b: 0.0,
+        a: 1.0,
+    };
+    const BLUE: dashpaint::Color = dashpaint::Color {
+        r: 0.0,
+        g: 0.0,
+        b: 1.0,
+        a: 1.0,
+    };
+
+    /// A one-asset table holding a 1x1 PNG of `color`.
+    fn one_image_table(color: dashpaint::Color) -> ImageTable {
+        let mut images = ImageTable::new();
+        images.push(ImageAsset {
+            format: dashpaint::ImageFormat::Png,
+            bytes: one_pixel_png(color),
+        });
+        images
+    }
+
+    /// One rect filling a 2x2 surface from `ImageTable` index 0.
+    fn one_image_rect() -> (PaintTable, [RectEntry; 1]) {
+        let mut paints = PaintTable::new();
+        let paint = paints.push(dashpaint::PaintEntry {
+            fill: Some(PaintKind::Image {
+                image: 0,
+                scale_mode: ScaleMode::Fill,
+                transform: None,
+                tile_scale: 1.0,
+            }),
+            ..dashpaint::PaintEntry::default()
+        });
+        let rects = [RectEntry {
+            x: 0.0,
+            y: 0.0,
+            w: 2.0,
+            h: 2.0,
+            paint,
+            clip: dashpaint::ClipIndex::UNCLIPPED,
+            opacity: 1.0,
+        }];
+        (paints, rects)
+    }
+
+    /// Paints `rects` against `images` and returns the top-left pixel as
+    /// unpremultiplied RGBA bytes.
+    fn paint_and_read(
+        painter: &mut SkiaPainter,
+        rects: &[RectEntry],
+        paints: &PaintTable,
+        images: &ImageTable,
+    ) -> [u8; 4] {
+        painter.paint(
+            rects,
+            paints,
+            images,
+            &ClipTable::new(),
+            &[],
+            &GlyphRunTable::new(),
+            None,
+        );
+        let pixels = painter.rgba_bytes();
+        [pixels[0], pixels[1], pixels[2], pixels[3]]
+    }
+
+    /// Sixty frames of one scene decode its asset once, not sixty times
+    /// (issue #639). The last frame paints an *independently built* table
+    /// holding the same bytes, because the host rebuilds its arena on a
+    /// resize and the reel returns to a scene it has shown before — an
+    /// equal table must be recognised as the same table, or the cache would
+    /// be thrown away on every rebuild.
+    ///
+    /// Falsifiable: moving the cache back into `paint()` — a
+    /// `HashMap<u32, Image>` declared as a local instead of
+    /// `self.images` — makes `DECODE_CALLS` read 61 here.
+    #[test]
+    fn paint_decodes_an_image_table_index_once_across_frames() {
+        let images = one_image_table(GREY);
+        let (paints, rects) = one_image_rect();
+
+        DECODE_CALLS.with(|c| c.set(0));
+        let mut painter = SkiaPainter::new(2, 2);
+        for _ in 0..60 {
+            paint_and_read(&mut painter, &rects, &paints, &images);
+        }
+        let rebuilt = one_image_table(GREY);
+        assert_eq!(rebuilt, images, "the rebuilt table holds the same bytes");
+        paint_and_read(&mut painter, &rects, &paints, &rebuilt);
+
+        assert_eq!(
+            DECODE_CALLS.with(|c| c.get()),
+            1,
+            "sixty-one paints of one asset must decode it once, not once per paint()"
+        );
+    }
+
+    /// A painter that outlives the document it painted must not draw the old
+    /// document's image (issue #639). This is the shape the host's scene reel
+    /// has: `demo/src/shell.rs` replaces the `Arena` on a scene change while
+    /// `demo/src/present.rs` keeps one `SkiaPainter`, so two unrelated
+    /// documents both hand it an asset at index 0.
+    ///
+    /// Falsifiable: deleting `self.images.begin_frame(images)` from `paint()`
+    /// makes the second read return the first document's red instead of the
+    /// second's blue — a wrong picture with nothing else to notice it,
+    /// which is why this is asserted on the pixel and not only on the
+    /// decode count.
+    #[test]
+    fn a_different_asset_table_is_not_the_table_that_was_decoded() {
+        let (paints, rects) = one_image_rect();
+        let first = one_image_table(RED);
+        let second = one_image_table(BLUE);
+        assert_ne!(first, second, "the two documents hold different bytes");
+
+        DECODE_CALLS.with(|c| c.set(0));
+        let mut painter = SkiaPainter::new(2, 2);
+        let drawn_first = paint_and_read(&mut painter, &rects, &paints, &first);
+        let drawn_second = paint_and_read(&mut painter, &rects, &paints, &second);
+
+        assert_eq!(
+            drawn_first,
+            [255, 0, 0, 255],
+            "the first document's image fill draws the first document's image"
+        );
+        assert_eq!(
+            drawn_second,
+            [0, 0, 255, 255],
+            "a second document's image fill must draw the second document's image at index 0, \
+             not the first document's"
+        );
+        assert_eq!(
+            DECODE_CALLS.with(|c| c.get()),
+            2,
+            "each of the two documents decodes its own asset once"
         );
     }
 }

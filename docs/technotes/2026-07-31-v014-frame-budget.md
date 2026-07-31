@@ -105,11 +105,28 @@ So the answer to "why is this not 60 Hz" is two costs, not one:
 
 `layout` and `typography` are already at the loop's 60 Hz pacing rather than
 work-bound, so removing blit cost does not raise their frame rate — only
-`surfaces` gained, from 38.1 to 41.2 frames per second. With issue #639's
-per-frame image decode also removed, `surfaces` would sit near 20.4 ms, about
-49 frames per second. **It does not reach 60 Hz on this painter**, and the
-remaining terms are the compositor post, the blur and the gradients rather than
-anything identified as waste.
+`surfaces` gained, from 38.1 to 41.2 frames per second. **It does not reach
+60 Hz on this painter**, and the remaining terms are the compositor post, the
+blur and the gradients rather than anything identified as waste.
+
+**Amended after issue #639 was fixed:** this note predicted that removing the
+per-frame image decode would put `surfaces` near 20.4 ms and about 49 frames
+per second. Measured, it is **21.7 ms and 45.7 frames per second** — the
+painter-lifetime decode cache is worth 2.22 ms of the 3.7 ms the profile
+attributed to PNG decoding, not all of it. The remainder is the MSDF glyph
+atlases, which hang off the `GlyphRunTable` rather than the `ImageTable` and so
+are decoded on every `paint` regardless (issue #644, about 2 ms for the three
+atlases every scene loads). `typography` and `layout` did not move, which is
+the expected result for scenes with no image fills.
+
+| scene      | present before | present after | frames per second |
+| ---------- | -------------: | ------------: | ----------------: |
+| surfaces   |          23.96 |         21.74 |      41.4 -> 45.7 |
+| typography |          12.68 |         12.63 |      57.1 -> 57.0 |
+| layout     |           7.23 |          7.20 |      55.4 -> 55.4 |
+
+Milliseconds, means over 240 frames, two repeats per scene in alternating
+order, one-minute load average between 3.1 and 4.3.
 
 Worth weighing before anyone spends on #603: `dashscene-wgpu` (v0.15) has no
 blit at all, because it presents to its own surface rather than handing pixels
