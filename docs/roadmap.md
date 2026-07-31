@@ -11,7 +11,7 @@ is nothing to keep in sync between the two.
 
 | This file (shape)               | GitHub (state)                                |
 | ------------------------------- | --------------------------------------------- |
-| Which slices exist (v0.1-v0.15) | Which stories exist under each epic           |
+| Which slices exist (v0.1-v0.16) | Which stories exist under each epic           |
 | What each slice delivers        | Which stories are open, closed, who owns them |
 | Inter-slice dependency edges    | Story-level dependency edges                  |
 | Which E-criteria a slice closes | Debt triage and milestone assignment          |
@@ -920,16 +920,70 @@ from-source GLES build, `skia_use_gl`, and the Ganesh-to-Graphite churn watch.
 Depends on: v0.13. Independent of v0.14, though the showcase is the obvious
 first consumer of a second painter.
 
+### v0.16 — loading performance — open
+
+**Epic #594.**
+
+Delivers: R5 made falsifiable. The file is mapped rather than read, assets stop
+being copied out of the mapping, blob residency is prefetched, and a benchmark
+asserts that cold-start cost tracks the shown root rather than the document
+size.
+
+**R5 names `mmap` in the requirement text itself** — "cold-start cost
+proportional to what is shown, not to file size (mmap + section discipline)" —
+and [`specification/05-qualification.md`](specification/05-qualification.md)
+makes the startup-scaling benchmark the first v1 exit criterion under guardrail
+G-20. Until this slice opened, **nothing tracked any of it**: no issue mentioned
+mmap, the v1 milestone held no epic for loading, and no `memmap` dependency
+existed in the workspace. A named exit criterion with no work item behind it is
+the failure
+[`decisions/pre-v1-hardening-slice.md`](decisions/pre-v1-hardening-slice.md)
+exists to prevent.
+
+**It can run without target hardware, and that is what makes it a slice rather
+than a v1 item.** Epic #476 and #462 wait on hardware because they need absolute
+numbers — a frame budget, a memory budget. R5's criterion is a **ratio**: a
+small-root document against a many-frame corpus document. A scaling assertion is
+measurable anywhere.
+
+The current load path guarantees it fails, which is the good kind of test to
+write first — nothing is mapped, and `dashscene-core`'s loader copies every
+asset payload a second time on the way in, so cold start scales with total asset
+bytes.
+
+The format already carries the hard part.
+[`decisions/dsb-sectioned-container.md`](decisions/dsb-sectioned-container.md)
+specifies "one `mmap` of the whole file, once" with blobs "untouched until the
+loader thread prefetches them", `Container` already hands out borrowed slices
+into its input, and blobs are aligned so a pointer into the mapping is directly
+usable. One bounds check in `parse` is the obstacle, and story #587 may already
+have settled it for the web target.
+
+**Placeholder activation stays in v1**, deliberately. The placeholder colour
+field has no producer — computing one needs pixel access `dashc` cannot have,
+Figma supplies none, and inventing a neutral grey at compile time is a result
+the document did not intend, which P1 forbids
+([`decisions/asset-model-content-addressed-blobs.md`](decisions/asset-model-content-addressed-blobs.md)).
+That makes it a producer question rather than a loading one, and R5 does not
+need it: prefetching the shown root's assets before first paint satisfies the
+criterion, while painting something not yet resident is a streaming problem.
+
+Depends on: v0.15 for the `Container::parse` answer, if #587 settles it there,
+and for the second painter that S16.2's boundary-B ownership choice is designed
+against. Independent of v0.14.
+
 ## v1 — Unity, full feature set, performance, production toolchain
 
 Engine painter (SDF shader library, material classes, a C# declarative
 skin); LATER-tier features land per priority, including shadow baking
-switching on and `profile:core` being enforced on target documents; loading
-performance — its foundations (the sectioned envelope, the asset table, the
-KTX2 texture pipeline) land in v0.11–v0.12, leaving v1 the prefetch
-choreography, placeholder activation, and the startup-scaling benchmark that
-asserts cold-start cost tracks the shown root, not document size — the v1 R5
-exit criterion, guardrail G-20,
+switching on and `profile:core` being enforced on target documents; **of the
+loading-performance work, only placeholder activation remains here** — its
+foundations (the sectioned envelope, the asset table, the KTX2 texture pipeline)
+landed in v0.11–v0.12, and the mapping, the prefetch choreography and the
+startup-scaling benchmark that makes R5 falsifiable moved to v0.16 at the v0.13
+close, because a ratio needs no target hardware to measure; what stays is
+blocked on a producer supplying the placeholder colour, not on loading
+(guardrail G-20,
 [`specification/05-qualification.md`](specification/05-qualification.md));
 rendering performance (tiler rules measured on target hardware; whether the
 lean native painter lands here or later is decided on those measurements, not
