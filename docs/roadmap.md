@@ -11,7 +11,7 @@ is nothing to keep in sync between the two.
 
 | This file (shape)               | GitHub (state)                                |
 | ------------------------------- | --------------------------------------------- |
-| Which slices exist (v0.1-v0.13) | Which stories exist under each epic           |
+| Which slices exist (v0.1-v0.16) | Which stories exist under each epic           |
 | What each slice delivers        | Which stories are open, closed, who owns them |
 | Inter-slice dependency edges    | Story-level dependency edges                  |
 | Which E-criteria a slice closes | Debt triage and milestone assignment          |
@@ -86,8 +86,11 @@ harness, `dashscene-core`'s arena and staged-mutation API
 paint-table types (boundary B), `dashscene-skia` as the CPU-raster reference
 painter, and `dashlang`'s minimal builder DSL — fixed rects and solid fills
 only. Spike: flatbuffer section-ordering control, resolved — the full
-sectioned container is deferred to v1
-([`decisions/dsb-sectioned-container.md`](decisions/dsb-sectioned-container.md)).
+sectioned container was deferred at this close, and **landed in v0.11** (the
+envelope in story #399, `.dsb` files becoming containers in #401), not in v1 as
+this note originally said
+([`decisions/dsb-sectioned-container.md`](decisions/dsb-sectioned-container.md),
+marked as-built).
 
 Depends on: nothing — the first slice.
 
@@ -503,13 +506,27 @@ to their slices. The v0.9 breakdown is revised at this close — see v0.9 below.
 ### v0.9 — parity — open
 
 **Epic #47.** Closes [`E1`](specification/05-qualification.md). Closing this
-epic asserts the v0 exit gate (`E1`–`E7`); v0 itself now extends through
-v0.13 (the 2026-07-19 plan revisions below), so the gate closes the
-qualification arc, not the version.
+epic asserts the v0 exit gate (`E1`–`E7`). **The gate closes the qualification
+arc, not the version** — the `v0.x` numbering has since run past it, through
+v0.16 as of the v0.13 close, and each slice after v0.9 closes no further `E`
+criterion. So "v0" now means the numbering, and `E1`–`E7` mean the
+qualification; the two stopped being the same thing at v0.9 and the roadmap
+should not be read as if they still are.
 
 Delivers: the same-screen-both-ways fixture, and the v0 exit gate — `E1`
 through `E7` asserted in CI. **The fixture landed; the gate did not** — see the
 close note below.
+
+**This slice is open with an empty milestone**, which is not a bookkeeping
+error: its remaining item, the gate (#49), is blocked on GitHub Actions billing
+(#263), and both it and epic #47 were re-homed to the v0.14 milestone at the
+v0.13 close rather than left on a closed slice's. A slice's open marker is set
+by its exit criterion, never by its milestone count.
+
+**#49 was closed once without being built** — by a docs pull request containing
+a closing keyword, the incident `AGENTS.md` cites as the reason for its rule
+against them. It was reopened on 2026-07-31, because a closed gate on an active
+milestone reads as delivered.
 
 Depends on: every prior epic, v0.1 through v0.8.
 
@@ -575,7 +592,7 @@ paths no `E7` frame covers. What that epic measured is the v0.10 slice below.
 
 ### v0.10 — real-file fidelity — closed
 
-**Epic #343.**
+**Epic #343.** Closes no `E` criterion — all seven were met during the v0.9 arc.
 
 Delivers: the named, counted gaps the real-file import left as
 skip-with-warning holes, in measured-value order — the `LIGA:0` text unlock
@@ -614,7 +631,7 @@ The v0.11 breakdown is revised at this close — see v0.11 below.
 
 ### v0.11 — document sections + asset model — closed
 
-**Epic #344.**
+**Epic #344.** Closes no `E` criterion.
 
 Delivers: the `.dsb` sectioned-container envelope
 ([`decisions/dsb-sectioned-container.md`](decisions/dsb-sectioned-container.md)
@@ -661,7 +678,7 @@ The v0.12 breakdown is revised at this close — see v0.12 below.
 
 ### v0.12 — packer + quality profiles — closed
 
-**Epic #345.**
+**Epic #345.** Closes no `E` criterion.
 
 Delivers: `dashpack` (an in-workspace standalone tool — vendored astcenc, an
 own KTX2 writer, no external CLIs), the RAW/HiFi/LoFi quality profiles as
@@ -752,8 +769,9 @@ not. The v0.13 breakdown is revised at this close — see v0.13 below.
 
 ### v0.13 — pre-v1 hardening — closed
 
-**Epics #362 (the burn-down) and #474 (the decisions track).** Revised at the
-v0.12 close (2026-07-27); the current slice.
+**Epics #362 (the burn-down) and #474 (the decisions track).** Closes no `E`
+criterion. Revised at the v0.12 close (2026-07-27); closed 2026-07-31, when
+epic #362 and its three stream epics closed together.
 
 Delivers: the independent code-debt that accumulated across v0.1–v0.12 and is
 resolvable before v1 — perf and allocation micro-debt, cleanup, test-gaps, and
@@ -823,11 +841,15 @@ track is blocked on an input rather than a decision: two items need a Figma
 capture that does not exist, and one is blocked on the painter's working colour
 space.
 
-Closed 2026-07-30. The milestone went from **102 open items to 104 closed**,
-and what remains is two items blocked on GitHub Actions billing (#263, #82)
-which no amount of work can clear.
+Closed 2026-07-31. The milestone went from **102 open items to 104 closed
+stories** — 109 issues in total, of which 5 are the epics themselves. Two items
+were blocked on GitHub Actions billing (#263, #82) which no amount of work can
+clear, and both were moved to the v1 milestone rather than closed, which is why
+this milestone now reads zero open.
 
-**Every one of the three blocked items resolved itself, and none by a ruling.**
+**Separately, all three of the items blocked on a missing input resolved
+themselves, and none by a ruling** — a different set from the two blocked on
+billing above.
 The two that needed "a Figma capture that does not exist" were each answered by
 one plugin command and one capture: the fixed-child-overflow question (#271)
 turned out to be a fidelity match, with Figma serialising the very construct
@@ -867,16 +889,145 @@ when the slice contains fixes whose purpose is to change output.
 
 The v1 breakdown is revised at this close — see v1 below.
 
+### v0.14 — the showcase runtime — open
+
+**Epic #568.** Closes no `E` criterion, but **carries the one still open** — see
+the v0 exit gate below. Design capture:
+`docs/wip/2026-07-29-v014-v015-showcase-and-wgpu-wbs.md`.
+
+Delivers: the first frame this project has ever drawn into a window, and the
+`README.md` it does not have.
+
+**Nothing here has ever drawn into a window.** There is no `winit` dependency,
+no event loop, no surface, no examples; the only binary targets are `dashc` and
+`dashpack`, both command-line tools. Every pixel produced so far is an offscreen
+raster compared against a PNG. Against that, the repo carries over 100 decision
+records and no entry path for anyone who does not already know it.
+
+The slice closes both gaps in that order — the demonstration first, because the
+best entry-path artifact is a moving picture of the system working, and a README
+written before one exists gets written twice.
+
+It is small because the runtime already exists: `dashlang::reactive::LiveScene`
+is already the per-frame driver, with `tick(dt, arena)`, signals, springs, the
+`bind`/`smooth`/`bind_text`/`visible_when` vocabulary and a `CachedSolver`. What
+is missing is a host — a window, an event loop and a surface — not a runtime.
+
+**Also carries the v0 exit gate.** Epic #47, the v0.9 parity epic, moved here
+rather than staying on a closed slice's milestone, and its one remaining item is
+the gate itself (#49) — `E1`-`E7` asserted together in CI.
+
+Two things about it are worth stating plainly, because both were previously
+implied rather than recorded:
+
+- **#49 was closed once without being built**, by a docs pull request carrying a
+  closing keyword. It was reopened on 2026-07-31. A closed gate on an active
+  milestone reads as delivered, which is exactly how two shipped documents came
+  to describe it as such.
+- **It is blocked on a billing decision, not on engineering.** Measured
+  2026-07-31: the five most recent workflow runs, including on `main`, all fail,
+  and `changes` — the trivial paths-filter job — **fails in four seconds having
+  executed zero steps**. That is an account-level block (#263), not a code
+  failure.
+
+The consequence reaches past this slice. v0.14's stated CI claim is
+`cargo build -p demo` green; v0.15's is layers 1 to 3 green; v0.16's benchmark
+is meant to gate there too. **With Actions blocked, none of those exit criteria
+can be met**, so one billing decision currently gates three slices. Worth
+resolving before v0.14 starts rather than discovering it at the close.
+
+Depends on: v0.13 (a burnt-down base). Independent of v0.15 — the showcase runs
+on the Skia reference painter.
+
+### v0.15 — the wgpu painter — open
+
+**Epic #569.** Closes no `E` criterion. Design capture: the same work breakdown,
+plus
+`docs/wip/2026-07-19-wgpu-painter-direction.md` for the ecosystem research and
+the pinned helper stack.
+
+Delivers: `dashscene-wgpu` behind boundary B, covering native and web. Four
+drivers, all selected at the design session: web reach, the entry-tier candidate
+slot, retiring the Skia trim profile, and `R-T5` single-sourced SDF math shared
+with the future Unity painter.
+
+**This slice does not switch the entry tier.** Skia stays the entry-tier bridge
+until wgpu is measured on a real entry SoC, and no such hardware is in the loop
+(epic #476 — no frame budget, no target-hardware measurement). That switch is a
+later, separate decision.
+
+**Skia does not leave the workspace either.** It is permanently the bit-exact
+CPU oracle, so `skia-safe` stays. What wgpu retires is the trim profile: the
+from-source GLES build, `skia_use_gl`, and the Ganesh-to-Graphite churn watch.
+
+Depends on: v0.13. Independent of v0.14, though the showcase is the obvious
+first consumer of a second painter.
+
+### v0.16 — loading performance — open
+
+**Epic #594.** Closes no `E` criterion, but makes **R5** falsifiable for the
+first time — the requirement, not an exit criterion, under guardrail G-20.
+
+Delivers: R5 made falsifiable. The file is mapped rather than read, assets stop
+being copied out of the mapping, blob residency is prefetched, and a benchmark
+asserts that cold-start cost tracks the shown root rather than the document
+size.
+
+**R5 names `mmap` in the requirement text itself** — "cold-start cost
+proportional to what is shown, not to file size (mmap + section discipline)" —
+and [`specification/05-qualification.md`](specification/05-qualification.md)
+makes the startup-scaling benchmark the first v1 exit criterion under guardrail
+G-20. Until this slice opened, **nothing tracked any of it**: no issue mentioned
+mmap, the v1 milestone held no epic for loading, and no `memmap` dependency
+existed in the workspace. A named exit criterion with no work item behind it is
+the failure
+[`decisions/pre-v1-hardening-slice.md`](decisions/pre-v1-hardening-slice.md)
+exists to prevent.
+
+**It can run without target hardware, and that is what makes it a slice rather
+than a v1 item.** Epic #476 and #462 wait on hardware because they need absolute
+numbers — a frame budget, a memory budget. R5's criterion is a **ratio**: a
+small-root document against a many-frame corpus document. A scaling assertion is
+measurable anywhere.
+
+The current load path guarantees it fails, which is the good kind of test to
+write first — nothing is mapped, and `dashscene-core`'s loader copies every
+asset payload a second time on the way in, so cold start scales with total asset
+bytes.
+
+The format already carries the hard part.
+[`decisions/dsb-sectioned-container.md`](decisions/dsb-sectioned-container.md)
+specifies "one `mmap` of the whole file, once" with blobs "untouched until the
+loader thread prefetches them", `Container` already hands out borrowed slices
+into its input, and blobs are aligned so a pointer into the mapping is directly
+usable. One bounds check in `parse` is the obstacle, and story #587 may already
+have settled it for the web target.
+
+**Placeholder activation stays in v1**, deliberately. The placeholder colour
+field has no producer — computing one needs pixel access `dashc` cannot have,
+Figma supplies none, and inventing a neutral grey at compile time is a result
+the document did not intend, which P1 forbids
+([`decisions/asset-model-content-addressed-blobs.md`](decisions/asset-model-content-addressed-blobs.md)).
+That makes it a producer question rather than a loading one, and R5 does not
+need it: prefetching the shown root's assets before first paint satisfies the
+criterion, while painting something not yet resident is a streaming problem.
+
+Depends on: v0.15 for the `Container::parse` answer, if #587 settles it there,
+and for the second painter that S16.2's boundary-B ownership choice is designed
+against. Independent of v0.14.
+
 ## v1 — Unity, full feature set, performance, production toolchain
 
 Engine painter (SDF shader library, material classes, a C# declarative
 skin); LATER-tier features land per priority, including shadow baking
-switching on and `profile:core` being enforced on target documents; loading
-performance — its foundations (the sectioned envelope, the asset table, the
-KTX2 texture pipeline) land in v0.11–v0.12, leaving v1 the prefetch
-choreography, placeholder activation, and the startup-scaling benchmark that
-asserts cold-start cost tracks the shown root, not document size — the v1 R5
-exit criterion, guardrail G-20,
+switching on and `profile:core` being enforced on target documents; **of the
+loading-performance work, only placeholder activation remains here** — its
+foundations (the sectioned envelope, the asset table, the KTX2 texture pipeline)
+landed in v0.11–v0.12, and the mapping, the prefetch choreography and the
+startup-scaling benchmark that makes R5 falsifiable moved to v0.16 at the v0.13
+close, because a ratio needs no target hardware to measure; what stays is
+blocked on a producer supplying the placeholder colour, not on loading
+(guardrail G-20,
 [`specification/05-qualification.md`](specification/05-qualification.md));
 rendering performance (tiler rules measured on target hardware; whether the
 lean native painter lands here or later is decided on those measurements, not
