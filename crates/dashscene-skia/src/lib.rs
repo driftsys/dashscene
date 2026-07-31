@@ -201,6 +201,13 @@ impl Painter for SkiaPainter {
         // decodes once (the hero repeats one atlas across ~148 vectors).
         let mut field_effect: Option<RuntimeEffect> = None;
         let mut field_atlases: HashMap<u32, Image> = HashMap::new();
+        // Each ImageTable index used by an ordinary (non-vector) fill decodes
+        // at most once per paint() call (issue #101): rects sharing one index
+        // — the v0.3 golden's checker asset among them — reuse the first
+        // decode instead of re-decoding per rect. This is the sibling cache
+        // to `field_atlases` above, for the ordinary-fill path rather than
+        // the baked-vector-field path.
+        let mut image_cache: HashMap<u32, Image> = HashMap::new();
         // The per-frame MSDF setup (SkSL compile + atlas decodes) and the
         // run-by-anchor index, built once. A text-free scene builds nothing.
         let msdf = MsdfFrame::new(glyphs, source);
@@ -360,10 +367,10 @@ impl Painter for SkiaPainter {
                     (rect, false)
                 };
                 if let Some(kind) = &entry.fill {
-                    draw_fill_kind(canvas, rrect, draw_rect, images, kind);
+                    draw_fill_kind(canvas, rrect, draw_rect, images, &mut image_cache, kind);
                 }
                 for kind in &entry.extra_fills {
-                    draw_fill_kind(canvas, rrect, draw_rect, images, kind);
+                    draw_fill_kind(canvas, rrect, draw_rect, images, &mut image_cache, kind);
                 }
                 if let Some(stroke) = &entry.stroke {
                     draw_stroke(canvas, &rrect, stroke, draw_rect.opacity);
@@ -1114,11 +1121,15 @@ fn draw_inner_shadow(
 /// blend — no per-fill blend mode is needed, because an advanced blend mode
 /// on any fill is already refused upstream by name (the profile triage,
 /// before it ever reaches a paint entry).
+///
+/// `image_cache` decodes each `ImageTable` index at most once per `paint()`
+/// call (issue #101): rects sharing one index reuse the first decode.
 fn draw_fill_kind(
     canvas: &Canvas,
     rrect: RRect,
     rect: &RectEntry,
     images: &ImageTable,
+    image_cache: &mut HashMap<u32, Image>,
     kind: &PaintKind,
 ) {
     match kind {
@@ -1140,11 +1151,14 @@ fn draw_fill_kind(
             transform,
             tile_scale,
         } => {
+            let decoded = image_cache
+                .entry(*image)
+                .or_insert_with(|| decode_image(images.resolve(*image)));
             draw_image_fill(
                 canvas,
                 &rrect,
                 rect,
-                images.resolve(*image),
+                decoded,
                 *scale_mode,
                 transform.as_ref(),
                 *tile_scale,
@@ -1305,6 +1319,23 @@ fn draw_stroke(canvas: &Canvas, rrect: &RRect, stroke: &Stroke, opacity: f32) {
     canvas.draw_rrect(stroked, &paint);
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Test-only decode counter (issue #101): `paint()`'s image-fill cache
+    /// should call `decode_image` at most once per `ImageTable` index, and
+    /// this is how `tests::paint_decodes_a_shared_image_table_index_once_per_call`
+    /// observes that without reaching into the cache itself. Compiled out
+    /// of every non-test build — this is not a runtime metric.
+    ///
+    /// Thread-local rather than a shared global counter: the default
+    /// `#[test]` harness runs each test function on its own thread, and
+    /// this crate's other `decode_image` callers
+    /// (`decode_image_handles_a_real_jpeg` and `..._static_gif`) would
+    /// otherwise bump a counter this test did not mean to observe, flakily,
+    /// whenever tests happen to run concurrently.
+    static DECODE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Decodes an encoded image asset with the Skia build's own codec —
 /// `docs/decisions/image-assets-cross-boundary-b.md` names this each
 /// painter's own machinery, and this build's `skia-safe` carries Png,
@@ -1313,23 +1344,26 @@ fn draw_stroke(canvas: &Canvas, rrect: &RRect, stroke: &Stroke, opacity: f32) {
 /// the pure-Rust fallback `docs/decisions/downloaded-raster-needs-no-vector-engine.md`
 /// describes, which the reference painter does not run).
 fn decode_image(asset: &ImageAsset) -> Image {
+    #[cfg(test)]
+    DECODE_CALLS.with(|c| c.set(c.get() + 1));
     images::deferred_from_encoded_data(Data::new_copy(&asset.bytes), None)
         .expect("image asset decodes (validated upstream, P4)")
 }
 
-/// Draws an image fill clipped to the entry's (rounded) box.
+/// Draws an image fill clipped to the entry's (rounded) box. `image` is
+/// already decoded — the caller (`draw_fill_kind`) owns the per-`paint()`
+/// decode cache, so this function decodes nothing (issue #101).
 #[allow(clippy::too_many_arguments)]
 fn draw_image_fill(
     canvas: &Canvas,
     rrect: &RRect,
     rect: &RectEntry,
-    asset: &ImageAsset,
+    image: &Image,
     scale_mode: ScaleMode,
     transform: Option<&dashpaint::Mat23>,
     tile_scale: f32,
     opacity: f32,
 ) {
-    let image = decode_image(asset);
     let (iw, ih) = (image.width() as f32, image.height() as f32);
 
     canvas.save();
@@ -1356,7 +1390,7 @@ fn draw_image_fill(
                 dw,
                 dh,
             );
-            canvas.draw_image_rect_with_sampling_options(&image, None, dest, sampling, &paint);
+            canvas.draw_image_rect_with_sampling_options(image, None, dest, sampling, &paint);
         }
         ScaleMode::Tile => {
             // Repeat at tile_scale magnification, anchored at the box
@@ -1413,7 +1447,8 @@ mod tests {
     //! Proves `decode_image` actually decodes Jpeg and static Gif rather
     //! than assuming the pinned `skia-safe` build's codecs cover them
     //! (story #342) — a real 2x2 fixture through the real decode path, not
-    //! a stub.
+    //! a stub. Also proves `paint()`'s per-`ImageTable`-index decode cache
+    //! (issue #101), via `DECODE_CALLS`.
 
     use super::*;
 
@@ -1442,5 +1477,100 @@ mod tests {
         };
         let image = decode_image(&asset);
         assert_eq!((image.width(), image.height()), (2, 2));
+    }
+
+    /// A minimal real (decodable) 1x1 PNG, rendered through the painter
+    /// itself rather than a committed binary fixture — the same approach
+    /// `goldens/tooling/tests/common::checker_asset` uses for its 4x4
+    /// checker.
+    fn one_pixel_png() -> Vec<u8> {
+        let mut painter = SkiaPainter::new(1, 1);
+        let mut paints = PaintTable::new();
+        let solid = paints.push(dashpaint::PaintEntry::solid(dashpaint::Color {
+            r: 0.4,
+            g: 0.5,
+            b: 0.6,
+            a: 1.0,
+        }));
+        let rects = [RectEntry {
+            x: 0.0,
+            y: 0.0,
+            w: 1.0,
+            h: 1.0,
+            paint: solid,
+            clip: dashpaint::ClipIndex::UNCLIPPED,
+            opacity: 1.0,
+        }];
+        painter.paint(
+            &rects,
+            &paints,
+            &ImageTable::new(),
+            &ClipTable::new(),
+            &[],
+            &GlyphRunTable::new(),
+            None,
+        );
+        painter.png_bytes()
+    }
+
+    /// Two rects filled from the same `ImageTable` index must decode that
+    /// index's asset exactly once per `paint()` call, not once per rect
+    /// (issue #101). The scene reduces the v0.3 golden's own shape — two
+    /// paint entries sharing one checker asset — to a single shared pixel,
+    /// so the test needs no external fixture.
+    ///
+    /// Falsifiable: reverting `draw_fill_kind`'s `image_cache` lookup back
+    /// to a bare `decode_image(images.resolve(*image))` call per fill makes
+    /// `DECODE_CALLS` read 2 here, and the assertion below fails.
+    #[test]
+    fn paint_decodes_a_shared_image_table_index_once_per_call() {
+        let mut images = ImageTable::new();
+        let asset = images.push(ImageAsset {
+            format: dashpaint::ImageFormat::Png,
+            bytes: one_pixel_png(),
+        });
+
+        let mut paints = PaintTable::new();
+        let image_fill = || dashpaint::PaintEntry {
+            fill: Some(PaintKind::Image {
+                image: asset,
+                scale_mode: ScaleMode::Fill,
+                transform: None,
+                tile_scale: 1.0,
+            }),
+            ..dashpaint::PaintEntry::default()
+        };
+        let paint_a = paints.push(image_fill());
+        let paint_b = paints.push(image_fill());
+
+        let rect = |x: f32, paint| RectEntry {
+            x,
+            y: 0.0,
+            w: 2.0,
+            h: 2.0,
+            paint,
+            clip: dashpaint::ClipIndex::UNCLIPPED,
+            opacity: 1.0,
+        };
+        let rects = [rect(0.0, paint_a), rect(2.0, paint_b)];
+
+        DECODE_CALLS.with(|c| c.set(0));
+        let mut painter = SkiaPainter::new(4, 2);
+        painter.paint(
+            &rects,
+            &paints,
+            &images,
+            &ClipTable::new(),
+            &[],
+            &GlyphRunTable::new(),
+            None,
+        );
+
+        assert_eq!(
+            DECODE_CALLS.with(|c| c.get()),
+            1,
+            "two rects sharing one ImageTable index must decode its asset exactly once per \
+             paint() call, not once per rect"
+        );
     }
 }

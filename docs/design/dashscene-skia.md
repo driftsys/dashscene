@@ -78,7 +78,12 @@ All in `crates/dashscene-skia/src/lib.rs`:
   (`docs/decisions/image-assets-cross-boundary-b.md`), decode, and
   draw clipped to the entry's (rounded) box: Fill covers, Fit
   contains, Tile repeats at `tile_scale`, Crop maps the normalized
-  transform. Nearest sampling, for determinism.
+  transform. Nearest sampling, for determinism. Decoding is cached by
+  `ImageTable` index for the length of one `paint()` call, so rects
+  sharing one index (a repeated fill asset) decode it once rather than
+  once per rect (issue #101) — the sibling of the vector-field atlas
+  cache described below, scoped to the ordinary-fill path instead of
+  the baked-vector-field path.
 - Subtree clipping arrives resolved (story #97): the rect's
   `ClipRegion` is intersected before it draws — `save`, one
   anti-aliased `clip_rrect(Intersect)` per box (outermost first), draw
