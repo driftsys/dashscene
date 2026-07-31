@@ -557,4 +557,18 @@ so each technote stops being the authority for the conclusion it reached:
   clear the #77 start-order guarantee for free — `Vec`'s own push/remove
   is what gives `samples()` that guarantee today (debt #488).
 
+- [frame-delta-is-clamped-and-the-host-owns-the-clock.md](frame-delta-is-clamped-and-the-host-owns-the-clock.md)
+  — the host clamps the frame delta at `dt = min(elapsed, 100 ms)` with **no
+  accumulator**, because `dashcue` already substeps below its own stability
+  bound and `tick` takes `dt` as a parameter, so R4's reproducibility clause
+  already holds. The clamp guards frame **cost**, not correctness: substep
+  count scales with `dt`. **100 ms is a convention, not a derived bound** —
+  the lower bound is real (it must sit above ordinary hitches) but nothing
+  distinguishes it from Unity's 333 ms, and deriving it needs a frame budget
+  #476 says does not exist. The binding clause is therefore not the value but
+  **cross-painter agreement**: both product painters clamp at the same value,
+  configured rather than inherited from either engine's default. Also lands the
+  clock invariant — no crate at or below `LiveScene` reads a clock — as a
+  committed source scan rather than a convention (story #572).
+
 See the `sdd-working-memory-lifecycle` rule.
