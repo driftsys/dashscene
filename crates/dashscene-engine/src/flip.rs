@@ -36,7 +36,7 @@
 
 use dashcue::{PropKey, Scheduler, VariantTransition};
 use dashscene_core::{Channel, NodeId, SolvedRect};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// The four rect channels, in packing order — the fixed set a rect
 /// decomposes into. A rect animates as one `dashcue` track per channel
@@ -87,6 +87,14 @@ pub struct VariantFlip {
     /// deterministic so #23 samples reproducibly, and a retarget updates a
     /// node's target in place rather than reordering it.
     targets: Vec<(NodeId, SolvedRect)>,
+    /// Scratch: this frame's live channel keys, rebuilt by
+    /// [`advance`](VariantFlip::advance) from [`Scheduler::samples`] — one
+    /// O(live tracks) pass — so pruning `targets` is an O(1) set lookup per
+    /// rect channel per node instead of a linear scan of the scheduler's
+    /// tracks repeated per node per channel (issue #205). Cleared and
+    /// reused rather than replaced, so a steady-state animated set costs no
+    /// allocation once its capacity settles (R4).
+    live_scratch: FxHashSet<PropKey>,
 }
 
 impl VariantFlip {
@@ -195,11 +203,24 @@ impl VariantFlip {
     /// never a clock this reads (P3) — then drop any node whose channels have
     /// all finished. Deterministic under a fixed step (`dashcue`'s IEEE-754
     /// determinism), which is what the E5 goldens sample.
+    ///
+    /// Builds `live_scratch` once per call from [`Scheduler::samples`]
+    /// (issue #205): the naive approach — probe [`Scheduler::sample`] once
+    /// per rect channel per target — costs a linear scan of the scheduler's
+    /// tracks per probe, so pruning `targets` that way is
+    /// O(targets · channels · live tracks). Indexing the live keys once
+    /// makes each node's liveness check an O(1) set lookup instead, so the
+    /// whole prune is O(targets + live tracks).
     pub fn advance(&mut self, dt: f32) {
         self.scheduler.advance(dt);
-        let scheduler = &self.scheduler;
+        self.live_scratch.clear();
+        for (key, _value) in self.scheduler.samples() {
+            #[cfg(test)]
+            probe_cost::record(1);
+            self.live_scratch.insert(key);
+        }
         self.targets
-            .retain(|(node, _)| node_is_live(scheduler, *node));
+            .retain(|(node, _)| node_is_live_in(&self.live_scratch, *node));
     }
 
     /// The current animated rect of `node`, or `None` when it is not
@@ -247,11 +268,64 @@ impl VariantFlip {
     }
 }
 
-/// Whether `node` has any live channel track in `scheduler`.
+/// Whether `node` has any live channel track in `scheduler` — probed
+/// directly against the scheduler, one [`Scheduler::sample`] call per rect
+/// channel. Still used by [`VariantFlip::is_live`] (`start`'s per-switch
+/// bookkeeping, not `advance`'s per-frame prune — issue #205 is scoped to
+/// `advance`). Each `Scheduler::sample` call is a linear scan of the
+/// scheduler's tracks (`dashcue::Scheduler`, "storage is a linearly scanned
+/// Vec"), so this is O(live tracks) per call — fine at `start`'s call
+/// frequency (once per switch, not once per frame).
 fn node_is_live(scheduler: &Scheduler, node: NodeId) -> bool {
-    RECT_CHANNELS
-        .iter()
-        .any(|&channel| scheduler.sample(prop_key(node, channel)).is_some())
+    RECT_CHANNELS.iter().any(|&channel| {
+        #[cfg(test)]
+        probe_cost::record(scheduler.len());
+        scheduler.sample(prop_key(node, channel)).is_some()
+    })
+}
+
+/// Whether `node` has any rect channel key present in `live` — the same
+/// "is any rect channel live" test [`node_is_live`] performs, against a
+/// prebuilt index (issue #205's fix) instead of probing the scheduler
+/// directly: each check here is O(1), where `node_is_live`'s is O(live
+/// tracks).
+fn node_is_live_in(live: &FxHashSet<PropKey>, node: NodeId) -> bool {
+    RECT_CHANNELS.iter().any(|&channel| {
+        #[cfg(test)]
+        probe_cost::record(1);
+        live.contains(&prop_key(node, channel))
+    })
+}
+
+/// Test-only cost accounting for issue #205: a deterministic stand-in for
+/// wall-clock cost, since call *count* alone doesn't distinguish the fix —
+/// both the old and new code make O(targets · channels) calls per
+/// `advance`. What differs is what each call costs, so each primitive is
+/// weighted by its own documented cost: a [`Scheduler::sample`] probe by
+/// `scheduler.len()` (the scan it performs), a [`Scheduler::samples`] item
+/// or an `FxHashSet::contains` probe by 1 (O(1) work each). Summed across
+/// one `advance` call, this total is the quantity issue #205 names:
+/// O(targets · channels · live tracks) through `node_is_live`, O(targets +
+/// live tracks) through `node_is_live_in`.
+#[cfg(test)]
+mod probe_cost {
+    use std::cell::Cell;
+
+    thread_local! {
+        static COST: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub fn reset() {
+        COST.with(|c| c.set(0));
+    }
+
+    pub fn record(units: usize) {
+        COST.with(|c| c.set(c.get() + units));
+    }
+
+    pub fn get() -> usize {
+        COST.with(|c| c.get())
+    }
 }
 
 /// Index each rect's four channels by their packed [`PropKey`], the lookup
@@ -285,5 +359,175 @@ fn channel_mut(rect: &mut SolvedRect, channel: Channel) -> &mut f32 {
         Channel::Height => &mut rect.h,
         // Only RECT_CHANNELS reach here.
         other => unreachable!("{other:?} is not a rect channel"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dashcue::{Easing, PropTransition, TransitionSpec};
+    use dashscene_core::Arena;
+
+    fn rect(x: f32) -> SolvedRect {
+        SolvedRect {
+            x,
+            y: 0.0,
+            w: 10.0,
+            h: 10.0,
+        }
+    }
+
+    /// `n` nodes, each with all four rect channels animating on a live
+    /// one-second linear tween — `advance`'s worst case, the shape issue
+    /// #205 is about. Every `dt` used against the returned flip stays far
+    /// short of the tween's duration, so nothing finishes and every node
+    /// survives one `advance` call — the two sizes below are therefore an
+    /// apples-to-apples comparison of the same shape of surviving work,
+    /// scaled by node count alone.
+    fn animating_flip(n: usize) -> (Arena, VariantFlip) {
+        let mut arena = Arena::new();
+        let nodes: Vec<NodeId> = {
+            let mut txn = arena.open();
+            let nodes = (0..n).map(|_| txn.add_node(None, None)).collect();
+            txn.commit();
+            nodes
+        };
+
+        let before: Vec<_> = nodes.iter().map(|&node| (node, rect(0.0))).collect();
+        let after: Vec<_> = nodes.iter().map(|&node| (node, rect(100.0))).collect();
+        let tracks = nodes
+            .iter()
+            .flat_map(|&node| {
+                RECT_CHANNELS.iter().map(move |&channel| PropTransition {
+                    prop: prop_key(node, channel),
+                    spec: TransitionSpec::Tween {
+                        duration: 1.0,
+                        easing: Easing::Linear,
+                    },
+                })
+            })
+            .collect();
+        let transition = VariantTransition {
+            tracks,
+            stagger: 0.0,
+        };
+
+        let mut flip = VariantFlip::new();
+        flip.start(&before, &after, &transition);
+        (arena, flip)
+    }
+
+    /// Issue #205: `advance`'s prune must cost O(animating nodes), not
+    /// O(animating nodes² · channels). `probe_cost` weighs each primitive
+    /// by its own documented cost, not by call count — call count alone is
+    /// O(N) either way; the quadratic blowup is in what each call costs.
+    /// Growing N by 4x should grow a linear cost ~4x and a quadratic cost
+    /// ~16x — comfortably far apart to tell apart with one fixed
+    /// threshold, without timing anything.
+    ///
+    /// Falsifiable: reverting `advance` to probe `node_is_live` per target
+    /// (the pre-fix shape) makes this fail, because `probe_cost` then
+    /// records `scheduler.len()` per node instead of O(1) per node — see
+    /// the PR description for the recorded failing run.
+    #[test]
+    fn advance_prunes_at_cost_linear_in_animating_nodes() {
+        const N: usize = 200;
+        const SCALE: usize = 4;
+
+        let (_arena_small, mut small) = animating_flip(N);
+        probe_cost::reset();
+        small.advance(0.01);
+        let small_cost = probe_cost::get();
+
+        let (_arena_big, mut big) = animating_flip(N * SCALE);
+        probe_cost::reset();
+        big.advance(0.01);
+        let big_cost = probe_cost::get();
+
+        // Confirms the two runs compare the same shape of work: dt is tiny
+        // against the 1-second tween, so nothing finished and every node
+        // is still live (and counted) in both.
+        assert_eq!(small.targets.len(), N, "no node finished in the small run");
+        assert_eq!(
+            big.targets.len(),
+            N * SCALE,
+            "no node finished in the big run"
+        );
+
+        let ratio = big_cost as f64 / small_cost as f64;
+        let quadratic_ratio = (SCALE * SCALE) as f64;
+        assert!(
+            ratio < quadratic_ratio / 2.0,
+            "cost ratio {ratio:.1} for a {SCALE}x node increase reads as O(N^2) \
+             (expected close to {SCALE}x for O(N), not close to {quadratic_ratio}x); \
+             small_cost={small_cost} (N={N}), big_cost={big_cost} (N={})",
+            N * SCALE,
+        );
+    }
+
+    /// The other half of the fix's contract: `advance` must prune exactly
+    /// the nodes whose every channel finished, not merely prune cheaply. A
+    /// mixed scene — one node finishes within `dt`, one does not — is the
+    /// case a single-node test can't tell apart from "dropped everything"
+    /// or "dropped nothing".
+    #[test]
+    fn advance_prunes_exactly_the_nodes_whose_every_channel_finished() {
+        let mut arena = Arena::new();
+        let (short, long) = {
+            let mut txn = arena.open();
+            let short = txn.add_node(None, None);
+            let long = txn.add_node(None, None);
+            txn.commit();
+            (short, long)
+        };
+
+        let transition = VariantTransition {
+            tracks: vec![
+                PropTransition {
+                    prop: prop_key(short, Channel::X),
+                    spec: TransitionSpec::Tween {
+                        duration: 0.5,
+                        easing: Easing::Linear,
+                    },
+                },
+                PropTransition {
+                    prop: prop_key(long, Channel::X),
+                    spec: TransitionSpec::Tween {
+                        duration: 2.0,
+                        easing: Easing::Linear,
+                    },
+                },
+            ],
+            stagger: 0.0,
+        };
+
+        let mut flip = VariantFlip::new();
+        flip.start(
+            &[(short, rect(0.0)), (long, rect(0.0))],
+            &[(short, rect(10.0)), (long, rect(10.0))],
+            &transition,
+        );
+
+        // The frame `short` finishes on: `Scheduler::advance`'s doc
+        // guarantees a track that finishes this step still samples until
+        // the *next* advance, so both nodes are still in the animated set.
+        flip.advance(0.5);
+        let live: Vec<NodeId> = flip.sampled_rects().map(|(n, _)| n).collect();
+        assert_eq!(
+            live,
+            vec![short, long],
+            "both present the frame short finishes on"
+        );
+
+        // The following advance drops exactly `short` — `long` still has a
+        // live track and survives.
+        flip.advance(0.1);
+        let live: Vec<NodeId> = flip.sampled_rects().map(|(n, _)| n).collect();
+        assert_eq!(
+            live,
+            vec![long],
+            "short is pruned once its track has actually finished; long, still \
+             running, is not"
+        );
     }
 }
