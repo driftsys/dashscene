@@ -8,8 +8,9 @@
 
 use std::ops::Range;
 
-use unicode_bidi::{BidiInfo, ParagraphInfo};
+use unicode_bidi::ParagraphInfo;
 
+use super::bidi::{Bidi, Reorder};
 use super::shape::{ShapedGlyph, ShapedText};
 use super::{Line, PositionedGlyph};
 
@@ -103,13 +104,24 @@ pub(crate) fn break_lines(
 }
 
 /// Positions one line's glyphs on its baseline, in display order:
-/// unicode-bidi reorders the line's level runs (UAX #9 L1+L2), an RTL
+/// `reorder` reorders the line's level runs (UAX #9 L1+L2), an RTL
 /// run's glyphs re-reverse from their stored logical order back to
 /// visual order, and the pen advances left-to-right over the result.
 /// The line lies within `para` by construction — the caller produces
 /// lines per bidi paragraph.
+///
+/// `reorder` is the typesetter's one reorder buffer, threaded in rather
+/// than allocated here: `unicode_bidi`'s own `visual_runs` allocates and
+/// copies a paragraph-length level vector per call, which a paragraph
+/// wrapped into N lines paid N times per `layout()` (issue #226).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "positioning inputs are independent; grouping them would only \
+              move the list into a struct built at the one call site"
+)]
 pub(crate) fn position_line(
-    bidi: &BidiInfo<'_>,
+    reorder: &mut Reorder,
+    bidi: Bidi<'_>,
     para: &ParagraphInfo,
     shaped: &ShapedText,
     range: Range<usize>,
@@ -135,7 +147,7 @@ pub(crate) fn position_line(
         .get(range.end)
         .map_or(bidi.text.len(), |g| g.cluster as usize)
         .min(para.range.end);
-    let (levels, visual) = bidi.visual_runs(para, line_start..line_end);
+    let (levels, visual) = reorder.line(bidi, para, line_start..line_end);
     let line_glyphs = &shaped.glyphs[range];
     let mut glyphs = Vec::with_capacity(line_glyphs.len());
     let mut pen_x = 0f32;
@@ -199,10 +211,9 @@ fn place(
 
 #[cfg(test)]
 mod tests {
-    use unicode_bidi::BidiInfo;
-
+    use super::super::bidi::Resolved;
     use super::super::shape::{ShapedGlyph, ShapedText};
-    use super::{break_lines, position_line};
+    use super::{Bidi, Reorder, break_lines, position_line};
 
     fn glyph(glyph_id: u16, cluster: u32, font: u16, x_advance: i32) -> ShapedGlyph {
         ShapedGlyph {
@@ -223,15 +234,25 @@ mod tests {
     #[test]
     fn each_glyph_scales_by_its_own_fonts_upem() {
         let text = "ab"; // one LTR level run; clusters 0 and 1
-        let bidi = BidiInfo::new(text, None);
-        let para = &bidi.paragraphs[0];
+        let resolved = Resolved::new(text);
+        let bidi = Bidi::new(text, &resolved);
+        let para = &resolved.paragraphs[0];
         let shaped = ShapedText {
             glyphs: vec![glyph(1, 0, 0, 1000), glyph(2, 1, 1, 1000)],
         };
         // size 32: primary upem 1000 → scale 0.032; fallback upem 2000 →
         // scale 0.016.
         let scales = [32.0 / 1000.0, 32.0 / 2000.0];
-        let line = position_line(&bidi, para, &shaped, 0..2, &scales, 0.0, 0.0);
+        let line = position_line(
+            &mut Reorder::default(),
+            bidi,
+            para,
+            &shaped,
+            0..2,
+            &scales,
+            0.0,
+            0.0,
+        );
         assert_eq!(line.glyphs.len(), 2);
         assert!((line.glyphs[0].x - 0.0).abs() < 1e-4);
         // Second glyph placed after the FIRST glyph's own-font advance
@@ -305,8 +326,9 @@ mod tests {
     #[test]
     fn position_line_drops_the_lines_trailing_letter_spacing_step() {
         let text = "abc";
-        let bidi = BidiInfo::new(text, None);
-        let para = &bidi.paragraphs[0];
+        let resolved = Resolved::new(text);
+        let bidi = Bidi::new(text, &resolved);
+        let para = &resolved.paragraphs[0];
         let shaped = ShapedText {
             glyphs: vec![
                 glyph(1, 0, 0, 1000),
@@ -315,7 +337,16 @@ mod tests {
             ],
         };
         let scales = [1.0];
-        let line = position_line(&bidi, para, &shaped, 0..3, &scales, 0.0, 4.0);
+        let line = position_line(
+            &mut Reorder::default(),
+            bidi,
+            para,
+            &shaped,
+            0..3,
+            &scales,
+            0.0,
+            4.0,
+        );
         // Positions unchanged: glyph 0 at 0, glyph 1 after 1000+4, glyph 2
         // after 2*(1000+4).
         assert!(
@@ -344,13 +375,23 @@ mod tests {
     #[test]
     fn position_line_single_glyph_run_has_zero_tracking_steps() {
         let text = "a";
-        let bidi = BidiInfo::new(text, None);
-        let para = &bidi.paragraphs[0];
+        let resolved = Resolved::new(text);
+        let bidi = Bidi::new(text, &resolved);
+        let para = &resolved.paragraphs[0];
         let shaped = ShapedText {
             glyphs: vec![glyph(1, 0, 0, 1000)],
         };
         let scales = [1.0];
-        let line = position_line(&bidi, para, &shaped, 0..1, &scales, 0.0, 4.0);
+        let line = position_line(
+            &mut Reorder::default(),
+            bidi,
+            para,
+            &shaped,
+            0..1,
+            &scales,
+            0.0,
+            4.0,
+        );
         assert!((line.width - 1000.0).abs() < 1e-4, "width {}", line.width);
     }
 
@@ -359,13 +400,23 @@ mod tests {
     #[test]
     fn position_line_empty_range_has_zero_width_no_underflow() {
         let text = "a";
-        let bidi = BidiInfo::new(text, None);
-        let para = &bidi.paragraphs[0];
+        let resolved = Resolved::new(text);
+        let bidi = Bidi::new(text, &resolved);
+        let para = &resolved.paragraphs[0];
         let shaped = ShapedText {
             glyphs: vec![glyph(1, 0, 0, 1000)],
         };
         let scales = [1.0];
-        let line = position_line(&bidi, para, &shaped, 0..0, &scales, 0.0, 4.0);
+        let line = position_line(
+            &mut Reorder::default(),
+            bidi,
+            para,
+            &shaped,
+            0..0,
+            &scales,
+            0.0,
+            4.0,
+        );
         assert_eq!(line.width, 0.0);
         assert!(line.glyphs.is_empty());
     }
@@ -375,8 +426,9 @@ mod tests {
     #[test]
     fn position_line_zero_letter_spacing_is_unchanged() {
         let text = "abc";
-        let bidi = BidiInfo::new(text, None);
-        let para = &bidi.paragraphs[0];
+        let resolved = Resolved::new(text);
+        let bidi = Bidi::new(text, &resolved);
+        let para = &resolved.paragraphs[0];
         let shaped = ShapedText {
             glyphs: vec![
                 glyph(1, 0, 0, 1000),
@@ -385,7 +437,16 @@ mod tests {
             ],
         };
         let scales = [1.0];
-        let line = position_line(&bidi, para, &shaped, 0..3, &scales, 0.0, 0.0);
+        let line = position_line(
+            &mut Reorder::default(),
+            bidi,
+            para,
+            &shaped,
+            0..3,
+            &scales,
+            0.0,
+            0.0,
+        );
         assert!((line.width - 3000.0).abs() < 1e-4, "width {}", line.width);
     }
 }
