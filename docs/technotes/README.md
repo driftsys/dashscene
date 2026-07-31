@@ -60,6 +60,12 @@ Notes:
   three tolerance bands: `blur-falloff` cannot fail on a bounded-area blur
   defect, `aa-edge` is blind to an amplitude one, and neither dominates the
   other. Informative; the decision is #422.
+- [2026-07-31-v014-frame-budget.md](2026-07-31-v014-frame-budget.md) — the
+  project's first frame budget, taken on the v0.14 showcase host: the animated
+  cost per scene, the static case measured separately (it is zero frames, not a
+  cheap frame), and a controlled before-and-after for issue #101 on a real
+  scene. Informative, and explicitly not the target-hardware budget epic #476
+  waits for.
 - [taffy-scaled-shrink-report.md](taffy-scaled-shrink-report.md) — the upstream
   report for the taffy 0.12 defect the negative-margin workarounds exist for
   (debt #269): where the two scaled-shrink expressions disagree, the minimal
