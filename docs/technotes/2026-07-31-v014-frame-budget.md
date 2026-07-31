@@ -25,13 +25,15 @@ The scenes are the three in `corpus/showcase/`, driven the way the host drives
 them: a scripted pulse on the host's own cadence, so every frame measured is one
 in which something is actually moving.
 
-### What these numbers do not include
+### The blit was measured afterwards, and it dominates
 
-**The blit.** The harness runs offscreen, so it measures `tick` plus `paint` and
-stops there. Presenting needs a window and cannot be measured this way. That
-omission is not negligible: issue #603 records that the Skia-to-window blit
-allocates a window-sized buffer per frame and unpremultiplies then re-premultiplies
-every pixel. The real per-frame cost is these numbers plus that.
+The offscreen harness measures `tick` plus `paint` and stops there, because
+presenting needs a window. **That omission turned out to matter more than the
+numbers it left out.** It was closed by instrumenting the host to time `present`
+directly, and the result is in "The blit is the largest cost here" below. The
+first version of this note led with "`surfaces` does not hold 60 Hz", which was
+true and badly misleading: the blit is a larger term than the painter for two of
+the three scenes.
 
 **Target hardware.** This is a desktop CPU raster on an M3. It is emphatically
 **not** the target-SoC budget epic #476 waits for, and it does not release any
@@ -48,10 +50,12 @@ previously had none.
 
 All figures in milliseconds.
 
-**`surfaces` does not hold 60 Hz.** The budget at 60 Hz is 16.67 ms. Its mean is
-16.57 ms and its 95th percentile is 17.31 ms, so `tick` plus `paint` alone
-already sits at the edge and exceeds it under load — and the blit is on top of
-that and is not counted here. `typography` and `layout` have ample headroom.
+**`surfaces` does not hold 60 Hz on paint alone.** The budget at 60 Hz is
+16.67 ms. Its mean is 16.57 ms and its 95th percentile is 17.31 ms, so `tick`
+plus `paint` already sits at the edge. `typography` and `layout` have ample
+headroom _in this table_ — but see the blit section above before drawing any
+conclusion from that, because none of these three scenes reaches 60 Hz in the
+host and for two of them the reason is not here.
 
 **The solver is not the cost.** `tick` is between 0.01 and 0.03 ms in every
 scene, against a paint of 0.76 to 16.54 ms. The whole of the per-frame cost is
@@ -59,6 +63,57 @@ in the painter. That is worth stating because four of the five debt items
 v0.14 pulled forward (#191, #205, #225, #226) are on the tick side, and this
 says their per-frame contribution is small on this hardware — which is a
 finding, not a criticism of fixing them.
+
+## The blit is the largest cost here
+
+Measured on `main` with the host instrumented to time `present`, which is
+`paint` plus the `softbuffer` blit. Same machine and extent, means over 240
+frames.
+
+| scene      | paint (offscreen) | present | blit | frames per second |
+| ---------- | ----------------: | ------: | ---: | ----------------: |
+| layout     |              0.51 |     9.9 |  9.4 |              57.2 |
+| typography |              6.31 |    15.2 |  8.9 |              59.2 |
+| surfaces   |             17.92 |    27.0 |  9.1 |              37.3 |
+
+**The blit costs about 9.1 ms and does not vary with scene content.** It is a
+flat per-frame tax of roughly 4 ms per megapixel, paid twice over because every
+pixel is unpremultiplied and then re-premultiplied around a window-sized
+allocation (issue #603).
+
+For `layout` that is **95 % of the frame**: 0.51 ms of painting inside 9.4 ms of
+copying. The repository owner reported that `layout` felt slow before this was
+measured, which is what prompted the measurement — the cheapest scene in the
+corpus to paint is the one most completely dominated by the blit.
+
+So the answer to "why is this not 60 Hz" is two costs, not one:
+
+- a flat blit tax on every scene, which is waste and is fixable
+- `surfaces` genuinely painting slowly, at roughly 6.4 ms fixed plus 5.0 ms per
+  megapixel from the extent sweep below — the per-megapixel term being the shape
+  a backdrop blur has
+
+With the blit removed, `layout` and `typography` clear 60 Hz on this machine
+comfortably. `surfaces` would still be marginal at about 17.9 ms of paint alone.
+
+Worth weighing before anyone spends on #603: `dashscene-wgpu` (v0.15) has no
+blit at all, because it presents to its own surface rather than handing pixels
+back.
+
+### How paint scales with extent
+
+Paint only, offscreen, means over 200 frames per point.
+
+| scene      | 480x300 | 960x600 | 1358x849 | 1920x1200 |
+| ---------- | ------: | ------: | -------: | --------: |
+| surfaces   |    5.44 |    8.18 |    12.16 |     17.92 |
+| typography |    2.96 |    3.55 |     4.75 |      6.31 |
+| layout     |    0.06 |    0.17 |     0.38 |      0.51 |
+
+Milliseconds. Fitting the top two points of each row gives a fixed cost plus a
+per-megapixel cost: `surfaces` about 6.4 ms plus 5.0 ms/Mpx, `typography` about
+3.2 ms plus 1.4 ms/Mpx, `layout` about 0.25 ms plus 0.11 ms/Mpx. None of the
+three is proportional to area alone, so none is purely fill-rate bound.
 
 ## The static case: zero, not small
 
@@ -119,7 +174,9 @@ skews it against the result.
 
 ## What this does not settle
 
-- The blit is unmeasured (#603), so no total per-frame figure exists yet.
+- Why `surfaces` costs 5.0 ms per megapixel is inferred, not proven. The shape
+  matches a backdrop blur and it is the only scene with one, but no per-feature
+  profile was taken.
 - No target-hardware number exists, so epic #476's entry condition is unchanged.
 - The other four items story #570 pulled forward have no controlled
   before-and-after on a scene, only the count assertions and microbenchmarks in
