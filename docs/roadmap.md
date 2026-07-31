@@ -750,7 +750,7 @@ real defect found in review**, several of which no test could have
 distinguished from correct behaviour — mutation testing found them, reading did
 not. The v0.13 breakdown is revised at this close — see v0.13 below.
 
-### v0.13 — pre-v1 hardening — open
+### v0.13 — pre-v1 hardening — closed
 
 **Epics #362 (the burn-down) and #474 (the decisions track).** Revised at the
 v0.12 close (2026-07-27); the current slice.
@@ -822,6 +822,50 @@ one (#446). The last three became ordinary burn-down work. What remains in the
 track is blocked on an input rather than a decision: two items need a Figma
 capture that does not exist, and one is blocked on the painter's working colour
 space.
+
+Closed 2026-07-30. The milestone went from **102 open items to 104 closed**,
+and what remains is two items blocked on GitHub Actions billing (#263, #82)
+which no amount of work can clear.
+
+**Every one of the three blocked items resolved itself, and none by a ruling.**
+The two that needed "a Figma capture that does not exist" were each answered by
+one plugin command and one capture: the fixed-child-overflow question (#271)
+turned out to be a fidelity match, with Figma serialising the very construct
+`template_track` maps to; and the four manual fixtures (#265) closed after a
+latent bug was found in the fixture-author command that had made `real-file`
+unauthorable since it was written. The colour-space question (#412) settled the
+same way — sRGB-encoded blending is what Figma does, measured, and a linear
+working space fails both `backdrop-blur` frames at 5.429 % and 4.866 % against
+a 2 % budget.
+
+**The lesson the slice actually taught is about deferral, not about debt.**
+Five items were held on a stated blocker that had never been checked, and each
+dissolved in minutes once measured: a spring golden that does not exist (#214),
+an uncaptured Figma question (#271), a depth ceiling that iterative walks raise
+by zero levels (#98), a fidelity signal that reads noise rather than resolution
+loss (#357), and a decision record whose own stale cross-reference hid the
+answer it already contained (#505). In each case the deferral cost more than
+the check would have.
+
+**Zero committed artifacts moved except by decision.** Every re-baseline in the
+slice was declared before the work started, landed alone, and recorded both
+measurements — including the one golden found to be stale on `main`
+independently of any change (#538), reproduced from three separate working
+trees before it was touched. The seven E7 oracle frames ended the slice at the
+numbers they started it with.
+
+Two structural additions outlast the burn-down. The dividing line in
+[`decisions/pre-v1-hardening-slice.md`](decisions/pre-v1-hardening-slice.md)
+grew from two terms to four, separating _needs a ruling or an input_ and _real
+but not yet measurable_ from ordinary debt — and the second of those moved 20
+perf items to v1's measured performance pass with an entry condition rather
+than loose onto the milestone. And
+[`decisions/debt-streams-own-artifact-classes.md`](decisions/debt-streams-own-artifact-classes.md)
+records why parallel streams are drawn around artifact classes rather than
+crates, and why a slice-wide zero-movement assertion becomes a per-story one
+when the slice contains fixes whose purpose is to change output.
+
+The v1 breakdown is revised at this close — see v1 below.
 
 ## v1 — Unity, full feature set, performance, production toolchain
 
