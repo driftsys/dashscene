@@ -157,13 +157,52 @@ pub enum Wake {
     Pulse,
 }
 
+/// One entry in the host's scene list: what to build, how to script it, and
+/// the name to report when it comes up.
+///
+/// The host holds these rather than the `corpus/showcase/` type, because the
+/// host is not allowed to know what the content is — `demo/` holds the loop and
+/// `corpus/showcase/` holds the scenes (epic #568). The name is carried only so
+/// the log can say which scene is on screen.
+pub struct SceneEntry {
+    pub name: &'static str,
+    pub build: SceneBuilder,
+    pub pulse: ScenePulse,
+}
+
+/// How long a scene is shown for before the host moves to the next one, when
+/// it has more than one to show (issue #628).
+///
+/// Expressed as a number of pulse intervals because the scene changes *on* a
+/// pulse: the host waits for this long to elapse and then advances at the next
+/// pulse, so a scene is never cut mid-transition. Four rather than one because
+/// each scene's script alternates direction, so an even count leaves the scene
+/// at the phase it started from.
+///
+/// **The deadline is elapsed time, not a count of pulse events**, and that
+/// distinction is load-bearing. [`spawn_pulse_driver`] free-runs: it sleeps and
+/// sends whether or not the host consumed the last message, so on a slow frame
+/// several pulses queue and arrive together. Counting the events gave later
+/// scenes a single pulse each while the first cycle got four, because one burst
+/// spent a whole scene's allowance. Elapsed time is immune to that.
+const PULSES_PER_SCENE: u32 = 4;
+
+/// How long each scene holds the window, derived from the two constants above
+/// so the two cannot drift apart.
+const SCENE_DWELL: Duration =
+    Duration::from_millis(PULSE_INTERVAL.as_millis() as u64 * PULSES_PER_SCENE as u64);
+
 /// Opens a window, binds the Skia presenter to it, and runs the frame loop
 /// until the window is closed.
-pub fn run(
-    title: &'static str,
-    scene: SceneBuilder,
-    pulse: ScenePulse,
-) -> Result<(), Box<dyn Error>> {
+///
+/// **The length of `scenes` is the mode.** One scene runs exactly as it did
+/// before this parameter existed and never advances. More than one, and the
+/// host moves to the next every [`PULSES_PER_SCENE`] pulses and cycles back to
+/// the first, so the vocabulary checklist can be walked in a single run.
+/// Nothing distinguishes the two paths except the count, so there is no flag
+/// that can disagree with the list.
+pub fn run(title: &'static str, scenes: Vec<SceneEntry>) -> Result<(), Box<dyn Error>> {
+    assert!(!scenes.is_empty(), "the host needs at least one scene");
     let event_loop = EventLoop::<Wake>::with_user_event().build()?;
     // The starting mode. The first frame replaces it: `WaitUntil` while the
     // generation advances, `Wait` once it is steady.
@@ -172,8 +211,9 @@ pub fn run(
 
     let mut host = Host {
         title,
-        scene,
-        pulse,
+        scenes,
+        current: 0,
+        scene_since: Instant::now(),
         window: None,
         presenter: None,
         arena: Arena::new(),
@@ -223,8 +263,17 @@ struct Parked {
 
 struct Host {
     title: &'static str,
-    scene: SceneBuilder,
-    pulse: ScenePulse,
+    /// Every scene the host was asked to show, in the order it shows them.
+    /// Never empty — [`run`] rejects an empty list, so `scenes[current]` is
+    /// always a scene.
+    scenes: Vec<SceneEntry>,
+    /// Which of [`Host::scenes`] is on screen.
+    current: usize,
+    /// When [`Host::current`] came on screen, so its turn is measured against
+    /// the wall clock rather than against a count of pulse events that can
+    /// arrive in bursts. Host-side only: nothing at or below `LiveScene` reads
+    /// a clock, which is the invariant `demo/tests/clock_invariant.rs` asserts.
+    scene_since: Instant,
     window: Option<Arc<Window>>,
     presenter: Option<Box<dyn Present>>,
     arena: Arena,
@@ -395,9 +444,9 @@ impl Host {
     /// than the host doing so — a scene whose root fills the drawable takes a
     /// new extent through a signal, and then a resize is an ordinary frame.
     fn rebuild(&mut self, width: u32, height: u32) {
-        let pulse = self.pulse;
+        let pulse = self.scenes[self.current].pulse;
         self.arena = Arena::new();
-        let mut live = (self.scene)(&mut self.arena, width, height);
+        let mut live = (self.scenes[self.current].build)(&mut self.arena, width, height);
         // Restore the phase, so a resize resumes the scene where it was rather
         // than snapping every signal back to its initial value.
         pulse(&mut live, self.pulse_index);
@@ -405,6 +454,57 @@ impl Host {
         // Generations count from a new arena, so the number the window shows
         // no longer names anything in this scene.
         self.shown = None;
+    }
+
+    /// Reports what did **not** happen while the loop was parked, if it was.
+    ///
+    /// Shared by the two things a pulse can do — script the current scene, or
+    /// end its turn — so that a scene change reports the idle interval it woke
+    /// from rather than swallowing it. That report is the only evidence the
+    /// idle-frame skip produces at run time, so it must not be lost on the one
+    /// pulse in every [`PULSES_PER_SCENE`] that changes the scene.
+    fn report_park(&mut self) {
+        let Some(parked) = self.parked.take() else {
+            return;
+        };
+        eprintln!(
+            "demo: woken by pulse {} after {:.2} s parked — {} ticks and {} presents ran while \
+             parked",
+            self.pulse_index,
+            parked.since.elapsed().as_secs_f32(),
+            self.ticks - parked.ticks,
+            self.presents - parked.presents,
+        );
+    }
+
+    /// Moves to the next scene in the list, cycling back to the first.
+    ///
+    /// The phase resets to zero because the incoming scene has its own script
+    /// and the outgoing scene's pulse count means nothing to it. That is the
+    /// one way this differs from [`Host::rebuild`]'s resize path, which keeps
+    /// the phase precisely because it is the *same* scene at a new extent.
+    ///
+    /// Rebuilding drops the outgoing scene's arena, so nothing of it survives
+    /// into the next — which is also what makes this a fair way to watch each
+    /// scene, since every one starts from its own seeded values.
+    fn advance_scene(&mut self) {
+        self.current = (self.current + 1) % self.scenes.len();
+        self.pulse_index = 0;
+        self.scene_since = Instant::now();
+
+        let (width, height) = self.extent;
+        if width == 0 || height == 0 {
+            // No drawable yet, so there is nothing to rebuild against. The
+            // scene index has moved; the first frame builds it.
+            return;
+        }
+        self.rebuild(width, height);
+
+        let scene = &self.scenes[self.current];
+        eprintln!("demo: scene {} — {}", self.current + 1, scene.name);
+        // A new arena means a generation the host has never shown, so the
+        // generation alone cannot report that this frame must paint.
+        self.force("a scene change");
     }
 }
 
@@ -468,7 +568,7 @@ impl ApplicationHandler<Wake> for Host {
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: Wake) {
         match event {
             Wake::Pulse => {
-                let pulse = self.pulse;
+                let pulse = self.scenes[self.current].pulse;
                 let Some(live) = self.live.as_mut() else {
                     // The window does not exist yet. Dropping this pulse costs
                     // one interval; the next one arrives on schedule.
@@ -477,16 +577,23 @@ impl ApplicationHandler<Wake> for Host {
                 self.pulse_index += 1;
                 pulse(live, self.pulse_index);
 
-                if let Some(parked) = self.parked.take() {
-                    eprintln!(
-                        "demo: woken by pulse {} after {:.2} s parked — {} ticks and {} presents \
-                         ran while parked",
-                        self.pulse_index,
-                        parked.since.elapsed().as_secs_f32(),
-                        self.ticks - parked.ticks,
-                        self.presents - parked.presents,
-                    );
+                // With more than one scene to show, this pulse may be the last
+                // of the current scene's turn. The check runs after the pulse
+                // has been applied, so each scene is seen through
+                // `PULSES_PER_SCENE` complete cycles rather than that many
+                // minus one.
+                // With more than one scene to show, this pulse may be the one
+                // that ends the current scene's turn. Decided on elapsed time
+                // rather than on `pulse_index`, for the reason [`SCENE_DWELL`]
+                // records, but acted on here so the change lands on a pulse
+                // boundary rather than part-way through a transition.
+                if self.scenes.len() > 1 && self.scene_since.elapsed() >= SCENE_DWELL {
+                    self.report_park();
+                    self.advance_scene();
+                    return;
                 }
+
+                self.report_park();
                 if let Some(window) = self.window.as_ref() {
                     window.request_redraw();
                 }

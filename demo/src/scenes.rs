@@ -12,6 +12,7 @@
 //! ```text
 //! cargo run -p demo                # the default scene
 //! cargo run -p demo -- typography  # a named one
+//! cargo run -p demo -- --all       # every scene in turn, cycling
 //! cargo run -p demo -- --list      # what there is
 //! ```
 
@@ -21,6 +22,10 @@ use showcase::Showcase;
 pub enum Selection {
     /// Draw this scene.
     Scene(&'static Showcase),
+    /// Draw every scene in turn, cycling (issue #628). The host advances on
+    /// its own, so the vocabulary checklist can be walked in one run instead
+    /// of one run per scene.
+    All,
     /// Print the scene list and exit successfully — the caller asked for it.
     Listed,
     /// The named scene does not exist. The list has been printed; exit with a
@@ -36,6 +41,7 @@ pub fn select(arguments: impl IntoIterator<Item = String>) -> Selection {
             list();
             Selection::Listed
         }
+        Some("--all" | "-a") => Selection::All,
         Some(name) => match showcase::by_name(name) {
             Some(scene) => Selection::Scene(scene),
             None => {
@@ -85,5 +91,24 @@ mod tests {
             select(["nonesuch".to_owned()]),
             Selection::Unknown
         ));
+    }
+
+    #[test]
+    fn the_all_flag_asks_for_every_scene() {
+        assert!(matches!(select(["--all".to_owned()]), Selection::All));
+        assert!(matches!(select(["-a".to_owned()]), Selection::All));
+    }
+
+    /// The host advances only when it holds more than one scene, so a reel of
+    /// one would silently be an ordinary single-scene run. Nothing in the code
+    /// stops the scene list shrinking to one, so this is asserted rather than
+    /// assumed (issue #628).
+    #[test]
+    fn every_scene_is_more_than_one_scene() {
+        assert!(
+            showcase::SCENES.len() > 1,
+            "`--all` advances only with more than one scene; with one it would \
+             be an ordinary run under a different name"
+        );
     }
 }

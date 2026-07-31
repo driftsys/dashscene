@@ -20,14 +20,28 @@ use std::process::ExitCode;
 use scenes::Selection;
 
 fn main() -> ExitCode {
-    let scene = match scenes::select(std::env::args().skip(1)) {
-        Selection::Scene(scene) => scene,
+    // One entry or several — the host takes a list either way, and its length
+    // is what decides whether it advances (issue #628).
+    let showing = match scenes::select(std::env::args().skip(1)) {
+        Selection::Scene(scene) => vec![scene],
+        Selection::All => showcase::SCENES.iter().collect(),
         Selection::Listed => return ExitCode::SUCCESS,
         Selection::Unknown => return ExitCode::FAILURE,
     };
-    eprintln!("demo: scene {} — {}", scene.name, scene.summary);
+    for scene in &showing {
+        eprintln!("demo: scene {} — {}", scene.name, scene.summary);
+    }
 
-    match shell::run("dashscene — showcase", scene.build, scene.pulse) {
+    let scenes = showing
+        .into_iter()
+        .map(|scene| shell::SceneEntry {
+            name: scene.name,
+            build: scene.build,
+            pulse: scene.pulse,
+        })
+        .collect();
+
+    match shell::run("dashscene — showcase", scenes) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             report(error.as_ref());
