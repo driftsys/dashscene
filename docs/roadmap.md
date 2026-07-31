@@ -86,8 +86,11 @@ harness, `dashscene-core`'s arena and staged-mutation API
 paint-table types (boundary B), `dashscene-skia` as the CPU-raster reference
 painter, and `dashlang`'s minimal builder DSL — fixed rects and solid fills
 only. Spike: flatbuffer section-ordering control, resolved — the full
-sectioned container is deferred to v1
-([`decisions/dsb-sectioned-container.md`](decisions/dsb-sectioned-container.md)).
+sectioned container was deferred at this close, and **landed in v0.11** (the
+envelope in story #399, `.dsb` files becoming containers in #401), not in v1 as
+this note originally said
+([`decisions/dsb-sectioned-container.md`](decisions/dsb-sectioned-container.md),
+marked as-built).
 
 Depends on: nothing — the first slice.
 
@@ -503,13 +506,27 @@ to their slices. The v0.9 breakdown is revised at this close — see v0.9 below.
 ### v0.9 — parity — open
 
 **Epic #47.** Closes [`E1`](specification/05-qualification.md). Closing this
-epic asserts the v0 exit gate (`E1`–`E7`); v0 itself now extends through
-v0.13 (the 2026-07-19 plan revisions below), so the gate closes the
-qualification arc, not the version.
+epic asserts the v0 exit gate (`E1`–`E7`). **The gate closes the qualification
+arc, not the version** — the `v0.x` numbering has since run past it, through
+v0.16 as of the v0.13 close, and each slice after v0.9 closes no further `E`
+criterion. So "v0" now means the numbering, and `E1`–`E7` mean the
+qualification; the two stopped being the same thing at v0.9 and the roadmap
+should not be read as if they still are.
 
 Delivers: the same-screen-both-ways fixture, and the v0 exit gate — `E1`
 through `E7` asserted in CI. **The fixture landed; the gate did not** — see the
 close note below.
+
+**This slice is open with an empty milestone**, which is not a bookkeeping
+error: its remaining item, the gate (#49), is blocked on GitHub Actions billing
+(#263), and both it and epic #47 were re-homed to the v0.14 milestone at the
+v0.13 close rather than left on a closed slice's. A slice's open marker is set
+by its exit criterion, never by its milestone count.
+
+**#49 was closed once without being built** — by a docs pull request containing
+a closing keyword, the incident `AGENTS.md` cites as the reason for its rule
+against them. It was reopened on 2026-07-31, because a closed gate on an active
+milestone reads as delivered.
 
 Depends on: every prior epic, v0.1 through v0.8.
 
@@ -575,7 +592,7 @@ paths no `E7` frame covers. What that epic measured is the v0.10 slice below.
 
 ### v0.10 — real-file fidelity — closed
 
-**Epic #343.**
+**Epic #343.** Closes no `E` criterion — all seven were met during the v0.9 arc.
 
 Delivers: the named, counted gaps the real-file import left as
 skip-with-warning holes, in measured-value order — the `LIGA:0` text unlock
@@ -614,7 +631,7 @@ The v0.11 breakdown is revised at this close — see v0.11 below.
 
 ### v0.11 — document sections + asset model — closed
 
-**Epic #344.**
+**Epic #344.** Closes no `E` criterion.
 
 Delivers: the `.dsb` sectioned-container envelope
 ([`decisions/dsb-sectioned-container.md`](decisions/dsb-sectioned-container.md)
@@ -661,7 +678,7 @@ The v0.12 breakdown is revised at this close — see v0.12 below.
 
 ### v0.12 — packer + quality profiles — closed
 
-**Epic #345.**
+**Epic #345.** Closes no `E` criterion.
 
 Delivers: `dashpack` (an in-workspace standalone tool — vendored astcenc, an
 own KTX2 writer, no external CLIs), the RAW/HiFi/LoFi quality profiles as
@@ -752,8 +769,9 @@ not. The v0.13 breakdown is revised at this close — see v0.13 below.
 
 ### v0.13 — pre-v1 hardening — closed
 
-**Epics #362 (the burn-down) and #474 (the decisions track).** Revised at the
-v0.12 close (2026-07-27); the current slice.
+**Epics #362 (the burn-down) and #474 (the decisions track).** Closes no `E`
+criterion. Revised at the v0.12 close (2026-07-27); closed 2026-07-31, when
+epic #362 and its three stream epics closed together.
 
 Delivers: the independent code-debt that accumulated across v0.1–v0.12 and is
 resolvable before v1 — perf and allocation micro-debt, cleanup, test-gaps, and
@@ -823,11 +841,15 @@ track is blocked on an input rather than a decision: two items need a Figma
 capture that does not exist, and one is blocked on the painter's working colour
 space.
 
-Closed 2026-07-30. The milestone went from **102 open items to 104 closed**,
-and what remains is two items blocked on GitHub Actions billing (#263, #82)
-which no amount of work can clear.
+Closed 2026-07-31. The milestone went from **102 open items to 104 closed
+stories** — 109 issues in total, of which 5 are the epics themselves. Two items
+were blocked on GitHub Actions billing (#263, #82) which no amount of work can
+clear, and both were moved to the v1 milestone rather than closed, which is why
+this milestone now reads zero open.
 
-**Every one of the three blocked items resolved itself, and none by a ruling.**
+**Separately, all three of the items blocked on a missing input resolved
+themselves, and none by a ruling** — a different set from the two blocked on
+billing above.
 The two that needed "a Figma capture that does not exist" were each answered by
 one plugin command and one capture: the fixed-child-overflow question (#271)
 turned out to be a fidelity match, with Figma serialising the very construct
@@ -869,7 +891,9 @@ The v1 breakdown is revised at this close — see v1 below.
 
 ### v0.14 — the showcase runtime — open
 
-**Epic #568.** Design capture: `docs/wip/2026-07-29-v014-v015-showcase-and-wgpu-wbs.md`.
+**Epic #568.** Closes no `E` criterion, but **carries the one still open** — see
+the v0 exit gate below. Design capture:
+`docs/wip/2026-07-29-v014-v015-showcase-and-wgpu-wbs.md`.
 
 Delivers: the first frame this project has ever drawn into a window, and the
 `README.md` it does not have.
@@ -889,17 +913,36 @@ is already the per-frame driver, with `tick(dt, arena)`, signals, springs, the
 `bind`/`smooth`/`bind_text`/`visible_when` vocabulary and a `CachedSolver`. What
 is missing is a host — a window, an event loop and a surface — not a runtime.
 
-Also carries **epic #47**, the v0.9 parity epic, whose one remaining item is the
-v0 exit gate (#49). That gate asserts `E1`-`E7` together and cannot be built
-while GitHub Actions billing is blocked (#263); it moved here rather than
-staying on a closed slice's milestone.
+**Also carries the v0 exit gate.** Epic #47, the v0.9 parity epic, moved here
+rather than staying on a closed slice's milestone, and its one remaining item is
+the gate itself (#49) — `E1`-`E7` asserted together in CI.
+
+Two things about it are worth stating plainly, because both were previously
+implied rather than recorded:
+
+- **#49 was closed once without being built**, by a docs pull request carrying a
+  closing keyword. It was reopened on 2026-07-31. A closed gate on an active
+  milestone reads as delivered, which is exactly how two shipped documents came
+  to describe it as such.
+- **It is blocked on a billing decision, not on engineering.** Measured
+  2026-07-31: the five most recent workflow runs, including on `main`, all fail,
+  and `changes` — the trivial paths-filter job — **fails in four seconds having
+  executed zero steps**. That is an account-level block (#263), not a code
+  failure.
+
+The consequence reaches past this slice. v0.14's stated CI claim is
+`cargo build -p demo` green; v0.15's is layers 1 to 3 green; v0.16's benchmark
+is meant to gate there too. **With Actions blocked, none of those exit criteria
+can be met**, so one billing decision currently gates three slices. Worth
+resolving before v0.14 starts rather than discovering it at the close.
 
 Depends on: v0.13 (a burnt-down base). Independent of v0.15 — the showcase runs
 on the Skia reference painter.
 
 ### v0.15 — the wgpu painter — open
 
-**Epic #569.** Design capture: the same work breakdown, plus
+**Epic #569.** Closes no `E` criterion. Design capture: the same work breakdown,
+plus
 `docs/wip/2026-07-19-wgpu-painter-direction.md` for the ecosystem research and
 the pinned helper stack.
 
@@ -922,7 +965,8 @@ first consumer of a second painter.
 
 ### v0.16 — loading performance — open
 
-**Epic #594.**
+**Epic #594.** Closes no `E` criterion, but makes **R5** falsifiable for the
+first time — the requirement, not an exit criterion, under guardrail G-20.
 
 Delivers: R5 made falsifiable. The file is mapped rather than read, assets stop
 being copied out of the mapping, blob residency is prefetched, and a benchmark
