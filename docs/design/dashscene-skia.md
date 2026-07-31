@@ -79,11 +79,27 @@ All in `crates/dashscene-skia/src/lib.rs`:
   draw clipped to the entry's (rounded) box: Fill covers, Fit
   contains, Tile repeats at `tile_scale`, Crop maps the normalized
   transform. Nearest sampling, for determinism. Decoding is cached by
-  `ImageTable` index for the length of one `paint()` call, so rects
-  sharing one index (a repeated fill asset) decode it once rather than
-  once per rect (issue #101) — the sibling of the vector-field atlas
-  cache described below, scoped to the ordinary-fill path instead of
-  the baked-vector-field path.
+  `ImageTable` index on the painter, so an asset decodes once no matter
+  how many rects reference it (issue #101) or how many frames are
+  painted (issue #639). The baked-vector-field atlases share that cache
+  — they are ordinary `ImageTable` entries, so there is one key space
+  and one decode per asset.
+
+  The cache is invalidated by comparing the incoming `ImageTable`
+  against the one the decodes came from, by value. An index alone is
+  not an identity: a host keeps one painter across a document change
+  (`demo/`), and two documents both have an asset at index 0. A
+  content hash would be the honest key, but `dashbuf`'s
+  `AssetEntry.hash` is consumed by the loader and does not cross
+  boundary B — `ImageAsset` carries a format and bytes and no hash.
+
+  What the cache retains is two copies of each asset's _encoded_
+  payload, one in the kept table and one inside the Skia image. The
+  decoded pixels live in Skia's own global resource cache, which is
+  limited and purges under pressure. Nothing bounds the number of
+  entries, and no memory budget exists to size it against (issue #462,
+  and issue #614 for the same shape of risk on retained group
+  composites).
 - Subtree clipping arrives resolved (story #97): the rect's
   `ClipRegion` is intersected before it draws — `save`, one
   anti-aliased `clip_rrect(Intersect)` per box (outermost first), draw
@@ -198,7 +214,10 @@ runs in its barrier accounting rather than only rects.
 
 The per-frame MSDF setup — the SkSL compile and one decode per atlas — is
 built once per `paint` in `MsdfFrame`, not once per rect that anchors a run,
-and a text-free scene builds none of it. `MsdfFrame::new` also checks every
+and a text-free scene builds none of it. These atlases come from the
+`GlyphRunTable` rather than the `ImageTable`, so they are outside the
+painter-lifetime image cache and are still decoded on every `paint`
+(issue #644). `MsdfFrame::new` also checks every
 anchor against the rect table up front: under the interleave, a run bucketed
 at an index the loop never visits would simply never be drawn, so the check
 turns a silent drop into a named panic (P4).
