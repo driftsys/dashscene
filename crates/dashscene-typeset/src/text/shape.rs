@@ -34,9 +34,10 @@ use std::ops::Range;
 
 use rustybuzz::ttf_parser::Tag;
 use rustybuzz::{Direction, Feature, UnicodeBuffer};
-use unicode_bidi::{BidiClass, BidiInfo, ParagraphInfo, bidi_class};
+use unicode_bidi::{BidiClass, ParagraphInfo, bidi_class};
 use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
 
+use super::bidi::Bidi;
 use super::font::Font;
 
 /// One shaped glyph in font units, offsets preserved (GPOS positions
@@ -222,7 +223,7 @@ pub(crate) fn shape_with_face(
 pub(crate) fn shape_paragraph(
     fonts: &[Font],
     slots: &[u16],
-    bidi: &BidiInfo<'_>,
+    bidi: Bidi<'_>,
     ligatures_off: bool,
 ) -> ShapedText {
     // Build each resolved face once for the whole paragraph — the cascade
@@ -394,7 +395,7 @@ fn font_for(faces: &[rustybuzz::Face<'_>], c: char, context: RunContext) -> usiz
 /// the raw per-char classes keep EN distinct from AN (W2 rewrites
 /// EN to AN after Arabic — exactly the distinction scanned for), so
 /// the scans classify chars directly.
-fn run_context(bidi: &BidiInfo<'_>, para: &ParagraphInfo, run: &Range<usize>) -> RunContext {
+fn run_context(bidi: Bidi<'_>, para: &ParagraphInfo, run: &Range<usize>) -> RunContext {
     let text = &bidi.text[run.clone()];
     if text.chars().any(is_arabic_strong) {
         return RunContext::Arabic;
@@ -472,7 +473,7 @@ fn strong_after(text: &str) -> Option<BidiClass> {
 /// order. unicode-bidi resolves levels per byte and every byte of a
 /// char carries its char's level, so boundaries fall on char
 /// boundaries.
-pub(crate) fn level_runs(bidi: &BidiInfo<'_>, para: &ParagraphInfo) -> Vec<Range<usize>> {
+pub(crate) fn level_runs(bidi: Bidi<'_>, para: &ParagraphInfo) -> Vec<Range<usize>> {
     let mut runs = Vec::new();
     let mut start = para.range.start;
     for i in start + 1..para.range.end {
@@ -487,6 +488,7 @@ pub(crate) fn level_runs(bidi: &BidiInfo<'_>, para: &ParagraphInfo) -> Vec<Range
 
 #[cfg(test)]
 mod tests {
+    use super::super::bidi::{Reorder, Resolved};
     use super::*;
 
     fn font() -> Font {
@@ -751,10 +753,11 @@ mod tests {
             ("abc 123", 0, &[(0..7, 0)]),
         ];
         for (text, base, expected) in cases {
-            let bidi = BidiInfo::new(text, None);
-            let para = &bidi.paragraphs[0];
+            let resolved = Resolved::new(text);
+            let bidi = Bidi::new(text, &resolved);
+            let para = &resolved.paragraphs[0];
             assert_eq!(para.level.number(), *base, "base level of {text:?}");
-            let runs = level_runs(&bidi, para);
+            let runs = level_runs(bidi, para);
             let got: Vec<(Range<usize>, u8)> = runs
                 .into_iter()
                 .map(|r| (r.clone(), bidi.levels[r.start].number()))
@@ -774,9 +777,10 @@ mod tests {
             ("אב 123 גד", &[8..13, 5..8, 0..5]),
         ];
         for (text, expected) in cases {
-            let bidi = BidiInfo::new(text, None);
-            let para = &bidi.paragraphs[0];
-            let (_, runs) = bidi.visual_runs(para, para.range.clone());
+            let resolved = Resolved::new(text);
+            let bidi = Bidi::new(text, &resolved);
+            let para = &resolved.paragraphs[0];
+            let (_, runs) = Reorder::default().line(bidi, para, para.range.clone());
             assert_eq!(&runs, expected, "visual order of {text:?}");
         }
     }
@@ -786,8 +790,9 @@ mod tests {
         // Three level runs shaped separately; clusters come back
         // paragraph-relative and non-decreasing across run boundaries.
         let text = "אב 123 גד";
-        let bidi = BidiInfo::new(text, None);
-        let shaped = shape_paragraph(&[font()], &[0], &bidi, false);
+        let resolved = Resolved::new(text);
+        let bidi = Bidi::new(text, &resolved);
+        let shaped = shape_paragraph(&[font()], &[0], bidi, false);
         let clusters: Vec<u32> = shaped.glyphs.iter().map(|g| g.cluster).collect();
         assert_eq!(clusters, vec![0, 2, 4, 5, 6, 7, 8, 9, 11]);
     }
@@ -948,11 +953,12 @@ mod tests {
             ("Price 5\u{060C} Total 10", &[Plain]),
         ];
         for (text, expected) in cases {
-            let bidi = BidiInfo::new(text, None);
-            let para = &bidi.paragraphs[0];
-            let got: Vec<RunContext> = level_runs(&bidi, para)
+            let resolved = Resolved::new(text);
+            let bidi = Bidi::new(text, &resolved);
+            let para = &resolved.paragraphs[0];
+            let got: Vec<RunContext> = level_runs(bidi, para)
                 .iter()
-                .map(|r| run_context(&bidi, para, r))
+                .map(|r| run_context(bidi, para, r))
                 .collect();
             assert_eq!(&got, expected, "run contexts of {text:?}");
         }

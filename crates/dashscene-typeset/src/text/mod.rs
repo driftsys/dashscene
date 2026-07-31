@@ -2,8 +2,10 @@
 //! (UAX #9 level runs) → shape per run (rustybuzz, features and digit
 //! shapes resolved from the run's context — `shape::RunContext`) →
 //! greedy line break → positioned glyph runs, reordered per line for
-//! display, with a font-unit shaped-run cache in front of shaping.
+//! display, with a resolved-levels cache in front of the bidi split and
+//! a font-unit shaped-run cache in front of shaping.
 
+mod bidi;
 mod font;
 mod layout;
 mod shape;
@@ -16,13 +18,14 @@ pub use font::{Font, FontFamily, WeightedFont};
 // derivation cannot drift from production shaping.
 pub(crate) use shape::{arabic_indic_digit, is_arabic_strong};
 
+use bidi::{Bidi, Reorder};
 use shape::ShapedText;
 
 use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
 
-use unicode_bidi::{BidiClass, BidiInfo, ParagraphInfo};
+use unicode_bidi::{BidiClass, ParagraphInfo};
 
 // ShapedText/ShapedGlyph stay crate-private: they are the cache-value
 // representation, and publishing them before a consumer exists (#29/
@@ -139,8 +142,18 @@ fn half_leading(shape: &TextShape, intrinsic: f32) -> f32 {
 /// Cache observability for tests and the measure callback's caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CacheStats {
+    /// Shaped-run cache hits.
     pub hits: u64,
+    /// Shaped-run cache misses — each one shaped a paragraph.
     pub misses: u64,
+    /// How many times the full UAX #9 resolution actually ran (issue
+    /// #225). One per distinct paragraph text this typesetter has ever
+    /// been given, however many times it lays that paragraph out.
+    pub bidi_resolutions: u64,
+    /// How many embedding levels the per-line display reorder has copied
+    /// (issue #226). Each line copies its own bytes' levels; before the
+    /// fix each line copied the whole paragraph's.
+    pub reorder_levels_copied: u64,
 }
 
 /// The named diagnostic `text.weight-substituted` (story #368): a layout
@@ -222,7 +235,8 @@ fn shaped_any(layout: &TextLayout, slot: u16) -> bool {
 
 /// The runtime pipeline facade: an ordered font list (primary first,
 /// story #219 — the runtime resolves one document font reference to a
-/// fallback list), one shaped-run cache in front of shaping.
+/// fallback list), a UAX #9 resolution cache and a shaped-run cache in
+/// front of shaping.
 ///
 /// The cache stores font-unit shaped runs keyed by paragraph text —
 /// shaping output is size-independent, so one entry serves every
@@ -245,6 +259,15 @@ fn shaped_any(layout: &TextLayout, slot: u16) -> bool {
 /// Posture 0 is reserved for the all-weight-400 cascade with ligatures on
 /// — every pre-#368 call site — so the default path is one lookup in one
 /// map, exactly as before.
+///
+/// The UAX #9 resolution sits in its own map, `bidi_cache`, rather than
+/// beside the shaped runs, because it has no posture: neither the
+/// ligature setting nor the resolved slot set reaches it, so the same
+/// paragraph rendered at two weights resolves its levels once (issue
+/// #225). It is unbounded on the same reasoning as the shaped-run
+/// caches, and holds two bytes per byte of paragraph text plus the
+/// paragraph boundaries — a fraction of the shaped runs already kept for
+/// the same key.
 #[derive(Debug)]
 pub struct Typesetter {
     /// The flat slot list, primary family first — what
@@ -261,6 +284,13 @@ pub struct Typesetter {
     /// One shaped-run cache per posture; `caches[i]` is keyed by paragraph
     /// text and holds the entries shaped under `slot_sets[i]`.
     caches: Vec<HashMap<Box<str>, Arc<ShapedText>>>,
+    /// Resolved UAX #9 state per paragraph text (issue #225). Keyed by
+    /// the text alone and shared by every posture — see
+    /// [`bidi::BASE_LEVEL`] for why the text is the whole key.
+    bidi_cache: HashMap<Box<str>, Arc<bidi::Resolved>>,
+    /// The per-line display-reorder buffer (issue #226), reused across
+    /// every line of every call.
+    reorder: Reorder,
     /// The interning table naming each posture: the resolved slot per
     /// family, plus the ligature posture. Index 0 is the default.
     slot_sets: Vec<(Vec<u16>, bool)>,
@@ -271,6 +301,8 @@ pub struct Typesetter {
     family_substitutions: Vec<FamilySubstitution>,
     hits: u64,
     misses: u64,
+    /// Bidi-cache misses: how many times [`bidi::Resolved::new`] ran.
+    bidi_resolutions: u64,
 }
 
 impl Typesetter {
@@ -414,11 +446,14 @@ impl Typesetter {
             families: ranges,
             family_names: names,
             caches: vec![HashMap::new()],
+            bidi_cache: HashMap::new(),
+            reorder: Reorder::default(),
             slot_sets: vec![(default_slots, false)],
             substitutions: Vec::new(),
             family_substitutions: Vec::new(),
             hits: 0,
             misses: 0,
+            bidi_resolutions: 0,
         }
     }
 
@@ -482,6 +517,8 @@ impl Typesetter {
         CacheStats {
             hits: self.hits,
             misses: self.misses,
+            bidi_resolutions: self.bidi_resolutions,
+            reorder_levels_copied: self.reorder.copied,
         }
     }
 
@@ -727,8 +764,13 @@ impl Typesetter {
         let mut rtl_lines = Vec::new();
         if !text.is_empty() {
             for paragraph in text.split('\n') {
-                let bidi = BidiInfo::new(paragraph, None);
-                let shaped = self.shaped(paragraph, &bidi, shape.ligatures_off, slots);
+                // The resolution is cached (issue #225): the measure
+                // callback lays one text node out several times per Taffy
+                // solve, and repeating UAX #9 each time bought nothing —
+                // the levels are a pure function of this text.
+                let resolved = self.resolve_bidi(paragraph);
+                let bidi = Bidi::new(paragraph, &resolved);
+                let shaped = self.shaped(paragraph, bidi, shape.ligatures_off, slots);
                 // An empty chunk has no bidi paragraph: one empty line.
                 if bidi.paragraphs.is_empty() {
                     // A blank line has no glyphs; measure its box by the
@@ -751,7 +793,7 @@ impl Typesetter {
                 // ever spans two paragraphs — each line reorders and
                 // aligns under its own paragraph's level.
                 for para in &bidi.paragraphs {
-                    let content = paragraph_content(&bidi, para);
+                    let content = paragraph_content(bidi, para);
                     let gs = shaped
                         .glyphs
                         .partition_point(|g| (g.cluster as usize) < content.start);
@@ -783,7 +825,8 @@ impl Typesetter {
                         pen_y += shape.line_height_px.unwrap_or(intrinsic);
                         rtl_lines.push(para.level.is_rtl());
                         lines.push(layout::position_line(
-                            &bidi,
+                            &mut self.reorder,
+                            bidi,
                             para,
                             &shaped,
                             range,
@@ -877,19 +920,51 @@ impl Typesetter {
         (ascent, ascent - descent + gap)
     }
 
-    /// The cache key is the paragraph text within a **posture**: resolved
-    /// bidi levels and the per-run context (Arabic/Plain, `shape::
-    /// RunContext`) are a pure function of the text alone, but the ligature
-    /// setting (story #341) and the resolved slot set (story #368) are not
-    /// — the text carries no trace of either, and both change shaping
-    /// output. `posture` interns the pair and indexes `caches`, so entries
-    /// shaped under different postures cannot collide. The default posture
-    /// is index 0, so the pre-#368 path is one lookup in one map exactly as
-    /// before.
+    /// The resolved UAX #9 state for `paragraph`, from the cache or newly
+    /// resolved (issue #225).
+    ///
+    /// **The key is the paragraph text and nothing else, and that key is
+    /// complete.** [`unicode_bidi::BidiInfo::new`] takes two inputs: the
+    /// text, and a base paragraph level. This crate always passes
+    /// [`bidi::BASE_LEVEL`], which is `None` — UAX #9 P2/P3 auto-detection
+    /// from the paragraph's own first strong character — so the resolution
+    /// is a pure function of the text, and a paragraph that changes
+    /// direction does so by changing its text and therefore its key. No
+    /// other axis reaches the resolution: size, maximum width, alignment,
+    /// line height, letter spacing, ligatures, requested weight and
+    /// requested family all act after it. `bidi::BASE_LEVEL` documents the
+    /// obligation to extend this key if a base direction ever becomes a
+    /// per-call parameter, and a unit test pins the constant.
+    fn resolve_bidi(&mut self, paragraph: &str) -> Arc<bidi::Resolved> {
+        if let Some(resolved) = self.bidi_cache.get(paragraph) {
+            return resolved.clone();
+        }
+        self.bidi_resolutions += 1;
+        let resolved = Arc::new(bidi::Resolved::new(paragraph));
+        self.bidi_cache.insert(paragraph.into(), resolved.clone());
+        resolved
+    }
+
+    /// The cache key is the paragraph text within a **posture**: the
+    /// per-run context (Arabic/Plain, `shape::RunContext`) is a pure
+    /// function of the text alone, but the ligature setting (story #341)
+    /// and the resolved slot set (story #368) are not — the text carries
+    /// no trace of either, and both change shaping output. `posture`
+    /// interns the pair and indexes `caches`, so entries shaped under
+    /// different postures cannot collide. The default posture is index 0,
+    /// so the pre-#368 path is one lookup in one map exactly as before.
+    ///
+    /// One entry serves every layout of the paragraph *under its posture*
+    /// — and, since issue #225, that now holds for the bidi step too: the
+    /// resolved levels this shaping consumes come from
+    /// [`resolve_bidi`](Self::resolve_bidi)'s own cache rather than being
+    /// re-resolved per call. Before that fix this comment overclaimed:
+    /// the shaped runs were cached but the UAX #9 pass in front of them
+    /// was repaid on every `layout()` call.
     fn shaped(
         &mut self,
         paragraph: &str,
-        bidi: &BidiInfo<'_>,
+        bidi: Bidi<'_>,
         ligatures_off: bool,
         slots: &[u16],
     ) -> Arc<ShapedText> {
@@ -955,7 +1030,7 @@ fn resolve_slots(weights: &[u16], families: &[Range<usize>], requested: u16) -> 
 /// ends the paragraph and renders on no line, exactly like the '\n'
 /// the caller splits on. Every byte of a multi-byte separator carries
 /// class B, so trimming by byte is trimming by char.
-fn paragraph_content(bidi: &BidiInfo<'_>, para: &ParagraphInfo) -> Range<usize> {
+fn paragraph_content(bidi: Bidi<'_>, para: &ParagraphInfo) -> Range<usize> {
     let mut end = para.range.end;
     while end > para.range.start && bidi.original_classes[end - 1] == BidiClass::B {
         end -= 1;

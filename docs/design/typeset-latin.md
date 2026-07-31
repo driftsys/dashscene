@@ -332,9 +332,11 @@ SemiBold and Bold, and Arabic Regular.
     pub struct Typesetter { fonts: Vec<Font>, weights: Vec<u16>,
                             families: Vec<Range<usize>>,
                             caches: Vec<HashMap<Box<str>, Arc<ShapedText>>>,
+                            bidi_cache: HashMap<Box<str>, Arc<bidi::Resolved>>,
+                            reorder: bidi::Reorder,
                             slot_sets: Vec<(Vec<u16>, bool)>,
                             substitutions: Vec<WeightSubstitution>,
-                            hits, misses }
+                            hits, misses, bidi_resolutions }
     impl Typesetter {
         pub fn new(font: Font) -> Typesetter;           // one-element list
         pub fn with_fonts(fonts: Vec<Font>) -> Typesetter;   // primary first
@@ -470,15 +472,16 @@ paragraph regardless of width.
 
 ## Cache semantics
 
-The cache lives on `Typesetter` (one `HashMap<Box<str>, Arc<ShapedText>>`
-per posture plus hit/miss counters) — it is not a separate type; the cache
-is too small to warrant its own module.
+The caches live on `Typesetter` — one `HashMap<Box<str>, Arc<ShapedText>>`
+per posture for the shaped runs, one `HashMap<Box<str>,
+Arc<bidi::Resolved>>` for the UAX #9 resolution, plus the counters. They
+are not separate types; each is too small to warrant its own module.
 
 - Stores font-unit, unpositioned `ShapedText` — shaping output (glyph
   ids, advances, offsets in font units) is size-independent, so the
   px scale is applied only at positioning time.
-- Keyed by chunk text **within a posture**. Resolved bidi levels, run
-  directions, digit-shape contexts, and the coverage split are all pure
+- Keyed by chunk text **within a posture**. Run directions, digit-shape
+  contexts, and the coverage split are all pure
   functions of that text, so one entry serves every layout of the chunk
   under one posture. `docs/archive/2026-07-14-design-1-seed.md`
   §7.2 describes the key as
@@ -500,10 +503,32 @@ is too small to warrant its own module.
   table is scanned linearly: a corpus offers a handful of weights, so it
   holds a handful of postures, and the default is found on the first
   comparison.
+- The **UAX #9 resolution is cached separately**, keyed by chunk text
+  alone (issues #225, #226). It has no posture — neither the ligature
+  setting nor the resolved slot set reaches `BidiInfo::new` — so the
+  same paragraph rendered at two weights resolves its levels once. The
+  key is the text and nothing else because the only other input to the
+  resolution is the base paragraph level, which this crate pins to
+  auto-detection (`text/bidi.rs`, `BASE_LEVEL`): the direction of a
+  paragraph is derived from its own first strong character, so a
+  paragraph that changes direction changes its text and therefore its
+  key. A base direction that ever becomes a per-call axis must join the
+  key. Before this the resolution ran in front of the shaped-run cache
+  lookup, so the measure callback repaid it on every `layout()` call.
+- The **per-line display reorder** (UAX #9 L1 + L2) runs over one buffer
+  held on `Typesetter` and reused across every line of every call.
+  `unicode_bidi::BidiInfo::visual_runs` copies the whole paragraph's
+  level vector per line, which a paragraph wrapped into N lines paid N
+  times per call; `text/bidi.rs` re-implements the two rules over a
+  refreshed slice, and pins the re-implementation against
+  `unicode_bidi`'s own output for every line split of a direction corpus.
 - Unbounded: cockpit UI text is a bounded set; an eviction policy is
-  speculative until a real producer shows growth.
-- `Typesetter::cache_stats() -> CacheStats { hits, misses }` makes hit
-  and miss counts observable for tests and for #29's caller.
+  speculative until a real producer shows growth. The resolution cache
+  adds two bytes per byte of chunk text plus the paragraph boundaries —
+  a fraction of the shaped runs held under the same key.
+- `Typesetter::cache_stats() -> CacheStats { hits, misses,
+  bidi_resolutions, reorder_levels_copied }` makes the counts observable
+  for tests and for #29's caller.
 
 ## Error handling
 
@@ -577,6 +602,13 @@ not look the glyph id up in an atlas at all.
                                                   flush-right shift;
                                                   resolve_slots and the
                                                   posture interning (#368)
+    crates/dashscene-typeset/src/text/bidi.rs    Resolved (the cacheable,
+                                                  owned UAX #9 state) and
+                                                  Bidi (Resolved + the text
+                                                  it was resolved from);
+                                                  Reorder — the reused
+                                                  per-line L1+L2 buffer
+                                                  (#225, #226)
     crates/dashscene-typeset/src/text/font.rs    Font (bytes, face
                                                   index, hhea metrics);
                                                   builds the on-demand
