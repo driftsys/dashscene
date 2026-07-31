@@ -154,6 +154,13 @@ pub struct SkiaPresenter {
     /// it). Storing the context as well would suggest a dependency that does
     /// not exist.
     surface: softbuffer::Surface<Arc<Window>, Arc<Window>>,
+    /// The painter's readback, held across frames rather than allocated per
+    /// frame. It is 9.2 MB at 1920x1200, and a presenter posts one of these
+    /// every frame it runs, so allocating it in [`Present::present`] put a
+    /// window-sized allocation and its first-touch page faults on the frame
+    /// path for nothing (issue #603). [`SkiaPainter::read_premul_into`]
+    /// resizes it only when the extent changes and overwrites every byte.
+    frame: Vec<u8>,
     /// The drawable extent in physical pixels, as last configured. Zero on
     /// either axis means there is nothing to draw into.
     width: u32,
@@ -177,6 +184,7 @@ impl SkiaPresenter {
         let mut presenter = Self {
             painter: SkiaPainter::new(1, 1),
             surface,
+            frame: Vec::new(),
             width: 0,
             height: 0,
         };
@@ -244,55 +252,88 @@ impl Present for SkiaPresenter {
             scene.glyphs(),
             None,
         );
-        let rgba = self.painter.rgba_bytes();
+        self.painter.read_premul_into(&mut self.frame);
 
         let mut framebuffer = self
             .surface
             .buffer_mut()
             .map_err(|error| PresentError::Post(error.to_string()))?;
-        let painted = rgba.len() / 4;
+        let painted = self.frame.len() / 4;
         if painted != framebuffer.len() {
             return Err(PresentError::ExtentMismatch {
                 painted,
                 framebuffer: framebuffer.len(),
             });
         }
-        composite_over_black(&rgba, &mut framebuffer);
+        pack_premul_over_black(&self.frame, &mut framebuffer);
         framebuffer
             .present()
             .map_err(|error| PresentError::Post(error.to_string()))
     }
 }
 
-/// Converts unpremultiplied RGBA8888 rows into `softbuffer`'s `0RGB` words,
-/// compositing each pixel over opaque black.
+/// Composites **premultiplied** RGBA8888 rows over opaque black into
+/// `softbuffer`'s `0RGB` words.
 ///
-/// Two conversions happen here, and both are forced by what sits on either
-/// side.
+/// # Why compositing costs nothing here
 ///
-/// - **Channel order.** `SkiaPainter::rgba_bytes` reads back in the golden
-///   comparison space — unpremultiplied RGBA8888, one byte per channel —
-///   while `softbuffer` takes one `u32` per pixel laid out as `0RGB`, red in
-///   bits 16..24. Neither is negotiable, so the blit does the swizzle.
-/// - **Compositing.** The painter clears its surface to transparent, so a
-///   pixel no rect covers arrives with alpha 0, and a partially covered one
-///   arrives with its colour divided back out. A window is opaque and takes
-///   no alpha, so every pixel is composited over black. The alternative —
-///   posting the unpremultiplied colour and dropping alpha — would draw a
-///   10 %-opacity white as opaque white.
-fn composite_over_black(rgba: &[u8], framebuffer: &mut [u32]) {
-    for (pixel, word) in rgba.chunks_exact(4).zip(framebuffer.iter_mut()) {
-        let alpha = u32::from(pixel[3]);
-        let red = u32::from(pixel[0]) * alpha / 255;
-        let green = u32::from(pixel[1]) * alpha / 255;
-        let blue = u32::from(pixel[2]) * alpha / 255;
-        *word = (red << 16) | (green << 8) | blue;
+/// A window is opaque and takes no alpha, so every pixel the painter drew has
+/// to be composited over an opaque background — the painter clears its
+/// surface to transparent, so a pixel no rect covers arrives with alpha 0 and
+/// a partially covered one arrives scaled by its coverage. Simply dropping
+/// alpha would draw a 10 %-opacity white as opaque white.
+///
+/// Source-over with a premultiplied source is
+/// `dst = src + (1 - alpha) * backdrop`. The backdrop is black, so the second
+/// term is zero for every channel and `dst = src`: **the composite of a
+/// premultiplied pixel over black is the pixel**. That identity is the whole
+/// correctness argument for this function having no arithmetic in it, and it
+/// is why the readback asks Skia for `AlphaType::Premul` rather than the
+/// `Unpremul` the golden route uses.
+///
+/// It was written the other way round until issue #603: the readback divided
+/// every channel by alpha and this function multiplied it back. Beyond being
+/// two passes of work that cancel, the integer division truncates, so every
+/// semi-transparent pixel reached the window up to one code point darker per
+/// channel than the value the surface holds.
+///
+/// # Channel order
+///
+/// This is the one conversion that remains, and neither side of it is
+/// negotiable. The readback is RGBA8888, one byte per channel, in the order
+/// the golden tooling and the `.dsb` colour tables use; `softbuffer` takes one
+/// `u32` per pixel laid out as `0RGB`, red in bits 16..24. So the blit
+/// swizzles, and dropping alpha is what leaves the high byte zero.
+fn pack_premul_over_black(premul: &[u8], framebuffer: &mut [u32]) {
+    for (pixel, word) in premul.chunks_exact(4).zip(framebuffer.iter_mut()) {
+        *word = (u32::from(pixel[0]) << 16) | (u32::from(pixel[1]) << 8) | u32::from(pixel[2]);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::composite_over_black;
+    use dashpaint::{Color, Painter};
+    use dashscene_core::{Arena, Prop};
+    use dashscene_skia::SkiaPainter;
+
+    use super::pack_premul_over_black;
+
+    /// What the blit did before issue #603: take the unpremultiplied readback
+    /// and multiply every channel by alpha on the way into the framebuffer.
+    ///
+    /// Kept in the test module only, as the reference the new path is measured
+    /// against by `the_premultiplied_path_matches_the_round_trip_it_replaced`.
+    /// Nothing outside these tests may call it — it is the code the change
+    /// removed.
+    fn legacy_composite_over_black(unpremul: &[u8], framebuffer: &mut [u32]) {
+        for (pixel, word) in unpremul.chunks_exact(4).zip(framebuffer.iter_mut()) {
+            let alpha = u32::from(pixel[3]);
+            let red = u32::from(pixel[0]) * alpha / 255;
+            let green = u32::from(pixel[1]) * alpha / 255;
+            let blue = u32::from(pixel[2]) * alpha / 255;
+            *word = (red << 16) | (green << 8) | blue;
+        }
+    }
 
     /// Pins the channel order alone. It says nothing about whether the
     /// demonstration draws anything — that is confirmed by running it, not by
@@ -300,21 +341,111 @@ mod tests {
     #[test]
     fn an_opaque_pixel_keeps_its_channels_in_softbuffer_order() {
         let mut framebuffer = [0u32; 1];
-        composite_over_black(&[0x12, 0x34, 0x56, 0xff], &mut framebuffer);
+        pack_premul_over_black(&[0x12, 0x34, 0x56, 0xff], &mut framebuffer);
         assert_eq!(framebuffer[0], 0x0012_3456);
     }
 
+    /// A fully transparent pixel is all zeroes once premultiplied, whatever
+    /// colour it was authored in, so this also pins that the framebuffer word
+    /// is overwritten rather than blended into.
     #[test]
     fn a_fully_transparent_pixel_composites_to_black() {
         let mut framebuffer = [0xffff_ffffu32; 1];
-        composite_over_black(&[0xff, 0xff, 0xff, 0x00], &mut framebuffer);
+        pack_premul_over_black(&[0x00, 0x00, 0x00, 0x00], &mut framebuffer);
         assert_eq!(framebuffer[0], 0);
     }
 
+    /// The same word the old path produced from the unpremultiplied
+    /// `[0xff, 0xff, 0xff, 0x80]`, which is what this premultiplied pixel is
+    /// the surface's own storage of.
     #[test]
     fn a_half_transparent_white_composites_to_half_grey() {
         let mut framebuffer = [0u32; 1];
-        composite_over_black(&[0xff, 0xff, 0xff, 0x80], &mut framebuffer);
+        pack_premul_over_black(&[0x80, 0x80, 0x80, 0x80], &mut framebuffer);
         assert_eq!(framebuffer[0], 0x0080_8080);
+    }
+
+    /// The premultiplied path must put the same picture on the window as the
+    /// unpremultiplied round trip did, apart from the precision that round
+    /// trip was losing.
+    ///
+    /// This is the assertion that issue #603 removed a cancellation rather
+    /// than changing what is drawn, and it is the only one that can make it:
+    /// the blit is not on the golden route — goldens go through `png_bytes`
+    /// and `rgba_bytes` — so no golden moves whether this is right or wrong.
+    ///
+    /// The bound is one code point per channel, which is exactly what the
+    /// integer divide-then-multiply could lose.
+    #[test]
+    fn the_premultiplied_path_matches_the_round_trip_it_replaced() {
+        const EXTENT: i32 = 8;
+        let mut arena = Arena::new();
+        let mut txn = arena.open();
+        let root = txn.add_node(None, Some("bg"));
+        txn.set_prop(root, Prop::Width(EXTENT as f32));
+        txn.set_prop(root, Prop::Height(EXTENT as f32));
+        // Semi-transparent on purpose: an opaque fill round-trips byte-exact
+        // through the unpremultiplied readback, so a scene of opaque rects
+        // would agree with the old path for the wrong reason.
+        txn.set_prop(
+            root,
+            Prop::Fill(Color {
+                r: 0.87,
+                g: 0.31,
+                b: 0.13,
+                a: 0.4,
+            }),
+        );
+        let wash = txn.add_node(Some(root), Some("wash"));
+        txn.set_prop(wash, Prop::X(2.0));
+        txn.set_prop(wash, Prop::Y(2.0));
+        txn.set_prop(wash, Prop::Width(4.0));
+        txn.set_prop(wash, Prop::Height(4.0));
+        txn.set_prop(
+            wash,
+            Prop::Fill(Color {
+                r: 0.05,
+                g: 0.62,
+                b: 0.94,
+                a: 0.55,
+            }),
+        );
+        txn.commit();
+
+        let scene = arena.committed();
+        let mut painter = SkiaPainter::new(EXTENT, EXTENT);
+        painter.paint(
+            scene.rects(),
+            scene.paints(),
+            scene.images(),
+            scene.clips(),
+            scene.groups(),
+            scene.glyphs(),
+            None,
+        );
+
+        let unpremul = painter.rgba_bytes();
+        let mut premul = Vec::new();
+        painter.read_premul_into(&mut premul);
+        assert_eq!(premul.len(), unpremul.len());
+
+        let pixels = (EXTENT * EXTENT) as usize;
+        let mut before = vec![0u32; pixels];
+        legacy_composite_over_black(&unpremul, &mut before);
+        let mut after = vec![0u32; pixels];
+        pack_premul_over_black(&premul, &mut after);
+
+        for (index, (old, new)) in before.iter().zip(after.iter()).enumerate() {
+            assert_eq!(new >> 24, 0, "pixel {index}: the high byte must stay clear");
+            for shift in [16u32, 8, 0] {
+                let old_channel = i32::from((old >> shift) as u8);
+                let new_channel = i32::from((new >> shift) as u8);
+                assert!(
+                    (old_channel - new_channel).abs() <= 1,
+                    "pixel {index}, channel at bit {shift}: {old_channel:#04x} became \
+                     {new_channel:#04x}, which is more than the round trip could lose"
+                );
+            }
+        }
     }
 }

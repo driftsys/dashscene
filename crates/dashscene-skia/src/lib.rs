@@ -171,6 +171,44 @@ impl SkiaPainter {
         assert!(read, "CPU raster surfaces read back");
         pixels
     }
+
+    /// The current surface contents as tightly packed **premultiplied**
+    /// RGBA8888 rows, written into `buffer` — the presentation readback.
+    ///
+    /// Both halves of the name are the difference from
+    /// [`SkiaPainter::rgba_bytes`], and both matter once this runs every
+    /// frame rather than once per golden (issue #603).
+    ///
+    /// - **Premultiplied** is the surface's own alpha type: the raster is
+    ///   `raster_n32_premul`, so Skia converts the channel order and nothing
+    ///   else. Asking for `Unpremul` makes Skia divide every channel by
+    ///   alpha, which a host presenting onto an opaque window has to undo by
+    ///   multiplying it back. That round trip is not only wasted work, it is
+    ///   lossy in one direction: the integer division truncates, so every
+    ///   semi-transparent pixel reached the window up to one code point
+    ///   darker per channel than the value this surface holds.
+    /// - **Into a caller's buffer**, because a presenter holds one across
+    ///   frames and reuses it. `rgba_bytes` returns a fresh allocation, which
+    ///   is 9.2 MB at 1920x1200 and is the right shape for a caller that runs
+    ///   once.
+    ///
+    /// `buffer` is resized to `width * height * 4` bytes and every one of
+    /// them is overwritten. When the extent has not changed since the last
+    /// call, the resize is a no-op and nothing is allocated.
+    pub fn read_premul_into(&mut self, buffer: &mut Vec<u8>) {
+        let width = self.surface.width();
+        let height = self.surface.height();
+        let info = ImageInfo::new(
+            (width, height),
+            ColorType::RGBA8888,
+            AlphaType::Premul,
+            None,
+        );
+        let row_bytes = width as usize * 4;
+        buffer.resize(row_bytes * height as usize, 0);
+        let read = self.surface.read_pixels(&info, buffer, row_bytes, (0, 0));
+        assert!(read, "CPU raster surfaces read back");
+    }
 }
 
 impl Painter for SkiaPainter {
