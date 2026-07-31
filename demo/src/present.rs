@@ -191,6 +191,20 @@ impl Present for SkiaPresenter {
     }
 
     fn resize(&mut self, width: u32, height: u32) -> Result<(), PresentError> {
+        // A window system delivers `Resized` with an unchanged extent: macOS
+        // does during a drag, and a scale-factor change reports the same
+        // physical size. Reconfiguring for it would allocate a whole raster
+        // surface — about 9.2 MB at 1920x1200 — for no change in output.
+        //
+        // Correct against the one state that could make the stored pair agree
+        // with an unconfigured surface: the constructor leaves it (0, 0) and
+        // immediately calls this. An early-out there means the requested
+        // extent is also zero, which is the branch below that configures
+        // nothing on purpose.
+        if width == self.width && height == self.height {
+            return Ok(());
+        }
+
         let (Some(nz_width), Some(nz_height)) = (NonZeroU32::new(width), NonZeroU32::new(height))
         else {
             // Minimised, or a drawable the windowing system has not sized yet.

@@ -18,5 +18,8 @@ dashscene-skia.workspace = true
 # Authors the placeholder scene. Story #574 replaces it with the showcase
 # scenes in `corpus/showcase/`.
 dashlang.workspace = true
+# The product layout solver. `Scene::build_live` takes one and the live scene
+# retains it, so the host injects it rather than `dashlang` constructing one.
+dashscene-engine.workspace = true
 winit.workspace = true
 softbuffer.workspace = true
