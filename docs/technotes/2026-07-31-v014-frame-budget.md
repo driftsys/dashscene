@@ -128,6 +128,34 @@ the expected result for scenes with no image fills.
 Milliseconds, means over 240 frames, two repeats per scene in alternating
 order, one-minute load average between 3.1 and 4.3.
 
+**Amended again after issue #644 was fixed.** The atlas decode above was
+estimated at "about 2 ms" from the issue's own microbenchmark. Holding the
+atlas decodes and the resolve-shader compile on the painter, the way
+issue #639 holds the image decodes, measures this on `paint`:
+
+| scene      | paint before | paint after | removed |
+| ---------- | -----------: | ----------: | ------: |
+| surfaces   |         6.21 |        4.73 |    1.48 |
+| typography |         3.91 |        1.55 |    2.36 |
+| layout     |         0.28 |        0.29 |    0.00 |
+
+Milliseconds, medians of the per-frame median over 600 frames per scene, two
+alternating before/after rounds on the machine named at the top of this note.
+Offscreen at 1920x1200 — `paint` only, so the blit and the present are outside
+it and the frames-per-second table above was **not** re-measured; that needs an
+interactive window run.
+
+Three things the numbers say. The estimate was close for the two text scenes
+and the saving is real. `layout` does not move, which is the control: it
+carries no glyph runs, so the cache is never built for it. And `typography`
+loses more than `surfaces` does — 2.36 against 1.48 for the same three atlases
+— which is the noise floor of a 600-frame median rather than a difference in
+what was removed.
+
+The prediction chain in this note has now been closed twice, and both times the
+measured value was smaller than the estimate. Worth remembering before quoting
+the next one.
+
 Worth weighing before anyone spends on #603: `dashscene-wgpu` (v0.15) has no
 blit at all, because it presents to its own surface rather than handing pixels
 back.

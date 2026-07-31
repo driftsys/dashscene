@@ -212,15 +212,31 @@ at a higher index, which is the correct reading of DFS stacking; and a run
 is now inside the backdrop barrier, so a painter that reorders must count
 runs in its barrier accounting rather than only rects.
 
-The per-frame MSDF setup — the SkSL compile and one decode per atlas — is
-built once per `paint` in `MsdfFrame`, not once per rect that anchors a run,
-and a text-free scene builds none of it. These atlases come from the
-`GlyphRunTable` rather than the `ImageTable`, so they are outside the
-painter-lifetime image cache and are still decoded on every `paint`
-(issue #644). `MsdfFrame::new` also checks every
-anchor against the rect table up front: under the interleave, a run bucketed
-at an index the loop never visits would simply never be drawn, so the check
-turns a silent drop into a named panic (P4).
+The MSDF setup splits by how long each part stays valid. The SkSL compile
+and one decode per atlas are held on the painter in `MsdfCache`, so a text
+scene compiles the resolve shader once and decodes each atlas once for as
+long as that atlas set is the one being drawn (issue #644). The run-by-anchor
+index is genuinely per-frame — the runs change every commit — and is built in
+`MsdfFrame`, which borrows the cache's shader and decodes rather than
+rebuilding them. A text-free scene still builds none of it.
+
+These atlases hang off the `GlyphRunTable` and are not `ImageTable` entries,
+so the painter-lifetime image cache above could not reach them; this is that
+cache's twin for the text half of the input, and it invalidates on the same
+principle. The difference is what it compares. The atlas set arrives behind
+an `Arc` that commit shares rather than rebuilds, so `Arc::ptr_eq` settles
+the steady-state frame in constant time and comparing contents is only the
+fallback for an equal set rebuilt behind a fresh allocation. Holding the
+handle is also what makes keeping it free, where the image cache must keep a
+copy of its table. Both properties — that a shared set cannot change under
+its holder, and that a live handle's address cannot be reused — follow from
+`push_atlas` going through `Arc::make_mut`, and are recorded on
+`GlyphRunTable::atlas_set`.
+
+`MsdfCache::frame` also checks every anchor against the rect table up front:
+under the interleave, a run bucketed at an index the loop never visits would
+simply never be drawn, so the check turns a silent drop into a named panic
+(P4).
 
 ## Testing
 

@@ -16,6 +16,7 @@
 pub mod retention;
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use dashpaint::{
     Atlas, BlurKind, ClipTable, CornerRadii, GlyphRun, GlyphRunTable, Gradient, GradientKind,
@@ -79,6 +80,11 @@ pub struct SkiaPainter {
     /// (issue #639). Independent of [`DirtyMode`]: a decode is not a draw,
     /// and both modes read the same table.
     images: ImageCache,
+    /// The decoded MSDF glyph atlases and the compiled resolve shader, kept
+    /// for as long as this painter lives (issue #644). The sibling of
+    /// [`ImageCache`] for the text half of the painter input, and
+    /// [`DirtyMode`]-independent for the same reason.
+    msdf: MsdfCache,
 }
 
 impl SkiaPainter {
@@ -125,6 +131,7 @@ impl SkiaPainter {
             retained: Vec::new(),
             group_layers: retention::GroupCache::new(),
             images: ImageCache::default(),
+            msdf: MsdfCache::default(),
         }
     }
 
@@ -366,8 +373,8 @@ impl Painter for SkiaPainter {
         // table does not stand behind.
         self.images.begin_frame(images);
 
-        // Disjoint field borrows: `retained`, `group_layers` and `images` are
-        // read while `surface` is borrowed mutably.
+        // Disjoint field borrows: `retained`, `group_layers`, `images` and
+        // `msdf` are read while `surface` is borrowed mutably.
         let source: &[RectEntry] = match self.mode {
             DirtyMode::Full => rects,
             DirtyMode::Retained => &self.retained,
@@ -376,6 +383,7 @@ impl Painter for SkiaPainter {
         let (layer_width, layer_height) = (self.surface.width(), self.surface.height());
         let group_layers = &mut self.group_layers;
         let image_cache = &mut self.images;
+        let msdf_cache = &mut self.msdf;
 
         let base_canvas = self.surface.canvas();
         base_canvas.clear(skia_safe::colors::TRANSPARENT);
@@ -406,9 +414,10 @@ impl Painter for SkiaPainter {
         // `image_cache` along with every other asset — one cache, one key
         // space, one decode per asset (issues #101 and #639).
         let mut field_effect: Option<RuntimeEffect> = None;
-        // The per-frame MSDF setup (SkSL compile + atlas decodes) and the
-        // run-by-anchor index, built once. A text-free scene builds nothing.
-        let msdf = MsdfFrame::new(glyphs, source);
+        // The run-by-anchor index, built once, over the atlases and shader
+        // the painter already holds — re-decoding and re-compiling only what
+        // this frame changed (issue #644). A text-free scene builds nothing.
+        let msdf = msdf_cache.frame(glyphs, source);
         // A manual index rather than `enumerate`, because a reused group
         // composite advances it past the whole subtree it covers.
         let mut i = 0usize;
@@ -725,21 +734,68 @@ const MSDF_SKSL: &str = r"
     }
 ";
 
-/// The per-frame MSDF setup, built once per `paint` rather than once per
-/// rect that anchors a run: the SkSL compile and the atlas decodes are the
-/// expensive parts and neither depends on the run.
+/// The decoded MSDF glyph atlases and the compiled resolve shader, kept for
+/// as long as the painter lives (issue #644).
 ///
-/// `None` for a text-free scene, which then compiles nothing and decodes
-/// nothing — the posture the old lazy entry point had.
-struct MsdfFrame {
-    effect: RuntimeEffect,
+/// # Why the painter and not `paint()`
+///
+/// Both were built inside `MsdfFrame::new`, whose doc comment called them
+/// "the expensive parts" while placing them on the path a frame loop runs
+/// sixty times a second. Every scene loads the same three atlases regardless
+/// of what it draws, so a document carrying one glyph run re-inflated 226 508
+/// encoded bytes per frame — about 2 ms
+/// (`docs/technotes/2026-07-31-v014-frame-budget.md`).
+///
+/// This is the same defect issue #639 fixed for the [`ImageTable`], in a
+/// different table: the atlases hang off the [`GlyphRunTable`] and are not
+/// `ImageTable` entries, so that cache could not reach them.
+///
+/// # Why the atlas set is the key, and how it is compared
+///
+/// An [`AtlasIndex`](dashpaint::AtlasIndex) alone is not an identity, for the
+/// reason [`ImageCache`] gives at length: the host's reel keeps one painter
+/// across a scene change, so two unrelated documents both have an atlas at
+/// index 0. The set is what identifies the decodes.
+///
+/// Unlike the image table, the set arrives behind an [`Arc`] that commit
+/// shares rather than rebuilds, so the comparison has a fast path the sibling
+/// cache does not: [`Arc::ptr_eq`] settles the steady-state frame in constant
+/// time, and comparing contents is the fallback for an equal set rebuilt
+/// behind a fresh allocation (the reel returning to a scene it has shown
+/// before). Holding the handle is also what makes keeping it free —
+/// `GlyphRunTable::atlas_set` records why both properties hold.
+///
+/// # Memory
+///
+/// **This grows with the atlas set and nothing evicts from it**, the same
+/// posture — and the same open question, issue #462 — as [`ImageCache`]. The
+/// retained bytes are one [`Arc`] clone of the set (shared, not copied) plus
+/// one copy of each atlas's **encoded** payload inside its [`Image`], which
+/// `decode_image` builds over its own `Data::new_copy`: 226 508 B for the
+/// eight-atlas cascade the goldens harness and the showcase scenes both load.
+/// The decoded texels are Skia's own resource cache's, as before.
+#[derive(Default)]
+struct MsdfCache {
+    /// The atlas set the entries in `decoded` were decoded from.
+    source: Arc<Vec<Atlas>>,
     decoded: Vec<Image>,
-    /// Run indices by anchor rect. Built once so the rect loop can ask for
-    /// "the runs at index i" without scanning the table per rect.
-    by_anchor: HashMap<u32, Vec<usize>>,
+    /// Compiled on the first text-bearing frame and never invalidated — the
+    /// shader is a constant, so no input can stale it. A scene that never
+    /// carries a glyph run never compiles it, which is the posture the old
+    /// lazy entry point had.
+    effect: Option<RuntimeEffect>,
 }
 
-impl MsdfFrame {
+impl MsdfCache {
+    /// This frame's MSDF setup, decoding and compiling only what this frame
+    /// changed, or `None` for a text-free scene.
+    ///
+    /// Taking the whole frame's setup through one call is deliberate: the
+    /// compiled shader and the decoded atlases are only in step with `glyphs`
+    /// because the same `glyphs` selected them, and splitting this into a
+    /// prepare call and a build call would put that invariant between two
+    /// call sites where a later edit could separate them.
+    ///
     /// # Panics
     ///
     /// Panics if a run's anchor is out of range for `rects`. A run and the
@@ -750,7 +806,7 @@ impl MsdfFrame {
     /// the silent drop P4 forbids. Checked here, once, rather than at the
     /// draw site, so an unreachable run cannot hide behind a rect table that
     /// merely happens to be short.
-    fn new(glyphs: &GlyphRunTable, rects: &[RectEntry]) -> Option<Self> {
+    fn frame(&mut self, glyphs: &GlyphRunTable, rects: &[RectEntry]) -> Option<MsdfFrame<'_>> {
         if glyphs.is_empty() {
             return None;
         }
@@ -765,23 +821,51 @@ impl MsdfFrame {
             );
             by_anchor.entry(run.rect).or_default().push(index);
         }
-        let effect =
-            RuntimeEffect::make_for_shader(MSDF_SKSL, None).expect("MSDF resolve SkSL compiles");
-        let decoded: Vec<Image> = glyphs
-            .atlases()
-            .iter()
-            .map(|atlas| {
-                images::deferred_from_encoded_data(Data::new_copy(&atlas.image.bytes), None)
-                    .expect("atlas image decodes (a build artifact, validated upstream P4)")
-            })
-            .collect();
-        Some(Self {
-            effect,
-            decoded,
+        self.refresh(glyphs.atlas_set());
+        Some(MsdfFrame {
+            effect: self.effect.get_or_insert_with(|| {
+                RuntimeEffect::make_for_shader(MSDF_SKSL, None).expect("MSDF resolve SkSL compiles")
+            }),
+            decoded: &self.decoded,
             by_anchor,
         })
     }
 
+    /// Points the cache at `atlases`, re-decoding only when that is not the
+    /// set the decodes came from.
+    ///
+    /// The handle is adopted in the equal-contents case too, so a reel
+    /// returning to a scene pays the comparison once and takes the pointer
+    /// fast path on every later frame of it.
+    fn refresh(&mut self, atlases: &Arc<Vec<Atlas>>) {
+        if Arc::ptr_eq(&self.source, atlases) {
+            return;
+        }
+        if self.source != *atlases {
+            self.decoded = atlases
+                .iter()
+                .map(|atlas| decode_image(&atlas.image))
+                .collect();
+        }
+        self.source = Arc::clone(atlases);
+    }
+}
+
+/// One frame's MSDF drawing state: the run index this frame's runs produced,
+/// over the atlases and shader the painter already holds.
+///
+/// `None` for a text-free scene, which then compiles nothing and decodes
+/// nothing — the posture the old lazy entry point had.
+struct MsdfFrame<'a> {
+    effect: &'a RuntimeEffect,
+    decoded: &'a [Image],
+    /// Run indices by anchor rect. Built once so the rect loop can ask for
+    /// "the runs at index i" without scanning the table per rect. This is
+    /// the part that genuinely changes every frame — the runs do.
+    by_anchor: HashMap<u32, Vec<usize>>,
+}
+
+impl MsdfFrame<'_> {
     /// Draws every run anchored at rect `index`, in table order, at the
     /// canvas's current clip and layer state.
     ///
@@ -818,7 +902,7 @@ impl MsdfFrame {
             a: run.color.a * run.opacity,
             ..run.color
         };
-        let uniforms = msdf_uniforms(&self.effect, color, px_range);
+        let uniforms = msdf_uniforms(self.effect, color, px_range);
         for quad in &run.glyphs {
             let Some(g) = atlas.glyph(quad.glyph_id) else {
                 // No quad for this glyph id — an empty outline (space) or
@@ -834,7 +918,7 @@ impl MsdfFrame {
                 g,
                 quad,
                 run,
-                &self.effect,
+                self.effect,
                 &uniforms,
                 sampling,
             );
@@ -2011,6 +2095,206 @@ mod tests {
             DECODE_CALLS.with(|c| c.get()),
             2,
             "each of the two documents decodes its own asset once"
+        );
+    }
+
+    /// The white the MSDF resolve reads as full coverage: the shader takes
+    /// the median of the three distance channels, so `(1, 1, 1)` is a signed
+    /// distance of 1 and `clamp(px_range * 0.5 + 0.5, 0, 1)` saturates. A run
+    /// over this atlas paints its own fill colour.
+    const ATLAS_INK: dashpaint::Color = dashpaint::Color {
+        r: 1.0,
+        g: 1.0,
+        b: 1.0,
+        a: 1.0,
+    };
+    /// The black the same resolve reads as zero coverage — distance 0 gives
+    /// `clamp(-px_range * 0.5 + 0.5, 0, 1)`, which is 0 for any `px_range`
+    /// of 1 or more. A run over this atlas paints nothing, which is how the
+    /// test below tells one atlas set from the other by pixel.
+    const ATLAS_VOID: dashpaint::Color = dashpaint::Color {
+        r: 0.0,
+        g: 0.0,
+        b: 0.0,
+        a: 1.0,
+    };
+
+    /// A one-atlas, one-run table whose single glyph covers the whole 2x2
+    /// surface, sampling a 1x1 atlas of `atlas_color` and filling with
+    /// `ink`.
+    fn one_atlas_table(atlas_color: dashpaint::Color, ink: dashpaint::Color) -> GlyphRunTable {
+        let mut glyphs = GlyphRunTable::new();
+        let atlas = glyphs.push_atlas(Atlas::new(
+            ImageAsset {
+                format: dashpaint::ImageFormat::Png,
+                bytes: one_pixel_png(atlas_color),
+            },
+            1,
+            1,
+            1,
+            2.0,
+            vec![dashpaint::AtlasGlyph {
+                glyph_id: 0,
+                // y-up, baseline origin: a 2-em quad sitting above the
+                // baseline, which the run's 2.0 size places over the surface.
+                plane_em: [0.0, 0.0, 1.0, 1.0],
+                atlas_px: [0.0, 0.0, 1.0, 1.0],
+            }],
+        ));
+        glyphs.push_run(GlyphRun {
+            rect: 0,
+            atlas,
+            size: 2.0,
+            color: ink,
+            glyphs: vec![dashpaint::GlyphQuad {
+                glyph_id: 0,
+                x: 0.0,
+                y: 2.0,
+            }],
+            opacity: 1.0,
+        });
+        glyphs
+    }
+
+    /// One rect anchoring a glyph run, drawing no ink of its own.
+    fn one_text_rect() -> (PaintTable, [RectEntry; 1]) {
+        let mut paints = PaintTable::new();
+        let paint = paints.push(dashpaint::PaintEntry::default());
+        let rects = [RectEntry {
+            x: 0.0,
+            y: 0.0,
+            w: 2.0,
+            h: 2.0,
+            paint,
+            clip: dashpaint::ClipIndex::UNCLIPPED,
+            opacity: 1.0,
+        }];
+        (paints, rects)
+    }
+
+    /// Paints `glyphs` and returns the top-left pixel as unpremultiplied
+    /// RGBA bytes.
+    fn paint_text_and_read(
+        painter: &mut SkiaPainter,
+        rects: &[RectEntry],
+        paints: &PaintTable,
+        glyphs: &GlyphRunTable,
+    ) -> [u8; 4] {
+        painter.paint(
+            rects,
+            paints,
+            &ImageTable::new(),
+            &ClipTable::new(),
+            &[],
+            glyphs,
+            None,
+        );
+        let pixels = painter.rgba_bytes();
+        [pixels[0], pixels[1], pixels[2], pixels[3]]
+    }
+
+    /// Sixty frames of one text scene decode its atlas once, not sixty times
+    /// (issue #644). The last frame paints an *independently built* table
+    /// holding an equal atlas set behind a fresh allocation, which is what
+    /// the host's reel produces when it returns to a scene it has shown
+    /// before — the pointer fast path misses there, and comparing contents
+    /// must still recognise it.
+    ///
+    /// Falsifiable: moving the decode back into the per-frame path — a
+    /// `decoded` built inside `MsdfCache::frame` instead of behind
+    /// `refresh`'s identity check — makes `DECODE_CALLS` read 61 here.
+    #[test]
+    fn paint_decodes_a_glyph_atlas_once_across_frames() {
+        let glyphs = one_atlas_table(ATLAS_INK, RED);
+        let (paints, rects) = one_text_rect();
+
+        DECODE_CALLS.with(|c| c.set(0));
+        let mut painter = SkiaPainter::new(2, 2);
+        for _ in 0..60 {
+            paint_text_and_read(&mut painter, &rects, &paints, &glyphs);
+        }
+        let rebuilt = one_atlas_table(ATLAS_INK, RED);
+        assert_eq!(
+            rebuilt.atlases(),
+            glyphs.atlases(),
+            "the rebuilt table holds an equal atlas set"
+        );
+        assert!(
+            !Arc::ptr_eq(rebuilt.atlas_set(), glyphs.atlas_set()),
+            "behind a different allocation, so the pointer fast path misses \
+             and the contents comparison is what is under test"
+        );
+        paint_text_and_read(&mut painter, &rects, &paints, &rebuilt);
+
+        assert_eq!(
+            DECODE_CALLS.with(|c| c.get()),
+            1,
+            "sixty-one paints of one atlas set must decode it once, not once per paint()"
+        );
+    }
+
+    /// A painter that outlives the document it painted must not sample the
+    /// old document's atlas (issue #644) — the text-side twin of
+    /// `a_different_asset_table_is_not_the_table_that_was_decoded`, and the
+    /// same host shape: one painter, two documents, an atlas at index 0 in
+    /// both.
+    ///
+    /// The two atlases differ in what the MSDF resolve makes of them: the
+    /// first paints red, the second paints nothing at all. So a stale decode
+    /// shows up as ink on a surface that should have stayed clear.
+    ///
+    /// Falsifiable: deleting the `self.source != *atlases` arm from
+    /// `MsdfCache::refresh` — keeping only the `Arc::ptr_eq` early return —
+    /// makes the second read return the first document's red.
+    #[test]
+    fn a_different_atlas_set_is_not_the_set_that_was_decoded() {
+        let (paints, rects) = one_text_rect();
+        let first = one_atlas_table(ATLAS_INK, RED);
+        let second = one_atlas_table(ATLAS_VOID, RED);
+        assert_ne!(
+            first.atlases(),
+            second.atlases(),
+            "the two documents hold different atlas bytes"
+        );
+
+        DECODE_CALLS.with(|c| c.set(0));
+        let mut painter = SkiaPainter::new(2, 2);
+        let drawn_first = paint_text_and_read(&mut painter, &rects, &paints, &first);
+        let drawn_second = paint_text_and_read(&mut painter, &rects, &paints, &second);
+
+        assert_eq!(
+            drawn_first,
+            [255, 0, 0, 255],
+            "a run over a full-coverage atlas paints its own fill colour"
+        );
+        assert_eq!(
+            drawn_second[3], 0,
+            "a second document's run must sample the second document's atlas, which resolves to \
+             zero coverage — reading the first document's decode paints red on a clear surface"
+        );
+        assert_eq!(
+            DECODE_CALLS.with(|c| c.get()),
+            2,
+            "each of the two documents decodes its own atlas once"
+        );
+    }
+
+    /// A text-free scene compiles no shader and decodes no atlas, which is
+    /// the posture the lazy entry point had before the cache moved onto the
+    /// painter — worth pinning, because a cache built eagerly in `paint()`
+    /// would make every image-only scene pay for text it never draws.
+    #[test]
+    fn a_text_free_scene_decodes_no_atlas() {
+        let (paints, rects) = one_text_rect();
+
+        DECODE_CALLS.with(|c| c.set(0));
+        let mut painter = SkiaPainter::new(2, 2);
+        paint_text_and_read(&mut painter, &rects, &paints, &GlyphRunTable::new());
+
+        assert_eq!(
+            DECODE_CALLS.with(|c| c.get()),
+            0,
+            "a scene with no glyph runs decodes nothing"
         );
     }
 }
