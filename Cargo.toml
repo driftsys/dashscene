@@ -17,6 +17,12 @@ members = [
   "crates/dashscene-unity",
   "crates/dashscene-web",
   "goldens/tooling",
+  # The showcase scenes the demonstration draws (v0.14, story #574). Under
+  # `corpus/` rather than `demo/` because they exercise the full v0 paint
+  # vocabulary, which is what the stress corpus is for; `demo/` holds the host.
+  # `publish = false`, like `goldens/tooling` and `demo`, so it is outside
+  # `docs/decisions/crate-name-map.md`.
+  "corpus/showcase",
   # The windowed showcase host (v0.14, epic #568). A workspace member and not a
   # sixteenth published crate, following `goldens/tooling`: it carries
   # `publish = false`, it is absent from the justfile's `publish` recipe, and it

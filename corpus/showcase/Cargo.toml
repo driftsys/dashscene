@@ -1,0 +1,24 @@
+[package]
+name = "showcase"
+version = "0.0.0"
+publish = false
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "The showcase scenes the demonstration host draws (v0.14, story #574)."
+
+[dependencies]
+dashlang.workspace = true
+dashscene-core.workspace = true
+dashscene-engine.workspace = true
+dashscene-typeset.workspace = true
+dashpaint.workspace = true
+dashc.workspace = true
+
+[dev-dependencies]
+# The reference painter, for the `still` example only: it renders one scene to
+# a PNG for the entry-path documentation. A dev-dependency rather than a plain
+# one so the library the host links carries no painter of its own — a scene
+# describes what to draw and never how.
+dashscene-skia.workspace = true

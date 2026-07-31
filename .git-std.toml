@@ -12,10 +12,14 @@ scheme = "semver"
 # the non-crate scopes are deliberate rather than exhaustive:
 #
 #   goldens     goldens/     the golden images and their diff tooling
-#   corpus      corpus/      the Figma fixture corpus — captured JSON,
-#                            fonts, generated stress scenes. Data only:
-#                            the capture tool itself is code, and lives
-#                            under importers/, so it takes that scope.
+#   corpus      corpus/      the stress corpus — captured Figma JSON,
+#                            fonts, glyph atlases, photographic payloads,
+#                            the DSL-generated stress cases, and the
+#                            showcase scenes the demonstration draws
+#                            (corpus/showcase/, a workspace member added
+#                            by story #574). Mostly data; the capture tool
+#                            is code but lives under importers/, so it
+#                            takes that scope instead.
 #   importers   importers/   the Deno/TypeScript Figma importer and its
 #                            capture tool, which have their own
 #                            toolchain and their own CI job

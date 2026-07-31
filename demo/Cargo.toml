@@ -15,11 +15,12 @@ dashpaint.workspace = true
 dashscene-core.workspace = true
 # The v0 reference painter, and the only `Present` implementation for now.
 dashscene-skia.workspace = true
-# Authors the placeholder scene. Story #574 replaces it with the showcase
-# scenes in `corpus/showcase/`.
+# `LiveScene`, the type the frame loop ticks and the scenes hand back.
 dashlang.workspace = true
-# The product layout solver. `Scene::build_live` takes one and the live scene
-# retains it, so the host injects it rather than `dashlang` constructing one.
-dashscene-engine.workspace = true
+# The showcase scenes themselves (story #574). A workspace member under
+# `corpus/`, not a published crate: the host holds the loop, the corpus holds
+# the content. Each scene injects its own solver, which is why the host no
+# longer names `dashscene-engine`.
+showcase = { path = "../corpus/showcase" }
 winit.workspace = true
 softbuffer.workspace = true
