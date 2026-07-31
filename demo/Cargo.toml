@@ -1,0 +1,22 @@
+[package]
+name = "demo"
+version = "0.0.0"
+publish = false
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "The showcase host: a window, a presentation seam, and the Skia blit behind it (v0.14, epic #568)."
+
+[dependencies]
+# Boundary B — the `Painter` trait the presenter drives.
+dashpaint.workspace = true
+# `CommittedScene`, the committed buffer a presenter is handed.
+dashscene-core.workspace = true
+# The v0 reference painter, and the only `Present` implementation for now.
+dashscene-skia.workspace = true
+# Authors the placeholder scene. Story #574 replaces it with the showcase
+# scenes in `corpus/showcase/`.
+dashlang.workspace = true
+winit.workspace = true
+softbuffer.workspace = true

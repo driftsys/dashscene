@@ -17,6 +17,11 @@ members = [
   "crates/dashscene-unity",
   "crates/dashscene-web",
   "goldens/tooling",
+  # The windowed showcase host (v0.14, epic #568). A workspace member and not a
+  # sixteenth published crate, following `goldens/tooling`: it carries
+  # `publish = false`, it is absent from the justfile's `publish` recipe, and it
+  # is therefore outside `docs/decisions/crate-name-map.md`.
+  "demo",
 ]
 
 [workspace.package]
@@ -148,6 +153,30 @@ nv-flip = "0.1"
 # build (goldens/README.md); a patch release changing rasterization or
 # PNG encoding must arrive as a deliberate, re-goldened bump.
 skia-safe = "=0.81.0"
+# The window and its event loop, for the showcase host (`demo/`, story #571).
+# 0.30 rather than 0.31: 0.31 is published only as `0.31.0-beta.1` and
+# `0.31.0-beta.2`, and it renames the whole `ApplicationHandler` surface
+# (`resumed` to `can_create_surfaces`, `Window` to `Box<dyn Window>`,
+# `WindowEvent::Resized` to `SurfaceResized`). A pre-release is not something to
+# pin a first windowed target to; 0.30.13 is the current stable line.
+#
+# Default features, kept rather than trimmed: `x11`, `wayland`,
+# `wayland-dlopen` and `wayland-csd-adwaita`. The first three matter because
+# both Linux backends load their client libraries at run time rather than
+# linking them, so `cargo build -p demo` needs no X11 or Wayland development
+# package on a headless runner; the fourth is what draws a titlebar on a
+# Wayland compositor that expects the client to draw its own.
+winit = "0.30"
+# The CPU blit path: `softbuffer` hands back a window-sized framebuffer and
+# posts it. It is the same rust-windowing project as `winit`, and 0.4 speaks
+# `raw-window-handle` 0.6, which is the version winit 0.30 exposes.
+#
+# This is what lets the Skia reference painter reach a window without a GL
+# context, Ganesh, or a `skia_use_gl` build: skia rasters to CPU memory, and
+# this posts CPU memory to a window. Default features are `x11`, `wayland` and
+# `kms`, all three dlopen or pure Rust, so the headless-build property above
+# holds here too.
+softbuffer = "0.4"
 
 [profile.release]
 lto = true
