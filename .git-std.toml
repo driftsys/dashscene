@@ -19,6 +19,9 @@ scheme = "semver"
 #   importers   importers/   the Deno/TypeScript Figma importer and its
 #                            capture tool, which have their own
 #                            toolchain and their own CI job
+#   demo        demo/        the windowed showcase host — a workspace
+#                            member with its own binary and its own CI
+#                            job, not a published crate (story #571)
 #
 scopes = [
     "dashscene",
@@ -39,6 +42,7 @@ scopes = [
     "goldens",
     "corpus",
     "importers",
+    "demo",
     "repo",
     "docs",
     "ci",

@@ -98,6 +98,41 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
       - run: cargo test --workspace
 
+  demo-build:
+    name: demo-build
+    runs-on: ubuntu-latest
+    # The showcase host builds. That is the whole claim, and it is the only one
+    # slice v0.14 makes (epic #568). The demonstration is run by a person, not
+    # asserted by a suite: there is no golden producer, no coverage gate and no
+    # fidelity check here, because a demonstration wired into CI becomes a suite
+    # whose green state reads as evidence it never established — the
+    # `t2-check-has-no-teeth` failure the v0.13 test tiering exists to remove.
+    #
+    # The runner has no GPU and no display, and this job needs neither. It never
+    # opens a window; it compiles one. The build itself is headless-safe because
+    # both Linux backends load their client libraries at run time rather than
+    # linking them: winit's default features carry `wayland-dlopen`, and
+    # softbuffer's carry `x11-dlopen` and `wayland-dlopen`. So no X11 or Wayland
+    # development package is installed below — only the two the rest of the
+    # workspace already needs.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # dashbuf's build.rs shells out to flatc, and `demo` reaches dashbuf
+      # through dashscene-core.
+      - name: install flatc
+        run: |
+          curl -fsSL -o flatc.zip https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip
+          unzip -o flatc.zip flatc -d /usr/local/bin
+          chmod +x /usr/local/bin/flatc
+      # skia-safe's prebuilt Linux binaries link the system fontconfig;
+      # the runner image ships the runtime library but not the -dev
+      # symlink the linker needs.
+      - name: install skia system libraries
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
+      - run: cargo build -p demo
+
   convco:
     name: convco
     if: github.event_name == 'pull_request'
@@ -262,6 +297,7 @@ jobs:
         dprint,
         clippy,
         test,
+        demo-build,
         wasm-build,
         convco,
         deno,
