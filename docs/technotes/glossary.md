@@ -57,8 +57,9 @@ variants, FLIP, measure), `dashscene-typeset` (bidi/shaping/atlas), `dashbuf`
 vocabulary + scheduling), `dashlang` (Rust DSL + corpus generator), `dashc`
 (compiler), `dashpack-astcenc-sys` (raw bindings to the vendored astcenc C++
 sources), `dashpack` (asset packer — per-profile derivations and cold-bank
-assembly), `dashscene-unity` (Unity FFI bindings), `dashscene-web` /
-`dashscore` / `dashscene-compose` (parked).
+assembly), `dashscene-unity` (Unity FFI bindings), `dashscene-gpu` (the lean painter —
+instanced quads and analytic SDF over wgpu, native and web), `dashscene-web`
+(retired at v0.15), `dashscore` / `dashscene-compose` (parked).
 
 **dirty set** — the set of changed rect/glyph entries, enabling per-frame upload
 of only what moved (R-T4).

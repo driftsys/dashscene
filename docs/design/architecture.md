@@ -146,7 +146,8 @@ runtime that solves it),
 | `crates/dashpack-astcenc-sys` | raw bindings to the vendored astcenc C++ sources — ASTC encode plus the in-process reference decode | in progress (epic #345) — [native-astc-codec-table.md](../decisions/native-astc-codec-table.md)         |
 | `crates/dashpack`             | asset packer — per-profile derivations, cold-bank assembly, derivation manifest                     | in progress (epic #345) — [asset-quality-profile-bands.md](../decisions/asset-quality-profile-bands.md) |
 | `crates/dashscene-unity`      | Rust-side FFI bindings for the Unity painter                                                        | planned — see below                                                                                     |
-| `crates/dashscene-web`        | wasm/tiny-skia painter                                                                              | planned — see below                                                                                     |
+| `crates/dashscene-web`        | wasm/tiny-skia painter — retired at v0.15, superseded by `dashscene-gpu`                            | retired — see below                                                                                     |
+| `crates/dashscene-gpu`        | the lean painter — instanced quads and analytic SDF over wgpu, native and web                       | in progress (epic #569) — [wgpu-is-the-lean-painter.md](../decisions/wgpu-is-the-lean-painter.md)       |
 | `importers/figma/`            | Deno/TypeScript Figma REST importer + `sharedPluginData` annotator plugin                           | [dashc-wasm-abi.md](../decisions/dashc-wasm-abi.md) (the ABI it calls through)                          |
 | `corpus/`                     | DSL-generated stress corpus + Figma fixture captures                                                | —                                                                                                       |
 | `goldens/`                    | CI golden images + diff tooling (`goldens/tooling` workspace member)                                | [goldens.md](goldens.md)                                                                                |
@@ -166,13 +167,18 @@ that binds it:
   deferred to v1 in a separate repo by
   `docs/archive/2026-07-14-scope-decisions.md` §5. Internals:
   [rendering-and-painters.md](../technotes/rendering-and-painters.md) §9-§10.
-- **Lean native painter** — no crate name is reserved yet. Bound by R3
-  ("far less memory and CPU than the engine backend"); the decision to
-  build it is deliberately deferred to on-target measurement of the trimmed
-  Skia entry tier —
-  [rendering-and-painters.md](../technotes/rendering-and-painters.md) §5.
-- **Web painter** (`dashscene-web`, wasm + tiny-skia) — parked. Bound by G2
-  ("wasm (review)"); the climb-only-when-pushed ladder toward it is
+- **Lean native painter** (`dashscene-gpu`, instanced quads + analytic SDF
+  over wgpu) — in progress, epic #569. Bound by R3 ("far less memory and CPU
+  than the engine backend"). The 2026-07-13 sequencing deferred it to
+  on-target measurement of a trimmed Skia entry tier; that is amended by
+  [wgpu-is-the-lean-painter.md](../decisions/wgpu-is-the-lean-painter.md),
+  because the same painter is needed for the web regardless, and Skia-GPU is
+  recorded there as **not planned**. Skia remains the bit-exact CPU oracle,
+  permanently.
+- **Web painter** — `dashscene-gpu` covers the browser from the same codebase
+  as native. `dashscene-web`, which reserved a name for a wasm/tiny-skia
+  painter, is retired. Bound by G2 ("wasm (review)"); the
+  climb-only-when-pushed ladder is
   `docs/archive/2026-07-14-design-1-seed.md` §8.4.
 - **Placeholders and node replacement** — a reserved schema surface:
   `Node` already carries the fields (`contribution_id`/`fragment_ref`/

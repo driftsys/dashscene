@@ -36,7 +36,7 @@ intentionally undecided until that point
 
 ## Crates
 
-15 crates in one Cargo workspace (`resolver = "3"`, `edition = "2024"`,
+16 crates in one Cargo workspace (`resolver = "3"`, `edition = "2024"`,
 `license = "MIT"`). Full role-by-role mapping: `docs/decisions/crate-name-map.md`.
 
     dashscene            umbrella / facade
@@ -63,7 +63,11 @@ intentionally undecided until that point
                           derivation manifest; lands across slice v0.12
     dashscene-unity        Rust-side FFI bindings only — the Unity/C# project
                           itself is a separate, not-yet-created repo
-    dashscene-web          wasm/tiny-skia painter — parked
+    dashscene-web          wasm/tiny-skia painter — retired at v0.15,
+                          superseded by dashscene-gpu
+    dashscene-gpu          the lean painter — instanced quads and analytic
+                          SDF over wgpu, native and web from one codebase;
+                          lands across slice v0.15
 
 Plus `importers/figma/` (Deno/TypeScript — the Figma REST importer and
 the `sharedPluginData` annotator plugin; calls `dashc.wasm` directly

@@ -553,6 +553,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashscene-gpu"
+version = "0.0.0"
+dependencies = [
+ "dashpaint",
+]
+
+[[package]]
 name = "dashscene-skia"
 version = "0.0.0"
 dependencies = [

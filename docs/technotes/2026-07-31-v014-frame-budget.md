@@ -156,7 +156,7 @@ The prediction chain in this note has now been closed twice, and both times the
 measured value was smaller than the estimate. Worth remembering before quoting
 the next one.
 
-Worth weighing before anyone spends on #603: `dashscene-wgpu` (v0.15) has no
+Worth weighing before anyone spends on #603: `dashscene-gpu` (v0.15) has no
 blit at all, because it presents to its own surface rather than handing pixels
 back.
 

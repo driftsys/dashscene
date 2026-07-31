@@ -47,7 +47,8 @@ Reuse all 12, mapped onto the roles in `docs/design/architecture.md`:
     dashscene-unity        Rust-side FFI bindings for the Unity painter;
                           the Unity/C# work itself lives in a separate
                           repo
-    dashscene-web          wasm/tiny-skia painter, parked
+    dashscene-web          wasm/tiny-skia painter, parked — retired at
+                          v0.15, see the `dashscene-gpu` section below
     dashscore              parked — an authoring IDE, not in scope
     dashscene-compose      parked — Android Jetpack Compose backend, not
                           a target
@@ -96,6 +97,44 @@ reserved on crates.io. Nothing here is published yet
 belongs with the promotion rather than with this story — but the name can
 be squatted out from under the project in the meantime, which is the same
 exposure the original three had before they were reserved.
+
+## `dashscene-gpu`, added at the v0.15 open (story #577, 2026-08-01)
+
+    dashscene-gpu        the lean painter — instanced quads and analytic SDF
+                         over wgpu, covering native and web from one codebase
+
+A fifteenth published crate, and the fifth name that was not among the 12
+reserved. The strategy behind it is
+`docs/decisions/wgpu-is-the-lean-painter.md`; only the naming is settled here.
+
+**Why not `dashscene-wgpu`.** Epic #569 and its stories were filed under that
+name. `wgpu` is the backend this crate is built on, and the strategy record's
+contingency names a direct-GLES backend written over the same instance buffer
+and the same shaders — so a crate named for the backend would have to be
+renamed on the day that contingency was taken. The role is "the GPU painter";
+the name says that.
+
+**`dashscene-web` is retired.** Its reserved name described a wasm/tiny-skia
+painter, and `dashscene-gpu` reaches the browser from the same codebase as
+native. The crate is a 3-line placeholder, so nothing migrates. The reserved
+crates.io name is not released — it stays held, describing nothing, which is
+the cheap state for a reserved name to be in.
+
+**Availability.** `dashscene-gpu` was unclaimed on crates.io and is reserved by
+this story, unlike `dashpack` above. The exposure is the same one that record
+names — a name can be squatted out from under the project while nothing is
+published — and the answer taken here is the one the original twelve took:
+publish a placeholder version now, promote it later.
+
+Reserved 2026-08-01 as `dashscene-gpu` 0.1.0: a standalone placeholder built to
+the same shape as the twelve, **not** the workspace crate. Two properties follow
+from that, and both are deliberate. Its `repository` is the public
+`driftsys/dashscene`, not `driftsys/dashscene-staging`, so the reservation does
+not publish the private working repo's name. And the workspace crate stays at
+`0.0.0` like every other crate here, so the reservation does not drag the
+workspace out of the shared version flow — the same split the twelve are
+already in, where a reserved 0.1.0 sits above a workspace 0.0.0 and the real
+release at promotion is what closes the gap.
 
 ## Why
 
