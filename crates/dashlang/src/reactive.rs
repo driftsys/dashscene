@@ -714,20 +714,47 @@ fn apply_scalar_write(
     b.last_applied = v;
 }
 
-/// A [`LayoutSolver`] that replays a fixed set of rects — the retained
-/// geometry the reactive layer keeps between solves. Feeding it to
-/// `commit_with` publishes a paint-only or contained-scalar change
-/// without invoking the real solver, which is how a contained write
-/// performs no layout solve (A1). Core is unchanged: the "no solve"
-/// decision lives entirely in `dashlang`.
+/// A [`LayoutSolver`] that reports only the rects a contained write
+/// patched this tick — not the whole retained cache. `commit_with`'s own
+/// carry-forward (core issue #164: "a solver may report only the nodes
+/// that moved... leaves the rest... to carry forward from the previous
+/// commit") supplies every other node's rect unchanged, so publishing a
+/// contained-scalar change never touches, let alone allocates, the whole
+/// retained geometry (debt #191). Feeding it to `commit_with` also never
+/// invokes the real solver, which is how a contained write performs no
+/// layout solve (A1). Core is unchanged: the "no solve" decision lives
+/// entirely in `dashlang`.
 struct CachedSolver {
+    /// This tick's changed rects only, built fresh by `patched_rects` for
+    /// one `commit_with` call.
     rects: Vec<(NodeId, SolvedRect)>,
 }
 
 impl LayoutSolver for CachedSolver {
     fn solve(&mut self, _arena: &Arena) -> Vec<(NodeId, SolvedRect)> {
-        self.rects.clone()
+        // Moved, not cloned: `self.rects` is already this call's answer,
+        // built for exactly one `solve`.
+        std::mem::take(&mut self.rects)
     }
+}
+
+/// Applies every patch to the retained cache in place, then returns just
+/// the entries this tick changed — the size of a tick's dirty writes, not
+/// the size of the scene (debt #191). A node touched by more than one
+/// patch (e.g. both `X` and `Width` bound to signals dirty in the same
+/// tick) reports once, with every one of its patches already applied, so
+/// `commit_with` never sees the same [`NodeId`] twice (P4).
+fn patched_rects(
+    cached_solve: &mut [(NodeId, SolvedRect)],
+    patches: &[(usize, Patch)],
+) -> Vec<(NodeId, SolvedRect)> {
+    for (i, patch) in patches {
+        apply_patch(&mut cached_solve[*i].1, *patch);
+    }
+    let mut changed: Vec<usize> = patches.iter().map(|(i, _)| *i).collect();
+    changed.sort_unstable();
+    changed.dedup();
+    changed.into_iter().map(|i| cached_solve[i]).collect()
 }
 
 /// Accumulates resolved bindings while the node tree is staged.
@@ -911,11 +938,8 @@ impl LiveScene {
         let generation = if layout_dirty {
             txn.commit_with(&mut *self.solver)
         } else {
-            for (i, patch) in &patches {
-                apply_patch(&mut self.cached_solve[*i].1, *patch);
-            }
             let mut cached = CachedSolver {
-                rects: self.cached_solve.clone(),
+                rects: patched_rects(&mut self.cached_solve, &patches),
             };
             txn.commit_with(&mut cached)
         };
@@ -1381,5 +1405,97 @@ fn stage_live(
     let child_contained = contained && layout.mode == LayoutMode::None && !hug;
     for child in children {
         stage_live(txn, Some(id), child, child_contained, ctx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Debt #191: the no-solve path used to publish a contained write by
+    /// building `CachedSolver { rects: self.cached_solve.clone() }` — an
+    /// O(retained-node-count) allocation and copy every tick, regardless
+    /// of how many rects the tick actually touched. `patched_rects` is
+    /// the replacement: its output is sized to the tick's patch count,
+    /// never to the retained cache it reads from.
+    ///
+    /// A retained cache of 50,000 rects stands in for a large scene; one
+    /// patch, to node 0, is this tick's only write. Before the fix (a
+    /// full clone of `cached_solve`), `changed.len()` would be 50,000, not
+    /// 1 — this assertion is what a reverted fix fails.
+    #[test]
+    fn patched_rects_is_bounded_by_the_patch_count_not_the_cache_size() {
+        const RETAINED_NODE_COUNT: usize = 50_000;
+
+        let mut arena = Arena::new();
+        let ids: Vec<NodeId> = {
+            let mut txn = arena.open();
+            let ids = (0..RETAINED_NODE_COUNT)
+                .map(|_| txn.add_node(None, None))
+                .collect();
+            txn.commit();
+            ids
+        };
+        let seed = SolvedRect {
+            x: 0.0,
+            y: 0.0,
+            w: 1.0,
+            h: 1.0,
+        };
+        let mut cached_solve: Vec<(NodeId, SolvedRect)> =
+            ids.iter().map(|&id| (id, seed)).collect();
+
+        let patches = vec![(0usize, Patch::W(42.0))];
+        let changed = patched_rects(&mut cached_solve, &patches);
+
+        assert_eq!(
+            changed.len(),
+            1,
+            "one patch must report one changed rect, not the whole retained cache"
+        );
+        assert!(
+            changed.capacity() < RETAINED_NODE_COUNT,
+            "the delta must not allocate proportional to the retained node count \
+             (capacity {}, retained {RETAINED_NODE_COUNT})",
+            changed.capacity()
+        );
+        assert_eq!(cached_solve[0].1.w, 42.0, "the patch is applied in place");
+        assert_eq!(changed[0].1.w, 42.0, "the reported rect reflects the patch");
+    }
+
+    /// Two different channels on the same node (e.g. `X` and `Width`)
+    /// both classify as `Patch` and can both be dirty in the same tick.
+    /// Both patches must land on the retained cache, and the node must be
+    /// reported exactly once — `Txn::commit_with` panics on a duplicate
+    /// `NodeId` (P4).
+    #[test]
+    fn patched_rects_dedupes_multiple_patches_to_the_same_node() {
+        let mut arena = Arena::new();
+        let ids: Vec<NodeId> = {
+            let mut txn = arena.open();
+            let ids: Vec<NodeId> = (0..3).map(|_| txn.add_node(None, None)).collect();
+            txn.commit();
+            ids
+        };
+        let seed = SolvedRect {
+            x: 0.0,
+            y: 0.0,
+            w: 1.0,
+            h: 1.0,
+        };
+        let mut cached_solve: Vec<(NodeId, SolvedRect)> =
+            ids.iter().map(|&id| (id, seed)).collect();
+
+        // Both patches target index 1 (a distinct field each).
+        let patches = vec![(1usize, Patch::X(7.0)), (1usize, Patch::W(9.0))];
+        let changed = patched_rects(&mut cached_solve, &patches);
+
+        assert_eq!(changed.len(), 1, "one node reported once, not twice");
+        assert_eq!(changed[0].0, ids[1]);
+        assert_eq!(
+            (changed[0].1.x, changed[0].1.w),
+            (7.0, 9.0),
+            "both patches applied"
+        );
     }
 }
