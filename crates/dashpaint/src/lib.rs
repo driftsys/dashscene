@@ -687,6 +687,55 @@ pub struct VectorField {
     pub distance_range: f32,
 }
 
+/// Where one entry's shadows sit in the [`PaintTable`]'s flat shadow array.
+///
+/// The effect-side twin of [`ClipRegion`] and [`GlyphRange`], for the same
+/// two reasons: a `Vec` per entry has no C representation, and a flat array
+/// plus a range uploads as one buffer copy (story #578).
+///
+/// A distinct type rather than one shared span type, following the rule
+/// [`PaintIndex`], [`ClipIndex`] and [`AtlasIndex`] already follow here: a
+/// range into the shadow array cannot be passed where a range into the blur
+/// array belongs.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct ShadowRange {
+    /// First shadow, as an index into [`PaintTable::all_shadows`].
+    pub offset: u32,
+    /// How many shadows, in paint order. Zero = none.
+    pub count: u32,
+}
+
+impl ShadowRange {
+    /// The range an entry carries before [`PaintTable::push_with_effects`]
+    /// assigns it one, and the range of an entry with no shadows. Both mean
+    /// "names nothing", which is why one value serves both.
+    pub const NONE: Self = Self {
+        offset: 0,
+        count: 0,
+    };
+}
+
+/// Where one entry's blurs sit in the [`PaintTable`]'s flat blur array.
+/// Sibling of [`ShadowRange`]; see it for why these are two types.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct BlurRange {
+    /// First blur, as an index into [`PaintTable::all_blurs`].
+    pub offset: u32,
+    /// How many blurs. Zero = none.
+    pub count: u32,
+}
+
+impl BlurRange {
+    /// The range an entry carries before [`PaintTable::push_with_effects`]
+    /// assigns it one, and the range of an entry with no blurs.
+    pub const NONE: Self = Self {
+        offset: 0,
+        count: 0,
+    };
+}
+
 /// One paint-table entry (docs/design/dashbuf.md's paint-table row: paint-kind
 /// enum plus fill/stroke params): what a rect is filled with, how its
 /// outline is stroked, how its corners round, and the shadows it casts.
@@ -711,7 +760,11 @@ pub struct PaintEntry {
     /// node stacks as many as it authors, the same posture `extra_fills`
     /// (below) brought to the fill side (story C1, debt #146). `stroke`
     /// stays single-valued (the debt's stroke half is untouched).
-    pub shadows: Vec<Shadow>,
+    ///
+    /// A range into the table's flat shadow array since story #578; read it
+    /// with [`PaintTable::shadows`]. [`ShadowRange::NONE`] for a node with
+    /// no shadows, which is the default.
+    pub shadows: ShadowRange,
     /// The node's blurs (v0.11, story #393). Empty (the default) for a node
     /// with no blur, so every pre-v0.11 entry is unchanged. Carried beside
     /// `shadows` because a blur is an effect on the same node and dedups
@@ -721,7 +774,11 @@ pub struct PaintEntry {
     /// samples the already-composited backdrop; there is deliberately no
     /// separate flag saying so, because two records of one fact can
     /// disagree.
-    pub blurs: Vec<Blur>,
+    ///
+    /// A range into the table's flat blur array since story #578; read it
+    /// with [`PaintTable::blurs`]. [`BlurRange::NONE`] for a node with no
+    /// blur, which is the default.
+    pub blurs: BlurRange,
     /// The baked-vector coverage mask (story B1). `Some` masks `fill` by the
     /// referenced field's coverage — a Figma VECTOR shape. `None` (the
     /// default) is the implicit parametric shape, so every pre-B1 entry is
@@ -745,37 +802,17 @@ impl PaintEntry {
             ..Self::default()
         }
     }
-
-    /// True when a rect painted from this entry reads the
-    /// already-composited backdrop beneath it, rather than being built
-    /// from the node's own geometry alone — that is, when any of
-    /// [`blurs`](Self::blurs) is a [`BlurKind::Backdrop`]
-    /// (`docs/decisions/backdrop-blur-is-core-vocabulary.md`). A
-    /// [`BlurKind::Layer`] blur is node-local and does not count.
-    ///
-    /// This is the property [`Painter::paint`]'s ordering guarantee is
-    /// stated over: every rect beneath a rect whose entry answers `true`
-    /// is composited before that rect is drawn. Nothing in boundary B
-    /// changes shape for it — a painter finds its barriers by resolving
-    /// the paint index it already resolves per rect.
-    ///
-    /// Derived rather than stored, deliberately. `blurs` already carries
-    /// whether a backdrop blur is present, so a flag beside it would be a
-    /// second copy of one fact, and a struct of public fields has nothing
-    /// that would keep the two agreeing. Deriving it also widens the
-    /// guarantee by itself: a further backdrop-sampling effect extends
-    /// this answer, and no painter's barrier handling changes.
-    pub fn samples_backdrop(&self) -> bool {
-        self.blurs
-            .iter()
-            .any(|blur| matches!(blur.kind, BlurKind::Backdrop))
-    }
 }
 
 /// The paint table (docs/design/dashbuf.md): dense, indexed by `RectEntry.paint`.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PaintTable {
     entries: Vec<PaintEntry>,
+    /// Every entry's shadows, in one flat array (story #578). A
+    /// [`ShadowRange`] indexes into this.
+    shadows: Vec<Shadow>,
+    /// Every entry's blurs, likewise, named by a [`BlurRange`].
+    blurs: Vec<Blur>,
 }
 
 impl PaintTable {
@@ -783,13 +820,147 @@ impl PaintTable {
         Self::default()
     }
 
-    /// Appends an entry and returns its index — the value a
-    /// [`RectEntry::paint`] field holds to reference it.
+    /// Appends an entry that casts no shadow and carries no blur, and
+    /// returns its index — the value a [`RectEntry::paint`] field holds to
+    /// reference it.
+    ///
+    /// Most entries are this: of the paint pushes in this workspace, five
+    /// carry an effect. [`push_with_effects`](Self::push_with_effects) is
+    /// for those.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `entry` already names shadows or blurs, which this cannot
+    /// honour — it is given no arrays to copy them from, so accepting the
+    /// entry would leave the ranges pointing at whatever happened to sit at
+    /// those offsets. Refused by name (P4).
     pub fn push(&mut self, entry: PaintEntry) -> PaintIndex {
+        assert_eq!(
+            (entry.shadows, entry.blurs),
+            (ShadowRange::NONE, BlurRange::NONE),
+            "push takes an effect-less entry; an entry naming shadows or blurs goes through \
+             push_with_effects, which is given the arrays to copy them from"
+        );
+        self.push_entry(entry)
+    }
+
+    /// Appends an entry over `shadows` and `blurs`, which are copied into
+    /// the table's flat arrays and named by the ranges this assigns.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless the entry arrives with [`ShadowRange::NONE`] and
+    /// [`BlurRange::NONE`], for the reason
+    /// [`GlyphRunTable::push_run`] gives: a caller cannot know where its
+    /// effects will land in a table it has not entered, so a range arriving
+    /// here is one that will be replaced, and replacing it silently is how a
+    /// producer comes to believe its own offsets were used.
+    pub fn push_with_effects(
+        &mut self,
+        mut entry: PaintEntry,
+        shadows: &[Shadow],
+        blurs: &[Blur],
+    ) -> PaintIndex {
+        assert_eq!(
+            (entry.shadows, entry.blurs),
+            (ShadowRange::NONE, BlurRange::NONE),
+            "push_with_effects assigns an entry's effect ranges; the entry must arrive with \
+             ShadowRange::NONE and BlurRange::NONE, not offsets into some other table"
+        );
+        entry.shadows = ShadowRange {
+            offset: u32::try_from(self.shadows.len())
+                .expect("paint table exceeds u32::MAX shadows"),
+            count: u32::try_from(shadows.len()).expect("an entry exceeds u32::MAX shadows"),
+        };
+        entry.blurs = BlurRange {
+            offset: u32::try_from(self.blurs.len()).expect("paint table exceeds u32::MAX blurs"),
+            count: u32::try_from(blurs.len()).expect("an entry exceeds u32::MAX blurs"),
+        };
+        self.shadows.extend_from_slice(shadows);
+        self.blurs.extend_from_slice(blurs);
+        self.push_entry(entry)
+    }
+
+    fn push_entry(&mut self, entry: PaintEntry) -> PaintIndex {
         let index =
             u32::try_from(self.entries.len()).expect("paint table exceeds u32::MAX entries");
         self.entries.push(entry);
         PaintIndex(index)
+    }
+
+    /// The shadows `entry` casts, in paint order.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the range runs past the flat array. Only
+    /// [`push_with_effects`](Self::push_with_effects) writes ranges, and it
+    /// writes them from the array's own length, so no public path reaches
+    /// this today — but an entry read against a table it did not come from
+    /// would, which is the hazard a range has and a `Vec` did not.
+    pub fn shadows(&self, entry: &PaintEntry) -> &[Shadow] {
+        let start = entry.shadows.offset as usize;
+        let end = start + entry.shadows.count as usize;
+        self.shadows.get(start..end).unwrap_or_else(|| {
+            panic!(
+                "shadow range {}..{} runs past the table's {} shadows: an entry and the table it \
+                 is read against must be the same one",
+                start,
+                end,
+                self.shadows.len()
+            )
+        })
+    }
+
+    /// The blurs `entry` applies. Same contract as
+    /// [`shadows`](Self::shadows).
+    pub fn blurs(&self, entry: &PaintEntry) -> &[Blur] {
+        let start = entry.blurs.offset as usize;
+        let end = start + entry.blurs.count as usize;
+        self.blurs.get(start..end).unwrap_or_else(|| {
+            panic!(
+                "blur range {}..{} runs past the table's {} blurs: an entry and the table it is \
+                 read against must be the same one",
+                start,
+                end,
+                self.blurs.len()
+            )
+        })
+    }
+
+    /// True when a rect painted from `entry` reads the already-composited
+    /// backdrop beneath it, rather than being built from the node's own
+    /// geometry alone — that is, when any of its blurs is a
+    /// [`BlurKind::Backdrop`]
+    /// (`docs/decisions/backdrop-blur-is-core-vocabulary.md`). A
+    /// [`BlurKind::Layer`] blur is node-local and does not count.
+    ///
+    /// This is the property [`Painter::paint`]'s ordering guarantee is
+    /// stated over: every rect beneath a rect whose entry answers `true` is
+    /// composited before that rect is drawn. A painter finds its barriers by
+    /// resolving the paint index it already resolves per rect.
+    ///
+    /// Moved here from `PaintEntry` by story #578: the answer is derived
+    /// from the entry's blurs, and the blurs now live in this table. Still
+    /// derived rather than stored, for the reason it always was — a flag
+    /// beside `blurs` would be a second copy of one fact, and a struct of
+    /// public fields has nothing to keep the two agreeing. Deriving it also
+    /// widens the guarantee by itself: a further backdrop-sampling effect
+    /// extends this answer, and no painter's barrier handling changes.
+    pub fn samples_backdrop(&self, entry: &PaintEntry) -> bool {
+        self.blurs(entry)
+            .iter()
+            .any(|blur| matches!(blur.kind, BlurKind::Backdrop))
+    }
+
+    /// Every shadow in the table, in one flat array — the shape an
+    /// instance-buffer upload wants.
+    pub fn all_shadows(&self) -> &[Shadow] {
+        &self.shadows
+    }
+
+    /// Every blur in the table, likewise.
+    pub fn all_blurs(&self) -> &[Blur] {
+        &self.blurs
     }
 
     pub fn get(&self, index: PaintIndex) -> Option<&PaintEntry> {

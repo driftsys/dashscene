@@ -554,12 +554,23 @@ fn too_many_render_target_groups_warn_but_never_error() {
     );
 }
 
-/// A paint entry carrying one shadow, over a plain red fill.
-fn shadowed(shadow: Shadow) -> PaintEntry {
-    PaintEntry {
-        shadows: vec![shadow],
-        ..PaintEntry::solid(red())
-    }
+/// [`check_one`] over a plain red fill carrying one shadow.
+///
+/// A helper rather than a `PaintEntry` builder because `PaintEntry::shadows`
+/// is a range into a `PaintTable`'s flat array (story #578): the entry and
+/// its shadow have to reach the table together, through
+/// `push_with_effects`, and only the table can pair them.
+fn check_shadowed(w: f32, h: f32, shadow: Shadow) -> Report {
+    let mut paints = PaintTable::new();
+    let index = paints.push_with_effects(PaintEntry::solid(red()), &[shadow], &[]);
+    validate_scene(
+        &[rect(w, h, index.0)],
+        &paints,
+        &ImageTable::new(),
+        &ClipTable::new(),
+        &[],
+        &GlyphRunTable::new(),
+    )
 }
 
 fn drop_shadow() -> Shadow {
@@ -579,19 +590,19 @@ fn drop_shadow() -> Shadow {
 
 #[test]
 fn a_well_formed_shadow_produces_no_diagnostics() {
-    let report = check_one(100.0, 50.0, shadowed(drop_shadow()));
+    let report = check_shadowed(100.0, 50.0, drop_shadow());
     assert!(report.is_empty(), "unexpected diagnostics:\n{report}");
 }
 
 #[test]
 fn a_negative_blur_radius_is_named() {
-    let report = check_one(
+    let report = check_shadowed(
         100.0,
         50.0,
-        shadowed(Shadow {
+        Shadow {
             blur: -4.0,
             ..drop_shadow()
-        }),
+        },
     );
     assert!(report.has(rule::SHADOW_INVALID_GEOMETRY), "{report}");
     assert!(report.has_errors());
@@ -599,26 +610,26 @@ fn a_negative_blur_radius_is_named() {
 
 #[test]
 fn a_non_finite_offset_is_named() {
-    let report = check_one(
+    let report = check_shadowed(
         100.0,
         50.0,
-        shadowed(Shadow {
+        Shadow {
             offset: Vec2 {
                 x: f32::NAN,
                 y: 0.0,
             },
             ..drop_shadow()
-        }),
+        },
     );
     assert!(report.has(rule::SHADOW_INVALID_GEOMETRY), "{report}");
 }
 
 #[test]
 fn a_shadow_color_channel_out_of_range_is_named() {
-    let report = check_one(
+    let report = check_shadowed(
         100.0,
         50.0,
-        shadowed(Shadow {
+        Shadow {
             color: Color {
                 r: 1.5,
                 g: 0.0,
@@ -626,7 +637,7 @@ fn a_shadow_color_channel_out_of_range_is_named() {
                 a: 1.0,
             },
             ..drop_shadow()
-        }),
+        },
     );
     assert!(report.has(rule::SHADOW_COLOR_OUT_OF_RANGE), "{report}");
 }
@@ -635,13 +646,13 @@ fn a_shadow_color_channel_out_of_range_is_named() {
 fn a_negative_spread_is_allowed() {
     // CSS/Figma spread may be negative (it shrinks the shadow); only the
     // blur radius is required non-negative.
-    let report = check_one(
+    let report = check_shadowed(
         100.0,
         50.0,
-        shadowed(Shadow {
+        Shadow {
             spread: -3.0,
             ..drop_shadow()
-        }),
+        },
     );
     assert!(
         !report.has(rule::SHADOW_INVALID_GEOMETRY),

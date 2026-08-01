@@ -1098,8 +1098,11 @@ impl Walk<'_> {
             extra_fills: fills,
             stroke: self.stroke_of(node, blockers),
             corners: corners_of(node),
-            shadows: shadows_of(node, blockers),
-            blurs: blurs_of(node),
+            // The entry names ranges into a `PaintTable`'s flat arrays
+            // (story #578); this lowering has no table, so the lists travel
+            // beside it on `DocPaint`.
+            shadows: dashpaint::ShadowRange::NONE,
+            blurs: dashpaint::BlurRange::NONE,
             // A parametric (rounded-box) node carries no baked shape; the
             // VECTOR arm is the only place a shape index is set.
             shape: None,
@@ -1107,11 +1110,22 @@ impl Walk<'_> {
 
         // A layout-only container draws nothing but still occupies a rect-table
         // slot. A clipping frame with no paint still needs its clip intent.
-        if entry == PaintEntry::default() && !node.clips_content {
+        let shadows = shadows_of(node, blockers);
+        let blurs = blurs_of(node);
+        // The effects are no longer part of the entry, so `default()` alone
+        // no longer means "draws nothing": a node whose only paint is a drop
+        // shadow would compare equal to it and be dropped (story #578).
+        if entry == PaintEntry::default()
+            && shadows.is_empty()
+            && blurs.is_empty()
+            && !node.clips_content
+        {
             return Ok(None);
         }
         Ok(Some(DocPaint {
             entry,
+            shadows,
+            blurs,
             clip: node.clips_content,
             shape_field: None,
         }))
@@ -1200,25 +1214,28 @@ impl Walk<'_> {
                 bottom_right: radius,
                 bottom_left: radius,
             },
-            shadows: shadows_of(node, blockers),
-            blurs: blurs_of(node),
+            // Ranges into a `PaintTable` this lowering does not have
+            // (story #578); the lists travel beside the entry.
+            shadows: dashpaint::ShadowRange::NONE,
+            blurs: dashpaint::BlurRange::NONE,
             // An ellipse is a parametric (rounded-box) shape, not a baked one.
             shape: None,
         };
+        let shadows = shadows_of(node, blockers);
+        let blurs = blurs_of(node);
         // A circle with neither fill, stroke, shadow nor blur draws nothing —
         // the corners alone shape no ink. A backdrop blur counts as ink even
         // with no fill of its own: it changes the pixels beneath it, which is
         // the whole point of the effect.
         // An ellipse is a leaf, so it never clips.
-        if entry.fill.is_none()
-            && entry.stroke.is_none()
-            && entry.shadows.is_empty()
-            && entry.blurs.is_empty()
+        if entry.fill.is_none() && entry.stroke.is_none() && shadows.is_empty() && blurs.is_empty()
         {
             return Ok(None);
         }
         Ok(Some(DocPaint {
             entry,
+            shadows,
+            blurs,
             clip: false,
             shape_field: None,
         }))
@@ -1338,7 +1355,7 @@ impl Walk<'_> {
             // The outline is baked into the field, not a parametric stroke.
             stroke: None,
             corners: CornerRadii::default(),
-            shadows: Vec::new(),
+            shadows: dashpaint::ShadowRange::NONE,
             // A baked vector DOES carry its blur. The hero's frosted panel is
             // exactly this shape — a VECTOR with BACKGROUND_BLUR radius 100 —
             // and `docs/decisions/baked-vector-msdf-field.md` records that
@@ -1355,13 +1372,17 @@ impl Walk<'_> {
             // star — an approximation, where B1's rule is to skip and name
             // (`docs/decisions/baked-vector-msdf-field.md`). Refusing keeps the
             // gap visible until the painter can cast from a field.
-            blurs: blurs_of(node),
+            blurs: dashpaint::BlurRange::NONE,
             // The resolved `VectorField` is a runtime form; the `.dsb` carries
             // the shape index, on `DocPaint::shape_field` below.
             shape: None,
         };
         Ok(Some(DocPaint {
             entry,
+            // Empty for the reason the long comment above gives: a baked
+            // vector is refused whenever it carries a shadow.
+            shadows: Vec::new(),
+            blurs: blurs_of(node),
             clip: false,
             shape_field: Some(shape_field),
         }))

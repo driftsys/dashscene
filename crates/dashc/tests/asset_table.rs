@@ -58,13 +58,15 @@ fn image_node(name: &str, asset: u32) -> Node {
                 }),
                 stroke: None,
                 corners: dashpaint::CornerRadii::default(),
-                shadows: Vec::new(),
-                blurs: Vec::new(),
+                shadows: dashpaint::ShadowRange::NONE,
+                blurs: dashpaint::BlurRange::NONE,
                 shape: None,
                 extra_fills: Vec::new(),
             },
             clip: false,
             shape_field: None,
+            shadows: Vec::new(),
+            blurs: Vec::new(),
         }),
         ..Node::default()
     }

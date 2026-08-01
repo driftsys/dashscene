@@ -2460,7 +2460,7 @@ fn shadows_commit_onto_the_paint_entry_and_dedup() {
     assert_eq!(scene.paints().len(), 2);
 
     let entry = scene.paints().resolve(scene.rects()[0].paint);
-    assert_eq!(entry.shadows, vec![shadow(ShadowKind::Drop)]);
+    assert_eq!(scene.paints().shadows(entry), &[shadow(ShadowKind::Drop)]);
 }
 
 #[test]
@@ -2506,7 +2506,7 @@ fn a_masks_paint_entry_carries_no_shadows() {
     let scene = arena.committed();
     let mask_entry = scene.paints().resolve(scene.rects()[1].paint);
     assert!(
-        mask_entry.shadows.is_empty(),
+        scene.paints().shadows(mask_entry).is_empty(),
         "a mask draws nothing, so it casts no shadow"
     );
 }
@@ -2577,8 +2577,10 @@ fn blurs_commit_onto_the_paint_entry_and_dedup() {
     );
     assert_eq!(scene.paints().len(), 4);
 
-    assert_eq!(scene.paints().resolve(paint(0)).blurs, vec![backdrop(12.0)]);
-    assert!(scene.paints().resolve(paint(4)).blurs.is_empty());
+    let blurred = scene.paints().resolve(paint(0));
+    assert_eq!(scene.paints().blurs(blurred), &[backdrop(12.0)]);
+    let unblurred = scene.paints().resolve(paint(4));
+    assert!(scene.paints().blurs(unblurred).is_empty());
 }
 
 #[test]

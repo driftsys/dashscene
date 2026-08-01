@@ -1677,31 +1677,43 @@ impl Txn<'_> {
             {
                 Some(prev) => prev.paint,
                 None => {
-                    let entry = if draws_nothing {
-                        PaintEntry::default()
+                    // The effects travel beside the entry, not inside it:
+                    // an entry's `shadows`/`blurs` are ranges into the paint
+                    // table's flat arrays, and this code has no table to
+                    // index (story #578). `intern_paint` keys on the
+                    // contents and `PaintTable::push_with_effects` assigns
+                    // the ranges.
+                    let (entry, shadows, blurs) = if draws_nothing {
+                        (PaintEntry::default(), &[][..], &[][..])
                     } else {
                         let fill = arena.overlay(id).fill.or_else(|| node.fill.clone());
-                        PaintEntry {
-                            fill,
-                            stroke: node.stroke,
-                            corners: node.corners,
-                            // Shadows are not variant-overridable (the
-                            // variant vocabulary is X/Y/W/H/Fill), so they
-                            // come straight from the node. Cloned in the
-                            // cache-miss arm only, like the fill's stops.
-                            shadows: node.shadows.clone(),
-                            blurs: node.blurs.clone(),
-                            // The baked-vector coverage mask (story B1), not
-                            // variant-overridable either — straight from the
-                            // node. `VectorField` is `Copy`, so no clone.
-                            shape: node.shape,
-                            // Stacked fills (story C1), not variant-overridable
-                            // either — same posture as shadows, straight from
-                            // the node.
-                            extra_fills: node.extra_fills.clone(),
-                        }
+                        (
+                            PaintEntry {
+                                fill,
+                                stroke: node.stroke,
+                                corners: node.corners,
+                                // Shadows are not variant-overridable (the
+                                // variant vocabulary is X/Y/W/H/Fill), so
+                                // they come straight from the node. Borrowed
+                                // rather than cloned now that the entry
+                                // names a range instead of owning a Vec.
+                                shadows: dashpaint::ShadowRange::NONE,
+                                blurs: dashpaint::BlurRange::NONE,
+                                // The baked-vector coverage mask (story B1),
+                                // not variant-overridable either — straight
+                                // from the node. `VectorField` is `Copy`, so
+                                // no clone.
+                                shape: node.shape,
+                                // Stacked fills (story C1), not
+                                // variant-overridable either — same posture
+                                // as shadows, straight from the node.
+                                extra_fills: node.extra_fills.clone(),
+                            },
+                            node.shadows.as_slice(),
+                            node.blurs.as_slice(),
+                        )
                     };
-                    intern_paint(&mut back_paints, paint_map, entry)
+                    intern_paint(&mut back_paints, paint_map, entry, shadows, blurs)
                 }
             };
 
@@ -2207,15 +2219,21 @@ fn intern_paint(
     paints: &mut Arc<PaintTable>,
     interned: &mut FxHashMap<PaintKey, PaintIndex>,
     entry: PaintEntry,
+    shadows: &[Shadow],
+    blurs: &[Blur],
 ) -> PaintIndex {
-    let key = paint_key(&entry);
+    // The key is over the effects' *contents*, not over the ranges that will
+    // name them — which is what keeps dedup working now that the entry
+    // carries ranges (story #578). Two nodes with identical shadows must
+    // still reach one entry, and their ranges would differ until they did.
+    let key = paint_key(&entry, shadows, blurs);
     if let Some(&index) = interned.get(&key) {
         return index;
     }
     // Cannot truncate: the paint table stays below u32::MAX. `add_node`
     // bounds the node count, and the rebuild in `compact_paints` bounds
     // the table at a small multiple of the rect count (issue #197).
-    let index = Arc::make_mut(paints).push(entry);
+    let index = Arc::make_mut(paints).push_with_effects(entry, shadows, blurs);
     interned.insert(key, index);
     index
 }
@@ -2255,7 +2273,16 @@ fn compact_paints(
         rect.paint = match moved.get(&rect.paint.0) {
             Some(&index) => index,
             None => {
-                let index = table.push(paints.resolve(rect.paint).clone());
+                // Re-homing an entry into a fresh table: its ranges name the
+                // old table's arrays, so they are cleared and reassigned by
+                // the push, exactly as `push_with_effects` requires (story
+                // #578).
+                let old = paints.resolve(rect.paint);
+                let mut rehomed = old.clone();
+                rehomed.shadows = dashpaint::ShadowRange::NONE;
+                rehomed.blurs = dashpaint::BlurRange::NONE;
+                let index =
+                    table.push_with_effects(rehomed, paints.shadows(old), paints.blurs(old));
                 moved.insert(rect.paint.0, index);
                 index
             }
@@ -2269,7 +2296,11 @@ fn compact_paints(
         // In range for u32: the table holds at most one entry per rect,
         // and `add_node` keeps the node count below u32::MAX.
         let index = PaintIndex(i as u32);
-        interned.insert(paint_key(table.resolve(index)), index);
+        let entry = table.resolve(index);
+        interned.insert(
+            paint_key(entry, table.shadows(entry), table.blurs(entry)),
+            index,
+        );
     }
     *paints = Arc::new(table);
 }
@@ -2396,7 +2427,7 @@ fn intern_region(
 /// dirty and its paint entry never dedup.
 type PaintKey = Vec<u32>;
 
-fn paint_key(entry: &PaintEntry) -> PaintKey {
+fn paint_key(entry: &PaintEntry, shadows: &[Shadow], blurs: &[Blur]) -> PaintKey {
     let mut key = Vec::new();
 
     push_fill_key(&mut key, entry.fill.as_ref());
@@ -2426,13 +2457,13 @@ fn paint_key(entry: &PaintEntry) -> PaintKey {
 
     key.extend(corner_key(entry.corners));
 
-    key.push(entry.blurs.len() as u32);
-    for b in &entry.blurs {
+    key.push(blurs.len() as u32);
+    for b in blurs {
         key.push(b.kind as u32);
         key.push(b.radius.to_bits());
     }
-    key.push(entry.shadows.len() as u32);
-    for shadow in &entry.shadows {
+    key.push(shadows.len() as u32);
+    for shadow in shadows {
         key.push(shadow.kind as u32);
         key.extend(vec2_key(shadow.offset));
         key.push(shadow.blur.to_bits());
