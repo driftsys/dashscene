@@ -360,6 +360,14 @@ jobs:
       # Regenerate this list rather than trusting it — a golden added to
       # the class and not added here is measured by nothing:
       #   grep -rl assert_matches_golden_max_pixels goldens/tooling/tests/
+      #
+      # `v03` is in the list although it carries a fraction tolerance
+      # rather than a pixel budget. It renders `v03-paint`, the scene the
+      # 32 px anchor every other budget extrapolates from was measured
+      # on. Measuring the anchor in the same run as the budgets derived
+      # from it is what makes the comparison sound: otherwise today's
+      # residuals are being read against a figure taken on an older Skia,
+      # on hardware nobody has described.
       - name: calibrated-budget cross-architecture residuals (issue #539)
         run: |
           cargo test -p goldens \
@@ -370,6 +378,7 @@ jobs:
             --test v07_variant_topology \
             --test v013_uncovered_shapes \
             --test v07_ellipse \
+            --test v03 \
             -- --nocapture
 
   calibration:
