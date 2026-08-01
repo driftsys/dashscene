@@ -38,13 +38,13 @@ off to `git std bootstrap`, which wires up repo-local git hooks.
 
 Run `just --list` for the full recipe set. The common ones:
 
-| recipe        | what it does                                               |
-| ------------- | ---------------------------------------------------------- |
-| `just build`  | assemble + check (test, lint, audit) — the full local gate |
-| `just verify` | commit-message lint + `just build` — run before a PR       |
-| `just fmt`    | reformat Rust and markdown in place                        |
-| `just wasm`   | build `dashc` for `wasm32-unknown-unknown`                 |
-| `just book`   | serve the mdBook docs locally                              |
+| recipe        | what it does                                                                                                                                           |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `just build`  | assemble + check (test, lint, audit) — the local gate; two tests that re-derive committed asset tables sit outside it (`docs/decisions/test-tiers.md`) |
+| `just verify` | commit-message lint + `just build` — run before a PR                                                                                                   |
+| `just fmt`    | reformat Rust and markdown in place                                                                                                                    |
+| `just wasm`   | build `dashc` for `wasm32-unknown-unknown`                                                                                                             |
+| `just book`   | serve the mdBook docs locally                                                                                                                          |
 
 ## Crate ownership and scope
 

@@ -433,8 +433,10 @@ manifest rather than left to be discovered.
 - The vendored astcenc is built at `opt-level = 3` under the dev profile.
   Left unoptimised it runs about eighty times slower — 597 s against 7.5 s
   for one band sweep — which would make `just test` unusable. Both profiles
-  produce byte-identical output, which the pinned measurements in
-  `crates/dashpack/tests/band_contract.rs` check on every run.
+  produce byte-identical output, which
+  `crates/dashpack/tests/band_contract.rs`'s `the_recorded_contract_table`
+  checks — in the calibration tier, run in CI on the `packer` path filter and
+  locally at slice close (`docs/decisions/test-tiers.md`), not on every run.
 
 ## What this does not pin
 

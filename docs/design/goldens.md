@@ -15,8 +15,10 @@ how CPU painters generate their own goldens: a scene
 authored in the Rust DSL (`dashlang`), committed through
 `dashscene-core`, painted by the Skia reference painter
 (`dashscene-skia`), and compared pixel by pixel against a checked-in PNG — on
-every `cargo test --workspace` run, with no recipe or CI wiring beyond
-the workspace member. It is the harness every later slice re-goldens
+every `just test` and `just test-regression` run. There is now recipe wiring
+beyond the workspace member: three `goldens` test binaries are filtered out
+of the sanity tier, and `perceptual_calibration.rs` has its own CI
+`calibration` job (`docs/decisions/test-tiers.md`). It is the harness every later slice re-goldens
 against on a painter swap (`docs/technotes/rendering-and-painters.md`).
 
 An unpublished workspace member at `goldens/tooling`; the checked-in

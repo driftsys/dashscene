@@ -69,5 +69,94 @@ install_git_std() {
   esac
 }
 
+# cargo-nextest runs the test tiers (docs/decisions/test-tiers.md). Installed
+# from the project's own prebuilt binary rather than `cargo install
+# cargo-nextest`, which compiles it from source and would add minutes to every
+# fresh clone and every worktree.
+install_nextest() {
+  # The convco CI job runs this script only to obtain git-std, and a
+  # commit-message lint should not depend on a test runner's download host
+  # being reachable.
+  if [ -n "${BOOTSTRAP_SKIP_NEXTEST:-}" ]; then
+    log "cargo-nextest install skipped (BOOTSTRAP_SKIP_NEXTEST is set)"
+    return
+  fi
+
+  if command -v cargo-nextest >/dev/null 2>&1; then
+    log "cargo-nextest already installed: $(command -v cargo-nextest)"
+    return
+  fi
+
+  local platform cargo_bin url asset tmp sha_expected sha_actual
+  case "$(uname -s)" in
+    # These aliases are gnu-linked on Linux, where detect_platform() picks musl
+    # for git-std. The difference is deliberate rather than an oversight:
+    # nextest publishes no musl asset under these aliases, and every machine
+    # this repository targets is either Darwin or the gnu-linked ubuntu CI
+    # runner. A musl-only host would have to build nextest from source.
+    Linux)
+      case "$(uname -m)" in
+        x86_64 | amd64) platform="linux" ;;
+        arm64 | aarch64) platform="linux-arm" ;;
+        *) die "unsupported architecture for cargo-nextest: $(uname -m)" ;;
+      esac
+      ;;
+    # The mac tarball is a universal binary, so it needs no architecture case.
+    Darwin) platform="mac" ;;
+    *) die "unsupported OS for cargo-nextest: $(uname -s)" ;;
+  esac
+
+  url="https://get.nexte.st/latest/${platform}"
+  cargo_bin="${CARGO_HOME:-$HOME/.cargo}/bin"
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "${tmp}"' RETURN
+
+  # get.nexte.st is a redirector, and the checksum is a separate release asset
+  # beside the tarball: the same name with .tar.gz replaced by .sha256. Two
+  # addresses cannot produce it. The redirector's own address has no checksum
+  # beside it, and the fully resolved address is a pre-signed content-delivery
+  # URL where a suffix means nothing — asking for that one plus ".sha256"
+  # returns the tarball again, so the comparison below would fail on every
+  # fresh install rather than only on a corrupted one. The address that works
+  # is the first redirect target, taken without following it: that is the
+  # release asset itself, and swapping its extension gives the checksum.
+  asset="$(curl --fail --silent --show-error --output /dev/null \
+    --write-out '%{redirect_url}' "${url}")"
+  [ -n "${asset}" ] || die "get.nexte.st did not redirect for ${platform}"
+
+  log "downloading cargo-nextest (${platform})"
+  curl --fail --silent --show-error --location "${asset}" \
+    --output "${tmp}/nextest.tar.gz"
+  curl --fail --silent --show-error --location "${asset%.tar.gz}.sha256" \
+    --output "${tmp}/nextest.tar.gz.sha256"
+  sha_expected="$(cut -d' ' -f1 "${tmp}/nextest.tar.gz.sha256")"
+  # macOS ships shasum, not sha256sum. install_git_std above calls sha256sum
+  # unconditionally, which means its own download path cannot work on a Mac —
+  # noted here, not fixed here, because it is outside this change.
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha_actual="$(sha256sum "${tmp}/nextest.tar.gz" | cut -d' ' -f1)"
+  else
+    sha_actual="$(shasum -a 256 "${tmp}/nextest.tar.gz" | cut -d' ' -f1)"
+  fi
+  [ "${sha_expected}" = "${sha_actual}" ] || die "sha256 mismatch for cargo-nextest"
+
+  # Extract in the temporary directory and move the finished binary into place,
+  # the way install_git_std does. Streaming the download straight into
+  # ${cargo_bin} would leave a truncated cargo-nextest there if the transfer
+  # failed partway, and the "already installed" check at the top of this
+  # function would then skip the repair on every later run — a broken install
+  # that reports itself as done.
+  tar -xzf "${tmp}/nextest.tar.gz" -C "${tmp}"
+  mkdir -p "${cargo_bin}"
+  install -m 0755 "${tmp}/cargo-nextest" "${cargo_bin}/cargo-nextest"
+
+  log "installed cargo-nextest to ${cargo_bin}/cargo-nextest"
+  case ":${PATH}:" in
+    *":${cargo_bin}:"*) ;;
+    *) log "note: ${cargo_bin} is not on PATH — add it to your shell profile" ;;
+  esac
+}
+
 install_git_std
+install_nextest
 exec git std bootstrap

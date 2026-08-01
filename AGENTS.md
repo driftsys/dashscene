@@ -78,16 +78,23 @@ captures), `goldens/` (CI golden images + diff tooling).
 ## Commands
 
     just build      assemble + full check (this is what CI runs)
-    just test        cargo test --workspace
+    just test        sanity tier — ~7 s. Between edits, and before every
+                      commit.
+    just test-regression  regression tier — every test but the two
+                      calibration re-derivations, ~35 s. What `build` and
+                      the pre-push hook run.
+    just calibrate    calibration tier — 2 tests, ~165 s. Re-derives the
+                      committed asset tables; see the schedule below.
+    just test-all     every tier in one run.
     just lint         clippy -D warnings, cargo fmt --check, dprint check, markdownlint
     just fmt          reformat everything in place
-    just check        test + lint + audit
+    just check        regression tier + lint + audit
     just verify       commit-message lint over the branch range, then build — run before opening a PR
     just wasm         build dashc for wasm32-unknown-unknown
     just deno-check   just deno-test   just deno-fmt   just deno-capture
                       — scoped to importers/figma/
     just book         serve the mdBook docs locally
-    just install      ./bootstrap — installs git hooks, git-std, dprint, markdownlint-cli
+    just install      ./bootstrap — installs git hooks, git-std, dprint, markdownlint-cli, cargo-nextest
 
 Full recipe set: `justfile`. Conventions behind all of it — publish
 order, `.git-std.toml` versioning, CI job breakdown, why dprint is
@@ -132,6 +139,30 @@ broken into `story`-labeled issues. Stories are split so that
 independent stories can run in parallel; each story is worked in its
 own git worktree, on the branch named in the story issue, and its body
 lists what it depends on and what it blocks.
+
+**When to run which test tier** (`docs/decisions/test-tiers.md`). The suite
+runs as three tiers, so "tests pass" is no longer a claim about all of it:
+
+- **While editing, and before every commit** — `just test`. Seven seconds,
+  and everything except the four slower binaries the regression tier adds.
+  There is no reason to skip it.
+- **Before pushing, and before opening a PR** — `just build`, which runs the
+  regression tier. The `pre-push` hook runs `just verify` and therefore this
+  anyway; running it by hand only buys finding out before the push rather
+  than during it.
+- **When the diff touches any path in the `packer` filter** — the filter is
+  defined in the `changes` job of `.github/workflows/ci.yml`, and enumerated
+  with a reason per entry in `docs/decisions/test-tiers.md`. Run
+  `just calibrate` before marking the PR ready. The path list is deliberately
+  not repeated here: it has already drifted three times as a partial copy,
+  most recently omitting `Cargo.lock`. CI runs the tier regardless, and a red
+  job on a non-draft PR is what
+  `docs/decisions/review-before-ready-not-before-open.md` exists to prevent.
+- **At slice close** — `just calibrate`, whatever the slice touched. This is
+  the one run not driven by a path, and it is the backstop against a table
+  drifting through a change the filter did not predict.
+- **Name the tier in the PR body.** Never report a tier as run that was not
+  run.
 
 Story workflow — the definition of done for every story:
 

@@ -1,0 +1,85 @@
+# Test tiers — docs/decisions/test-tiers.md.
+#
+# The tier lives here rather than in attributes on the tests. An `#[ignore]`
+# says "do not run this" at the point the test is defined, which is the wrong
+# place to record a schedule that differs per moment: the same test belongs in
+# the gate before a push and not in the loop between edits. This file is the
+# one place the tiers are defined; `just test`, `just build` and
+# `just calibrate` select between them.
+#
+# The tiers nest. `regression` is a superset of `sanity`; `regression` and
+# `calibration` together are the whole suite.
+#
+# Filters use exact matches (`test(=name)`, `binary(=name)`) rather than
+# substring matches, so a test added later cannot join a tier by accident of
+# its name.
+#
+# An exact match has one failure mode of its own: rename a test and its filter
+# stops matching, so the test leaves its tier without any error. Counting does
+# not catch that — the tiers partition the suite, so a test moving from
+# `calibration` into `regression` keeps every total reconciling. What catches it
+# is `calibration-tier.txt` beside this file, which pins that tier's membership
+# by name; `just calibrate` and the CI calibration job both diff the live
+# listing against it. A rename fails there, loudly, instead of quietly
+# shrinking the tier. Only the calibration tier is pinned this way: it is two
+# names and they change rarely, where pinning the regression tier's would churn on every
+# test added.
+
+# The minimum version this file was written against and verified on.
+# Per-profile `default-filter` and exact-match filters both predate it, but
+# pinning the floor turns "runs against an old nextest" into a named error
+# rather than a filter that parses to something else.
+nextest-version = "0.9.87"
+
+# `default` is the regression tier, so a bare `cargo nextest run` gives the
+# same gate `just build` runs rather than a thinner one. The two tests excluded
+# here re-derive committed asset tables from the packer alone; they are the
+# `calibration` tier.
+[profile.default]
+default-filter = """
+not (
+    test(=every_rung_of_every_fixture_is_recorded)
+  + test(=the_recorded_contract_table)
+)
+"""
+
+# An empty profile inherits everything from `default`, including its filter.
+# It exists so `-P regression` reads as the tier it selects, rather than
+# leaving the gate nameless.
+[profile.regression]
+
+# The loop between edits and before every commit. Drops, on top of the
+# calibration tier: the profile-preview oracle, the glyph atlas pipeline, the
+# bake oracle, and the grid-anchor saturation test. Those cost about 73 s
+# together and each is reachable from a narrow part of the tree, so the
+# regression tier is where they are caught rather than this one.
+[profile.sanity]
+default-filter = """
+not (
+    test(=every_rung_of_every_fixture_is_recorded)
+  + test(=the_recorded_contract_table)
+  + binary(=profile_preview_oracle)
+  + binary(=atlas_pipeline)
+  + test(=an_out_of_range_grid_anchor_does_not_panic)
+  + binary(=v010_bake_oracle)
+)
+"""
+
+# The two tests that re-derive a committed table from the packer alone. They
+# can only fail when dashpack, its encoder, dashbuf's asset kinds, or the
+# corpus payloads change, which is what makes a narrow path filter correct for
+# them in CI.
+#
+# The profile-preview oracle is deliberately NOT here, though it also checks a
+# committed table. It renders every scene through Skia, so it reads the whole
+# painter stack and almost any Rust change can move it — no path filter could
+# honestly cover it. It runs in `regression`, on every push, instead.
+[profile.calibration]
+default-filter = """
+    test(=every_rung_of_every_fixture_is_recorded)
+  + test(=the_recorded_contract_table)
+"""
+
+# Every tier in one run.
+[profile.all]
+default-filter = "all()"
