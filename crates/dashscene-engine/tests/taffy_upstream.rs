@@ -30,7 +30,7 @@ fn fixed_child(width: f32, margin_left: f32) -> Style {
     Style {
         size: Size {
             width: length(width),
-            height: length(56.0),
+            height: length(56.0_f32),
         },
         flex_basis: Dimension::length(width),
         flex_grow: 0.0,
@@ -51,7 +51,7 @@ fn hug_row() -> Style {
         flex_direction: FlexDirection::Row,
         size: Size {
             width: Dimension::AUTO,
-            height: length(56.0),
+            height: length(56.0_f32),
         },
         ..Default::default()
     }
