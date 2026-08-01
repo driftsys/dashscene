@@ -181,6 +181,24 @@ the layout now costs nothing. A `RectEntry` is 28 bytes — four
 coordinates, the paint and clip indices, and the free-path group alpha —
 pinned by test.
 
+`CornerRadii` is `#[repr(C)]` too, and was not until story #600.
+`ClipBox` embeds one, so a `repr(C)` struct held a `repr(Rust)` field,
+whose layout is unspecified — the blittability claim above was true only
+by accident of what rustc does with four `f32`s. It was found by
+`crates/dashscene-unity`'s `improper_ctypes_definitions` gate on the
+first run of that gate, and adding the attribute moved nothing: all 77
+committed binary artifacts stayed byte-identical.
+
+That gate is why these attributes are now enforced rather than merely
+intended. `dashscene-unity` declares an `extern "C"` surface over the
+boundary-B value types under `#![deny(improper_ctypes_definitions)]`, so
+removing a `repr` attribute, adding a `Vec` field, or putting a
+payload-carrying enum on the surface stops the workspace compiling.
+Boundary B is a language-neutral data contract, and the reason is G2 —
+see `docs/design/architecture.md`. The surface is narrow today and widens
+as story #578 flattens `PaintKind`, `GlyphRun`, `ClipRegion`,
+`PaintEntry` and `ImageAsset`.
+
 `Painter::paint` is infallible and the trait is object-safe (`Box<dyn
 Painter>` must work — backend selection is whole-scene, R3). Slice order
 defines stacking — a later entry composites over an earlier one, since

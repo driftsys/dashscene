@@ -585,6 +585,9 @@ dependencies = [
 [[package]]
 name = "dashscene-unity"
 version = "0.0.0"
+dependencies = [
+ "dashpaint",
+]
 
 [[package]]
 name = "dashscene-validator"

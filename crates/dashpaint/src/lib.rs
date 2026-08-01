@@ -300,6 +300,15 @@ pub struct Stroke {
 
 /// Per-corner radii in document units; all zero (the default) = sharp
 /// corners.
+///
+/// `#[repr(C)]` because [`ClipBox`] embeds one and is itself `#[repr(C)]`.
+/// A `repr(C)` struct with a `repr(Rust)` field does not have a fixed
+/// layout — the field's own layout is unspecified — so `ClipBox` was
+/// making a promise it did not keep. Found by `dashscene-unity`'s
+/// `improper_ctypes_definitions` gate on its first run (story #600); the
+/// attribute changes no layout any current target actually produces, which
+/// is why nothing moved when it was added.
+#[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct CornerRadii {
     pub top_left: f32,
