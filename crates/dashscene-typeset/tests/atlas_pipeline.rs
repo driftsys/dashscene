@@ -383,6 +383,110 @@ fn arabic_atlas_double_run_is_byte_identical() {
     );
 }
 
+/// The largest channel movement a reproduced atlas may carry: one step,
+/// the smallest difference an 8-bit channel can express.
+const MAX_CHANNEL_STEP: u8 = 1;
+
+/// The largest share of an atlas's pixels that may differ at all, as a
+/// fraction. Measured worst case across all eight committed fixtures on
+/// both architectures: 4 pixels of 65536, which is 0.006 %.
+const MAX_DIFFERING_PIXEL_RATIO: f64 = 0.001;
+
+/// Decodes an atlas PNG to raw samples, with its dimensions and its
+/// channel count. Comparing decoded samples rather than PNG bytes keeps
+/// the assertion about the atlas rather than about the encoder.
+fn decode_atlas(png_bytes: &[u8], which: &str) -> (Vec<u8>, (u32, u32), usize) {
+    let mut reader = png::Decoder::new(std::io::Cursor::new(png_bytes))
+        .read_info()
+        .unwrap_or_else(|e| panic!("{which} atlas.png has a readable PNG header: {e}"));
+    let mut buf = vec![
+        0;
+        reader
+            .output_buffer_size()
+            .expect("atlas.png fits in memory")
+    ];
+    let info = reader
+        .next_frame(&mut buf)
+        .unwrap_or_else(|e| panic!("{which} atlas.png decodes: {e}"));
+    buf.truncate(info.buffer_size());
+    let pixels = (info.width as usize) * (info.height as usize);
+    assert!(pixels > 0, "{which} atlas.png is not empty");
+    let channels = buf.len() / pixels;
+    (buf, (info.width, info.height), channels)
+}
+
+/// Asserts a freshly generated atlas reproduces the committed one (R7).
+///
+/// The metrics blob — packing, per-glyph boxes, atlas parameters and
+/// generator provenance — is compared byte for byte, because it is
+/// byte-identical on every machine measured.
+///
+/// The image is not compared byte for byte, because it cannot be:
+/// `msdf-atlas-gen`'s floating-point arithmetic differs between CPU
+/// architectures, so the committed Bold fixture decodes 4 pixels apart
+/// between arm64 and x86_64, each by a single channel step (story #654).
+/// Byte-identity there asserts a property no committed fixture can hold
+/// on two architectures at once, and fails on whichever fixture the
+/// drift happens to land on.
+///
+/// The two bounds below admit that noise and nothing else. A generator
+/// that re-rasterises a glyph, moves the packing, or changes the
+/// distance range moves some channel by far more than one step; a
+/// systematic shift of the whole field moves far more than 0.1 % of the
+/// pixels. Same-machine determinism is still asserted byte for byte, by
+/// `double_run_is_byte_identical` and its Arabic twin.
+fn assert_atlas_reproduces(committed: &AtlasBundle, fresh: &AtlasBundle, face: &str) {
+    assert_eq!(
+        committed.metrics.to_bytes(),
+        fresh.metrics.to_bytes(),
+        "committed {face} atlas.metrics no longer reproducible (R7) — if the \
+         toolchain legitimately changed, regenerate the fixture and record why"
+    );
+
+    let (a, a_dim, channels) = decode_atlas(&committed.image_png, "committed");
+    let (b, b_dim, _) = decode_atlas(&fresh.image_png, "fresh");
+    assert_eq!(
+        a_dim, b_dim,
+        "committed {face} atlas.png changed dimensions (R7) — a relayout, not \
+         cross-architecture noise; regenerate the fixture and record why"
+    );
+    assert_eq!(
+        a.len(),
+        b.len(),
+        "{face}: equal dimensions, equal sample count"
+    );
+
+    let mut differing = 0usize;
+    let mut peak = 0u8;
+    for (p, q) in a.chunks(channels).zip(b.chunks(channels)) {
+        let mut moved = false;
+        for (x, y) in p.iter().zip(q) {
+            let delta = x.abs_diff(*y);
+            peak = peak.max(delta);
+            moved |= delta > 0;
+        }
+        differing += usize::from(moved);
+    }
+
+    let pixels = (a_dim.0 as usize) * (a_dim.1 as usize);
+    let budget = (pixels as f64 * MAX_DIFFERING_PIXEL_RATIO) as usize;
+    assert!(
+        peak <= MAX_CHANNEL_STEP,
+        "committed {face} atlas.png no longer reproducible (R7): a channel moved \
+         by {peak}, over the {MAX_CHANNEL_STEP}-step bound that admits only \
+         cross-architecture noise. If the toolchain legitimately changed, \
+         regenerate the fixture and record why"
+    );
+    assert!(
+        differing <= budget,
+        "committed {face} atlas.png no longer reproducible (R7): {differing} of \
+         {pixels} pixels differ, over the {budget}-pixel budget. Each moved by at \
+         most one step, so this is a systematic shift rather than a re-rasterised \
+         glyph. If the toolchain legitimately changed, regenerate the fixture and \
+         record why"
+    );
+}
+
 #[test]
 fn committed_ascii_fixture_is_reproducible() {
     if !tool_available() {
@@ -393,13 +497,7 @@ fn committed_ascii_fixture_is_reproducible() {
          --test atlas_pipeline -- --ignored regenerate_committed_ascii_fixture`",
     );
     let fresh = shared_ascii_bundle();
-    assert_eq!(
-        committed.image_png, fresh.image_png,
-        "committed atlas.png no longer reproducible (R7) — if the \
-         toolchain legitimately changed, regenerate the fixture and \
-         record why"
-    );
-    assert_eq!(committed.metrics.to_bytes(), fresh.metrics.to_bytes());
+    assert_atlas_reproduces(&committed, fresh, "Regular");
 }
 
 /// The Arabic committed fixture is reproducible across machines, the
@@ -417,13 +515,7 @@ fn committed_arabic_fixture_is_reproducible() {
          --test atlas_pipeline -- --ignored regenerate_committed_arabic_fixture`",
     );
     let fresh = generate(&arabic_spec()).expect("pipeline runs over the Arabic fixture");
-    assert_eq!(
-        committed.image_png, fresh.image_png,
-        "committed Arabic atlas.png no longer reproducible (R7) — if \
-         the toolchain legitimately changed, regenerate the fixture and \
-         record why"
-    );
-    assert_eq!(committed.metrics.to_bytes(), fresh.metrics.to_bytes());
+    assert_atlas_reproduces(&committed, &fresh, "Arabic");
 }
 
 /// The committed SemiBold ASCII fixture is reproducible, exactly as
@@ -439,13 +531,7 @@ fn committed_ascii_semibold_fixture_is_reproducible() {
          --test atlas_pipeline -- --ignored regenerate_committed_ascii_semibold_fixture`",
     );
     let fresh = generate(&ascii_semibold_spec()).expect("pipeline runs over the SemiBold face");
-    assert_eq!(
-        committed.image_png, fresh.image_png,
-        "committed SemiBold atlas.png no longer reproducible (R7) — if \
-         the toolchain legitimately changed, regenerate the fixture and \
-         record why"
-    );
-    assert_eq!(committed.metrics.to_bytes(), fresh.metrics.to_bytes());
+    assert_atlas_reproduces(&committed, &fresh, "SemiBold");
 }
 
 /// The committed Bold ASCII fixture is reproducible (story #368).
@@ -459,13 +545,7 @@ fn committed_ascii_bold_fixture_is_reproducible() {
          --test atlas_pipeline -- --ignored regenerate_committed_ascii_bold_fixture`",
     );
     let fresh = generate(&ascii_bold_spec()).expect("pipeline runs over the Bold face");
-    assert_eq!(
-        committed.image_png, fresh.image_png,
-        "committed Bold atlas.png no longer reproducible (R7) — if the \
-         toolchain legitimately changed, regenerate the fixture and \
-         record why"
-    );
-    assert_eq!(committed.metrics.to_bytes(), fresh.metrics.to_bytes());
+    assert_atlas_reproduces(&committed, &fresh, "Bold");
 }
 
 /// The three ASCII weights are distinct rasterizations of one charset:
@@ -592,10 +672,11 @@ fn regenerate_committed_ascii_bold_fixture() {
 // are what the E7 gate's atlases are checked by, and this story does not
 // rewrite them.
 
-/// Loads a committed fixture, regenerates it from `spec`, and byte-compares
+/// Loads a committed fixture, regenerates it from `spec`, and compares
 /// both files — the R7 guarantee `committed_ascii_fixture_is_reproducible`
-/// states for the Regular Noto fixture. `regenerator` names the ignored test
-/// that rewrites this fixture, so a failure says how to fix itself.
+/// states for the Regular Noto fixture, under the bounds
+/// [`assert_atlas_reproduces`] documents. `regenerator` names the ignored
+/// test that rewrites this fixture, so a failure says how to fix itself.
 fn assert_fixture_reproducible(dir: &str, spec: &AtlasSpec, regenerator: &str) {
     let committed = AtlasBundle::load_from_dir(&PathBuf::from(dir)).unwrap_or_else(|e| {
         panic!(
@@ -604,16 +685,7 @@ fn assert_fixture_reproducible(dir: &str, spec: &AtlasSpec, regenerator: &str) {
         )
     });
     let fresh = generate(spec).expect("pipeline runs over the committed face");
-    assert_eq!(
-        committed.image_png, fresh.image_png,
-        "committed {dir} atlas.png no longer reproducible (R7) — if the \
-         toolchain legitimately changed, regenerate the fixture and record why"
-    );
-    assert_eq!(
-        committed.metrics.to_bytes(),
-        fresh.metrics.to_bytes(),
-        "committed {dir} atlas.metrics no longer reproducible (R7)"
-    );
+    assert_atlas_reproduces(&committed, &fresh, dir);
 }
 
 /// Rewrites a committed fixture from the current pipeline. Called only by the

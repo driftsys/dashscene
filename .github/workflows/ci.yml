@@ -206,8 +206,28 @@ jobs:
           if-no-files-found: error
 
   atlas-repro:
-    name: atlas-repro
-    runs-on: ubuntu-latest
+    name: atlas-repro (${{ matrix.arch }})
+    # Both architectures, because the fixtures are checked on both and
+    # each catches what the other cannot. The committed atlases are not
+    # byte-identical across CPU architectures — msdf-atlas-gen's
+    # floating-point arithmetic differs, so a fixture baked on arm64
+    # decodes a few pixels away from the x86_64 one, each by a single
+    # channel step (story #654). The reproducibility tests compare
+    # decoded samples under bounds that admit exactly that noise, so one
+    # committed fixture is checkable on either runner.
+    #
+    # Same-machine determinism is still asserted byte for byte, by
+    # `double_run_is_byte_identical` and its Arabic twin, which run on
+    # both legs here.
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     env:
       # Commit SHA of the upstream v1.4 tag (tags are movable; a SHA is
       # not). The version this builds must match REQUIRED_TOOL_VERSION
@@ -225,7 +245,12 @@ jobs:
           # linked binary (loader error, surfaced by the version
           # probe's stderr), delete this cache entry to force a
           # rebuild.
-          key: msdf-atlas-gen-${{ env.MAG_REF }}-${{ runner.os }}
+          #
+          # `runner.arch` is part of the key, not decoration:
+          # `runner.os` is `Linux` on both x86_64 and arm64, so without
+          # it this job would restore an x86_64 binary onto an arm64
+          # runner and fail on the exec, not on anything it tests.
+          key: msdf-atlas-gen-${{ env.MAG_REF }}-${{ runner.os }}-${{ runner.arch }}
       - name: build msdf-atlas-gen
         if: steps.cache-tool.outputs.cache-hit != 'true'
         # Upstream publishes Windows binaries only; build the pinned
