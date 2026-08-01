@@ -180,6 +180,26 @@ const SHARP: ClipBox = ClipBox {
     },
 };
 
+/// A box distinguishable from [`SHARP`] in every field.
+///
+/// Needed because the flat-array tests below index into one shared box
+/// array, and a fixture of identical boxes cannot tell a correct range from
+/// one that reads the right *number* of boxes at the wrong offset — the two
+/// slices compare equal. Mutating `ClipTable::view` to ignore `offset`
+/// leaves an all-`SHARP` suite green.
+const OTHER: ClipBox = ClipBox {
+    x: 1.0,
+    y: 2.0,
+    w: 3.0,
+    h: 4.0,
+    corners: CornerRadii {
+        top_left: 5.0,
+        top_right: 6.0,
+        bottom_right: 7.0,
+        bottom_left: 8.0,
+    },
+};
+
 #[test]
 fn a_new_clip_table_reserves_the_unclipped_region_at_index_zero() {
     let clips = ClipTable::new();
@@ -194,15 +214,15 @@ fn a_new_clip_table_reserves_the_unclipped_region_at_index_zero() {
 fn clip_table_push_returns_sequential_indices_and_get_resolves_them() {
     let mut clips = ClipTable::new();
 
-    let one = clips.push(ClipRegion::new(vec![SHARP]));
-    let two = clips.push(ClipRegion::new(vec![SHARP, SHARP]));
+    let one = clips.push(&[SHARP]);
+    let two = clips.push(&[SHARP, SHARP]);
 
     assert_eq!(one, ClipIndex(1));
     assert_eq!(two, ClipIndex(2));
     assert_eq!(clips.len(), 3);
     assert_eq!(clips.resolve(one).boxes(), &[SHARP]);
     assert_eq!(
-        clips.get(two).map(ClipRegion::boxes),
+        clips.get(two).map(|view| view.boxes()),
         Some(&[SHARP, SHARP][..])
     );
     assert_eq!(clips.get(ClipIndex(3)), None);
@@ -211,7 +231,58 @@ fn clip_table_push_returns_sequential_indices_and_get_resolves_them() {
 #[test]
 fn a_region_with_boxes_is_not_unclipped() {
     assert!(ClipRegion::unclipped().is_unclipped());
-    assert!(!ClipRegion::new(vec![SHARP]).is_unclipped());
+
+    let mut clips = ClipTable::new();
+    let one = clips.push(&[SHARP]);
+    assert!(!clips.resolve(one).is_unclipped());
+}
+
+/// A region is a range into the table's one flat box array, and the ranges
+/// of two regions pushed in order are adjacent and non-overlapping (story
+/// #578). The upload path this shape exists for reads `all_boxes` directly,
+/// so the ranges have to mean what they say against it.
+#[test]
+fn regions_are_adjacent_ranges_into_one_flat_box_array() {
+    let mut clips = ClipTable::new();
+    let one = clips.push(&[SHARP]);
+    let two = clips.push(&[OTHER, SHARP]);
+
+    assert_eq!(
+        clips.region(ClipIndex::UNCLIPPED),
+        ClipRegion {
+            offset: 0,
+            count: 0
+        },
+        "the reserved unclipped region names no boxes"
+    );
+    assert_eq!(
+        clips.region(one),
+        ClipRegion {
+            offset: 0,
+            count: 1
+        }
+    );
+    assert_eq!(
+        clips.region(two),
+        ClipRegion {
+            offset: 1,
+            count: 2
+        },
+        "the second region starts where the first ended"
+    );
+    assert_eq!(clips.all_boxes(), &[SHARP, OTHER, SHARP]);
+
+    // The boxes a view hands back are the slice its range names, read out of
+    // the flat array rather than out of a Vec the region owns. Asserted
+    // against the literal boxes rather than against a slice recomputed from
+    // the same range this is checking, which would agree with an offset bug
+    // by construction.
+    assert_eq!(clips.resolve(one).boxes(), &[SHARP]);
+    assert_eq!(
+        clips.resolve(two).boxes(),
+        &[OTHER, SHARP],
+        "the second region starts at its own offset, not at the array's start"
+    );
 }
 
 #[test]
@@ -227,7 +298,11 @@ fn clip_table_resolve_panics_on_an_out_of_range_index() {
 #[derive(Default)]
 struct RecordingPainter {
     painted: Vec<(RectEntry, Color)>,
-    clipped: Vec<ClipRegion>,
+    /// The boxes each rect resolved to, in paint order. Stores the boxes
+    /// rather than the `ClipRegion` range, because a range is meaningless
+    /// away from the table it indexes and the painter is being asked what
+    /// it was told to clip against (story #578).
+    clipped: Vec<Vec<ClipBox>>,
     groups: Vec<GroupComposite>,
 }
 
@@ -247,7 +322,7 @@ impl Painter for RecordingPainter {
                 Some(PaintKind::Solid { color }) => self.painted.push((*rect, *color)),
                 other => panic!("fixture only paints solids, got {other:?}"),
             }
-            self.clipped.push(clips.resolve(rect.clip).clone());
+            self.clipped.push(clips.resolve(rect.clip).boxes().to_vec());
         }
         self.groups.extend_from_slice(groups);
     }
@@ -259,13 +334,13 @@ fn two_rect_fixture() -> (Vec<RectEntry>, PaintTable, ClipTable) {
     let blue = paints.push(PaintEntry::solid(HALF_BLUE));
     let mut clips = ClipTable::new();
     // The second rect sits inside the first, which clips it.
-    let inside_first = clips.push(ClipRegion::new(vec![ClipBox {
+    let inside_first = clips.push(&[ClipBox {
         x: 0.0,
         y: 0.0,
         w: 100.0,
         h: 50.0,
         corners: CornerRadii::default(),
-    }]));
+    }]);
     let rects = vec![
         RectEntry {
             x: 0.0,
@@ -325,9 +400,12 @@ fn painter_resolves_each_rects_clip_region() {
         None,
     );
 
-    assert!(painter.clipped[0].is_unclipped());
+    assert!(
+        painter.clipped[0].is_empty(),
+        "the first rect resolves to no boxes"
+    );
     assert_eq!(
-        painter.clipped[1].boxes(),
+        painter.clipped[1],
         &[ClipBox {
             x: 0.0,
             y: 0.0,

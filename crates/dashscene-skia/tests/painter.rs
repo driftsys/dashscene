@@ -150,8 +150,8 @@ fn encodes_png() {
 // with anti-aliasing on.
 
 use dashpaint::{
-    Blur, BlurKind, ClipBox, ClipRegion, CornerRadii, GradientStop, ImageAsset, ImageFormat, Mat23,
-    PaintTable, ScaleMode, Stroke, StrokeAlign,
+    Blur, BlurKind, ClipBox, CornerRadii, GradientStop, ImageAsset, ImageFormat, Mat23, PaintTable,
+    ScaleMode, Stroke, StrokeAlign,
 };
 
 const GREEN: Color = Color {
@@ -646,11 +646,11 @@ fn image_overflow_clips_to_rounded_corners() {
 
 /// One filled 16x16 rect, clipped by `region`, rendered on a 16x16
 /// surface.
-fn clipped_square(region: ClipRegion) -> Vec<u8> {
+fn clipped_square(boxes: &[ClipBox]) -> Vec<u8> {
     let mut paints = PaintTable::new();
     let paint = paints.push(PaintEntry::solid(RED));
     let mut clips = ClipTable::new();
-    let clip = clips.push(region);
+    let clip = clips.push(boxes);
     let rects = [RectEntry {
         x: 0.0,
         y: 0.0,
@@ -676,13 +676,13 @@ fn clipped_square(region: ClipRegion) -> Vec<u8> {
 
 #[test]
 fn a_clip_region_confines_a_rect_to_its_ancestors_box() {
-    let rgba = clipped_square(ClipRegion::new(vec![ClipBox {
+    let rgba = clipped_square(&[ClipBox {
         x: 4.0,
         y: 4.0,
         w: 8.0,
         h: 8.0,
         corners: CornerRadii::default(),
-    }]));
+    }]);
 
     assert_eq!(px(&rgba, 16, 8, 8), RED_RGBA, "inside the clip box");
     assert_eq!(
@@ -695,7 +695,7 @@ fn a_clip_region_confines_a_rect_to_its_ancestors_box() {
 
 #[test]
 fn a_rounded_clip_region_rounds_the_clipped_rect() {
-    let rgba = clipped_square(ClipRegion::new(vec![ClipBox {
+    let rgba = clipped_square(&[ClipBox {
         x: 0.0,
         y: 0.0,
         w: 16.0,
@@ -706,7 +706,7 @@ fn a_rounded_clip_region_rounds_the_clipped_rect() {
             bottom_right: 8.0,
             bottom_left: 8.0,
         },
-    }]));
+    }]);
 
     assert_eq!(px(&rgba, 16, 8, 8), RED_RGBA, "the middle still paints");
     assert_eq!(
@@ -719,7 +719,7 @@ fn a_rounded_clip_region_rounds_the_clipped_rect() {
 #[test]
 fn nested_clip_boxes_intersect() {
     // Two ancestor boxes overlapping in x in [8,12), y in [4,12).
-    let rgba = clipped_square(ClipRegion::new(vec![
+    let rgba = clipped_square(&[
         ClipBox {
             x: 0.0,
             y: 4.0,
@@ -734,7 +734,7 @@ fn nested_clip_boxes_intersect() {
             h: 16.0,
             corners: CornerRadii::default(),
         },
-    ]));
+    ]);
 
     assert_eq!(px(&rgba, 16, 10, 8), RED_RGBA, "inside both boxes");
     assert_eq!(
@@ -757,13 +757,13 @@ fn a_clip_region_does_not_leak_into_the_next_rect() {
     let red = paints.push(PaintEntry::solid(RED));
     let blue = paints.push(PaintEntry::solid(BLUE));
     let mut clips = ClipTable::new();
-    let corner = clips.push(ClipRegion::new(vec![ClipBox {
+    let corner = clips.push(&[ClipBox {
         x: 0.0,
         y: 0.0,
         w: 4.0,
         h: 4.0,
         corners: CornerRadii::default(),
-    }]));
+    }]);
     let rects = [
         RectEntry {
             x: 0.0,
@@ -1430,13 +1430,13 @@ fn a_glyph_run_is_clipped_to_the_region_its_anchor_rect_carries() {
     });
 
     let mut clips = ClipTable::new();
-    let clip = clips.push(ClipRegion::new(vec![ClipBox {
+    let clip = clips.push(&[ClipBox {
         x: 0.0,
         y: 0.0,
         w: 16.0,
         h: 32.0,
         corners: CornerRadii::default(),
-    }]));
+    }]);
     let rects = [RectEntry {
         clip,
         ..anchor_rect()[0]
@@ -1531,13 +1531,13 @@ fn a_clipped_runs_region_does_not_leak_onto_the_next_run() {
     glyphs.push_run(run(1, 8.0));
 
     let mut clips = ClipTable::new();
-    let clip = clips.push(ClipRegion::new(vec![ClipBox {
+    let clip = clips.push(&[ClipBox {
         x: 0.0,
         y: 0.0,
         w: 16.0,
         h: 32.0,
         corners: CornerRadii::default(),
-    }]));
+    }]);
     let rects = [
         RectEntry {
             clip,
