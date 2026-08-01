@@ -17,8 +17,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::bindings::{Binding, Channel, ScalarTransform, SignalDecl, SignalId};
 use crate::committed::{
     Atlas, Blur, ClipBox, ClipIndex, ClipTable, ClipView, Color, CommittedScene, CornerRadii,
-    GlyphRun, GlyphRunTable, GroupComposite, ImageAsset, ImageTable, PaintEntry, PaintIndex,
-    PaintKind, PaintTable, RectEntry, Shadow, Stroke, StrokeAlign, Vec2, VectorField,
+    GlyphQuad, GlyphRun, GlyphRunTable, GroupComposite, ImageAsset, ImageTable, PaintEntry,
+    PaintIndex, PaintKind, PaintTable, RectEntry, Shadow, Stroke, StrokeAlign, Vec2, VectorField,
 };
 
 /// Stable handle to a node in one [`Arena`]. Returned by
@@ -108,6 +108,12 @@ pub trait LayoutSolver {
     /// wrong and no run can disagree with the rect table it is read
     /// against.
     ///
+    /// [`GlyphRun::glyphs`] is likewise not the stager's to fill. A staged
+    /// run carries its quads beside it in [`StagedRun`] and its range as
+    /// [`GlyphRange::UNASSIGNED`]; commit sorts the runs by anchor before
+    /// pushing them, so no offset a stager could compute would survive the
+    /// reorder anyway (story #578).
+    ///
     /// The default stages nothing, so every existing implementer keeps
     /// compiling untouched and a text-free scene costs nothing.
     ///
@@ -120,10 +126,29 @@ pub trait LayoutSolver {
         &mut self,
         arena: &Arena,
         geometry: &dyn Fn(NodeId) -> SolvedRect,
-    ) -> Vec<(NodeId, GlyphRun)> {
+    ) -> Vec<StagedRun> {
         let _ = (arena, geometry);
         Vec::new()
     }
+}
+
+/// One run a stager produced, with the quads it draws.
+///
+/// The quads travel beside the run rather than inside it because
+/// [`GlyphRun::glyphs`] is a range into the table's flat array (story
+/// #578), and a stager has no table to index. Commit sorts these by anchor
+/// and then pushes each through [`GlyphRunTable::push_run`], which is what
+/// assigns the range — so a stager could not compute a surviving offset
+/// even if it had one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StagedRun {
+    /// The node this run was shaped from. Commit turns it into
+    /// [`GlyphRun::rect`].
+    pub node: NodeId,
+    /// The run, carrying [`GlyphRange::UNASSIGNED`].
+    pub run: GlyphRun,
+    /// Its quads, in draw order.
+    pub quads: Vec<GlyphQuad>,
 }
 
 /// Layout mode of a container node. `None` = passthrough (children
@@ -1885,13 +1910,14 @@ impl Txn<'_> {
             // runs and rects together with one cursor. The sort is stable,
             // so the run order *within* one text node — the font-fallback
             // split — is preserved.
-            for (id, run) in &mut staged {
-                run.rect = rect_of_slot_checked(&rect_of_slot, *id, "returned a run for");
+            for staged in &mut staged {
+                staged.run.rect =
+                    rect_of_slot_checked(&rect_of_slot, staged.node, "returned a run for");
             }
-            staged.sort_by_key(|(_, run)| run.rect);
+            staged.sort_by_key(|staged| staged.run.rect);
             let mut table = GlyphRunTable::with_atlases(solver.atlases());
-            for (_, run) in staged {
-                table.push_run(run);
+            for staged in staged {
+                table.push_run(staged.run, &staged.quads);
             }
             table
         };

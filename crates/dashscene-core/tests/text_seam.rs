@@ -12,7 +12,8 @@ use std::sync::Arc;
 
 use dashpaint::{ImageAsset, ImageFormat};
 use dashscene_core::{
-    Arena, Atlas, AtlasIndex, Color, GlyphQuad, GlyphRun, LayoutSolver, NodeId, Prop, SolvedRect,
+    Arena, Atlas, AtlasIndex, Color, GlyphQuad, GlyphRange, GlyphRun, LayoutSolver, NodeId, Prop,
+    SolvedRect, StagedRun,
 };
 
 /// A one-pixel stand-in for a real atlas — enough to index, never sampled.
@@ -41,19 +42,24 @@ fn ink() -> Color {
 
 /// A run with one glyph placed at `at`, carrying `size`. `rect` is deliberately
 /// wrong so every test proves commit overwrote it rather than trusting it.
-fn run_at(at: (f32, f32), size: f32) -> GlyphRun {
-    GlyphRun {
-        rect: u32::MAX,
-        atlas: AtlasIndex(0),
-        size,
-        color: ink(),
-        glyphs: vec![GlyphQuad {
+fn run_at(at: (f32, f32), size: f32) -> (GlyphRun, Vec<GlyphQuad>) {
+    (
+        GlyphRun {
+            rect: u32::MAX,
+            atlas: AtlasIndex(0),
+            size,
+            color: ink(),
+            // Commit assigns this through `GlyphRunTable::push_run`, the same
+            // way it stamps `rect` (story #578).
+            glyphs: GlyphRange::UNASSIGNED,
+            opacity: 1.0,
+        },
+        vec![GlyphQuad {
             glyph_id: 1,
             x: at.0,
             y: at.1,
         }],
-        opacity: 1.0,
-    }
+    )
 }
 
 /// Places every node at its authored offset, and stages one run per node that
@@ -93,17 +99,18 @@ impl LayoutSolver for TextStager {
         &mut self,
         arena: &Arena,
         geometry: &dyn Fn(NodeId) -> SolvedRect,
-    ) -> Vec<(NodeId, GlyphRun)> {
+    ) -> Vec<StagedRun> {
         fn walk(
             arena: &Arena,
             node: NodeId,
             size: f32,
             geometry: &dyn Fn(NodeId) -> SolvedRect,
-            out: &mut Vec<(NodeId, GlyphRun)>,
+            out: &mut Vec<StagedRun>,
         ) {
             if arena.text(node).is_some() {
                 let r = geometry(node);
-                out.push((node, run_at((r.x, r.y), size)));
+                let (run, quads) = run_at((r.x, r.y), size);
+                out.push(StagedRun { node, run, quads });
             }
             for &child in arena.children(node) {
                 walk(arena, child, size, geometry, out);
@@ -223,7 +230,8 @@ fn the_stager_is_handed_this_commits_geometry_not_the_previous_ones() {
     // boxes, which is only correct for a stager that runs after publication.
     let (mut arena, texts) = scene(1);
     let label = texts[0];
-    let before = arena.committed().glyphs().runs()[0].glyphs[0];
+    let committed = arena.committed();
+    let before = committed.glyphs().quads(&committed.glyphs().runs()[0])[0];
     assert_eq!((before.x, before.y), (0.0, 0.0));
 
     {
@@ -233,7 +241,8 @@ fn the_stager_is_handed_this_commits_geometry_not_the_previous_ones() {
         txn.commit_with(&mut TextStager { size: 12.0 });
     }
 
-    let after = arena.committed().glyphs().runs()[0].glyphs[0];
+    let committed = arena.committed();
+    let after = committed.glyphs().quads(&committed.glyphs().runs()[0])[0];
     assert_eq!(
         (after.x, after.y),
         (64.0, 32.0),
@@ -314,7 +323,7 @@ fn a_run_for_a_foreign_node_is_named_rather_than_stamped_wrong() {
             &mut self,
             _arena: &Arena,
             _geometry: &dyn Fn(NodeId) -> SolvedRect,
-        ) -> Vec<(NodeId, GlyphRun)> {
+        ) -> Vec<StagedRun> {
             // A node of some other arena: its slot is past this arena's end.
             let mut other = Arena::new();
             let foreign = {
@@ -325,7 +334,12 @@ fn a_run_for_a_foreign_node_is_named_rather_than_stamped_wrong() {
                 txn.commit();
                 c
             };
-            vec![(foreign, run_at((0.0, 0.0), 1.0))]
+            let (run, quads) = run_at((0.0, 0.0), 1.0);
+            vec![StagedRun {
+                node: foreign,
+                run,
+                quads,
+            }]
         }
     }
 

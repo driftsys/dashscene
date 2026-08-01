@@ -40,15 +40,15 @@ mod load;
 
 pub use arena::{
     Arena, AxisSizing, CrossAxisAlign, EdgeInsets, GridTrack, Layout, LayoutMode, LayoutSolver,
-    MainAxisAlign, NodeId, Prop, SolvedRect, TextAlign, TextAlignV, TextStyle, Txn, VariantMember,
-    VariantSetId, VariantValue,
+    MainAxisAlign, NodeId, Prop, SolvedRect, StagedRun, TextAlign, TextAlignV, TextStyle, Txn,
+    VariantMember, VariantSetId, VariantValue,
 };
 pub use bindings::{
     Binding, Channel, ScalarTransform, SignalDecl, SignalId, decode_prop_key, prop_key,
 };
 pub use committed::{
     Atlas, AtlasGlyph, AtlasIndex, Blur, BlurKind, ClipBox, ClipIndex, ClipRegion, ClipTable,
-    ClipView, Color, CommittedScene, CornerRadii, GlyphQuad, GlyphRun, GlyphRunTable,
+    ClipView, Color, CommittedScene, CornerRadii, GlyphQuad, GlyphRange, GlyphRun, GlyphRunTable,
     GroupComposite, PaintEntry, PaintIndex, PaintKind, PaintTable, RectEntry, Shadow, ShadowKind,
     Stroke, StrokeAlign,
 };

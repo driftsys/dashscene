@@ -390,7 +390,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use dashc_wasm::compile_figma;
-    use dashpaint::{AtlasIndex, Color, GlyphRun};
+    use dashpaint::{AtlasIndex, Color, GlyphRunTable};
     use dashscene_validator::Profile;
 
     use super::{Arena, TaffySolver, Typesetter, cascade_atlases, oracle_typesetter, render_dsb};
@@ -418,7 +418,7 @@ mod tests {
         box_size: (f32, f32),
         text: &str,
         style: dashscene_core::TextStyle,
-    ) -> Vec<GlyphRun> {
+    ) -> GlyphRunTable {
         use dashscene_core::Prop;
 
         let mut arena = Arena::new();
@@ -431,7 +431,9 @@ mod tests {
             txn.set_prop(node, Prop::TextStyle(style));
             txn.commit_with(&mut TaffySolver::with_text(ts, cascade_atlases()));
         }
-        arena.committed().glyphs().runs().to_vec()
+        // The whole table, not just its runs: a run's quads live in the
+        // table's flat array now, so a detached run names nothing (story #578).
+        arena.committed().glyphs().clone()
     }
 
     /// The text style the tests vary from: the lowered defaults every
@@ -474,8 +476,8 @@ mod tests {
             },
         );
 
-        let left_glyph = left[0].glyphs[0];
-        let center_glyph = center[0].glyphs[0];
+        let left_glyph = left.quads(&left.runs()[0])[0];
+        let center_glyph = center.quads(&center.runs()[0])[0];
         assert!(
             center_glyph.x > left_glyph.x,
             "center alignment shifts the first glyph right within the box \
@@ -510,10 +512,10 @@ mod tests {
             )
         };
         for (weight, expected) in [(400u16, 0u32), (600, 1), (700, 2)] {
-            let runs = staged(&mut ts, weight);
-            assert_eq!(runs.len(), 1, "one atlas per row");
+            let table = staged(&mut ts, weight);
+            assert_eq!(table.runs().len(), 1, "one atlas per row");
             assert_eq!(
-                runs[0].atlas,
+                table.runs()[0].atlas,
                 AtlasIndex(expected),
                 "weight {weight} must stage against atlas {expected}"
             );
@@ -522,7 +524,7 @@ mod tests {
         // resolves it to Regular, and the substitution is reported rather than
         // silent.
         let at_500 = staged(&mut ts, 500);
-        assert_eq!(at_500[0].atlas, AtlasIndex(0));
+        assert_eq!(at_500.runs()[0].atlas, AtlasIndex(0));
         assert!(
             ts.weight_substitutions()
                 .iter()
@@ -533,7 +535,9 @@ mod tests {
         // The rows are not merely tagged differently — they are placed
         // differently, because the heavier faces advance wider.
         let end_x = |ts: &mut Typesetter, weight| {
-            staged(ts, weight).last().unwrap().glyphs.last().unwrap().x
+            let table = staged(ts, weight);
+            let last = table.runs().last().expect("a staged row");
+            table.quads(last).last().expect("a placed glyph").x
         };
         let regular_end = end_x(&mut ts, 400);
         let bold_end = end_x(&mut ts, 700);

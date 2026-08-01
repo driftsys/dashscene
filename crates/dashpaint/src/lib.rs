@@ -926,10 +926,36 @@ impl Atlas {
     }
 }
 
+/// Where one run's quads sit in the [`GlyphRunTable`]'s flat quad array.
+///
+/// The glyph-side twin of [`ClipRegion`], and there for the same two
+/// reasons: a `Vec` per run has no C representation, and a flat array plus
+/// a range uploads as one buffer copy where a `Vec` per run is a pointer
+/// chase (story #578).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct GlyphRange {
+    /// First quad, as an index into [`GlyphRunTable::all_quads`].
+    pub offset: u32,
+    /// How many quads, in draw order.
+    pub count: u32,
+}
+
+impl GlyphRange {
+    /// The range a run carries before [`GlyphRunTable::push_run`] assigns
+    /// it one. A staged run names no quads in a table it has not entered
+    /// yet, and this is the only value `push_run` accepts.
+    pub const UNASSIGNED: Self = Self {
+        offset: 0,
+        count: 0,
+    };
+}
+
 /// One positioned glyph run: a sequence of placed glyphs that share a
 /// render size, a fill color, and an atlas (one style per text node in
 /// the v0.5 Latin subset — `docs/design/architecture.md` §7.2).
-#[derive(Debug, Clone, PartialEq)]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GlyphRun {
     /// The rect-table index of the text node this run was shaped from —
     /// the run's *anchor*, stamped by commit
@@ -953,8 +979,18 @@ pub struct GlyphRun {
     pub size: f32,
     /// The text fill; the MSDF coverage modulates this color.
     pub color: Color,
-    /// The placed glyphs, in draw order.
-    pub glyphs: Vec<GlyphQuad>,
+    /// The placed glyphs, in draw order, as a range into the
+    /// [`GlyphRunTable`]'s one flat quad array — read it with
+    /// [`GlyphRunTable::quads`] (story #578).
+    ///
+    /// A `Vec` here has no C representation and would be a pointer chase
+    /// per run on the path R-T4 bounds; the same reasoning as
+    /// [`ClipRegion`], and the same shape.
+    ///
+    /// [`GlyphRunTable::push_run`] assigns this. Whatever a caller writes
+    /// is refused rather than overwritten, because a range is only
+    /// meaningful against the array the table owns — see that method.
+    pub glyphs: GlyphRange,
     /// The run's free-path group alpha in `[0, 1]`, mirroring
     /// [`RectEntry::opacity`] (story #44,
     /// `docs/decisions/masks-and-group-opacity.md`): a group opacity that
@@ -998,6 +1034,11 @@ pub struct GlyphRun {
 pub struct GlyphRunTable {
     atlases: Arc<Vec<Atlas>>,
     runs: Vec<GlyphRun>,
+    /// Every run's quads, in one flat array (story #578). A
+    /// [`GlyphRun::glyphs`] range indexes into this. Runs are appended in
+    /// draw order and never rewritten, so each range is a contiguous run
+    /// and the array is in the same order as `runs`.
+    quads: Vec<GlyphQuad>,
 }
 
 impl GlyphRunTable {
@@ -1013,6 +1054,7 @@ impl GlyphRunTable {
         Self {
             atlases,
             runs: Vec::new(),
+            quads: Vec::new(),
         }
     }
 
@@ -1029,9 +1071,61 @@ impl GlyphRunTable {
         AtlasIndex(index)
     }
 
-    /// Appends a positioned run.
-    pub fn push_run(&mut self, run: GlyphRun) {
+    /// Appends a positioned run over `quads`, which are copied into the
+    /// table's flat array and named by the range this assigns.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless `run.glyphs` is [`GlyphRange::UNASSIGNED`]. A caller
+    /// cannot know where its quads will land in a table it has not entered,
+    /// so a range arriving here is a range that will be replaced — and
+    /// silently replacing it is how a producer comes to believe its own
+    /// offsets were used. Refused by name instead (P4).
+    ///
+    /// Also panics if the flat array would exceed `u32::MAX` quads.
+    pub fn push_run(&mut self, mut run: GlyphRun, quads: &[GlyphQuad]) {
+        assert_eq!(
+            run.glyphs,
+            GlyphRange::UNASSIGNED,
+            "push_run assigns a run's quad range; a staged run must carry \
+             GlyphRange::UNASSIGNED, not offsets into some other array"
+        );
+        let offset =
+            u32::try_from(self.quads.len()).expect("glyph-run table exceeds u32::MAX quads");
+        let count = u32::try_from(quads.len()).expect("a glyph run exceeds u32::MAX quads");
+        self.quads.extend_from_slice(quads);
+        run.glyphs = GlyphRange { offset, count };
         self.runs.push(run);
+    }
+
+    /// The quads `run` draws, in draw order.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the run's range runs past the flat array — the same
+    /// contract, and the same reasoning, as [`ClipTable::all_boxes`]'s
+    /// side of a [`ClipRegion`]. Only [`push_run`](Self::push_run) writes
+    /// ranges, and it writes them from the array's own length, so no
+    /// public path reaches this today.
+    pub fn quads(&self, run: &GlyphRun) -> &[GlyphQuad] {
+        let start = run.glyphs.offset as usize;
+        let end = start + run.glyphs.count as usize;
+        self.quads.get(start..end).unwrap_or_else(|| {
+            panic!(
+                "glyph run range {}..{} runs past the table's {} quads: a run and the array it \
+                 indexes must be built together",
+                start,
+                end,
+                self.quads.len()
+            )
+        })
+    }
+
+    /// Every quad in the table, in one flat array. A [`GlyphRange`]'s
+    /// `offset` and `count` index into this — the shape an instance-buffer
+    /// upload wants.
+    pub fn all_quads(&self) -> &[GlyphQuad] {
+        &self.quads
     }
 
     /// The runs to draw, in order.

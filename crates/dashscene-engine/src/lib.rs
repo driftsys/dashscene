@@ -30,8 +30,8 @@ pub use flip::{VariantFlip, decode_prop_key, prop_key};
 use std::sync::Arc;
 
 use dashscene_core::{
-    Arena, Atlas, AtlasIndex, AxisSizing, GlyphQuad, GlyphRun, GridTrack, Layout, LayoutMode,
-    LayoutSolver, NodeId, SolvedRect, TextAlignV, TextStyle,
+    Arena, Atlas, AtlasIndex, AxisSizing, GlyphQuad, GlyphRange, GlyphRun, GridTrack, Layout,
+    LayoutMode, LayoutSolver, NodeId, SolvedRect, StagedRun, TextAlignV, TextStyle,
 };
 use dashscene_typeset::text::{TextShape, Typesetter};
 use rustc_hash::FxHashSet;
@@ -196,7 +196,7 @@ impl LayoutSolver for TaffySolver<'_> {
         &mut self,
         arena: &Arena,
         geometry: &dyn Fn(NodeId) -> SolvedRect,
-    ) -> Vec<(NodeId, GlyphRun)> {
+    ) -> Vec<StagedRun> {
         // A solver with no atlas set stages nothing. A run whose atlas
         // index resolves against an empty table is not a run any painter
         // can draw, so producing one would be worse than producing none:
@@ -223,14 +223,14 @@ fn stage_subtree(
     node: NodeId,
     ts: &mut Typesetter,
     geometry: &dyn Fn(NodeId) -> SolvedRect,
-    out: &mut Vec<(NodeId, GlyphRun)>,
+    out: &mut Vec<StagedRun>,
 ) {
     // A node is a text leaf exactly when it carries both authored
     // characters and a text style; either alone is a plain node, the same
     // test the measure seam applies.
     if let (Some(text), Some(style)) = (arena.text(node), arena.text_style(node)) {
-        for run in text_runs(ts, geometry(node), text, style) {
-            out.push((node, run));
+        for (run, quads) in text_runs(ts, geometry(node), text, style) {
+            out.push(StagedRun { node, run, quads });
         }
     }
     for &child in arena.children(node) {
@@ -246,7 +246,12 @@ fn stage_subtree(
 /// and the block is shifted down by the vertical alignment's share of the
 /// box's free space. The layout runs within the solved box width, so the
 /// line breaks are the ones the solve measured.
-fn text_runs(ts: &mut Typesetter, r: SolvedRect, text: &str, style: &TextStyle) -> Vec<GlyphRun> {
+fn text_runs(
+    ts: &mut Typesetter,
+    r: SolvedRect,
+    text: &str,
+    style: &TextStyle,
+) -> Vec<(GlyphRun, Vec<GlyphQuad>)> {
     let laid = ts.layout_styled(
         text,
         style.size,
@@ -256,7 +261,10 @@ fn text_runs(ts: &mut Typesetter, r: SolvedRect, text: &str, style: &TextStyle) 
         &style.family,
     );
     let voff = vertical_offset(r.h, laid.height, style.text_align_v);
-    let mut runs: Vec<GlyphRun> = Vec::new();
+    // The quads travel beside their run rather than inside it: a run's
+    // `glyphs` is a range into the table's flat array, and a stager has no
+    // table to index (story #578).
+    let mut runs: Vec<(GlyphRun, Vec<GlyphQuad>)> = Vec::new();
     for line in &laid.lines {
         for g in &line.glyphs {
             let atlas = AtlasIndex(u32::from(g.font));
@@ -266,17 +274,23 @@ fn text_runs(ts: &mut Typesetter, r: SolvedRect, text: &str, style: &TextStyle) 
                 y: r.y + voff + g.y,
             };
             match runs.last_mut() {
-                Some(run) if run.atlas == atlas => run.glyphs.push(quad),
-                _ => runs.push(GlyphRun {
-                    // Commit stamps the anchor from the node this run was
-                    // staged for; whatever is written here is overwritten.
-                    rect: 0,
-                    atlas,
-                    size: style.size,
-                    color: style.color,
-                    glyphs: vec![quad],
-                    opacity: 1.0,
-                }),
+                Some((run, quads)) if run.atlas == atlas => quads.push(quad),
+                _ => runs.push((
+                    GlyphRun {
+                        // Commit stamps the anchor from the node this run was
+                        // staged for; whatever is written here is overwritten.
+                        rect: 0,
+                        atlas,
+                        size: style.size,
+                        color: style.color,
+                        // Assigned by `GlyphRunTable::push_run`, after commit
+                        // has sorted the runs by anchor — so no offset a
+                        // stager computed could survive anyway.
+                        glyphs: GlyphRange::UNASSIGNED,
+                        opacity: 1.0,
+                    },
+                    vec![quad],
+                )),
             }
         }
     }

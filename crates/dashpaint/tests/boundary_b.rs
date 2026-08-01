@@ -2,10 +2,10 @@
 //! no dashscene-core, no dashbuf — dashpaint's public API only.
 
 use dashpaint::{
-    Blur, BlurKind, ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CornerRadii, GlyphRunTable,
-    Gradient, GradientKind, GradientStop, GroupComposite, ImageAsset, ImageFormat, ImageTable,
-    PaintEntry, PaintIndex, PaintKind, PaintTable, Painter, RectEntry, ScaleMode, Shadow,
-    ShadowKind, Stroke, StrokeAlign, Vec2,
+    AtlasIndex, Blur, BlurKind, ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CornerRadii,
+    GlyphQuad, GlyphRange, GlyphRun, GlyphRunTable, Gradient, GradientKind, GradientStop,
+    GroupComposite, ImageAsset, ImageFormat, ImageTable, PaintEntry, PaintIndex, PaintKind,
+    PaintTable, Painter, RectEntry, ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, Vec2,
 };
 
 const RED: Color = Color {
@@ -736,4 +736,99 @@ fn derived_partial_eq_treats_zero_and_negative_zero_as_equal() {
         rect_zero, rect_negative_zero,
         "the same 0.0/-0.0 equality applies to RectEntry's f32 fields",
     );
+}
+
+/// A run naming no quads, for the flat-array tests below.
+fn bare_run(rect: u32) -> GlyphRun {
+    GlyphRun {
+        rect,
+        atlas: AtlasIndex(0),
+        size: 16.0,
+        color: Color {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        },
+        glyphs: GlyphRange::UNASSIGNED,
+        opacity: 1.0,
+    }
+}
+
+/// A quad distinguishable by its glyph id alone.
+fn quad(glyph_id: u16) -> GlyphQuad {
+    GlyphQuad {
+        glyph_id,
+        x: f32::from(glyph_id),
+        y: 0.0,
+    }
+}
+
+/// Runs name adjacent, non-overlapping ranges into the table's one flat quad
+/// array, and `quads` reads the slice a run's own range names (story #578).
+///
+/// Every quad carries a distinct glyph id, because a fixture of identical
+/// quads cannot tell a correct range from one that reads the right *count* at
+/// the wrong offset — the two slices compare equal. That is not hypothetical:
+/// the same test written with a uniform fixture stayed green against exactly
+/// that mutation when `ClipRegion` was flattened.
+#[test]
+fn runs_are_adjacent_ranges_into_one_flat_quad_array() {
+    let mut glyphs = GlyphRunTable::new();
+    glyphs.push_run(bare_run(0), &[quad(1)]);
+    glyphs.push_run(bare_run(1), &[quad(2), quad(3)]);
+
+    assert_eq!(
+        glyphs.runs()[0].glyphs,
+        GlyphRange {
+            offset: 0,
+            count: 1
+        }
+    );
+    assert_eq!(
+        glyphs.runs()[1].glyphs,
+        GlyphRange {
+            offset: 1,
+            count: 2
+        },
+        "the second run starts where the first ended"
+    );
+    assert_eq!(glyphs.all_quads(), &[quad(1), quad(2), quad(3)]);
+
+    assert_eq!(glyphs.quads(&glyphs.runs()[0]), &[quad(1)]);
+    assert_eq!(
+        glyphs.quads(&glyphs.runs()[1]),
+        &[quad(2), quad(3)],
+        "the second run reads from its own offset, not from the array's start"
+    );
+}
+
+/// `push_run` refuses a run that already carries a range.
+///
+/// A caller cannot know where its quads will land in a table it has not
+/// entered, so a range arriving at `push_run` is one that will be replaced —
+/// and silently replacing it is how a producer comes to believe its own
+/// offsets were used. The goldens harness re-homes runs between tables and is
+/// the real caller that has to clear the range (P4).
+#[test]
+#[should_panic(expected = "push_run assigns a run's quad range")]
+fn push_run_refuses_a_range_it_did_not_assign() {
+    let mut glyphs = GlyphRunTable::new();
+    glyphs.push_run(bare_run(0), &[quad(1)]);
+
+    let mut smuggled = bare_run(1);
+    smuggled.glyphs = GlyphRange {
+        offset: 0,
+        count: 1,
+    };
+    glyphs.push_run(smuggled, &[quad(2)]);
+}
+
+/// An empty table has an empty flat array, and a text-free scene pays nothing
+/// for the flattening.
+#[test]
+fn an_empty_glyph_run_table_names_no_quads() {
+    let glyphs = GlyphRunTable::new();
+    assert!(glyphs.all_quads().is_empty());
+    assert!(glyphs.runs().is_empty());
 }

@@ -903,7 +903,7 @@ impl MsdfFrame<'_> {
             ..run.color
         };
         let uniforms = msdf_uniforms(self.effect, color, px_range);
-        for quad in &run.glyphs {
+        for quad in glyphs.quads(run) {
             let Some(g) = atlas.glyph(quad.glyph_id) else {
                 // No quad for this glyph id — an empty outline (space) or
                 // a glyph outside the atlas charset. Painting nothing is
@@ -2141,18 +2141,21 @@ mod tests {
                 atlas_px: [0.0, 0.0, 1.0, 1.0],
             }],
         ));
-        glyphs.push_run(GlyphRun {
-            rect: 0,
-            atlas,
-            size: 2.0,
-            color: ink,
-            glyphs: vec![dashpaint::GlyphQuad {
+        glyphs.push_run(
+            GlyphRun {
+                rect: 0,
+                atlas,
+                size: 2.0,
+                color: ink,
+                glyphs: dashpaint::GlyphRange::UNASSIGNED,
+                opacity: 1.0,
+            },
+            &[dashpaint::GlyphQuad {
                 glyph_id: 0,
                 x: 0.0,
                 y: 2.0,
             }],
-            opacity: 1.0,
-        });
+        );
         glyphs
     }
 

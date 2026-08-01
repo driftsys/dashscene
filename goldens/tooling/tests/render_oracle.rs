@@ -700,9 +700,14 @@ fn a_width_fixed_text_node_stages_the_lines_the_measure_seam_wrapped() {
     let (solved_w, _) = size_of(&arena, label);
     assert_eq!(solved_w, BOX_WIDTH, "the label keeps its fixed width");
 
-    let staged = arena.committed().glyphs().runs();
+    let committed = arena.committed();
+    let staged = committed.glyphs();
 
-    let quads: Vec<&GlyphQuad> = staged.iter().flat_map(|run| run.glyphs.iter()).collect();
+    let quads: Vec<&GlyphQuad> = staged
+        .runs()
+        .iter()
+        .flat_map(|run| staged.quads(run).iter())
+        .collect();
     assert!(!quads.is_empty(), "the label staged glyphs");
 
     let (origin_x, _) = origin_of(&arena, label);
