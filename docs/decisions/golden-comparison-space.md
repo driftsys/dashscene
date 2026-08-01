@@ -16,11 +16,12 @@
              restates every golden that samples it" below), and issue
              #532 (the same calibration applied to the v0.6 Arabic
              golden — see "The v0.6 Arabic budget takes the same
-             calibration" below), and issue #539 (closed as a documented
-             limitation, not a mechanism — no text golden has been
-             diffed across architectures, and none can be from inside
-             this project while #263 stands; see "Cross-architecture
-             text-golden measurement stays unavailable" below).
+             calibration" below), and issue #539 (the cross-architecture
+             text residual, measured 2026-08-01 at 0 to 4 px against
+             budgets of 200 to 1,200 px — the extrapolation it replaces
+             was wrong in the safe direction by two to three orders of
+             magnitude; see "Cross-architecture text-golden
+             measurement" below).
     scope    goldens/ tooling; binds golden authoring for every painter
 
 ## Context
@@ -288,14 +289,13 @@ Two notes on the number:
 - **It is tighter per inked pixel than either budget calibrated the same
   way**, at 0.18 px of tolerance against v0.5's 0.32 and
   `v07-text-fallback`'s 0.34. This scene renders bit-exact against its
-  golden (0 px of 71,400), and 440 px is about 13.75x the only
-  cross-machine difference this project has measured — but that 32-px
-  figure comes from the v0.3 paint golden, a gradient-and-stroke scene on
-  Skia's own rasteriser rather than the MSDF path, and the ratio it
-  replaces was 31.25x. No text golden has been diffed across
-  architectures at all, because CI has been billing-blocked since
-  2026-07-17 (#263). The multiplier is therefore an extrapolation, and
-  #539 tracks measuring it. Raising the budget instead would spend the
+  golden on the machine it is recorded on (0 px of 71,400), and 440 px was
+  set at about 13.75x a 32-px anchor taken on the v0.3 paint golden — a
+  gradient-and-stroke scene on Skia's own rasteriser rather than the MSDF
+  path — against 31.25x for the ratio it replaces. That multiplier was an
+  extrapolation; #539 has since measured the real figure, and this golden
+  differs by **4 px of 71,400** across architectures, so 440 px clears the
+  cross-machine floor by about 110x. Raising the budget instead would spend the
   drift margin the two-thirds rule provides: anything above about 600 px
   is within 71 px of the 671-px break.
 
@@ -306,34 +306,64 @@ v0.6 number. Its stated comparison to "the CI-proven v0.6 Arabic golden"
 quotes the 1,000-px value and is left unedited as the historical note it
 now is.
 
-## Cross-architecture text-golden measurement stays unavailable (issue #539)
+## Cross-architecture text-golden measurement (issue #539, measured 2026-08-01)
 
 Every text budget above is set against one number: **32 px**, measured
 once on `v03-paint.png` (story #14, "Cross-machine anti-aliasing"
 above) — a gradient-and-stroke scene drawn by Skia's own path
-rasteriser. No text golden has ever been diffed across architectures at
-all: the MSDF resolve is a different rendering path, and CI has been
-billing-blocked since 2026-07-17 (#263), which predates every text-budget
-calibration made so far (#233, #532). So each text budget's multiplier
-against the 32-px anchor is an extrapolation from a path other than the
-one it guards, not a measurement of that path:
+rasteriser. The MSDF resolve is a different rendering path, so each text
+budget's multiplier against the 32-px anchor was an extrapolation from a
+path other than the one it guards.
 
-| golden                  | budget (px) | ratio to the 32-px vector-AA anchor | cross-architecture measurement |
-| ----------------------- | ----------- | ----------------------------------- | ------------------------------ |
-| v05-text-latin          | 1,200       | 37.5x                               | not measured (#539)            |
-| v06-text-arabic         | 440         | 13.75x                              | not measured (#539)            |
-| v07-text-fallback       | 500         | 15.6x                               | not measured (#539)            |
-| v07-text-lowering       | 200         | 6.25x                               | not measured (#539)            |
-| v07-variant-topology    | 200         | 6.25x                               | not measured (#539)            |
-| v013-baseline-hug-cross | 400         | 12.5x                               | not measured (#539)            |
+It is no longer an extrapolation. The goldens are recorded on macOS
+arm64 and CI runs them on x86_64, so **every green run was already a
+cross-architecture diff** — and `compare_against` already prints its
+residual on a within-budget pass. The `test` job runs under nextest,
+which captures a passing test's output, so the number was measured and
+discarded on every run. Re-running the six with `--nocapture` in the
+`render-oracle` job records it:
+
+| golden                  | budget (px) | ratio to the 32-px vector-AA anchor | cross-architecture residual | headroom |
+| ----------------------- | ----------- | ----------------------------------- | --------------------------- | -------- |
+| v05-text-latin          | 1,200       | 37.5x                               | 1 px of 44,800 (0.002 %)    | 1200x    |
+| v06-text-arabic         | 440         | 13.75x                              | 4 px of 71,400 (0.006 %)    | 110x     |
+| v07-text-fallback       | 500         | 15.6x                               | 2 px of 34,560 (0.006 %)    | 250x     |
+| v07-text-lowering       | 200         | 6.25x                               | 0 px — byte-identical       | infinite |
+| v07-variant-topology    | 200         | 6.25x                               | 0 px — byte-identical       | infinite |
+| v013-baseline-hug-cross | 400         | 12.5x                               | 3 px of 36,000 (0.008 %)    | 133x     |
 
 Issue #539 asked whether MSDF edge coverage is more or less stable
-across architectures than the gradient AA the 32-px figure actually
-measured. That question is not answerable from inside this project
-today: answering it needs a second architecture in CI, and CI cannot
-run at all while #263 stands. Closing #539 here therefore records a
-**documented limitation, not a mechanism** — no code was written to try
-to measure this, because there is nothing in reach to measure it with.
+across architectures than the gradient AA the 32-px figure measured.
+**Far more stable.** The gradient-and-stroke anchor moved 32 px; MSDF
+text moves 0 to 4 px on the same architecture change, and two of the six
+frames do not move at all. The extrapolation was wrong in the safe
+direction, by two to three orders of magnitude.
+
+The earlier `--release` data point below reads differently in hindsight:
+it was treated as a much weaker perturbation than a change of
+architecture, and it turns out that a change of architecture is itself a
+weak perturbation for this path.
+
+### What the headroom does and does not mean
+
+A text budget has two constraints, and only one of them is now measured.
+It must sit **above** the cross-architecture noise floor — which the
+table shows it clears by 110x or more — and **below** the smallest
+regression it must catch, which each golden pins with its own
+sensitivity guard (issue #233; for example
+`dropping_either_string_exceeds_the_budget`). Those guards prove a whole
+string vanishing exceeds the budget. They do not prove anything about a
+smaller regression.
+
+That gap is now quantified rather than suspected: with the noise floor at
+1 to 4 px and budgets at 200 to 1,200 px, a regression that moves a few
+glyphs by a pixel — a baseline nudge, a kerning change, a single
+glyph substituted — passes silently on every one of these six frames.
+Tightening the budgets toward the measured floor is the obvious
+consequence, and it is deliberately **not** done here: each budget's
+sensitivity guard is calibrated against its current value, so retuning
+them is a change to the gate, and belongs in its own change with its own
+measurement, not folded into the measurement that revealed it.
 
 One data point narrows the question without answering it, recorded
 during PR #536's review rather than left there: re-recording
