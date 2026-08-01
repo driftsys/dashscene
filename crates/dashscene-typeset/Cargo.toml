@@ -10,6 +10,12 @@ description = "One typesetter: bidi split, rustybuzz shaping, glyph atlas pipeli
 [lib]
 name = "dashscene_typeset"
 
+[dev-dependencies]
+# The reproducibility tests compare decoded atlas samples, not PNG bytes,
+# so the assertion is about the atlas rather than about the encoder
+# (story #654).
+png.workspace = true
+
 [dependencies]
 ttf-parser.workspace = true
 rustybuzz.workspace = true

@@ -129,10 +129,11 @@ golden against the previous bytes, and
 `goldens/images/v05-text-latin.png` then remained 3 px stale until #533
 found it (`docs/decisions/golden-comparison-space.md`).
 
-## Cross-machine byte-identity
+## Cross-machine reproducibility
 
-The fixtures are generated on one platform (macOS) and byte-reproduced
-on another (Linux) by the CI `atlas-repro` job, which builds the pinned
+The fixtures are generated on one platform (macOS, arm64) and reproduced
+on another (Linux, both x86_64 and arm64) by the CI `atlas-repro` job,
+which builds the pinned
 `msdf-atlas-gen` commit and runs `committed_ascii_fixture_is_reproducible`,
 `committed_arabic_fixture_is_reproducible`,
 `committed_ascii_semibold_fixture_is_reproducible`,
@@ -140,6 +141,36 @@ on another (Linux) by the CI `atlas-repro` job, which builds the pinned
 `committed_inter_ascii*_fixture_is_reproducible` tests under
 `DASHSCENE_REQUIRE_ATLAS_TOOL=1` — the job runs the whole
 `atlas_pipeline` binary, so a new fixture's checker is picked up by
-adding it there and nowhere else. A byte difference fails that job, so a
+adding it there and nowhere else. A difference fails that job, so a
 toolchain change that breaks reproducibility is surfaced, not hidden
 (R7; `docs/design/atlas-pipeline.md`, Determinism).
+
+What "reproduced" means is exact for the metrics blob and bounded for the
+image, and the split is measured rather than conceded:
+
+- `atlas.metrics` — packing, per-glyph boxes, atlas parameters, generator
+  provenance — is compared **byte for byte**. It is byte-identical on
+  every machine measured, both architectures included.
+- `atlas.png` is compared **decoded**, under two bounds: no channel may
+  move by more than one step, and at most 0.1 % of the pixels may differ
+  at all.
+
+The image cannot be compared byte for byte because `msdf-atlas-gen`'s
+floating-point arithmetic differs between CPU architectures. The Bold
+fixture decodes 4 pixels of 65536 apart between arm64 and x86_64 — 0.006
+%, each by a single channel step, at identical dimensions and identical
+packing. The tool is external C++, so this is not a difference the
+pipeline can round away, and one committed fixture cannot be
+byte-identical on two architectures at once (story #654).
+
+The bounds are tight enough to keep the gate: a generator that
+re-rasterises a glyph, moves the packing, or changes the distance range
+moves some channel by more than one step, and a systematic shift of the
+whole field moves far more than 0.1 % of the pixels. Both bounds are
+mutation-proven — one pixel moved two steps fails, and the real
+cross-architecture 4 fails against a zero budget.
+
+Same-machine determinism is still byte-identity, asserted by
+`double_run_is_byte_identical` and `arabic_atlas_double_run_is_byte_identical`,
+which compare two independent runs on one machine and admit no tolerance
+at all.
