@@ -1048,7 +1048,7 @@ fn style_for(
 fn template_track(track: &GridTrack) -> taffy::GridTemplateComponent<String> {
     match *track {
         GridTrack::Fixed(v) => length(v),
-        GridTrack::Fraction(weight) => minmax(length(0.0), fr(weight)),
+        GridTrack::Fraction(weight) => minmax(length(0.0_f32), fr(weight)),
     }
 }
 
