@@ -342,31 +342,76 @@ pub struct ClipBox {
 /// rect table, so a painter has no ancestors to walk and P2 forbids it
 /// re-deriving them. The box list is kept rather than pre-intersected
 /// because the intersection of two rounded rects is not a rounded rect.
-#[derive(Debug, Clone, Default, PartialEq)]
+///
+/// # A range, not a list (story #578)
+///
+/// This is `(offset, count)` into the [`ClipTable`]'s one flat box array,
+/// not a `Vec<ClipBox>` of its own. Two reasons, and they are the same
+/// reason:
+///
+/// - **It has a C representation.** A `Vec` does not, and boundary B is a
+///   language-neutral data contract because G2 names a C# backend
+///   (`docs/design/architecture.md`). `crates/dashscene-unity`'s
+///   `improper_ctypes_definitions` gate holds this.
+/// - **It uploads.** A flat array plus a range is one buffer copy; a
+///   `Vec` per region is a pointer chase per rect, which is what R-T4
+///   bounds the frame's CPU cost against.
+///
+/// Reading the boxes needs the table that owns them, so
+/// [`ClipTable::resolve`] hands back a [`ClipView`] rather than this type
+/// directly. This is what crosses the seam; that is what code reads.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct ClipRegion {
-    boxes: Vec<ClipBox>,
+    /// First box, as an index into [`ClipTable::all_boxes`].
+    pub offset: u32,
+    /// How many boxes, outermost ancestor first. Zero = unclipped.
+    pub count: u32,
 }
 
 impl ClipRegion {
     /// The region of a rect no ancestor clips — the one [`ClipTable`]
     /// reserves at [`ClipIndex::UNCLIPPED`].
-    pub fn unclipped() -> Self {
-        Self::default()
+    pub const fn unclipped() -> Self {
+        Self {
+            offset: 0,
+            count: 0,
+        }
     }
 
-    /// A region clipped by every box, outermost ancestor first.
-    pub fn new(boxes: Vec<ClipBox>) -> Self {
-        Self { boxes }
+    /// True when no ancestor clips this rect (no boxes).
+    pub const fn is_unclipped(&self) -> bool {
+        self.count == 0
     }
+}
 
+/// One region together with the boxes it names — what a painter reads.
+///
+/// [`ClipRegion`] is a range and cannot answer "which boxes" on its own.
+/// Rather than make every call site carry the table alongside the range,
+/// [`ClipTable::resolve`] returns this, so `clips.resolve(rect.clip).boxes()`
+/// reads exactly as it did before the flattening.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ClipView<'a> {
+    region: ClipRegion,
+    boxes: &'a [ClipBox],
+}
+
+impl<'a> ClipView<'a> {
     /// The boxes to intersect, outermost ancestor first.
-    pub fn boxes(&self) -> &[ClipBox] {
-        &self.boxes
+    pub fn boxes(&self) -> &'a [ClipBox] {
+        self.boxes
     }
 
     /// True when no ancestor clips this rect (no boxes).
     pub fn is_unclipped(&self) -> bool {
-        self.boxes.is_empty()
+        self.region.is_unclipped()
+    }
+
+    /// The range itself — the value that crosses boundary B, for a caller
+    /// packing an instance buffer rather than drawing.
+    pub fn region(&self) -> ClipRegion {
+        self.region
     }
 }
 
@@ -374,15 +419,24 @@ impl ClipRegion {
 /// always the unclipped region ([`ClipIndex::UNCLIPPED`]), so every rect
 /// resolves; regions are deduplicated by `dashscene-core`, so the
 /// subtree under one clipping ancestor shares one entry.
+///
+/// The regions are ranges into `boxes`, one flat array for the whole table
+/// (story #578). Prefixes are **not** shared: a region `[A]` and a region
+/// `[A, B]` store `A` twice. Sharing them would mean a suffix-matching
+/// allocator on a path that runs per commit, to save bytes on a table whose
+/// regions are already deduplicated by value upstream — and a painter
+/// uploading this wants one contiguous run per region regardless.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClipTable {
     entries: Vec<ClipRegion>,
+    boxes: Vec<ClipBox>,
 }
 
 impl Default for ClipTable {
     fn default() -> Self {
         Self {
             entries: vec![ClipRegion::unclipped()],
+            boxes: Vec::new(),
         }
     }
 }
@@ -396,16 +450,26 @@ impl ClipTable {
         Self::default()
     }
 
-    /// Appends a region and returns its index — the value a
-    /// [`RectEntry::clip`] field holds to reference it.
-    pub fn push(&mut self, region: ClipRegion) -> ClipIndex {
+    /// Appends a region over `boxes` (outermost ancestor first) and returns
+    /// its index — the value a [`RectEntry::clip`] field holds to reference
+    /// it.
+    ///
+    /// Takes the boxes rather than a [`ClipRegion`] because the range is
+    /// only meaningful against this table's flat array, so only this table
+    /// can produce a correct one.
+    pub fn push(&mut self, boxes: &[ClipBox]) -> ClipIndex {
         let index = u32::try_from(self.entries.len()).expect("clip table exceeds u32::MAX entries");
-        self.entries.push(region);
+        let offset =
+            u32::try_from(self.boxes.len()).expect("clip table exceeds u32::MAX clip boxes");
+        let count = u32::try_from(boxes.len()).expect("a clip region exceeds u32::MAX boxes");
+        self.boxes.extend_from_slice(boxes);
+        self.entries.push(ClipRegion { offset, count });
         ClipIndex(index)
     }
 
-    pub fn get(&self, index: ClipIndex) -> Option<&ClipRegion> {
-        self.entries.get(index.0 as usize)
+    pub fn get(&self, index: ClipIndex) -> Option<ClipView<'_>> {
+        let region = *self.entries.get(index.0 as usize)?;
+        Some(self.view(region))
     }
 
     /// Resolves a rect's clip index. This is the lookup painters use.
@@ -414,7 +478,7 @@ impl ClipTable {
     /// [`PaintTable::resolve`]: a miss is a broken contract between
     /// crates, and a painter must never skip a rect's clip silently
     /// (P4).
-    pub fn resolve(&self, index: ClipIndex) -> &ClipRegion {
+    pub fn resolve(&self, index: ClipIndex) -> ClipView<'_> {
         self.get(index).unwrap_or_else(|| {
             panic!(
                 "clip index {} out of range ({} regions): clip indices are validated upstream (P4)",
@@ -424,9 +488,52 @@ impl ClipTable {
         })
     }
 
+    /// The stored range for an index, without its boxes — what a caller
+    /// packing an instance buffer writes, rather than what a painter draws.
+    ///
+    /// Panics on an out-of-range index, same contract as
+    /// [`resolve`](Self::resolve).
+    pub fn region(&self, index: ClipIndex) -> ClipRegion {
+        self.resolve(index).region()
+    }
+
+    /// Every box in the table, in one flat array. A [`ClipRegion`]'s
+    /// `offset` and `count` index into this.
+    pub fn all_boxes(&self) -> &[ClipBox] {
+        &self.boxes
+    }
+
     /// Region count, including the reserved unclipped region at index 0.
     pub fn len(&self) -> usize {
         self.entries.len()
+    }
+
+    /// Pairs a stored range with the boxes it names.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the range runs past the flat array.
+    ///
+    /// No public path reaches this today: only [`push`](Self::push) writes
+    /// ranges, and it writes them from the array's own length, so every
+    /// stored range is in bounds by construction. It is a named panic rather
+    /// than the slice indexer's because the failure it describes — a range
+    /// and the array it indexes built apart from each other — is the one
+    /// defect this shape introduces that a `Vec` per region could not have,
+    /// and because the next story to write ranges here will not be `push`.
+    fn view(&self, region: ClipRegion) -> ClipView<'_> {
+        let start = region.offset as usize;
+        let end = start + region.count as usize;
+        let boxes = self.boxes.get(start..end).unwrap_or_else(|| {
+            panic!(
+                "clip region {}..{} runs past the table's {} boxes: a region and the array it \
+                 indexes must be built together",
+                start,
+                end,
+                self.boxes.len()
+            )
+        });
+        ClipView { region, boxes }
     }
 }
 

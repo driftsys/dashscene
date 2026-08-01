@@ -6,10 +6,9 @@
 //! stroke width to be measured against (issue #100).
 
 use dashpaint::{
-    ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CornerRadii, GlyphRunTable, Gradient,
-    GradientKind, GradientStop, GroupComposite, ImageAsset, ImageFormat, ImageTable, PaintEntry,
-    PaintIndex, PaintKind, PaintTable, RectEntry, ScaleMode, Shadow, ShadowKind, Stroke,
-    StrokeAlign, Vec2,
+    ClipBox, ClipIndex, ClipTable, Color, CornerRadii, GlyphRunTable, Gradient, GradientKind,
+    GradientStop, GroupComposite, ImageAsset, ImageFormat, ImageTable, PaintEntry, PaintIndex,
+    PaintKind, PaintTable, RectEntry, ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, Vec2,
 };
 use dashscene_validator::{
     Location, RENDER_TARGET_BUDGET_PLACEHOLDER, Report, Severity, rule, validate_scene,
@@ -451,13 +450,13 @@ fn a_rect_carrying_a_real_clip_region_is_clean() {
     let paint = paints.push(PaintEntry::solid(red()));
 
     let mut clips = ClipTable::new();
-    let region = clips.push(ClipRegion::new(vec![ClipBox {
+    let region = clips.push(&[ClipBox {
         x: 0.0,
         y: 0.0,
         w: 100.0,
         h: 100.0,
         corners: CornerRadii::default(),
-    }]));
+    }]);
 
     let mut clipped = rect(10.0, 10.0, paint.0);
     clipped.clip = region;

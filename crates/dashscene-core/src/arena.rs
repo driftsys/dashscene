@@ -16,7 +16,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::bindings::{Binding, Channel, ScalarTransform, SignalDecl, SignalId};
 use crate::committed::{
-    Atlas, Blur, ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CommittedScene, CornerRadii,
+    Atlas, Blur, ClipBox, ClipIndex, ClipTable, ClipView, Color, CommittedScene, CornerRadii,
     GlyphRun, GlyphRunTable, GroupComposite, ImageAsset, ImageTable, PaintEntry, PaintIndex,
     PaintKind, PaintTable, RectEntry, Shadow, Stroke, StrokeAlign, Vec2, VectorField,
 };
@@ -2290,7 +2290,7 @@ fn compact_clips(
                 .get(head)
                 .expect("shorter prefixes are rebuilt before the regions that extend them"),
         };
-        let index = table.push(ClipRegion::new(boxes.clone()));
+        let index = table.push(boxes);
         interned.insert((parent.0, *last), index);
         index_of.insert(bits, index);
     }
@@ -2348,7 +2348,7 @@ fn intern_region(
     let table = Arc::make_mut(clips);
     let mut boxes = table.resolve(parent_region).boxes().to_vec();
     boxes.push(parent_box);
-    let index = table.push(ClipRegion::new(boxes));
+    let index = table.push(&boxes);
     interned.insert(key, index);
     index
 }
@@ -2568,7 +2568,7 @@ fn stroke_extent(geometry: SolvedRect, stroke: Option<&Stroke>) -> Extent {
 /// which is the direction the overlap test has to err in: judging two rects
 /// disjoint when they share a pixel would under-composite, a visible bug,
 /// while judging two disjoint rects overlapping only costs a render target.
-fn clipped_extent(extent: Extent, region: &ClipRegion) -> Option<Extent> {
+fn clipped_extent(extent: Extent, region: ClipView<'_>) -> Option<Extent> {
     let mut left = extent.x;
     let mut top = extent.y;
     let mut right = extent.x + extent.w;

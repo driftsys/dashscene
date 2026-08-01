@@ -28,12 +28,14 @@
 //! # Deliberately narrow, and widened by the story that flattens the rest
 //!
 //! The lint cannot be switched on over all of boundary B yet: `PaintKind`
-//! carries payloads, and `GlyphRun`, `ClipRegion`, `PaintEntry` and
-//! `ImageAsset` hold `Vec`s. Those are story #578's to flatten — payload enums
+//! carries payloads, and `GlyphRun`, `PaintEntry` and `ImageAsset` hold
+//! `Vec`s. Those are story #578's to flatten — payload enums
 //! become tag plus index into per-kind tables, nested collections become a flat
 //! array plus `(offset, count)` — and #578 widens this surface as it goes. That
 //! ordering is the point: the lint is never "turned on later and forgotten",
-//! and each flattening step is checked as it lands.
+//! and each flattening step is checked as it lands. `ClipRegion` was the
+//! first to arrive that way: it became `(offset, count)` into the clip
+//! table's one flat box array, and joined this surface in the same change.
 //!
 //! # What this is not
 //!
@@ -45,7 +47,9 @@
 //! generality this crate exists to protect.
 #![deny(improper_ctypes_definitions)]
 
-use dashpaint::{AtlasGlyph, ClipBox, Color, GlyphQuad, GradientStop, Mat23, RectEntry, Vec2};
+use dashpaint::{
+    AtlasGlyph, ClipBox, ClipRegion, Color, GlyphQuad, GradientStop, Mat23, RectEntry, Vec2,
+};
 
 /// How this build lays out one boundary-B type.
 ///
@@ -102,6 +106,7 @@ abi_surface! {
     Mat23 => dashscene_abi_mat23_layout, dashscene_abi_mat23_round_trip;
     GradientStop => dashscene_abi_gradient_stop_layout, dashscene_abi_gradient_stop_round_trip;
     ClipBox => dashscene_abi_clip_box_layout, dashscene_abi_clip_box_round_trip;
+    ClipRegion => dashscene_abi_clip_region_layout, dashscene_abi_clip_region_round_trip;
     RectEntry => dashscene_abi_rect_entry_layout, dashscene_abi_rect_entry_round_trip;
     GlyphQuad => dashscene_abi_glyph_quad_layout, dashscene_abi_glyph_quad_round_trip;
     AtlasGlyph => dashscene_abi_atlas_glyph_layout, dashscene_abi_atlas_glyph_round_trip;
@@ -140,6 +145,7 @@ mod tests {
             ("Mat23", dashscene_abi_mat23_layout(), 24, 4),
             ("GradientStop", dashscene_abi_gradient_stop_layout(), 20, 4),
             ("ClipBox", dashscene_abi_clip_box_layout(), 32, 4),
+            ("ClipRegion", dashscene_abi_clip_region_layout(), 8, 4),
             ("RectEntry", dashscene_abi_rect_entry_layout(), 28, 4),
             ("GlyphQuad", dashscene_abi_glyph_quad_layout(), 12, 4),
             ("AtlasGlyph", dashscene_abi_atlas_glyph_layout(), 36, 4),
