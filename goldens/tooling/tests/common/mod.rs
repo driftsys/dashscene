@@ -21,8 +21,8 @@ pub mod manifest;
 pub mod stress;
 
 use dashpaint::{
-    Atlas, AtlasGlyph, ClipIndex, ClipTable, Color, GlyphRun, GlyphRunTable, ImageAsset,
-    ImageFormat, ImageTable, PaintEntry, PaintTable, Painter, RectEntry,
+    Atlas, AtlasGlyph, ClipIndex, ClipTable, Color, GlyphRange, GlyphRun, GlyphRunTable,
+    ImageAsset, ImageFormat, ImageTable, PaintEntry, PaintTable, Painter, RectEntry,
 };
 use dashscene_core::{Arena, NodeId, TextAlign, TextAlignV, TextStyle};
 use dashscene_skia::SkiaPainter;
@@ -149,7 +149,13 @@ pub fn runs_where(table: &GlyphRunTable, keep: impl Fn(&GlyphRun) -> bool) -> Gl
         out.push_atlas(atlas.clone());
     }
     for run in table.runs().iter().filter(|r| keep(r)) {
-        out.push_run(run.clone());
+        // The run's range names quads in `table`, not in `out`. Clearing it
+        // is what says so: `push_run` refuses a range it did not assign, and
+        // re-homing a run into another table is exactly the case that rule
+        // exists for (story #578).
+        let mut rehomed = *run;
+        rehomed.glyphs = GlyphRange::UNASSIGNED;
+        out.push_run(rehomed, table.quads(run));
     }
     out
 }

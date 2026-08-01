@@ -72,6 +72,16 @@ packer, which publishes after everything here
   never moves anything (P2). The atlas is a plain mirror of the
   `dashscene-typeset` metrics blob, so `dashpaint` still depends on no
   crate.
+- A `GlyphRun`'s quads are a `GlyphRange` — `(offset, count)` into the
+  table's one flat quad array, read with `GlyphRunTable::quads` (story
+  #578). Same shape and same two reasons as `ClipRegion`: a `Vec` per run
+  has no C representation, and a flat array plus a range uploads as one
+  buffer copy where a `Vec` per run is a pointer chase. `push_run` assigns
+  the range and **refuses** a run that already carries one, because a
+  producer cannot know where its quads will land in a table it has not
+  entered — and commit sorts runs by anchor before pushing, so no offset a
+  stager computed would survive. A stager therefore hands back a
+  `StagedRun`, its quads beside the run rather than inside it.
 
   Each run carries `rect: u32`, the rect-table index of the text node it
   was shaped from — its **anchor**, stamped by `dashscene-core`'s commit
@@ -196,8 +206,9 @@ removing a `repr` attribute, adding a `Vec` field, or putting a
 payload-carrying enum on the surface stops the workspace compiling.
 Boundary B is a language-neutral data contract, and the reason is G2 —
 see `docs/design/architecture.md`. The surface is narrow today and widens
-as story #578 flattens `PaintKind`, `GlyphRun`, `ClipRegion`,
-`PaintEntry` and `ImageAsset`.
+as story #578 flattens each type in turn. `ClipRegion` and `GlyphRun`
+(with `GlyphRange`) are done and on the surface; `PaintKind`,
+`PaintEntry` and `ImageAsset` remain.
 
 `Painter::paint` is infallible and the trait is object-safe (`Box<dyn
 Painter>` must work — backend selection is whole-scene, R3). Slice order

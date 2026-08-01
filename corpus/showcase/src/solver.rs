@@ -16,7 +16,7 @@
 use std::sync::Arc;
 
 use dashpaint::Atlas;
-use dashscene_core::{Arena, GlyphRun, LayoutSolver, NodeId, SolvedRect};
+use dashscene_core::{Arena, LayoutSolver, NodeId, SolvedRect, StagedRun};
 use dashscene_engine::TaffySolver;
 use dashscene_typeset::text::Typesetter;
 
@@ -56,7 +56,7 @@ impl LayoutSolver for ShowcaseSolver {
         &mut self,
         arena: &Arena,
         geometry: &dyn Fn(NodeId) -> SolvedRect,
-    ) -> Vec<(NodeId, GlyphRun)> {
+    ) -> Vec<StagedRun> {
         // `TaffySolver::stage_text` stages nothing when its own atlas list is
         // empty, so the list has to be handed over here even though the table
         // commit builds takes its atlases from `atlases` above. The clone is

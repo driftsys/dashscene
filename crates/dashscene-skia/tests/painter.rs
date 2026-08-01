@@ -150,8 +150,8 @@ fn encodes_png() {
 // with anti-aliasing on.
 
 use dashpaint::{
-    Blur, BlurKind, ClipBox, CornerRadii, GradientStop, ImageAsset, ImageFormat, Mat23, PaintTable,
-    ScaleMode, Stroke, StrokeAlign,
+    Blur, BlurKind, ClipBox, CornerRadii, GlyphRange, GradientStop, ImageAsset, ImageFormat, Mat23,
+    PaintTable, ScaleMode, Stroke, StrokeAlign,
 };
 
 const GREEN: Color = Color {
@@ -1191,18 +1191,21 @@ fn a_glyph_quad_fills_its_box_with_the_text_color() {
     // the quad and it renders at full text color — the quad placement,
     // atlas sampling, and colour modulation, without AA in the way.
     let (mut glyphs, atlas) = inside_atlas();
-    glyphs.push_run(GlyphRun {
-        rect: 0,
-        atlas,
-        size: 16.0,
-        color: RED,
-        glyphs: vec![GlyphQuad {
+    glyphs.push_run(
+        GlyphRun {
+            rect: 0,
+            atlas,
+            size: 16.0,
+            color: RED,
+            glyphs: GlyphRange::UNASSIGNED,
+            opacity: 1.0,
+        },
+        &[GlyphQuad {
             glyph_id: 1,
             x: 8.0,
             y: 24.0,
         }],
-        opacity: 1.0,
-    });
+    );
 
     let mut painter = SkiaPainter::new(32, 32);
     painter.paint(
@@ -1233,18 +1236,21 @@ fn a_glyph_absent_from_the_atlas_draws_nothing() {
     // glyph id 2 has no atlas quad (an empty outline such as a space, or a
     // glyph outside the charset): it paints nothing rather than panicking.
     let (mut glyphs, atlas) = inside_atlas();
-    glyphs.push_run(GlyphRun {
-        rect: 0,
-        atlas,
-        size: 16.0,
-        color: RED,
-        glyphs: vec![GlyphQuad {
+    glyphs.push_run(
+        GlyphRun {
+            rect: 0,
+            atlas,
+            size: 16.0,
+            color: RED,
+            glyphs: GlyphRange::UNASSIGNED,
+            opacity: 1.0,
+        },
+        &[GlyphQuad {
             glyph_id: 2,
             x: 8.0,
             y: 24.0,
         }],
-        opacity: 1.0,
-    });
+    );
 
     let mut painter = SkiaPainter::new(32, 32);
     painter.paint(
@@ -1365,18 +1371,21 @@ fn a_glyph_runs_free_path_opacity_dims_the_text() {
 
     fn inked(opacity: f32) -> usize {
         let (mut glyphs, atlas) = inside_atlas();
-        glyphs.push_run(GlyphRun {
-            rect: 0,
-            atlas,
-            size: 16.0,
-            color: RED,
-            glyphs: vec![GlyphQuad {
+        glyphs.push_run(
+            GlyphRun {
+                rect: 0,
+                atlas,
+                size: 16.0,
+                color: RED,
+                glyphs: GlyphRange::UNASSIGNED,
+                opacity,
+            },
+            &[GlyphQuad {
                 glyph_id: 1,
                 x: 8.0,
                 y: 24.0,
             }],
-            opacity,
-        });
+        );
         let mut painter = SkiaPainter::new(32, 32);
         painter.paint(
             &anchor_rect(),
@@ -1416,18 +1425,21 @@ fn a_glyph_runs_free_path_opacity_dims_the_text() {
 #[test]
 fn a_glyph_run_is_clipped_to_the_region_its_anchor_rect_carries() {
     let (mut glyphs, atlas) = inside_atlas();
-    glyphs.push_run(GlyphRun {
-        rect: 0,
-        atlas,
-        size: 16.0,
-        color: RED,
-        glyphs: vec![GlyphQuad {
+    glyphs.push_run(
+        GlyphRun {
+            rect: 0,
+            atlas,
+            size: 16.0,
+            color: RED,
+            glyphs: GlyphRange::UNASSIGNED,
+            opacity: 1.0,
+        },
+        &[GlyphQuad {
             glyph_id: 1,
             x: 8.0,
             y: 24.0,
         }],
-        opacity: 1.0,
-    });
+    );
 
     let mut clips = ClipTable::new();
     let clip = clips.push(&[ClipBox {
@@ -1472,18 +1484,21 @@ fn a_glyph_run_is_clipped_to_the_region_its_anchor_rect_carries() {
 #[test]
 fn a_run_whose_anchor_is_unclipped_draws_in_full() {
     let (mut glyphs, atlas) = inside_atlas();
-    glyphs.push_run(GlyphRun {
-        rect: 0,
-        atlas,
-        size: 16.0,
-        color: RED,
-        glyphs: vec![GlyphQuad {
+    glyphs.push_run(
+        GlyphRun {
+            rect: 0,
+            atlas,
+            size: 16.0,
+            color: RED,
+            glyphs: GlyphRange::UNASSIGNED,
+            opacity: 1.0,
+        },
+        &[GlyphQuad {
             glyph_id: 1,
             x: 8.0,
             y: 24.0,
         }],
-        opacity: 1.0,
-    });
+    );
 
     let mut painter = SkiaPainter::new(32, 32);
     painter.paint(
@@ -1518,17 +1533,17 @@ fn a_clipped_runs_region_does_not_leak_onto_the_next_run() {
         x,
         y: 24.0,
     };
-    let run = |rect: u32, x: f32| GlyphRun {
+    let run = |rect: u32| GlyphRun {
         rect,
         atlas,
         size: 16.0,
         color: RED,
-        glyphs: vec![quad(x)],
+        glyphs: GlyphRange::UNASSIGNED,
         opacity: 1.0,
     };
     // Rect 0 is clipped to x < 16; rect 1 is unclipped.
-    glyphs.push_run(run(0, 8.0));
-    glyphs.push_run(run(1, 8.0));
+    glyphs.push_run(run(0), &[quad(8.0)]);
+    glyphs.push_run(run(1), &[quad(8.0)]);
 
     let mut clips = ClipTable::new();
     let clip = clips.push(&[ClipBox {
@@ -1573,18 +1588,21 @@ fn a_clipped_runs_region_does_not_leak_onto_the_next_run() {
 #[should_panic(expected = "out of range")]
 fn a_run_anchored_past_the_rect_table_is_named_rather_than_drawn_unclipped() {
     let (mut glyphs, atlas) = inside_atlas();
-    glyphs.push_run(GlyphRun {
-        rect: 7,
-        atlas,
-        size: 16.0,
-        color: RED,
-        glyphs: vec![GlyphQuad {
+    glyphs.push_run(
+        GlyphRun {
+            rect: 7,
+            atlas,
+            size: 16.0,
+            color: RED,
+            glyphs: GlyphRange::UNASSIGNED,
+            opacity: 1.0,
+        },
+        &[GlyphQuad {
             glyph_id: 1,
             x: 8.0,
             y: 24.0,
         }],
-        opacity: 1.0,
-    });
+    );
 
     let mut painter = SkiaPainter::new(32, 32);
     painter.paint(
@@ -2233,18 +2251,21 @@ fn nested_group_scene(
 /// A glyph run anchored at rect 2 — inside both groups.
 fn group_glyphs() -> GlyphRunTable {
     let (mut glyphs, atlas) = inside_atlas();
-    glyphs.push_run(GlyphRun {
-        rect: 2,
-        atlas,
-        size: 6.0,
-        color: RED,
-        glyphs: vec![GlyphQuad {
+    glyphs.push_run(
+        GlyphRun {
+            rect: 2,
+            atlas,
+            size: 6.0,
+            color: RED,
+            glyphs: GlyphRange::UNASSIGNED,
+            opacity: 1.0,
+        },
+        &[GlyphQuad {
             glyph_id: 1,
             x: 9.0,
             y: 12.0,
         }],
-        opacity: 1.0,
-    });
+    );
     glyphs
 }
 

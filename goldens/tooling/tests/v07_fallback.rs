@@ -190,7 +190,8 @@ fn the_label_cascades_across_both_atlases() {
     let (arena, label) = author_scene(&mut ts);
 
     let scene = arena.committed();
-    let runs = scene.glyphs().runs();
+    let glyphs = scene.glyphs();
+    let runs = glyphs.runs();
 
     // Every run belongs to the one text node, so the cascade split the label
     // rather than the walk picking up something else.
@@ -223,7 +224,7 @@ fn the_label_cascades_across_both_atlases() {
         } else {
             &ascii_covered
         };
-        for quad in &run.glyphs {
+        for quad in glyphs.quads(run) {
             // A .notdef would mean the cascade sent a codepoint to a font
             // that cannot shape it — the failure this guard exists to catch.
             assert_ne!(quad.glyph_id, 0, "no glyph shaped to .notdef");

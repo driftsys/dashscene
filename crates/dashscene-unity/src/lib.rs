@@ -28,14 +28,15 @@
 //! # Deliberately narrow, and widened by the story that flattens the rest
 //!
 //! The lint cannot be switched on over all of boundary B yet: `PaintKind`
-//! carries payloads, and `GlyphRun`, `PaintEntry` and `ImageAsset` hold
-//! `Vec`s. Those are story #578's to flatten — payload enums
+//! carries payloads, and `PaintEntry` and `ImageAsset` hold `Vec`s. Those are
+//! story #578's to flatten — payload enums
 //! become tag plus index into per-kind tables, nested collections become a flat
 //! array plus `(offset, count)` — and #578 widens this surface as it goes. That
 //! ordering is the point: the lint is never "turned on later and forgotten",
-//! and each flattening step is checked as it lands. `ClipRegion` was the
-//! first to arrive that way: it became `(offset, count)` into the clip
-//! table's one flat box array, and joined this surface in the same change.
+//! and each flattening step is checked as it lands. `ClipRegion` arrived that
+//! way first, then `GlyphRange` and with it `GlyphRun`: each became
+//! `(offset, count)` into its table's one flat array, and each joined this
+//! surface in the change that flattened it.
 //!
 //! # What this is not
 //!
@@ -48,7 +49,8 @@
 #![deny(improper_ctypes_definitions)]
 
 use dashpaint::{
-    AtlasGlyph, ClipBox, ClipRegion, Color, GlyphQuad, GradientStop, Mat23, RectEntry, Vec2,
+    AtlasGlyph, ClipBox, ClipRegion, Color, GlyphQuad, GlyphRange, GlyphRun, GradientStop, Mat23,
+    RectEntry, Vec2,
 };
 
 /// How this build lays out one boundary-B type.
@@ -109,6 +111,8 @@ abi_surface! {
     ClipRegion => dashscene_abi_clip_region_layout, dashscene_abi_clip_region_round_trip;
     RectEntry => dashscene_abi_rect_entry_layout, dashscene_abi_rect_entry_round_trip;
     GlyphQuad => dashscene_abi_glyph_quad_layout, dashscene_abi_glyph_quad_round_trip;
+    GlyphRange => dashscene_abi_glyph_range_layout, dashscene_abi_glyph_range_round_trip;
+    GlyphRun => dashscene_abi_glyph_run_layout, dashscene_abi_glyph_run_round_trip;
     AtlasGlyph => dashscene_abi_atlas_glyph_layout, dashscene_abi_atlas_glyph_round_trip;
 }
 
@@ -148,6 +152,8 @@ mod tests {
             ("ClipRegion", dashscene_abi_clip_region_layout(), 8, 4),
             ("RectEntry", dashscene_abi_rect_entry_layout(), 28, 4),
             ("GlyphQuad", dashscene_abi_glyph_quad_layout(), 12, 4),
+            ("GlyphRange", dashscene_abi_glyph_range_layout(), 8, 4),
+            ("GlyphRun", dashscene_abi_glyph_run_layout(), 40, 4),
             ("AtlasGlyph", dashscene_abi_atlas_glyph_layout(), 36, 4),
         ];
         for (name, layout, size, align) in measured {
