@@ -320,24 +320,38 @@ arm64 and CI runs them on x86_64, so **every green run was already a
 cross-architecture diff** — and `compare_against` already prints its
 residual on a within-budget pass. The `test` job runs under nextest,
 which captures a passing test's output, so the number was measured and
-discarded on every run. Re-running the six with `--nocapture` in the
+discarded on every run. Re-running them with `--nocapture` in the
 `render-oracle` job records it:
 
-| golden                  | budget (px) | ratio to the 32-px vector-AA anchor | cross-architecture residual | headroom |
-| ----------------------- | ----------- | ----------------------------------- | --------------------------- | -------- |
-| v05-text-latin          | 1,200       | 37.5x                               | 1 px of 44,800 (0.002 %)    | 1200x    |
-| v06-text-arabic         | 440         | 13.75x                              | 4 px of 71,400 (0.006 %)    | 110x     |
-| v07-text-fallback       | 500         | 15.6x                               | 2 px of 34,560 (0.006 %)    | 250x     |
-| v07-text-lowering       | 200         | 6.25x                               | 0 px — byte-identical       | infinite |
-| v07-variant-topology    | 200         | 6.25x                               | 0 px — byte-identical       | infinite |
-| v013-baseline-hug-cross | 400         | 12.5x                               | 3 px of 36,000 (0.008 %)    | 133x     |
+| golden                  | budget (px)   | ratio to the 32-px vector-AA anchor | cross-architecture residual | rate    | headroom |
+| ----------------------- | ------------- | ----------------------------------- | --------------------------- | ------- | -------- |
+| **v03-paint** (anchor)  | 1 % tolerance | —                                   | **32 px of 9,216**          | 0.347 % | 2.9x     |
+| v05-text-latin          | 1,200         | 37.5x                               | 1 px of 44,800              | 0.002 % | 1200x    |
+| v06-text-arabic         | 440           | 13.75x                              | 4 px of 71,400              | 0.006 % | 110x     |
+| v07-text-fallback       | 500           | 15.6x                               | 2 px of 34,560              | 0.006 % | 250x     |
+| v07-text-lowering       | 200           | 6.25x                               | 0 px — byte-identical       | 0 %     | infinite |
+| v07-variant-topology    | 200           | 6.25x                               | 0 px — byte-identical       | 0 %     | infinite |
+| v013-baseline-hug-cross | 400           | 12.5x                               | 3 px of 36,000              | 0.008 % | 133x     |
+| v07-ellipse             | 500           | 15.6x                               | 0 px — byte-identical       | 0 %     | infinite |
+
+The anchor scene is measured in the same run, on the same toolchain, so
+this is a comparison across architectures rather than across time. It
+lands on **exactly 32 px of 9,216**, reproducing the historical figure —
+the anchor was accurate; only its application to a different rendering
+path was not.
 
 Issue #539 asked whether MSDF edge coverage is more or less stable
 across architectures than the gradient AA the 32-px figure measured.
-**Far more stable.** The gradient-and-stroke anchor moved 32 px; MSDF
-text moves 0 to 4 px on the same architecture change, and two of the six
-frames do not move at all. The extrapolation was wrong in the safe
-direction, by two to three orders of magnitude.
+**Far more stable, and the gap is large.** The anchor scene moves 32 px
+on a 9,216-px canvas; the text frames move 0 to 4 px on canvases three
+to eight times larger. Per pixel that is **58x to 170x** less movement,
+and three of the seven calibrated-budget goldens do not move at all.
+
+`v07-ellipse` is the useful control: it is curved anti-aliased shape
+edges rather than text, so it sits between the two paths — and it is
+byte-identical. The instability the 32-px anchor captured is specific to
+what `v03-paint` draws, gradients and strokes through Skia's own path
+rasteriser, not a general property of anti-aliased edges.
 
 The earlier `--release` data point below reads differently in hindsight:
 it was treated as a much weaker perturbation than a change of
@@ -358,7 +372,7 @@ smaller regression.
 That gap is now quantified rather than suspected: with the noise floor at
 1 to 4 px and budgets at 200 to 1,200 px, a regression that moves a few
 glyphs by a pixel — a baseline nudge, a kerning change, a single
-glyph substituted — passes silently on every one of these six frames.
+glyph substituted — passes silently on every one of these frames.
 Tightening the budgets toward the measured floor is the obvious
 consequence, and it is deliberately **not** done here: each budget's
 sensitivity guard is calibrated against its current value, so retuning
