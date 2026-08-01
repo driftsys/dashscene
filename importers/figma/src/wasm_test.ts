@@ -149,6 +149,17 @@ Deno.test("REJECT-band constructs come back as diagnostics, not bytes", () => {
   // compile reaches the three REJECT-band effects the fixture was authored
   // to carry. What comes back must name each one, never silently drop it
   // (P4).
+  //
+  // The whole report is pinned, by severity and by rule. It is not only the
+  // three errors: the fixture's text style renders at 12 px per em, under
+  // the 14 px per em floor story #373 introduced, so
+  // `text.style-below-msdf-floor` rides along as a warning. Naming both
+  // groups keeps what a bare total count was there for — a construct that
+  // stopped being triaged at all would still satisfy a membership check
+  // over the rest (the reasoning behind `EFFECTS_2025_DIAGNOSTICS` in
+  // crates/dashc/tests/figma_lowering.rs) — and a diagnostic that appears,
+  // vanishes, or changes severity fails here naming itself, rather than as
+  // a count that drifted.
   const error = assertThrows(
     () => dashc.compileFigma(fixture("effects-2025"), "core", new Map()),
     CompileFailed,
@@ -157,8 +168,14 @@ Deno.test("REJECT-band constructs come back as diagnostics, not bytes", () => {
   const detail = error.detail;
   assertEquals(detail.kind, "diagnostics");
   if (detail.kind !== "diagnostics") throw new Error("unreachable");
-  assertEquals(detail.diagnostics.length, 3);
-  assertEquals(detail.diagnostics.every((d) => d.severity === "error"), true);
+  const errors = detail.diagnostics.filter((d) => d.severity === "error");
+  assertEquals(errors.map((d) => d.rule), [
+    "profile.noise-or-texture-effect",
+    "profile.noise-or-texture-effect",
+    "profile.progressive-blur",
+  ]);
+  const warnings = detail.diagnostics.filter((d) => d.severity === "warning");
+  assertEquals(warnings.map((d) => d.rule), ["text.style-below-msdf-floor"]);
 });
 
 Deno.test("an unresolved imageRef is a named failure", () => {
