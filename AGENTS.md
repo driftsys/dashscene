@@ -153,11 +153,11 @@ runs as three tiers, so "tests pass" is no longer a claim about all of it:
 - **When the diff touches any path in the `packer` filter** — the filter is
   defined in the `changes` job of `.github/workflows/ci.yml`, and enumerated
   with a reason per entry in `docs/decisions/test-tiers.md`. Run
-  `just calibrate` before marking the PR ready. The path list is deliberately
-  not repeated here: it has already drifted three times as a partial copy,
-  most recently omitting `Cargo.lock`. CI runs the tier regardless, and a red
-  job on a non-draft PR is what
-  `docs/decisions/review-before-ready-not-before-open.md` exists to prevent.
+  `just calibrate` before merging. The path list is deliberately not
+  repeated here: it has already drifted three times as a partial copy, most
+  recently omitting `Cargo.lock`. CI runs the tier regardless, and merging
+  with that job red is what
+  `docs/decisions/ci-green-before-story-merge.md` exists to prevent.
 - **At slice close** — `just calibrate`, whatever the slice touched. This is
   the one run not driven by a path, and it is the backstop against a table
   drifting through a change the filter did not predict.
@@ -167,16 +167,21 @@ runs as three tiers, so "tests pass" is no longer a claim about all of it:
 Story workflow — the definition of done for every story:
 
 - `just build` green.
-- Open the PR as a **draft**, then run `/code-review` on it (`--comment`
-  posts the findings as inline PR comments). Capture every finding as a
-  checklist in the PR description — never drop a finding silently.
-- Fix all critical findings before marking the PR ready. For minor
-  findings, file one `debt`-labeled issue each (linked to the story)
-  instead of fixing them inline.
-- Mark the PR ready for review only once CI is green, the review pass is
-  complete, and all critical findings are resolved. A non-draft PR is a
-  request to merge, so it must never carry an unreviewed diff
+- Open the PR as an ordinary pull request — **never a draft**. Draft means
+  "not ready for review", which is the opposite of why the PR was opened:
+  reviewers are not requested, and `/code-review` stops without reviewing
+  when the PR is a draft
   (`docs/decisions/review-before-ready-not-before-open.md`).
+- Run `/code-review` on the PR (`--comment` posts the findings as inline
+  PR comments). Capture every finding as a checklist in the PR
+  description — never drop a finding silently.
+- Fix all critical findings before merging. For minor findings, file one
+  `debt`-labeled issue each (linked to the story) instead of fixing them
+  inline.
+- The findings checklist is what says the PR is not ready to merge: an
+  absent or unticked checklist means the review is still running. Nothing
+  on this repo enforces that mechanically — branch protection needs a paid
+  plan — so it is held by the checklist and by whoever presses merge.
 - **Never write "closes #N", "fixes #N" or "resolves #N" in PR prose.**
   GitHub reads a closing keyword anywhere in the body, including inside an
   ordinary sentence, and closes the issue on merge. Story #49 was closed
@@ -185,9 +190,10 @@ Story workflow — the definition of done for every story:
   shipped. Write `Refs #N` when referring to an issue, and reserve a
   closing keyword for the one issue the PR actually completes. When naming
   an issue mid-sentence, write "issue #N" or restructure the sentence.
-- Merge only when the PR is out of draft and CI is green on the commit
-  being merged. Marking a PR ready is a gate, not a promise: a later
-  push, or a rebase onto a moved `main`, can turn it red again.
+- Merge only when the review pass is complete, every critical finding is
+  resolved, and CI is green on the commit being merged. A green run
+  earlier is not a promise: a later push, or a rebase onto a moved `main`,
+  can turn it red again, so check the commit you are about to merge.
 
 Merging a PR — how the branch lands on `main`:
 

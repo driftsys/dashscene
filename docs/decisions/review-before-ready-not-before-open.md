@@ -1,9 +1,13 @@
-# Decision: the review gate is "ready for review", not "PR opened"
+# Decision: review before merge — a story PR is never a draft
 
     status   accepted
-    date     2026-07-13
+    date     2026-07-13, revised 2026-08-01
     scope    process — applies to every story PR
     session  marshal/coordinator lane
+
+The filename still reads `review-before-ready-not-before-open` — the name
+this decision carried between 2026-07-13 and 2026-08-01. It is kept
+unchanged so the links to it from `docs/archive/` stay valid.
 
 ## Context
 
@@ -43,45 +47,97 @@ resolved. Nothing bad happened, but for the window between opening and
 reviewing, a PR that looked ready to merge carried an unreviewed defect —
 and PRs in this repo are merged promptly.
 
+## Why the draft step was dropped (2026-08-01)
+
+The first version of this decision closed that window by opening every
+story PR as a draft and marking it ready once the review was complete.
+That step is now removed. Three things were wrong with it.
+
+**Draft already means something else.** On GitHub, draft means "not ready
+for review": reviewers are not requested, and review tooling is expected
+to skip the PR. The draft step reused that state to carry a different
+claim — "review in progress, do not merge". The author knew which
+meaning was intended. Every other reader saw the published one.
+
+**It blocked the review it was meant to sequence.** The `/code-review`
+command's first step is to stop if the pull request is closed, is a
+draft, is too simple to need review, or has already been reviewed. This
+repo's workflow therefore pointed the review tool at exactly the PRs it
+declines. Stories worked around it by reviewing inline and recording in
+the PR body why the fan-out had not been run — a workaround for a rule
+that, followed literally, produced no review at all.
+
+**What it protected was narrower than the record claimed.** GitHub
+refuses to merge a draft, so the step did stop the author merging while
+their own review was still running. That is the whole of what it bought,
+and it guards against the author's own haste rather than against an
+unreviewed merge: the author is also the person who marks the PR ready.
+
+No server-side replacement is available on this repository. Both
+`GET /repos/{owner}/{repo}/rulesets` and
+`GET /repos/{owner}/{repo}/branches/main/protection` return HTTP 403 —
+"Upgrade to GitHub Pro or make this repository public to enable this
+feature" — because `dashscene-staging` is private on a free plan. Nothing
+mechanically prevents a merge here, and this record no longer implies
+otherwise.
+
 ## Decision
 
-The gate is **"ready for review"**, not "PR opened".
+The gate is **merge**. A story PR is opened as an ordinary pull request
+and is never a draft.
 
-- Open the PR as a draft.
+- Open the PR. Do not pass `--draft`.
 - Run `/code-review` against it. Capture every finding as a checklist in
   the PR description.
 - Fix critical findings; file one `debt`-labeled issue per minor finding.
-- Mark the PR ready for review only once CI is green, the review pass is
-  complete, and every critical finding is resolved.
+- Merge only once CI is green on the commit being merged, the review pass
+  is complete, and every critical finding is resolved.
 
-A draft PR is a work-in-progress signal. A non-draft PR is a request to
-merge, and must never carry an unreviewed diff.
+The signal that a PR is not ready to merge is the findings checklist in
+its description: an absent or unticked checklist means the review is
+unfinished. That checklist is an artifact the review already produces, it
+is visible on the PR, and unlike draft it does not tell readers the diff
+is not ready to read.
 
 ## Consequences
 
+- `/code-review` runs against story PRs instead of declining them.
 - Review findings can be posted as inline PR comments, anchored to the
   lines they concern, instead of only as prose in the description.
 - The review target is the pushed diff CI has already run against.
 - The review pass is visible in the PR's timeline rather than only inside
   an agent session.
-- Approvers can trust that a non-draft PR has been reviewed, which is the
-  same guarantee the old "before opening" wording gave, without forbidding
-  a draft PR from existing first.
+- Between opening the PR and completing the review, an open PR carries an
+  unreviewed diff. This is the #123 window, reopened deliberately. What
+  bounds it is that the PR is opened and reviewed in the same session,
+  and that the checklist is absent or unticked for the whole window.
+- Nothing enforces the gate mechanically. It is held by the description's
+  checklist and by whoever presses merge.
 
 ## Alternatives considered
 
-**Keep "review before opening the PR".** It does guarantee the invariant,
-and the miss on #123 was a failure to follow the rule rather than a flaw
-in it. Rejected because it forfeits inline comments and the CI signal for
-no additional safety: a draft PR cannot be merged by accident, so nothing
-is protected by refusing to create one.
+**Keep the draft step.** Rejected: it publishes "not ready for review" to
+every reader while meaning "do not merge yet" to one of them, and
+`/code-review` declines drafts, so following the rule literally produced
+no review.
 
-**Gate on merge only ("review before merging"), with no draft step.** This
-is what `superpowers:requesting-code-review` says, and it is sufficient in
-principle. Rejected because it relies on the merger remembering the gate at
-the moment they press the button, while the PR's own state says nothing.
-A PR is merged when it looks ready, so "looks ready" has to _mean_
-"reviewed" — otherwise the only thing standing between an unreviewed diff
-and `main` is the approver's memory. The draft step encodes the gate in the
-PR's state instead of in a person's discipline, which is what makes it
-worth the extra step.
+**Keep "review before opening the PR"** — the wording this record
+replaced on 2026-07-13. Rejected then and still rejected: it forfeits
+inline comments and the CI signal, and it reviews a working tree that can
+still move rather than the pushed artifact.
+
+**A `review-in-progress` label, applied at open and removed once the
+review completes.** Rejected: it carries exactly the advisory weight the
+findings checklist already carries, while adding a second piece of
+per-story bookkeeping that can be forgotten independently of the first.
+
+**A `just merge` recipe that refuses while findings are unticked.**
+Rejected: it guards only the merges that go through the recipe, and the
+merge button stays available next to it. It would put the gate in tooling
+that can be bypassed without noticing.
+
+**Branch protection or a ruleset requiring an approving review.** The
+only option that cannot be bypassed, and the right answer if it becomes
+available. Unavailable today: both endpoints return HTTP 403 on this
+repository's plan. Revisit if the plan changes, or when this content is
+promoted into the public `driftsys/dashscene` repository.
