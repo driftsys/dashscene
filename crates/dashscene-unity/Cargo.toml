@@ -11,3 +11,4 @@ description = "Rust-side FFI bindings consumed by the Unity painter's C# project
 name = "dashscene_unity"
 
 [dependencies]
+dashpaint.workspace = true

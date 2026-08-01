@@ -71,6 +71,30 @@ API (`open`/`set_prop`/`set_variant`/`commit`) is the real contract, and
   [02-principles.md](../specification/02-principles.md)) — types and trait:
   [dashpaint.md](dashpaint.md).
 
+**Boundary B is a language-neutral data contract, not a Rust trait that happens
+to have painters behind it.** G2 names the backends and one of them is Unity,
+which is C#; a Rust trait cannot serve C#. So the interchangeability this
+document claims — "a painter swap is a re-golden, not a redesign" — holds for
+Rust painters by construction and for a non-Rust painter only if the tables
+crossing the boundary have a C representation. That makes representability the
+condition on a goal already written down, rather than provision for a
+hypothetical backend. Once it holds, Unreal and Kanzi are the same problem as
+Unity minus the C# adapter, since both consume a C header directly.
+
+It is enforced rather than asserted: `crates/dashscene-unity` declares an
+`extern "C"` surface over the boundary-B value types under
+`#![deny(improper_ctypes_definitions)]`, so making one of them
+non-representable stops the workspace compiling (story #600). The surface is
+narrow today and widens as story #578 flattens what is left — `PaintKind`
+carries payloads, and `GlyphRun`, `ClipRegion`, `PaintEntry` and `ImageAsset`
+hold `Vec`s.
+
+**What this does not buy.** It removes one obstacle, not the work. A non-Rust
+engine still needs its own projection of the tables into its scene
+representation, its own material library, its own atlas upload path, and its
+own oracle calibration against the reference painter. Representability is what
+makes those tractable; it does not do any of them.
+
 ## The document, producers, runtime, painters
 
 Framing only; each of these has its own record.
@@ -130,27 +154,27 @@ from that suggestion split in two on contact with the code —
 runtime that solves it),
 `docs/archive/2026-07-14-scope-decisions.md` §9.
 
-| Path                          | Role                                                                                                | Record                                                                                                  |
-| ----------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `crates/dashscene`            | umbrella / facade crate                                                                             | — (thin re-export)                                                                                      |
-| `crates/dashscene-core`       | arena, node tree, layout+paint tables, staged-mutation API                                          | [dashscene-core-arena.md](dashscene-core-arena.md)                                                      |
-| `crates/dashscene-engine`     | Taffy solve, variants, FLIP, measure callback                                                       | [dashscene-engine.md](dashscene-engine.md)                                                              |
-| `crates/dashscene-typeset`    | bidi, shaping, glyph atlas pipeline                                                                 | [atlas-pipeline.md](atlas-pipeline.md), [typeset-latin.md](typeset-latin.md)                            |
-| `crates/dashscene-validator`  | profiles, diagnostics, waivers                                                                      | [dashscene-validator.md](dashscene-validator.md)                                                        |
-| `crates/dashpaint`            | paint table + painter trait (boundary B)                                                            | [dashpaint.md](dashpaint.md)                                                                            |
-| `crates/dashscene-skia`       | Skia reference painter                                                                              | [dashscene-skia.md](dashscene-skia.md)                                                                  |
-| `crates/dashcue`              | descriptive animation vocabulary + runtime scheduling                                               | [dashcue.md](dashcue.md)                                                                                |
-| `crates/dashlang`             | Rust DSL skin + stress-corpus generator                                                             | [dashlang.md](dashlang.md)                                                                              |
-| `crates/dashbuf`              | the `.dsb` flatbuffer schema                                                                        | [dashbuf.md](dashbuf.md)                                                                                |
-| `crates/dashc`                | compiler CLI; also builds to wasm32 for the Deno importer                                           | [dashc.md](dashc.md), [vector-msdf-baking.md](vector-msdf-baking.md)                                    |
-| `crates/dashpack-astcenc-sys` | raw bindings to the vendored astcenc C++ sources — ASTC encode plus the in-process reference decode | in progress (epic #345) — [native-astc-codec-table.md](../decisions/native-astc-codec-table.md)         |
-| `crates/dashpack`             | asset packer — per-profile derivations, cold-bank assembly, derivation manifest                     | in progress (epic #345) — [asset-quality-profile-bands.md](../decisions/asset-quality-profile-bands.md) |
-| `crates/dashscene-unity`      | Rust-side FFI bindings for the Unity painter                                                        | planned — see below                                                                                     |
-| `crates/dashscene-web`        | wasm/tiny-skia painter — retired at v0.15, superseded by `dashscene-gpu`                            | retired — see below                                                                                     |
-| `crates/dashscene-gpu`        | the lean painter — instanced quads and analytic SDF over wgpu, native and web                       | in progress (epic #569) — [wgpu-is-the-lean-painter.md](../decisions/wgpu-is-the-lean-painter.md)       |
-| `importers/figma/`            | Deno/TypeScript Figma REST importer + `sharedPluginData` annotator plugin                           | [dashc-wasm-abi.md](../decisions/dashc-wasm-abi.md) (the ABI it calls through)                          |
-| `corpus/`                     | DSL-generated stress corpus + Figma fixture captures                                                | —                                                                                                       |
-| `goldens/`                    | CI golden images + diff tooling (`goldens/tooling` workspace member)                                | [goldens.md](goldens.md)                                                                                |
+| Path                          | Role                                                                                                              | Record                                                                                                  |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `crates/dashscene`            | umbrella / facade crate                                                                                           | — (thin re-export)                                                                                      |
+| `crates/dashscene-core`       | arena, node tree, layout+paint tables, staged-mutation API                                                        | [dashscene-core-arena.md](dashscene-core-arena.md)                                                      |
+| `crates/dashscene-engine`     | Taffy solve, variants, FLIP, measure callback                                                                     | [dashscene-engine.md](dashscene-engine.md)                                                              |
+| `crates/dashscene-typeset`    | bidi, shaping, glyph atlas pipeline                                                                               | [atlas-pipeline.md](atlas-pipeline.md), [typeset-latin.md](typeset-latin.md)                            |
+| `crates/dashscene-validator`  | profiles, diagnostics, waivers                                                                                    | [dashscene-validator.md](dashscene-validator.md)                                                        |
+| `crates/dashpaint`            | paint table + painter trait (boundary B)                                                                          | [dashpaint.md](dashpaint.md)                                                                            |
+| `crates/dashscene-skia`       | Skia reference painter                                                                                            | [dashscene-skia.md](dashscene-skia.md)                                                                  |
+| `crates/dashcue`              | descriptive animation vocabulary + runtime scheduling                                                             | [dashcue.md](dashcue.md)                                                                                |
+| `crates/dashlang`             | Rust DSL skin + stress-corpus generator                                                                           | [dashlang.md](dashlang.md)                                                                              |
+| `crates/dashbuf`              | the `.dsb` flatbuffer schema                                                                                      | [dashbuf.md](dashbuf.md)                                                                                |
+| `crates/dashc`                | compiler CLI; also builds to wasm32 for the Deno importer                                                         | [dashc.md](dashc.md), [vector-msdf-baking.md](vector-msdf-baking.md)                                    |
+| `crates/dashpack-astcenc-sys` | raw bindings to the vendored astcenc C++ sources — ASTC encode plus the in-process reference decode               | in progress (epic #345) — [native-astc-codec-table.md](../decisions/native-astc-codec-table.md)         |
+| `crates/dashpack`             | asset packer — per-profile derivations, cold-bank assembly, derivation manifest                                   | in progress (epic #345) — [asset-quality-profile-bands.md](../decisions/asset-quality-profile-bands.md) |
+| `crates/dashscene-unity`      | Rust-side FFI bindings for the Unity painter; today, the `extern "C"` surface that holds boundary B representable | the gate is built (story #600); the bindings are planned — see below                                    |
+| `crates/dashscene-web`        | wasm/tiny-skia painter — retired at v0.15, superseded by `dashscene-gpu`                                          | retired — see below                                                                                     |
+| `crates/dashscene-gpu`        | the lean painter — instanced quads and analytic SDF over wgpu, native and web                                     | in progress (epic #569) — [wgpu-is-the-lean-painter.md](../decisions/wgpu-is-the-lean-painter.md)       |
+| `importers/figma/`            | Deno/TypeScript Figma REST importer + `sharedPluginData` annotator plugin                                         | [dashc-wasm-abi.md](../decisions/dashc-wasm-abi.md) (the ABI it calls through)                          |
+| `corpus/`                     | DSL-generated stress corpus + Figma fixture captures                                                              | —                                                                                                       |
+| `goldens/`                    | CI golden images + diff tooling (`goldens/tooling` workspace member)                                              | [goldens.md](goldens.md)                                                                                |
 
 ## Planned components (not yet built)
 
