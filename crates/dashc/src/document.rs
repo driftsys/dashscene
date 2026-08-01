@@ -301,6 +301,16 @@ impl Default for Node {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Paint {
     pub entry: PaintEntry,
+    /// The entry's shadows, held here rather than inside `entry`.
+    ///
+    /// `PaintEntry::shadows` is a range into a `PaintTable`'s flat array
+    /// since story #578, and this type is a producer's authored paint — it
+    /// has no table to index. Same shape as `dashscene_core::StagedRun`,
+    /// and for the same reason: the owned data travels beside the
+    /// boundary-B value until a table takes it.
+    pub shadows: Vec<dashpaint::Shadow>,
+    /// The entry's blurs, held here for the same reason as `shadows`.
+    pub blurs: Vec<dashpaint::Blur>,
     pub clip: bool,
     /// The baked-vector shape index (story B1): `Some(i)` masks this entry's
     /// fill by `Document::vector_shapes[i]`. `None` is the implicit

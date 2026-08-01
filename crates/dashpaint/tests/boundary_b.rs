@@ -2,10 +2,11 @@
 //! no dashscene-core, no dashbuf — dashpaint's public API only.
 
 use dashpaint::{
-    AtlasIndex, Blur, BlurKind, ClipBox, ClipIndex, ClipRegion, ClipTable, Color, CornerRadii,
-    GlyphQuad, GlyphRange, GlyphRun, GlyphRunTable, Gradient, GradientKind, GradientStop,
-    GroupComposite, ImageAsset, ImageFormat, ImageTable, PaintEntry, PaintIndex, PaintKind,
-    PaintTable, Painter, RectEntry, ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, Vec2,
+    AtlasIndex, Blur, BlurKind, BlurRange, ClipBox, ClipIndex, ClipRegion, ClipTable, Color,
+    CornerRadii, GlyphQuad, GlyphRange, GlyphRun, GlyphRunTable, Gradient, GradientKind,
+    GradientStop, GroupComposite, ImageAsset, ImageFormat, ImageTable, PaintEntry, PaintIndex,
+    PaintKind, PaintTable, Painter, RectEntry, ScaleMode, Shadow, ShadowKind, ShadowRange, Stroke,
+    StrokeAlign, Vec2,
 };
 
 const RED: Color = Color {
@@ -110,21 +111,35 @@ fn a_full_entry_round_trips_through_the_table() {
             bottom_right: 3.0,
             bottom_left: 4.0,
         },
-        shadows: vec![Shadow {
-            kind: ShadowKind::Drop,
-            offset: Vec2 { x: 0.0, y: 4.0 },
-            blur: 8.0,
-            spread: 1.0,
-            color: HALF_BLUE,
-        }],
+        shadows: ShadowRange::NONE,
         shape: None,
         extra_fills: Vec::new(),
-        blurs: Vec::new(),
+        blurs: BlurRange::NONE,
+    };
+    let shadow = Shadow {
+        kind: ShadowKind::Drop,
+        offset: Vec2 { x: 0.0, y: 4.0 },
+        blur: 8.0,
+        spread: 1.0,
+        color: HALF_BLUE,
     };
     let mut table = PaintTable::new();
-    let index = table.push(entry.clone());
+    let index = table.push_with_effects(entry.clone(), &[shadow], &[]);
 
-    assert_eq!(table.resolve(index), &entry);
+    // The entry round-trips with the range the table assigned, and the
+    // shadow round-trips through the flat array that range names.
+    let stored = table.resolve(index);
+    assert_eq!(stored.fill, entry.fill);
+    assert_eq!(stored.stroke, entry.stroke);
+    assert_eq!(stored.corners, entry.corners);
+    assert_eq!(
+        stored.shadows,
+        ShadowRange {
+            offset: 0,
+            count: 1
+        }
+    );
+    assert_eq!(table.shadows(stored), &[shadow]);
 }
 
 #[test]
@@ -568,12 +583,20 @@ fn group_opacity_crosses_as_per_rect_alpha_and_a_group_slice() {
     assert_eq!(painter.groups, groups);
 }
 
-/// A blurred entry over the half-blue fill, for the backdrop cases below.
-fn blurred(kind: BlurKind) -> PaintEntry {
-    PaintEntry {
-        blurs: vec![Blur { kind, radius: 16.0 }],
-        ..PaintEntry::solid(HALF_BLUE)
-    }
+/// A one-entry table over the half-blue fill, carrying one blur of `kind`.
+///
+/// The entry itself no longer says anything about the blur — a
+/// `PaintEntry` names a range and the blur lives in the table's flat array
+/// (story #578) — so there is nothing to build without a table, and the
+/// helper hands back both.
+fn blurred_table(kind: BlurKind) -> (PaintTable, PaintIndex) {
+    let mut paints = PaintTable::new();
+    let index = paints.push_with_effects(
+        PaintEntry::solid(HALF_BLUE),
+        &[],
+        &[Blur { kind, radius: 16.0 }],
+    );
+    (paints, index)
 }
 
 /// Whether an entry samples the backdrop is derived from its blurs
@@ -582,10 +605,19 @@ fn blurred(kind: BlurKind) -> PaintEntry {
 /// nothing, and a layer blur is node-local rather than backdrop-reading.
 #[test]
 fn only_a_backdrop_blur_makes_an_entry_sample_the_backdrop() {
-    assert!(!PaintEntry::default().samples_backdrop());
-    assert!(!PaintEntry::solid(RED).samples_backdrop());
-    assert!(!blurred(BlurKind::Layer).samples_backdrop());
-    assert!(blurred(BlurKind::Backdrop).samples_backdrop());
+    // The answer moved onto the table with the blurs it is derived from
+    // (story #578), so it is asked of the table an entry came from.
+    let mut plain = PaintTable::new();
+    let empty = plain.push(PaintEntry::default());
+    let solid = plain.push(PaintEntry::solid(RED));
+    assert!(!plain.samples_backdrop(plain.resolve(empty)));
+    assert!(!plain.samples_backdrop(plain.resolve(solid)));
+
+    let (layer, layer_index) = blurred_table(BlurKind::Layer);
+    assert!(!layer.samples_backdrop(layer.resolve(layer_index)));
+
+    let (backdrop, backdrop_index) = blurred_table(BlurKind::Backdrop);
+    assert!(backdrop.samples_backdrop(backdrop.resolve(backdrop_index)));
 }
 
 /// Test double: records the rect indices that are ordering barriers. It
@@ -609,7 +641,7 @@ impl Painter for BarrierRecordingPainter {
         _dirty: Option<&[u32]>,
     ) {
         for (index, rect) in rects.iter().enumerate() {
-            if paints.resolve(rect.paint).samples_backdrop() {
+            if paints.samples_backdrop(paints.resolve(rect.paint)) {
                 self.barriers.push(index);
             }
         }
@@ -620,7 +652,16 @@ impl Painter for BarrierRecordingPainter {
 fn a_backdrop_sampling_rect_crosses_boundary_b_as_an_ordering_barrier() {
     let mut paints = PaintTable::new();
     let plain = paints.push(PaintEntry::solid(RED));
-    let frosted = paints.push(blurred(BlurKind::Backdrop));
+    // Through `push_with_effects`: the blur that makes this entry a barrier
+    // lives in the table's flat array, not on the entry (story #578).
+    let frosted = paints.push_with_effects(
+        PaintEntry::solid(HALF_BLUE),
+        &[],
+        &[Blur {
+            kind: BlurKind::Backdrop,
+            radius: 16.0,
+        }],
+    );
     let rects: Vec<RectEntry> = [plain, frosted, plain]
         .into_iter()
         .map(|paint| RectEntry {

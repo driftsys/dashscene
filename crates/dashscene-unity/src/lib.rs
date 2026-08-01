@@ -34,9 +34,13 @@
 //! array plus `(offset, count)` — and #578 widens this surface as it goes. That
 //! ordering is the point: the lint is never "turned on later and forgotten",
 //! and each flattening step is checked as it lands. `ClipRegion` arrived that
-//! way first, then `GlyphRange` and with it `GlyphRun`: each became
-//! `(offset, count)` into its table's one flat array, and each joined this
-//! surface in the change that flattened it.
+//! way first, then `GlyphRange` and with it `GlyphRun`, then `ShadowRange`
+//! and `BlurRange`: each became `(offset, count)` into its table's one flat
+//! array, and each joined this surface in the change that flattened it.
+//!
+//! `PaintEntry` is not here yet even though its effect lists are flat now,
+//! because its `fill` and `extra_fills` still hold `PaintKind`. That is the
+//! last flattening.
 //!
 //! # What this is not
 //!
@@ -49,8 +53,8 @@
 #![deny(improper_ctypes_definitions)]
 
 use dashpaint::{
-    AtlasGlyph, ClipBox, ClipRegion, Color, GlyphQuad, GlyphRange, GlyphRun, GradientStop, Mat23,
-    RectEntry, Vec2,
+    AtlasGlyph, BlurRange, ClipBox, ClipRegion, Color, GlyphQuad, GlyphRange, GlyphRun,
+    GradientStop, Mat23, RectEntry, ShadowRange, Vec2,
 };
 
 /// How this build lays out one boundary-B type.
@@ -113,6 +117,8 @@ abi_surface! {
     GlyphQuad => dashscene_abi_glyph_quad_layout, dashscene_abi_glyph_quad_round_trip;
     GlyphRange => dashscene_abi_glyph_range_layout, dashscene_abi_glyph_range_round_trip;
     GlyphRun => dashscene_abi_glyph_run_layout, dashscene_abi_glyph_run_round_trip;
+    ShadowRange => dashscene_abi_shadow_range_layout, dashscene_abi_shadow_range_round_trip;
+    BlurRange => dashscene_abi_blur_range_layout, dashscene_abi_blur_range_round_trip;
     AtlasGlyph => dashscene_abi_atlas_glyph_layout, dashscene_abi_atlas_glyph_round_trip;
 }
 
@@ -154,6 +160,8 @@ mod tests {
             ("GlyphQuad", dashscene_abi_glyph_quad_layout(), 12, 4),
             ("GlyphRange", dashscene_abi_glyph_range_layout(), 8, 4),
             ("GlyphRun", dashscene_abi_glyph_run_layout(), 40, 4),
+            ("ShadowRange", dashscene_abi_shadow_range_layout(), 8, 4),
+            ("BlurRange", dashscene_abi_blur_range_layout(), 8, 4),
             ("AtlasGlyph", dashscene_abi_atlas_glyph_layout(), 36, 4),
         ];
         for (name, layout, size, align) in measured {

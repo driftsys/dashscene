@@ -23,7 +23,7 @@
 
 use dashpaint::{
     ClipTable, GlyphRunTable, GroupComposite, ImageTable, PaintEntry, PaintIndex, PaintKind,
-    PaintTable, RectEntry, StrokeAlign,
+    PaintTable, RectEntry, Shadow, StrokeAlign,
 };
 
 use crate::paint::{
@@ -82,6 +82,7 @@ pub fn validate_scene(
         check_paint_entry(
             &mut report,
             entry,
+            paints.shadows(entry),
             &Location::PaintEntry(index),
             images.len(),
         );
@@ -147,7 +148,13 @@ fn check_fill_kind(report: &mut Report, at: &Location, kind: &PaintKind, image_c
     }
 }
 
-fn check_paint_entry(report: &mut Report, entry: &PaintEntry, at: &Location, image_count: usize) {
+fn check_paint_entry(
+    report: &mut Report,
+    entry: &PaintEntry,
+    shadows: &[Shadow],
+    at: &Location,
+    image_count: usize,
+) {
     if let Some(kind) = &entry.fill {
         check_fill_kind(report, at, kind, image_count);
     }
@@ -171,7 +178,7 @@ fn check_paint_entry(report: &mut Report, entry: &PaintEntry, at: &Location, ima
 
     // v0.8 shadows (story #45): the same numeric domain as the load gate, on
     // the resolved paint entry.
-    for (i, shadow) in entry.shadows.iter().enumerate() {
+    for (i, shadow) in shadows.iter().enumerate() {
         check_shadow(
             report,
             at,
