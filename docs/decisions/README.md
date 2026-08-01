@@ -576,4 +576,8 @@ so each technote stops being the authority for the conclusion it reached:
   clock invariant — no crate at or below `LiveScene` reads a clock — as a
   committed source scan rather than a convention (story #572).
 
+- [test-tiers.md](test-tiers.md) — the workspace suite runs as three
+  nextest tiers: `sanity` before every commit, `regression` as the gate,
+  `calibration` on a path filter and at slice close.
+
 See the `sdd-working-memory-lifecycle` rule.

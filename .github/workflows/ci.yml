@@ -21,6 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       figma: ${{ steps.filter.outputs.figma }}
+      packer: ${{ steps.filter.outputs.packer }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -41,6 +42,36 @@ jobs:
               # merges green against a boundary nothing checked (story #17).
               - 'crates/**'
               - 'goldens/dsb/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+            # The calibration tier re-derives two committed asset tables from
+            # the packer alone. This list is every input that can move them,
+            # traced from what those two tests read rather than guessed
+            # (docs/decisions/test-tiers.md).
+            #
+            # The profile-preview oracle is deliberately not covered here. It
+            # checks a committed table too, but it renders through Skia and
+            # reads the whole painter stack, so no honest path list could
+            # bound it — it runs in the regression tier, on every push.
+            packer:
+              - 'crates/dashpack/**'
+              - 'crates/dashpack-astcenc-sys/**'
+              # AssetKind and its classification decide which rungs the ladder
+              # walk considers at all, so a change here moves both tables.
+              - 'crates/dashbuf/**'
+              - 'corpus/**'
+              - 'goldens/tooling/src/metric.rs'
+              # The two tests' own helpers: the deterministic stress fixture
+              # they both measure, and the repository-root lookup that finds
+              # the committed payloads.
+              - 'goldens/tooling/tests/common/**'
+              # The calibration table is the artifact under test; editing it
+              # without re-deriving it is the exact drift this job exists to
+              # catch. band_contract.rs needs no entry of its own, because
+              # crates/dashpack/** already covers it.
+              - 'goldens/tooling/tests/perceptual_calibration.rs'
+              # A dependency bump can move an encoder's output without touching
+              # any path above. The figma filter includes both for that reason.
               - 'Cargo.toml'
               - 'Cargo.lock'
 
@@ -96,7 +127,14 @@ jobs:
       # symlink the linker needs.
       - name: install skia system libraries
         run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
-      - run: cargo test --workspace
+      # The regression tier (docs/decisions/test-tiers.md). nextest's default
+      # profile is that tier, so no -P is needed here and a bare run cannot
+      # silently be the thinner one.
+      - name: install cargo-nextest
+        run: curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C ${CARGO_HOME:-~/.cargo}/bin
+      - run: cargo nextest run --workspace
+      # nextest does not run doctests.
+      - run: cargo test --workspace --doc
 
   demo-build:
     name: demo-build
@@ -149,6 +187,7 @@ jobs:
         run: ./bootstrap
         env:
           GIT_STD_INSTALL_DIR: /usr/local/bin
+          BOOTSTRAP_SKIP_NEXTEST: "1"
       - run: git std lint --range origin/${{ github.base_ref }}..HEAD
 
   deno:
@@ -309,12 +348,61 @@ jobs:
       - name: design-source render oracle (E7 / G-11)
         run: cargo test -p goldens --test render_oracle -- --nocapture
 
+  calibration:
+    name: calibration
+    needs: [changes]
+    runs-on: ubuntu-latest
+    # Path-filtered: the two tests here re-derive the committed asset tables,
+    # and the `packer` filter above lists every input that can move them —
+    # traced from what those two tests read, not guessed. Running them on
+    # every push would put about 3 min of re-derivation behind every
+    # unrelated change; running them on nobody's schedule would let the
+    # tables drift. The filter is the compromise, and it defines a risky
+    # change by what the diff touches rather than by anyone's judgement
+    # (docs/decisions/test-tiers.md).
+    #
+    # The profile-preview oracle is deliberately not here. It checks a
+    # committed table too, but it renders through Skia and reads the whole
+    # painter stack, so no honest path list could bound it — it runs in the
+    # regression tier, on every push.
+    if: needs.changes.outputs.packer == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: install flatc
+        run: |
+          curl -fsSL -o flatc.zip https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip
+          unzip -o flatc.zip flatc -d /usr/local/bin
+          chmod +x /usr/local/bin/flatc
+      # skia-safe's prebuilt Linux binaries link the system fontconfig; the
+      # runner image ships the runtime library but not the -dev symlink the
+      # linker needs. The `goldens` crate that perceptual_calibration.rs
+      # belongs to links skia-safe unconditionally, so building its test
+      # binaries needs this even though these two tests never call it.
+      - name: install skia system libraries
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
+      - name: install cargo-nextest
+        run: curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C ${CARGO_HOME:-~/.cargo}/bin
+      # The same check the `calibrate` recipe runs, inline because this job does
+      # not install `just`. It comes first: the profiles select by exact test
+      # name, so a rename drops a test out of the tier silently, and no count
+      # catches that — the tiers partition the suite, so the totals reconcile
+      # either way. Keep this identical to the recipe.
+      - name: calibration tier membership
+        run: |
+          cargo nextest list --workspace -P calibration 2>/dev/null \
+            | diff -u .config/calibration-tier.txt -
+      - name: calibration tier
+        run: cargo nextest run --workspace -P calibration
+
   ci:
     name: ci
     if: always()
     # Every job in the workflow, so a red anywhere fails the aggregate
     # (docs/decisions/house-style.md). "skipped" is accepted: convco only runs on
-    # pull requests, and deno only when importers/figma/ changed.
+    # pull requests, deno only when importers/figma/ changed, and calibration
+    # only when the packer paths changed (docs/decisions/test-tiers.md).
     needs:
       [
         changes,
@@ -328,6 +416,7 @@ jobs:
         deno,
         atlas-repro,
         render-oracle,
+        calibration,
       ]
     runs-on: ubuntu-latest
     steps:

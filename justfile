@@ -15,9 +15,46 @@ default:
 assemble:
     cargo build --workspace
 
-# Run the Rust test suite.
+# Run the sanity tier — the loop between edits and before every commit.
+# About 7 s. Tier definitions and the schedule: docs/decisions/test-tiers.md.
+#
+# `cargo test --doc` rides along in every tier recipe because nextest does not
+# run doctests. Leaving it out would mean three recipes that each claim to run
+# a tier and each silently skip the same three tests.
 test:
-    cargo test --workspace
+    cargo nextest run --workspace -P sanity
+    cargo test --workspace --doc
+
+# Run the regression tier — what `check`, `build`, `verify`, the pre-push hook
+# and the CI `test` job all run. About 35 s. This is the gate; `just test` is
+# not.
+test-regression:
+    cargo nextest run --workspace -P regression
+    cargo test --workspace --doc
+
+# Run the calibration tier — the two tests that re-derive the committed asset
+# tables from the packer alone. About 165 s. Run it when the diff touches a
+# path in the `packer` filter of .github/workflows/ci.yml, and again at slice
+# close. That filter is the list, and docs/decisions/test-tiers.md enumerates
+# it with a reason per entry; a copy of the list here would be a fourth one to
+# keep in step, and the partial copies have already drifted three times.
+#
+# The membership check runs first, and it is the reason the tier cannot rot
+# quietly. The profiles select by exact test name, so renaming either of the
+# two drops it out of the tier with no error — and no count catches that,
+# because the tiers partition the suite and the totals still reconcile.
+# Diffing the live listing against the pinned .config/calibration-tier.txt
+# does catch it. The CI calibration job runs the same two lines; keep them
+# identical.
+calibrate:
+    cargo nextest list --workspace -P calibration 2>/dev/null \
+        | diff -u .config/calibration-tier.txt -
+    cargo nextest run --workspace -P calibration
+
+# Every tier in one run.
+test-all:
+    cargo nextest run --workspace -P all
+    cargo test --workspace --doc
 
 # Rust + markdown + Deno lint gate: clippy, cargo fmt check, dprint check,
 # markdownlint, deno fmt check.
@@ -31,8 +68,10 @@ lint: deno-fmt-check
 audit:
     cargo audit
 
-# Full non-build verification: test + lint + audit.
-check: test lint audit
+# Full non-build verification: the regression tier + lint + audit. Not the
+# sanity tier — `check` is what `build` and the pre-push hook run, so it takes
+# the tier that is the gate (docs/decisions/test-tiers.md).
+check: test-regression lint audit
 
 # Everything short of a PR: assemble + check.
 build: assemble check

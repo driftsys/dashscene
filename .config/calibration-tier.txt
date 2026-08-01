@@ -1,0 +1,4 @@
+dashpack::band_contract:
+    the_recorded_contract_table
+goldens::perceptual_calibration:
+    every_rung_of_every_fixture_is_recorded

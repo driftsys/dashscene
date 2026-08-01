@@ -35,6 +35,11 @@ recipes: `wasm` (build `dashc` for `wasm32-unknown-unknown`, needed by
 the Deno importer) and `deno-check`/`deno-test`/`deno-fmt` scoped to
 `importers/figma/`.
 
+The `test` and `check` recipes deviate from that template: `test` runs the
+sanity tier and `check` the regression tier, and `test-regression`,
+`calibrate` and `test-all` are additions. The reason, the measurements and
+the tier definitions are in [test-tiers.md](test-tiers.md).
+
 **`dprint.json`**: markdown only (`includes: ["**/*.md"]`, the
 `dprint/markdown` plugin) — it does not replace `cargo fmt` or `deno
 fmt`, both of which run as their own separate lint/fmt steps for their
@@ -67,6 +72,12 @@ Rust-only changes don't trigger it) and a `wasm-build` job (`dashc` →
 actually builds). No cross-platform `build-release` matrix yet — that's
 git-std's own binary-distribution concern, not relevant until dashscene
 ships a distributable binary of its own.
+
+The `test` job deviates from that template: it runs `cargo nextest run
+--workspace` (the regression tier) plus `cargo test --workspace --doc`
+rather than a plain `cargo test`, and a `calibration` job runs the
+calibration tier on the `packer` path filter. The reason and the tier
+definitions are in [test-tiers.md](test-tiers.md).
 
 **`bootstrap` script**: ensures `git-std` itself is installed (detects
 platform, downloads the matching release, verifies the sha256, installs

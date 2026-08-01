@@ -50,6 +50,12 @@ retrospective (`AGENTS.md`, "Plan tracking"). This file is what that ritual
 keeps current — a slice entry below is only ever as fresh as its most recent
 revision, which is why each one says which revision produced it.
 
+The ritual has one gate that is not a document edit: run `just calibrate`
+before revising anything. It re-derives the committed asset tables, and it is
+the only run in the schedule not driven by a path filter — the backstop
+against a table that drifted through a change the filter did not predict
+(`docs/decisions/test-tiers.md`).
+
 The ritual has fired off-cycle twice, ahead of its own slice's close: v0.4 was
 revised by a design session before epic #19 closed, and v0.7 was revised at
 the v0.3 close even though epic #36 had not yet closed at that point. A
