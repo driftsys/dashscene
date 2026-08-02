@@ -22,7 +22,7 @@
 //! load gate has nothing to check and this gate has to.
 
 use dashpaint::{
-    ClipTable, GlyphRunTable, GroupComposite, ImageTable, PaintEntry, PaintIndex, PaintKind,
+    ClipTable, Fill, GlyphRunTable, GroupComposite, ImageTable, PaintEntry, PaintIndex, PaintKind,
     PaintTable, RectEntry, Shadow, StrokeAlign,
 };
 
@@ -81,6 +81,7 @@ pub fn validate_scene(
             .expect("an index below len() resolves");
         check_paint_entry(
             &mut report,
+            paints,
             entry,
             paints.shadows(entry),
             &Location::PaintEntry(index),
@@ -135,34 +136,45 @@ pub fn validate_scene(
 /// fill's asset index. Shared by the primary `PaintEntry.fill` and every
 /// stacked layer in `PaintEntry.extra_fills` (story C1, debt #146) — a
 /// layer is not exempt from the same rules just because it sits in a stack.
-fn check_fill_kind(report: &mut Report, at: &Location, kind: &PaintKind, image_count: usize) {
-    match kind {
-        PaintKind::Solid { .. } => {}
-        PaintKind::Gradient(gradient) => {
-            let offsets: Vec<f32> = gradient.stops.iter().map(|s| s.offset).collect();
+///
+/// `kind` is a tag plus a row index since story #578 and carries no
+/// parameters of its own, so it is resolved against `paints` — the table
+/// that interned it — before its vocabulary rules can run.
+fn check_fill_kind(
+    report: &mut Report,
+    paints: &PaintTable,
+    at: &Location,
+    kind: PaintKind,
+    image_count: usize,
+) {
+    match paints.fill(kind) {
+        Fill::Solid(_) => {}
+        Fill::Gradient(view) => {
+            let offsets: Vec<f32> = view.stops.iter().map(|s| s.offset).collect();
             check_gradient_stops(report, at, &offsets);
         }
-        PaintKind::Image { image, .. } => {
-            check_image_index(report, at, *image, image_count);
+        Fill::Image(image) => {
+            check_image_index(report, at, image.image, image_count);
         }
     }
 }
 
 fn check_paint_entry(
     report: &mut Report,
+    paints: &PaintTable,
     entry: &PaintEntry,
     shadows: &[Shadow],
     at: &Location,
     image_count: usize,
 ) {
-    if let Some(kind) = &entry.fill {
-        check_fill_kind(report, at, kind, image_count);
+    if let Some(kind) = entry.fill {
+        check_fill_kind(report, paints, at, kind, image_count);
     }
     // Stacked fills (story C1, debt #146): each layer's own vocabulary
     // rules, the same posture as the shadows loop below — one check per
     // layer, `at` naming the paint entry rather than the individual layer.
-    for kind in &entry.extra_fills {
-        check_fill_kind(report, at, kind, image_count);
+    for &kind in &entry.extra_fills {
+        check_fill_kind(report, paints, at, kind, image_count);
     }
 
     if let Some(stroke) = &entry.stroke {

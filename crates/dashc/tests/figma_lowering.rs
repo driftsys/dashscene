@@ -16,10 +16,10 @@ use std::collections::BTreeMap;
 
 use dashc_wasm::figma::rest::FigmaFile;
 use dashc_wasm::figma::{CompileError, lower};
-use dashc_wasm::{EmitPolicy, compile_figma, compile_figma_with_bindings_and_policy};
+use dashc_wasm::{EmitPolicy, PaintEntry, compile_figma, compile_figma_with_bindings_and_policy};
 use dashpaint::{
-    Color, CornerRadii, GlyphRunTable, GradientKind, ImageAsset, ImageFormat, Mat23, PaintEntry,
-    PaintKind, Painter, ScaleMode, ShadowKind, StrokeAlign, Vec2,
+    Color, CornerRadii, FillSpec, GlyphRunTable, GradientKind, ImageAsset, ImageFill, ImageFormat,
+    Mat23, Painter, ScaleMode, ShadowKind, StrokeAlign, Vec2,
 };
 use dashscene_core::{Arena, load_document};
 use dashscene_skia::SkiaPainter;
@@ -639,14 +639,15 @@ fn all_four_gradient_kinds_lower() {
         ("gradient-diamond", GradientKind::Diamond),
     ] {
         let (_, n) = node(&doc, name);
-        let Some(PaintKind::Gradient(g)) = &n.paint.as_ref().unwrap().entry.fill else {
+        let Some(FillSpec::Gradient { gradient, stops }) = &n.paint.as_ref().unwrap().entry.fill
+        else {
             panic!("{name} did not lower to a gradient");
         };
 
-        assert_eq!(g.kind, kind, "{name}");
-        assert_eq!(g.stops.len(), 3, "{name}");
+        assert_eq!(gradient.kind, kind, "{name}");
+        assert_eq!(stops.len(), 3, "{name}");
         // Figma calls it `position`, dashpaint calls it `offset`.
-        assert_eq!(g.stops[1].offset, 0.5, "{name}");
+        assert_eq!(stops[1].offset, 0.5, "{name}");
     }
 }
 
@@ -659,13 +660,13 @@ fn the_gradient_handles_lower_in_figma_order() {
     let doc = lowered();
     let (_, n) = node(&doc, "gradient-linear");
 
-    let Some(PaintKind::Gradient(g)) = &n.paint.as_ref().unwrap().entry.fill else {
+    let Some(FillSpec::Gradient { gradient, .. }) = &n.paint.as_ref().unwrap().entry.fill else {
         panic!("gradient-linear did not lower to a gradient");
     };
 
-    assert_eq!(g.handle_origin, Vec2 { x: 0.0, y: 0.5 });
-    assert_eq!(g.handle_primary, Vec2 { x: 1.0, y: 0.5 });
-    assert_eq!(g.handle_secondary, Vec2 { x: 0.0, y: 1.0 });
+    assert_eq!(gradient.handle_origin, Vec2 { x: 0.0, y: 0.5 });
+    assert_eq!(gradient.handle_primary, Vec2 { x: 1.0, y: 0.5 });
+    assert_eq!(gradient.handle_secondary, Vec2 { x: 0.0, y: 1.0 });
 }
 
 #[test]
@@ -676,7 +677,7 @@ fn the_lowered_colors_are_the_fixture_colors() {
     let doc = lowered();
 
     let (_, solid) = node(&doc, "fill-solid");
-    let Some(PaintKind::Solid { color }) = &solid.paint.as_ref().unwrap().entry.fill else {
+    let Some(FillSpec::Solid { color }) = &solid.paint.as_ref().unwrap().entry.fill else {
         panic!("fill-solid did not lower to a solid fill");
     };
     assert_eq!(
@@ -690,11 +691,12 @@ fn the_lowered_colors_are_the_fixture_colors() {
     );
 
     let (_, gradient) = node(&doc, "gradient-linear");
-    let Some(PaintKind::Gradient(g)) = &gradient.paint.as_ref().unwrap().entry.fill else {
+    let Some(FillSpec::Gradient { stops, .. }) = &gradient.paint.as_ref().unwrap().entry.fill
+    else {
         panic!("gradient-linear did not lower to a gradient");
     };
     assert_eq!(
-        g.stops[0].color,
+        stops[0].color,
         Color {
             r: 1.0,
             g: 0.85,
@@ -703,7 +705,7 @@ fn the_lowered_colors_are_the_fixture_colors() {
         },
     );
     assert_eq!(
-        g.stops[2].color,
+        stops[2].color,
         Color {
             r: 0.2,
             g: 0.25,
@@ -750,7 +752,7 @@ fn a_paint_opacity_multiplies_the_lowered_alpha() {
     let (doc, _) = lower(&file, Profile::Core, &BTreeMap::new()).expect("the document lowers");
     let (_, n) = node(&doc, "translucent");
 
-    let Some(PaintKind::Solid { color }) = &n.paint.as_ref().unwrap().entry.fill else {
+    let Some(FillSpec::Solid { color }) = &n.paint.as_ref().unwrap().entry.fill else {
         panic!("translucent did not lower to a solid fill");
     };
     assert_eq!(
@@ -769,12 +771,12 @@ fn an_image_fill_resolves_through_the_caller_supplied_map() {
     let doc = lowered();
     let (_, n) = node(&doc, "image-fit");
 
-    let Some(PaintKind::Image {
+    let Some(FillSpec::Image(ImageFill {
         image,
         scale_mode,
         transform,
         tile_scale,
-    }) = &n.paint.as_ref().unwrap().entry.fill
+    })) = &n.paint.as_ref().unwrap().entry.fill
     else {
         panic!("image-fit did not lower to an image fill");
     };
@@ -782,16 +784,20 @@ fn an_image_fill_resolves_through_the_caller_supplied_map() {
     assert_eq!(*scale_mode, ScaleMode::Fit);
     assert_eq!(doc.assets[*image as usize].bytes, IMAGE_PNG);
     // FIT carries neither a crop transform nor a tile scale.
-    assert_eq!(*transform, None, "identity when Figma sends no transform");
+    assert_eq!(
+        *transform,
+        Mat23::IDENTITY,
+        "identity when Figma sends no transform"
+    );
     assert_eq!(*tile_scale, 1.0);
 }
 
 #[test]
 fn a_cropped_image_fill_lowers_its_crop_transform() {
     // `scaleMode: CROP` carries an `imageTransform`: Figma's row-major 2x3
-    // affine, `[[a, b, tx], [c, d, ty]]`. `dashpaint::PaintKind::Image`
-    // already carries it, so dropping it would not be an expressiveness gap
-    // — it would lower a cropped image to a *wrong* image, in silence (P4).
+    // affine, `[[a, b, tx], [c, d, ty]]`. `dashpaint::ImageFill` already
+    // carries it, so dropping it would not be an expressiveness gap — it
+    // would lower a cropped image to a *wrong* image, in silence (P4).
     //
     // The six components are all distinct, so a transposed or column-major
     // reading fails rather than coincidentally matching.
@@ -810,12 +816,12 @@ fn a_cropped_image_fill_lowers_its_crop_transform() {
     let (doc, _) = lower(&file, Profile::Core, &images()).expect("the document lowers");
     let (_, n) = node(&doc, "image-crop");
 
-    let Some(PaintKind::Image {
+    let Some(FillSpec::Image(ImageFill {
         scale_mode,
         transform,
         tile_scale,
         ..
-    }) = &n.paint.as_ref().unwrap().entry.fill
+    })) = &n.paint.as_ref().unwrap().entry.fill
     else {
         panic!("image-crop did not lower to an image fill");
     };
@@ -823,14 +829,14 @@ fn a_cropped_image_fill_lowers_its_crop_transform() {
     assert_eq!(*scale_mode, ScaleMode::Crop);
     assert_eq!(
         *transform,
-        Some(Mat23 {
+        Mat23 {
             a: 0.5,
             b: 0.125,
             c: 0.75,
             d: 2.0,
             tx: 0.25,
             ty: 0.375,
-        }),
+        },
     );
     assert_eq!(*tile_scale, 1.0, "a crop carries no tile scale");
 }
@@ -854,19 +860,23 @@ fn a_tiled_image_fill_lowers_its_tile_scale() {
     let (doc, _) = lower(&file, Profile::Core, &images()).expect("the document lowers");
     let (_, n) = node(&doc, "image-tile");
 
-    let Some(PaintKind::Image {
+    let Some(FillSpec::Image(ImageFill {
         scale_mode,
         transform,
         tile_scale,
         ..
-    }) = &n.paint.as_ref().unwrap().entry.fill
+    })) = &n.paint.as_ref().unwrap().entry.fill
     else {
         panic!("image-tile did not lower to an image fill");
     };
 
     assert_eq!(*scale_mode, ScaleMode::Tile);
     assert_eq!(*tile_scale, 0.25);
-    assert_eq!(*transform, None, "a tile carries no crop transform");
+    assert_eq!(
+        *transform,
+        Mat23::IDENTITY,
+        "a tile carries no crop transform"
+    );
 }
 
 #[test]
@@ -907,7 +917,8 @@ fn two_nodes_sharing_an_image_ref_share_one_asset() {
 /// The image-table index of the node's image fill.
 fn image_index(doc: &dashc_wasm::Document, name: &str) -> u32 {
     let (_, n) = node(doc, name);
-    let Some(PaintKind::Image { image, .. }) = &n.paint.as_ref().unwrap().entry.fill else {
+    let Some(FillSpec::Image(ImageFill { image, .. })) = &n.paint.as_ref().unwrap().entry.fill
+    else {
         panic!("{name} did not lower to an image fill");
     };
     *image
@@ -1126,7 +1137,7 @@ fn two_visible_fills_lower_bottom_to_top() {
 
     assert_eq!(
         entry.fill,
-        Some(PaintKind::Solid {
+        Some(FillSpec::Solid {
             color: Color {
                 r: 1.0,
                 g: 0.0,
@@ -1138,7 +1149,7 @@ fn two_visible_fills_lower_bottom_to_top() {
     );
     assert_eq!(
         entry.extra_fills,
-        vec![PaintKind::Solid {
+        vec![FillSpec::Solid {
             color: Color {
                 r: 0.0,
                 g: 1.0,
@@ -1178,7 +1189,7 @@ fn a_hidden_fill_amid_a_stack_is_not_a_third_visible_fill() {
 
     assert_eq!(
         entry.extra_fills,
-        vec![PaintKind::Solid {
+        vec![FillSpec::Solid {
             color: Color {
                 r: 0.0,
                 g: 1.0,

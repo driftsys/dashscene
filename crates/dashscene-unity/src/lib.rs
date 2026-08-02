@@ -27,16 +27,19 @@
 //!
 //! # Deliberately narrow, and widened by the story that flattens the rest
 //!
-//! The lint cannot be switched on over all of boundary B yet: `PaintKind`
-//! carries payloads, and `PaintEntry` and `ImageAsset` hold `Vec`s. Those are
-//! story #578's to flatten — payload enums
+//! The lint cannot be switched on over all of boundary B yet: `PaintEntry` and
+//! `ImageAsset` hold `Vec`s. Those are story #578's to flatten — payload enums
 //! become tag plus index into per-kind tables, nested collections become a flat
 //! array plus `(offset, count)` — and #578 widens this surface as it goes. That
 //! ordering is the point: the lint is never "turned on later and forgotten",
 //! and each flattening step is checked as it lands. `ClipRegion` arrived that
 //! way first, then `GlyphRange` and with it `GlyphRun`, then `ShadowRange`
 //! and `BlurRange`: each became `(offset, count)` into its table's one flat
-//! array, and each joined this surface in the change that flattened it.
+//! array, and each joined this surface in the change that flattened it. Then
+//! `PaintKind` became a tag plus a row index, `Gradient` traded its owned
+//! stops for a `StopRange`, and the image-fill parameters became `ImageFill`
+//! — the three that arrive together, because a gradient with no table to hold
+//! its stops cannot be flattened on its own.
 //!
 //! The leaf value types an entry's effects are made of — `Stroke`, `Shadow`,
 //! `Blur`, `VectorField`, and the five fieldless enums they carry — are here
@@ -44,9 +47,11 @@
 //! intent, with nothing checking it, exactly the state `ClipBox` was in when
 //! this gate found it.
 //!
-//! `PaintEntry` is not here yet even though its effect lists are flat now,
-//! because its `fill` and `extra_fills` still hold `PaintKind`, and
-//! `Gradient` still owns its stops. Those are the last flattening.
+//! `PaintEntry` is not here yet: `extra_fills` is still a `Vec<PaintKind>`,
+//! and `shape` and `fill` are still `Option`s. That is the last flattening —
+//! the stacked layers become a range into a flat array like the effects
+//! before them, and each `Option` becomes a value with a sentinel, since
+//! `Option<T>` has no C representation for a `T` without a niche.
 //!
 //! # What this is not
 //!
@@ -60,7 +65,8 @@
 
 use dashpaint::{
     AtlasGlyph, Blur, BlurRange, ClipBox, ClipRegion, Color, GlyphQuad, GlyphRange, GlyphRun,
-    GradientStop, Mat23, RectEntry, Shadow, ShadowRange, Stroke, Vec2, VectorField,
+    Gradient, GradientStop, ImageFill, Mat23, PaintKind, RectEntry, Shadow, ShadowRange, StopRange,
+    Stroke, Vec2, VectorField,
 };
 
 /// How this build lays out one boundary-B type.
@@ -130,6 +136,10 @@ abi_surface! {
     Blur => dashscene_abi_blur_layout, dashscene_abi_blur_round_trip;
     VectorField => dashscene_abi_vector_field_layout, dashscene_abi_vector_field_round_trip;
     AtlasGlyph => dashscene_abi_atlas_glyph_layout, dashscene_abi_atlas_glyph_round_trip;
+    StopRange => dashscene_abi_stop_range_layout, dashscene_abi_stop_range_round_trip;
+    Gradient => dashscene_abi_gradient_layout, dashscene_abi_gradient_round_trip;
+    ImageFill => dashscene_abi_image_fill_layout, dashscene_abi_image_fill_round_trip;
+    PaintKind => dashscene_abi_paint_kind_layout, dashscene_abi_paint_kind_round_trip;
 }
 
 #[cfg(test)]
@@ -177,6 +187,10 @@ mod tests {
             ("Blur", dashscene_abi_blur_layout(), 8, 4),
             ("VectorField", dashscene_abi_vector_field_layout(), 40, 4),
             ("AtlasGlyph", dashscene_abi_atlas_glyph_layout(), 36, 4),
+            ("StopRange", dashscene_abi_stop_range_layout(), 8, 4),
+            ("Gradient", dashscene_abi_gradient_layout(), 36, 4),
+            ("ImageFill", dashscene_abi_image_fill_layout(), 36, 4),
+            ("PaintKind", dashscene_abi_paint_kind_layout(), 8, 4),
         ];
         for (name, layout, size, align) in measured {
             assert_eq!(

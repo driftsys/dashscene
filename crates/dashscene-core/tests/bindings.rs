@@ -63,7 +63,7 @@ fn binding_tables_do_not_change_committed_output() {
 
 #[test]
 fn intent_accessors_expose_parent_and_fill() {
-    use dashscene_core::{Color, PaintKind};
+    use dashscene_core::{Color, FillSpec};
 
     let mut arena = Arena::new();
     let mut txn = arena.open();
@@ -84,7 +84,7 @@ fn intent_accessors_expose_parent_and_fill() {
     assert_eq!(arena.parent(chip), Some(root));
     assert_eq!(arena.fill(root), None);
     match arena.fill(chip) {
-        Some(PaintKind::Solid { color }) => assert_eq!(color.r, 0.5),
+        Some(FillSpec::Solid { color }) => assert_eq!(color.r, 0.5),
         other => panic!("expected a solid fill, got {other:?}"),
     }
 }

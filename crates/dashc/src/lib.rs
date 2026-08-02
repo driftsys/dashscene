@@ -52,7 +52,7 @@ pub mod figma;
 pub use document::{
     Asset, AssetKind, AxisSizing, Binding, BindingChannel, BindingTransform, Box2D, CrossAxisAlign,
     Document, EdgeInsets, GridTrack, LayoutConstraints, LayoutContainer, LayoutMode, MainAxisAlign,
-    Node, Paint, SignalDecl, TextAlign, TextAlignV, TextStyle,
+    Node, Paint, PaintEntry, SignalDecl, TextAlign, TextAlignV, TextStyle,
 };
 pub use emit::emit;
 // `CompileError` only: it is `compile_figma`'s error type, so it belongs at the

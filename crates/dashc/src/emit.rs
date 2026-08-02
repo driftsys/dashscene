@@ -25,13 +25,13 @@ use dashbuf::{
     TransformScaleArgs, Vec2, VectorAtlas as FbVectorAtlas, VectorAtlasArgs,
     VectorShape as FbVectorShape, VectorShapeArgs,
 };
-use dashpaint::{BlurKind, PaintEntry, PaintKind, ShadowKind};
+use dashpaint::{BlurKind, FillSpec, ShadowKind};
 use flatbuffers::{FlatBufferBuilder, UnionWIPOffset, WIPOffset};
 
 use crate::document::{
     Asset, AssetKind, AxisSizing, Binding, BindingChannel, BindingTransform, CrossAxisAlign,
-    Document, EdgeInsets, GridTrack, LayoutMode, MainAxisAlign, Node, Paint, SignalDecl, TextAlign,
-    TextAlignV, TextStyle, VectorAtlas, VectorShape,
+    Document, EdgeInsets, GridTrack, LayoutMode, MainAxisAlign, Node, Paint, PaintEntry,
+    SignalDecl, TextAlign, TextAlignV, TextStyle, VectorAtlas, VectorShape,
 };
 
 /// Serializes a document to `.dsb` bytes.
@@ -496,10 +496,10 @@ fn build_vector_shape<'a>(
 /// `build_paint` shares this rather than duplicating the match per layer.
 fn build_fill<'a>(
     b: &mut FlatBufferBuilder<'a>,
-    kind: &PaintKind,
+    spec: &FillSpec,
 ) -> (dashbuf::Fill, WIPOffset<UnionWIPOffset>) {
-    match kind {
-        PaintKind::Solid { color } => {
+    match spec {
+        FillSpec::Solid { color } => {
             let solid = SolidFill::create(
                 b,
                 &SolidFillArgs {
@@ -508,37 +508,42 @@ fn build_fill<'a>(
             );
             (dashbuf::Fill::SolidFill, solid.as_union_value())
         }
-        PaintKind::Gradient(g) => {
-            let stops: Vec<GradientStop> = g
-                .stops
+        FillSpec::Gradient { gradient, stops } => {
+            let fb_stops: Vec<GradientStop> = stops
                 .iter()
                 .map(|s| GradientStop::new(s.offset, &color_of(s.color)))
                 .collect();
-            let stops = b.create_vector(&stops);
-            let gradient = Gradient::create(
+            let fb_stops = b.create_vector(&fb_stops);
+            let fb_gradient = Gradient::create(
                 b,
                 &GradientArgs {
-                    kind: match g.kind {
+                    kind: match gradient.kind {
                         dashpaint::GradientKind::Linear => dashbuf::GradientKind::Linear,
                         dashpaint::GradientKind::Radial => dashbuf::GradientKind::Radial,
                         dashpaint::GradientKind::Angular => dashbuf::GradientKind::Angular,
                         dashpaint::GradientKind::Diamond => dashbuf::GradientKind::Diamond,
                     },
-                    handle_origin: Some(&vec2_of(g.handle_origin)),
-                    handle_primary: Some(&vec2_of(g.handle_primary)),
-                    handle_secondary: Some(&vec2_of(g.handle_secondary)),
-                    stops: Some(stops),
+                    handle_origin: Some(&vec2_of(gradient.handle_origin)),
+                    handle_primary: Some(&vec2_of(gradient.handle_primary)),
+                    handle_secondary: Some(&vec2_of(gradient.handle_secondary)),
+                    stops: Some(fb_stops),
                 },
             );
-            (dashbuf::Fill::Gradient, gradient.as_union_value())
+            (dashbuf::Fill::Gradient, fb_gradient.as_union_value())
         }
-        PaintKind::Image {
-            image,
-            scale_mode,
-            transform,
-            tile_scale,
-        } => {
-            let image_fill = ImageFill::create(
+        FillSpec::Image(image_fill) => {
+            let dashpaint::ImageFill {
+                image,
+                scale_mode,
+                transform,
+                tile_scale,
+            } = image_fill;
+            // `Mat23::IDENTITY` is what an absent `transform` means since
+            // story #578 removed `ImageFill::transform`'s `Option`; write
+            // the field only when it differs, matching the bytes the old
+            // `Option` produced (R7).
+            let transform = (*transform != dashpaint::Mat23::IDENTITY).then(|| mat23_of(transform));
+            let fb_image_fill = ImageFill::create(
                 b,
                 &ImageFillArgs {
                     image: *image,
@@ -548,11 +553,11 @@ fn build_fill<'a>(
                         dashpaint::ScaleMode::Crop => dashbuf::ScaleMode::Crop,
                         dashpaint::ScaleMode::Tile => dashbuf::ScaleMode::Tile,
                     },
-                    transform: transform.as_ref().map(mat23_of).as_ref(),
+                    transform: transform.as_ref(),
                     tile_scale: *tile_scale,
                 },
             );
-            (dashbuf::Fill::ImageFill, image_fill.as_union_value())
+            (dashbuf::Fill::ImageFill, fb_image_fill.as_union_value())
         }
     }
 }
@@ -748,51 +753,60 @@ fn text_style_key(style: &TextStyle) -> TextStyleKey {
 /// The interning key's bits for one fill kind — the tag plus its payload.
 /// Shared by `entry_bits` for the primary fill and every stacked layer
 /// (story C1, debt #146), so a solid tags `1` no matter which slot it fills.
-fn fill_kind_bits(kind: &PaintKind) -> Vec<u32> {
+fn fill_kind_bits(spec: &FillSpec) -> Vec<u32> {
     let mut key = Vec::new();
-    match kind {
-        PaintKind::Solid { color } => {
+    match spec {
+        FillSpec::Solid { color } => {
             key.push(1);
             key.extend(color_bits(*color));
         }
-        PaintKind::Gradient(g) => {
+        FillSpec::Gradient { gradient, stops } => {
             key.push(2);
-            key.push(g.kind as u32);
-            key.extend([g.handle_origin.x.to_bits(), g.handle_origin.y.to_bits()]);
-            key.extend([g.handle_primary.x.to_bits(), g.handle_primary.y.to_bits()]);
+            key.push(gradient.kind as u32);
             key.extend([
-                g.handle_secondary.x.to_bits(),
-                g.handle_secondary.y.to_bits(),
+                gradient.handle_origin.x.to_bits(),
+                gradient.handle_origin.y.to_bits(),
             ]);
-            key.push(g.stops.len() as u32);
-            for s in &g.stops {
+            key.extend([
+                gradient.handle_primary.x.to_bits(),
+                gradient.handle_primary.y.to_bits(),
+            ]);
+            key.extend([
+                gradient.handle_secondary.x.to_bits(),
+                gradient.handle_secondary.y.to_bits(),
+            ]);
+            key.push(stops.len() as u32);
+            for s in stops {
                 key.push(s.offset.to_bits());
                 key.extend(color_bits(s.color));
             }
         }
-        PaintKind::Image {
-            image,
-            scale_mode,
-            transform,
-            tile_scale,
-        } => {
+        FillSpec::Image(image_fill) => {
+            let dashpaint::ImageFill {
+                image,
+                scale_mode,
+                transform,
+                tile_scale,
+            } = image_fill;
             key.push(3);
             key.push(*image);
             key.push(*scale_mode as u32);
             key.push(tile_scale.to_bits());
-            match transform {
-                None => key.push(0),
-                Some(m) => {
-                    key.push(1);
-                    key.extend([
-                        m.a.to_bits(),
-                        m.b.to_bits(),
-                        m.c.to_bits(),
-                        m.d.to_bits(),
-                        m.tx.to_bits(),
-                        m.ty.to_bits(),
-                    ]);
-                }
+            // `Mat23::IDENTITY` is what an absent transform means since
+            // story #578 (see `build_fill`); key it the same way so a
+            // pool hit tracks a real byte match, not just an in-memory one.
+            if *transform == dashpaint::Mat23::IDENTITY {
+                key.push(0);
+            } else {
+                key.push(1);
+                key.extend([
+                    transform.a.to_bits(),
+                    transform.b.to_bits(),
+                    transform.c.to_bits(),
+                    transform.d.to_bits(),
+                    transform.tx.to_bits(),
+                    transform.ty.to_bits(),
+                ]);
             }
         }
     }

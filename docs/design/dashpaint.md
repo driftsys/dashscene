@@ -114,15 +114,33 @@ All types and the trait live in `crates/dashpaint/src/lib.rs`:
 - `PaintIndex` — `#[repr(transparent)]` newtype over `u32` (story #4,
   debt #54): a node index or other bare `u32` cannot cross into a
   paint index without an explicit wrap; layout unchanged.
-- `PaintKind` — the fill vocabulary: `Solid { color }` (the pinned
-  v0.1 shape), `Gradient(Gradient)`, `Image { image, scale_mode,
-  transform, tile_scale }` (crop transform and tile magnification,
-  story #14).
+- `PaintKind` — the fill vocabulary as `#[repr(C)]` tag plus row index:
+  a `PaintTag` (Solid/Gradient/Image) and a `u32` into that kind's table
+  on the `PaintTable` (story #578). It was a payload-carrying enum until
+  then; a tag-plus-union has no clean C form, and the repo already
+  mandates integer indices for cross-table references
+  (`docs/decisions/dsb-sectioned-container.md`). Eight bytes, pinned by
+  test.
+- `FillSpec` — the same vocabulary as a producer authors it, with a
+  gradient's stops still owned: `Solid { color }`, `Gradient { gradient,
+  stops }`, `Image(ImageFill)`. A producer has no table to index, so it
+  describes the fill and `PaintTable::intern_fill` assigns the row. Same
+  split, and the same reason, as `GlyphRunTable::push_run`'s.
+- `Fill<'a>` / `GradientView<'a>` — the borrowed view `PaintTable::fill`
+  returns, and the form painters match on: `Solid(Color)`,
+  `Gradient(GradientView)` (the gradient plus the stops its range names),
+  `Image(&ImageFill)`. The flattened `PaintKind` is for uploading; this is
+  for reading, and it is what keeps the tag-match plus bounds check from
+  being repeated at every call site.
 - Vocabulary value types — `Vec2`, `GradientStop`, `GradientKind`
   (Linear/Radial/Angular/Diamond), `Gradient` (kind + three normalized
-  handle positions + stops), `ScaleMode` (Fill/Fit/Crop/Tile),
-  `StrokeAlign` (Inside/Center/Outside), `Stroke` (width + align +
-  solid color), `CornerRadii` (per-corner, `Default` = sharp).
+  handle positions + a `StopRange` into the table's flat stop array),
+  `ImageFill` (image index, `ScaleMode`, crop `Mat23`, tile scale),
+  `ScaleMode` (Fill/Fit/Crop/Tile), `StrokeAlign`
+  (Inside/Center/Outside), `Stroke` (width + align + solid color),
+  `CornerRadii` (per-corner, `Default` = sharp). `ImageFill.transform`
+  is a plain `Mat23` — `Option<Mat23>` has no C representation, and
+  `Mat23::IDENTITY` is what its `None` meant.
 - `MAX_GRADIENT_STOPS` — the gradient stop budget (story #15). It lives
   here, on boundary B, because it is a property of the paint vocabulary
   rather than of one backend: `dashscene-skia` asserts against it and
@@ -130,8 +148,10 @@ All types and the trait live in `crates/dashpaint/src/lib.rs`:
   copies that drifted would make the validator's guarantee false.
 - `PaintEntry` — the paint-table entry: `fill: Option<PaintKind>`
   (`None` = a paint-less, layout-only node), `stroke: Option<Stroke>`,
-  `corners: CornerRadii`, `shadows: Vec<Shadow>` (v0.8, story #45);
-  `PaintEntry::solid(Color)` is the v0.1 shorthand. See
+  `corners: CornerRadii`, `shadows: ShadowRange` (v0.8, story #45;
+  a range since story #578); `PaintTable::push_solid(Color)` is the v0.1
+  shorthand, and replaced `PaintEntry::solid`, which could not survive a
+  fill that only a table can name. See
   `docs/decisions/paint-entry-composition.md`. It carries no clip flag —
   whether a node clips its children is intent, and lives in the document
   and the arena, not in resolved painter input
@@ -156,11 +176,29 @@ All types and the trait live in `crates/dashpaint/src/lib.rs`:
   (returns the sequential index just assigned), `get(&self, PaintIndex)
   -> Option<&PaintEntry>`, `resolve(&self, PaintIndex) -> &PaintEntry`
   (the lookup painters use — panics on an out-of-range index), `len`,
-  `is_empty`.
+  `is_empty`. Since story #578 it also owns the flat arrays its ranges
+  and row indices name: shadows, blurs, and one array per fill kind
+  (`all_solids`, `all_gradients`, `all_stops`, `all_images`).
+- `PaintTable::intern_fill(&FillSpec) -> PaintKind` — the only way a fill
+  enters the table. Unlike `push_with_effects`, which copies an entry's
+  shadows and blurs in without dedup, this **deduplicates**: a shadow
+  list belongs to one entry and has no identity beyond it, while a fill
+  is a shared value that `dashscene-core`'s retained interner re-stages
+  every commit. Appending each time would grow the fill arrays for the
+  life of a session, and the entry-level interner could not see it,
+  because two equal fills would already have reached it as two different
+  row indices.
+- A `PaintKind` names a row in **the table that interned it**. `push`
+  refuses an entry naming a row the table does not hold, by name (P4).
+  That refusal is what catches the one place this can go wrong:
+  `dashscene-core`'s table compaction rebuilds a fresh table from the
+  entries still referenced, so a re-homed entry has to re-intern its
+  fills from their contents (`Fill::to_spec`) rather than carry its old
+  indices across.
 - `ImageTable` / `ImageAsset` / `ImageFormat` — encoded, format-tagged
   image assets (the runtime side of `dashbuf`'s `Document.assets`, whose
   payloads the loader bound from the file's blob sections), indexed by
-  `PaintKind::Image`'s `image` field; same push/get/resolve contract as
+  `ImageFill.image`; same push/get/resolve contract as
   `PaintTable`. See
   `docs/decisions/image-assets-cross-boundary-b.md` (story #14).
 - `Mat23` — row-major 2×3 affine; the image crop transform's shape.
@@ -206,9 +244,10 @@ removing a `repr` attribute, adding a `Vec` field, or putting a
 payload-carrying enum on the surface stops the workspace compiling.
 Boundary B is a language-neutral data contract, and the reason is G2 —
 see `docs/design/architecture.md`. The surface is narrow today and widens
-as story #578 flattens each type in turn. `ClipRegion` and `GlyphRun`
-(with `GlyphRange`) are done and on the surface; `PaintKind`,
-`PaintEntry` and `ImageAsset` remain.
+as story #578 flattens each type in turn. `ClipRegion`, `GlyphRun` (with
+`GlyphRange`), `ShadowRange`, `BlurRange`, and now `PaintKind`,
+`Gradient` (with `StopRange`) and `ImageFill` are done and on the
+surface; `PaintEntry` and `ImageAsset` remain.
 
 `Painter::paint` is infallible and the trait is object-safe (`Box<dyn
 Painter>` must work — backend selection is whole-scene, R3). Slice order

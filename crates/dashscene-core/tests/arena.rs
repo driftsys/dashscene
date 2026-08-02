@@ -7,8 +7,8 @@ use std::mem::{align_of, size_of};
 
 use dashpaint::VectorField;
 use dashscene_core::{
-    Arena, ClipBox, ClipIndex, Color, CornerRadii, LayoutMode, PaintEntry, PaintIndex, PaintKind,
-    Prop, RectEntry, Stroke, StrokeAlign, TextAlign, TextAlignV, TextStyle,
+    Arena, ClipBox, ClipIndex, Color, CornerRadii, Fill, FillSpec, LayoutMode, PaintEntry,
+    PaintIndex, PaintTable, Prop, RectEntry, Stroke, StrokeAlign, TextAlign, TextAlignV, TextStyle,
 };
 
 const RED: Color = Color {
@@ -84,10 +84,7 @@ fn a_single_filled_root_resolves_to_one_rect_and_one_paint() {
         }]
     );
     assert_eq!(scene.paints().len(), 1);
-    assert_eq!(
-        scene.paints().resolve(scene.rects()[0].paint),
-        &PaintEntry::solid(RED)
-    );
+    assert_solid(scene.paints(), scene.rects()[0].paint, RED);
     assert_eq!(arena.name(root), Some("bg"));
 }
 
@@ -228,10 +225,7 @@ fn a_hidden_node_resolves_its_geometry_but_paints_nothing() {
         "a hidden node's descendant paints nothing",
     );
     // The visible root still paints its fill.
-    assert_eq!(
-        scene.paints().resolve(scene.rects()[0].paint),
-        &PaintEntry::solid(RED),
-    );
+    assert_solid(scene.paints(), scene.rects()[0].paint, RED);
 }
 
 #[test]
@@ -254,14 +248,8 @@ fn identical_fills_share_one_paint_entry_in_first_use_order() {
 
     let scene = arena.committed();
     assert_eq!(scene.paints().len(), 2);
-    assert_eq!(
-        scene.paints().resolve(PaintIndex(0)),
-        &PaintEntry::solid(RED)
-    );
-    assert_eq!(
-        scene.paints().resolve(PaintIndex(1)),
-        &PaintEntry::solid(BLUE)
-    );
+    assert_solid(scene.paints(), PaintIndex(0), RED);
+    assert_solid(scene.paints(), PaintIndex(1), BLUE);
     let indices: Vec<PaintIndex> = scene.rects().iter().map(|r| r.paint).collect();
     assert_eq!(indices, [PaintIndex(0), PaintIndex(1), PaintIndex(0)]);
 }
@@ -741,10 +729,7 @@ fn commit_with_uses_the_solver_geometry_verbatim() {
     assert_eq!((rects[1].x, rects[1].y), (100.0, 7.0), "child from solver");
     // Paint interning still core's: the root's fill resolves to solid
     // RED regardless of where the geometry came from.
-    assert_eq!(
-        arena.committed().paints().resolve(rects[0].paint),
-        &dashscene_core::PaintEntry::solid(RED)
-    );
+    assert_solid(arena.committed().paints(), rects[0].paint, RED);
 }
 
 #[test]
@@ -1629,20 +1614,14 @@ fn switching_a_variant_changes_the_resolved_paint() {
     ]);
     txn.commit();
     let scene = arena.committed();
-    assert_eq!(
-        scene.paints().resolve(scene.rects()[0].paint),
-        &PaintEntry::solid(RED)
-    );
+    assert_solid(scene.paints(), scene.rects()[0].paint, RED);
 
     let mut txn = arena.open();
     txn.set_variant(set, 1);
     txn.commit();
 
     let scene = arena.committed();
-    assert_eq!(
-        scene.paints().resolve(scene.rects()[0].paint),
-        &PaintEntry::solid(BLUE)
-    );
+    assert_solid(scene.paints(), scene.rects()[0].paint, BLUE);
 }
 
 #[test]
@@ -1782,11 +1761,7 @@ fn a_variant_visible_override_toggles_the_laid_out_set() {
         "member 0 keeps the child visible"
     );
     let scene = arena.committed();
-    assert_eq!(
-        scene.paints().resolve(scene.rects()[1].paint),
-        &PaintEntry::solid(RED),
-        "the shown child paints its fill",
-    );
+    assert_solid(scene.paints(), scene.rects()[1].paint, RED);
 
     // Switch to member 1: the override hides the child.
     let mut txn = arena.open();
@@ -2354,16 +2329,17 @@ fn stacked_fills_commit_onto_the_paint_entry_and_dedup() {
     // first, so the overlay was lost with no diagnostic. Measured on the
     // Landify hero: its document carried one entry with one extra layer and
     // the arena kept none.
-    let blue = PaintKind::Solid {
-        color: Color {
-            r: 0.0,
-            g: 0.0,
-            b: 1.0,
-            a: 1.0,
-        },
+    const BLUE_OVERLAY: Color = Color {
+        r: 0.0,
+        g: 0.0,
+        b: 1.0,
+        a: 1.0,
+    };
+    let blue = FillSpec::Solid {
+        color: BLUE_OVERLAY,
     };
 
-    let boxed = |txn: &mut dashscene_core::Txn<'_>, name: &str, extra: Vec<PaintKind>| {
+    let boxed = |txn: &mut dashscene_core::Txn<'_>, name: &str, extra: Vec<FillSpec>| {
         let node = txn.add_node(None, Some(name));
         txn.set_prop(node, Prop::Width(10.0));
         txn.set_prop(node, Prop::Height(10.0));
@@ -2404,9 +2380,18 @@ fn stacked_fills_commit_onto_the_paint_entry_and_dedup() {
             .is_empty(),
         "the plain node keeps no overlay"
     );
+    // Through the table: the entry keeps row indices now, so the overlay is
+    // compared as the fill it resolves to (story #578).
+    let paints = scene.paints();
+    let stacked: Vec<Fill<'_>> = paints
+        .resolve(scene.rects()[1].paint)
+        .extra_fills
+        .iter()
+        .map(|&kind| paints.fill(kind))
+        .collect();
     assert_eq!(
-        scene.paints().resolve(scene.rects()[1].paint).extra_fills,
-        vec![blue],
+        stacked,
+        vec![Fill::Solid(BLUE_OVERLAY)],
         "the stacked node keeps its overlay through commit"
     );
 }
@@ -2737,14 +2722,19 @@ fn a_rebuilt_paint_table_still_resolves_every_rect_and_reports_them_dirty() {
             continue;
         }
         rebuilt = true;
+        // Read through the table, which is what makes this cover the
+        // rebuild's fill re-homing: a `PaintKind` names a row in the table
+        // that interned it, so an entry carried across the rebuild with its
+        // old index would resolve to the wrong colour here, or panic
+        // (story #578).
         assert_eq!(
-            scene.paints().resolve(scene.rects()[0].paint).fill,
-            Some(PaintKind::Solid { color: fill }),
+            fill_of(scene.paints(), scene.rects()[0].paint),
+            Some(Fill::Solid(fill)),
             "the animated node resolves to the fill it was just given",
         );
         assert_eq!(
-            scene.paints().resolve(scene.rects()[1].paint).fill,
-            Some(PaintKind::Solid { color: RED }),
+            fill_of(scene.paints(), scene.rects()[1].paint),
+            Some(Fill::Solid(RED)),
             "the untouched node still resolves to its own fill",
         );
         assert_eq!(
@@ -2757,6 +2747,19 @@ fn a_rebuilt_paint_table_still_resolves_every_rect_and_reports_them_dirty() {
             3,
             "the rebuilt table holds one entry per distinct live paint",
         );
+        // The per-kind fill arrays are rebuilt with the entries (story
+        // #578). They are a second way this table could grow without
+        // bound, and the entry count alone would not catch it: the rebuild
+        // re-interns only the fills its surviving entries name, so two
+        // live solids is all that can remain.
+        assert_eq!(
+            scene.paints().all_solids().len(),
+            2,
+            "the rebuild keeps only the fills its live entries name",
+        );
+        assert!(scene.paints().all_gradients().is_empty());
+        assert!(scene.paints().all_stops().is_empty());
+        assert!(scene.paints().all_images().is_empty());
         let mut renumbered_untouched = 0;
         for (i, was) in paint_before.iter().enumerate() {
             if scene.rects()[i].paint != *was {
@@ -2808,8 +2811,8 @@ fn a_rebuilt_paint_table_still_resolves_every_rect_and_reports_them_dirty() {
     txn.commit();
     let scene = arena.committed();
     assert_eq!(
-        scene.paints().resolve(scene.rects()[0].paint).fill,
-        Some(PaintKind::Solid { color: discarded }),
+        fill_of(scene.paints(), scene.rects()[0].paint),
+        Some(Fill::Solid(discarded)),
         "a discarded colour is interned again, not resolved through a stale key",
     );
 }
@@ -3117,8 +3120,8 @@ fn a_caught_mid_commit_panic_discards_the_entries_that_failed_commit_interned() 
 
     let scene = arena.committed();
     assert_eq!(
-        scene.paints().resolve(scene.rects()[0].paint).fill,
-        Some(PaintKind::Solid { color: BLUE }),
+        fill_of(scene.paints(), scene.rects()[0].paint),
+        Some(Fill::Solid(BLUE)),
         "the first node still resolves to its blue fill",
     );
     assert_eq!(
@@ -3282,4 +3285,29 @@ fn a_maskee_under_a_clipping_parent_intersects_the_parent_clip_then_the_mask() {
         ],
         "the clipping parent first, then the mask box",
     );
+}
+
+/// The fill a paint entry names, resolved through the table that interned
+/// it. Since story #578 a `PaintKind` is a row index into that table's
+/// per-kind arrays, so an entry read against any other table is
+/// meaningless — which is why these tests never compare a `PaintEntry` to
+/// one built outside a table.
+#[track_caller]
+fn fill_of(paints: &PaintTable, index: PaintIndex) -> Option<Fill<'_>> {
+    paints.resolve(index).fill.map(|kind| paints.fill(kind))
+}
+
+/// Asserts an entry is the fill-only solid `color` and nothing else — the
+/// post-#578 form of the `resolve(i) == &PaintEntry::solid(c)` comparison
+/// these tests used to make, keeping its "and nothing else" half.
+#[track_caller]
+fn assert_solid(paints: &PaintTable, index: PaintIndex, color: Color) {
+    let entry = paints.resolve(index);
+    assert_eq!(fill_of(paints, index), Some(Fill::Solid(color)));
+    assert_eq!(entry.stroke, None);
+    assert_eq!(entry.corners, CornerRadii::default());
+    assert_eq!(entry.shadows, dashpaint::ShadowRange::default());
+    assert_eq!(entry.blurs, dashpaint::BlurRange::default());
+    assert_eq!(entry.shape, None);
+    assert!(entry.extra_fills.is_empty());
 }

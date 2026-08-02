@@ -13,7 +13,7 @@
 //! output, and `crates/dashlang/tests/paint.rs` asserts exactly that.
 
 use dashscene_core::{
-    Blur, BlurKind, Color, CornerRadii, NodeId, PaintKind, Prop, Shadow, ShadowKind, Stroke,
+    Blur, BlurKind, Color, CornerRadii, FillSpec, NodeId, Prop, Shadow, ShadowKind, Stroke,
     TextStyle, Txn, Vec2, VectorField,
 };
 
@@ -51,14 +51,14 @@ impl Node {
     /// An image fill's `image` index is issued by
     /// `Txn::add_image` against an arena, which an inert value tree does
     /// not have. A scene using one still stages it through the arena.
-    pub fn fill_with(mut self, fill: PaintKind) -> Self {
+    pub fn fill_with(mut self, fill: FillSpec) -> Self {
         self.fill_with = Some(fill);
         self
     }
 
     /// Fills painted over the node's base fill, in paint order.
     /// Replaces the whole list.
-    pub fn extra_fills(mut self, fills: impl IntoIterator<Item = PaintKind>) -> Self {
+    pub fn extra_fills(mut self, fills: impl IntoIterator<Item = FillSpec>) -> Self {
         self.extra_fills = fills.into_iter().collect();
         self
     }

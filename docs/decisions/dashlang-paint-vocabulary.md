@@ -70,7 +70,7 @@ invent both the handles and the stop offsets, and inventing a value the author
 never wrote is the one thing the charter forbids
 (`docs/decisions/dashlang-value-tree-builder.md`, "What the charter permits").
 The showcase keeps its own `gradient`/`diagonal_gradient` helpers as
-scene-local conveniences over `PaintKind`: two stops at 0.0 and 1.0 is a
+scene-local conveniences over `FillSpec`: two stops at 0.0 and 1.0 is a
 scene's opinion, and a scene is allowed one.
 
 Each sugar method is held to the same acceptance test as its mirror, and is
@@ -82,7 +82,7 @@ The paint types live in `dashpaint`. `dashscene-core` re-exported a subset,
 and `dashlang` re-exported onward from core, so a DSL consumer needs one
 import path and no direct `dashscene-core` dependency. That subset was
 incomplete for authoring: a `Shadow` needs `Vec2`, a gradient needs
-`Gradient`/`GradientKind`/`GradientStop`, naming `PaintKind::Image` at all
+`Gradient`/`GradientKind`/`GradientStop`, naming an image fill at all
 needs `ScaleMode` and `Mat23`, and a coverage mask needs `VectorField`.
 
 Those names join `dashscene-core`'s existing `pub use committed::{..}` list
@@ -95,11 +95,15 @@ producer names.
 
 ## D4 — Image fills and variant sets stay on the arena pass
 
-`PaintKind::Image` carries an index `Txn::add_image` issues against an arena,
-and an inert value tree has no arena. `Txn::add_variant_set` is an arena
-operation for the same reason. Neither can move onto the value tree, so
-`fill_with(PaintKind::Image { .. })` is nameable but not authorable in one
-pass.
+An image fill carries an index `Txn::add_image` issues against an arena, and
+an inert value tree has no arena. `Txn::add_variant_set` is an arena
+operation for the same reason. Neither can move onto the value tree, so an
+image fill is nameable but not authorable in one pass.
+
+The type this decision was written against was `PaintKind::Image`. Story #578
+split the fill vocabulary into a producer-side `FillSpec` and a table-side
+`PaintKind`, so the construct named here is `FillSpec::Image(ImageFill)`
+today. The decision is unchanged: the index still comes from the arena.
 
 This bounds the deliverable, and it is stated plainly rather than implied:
 **most scenes author in one pass, not all.** Gradients, solid fills, strokes,

@@ -126,7 +126,7 @@ fn set_signal(live: &mut LiveScene, signal: &str, value: f32) -> bool {
 mod tests {
     use super::*;
 
-    use dashscene_core::{Color, NodeId, PaintKind};
+    use dashscene_core::{Color, Fill, NodeId};
     use showcase::Showcase;
 
     /// The `layout` scene, which is the one that carries an action. Fetched
@@ -172,12 +172,10 @@ mod tests {
     fn committed_fill(arena: &Arena, name: &str) -> Option<Color> {
         let index = rect_index(arena, name).expect("the node has a committed rect");
         let committed = arena.committed();
-        match committed
-            .paints()
-            .resolve(committed.rects()[index].paint)
-            .fill
-        {
-            Some(PaintKind::Solid { color }) => Some(color),
+        let paints = committed.paints();
+        let kind = paints.resolve(committed.rects()[index].paint).fill?;
+        match paints.fill(kind) {
+            Fill::Solid(color) => Some(color),
             _ => None,
         }
     }

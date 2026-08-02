@@ -85,9 +85,10 @@ It is enforced rather than asserted: `crates/dashscene-unity` declares an
 `extern "C"` surface over the boundary-B value types under
 `#![deny(improper_ctypes_definitions)]`, so making one of them
 non-representable stops the workspace compiling (story #600). The surface is
-narrow today and widens as story #578 flattens what is left — `PaintKind`
-carries payloads, and `GlyphRun`, `ClipRegion`, `PaintEntry` and `ImageAsset`
-hold `Vec`s.
+narrow today and widens as story #578 flattens what is left. `PaintKind`
+carried payloads until #578 gave it a tag and a row index, and it is on the
+surface now with `Gradient`, `StopRange` and `ImageFill`; `PaintEntry` and
+`ImageAsset` still hold `Vec`s and are what remains.
 
 **What this does not buy.** It removes one obstacle, not the work. A non-Rust
 engine still needs its own projection of the tables into its scene

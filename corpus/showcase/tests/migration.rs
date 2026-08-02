@@ -155,14 +155,18 @@ fn backdrop_blur(radius: f32) -> Prop {
 /// arenas that reach the same picture by different commit sequences earn
 /// different positions for the same content. Every such value must be
 /// resolved to its contents first, and only the contents compared. This has
-/// bitten the helper three times: the paint-table index on a rect (resolved
+/// bitten the helper four times: the paint-table index on a rect (resolved
 /// through `PaintTable::resolve`, above), `ClipRegion`'s flattening to a
-/// range read through `ClipView::boxes()` (also above), and now
-/// `PaintEntry`'s `shadows`/`blurs` fields, which the same story (#578) that
-/// flattened them into `ShadowRange`/`BlurRange` turned into arena-relative
+/// range read through `ClipView::boxes()` (also above), `PaintEntry`'s
+/// `shadows`/`blurs` fields, which story #578 turned into arena-relative
 /// positions in their own right — resolved below through
-/// `PaintTable::shadows`/`PaintTable::blurs` rather than compared as part of
-/// the whole `PaintEntry`.
+/// `PaintTable::shadows`/`PaintTable::blurs` — and now `fill` and
+/// `extra_fills`, which the last step of that story turned into row indices
+/// into each arena's own per-kind fill tables. Those are resolved through
+/// [`fills_of`]; comparing them directly was the exact mistake
+/// `docs/decisions/cross-arena-comparison-resolves-indices.md` exists to
+/// stop, and it passed only because both builders happened to intern in the
+/// same order.
 fn assert_same_committed(a: &Arena, b: &Arena) {
     let (a, b) = (a.committed(), b.committed());
 
@@ -178,21 +182,18 @@ fn assert_same_committed(a: &Arena, b: &Arena) {
             b.paints().resolve(right.paint),
         );
         assert_eq!(
+            (&left_paint.stroke, &left_paint.corners, &left_paint.shape),
             (
-                &left_paint.fill,
-                &left_paint.stroke,
-                &left_paint.corners,
-                &left_paint.shape,
-                &left_paint.extra_fills,
-            ),
-            (
-                &right_paint.fill,
                 &right_paint.stroke,
                 &right_paint.corners,
-                &right_paint.shape,
-                &right_paint.extra_fills,
+                &right_paint.shape
             ),
             "paints (rect {index})"
+        );
+        assert_eq!(
+            fills_of(a, left_paint),
+            fills_of(b, right_paint),
+            "paint fills (rect {index})"
         );
         assert_eq!(
             a.paints().shadows(left_paint),
@@ -216,6 +217,25 @@ fn assert_same_committed(a: &Arena, b: &Arena) {
     assert_eq!(a.images(), b.images(), "images");
 }
 
+/// One entry's fills — the base fill and every stacked layer — resolved to
+/// their contents.
+///
+/// A `PaintKind` is a row index into the arena's own per-kind fill tables
+/// since story #578, so two arenas that reached the same picture by
+/// different commit sequences can hold the same fill at different rows. Only
+/// the resolved contents mean anything across the two.
+fn fills_of<'a>(
+    scene: &'a dashscene_core::CommittedScene,
+    entry: &dashscene_core::PaintEntry,
+) -> Vec<dashscene_core::Fill<'a>> {
+    entry
+        .fill
+        .iter()
+        .chain(entry.extra_fills.iter())
+        .map(|&kind| scene.paints().fill(kind))
+        .collect()
+}
+
 // --- `surfaces`, frozen at its two-pass authoring -------------------------
 //
 // `surfaces::build` and the private `surfaces::paint` it calls, copied
@@ -223,8 +243,8 @@ fn assert_same_committed(a: &Arena, b: &Arena) {
 // `surfaces_two_pass_paint` because this file holds more than one frozen
 // scene. And its nine `gradient`/`diagonal_gradient` calls are each
 // wrapped in `Prop::FillWith(...)`, because those two helpers used to
-// return a `Prop` — a `Prop::FillWith` around the `PaintKind` they built —
-// and on this branch they return the bare `PaintKind`, so that the scenes
+// return a `Prop` — a `Prop::FillWith` around the `FillSpec` they built —
+// and on this branch they return the bare `FillSpec`, so that the scenes
 // can hand it to `Node::fill_with`. The wrap restores exactly the value the
 // helper used to return, at the same call site, so the `Prop` this body
 // stages is byte-for-byte the one it staged before the change.

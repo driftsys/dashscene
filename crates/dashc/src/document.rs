@@ -10,7 +10,7 @@
 //! node list whose array index is the rect-table index (docs/design/dashbuf.md), layout
 //! intent (never results — P1), and the pools nodes reference by index.
 
-use dashpaint::{Color, PaintEntry};
+use dashpaint::{Color, CornerRadii, FillSpec, Stroke};
 
 /// A node's authored box. Intent, not a result (P1): under a flex parent the
 /// solver owns placement and these offsets are ignored, and the width/height
@@ -290,6 +290,29 @@ impl Default for Node {
     }
 }
 
+/// A node's fill, stroke, and corner intent — the producer-side twin of
+/// `dashpaint::PaintEntry` (story #578). Fills are [`FillSpec`]s here, not
+/// `PaintKind`s: a `PaintKind` is a row index into a `PaintTable`'s per-kind
+/// arrays, and this lowering has no table to index into — the emitter writes
+/// the `.dsb` fill union straight from each spec's owned data.
+///
+/// `dashpaint::PaintEntry` also carries `shadows`/`blurs` (ranges into a
+/// `PaintTable`'s flat arrays) and `shape` (a resolved `VectorField`), for
+/// the same table-shaped reason. This lowering has no table for those
+/// either, so — as before this story — they travel beside the entry on
+/// [`Paint`] instead, which is why there is no field for them here.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PaintEntry {
+    pub fill: Option<FillSpec>,
+    pub stroke: Option<Stroke>,
+    pub corners: CornerRadii,
+    /// Fills stacked over `fill`, bottom to top (story C1, debt #146): `fill`
+    /// is the bottom (first visible) layer, and this carries every fill
+    /// above it, in the same order a node's fills paint. Empty for a
+    /// single-fill or fill-less entry.
+    pub extra_fills: Vec<FillSpec>,
+}
+
 /// A node's style: the boundary-B paint entry, plus the clip intent the
 /// document pools alongside it.
 ///
@@ -303,11 +326,11 @@ pub struct Paint {
     pub entry: PaintEntry,
     /// The entry's shadows, held here rather than inside `entry`.
     ///
-    /// `PaintEntry::shadows` is a range into a `PaintTable`'s flat array
-    /// since story #578, and this type is a producer's authored paint — it
-    /// has no table to index. Same shape as `dashscene_core::StagedRun`,
-    /// and for the same reason: the owned data travels beside the
-    /// boundary-B value until a table takes it.
+    /// `dashpaint::PaintEntry::shadows` is a range into a `PaintTable`'s flat
+    /// array since story #578, and this type is a producer's authored paint
+    /// — it has no table to index. Same shape as
+    /// `dashscene_core::StagedRun`, and for the same reason: the owned data
+    /// travels beside the boundary-B value until a table takes it.
     pub shadows: Vec<dashpaint::Shadow>,
     /// The entry's blurs, held here for the same reason as `shadows`.
     pub blurs: Vec<dashpaint::Blur>,
