@@ -260,6 +260,26 @@ job runs when the `changes` job's `packer` path filter fires, listed above.
 Defining risk by what the diff touches means nobody has to remember to
 judge a change risky.
 
+Since 2026-08-01 the `test` job also skips entirely when the diff is
+documentation only, together with `clippy`, `demo-build`, `wasm-build`,
+`atlas-repro` and `render-oracle`. The `changes` job decides this by asking
+whether every changed file is Markdown under `docs/` or Markdown at the
+repository root. `fmt`, `dprint` and `convco` stay unconditional: a
+documentation-only diff still has to be formatted, and its commit messages
+still have to lint.
+
+Two properties of that detector are deliberate. It reports "code changed"
+on every path except a successfully read documentation-only diff, so an
+empty diff, an unreadable diff, or a file it does not recognise runs the
+suite rather than skipping it. And Markdown under `crates/` counts as code,
+because a crate's Markdown can reach a doctest through `include_str!` — no
+crate does that today, which is a fact about today rather than a guarantee.
+
+The consequence is that **a green aggregate `ci` job no longer means the
+suite ran.** It means nothing red ran. Which tiers actually executed is
+readable only from the individual jobs, which is the same caution this
+record opens with, now applying to CI as well as to `just test`.
+
 ## What this deviates from
 
 `docs/decisions/house-style.md`'s `justfile` paragraph records the recipe set
