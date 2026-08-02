@@ -38,9 +38,15 @@
 //! and `BlurRange`: each became `(offset, count)` into its table's one flat
 //! array, and each joined this surface in the change that flattened it.
 //!
+//! The leaf value types an entry's effects are made of — `Stroke`, `Shadow`,
+//! `Blur`, `VectorField`, and the five fieldless enums they carry — are here
+//! too. They were `repr(Rust)` until they joined: `#[repr(C)]` written as
+//! intent, with nothing checking it, exactly the state `ClipBox` was in when
+//! this gate found it.
+//!
 //! `PaintEntry` is not here yet even though its effect lists are flat now,
-//! because its `fill` and `extra_fills` still hold `PaintKind`. That is the
-//! last flattening.
+//! because its `fill` and `extra_fills` still hold `PaintKind`, and
+//! `Gradient` still owns its stops. Those are the last flattening.
 //!
 //! # What this is not
 //!
@@ -53,8 +59,8 @@
 #![deny(improper_ctypes_definitions)]
 
 use dashpaint::{
-    AtlasGlyph, BlurRange, ClipBox, ClipRegion, Color, GlyphQuad, GlyphRange, GlyphRun,
-    GradientStop, Mat23, RectEntry, ShadowRange, Vec2,
+    AtlasGlyph, Blur, BlurRange, ClipBox, ClipRegion, Color, GlyphQuad, GlyphRange, GlyphRun,
+    GradientStop, Mat23, RectEntry, Shadow, ShadowRange, Stroke, Vec2, VectorField,
 };
 
 /// How this build lays out one boundary-B type.
@@ -119,6 +125,10 @@ abi_surface! {
     GlyphRun => dashscene_abi_glyph_run_layout, dashscene_abi_glyph_run_round_trip;
     ShadowRange => dashscene_abi_shadow_range_layout, dashscene_abi_shadow_range_round_trip;
     BlurRange => dashscene_abi_blur_range_layout, dashscene_abi_blur_range_round_trip;
+    Stroke => dashscene_abi_stroke_layout, dashscene_abi_stroke_round_trip;
+    Shadow => dashscene_abi_shadow_layout, dashscene_abi_shadow_round_trip;
+    Blur => dashscene_abi_blur_layout, dashscene_abi_blur_round_trip;
+    VectorField => dashscene_abi_vector_field_layout, dashscene_abi_vector_field_round_trip;
     AtlasGlyph => dashscene_abi_atlas_glyph_layout, dashscene_abi_atlas_glyph_round_trip;
 }
 
@@ -162,6 +172,10 @@ mod tests {
             ("GlyphRun", dashscene_abi_glyph_run_layout(), 40, 4),
             ("ShadowRange", dashscene_abi_shadow_range_layout(), 8, 4),
             ("BlurRange", dashscene_abi_blur_range_layout(), 8, 4),
+            ("Stroke", dashscene_abi_stroke_layout(), 24, 4),
+            ("Shadow", dashscene_abi_shadow_layout(), 36, 4),
+            ("Blur", dashscene_abi_blur_layout(), 8, 4),
+            ("VectorField", dashscene_abi_vector_field_layout(), 40, 4),
             ("AtlasGlyph", dashscene_abi_atlas_glyph_layout(), 36, 4),
         ];
         for (name, layout, size, align) in measured {
