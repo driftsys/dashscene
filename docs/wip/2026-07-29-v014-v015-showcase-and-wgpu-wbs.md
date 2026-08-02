@@ -1,10 +1,24 @@
 # v0.14 + v0.15 — the showcase runtime and the wgpu painter
 
-    status   WIP — design + work breakdown, NOT yet ratified. Produced
-             2026-07-29 in a design session (user + Opus). No issue has
-             been filed and no crate has been created. The painter-strategy
-             decision this assumes is recorded nowhere yet; see
-             "Decisions this needs" below.
+    status   WIP — design + work breakdown, RATIFIED and partly built.
+             Produced 2026-07-29 in a design session (user + Opus).
+             Superseded in part as of 2026-08-02: the breakdown was filed
+             as epics #568 (v0.14) and #569 (v0.15), v0.14's showcase
+             runtime has landed, and the crate this assumed does exist —
+             as `dashscene-gpu`, not the `dashscene-wgpu` named
+             throughout the text below. Read every crate name here as
+             `dashscene-gpu`.
+
+             The sentences claiming no issue is filed and no crate is
+             created were true when written and are now false; they are
+             corrected rather than deleted, because the archive records
+             what was planned rather than a rewritten version of it.
+
+             What is left is v0.15, in progress: the painter is chosen
+             but not built. The file is gardened and archived when it is
+             built, on the same rule the glyph-run spike was held to — a
+             decision landing and a design being built are two events,
+             and only the second empties the file.
     scope    what comes after v0.13: a windowed showcase runtime (v0.14),
              then a wgpu painter covering native and web (v0.15); which
              open debt must land before v0.14; which debt v0.14 makes

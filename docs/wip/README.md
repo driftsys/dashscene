@@ -11,14 +11,34 @@ project's convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports seven files
+## Why the WIP gate currently reports eight files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-seven and exits non-zero. All seven are deliberate, accepted exceptions rather
+eight and exits non-zero. All eight are deliberate, accepted exceptions rather
 than ungardened debt, and they are recorded here so the gate's result is
 explained rather than merely tolerated.
 
-Six are design captures, described below. **One is a driver prompt**, the
+**The gate is deliberately not wired into CI, and this section is why.** Its
+result here is non-zero by design and would stay non-zero for as long as any
+forward-looking capture is held, so a CI job running it would be permanently
+red — which trains a reader to ignore it, the opposite of a gate. The
+`sdd-working-memory-lifecycle` rule that ships `wip-gate.sh` describes a
+directory holding one finished session's working memory; this directory is
+also a standing shelf for captures whose work has not started, which the same
+rule requires ("forward-looking concepts stay in `docs/wip/` until implemented
+and gardened in"). The gate cannot tell those two populations apart. What holds
+the line instead is this file: every tracked entry is listed below with the
+condition that empties it, and an entry that appears here without such a line
+is ungardened debt.
+
+**This count has been wrong before.** It read "seven" from the v0.13 close
+until 2026-08-02, while eight files were tracked — the v0.14/v0.15 breakdown
+was added and never listed. Issue #663 was then filed against the count rather
+than against this ledger, and asserted eight ungardened files when seven were
+accounted for here. Re-derive the number from `git ls-files docs/wip/` when
+touching this section rather than trusting the prose.
+
+Seven are design captures, described below. **One is a driver prompt**, the
 brief a session is handed to carry out a named piece of work. Driver prompts are
 transient by construction — spent the moment their work lands — and the
 convention is to archive them verbatim rather than garden them into records, as
@@ -32,13 +52,33 @@ prompt that carried out its design rather than gardened.
 
 It is archived when its work lands.
 
-Five are forward-looking design captures for work that has not started. Every
+Four are forward-looking design captures for work that has not started. Every
 one says so in its own `status` line — "Nothing here is implemented". Gardening
 runs **after** tests are green by definition, so there is no as-built code to
 reconcile any of them against; promoting one now would put a plan into
 `docs/design/` describing a system that does not exist.
 
-One of those five no longer fits that description, and this paragraph should
+**Two more have since started, and this is the distinction that decides when
+they leave.** `2026-07-19-wgpu-painter-direction.md` and
+`2026-07-29-v014-v015-showcase-and-wgpu-wbs.md` both said no crate existed and
+nothing was implemented. Both sentences went stale on the same events: the
+breakdown was filed as epics #568 and #569, v0.14's showcase runtime landed,
+and `crates/dashscene-gpu` was created by story #577. Their `status` lines were
+corrected on 2026-08-02 and now say what is true.
+
+Neither is gardened yet, and being chosen is not the reason to garden one. The
+rule this directory has applied throughout is that a decision landing and a
+design being **built** are two events, and only the second empties the file —
+the same rule the glyph-run spike was held to. v0.15 is in progress: the
+painter is chosen, the seam compiles, and the painter is not built. Both files
+leave when it is.
+
+One note on reading the breakdown: it says `dashscene-wgpu` throughout, and the
+crate is `dashscene-gpu`. The name was settled after the breakdown was written,
+and the text is corrected in its `status` line rather than rewritten, so the
+file still records what was actually planned.
+
+One of the four no longer fits that description, and this paragraph should
 not be read as claiming it does. Backdrop blur landed in v0.11 (story #393), so
 `2026-07-19-backdrop-blur-v011.md` is spent in its decided half — the reversal,
 the contract shape and all four of its open questions are now in
@@ -51,7 +91,7 @@ re-blur cadence); the table's Skia row, previously stale the other way round
 gardening, the same shape as the asset-pipeline capture below — done at the
 same pass, **#427**.
 
-The sixth, the asset-pipeline capture, is **partly gardened**: v0.11 and v0.12
+The seventh, the asset-pipeline capture, is **partly gardened**: v0.11 and v0.12
 each built the parts of it their scope covered, those parts are now as-built
 records, and its `status` line says which and where. A partial gardening is the
 honest state for a capture that spans several slices. The rule's own words are
@@ -132,10 +172,11 @@ it. What was actually true is in
 | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `2026-07-19-asset-pipeline-profiles-and-baking.md`     | partly gardened at the v0.11 close (epic #344) and again across v0.12 (epic #345, stories #432, #433, #434, #435, #436); the rest when the vector bake's end-state fork and animated content are built — its `status` line says which half is which                                                                                                                        |
 | `2026-07-19-backdrop-blur-v011.md`                     | partly gardened at the v0.11 close (story #393): the profile-policy reversal, the schema `Effect` representation, and the boundary-B contract now live in `docs/decisions/backdrop-blur-is-core-vocabulary.md`; the rest when a second painter (Unity, tiny-skia web, or a future wgpu painter) needs the per-painter capability table or its two remaining quality levers |
-| `2026-07-19-wgpu-painter-direction.md`                 | a wgpu painter is actually chosen. Explicitly a direction, not a commitment; it exists so the question is not researched from scratch when that slice opens                                                                                                                                                                                                                |
+| `2026-07-19-wgpu-painter-direction.md`                 | the painter is **built**, not when it was chosen. Choosing it happened on 2026-08-02 — v0.15 opened as epic #569 and story #577 created `crates/dashscene-gpu` — and this row previously said "a wgpu painter is actually chosen", which that event satisfied without emptying the file. The research below stays the authority for the parts v0.15 has not reached yet    |
 | `2026-07-28-photorealistic-3d-content.md`              | each question it traces is ruled on. It records an input rather than a plan: photorealistic 3D renders are target product content, and every number in the asset pipeline was chosen against content that is not representative of it. Its first measurable consequence is #455's fixture                                                                                  |
 | `2026-07-27-indic-script-support.md`                   | Indic support is designed: the closure becomes text-driven and the unformed-cluster fallback is built. Its decided half — coverage is declared at build time, dynamic generation is a deferred painter capability — is already gardened into `docs/decisions/glyph-coverage-is-declared-at-build-time.md`                                                                  |
 | `2026-07-27-glyph-coverage-sets-and-text-residency.md` | glyph-atlas residency is designed: the unit of residency is chosen and the runtime-supplied-string case is answered. Its decided half — that only raster is block-compressed — is already gardened into `docs/decisions/compress-raster-only.md`                                                                                                                           |
+| `2026-07-29-v014-v015-showcase-and-wgpu-wbs.md`        | the wgpu painter is **built**. Ratified and partly built: filed as epics #568 and #569, and v0.14's showcase runtime has landed, so its v0.14 half is spent. Held for v0.15, which is in progress. Reads `dashscene-wgpu` throughout; the crate is `dashscene-gpu`                                                                                                         |
 
 Each row's entry is removed when its capture is gardened.
 

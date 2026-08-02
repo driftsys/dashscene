@@ -1,11 +1,22 @@
 # Future painter: a wgpu quad + SDF backend
 
-    status   WIP — direction, NOT a commitment. Design-discussion capture
-             plus verified ecosystem research (2026-07-19, user + Opus).
-             The web painter is parked and the lean native painter is
-             "later" per AGENTS.md; this note exists so the question is
-             not researched from scratch when that slice opens. Nothing
-             here is implemented and no crate has been adopted.
+    status   WIP — was a direction, now the chosen one. Design-discussion
+             capture plus verified ecosystem research (2026-07-19,
+             user + Opus). Written so the question would not be
+             researched from scratch when the slice opened, which is what
+             it was used for.
+
+             Updated 2026-08-02. The line that stood here — "nothing is
+             implemented and no crate has been adopted" — was true when
+             written and is now false. The slice opened as v0.15
+             (epic #569), the crate exists as `dashscene-gpu`, and
+             story #577 landed its seam. The painter is chosen; it is not
+             yet built, so the research below is still the authority for
+             the parts not yet reached.
+
+             Gardened and archived when the painter is built, not when it
+             was chosen — the two are separate events and only the second
+             empties this file.
     scope    whether a wgpu painter is a viable alternative to the parked
              tiny-skia web painter and a candidate for the lean native
              painter; what would have to be written vs adopted
