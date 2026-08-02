@@ -193,7 +193,18 @@ tier.
   `goldens/tooling/tests/common/**` (the two tests' own fixture and
   repository-root helpers), `goldens/tooling/tests/perceptual_calibration.rs`
   itself, `Cargo.toml` and `Cargo.lock` (a dependency bump can move an
-  encoder's output without touching any path above).
+  encoder's output without touching any path above), `.config/**`
+  (`nextest.toml` names the two tests by filter and `calibration-tier.txt`
+  pins the listing they must produce), and `.github/workflows/ci.yml` (the
+  job's own definition).
+
+The last two entries are about the check rather than the tables, and they
+were added after the membership check shipped broken. None of the paths
+that define the check were in the filter, so the job that exists to catch
+tier drift was the one job an edit to the tier could not trigger: the
+check reached `main` and stayed red on unrelated branches for as long as
+it took one of them to touch `crates/dashpack/**`. A gate that its own
+edits cannot run is a gate nobody is measuring.
 
 The pre-push gate keeps `regression` rather than `sanity` because 35 s is
 already close to a ten-fold improvement over the original 325 s and it
@@ -225,13 +236,35 @@ tiers partition the suite, so a test moving from `calibration` into
 `calibration` shrinks by one, `regression + calibration` still equals
 `all`. What catches it is `.config/calibration-tier.txt`, a file pinning
 the calibration tier's membership by name, byte for byte, against
-`cargo nextest list --workspace -P calibration`'s output.
+`cargo nextest list --workspace -P calibration --message-format json`
+reduced to one `binary test` line per matching test.
 `just calibrate` and the CI `calibration` job both diff the live listing
 against this file before running the tier, so a rename fails loudly, on the
 membership check, instead of quietly shrinking the tier. Only the
 calibration tier is pinned this way — it is two names that change rarely,
 where pinning the regression tier's would churn on every test added in the
 workspace.
+
+**The listing is read as JSON because the default one is a rendering, not
+a format.** `nextest list`'s default output carries no stability promise —
+its own `--help` points at `--message-format json` for machine reading —
+and it changed under this check. 0.9.87 printed a binary header with its
+tests indented beneath it; 0.9.140 prints one `binary test` line per test.
+The two sides of the check are routinely versions apart: CI installs
+whatever `get.nexte.st/latest` serves that morning, while `bootstrap`
+installs `cargo-nextest` only on a machine that has none, so a developer
+keeps the version they first cloned with. That default rendering also
+emits ANSI colour whenever `CARGO_TERM_COLOR` is set, which every CI job
+inherits from `dtolnay/rust-toolchain`. Reading JSON and sorting under
+`LC_ALL=C` makes the check depend on the test names alone, which is what
+it is pinning. It costs a `jq` dependency, which every GitHub runner ships
+and `bootstrap` does not install.
+
+The check also runs under `pipefail` on both sides — `set shell` in the
+justfile, `shell: bash` on the CI step. Without it the pipeline's status
+is `diff`'s alone, so a `cargo nextest list` that fails outright would
+feed an empty listing into a diff that reports every test as deleted,
+which reads as a rename rather than as the build failure it is.
 
 **`bootstrap` installs `cargo-nextest`.** Every recipe that runs a tier
 needs it, so a fresh clone or worktree that has not run `bootstrap` can run
