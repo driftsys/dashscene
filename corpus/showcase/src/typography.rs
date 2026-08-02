@@ -33,11 +33,11 @@
 //! the ASCII set.
 
 use dashlang::{Channel, FormatSpec, LiveScene, Scene, Spring, node};
-use dashscene_core::{Arena, CrossAxisAlign, LayoutMode, Prop, TextAlign, TextAlignV};
+use dashscene_core::{Arena, CrossAxisAlign, LayoutMode, TextAlign, TextAlignV};
 
 use crate::resources::{self, ARABIC_FAMILY, LATIN_FAMILY};
 use crate::solver::ShowcaseSolver;
-use crate::vocabulary::{Painting, corners, palette, text_style};
+use crate::vocabulary::{palette, text_style};
 
 /// The one signal, named so the pulse can find it in a scene it did not build.
 ///
@@ -92,18 +92,59 @@ pub fn build(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
         .mode(LayoutMode::Vertical)
         .padding(margin, margin, margin, margin)
         .gap(gap)
-        .child(node("type-heading").size(column, 46.0 * unit))
-        .child(node("type-sub").size(column, 26.0 * unit))
+        .fill(palette::NAVY)
         .child(
+            node("type-heading")
+                .size(column, 46.0 * unit)
+                .text(HEADING)
+                .text_style({
+                    let mut style = text_style(LATIN_FAMILY, 40.0 * unit, 600, palette::NEAR_WHITE);
+                    style.letter_spacing = -0.8 * unit;
+                    style
+                }),
+        )
+        .child(
+            node("type-sub")
+                .size(column, 26.0 * unit)
+                .text(SUBHEADING)
+                .text_style(text_style(LATIN_FAMILY, 17.0 * unit, 400, palette::SKY)),
+        )
+        .child(
+            // The Arabic panel. Each run asks for the Arabic family by name;
+            // coverage outranks the request in the cascade, so an Arabic run
+            // would reach that family even if it asked for Inter — naming it
+            // keeps the intent in the scene rather than in the fallback.
             node("arabic-panel")
                 .size(column, 78.0 * unit)
                 .mode(LayoutMode::Horizontal)
                 .gap(gap)
                 .padding(gap, gap * 0.6, gap, gap * 0.6)
                 .cross_align(CrossAxisAlign::Center)
-                .child(node("arabic-banner").size(column * 0.42, 46.0 * unit))
-                .child(node("arabic-word").size(column * 0.22, 52.0 * unit))
-                .child(node("arabic-speed").size(column * 0.24, 52.0 * unit)),
+                .fill(palette::PANEL)
+                .corners(radius)
+                .child(
+                    node("arabic-banner")
+                        .size(column * 0.42, 46.0 * unit)
+                        .text(ARABIC_BANNER)
+                        .text_style(text_style(
+                            ARABIC_FAMILY,
+                            26.0 * unit,
+                            400,
+                            palette::NEAR_WHITE,
+                        )),
+                )
+                .child(
+                    node("arabic-word")
+                        .size(column * 0.22, 52.0 * unit)
+                        .text(ARABIC_WORD)
+                        .text_style(text_style(ARABIC_FAMILY, 34.0 * unit, 400, palette::AMBER)),
+                )
+                .child(
+                    node("arabic-speed")
+                        .size(column * 0.24, 52.0 * unit)
+                        .text(ARABIC_SPEED)
+                        .text_style(text_style(ARABIC_FAMILY, 34.0 * unit, 400, palette::TEAL)),
+                ),
         )
         .child(
             node("readout")
@@ -114,6 +155,8 @@ pub fn build(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
                 .child(
                     node("gauge-track")
                         .size(gauge_track, gauge_height)
+                        .fill(palette::PANEL)
+                        .corners(radius)
                         // The bar's own width is what the signal drives. It
                         // sits under a flex parent, so the write is
                         // layout-affecting and the frame re-solves — which is
@@ -121,6 +164,8 @@ pub fn build(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
                         .child(
                             node("gauge-fill")
                                 .size(gauge_track * 0.08, gauge_height)
+                                .fill(palette::AMBER)
+                                .corners(radius)
                                 .bind(
                                     Channel::Width,
                                     level.map_range(
@@ -139,126 +184,61 @@ pub fn build(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
                 .child(
                     node("readout-value")
                         .size(column * 0.4, 36.0 * unit)
+                        .text_style({
+                            let mut style =
+                                text_style(LATIN_FAMILY, 28.0 * unit, 600, palette::NEAR_WHITE);
+                            style.text_align_v = TextAlignV::Center;
+                            style
+                        })
                         .bind_text(level.format(FormatSpec::new("", 0, " km/h"))),
                 ),
         )
-        .child(node("type-body").size(column * 0.72, 92.0 * unit))
         .child(
-            node("clip-box").size(column * 0.62, 40.0 * unit).child(
-                node("clip-text")
-                    .at(0.0, 0.0)
-                    .size(column * 1.4, 40.0 * unit),
-            ),
+            // A wrapping paragraph, with the four v0.9 text axes set away from
+            // their defaults so each is visible: a fixed line height, letter
+            // spacing, and both alignments.
+            node("type-body")
+                .size(column * 0.72, 92.0 * unit)
+                .text(BODY)
+                .text_style({
+                    let mut style = text_style(LATIN_FAMILY, 15.0 * unit, 400, palette::NEAR_WHITE);
+                    style.line_height_px = Some(24.0 * unit);
+                    style.letter_spacing = 0.3 * unit;
+                    style.text_align = TextAlign::Left;
+                    style.text_align_v = TextAlignV::Top;
+                    style
+                }),
+        )
+        .child(
+            // Glyphs are clipped by the same resolved clip regions the rects
+            // are.
+            node("clip-box")
+                .size(column * 0.62, 40.0 * unit)
+                .fill(palette::PANEL)
+                .corners(radius)
+                .clip(true)
+                .child(
+                    node("clip-text")
+                        .at(0.0, 0.0)
+                        .size(column * 1.4, 40.0 * unit)
+                        .text(CLIPPED)
+                        .text_style({
+                            let mut style =
+                                text_style(LATIN_FAMILY, 20.0 * unit, 400, palette::AMBER);
+                            style.text_align_v = TextAlignV::Center;
+                            style
+                        }),
+                ),
         );
 
     scene.roots([root]);
-    let live = scene.build_live(
+    scene.build_live(
         arena,
         Box::new(ShowcaseSolver::new(
             resources::new_typesetter(),
             resources::atlases(),
         )),
-    );
-    paint(arena, unit, radius);
-    live
-}
-
-fn paint(arena: &mut Arena, unit: f32, radius: f32) {
-    let mut painting = Painting::open(arena);
-
-    painting
-        .set("typography", Prop::Fill(palette::NAVY))
-        .set("type-heading", Prop::Text(HEADING.to_owned()))
-        .set(
-            "type-heading",
-            Prop::TextStyle({
-                let mut style = text_style(LATIN_FAMILY, 40.0 * unit, 600, palette::NEAR_WHITE);
-                style.letter_spacing = -0.8 * unit;
-                style
-            }),
-        )
-        .set("type-sub", Prop::Text(SUBHEADING.to_owned()))
-        .set(
-            "type-sub",
-            Prop::TextStyle(text_style(LATIN_FAMILY, 17.0 * unit, 400, palette::SKY)),
-        );
-
-    // The Arabic panel. Each run asks for the Arabic family by name; coverage
-    // outranks the request in the cascade, so an Arabic run would reach that
-    // family even if it asked for Inter — naming it keeps the intent in the
-    // scene rather than in the fallback.
-    painting
-        .set("arabic-panel", Prop::Fill(palette::PANEL))
-        .set("arabic-panel", corners(radius))
-        .set("arabic-banner", Prop::Text(ARABIC_BANNER.to_owned()))
-        .set(
-            "arabic-banner",
-            Prop::TextStyle(text_style(
-                ARABIC_FAMILY,
-                26.0 * unit,
-                400,
-                palette::NEAR_WHITE,
-            )),
-        )
-        .set("arabic-word", Prop::Text(ARABIC_WORD.to_owned()))
-        .set(
-            "arabic-word",
-            Prop::TextStyle(text_style(ARABIC_FAMILY, 34.0 * unit, 400, palette::AMBER)),
-        )
-        .set("arabic-speed", Prop::Text(ARABIC_SPEED.to_owned()))
-        .set(
-            "arabic-speed",
-            Prop::TextStyle(text_style(ARABIC_FAMILY, 34.0 * unit, 400, palette::TEAL)),
-        );
-
-    painting
-        .set("gauge-track", Prop::Fill(palette::PANEL))
-        .set("gauge-track", corners(radius))
-        .set("gauge-fill", Prop::Fill(palette::AMBER))
-        .set("gauge-fill", corners(radius))
-        .set(
-            "readout-value",
-            Prop::TextStyle({
-                let mut style = text_style(LATIN_FAMILY, 28.0 * unit, 600, palette::NEAR_WHITE);
-                style.text_align_v = TextAlignV::Center;
-                style
-            }),
-        );
-
-    // A wrapping paragraph, with the four v0.9 text axes set away from their
-    // defaults so each is visible: a fixed line height, letter spacing, and
-    // both alignments.
-    painting.set("type-body", Prop::Text(BODY.to_owned())).set(
-        "type-body",
-        Prop::TextStyle({
-            let mut style = text_style(LATIN_FAMILY, 15.0 * unit, 400, palette::NEAR_WHITE);
-            style.line_height_px = Some(24.0 * unit);
-            style.letter_spacing = 0.3 * unit;
-            style.text_align = TextAlign::Left;
-            style.text_align_v = TextAlignV::Top;
-            style
-        }),
-    );
-
-    // Glyphs are clipped by the same resolved clip regions the rects are.
-    painting
-        .set("clip-box", Prop::Fill(palette::PANEL))
-        .set("clip-box", corners(radius))
-        .set("clip-box", Prop::Clip(true))
-        .set("clip-text", Prop::Text(CLIPPED.to_owned()))
-        .set(
-            "clip-text",
-            Prop::TextStyle({
-                let mut style = text_style(LATIN_FAMILY, 20.0 * unit, 400, palette::AMBER);
-                style.text_align_v = TextAlignV::Center;
-                style
-            }),
-        );
-
-    painting.commit(&mut ShowcaseSolver::new(
-        resources::new_typesetter(),
-        resources::atlases(),
-    ));
+    )
 }
 
 /// The scripted phase: drive `level` between its two ends, so the bar reflows

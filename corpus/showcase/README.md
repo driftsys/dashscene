@@ -177,22 +177,29 @@ name, and a scripted phase handed only a `LiveScene` cannot ask for one.
 
 ## How a scene is built
 
-In two passes.
+In one pass, for the most part. `dashlang::Node` carries the whole v0 paint
+vocabulary — fill, gradient, stroke, corner, shadow, blur, mask, clip, opacity,
+vector-field and text-style setters all exist on it now — alongside geometry,
+the flex vocabulary and the reactive bindings, so structure, layout, motion and
+paint are authored together on one value tree. An image fill has a setter too
+(`fill_with`, which takes any `PaintKind`), but authoring one still needs the
+arena, for the reason the next paragraph gives.
 
-`dashlang`'s builder carries geometry, the flex vocabulary, one solid fill and
-the reactive bindings, and none of the paint vocabulary — no gradient, stroke,
-corner, shadow, blur, image, mask, clip, opacity, vector-field or text-style
-setter exists on `dashlang::Node` (the DSL's vocabulary gap, issue #118). So
-structure, layout and motion are authored through `dashlang`, and then a second
-pass stages the paint intent onto the named nodes through
-`dashscene_core::Txn`. `corpus/dsl-generated` already splits this way, where two
-of its six cases go through core's `Txn` for constructs the builder does not
-carry.
+Two constructs still need a short second pass over the built arena, staged
+through `dashscene_core::Txn` and addressing nodes by the name they were given
+on the tree: an image fill (including a cropped one and a baked vector field's
+coverage mask), because each references an index `Txn::add_image` issues
+against the arena, and no such index exists until the tree is built; and a
+variant-set declaration, because `Txn::add_variant_set` is likewise an arena
+operation. `surfaces` runs this second pass for its image fills and its vector
+field; `layout` runs it only to declare its variant set; `typography` needs no
+second pass at all.
 
 The second pass is safe to run against a live scene's arena because everything
-it stages is paint intent, which no solver resolves: replaying the retained rect
-cache reproduces exactly the geometry the pass committed against. It commits
-through a text-capable solver rather than a rect replay, for the reason above.
+it stages is either paint intent or arena metadata, and none of it is resolved
+by a solver: replaying the retained rect cache reproduces exactly the geometry
+the pass committed against. It commits through a text-capable solver rather
+than a rect replay, so the text the first pass already staged is not wiped out.
 
 ## What is reused from the corpus, and what is new
 

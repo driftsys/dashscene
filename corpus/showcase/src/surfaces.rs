@@ -16,14 +16,14 @@
 //! set once rather than animated, for the same reason.
 
 use dashlang::{Channel, LiveScene, Scene, Spring, node};
-use dashpaint::{GradientKind, Mat23, ScaleMode, StrokeAlign};
-use dashscene_core::{Arena, CrossAxisAlign, LayoutMode, Prop, TextAlignV};
+use dashpaint::{GradientKind, Mat23, ScaleMode, Stroke, StrokeAlign};
+use dashscene_core::{Arena, CrossAxisAlign, LayoutMode, TextAlignV};
 
 use crate::resources::{self, LATIN_FAMILY};
 use crate::solver::ShowcaseSolver;
 use crate::vocabulary::{
-    Painting, backdrop_blur, corners, diagonal_gradient, drop_shadow, gradient, image_crop,
-    image_fill, inner_shadow, palette, rgba, shape_field, stroke, text_style,
+    Painting, diagonal_gradient, gradient, image_crop, image_fill, palette, rgba, shape_field,
+    text_style,
 };
 
 /// The one signal, named so the pulse can find it in a scene it did not build.
@@ -84,7 +84,11 @@ pub fn build(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
 
     let root = node("surfaces")
         .size(width, height)
-        .child(node("backdrop").size(width, height))
+        .child(
+            node("backdrop")
+                .size(width, height)
+                .fill_with(diagonal_gradient(palette::NAVY, palette::INK)),
+        )
         .child(
             node("header")
                 .at(margin, margin)
@@ -93,6 +97,18 @@ pub fn build(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
                 .cross_align(CrossAxisAlign::Center)
                 .padding(gap * 1.5, 0.0, gap * 1.5, 0.0)
                 .gap(gap)
+                .fill_with(gradient(
+                    GradientKind::Linear,
+                    palette::VIOLET,
+                    palette::SKY,
+                ))
+                .corners(radius)
+                .drop_shadow(0.0, 6.0 * unit, 18.0 * unit, 0.0, rgba(0.0, 0.0, 0.0, 0.55))
+                .stroke(Stroke {
+                    width: 1.5 * unit,
+                    align: StrokeAlign::Inside,
+                    color: rgba(1.0, 1.0, 1.0, 0.35),
+                })
                 // The header has children, so a width write redistributes them
                 // and the frame re-solves. That is what keeps the title's
                 // glyphs staged while the scene animates.
@@ -101,8 +117,33 @@ pub fn build(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
                     sweep.map_range(0.0, 1.0, gallery_width, gallery_width * 0.72),
                 )
                 .smooth(Channel::Width, Spring::critically_damped(0.45))
-                .child(node("header-title").size(gallery_width * 0.24, header_height * 0.62))
-                .child(node("header-subtitle").size(gallery_width * 0.62, header_height * 0.42)),
+                .child(
+                    node("header-title")
+                        .size(gallery_width * 0.24, header_height * 0.62)
+                        .text(TITLE)
+                        .text_style({
+                            let mut style =
+                                text_style(LATIN_FAMILY, 34.0 * unit, 600, palette::NEAR_WHITE);
+                            style.letter_spacing = -0.6 * unit;
+                            style.text_align_v = TextAlignV::Center;
+                            style
+                        }),
+                )
+                .child(
+                    node("header-subtitle")
+                        .size(gallery_width * 0.62, header_height * 0.42)
+                        .text(SUBTITLE)
+                        .text_style({
+                            let mut style = text_style(
+                                LATIN_FAMILY,
+                                15.0 * unit,
+                                400,
+                                rgba(1.0, 1.0, 1.0, 0.85),
+                            );
+                            style.text_align_v = TextAlignV::Center;
+                            style
+                        }),
+                ),
         )
         .child(
             node("gallery")
@@ -114,71 +155,181 @@ pub fn build(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
                 .cross_align(CrossAxisAlign::Start)
                 // Fills and strokes: one stroke alignment per tile, at one
                 // width, so the three read against each other.
-                .child(plain("tile-solid"))
-                .child(plain("tile-linear"))
-                .child(plain("tile-radial"))
-                .child(plain("tile-angular"))
-                .child(plain("tile-diamond"))
+                .child(
+                    plain("tile-solid")
+                        .fill(palette::PANEL)
+                        .corners(radius)
+                        .stroke(Stroke {
+                            width: 4.0 * unit,
+                            align: StrokeAlign::Inside,
+                            color: palette::AMBER,
+                        }),
+                )
+                .child(
+                    plain("tile-linear")
+                        .fill_with(gradient(
+                            GradientKind::Linear,
+                            palette::CRIMSON,
+                            palette::VIOLET,
+                        ))
+                        .stroke(Stroke {
+                            width: 4.0 * unit,
+                            align: StrokeAlign::Center,
+                            color: palette::NEAR_WHITE,
+                        }),
+                )
+                .child(
+                    plain("tile-radial")
+                        .fill_with(gradient(
+                            GradientKind::Radial,
+                            palette::AMBER,
+                            palette::CRIMSON,
+                        ))
+                        .stroke(Stroke {
+                            width: 4.0 * unit,
+                            align: StrokeAlign::Outside,
+                            color: palette::TEAL,
+                        }),
+                )
+                .child(plain("tile-angular").fill_with(gradient(
+                    GradientKind::Angular,
+                    palette::SKY,
+                    palette::AMBER,
+                )))
+                .child(plain("tile-diamond").fill_with(gradient(
+                    GradientKind::Diamond,
+                    palette::TEAL,
+                    palette::VIOLET,
+                )))
                 // Images, one tile per Figma scale mode. The `Fit` tile puts
                 // the image on a short child so the letterbox the mode
                 // produces has the tile's own fill behind it — on a square box
                 // a square payload fits and fills identically.
-                .child(plain("tile-image-fill"))
+                //
+                // The fills themselves are the one part of this scene's paint
+                // that is still staged in a second pass: an image's index is
+                // issued by the arena, which this inert tree does not have.
+                .child(plain("tile-image-fill").corners(radius))
                 .child(
                     plain("tile-image-fit")
+                        .fill(palette::PANEL)
+                        .corners(radius)
                         .child(node("fit-image").at(0.0, tile * 0.2).size(tile, tile * 0.6)),
                 )
-                .child(plain("tile-image-crop"))
-                .child(plain("tile-image-tile"))
-                // A baked vector field masking a gradient.
+                .child(plain("tile-image-crop").corners(radius))
+                .child(plain("tile-image-tile").corners(radius))
+                // A baked vector field masking a gradient. The field is staged
+                // in the second pass for the reason the image fills are.
                 .child(
-                    plain("tile-vector").child(
-                        node("vector-star")
-                            .at(star_inset, star_inset)
-                            .size(star, star),
-                    ),
+                    plain("tile-vector")
+                        .fill(palette::PANEL)
+                        .corners(radius)
+                        .child(
+                            node("vector-star")
+                                .at(star_inset, star_inset)
+                                .size(star, star)
+                                .fill_with(gradient(
+                                    GradientKind::Linear,
+                                    palette::AMBER,
+                                    palette::CRIMSON,
+                                )),
+                        ),
                 )
                 // Effects.
-                .child(plain("tile-drop-shadow"))
-                .child(plain("tile-inner-shadow"))
-                // A clipping container whose child overflows it on every edge,
-                // against a fully rounded box, so the clip is the circle.
                 .child(
-                    plain("tile-clip").child(
-                        node("clip-overflow")
-                            .at(-tile * 0.25, -tile * 0.25)
-                            .size(tile * 1.5, tile * 1.5),
-                    ),
+                    plain("tile-drop-shadow")
+                        .fill(palette::NEAR_WHITE)
+                        .corners(radius)
+                        .drop_shadow(
+                            6.0 * unit,
+                            10.0 * unit,
+                            16.0 * unit,
+                            2.0 * unit,
+                            rgba(0.0, 0.0, 0.0, 0.8),
+                        ),
                 )
-                // A mask sibling stencilling the sibling that follows it.
+                .child(
+                    plain("tile-inner-shadow")
+                        .fill(palette::MOSS)
+                        .corners(radius)
+                        .inner_shadow(
+                            0.0,
+                            4.0 * unit,
+                            18.0 * unit,
+                            8.0 * unit,
+                            rgba(0.0, 0.0, 0.0, 0.95),
+                        ),
+                )
+                // A clipping container whose child overflows it on every edge,
+                // against a fully rounded box, so the clip is the circle. The
+                // clip follows the tile's corner radii, which a plain
+                // rectangular clip would not.
+                .child(
+                    plain("tile-clip")
+                        .fill(palette::INK)
+                        .corners(tile * 0.5)
+                        .clip(true)
+                        .child(
+                            node("clip-overflow")
+                                .at(-tile * 0.25, -tile * 0.25)
+                                .size(tile * 1.5, tile * 1.5)
+                                .fill_with(gradient(
+                                    GradientKind::Radial,
+                                    palette::SKY,
+                                    palette::MOSS,
+                                )),
+                        ),
+                )
+                // A mask sibling stencilling the sibling that follows it. The
+                // mask node draws nothing itself.
                 .child(
                     plain("tile-mask")
+                        .fill(palette::INK)
+                        .corners(radius)
                         .child(
                             node("mask-shape")
                                 .at(tile * 0.12, tile * 0.12)
-                                .size(tile * 0.76, tile * 0.76),
+                                .size(tile * 0.76, tile * 0.76)
+                                .corners(tile * 0.38)
+                                .mask(true),
                         )
-                        .child(node("mask-content").size(tile, tile)),
+                        .child(node("mask-content").size(tile, tile).fill_with(gradient(
+                            GradientKind::Angular,
+                            palette::AMBER,
+                            palette::TEAL,
+                        ))),
                 )
                 // A subtree at less than full alpha, with overlapping
                 // children, which is what makes commit resolve a render-target
                 // group rather than a per-rect alpha.
                 .child(
                     plain("tile-group")
+                        .fill(palette::INK)
+                        .corners(radius)
+                        .opacity(0.55)
                         .child(
                             node("group-back")
                                 .at(tile * 0.10, tile * 0.16)
-                                .size(tile * 0.58, tile * 0.58),
+                                .size(tile * 0.58, tile * 0.58)
+                                .fill(palette::CRIMSON)
+                                .corners(radius),
                         )
                         .child(
                             node("group-front")
                                 .at(tile * 0.34, tile * 0.30)
-                                .size(tile * 0.58, tile * 0.58),
+                                .size(tile * 0.58, tile * 0.58)
+                                .fill(palette::SKY)
+                                .corners(radius),
                         ),
                 )
                 // Corner radii on their own, two corners rounded and two
                 // square, so the per-corner vocabulary is what the tile shows.
-                .child(plain("tile-corners")),
+                .child(plain("tile-corners").fill(palette::AMBER).corners_each(
+                    tile * 0.45,
+                    0.0,
+                    tile * 0.45,
+                    0.0,
+                )),
         )
         // Last in document order, so it composites over the gallery — which is
         // what gives its backdrop blur something to read. It carries a child
@@ -188,6 +339,17 @@ pub fn build(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
             node("frost")
                 .at(frost_left, frost_top)
                 .size(frost_width, frost_height)
+                // A translucent white over a backdrop blur, which is the one
+                // effect whose result depends on what is already composited
+                // beneath it.
+                .fill(palette::FROST)
+                .corners(radius * 1.6)
+                .backdrop_blur(24.0 * unit)
+                .stroke(Stroke {
+                    width: 1.5 * unit,
+                    align: StrokeAlign::Inside,
+                    color: rgba(1.0, 1.0, 1.0, 0.5),
+                })
                 .bind(
                     Channel::X,
                     sweep.map_range(0.0, 1.0, frost_left, frost_right),
@@ -196,7 +358,9 @@ pub fn build(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
                 .child(
                     node("frost-handle")
                         .at(frost_width * 0.3, frost_height * 0.86)
-                        .size(frost_width * 0.4, 5.0 * unit),
+                        .size(frost_width * 0.4, 5.0 * unit)
+                        .fill(rgba(1.0, 1.0, 1.0, 0.6))
+                        .corners(3.0 * unit),
                 ),
         );
 
@@ -208,93 +372,28 @@ pub fn build(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
             resources::atlases(),
         )),
     );
-    paint(arena, unit, radius, tile, star);
+    paint(arena, star);
     live
 }
 
-/// Stages the paint vocabulary onto the tiles, by name.
-fn paint(arena: &mut Arena, unit: f32, radius: f32, tile: f32, star_size: f32) {
+/// Stages the paint intent that cannot be authored on the value tree: the four
+/// image fills and the baked vector field.
+///
+/// Everything else this scene paints is authored on the builder above. What is
+/// left here is what needs an image index, and an index is issued by
+/// `Txn::add_image` against the arena — which an inert value tree does not
+/// have.
+fn paint(arena: &mut Arena, star_size: f32) {
     let star = resources::baked_star(star_size);
     let mut painting = Painting::open(arena);
     let photo = painting.add_image(resources::photo());
     let field = painting.add_image(star.atlas.clone());
-
-    painting
-        .set("backdrop", diagonal_gradient(palette::NAVY, palette::INK))
-        .set(
-            "header",
-            gradient(GradientKind::Linear, palette::VIOLET, palette::SKY),
-        )
-        .set("header", corners(radius))
-        .set(
-            "header",
-            drop_shadow(0.0, 6.0 * unit, 18.0 * unit, 0.0, rgba(0.0, 0.0, 0.0, 0.55)),
-        )
-        .set(
-            "header",
-            stroke(1.5 * unit, StrokeAlign::Inside, rgba(1.0, 1.0, 1.0, 0.35)),
-        )
-        .set("header-title", Prop::Text(TITLE.to_owned()))
-        .set(
-            "header-title",
-            Prop::TextStyle({
-                let mut style = text_style(LATIN_FAMILY, 34.0 * unit, 600, palette::NEAR_WHITE);
-                style.letter_spacing = -0.6 * unit;
-                style.text_align_v = TextAlignV::Center;
-                style
-            }),
-        )
-        .set("header-subtitle", Prop::Text(SUBTITLE.to_owned()))
-        .set(
-            "header-subtitle",
-            Prop::TextStyle({
-                let mut style =
-                    text_style(LATIN_FAMILY, 15.0 * unit, 400, rgba(1.0, 1.0, 1.0, 0.85));
-                style.text_align_v = TextAlignV::Center;
-                style
-            }),
-        );
-
-    painting
-        .set("tile-solid", Prop::Fill(palette::PANEL))
-        .set("tile-solid", corners(radius))
-        .set(
-            "tile-solid",
-            stroke(4.0 * unit, StrokeAlign::Inside, palette::AMBER),
-        )
-        .set(
-            "tile-linear",
-            gradient(GradientKind::Linear, palette::CRIMSON, palette::VIOLET),
-        )
-        .set(
-            "tile-linear",
-            stroke(4.0 * unit, StrokeAlign::Center, palette::NEAR_WHITE),
-        )
-        .set(
-            "tile-radial",
-            gradient(GradientKind::Radial, palette::AMBER, palette::CRIMSON),
-        )
-        .set(
-            "tile-radial",
-            stroke(4.0 * unit, StrokeAlign::Outside, palette::TEAL),
-        )
-        .set(
-            "tile-angular",
-            gradient(GradientKind::Angular, palette::SKY, palette::AMBER),
-        )
-        .set(
-            "tile-diamond",
-            gradient(GradientKind::Diamond, palette::TEAL, palette::VIOLET),
-        );
 
     // The crop transform halves the sampled region and moves it to the
     // payload's centre, so the crop tile shows a visibly different part of the
     // same photograph than the tile beside it.
     painting
         .set("tile-image-fill", image_fill(photo, ScaleMode::Fill, 1.0))
-        .set("tile-image-fill", corners(radius))
-        .set("tile-image-fit", Prop::Fill(palette::PANEL))
-        .set("tile-image-fit", corners(radius))
         .set("fit-image", image_fill(photo, ScaleMode::Fit, 1.0))
         .set(
             "tile-image-crop",
@@ -310,104 +409,11 @@ fn paint(arena: &mut Arena, unit: f32, radius: f32, tile: f32, star_size: f32) {
                 },
             ),
         )
-        .set("tile-image-crop", corners(radius))
         .set("tile-image-tile", image_fill(photo, ScaleMode::Tile, 0.25))
-        .set("tile-image-tile", corners(radius));
-
-    // A baked MSDF field masking a gradient: the painter composes the field's
-    // coverage with the node's own fill and rasterises no path.
-    painting
-        .set("tile-vector", Prop::Fill(palette::PANEL))
-        .set("tile-vector", corners(radius))
-        .set(
-            "vector-star",
-            gradient(GradientKind::Linear, palette::AMBER, palette::CRIMSON),
-        )
+        // A baked MSDF field masking the gradient the builder put on this
+        // node: the painter composes the field's coverage with the node's own
+        // fill and rasterises no path.
         .set("vector-star", shape_field(star.field(field)));
-
-    painting
-        .set("tile-drop-shadow", Prop::Fill(palette::NEAR_WHITE))
-        .set("tile-drop-shadow", corners(radius))
-        .set(
-            "tile-drop-shadow",
-            drop_shadow(
-                6.0 * unit,
-                10.0 * unit,
-                16.0 * unit,
-                2.0 * unit,
-                rgba(0.0, 0.0, 0.0, 0.8),
-            ),
-        )
-        .set("tile-inner-shadow", Prop::Fill(palette::MOSS))
-        .set("tile-inner-shadow", corners(radius))
-        .set(
-            "tile-inner-shadow",
-            inner_shadow(
-                0.0,
-                4.0 * unit,
-                18.0 * unit,
-                8.0 * unit,
-                rgba(0.0, 0.0, 0.0, 0.95),
-            ),
-        );
-
-    // The clip tile's child is half again as wide as the tile and offset up
-    // and left, so the clip is what keeps it inside — and the clip follows the
-    // tile's corner radii, which a plain rectangular clip would not.
-    painting
-        .set("tile-clip", Prop::Fill(palette::INK))
-        .set("tile-clip", corners(tile * 0.5))
-        .set("tile-clip", Prop::Clip(true))
-        .set(
-            "clip-overflow",
-            gradient(GradientKind::Radial, palette::SKY, palette::MOSS),
-        );
-
-    // The mask stencils the sibling that follows it and draws nothing itself.
-    painting
-        .set("tile-mask", Prop::Fill(palette::INK))
-        .set("tile-mask", corners(radius))
-        .set("mask-shape", corners(tile * 0.38))
-        .set("mask-shape", Prop::Mask(true))
-        .set(
-            "mask-content",
-            gradient(GradientKind::Angular, palette::AMBER, palette::TEAL),
-        );
-
-    painting
-        .set("tile-group", Prop::Fill(palette::INK))
-        .set("tile-group", corners(radius))
-        .set("tile-group", Prop::Opacity(0.55))
-        .set("group-back", Prop::Fill(palette::CRIMSON))
-        .set("group-back", corners(radius))
-        .set("group-front", Prop::Fill(palette::SKY))
-        .set("group-front", corners(radius));
-
-    painting
-        .set("tile-corners", Prop::Fill(palette::AMBER))
-        .set(
-            "tile-corners",
-            Prop::Corners {
-                top_left: tile * 0.45,
-                top_right: 0.0,
-                bottom_right: tile * 0.45,
-                bottom_left: 0.0,
-            },
-        );
-
-    // The frosted panel: a translucent white over a backdrop blur, which is
-    // the one effect whose result depends on what is already composited
-    // beneath it.
-    painting
-        .set("frost", Prop::Fill(palette::FROST))
-        .set("frost", corners(radius * 1.6))
-        .set("frost", backdrop_blur(24.0 * unit))
-        .set(
-            "frost",
-            stroke(1.5 * unit, StrokeAlign::Inside, rgba(1.0, 1.0, 1.0, 0.5)),
-        )
-        .set("frost-handle", Prop::Fill(rgba(1.0, 1.0, 1.0, 0.6)))
-        .set("frost-handle", corners(3.0 * unit));
 
     painting.commit(&mut ShowcaseSolver::new(
         resources::new_typesetter(),
