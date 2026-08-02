@@ -619,6 +619,13 @@ fn a_gradient_with_no_stops_inside_a_stacked_fill_is_named() {
     assert!(report.has(rule::GRADIENT_NO_STOPS), "{report}");
 }
 
+/// This gate is now the *only* place the over-budget case is checkable.
+///
+/// Story #578 gave `dashpaint::Gradient` a bounded array of
+/// `MAX_GRADIENT_STOPS`, so an over-budget gradient cannot be built in memory
+/// and the boundary-B test that used to mirror this one was retired. A `.dsb`
+/// on disk can still carry one, and this runs on the file's own bytes before
+/// any `Gradient` exists.
 #[test]
 fn a_gradient_over_the_stop_budget_is_named() {
     let stops: Vec<f32> = (0..=dashscene_validator::MAX_GRADIENT_STOPS)

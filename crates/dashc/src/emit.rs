@@ -510,7 +510,7 @@ fn build_fill<'a>(
         }
         PaintKind::Gradient(g) => {
             let stops: Vec<GradientStop> = g
-                .stops
+                .stops()
                 .iter()
                 .map(|s| GradientStop::new(s.offset, &color_of(s.color)))
                 .collect();
@@ -764,8 +764,8 @@ fn fill_kind_bits(kind: &PaintKind) -> Vec<u32> {
                 g.handle_secondary.x.to_bits(),
                 g.handle_secondary.y.to_bits(),
             ]);
-            key.push(g.stops.len() as u32);
-            for s in &g.stops {
+            key.push(g.stops().len() as u32);
+            for s in g.stops() {
                 key.push(s.offset.to_bits());
                 key.extend(color_bits(s.color));
             }

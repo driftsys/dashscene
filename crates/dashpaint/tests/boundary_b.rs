@@ -82,12 +82,12 @@ fn a_paint_less_entry_pushes_and_resolves() {
 
 #[test]
 fn a_full_entry_round_trips_through_the_table() {
-    let gradient = Gradient {
-        kind: GradientKind::Radial,
-        handle_origin: Vec2 { x: 0.5, y: 0.5 },
-        handle_primary: Vec2 { x: 1.0, y: 0.5 },
-        handle_secondary: Vec2 { x: 0.5, y: 1.0 },
-        stops: vec![
+    let gradient = Gradient::new(
+        GradientKind::Radial,
+        Vec2 { x: 0.5, y: 0.5 },
+        Vec2 { x: 1.0, y: 0.5 },
+        Vec2 { x: 0.5, y: 1.0 },
+        &[
             GradientStop {
                 offset: 0.0,
                 color: RED,
@@ -97,9 +97,9 @@ fn a_full_entry_round_trips_through_the_table() {
                 color: HALF_BLUE,
             },
         ],
-    };
+    );
     let entry = PaintEntry {
-        fill: Some(PaintKind::Gradient(gradient.clone())),
+        fill: Some(PaintKind::Gradient(gradient)),
         stroke: Some(Stroke {
             width: 2.0,
             align: StrokeAlign::Inside,

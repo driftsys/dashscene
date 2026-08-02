@@ -1521,36 +1521,50 @@ impl Walk<'_> {
                 let [origin, primary, secondary] = handles[..] else {
                     return Err(unsupported("a gradient without three handles"));
                 };
-                Ok(PaintKind::Gradient(Gradient {
-                    kind: match paint.kind.as_str() {
+                let stops: Vec<GradientStop> = paint
+                    .gradient_stops
+                    .iter()
+                    // Figma calls the location `position`; dashpaint calls it
+                    // `offset`.
+                    .map(|s| GradientStop {
+                        offset: s.position,
+                        color: color_of(s.color, paint.opacity),
+                    })
+                    .collect();
+                // The ceiling is refused here by name, because the stop array
+                // physically cannot hold more and `Gradient::new` would panic
+                // on a real Figma file (P4: a named diagnostic, never a crash).
+                // An *empty* gradient is deliberately not refused here — that
+                // is `gradient.no-stops` at the load gate, and refusing it
+                // early would move a gate rule into the lowering.
+                if stops.len() > dashpaint::MAX_GRADIENT_STOPS {
+                    return Err(unsupported(&format!(
+                        "a gradient with {} stops (at most {} supported)",
+                        stops.len(),
+                        dashpaint::MAX_GRADIENT_STOPS
+                    )));
+                }
+                Ok(PaintKind::Gradient(Gradient::new(
+                    match paint.kind.as_str() {
                         "GRADIENT_LINEAR" => GradientKind::Linear,
                         "GRADIENT_RADIAL" => GradientKind::Radial,
                         "GRADIENT_ANGULAR" => GradientKind::Angular,
                         _ => GradientKind::Diamond,
                     },
-                    handle_origin: Vec2 {
+                    Vec2 {
                         x: origin.x,
                         y: origin.y,
                     },
-                    handle_primary: Vec2 {
+                    Vec2 {
                         x: primary.x,
                         y: primary.y,
                     },
-                    handle_secondary: Vec2 {
+                    Vec2 {
                         x: secondary.x,
                         y: secondary.y,
                     },
-                    stops: paint
-                        .gradient_stops
-                        .iter()
-                        // Figma calls the location `position`; dashpaint calls
-                        // it `offset`.
-                        .map(|s| GradientStop {
-                            offset: s.position,
-                            color: color_of(s.color, paint.opacity),
-                        })
-                        .collect(),
-                }))
+                    &stops,
+                )))
             }
             "IMAGE" => {
                 let image_ref = paint

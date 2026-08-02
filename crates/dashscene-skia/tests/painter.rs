@@ -210,13 +210,13 @@ fn single_entry_scene(entry: PaintEntry, w: f32, h: f32) -> (Vec<RectEntry>, Pai
 
 fn gradient_entry(kind: GradientKind, stops: Vec<GradientStop>) -> PaintEntry {
     PaintEntry {
-        fill: Some(PaintKind::Gradient(Gradient {
+        fill: Some(PaintKind::Gradient(Gradient::new(
             kind,
-            handle_origin: Vec2 { x: 0.5, y: 0.5 },
-            handle_primary: Vec2 { x: 1.0, y: 0.5 },
-            handle_secondary: Vec2 { x: 0.5, y: 1.0 },
-            stops,
-        })),
+            Vec2 { x: 0.5, y: 0.5 },
+            Vec2 { x: 1.0, y: 0.5 },
+            Vec2 { x: 0.5, y: 1.0 },
+            &stops,
+        ))),
         ..PaintEntry::default()
     }
 }
@@ -807,12 +807,19 @@ fn a_clip_region_does_not_leak_into_the_next_rect() {
 }
 
 #[test]
-#[should_panic(expected = "gradient stop budget")]
+#[should_panic(expected = "a gradient carries at most")]
 fn a_diamond_gradient_with_too_many_stops_panics_by_name() {
     // One over the shared budget. Reading `MAX_GRADIENT_STOPS` rather than
-    // spelling `9` keeps this test, the painter's assertion, and the
+    // spelling `9` keeps this test, the constructor's assertion, and the
     // validator's rule (which rejects exactly this input upstream) pinned
     // to one number.
+    //
+    // The refusal moved with story #578: `Gradient` now holds a bounded
+    // array, so an over-budget list is refused when the gradient is built
+    // rather than when it is drawn. Earlier, and it makes the case
+    // unrepresentable instead of merely rejected — but the guarantee this
+    // test exists for is unchanged: over budget is a named panic, never a
+    // silent truncation.
     let stops = (0..=MAX_GRADIENT_STOPS)
         .map(|i| GradientStop {
             offset: i as f32 / MAX_GRADIENT_STOPS as f32,

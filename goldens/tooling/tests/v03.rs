@@ -32,13 +32,13 @@ fn stops(colors: [Color; 2]) -> Vec<GradientStop> {
 }
 
 fn gradient(kind: GradientKind, colors: [Color; 2]) -> PaintKind {
-    PaintKind::Gradient(Gradient {
+    PaintKind::Gradient(Gradient::new(
         kind,
-        handle_origin: Vec2 { x: 0.5, y: 0.5 },
-        handle_primary: Vec2 { x: 1.0, y: 0.5 },
-        handle_secondary: Vec2 { x: 0.5, y: 1.0 },
-        stops: stops(colors),
-    })
+        Vec2 { x: 0.5, y: 0.5 },
+        Vec2 { x: 1.0, y: 0.5 },
+        Vec2 { x: 0.5, y: 1.0 },
+        &stops(colors),
+    ))
 }
 
 #[test]

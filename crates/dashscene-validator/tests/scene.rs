@@ -24,19 +24,20 @@ fn red() -> Color {
 }
 
 fn gradient(offsets: &[f32]) -> PaintKind {
-    PaintKind::Gradient(Gradient {
-        kind: GradientKind::Linear,
-        handle_origin: Vec2 { x: 0.0, y: 0.0 },
-        handle_primary: Vec2 { x: 1.0, y: 0.0 },
-        handle_secondary: Vec2 { x: 0.0, y: 1.0 },
-        stops: offsets
-            .iter()
-            .map(|&offset| GradientStop {
-                offset,
-                color: red(),
-            })
-            .collect(),
-    })
+    let stops: Vec<GradientStop> = offsets
+        .iter()
+        .map(|&offset| GradientStop {
+            offset,
+            color: red(),
+        })
+        .collect();
+    PaintKind::Gradient(Gradient::new(
+        GradientKind::Linear,
+        Vec2 { x: 0.0, y: 0.0 },
+        Vec2 { x: 1.0, y: 0.0 },
+        Vec2 { x: 0.0, y: 1.0 },
+        &stops,
+    ))
 }
 
 fn rect(w: f32, h: f32, paint: u32) -> RectEntry {
@@ -167,22 +168,10 @@ fn a_gradient_with_no_stops_inside_a_stacked_fill_is_named() {
     assert!(report.has(rule::GRADIENT_NO_STOPS), "{report}");
 }
 
-#[test]
-fn a_gradient_over_the_stop_budget_is_named() {
-    let offsets: Vec<f32> = (0..=dashscene_validator::MAX_GRADIENT_STOPS)
-        .map(|i| i as f32 / dashscene_validator::MAX_GRADIENT_STOPS as f32)
-        .collect();
-    let report = check_one(
-        100.0,
-        50.0,
-        PaintEntry {
-            fill: Some(gradient(&offsets)),
-            ..PaintEntry::default()
-        },
-    );
-    assert!(report.has(rule::GRADIENT_STOP_BUDGET), "{report}");
-}
-
+// The over-budget gradient test moved to `tests/document.rs` with story
+// #578: `dashpaint::Gradient` holds a bounded array now, so the case cannot
+// be built at boundary B to check. The gate still catches it on a file's own
+// bytes, which is where a malformed `.dsb` actually arrives.
 #[test]
 fn a_negative_stroke_width_is_named() {
     let report = check_one(

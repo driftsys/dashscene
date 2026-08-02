@@ -453,12 +453,12 @@ fn a_loaded_document_replays_its_stacked_fills() {
     );
     assert_eq!(
         entry.extra_fills,
-        vec![dashpaint::PaintKind::Gradient(dashpaint::Gradient {
-            kind: dashpaint::GradientKind::Linear,
-            handle_origin: dashpaint::Vec2 { x: 0.0, y: 0.0 },
-            handle_primary: dashpaint::Vec2 { x: 1.0, y: 0.0 },
-            handle_secondary: dashpaint::Vec2 { x: 0.0, y: 1.0 },
-            stops: vec![
+        vec![dashpaint::PaintKind::Gradient(dashpaint::Gradient::new(
+            dashpaint::GradientKind::Linear,
+            dashpaint::Vec2 { x: 0.0, y: 0.0 },
+            dashpaint::Vec2 { x: 1.0, y: 0.0 },
+            dashpaint::Vec2 { x: 0.0, y: 1.0 },
+            &[
                 dashpaint::GradientStop {
                     offset: 0.0,
                     color: dashpaint::Color {
@@ -478,7 +478,7 @@ fn a_loaded_document_replays_its_stacked_fills() {
                     },
                 },
             ],
-        })],
+        ))],
         "the document's stacked fill replayed onto the committed paint entry"
     );
 }

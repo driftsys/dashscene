@@ -430,20 +430,21 @@ fn fill_layer_kind_of(layer: &dashbuf::FillLayer<'_>, image_of: &[u32]) -> Optio
             .and_then(|s| s.color())
             .map(|c| PaintKind::Solid { color: color_of(c) }),
         Fill::Gradient => layer.fill_as_gradient().map(|g| {
-            PaintKind::Gradient(Gradient {
-                kind: gradient_kind(g.kind()),
-                handle_origin: vec2_of(g.handle_origin()),
-                handle_primary: vec2_of(g.handle_primary()),
-                handle_secondary: vec2_of(g.handle_secondary()),
-                stops: g
-                    .stops()
-                    .iter()
-                    .map(|s| GradientStop {
-                        offset: s.offset(),
-                        color: color_of(s.color()),
-                    })
-                    .collect(),
-            })
+            let stops: Vec<GradientStop> = g
+                .stops()
+                .iter()
+                .map(|s| GradientStop {
+                    offset: s.offset(),
+                    color: color_of(s.color()),
+                })
+                .collect();
+            PaintKind::Gradient(Gradient::new(
+                gradient_kind(g.kind()),
+                vec2_of(g.handle_origin()),
+                vec2_of(g.handle_primary()),
+                vec2_of(g.handle_secondary()),
+                &stops,
+            ))
         }),
         Fill::ImageFill => layer.fill_as_image_fill().map(|f| PaintKind::Image {
             image: image_of[f.image() as usize],
@@ -474,22 +475,23 @@ fn load_paint(
         }
         Fill::Gradient => {
             if let Some(g) = paint.fill_as_gradient() {
+                let stops: Vec<GradientStop> = g
+                    .stops()
+                    .iter()
+                    .map(|s| GradientStop {
+                        offset: s.offset(),
+                        color: color_of(s.color()),
+                    })
+                    .collect();
                 txn.set_prop(
                     id,
-                    Prop::FillWith(PaintKind::Gradient(Gradient {
-                        kind: gradient_kind(g.kind()),
-                        handle_origin: vec2_of(g.handle_origin()),
-                        handle_primary: vec2_of(g.handle_primary()),
-                        handle_secondary: vec2_of(g.handle_secondary()),
-                        stops: g
-                            .stops()
-                            .iter()
-                            .map(|s| GradientStop {
-                                offset: s.offset(),
-                                color: color_of(s.color()),
-                            })
-                            .collect(),
-                    })),
+                    Prop::FillWith(PaintKind::Gradient(Gradient::new(
+                        gradient_kind(g.kind()),
+                        vec2_of(g.handle_origin()),
+                        vec2_of(g.handle_primary()),
+                        vec2_of(g.handle_secondary()),
+                        &stops,
+                    ))),
                 );
             }
         }

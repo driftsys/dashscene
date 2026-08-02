@@ -139,7 +139,7 @@ fn check_fill_kind(report: &mut Report, at: &Location, kind: &PaintKind, image_c
     match kind {
         PaintKind::Solid { .. } => {}
         PaintKind::Gradient(gradient) => {
-            let offsets: Vec<f32> = gradient.stops.iter().map(|s| s.offset).collect();
+            let offsets: Vec<f32> = gradient.stops().iter().map(|s| s.offset).collect();
             check_gradient_stops(report, at, &offsets);
         }
         PaintKind::Image { image, .. } => {

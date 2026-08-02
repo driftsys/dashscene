@@ -215,12 +215,12 @@ pub fn stroke(width: f32, align: StrokeAlign, color: Color) -> Prop {
 /// edge, so a `Linear` reads left to right and the other three read outward
 /// from the middle.
 pub fn gradient(kind: GradientKind, from: Color, to: Color) -> Prop {
-    Prop::FillWith(PaintKind::Gradient(Gradient {
+    Prop::FillWith(PaintKind::Gradient(Gradient::new(
         kind,
-        handle_origin: Vec2 { x: 0.5, y: 0.5 },
-        handle_primary: Vec2 { x: 1.0, y: 0.5 },
-        handle_secondary: Vec2 { x: 0.5, y: 1.0 },
-        stops: vec![
+        Vec2 { x: 0.5, y: 0.5 },
+        Vec2 { x: 1.0, y: 0.5 },
+        Vec2 { x: 0.5, y: 1.0 },
+        &[
             GradientStop {
                 offset: 0.0,
                 color: from,
@@ -230,17 +230,17 @@ pub fn gradient(kind: GradientKind, from: Color, to: Color) -> Prop {
                 color: to,
             },
         ],
-    }))
+    )))
 }
 
 /// A linear gradient running top-left to bottom-right.
 pub fn diagonal_gradient(from: Color, to: Color) -> Prop {
-    Prop::FillWith(PaintKind::Gradient(Gradient {
-        kind: GradientKind::Linear,
-        handle_origin: Vec2 { x: 0.0, y: 0.0 },
-        handle_primary: Vec2 { x: 1.0, y: 1.0 },
-        handle_secondary: Vec2 { x: 0.0, y: 1.0 },
-        stops: vec![
+    Prop::FillWith(PaintKind::Gradient(Gradient::new(
+        GradientKind::Linear,
+        Vec2 { x: 0.0, y: 0.0 },
+        Vec2 { x: 1.0, y: 1.0 },
+        Vec2 { x: 0.0, y: 1.0 },
+        &[
             GradientStop {
                 offset: 0.0,
                 color: from,
@@ -250,7 +250,7 @@ pub fn diagonal_gradient(from: Color, to: Color) -> Prop {
                 color: to,
             },
         ],
-    }))
+    )))
 }
 
 /// An image fill in one of Figma's four scale modes.

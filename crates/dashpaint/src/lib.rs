@@ -158,7 +158,24 @@ pub struct GradientStop {
     pub color: Color,
 }
 
+impl GradientStop {
+    /// The filler in a [`Gradient`]'s stop array past `stop_count`.
+    ///
+    /// Fully transparent black at offset zero: not a value any painter
+    /// should read, and the least harmful thing to draw if one ever does.
+    pub const UNUSED: Self = Self {
+        offset: 0.0,
+        color: Color {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 0.0,
+        },
+    };
+}
+
 /// The four gradient kinds of docs/specification/04-figma-vocabulary-profile.md (angular serves gauges).
+#[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GradientKind {
     Linear,
@@ -184,18 +201,83 @@ pub const MAX_GRADIENT_STOPS: usize = 8;
 /// gradientHandlePositions). Handles are intent; resolved geometry is
 /// per-painter math (P1).
 ///
-/// `stops` carries at least one and at most [`MAX_GRADIENT_STOPS`] entries
+/// The stops carry at least one and at most [`MAX_GRADIENT_STOPS`] entries
 /// — validated upstream (P4), and painters may assume it.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// # A bounded array, not a `Vec` (story #578)
+///
+/// The other nested collections on boundary B became ranges into a flat
+/// array. This one did not, because it already had a ceiling:
+/// [`MAX_GRADIENT_STOPS`] is a property of the paint vocabulary, chosen so
+/// the lean painter can hold stops in uniform slots, and enforced upstream.
+/// A range would add an indirection and a second array to keep in step, to
+/// bound something already bounded. `stops()` reads the live prefix.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Gradient {
     pub kind: GradientKind,
     pub handle_origin: Vec2,
     pub handle_primary: Vec2,
     pub handle_secondary: Vec2,
-    pub stops: Vec<GradientStop>,
+    /// The stop array. Only the first `stop_count` entries are live; the
+    /// rest are whatever [`GradientStop::UNUSED`] is, and reading them is a
+    /// bug rather than a default.
+    pub stop_storage: [GradientStop; MAX_GRADIENT_STOPS],
+    /// How many of `stop_storage` are live. At most
+    /// [`MAX_GRADIENT_STOPS`], and at least 1 in any document that passed
+    /// the gate — the lower bound is `gradient.no-stops`, reported rather
+    /// than enforced here (P4).
+    pub stop_count: u32,
+}
+
+impl Gradient {
+    /// A gradient over `stops`, which must be non-empty and no longer than
+    /// [`MAX_GRADIENT_STOPS`].
+    ///
+    /// # Panics
+    ///
+    /// Panics only if `stops` is longer than [`MAX_GRADIENT_STOPS`], which
+    /// the array physically cannot hold. It does **not** panic on an empty
+    /// list: "at least one stop" is a vocabulary rule the validator reports
+    /// as `gradient.no-stops` (P4), and a producer that builds one in memory
+    /// must reach that diagnostic rather than crash on the way to it. The
+    /// upper bound is a named refusal upstream too — the Figma lowering
+    /// declines an over-long gradient by name — so this panic is the
+    /// backstop for a producer that skipped it, not the gate.
+    pub fn new(
+        kind: GradientKind,
+        handle_origin: Vec2,
+        handle_primary: Vec2,
+        handle_secondary: Vec2,
+        stops: &[GradientStop],
+    ) -> Self {
+        assert!(
+            stops.len() <= MAX_GRADIENT_STOPS,
+            "a gradient carries at most {MAX_GRADIENT_STOPS} stops, got {}: the ceiling is \
+             refused by name upstream (P4), so reaching this is a producer that skipped it",
+            stops.len()
+        );
+        let mut stop_storage = [GradientStop::UNUSED; MAX_GRADIENT_STOPS];
+        stop_storage[..stops.len()].copy_from_slice(stops);
+        Self {
+            kind,
+            handle_origin,
+            handle_primary,
+            handle_secondary,
+            stop_storage,
+            // In range: bounded by MAX_GRADIENT_STOPS just above.
+            stop_count: stops.len() as u32,
+        }
+    }
+
+    /// The live stops, in offset order.
+    pub fn stops(&self) -> &[GradientStop] {
+        &self.stop_storage[..self.stop_count as usize]
+    }
 }
 
 /// Figma image-fill scale modes.
+#[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScaleMode {
     Fill,
@@ -281,6 +363,7 @@ impl ImageTable {
 /// Stroke placement relative to the node's outline. Painters that only
 /// stroke on center lower Inside/Outside by path expansion
 /// (docs/technotes/rendering-and-painters.md).
+#[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StrokeAlign {
     Inside,
@@ -291,6 +374,7 @@ pub enum StrokeAlign {
 /// A stroke. v0.3 strokes are solid-only (see
 /// `docs/decisions/paint-entry-composition.md`); the color widens to a
 /// fill additively if a real file ever needs gradient strokes.
+#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Stroke {
     pub width: f32,
@@ -560,6 +644,7 @@ pub enum PaintKind {
 
 /// Whether a shadow falls behind the node (a drop shadow) or inside it
 /// (an inner shadow). Mirrors `dashbuf`'s `ShadowKind`.
+#[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShadowKind {
     Drop,
@@ -577,6 +662,7 @@ pub enum ShadowKind {
 /// `spread` grows the shadow shape — a drop shadow outward, an inner
 /// shadow's lit hole inward — and may be negative. Ranges are validated
 /// upstream (`dashscene-validator`, P4).
+#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Shadow {
     pub kind: ShadowKind,
@@ -595,6 +681,7 @@ pub struct Shadow {
 /// composited beneath the node, seen through the node's own transparency,
 /// which is why it carries an ordering guarantee the other effects do not
 /// (see [`Painter::paint`]).
+#[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlurKind {
     Layer,
@@ -640,6 +727,7 @@ pub enum BlurKind {
 /// colour space attached, which is also what keeps MSDF distance channels
 /// sampling raw — one allocation, two requirements, no conflict. A painter
 /// built on a pipeline that is linear by default has to convert deliberately.
+#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Blur {
     pub kind: BlurKind,
@@ -673,6 +761,7 @@ pub struct Blur {
 /// `atlas_rect`-to-device-quad ratio already is the scale, so a bake
 /// resolution carried alongside it would be redundant for every reader that
 /// only paints.
+#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VectorField {
     /// Index into the [`ImageTable`] — the packed MSDF atlas PNG.

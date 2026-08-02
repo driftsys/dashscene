@@ -644,9 +644,9 @@ fn all_four_gradient_kinds_lower() {
         };
 
         assert_eq!(g.kind, kind, "{name}");
-        assert_eq!(g.stops.len(), 3, "{name}");
+        assert_eq!(g.stops().len(), 3, "{name}");
         // Figma calls it `position`, dashpaint calls it `offset`.
-        assert_eq!(g.stops[1].offset, 0.5, "{name}");
+        assert_eq!(g.stops()[1].offset, 0.5, "{name}");
     }
 }
 
@@ -694,7 +694,7 @@ fn the_lowered_colors_are_the_fixture_colors() {
         panic!("gradient-linear did not lower to a gradient");
     };
     assert_eq!(
-        g.stops[0].color,
+        g.stops()[0].color,
         Color {
             r: 1.0,
             g: 0.85,
@@ -703,7 +703,7 @@ fn the_lowered_colors_are_the_fixture_colors() {
         },
     );
     assert_eq!(
-        g.stops[2].color,
+        g.stops()[2].color,
         Color {
             r: 0.2,
             g: 0.25,

@@ -50,13 +50,13 @@ fn full_box(paint: dashpaint::PaintIndex, w: f32, h: f32) -> RectEntry {
 }
 
 fn gradient_fill(kind: GradientKind, stops: Vec<GradientStop>) -> PaintKind {
-    PaintKind::Gradient(Gradient {
+    PaintKind::Gradient(Gradient::new(
         kind,
-        handle_origin: Vec2 { x: 0.5, y: 0.5 },
-        handle_primary: Vec2 { x: 1.0, y: 0.5 },
-        handle_secondary: Vec2 { x: 0.5, y: 1.0 },
-        stops,
-    })
+        Vec2 { x: 0.5, y: 0.5 },
+        Vec2 { x: 1.0, y: 0.5 },
+        Vec2 { x: 0.5, y: 1.0 },
+        &stops,
+    ))
 }
 
 fn two_stops(a: Color, b: Color) -> Vec<GradientStop> {

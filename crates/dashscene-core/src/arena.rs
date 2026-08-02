@@ -2507,8 +2507,8 @@ fn push_fill_key(key: &mut Vec<u32>, fill: Option<&PaintKind>) {
             key.extend(vec2_key(gradient.handle_origin));
             key.extend(vec2_key(gradient.handle_primary));
             key.extend(vec2_key(gradient.handle_secondary));
-            key.push(gradient.stops.len() as u32);
-            for stop in &gradient.stops {
+            key.push(gradient.stops().len() as u32);
+            for stop in gradient.stops() {
                 key.push(stop.offset.to_bits());
                 key.extend(color_key(stop.color));
             }

@@ -51,12 +51,12 @@ fn png_pixel() -> Vec<u8> {
 }
 
 fn gradient() -> PaintKind {
-    PaintKind::Gradient(Gradient {
-        kind: GradientKind::Linear,
-        handle_origin: Vec2 { x: 0.0, y: 0.0 },
-        handle_primary: Vec2 { x: 1.0, y: 0.0 },
-        handle_secondary: Vec2 { x: 0.0, y: 1.0 },
-        stops: vec![
+    PaintKind::Gradient(Gradient::new(
+        GradientKind::Linear,
+        Vec2 { x: 0.0, y: 0.0 },
+        Vec2 { x: 1.0, y: 0.0 },
+        Vec2 { x: 0.0, y: 1.0 },
+        &[
             GradientStop {
                 offset: 0.0,
                 color: RED,
@@ -66,7 +66,7 @@ fn gradient() -> PaintKind {
                 color: BLUE,
             },
         ],
-    })
+    ))
 }
 
 fn stroke() -> Stroke {
@@ -678,13 +678,16 @@ fn an_invalid_document_is_refused_rather_than_emitted() {
         },
         paint: Some(Paint {
             entry: PaintEntry {
-                fill: Some(PaintKind::Gradient(Gradient {
-                    kind: GradientKind::Linear,
-                    handle_origin: Vec2 { x: 0.0, y: 0.0 },
-                    handle_primary: Vec2 { x: 1.0, y: 0.0 },
-                    handle_secondary: Vec2 { x: 0.0, y: 1.0 },
-                    stops: Vec::new(),
-                })),
+                fill: Some(PaintKind::Gradient(Gradient::new(
+                    GradientKind::Linear,
+                    Vec2 { x: 0.0, y: 0.0 },
+                    Vec2 { x: 1.0, y: 0.0 },
+                    Vec2 { x: 0.0, y: 1.0 },
+                    // Constructible on purpose: "at least one stop" is a gate
+                    // rule the validator reports, not a type invariant, so a
+                    // producer must be able to build one and be refused.
+                    &[],
+                ))),
                 stroke: None,
                 corners: dashpaint::CornerRadii::default(),
                 shadows: dashpaint::ShadowRange::NONE,

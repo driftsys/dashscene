@@ -53,8 +53,8 @@
 #![deny(improper_ctypes_definitions)]
 
 use dashpaint::{
-    AtlasGlyph, BlurRange, ClipBox, ClipRegion, Color, GlyphQuad, GlyphRange, GlyphRun,
-    GradientStop, Mat23, RectEntry, ShadowRange, Vec2,
+    AtlasGlyph, Blur, BlurRange, ClipBox, ClipRegion, Color, GlyphQuad, GlyphRange, GlyphRun,
+    Gradient, GradientStop, Mat23, RectEntry, Shadow, ShadowRange, Stroke, Vec2, VectorField,
 };
 
 /// How this build lays out one boundary-B type.
@@ -119,6 +119,11 @@ abi_surface! {
     GlyphRun => dashscene_abi_glyph_run_layout, dashscene_abi_glyph_run_round_trip;
     ShadowRange => dashscene_abi_shadow_range_layout, dashscene_abi_shadow_range_round_trip;
     BlurRange => dashscene_abi_blur_range_layout, dashscene_abi_blur_range_round_trip;
+    Shadow => dashscene_abi_shadow_layout, dashscene_abi_shadow_round_trip;
+    Blur => dashscene_abi_blur_layout, dashscene_abi_blur_round_trip;
+    Stroke => dashscene_abi_stroke_layout, dashscene_abi_stroke_round_trip;
+    VectorField => dashscene_abi_vector_field_layout, dashscene_abi_vector_field_round_trip;
+    Gradient => dashscene_abi_gradient_layout, dashscene_abi_gradient_round_trip;
     AtlasGlyph => dashscene_abi_atlas_glyph_layout, dashscene_abi_atlas_glyph_round_trip;
 }
 
@@ -162,6 +167,11 @@ mod tests {
             ("GlyphRun", dashscene_abi_glyph_run_layout(), 40, 4),
             ("ShadowRange", dashscene_abi_shadow_range_layout(), 8, 4),
             ("BlurRange", dashscene_abi_blur_range_layout(), 8, 4),
+            ("Shadow", dashscene_abi_shadow_layout(), 36, 4),
+            ("Blur", dashscene_abi_blur_layout(), 8, 4),
+            ("Stroke", dashscene_abi_stroke_layout(), 24, 4),
+            ("VectorField", dashscene_abi_vector_field_layout(), 40, 4),
+            ("Gradient", dashscene_abi_gradient_layout(), 192, 4),
             ("AtlasGlyph", dashscene_abi_atlas_glyph_layout(), 36, 4),
         ];
         for (name, layout, size, align) in measured {

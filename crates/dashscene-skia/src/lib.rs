@@ -20,8 +20,8 @@ use std::sync::Arc;
 
 use dashpaint::{
     Atlas, BlurKind, ClipTable, CornerRadii, GlyphRun, GlyphRunTable, Gradient, GradientKind,
-    GroupComposite, ImageAsset, ImageTable, MAX_GRADIENT_STOPS, PaintKind, PaintTable, Painter,
-    RectEntry, ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, VectorField,
+    GroupComposite, ImageAsset, ImageTable, PaintKind, PaintTable, Painter, RectEntry, ScaleMode,
+    Shadow, ShadowKind, Stroke, StrokeAlign, VectorField,
 };
 use skia_safe::{
     AlphaType, BlendMode, BlurStyle, Canvas, ClipOp, Color4f, ColorType, Data, EncodedImageFormat,
@@ -1603,14 +1603,13 @@ fn gradient_frame(gradient: &Gradient, rect: &RectEntry) -> Matrix {
 /// area) falls back to the first stop's color — deterministic; the
 /// validator owns rejecting it upstream (P4).
 fn gradient_paint(gradient: &Gradient, rect: &RectEntry) -> skia_safe::Paint {
-    assert!(
-        gradient.stops.len() <= MAX_GRADIENT_STOPS,
-        "gradient stop budget exceeded: {} stops, budget {MAX_GRADIENT_STOPS} \
-         (validated upstream once profiles land, P4)",
-        gradient.stops.len()
-    );
+    // The budget assertion that stood here is gone, because it can no longer
+    // fail: `Gradient` holds a bounded array of `MAX_GRADIENT_STOPS` and
+    // `Gradient::new` refuses a longer list, so an over-budget gradient is now
+    // unrepresentable rather than caught at draw time (story #578). The named
+    // refusal moved to the constructor and, before it, to the Figma lowering.
     let first_stop = gradient
-        .stops
+        .stops()
         .first()
         .expect("a gradient carries at least one stop (the schema requires stops)");
 
@@ -1619,8 +1618,12 @@ fn gradient_paint(gradient: &Gradient, rect: &RectEntry) -> skia_safe::Paint {
         return solid_paint(first_stop.color);
     }
 
-    let colors: Vec<Color4f> = gradient.stops.iter().map(|s| to_color4f(s.color)).collect();
-    let positions: Vec<f32> = gradient.stops.iter().map(|s| s.offset).collect();
+    let colors: Vec<Color4f> = gradient
+        .stops()
+        .iter()
+        .map(|s| to_color4f(s.color))
+        .collect();
+    let positions: Vec<f32> = gradient.stops().iter().map(|s| s.offset).collect();
 
     let shader = match gradient.kind {
         GradientKind::Linear => gradient_shader::linear(
