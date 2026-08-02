@@ -95,6 +95,36 @@ pub fn assert_matches_golden_within(name: &str, png_bytes: &[u8], max_differing_
     run_golden(name, png_bytes, Budget::Fraction(max_differing_fraction));
 }
 
+/// The cross-architecture pixel budget every calibrated-budget golden
+/// carries, in differing pixels.
+///
+/// One constant rather than one number per scene, because what a budget
+/// absorbs is cross-architecture rasterisation jitter — a property of the
+/// renderer and the machine, not of the picture. Measured across six
+/// independent CI runners on 2026-08-02, the residual for the seven
+/// goldens in this class was 0, 0, 0, 1, 2, 3 and 4 pixels, with **no
+/// variance between runners**, and it did not scale with scene size,
+/// glyph count or ink: the densest scene measured 0 and a sparse Arabic
+/// one measured 4. A per-scene budget would model something that is not
+/// per-scene.
+///
+/// 32 is the `v03-paint` anchor, the measured residual of the paint scene
+/// every earlier budget was extrapolated from. It leaves at least 8x over
+/// the largest measured floor (4 px) and at least 15x under the weakest
+/// sensitivity guard (484 px, `v07-text-lowering`), so it absorbs the
+/// jitter while still failing on lost ink.
+///
+/// The seven budgets this replaced — 1200, 500, 500, 440, 400, 200, 200 —
+/// were not seven calibrations. They were seven multipliers of this same
+/// anchor, each sitting about 1.5x under its guard and 110x to 1200x over
+/// its floor, which is why a regression moving a few glyphs by a pixel
+/// passed silently on every one of them (story #671).
+///
+/// **If a scene's measured floor ever rises above about 4 px, re-derive
+/// this constant — do not exempt the scene.** Exempting one is how seven
+/// unexplained numbers came about the first time.
+pub const CROSS_ARCH_BUDGET_PX: usize = 32;
+
 /// Compares `png_bytes` against the checked-in golden, allowing up to
 /// `max_differing_pixels` pixels to differ.
 ///

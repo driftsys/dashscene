@@ -407,7 +407,42 @@ fn a_hug_cross_baseline_row_with_text_matches_its_golden() {
     // shorter image and the golden fails on its dimension check — before any
     // budget applies. The budget below only absorbs cross-machine MSDF edge
     // jitter (`docs/decisions/golden-comparison-space.md`, "Text goldens").
-    goldens::assert_matches_golden_max_pixels("v013-baseline-hug-cross", &png, 400);
+    goldens::assert_matches_golden_max_pixels(
+        "v013-baseline-hug-cross",
+        &png,
+        goldens::CROSS_ARCH_BUDGET_PX,
+    );
+}
+
+/// Sensitivity guard (the #232/#235 lesson), the one this golden was missing
+/// when its budget was retuned in story #671. The other six pixel-budget
+/// goldens each carry one; this golden did not, so nothing asserted that its
+/// budget could still distinguish a right render from a wrong one.
+///
+/// The dimension check above catches the regression this scene exists for —
+/// reverting #322 renders a shorter canvas and fails before any budget
+/// applies. That is a different property from the budget being tight enough
+/// to see lost ink, which is what this asserts: the row's text dropped must
+/// exceed the budget.
+#[test]
+fn dropping_the_baseline_run_exceeds_the_budget() {
+    let font = Font::from_bytes(std::fs::read(FONT).expect("corpus font present"), 0)
+        .expect("Noto Sans parses");
+    let mut ts = Typesetter::new(font);
+    let mut arena = Arena::new();
+    let _ = baseline_hug_cross_scene(&mut arena, &mut ts);
+
+    let empty = render(&arena, &GlyphRunTable::new());
+    let differed = diff_vs(
+        &decode_golden("v013-baseline-hug-cross"),
+        &decode_rgba(&empty),
+    );
+    assert!(
+        differed > goldens::CROSS_ARCH_BUDGET_PX,
+        "dropping the baseline row's text must exceed the \
+         {}px budget, differed by {differed}",
+        goldens::CROSS_ARCH_BUDGET_PX,
+    );
 }
 
 // ---------------------------------------------------------------------

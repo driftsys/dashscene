@@ -124,7 +124,7 @@ const SPEED_SIZE: f32 = 34.0;
 /// regression that passes silently, which is what #532 exists to prevent.
 /// The re-check this once deferred to "the first full CI run after #263"
 /// has happened: 4 px, so the budget is not too tight.
-const BUDGET: usize = 440;
+const BUDGET: usize = goldens::CROSS_ARCH_BUDGET_PX;
 
 /// One of the screen's three text runs. Naming them lets the sensitivity
 /// guard drop exactly one and say which, the way #532 asks: the
