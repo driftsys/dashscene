@@ -4,9 +4,9 @@
 //! boundary B.
 
 use dashpaint::{
-    Atlas, AtlasGlyph, AtlasIndex, ClipIndex, ClipTable, Color, FillSpec, GlyphQuad, GlyphRun,
-    GlyphRunTable, Gradient, GradientKind, ImageTable, MAX_GRADIENT_STOPS, PaintEntry, PaintIndex,
-    Painter, RectEntry, Vec2,
+    Atlas, AtlasGlyph, AtlasIndex, ClipIndex, ClipTable, Color, EntryParts, FillSpec, GlyphQuad,
+    GlyphRun, GlyphRunTable, Gradient, GradientKind, ImageTable, MAX_GRADIENT_STOPS, PaintEntry,
+    PaintIndex, Painter, RectEntry, Vec2,
 };
 use dashscene_core::{Arena, Prop};
 use dashscene_skia::{DirtyMode, SkiaPainter};
@@ -224,7 +224,7 @@ fn single_entry_scene(
 /// ready to push the entry (`PaintTable::push_solid` does both at once).
 fn solid_entry(paints: &mut PaintTable, color: Color) -> PaintEntry {
     PaintEntry {
-        fill: Some(paints.intern_fill(&FillSpec::Solid { color })),
+        fill: paints.intern_fill(&FillSpec::Solid { color }),
         ..PaintEntry::default()
     }
 }
@@ -242,7 +242,7 @@ fn gradient_entry(
         stops: StopRange::NONE,
     };
     PaintEntry {
-        fill: Some(paints.intern_fill(&FillSpec::Gradient { gradient, stops })),
+        fill: paints.intern_fill(&FillSpec::Gradient { gradient, stops }),
         ..PaintEntry::default()
     }
 }
@@ -259,7 +259,7 @@ fn degenerate_gradient_entry(paints: &mut PaintTable, stops: Vec<GradientStop>) 
         stops: StopRange::NONE,
     };
     PaintEntry {
-        fill: Some(paints.intern_fill(&FillSpec::Gradient { gradient, stops })),
+        fill: paints.intern_fill(&FillSpec::Gradient { gradient, stops }),
         ..PaintEntry::default()
     }
 }
@@ -388,18 +388,35 @@ fn stacked_opaque_fills_composite_bottom_to_top_last_on_top() {
     // then `extra_fills` blue then green (top). Each fully occludes the one
     // below it, so the visible color is the *last* array element — proving
     // the painter draws the list in array order, not reversed.
-    let (rects, paints) = single_entry_scene(
-        |paints| PaintEntry {
-            fill: Some(paints.intern_fill(&FillSpec::Solid { color: RED })),
-            extra_fills: vec![
-                paints.intern_fill(&FillSpec::Solid { color: BLUE }),
-                paints.intern_fill(&FillSpec::Solid { color: GREEN }),
-            ],
+    //
+    // `extra_fills` is now a range the table owns (story #578), so building
+    // this entry needs `push_with` rather than `single_entry_scene`'s bare
+    // `push`.
+    let mut paints = PaintTable::new();
+    let fill = paints.intern_fill(&FillSpec::Solid { color: RED });
+    let extra_fills = [
+        paints.intern_fill(&FillSpec::Solid { color: BLUE }),
+        paints.intern_fill(&FillSpec::Solid { color: GREEN }),
+    ];
+    let paint = paints.push_with(
+        PaintEntry {
+            fill,
             ..PaintEntry::default()
         },
-        4.0,
-        4.0,
+        EntryParts {
+            extra_fills: &extra_fills,
+            ..EntryParts::default()
+        },
     );
+    let rects = vec![RectEntry {
+        x: 0.0,
+        y: 0.0,
+        w: 4.0,
+        h: 4.0,
+        paint,
+        clip: ClipIndex::UNCLIPPED,
+        opacity: 1.0,
+    }];
     let rgba = render(&rects, &paints, &ImageTable::new(), 4);
 
     for y in 0..4 {
@@ -415,22 +432,39 @@ fn a_semi_transparent_stacked_fill_blends_over_the_bottom_fill() {
     // semi-transparent layer on top. Real alpha compositing, not a bare
     // overwrite — the result carries both colors, and stays fully opaque
     // (compositing anything over an opaque base cannot lower its alpha).
-    let (rects, paints) = single_entry_scene(
-        |paints| PaintEntry {
-            fill: Some(paints.intern_fill(&FillSpec::Solid { color: RED })),
-            extra_fills: vec![paints.intern_fill(&FillSpec::Solid {
-                color: Color {
-                    r: 0.0,
-                    g: 0.0,
-                    b: 1.0,
-                    a: 0.5,
-                },
-            })],
+    //
+    // `extra_fills` is now a range the table owns (story #578), so building
+    // this entry needs `push_with` rather than `single_entry_scene`'s bare
+    // `push`.
+    let mut paints = PaintTable::new();
+    let fill = paints.intern_fill(&FillSpec::Solid { color: RED });
+    let extra_fills = [paints.intern_fill(&FillSpec::Solid {
+        color: Color {
+            r: 0.0,
+            g: 0.0,
+            b: 1.0,
+            a: 0.5,
+        },
+    })];
+    let paint = paints.push_with(
+        PaintEntry {
+            fill,
             ..PaintEntry::default()
         },
-        4.0,
-        4.0,
+        EntryParts {
+            extra_fills: &extra_fills,
+            ..EntryParts::default()
+        },
     );
+    let rects = vec![RectEntry {
+        x: 0.0,
+        y: 0.0,
+        w: 4.0,
+        h: 4.0,
+        paint,
+        clip: ClipIndex::UNCLIPPED,
+        opacity: 1.0,
+    }];
     let rgba = render(&rects, &paints, &ImageTable::new(), 4);
     let center = px(&rgba, 4, 2, 2);
 
@@ -451,14 +485,17 @@ fn a_semi_transparent_stacked_fill_blends_over_the_bottom_fill() {
 
 fn stroked_square(align: StrokeAlign) -> Vec<u8> {
     let mut paints = PaintTable::new();
-    let paint = paints.push(PaintEntry {
-        stroke: Some(Stroke {
-            width: 2.0,
-            align,
-            color: RED,
-        }),
-        ..PaintEntry::default()
-    });
+    let paint = paints.push_with(
+        PaintEntry::default(),
+        EntryParts {
+            stroke: Some(Stroke {
+                width: 2.0,
+                align,
+                color: RED,
+            }),
+            ..EntryParts::default()
+        },
+    );
     let rects = [RectEntry {
         x: 4.0,
         y: 4.0,
@@ -573,12 +610,12 @@ fn image_entry(
     tile_scale: f32,
 ) -> PaintEntry {
     PaintEntry {
-        fill: Some(paints.intern_fill(&FillSpec::Image(ImageFill {
+        fill: paints.intern_fill(&FillSpec::Image(ImageFill {
             image: 0,
             scale_mode,
             transform,
             tile_scale,
-        }))),
+        })),
         ..PaintEntry::default()
     }
 }
@@ -2074,15 +2111,20 @@ fn an_off_canvas_shadow_paints_nothing_without_error() {
 fn fill_and_stroke_at_half_opacity() -> (Vec<RectEntry>, PaintTable) {
     let mut paints = PaintTable::new();
     let fill = paints.intern_fill(&FillSpec::Solid { color: RED });
-    let paint = paints.push(PaintEntry {
-        fill: Some(fill),
-        stroke: Some(Stroke {
-            width: 8.0,
-            align: StrokeAlign::Inside,
-            color: RED,
-        }),
-        ..PaintEntry::default()
-    });
+    let paint = paints.push_with(
+        PaintEntry {
+            fill,
+            ..PaintEntry::default()
+        },
+        EntryParts {
+            stroke: Some(Stroke {
+                width: 8.0,
+                align: StrokeAlign::Inside,
+                color: RED,
+            }),
+            ..EntryParts::default()
+        },
+    );
     (
         vec![RectEntry {
             x: 16.0,
@@ -2139,14 +2181,17 @@ fn a_stroke_with_no_fill_is_correct_at_partial_opacity() {
     // for a stroke-only node, this fails and the guard becomes a real gate
     // that needs its own reasoning.
     let mut paints = PaintTable::new();
-    let paint = paints.push(PaintEntry {
-        stroke: Some(Stroke {
-            width: 8.0,
-            align: StrokeAlign::Inside,
-            color: RED,
-        }),
-        ..PaintEntry::default()
-    });
+    let paint = paints.push_with(
+        PaintEntry::default(),
+        EntryParts {
+            stroke: Some(Stroke {
+                width: 8.0,
+                align: StrokeAlign::Inside,
+                color: RED,
+            }),
+            ..EntryParts::default()
+        },
+    );
     let rects = vec![RectEntry {
         x: 16.0,
         y: 16.0,
@@ -2186,13 +2231,15 @@ fn a_stroke_with_no_fill_is_correct_at_partial_opacity() {
 fn transparent_backdrop_blur_scene() -> (Vec<RectEntry>, PaintTable) {
     let mut paints = PaintTable::new();
     let band = paints.push_solid(RED);
-    let panel = paints.push_with_effects(
+    let panel = paints.push_with(
         PaintEntry::default(),
-        &[],
-        &[Blur {
-            kind: BlurKind::Backdrop,
-            radius: 12.0,
-        }],
+        EntryParts {
+            blurs: &[Blur {
+                kind: BlurKind::Backdrop,
+                radius: 12.0,
+            }],
+            ..EntryParts::default()
+        },
     );
     (
         vec![

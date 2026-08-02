@@ -214,10 +214,7 @@ fn every_node_resolves_to_the_payload_it_named() {
     let expected = [PAYLOAD_PNG, PAYLOAD_JPEG, PAYLOAD_PNG];
     for (index, want) in expected.iter().enumerate() {
         let paint = scene.paints().resolve(scene.rects()[index].paint);
-        let kind = paint
-            .fill
-            .expect("every node in this document has an image fill");
-        let Fill::Image(image_fill) = scene.paints().fill(kind) else {
+        let Fill::Image(image_fill) = scene.paints().fill(paint.fill) else {
             panic!("node {index} did not resolve to an image fill");
         };
         let asset = scene.images().resolve(image_fill.image);

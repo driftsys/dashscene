@@ -146,12 +146,19 @@ All types and the trait live in `crates/dashpaint/src/lib.rs`:
   rather than of one backend: `dashscene-skia` asserts against it and
   `dashscene-validator` rejects it upstream (P4), and two hard-coded
   copies that drifted would make the validator's guarantee false.
-- `PaintEntry` — the paint-table entry: `fill: Option<PaintKind>`
-  (`None` = a paint-less, layout-only node), `stroke: Option<Stroke>`,
-  `corners: CornerRadii`, `shadows: ShadowRange` (v0.8, story #45;
-  a range since story #578); `PaintTable::push_solid(Color)` is the v0.1
-  shorthand, and replaced `PaintEntry::solid`, which could not survive a
-  fill that only a table can name. See
+- `PaintEntry` — the paint-table entry, `#[repr(C)]`, `Copy`, 64 bytes
+  and seven fixed-width members since story #578: `fill: PaintKind`
+  ([`PaintKind::NONE`] = a paint-less, layout-only node),
+  `extra_fills: FillRange`, `stroke: StrokeRange`,
+  `corners: CornerRadii`, `shadows: ShadowRange`, `blurs: BlurRange`,
+  `shape: ShapeRange`. Every optional or repeated member is a range into
+  an array the table owns, and `stroke` and `shape` carry arity 0-or-1 —
+  a range rather than a sentinel, so an absent member needs no skip rule
+  at the read site (`docs/decisions/optional-members-are-ranges-of-arity-one.md`).
+  `EntryParts` is the producer-side shape, with the lists still owned.
+  `PaintTable::push_solid(Color)` is the v0.1 shorthand, and replaced
+  `PaintEntry::solid`, which could not survive a fill that only a table
+  can name. See
   `docs/decisions/paint-entry-composition.md`. It carries no clip flag —
   whether a node clips its children is intent, and lives in the document
   and the arena, not in resolved painter input
@@ -176,12 +183,22 @@ All types and the trait live in `crates/dashpaint/src/lib.rs`:
   (returns the sequential index just assigned), `get(&self, PaintIndex)
   -> Option<&PaintEntry>`, `resolve(&self, PaintIndex) -> &PaintEntry`
   (the lookup painters use — panics on an out-of-range index), `len`,
-  `is_empty`. Since story #578 it also owns the flat arrays its ranges
-  and row indices name: shadows, blurs, and one array per fill kind
-  (`all_solids`, `all_gradients`, `all_stops`, `all_images`).
+  `is_empty`. Since story #578 it also owns every flat array its ranges
+  and row indices name: `all_shadows`, `all_blurs`, `all_extra_fills`,
+  `all_strokes`, `all_shapes`, and one array per fill kind
+  (`all_solids`, `all_gradients`, `all_stops`, `all_images`). The
+  matching readers — `shadows`, `blurs`, `extra_fills`, `stroke`,
+  `shape`, `fill` — are the only way to resolve an entry.
+- `PaintTable::push_with(entry, EntryParts)` — appends an entry over its
+  parts, copying each into the flat arrays and assigning every range. It
+  refuses an entry that arrives with a range already set, for the reason
+  `GlyphRunTable::push_run` gives. `push` is the bare-entry shorthand and
+  refuses the same way. An empty range is assigned `(0, 0)` rather than
+  the offset it would have started at, so two entries that both draw
+  nothing compare equal.
 - `PaintTable::intern_fill(&FillSpec) -> PaintKind` — the only way a fill
-  enters the table. Unlike `push_with_effects`, which copies an entry's
-  shadows and blurs in without dedup, this **deduplicates**: a shadow
+  enters the table. Unlike `push_with`, which copies an entry's parts in
+  without dedup, this **deduplicates**: a shadow
   list belongs to one entry and has no identity beyond it, while a fill
   is a shared value that `dashscene-core`'s retained interner re-stages
   every commit. Appending each time would grow the fill arrays for the
@@ -245,9 +262,12 @@ payload-carrying enum on the surface stops the workspace compiling.
 Boundary B is a language-neutral data contract, and the reason is G2 —
 see `docs/design/architecture.md`. The surface is narrow today and widens
 as story #578 flattens each type in turn. `ClipRegion`, `GlyphRun` (with
-`GlyphRange`), `ShadowRange`, `BlurRange`, and now `PaintKind`,
-`Gradient` (with `StopRange`) and `ImageFill` are done and on the
-surface; `PaintEntry` and `ImageAsset` remain.
+`GlyphRange`), `ShadowRange`, `BlurRange`, `PaintKind`, `Gradient` (with
+`StopRange`), `ImageFill`, and now `PaintEntry` itself with the three
+ranges it gained, are done and on the surface. `ImageAsset` remains, and
+is a different problem: its `Vec<u8>` is a payload rather than a
+reference into a table, so flattening it means deciding where a
+decoded-ready blob lives.
 
 `Painter::paint` is infallible and the trait is object-safe (`Box<dyn
 Painter>` must work — backend selection is whole-scene, R3). Slice order

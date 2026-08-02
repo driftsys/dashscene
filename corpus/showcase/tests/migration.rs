@@ -155,18 +155,24 @@ fn backdrop_blur(radius: f32) -> Prop {
 /// arenas that reach the same picture by different commit sequences earn
 /// different positions for the same content. Every such value must be
 /// resolved to its contents first, and only the contents compared. This has
-/// bitten the helper four times: the paint-table index on a rect (resolved
+/// bitten the helper five times: the paint-table index on a rect (resolved
 /// through `PaintTable::resolve`, above), `ClipRegion`'s flattening to a
 /// range read through `ClipView::boxes()` (also above), `PaintEntry`'s
 /// `shadows`/`blurs` fields, which story #578 turned into arena-relative
 /// positions in their own right — resolved below through
-/// `PaintTable::shadows`/`PaintTable::blurs` — and now `fill` and
-/// `extra_fills`, which the last step of that story turned into row indices
-/// into each arena's own per-kind fill tables. Those are resolved through
-/// [`fills_of`]; comparing them directly was the exact mistake
-/// `docs/decisions/cross-arena-comparison-resolves-indices.md` exists to
-/// stop, and it passed only because both builders happened to intern in the
-/// same order.
+/// `PaintTable::shadows`/`PaintTable::blurs` — then `fill` and
+/// `extra_fills`, which that story turned into row indices into each
+/// arena's own per-kind fill tables, resolved through [`fills_of`] — and
+/// now `stroke` and `shape`, which its last step turned into
+/// `StrokeRange`/`ShapeRange`, resolved below through
+/// `PaintTable::stroke`/`PaintTable::shape`.
+///
+/// The last two are the clearest case of why this keeps happening: both
+/// were plain values this helper was correct to compare directly, right up
+/// until the commit that made them positions. Comparing them directly was
+/// the exact mistake `docs/decisions/cross-arena-comparison-resolves-indices.md`
+/// exists to stop, and each time it passed only because both builders
+/// happened to intern in the same order.
 fn assert_same_committed(a: &Arena, b: &Arena) {
     let (a, b) = (a.committed(), b.committed());
 
@@ -181,12 +187,22 @@ fn assert_same_committed(a: &Arena, b: &Arena) {
             a.paints().resolve(left.paint),
             b.paints().resolve(right.paint),
         );
+        // `stroke` and `shape` are a `StrokeRange`/`ShapeRange` into the
+        // table's own flat array since story #578 — the same per-arena
+        // position `fills_of` resolves a fill row index out of, and for the
+        // same reason: comparing the range itself would compare an offset
+        // that is a function of each arena's own commit history, not of the
+        // picture.
         assert_eq!(
-            (&left_paint.stroke, &left_paint.corners, &left_paint.shape),
             (
-                &right_paint.stroke,
-                &right_paint.corners,
-                &right_paint.shape
+                a.paints().stroke(left_paint),
+                left_paint.corners,
+                a.paints().shape(left_paint),
+            ),
+            (
+                b.paints().stroke(right_paint),
+                right_paint.corners,
+                b.paints().shape(right_paint),
             ),
             "paints (rect {index})"
         );
@@ -223,16 +239,17 @@ fn assert_same_committed(a: &Arena, b: &Arena) {
 /// A `PaintKind` is a row index into the arena's own per-kind fill tables
 /// since story #578, so two arenas that reached the same picture by
 /// different commit sequences can hold the same fill at different rows. Only
-/// the resolved contents mean anything across the two.
+/// the resolved contents mean anything across the two. `extra_fills` is
+/// itself a `FillRange` into the table's own flat array — the same kind of
+/// per-arena position — so it is read through `PaintTable::extra_fills`
+/// rather than iterated directly.
 fn fills_of<'a>(
     scene: &'a dashscene_core::CommittedScene,
     entry: &dashscene_core::PaintEntry,
 ) -> Vec<dashscene_core::Fill<'a>> {
-    entry
-        .fill
-        .iter()
-        .chain(entry.extra_fills.iter())
-        .map(|&kind| scene.paints().fill(kind))
+    std::iter::once(entry.fill)
+        .chain(scene.paints().extra_fills(entry).iter().copied())
+        .map(|kind| scene.paints().fill(kind))
         .collect()
 }
 

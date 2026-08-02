@@ -17,8 +17,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::bindings::{Binding, Channel, ScalarTransform, SignalDecl, SignalId};
 use crate::committed::{
     Atlas, Blur, ClipBox, ClipIndex, ClipTable, ClipView, Color, CommittedScene, CornerRadii,
-    FillSpec, GlyphQuad, GlyphRun, GlyphRunTable, GroupComposite, ImageAsset, ImageTable,
-    PaintEntry, PaintIndex, PaintTable, RectEntry, Shadow, Stroke, StrokeAlign, Vec2, VectorField,
+    EntryParts, FillSpec, GlyphQuad, GlyphRun, GlyphRunTable, GroupComposite, ImageAsset,
+    ImageTable, PaintEntry, PaintIndex, PaintTable, RectEntry, Shadow, Stroke, StrokeAlign, Vec2,
+    VectorField,
 };
 
 /// Stable handle to a node in one [`Arena`]. Returned by
@@ -1686,54 +1687,39 @@ impl Txn<'_> {
                     // an entry's `shadows`/`blurs` are ranges into the paint
                     // table's flat arrays, and this code has no table to
                     // index (story #578). `intern_paint` keys on the
-                    // contents and `PaintTable::push_with_effects` assigns
+                    // contents and `PaintTable::push_with` assigns
                     // the ranges.
-                    let (entry, fill, extra_fills, shadows, blurs) = if draws_nothing {
-                        (PaintEntry::default(), None, &[][..], &[][..], &[][..])
+                    let (entry, fill, parts) = if draws_nothing {
+                        (PaintEntry::default(), None, StagedPaint::default())
                     } else {
                         let fill = arena.overlay(id).fill.clone().or_else(|| node.fill.clone());
                         (
                             PaintEntry {
-                                // Assigned by `intern_paint`, which is where
-                                // the table that interns the fill is (story
-                                // #578).
-                                fill: None,
-                                stroke: node.stroke,
+                                // Every range is assigned by `intern_paint`,
+                                // which is where the table that owns the
+                                // arrays is (story #578). Nothing else on the
+                                // entry is set here either: `corners` is the
+                                // only member that is neither a range nor a
+                                // row reference.
                                 corners: node.corners,
-                                // Shadows are not variant-overridable (the
-                                // variant vocabulary is X/Y/W/H/Fill), so
-                                // they come straight from the node. Borrowed
-                                // rather than cloned now that the entry
-                                // names a range instead of owning a Vec.
-                                shadows: dashpaint::ShadowRange::NONE,
-                                blurs: dashpaint::BlurRange::NONE,
-                                // The baked-vector coverage mask (story B1),
-                                // not variant-overridable either — straight
-                                // from the node. `VectorField` is `Copy`, so
-                                // no clone.
-                                shape: node.shape,
-                                // Stacked fills (story C1), not
-                                // variant-overridable either — same posture
-                                // as shadows, straight from the node, and
-                                // interned by `intern_paint` like the base
-                                // fill.
-                                extra_fills: Vec::new(),
+                                ..PaintEntry::default()
                             },
                             fill,
-                            node.extra_fills.as_slice(),
-                            node.shadows.as_slice(),
-                            node.blurs.as_slice(),
+                            StagedPaint {
+                                // None of these is variant-overridable — the
+                                // variant vocabulary is X/Y/W/H/Fill — so
+                                // they come straight from the node, borrowed
+                                // rather than cloned now that the entry names
+                                // ranges instead of owning lists.
+                                extra_fills: node.extra_fills.as_slice(),
+                                stroke: node.stroke,
+                                shape: node.shape,
+                                shadows: node.shadows.as_slice(),
+                                blurs: node.blurs.as_slice(),
+                            },
                         )
                     };
-                    intern_paint(
-                        &mut back_paints,
-                        paint_map,
-                        entry,
-                        fill.as_ref(),
-                        extra_fills,
-                        shadows,
-                        blurs,
-                    )
+                    intern_paint(&mut back_paints, paint_map, entry, fill.as_ref(), parts)
                 }
             };
 
@@ -2240,20 +2226,18 @@ fn intern_paint(
     interned: &mut FxHashMap<PaintKey, PaintIndex>,
     entry: PaintEntry,
     fill: Option<&FillSpec>,
-    extra_fills: &[FillSpec],
-    shadows: &[Shadow],
-    blurs: &[Blur],
+    staged: StagedPaint<'_>,
 ) -> PaintIndex {
-    // The key is over the effects' and fills' *contents*, not over the
-    // ranges and row indices that will name them — which is what keeps dedup
-    // working now that the entry carries both (story #578). Two nodes with
+    // The key is over the parts' *contents*, not over the ranges and row
+    // indices that will name them — which is what keeps dedup working now
+    // that the entry carries nothing else (story #578). Two nodes with
     // identical shadows must still reach one entry, and their ranges would
     // differ until they did.
     //
     // Keying before interning is also what keeps the per-kind fill tables
     // from growing: a hit returns without touching them, so re-staging the
     // same fill every commit interns it once.
-    let key = paint_key(&entry, fill, extra_fills, shadows, blurs);
+    let key = paint_key(&entry, fill, &staged);
     if let Some(&index) = interned.get(&key) {
         return index;
     }
@@ -2261,14 +2245,40 @@ fn intern_paint(
     // bounds the node count, and the rebuild in `compact_paints` bounds
     // the table at a small multiple of the rect count (issue #197).
     let table = Arc::make_mut(paints);
-    let entry = PaintEntry {
-        fill: fill.map(|spec| table.intern_fill(spec)),
-        extra_fills: extra_fills.iter().map(|s| table.intern_fill(s)).collect(),
-        ..entry
-    };
-    let index = table.push_with_effects(entry, shadows, blurs);
+    let fill = fill.map(|spec| table.intern_fill(spec)).unwrap_or_default();
+    let layers: Vec<_> = staged
+        .extra_fills
+        .iter()
+        .map(|spec| table.intern_fill(spec))
+        .collect();
+    let index = table.push_with(
+        PaintEntry { fill, ..entry },
+        EntryParts {
+            extra_fills: &layers,
+            stroke: staged.stroke,
+            shape: staged.shape,
+            shadows: staged.shadows,
+            blurs: staged.blurs,
+        },
+    );
     interned.insert(key, index);
     index
+}
+
+/// What a node stages onto one paint entry, before any of it has entered a
+/// table.
+///
+/// The core-side twin of [`dashpaint::EntryParts`], and it exists because
+/// the two differ in exactly one member: a producer holds fill *specs*,
+/// while the table's parts hold the row references interning them returns.
+/// [`intern_paint`] is where one becomes the other.
+#[derive(Debug, Clone, Default)]
+struct StagedPaint<'a> {
+    extra_fills: &'a [FillSpec],
+    stroke: Option<Stroke>,
+    shape: Option<VectorField>,
+    shadows: &'a [Shadow],
+    blurs: &'a [Blur],
 }
 
 /// Table size below which a rebuild is not worth its bookkeeping. Small
@@ -2308,7 +2318,7 @@ fn compact_paints(
             None => {
                 // Re-homing an entry into a fresh table: its ranges name the
                 // old table's arrays, so they are cleared and reassigned by
-                // the push, exactly as `push_with_effects` requires (story
+                // the push, exactly as `push_with` requires (story
                 // #578).
                 //
                 // Its fills are the same hazard in the other direction. A
@@ -2318,19 +2328,43 @@ fn compact_paints(
                 // re-interned from their contents, which is also what makes
                 // the rebuild drop the fills no surviving entry references.
                 let old = paints.resolve(rect.paint);
-                let fill = old.fill.map(|kind| paints.fill(kind).to_spec());
-                let extra_fills: Vec<_> = old
-                    .extra_fills
+                let fill = paints.fill(old.fill).to_spec();
+                let layers: Vec<_> = paints
+                    .extra_fills(old)
                     .iter()
-                    .map(|&kind| paints.fill(kind).to_spec())
+                    .map(|&kind| {
+                        // A stacked layer is always a real fill; a
+                        // `PaintTag::None` here would mean the layer list
+                        // itself is corrupt, and dropping it silently is
+                        // what P4 forbids.
+                        paints
+                            .fill(kind)
+                            .to_spec()
+                            .expect("a stacked fill layer resolved to no fill")
+                    })
                     .collect();
-                let mut rehomed = old.clone();
-                rehomed.shadows = dashpaint::ShadowRange::NONE;
-                rehomed.blurs = dashpaint::BlurRange::NONE;
-                rehomed.fill = fill.as_ref().map(|spec| table.intern_fill(spec));
-                rehomed.extra_fills = extra_fills.iter().map(|s| table.intern_fill(s)).collect();
-                let index =
-                    table.push_with_effects(rehomed, paints.shadows(old), paints.blurs(old));
+                let rehomed = PaintEntry {
+                    // Only `corners` survives the move as-is. Every other
+                    // member is a row reference or a range into the old
+                    // table's arrays, so each is cleared here and reassigned
+                    // by the push — exactly what `push_with` requires.
+                    corners: old.corners,
+                    ..PaintEntry::default()
+                };
+                let fill = fill
+                    .map(|spec| table.intern_fill(&spec))
+                    .unwrap_or_default();
+                let layers: Vec<_> = layers.iter().map(|s| table.intern_fill(s)).collect();
+                let index = table.push_with(
+                    PaintEntry { fill, ..rehomed },
+                    EntryParts {
+                        extra_fills: &layers,
+                        stroke: paints.stroke(old).copied(),
+                        shape: paints.shape(old).copied(),
+                        shadows: paints.shadows(old),
+                        blurs: paints.blurs(old),
+                    },
+                );
                 moved.insert(rect.paint.0, index);
                 index
             }
@@ -2349,19 +2383,28 @@ fn compact_paints(
         // keys on what a fill *is*, not on the row this table happens to
         // hold it in, so a re-keyed entry matches the same intent staged
         // again after the rebuild.
-        let fill = entry.fill.map(|kind| table.fill(kind).to_spec());
-        let extra_fills: Vec<_> = entry
-            .extra_fills
+        let fill = table.fill(entry.fill).to_spec();
+        let layers: Vec<_> = table
+            .extra_fills(entry)
             .iter()
-            .map(|&kind| table.fill(kind).to_spec())
+            .map(|&kind| {
+                table
+                    .fill(kind)
+                    .to_spec()
+                    .expect("a stacked fill layer resolved to no fill")
+            })
             .collect();
         interned.insert(
             paint_key(
                 entry,
                 fill.as_ref(),
-                &extra_fills,
-                table.shadows(entry),
-                table.blurs(entry),
+                &StagedPaint {
+                    extra_fills: &layers,
+                    stroke: table.stroke(entry).copied(),
+                    shape: table.shape(entry).copied(),
+                    shadows: table.shadows(entry),
+                    blurs: table.blurs(entry),
+                },
             ),
             index,
         );
@@ -2491,13 +2534,7 @@ fn intern_region(
 /// dirty and its paint entry never dedup.
 type PaintKey = Vec<u32>;
 
-fn paint_key(
-    entry: &PaintEntry,
-    fill: Option<&FillSpec>,
-    extra_fills: &[FillSpec],
-    shadows: &[Shadow],
-    blurs: &[Blur],
-) -> PaintKey {
+fn paint_key(entry: &PaintEntry, fill: Option<&FillSpec>, staged: &StagedPaint<'_>) -> PaintKey {
     let mut key = Vec::new();
 
     // The fills arrive as specs, not as the entry's row indices: an index is
@@ -2513,12 +2550,12 @@ fn paint_key(
     // with one extra layer and the arena kept none. Same "count then each
     // element's bits" framing as the sections below, so the encoding stays
     // prefix-free and no two distinct entries can collide.
-    key.push(extra_fills.len() as u32);
-    for layer in extra_fills {
+    key.push(staged.extra_fills.len() as u32);
+    for layer in staged.extra_fills {
         push_fill_key(&mut key, Some(layer));
     }
 
-    match &entry.stroke {
+    match &staged.stroke {
         None => key.push(0),
         Some(stroke) => {
             key.push(1);
@@ -2530,13 +2567,13 @@ fn paint_key(
 
     key.extend(corner_key(entry.corners));
 
-    key.push(blurs.len() as u32);
-    for b in blurs {
+    key.push(staged.blurs.len() as u32);
+    for b in staged.blurs {
         key.push(b.kind as u32);
         key.push(b.radius.to_bits());
     }
-    key.push(shadows.len() as u32);
-    for shadow in shadows {
+    key.push(staged.shadows.len() as u32);
+    for shadow in staged.shadows {
         key.push(shadow.kind as u32);
         key.extend(vec2_key(shadow.offset));
         key.push(shadow.blur.to_bits());
@@ -2548,7 +2585,7 @@ fn paint_key(
     // shape (a leading 0). A present field encodes its full resolved
     // reference, so two nodes with the same fill but different shapes — or a
     // shape vs. the parametric box — take distinct pool entries.
-    match &entry.shape {
+    match &staged.shape {
         None => key.push(0),
         Some(field) => {
             key.push(1);

@@ -3,10 +3,11 @@
 
 use dashpaint::{
     AtlasIndex, Blur, BlurKind, BlurRange, ClipBox, ClipIndex, ClipRegion, ClipTable, Color,
-    CornerRadii, Fill, FillSpec, GlyphQuad, GlyphRange, GlyphRun, GlyphRunTable, Gradient,
-    GradientKind, GradientStop, GroupComposite, ImageAsset, ImageFill, ImageFormat, ImageTable,
-    Mat23, PaintEntry, PaintIndex, PaintKind, PaintTable, PaintTag, Painter, RectEntry, ScaleMode,
-    Shadow, ShadowKind, ShadowRange, StopRange, Stroke, StrokeAlign, Vec2,
+    CornerRadii, EntryParts, Fill, FillSpec, GlyphQuad, GlyphRange, GlyphRun, GlyphRunTable,
+    Gradient, GradientKind, GradientStop, GroupComposite, ImageAsset, ImageFill, ImageFormat,
+    ImageTable, Mat23, PaintEntry, PaintIndex, PaintKind, PaintTable, PaintTag, Painter, RectEntry,
+    ScaleMode, Shadow, ShadowKind, ShadowRange, ShapeRange, StopRange, Stroke, StrokeAlign,
+    StrokeRange, Vec2, VectorField,
 };
 
 const RED: Color = Color {
@@ -36,14 +37,8 @@ fn paint_table_push_returns_sequential_indices_and_get_resolves_them() {
     // Compared through the fills the entries name rather than by rebuilding
     // an equal `PaintEntry`: a `PaintKind` is a row index, so an entry only
     // means anything against the table that interned it (story #578).
-    assert_eq!(
-        table.fill(table.resolve(red).fill.unwrap()),
-        Fill::Solid(RED)
-    );
-    assert_eq!(
-        table.fill(table.resolve(blue).fill.unwrap()),
-        Fill::Solid(HALF_BLUE)
-    );
+    assert_eq!(table.fill(table.resolve(red).fill), Fill::Solid(RED));
+    assert_eq!(table.fill(table.resolve(blue).fill), Fill::Solid(HALF_BLUE));
 }
 
 #[test]
@@ -60,11 +55,8 @@ fn paint_table_resolve_returns_the_entry() {
     let mut table = PaintTable::new();
     let red = table.push_solid(RED);
 
-    assert_eq!(
-        table.fill(table.resolve(red).fill.unwrap()),
-        Fill::Solid(RED)
-    );
-    assert_eq!(table.resolve(red).stroke, None);
+    assert_eq!(table.fill(table.resolve(red).fill), Fill::Solid(RED));
+    assert_eq!(table.resolve(red).stroke, StrokeRange::NONE);
 }
 
 #[test]
@@ -82,8 +74,8 @@ fn push_solid_is_fill_only() {
     let index = table.push_solid(RED);
     let entry = table.resolve(index);
 
-    assert_eq!(table.fill(entry.fill.unwrap()), Fill::Solid(RED));
-    assert_eq!(entry.stroke, None);
+    assert_eq!(table.fill(entry.fill), Fill::Solid(RED));
+    assert_eq!(entry.stroke, StrokeRange::NONE);
     assert_eq!(entry.corners, CornerRadii::default());
     assert_eq!(entry.shadows, ShadowRange::NONE);
     assert_eq!(entry.blurs, BlurRange::NONE);
@@ -94,7 +86,10 @@ fn a_paint_less_entry_pushes_and_resolves() {
     let mut table = PaintTable::new();
     let index = table.push(PaintEntry::default());
 
-    assert_eq!(table.resolve(index).fill, None);
+    // The paint-less entry: a tag rather than an absent value, so reading it
+    // resolves like any other fill (story #578).
+    assert_eq!(table.resolve(index).fill, PaintKind::NONE);
+    assert_eq!(table.fill(table.resolve(index).fill), Fill::None);
 }
 
 #[test]
@@ -121,23 +116,20 @@ fn a_full_entry_round_trips_through_the_table() {
         gradient,
         stops: stops.clone(),
     });
+    let stroke = Stroke {
+        width: 2.0,
+        align: StrokeAlign::Inside,
+        color: RED,
+    };
     let entry = PaintEntry {
-        fill: Some(fill),
-        stroke: Some(Stroke {
-            width: 2.0,
-            align: StrokeAlign::Inside,
-            color: RED,
-        }),
+        fill,
         corners: CornerRadii {
             top_left: 1.0,
             top_right: 2.0,
             bottom_right: 3.0,
             bottom_left: 4.0,
         },
-        shadows: ShadowRange::NONE,
-        shape: None,
-        extra_fills: Vec::new(),
-        blurs: BlurRange::NONE,
+        ..PaintEntry::default()
     };
     let shadow = Shadow {
         kind: ShadowKind::Drop,
@@ -146,13 +138,20 @@ fn a_full_entry_round_trips_through_the_table() {
         spread: 1.0,
         color: HALF_BLUE,
     };
-    let index = table.push_with_effects(entry.clone(), &[shadow], &[]);
+    let index = table.push_with(
+        entry,
+        EntryParts {
+            stroke: Some(stroke),
+            shadows: &[shadow],
+            ..EntryParts::default()
+        },
+    );
 
     // The entry round-trips with the range the table assigned, and the
     // shadow round-trips through the flat array that range names.
-    let stored = table.resolve(index).clone();
+    let stored = *table.resolve(index);
     assert_eq!(stored.fill, entry.fill);
-    assert_eq!(stored.stroke, entry.stroke);
+    assert_eq!(table.stroke(&stored), Some(&stroke));
     assert_eq!(stored.corners, entry.corners);
     assert_eq!(
         stored.shadows,
@@ -164,7 +163,7 @@ fn a_full_entry_round_trips_through_the_table() {
     assert_eq!(table.shadows(&stored), &[shadow]);
     // The fill round-trips the same way: through the table that interned
     // it, with the stops resolved from the range it was given.
-    match table.fill(stored.fill.unwrap()) {
+    match table.fill(stored.fill) {
         Fill::Gradient(view) => {
             assert_eq!(view.gradient.kind, GradientKind::Radial);
             assert_eq!(view.gradient.handle_secondary, Vec2 { x: 0.5, y: 1.0 });
@@ -186,12 +185,12 @@ fn an_image_fill_round_trips_through_the_table() {
     let mut table = PaintTable::new();
     let fill = table.intern_fill(&FillSpec::Image(image));
     let index = table.push(PaintEntry {
-        fill: Some(fill),
+        fill,
         ..PaintEntry::default()
     });
 
     assert_eq!(table.fill(fill), Fill::Image(&image));
-    assert_eq!(table.resolve(index).fill, Some(fill));
+    assert_eq!(table.resolve(index).fill, fill);
 }
 
 #[test]
@@ -368,7 +367,7 @@ impl Painter for RecordingPainter {
         _dirty: Option<&[u32]>,
     ) {
         for rect in rects {
-            match paints.resolve(rect.paint).fill.map(|k| paints.fill(k)) {
+            match Some(paints.fill(paints.resolve(rect.paint).fill)) {
                 Some(Fill::Solid(color)) => self.painted.push((*rect, color)),
                 other => panic!("fixture only paints solids, got {other:?}"),
             }
@@ -640,12 +639,12 @@ fn an_entry_naming_a_fill_from_another_table_is_refused() {
     let mut interned_in = PaintTable::new();
     interned_in.push_solid(RED);
     interned_in.push_solid(HALF_BLUE);
-    let stray = interned_in.resolve(PaintIndex(1)).fill.unwrap();
+    let stray = interned_in.resolve(PaintIndex(1)).fill;
 
     let mut other = PaintTable::new();
     other.push_solid(RED);
     other.push(PaintEntry {
-        fill: Some(stray),
+        fill: stray,
         ..PaintEntry::default()
     });
 }
@@ -674,13 +673,165 @@ fn a_fill_view_round_trips_through_its_spec() {
     // A row ahead of it, so a re-homed fill that ignored the spec and kept
     // its old index would land on the wrong row.
     rehomed.push_solid(RED);
-    let moved = rehomed.intern_fill(&table.fill(kind).to_spec());
+    let moved = rehomed.intern_fill(&table.fill(kind).to_spec().expect("a gradient fill"));
 
     assert_eq!(rehomed.fill(moved), table.fill(kind));
     match rehomed.fill(moved) {
         Fill::Gradient(view) => assert_eq!(view.stops, stops.as_slice()),
         other => panic!("expected a gradient fill, got {other:?}"),
     }
+}
+
+/// Two entries with *different* part counts, so each reads its own range
+/// rather than the head of the array. A fixture where both carried the same
+/// counts would pass against an implementation that ignored every offset.
+#[test]
+fn each_entry_reads_its_own_parts_from_the_flat_arrays() {
+    let mut table = PaintTable::new();
+    let red = table.intern_fill(&FillSpec::Solid { color: RED });
+    let blue = table.intern_fill(&FillSpec::Solid { color: HALF_BLUE });
+    let stroke = Stroke {
+        width: 3.0,
+        align: StrokeAlign::Outside,
+        color: RED,
+    };
+    // A second, *different* stroke, so the second entry's stroke sits at a
+    // non-zero offset. With only one stroke in the array an implementation
+    // that ignored the offset entirely would still read the right one —
+    // measured: that mutation survived the first version of this test.
+    let other_stroke = Stroke {
+        width: 1.0,
+        align: StrokeAlign::Inside,
+        color: HALF_BLUE,
+    };
+    // Two distinct coverage masks, for the same reason.
+    let field = VectorField {
+        image: 1,
+        atlas_rect: [0, 0, 8, 8],
+        plane_bounds: [0.0, 0.0, 1.0, 1.0],
+        distance_range: 2.0,
+    };
+    let other_field = VectorField {
+        image: 2,
+        atlas_rect: [8, 0, 16, 8],
+        plane_bounds: [0.0, 0.0, 0.5, 0.5],
+        distance_range: 4.0,
+    };
+
+    let first = table.push_with(
+        PaintEntry {
+            fill: red,
+            ..PaintEntry::default()
+        },
+        EntryParts {
+            extra_fills: &[blue],
+            stroke: Some(stroke),
+            shape: Some(field),
+            ..EntryParts::default()
+        },
+    );
+    let second = table.push_with(
+        PaintEntry {
+            fill: blue,
+            ..PaintEntry::default()
+        },
+        EntryParts {
+            // Two layers where the first entry had one, and its own stroke:
+            // every range on this entry starts at a different offset from
+            // its neighbour's.
+            extra_fills: &[red, blue],
+            stroke: Some(other_stroke),
+            shape: Some(other_field),
+            ..EntryParts::default()
+        },
+    );
+
+    let first = *table.resolve(first);
+    let second = *table.resolve(second);
+    assert_eq!(table.extra_fills(&first), &[blue]);
+    assert_eq!(table.extra_fills(&second), &[red, blue]);
+    assert_eq!(table.stroke(&first), Some(&stroke));
+    assert_eq!(table.stroke(&second), Some(&other_stroke));
+    assert_eq!(second.extra_fills.offset, 1);
+    assert_eq!(second.stroke.offset, 1);
+    assert_eq!(table.shape(&first), Some(&field));
+    assert_eq!(table.shape(&second), Some(&other_field));
+    assert_eq!(second.shape.offset, 1);
+    assert_eq!(table.all_extra_fills().len(), 3);
+    assert_eq!(table.all_strokes().len(), 2);
+    assert_eq!(table.all_shapes().len(), 2);
+}
+
+/// The paint-less entry is a tag, not an absent value, so a painter's match
+/// over the fill vocabulary stays exhaustive and cannot forget it.
+#[test]
+fn the_paint_less_entry_resolves_like_any_other_fill() {
+    let mut table = PaintTable::new();
+    let index = table.push(PaintEntry::default());
+    let entry = *table.resolve(index);
+
+    assert_eq!(entry.fill.tag, PaintTag::None);
+    assert_eq!(table.fill(entry.fill), Fill::None);
+    assert_eq!(table.fill(entry.fill).to_spec(), None);
+    // And it names no row, so it cannot be caught by the cross-table check
+    // the way a real fill can — there is nothing to be in range of.
+    assert_eq!(table.all_solids().len(), 0);
+}
+
+#[test]
+#[should_panic(expected = "the vocabulary is single-stroke")]
+fn an_entry_naming_more_than_one_stroke_is_refused() {
+    let mut table = PaintTable::new();
+    let index = table.push_with(
+        PaintEntry::default(),
+        EntryParts {
+            stroke: Some(Stroke {
+                width: 1.0,
+                align: StrokeAlign::Center,
+                color: RED,
+            }),
+            ..EntryParts::default()
+        },
+    );
+    // Reaching a count above one takes a hand-built entry: `push_with`
+    // assigns 0 or 1 from an `Option`. This is the arity the *read* refuses,
+    // which is what a hand-built boundary-B input would hit.
+    let mut entry = *table.resolve(index);
+    entry.stroke.count = 2;
+    table.stroke(&entry);
+}
+
+#[test]
+#[should_panic(expected = "a layer with nothing to paint is a corrupt list")]
+fn a_stacked_layer_naming_no_fill_is_refused() {
+    let mut table = PaintTable::new();
+    table.push_solid(RED);
+    // A stacked layer exists to add ink. `PaintKind::NONE` there is a
+    // corrupt list, not an empty one — and it is the entry's own `fill`, at
+    // position 0, that is allowed to name nothing.
+    table.push_with(
+        PaintEntry::default(),
+        EntryParts {
+            extra_fills: &[PaintKind::NONE],
+            ..EntryParts::default()
+        },
+    );
+}
+
+#[test]
+#[should_panic(expected = "push_with assigns an entry's ranges")]
+fn an_entry_arriving_with_a_range_already_assigned_is_refused() {
+    let mut table = PaintTable::new();
+    table.push_with(
+        PaintEntry {
+            shape: ShapeRange {
+                offset: 7,
+                count: 1,
+            },
+            ..PaintEntry::default()
+        },
+        EntryParts::default(),
+    );
 }
 
 /// The handles every gradient fixture here shares; only kind and stops
@@ -821,14 +972,16 @@ fn group_opacity_crosses_as_per_rect_alpha_and_a_group_slice() {
 /// helper hands back both.
 fn blurred_table(kind: BlurKind) -> (PaintTable, PaintIndex) {
     let mut paints = PaintTable::new();
-    let fill = Some(paints.intern_fill(&FillSpec::Solid { color: HALF_BLUE }));
-    let index = paints.push_with_effects(
+    let fill = paints.intern_fill(&FillSpec::Solid { color: HALF_BLUE });
+    let index = paints.push_with(
         PaintEntry {
             fill,
             ..PaintEntry::default()
         },
-        &[],
-        &[Blur { kind, radius: 16.0 }],
+        EntryParts {
+            blurs: &[Blur { kind, radius: 16.0 }],
+            ..EntryParts::default()
+        },
     );
     (paints, index)
 }
@@ -886,19 +1039,21 @@ impl Painter for BarrierRecordingPainter {
 fn a_backdrop_sampling_rect_crosses_boundary_b_as_an_ordering_barrier() {
     let mut paints = PaintTable::new();
     let plain = paints.push_solid(RED);
-    // Through `push_with_effects`: the blur that makes this entry a barrier
+    // Through `push_with`: the blur that makes this entry a barrier
     // lives in the table's flat array, not on the entry (story #578).
-    let frosted_fill = Some(paints.intern_fill(&FillSpec::Solid { color: HALF_BLUE }));
-    let frosted = paints.push_with_effects(
+    let frosted_fill = paints.intern_fill(&FillSpec::Solid { color: HALF_BLUE });
+    let frosted = paints.push_with(
         PaintEntry {
             fill: frosted_fill,
             ..PaintEntry::default()
         },
-        &[],
-        &[Blur {
-            kind: BlurKind::Backdrop,
-            radius: 16.0,
-        }],
+        EntryParts {
+            blurs: &[Blur {
+                kind: BlurKind::Backdrop,
+                radius: 16.0,
+            }],
+            ..EntryParts::default()
+        },
     );
     let rects: Vec<RectEntry> = [plain, frosted, plain]
         .into_iter()

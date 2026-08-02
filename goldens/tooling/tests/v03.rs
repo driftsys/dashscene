@@ -5,9 +5,9 @@
 //! rendering.
 
 use dashpaint::{
-    ClipIndex, ClipTable, Color, CornerRadii, FillSpec, GlyphRunTable, Gradient, GradientKind,
-    GradientStop, ImageFill, ImageTable, Mat23, PaintEntry, PaintKind, PaintTable, Painter,
-    RectEntry, ScaleMode, StopRange, Stroke, StrokeAlign, Vec2,
+    ClipIndex, ClipTable, Color, CornerRadii, EntryParts, FillSpec, GlyphRunTable, Gradient,
+    GradientKind, GradientStop, ImageFill, ImageTable, Mat23, PaintEntry, PaintKind, PaintTable,
+    Painter, RectEntry, ScaleMode, StopRange, Stroke, StrokeAlign, Vec2,
 };
 use dashscene_skia::SkiaPainter;
 
@@ -58,48 +58,56 @@ fn the_v03_paint_vocabulary_matches_its_golden() {
     let background = paints.push_solid(rgba(0.06, 0.07, 0.1));
     let linear_fill = gradient(&mut paints, GradientKind::Linear, [red, blue]);
     let linear = paints.push(PaintEntry {
-        fill: Some(linear_fill),
+        fill: linear_fill,
         ..PaintEntry::default()
     });
     let radial_fill = gradient(&mut paints, GradientKind::Radial, [gold, teal]);
     let radial = paints.push(PaintEntry {
-        fill: Some(radial_fill),
+        fill: radial_fill,
         ..PaintEntry::default()
     });
     let angular_fill = gradient(&mut paints, GradientKind::Angular, [blue, gold]);
     let angular = paints.push(PaintEntry {
-        fill: Some(angular_fill),
+        fill: angular_fill,
         ..PaintEntry::default()
     });
     let diamond_fill = gradient(&mut paints, GradientKind::Diamond, [teal, red]);
     let diamond = paints.push(PaintEntry {
-        fill: Some(diamond_fill),
+        fill: diamond_fill,
         ..PaintEntry::default()
     });
     let rounded_stroked_fill = paints.intern_fill(&FillSpec::Solid { color: gold });
-    let rounded_stroked = paints.push(PaintEntry {
-        fill: Some(rounded_stroked_fill),
-        stroke: Some(Stroke {
-            width: 3.0,
-            align: StrokeAlign::Inside,
-            color: red,
-        }),
-        corners: CornerRadii {
-            top_left: 6.0,
-            top_right: 6.0,
-            bottom_right: 6.0,
-            bottom_left: 6.0,
+    let rounded_stroked = paints.push_with(
+        PaintEntry {
+            fill: rounded_stroked_fill,
+            corners: CornerRadii {
+                top_left: 6.0,
+                top_right: 6.0,
+                bottom_right: 6.0,
+                bottom_left: 6.0,
+            },
+            ..PaintEntry::default()
         },
-        ..PaintEntry::default()
-    });
-    let outside_stroke_only = paints.push(PaintEntry {
-        stroke: Some(Stroke {
-            width: 2.0,
-            align: StrokeAlign::Outside,
-            color: teal,
-        }),
-        ..PaintEntry::default()
-    });
+        EntryParts {
+            stroke: Some(Stroke {
+                width: 3.0,
+                align: StrokeAlign::Inside,
+                color: red,
+            }),
+            ..EntryParts::default()
+        },
+    );
+    let outside_stroke_only = paints.push_with(
+        PaintEntry::default(),
+        EntryParts {
+            stroke: Some(Stroke {
+                width: 2.0,
+                align: StrokeAlign::Outside,
+                color: teal,
+            }),
+            ..EntryParts::default()
+        },
+    );
     let rounded_image_fill = paints.intern_fill(&FillSpec::Image(ImageFill {
         image: checker,
         scale_mode: ScaleMode::Fill,
@@ -107,7 +115,7 @@ fn the_v03_paint_vocabulary_matches_its_golden() {
         tile_scale: 1.0,
     }));
     let rounded_image = paints.push(PaintEntry {
-        fill: Some(rounded_image_fill),
+        fill: rounded_image_fill,
         corners: CornerRadii {
             top_left: 10.0,
             top_right: 10.0,
@@ -123,7 +131,7 @@ fn the_v03_paint_vocabulary_matches_its_golden() {
         tile_scale: 2.0,
     }));
     let tiled_image = paints.push(PaintEntry {
-        fill: Some(tiled_image_fill),
+        fill: tiled_image_fill,
         ..PaintEntry::default()
     });
 

@@ -734,7 +734,7 @@ fn image_indices_are_remapped_when_loading_into_a_non_empty_arena() {
                 .paints()
                 .get(dashpaint::PaintIndex(i as u32))
                 .expect("in range")
-                .fill?;
+                .fill;
             match scene.paints().fill(kind) {
                 dashpaint::Fill::Image(image_fill) => Some(image_fill.image),
                 _ => None,

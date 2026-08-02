@@ -47,11 +47,18 @@
 //! intent, with nothing checking it, exactly the state `ClipBox` was in when
 //! this gate found it.
 //!
-//! `PaintEntry` is not here yet: `extra_fills` is still a `Vec<PaintKind>`,
-//! and `shape` and `fill` are still `Option`s. That is the last flattening —
-//! the stacked layers become a range into a flat array like the effects
-//! before them, and each `Option` becomes a value with a sentinel, since
-//! `Option<T>` has no C representation for a `T` without a niche.
+//! `PaintEntry` is here now, and it is the last of the flattenings. Its
+//! stacked layers became a `FillRange` like the effects before them, and its
+//! three `Option`s became a fill tag with a `None` variant and two ranges of
+//! arity 0-or-1 — a range rather than a sentinel, so an absent member needs
+//! no skip rule at the read site
+//! (`docs/decisions/boundary-b-unification.md`). Sixty-four bytes, seven
+//! members, every one of them fixed-width.
+//!
+//! `ImageAsset` is what remains: it holds the encoded bytes as a `Vec<u8>`,
+//! which is a different problem from the ranges above — the bytes are the
+//! payload, not a reference into a table, so flattening it means deciding
+//! where a decoded-ready blob lives.
 //!
 //! # What this is not
 //!
@@ -64,9 +71,9 @@
 #![deny(improper_ctypes_definitions)]
 
 use dashpaint::{
-    AtlasGlyph, Blur, BlurRange, ClipBox, ClipRegion, Color, GlyphQuad, GlyphRange, GlyphRun,
-    Gradient, GradientStop, ImageFill, Mat23, PaintKind, RectEntry, Shadow, ShadowRange, StopRange,
-    Stroke, Vec2, VectorField,
+    AtlasGlyph, Blur, BlurRange, ClipBox, ClipRegion, Color, FillRange, GlyphQuad, GlyphRange,
+    GlyphRun, Gradient, GradientStop, ImageFill, Mat23, PaintEntry, PaintKind, RectEntry, Shadow,
+    ShadowRange, ShapeRange, StopRange, Stroke, StrokeRange, Vec2, VectorField,
 };
 
 /// How this build lays out one boundary-B type.
@@ -140,6 +147,10 @@ abi_surface! {
     Gradient => dashscene_abi_gradient_layout, dashscene_abi_gradient_round_trip;
     ImageFill => dashscene_abi_image_fill_layout, dashscene_abi_image_fill_round_trip;
     PaintKind => dashscene_abi_paint_kind_layout, dashscene_abi_paint_kind_round_trip;
+    FillRange => dashscene_abi_fill_range_layout, dashscene_abi_fill_range_round_trip;
+    StrokeRange => dashscene_abi_stroke_range_layout, dashscene_abi_stroke_range_round_trip;
+    ShapeRange => dashscene_abi_shape_range_layout, dashscene_abi_shape_range_round_trip;
+    PaintEntry => dashscene_abi_paint_entry_layout, dashscene_abi_paint_entry_round_trip;
 }
 
 #[cfg(test)]
@@ -191,6 +202,10 @@ mod tests {
             ("Gradient", dashscene_abi_gradient_layout(), 36, 4),
             ("ImageFill", dashscene_abi_image_fill_layout(), 36, 4),
             ("PaintKind", dashscene_abi_paint_kind_layout(), 8, 4),
+            ("FillRange", dashscene_abi_fill_range_layout(), 8, 4),
+            ("StrokeRange", dashscene_abi_stroke_range_layout(), 8, 4),
+            ("ShapeRange", dashscene_abi_shape_range_layout(), 8, 4),
+            ("PaintEntry", dashscene_abi_paint_entry_layout(), 64, 4),
         ];
         for (name, layout, size, align) in measured {
             assert_eq!(

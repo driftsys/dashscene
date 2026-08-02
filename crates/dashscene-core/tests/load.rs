@@ -444,7 +444,7 @@ fn a_loaded_document_replays_its_stacked_fills() {
     // story #578, so the assertion resolves them rather than rebuilding an
     // equal fill value.
     assert_eq!(
-        entry.fill.map(|kind| paints.fill(kind)),
+        Some(paints.fill(entry.fill)),
         Some(dashpaint::Fill::Solid(dashpaint::Color {
             r: 1.0,
             g: 0.0,
@@ -453,8 +453,8 @@ fn a_loaded_document_replays_its_stacked_fills() {
         })),
         "the bottom fill replays exactly as a single fill always has"
     );
-    let stacked: Vec<_> = entry
-        .extra_fills
+    let stacked: Vec<_> = paints
+        .extra_fills(entry)
         .iter()
         .map(|&kind| paints.fill(kind))
         .collect();

@@ -600,8 +600,13 @@ impl ClipTable {
 /// Burst handles badly — and the repo already mandates integer indices for
 /// cross-table references (`docs/decisions/dsb-sectioned-container.md`).
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum PaintTag {
+    /// The paint-less node: a layout-only container draws nothing but still
+    /// occupies its rect-table slot. First variant, so a zeroed
+    /// [`PaintKind`] is the fill-less one and `Default` agrees.
+    #[default]
+    None,
     Solid,
     Gradient,
     Image,
@@ -617,12 +622,23 @@ pub enum PaintTag {
 /// directly: they hand a [`FillSpec`] to the table, which interns the
 /// parameters and returns the index.
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct PaintKind {
     pub tag: PaintTag,
     /// Row in the table named by `tag` — [`PaintTable::all_solids`],
     /// [`PaintTable::all_gradients`] or [`PaintTable::all_images`].
+    /// Meaningless, and zero, when `tag` is [`PaintTag::None`].
     pub index: u32,
+}
+
+impl PaintKind {
+    /// The fill a paint-less node carries (story #578). Replaced
+    /// `PaintEntry`'s `Option<PaintKind>`, which has no C representation:
+    /// `Option<T>` needs a niche and this struct has none.
+    pub const NONE: Self = Self {
+        tag: PaintTag::None,
+        index: 0,
+    };
 }
 
 /// An image fill's parameters, as one table row.
@@ -676,6 +692,11 @@ pub enum FillSpec {
 /// for that repetition to be where a wrong table gets indexed.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Fill<'a> {
+    /// The paint-less node. An arm rather than an `Option` around the enum,
+    /// so a painter's `match` is exhaustive over it and cannot forget the
+    /// case — the same reason `docs/decisions/boundary-b-unification.md`
+    /// gives for every rect resolving.
+    None,
     Solid(Color),
     Gradient(GradientView<'a>),
     Image(&'a ImageFill),
@@ -689,17 +710,18 @@ impl Fill<'_> {
     /// fresh [`PaintTable`] from the entries still referenced, and a fill
     /// index names a row in the table that interned it, so a re-homed entry
     /// has to re-intern rather than carry its index over.
-    pub fn to_spec(&self) -> FillSpec {
+    pub fn to_spec(&self) -> Option<FillSpec> {
         match self {
-            Fill::Solid(color) => FillSpec::Solid { color: *color },
-            Fill::Gradient(view) => FillSpec::Gradient {
+            Fill::None => None,
+            Fill::Solid(color) => Some(FillSpec::Solid { color: *color }),
+            Fill::Gradient(view) => Some(FillSpec::Gradient {
                 gradient: Gradient {
                     stops: StopRange::NONE,
                     ..*view.gradient
                 },
                 stops: view.stops.to_vec(),
-            },
-            Fill::Image(image) => FillSpec::Image(**image),
+            }),
+            Fill::Image(image) => Some(FillSpec::Image(**image)),
         }
     }
 }
@@ -865,7 +887,7 @@ pub struct ShadowRange {
 }
 
 impl ShadowRange {
-    /// The range an entry carries before [`PaintTable::push_with_effects`]
+    /// The range an entry carries before [`PaintTable::push_with`]
     /// assigns it one, and the range of an entry with no shadows. Both mean
     /// "names nothing", which is why one value serves both.
     pub const NONE: Self = Self {
@@ -886,8 +908,81 @@ pub struct BlurRange {
 }
 
 impl BlurRange {
-    /// The range an entry carries before [`PaintTable::push_with_effects`]
+    /// The range an entry carries before [`PaintTable::push_with`]
     /// assigns it one, and the range of an entry with no blurs.
+    pub const NONE: Self = Self {
+        offset: 0,
+        count: 0,
+    };
+}
+
+/// Where one entry's stacked fill layers sit in the [`PaintTable`]'s flat
+/// fill array. Sibling of [`ShadowRange`]; see it for why these are
+/// separate types.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct FillRange {
+    /// First layer, as an index into [`PaintTable::all_extra_fills`].
+    pub offset: u32,
+    /// How many layers, bottom to top. Zero = a single-fill or fill-less
+    /// entry.
+    pub count: u32,
+}
+
+impl FillRange {
+    /// The range an entry carries before [`PaintTable::push_with`] assigns
+    /// it one, and the range of an entry with no stacked layers.
+    pub const NONE: Self = Self {
+        offset: 0,
+        count: 0,
+    };
+}
+
+/// Where one entry's stroke sits in the [`PaintTable`]'s flat stroke array.
+///
+/// A range rather than an index-plus-sentinel for a member that is at most
+/// one, because an empty range needs no skip rule at the read site — the
+/// property `docs/decisions/boundary-b-unification.md` chose over a
+/// sentinel painters must each remember to test. `count` is 0 or 1;
+/// anything higher is refused upstream (P4), the same way
+/// [`MAX_GRADIENT_STOPS`] bounds a gradient's stops rather than the type
+/// doing it.
+///
+/// It also leaves the stroke half of debt #146 expressible without a second
+/// migration: a node that one day stacks strokes needs a wider arity bound
+/// here, not a different shape.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct StrokeRange {
+    /// The stroke, as an index into [`PaintTable::all_strokes`].
+    pub offset: u32,
+    /// 1 for a stroked entry, 0 for an unstroked one.
+    pub count: u32,
+}
+
+impl StrokeRange {
+    /// The range an unstroked entry carries, and what an entry arrives with
+    /// before [`PaintTable::push_with`] assigns one.
+    pub const NONE: Self = Self {
+        offset: 0,
+        count: 0,
+    };
+}
+
+/// Where one entry's baked-vector coverage mask sits in the
+/// [`PaintTable`]'s flat shape array. Sibling of [`StrokeRange`], with the
+/// same 0-or-1 arity and the same reason for being a range.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct ShapeRange {
+    /// The field, as an index into [`PaintTable::all_shapes`].
+    pub offset: u32,
+    /// 1 for a masked entry, 0 for the implicit parametric shape.
+    pub count: u32,
+}
+
+impl ShapeRange {
+    /// The range an unmasked entry carries.
     pub const NONE: Self = Self {
         offset: 0,
         count: 0,
@@ -898,32 +993,51 @@ impl BlurRange {
 /// enum plus fill/stroke params): what a rect is filled with, how its
 /// outline is stroked, how its corners round, and the shadows it casts.
 ///
-/// `fill: None` is the paint-less node — a layout-only container draws
-/// nothing but still occupies its rect-table slot (index = DFS node
-/// index).
+/// [`PaintKind::NONE`] as the fill is the paint-less node — a layout-only
+/// container draws nothing but still occupies its rect-table slot
+/// (index = DFS node index).
 ///
 /// Whether a node clips its children (`Paint.clip`, docs/design/architecture.md)
 /// is *intent*, and does not appear here: `dashscene-core` resolves it
 /// at commit into the [`ClipTable`] each [`RectEntry::clip`] references
 /// (issue #97). The intent itself lives in the document (`dashbuf`'s
 /// `Paint.clip`) and in the arena (`Prop::Clip`).
-#[derive(Debug, Clone, Default, PartialEq)]
+///
+/// # Every member is fixed-width, and that is the point
+///
+/// Story #578 replaced this type's `Option`s and its one `Vec` with row
+/// references into the table's flat arrays. Sixty-four bytes, seven
+/// members, no pointer to chase and no niche to depend on — which is what
+/// lets it cross an `extern "C"` seam and what an instance-buffer upload
+/// wants. The producer-side shape, with its lists still owned, is
+/// [`EntryParts`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct PaintEntry {
-    pub fill: Option<PaintKind>,
-    pub stroke: Option<Stroke>,
+    /// What the rect is filled with, or [`PaintKind::NONE`]. Read it with
+    /// [`PaintTable::fill`].
+    pub fill: PaintKind,
+    /// Fills stacked over `fill`, bottom to top (story C1, debt #146):
+    /// `fill` is the bottom (first visible) layer, and this names every
+    /// layer above it, in the order a node's fills paint. A layer's own
+    /// opacity is already folded into its color or stops the same way
+    /// `fill`'s is. [`FillRange::NONE`] for a single-fill or fill-less
+    /// entry; read it with [`PaintTable::extra_fills`].
+    pub extra_fills: FillRange,
+    /// The node's outline stroke, or [`StrokeRange::NONE`]. Read it with
+    /// [`PaintTable::stroke`].
+    pub stroke: StrokeRange,
     pub corners: CornerRadii,
     /// The node's drop and inner shadows, in paint order (v0.8, story
-    /// #45). Empty (the default) for a node with no shadows. Shadows are
-    /// an effect, not a fill or stroke, so they carry no arity limit — a
-    /// node stacks as many as it authors, the same posture `extra_fills`
-    /// (below) brought to the fill side (story C1, debt #146). `stroke`
-    /// stays single-valued (the debt's stroke half is untouched).
+    /// #45). Shadows are an effect, not a fill or stroke, so they carry no
+    /// arity limit — a node stacks as many as it authors, the same posture
+    /// `extra_fills` brought to the fill side (story C1, debt #146).
     ///
     /// A range into the table's flat shadow array since story #578; read it
     /// with [`PaintTable::shadows`]. [`ShadowRange::NONE`] for a node with
     /// no shadows, which is the default.
     pub shadows: ShadowRange,
-    /// The node's blurs (v0.11, story #393). Empty (the default) for a node
+    /// The node's blurs (v0.11, story #393). [`BlurRange::NONE`] for a node
     /// with no blur, so every pre-v0.11 entry is unchanged. Carried beside
     /// `shadows` because a blur is an effect on the same node and dedups
     /// with the rest of the entry the same way.
@@ -932,24 +1046,31 @@ pub struct PaintEntry {
     /// samples the already-composited backdrop; there is deliberately no
     /// separate flag saying so, because two records of one fact can
     /// disagree.
-    ///
-    /// A range into the table's flat blur array since story #578; read it
-    /// with [`PaintTable::blurs`]. [`BlurRange::NONE`] for a node with no
-    /// blur, which is the default.
     pub blurs: BlurRange,
-    /// The baked-vector coverage mask (story B1). `Some` masks `fill` by the
-    /// referenced field's coverage — a Figma VECTOR shape. `None` (the
-    /// default) is the implicit parametric shape, so every pre-B1 entry is
-    /// unchanged. Skipped for a fill-less entry (no ink to mask).
+    /// The baked-vector coverage mask (story B1). A named field masks
+    /// `fill` by that field's coverage — a Figma VECTOR shape.
+    /// [`ShapeRange::NONE`] is the implicit parametric shape, so every
+    /// pre-B1 entry is unchanged. Skipped for a fill-less entry (no ink to
+    /// mask). Read it with [`PaintTable::shape`].
+    pub shape: ShapeRange,
+}
+
+/// Everything an entry owns that lives in the table's flat arrays, as a
+/// producer holds it: owned, and with no index into a table it has not
+/// entered.
+///
+/// The producer-side twin of [`PaintEntry`], the same split [`FillSpec`]
+/// has from [`PaintKind`]. [`PaintTable::push_with`] copies these in and
+/// assigns every range.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct EntryParts<'a> {
+    /// At most [`MAX_GRADIENT_STOPS`]-independent: any number of layers,
+    /// bottom to top.
+    pub extra_fills: &'a [PaintKind],
+    pub stroke: Option<Stroke>,
     pub shape: Option<VectorField>,
-    /// Fills stacked over `fill`, bottom to top (story C1, debt #146): `fill`
-    /// is the bottom (first visible) layer, and this carries every fill
-    /// above it, in the same order a node's fills paint. Empty (the
-    /// default) for a single-fill or fill-less entry, so a pre-C1 entry is
-    /// unchanged (a single-fill node renders byte-identically). A layer's
-    /// own opacity is already folded into its color/stops the same way
-    /// `fill`'s is — nothing else is needed to composite it.
-    pub extra_fills: Vec<PaintKind>,
+    pub shadows: &'a [Shadow],
+    pub blurs: &'a [Blur],
 }
 
 /// The paint table (docs/design/dashbuf.md): dense, indexed by `RectEntry.paint`.
@@ -961,6 +1082,15 @@ pub struct PaintTable {
     shadows: Vec<Shadow>,
     /// Every entry's blurs, likewise, named by a [`BlurRange`].
     blurs: Vec<Blur>,
+    /// Every entry's stacked fill layers, flat; a [`FillRange`] indexes
+    /// into this. Not the same array as the per-kind tables below: this
+    /// holds *references* in paint order, those hold the parameters.
+    extra_fills: Vec<PaintKind>,
+    /// Every entry's stroke, flat; a [`StrokeRange`] indexes into this.
+    strokes: Vec<Stroke>,
+    /// Every entry's baked-vector coverage mask; a [`ShapeRange`] indexes
+    /// into this.
+    shapes: Vec<VectorField>,
     /// The per-kind fill tables a [`PaintKind`] indexes (story #578), one
     /// per [`PaintTag`]. Deduplicated on the way in by
     /// [`intern_fill`](Self::intern_fill), so a scene's distinct fills are
@@ -982,7 +1112,7 @@ impl PaintTable {
     ///
     /// Deduplicated: an identical fill returns the index it already has.
     /// This is where fills differ from shadows and blurs, which
-    /// [`push_with_effects`](Self::push_with_effects) copies per entry
+    /// [`push_with`](Self::push_with) copies per entry
     /// without dedup. A shadow list belongs to one entry and has no
     /// identity beyond it; a fill is a shared value, and the retained
     /// interner in `dashscene-core` re-stages the same fills on every
@@ -994,7 +1124,7 @@ impl PaintTable {
     ///
     /// Panics if a gradient arrives with a [`StopRange`] already assigned —
     /// a range that would be silently replaced, refused by name for the
-    /// reason [`push_with_effects`](Self::push_with_effects) gives.
+    /// reason [`push_with`](Self::push_with) gives.
     ///
     /// It deliberately does **not** check the stop count against
     /// [`MAX_GRADIENT_STOPS`]. That is a vocabulary rule, and P4 puts
@@ -1083,6 +1213,23 @@ impl PaintTable {
             && interned_stops == candidate_stops
     }
 
+    /// One range's `(offset, count)`, with an empty range canonicalized to
+    /// `(0, 0)`.
+    ///
+    /// An empty range names nothing, so where it would have started carries
+    /// no information — but it is still *observable*, and two entries that
+    /// both draw nothing would compare unequal for differing in it. That
+    /// breaks entry equality, and with it every comparison against
+    /// [`PaintEntry::default`], for a difference that means nothing. Every
+    /// `NONE` const in this crate is `(0, 0)`, and this is what keeps an
+    /// assigned empty range equal to one.
+    fn span(array_len: usize, count: usize) -> (u32, u32) {
+        if count == 0 {
+            return (0, 0);
+        }
+        (Self::fill_index(array_len), Self::fill_index(count))
+    }
+
     /// A row index, offset or count as the flattened types carry them.
     ///
     /// `u32` rather than `usize` because these cross boundary B, where a
@@ -1101,6 +1248,7 @@ impl PaintTable {
     /// interned into one table and read from another.
     pub fn fill(&self, kind: PaintKind) -> Fill<'_> {
         match kind.tag {
+            PaintTag::None => Fill::None,
             PaintTag::Solid => {
                 Fill::Solid(*self.solids.get(kind.index as usize).unwrap_or_else(|| {
                     panic!(
@@ -1156,6 +1304,94 @@ impl PaintTable {
         })
     }
 
+    /// The fill layers stacked over `entry`'s own fill, bottom to top.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the range runs past the flat array, for the reason
+    /// [`shadows`](Self::shadows) gives.
+    pub fn extra_fills(&self, entry: &PaintEntry) -> &[PaintKind] {
+        let start = entry.extra_fills.offset as usize;
+        let end = start + entry.extra_fills.count as usize;
+        self.extra_fills.get(start..end).unwrap_or_else(|| {
+            panic!(
+                "fill range {start}..{end} runs past the table's {} stacked fills: an entry and \
+                 the table it is read against must be the same one",
+                self.extra_fills.len()
+            )
+        })
+    }
+
+    /// The stroke `entry` carries, or `None` for an unstroked entry.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the range runs past the flat array, or names more than one
+    /// stroke — an arity the vocabulary does not have (debt #146's stroke
+    /// half is untouched), and one no painter is written for.
+    pub fn stroke(&self, entry: &PaintEntry) -> Option<&Stroke> {
+        assert!(
+            entry.stroke.count <= 1,
+            "entry names {} strokes; the vocabulary is single-stroke",
+            entry.stroke.count
+        );
+        let start = entry.stroke.offset as usize;
+        let end = start + entry.stroke.count as usize;
+        self.strokes
+            .get(start..end)
+            .unwrap_or_else(|| {
+                panic!(
+                    "stroke range {start}..{end} runs past the table's {} strokes: an entry and \
+                     the table it is read against must be the same one",
+                    self.strokes.len()
+                )
+            })
+            .first()
+    }
+
+    /// The baked-vector coverage mask `entry` is masked by, or `None` for
+    /// the implicit parametric shape.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the range runs past the flat array, or names more than one
+    /// field — a node has at most one coverage mask.
+    pub fn shape(&self, entry: &PaintEntry) -> Option<&VectorField> {
+        assert!(
+            entry.shape.count <= 1,
+            "entry names {} coverage masks; a node has at most one",
+            entry.shape.count
+        );
+        let start = entry.shape.offset as usize;
+        let end = start + entry.shape.count as usize;
+        self.shapes
+            .get(start..end)
+            .unwrap_or_else(|| {
+                panic!(
+                    "shape range {start}..{end} runs past the table's {} shapes: an entry and \
+                     the table it is read against must be the same one",
+                    self.shapes.len()
+                )
+            })
+            .first()
+    }
+
+    /// Every entry's stacked fill layers, flat — what a [`FillRange`]
+    /// indexes.
+    pub fn all_extra_fills(&self) -> &[PaintKind] {
+        &self.extra_fills
+    }
+
+    /// Every entry's stroke, flat — what a [`StrokeRange`] indexes.
+    pub fn all_strokes(&self) -> &[Stroke] {
+        &self.strokes
+    }
+
+    /// Every entry's coverage mask, flat — what a [`ShapeRange`] indexes.
+    pub fn all_shapes(&self) -> &[VectorField] {
+        &self.shapes
+    }
+
     /// Every interned solid color, in index order.
     pub fn all_solids(&self) -> &[Color] {
         &self.solids
@@ -1176,64 +1412,86 @@ impl PaintTable {
         &self.images
     }
 
-    /// Appends an entry that casts no shadow and carries no blur, and
-    /// returns its index — the value a [`RectEntry::paint`] field holds to
-    /// reference it.
+    /// Appends a bare entry — one that names no stacked fills, no stroke,
+    /// no effects and no coverage mask — and returns its index, the value a
+    /// [`RectEntry::paint`] field holds to reference it.
     ///
-    /// Most entries are this: of the paint pushes in this workspace, five
-    /// carry an effect. [`push_with_effects`](Self::push_with_effects) is
-    /// for those.
+    /// Most entries are this. [`push_with`](Self::push_with) is for the
+    /// rest.
     ///
     /// # Panics
     ///
-    /// Panics if `entry` already names shadows or blurs, which this cannot
-    /// honour — it is given no arrays to copy them from, so accepting the
-    /// entry would leave the ranges pointing at whatever happened to sit at
-    /// those offsets. Refused by name (P4).
+    /// Panics if `entry` already names any of them, which this cannot
+    /// honour: it is given no arrays to copy from, so accepting the entry
+    /// would leave its ranges pointing at whatever happened to sit at those
+    /// offsets. Refused by name (P4).
     pub fn push(&mut self, entry: PaintEntry) -> PaintIndex {
         assert_eq!(
-            (entry.shadows, entry.blurs),
-            (ShadowRange::NONE, BlurRange::NONE),
-            "push takes an effect-less entry; an entry naming shadows or blurs goes through \
-             push_with_effects, which is given the arrays to copy them from"
+            (
+                entry.extra_fills,
+                entry.stroke,
+                entry.shadows,
+                entry.blurs,
+                entry.shape,
+            ),
+            (
+                FillRange::NONE,
+                StrokeRange::NONE,
+                ShadowRange::NONE,
+                BlurRange::NONE,
+                ShapeRange::NONE,
+            ),
+            "push takes a bare entry; an entry naming stacked fills, a stroke, effects or a \
+             coverage mask goes through push_with, which is given the arrays to copy them from"
         );
         self.push_entry(entry)
     }
 
-    /// Appends an entry over `shadows` and `blurs`, which are copied into
-    /// the table's flat arrays and named by the ranges this assigns.
+    /// Appends an entry over `parts`, which are copied into the table's
+    /// flat arrays and named by the ranges this assigns.
     ///
     /// # Panics
     ///
-    /// Panics unless the entry arrives with [`ShadowRange::NONE`] and
-    /// [`BlurRange::NONE`], for the reason
-    /// [`GlyphRunTable::push_run`] gives: a caller cannot know where its
-    /// effects will land in a table it has not entered, so a range arriving
-    /// here is one that will be replaced, and replacing it silently is how a
-    /// producer comes to believe its own offsets were used.
-    pub fn push_with_effects(
-        &mut self,
-        mut entry: PaintEntry,
-        shadows: &[Shadow],
-        blurs: &[Blur],
-    ) -> PaintIndex {
+    /// Panics unless the entry arrives with every range at `NONE`, for the
+    /// reason [`GlyphRunTable::push_run`] gives: a caller cannot know where
+    /// its parts will land in a table it has not entered, so a range
+    /// arriving here is one that will be replaced, and replacing it
+    /// silently is how a producer comes to believe its own offsets were
+    /// used.
+    pub fn push_with(&mut self, mut entry: PaintEntry, parts: EntryParts<'_>) -> PaintIndex {
         assert_eq!(
-            (entry.shadows, entry.blurs),
-            (ShadowRange::NONE, BlurRange::NONE),
-            "push_with_effects assigns an entry's effect ranges; the entry must arrive with \
-             ShadowRange::NONE and BlurRange::NONE, not offsets into some other table"
+            (
+                entry.extra_fills,
+                entry.stroke,
+                entry.shadows,
+                entry.blurs,
+                entry.shape,
+            ),
+            (
+                FillRange::NONE,
+                StrokeRange::NONE,
+                ShadowRange::NONE,
+                BlurRange::NONE,
+                ShapeRange::NONE,
+            ),
+            "push_with assigns an entry's ranges; the entry must arrive with every range at \
+             NONE, not offsets into some other table"
         );
-        entry.shadows = ShadowRange {
-            offset: u32::try_from(self.shadows.len())
-                .expect("paint table exceeds u32::MAX shadows"),
-            count: u32::try_from(shadows.len()).expect("an entry exceeds u32::MAX shadows"),
-        };
-        entry.blurs = BlurRange {
-            offset: u32::try_from(self.blurs.len()).expect("paint table exceeds u32::MAX blurs"),
-            count: u32::try_from(blurs.len()).expect("an entry exceeds u32::MAX blurs"),
-        };
-        self.shadows.extend_from_slice(shadows);
-        self.blurs.extend_from_slice(blurs);
+        let (offset, count) = Self::span(self.extra_fills.len(), parts.extra_fills.len());
+        entry.extra_fills = FillRange { offset, count };
+        let (offset, count) = Self::span(self.strokes.len(), usize::from(parts.stroke.is_some()));
+        entry.stroke = StrokeRange { offset, count };
+        let (offset, count) = Self::span(self.shadows.len(), parts.shadows.len());
+        entry.shadows = ShadowRange { offset, count };
+        let (offset, count) = Self::span(self.blurs.len(), parts.blurs.len());
+        entry.blurs = BlurRange { offset, count };
+        let (offset, count) = Self::span(self.shapes.len(), usize::from(parts.shape.is_some()));
+        entry.shape = ShapeRange { offset, count };
+        self.extra_fills.extend_from_slice(parts.extra_fills);
+        self.strokes.extend(parts.stroke);
+        self.shadows.extend_from_slice(parts.shadows);
+        self.blurs.extend_from_slice(parts.blurs);
+        self.shapes.extend(parts.shape);
         self.push_entry(entry)
     }
 
@@ -1243,7 +1501,7 @@ impl PaintTable {
     pub fn push_solid(&mut self, color: Color) -> PaintIndex {
         let fill = self.intern_fill(&FillSpec::Solid { color });
         self.push(PaintEntry {
-            fill: Some(fill),
+            fill,
             ..PaintEntry::default()
         })
     }
@@ -1267,8 +1525,29 @@ impl PaintTable {
     /// panic to whichever painter reads the entry first, or, if the other
     /// table happened to be longer, silently paints the wrong fill (P4).
     fn check_fills(&self, entry: &PaintEntry) {
-        for kind in entry.fill.iter().chain(entry.extra_fills.iter()) {
+        // Through the accessor, not by slicing the array here: it panics by
+        // name when a range runs past its array, and this function exists to
+        // refuse exactly that kind of mismatched entry. Resolving it any
+        // other way would validate however many layers happened to be in
+        // reach and wave the rest through, which is the silent drop P4
+        // forbids — in the one place written to catch it.
+        for (position, kind) in std::iter::once(&entry.fill)
+            .chain(self.extra_fills(entry))
+            .enumerate()
+        {
             let len = match kind.tag {
+                // The entry's own fill may name no row — that is the
+                // paint-less node, and there is nothing to be in range of.
+                // A stacked *layer* may not: a layer exists to add ink, and
+                // one naming no fill is a corrupt list rather than an empty
+                // one. `dashscene-core`'s table compaction refuses the same
+                // state by name.
+                PaintTag::None if position == 0 => continue,
+                PaintTag::None => panic!(
+                    "stacked fill layer {} names no fill; a layer with nothing to paint is a \
+                     corrupt list, not an empty one",
+                    position - 1
+                ),
                 PaintTag::Solid => self.solids.len(),
                 PaintTag::Gradient => self.gradients.len(),
                 PaintTag::Image => self.images.len(),
@@ -1288,7 +1567,7 @@ impl PaintTable {
     /// # Panics
     ///
     /// Panics if the range runs past the flat array. Only
-    /// [`push_with_effects`](Self::push_with_effects) writes ranges, and it
+    /// [`push_with`](Self::push_with) writes ranges, and it
     /// writes them from the array's own length, so no public path reaches
     /// this today — but an entry read against a table it did not come from
     /// would, which is the hazard a range has and a `Vec` did not.

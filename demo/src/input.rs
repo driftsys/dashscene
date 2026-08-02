@@ -173,7 +173,7 @@ mod tests {
         let index = rect_index(arena, name).expect("the node has a committed rect");
         let committed = arena.committed();
         let paints = committed.paints();
-        let kind = paints.resolve(committed.rects()[index].paint).fill?;
+        let kind = paints.resolve(committed.rects()[index].paint).fill;
         match paints.fill(kind) {
             Fill::Solid(color) => Some(color),
             _ => None,

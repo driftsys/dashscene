@@ -2375,8 +2375,7 @@ fn stacked_fills_commit_onto_the_paint_entry_and_dedup() {
     assert!(
         scene
             .paints()
-            .resolve(scene.rects()[0].paint)
-            .extra_fills
+            .extra_fills(scene.paints().resolve(scene.rects()[0].paint))
             .is_empty(),
         "the plain node keeps no overlay"
     );
@@ -2384,8 +2383,7 @@ fn stacked_fills_commit_onto_the_paint_entry_and_dedup() {
     // compared as the fill it resolves to (story #578).
     let paints = scene.paints();
     let stacked: Vec<Fill<'_>> = paints
-        .resolve(scene.rects()[1].paint)
-        .extra_fills
+        .extra_fills(paints.resolve(scene.rects()[1].paint))
         .iter()
         .map(|&kind| paints.fill(kind))
         .collect();
@@ -2628,6 +2626,13 @@ fn a_blur_and_a_shadow_section_do_not_alias_each_other_in_the_paint_key() {
 /// growth would reach over the commit counts these tests run.
 const POOL_CEILING: usize = 300;
 
+/// The stroke the fourth node carries through the rebuild in the test below.
+const STILL_STROKE: Stroke = Stroke {
+    width: 2.0,
+    align: StrokeAlign::Inside,
+    color: BLUE,
+};
+
 #[test]
 fn a_fill_that_changes_every_commit_does_not_grow_the_paint_table_without_bound() {
     let mut arena = Arena::new();
@@ -2696,6 +2701,16 @@ fn a_rebuilt_paint_table_still_resolves_every_rect_and_reports_them_dirty() {
     let still = boxed(&mut txn, None, 20.0, 0.0, 10.0, 10.0);
     txn.set_prop(still, Prop::Fill(RED));
     boxed(&mut txn, None, 40.0, 0.0, 10.0, 10.0); // unfilled
+    // A fourth node carrying a stroke, so the rebuild has a second kind of
+    // range to re-home. Fills were already covered; `stroke` became a range
+    // into a table array in story #578's last flattening, and a range
+    // carried across the rebuild names a row of the new table that holds
+    // something else — or nothing. It is deliberately *not* `still`, whose
+    // entry must keep sharing `animated`'s for the renumbering assertion
+    // below to be reachable (debt #527).
+    let stroked = boxed(&mut txn, None, 60.0, 0.0, 10.0, 10.0);
+    txn.set_prop(stroked, Prop::Fill(RED));
+    txn.set_prop(stroked, Prop::Stroke(STILL_STROKE));
     txn.commit();
 
     let mut rebuilt = false;
@@ -2738,13 +2753,20 @@ fn a_rebuilt_paint_table_still_resolves_every_rect_and_reports_them_dirty() {
             "the untouched node still resolves to its own fill",
         );
         assert_eq!(
+            scene
+                .paints()
+                .stroke(scene.paints().resolve(scene.rects()[3].paint)),
+            Some(&STILL_STROKE),
+            "the stroked node still resolves to its own stroke after the rebuild",
+        );
+        assert_eq!(
             scene.paints().resolve(scene.rects()[2].paint),
             &PaintEntry::default(),
             "the unfilled node still resolves to the draws-nothing entry",
         );
         assert_eq!(
             scene.paints().len(),
-            3,
+            4,
             "the rebuilt table holds one entry per distinct live paint",
         );
         // The per-kind fill arrays are rebuilt with the entries (story
@@ -2756,6 +2778,11 @@ fn a_rebuilt_paint_table_still_resolves_every_rect_and_reports_them_dirty() {
             scene.paints().all_solids().len(),
             2,
             "the rebuild keeps only the fills its live entries name",
+        );
+        assert_eq!(
+            scene.paints().all_strokes().len(),
+            1,
+            "and only the strokes they name",
         );
         assert!(scene.paints().all_gradients().is_empty());
         assert!(scene.paints().all_stops().is_empty());
@@ -3294,7 +3321,10 @@ fn a_maskee_under_a_clipping_parent_intersects_the_parent_clip_then_the_mask() {
 /// one built outside a table.
 #[track_caller]
 fn fill_of(paints: &PaintTable, index: PaintIndex) -> Option<Fill<'_>> {
-    paints.resolve(index).fill.map(|kind| paints.fill(kind))
+    match paints.fill(paints.resolve(index).fill) {
+        Fill::None => None,
+        fill => Some(fill),
+    }
 }
 
 /// Asserts an entry is the fill-only solid `color` and nothing else — the
@@ -3304,10 +3334,10 @@ fn fill_of(paints: &PaintTable, index: PaintIndex) -> Option<Fill<'_>> {
 fn assert_solid(paints: &PaintTable, index: PaintIndex, color: Color) {
     let entry = paints.resolve(index);
     assert_eq!(fill_of(paints, index), Some(Fill::Solid(color)));
-    assert_eq!(entry.stroke, None);
+    assert_eq!(paints.stroke(entry), None);
     assert_eq!(entry.corners, CornerRadii::default());
     assert_eq!(entry.shadows, dashpaint::ShadowRange::default());
     assert_eq!(entry.blurs, dashpaint::BlurRange::default());
-    assert_eq!(entry.shape, None);
-    assert!(entry.extra_fills.is_empty());
+    assert_eq!(paints.shape(entry), None);
+    assert!(paints.extra_fills(entry).is_empty());
 }

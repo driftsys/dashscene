@@ -6,10 +6,10 @@
 //! stroke width to be measured against (issue #100).
 
 use dashpaint::{
-    ClipBox, ClipIndex, ClipTable, Color, CornerRadii, FillSpec, GlyphRunTable, Gradient,
-    GradientKind, GradientStop, GroupComposite, ImageAsset, ImageFill, ImageFormat, ImageTable,
-    Mat23, PaintEntry, PaintIndex, PaintKind, PaintTable, RectEntry, ScaleMode, Shadow, ShadowKind,
-    StopRange, Stroke, StrokeAlign, Vec2,
+    ClipBox, ClipIndex, ClipTable, Color, CornerRadii, EntryParts, FillSpec, GlyphRunTable,
+    Gradient, GradientKind, GradientStop, GroupComposite, ImageAsset, ImageFill, ImageFormat,
+    ImageTable, Mat23, PaintEntry, PaintIndex, PaintKind, PaintTable, RectEntry, ScaleMode, Shadow,
+    ShadowKind, StopRange, Stroke, StrokeAlign, Vec2,
 };
 use dashscene_validator::{
     Location, RENDER_TARGET_BUDGET_PLACEHOLDER, Report, Severity, rule, validate_scene,
@@ -30,7 +30,7 @@ fn red() -> Color {
 /// it will live in.
 fn solid_entry(paints: &mut PaintTable, color: Color) -> PaintEntry {
     PaintEntry {
-        fill: Some(paints.intern_fill(&FillSpec::Solid { color })),
+        fill: paints.intern_fill(&FillSpec::Solid { color }),
         ..PaintEntry::default()
     }
 }
@@ -88,6 +88,30 @@ fn check_one(w: f32, h: f32, build: impl FnOnce(&mut PaintTable) -> PaintEntry) 
     )
 }
 
+/// [`check_one`]'s counterpart for an entry that also carries parts living in
+/// the table's flat arrays — a stroke, stacked fill layers, effects, or a
+/// coverage mask (story #578 moved these off `PaintEntry` and into
+/// [`PaintTable::push_with`]). `paints` and `entry` come in already built
+/// (typically `entry` from [`solid_entry`]) because assembling them can
+/// itself need to intern a fill against the same table.
+fn check_one_with(
+    w: f32,
+    h: f32,
+    mut paints: PaintTable,
+    entry: PaintEntry,
+    parts: EntryParts<'_>,
+) -> Report {
+    let index = paints.push_with(entry, parts);
+    validate_scene(
+        &[rect(w, h, index.0)],
+        &paints,
+        &ImageTable::new(),
+        &ClipTable::new(),
+        &[],
+        &GlyphRunTable::new(),
+    )
+}
+
 #[test]
 fn a_well_formed_scene_produces_no_diagnostics() {
     let report = check_one(100.0, 50.0, |paints| solid_entry(paints, red()));
@@ -99,14 +123,22 @@ fn an_inside_stroke_wider_than_the_box_is_named() {
     // Issue #100: `draw_stroke` insets by half the width per side, so the
     // stroked box is `w - width` by `h - width`. Above `min(w, h)` that
     // inverts and the stroke silently collapses rather than drawing.
-    let report = check_one(100.0, 20.0, |paints| PaintEntry {
-        stroke: Some(Stroke {
-            width: 24.0,
-            align: StrokeAlign::Inside,
-            color: red(),
-        }),
-        ..solid_entry(paints, red())
-    });
+    let mut paints = PaintTable::new();
+    let entry = solid_entry(&mut paints, red());
+    let report = check_one_with(
+        100.0,
+        20.0,
+        paints,
+        entry,
+        EntryParts {
+            stroke: Some(Stroke {
+                width: 24.0,
+                align: StrokeAlign::Inside,
+                color: red(),
+            }),
+            ..EntryParts::default()
+        },
+    );
     assert!(report.has(rule::STROKE_EXCEEDS_BOX), "{report}");
     assert!(report.has_errors());
 }
@@ -117,14 +149,22 @@ fn an_inside_stroke_exactly_filling_the_box_is_allowed() {
     // zero and the stroke covers the box completely — which is what a
     // stroke that wide should look like. Only *above* it does the geometry
     // invert, so this must not be a diagnostic.
-    let report = check_one(100.0, 20.0, |paints| PaintEntry {
-        stroke: Some(Stroke {
-            width: 20.0,
-            align: StrokeAlign::Inside,
-            color: red(),
-        }),
-        ..solid_entry(paints, red())
-    });
+    let mut paints = PaintTable::new();
+    let entry = solid_entry(&mut paints, red());
+    let report = check_one_with(
+        100.0,
+        20.0,
+        paints,
+        entry,
+        EntryParts {
+            stroke: Some(Stroke {
+                width: 20.0,
+                align: StrokeAlign::Inside,
+                color: red(),
+            }),
+            ..EntryParts::default()
+        },
+    );
     assert!(!report.has(rule::STROKE_EXCEEDS_BOX), "{report}");
 }
 
@@ -133,14 +173,22 @@ fn a_wide_stroke_that_is_not_inside_aligned_is_allowed() {
     // Center and outside strokes expand outward; they never invert the
     // box, so a wide one is legal (it just overhangs).
     for align in [StrokeAlign::Center, StrokeAlign::Outside] {
-        let report = check_one(100.0, 20.0, |paints| PaintEntry {
-            stroke: Some(Stroke {
-                width: 60.0,
-                align,
-                color: red(),
-            }),
-            ..solid_entry(paints, red())
-        });
+        let mut paints = PaintTable::new();
+        let entry = solid_entry(&mut paints, red());
+        let report = check_one_with(
+            100.0,
+            20.0,
+            paints,
+            entry,
+            EntryParts {
+                stroke: Some(Stroke {
+                    width: 60.0,
+                    align,
+                    color: red(),
+                }),
+                ..EntryParts::default()
+            },
+        );
         assert!(
             !report.has(rule::STROKE_EXCEEDS_BOX),
             "{align:?} stroke must not trip the inside-stroke rule:\n{report}"
@@ -153,7 +201,7 @@ fn a_gradient_with_no_stops_is_named() {
     let report = check_one(100.0, 50.0, |paints| {
         let fill = gradient(paints, &[]);
         PaintEntry {
-            fill: Some(fill),
+            fill,
             ..PaintEntry::default()
         }
     });
@@ -165,14 +213,22 @@ fn a_gradient_with_no_stops_inside_a_stacked_fill_is_named() {
     // Story C1 (debt #146): a stacked layer's own vocabulary rules apply
     // exactly as the primary fill's on the resolved paint entry, same as at
     // the load gate.
-    let report = check_one(100.0, 50.0, |paints| {
-        let extra = gradient(paints, &[]);
-        PaintEntry {
-            fill: Some(paints.intern_fill(&FillSpec::Solid { color: red() })),
-            extra_fills: vec![extra],
-            ..PaintEntry::default()
-        }
-    });
+    let mut paints = PaintTable::new();
+    let extra = gradient(&mut paints, &[]);
+    let entry = PaintEntry {
+        fill: paints.intern_fill(&FillSpec::Solid { color: red() }),
+        ..PaintEntry::default()
+    };
+    let report = check_one_with(
+        100.0,
+        50.0,
+        paints,
+        entry,
+        EntryParts {
+            extra_fills: &[extra],
+            ..EntryParts::default()
+        },
+    );
     assert!(report.has(rule::GRADIENT_NO_STOPS), "{report}");
 }
 
@@ -184,7 +240,7 @@ fn a_gradient_over_the_stop_budget_is_named() {
     let report = check_one(100.0, 50.0, |paints| {
         let fill = gradient(paints, &offsets);
         PaintEntry {
-            fill: Some(fill),
+            fill,
             ..PaintEntry::default()
         }
     });
@@ -193,14 +249,20 @@ fn a_gradient_over_the_stop_budget_is_named() {
 
 #[test]
 fn a_negative_stroke_width_is_named() {
-    let report = check_one(100.0, 50.0, |_paints| PaintEntry {
-        stroke: Some(Stroke {
-            width: -1.0,
-            align: StrokeAlign::Center,
-            color: red(),
-        }),
-        ..PaintEntry::default()
-    });
+    let report = check_one_with(
+        100.0,
+        50.0,
+        PaintTable::new(),
+        PaintEntry::default(),
+        EntryParts {
+            stroke: Some(Stroke {
+                width: -1.0,
+                align: StrokeAlign::Center,
+                color: red(),
+            }),
+            ..EntryParts::default()
+        },
+    );
     assert!(report.has(rule::STROKE_INVALID_WIDTH), "{report}");
 }
 
@@ -216,7 +278,7 @@ fn an_image_fill_past_the_image_table_is_named() {
         tile_scale: 1.0,
     }));
     let index = paints.push(PaintEntry {
-        fill: Some(fill),
+        fill,
         ..PaintEntry::default()
     });
     let mut images = ImageTable::new();
@@ -264,7 +326,7 @@ fn a_shared_paint_entry_is_reported_once_not_once_per_rect() {
     let mut paints = PaintTable::new();
     let fill = gradient(&mut paints, &[]);
     let index = paints.push(PaintEntry {
-        fill: Some(fill),
+        fill,
         ..PaintEntry::default()
     });
     let rects: Vec<RectEntry> = (0..5).map(|_| rect(10.0, 10.0, index.0)).collect();
@@ -295,7 +357,7 @@ fn a_pool_diagnostic_points_at_the_pool_entry_not_a_rect() {
     paints.push(first);
     let fill = gradient(&mut paints, &[]);
     let broken = paints.push(PaintEntry {
-        fill: Some(fill),
+        fill,
         ..PaintEntry::default()
     });
 
@@ -325,7 +387,7 @@ fn an_image_asset_with_no_bytes_is_named() {
         tile_scale: 1.0,
     }));
     let index = paints.push(PaintEntry {
-        fill: Some(fill),
+        fill,
         ..PaintEntry::default()
     });
     let mut images = ImageTable::new();
@@ -354,7 +416,7 @@ fn gradient_stops_that_run_backwards_are_named() {
     let report = check_one(100.0, 50.0, |paints| {
         let fill = gradient(paints, &[0.0, 0.8, 0.3, 1.0]);
         PaintEntry {
-            fill: Some(fill),
+            fill,
             ..PaintEntry::default()
         }
     });
@@ -366,14 +428,22 @@ fn a_non_finite_box_does_not_silently_pass_the_stroke_rule() {
     // `f32::min` returns the non-NaN operand, so a NaN extent would compare
     // against the other axis; a fully-NaN box would pass every comparison.
     // The rule must not claim a NaN box is fine — it declines to judge it.
-    let report = check_one(f32::NAN, f32::NAN, |paints| PaintEntry {
-        stroke: Some(Stroke {
-            width: 24.0,
-            align: StrokeAlign::Inside,
-            color: red(),
-        }),
-        ..solid_entry(paints, red())
-    });
+    let mut paints = PaintTable::new();
+    let entry = solid_entry(&mut paints, red());
+    let report = check_one_with(
+        f32::NAN,
+        f32::NAN,
+        paints,
+        entry,
+        EntryParts {
+            stroke: Some(Stroke {
+                width: 24.0,
+                align: StrokeAlign::Inside,
+                color: red(),
+            }),
+            ..EntryParts::default()
+        },
+    );
     assert!(!report.has(rule::STROKE_EXCEEDS_BOX), "{report}");
     // The stroke rule declines to judge the NaN box; #128's extent rule is
     // what names the real fault so it is not discovered downstream (P4).
@@ -565,18 +635,19 @@ fn too_many_render_target_groups_warn_but_never_error() {
 /// A helper rather than a `PaintEntry` builder because `PaintEntry::shadows`
 /// is a range into a `PaintTable`'s flat array (story #578): the entry and
 /// its shadow have to reach the table together, through
-/// `push_with_effects`, and only the table can pair them.
+/// `PaintTable::push_with`, and only the table can pair them.
 fn check_shadowed(w: f32, h: f32, shadow: Shadow) -> Report {
     let mut paints = PaintTable::new();
     let entry = solid_entry(&mut paints, red());
-    let index = paints.push_with_effects(entry, &[shadow], &[]);
-    validate_scene(
-        &[rect(w, h, index.0)],
-        &paints,
-        &ImageTable::new(),
-        &ClipTable::new(),
-        &[],
-        &GlyphRunTable::new(),
+    check_one_with(
+        w,
+        h,
+        paints,
+        entry,
+        EntryParts {
+            shadows: &[shadow],
+            ..EntryParts::default()
+        },
     )
 }
 
