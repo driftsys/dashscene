@@ -584,11 +584,23 @@ says it should stay open. There is no `E1`–`E7` job in
 `.github/workflows/ci.yml`, no `just` recipe, and no test asserting the
 criteria as a set. #49 is reopened and epic #47 stays open with it.
 
+Built at the v0.14 close (2026-08-01), once Actions billing was restored
+(#263, now closed). The gate is the CI `exit-gate` job and the `just exit-gate`
+recipe: it requires the `test`, `render-oracle`, `wasm-build` and `deno` jobs,
+diffs the `exit-gate` nextest profile's membership against the pinned
+`.config/exit-gate.txt` so a renamed covering test cannot leave the gate
+silently, and runs the 39 tests covering `E1`–`E7`. It needs `deno` because
+`E6` is the one criterion no single job can prove — byte-identity is transitive
+only because two suites on two machines assert against the same committed
+bytes. Full account: `docs/specification/05-qualification.md`, "The exit
+gate".
+
 The seven criteria are each met and each individually evidenced, which is why
-the gap went unnoticed: what is missing is not proof of any criterion, but the
-one mechanical assertion that they all hold on a given commit, so a regression
-in any of them fails a build rather than waiting for a person to notice. That
-assertion still cannot run while #263 holds.
+the gap went unnoticed: what was missing was not proof of any criterion, but
+the one mechanical assertion that they all hold on a given commit, so a
+regression in any of them fails a build rather than waiting for a person to
+notice. That assertion is the `exit-gate` job, built at the v0.14 close, once
+issue #263 was closed and Actions billing restored.
 
 After `E7` was met, the full real-file-import epic ran outside the slice map
 (2026-07-18/19, [`technotes/2026-07-19-real-file-import.md`](technotes/2026-07-19-real-file-import.md)):

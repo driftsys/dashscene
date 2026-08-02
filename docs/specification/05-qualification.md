@@ -24,7 +24,7 @@ missing proof must be visible.
 | E4 dirty Figma file → report      | R6       | **met**                                                                                                                                                                                                                                                                                                                                                                                                |
 | E5 variant switch via FLIP        | R4       | **met**                                                                                                                                                                                                                                                                                                                                                                                                |
 | E6 byte-identical `.dsb`          | R7       | **met**                                                                                                                                                                                                                                                                                                                                                                                                |
-| E7 design-source render oracle    | R6       | **met** — the oracle measures all 7 frames within band against real Figma renders (aa-edge: v08-wrap 0.00 %, v08-grid-spans 0.04 % after #385 committed Inter; blur-falloff: drop/inner-shadow 0.02 %/0.00 %; msdf-text: text-latin 0.03 %, text-arabic 1.41 % after the #314 line-height fix, v08-baseline 1.82 % after the #272 baseline fix); the v0.9 exit gate (#49) is **not built** — see below |
+| E7 design-source render oracle    | R6       | **met** — the oracle measures all 7 frames within band against real Figma renders (aa-edge: v08-wrap 0.00 %, v08-grid-spans 0.04 % after #385 committed Inter; blur-falloff: drop/inner-shadow 0.02 %/0.00 %; msdf-text: text-latin 0.03 %, text-arabic 1.41 % after the #314 line-height fix, v08-baseline 1.82 % after the #272 baseline fix); the v0.9 exit gate (#49) asserts it in CI — see below |
 
 The file carries no version in its name. "v0 exit criteria" is a heading
 inside it; v1's criteria are a second heading below, not a second file.
@@ -511,28 +511,100 @@ post-solve glyph-baseline correction in `dashscene-engine` fixed, bringing the
 frame from 3.807 % to 1.816 % within the msdf-text band. With all seven frames
 measured, E7 is met.
 
-### The exit gate itself is not built
+### The exit gate
 
-Every criterion above is met. **The gate that asserts them together is not.**
+Every criterion above is met, and the gate that asserts them together is the
+CI `exit-gate` job (story #49, epic #47).
 
-Story #49 scopes a CI job asserting `E1`–`E7`. No such job exists:
-`.github/workflows/ci.yml` runs `changes`, `fmt`, `dprint`, `clippy`, `test`,
-`convco`, `deno`, `wasm-build`, `atlas-repro`, `render-oracle` and the `ci`
-fan-in, and the fan-in aggregates those jobs rather than asserting the
-criteria. No `just` recipe and no test asserts them as a set either. It could
-not run in any case while GitHub Actions billing is blocked (#263).
+What it adds is not new evidence. Each criterion was already individually met
+and individually evidenced, above and in the records each row cites. What was
+missing, and what the gate supplies, is a single mechanical assertion that they
+are **all** met on a given commit — so that a regression in any one of them
+fails a build rather than being noticed by a person.
 
-Until 2026-07-27 this file stated in two places that the gate asserts `E1`–`E7`
-in CI, in the present tense. That was wrong. #49 had been closed on 2026-07-25
-as a side effect of a pull request whose body contained the words "closes #49"
-in prose, and the claim was written against that apparent close rather than
-against the workflow. #49 is reopened.
+The job has three steps, and each answers a different way the gate could be
+hollow:
 
-What is true: each criterion is individually met and individually evidenced,
-above and in the records each row cites. What is not true, and what the gate
-would add, is a single mechanical assertion that they are **all** met on a
-given commit — so that a regression in any one of them fails a build rather
-than being noticed by a person.
+- **The jobs carrying the criteria succeeded.** `exit-gate` requires `test`,
+  `render-oracle`, `wasm-build` and `deno`. This is what holds `E6`, and it is
+  the reason the gate cannot be a single test: byte-identity is transitive only
+  because two suites on two machines assert against the same committed bytes —
+  the native library call in `crates/dashc/tests/abi.rs` and the same compile
+  through the wasm ABI in `importers/figma/src/wasm_test.ts`. No Rust filter
+  can reach the second.
+
+  `deno` is asserted **conditionally**, and the condition is worth stating
+  plainly rather than leaving a reader to assume more than the gate delivers:
+  it is required to have succeeded when the `figma` path filter fired, and a
+  filter skip is accepted otherwise. So on a change that cannot move the
+  committed bytes, the gate goes green with `E6`'s wasm half not run. That is
+  the same treatment every other path-filtered job gets here. `wasm-build` is
+  required unconditionally because a failed `wasm-build` marks `deno`
+  _skipped_ rather than failed, which would otherwise make a real failure
+  indistinguishable from a filter skip.
+- **Every covering test still exists.** `.config/exit-gate.txt` pins the
+  membership of the `exit-gate` nextest profile by name, and the job diffs the
+  live listing against it. The profile selects by exact test name, so renaming
+  or deleting a covering test would otherwise drop it out of the gate with no
+  error — the gate would keep passing while asserting less. Counting cannot
+  substitute: a test dropped from this profile still runs in `test`, so every
+  total still reconciles.
+- **They pass.** `cargo nextest run --workspace -P exit-gate`, 39 tests across
+  seven binaries.
+
+`just exit-gate` runs the local half — the membership check and the tests. It
+cannot cover `E6`'s wasm side, and it says so when it finishes.
+
+One more thing the gate does not hold, stated rather than left silent. `E2`'s
+section rests golden-stability partly on `committed_arabic_fixture_is_reproducible`
+being byte-reproduced on a second machine, and that test runs in the
+`atlas-repro` job, which `exit-gate` neither selects nor requires. This is
+deliberate: cross-machine reproducibility is `R7`'s property, which `E6` is the
+criterion for, and `atlas-repro` is architecture-sensitive — it runs as two
+jobs, one per architecture, for that reason. A gate that required it would be
+asserting `E6`'s property under `E2`'s name.
+
+Three criteria name a whole binary rather than one test. `E3` takes
+`dashlang::corpus` and `E7` takes `goldens::render_oracle`, because "the stress
+corpus is green" and "the oracle measures every frame" are claims about a suite
+rather than about one case, and because a case added to either later is then
+covered without anyone remembering to extend the gate. `E2` takes
+`goldens::v06_arabic` for a sharper reason: its pixel golden is the coarse half
+— the text ink is a few per cent of the canvas — and the glyph-level companion
+that pins each feature is the evidence that would actually catch a shaping
+regression, so naming one test would have pinned the weaker evidence and left
+the stronger free to be deleted silently. For `E7` this also pulls
+in the oracle's own harness tests, which is deliberate: if the harness is
+broken, the criterion's evidence is worthless.
+
+`E7`'s frames are asserted measured rather than pending, by
+`no_frame_is_pending_so_e7_is_asserted_over_all_of_them` in
+`goldens/tooling/tests/render_oracle.rs`.
+`goldens/tooling/tests/common/manifest.rs` deliberately does not assert
+`pending.is_empty()` — its `assert_captured_or_pending` checks each frame's own
+state, and its documentation records that whether a pending frame is allowed
+belongs to the owning gate rather than to the harness. This gate is that owner,
+and that test is its answer: without it, dropping one frame's `designSource`
+and marking it pending leaves every other assertion in the file green while
+`E7` silently measures a smaller corpus. The test fails naming the pending
+frames, which was verified by making one pending and running it.
+
+The first version of this gate claimed that assertion in this paragraph and did
+not make it. The claim was caught in review, which is the only reason it is not
+still here.
+
+#### The history this section records
+
+Until 2026-07-27 this file stated in two places that the gate asserts `E1`-`E7`
+in CI, in the present tense, and that was wrong. #49 had been closed on
+2026-07-25 as a side effect of a pull request whose body contained the words
+"closes #49" in prose, and the claim was written against that apparent close
+rather than against the workflow. #49 was reopened, this section was corrected
+to say the gate was not built, and it stayed that way until the gate existed.
+
+It is kept here because the failure was not the accidental close. It was that a
+specification asserted a mechanism into existence, and nothing checked. The
+gate is the check.
 
 ## v1 exit criteria
 
