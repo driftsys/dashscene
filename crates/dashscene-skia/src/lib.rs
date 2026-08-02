@@ -19,9 +19,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use dashpaint::{
-    Atlas, BlurKind, ClipTable, CornerRadii, GlyphRun, GlyphRunTable, Gradient, GradientKind,
-    GroupComposite, ImageAsset, ImageTable, MAX_GRADIENT_STOPS, PaintKind, PaintTable, Painter,
-    RectEntry, ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, VectorField,
+    Atlas, BlurKind, ClipTable, CornerRadii, Fill, GlyphRun, GlyphRunTable, Gradient, GradientKind,
+    GradientView, GroupComposite, ImageAsset, ImageTable, MAX_GRADIENT_STOPS, PaintKind,
+    PaintTable, Painter, RectEntry, ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign,
+    VectorField,
 };
 use skia_safe::{
     AlphaType, BlendMode, BlurStyle, Canvas, ClipOp, Color4f, ColorType, Data, EncodedImageFormat,
@@ -575,7 +576,15 @@ impl Painter for SkiaPainter {
                         .expect("field-mask resolve SkSL compiles")
                 });
                 let atlas = image_cache.get(field.image);
-                draw_vector_field(canvas, rect, entry.fill.as_ref(), field, atlas, effect);
+                draw_vector_field(
+                    canvas,
+                    rect,
+                    paints,
+                    entry.fill.as_ref(),
+                    field,
+                    atlas,
+                    effect,
+                );
             } else {
                 // A fill-less entry draws nothing (a layout-only node, or a
                 // mask node whose shape is a stencil, not paint). Stacked
@@ -614,10 +623,10 @@ impl Painter for SkiaPainter {
                     (rect, false)
                 };
                 if let Some(kind) = &entry.fill {
-                    draw_fill_kind(canvas, rrect, draw_rect, image_cache, kind);
+                    draw_fill_kind(canvas, rrect, draw_rect, image_cache, paints, *kind);
                 }
                 for kind in &entry.extra_fills {
-                    draw_fill_kind(canvas, rrect, draw_rect, image_cache, kind);
+                    draw_fill_kind(canvas, rrect, draw_rect, image_cache, paints, *kind);
                 }
                 if let Some(stroke) = &entry.stroke {
                     draw_stroke(canvas, &rrect, stroke, draw_rect.opacity);
@@ -1044,6 +1053,7 @@ const FIELD_MASK_SKSL: &str = r"
 fn draw_vector_field(
     canvas: &Canvas,
     rect: &RectEntry,
+    paints: &PaintTable,
     fill: Option<&PaintKind>,
     field: &VectorField,
     atlas: &Image,
@@ -1051,7 +1061,7 @@ fn draw_vector_field(
 ) {
     // A shape with no fill has no ink to mask — a defensive guard; the
     // lowering always pairs a shape with a fill.
-    let Some(fill) = fill else {
+    let Some(&fill) = fill else {
         return;
     };
     let Some((dest, coverage)) = field_coverage(rect, field, atlas, effect) else {
@@ -1071,13 +1081,13 @@ fn draw_vector_field(
     // Skia takes the bounds as the layer extent and clips to it, and the
     // clip is one every draw already respects.
     canvas.save_layer(&SaveLayerRec::default().bounds(&dest));
-    match fill {
-        PaintKind::Solid { color } => {
-            let mut paint = solid_paint(*color);
+    match paints.fill(fill) {
+        Fill::Solid(color) => {
+            let mut paint = solid_paint(color);
             apply_opacity(&mut paint, rect.opacity);
             canvas.draw_rect(dest, &paint);
         }
-        PaintKind::Gradient(gradient) => {
+        Fill::Gradient(gradient) => {
             let mut paint = gradient_paint(gradient, rect);
             apply_opacity(&mut paint, rect.opacity);
             canvas.draw_rect(dest, &paint);
@@ -1085,7 +1095,7 @@ fn draw_vector_field(
         // An image-filled vector is not in the measured census (B1 widens by
         // exactly what is measured); it draws nothing rather than an unmasked
         // rectangle. Masking an image fill is additive later work.
-        PaintKind::Image { .. } => {}
+        Fill::Image(_) => {}
     }
     let mut mask = skia_safe::Paint::default();
     mask.set_shader(coverage);
@@ -1521,36 +1531,32 @@ fn draw_fill_kind(
     rrect: RRect,
     rect: &RectEntry,
     image_cache: &mut ImageCache,
-    kind: &PaintKind,
+    paints: &PaintTable,
+    kind: PaintKind,
 ) {
-    match kind {
-        PaintKind::Solid { color } => {
-            let mut paint = solid_paint(*color);
+    match paints.fill(kind) {
+        Fill::Solid(color) => {
+            let mut paint = solid_paint(color);
             paint.set_anti_alias(true);
             apply_opacity(&mut paint, rect.opacity);
             canvas.draw_rrect(rrect, &paint);
         }
-        PaintKind::Gradient(gradient) => {
+        Fill::Gradient(gradient) => {
             let mut paint = gradient_paint(gradient, rect);
             paint.set_anti_alias(true);
             apply_opacity(&mut paint, rect.opacity);
             canvas.draw_rrect(rrect, &paint);
         }
-        PaintKind::Image {
-            image,
-            scale_mode,
-            transform,
-            tile_scale,
-        } => {
-            let decoded = image_cache.get(*image);
+        Fill::Image(image) => {
+            let decoded = image_cache.get(image.image);
             draw_image_fill(
                 canvas,
                 &rrect,
                 rect,
                 decoded,
-                *scale_mode,
-                transform.as_ref(),
-                *tile_scale,
+                image.scale_mode,
+                &image.transform,
+                image.tile_scale,
                 rect.opacity,
             );
         }
@@ -1602,7 +1608,7 @@ fn gradient_frame(gradient: &Gradient, rect: &RectEntry) -> Matrix {
 /// Builds the skia paint for a gradient fill. A degenerate frame (no
 /// area) falls back to the first stop's color — deterministic; the
 /// validator owns rejecting it upstream (P4).
-fn gradient_paint(gradient: &Gradient, rect: &RectEntry) -> skia_safe::Paint {
+fn gradient_paint(gradient: GradientView<'_>, rect: &RectEntry) -> skia_safe::Paint {
     assert!(
         gradient.stops.len() <= MAX_GRADIENT_STOPS,
         "gradient stop budget exceeded: {} stops, budget {MAX_GRADIENT_STOPS} \
@@ -1614,7 +1620,7 @@ fn gradient_paint(gradient: &Gradient, rect: &RectEntry) -> skia_safe::Paint {
         .first()
         .expect("a gradient carries at least one stop (the schema requires stops)");
 
-    let frame = gradient_frame(gradient, rect);
+    let frame = gradient_frame(gradient.gradient, rect);
     if frame.invert().is_none() {
         return solid_paint(first_stop.color);
     }
@@ -1622,7 +1628,7 @@ fn gradient_paint(gradient: &Gradient, rect: &RectEntry) -> skia_safe::Paint {
     let colors: Vec<Color4f> = gradient.stops.iter().map(|s| to_color4f(s.color)).collect();
     let positions: Vec<f32> = gradient.stops.iter().map(|s| s.offset).collect();
 
-    let shader = match gradient.kind {
+    let shader = match gradient.gradient.kind {
         GradientKind::Linear => gradient_shader::linear(
             (Point::new(0.0, 0.0), Point::new(1.0, 0.0)),
             &colors[..],
@@ -1749,7 +1755,7 @@ fn draw_image_fill(
     rect: &RectEntry,
     image: &Image,
     scale_mode: ScaleMode,
-    transform: Option<&dashpaint::Mat23>,
+    transform: &dashpaint::Mat23,
     tile_scale: f32,
     opacity: f32,
 ) {
@@ -1797,17 +1803,10 @@ fn draw_image_fill(
             canvas.draw_rrect(*rrect, &paint);
         }
         ScaleMode::Crop => {
-            // uv_image = T · uv_box (normalized spaces; identity when
-            // absent). The shader's local matrix maps image pixel space
-            // to device space: box ∘ T⁻¹ ∘ image-normalize.
-            let t = transform.copied().unwrap_or(dashpaint::Mat23 {
-                a: 1.0,
-                b: 0.0,
-                c: 0.0,
-                d: 1.0,
-                tx: 0.0,
-                ty: 0.0,
-            });
+            // uv_image = T · uv_box (normalized spaces; T is Mat23::IDENTITY
+            // for a fill that crops nothing). The shader's local matrix maps
+            // image pixel space to device space: box ∘ T⁻¹ ∘ image-normalize.
+            let t = *transform;
             let uv_transform = Matrix::new_all(t.a, t.b, t.tx, t.c, t.d, t.ty, 0.0, 0.0, 1.0);
             let inverted = uv_transform
                 .invert()
@@ -1875,7 +1874,7 @@ mod tests {
     fn one_pixel_png(color: dashpaint::Color) -> Vec<u8> {
         let mut painter = SkiaPainter::new(1, 1);
         let mut paints = PaintTable::new();
-        let solid = paints.push(dashpaint::PaintEntry::solid(color));
+        let solid = paints.push_solid(color);
         let rects = [RectEntry {
             x: 0.0,
             y: 0.0,
@@ -1915,13 +1914,14 @@ mod tests {
         });
 
         let mut paints = PaintTable::new();
+        let image_kind = paints.intern_fill(&dashpaint::FillSpec::Image(dashpaint::ImageFill {
+            image: asset,
+            scale_mode: ScaleMode::Fill,
+            transform: dashpaint::Mat23::IDENTITY,
+            tile_scale: 1.0,
+        }));
         let image_fill = || dashpaint::PaintEntry {
-            fill: Some(PaintKind::Image {
-                image: asset,
-                scale_mode: ScaleMode::Fill,
-                transform: None,
-                tile_scale: 1.0,
-            }),
+            fill: Some(image_kind),
             ..dashpaint::PaintEntry::default()
         };
         let paint_a = paints.push(image_fill());
@@ -1992,13 +1992,14 @@ mod tests {
     /// One rect filling a 2x2 surface from `ImageTable` index 0.
     fn one_image_rect() -> (PaintTable, [RectEntry; 1]) {
         let mut paints = PaintTable::new();
+        let image_kind = paints.intern_fill(&dashpaint::FillSpec::Image(dashpaint::ImageFill {
+            image: 0,
+            scale_mode: ScaleMode::Fill,
+            transform: dashpaint::Mat23::IDENTITY,
+            tile_scale: 1.0,
+        }));
         let paint = paints.push(dashpaint::PaintEntry {
-            fill: Some(PaintKind::Image {
-                image: 0,
-                scale_mode: ScaleMode::Fill,
-                transform: None,
-                tile_scale: 1.0,
-            }),
+            fill: Some(image_kind),
             ..dashpaint::PaintEntry::default()
         });
         let rects = [RectEntry {

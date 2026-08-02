@@ -328,9 +328,9 @@ fn build_with_routes_through_the_injected_solver() {
 #[test]
 fn the_paint_types_are_nameable_through_dashlang() {
     use dashlang::{
-        Blur, BlurKind, CornerRadii, Gradient, GradientKind, GradientStop, Mat23, PaintKind,
-        ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, TextAlign, TextAlignV, TextStyle, Vec2,
-        VectorField,
+        Blur, BlurKind, CornerRadii, FillSpec, Gradient, GradientKind, GradientStop, ImageFill,
+        Mat23, ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, TextAlign, TextAlignV,
+        TextStyle, Vec2, VectorField,
     };
 
     let _: Option<Vec2> = None;
@@ -339,6 +339,7 @@ fn the_paint_types_are_nameable_through_dashlang() {
     let _: Option<GradientKind> = None;
     let _: Option<GradientStop> = None;
     let _: Option<ScaleMode> = None;
+    let _: Option<ImageFill> = None;
     let _: Option<VectorField> = None;
     let _: Option<Shadow> = None;
     let _: Option<ShadowKind> = None;
@@ -347,7 +348,7 @@ fn the_paint_types_are_nameable_through_dashlang() {
     let _: Option<Stroke> = None;
     let _: Option<StrokeAlign> = None;
     let _: Option<CornerRadii> = None;
-    let _: Option<PaintKind> = None;
+    let _: Option<FillSpec> = None;
     let _: Option<TextStyle> = None;
     let _: Option<TextAlign> = None;
     let _: Option<TextAlignV> = None;

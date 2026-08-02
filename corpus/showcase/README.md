@@ -182,7 +182,7 @@ vocabulary — fill, gradient, stroke, corner, shadow, blur, mask, clip, opacity
 vector-field and text-style setters all exist on it now — alongside geometry,
 the flex vocabulary and the reactive bindings, so structure, layout, motion and
 paint are authored together on one value tree. An image fill has a setter too
-(`fill_with`, which takes any `PaintKind`), but authoring one still needs the
+(`fill_with`, which takes any `FillSpec`), but authoring one still needs the
 arena, for the reason the next paragraph gives.
 
 Two constructs still need a short second pass over the built arena, staged

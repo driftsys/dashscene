@@ -9,10 +9,10 @@
 
 pub use dashpaint::{
     Atlas, AtlasGlyph, AtlasIndex, Blur, BlurKind, ClipBox, ClipIndex, ClipRegion, ClipTable,
-    ClipView, Color, CornerRadii, GlyphQuad, GlyphRange, GlyphRun, GlyphRunTable, Gradient,
-    GradientKind, GradientStop, GroupComposite, ImageAsset, ImageFormat, ImageTable, Mat23,
-    PaintEntry, PaintIndex, PaintKind, PaintTable, RectEntry, ScaleMode, Shadow, ShadowKind,
-    Stroke, StrokeAlign, Vec2, VectorField,
+    ClipView, Color, CornerRadii, Fill, FillSpec, GlyphQuad, GlyphRange, GlyphRun, GlyphRunTable,
+    Gradient, GradientKind, GradientStop, GradientView, GroupComposite, ImageAsset, ImageFill,
+    ImageFormat, ImageTable, Mat23, PaintEntry, PaintIndex, PaintKind, PaintTable, PaintTag,
+    RectEntry, ScaleMode, Shadow, ShadowKind, StopRange, Stroke, StrokeAlign, Vec2, VectorField,
 };
 
 use std::sync::Arc;

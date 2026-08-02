@@ -4,8 +4,8 @@
 //! boundary B.
 
 use dashpaint::{
-    Atlas, AtlasGlyph, AtlasIndex, ClipIndex, ClipTable, Color, GlyphQuad, GlyphRun, GlyphRunTable,
-    Gradient, GradientKind, ImageTable, MAX_GRADIENT_STOPS, PaintEntry, PaintIndex, PaintKind,
+    Atlas, AtlasGlyph, AtlasIndex, ClipIndex, ClipTable, Color, FillSpec, GlyphQuad, GlyphRun,
+    GlyphRunTable, Gradient, GradientKind, ImageTable, MAX_GRADIENT_STOPS, PaintEntry, PaintIndex,
     Painter, RectEntry, Vec2,
 };
 use dashscene_core::{Arena, Prop};
@@ -150,8 +150,8 @@ fn encodes_png() {
 // with anti-aliasing on.
 
 use dashpaint::{
-    Blur, BlurKind, ClipBox, CornerRadii, GlyphRange, GradientStop, ImageAsset, ImageFormat, Mat23,
-    PaintTable, ScaleMode, Stroke, StrokeAlign,
+    Blur, BlurKind, ClipBox, CornerRadii, GlyphRange, GradientStop, ImageAsset, ImageFill,
+    ImageFormat, Mat23, PaintTable, ScaleMode, StopRange, Stroke, StrokeAlign,
 };
 
 const GREEN: Color = Color {
@@ -191,8 +191,18 @@ fn hard_red_blue_stops() -> Vec<GradientStop> {
     ]
 }
 
-fn single_entry_scene(entry: PaintEntry, w: f32, h: f32) -> (Vec<RectEntry>, PaintTable) {
+// A fill's parameters now live in the `PaintTable` row a `PaintKind` indexes
+// (story #578), so building an entry that fills needs the table it will be
+// interned into before the entry itself is built. `single_entry_scene`
+// therefore takes a builder over the table it creates, rather than an
+// already-built `PaintEntry`.
+fn single_entry_scene(
+    build: impl FnOnce(&mut PaintTable) -> PaintEntry,
+    w: f32,
+    h: f32,
+) -> (Vec<RectEntry>, PaintTable) {
     let mut paints = PaintTable::new();
+    let entry = build(&mut paints);
     let paint = paints.push(entry);
     (
         vec![RectEntry {
@@ -208,15 +218,48 @@ fn single_entry_scene(entry: PaintEntry, w: f32, h: f32) -> (Vec<RectEntry>, Pai
     )
 }
 
-fn gradient_entry(kind: GradientKind, stops: Vec<GradientStop>) -> PaintEntry {
+/// An entry with a solid fill and nothing else, interning `color` into
+/// `paints` — the direct replacement for the removed `PaintEntry::solid`
+/// shorthand for a caller that has a table to intern into but is not yet
+/// ready to push the entry (`PaintTable::push_solid` does both at once).
+fn solid_entry(paints: &mut PaintTable, color: Color) -> PaintEntry {
     PaintEntry {
-        fill: Some(PaintKind::Gradient(Gradient {
-            kind,
-            handle_origin: Vec2 { x: 0.5, y: 0.5 },
-            handle_primary: Vec2 { x: 1.0, y: 0.5 },
-            handle_secondary: Vec2 { x: 0.5, y: 1.0 },
-            stops,
-        })),
+        fill: Some(paints.intern_fill(&FillSpec::Solid { color })),
+        ..PaintEntry::default()
+    }
+}
+
+fn gradient_entry(
+    paints: &mut PaintTable,
+    kind: GradientKind,
+    stops: Vec<GradientStop>,
+) -> PaintEntry {
+    let gradient = Gradient {
+        kind,
+        handle_origin: Vec2 { x: 0.5, y: 0.5 },
+        handle_primary: Vec2 { x: 1.0, y: 0.5 },
+        handle_secondary: Vec2 { x: 0.5, y: 1.0 },
+        stops: StopRange::NONE,
+    };
+    PaintEntry {
+        fill: Some(paints.intern_fill(&FillSpec::Gradient { gradient, stops })),
+        ..PaintEntry::default()
+    }
+}
+
+/// [`gradient_entry`] with all three handles coincident, so the gradient's
+/// frame has no area — the fixture
+/// `a_gradient_with_a_degenerate_frame_falls_back_to_the_first_stop` needs.
+fn degenerate_gradient_entry(paints: &mut PaintTable, stops: Vec<GradientStop>) -> PaintEntry {
+    let gradient = Gradient {
+        kind: GradientKind::Linear,
+        handle_origin: Vec2 { x: 0.5, y: 0.5 },
+        handle_primary: Vec2 { x: 0.5, y: 0.5 },
+        handle_secondary: Vec2 { x: 0.5, y: 0.5 },
+        stops: StopRange::NONE,
+    };
+    PaintEntry {
+        fill: Some(paints.intern_fill(&FillSpec::Gradient { gradient, stops })),
         ..PaintEntry::default()
     }
 }
@@ -247,7 +290,7 @@ fn linear_gradient_splits_at_a_hard_stop() {
     // Origin at the box center, primary axis +x: t=0 at x=4, t=1 at
     // x=8, clamped left of center. The hard stop at 0.5 lands at x=6.
     let (rects, paints) = single_entry_scene(
-        gradient_entry(GradientKind::Linear, hard_red_blue_stops()),
+        |paints| gradient_entry(paints, GradientKind::Linear, hard_red_blue_stops()),
         8.0,
         8.0,
     );
@@ -263,7 +306,7 @@ fn radial_gradient_fills_a_disk_inside_the_hard_stop() {
     // Unit radius = half the box; the hard stop at 0.5 is a disk of
     // radius 2px around the center of the 8px box.
     let (rects, paints) = single_entry_scene(
-        gradient_entry(GradientKind::Radial, hard_red_blue_stops()),
+        |paints| gradient_entry(paints, GradientKind::Radial, hard_red_blue_stops()),
         8.0,
         8.0,
     );
@@ -277,7 +320,7 @@ fn radial_gradient_fills_a_disk_inside_the_hard_stop() {
 #[test]
 fn angular_gradient_splits_half_turns_at_the_hard_stop() {
     let (rects, paints) = single_entry_scene(
-        gradient_entry(GradientKind::Angular, hard_red_blue_stops()),
+        |paints| gradient_entry(paints, GradientKind::Angular, hard_red_blue_stops()),
         8.0,
         8.0,
     );
@@ -294,7 +337,7 @@ fn angular_gradient_splits_half_turns_at_the_hard_stop() {
 #[test]
 fn diamond_gradient_fills_a_diamond_inside_the_hard_stop() {
     let (rects, paints) = single_entry_scene(
-        gradient_entry(GradientKind::Diamond, hard_red_blue_stops()),
+        |paints| gradient_entry(paints, GradientKind::Diamond, hard_red_blue_stops()),
         8.0,
         8.0,
     );
@@ -311,13 +354,11 @@ fn diamond_gradient_fills_a_diamond_inside_the_hard_stop() {
 
 #[test]
 fn a_gradient_with_a_degenerate_frame_falls_back_to_the_first_stop() {
-    let mut entry = gradient_entry(GradientKind::Linear, hard_red_blue_stops());
-    if let Some(PaintKind::Gradient(gradient)) = &mut entry.fill {
-        // All three handles coincide: the frame has no area.
-        gradient.handle_primary = Vec2 { x: 0.5, y: 0.5 };
-        gradient.handle_secondary = Vec2 { x: 0.5, y: 0.5 };
-    }
-    let (rects, paints) = single_entry_scene(entry, 4.0, 4.0);
+    let (rects, paints) = single_entry_scene(
+        |paints| degenerate_gradient_entry(paints, hard_red_blue_stops()),
+        4.0,
+        4.0,
+    );
     let rgba = render(&rects, &paints, &ImageTable::new(), 4);
 
     assert_eq!(px(&rgba, 4, 2, 2), RED_RGBA);
@@ -331,8 +372,7 @@ fn a_single_fill_entry_renders_byte_identically_with_no_extra_fills() {
     // The guard: an entry that never touches `extra_fills` (the
     // `PaintEntry::default()` empty vec) paints exactly the single fill it
     // always has — no compositing loop runs for it.
-    let entry = PaintEntry::solid(RED);
-    let (rects, paints) = single_entry_scene(entry, 4.0, 4.0);
+    let (rects, paints) = single_entry_scene(|paints| solid_entry(paints, RED), 4.0, 4.0);
     let rgba = render(&rects, &paints, &ImageTable::new(), 4);
 
     for y in 0..4 {
@@ -348,15 +388,18 @@ fn stacked_opaque_fills_composite_bottom_to_top_last_on_top() {
     // then `extra_fills` blue then green (top). Each fully occludes the one
     // below it, so the visible color is the *last* array element — proving
     // the painter draws the list in array order, not reversed.
-    let entry = PaintEntry {
-        fill: Some(PaintKind::Solid { color: RED }),
-        extra_fills: vec![
-            PaintKind::Solid { color: BLUE },
-            PaintKind::Solid { color: GREEN },
-        ],
-        ..PaintEntry::default()
-    };
-    let (rects, paints) = single_entry_scene(entry, 4.0, 4.0);
+    let (rects, paints) = single_entry_scene(
+        |paints| PaintEntry {
+            fill: Some(paints.intern_fill(&FillSpec::Solid { color: RED })),
+            extra_fills: vec![
+                paints.intern_fill(&FillSpec::Solid { color: BLUE }),
+                paints.intern_fill(&FillSpec::Solid { color: GREEN }),
+            ],
+            ..PaintEntry::default()
+        },
+        4.0,
+        4.0,
+    );
     let rgba = render(&rects, &paints, &ImageTable::new(), 4);
 
     for y in 0..4 {
@@ -372,19 +415,22 @@ fn a_semi_transparent_stacked_fill_blends_over_the_bottom_fill() {
     // semi-transparent layer on top. Real alpha compositing, not a bare
     // overwrite — the result carries both colors, and stays fully opaque
     // (compositing anything over an opaque base cannot lower its alpha).
-    let entry = PaintEntry {
-        fill: Some(PaintKind::Solid { color: RED }),
-        extra_fills: vec![PaintKind::Solid {
-            color: Color {
-                r: 0.0,
-                g: 0.0,
-                b: 1.0,
-                a: 0.5,
-            },
-        }],
-        ..PaintEntry::default()
-    };
-    let (rects, paints) = single_entry_scene(entry, 4.0, 4.0);
+    let (rects, paints) = single_entry_scene(
+        |paints| PaintEntry {
+            fill: Some(paints.intern_fill(&FillSpec::Solid { color: RED })),
+            extra_fills: vec![paints.intern_fill(&FillSpec::Solid {
+                color: Color {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 1.0,
+                    a: 0.5,
+                },
+            })],
+            ..PaintEntry::default()
+        },
+        4.0,
+        4.0,
+    );
     let rgba = render(&rects, &paints, &ImageTable::new(), 4);
     let center = px(&rgba, 4, 2, 2);
 
@@ -459,14 +505,20 @@ fn stroke_align_places_the_band_relative_to_the_outline() {
 
 #[test]
 fn rounded_corners_shape_the_fill() {
-    let mut entry = PaintEntry::solid(RED);
-    entry.corners = CornerRadii {
-        top_left: 8.0,
-        top_right: 8.0,
-        bottom_right: 8.0,
-        bottom_left: 8.0,
-    };
-    let (rects, paints) = single_entry_scene(entry, 16.0, 16.0);
+    let (rects, paints) = single_entry_scene(
+        |paints| {
+            let mut entry = solid_entry(paints, RED);
+            entry.corners = CornerRadii {
+                top_left: 8.0,
+                top_right: 8.0,
+                bottom_right: 8.0,
+                bottom_left: 8.0,
+            };
+            entry
+        },
+        16.0,
+        16.0,
+    );
     let rgba = render(&rects, &paints, &ImageTable::new(), 16);
 
     assert_eq!(px(&rgba, 16, 8, 8), RED_RGBA, "center");
@@ -494,7 +546,7 @@ fn quadrant_asset() -> ImageAsset {
         y,
         w: 1.0,
         h: 1.0,
-        paint: paints.push(PaintEntry::solid(color)),
+        paint: paints.push_solid(color),
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
     })
@@ -514,22 +566,32 @@ fn quadrant_asset() -> ImageAsset {
     }
 }
 
-fn image_entry(scale_mode: ScaleMode, transform: Option<Mat23>, tile_scale: f32) -> PaintEntry {
+fn image_entry(
+    paints: &mut PaintTable,
+    scale_mode: ScaleMode,
+    transform: Mat23,
+    tile_scale: f32,
+) -> PaintEntry {
     PaintEntry {
-        fill: Some(PaintKind::Image {
+        fill: Some(paints.intern_fill(&FillSpec::Image(ImageFill {
             image: 0,
             scale_mode,
             transform,
             tile_scale,
-        }),
+        }))),
         ..PaintEntry::default()
     }
 }
 
-fn image_scene(entry: PaintEntry, w: f32, h: f32, size: i32) -> Vec<u8> {
+fn image_scene(
+    build: impl FnOnce(&mut PaintTable) -> PaintEntry,
+    w: f32,
+    h: f32,
+    size: i32,
+) -> Vec<u8> {
     let mut images = ImageTable::new();
     images.push(quadrant_asset());
-    let (rects, paints) = single_entry_scene(entry, w, h);
+    let (rects, paints) = single_entry_scene(build, w, h);
     let mut painter = SkiaPainter::new(size, size);
     painter.paint(
         &rects,
@@ -545,7 +607,12 @@ fn image_scene(entry: PaintEntry, w: f32, h: f32, size: i32) -> Vec<u8> {
 
 #[test]
 fn image_fill_covers_the_box_with_quadrants_in_place() {
-    let rgba = image_scene(image_entry(ScaleMode::Fill, None, 1.0), 8.0, 8.0, 8);
+    let rgba = image_scene(
+        |paints| image_entry(paints, ScaleMode::Fill, Mat23::IDENTITY, 1.0),
+        8.0,
+        8.0,
+        8,
+    );
 
     assert_eq!(px(&rgba, 8, 2, 2), RED_RGBA);
     assert_eq!(px(&rgba, 8, 6, 2), GREEN_RGBA);
@@ -557,7 +624,12 @@ fn image_fill_covers_the_box_with_quadrants_in_place() {
 fn image_fit_letterboxes_a_wide_box() {
     // 8×4 box, square image: contain gives a 4×4 image centered at
     // x in [2, 6); the letterbox stays transparent.
-    let rgba = image_scene(image_entry(ScaleMode::Fit, None, 1.0), 8.0, 4.0, 8);
+    let rgba = image_scene(
+        |paints| image_entry(paints, ScaleMode::Fit, Mat23::IDENTITY, 1.0),
+        8.0,
+        4.0,
+        8,
+    );
 
     assert_eq!(px(&rgba, 8, 0, 1), TRANSPARENT_RGBA, "letterbox left");
     assert_eq!(px(&rgba, 8, 7, 1), TRANSPARENT_RGBA, "letterbox right");
@@ -571,7 +643,12 @@ fn image_fit_letterboxes_a_wide_box() {
 
 #[test]
 fn image_tile_repeats_at_native_scale() {
-    let rgba = image_scene(image_entry(ScaleMode::Tile, None, 1.0), 8.0, 8.0, 8);
+    let rgba = image_scene(
+        |paints| image_entry(paints, ScaleMode::Tile, Mat23::IDENTITY, 1.0),
+        8.0,
+        8.0,
+        8,
+    );
 
     // The 2×2 pattern repeats every 2 pixels.
     assert_eq!(px(&rgba, 8, 0, 0), RED_RGBA);
@@ -584,7 +661,12 @@ fn image_tile_repeats_at_native_scale() {
 
 #[test]
 fn image_tile_scale_magnifies_the_pattern() {
-    let rgba = image_scene(image_entry(ScaleMode::Tile, None, 2.0), 8.0, 8.0, 8);
+    let rgba = image_scene(
+        |paints| image_entry(paints, ScaleMode::Tile, Mat23::IDENTITY, 2.0),
+        8.0,
+        8.0,
+        8,
+    );
 
     // Each texel now covers 2×2 pixels: one 4×4 tile.
     assert_eq!(px(&rgba, 8, 1, 1), RED_RGBA);
@@ -607,7 +689,7 @@ fn image_crop_shows_the_transformed_region() {
         ty: 0.0,
     };
     let rgba = image_scene(
-        image_entry(ScaleMode::Crop, Some(transform), 1.0),
+        |paints| image_entry(paints, ScaleMode::Crop, transform, 1.0),
         8.0,
         8.0,
         8,
@@ -619,14 +701,21 @@ fn image_crop_shows_the_transformed_region() {
 
 #[test]
 fn image_overflow_clips_to_rounded_corners() {
-    let mut entry = image_entry(ScaleMode::Fill, None, 1.0);
-    entry.corners = CornerRadii {
-        top_left: 8.0,
-        top_right: 8.0,
-        bottom_right: 8.0,
-        bottom_left: 8.0,
-    };
-    let rgba = image_scene(entry, 16.0, 16.0, 16);
+    let rgba = image_scene(
+        |paints| {
+            let mut entry = image_entry(paints, ScaleMode::Fill, Mat23::IDENTITY, 1.0);
+            entry.corners = CornerRadii {
+                top_left: 8.0,
+                top_right: 8.0,
+                bottom_right: 8.0,
+                bottom_left: 8.0,
+            };
+            entry
+        },
+        16.0,
+        16.0,
+        16,
+    );
 
     // (7,7) sits in the asset's top-left (red) quadrant, inside the
     // rounded box.
@@ -648,7 +737,7 @@ fn image_overflow_clips_to_rounded_corners() {
 /// surface.
 fn clipped_square(boxes: &[ClipBox]) -> Vec<u8> {
     let mut paints = PaintTable::new();
-    let paint = paints.push(PaintEntry::solid(RED));
+    let paint = paints.push_solid(RED);
     let mut clips = ClipTable::new();
     let clip = clips.push(boxes);
     let rects = [RectEntry {
@@ -754,8 +843,8 @@ fn a_clip_region_does_not_leak_into_the_next_rect() {
     // Slice order is stacking order; a clipped rect must not clip the
     // rects painted after it.
     let mut paints = PaintTable::new();
-    let red = paints.push(PaintEntry::solid(RED));
-    let blue = paints.push(PaintEntry::solid(BLUE));
+    let red = paints.push_solid(RED);
+    let blue = paints.push_solid(BLUE);
     let mut clips = ClipTable::new();
     let corner = clips.push(&[ClipBox {
         x: 0.0,
@@ -819,8 +908,11 @@ fn a_diamond_gradient_with_too_many_stops_panics_by_name() {
             color: RED,
         })
         .collect();
-    let (rects, paints) =
-        single_entry_scene(gradient_entry(GradientKind::Diamond, stops), 4.0, 4.0);
+    let (rects, paints) = single_entry_scene(
+        |paints| gradient_entry(paints, GradientKind::Diamond, stops),
+        4.0,
+        4.0,
+    );
 
     let mut painter = SkiaPainter::new(4, 4);
     painter.paint(
@@ -837,8 +929,8 @@ fn a_diamond_gradient_with_too_many_stops_panics_by_name() {
 /// Two side-by-side rects, so an incomplete dirty set can starve one.
 fn two_rects(left_w: f32) -> (Vec<RectEntry>, PaintTable) {
     let mut paints = PaintTable::new();
-    let l = paints.push(PaintEntry::solid(RED));
-    let r = paints.push(PaintEntry::solid(GREEN));
+    let l = paints.push_solid(RED);
+    let r = paints.push_solid(GREEN);
     let rects = vec![
         RectEntry {
             x: 0.0,
@@ -968,7 +1060,7 @@ fn retained_mode_ignores_an_out_of_range_dirty_index() {
 /// is visible as the seam showing through.
 fn three_rects(left_w: f32) -> (Vec<RectEntry>, PaintTable) {
     let (mut rects, mut paints) = two_rects(left_w);
-    let b = paints.push(PaintEntry::solid(BLUE));
+    let b = paints.push_solid(BLUE);
     rects.push(RectEntry {
         x: 4.0,
         y: 4.0,
@@ -1108,12 +1200,12 @@ fn the_node_count_change_frames_render_different_pictures() {
 fn solid_atlas_png(n: i32) -> Vec<u8> {
     let mut painter = SkiaPainter::new(n, n);
     let mut paints = PaintTable::new();
-    let white = paints.push(PaintEntry::solid(Color {
+    let white = paints.push_solid(Color {
         r: 1.0,
         g: 1.0,
         b: 1.0,
         a: 1.0,
-    }));
+    });
     let rects = [RectEntry {
         x: 0.0,
         y: 0.0,
@@ -1296,7 +1388,7 @@ fn render_with_groups(
 
 #[test]
 fn free_path_opacity_modulates_a_solid_fills_alpha() {
-    let (mut rects, paints) = single_entry_scene(PaintEntry::solid(RED), 8.0, 8.0);
+    let (mut rects, paints) = single_entry_scene(|paints| solid_entry(paints, RED), 8.0, 8.0);
     rects[0].opacity = 0.5;
     let rgba = render_with_groups(&rects, &paints, &[], 8, 8);
 
@@ -1317,7 +1409,7 @@ fn a_render_target_group_flattens_before_applying_alpha() {
     // half alpha. The free path would instead double-blend the overlap
     // (0.5 over 0.5 = 0.75), so equal alphas is what proves the composite.
     let mut paints = PaintTable::new();
-    let red = paints.push(PaintEntry::solid(RED));
+    let red = paints.push_solid(RED);
     let rects = [
         RectEntry {
             x: 0.0,
@@ -1981,8 +2073,9 @@ fn an_off_canvas_shadow_paints_nothing_without_error() {
 
 fn fill_and_stroke_at_half_opacity() -> (Vec<RectEntry>, PaintTable) {
     let mut paints = PaintTable::new();
+    let fill = paints.intern_fill(&FillSpec::Solid { color: RED });
     let paint = paints.push(PaintEntry {
-        fill: Some(PaintKind::Solid { color: RED }),
+        fill: Some(fill),
         stroke: Some(Stroke {
             width: 8.0,
             align: StrokeAlign::Inside,
@@ -2092,10 +2185,7 @@ fn a_stroke_with_no_fill_is_correct_at_partial_opacity() {
 
 fn transparent_backdrop_blur_scene() -> (Vec<RectEntry>, PaintTable) {
     let mut paints = PaintTable::new();
-    let band = paints.push(PaintEntry {
-        fill: Some(PaintKind::Solid { color: RED }),
-        ..PaintEntry::default()
-    });
+    let band = paints.push_solid(RED);
     let panel = paints.push_with_effects(
         PaintEntry::default(),
         &[],
@@ -2181,6 +2271,20 @@ struct GroupFrame {
     dirty: Option<Vec<u32>>,
 }
 
+/// A solid-filled entry with uniform 3px rounded corners — the shared shape
+/// of [`nested_group_scene`]'s own nodes.
+fn rounded_entry(paints: &mut PaintTable, color: Color) -> PaintEntry {
+    PaintEntry {
+        corners: CornerRadii {
+            top_left: 3.0,
+            top_right: 3.0,
+            bottom_right: 3.0,
+            bottom_left: 3.0,
+        },
+        ..solid_entry(paints, color)
+    }
+}
+
 /// Two nested render-target groups over overlapping rounded rects, with a
 /// glyph run anchored inside the inner one.
 ///
@@ -2201,19 +2305,13 @@ fn nested_group_scene(
     inner_y: f32,
 ) -> (Vec<RectEntry>, PaintTable, Vec<dashpaint::GroupComposite>) {
     let mut paints = PaintTable::new();
-    let rounded = |color| PaintEntry {
-        corners: CornerRadii {
-            top_left: 3.0,
-            top_right: 3.0,
-            bottom_right: 3.0,
-            bottom_left: 3.0,
-        },
-        ..PaintEntry::solid(color)
-    };
-    let backdrop = paints.push(PaintEntry::solid(BLUE));
-    let outer = paints.push(rounded(RED));
-    let middle = paints.push(rounded(GREEN));
-    let inner = paints.push(rounded(BLUE));
+    let backdrop = paints.push_solid(BLUE);
+    let outer_entry = rounded_entry(&mut paints, RED);
+    let outer = paints.push(outer_entry);
+    let middle_entry = rounded_entry(&mut paints, GREEN);
+    let middle = paints.push(middle_entry);
+    let inner_entry = rounded_entry(&mut paints, BLUE);
+    let inner = paints.push(inner_entry);
 
     let rect = |x: f32, y: f32, w: f32, h: f32, paint| RectEntry {
         x,

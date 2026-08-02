@@ -35,7 +35,7 @@ use std::marker::PhantomData;
 
 use dashcue::{PropKey, Scheduler, TransitionSpec};
 use dashscene_core::{
-    Arena, AxisSizing, Color, Layout, LayoutMode, LayoutSolver, NodeId, PaintKind, Prop,
+    Arena, AxisSizing, Color, FillSpec, Layout, LayoutMode, LayoutSolver, NodeId, Prop,
     ScalarTransform, SignalId, SolvedRect,
 };
 
@@ -1025,7 +1025,7 @@ pub fn attach_live(arena: &mut Arena, mut solver: Box<dyn LayoutSolver>) -> Live
         let has_children = !arena.children(node).is_empty();
         let passthrough = layout.mode == LayoutMode::None;
         let fill = match arena.fill(node) {
-            Some(PaintKind::Solid { color }) => Some(*color),
+            Some(FillSpec::Solid { color }) => Some(*color),
             _ => None,
         };
         if is_fill(row.channel) {

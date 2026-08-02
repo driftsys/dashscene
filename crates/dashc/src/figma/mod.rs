@@ -37,8 +37,8 @@ use std::fmt;
 use serde::Deserialize;
 
 use dashpaint::{
-    Blur, BlurKind, Color, CornerRadii, Gradient, GradientKind, GradientStop, ImageAsset, Mat23,
-    PaintEntry, PaintKind, ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, Vec2,
+    Blur, BlurKind, Color, CornerRadii, FillSpec, Gradient, GradientKind, GradientStop, ImageAsset,
+    ImageFill, Mat23, ScaleMode, Shadow, ShadowKind, StopRange, Stroke, StrokeAlign, Vec2,
 };
 use dashscene_validator::{Diagnostic, Location, NodePath, Profile, Report, Severity};
 
@@ -52,7 +52,7 @@ use dashscene_validator::{Diagnostic, Location, NodePath, Profile, Report, Sever
 use crate::document::{
     Asset, AssetKind, AxisSizing, Box2D, CrossAxisAlign, Document, EdgeInsets,
     GridTrack as DocGridTrack, LayoutConstraints, LayoutContainer as DocContainer, LayoutMode,
-    MainAxisAlign, Node as DocNode, Paint as DocPaint, TextAlign as DocTextAlign,
+    MainAxisAlign, Node as DocNode, Paint as DocPaint, PaintEntry, TextAlign as DocTextAlign,
     TextAlignV as DocTextAlignV, TextStyle as DocTextStyle, VectorAtlas as DocVectorAtlas,
     VectorShape as DocVectorShape,
 };
@@ -1098,14 +1098,6 @@ impl Walk<'_> {
             extra_fills: fills,
             stroke: self.stroke_of(node, blockers),
             corners: corners_of(node),
-            // The entry names ranges into a `PaintTable`'s flat arrays
-            // (story #578); this lowering has no table, so the lists travel
-            // beside it on `DocPaint`.
-            shadows: dashpaint::ShadowRange::NONE,
-            blurs: dashpaint::BlurRange::NONE,
-            // A parametric (rounded-box) node carries no baked shape; the
-            // VECTOR arm is the only place a shape index is set.
-            shape: None,
         };
 
         // A layout-only container draws nothing but still occupies a rect-table
@@ -1127,6 +1119,8 @@ impl Walk<'_> {
             shadows,
             blurs,
             clip: node.clips_content,
+            // A parametric (rounded-box) node carries no baked shape; the
+            // VECTOR arm is the only place a shape index is set.
             shape_field: None,
         }))
     }
@@ -1214,12 +1208,6 @@ impl Walk<'_> {
                 bottom_right: radius,
                 bottom_left: radius,
             },
-            // Ranges into a `PaintTable` this lowering does not have
-            // (story #578); the lists travel beside the entry.
-            shadows: dashpaint::ShadowRange::NONE,
-            blurs: dashpaint::BlurRange::NONE,
-            // An ellipse is a parametric (rounded-box) shape, not a baked one.
-            shape: None,
         };
         let shadows = shadows_of(node, blockers);
         let blurs = blurs_of(node);
@@ -1237,6 +1225,7 @@ impl Walk<'_> {
             shadows,
             blurs,
             clip: false,
+            // An ellipse is a parametric (rounded-box) shape, not a baked one.
             shape_field: None,
         }))
     }
@@ -1268,14 +1257,14 @@ impl Walk<'_> {
         let stroke = self.stroke_of(node, blockers);
 
         // Select the field-input geometry and the fill that paints it.
-        let (geometry, paint_fill): (Vec<Geometry>, PaintKind) = match (fill, stroke) {
+        let (geometry, paint_fill): (Vec<Geometry>, FillSpec) = match (fill, stroke) {
             // Filled: the fill's own geometry, painted by the fill.
             (Some(fill), None) => (node.fill_geometry.clone(), fill),
             // Stroke-only (a hairline arrow): Figma's expanded outline,
             // painted a synthesized solid of the stroke's colour.
             (None, Some(stroke)) => (
                 node.stroke_geometry.clone(),
-                PaintKind::Solid {
+                FillSpec::Solid {
                     color: stroke.color,
                 },
             ),
@@ -1286,13 +1275,13 @@ impl Walk<'_> {
             // message used to cover both, and it described only the second:
             // a gradient- or image-filled vector with a stroke was refused as
             // "differently-coloured", which is not why it cannot lower — the
-            // union is one field painted by one `PaintKind`, and a non-solid
+            // union is one field painted by one `FillSpec`, and a non-solid
             // fill has no colour to compare with the stroke's in the first
             // place. The refusal was correct either way; the cause was not.
             (Some(fill), Some(stroke)) => {
                 let refusal = match &fill {
-                    PaintKind::Solid { color } if *color == stroke.color => None,
-                    PaintKind::Solid { .. } => {
+                    FillSpec::Solid { color } if *color == stroke.color => None,
+                    FillSpec::Solid { .. } => {
                         Some("a vector with a differently-coloured fill and stroke")
                     }
                     _ => Some("a vector with a non-solid fill and a stroke"),
@@ -1355,28 +1344,23 @@ impl Walk<'_> {
             // The outline is baked into the field, not a parametric stroke.
             stroke: None,
             corners: CornerRadii::default(),
-            shadows: dashpaint::ShadowRange::NONE,
-            // A baked vector DOES carry its blur. The hero's frosted panel is
-            // exactly this shape — a VECTOR with BACKGROUND_BLUR radius 100 —
-            // and `docs/decisions/baked-vector-msdf-field.md` records that
-            // lowering the hero's vectors is what unmasked it. Dropping it here
-            // would silently lose the one node story #393 exists to fix.
-            //
-            // Shadows stay empty, and the node is refused whenever it has one
-            // (the carrier guard in `visit`, debt #396). The asymmetry with the
-            // blur above is the painter's, not a gap: `draw_backdrop_blur_field`
-            // confines a blur to the baked coverage, but `draw_drop_shadow` and
-            // `draw_inner_shadow` build their geometry from the node's
-            // parametric box and corners. A baked vector's silhouette is its
-            // field, so lowering a shadow here would cast a rectangle behind a
-            // star — an approximation, where B1's rule is to skip and name
-            // (`docs/decisions/baked-vector-msdf-field.md`). Refusing keeps the
-            // gap visible until the painter can cast from a field.
-            blurs: dashpaint::BlurRange::NONE,
-            // The resolved `VectorField` is a runtime form; the `.dsb` carries
-            // the shape index, on `DocPaint::shape_field` below.
-            shape: None,
         };
+        // A baked vector DOES carry its blur. The hero's frosted panel is
+        // exactly this shape — a VECTOR with BACKGROUND_BLUR radius 100 —
+        // and `docs/decisions/baked-vector-msdf-field.md` records that
+        // lowering the hero's vectors is what unmasked it. Dropping it here
+        // would silently lose the one node story #393 exists to fix.
+        //
+        // Shadows stay empty, and the node is refused whenever it has one
+        // (the carrier guard in `visit`, debt #396). The asymmetry with the
+        // blur above is the painter's, not a gap: `draw_backdrop_blur_field`
+        // confines a blur to the baked coverage, but `draw_drop_shadow` and
+        // `draw_inner_shadow` build their geometry from the node's
+        // parametric box and corners. A baked vector's silhouette is its
+        // field, so lowering a shadow here would cast a rectangle behind a
+        // star — an approximation, where B1's rule is to skip and name
+        // (`docs/decisions/baked-vector-msdf-field.md`). Refusing keeps the
+        // gap visible until the painter can cast from a field.
         Ok(Some(DocPaint {
             entry,
             // Empty for the reason the long comment above gives: a baked
@@ -1384,6 +1368,8 @@ impl Walk<'_> {
             shadows: Vec::new(),
             blurs: blurs_of(node),
             clip: false,
+            // The resolved `VectorField` is a runtime form; the `.dsb`
+            // carries the shape index here instead.
             shape_field: Some(shape_field),
         }))
     }
@@ -1400,13 +1386,13 @@ impl Walk<'_> {
         node: &Node,
         path: &str,
         blockers: &mut Vec<String>,
-    ) -> Result<Option<PaintKind>, CompileError> {
+    ) -> Result<Option<FillSpec>, CompileError> {
         let kinds = self.fills_of(node, path, blockers)?;
         match single_visible_paint(&node.fills) {
             // A layout-only frame with no fill draws nothing.
             OnePaint::None => Ok(None),
             OnePaint::One(_) => Ok(kinds.into_iter().next()),
-            // PaintEntry.fill is one Option<PaintKind>; Figma's fills is an
+            // PaintEntry.fill is one Option<FillSpec>; Figma's fills is an
             // array. Stacking is a Document expressiveness gap (debt #146), not
             // a triage gap — and a silent drop would violate P4. `paint_of`
             // (the plain rectangle/frame path) lowers a stack instead, through
@@ -1430,7 +1416,7 @@ impl Walk<'_> {
     /// Every visible fill is inspected, not only those before the first
     /// refusal (debt #329): two unlowerable fills in one stack are two
     /// findings, and the second is not implied by the first. A fill that
-    /// refuses contributes a blocker and no `PaintKind`, so the returned list
+    /// refuses contributes a blocker and no `FillSpec`, so the returned list
     /// is shorter than the visible-fill count exactly when `blockers` grew.
     ///
     /// An unresolved `imageRef` (issue #484) is deferred rather than aborting
@@ -1453,7 +1439,7 @@ impl Walk<'_> {
         node: &Node,
         path: &str,
         blockers: &mut Vec<String>,
-    ) -> Result<Vec<PaintKind>, CompileError> {
+    ) -> Result<Vec<FillSpec>, CompileError> {
         let mut kinds = Vec::new();
         let mut pending_images: Vec<CompileError> = Vec::new();
         for fill in visible_paints(&node.fills) {
@@ -1501,7 +1487,7 @@ impl Walk<'_> {
         Ok(kinds)
     }
 
-    fn paint_kind(&mut self, paint: &Paint, path: &str) -> Result<PaintKind, CompileError> {
+    fn paint_kind(&mut self, paint: &Paint, path: &str) -> Result<FillSpec, CompileError> {
         let unsupported = |what: &str| CompileError::Unsupported {
             path: path.to_string(),
             what: what.to_string(),
@@ -1512,7 +1498,7 @@ impl Walk<'_> {
                 let color = paint
                     .color
                     .ok_or_else(|| unsupported("a SOLID with no color"))?;
-                Ok(PaintKind::Solid {
+                Ok(FillSpec::Solid {
                     color: color_of(color, paint.opacity),
                 })
             }
@@ -1521,24 +1507,29 @@ impl Walk<'_> {
                 let [origin, primary, secondary] = handles[..] else {
                     return Err(unsupported("a gradient without three handles"));
                 };
-                Ok(PaintKind::Gradient(Gradient {
-                    kind: match paint.kind.as_str() {
-                        "GRADIENT_LINEAR" => GradientKind::Linear,
-                        "GRADIENT_RADIAL" => GradientKind::Radial,
-                        "GRADIENT_ANGULAR" => GradientKind::Angular,
-                        _ => GradientKind::Diamond,
-                    },
-                    handle_origin: Vec2 {
-                        x: origin.x,
-                        y: origin.y,
-                    },
-                    handle_primary: Vec2 {
-                        x: primary.x,
-                        y: primary.y,
-                    },
-                    handle_secondary: Vec2 {
-                        x: secondary.x,
-                        y: secondary.y,
+                Ok(FillSpec::Gradient {
+                    gradient: Gradient {
+                        kind: match paint.kind.as_str() {
+                            "GRADIENT_LINEAR" => GradientKind::Linear,
+                            "GRADIENT_RADIAL" => GradientKind::Radial,
+                            "GRADIENT_ANGULAR" => GradientKind::Angular,
+                            _ => GradientKind::Diamond,
+                        },
+                        handle_origin: Vec2 {
+                            x: origin.x,
+                            y: origin.y,
+                        },
+                        handle_primary: Vec2 {
+                            x: primary.x,
+                            y: primary.y,
+                        },
+                        handle_secondary: Vec2 {
+                            x: secondary.x,
+                            y: secondary.y,
+                        },
+                        // The table assigns the range on intern; this
+                        // lowering has no table (story #578).
+                        stops: StopRange::NONE,
                     },
                     stops: paint
                         .gradient_stops
@@ -1550,7 +1541,7 @@ impl Walk<'_> {
                             color: color_of(s.color, paint.opacity),
                         })
                         .collect(),
-                }))
+                })
             }
             "IMAGE" => {
                 let image_ref = paint
@@ -1628,7 +1619,7 @@ impl Walk<'_> {
                     }
                 };
 
-                Ok(PaintKind::Image {
+                Ok(FillSpec::Image(ImageFill {
                     image,
                     scale_mode: match paint
                         .scale_mode
@@ -1646,17 +1637,15 @@ impl Walk<'_> {
                     // lower a cropped or tiled image to a *wrong* image, in
                     // silence (P4). Figma's imageTransform is row-major
                     // `[[a, b, tx], [c, d, ty]]`, the same six components
-                    // `Mat23` holds; absent means identity.
-                    transform: paint.image_transform.map(|[[a, b, tx], [c, d, ty]]| Mat23 {
-                        a,
-                        b,
-                        c,
-                        d,
-                        tx,
-                        ty,
-                    }),
+                    // `Mat23` holds; `Mat23::IDENTITY` is what an absent one
+                    // means (story #578 removed `ImageFill::transform`'s
+                    // `Option`).
+                    transform: paint
+                        .image_transform
+                        .map(|[[a, b, tx], [c, d, ty]]| Mat23 { a, b, c, d, tx, ty })
+                        .unwrap_or(Mat23::IDENTITY),
                     tile_scale: paint.scaling_factor.unwrap_or(1.0),
-                })
+                }))
             }
             other => Err(unsupported(&format!("a {other} paint"))),
         }

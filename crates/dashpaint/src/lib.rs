@@ -149,6 +149,21 @@ pub struct Mat23 {
     pub ty: f32,
 }
 
+impl Mat23 {
+    /// The transform that maps every point to itself — what an image fill
+    /// carries when it names no crop transform of its own. Story #578
+    /// removed [`ImageFill::transform`]'s `Option`, which had no C
+    /// representation, and this is the value its `None` meant.
+    pub const IDENTITY: Self = Self {
+        a: 1.0,
+        b: 0.0,
+        c: 0.0,
+        d: 1.0,
+        tx: 0.0,
+        ty: 0.0,
+    };
+}
+
 /// One gradient color stop; `offset` is normalized 0..1 along the
 /// gradient's primary axis.
 #[repr(C)]
@@ -159,12 +174,9 @@ pub struct GradientStop {
 }
 
 /// The four gradient kinds of docs/specification/04-figma-vocabulary-profile.md (angular serves gauges).
-/// `#[repr(u8)]` is **not yet checked**: nothing on `dashscene-unity`'s
-/// `extern "C"` surface reaches this enum, because the only types that carry
-/// it — `Gradient` and `PaintKind` — are not flattened yet. Removing the
-/// attribute today fires no lint, verified by mutation. It becomes
-/// load-bearing with the `PaintKind` flattening, and is written now so that
-/// change does not also have to discover it.
+/// `#[repr(u8)]` is checked: [`Gradient`] carries this enum and is on
+/// `dashscene-unity`'s `extern "C"` surface since story #578, so removing
+/// the attribute stops the workspace compiling — verified by mutation.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GradientKind {
@@ -185,30 +197,57 @@ pub enum GradientKind {
 /// validator's guarantee false.
 pub const MAX_GRADIENT_STOPS: usize = 8;
 
+/// Where one gradient's stops sit in the [`PaintTable`]'s flat stop array.
+///
+/// The fill-side twin of [`ShadowRange`] and [`GlyphRange`], for the same
+/// two reasons: a `Vec` per gradient has no C representation, and a flat
+/// array plus a range uploads as one buffer copy (story #578).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct StopRange {
+    /// First stop, as an index into [`PaintTable::all_stops`].
+    pub offset: u32,
+    /// How many stops, along the primary axis. At least one and at most
+    /// [`MAX_GRADIENT_STOPS`] for a gradient the table holds.
+    pub count: u32,
+}
+
+impl StopRange {
+    /// The range a gradient carries before [`PaintTable::intern_fill`]
+    /// assigns it one. Unlike [`ShadowRange::NONE`] this is not also a
+    /// resting value: every gradient in a table names at least one stop,
+    /// so a zero count here means "not yet interned", never "no stops".
+    pub const NONE: Self = Self {
+        offset: 0,
+        count: 0,
+    };
+}
+
 /// A gradient fill. One geometry model serves all four kinds: three
 /// normalized handle positions in the node's box — the gradient origin,
 /// the primary-axis end, and the secondary-axis end (Figma's
 /// gradientHandlePositions). Handles are intent; resolved geometry is
 /// per-painter math (P1).
 ///
-/// `stops` carries at least one and at most [`MAX_GRADIENT_STOPS`] entries
-/// — validated upstream (P4), and painters may assume it.
-#[derive(Debug, Clone, PartialEq)]
+/// The stops are a [`StopRange`] into the table's flat array since story
+/// #578; read them with [`PaintTable::stops`]. A gradient carries at least
+/// one and at most [`MAX_GRADIENT_STOPS`] stops — validated upstream (P4),
+/// and painters may assume it.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Gradient {
     pub kind: GradientKind,
     pub handle_origin: Vec2,
     pub handle_primary: Vec2,
     pub handle_secondary: Vec2,
-    pub stops: Vec<GradientStop>,
+    pub stops: StopRange,
 }
 
 /// Figma image-fill scale modes.
-/// `#[repr(u8)]` is **not yet checked**: nothing on `dashscene-unity`'s
-/// `extern "C"` surface reaches this enum, because the only types that carry
-/// it — `Gradient` and `PaintKind` — are not flattened yet. Removing the
-/// attribute today fires no lint, verified by mutation. It becomes
-/// load-bearing with the `PaintKind` flattening, and is written now so that
-/// change does not also have to discover it.
+///
+/// `#[repr(u8)]` is checked: [`ImageFill`] carries this enum and is on
+/// `dashscene-unity`'s `extern "C"` surface since story #578, so removing
+/// the attribute stops the workspace compiling — verified by mutation.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScaleMode {
@@ -245,7 +284,7 @@ pub struct ImageAsset {
 /// A document names its assets by content hash (`dashbuf`'s `Document.assets`)
 /// and the loader binds each to its payload; by the time a table reaches a
 /// painter the bytes are here:
-/// dense, indexed by [`PaintKind::Image`]'s `image` field. Part of the
+/// dense, indexed by [`ImageFill::image`]. Part of the
 /// painter input since the v0.3 vocabulary
 /// (`docs/decisions/image-assets-cross-boundary-b.md`).
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -258,8 +297,8 @@ impl ImageTable {
         Self::default()
     }
 
-    /// Appends an asset and returns its index — the value a
-    /// [`PaintKind::Image`] `image` field holds to reference it.
+    /// Appends an asset and returns its index — the value an
+    /// [`ImageFill::image`] field holds to reference it.
     pub fn push(&mut self, asset: ImageAsset) -> u32 {
         let index =
             u32::try_from(self.entries.len()).expect("image table exceeds u32::MAX entries");
@@ -553,25 +592,123 @@ impl ClipTable {
     }
 }
 
-/// One way to fill a rect. Shadows are a separate per-entry list
-/// ([`PaintEntry::shadows`]), not a fill kind; masks resolve into clip
-/// regions, not paint.
+/// Which per-kind table a [`PaintKind`] indexes.
+///
+/// The tag half of the tag-plus-index form story #578 gave the fill
+/// vocabulary. A payload-carrying enum has no clean C form — it is a
+/// tag-plus-union, which means explicit-layout structs in C# and which
+/// Burst handles badly — and the repo already mandates integer indices for
+/// cross-table references (`docs/decisions/dsb-sectioned-container.md`).
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PaintTag {
+    Solid,
+    Gradient,
+    Image,
+}
+
+/// One way to fill a rect: which kind, and which row of that kind's table
+/// in the [`PaintTable`] holds its parameters. Shadows are a separate
+/// per-entry list ([`PaintEntry::shadows`]), not a fill kind; masks resolve
+/// into clip regions, not paint.
+///
+/// Read it with [`PaintTable::fill`], which returns the borrowed [`Fill`]
+/// view — the form painters match on. Producers do not build one of these
+/// directly: they hand a [`FillSpec`] to the table, which interns the
+/// parameters and returns the index.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PaintKind {
+    pub tag: PaintTag,
+    /// Row in the table named by `tag` — [`PaintTable::all_solids`],
+    /// [`PaintTable::all_gradients`] or [`PaintTable::all_images`].
+    pub index: u32,
+}
+
+/// An image fill's parameters, as one table row.
+///
+/// `transform` lost its `Option` in story #578 — `Option<Mat23>` has no C
+/// representation, and [`Mat23::IDENTITY`] is exactly what the `None` meant
+/// (an image fill that names no crop transform samples the whole image).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ImageFill {
+    /// Index into the [`ImageTable`].
+    pub image: u32,
+    pub scale_mode: ScaleMode,
+    /// Normalized image-space transform for [`ScaleMode::Crop`];
+    /// [`Mat23::IDENTITY`] for a fill that crops nothing.
+    pub transform: Mat23,
+    /// Tile magnification for [`ScaleMode::Tile`].
+    pub tile_scale: f32,
+}
+
+/// A fill as a producer authors it, with its gradient stops still owned.
+///
+/// The producer-side twin of [`PaintKind`]: a producer cannot know where
+/// its parameters will land in a table it has not entered, so it describes
+/// the fill and the table assigns the index. Same split as
+/// [`GlyphRunTable::push_run`]'s, and the reason is the same — an index
+/// assigned anywhere but the table it indexes is an index that will be
+/// silently replaced.
 #[derive(Debug, Clone, PartialEq)]
-pub enum PaintKind {
+pub enum FillSpec {
     Solid {
         color: Color,
     },
-    Gradient(Gradient),
-    Image {
-        /// Index into the [`ImageTable`].
-        image: u32,
-        scale_mode: ScaleMode,
-        /// Normalized image-space transform for [`ScaleMode::Crop`];
-        /// identity when `None`.
-        transform: Option<Mat23>,
-        /// Tile magnification for [`ScaleMode::Tile`].
-        tile_scale: f32,
+    Gradient {
+        /// Handles and kind. Its [`Gradient::stops`] must be
+        /// [`StopRange::NONE`] — the table assigns the range.
+        gradient: Gradient,
+        /// At least one and at most [`MAX_GRADIENT_STOPS`] stops.
+        stops: Vec<GradientStop>,
     },
+    Image(ImageFill),
+}
+
+/// A fill as a painter reads it: the table row, borrowed, with a
+/// gradient's stops resolved to the slice they name.
+///
+/// The form [`PaintTable::fill`] returns, and the one painters match on —
+/// the flattened [`PaintKind`] is for uploading, not for reading. Without
+/// this view every painter would repeat the same tag-match plus bounds
+/// check, and the fill vocabulary has enough call sites in this workspace
+/// for that repetition to be where a wrong table gets indexed.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Fill<'a> {
+    Solid(Color),
+    Gradient(GradientView<'a>),
+    Image(&'a ImageFill),
+}
+
+impl Fill<'_> {
+    /// The producer-side description of this fill — what re-interning it
+    /// into another table takes.
+    ///
+    /// `dashscene-core`'s table compaction is the caller: it rebuilds a
+    /// fresh [`PaintTable`] from the entries still referenced, and a fill
+    /// index names a row in the table that interned it, so a re-homed entry
+    /// has to re-intern rather than carry its index over.
+    pub fn to_spec(&self) -> FillSpec {
+        match self {
+            Fill::Solid(color) => FillSpec::Solid { color: *color },
+            Fill::Gradient(view) => FillSpec::Gradient {
+                gradient: Gradient {
+                    stops: StopRange::NONE,
+                    ..*view.gradient
+                },
+                stops: view.stops.to_vec(),
+            },
+            Fill::Image(image) => FillSpec::Image(**image),
+        }
+    }
+}
+
+/// A gradient and the stops its [`StopRange`] names.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GradientView<'a> {
+    pub gradient: &'a Gradient,
+    pub stops: &'a [GradientStop],
 }
 
 /// Whether a shadow falls behind the node (a drop shadow) or inside it
@@ -815,16 +952,6 @@ pub struct PaintEntry {
     pub extra_fills: Vec<PaintKind>,
 }
 
-impl PaintEntry {
-    /// The v0.1 walking-skeleton shorthand: a solid fill and nothing else.
-    pub fn solid(color: Color) -> Self {
-        Self {
-            fill: Some(PaintKind::Solid { color }),
-            ..Self::default()
-        }
-    }
-}
-
 /// The paint table (docs/design/dashbuf.md): dense, indexed by `RectEntry.paint`.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PaintTable {
@@ -834,11 +961,219 @@ pub struct PaintTable {
     shadows: Vec<Shadow>,
     /// Every entry's blurs, likewise, named by a [`BlurRange`].
     blurs: Vec<Blur>,
+    /// The per-kind fill tables a [`PaintKind`] indexes (story #578), one
+    /// per [`PaintTag`]. Deduplicated on the way in by
+    /// [`intern_fill`](Self::intern_fill), so a scene's distinct fills are
+    /// what these hold however many entries reference them.
+    solids: Vec<Color>,
+    gradients: Vec<Gradient>,
+    /// Every gradient's stops, flat; a [`StopRange`] indexes into this.
+    stops: Vec<GradientStop>,
+    images: Vec<ImageFill>,
 }
 
 impl PaintTable {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Interns a fill's parameters and returns the [`PaintKind`] naming
+    /// them — the value a [`PaintEntry::fill`] holds.
+    ///
+    /// Deduplicated: an identical fill returns the index it already has.
+    /// This is where fills differ from shadows and blurs, which
+    /// [`push_with_effects`](Self::push_with_effects) copies per entry
+    /// without dedup. A shadow list belongs to one entry and has no
+    /// identity beyond it; a fill is a shared value, and the retained
+    /// interner in `dashscene-core` re-stages the same fills on every
+    /// commit — appending each time would grow these tables without bound
+    /// across a session's frames, which the entry-level interner cannot
+    /// see because two equal fills would reach it as two different indices.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a gradient arrives with a [`StopRange`] already assigned —
+    /// a range that would be silently replaced, refused by name for the
+    /// reason [`push_with_effects`](Self::push_with_effects) gives.
+    ///
+    /// It deliberately does **not** check the stop count against
+    /// [`MAX_GRADIENT_STOPS`]. That is a vocabulary rule, and P4 puts
+    /// vocabulary rules in `dashscene-validator` as named diagnostics
+    /// (`GRADIENT_NO_STOPS`, `GRADIENT_STOP_BUDGET`). Asserting it here
+    /// would move the rule's enforcement into a panic that fires first and
+    /// makes those diagnostics unreachable — the validator could no longer
+    /// report what it exists to report.
+    pub fn intern_fill(&mut self, spec: &FillSpec) -> PaintKind {
+        match spec {
+            FillSpec::Solid { color } => {
+                let index = match self.solids.iter().position(|c| c == color) {
+                    Some(i) => i,
+                    None => {
+                        self.solids.push(*color);
+                        self.solids.len() - 1
+                    }
+                };
+                PaintKind {
+                    tag: PaintTag::Solid,
+                    index: Self::fill_index(index),
+                }
+            }
+            FillSpec::Gradient { gradient, stops } => {
+                assert_eq!(
+                    gradient.stops,
+                    StopRange::NONE,
+                    "intern_fill assigns a gradient's stop range; the gradient must arrive with \
+                     StopRange::NONE, not offsets into some other table"
+                );
+                let existing = self
+                    .gradients
+                    .iter()
+                    .position(|g| Self::same_gradient(g, self.stops_of(g), gradient, stops));
+                let index = match existing {
+                    Some(i) => i,
+                    None => {
+                        let offset = Self::fill_index(self.stops.len());
+                        self.stops.extend_from_slice(stops);
+                        self.gradients.push(Gradient {
+                            stops: StopRange {
+                                offset,
+                                // A count, not a row index, but bounded the
+                                // same way and by the same reason.
+                                count: Self::fill_index(stops.len()),
+                            },
+                            ..*gradient
+                        });
+                        self.gradients.len() - 1
+                    }
+                };
+                PaintKind {
+                    tag: PaintTag::Gradient,
+                    index: Self::fill_index(index),
+                }
+            }
+            FillSpec::Image(image) => {
+                let index = match self.images.iter().position(|i| i == image) {
+                    Some(i) => i,
+                    None => {
+                        self.images.push(*image);
+                        self.images.len() - 1
+                    }
+                };
+                PaintKind {
+                    tag: PaintTag::Image,
+                    index: Self::fill_index(index),
+                }
+            }
+        }
+    }
+
+    /// Whether an interned gradient and a candidate describe the same fill
+    /// — handles and kind, and the stops themselves rather than the ranges
+    /// naming them, since the candidate has no range yet.
+    fn same_gradient(
+        interned: &Gradient,
+        interned_stops: &[GradientStop],
+        candidate: &Gradient,
+        candidate_stops: &[GradientStop],
+    ) -> bool {
+        interned.kind == candidate.kind
+            && interned.handle_origin == candidate.handle_origin
+            && interned.handle_primary == candidate.handle_primary
+            && interned.handle_secondary == candidate.handle_secondary
+            && interned_stops == candidate_stops
+    }
+
+    /// A row index, offset or count as the flattened types carry them.
+    ///
+    /// `u32` rather than `usize` because these cross boundary B, where a
+    /// pointer-sized integer differs by target (story #578).
+    fn fill_index(len: usize) -> u32 {
+        u32::try_from(len).expect("a paint table's fill rows exceed u32::MAX")
+    }
+
+    /// The fill `kind` names, borrowed, with a gradient's stops resolved.
+    ///
+    /// # Panics
+    ///
+    /// Panics on an index past the end of the table `kind.tag` names. An
+    /// out-of-range fill index is a broken contract between crates, exactly
+    /// as [`resolve`](Self::resolve)'s is — most often a [`PaintKind`]
+    /// interned into one table and read from another.
+    pub fn fill(&self, kind: PaintKind) -> Fill<'_> {
+        match kind.tag {
+            PaintTag::Solid => {
+                Fill::Solid(*self.solids.get(kind.index as usize).unwrap_or_else(|| {
+                    panic!(
+                        "solid fill {} out of range: the table holds {}",
+                        kind.index,
+                        self.solids.len()
+                    )
+                }))
+            }
+            PaintTag::Gradient => {
+                let gradient = self.gradients.get(kind.index as usize).unwrap_or_else(|| {
+                    panic!(
+                        "gradient fill {} out of range: the table holds {}",
+                        kind.index,
+                        self.gradients.len()
+                    )
+                });
+                Fill::Gradient(GradientView {
+                    gradient,
+                    stops: self.stops_of(gradient),
+                })
+            }
+            PaintTag::Image => {
+                Fill::Image(self.images.get(kind.index as usize).unwrap_or_else(|| {
+                    panic!(
+                        "image fill {} out of range: the table holds {}",
+                        kind.index,
+                        self.images.len()
+                    )
+                }))
+            }
+        }
+    }
+
+    /// The stops `gradient`'s [`StopRange`] names.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the range runs past the flat stop array, for the reason
+    /// [`fill`](Self::fill) gives.
+    pub fn stops(&self, gradient: &Gradient) -> &[GradientStop] {
+        self.stops_of(gradient)
+    }
+
+    fn stops_of(&self, gradient: &Gradient) -> &[GradientStop] {
+        let start = gradient.stops.offset as usize;
+        let end = start + gradient.stops.count as usize;
+        self.stops.get(start..end).unwrap_or_else(|| {
+            panic!(
+                "stop range {start}..{end} out of range: the table holds {}",
+                self.stops.len()
+            )
+        })
+    }
+
+    /// Every interned solid color, in index order.
+    pub fn all_solids(&self) -> &[Color] {
+        &self.solids
+    }
+
+    /// Every interned gradient, in index order.
+    pub fn all_gradients(&self) -> &[Gradient] {
+        &self.gradients
+    }
+
+    /// Every gradient's stops, flat — what a [`StopRange`] indexes.
+    pub fn all_stops(&self) -> &[GradientStop] {
+        &self.stops
+    }
+
+    /// Every interned image fill, in index order.
+    pub fn all_images(&self) -> &[ImageFill] {
+        &self.images
     }
 
     /// Appends an entry that casts no shadow and carries no blur, and
@@ -902,11 +1237,50 @@ impl PaintTable {
         self.push_entry(entry)
     }
 
+    /// Interns a solid color and appends the entry that fills a rect with
+    /// it and nothing else — the v0.1 walking-skeleton shorthand, and what
+    /// most pushes in this workspace are.
+    pub fn push_solid(&mut self, color: Color) -> PaintIndex {
+        let fill = self.intern_fill(&FillSpec::Solid { color });
+        self.push(PaintEntry {
+            fill: Some(fill),
+            ..PaintEntry::default()
+        })
+    }
+
     fn push_entry(&mut self, entry: PaintEntry) -> PaintIndex {
+        self.check_fills(&entry);
         let index =
             u32::try_from(self.entries.len()).expect("paint table exceeds u32::MAX entries");
         self.entries.push(entry);
         PaintIndex(index)
+    }
+
+    /// Refuses an entry whose fills name rows this table does not hold.
+    ///
+    /// The fill-side counterpart of the [`ShadowRange::NONE`] assert: a
+    /// fill index is legitimately assigned before the entry is pushed, so
+    /// it cannot be refused by being present — but it can be refused for
+    /// naming a row that is not there, which is what a [`PaintKind`]
+    /// interned into a different table looks like. Catching it here names
+    /// the producer that mismatched them; letting it through moves the
+    /// panic to whichever painter reads the entry first, or, if the other
+    /// table happened to be longer, silently paints the wrong fill (P4).
+    fn check_fills(&self, entry: &PaintEntry) {
+        for kind in entry.fill.iter().chain(entry.extra_fills.iter()) {
+            let len = match kind.tag {
+                PaintTag::Solid => self.solids.len(),
+                PaintTag::Gradient => self.gradients.len(),
+                PaintTag::Image => self.images.len(),
+            };
+            assert!(
+                (kind.index as usize) < len,
+                "entry names {:?} fill {}, but this table holds {len}: a fill index belongs to \
+                 the table that interned it",
+                kind.tag,
+                kind.index
+            );
+        }
     }
 
     /// The shadows `entry` casts, in paint order.

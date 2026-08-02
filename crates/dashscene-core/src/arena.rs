@@ -17,8 +17,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::bindings::{Binding, Channel, ScalarTransform, SignalDecl, SignalId};
 use crate::committed::{
     Atlas, Blur, ClipBox, ClipIndex, ClipTable, ClipView, Color, CommittedScene, CornerRadii,
-    GlyphQuad, GlyphRun, GlyphRunTable, GroupComposite, ImageAsset, ImageTable, PaintEntry,
-    PaintIndex, PaintKind, PaintTable, RectEntry, Shadow, Stroke, StrokeAlign, Vec2, VectorField,
+    FillSpec, GlyphQuad, GlyphRun, GlyphRunTable, GroupComposite, ImageAsset, ImageTable,
+    PaintEntry, PaintIndex, PaintTable, RectEntry, Shadow, Stroke, StrokeAlign, Vec2, VectorField,
 };
 
 /// Stable handle to a node in one [`Arena`]. Returned by
@@ -313,13 +313,18 @@ pub enum Prop {
     Width(f32),
     Height(f32),
     /// The v0.1 solid-fill shorthand. Equivalent to
-    /// `FillWith(PaintKind::Solid { color })` — one field, two setters, so
+    /// `FillWith(FillSpec::Solid { color })` — one field, two setters, so
     /// unlike the document's `paint`/`paint_entry` pair (issue #63) the two
     /// cannot disagree.
     Fill(Color),
     /// The node's fill in the full v0.3 vocabulary: a gradient, or an image
     /// fill referencing an asset staged with [`Txn::add_image`].
-    FillWith(PaintKind),
+    ///
+    /// A [`FillSpec`] rather than a [`dashpaint::PaintKind`] since story
+    /// #578: a `PaintKind` is a row index into the paint table's per-kind
+    /// arrays, and a producer staging intent has no table to index —
+    /// `commit` interns the spec and assigns the index.
+    FillWith(FillSpec),
     /// The node's outline stroke: width, align, and solid color.
     Stroke(Stroke),
     /// Per-corner radii, in document units. They round the node's own
@@ -353,7 +358,7 @@ pub enum Prop {
     /// the node's stacked layers back to a single fill. Paint intent like
     /// `Shadows`: not variant-overridable, copied straight onto the
     /// paint-pool entry at commit with no cross-node resolution.
-    ExtraFills(Vec<PaintKind>),
+    ExtraFills(Vec<FillSpec>),
     /// The node's baked-vector coverage mask (story B1). Sets the resolved
     /// [`VectorField`] a Figma VECTOR node lowered into; the painter masks
     /// the node's fill by it. Paint intent like [`Prop::Shadows`] — commit
@@ -549,7 +554,7 @@ struct NodeOverlay {
     y: Option<f32>,
     width: Option<f32>,
     height: Option<f32>,
-    fill: Option<PaintKind>,
+    fill: Option<FillSpec>,
     /// `Some(false)` hides the node (and its subtree) — the same effect as
     /// [`Prop::Visible(false)`](Prop::Visible), reached through a variant
     /// switch (story #283). `None` = the member does not override
@@ -575,13 +580,13 @@ struct NodeData {
     /// The node's fill, in the full boundary-B vocabulary. `Prop::Fill`
     /// stays as the solid shorthand v0.1 producers use; `Prop::FillWith`
     /// stages a gradient or an image fill.
-    fill: Option<PaintKind>,
+    fill: Option<FillSpec>,
     /// Fills stacked over `fill`, bottom to top (story C1, debt #146). Beside
     /// the scalar paint fields rather than inside them — it is
     /// variable-length — the same split as `shadows`. Empty = a single fill
     /// (or no fill), not variant-overridable (the variant vocabulary is
     /// X/Y/W/H/Fill).
-    extra_fills: Vec<PaintKind>,
+    extra_fills: Vec<FillSpec>,
     stroke: Option<Stroke>,
     corners: CornerRadii,
     /// The node's drop and inner shadows, in paint order (v0.8, story
@@ -618,7 +623,7 @@ struct NodeData {
 #[derive(Debug, Default)]
 pub struct Arena {
     nodes: Vec<NodeData>,
-    /// The image assets `PaintKind::Image` fills reference by index.
+    /// The image assets `FillSpec::Image` fills reference by index.
     ///
     /// The arena owns them because a `.dsb` names them (`Document.assets`, whose
     /// payloads the loader binds from the file's blob sections),
@@ -851,7 +856,7 @@ impl Arena {
                     VariantValue::Width(v) => overlay.width = Some(v),
                     VariantValue::Height(v) => overlay.height = Some(v),
                     VariantValue::Fill(color) => {
-                        overlay.fill = Some(PaintKind::Solid { color });
+                        overlay.fill = Some(FillSpec::Solid { color });
                     }
                     VariantValue::Visible(v) => overlay.visible = Some(v),
                 }
@@ -885,7 +890,7 @@ impl Arena {
     /// # Panics
     ///
     /// Panics if `node` is out of range for this arena.
-    pub fn fill(&self, node: NodeId) -> Option<&PaintKind> {
+    pub fn fill(&self, node: NodeId) -> Option<&FillSpec> {
         self.node_data(node).fill.as_ref()
     }
 
@@ -1081,7 +1086,7 @@ impl Txn<'_> {
     /// another arena whose index happens to be in range is not detected
     /// — ids are only meaningful for the arena that produced them.
     /// Stages an image asset and returns its index — the value a
-    /// [`PaintKind::Image`] fill references.
+    /// [`FillSpec::Image`] fill references.
     ///
     /// Assets are append-only within an arena and are not deduplicated here:
     /// a document's asset table arrives already deduplicated by its producer
@@ -1190,7 +1195,7 @@ impl Txn<'_> {
             Prop::Y(v) => data.layout.y = v,
             Prop::Width(v) => data.layout.width = v,
             Prop::Height(v) => data.layout.height = v,
-            Prop::Fill(c) => data.fill = Some(PaintKind::Solid { color: c }),
+            Prop::Fill(c) => data.fill = Some(FillSpec::Solid { color: c }),
             Prop::FillWith(kind) => data.fill = Some(kind),
             Prop::Stroke(s) => data.stroke = Some(s),
             Prop::Corners {
@@ -1683,13 +1688,16 @@ impl Txn<'_> {
                     // index (story #578). `intern_paint` keys on the
                     // contents and `PaintTable::push_with_effects` assigns
                     // the ranges.
-                    let (entry, shadows, blurs) = if draws_nothing {
-                        (PaintEntry::default(), &[][..], &[][..])
+                    let (entry, fill, extra_fills, shadows, blurs) = if draws_nothing {
+                        (PaintEntry::default(), None, &[][..], &[][..], &[][..])
                     } else {
-                        let fill = arena.overlay(id).fill.or_else(|| node.fill.clone());
+                        let fill = arena.overlay(id).fill.clone().or_else(|| node.fill.clone());
                         (
                             PaintEntry {
-                                fill,
+                                // Assigned by `intern_paint`, which is where
+                                // the table that interns the fill is (story
+                                // #578).
+                                fill: None,
                                 stroke: node.stroke,
                                 corners: node.corners,
                                 // Shadows are not variant-overridable (the
@@ -1706,14 +1714,26 @@ impl Txn<'_> {
                                 shape: node.shape,
                                 // Stacked fills (story C1), not
                                 // variant-overridable either — same posture
-                                // as shadows, straight from the node.
-                                extra_fills: node.extra_fills.clone(),
+                                // as shadows, straight from the node, and
+                                // interned by `intern_paint` like the base
+                                // fill.
+                                extra_fills: Vec::new(),
                             },
+                            fill,
+                            node.extra_fills.as_slice(),
                             node.shadows.as_slice(),
                             node.blurs.as_slice(),
                         )
                     };
-                    intern_paint(&mut back_paints, paint_map, entry, shadows, blurs)
+                    intern_paint(
+                        &mut back_paints,
+                        paint_map,
+                        entry,
+                        fill.as_ref(),
+                        extra_fills,
+                        shadows,
+                        blurs,
+                    )
                 }
             };
 
@@ -2219,21 +2239,34 @@ fn intern_paint(
     paints: &mut Arc<PaintTable>,
     interned: &mut FxHashMap<PaintKey, PaintIndex>,
     entry: PaintEntry,
+    fill: Option<&FillSpec>,
+    extra_fills: &[FillSpec],
     shadows: &[Shadow],
     blurs: &[Blur],
 ) -> PaintIndex {
-    // The key is over the effects' *contents*, not over the ranges that will
-    // name them — which is what keeps dedup working now that the entry
-    // carries ranges (story #578). Two nodes with identical shadows must
-    // still reach one entry, and their ranges would differ until they did.
-    let key = paint_key(&entry, shadows, blurs);
+    // The key is over the effects' and fills' *contents*, not over the
+    // ranges and row indices that will name them — which is what keeps dedup
+    // working now that the entry carries both (story #578). Two nodes with
+    // identical shadows must still reach one entry, and their ranges would
+    // differ until they did.
+    //
+    // Keying before interning is also what keeps the per-kind fill tables
+    // from growing: a hit returns without touching them, so re-staging the
+    // same fill every commit interns it once.
+    let key = paint_key(&entry, fill, extra_fills, shadows, blurs);
     if let Some(&index) = interned.get(&key) {
         return index;
     }
     // Cannot truncate: the paint table stays below u32::MAX. `add_node`
     // bounds the node count, and the rebuild in `compact_paints` bounds
     // the table at a small multiple of the rect count (issue #197).
-    let index = Arc::make_mut(paints).push_with_effects(entry, shadows, blurs);
+    let table = Arc::make_mut(paints);
+    let entry = PaintEntry {
+        fill: fill.map(|spec| table.intern_fill(spec)),
+        extra_fills: extra_fills.iter().map(|s| table.intern_fill(s)).collect(),
+        ..entry
+    };
+    let index = table.push_with_effects(entry, shadows, blurs);
     interned.insert(key, index);
     index
 }
@@ -2277,10 +2310,25 @@ fn compact_paints(
                 // old table's arrays, so they are cleared and reassigned by
                 // the push, exactly as `push_with_effects` requires (story
                 // #578).
+                //
+                // Its fills are the same hazard in the other direction. A
+                // `PaintKind` is a row index into the table that interned
+                // it, so carrying one across would name a row of the new
+                // table that holds something else — or nothing. They are
+                // re-interned from their contents, which is also what makes
+                // the rebuild drop the fills no surviving entry references.
                 let old = paints.resolve(rect.paint);
+                let fill = old.fill.map(|kind| paints.fill(kind).to_spec());
+                let extra_fills: Vec<_> = old
+                    .extra_fills
+                    .iter()
+                    .map(|&kind| paints.fill(kind).to_spec())
+                    .collect();
                 let mut rehomed = old.clone();
                 rehomed.shadows = dashpaint::ShadowRange::NONE;
                 rehomed.blurs = dashpaint::BlurRange::NONE;
+                rehomed.fill = fill.as_ref().map(|spec| table.intern_fill(spec));
+                rehomed.extra_fills = extra_fills.iter().map(|s| table.intern_fill(s)).collect();
                 let index =
                     table.push_with_effects(rehomed, paints.shadows(old), paints.blurs(old));
                 moved.insert(rect.paint.0, index);
@@ -2297,8 +2345,24 @@ fn compact_paints(
         // and `add_node` keeps the node count below u32::MAX.
         let index = PaintIndex(i as u32);
         let entry = table.resolve(index);
+        // Back to specs for the key, for the reason `paint_key` gives: it
+        // keys on what a fill *is*, not on the row this table happens to
+        // hold it in, so a re-keyed entry matches the same intent staged
+        // again after the rebuild.
+        let fill = entry.fill.map(|kind| table.fill(kind).to_spec());
+        let extra_fills: Vec<_> = entry
+            .extra_fills
+            .iter()
+            .map(|&kind| table.fill(kind).to_spec())
+            .collect();
         interned.insert(
-            paint_key(entry, table.shadows(entry), table.blurs(entry)),
+            paint_key(
+                entry,
+                fill.as_ref(),
+                &extra_fills,
+                table.shadows(entry),
+                table.blurs(entry),
+            ),
             index,
         );
     }
@@ -2427,10 +2491,19 @@ fn intern_region(
 /// dirty and its paint entry never dedup.
 type PaintKey = Vec<u32>;
 
-fn paint_key(entry: &PaintEntry, shadows: &[Shadow], blurs: &[Blur]) -> PaintKey {
+fn paint_key(
+    entry: &PaintEntry,
+    fill: Option<&FillSpec>,
+    extra_fills: &[FillSpec],
+    shadows: &[Shadow],
+    blurs: &[Blur],
+) -> PaintKey {
     let mut key = Vec::new();
 
-    push_fill_key(&mut key, entry.fill.as_ref());
+    // The fills arrive as specs, not as the entry's row indices: an index is
+    // assigned by the table on a miss, so keying on it would make every
+    // not-yet-interned fill look distinct (story #578).
+    push_fill_key(&mut key, fill);
 
     // Stacked fills (story C1, debt #146). Omitted from this key until debt
     // #395: `commit` copies `extra_fills` onto the entry, so two nodes sharing
@@ -2440,8 +2513,8 @@ fn paint_key(entry: &PaintEntry, shadows: &[Shadow], blurs: &[Blur]) -> PaintKey
     // with one extra layer and the arena kept none. Same "count then each
     // element's bits" framing as the sections below, so the encoding stays
     // prefix-free and no two distinct entries can collide.
-    key.push(entry.extra_fills.len() as u32);
-    for layer in &entry.extra_fills {
+    key.push(extra_fills.len() as u32);
+    for layer in extra_fills {
         push_fill_key(&mut key, Some(layer));
     }
 
@@ -2494,49 +2567,42 @@ fn paint_key(entry: &PaintEntry, shadows: &[Shadow], blurs: &[Blur]) -> PaintKey
 /// ambiguity.
 ///
 /// `None` is the fill-less entry (tag 0). A stacked layer is always `Some`.
-fn push_fill_key(key: &mut Vec<u32>, fill: Option<&PaintKind>) {
+fn push_fill_key(key: &mut Vec<u32>, fill: Option<&FillSpec>) {
     match fill {
         None => key.push(0),
-        Some(PaintKind::Solid { color }) => {
+        Some(FillSpec::Solid { color }) => {
             key.push(1);
             key.extend(color_key(*color));
         }
-        Some(PaintKind::Gradient(gradient)) => {
+        Some(FillSpec::Gradient { gradient, stops }) => {
             key.push(2);
             key.push(gradient.kind as u32);
             key.extend(vec2_key(gradient.handle_origin));
             key.extend(vec2_key(gradient.handle_primary));
             key.extend(vec2_key(gradient.handle_secondary));
-            key.push(gradient.stops.len() as u32);
-            for stop in &gradient.stops {
+            key.push(stops.len() as u32);
+            for stop in stops {
                 key.push(stop.offset.to_bits());
                 key.extend(color_key(stop.color));
             }
         }
-        Some(PaintKind::Image {
-            image,
-            scale_mode,
-            transform,
-            tile_scale,
-        }) => {
+        Some(FillSpec::Image(image)) => {
             key.push(3);
-            key.push(*image);
-            key.push(*scale_mode as u32);
-            key.push(tile_scale.to_bits());
-            match transform {
-                None => key.push(0),
-                Some(m) => {
-                    key.push(1);
-                    key.extend([
-                        m.a.to_bits(),
-                        m.b.to_bits(),
-                        m.c.to_bits(),
-                        m.d.to_bits(),
-                        m.tx.to_bits(),
-                        m.ty.to_bits(),
-                    ]);
-                }
-            }
+            key.push(image.image);
+            key.push(image.scale_mode as u32);
+            key.push(image.tile_scale.to_bits());
+            // The transform is unconditional since story #578 removed its
+            // `Option`; an image fill that crops nothing carries
+            // `Mat23::IDENTITY`, which keys as itself.
+            let m = image.transform;
+            key.extend([
+                m.a.to_bits(),
+                m.b.to_bits(),
+                m.c.to_bits(),
+                m.d.to_bits(),
+                m.tx.to_bits(),
+                m.ty.to_bits(),
+            ]);
         }
     }
 }

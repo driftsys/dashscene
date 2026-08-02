@@ -37,8 +37,8 @@ use crate::arena::{
 };
 use crate::bindings::{Channel, ScalarTransform, SignalId};
 use crate::committed::{
-    Blur, BlurKind, Color, Gradient, GradientKind, GradientStop, ImageAsset, ImageFormat, Mat23,
-    PaintKind, ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, Vec2, VectorField,
+    Blur, BlurKind, Color, FillSpec, Gradient, GradientKind, GradientStop, ImageAsset, ImageFormat,
+    Mat23, ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, Vec2, VectorField,
 };
 
 /// Replays a validated `.dsb` document into `arena` and commits it,
@@ -416,41 +416,63 @@ fn variant_value(o: &dashbuf::VariantOverride<'_>) -> VariantValue {
     }
 }
 
-/// The `PaintKind` a stacked-fill layer's `Fill` union resolves to (story C1,
+/// One document gradient's handles and kind, with its stops left to
+/// [`gradient_stops_of`] — the split story #578 introduced, since a
+/// `Gradient` now names its stops by a range the paint table assigns.
+fn gradient_of(g: &dashbuf::Gradient<'_>) -> Gradient {
+    Gradient {
+        kind: gradient_kind(g.kind()),
+        handle_origin: vec2_of(g.handle_origin()),
+        handle_primary: vec2_of(g.handle_primary()),
+        handle_secondary: vec2_of(g.handle_secondary()),
+        stops: dashpaint::StopRange::NONE,
+    }
+}
+
+/// One document gradient's stops, owned, in document order.
+fn gradient_stops_of(g: &dashbuf::Gradient<'_>) -> Vec<GradientStop> {
+    g.stops()
+        .iter()
+        .map(|s| GradientStop {
+            offset: s.offset(),
+            color: color_of(s.color()),
+        })
+        .collect()
+}
+
+/// One document image fill. `transform` carries [`Mat23::IDENTITY`] where
+/// the document names none — story #578 removed the `Option`, and identity
+/// is what its `None` meant.
+fn image_fill_of(f: &dashbuf::ImageFill<'_>, image_of: &[u32]) -> dashpaint::ImageFill {
+    dashpaint::ImageFill {
+        // Through the mapping, never the document's own index.
+        image: image_of[f.image() as usize],
+        scale_mode: scale_mode(f.scale_mode()),
+        transform: f.transform().map(mat23_of).unwrap_or(Mat23::IDENTITY),
+        tile_scale: f.tile_scale(),
+    }
+}
+
+/// The `FillSpec` a stacked-fill layer's `Fill` union resolves to (story C1,
 /// debt #146), or `None` for `Fill::NONE` — a malformed layer (a stacked
 /// layer with no fill has no meaning, unlike the primary `Paint.fill`, which
 /// legitimately can be absent for a stroke-only entry), so it is dropped
 /// here the same way `load_paint`'s own primary-fill match tolerates an
 /// unrecognized value: this function assumes a validated document (P4),
 /// same contract as the rest of this module.
-fn fill_layer_kind_of(layer: &dashbuf::FillLayer<'_>, image_of: &[u32]) -> Option<PaintKind> {
+fn fill_layer_kind_of(layer: &dashbuf::FillLayer<'_>, image_of: &[u32]) -> Option<FillSpec> {
     match layer.fill_type() {
         Fill::SolidFill => layer
             .fill_as_solid_fill()
             .and_then(|s| s.color())
-            .map(|c| PaintKind::Solid { color: color_of(c) }),
-        Fill::Gradient => layer.fill_as_gradient().map(|g| {
-            PaintKind::Gradient(Gradient {
-                kind: gradient_kind(g.kind()),
-                handle_origin: vec2_of(g.handle_origin()),
-                handle_primary: vec2_of(g.handle_primary()),
-                handle_secondary: vec2_of(g.handle_secondary()),
-                stops: g
-                    .stops()
-                    .iter()
-                    .map(|s| GradientStop {
-                        offset: s.offset(),
-                        color: color_of(s.color()),
-                    })
-                    .collect(),
-            })
+            .map(|c| FillSpec::Solid { color: color_of(c) }),
+        Fill::Gradient => layer.fill_as_gradient().map(|g| FillSpec::Gradient {
+            gradient: gradient_of(&g),
+            stops: gradient_stops_of(&g),
         }),
-        Fill::ImageFill => layer.fill_as_image_fill().map(|f| PaintKind::Image {
-            image: image_of[f.image() as usize],
-            scale_mode: scale_mode(f.scale_mode()),
-            transform: f.transform().map(mat23_of),
-            tile_scale: f.tile_scale(),
-        }),
+        Fill::ImageFill => layer
+            .fill_as_image_fill()
+            .map(|f| FillSpec::Image(image_fill_of(&f, image_of))),
         _ => None,
     }
 }
@@ -476,20 +498,10 @@ fn load_paint(
             if let Some(g) = paint.fill_as_gradient() {
                 txn.set_prop(
                     id,
-                    Prop::FillWith(PaintKind::Gradient(Gradient {
-                        kind: gradient_kind(g.kind()),
-                        handle_origin: vec2_of(g.handle_origin()),
-                        handle_primary: vec2_of(g.handle_primary()),
-                        handle_secondary: vec2_of(g.handle_secondary()),
-                        stops: g
-                            .stops()
-                            .iter()
-                            .map(|s| GradientStop {
-                                offset: s.offset(),
-                                color: color_of(s.color()),
-                            })
-                            .collect(),
-                    })),
+                    Prop::FillWith(FillSpec::Gradient {
+                        gradient: gradient_of(&g),
+                        stops: gradient_stops_of(&g),
+                    }),
                 );
             }
         }
@@ -497,13 +509,7 @@ fn load_paint(
             if let Some(f) = paint.fill_as_image_fill() {
                 txn.set_prop(
                     id,
-                    Prop::FillWith(PaintKind::Image {
-                        // Through the mapping, never the document's own index.
-                        image: image_of[f.image() as usize],
-                        scale_mode: scale_mode(f.scale_mode()),
-                        transform: f.transform().map(mat23_of),
-                        tile_scale: f.tile_scale(),
-                    }),
+                    Prop::FillWith(FillSpec::Image(image_fill_of(&f, image_of))),
                 );
             }
         }

@@ -16,11 +16,11 @@
 // The lib target is `dashc_wasm`, not `dashc`: on wasm32 both the lib and the
 // bin compile to a same-named output file, which cargo flags as a collision
 // (see the crate manifest).
-use dashc_wasm::{Box2D, Document, Node, Paint, compile, emit};
+use dashc_wasm::{Box2D, Document, Node, Paint, PaintEntry, compile, emit};
 use dashpaint::{
-    Blur, BlurKind, Color, GlyphRunTable, Gradient, GradientKind, GradientStop, ImageAsset,
-    ImageFormat, PaintEntry, PaintKind, Painter, ScaleMode, Shadow, ShadowKind, Stroke,
-    StrokeAlign, Vec2,
+    Blur, BlurKind, Color, FillSpec, GlyphRunTable, Gradient, GradientKind, GradientStop,
+    ImageAsset, ImageFill, ImageFormat, Mat23, Painter, ScaleMode, Shadow, ShadowKind, StopRange,
+    Stroke, StrokeAlign, Vec2,
 };
 use dashscene_core::{Arena, Prop, load_document};
 use dashscene_skia::SkiaPainter;
@@ -50,12 +50,17 @@ fn png_pixel() -> Vec<u8> {
     PNG.to_vec()
 }
 
-fn gradient() -> PaintKind {
-    PaintKind::Gradient(Gradient {
-        kind: GradientKind::Linear,
-        handle_origin: Vec2 { x: 0.0, y: 0.0 },
-        handle_primary: Vec2 { x: 1.0, y: 0.0 },
-        handle_secondary: Vec2 { x: 0.0, y: 1.0 },
+fn gradient() -> FillSpec {
+    FillSpec::Gradient {
+        gradient: Gradient {
+            kind: GradientKind::Linear,
+            handle_origin: Vec2 { x: 0.0, y: 0.0 },
+            handle_primary: Vec2 { x: 1.0, y: 0.0 },
+            handle_secondary: Vec2 { x: 0.0, y: 1.0 },
+            // The table assigns the range on intern; this fixture has no
+            // table (story #578).
+            stops: StopRange::NONE,
+        },
         stops: vec![
             GradientStop {
                 offset: 0.0,
@@ -66,7 +71,7 @@ fn gradient() -> PaintKind {
                 color: BLUE,
             },
         ],
-    })
+    }
 }
 
 fn stroke() -> Stroke {
@@ -83,6 +88,17 @@ fn corners() -> dashpaint::CornerRadii {
         top_right: 0.0,
         bottom_right: 4.0,
         bottom_left: 0.0,
+    }
+}
+
+/// A paint entry with nothing but a solid fill — the
+/// `dashpaint::PaintEntry::solid` shorthand story #578 removed (it belongs
+/// on `PaintTable` now, since only a table can assign the fill an index);
+/// recreated here for the many fixtures in this file that want exactly that.
+fn solid_entry(color: Color) -> PaintEntry {
+    PaintEntry {
+        fill: Some(FillSpec::Solid { color }),
+        ..PaintEntry::default()
     }
 }
 
@@ -116,9 +132,6 @@ fn v03_document() -> Document {
                 fill: Some(gradient()),
                 stroke: None,
                 corners: dashpaint::CornerRadii::default(),
-                shadows: dashpaint::ShadowRange::NONE,
-                blurs: dashpaint::BlurRange::NONE,
-                shape: None,
                 extra_fills: Vec::new(),
             },
             clip: true,
@@ -140,7 +153,7 @@ fn v03_document() -> Document {
             height: 40.0,
         },
         paint: Some(Paint {
-            entry: PaintEntry::solid(RED),
+            entry: solid_entry(RED),
             clip: false,
             shape_field: None,
             shadows: Vec::new(),
@@ -163,9 +176,6 @@ fn v03_document() -> Document {
                 fill: None,
                 stroke: Some(stroke()),
                 corners: corners(),
-                shadows: dashpaint::ShadowRange::NONE,
-                blurs: dashpaint::BlurRange::NONE,
-                shape: None,
                 extra_fills: Vec::new(),
             },
             clip: false,
@@ -187,17 +197,14 @@ fn v03_document() -> Document {
         },
         paint: Some(Paint {
             entry: PaintEntry {
-                fill: Some(PaintKind::Image {
+                fill: Some(FillSpec::Image(ImageFill {
                     image,
                     scale_mode: ScaleMode::Fill,
-                    transform: None,
+                    transform: Mat23::IDENTITY,
                     tile_scale: 1.0,
-                }),
+                })),
                 stroke: None,
                 corners: dashpaint::CornerRadii::default(),
-                shadows: dashpaint::ShadowRange::NONE,
-                blurs: dashpaint::BlurRange::NONE,
-                shape: None,
                 extra_fills: Vec::new(),
             },
             clip: false,
@@ -264,12 +271,12 @@ fn v03_by_hand(arena: &mut Arena) {
     txn.set_prop(photo, Prop::Height(10.0));
     txn.set_prop(
         photo,
-        Prop::FillWith(PaintKind::Image {
+        Prop::FillWith(FillSpec::Image(ImageFill {
             image,
             scale_mode: ScaleMode::Fill,
-            transform: None,
+            transform: Mat23::IDENTITY,
             tile_scale: 1.0,
-        }),
+        })),
     );
 
     txn.commit();
@@ -360,11 +367,7 @@ fn shadowed_document() -> Document {
             height: 20.0,
         },
         paint: Some(Paint {
-            entry: PaintEntry {
-                fill: Some(PaintKind::Solid { color: RED }),
-                shadows: dashpaint::ShadowRange::NONE,
-                ..PaintEntry::default()
-            },
+            entry: solid_entry(RED),
             clip: false,
             shape_field: None,
             shadows: vec![
@@ -433,10 +436,7 @@ fn blurred_node(name: &str, blurs: Vec<Blur>) -> Node {
             height: 20.0,
         },
         paint: Some(Paint {
-            entry: PaintEntry {
-                fill: Some(PaintKind::Solid { color: RED }),
-                ..PaintEntry::default()
-            },
+            entry: solid_entry(RED),
             clip: false,
             shape_field: None,
             shadows: Vec::new(),
@@ -595,7 +595,7 @@ fn a_blur_less_entry_omits_the_blurs_field_entirely() {
 fn nodes_sharing_a_style_share_one_pool_entry() {
     let mut doc = Document::new();
     let paint = Paint {
-        entry: PaintEntry::solid(RED),
+        entry: solid_entry(RED),
         clip: false,
         shape_field: None,
         shadows: Vec::new(),
@@ -645,7 +645,7 @@ fn two_nodes_that_differ_only_in_clip_do_not_share_a_pool_entry() {
                 height: 4.0,
             },
             paint: Some(Paint {
-                entry: PaintEntry::solid(RED),
+                entry: solid_entry(RED),
                 clip,
                 shape_field: None,
                 shadows: Vec::new(),
@@ -678,18 +678,18 @@ fn an_invalid_document_is_refused_rather_than_emitted() {
         },
         paint: Some(Paint {
             entry: PaintEntry {
-                fill: Some(PaintKind::Gradient(Gradient {
-                    kind: GradientKind::Linear,
-                    handle_origin: Vec2 { x: 0.0, y: 0.0 },
-                    handle_primary: Vec2 { x: 1.0, y: 0.0 },
-                    handle_secondary: Vec2 { x: 0.0, y: 1.0 },
+                fill: Some(FillSpec::Gradient {
+                    gradient: Gradient {
+                        kind: GradientKind::Linear,
+                        handle_origin: Vec2 { x: 0.0, y: 0.0 },
+                        handle_primary: Vec2 { x: 1.0, y: 0.0 },
+                        handle_secondary: Vec2 { x: 0.0, y: 1.0 },
+                        stops: StopRange::NONE,
+                    },
                     stops: Vec::new(),
-                })),
+                }),
                 stroke: None,
                 corners: dashpaint::CornerRadii::default(),
-                shadows: dashpaint::ShadowRange::NONE,
-                blurs: dashpaint::BlurRange::NONE,
-                shape: None,
                 extra_fills: Vec::new(),
             },
             clip: false,
@@ -730,13 +730,13 @@ fn image_indices_are_remapped_when_loading_into_a_non_empty_arena() {
     // the second document's must point at the second asset — index 1, not 0.
     let referenced: Vec<u32> = (0..scene.paints().len())
         .filter_map(|i| {
-            match &scene
+            let kind = scene
                 .paints()
                 .get(dashpaint::PaintIndex(i as u32))
                 .expect("in range")
-                .fill
-            {
-                Some(PaintKind::Image { image, .. }) => Some(*image),
+                .fill?;
+            match scene.paints().fill(kind) {
+                dashpaint::Fill::Image(image_fill) => Some(image_fill.image),
                 _ => None,
             }
         })

@@ -196,7 +196,7 @@ fn figma_authored_bindings_land_in_the_arena_tables() {
 /// tick, and the committed scene follows.
 #[test]
 fn a_loaded_figma_document_drives_through_attach_live() {
-    use dashscene_core::PaintKind;
+    use dashscene_core::FillSpec;
     use dashscene_engine::TaffySolver;
 
     let (mut arena, _) = compile_and_load();
@@ -211,7 +211,7 @@ fn a_loaded_figma_document_drives_through_attach_live() {
 
     let dark_chip = arena.committed().node_of(5);
     match arena.fill(dark_chip) {
-        Some(PaintKind::Solid { color }) => {
+        Some(FillSpec::Solid { color }) => {
             assert_eq!(color.r, 0.9, "the bound component tracks the signal");
             assert_eq!(
                 color.g, 0.65,
@@ -366,7 +366,7 @@ fn a_custom_transform_reaching_compile_is_refused_by_name() {
 /// or the seeded scene visibly jumps to full opacity on attach.
 #[test]
 fn a_bound_fill_under_paint_opacity_keeps_its_literal_alpha() {
-    use dashscene_core::PaintKind;
+    use dashscene_core::FillSpec;
     use dashscene_engine::TaffySolver;
 
     // The derived capture, with the light chip's bound fill at 50%
@@ -418,7 +418,7 @@ fn a_bound_fill_under_paint_opacity_keeps_its_literal_alpha() {
 
     let chip = arena.committed().node_of(2);
     let literal_alpha = match arena.fill(chip) {
-        Some(PaintKind::Solid { color }) => color.a,
+        Some(FillSpec::Solid { color }) => color.a,
         other => panic!("expected a solid fill, got {other:?}"),
     };
     assert_eq!(
@@ -431,7 +431,7 @@ fn a_bound_fill_under_paint_opacity_keeps_its_literal_alpha() {
     // no visible jump to full opacity.
     let _live = dashlang::attach_live(&mut arena, Box::new(TaffySolver::new()));
     match arena.fill(chip) {
-        Some(PaintKind::Solid { color }) => {
+        Some(FillSpec::Solid { color }) => {
             assert_eq!(color.a, 0.5, "the seeded alpha equals the shipped literal")
         }
         other => panic!("expected a solid fill, got {other:?}"),

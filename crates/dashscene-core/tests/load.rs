@@ -438,47 +438,64 @@ fn a_loaded_document_replays_its_stacked_fills() {
     load_document(&doc, &[], &mut arena);
 
     let scene = arena.committed();
-    let entry = scene.paints().resolve(scene.rects()[0].paint);
+    let paints = scene.paints();
+    let entry = paints.resolve(scene.rects()[0].paint);
+    // Read through the table: an entry names its fills by row index since
+    // story #578, so the assertion resolves them rather than rebuilding an
+    // equal fill value.
     assert_eq!(
-        entry.fill,
-        Some(dashpaint::PaintKind::Solid {
-            color: dashpaint::Color {
-                r: 1.0,
-                g: 0.0,
-                b: 0.0,
-                a: 1.0,
-            },
-        }),
+        entry.fill.map(|kind| paints.fill(kind)),
+        Some(dashpaint::Fill::Solid(dashpaint::Color {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        })),
         "the bottom fill replays exactly as a single fill always has"
     );
+    let stacked: Vec<_> = entry
+        .extra_fills
+        .iter()
+        .map(|&kind| paints.fill(kind))
+        .collect();
+    let [dashpaint::Fill::Gradient(overlay)] = stacked.as_slice() else {
+        panic!("expected one stacked gradient layer, got {stacked:?}");
+    };
+    assert_eq!(overlay.gradient.kind, dashpaint::GradientKind::Linear);
     assert_eq!(
-        entry.extra_fills,
-        vec![dashpaint::PaintKind::Gradient(dashpaint::Gradient {
-            kind: dashpaint::GradientKind::Linear,
-            handle_origin: dashpaint::Vec2 { x: 0.0, y: 0.0 },
-            handle_primary: dashpaint::Vec2 { x: 1.0, y: 0.0 },
-            handle_secondary: dashpaint::Vec2 { x: 0.0, y: 1.0 },
-            stops: vec![
-                dashpaint::GradientStop {
-                    offset: 0.0,
-                    color: dashpaint::Color {
-                        r: 0.0,
-                        g: 1.0,
-                        b: 0.0,
-                        a: 1.0,
-                    },
+        overlay.gradient.handle_origin,
+        dashpaint::Vec2 { x: 0.0, y: 0.0 }
+    );
+    assert_eq!(
+        overlay.gradient.handle_primary,
+        dashpaint::Vec2 { x: 1.0, y: 0.0 }
+    );
+    assert_eq!(
+        overlay.gradient.handle_secondary,
+        dashpaint::Vec2 { x: 0.0, y: 1.0 }
+    );
+    assert_eq!(
+        overlay.stops,
+        [
+            dashpaint::GradientStop {
+                offset: 0.0,
+                color: dashpaint::Color {
+                    r: 0.0,
+                    g: 1.0,
+                    b: 0.0,
+                    a: 1.0,
                 },
-                dashpaint::GradientStop {
-                    offset: 1.0,
-                    color: dashpaint::Color {
-                        r: 0.0,
-                        g: 0.0,
-                        b: 1.0,
-                        a: 0.55,
-                    },
+            },
+            dashpaint::GradientStop {
+                offset: 1.0,
+                color: dashpaint::Color {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 1.0,
+                    a: 0.55,
                 },
-            ],
-        })],
+            },
+        ],
         "the document's stacked fill replayed onto the committed paint entry"
     );
 }

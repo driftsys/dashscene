@@ -22,7 +22,7 @@ pub mod stress;
 
 use dashpaint::{
     Atlas, AtlasGlyph, ClipIndex, ClipTable, Color, GlyphRange, GlyphRun, GlyphRunTable,
-    ImageAsset, ImageFormat, ImageTable, PaintEntry, PaintTable, Painter, RectEntry,
+    ImageAsset, ImageFormat, ImageTable, PaintTable, Painter, RectEntry,
 };
 use dashscene_core::{Arena, NodeId, TextAlign, TextAlignV, TextStyle};
 use dashscene_skia::SkiaPainter;
@@ -83,8 +83,8 @@ pub fn load_atlas(dir: &str) -> Atlas {
 pub fn checker_asset(dark: Color) -> ImageAsset {
     let mut painter = SkiaPainter::new(4, 4);
     let mut paints = PaintTable::new();
-    let dark = paints.push(PaintEntry::solid(dark));
-    let light = paints.push(PaintEntry::solid(rgb(0.9, 0.85, 0.7)));
+    let dark = paints.push_solid(dark);
+    let light = paints.push_solid(rgb(0.9, 0.85, 0.7));
     let mut rects = Vec::new();
     for y in 0..4 {
         for x in 0..4 {

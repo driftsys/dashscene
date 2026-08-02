@@ -18,7 +18,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use dashpaint::PaintKind;
+use dashpaint::FillSpec;
 use dashscene_validator::{Diagnostic, Location, NodePath, Severity};
 
 use crate::document::{Binding, BindingChannel, BindingTransform, Document, SignalDecl};
@@ -147,7 +147,7 @@ pub(super) fn apply(
             (BoundValue::Color { r, g, b, a }, PropertySite::FillColor) => {
                 let solid = matches!(
                     doc.nodes[*node as usize].paint,
-                    Some(ref paint) if matches!(paint.entry.fill, Some(PaintKind::Solid { .. }))
+                    Some(ref paint) if matches!(paint.entry.fill, Some(FillSpec::Solid { .. }))
                 );
                 if !solid {
                     diagnostics.push(unsupported(&format!(

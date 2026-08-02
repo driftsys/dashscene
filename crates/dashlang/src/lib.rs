@@ -59,9 +59,10 @@ pub use reactive::{
 // producer ever names (see `crates/dashlang/tests/builder.rs`'s
 // `DoubleWidthSolver` for exactly this case).
 pub use dashscene_core::{
-    Arena, AxisSizing, Blur, BlurKind, Color, CornerRadii, CrossAxisAlign, Gradient, GradientKind,
-    GradientStop, GridTrack, LayoutMode, MainAxisAlign, Mat23, PaintKind, ScaleMode, Shadow,
-    ShadowKind, Stroke, StrokeAlign, TextAlign, TextAlignV, TextStyle, Vec2, VectorField,
+    Arena, AxisSizing, Blur, BlurKind, Color, CornerRadii, CrossAxisAlign, FillSpec, Gradient,
+    GradientKind, GradientStop, GridTrack, ImageFill, LayoutMode, MainAxisAlign, Mat23, ScaleMode,
+    Shadow, ShadowKind, StopRange, Stroke, StrokeAlign, TextAlign, TextAlignV, TextStyle, Vec2,
+    VectorField,
 };
 
 /// A named node description. See [`anon`] for unnamed nodes.
@@ -119,8 +120,8 @@ pub struct Node {
     // unset-defaults acceptance tests assert.
     pub(crate) corners: Option<CornerRadii>,
     pub(crate) stroke: Option<Stroke>,
-    pub(crate) fill_with: Option<PaintKind>,
-    pub(crate) extra_fills: Vec<PaintKind>,
+    pub(crate) fill_with: Option<FillSpec>,
+    pub(crate) extra_fills: Vec<FillSpec>,
     pub(crate) shadows: Vec<Shadow>,
     pub(crate) blurs: Vec<Blur>,
     pub(crate) shape_field: Option<VectorField>,

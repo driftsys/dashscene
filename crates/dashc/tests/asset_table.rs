@@ -20,8 +20,8 @@
 use std::collections::BTreeMap;
 
 use dashbuf::container::{Container, FLAVOR_ASSET, FLAVOR_UI, SectionKind};
-use dashc_wasm::{Asset, AssetKind, Box2D, Document, Node, Paint, compile};
-use dashpaint::{ImageFormat, PaintEntry, PaintKind, ScaleMode};
+use dashc_wasm::{Asset, AssetKind, Box2D, Document, Node, Paint, PaintEntry, compile};
+use dashpaint::{Fill, FillSpec, ImageFill, ImageFormat, Mat23, ScaleMode};
 use dashscene_core::{Arena, load_document};
 
 /// The two distinct payloads every document here is built from.
@@ -50,17 +50,14 @@ fn image_node(name: &str, asset: u32) -> Node {
         },
         paint: Some(Paint {
             entry: PaintEntry {
-                fill: Some(PaintKind::Image {
+                fill: Some(FillSpec::Image(ImageFill {
                     image: asset,
                     scale_mode: ScaleMode::Fill,
-                    transform: None,
+                    transform: Mat23::IDENTITY,
                     tile_scale: 1.0,
-                }),
+                })),
                 stroke: None,
                 corners: dashpaint::CornerRadii::default(),
-                shadows: dashpaint::ShadowRange::NONE,
-                blurs: dashpaint::BlurRange::NONE,
-                shape: None,
                 extra_fills: Vec::new(),
             },
             clip: false,
@@ -217,14 +214,13 @@ fn every_node_resolves_to_the_payload_it_named() {
     let expected = [PAYLOAD_PNG, PAYLOAD_JPEG, PAYLOAD_PNG];
     for (index, want) in expected.iter().enumerate() {
         let paint = scene.paints().resolve(scene.rects()[index].paint);
-        let PaintKind::Image { image, .. } = paint
+        let kind = paint
             .fill
-            .as_ref()
-            .expect("every node in this document has an image fill")
-        else {
+            .expect("every node in this document has an image fill");
+        let Fill::Image(image_fill) = scene.paints().fill(kind) else {
             panic!("node {index} did not resolve to an image fill");
         };
-        let asset = scene.images().resolve(*image);
+        let asset = scene.images().resolve(image_fill.image);
         assert_eq!(
             asset.bytes.as_slice(),
             *want,

@@ -48,8 +48,8 @@
 use std::collections::HashMap;
 
 use dashpaint::{
-    Color, Gradient, GradientKind, GradientStop, ImageAsset, Mat23, PaintKind, ScaleMode, Vec2,
-    VectorField,
+    Color, FillSpec, Gradient, GradientKind, GradientStop, ImageAsset, ImageFill, Mat23, ScaleMode,
+    StopRange, Vec2, VectorField,
 };
 use dashscene_core::{
     Arena, LayoutSolver, NodeId, Prop, TextAlign, TextAlignV, TextStyle, Txn, VariantMember,
@@ -153,7 +153,7 @@ impl<'a> Painting<'a> {
         self.txn.add_variant_set(members)
     }
 
-    /// Stages an image payload and returns the index a [`PaintKind::Image`] or
+    /// Stages an image payload and returns the index an [`ImageFill`] or
     /// [`VectorField`] references it by.
     pub fn add_image(&mut self, asset: ImageAsset) -> u32 {
         self.txn.add_image(asset)
@@ -213,12 +213,15 @@ pub mod palette {
 /// Two stops at 0.0 and 1.0 is an opinion, which is why it lives here and not
 /// on `dashlang::Node`: the builder carries the vocabulary, a scene carries its
 /// own shorthands.
-pub fn gradient(kind: GradientKind, from: Color, to: Color) -> PaintKind {
-    PaintKind::Gradient(Gradient {
-        kind,
-        handle_origin: Vec2 { x: 0.5, y: 0.5 },
-        handle_primary: Vec2 { x: 1.0, y: 0.5 },
-        handle_secondary: Vec2 { x: 0.5, y: 1.0 },
+pub fn gradient(kind: GradientKind, from: Color, to: Color) -> FillSpec {
+    FillSpec::Gradient {
+        gradient: Gradient {
+            kind,
+            handle_origin: Vec2 { x: 0.5, y: 0.5 },
+            handle_primary: Vec2 { x: 1.0, y: 0.5 },
+            handle_secondary: Vec2 { x: 0.5, y: 1.0 },
+            stops: StopRange::NONE,
+        },
         stops: vec![
             GradientStop {
                 offset: 0.0,
@@ -229,16 +232,19 @@ pub fn gradient(kind: GradientKind, from: Color, to: Color) -> PaintKind {
                 color: to,
             },
         ],
-    })
+    }
 }
 
 /// A linear gradient running top-left to bottom-right.
-pub fn diagonal_gradient(from: Color, to: Color) -> PaintKind {
-    PaintKind::Gradient(Gradient {
-        kind: GradientKind::Linear,
-        handle_origin: Vec2 { x: 0.0, y: 0.0 },
-        handle_primary: Vec2 { x: 1.0, y: 1.0 },
-        handle_secondary: Vec2 { x: 0.0, y: 1.0 },
+pub fn diagonal_gradient(from: Color, to: Color) -> FillSpec {
+    FillSpec::Gradient {
+        gradient: Gradient {
+            kind: GradientKind::Linear,
+            handle_origin: Vec2 { x: 0.0, y: 0.0 },
+            handle_primary: Vec2 { x: 1.0, y: 1.0 },
+            handle_secondary: Vec2 { x: 0.0, y: 1.0 },
+            stops: StopRange::NONE,
+        },
         stops: vec![
             GradientStop {
                 offset: 0.0,
@@ -249,28 +255,28 @@ pub fn diagonal_gradient(from: Color, to: Color) -> PaintKind {
                 color: to,
             },
         ],
-    })
+    }
 }
 
 /// An image fill in one of Figma's four scale modes.
 pub fn image_fill(image: u32, scale_mode: ScaleMode, tile_scale: f32) -> Prop {
-    Prop::FillWith(PaintKind::Image {
+    Prop::FillWith(FillSpec::Image(ImageFill {
         image,
         scale_mode,
-        transform: None,
+        transform: Mat23::IDENTITY,
         tile_scale,
-    })
+    }))
 }
 
 /// A cropped image fill: `transform` is the normalized image-space transform
 /// [`ScaleMode::Crop`] reads, so the same payload shows a different region.
 pub fn image_crop(image: u32, transform: Mat23) -> Prop {
-    Prop::FillWith(PaintKind::Image {
+    Prop::FillWith(FillSpec::Image(ImageFill {
         image,
         scale_mode: ScaleMode::Crop,
-        transform: Some(transform),
+        transform,
         tile_scale: 1.0,
-    })
+    }))
 }
 
 /// The node's baked-vector coverage mask.

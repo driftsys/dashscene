@@ -6,7 +6,7 @@
 //! the geometry and flex setters.
 
 use dashlang::{
-    Arena, Blur, BlurKind, CornerRadii, PaintKind, Shadow, ShadowKind, Stroke, StrokeAlign,
+    Arena, Blur, BlurKind, CornerRadii, FillSpec, Shadow, ShadowKind, Stroke, StrokeAlign,
     TextAlign, TextAlignV, TextStyle, Vec2, VectorField, node, rgba, scene,
 };
 use dashscene_core::Prop;
@@ -125,10 +125,10 @@ fn stroke_opacity_clip_and_mask_reach_the_arena() {
 
 #[test]
 fn fill_with_and_extra_fills_reach_the_arena() {
-    let base = PaintKind::Solid {
+    let base = FillSpec::Solid {
         color: rgba(0.2, 0.4, 0.9, 1.0),
     };
-    let over = PaintKind::Solid {
+    let over = FillSpec::Solid {
         color: rgba(0.9, 0.7, 0.1, 0.5),
     };
 

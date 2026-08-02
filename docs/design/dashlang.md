@@ -79,8 +79,8 @@ setter per `dashscene_core::Prop` paint variant, taking core's own type:
 
     corners_each(tl, tr, br, bl: f32)   Prop::Corners
     stroke(Stroke)                      Prop::Stroke
-    fill_with(PaintKind)                Prop::FillWith
-    extra_fills(iter<PaintKind>)        Prop::ExtraFills
+    fill_with(FillSpec)                 Prop::FillWith
+    extra_fills(iter<FillSpec>)         Prop::ExtraFills
     opacity(f32)                        Prop::Opacity
     clip(bool)                          Prop::Clip
     mask(bool)                          Prop::Mask
@@ -106,7 +106,7 @@ among them: a gradient's geometry is three handle points, and any sugar
 short of the full `Gradient` would have to invent them — inventing
 defaults is the one thing "vocabulary, not semantics" forbids. The
 showcase's own `gradient`/`diagonal_gradient` helpers are scene-local
-conveniences over `PaintKind`, and they stay in the scene.
+conveniences over `FillSpec`, and they stay in the scene.
 
 **Stages only when authored.** Each paint field on `Node` is `Option` or
 an empty `Vec` until a setter writes it, and `stage_paint_props` emits a
@@ -117,8 +117,8 @@ consequence to know: `shadows([])` and `blurs([])` stage nothing, so
 neither clears a list the arena already holds. Core has no clear
 operation for either, the same gap `fill` has.
 
-**Image fills still need the arena.** `fill_with` takes any `PaintKind`,
-including `PaintKind::Image`, but that variant's `image` field is an index
+**Image fills still need the arena.** `fill_with` takes any `FillSpec`,
+including `FillSpec::Image`, but its `ImageFill.image` field is an index
 `Txn::add_image` issues against an arena — and the value tree has no
 arena. So a scene using an image fill builds the tree first and stages
 that one prop in a short second pass (`corpus/showcase/README.md`

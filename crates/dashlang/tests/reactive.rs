@@ -384,7 +384,7 @@ fn one_signal_binds_two_nodes() {
 #[test]
 fn a_fill_channel_write_is_paint_only() {
     use dashlang::rgba;
-    use dashscene_core::PaintKind;
+    use dashscene_core::FillSpec;
 
     let count = Rc::new(Cell::new(0));
     let mut arena = Arena::new();
@@ -412,7 +412,7 @@ fn a_fill_channel_write_is_paint_only() {
 
     let meter = arena.committed().node_of(1);
     match arena.fill(meter) {
-        Some(PaintKind::Solid { color }) => {
+        Some(FillSpec::Solid { color }) => {
             assert_eq!(color.r, 0.8, "the bound component tracks the signal");
             assert_eq!(
                 (color.g, color.b, color.a),
@@ -521,18 +521,21 @@ fn smooth_without_a_matching_bind_is_refused_by_name() {
 #[test]
 #[should_panic(expected = "cannot be combined")]
 fn fill_with_plus_a_fill_channel_binding_is_refused_by_name() {
-    use dashlang::{Gradient, GradientKind, GradientStop, PaintKind, Vec2, rgba};
+    use dashlang::{FillSpec, Gradient, GradientKind, GradientStop, StopRange, Vec2, rgba};
 
     let mut arena = Arena::new();
     let mut scene = Scene::new();
     let alpha = scene.signal(0.5f32);
     scene.roots([node("panel")
         .size(100.0, 100.0)
-        .fill_with(PaintKind::Gradient(Gradient {
-            kind: GradientKind::Linear,
-            handle_origin: Vec2 { x: 0.0, y: 0.0 },
-            handle_primary: Vec2 { x: 1.0, y: 0.0 },
-            handle_secondary: Vec2 { x: 0.0, y: 1.0 },
+        .fill_with(FillSpec::Gradient {
+            gradient: Gradient {
+                kind: GradientKind::Linear,
+                handle_origin: Vec2 { x: 0.0, y: 0.0 },
+                handle_primary: Vec2 { x: 1.0, y: 0.0 },
+                handle_secondary: Vec2 { x: 0.0, y: 1.0 },
+                stops: StopRange::NONE,
+            },
             stops: vec![
                 GradientStop {
                     offset: 0.0,
@@ -543,7 +546,7 @@ fn fill_with_plus_a_fill_channel_binding_is_refused_by_name() {
                     color: rgba(0.0, 0.0, 1.0, 1.0),
                 },
             ],
-        }))
+        })
         .bind(Channel::FillA, alpha)]);
     scene.build_live(&mut arena, Box::new(TaffySolver::new()));
 }
@@ -592,7 +595,7 @@ fn declarative_bindings_are_staged_into_the_arena_tables() {
 #[test]
 fn attach_live_drives_a_loaded_arenas_bindings() {
     use dashlang::attach_live;
-    use dashscene_core::{Channel as CoreChannel, Color, PaintKind, Prop, ScalarTransform};
+    use dashscene_core::{Channel as CoreChannel, Color, FillSpec, Prop, ScalarTransform};
 
     // Stage what a loaded document would have staged: nodes, literals,
     // and the binding tables.
@@ -654,7 +657,7 @@ fn attach_live_drives_a_loaded_arenas_bindings() {
     live.set(accent_r, 0.4);
     live.tick(0.016, &mut arena);
     match arena.fill(chip) {
-        Some(PaintKind::Solid { color }) => {
+        Some(FillSpec::Solid { color }) => {
             assert_eq!(color.r, 0.4, "the bound component tracks the signal");
             assert_eq!(color.g, 0.45, "unbound components keep the literal");
         }

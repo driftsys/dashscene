@@ -59,7 +59,7 @@ What a producer lowers _into_, and what `emit` writes _out of_.
     Document { nodes: Vec<Node>, images: Vec<ImageAsset> }
     Node     { name: Option<String>, parent: Option<u32>, box2d: Box2D, paint: Option<Paint>,
                container: Option<LayoutContainer>, constraints: Option<LayoutConstraints> }
-    Paint    { entry: dashpaint::PaintEntry, clip: bool }
+    Paint    { entry: document::PaintEntry, clip: bool }
 
 `container` and `constraints` (story #140) mirror the schema's two v0.2
 flex tables (`docs/decisions/flex-vocabulary-shape.md`) as plain types, the

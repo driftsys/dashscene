@@ -10,9 +10,9 @@
 //! interior-probe asserts pin the key property bit-stably.
 
 use dashpaint::{
-    ClipIndex, ClipTable, Color, CornerRadii, GlyphRunTable, Gradient, GradientKind, GradientStop,
-    ImageTable, Mat23, PaintEntry, PaintKind, PaintTable, Painter, RectEntry, ScaleMode, Stroke,
-    StrokeAlign, Vec2,
+    ClipIndex, ClipTable, Color, CornerRadii, FillSpec, GlyphRunTable, Gradient, GradientKind,
+    GradientStop, ImageFill, ImageTable, Mat23, PaintEntry, PaintKind, PaintTable, Painter,
+    RectEntry, ScaleMode, StopRange, Stroke, StrokeAlign, Vec2,
 };
 use dashscene_skia::SkiaPainter;
 
@@ -49,12 +49,19 @@ fn full_box(paint: dashpaint::PaintIndex, w: f32, h: f32) -> RectEntry {
     }
 }
 
-fn gradient_fill(kind: GradientKind, stops: Vec<GradientStop>) -> PaintKind {
-    PaintKind::Gradient(Gradient {
-        kind,
-        handle_origin: Vec2 { x: 0.5, y: 0.5 },
-        handle_primary: Vec2 { x: 1.0, y: 0.5 },
-        handle_secondary: Vec2 { x: 0.5, y: 1.0 },
+fn gradient_fill(
+    paints: &mut PaintTable,
+    kind: GradientKind,
+    stops: Vec<GradientStop>,
+) -> PaintKind {
+    paints.intern_fill(&FillSpec::Gradient {
+        gradient: Gradient {
+            kind,
+            handle_origin: Vec2 { x: 0.5, y: 0.5 },
+            handle_primary: Vec2 { x: 1.0, y: 0.5 },
+            handle_secondary: Vec2 { x: 0.5, y: 1.0 },
+            stops: StopRange::NONE,
+        },
         stops,
     })
 }
@@ -83,37 +90,42 @@ fn the_gradient_family_matches_its_golden() {
 
     // 2×2 strip of 32×32 cells: linear, radial, angular gauge, diamond.
     let mut paints = PaintTable::new();
+    let linear_fill = gradient_fill(&mut paints, GradientKind::Linear, two_stops(red, blue));
     let linear = paints.push(PaintEntry {
-        fill: Some(gradient_fill(GradientKind::Linear, two_stops(red, blue))),
+        fill: Some(linear_fill),
         ..PaintEntry::default()
     });
+    let radial_fill = gradient_fill(&mut paints, GradientKind::Radial, two_stops(gold, teal));
     let radial = paints.push(PaintEntry {
-        fill: Some(gradient_fill(GradientKind::Radial, two_stops(gold, teal))),
+        fill: Some(radial_fill),
         ..PaintEntry::default()
     });
     // Gauge-style angular sweep: a green→amber→red dial arc.
+    let gauge_fill = gradient_fill(
+        &mut paints,
+        GradientKind::Angular,
+        vec![
+            GradientStop {
+                offset: 0.0,
+                color: green,
+            },
+            GradientStop {
+                offset: 0.5,
+                color: amber,
+            },
+            GradientStop {
+                offset: 1.0,
+                color: red,
+            },
+        ],
+    );
     let gauge = paints.push(PaintEntry {
-        fill: Some(gradient_fill(
-            GradientKind::Angular,
-            vec![
-                GradientStop {
-                    offset: 0.0,
-                    color: green,
-                },
-                GradientStop {
-                    offset: 0.5,
-                    color: amber,
-                },
-                GradientStop {
-                    offset: 1.0,
-                    color: red,
-                },
-            ],
-        )),
+        fill: Some(gauge_fill),
         ..PaintEntry::default()
     });
+    let diamond_fill = gradient_fill(&mut paints, GradientKind::Diamond, two_stops(teal, red));
     let diamond = paints.push(PaintEntry {
-        fill: Some(gradient_fill(GradientKind::Diamond, two_stops(teal, red))),
+        fill: Some(diamond_fill),
         ..PaintEntry::default()
     });
 
@@ -172,9 +184,10 @@ fn the_stroke_family_matches_its_golden() {
     let red = rgba(0.85, 0.15, 0.1);
 
     let mut paints = PaintTable::new();
-    let background = paints.push(PaintEntry::solid(navy));
+    let background = paints.push_solid(navy);
+    let gold_fill = paints.intern_fill(&FillSpec::Solid { color: gold });
     let stroke_entry = |align, corners| PaintEntry {
-        fill: Some(PaintKind::Solid { color: gold }),
+        fill: Some(gold_fill),
         stroke: Some(Stroke {
             width: 4.0,
             align,
@@ -245,39 +258,45 @@ fn the_image_family_matches_its_golden() {
     let checker = images.push(checker_asset(rgba(0.15, 0.15, 0.2)));
 
     let mut paints = PaintTable::new();
-    let background = paints.push(PaintEntry::solid(navy));
-    let image_entry = |scale_mode, transform, corners| PaintEntry {
-        fill: Some(PaintKind::Image {
+    let background = paints.push_solid(navy);
+    let image_fill = |paints: &mut PaintTable, scale_mode, transform| {
+        paints.intern_fill(&FillSpec::Image(ImageFill {
             image: checker,
             scale_mode,
             transform,
             tile_scale: 1.0,
-        }),
+        }))
+    };
+    let image_entry = |fill, corners| PaintEntry {
+        fill: Some(fill),
         corners,
         ..PaintEntry::default()
     };
-    let fill = paints.push(image_entry(ScaleMode::Fill, None, CornerRadii::default()));
-    let fit = paints.push(image_entry(ScaleMode::Fit, None, CornerRadii::default()));
-    let crop = paints.push(image_entry(
+    let fill_fill = image_fill(&mut paints, ScaleMode::Fill, Mat23::IDENTITY);
+    let fill = paints.push(image_entry(fill_fill, CornerRadii::default()));
+    let fit_fill = image_fill(&mut paints, ScaleMode::Fit, Mat23::IDENTITY);
+    let fit = paints.push(image_entry(fit_fill, CornerRadii::default()));
+    // box uv [0,1] maps to image uv [0.25,0.5]×[0,0.25] = texel
+    // (1,0), the single light texel, so the crop cell is uniform
+    // and clearly distinct from the background.
+    let crop_fill = image_fill(
+        &mut paints,
         ScaleMode::Crop,
-        // box uv [0,1] maps to image uv [0.25,0.5]×[0,0.25] = texel
-        // (1,0), the single light texel, so the crop cell is uniform
-        // and clearly distinct from the background.
-        Some(Mat23 {
+        Mat23 {
             a: 0.25,
             b: 0.0,
             c: 0.0,
             d: 0.25,
             tx: 0.25,
             ty: 0.0,
-        }),
-        CornerRadii::default(),
-    ));
+        },
+    );
+    let crop = paints.push(image_entry(crop_fill, CornerRadii::default()));
     // Tile in a rounded box: exercises tiling and the own-content
     // rounded clip together.
+    let tile_fill = image_fill(&mut paints, ScaleMode::Tile, Mat23::IDENTITY);
     let tile = paints.push(image_entry(
-        ScaleMode::Tile,
-        None,
+        tile_fill,
         CornerRadii {
             top_left: 8.0,
             top_right: 8.0,

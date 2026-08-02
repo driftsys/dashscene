@@ -5,9 +5,9 @@
 //! rendering.
 
 use dashpaint::{
-    ClipIndex, ClipTable, Color, CornerRadii, GlyphRunTable, Gradient, GradientKind, GradientStop,
-    ImageTable, PaintEntry, PaintKind, PaintTable, Painter, RectEntry, ScaleMode, Stroke,
-    StrokeAlign, Vec2,
+    ClipIndex, ClipTable, Color, CornerRadii, FillSpec, GlyphRunTable, Gradient, GradientKind,
+    GradientStop, ImageFill, ImageTable, Mat23, PaintEntry, PaintKind, PaintTable, Painter,
+    RectEntry, ScaleMode, StopRange, Stroke, StrokeAlign, Vec2,
 };
 use dashscene_skia::SkiaPainter;
 
@@ -31,12 +31,15 @@ fn stops(colors: [Color; 2]) -> Vec<GradientStop> {
     ]
 }
 
-fn gradient(kind: GradientKind, colors: [Color; 2]) -> PaintKind {
-    PaintKind::Gradient(Gradient {
-        kind,
-        handle_origin: Vec2 { x: 0.5, y: 0.5 },
-        handle_primary: Vec2 { x: 1.0, y: 0.5 },
-        handle_secondary: Vec2 { x: 0.5, y: 1.0 },
+fn gradient(paints: &mut PaintTable, kind: GradientKind, colors: [Color; 2]) -> PaintKind {
+    paints.intern_fill(&FillSpec::Gradient {
+        gradient: Gradient {
+            kind,
+            handle_origin: Vec2 { x: 0.5, y: 0.5 },
+            handle_primary: Vec2 { x: 1.0, y: 0.5 },
+            handle_secondary: Vec2 { x: 0.5, y: 1.0 },
+            stops: StopRange::NONE,
+        },
         stops: stops(colors),
     })
 }
@@ -52,25 +55,30 @@ fn the_v03_paint_vocabulary_matches_its_golden() {
     let checker = images.push(checker_asset(rgba(0.2, 0.2, 0.25)));
 
     let mut paints = PaintTable::new();
-    let background = paints.push(PaintEntry::solid(rgba(0.06, 0.07, 0.1)));
+    let background = paints.push_solid(rgba(0.06, 0.07, 0.1));
+    let linear_fill = gradient(&mut paints, GradientKind::Linear, [red, blue]);
     let linear = paints.push(PaintEntry {
-        fill: Some(gradient(GradientKind::Linear, [red, blue])),
+        fill: Some(linear_fill),
         ..PaintEntry::default()
     });
+    let radial_fill = gradient(&mut paints, GradientKind::Radial, [gold, teal]);
     let radial = paints.push(PaintEntry {
-        fill: Some(gradient(GradientKind::Radial, [gold, teal])),
+        fill: Some(radial_fill),
         ..PaintEntry::default()
     });
+    let angular_fill = gradient(&mut paints, GradientKind::Angular, [blue, gold]);
     let angular = paints.push(PaintEntry {
-        fill: Some(gradient(GradientKind::Angular, [blue, gold])),
+        fill: Some(angular_fill),
         ..PaintEntry::default()
     });
+    let diamond_fill = gradient(&mut paints, GradientKind::Diamond, [teal, red]);
     let diamond = paints.push(PaintEntry {
-        fill: Some(gradient(GradientKind::Diamond, [teal, red])),
+        fill: Some(diamond_fill),
         ..PaintEntry::default()
     });
+    let rounded_stroked_fill = paints.intern_fill(&FillSpec::Solid { color: gold });
     let rounded_stroked = paints.push(PaintEntry {
-        fill: Some(PaintKind::Solid { color: gold }),
+        fill: Some(rounded_stroked_fill),
         stroke: Some(Stroke {
             width: 3.0,
             align: StrokeAlign::Inside,
@@ -92,13 +100,14 @@ fn the_v03_paint_vocabulary_matches_its_golden() {
         }),
         ..PaintEntry::default()
     });
+    let rounded_image_fill = paints.intern_fill(&FillSpec::Image(ImageFill {
+        image: checker,
+        scale_mode: ScaleMode::Fill,
+        transform: Mat23::IDENTITY,
+        tile_scale: 1.0,
+    }));
     let rounded_image = paints.push(PaintEntry {
-        fill: Some(PaintKind::Image {
-            image: checker,
-            scale_mode: ScaleMode::Fill,
-            transform: None,
-            tile_scale: 1.0,
-        }),
+        fill: Some(rounded_image_fill),
         corners: CornerRadii {
             top_left: 10.0,
             top_right: 10.0,
@@ -107,13 +116,14 @@ fn the_v03_paint_vocabulary_matches_its_golden() {
         },
         ..PaintEntry::default()
     });
+    let tiled_image_fill = paints.intern_fill(&FillSpec::Image(ImageFill {
+        image: checker,
+        scale_mode: ScaleMode::Tile,
+        transform: Mat23::IDENTITY,
+        tile_scale: 2.0,
+    }));
     let tiled_image = paints.push(PaintEntry {
-        fill: Some(PaintKind::Image {
-            image: checker,
-            scale_mode: ScaleMode::Tile,
-            transform: None,
-            tile_scale: 2.0,
-        }),
+        fill: Some(tiled_image_fill),
         ..PaintEntry::default()
     });
 
