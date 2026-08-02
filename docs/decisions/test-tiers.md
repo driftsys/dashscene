@@ -52,7 +52,7 @@ slowest individual tests measured during the design session were:
 
 | test                                                                          | s         |
 | ----------------------------------------------------------------------------- | --------- |
-| `goldens::perceptual_calibration every_rung_of_every_fixture_is_recorded`     | 194.4     |
+| `goldens::perceptual_calibration` (one walk over all nine fixtures)           | 194.4     |
 | `dashpack::band_contract the_recorded_contract_table`                         | 60.6      |
 | `dashscene-engine::solve an_out_of_range_grid_anchor_does_not_panic`          | 39.0      |
 | `goldens::v010_bake_oracle a_sub_texel_barcode_is_refused_at_the_ceiling`     | 26.7      |
@@ -69,10 +69,11 @@ table.
 
 `crates/dashpack/tests/band_contract.rs`'s `the_recorded_contract_table`
 re-packs every fixture and compares the result against a committed literal
-`TABLE`. `goldens/tooling/tests/perceptual_calibration.rs`'s
-`every_rung_of_every_fixture_is_recorded` re-encodes all nine fixtures over
-all seven rungs at `Quality::Thorough` for the same reason — sixty-three
-encodes inside one `#[test]`, which is why two tests cost 165 s. Eight of
+`TABLE`. `goldens/tooling/tests/perceptual_calibration.rs` re-encodes all
+nine fixtures over all seven rungs at `Quality::Thorough` for the same
+reason — sixty-three encodes, which is why this pair cost 165 s when the
+walk was a single `#[test]`. It is nine tests now, one per fixture, for the
+reason the next section gives. Eight of
 the nine fixtures are committed payloads; `block-stress` is generated.
 Together they ask one question, and it is not the question the rest of the
 suite answers: **is the committed table still what the packer produces?**
@@ -113,7 +114,7 @@ under another name.
 
 The repository owner ruled on this directly: the four `profile_preview_oracle`
 tests move into the regression tier, where every push already exercises them,
-and the calibration tier keeps only the two tests that depend on the packer
+and the calibration tier keeps only the tests that depend on the packer
 alone. The seam is unchanged — re-derivation from a bounded set of inputs is
 what a path filter can cover — but the correct line falls one test file
 short of where the design first drew it. `band_contract.rs` and
@@ -128,17 +129,17 @@ in `[profile.calibration]`.
 
 ## Decision
 
-Three tiers, nested, each a nextest profile. Measured at this record's own
-head, idle 8-core machine:
+Three tiers, nested, each a nextest profile. Re-measured on an idle 8-core
+machine after issue #660 split the perceptual walk per fixture:
 
-| tier          | tests | wall clock | contents                                                                                                           |
-| ------------- | ----- | ---------- | ------------------------------------------------------------------------------------------------------------------ |
-| `sanity`      | 1265  | **7 s**    | everything an ordinary edit can break, minus the four categories below                                             |
-| `regression`  | 1289  | **35 s**   | `sanity` plus the profile-preview oracle, the atlas pipeline, the bake oracle, and the grid-anchor saturation test |
-| `calibration` | 2     | **165 s**  | the two tests that re-derive a committed table from the packer alone                                               |
+| tier          | tests | wall clock | contents                                                                                                              |
+| ------------- | ----- | ---------- | --------------------------------------------------------------------------------------------------------------------- |
+| `sanity`      | 1287  | **5 s**    | everything an ordinary edit can break, minus the four categories below                                                |
+| `regression`  | 1312  | **33 s**   | `sanity` plus the profile-preview oracle, the atlas pipeline, the bake oracle, and the grid-anchor saturation test    |
+| `calibration` | 10    | **54 s**   | the tests that re-derive a committed table from the packer alone: one per calibration fixture, plus the band contract |
 
 `regression` is a superset of `sanity`; `regression` and `calibration`
-together are the whole suite (1289 + 2 = 1291 runnable tests, plus 3
+together are the whole suite (1312 + 10 = 1322 runnable tests, plus 3
 doctests nextest does not run). All three tiers ran green at the measured
 times.
 
@@ -161,13 +162,13 @@ tests, 185 s; close to `calibration` alone because nextest runs
 everything concurrently and the two calibration tests are the longest
 individual tests in the suite.
 
-The four categories `sanity` drops beyond `calibration`'s two tests — the
+The four categories `sanity` drops beyond the calibration tier — the
 profile-preview oracle, the glyph atlas pipeline, the bake oracle, and the
 grid-anchor saturation test — cost about 73 s of test time together, and
 each is reachable from a narrow part of the tree, so the regression tier is
 where they are caught rather than the sanity tier. None of the four
 re-derives a committed table from a bounded input set the way the
-calibration tier's two tests do; they are simply expensive, or they exercise
+calibration tier's tests do; they are simply expensive, or they exercise
 a large or external input space, and 35 s is a price worth paying to catch
 them on every push rather than only when a person remembers to run a wider
 tier.
@@ -184,17 +185,17 @@ tier.
   that can move the two committed tables, and at slice close regardless of
   what the slice touched. The CI `calibration` job runs on the same path
   filter, defined in the `changes` job of `.github/workflows/ci.yml`:
-  `crates/dashpack/**` (its encode-and-derive logic is what the two tests
+  `crates/dashpack/**` (its encode-and-derive logic is what the calibration tests
   re-derive), `crates/dashpack-astcenc-sys/**` (the vendored ASTC encoder
   `dashpack` calls), `crates/dashbuf/**` (`AssetKind` decides which rungs
   the ladder walk considers), `corpus/**` (the fixture payloads both tests
   re-encode), `goldens/tooling/src/metric.rs` (the perceptual scoring
-  `every_rung_of_every_fixture_is_recorded` computes its numbers from),
-  `goldens/tooling/tests/common/**` (the two tests' own fixture and
+  the perceptual calibration computes its numbers from),
+  `goldens/tooling/tests/common/**` (those tests' own fixture and
   repository-root helpers), `goldens/tooling/tests/perceptual_calibration.rs`
   itself, `Cargo.toml` and `Cargo.lock` (a dependency bump can move an
   encoder's output without touching any path above), `.config/**`
-  (`nextest.toml` names the two tests by filter and `calibration-tier.txt`
+  (`nextest.toml` names those tests by filter and `calibration-tier.txt`
   pins the listing they must produce), and `.github/workflows/ci.yml` (the
   job's own definition).
 
@@ -369,7 +370,9 @@ than restate the reason.
 **Adopt nextest and stop there.** 320 s to 222 s, every test on every push,
 no tiering question ever. Rejected because 222 s is still too slow to run
 between edits, and because it leaves 165 s of table re-derivation in a gate
-that cannot be moved by the edits it guards.
+that cannot be moved by the edits it guards. (That 165 s is now about 54 s,
+for the reason the last alternative below records; it was 165 s when this
+was decided.)
 
 **Shrink the photograph fixtures from 512×512 to 256×256.** Roughly four
 times cheaper. Rejected because every recorded number in
@@ -391,11 +394,20 @@ ASTC encoding happens twice. Rejected as the first move: a cache that
 serves a stale payload turns a real regression into a green run, which is a
 worse failure than a slow suite.
 
-**Split the two re-derivations per fixture instead of tiering.** Eight
-shards each would cut `calibration` from 165 s to roughly 35 s and remove
-the need for a third tier. Not rejected — deferred. It is a refactor of two
-table-driven tests, where tiering is a configuration file, so tiering lands
-first and the split follows.
+**Split the two re-derivations per fixture instead of tiering.** Not
+rejected — deferred, and since done for `perceptual_calibration` in
+issue #660. Tiering landed first because it is a configuration file where
+the split is a refactor of a table-driven test.
+
+The split did not remove the need for a third tier, which is what the
+deferral expected it might. Nine concurrent fixture tests take the tier to
+about 54 s locally rather than the projected 35 s, because a tier of
+independent tests costs its slowest member, not its total: the slowest
+photograph and `the_recorded_contract_table` — itself still one walk over
+every fixture — now set the floor together. Sixty seconds is still too slow
+for the between-edits loop, so the tier stays. Splitting `band_contract`
+the same way is the remaining move, and it would lower the floor to the
+slowest single photograph rather than remove it.
 
 ## Risks
 

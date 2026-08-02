@@ -21,9 +21,9 @@
 # is `calibration-tier.txt` beside this file, which pins that tier's membership
 # by name; `just calibrate` and the CI calibration job both diff the live
 # listing against it. A rename fails there, loudly, instead of quietly
-# shrinking the tier. Only the calibration tier is pinned this way: it is two
-# names and they change rarely, where pinning the regression tier's would churn on every
-# test added.
+# shrinking the tier. Only the calibration tier is pinned this way: its names
+# change rarely, where pinning the regression tier's would churn on every test
+# added.
 
 # The minimum version this file was written against and verified on.
 # Per-profile `default-filter` and exact-match filters both predate it, but
@@ -32,13 +32,21 @@
 nextest-version = "0.9.87"
 
 # `default` is the regression tier, so a bare `cargo nextest run` gives the
-# same gate `just build` runs rather than a thinner one. The two tests excluded
+# same gate `just build` runs rather than a thinner one. The ten tests excluded
 # here re-derive committed asset tables from the packer alone; they are the
 # `calibration` tier.
 [profile.default]
 default-filter = """
 not (
-    test(=every_rung_of_every_fixture_is_recorded)
+    test(=import_image_fill_rows_match_the_table)
+  + test(=v03_paint_rows_match_the_table)
+  + test(=block_stress_rows_match_the_table)
+  + test(=photo_interior_render_rows_match_the_table)
+  + test(=photo_coast_forest_rows_match_the_table)
+  + test(=photo_snowy_forest_rows_match_the_table)
+  + test(=photo_dawn_mountains_rows_match_the_table)
+  + test(=inter_ascii_atlas_rows_match_the_table)
+  + test(=arabic_atlas_rows_match_the_table)
   + test(=the_recorded_contract_table)
 )
 """
@@ -56,7 +64,15 @@ not (
 [profile.sanity]
 default-filter = """
 not (
-    test(=every_rung_of_every_fixture_is_recorded)
+    test(=import_image_fill_rows_match_the_table)
+  + test(=v03_paint_rows_match_the_table)
+  + test(=block_stress_rows_match_the_table)
+  + test(=photo_interior_render_rows_match_the_table)
+  + test(=photo_coast_forest_rows_match_the_table)
+  + test(=photo_snowy_forest_rows_match_the_table)
+  + test(=photo_dawn_mountains_rows_match_the_table)
+  + test(=inter_ascii_atlas_rows_match_the_table)
+  + test(=arabic_atlas_rows_match_the_table)
   + test(=the_recorded_contract_table)
   + binary(=profile_preview_oracle)
   + binary(=atlas_pipeline)
@@ -65,10 +81,14 @@ not (
 )
 """
 
-# The two tests that re-derive a committed table from the packer alone. They
-# can only fail when dashpack, its encoder, dashbuf's asset kinds, or the
-# corpus payloads change, which is what makes a narrow path filter correct for
-# them in CI.
+# The ten tests that re-derive a committed table from the packer alone: one per
+# calibration fixture, plus the band contract's own table. They can only fail
+# when dashpack, its encoder, dashbuf's asset kinds, or the corpus payloads
+# change, which is what makes a narrow path filter correct for them in CI.
+#
+# One test per fixture rather than one walk over all nine, so that nextest can
+# run them concurrently — as a single test the walk was sixty-three encodes in
+# one process and it alone set the tier's wall clock (issue #660).
 #
 # The profile-preview oracle is deliberately NOT here, though it also checks a
 # committed table. It renders every scene through Skia, so it reads the whole
@@ -76,7 +96,15 @@ not (
 # honestly cover it. It runs in `regression`, on every push, instead.
 [profile.calibration]
 default-filter = """
-    test(=every_rung_of_every_fixture_is_recorded)
+    test(=import_image_fill_rows_match_the_table)
+  + test(=v03_paint_rows_match_the_table)
+  + test(=block_stress_rows_match_the_table)
+  + test(=photo_interior_render_rows_match_the_table)
+  + test(=photo_coast_forest_rows_match_the_table)
+  + test(=photo_snowy_forest_rows_match_the_table)
+  + test(=photo_dawn_mountains_rows_match_the_table)
+  + test(=inter_ascii_atlas_rows_match_the_table)
+  + test(=arabic_atlas_rows_match_the_table)
   + test(=the_recorded_contract_table)
 """
 
