@@ -51,15 +51,23 @@ The twelfth is `2026-07-27-t2-checks-that-cannot-fail-DRIVER-PROMPT.md`, v0.13's
 that could not distinguish right from wrong. It was archived on 2026-08-02, when
 epic #362 closed.
 
-**One item under that label, #499, was still open when it was archived, and that
-was a decision rather than an oversight.** The prompt's own instruction was to
-archive it "when the tier is burnt down", and #499 — an end-to-end `ligatures_off`
-check that cannot fail for the corpus Arabic font — is a straggler that outlived
-its tier and is tracked on its own. What the prompt existed to drive, the
-19-item burn-down, is finished; holding the brief open for one deferred item
-would have described the tier as in progress when it is not. #499 keeps the
-label, because the label names the kind of defect rather than the slice that
-found it.
+**One item under that label, #499, was still open when it was archived, and the
+milestones say why that is correct rather than an oversight.** The prompt's own
+instruction was to archive it "when the tier is burnt down". The v0.13 milestone
+holds 109 issues and none of them is open; #499 is not in it, having been moved
+to the v1 milestone. The tier is burnt down, and #499 was re-scoped out of the
+slice rather than left behind in it.
+
+Issue #499 keeps the `t2-check-has-no-teeth` label because the label names the
+kind of defect, not the slice that found it. It is also not a bookkeeping
+entry: for the
+corpus Arabic font, output is byte-identical with ligatures on and off, because
+the lam-alef ligature is **required** and comes from `rlig`, which
+`ligatures_off` does not disable. No assertion over this corpus can tell the two
+settings apart, so the limitation is in the fixture rather than the test. It
+closes when a font carrying an Arabic `liga` or `clig` ligature the corpus text
+triggers is added under the corpus font rules — which is v1 work, and is why the
+issue sits in the v1 milestone rather than being closed.
 
 Four are forward-looking design captures for work that has not started. Every
 one says so in its own `status` line — "Nothing here is implemented". Gardening
