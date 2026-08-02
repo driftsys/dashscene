@@ -11,10 +11,10 @@ project's convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports seven files
+## Why the WIP gate currently reports eight files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-seven and exits non-zero. All seven are deliberate, accepted exceptions rather
+eight and exits non-zero. All eight are deliberate, accepted exceptions rather
 than ungardened debt, and they are recorded here so the gate's result is
 explained rather than merely tolerated.
 
@@ -33,18 +33,27 @@ is ungardened debt.
 
 **This count has been wrong before.** It read "seven" from the v0.13 close
 until 2026-08-02, while eight files were tracked — the v0.14/v0.15 breakdown
-was added and never listed. Issue #663 was then filed against the count rather
+was added and never listed. It went from seven to eight again later the same
+day, when the v0.15 driver prompt below was added. Issue #663 was then filed against the count rather
 than against this ledger, and asserted eight ungardened files when seven were
 accounted for here. Re-derive the number from `git ls-files docs/wip/` when
 touching this section rather than trusting the prose.
 
-**All seven are design captures**, described below. No driver prompt is held
-here any longer. Driver prompts — the brief a session is handed to carry out a
-named piece of work — are transient by construction, spent the moment their work
-lands, and the convention is to archive them verbatim rather than garden them
-into records. Twelve are now in `docs/archive/`: eleven `*-DRIVER-PROMPT.md`
-plus the one `*-SPIKE.md`, which is counted here because it was archived
-verbatim beside the prompt that carried out its design rather than gardened.
+**Seven are design captures**, described below. The eighth is a driver
+prompt: `2026-08-02-v015-DRIVER-PROMPT.md`, the brief that carries v0.15's
+remaining stories. Driver prompts — the brief a session is handed to carry out
+a named piece of work — are transient by construction, spent the moment their
+work lands, and the convention is to archive them verbatim rather than garden
+them into records. Twelve are already in `docs/archive/`: eleven
+`*-DRIVER-PROMPT.md` plus the one `*-SPIKE.md`, which is counted there because
+it was archived verbatim beside the prompt that carried out its design rather
+than gardened.
+
+**The v0.15 prompt leaves when epic #569 closes**, archived verbatim beside
+those twelve. It holds no decision and no design — it is current state, the
+story order, the per-story loop, and the failure modes this repo has actually
+hit — so there is nothing in it to garden into a record, and everything in it
+goes stale the moment the slice does. Its own `status` block says the same.
 
 The twelfth is `2026-07-27-t2-checks-that-cannot-fail-DRIVER-PROMPT.md`, v0.13's
 `t2-check-has-no-teeth` tier — 19 items whose common property was an assertion
