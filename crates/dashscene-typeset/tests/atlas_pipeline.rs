@@ -395,6 +395,15 @@ const MAX_DIFFERING_PIXEL_RATIO: f64 = 0.001;
 /// Decodes an atlas PNG to raw samples, with its dimensions and its
 /// channel count. Comparing decoded samples rather than PNG bytes keeps
 /// the assertion about the atlas rather than about the encoder.
+///
+/// The channel count is derived as bytes per pixel, and every caller
+/// compares one byte as one channel sample. Both hold only at 8 bits per
+/// sample, which is what `msdf-atlas-gen` writes. The bit-depth assertion
+/// below makes a generator change that alters the depth fail by name: at
+/// 16 bits the derived count would double and each sample would be
+/// compared as two independent bytes, so the differing-pixel count and
+/// the one-step peak bound would still pass or fail, but would no longer
+/// measure what they claim to.
 fn decode_atlas(png_bytes: &[u8], which: &str) -> (Vec<u8>, (u32, u32), usize) {
     let mut reader = png::Decoder::new(std::io::Cursor::new(png_bytes))
         .read_info()
@@ -409,10 +418,37 @@ fn decode_atlas(png_bytes: &[u8], which: &str) -> (Vec<u8>, (u32, u32), usize) {
         .next_frame(&mut buf)
         .unwrap_or_else(|e| panic!("{which} atlas.png decodes: {e}"));
     buf.truncate(info.buffer_size());
+    assert_eq!(
+        info.bit_depth,
+        png::BitDepth::Eight,
+        "{which} atlas.png must decode at 8 bits per sample: this helper derives \
+         its channel count as bytes per pixel, and the reproducibility bounds \
+         compare one byte as one channel sample"
+    );
     let pixels = (info.width as usize) * (info.height as usize);
     assert!(pixels > 0, "{which} atlas.png is not empty");
     let channels = buf.len() / pixels;
     (buf, (info.width, info.height), channels)
+}
+
+/// The bit-depth guard above cannot fire on a committed fixture, because
+/// every one of them is 8-bit. This feeds `decode_atlas` a 16-bit PNG
+/// directly, so the guard is shown to fail by name rather than only
+/// asserted to be present.
+#[test]
+#[should_panic(expected = "must decode at 8 bits per sample")]
+fn a_sixteen_bit_atlas_fails_by_name() {
+    let mut png_bytes = Vec::new();
+    let mut encoder = png::Encoder::new(&mut png_bytes, 2, 2);
+    encoder.set_color(png::ColorType::Rgb);
+    encoder.set_depth(png::BitDepth::Sixteen);
+    let mut writer = encoder.write_header().expect("16-bit header writes");
+    writer
+        .write_image_data(&[0u8; 2 * 2 * 3 * 2])
+        .expect("16-bit samples write");
+    writer.finish().expect("16-bit PNG finishes");
+
+    decode_atlas(&png_bytes, "synthetic");
 }
 
 /// Asserts a freshly generated atlas reproduces the committed one (R7).
