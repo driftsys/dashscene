@@ -194,18 +194,29 @@ tier.
   `goldens/tooling/tests/common/**` (those tests' own fixture and
   repository-root helpers), `goldens/tooling/tests/perceptual_calibration.rs`
   itself, `Cargo.toml` and `Cargo.lock` (a dependency bump can move an
-  encoder's output without touching any path above), `.config/**`
+  encoder's output without touching any path above), and `.config/**`
   (`nextest.toml` names those tests by filter and `calibration-tier.txt`
-  pins the listing they must produce), and `.github/workflows/ci.yml` (the
-  job's own definition).
+  pins the listing they must produce).
 
-The last two entries are about the check rather than the tables, and they
-were added after the membership check shipped broken. None of the paths
-that define the check were in the filter, so the job that exists to catch
-tier drift was the one job an edit to the tier could not trigger: the
-check reached `main` and stayed red on unrelated branches for as long as
-it took one of them to touch `crates/dashpack/**`. A gate that its own
-edits cannot run is a gate nobody is measuring.
+`.config/**` is about the check rather than the tables, and it was added
+after the membership check shipped broken. None of the paths that define
+the check were in the filter, so the job that exists to catch tier drift
+was the one job an edit to the tier could not trigger: the check reached
+`main` and stayed red on unrelated branches for as long as it took one of
+them to touch `crates/dashpack/**`. A gate that its own edits cannot run is
+a gate nobody is measuring.
+
+**`.github/workflows/ci.yml` was in this list briefly and was removed, on
+a measurement.** It went in beside `.config/**` on the same argument — a
+change to how the calibration job runs should have to survive that job.
+The cost turned out to be larger than the argument was worth. Calibration
+had fired once in sixty runs before; in the eight `main` runs after, it
+fired four times, three of them triggered by that entry alone and one of
+those from a pull request that touched nothing the packer reads. Every CI
+edit became a 460 s run rather than a 200 s one. `.config/**` keeps the
+property that matters, because it is the tier's own definition and is
+edited rarely; the workflow file is edited often and almost always for
+reasons the packer cannot see.
 
 The pre-push gate keeps `regression` rather than `sanity` because 35 s is
 already close to a ten-fold improvement over the original 325 s and it

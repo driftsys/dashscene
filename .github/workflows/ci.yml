@@ -86,9 +86,6 @@ jobs:
               # cannot trigger — which is how a membership check that had never
               # passed in CI reached `main` (issue #658).
               - '.config/**'
-              # And the job itself, for the same reason: a change to how the
-              # calibration job runs should have to survive the calibration job.
-              - '.github/workflows/ci.yml'
 
       # Whether anything outside documentation changed. The compile jobs gate
       # on this, so it asks the opposite question from the filters above: not
@@ -224,7 +221,25 @@ jobs:
       # the runner image ships the runtime library but not the -dev
       # symlink the linker needs.
       - name: install skia system libraries
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
+        # Install first and refresh the package lists only if that fails.
+        # `apt-get update` cost about 12 s of the roughly 20 s this step took
+        # unconditionally, on the critical path of every job that runs it, and
+        # the runner image already ships lists new enough to resolve this
+        # package. The retry is what keeps that an optimisation rather than a
+        # bet: if the lists ever are too stale, the install fails, the update
+        # runs, and the install is retried.
+        #
+        # Written as `if !` rather than `install || { update && install; }`.
+        # Under the `bash -e` these steps run with, the `||` form exits 0 when
+        # BOTH the install and the update fail — the `&&` short-circuits, and
+        # `set -e` does not fire for a compound command on the right of `||`.
+        # The step would pass with the package still missing and the failure
+        # would surface later as a linker error naming neither.
+        run: |
+          if ! sudo apt-get install -y libfontconfig1-dev; then
+            sudo apt-get update
+            sudo apt-get install -y libfontconfig1-dev
+          fi
       # The regression tier (docs/decisions/test-tiers.md). nextest's default
       # profile is that tier, so no -P is needed here and a bare run cannot
       # silently be the thinner one.
@@ -270,7 +285,25 @@ jobs:
       # the runner image ships the runtime library but not the -dev
       # symlink the linker needs.
       - name: install skia system libraries
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
+        # Install first and refresh the package lists only if that fails.
+        # `apt-get update` cost about 12 s of the roughly 20 s this step took
+        # unconditionally, on the critical path of every job that runs it, and
+        # the runner image already ships lists new enough to resolve this
+        # package. The retry is what keeps that an optimisation rather than a
+        # bet: if the lists ever are too stale, the install fails, the update
+        # runs, and the install is retried.
+        #
+        # Written as `if !` rather than `install || { update && install; }`.
+        # Under the `bash -e` these steps run with, the `||` form exits 0 when
+        # BOTH the install and the update fail — the `&&` short-circuits, and
+        # `set -e` does not fire for a compound command on the right of `||`.
+        # The step would pass with the package still missing and the failure
+        # would surface later as a linker error naming neither.
+        run: |
+          if ! sudo apt-get install -y libfontconfig1-dev; then
+            sudo apt-get update
+            sudo apt-get install -y libfontconfig1-dev
+          fi
       - run: cargo build -p demo
 
   convco:
@@ -405,8 +438,10 @@ jobs:
         # Upstream publishes Windows binaries only; build the pinned
         # commit once and cache it.
         run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake libfreetype-dev
+          if ! sudo apt-get install -y cmake libfreetype-dev; then
+            sudo apt-get update
+            sudo apt-get install -y cmake libfreetype-dev
+          fi
           git init "$RUNNER_TEMP/mag"
           git -C "$RUNNER_TEMP/mag" remote add origin https://github.com/Chlumsky/msdf-atlas-gen.git
           git -C "$RUNNER_TEMP/mag" fetch --depth 1 origin "$MAG_REF"
@@ -463,7 +498,25 @@ jobs:
           chmod +x /usr/local/bin/flatc
       # skia-safe's prebuilt Linux binaries link the system fontconfig.
       - name: install skia system libraries
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
+        # Install first and refresh the package lists only if that fails.
+        # `apt-get update` cost about 12 s of the roughly 20 s this step took
+        # unconditionally, on the critical path of every job that runs it, and
+        # the runner image already ships lists new enough to resolve this
+        # package. The retry is what keeps that an optimisation rather than a
+        # bet: if the lists ever are too stale, the install fails, the update
+        # runs, and the install is retried.
+        #
+        # Written as `if !` rather than `install || { update && install; }`.
+        # Under the `bash -e` these steps run with, the `||` form exits 0 when
+        # BOTH the install and the update fail — the `&&` short-circuits, and
+        # `set -e` does not fire for a compound command on the right of `||`.
+        # The step would pass with the package still missing and the failure
+        # would surface later as a linker error naming neither.
+        run: |
+          if ! sudo apt-get install -y libfontconfig1-dev; then
+            sudo apt-get update
+            sudo apt-get install -y libfontconfig1-dev
+          fi
       - name: design-source render oracle (E7 / G-11)
         run: cargo test -p goldens --test render_oracle -- --nocapture
       # Every golden carrying a calibrated absolute-pixel budget, for the
@@ -543,7 +596,25 @@ jobs:
       # belongs to links skia-safe unconditionally, so building its test
       # binaries needs this even though these two tests never call it.
       - name: install skia system libraries
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
+        # Install first and refresh the package lists only if that fails.
+        # `apt-get update` cost about 12 s of the roughly 20 s this step took
+        # unconditionally, on the critical path of every job that runs it, and
+        # the runner image already ships lists new enough to resolve this
+        # package. The retry is what keeps that an optimisation rather than a
+        # bet: if the lists ever are too stale, the install fails, the update
+        # runs, and the install is retried.
+        #
+        # Written as `if !` rather than `install || { update && install; }`.
+        # Under the `bash -e` these steps run with, the `||` form exits 0 when
+        # BOTH the install and the update fail — the `&&` short-circuits, and
+        # `set -e` does not fire for a compound command on the right of `||`.
+        # The step would pass with the package still missing and the failure
+        # would surface later as a linker error naming neither.
+        run: |
+          if ! sudo apt-get install -y libfontconfig1-dev; then
+            sudo apt-get update
+            sudo apt-get install -y libfontconfig1-dev
+          fi
       - name: install cargo-nextest
         run: curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C ${CARGO_HOME:-~/.cargo}/bin
       # The same check the `calibrate` recipe runs, inline because this job does
@@ -623,7 +694,25 @@ jobs:
           unzip -o flatc.zip flatc -d /usr/local/bin
           chmod +x /usr/local/bin/flatc
       - name: install skia system libraries
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
+        # Install first and refresh the package lists only if that fails.
+        # `apt-get update` cost about 12 s of the roughly 20 s this step took
+        # unconditionally, on the critical path of every job that runs it, and
+        # the runner image already ships lists new enough to resolve this
+        # package. The retry is what keeps that an optimisation rather than a
+        # bet: if the lists ever are too stale, the install fails, the update
+        # runs, and the install is retried.
+        #
+        # Written as `if !` rather than `install || { update && install; }`.
+        # Under the `bash -e` these steps run with, the `||` form exits 0 when
+        # BOTH the install and the update fail — the `&&` short-circuits, and
+        # `set -e` does not fire for a compound command on the right of `||`.
+        # The step would pass with the package still missing and the failure
+        # would surface later as a linker error naming neither.
+        run: |
+          if ! sudo apt-get install -y libfontconfig1-dev; then
+            sudo apt-get update
+            sudo apt-get install -y libfontconfig1-dev
+          fi
       - name: install cargo-nextest
         run: curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C ${CARGO_HOME:-~/.cargo}/bin
       # The membership check comes first: the profile selects by exact test
