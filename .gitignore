@@ -25,3 +25,6 @@ importers/figma/.render-tmp.*
 
 # Golden-harness failure artifacts (goldens/README.md)
 goldens/images/*.actual.png
+# Layer-1 instance-buffer golden failure artifacts
+# (docs/decisions/instance-buffer-contract.md)
+crates/dashscene-gpu/tests/goldens/*.actual.txt

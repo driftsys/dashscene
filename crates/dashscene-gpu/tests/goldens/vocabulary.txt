@@ -1,0 +1,32 @@
+instances 20 rects 11
+rect 0 at 0 count 0
+rect 1 at 0 count 1
+rect 2 at 1 count 1
+rect 3 at 2 count 1
+rect 4 at 3 count 4
+rect 5 at 7 count 3
+rect 6 at 10 count 5
+rect 7 at 15 count 2
+rect 8 at 17 count 1
+rect 9 at 18 count 2
+rect 10 at 20 count 0
+   0 fill     tag 1 row 0 shape 0 clip 0..0 layer 0 opacity 1.0 bounds [10.0, 11.0, 100.0, 50.0] corners [2.0, 4.0, 6.0, 8.0]
+   1 fill     tag 2 row 0 shape 0 clip 0..2 layer 0 opacity 1.0 bounds [120.0, 13.0, 90.0, 60.0] corners [0.0, 0.0, 0.0, 0.0]
+   2 fill     tag 3 row 0 shape 0 clip 2..3 layer 0 opacity 0.5 bounds [220.0, 15.0, 80.0, 70.0] corners [0.0, 0.0, 0.0, 0.0]
+   3 fill     tag 1 row 1 shape 0 clip 0..0 layer 0 opacity 1.0 bounds [310.0, 17.0, 70.0, 80.0] corners [0.0, 0.0, 0.0, 0.0]
+   4 fill     tag 1 row 2 shape 0 clip 0..0 layer 0 opacity 1.0 bounds [310.0, 17.0, 70.0, 80.0] corners [0.0, 0.0, 0.0, 0.0]
+   5 fill     tag 2 row 0 shape 0 clip 0..0 layer 0 opacity 1.0 bounds [310.0, 17.0, 70.0, 80.0] corners [0.0, 0.0, 0.0, 0.0]
+   6 shadow   tag 1 row 0 shape 0 clip 0..0 layer 0 opacity 1.0 bounds [310.0, 17.0, 70.0, 80.0] corners [0.0, 0.0, 0.0, 0.0]
+   7 fill     tag 1 row 2 shape 0 clip 0..2 layer 0 opacity 0.25 bounds [390.0, 19.0, 60.0, 90.0] corners [9.0, 0.0, 0.0, 0.0]
+   8 fill     tag 3 row 0 shape 0 clip 0..2 layer 0 opacity 0.25 bounds [390.0, 19.0, 60.0, 90.0] corners [9.0, 0.0, 0.0, 0.0]
+   9 stroke   tag 0 row 0 shape 0 clip 0..2 layer 0 opacity 0.25 bounds [390.0, 19.0, 60.0, 90.0] corners [9.0, 0.0, 0.0, 0.0]
+  10 shadow   tag 0 row 1 shape 0 clip 0..0 layer 0 opacity 1.0 bounds [454.0, 15.0, 62.0, 112.0] corners [13.0, 0.0, 13.0, 0.0]
+  11 shadow   tag 0 row 3 shape 0 clip 0..0 layer 0 opacity 1.0 bounds [454.0, 15.0, 62.0, 112.0] corners [13.0, 0.0, 13.0, 0.0]
+  12 fill     tag 1 row 0 shape 0 clip 0..0 layer 0 opacity 1.0 bounds [460.0, 21.0, 50.0, 100.0] corners [7.0, 0.0, 7.0, 0.0]
+  13 stroke   tag 0 row 1 shape 0 clip 0..0 layer 0 opacity 1.0 bounds [460.0, 21.0, 50.0, 100.0] corners [7.0, 0.0, 7.0, 0.0]
+  14 shadow   tag 1 row 2 shape 0 clip 0..0 layer 0 opacity 1.0 bounds [460.0, 21.0, 50.0, 100.0] corners [7.0, 0.0, 7.0, 0.0]
+  15 backdrop tag 1 row 1 shape 0 clip 2..3 layer 0 opacity 0.75 bounds [520.0, 23.0, 40.0, 110.0] corners [20.0, 20.0, 20.0, 20.0]
+  16 fill     tag 1 row 1 shape 0 clip 2..3 layer 0 opacity 0.75 bounds [520.0, 23.0, 40.0, 110.0] corners [20.0, 20.0, 20.0, 20.0]
+  17 fill     tag 2 row 0 shape 1 clip 0..0 layer 0 opacity 1.0 bounds [570.0, 25.0, 30.0, 120.0] corners [11.0, 12.0, 13.0, 14.0]
+  18 backdrop tag 1 row 2 shape 2 clip 0..2 layer 0 opacity 0.9 bounds [610.0, 27.0, 20.0, 130.0] corners [0.0, 0.0, 0.0, 0.0]
+  19 fill     tag 1 row 2 shape 2 clip 0..2 layer 0 opacity 0.9 bounds [610.0, 27.0, 20.0, 130.0] corners [0.0, 0.0, 0.0, 0.0]

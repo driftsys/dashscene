@@ -421,7 +421,9 @@ into the records below. Per-story decisions land here directly:
   0.037 % (#379).
 
 Gardened out of `docs/technotes/`'s `DECISION` / `DECISION direction` tags,
-so each technote stops being the authority for the conclusion it reached:
+so each technote stops being the authority for the conclusion it reached —
+together with the later story decisions that build directly on one of them,
+filed beside their parent rather than apart from it:
 
 - [dashc-lowers-figma-it-does-not-export.md](dashc-lowers-figma-it-does-not-export.md)
   — cross-references `figma-importer-deno-plus-dashc-wasm.md`; re-affirms it
@@ -449,6 +451,11 @@ so each technote stops being the authority for the conclusion it reached:
   over wgpu is the lean painter, covering native and web from one codebase;
   Skia-GPU is **not planned**, and Skia stays permanently as the bit-exact CPU
   oracle (story #577, amends the record above).
+- [instance-buffer-contract.md](instance-buffer-contract.md) — the lean
+  painter's frame is one ordered instance buffer of 64-byte `#[repr(C)]` rows,
+  a rect's instances contiguous and named by a per-rect span, in
+  `dashscene-skia`'s own per-node order; layer 1 of epic #569 is stated over it
+  as committed text goldens (story #578).
 - [unity-painter-uses-brg.md](unity-painter-uses-brg.md) — **proposed**:
   BatchRendererGroup over GameObject-per-node for the Unity painter, pending a
   lit-BRG shader spike and a GLES 3.2 platform check
