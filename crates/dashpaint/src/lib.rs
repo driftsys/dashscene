@@ -159,6 +159,13 @@ pub struct GradientStop {
 }
 
 /// The four gradient kinds of docs/specification/04-figma-vocabulary-profile.md (angular serves gauges).
+/// `#[repr(u8)]` is **not yet checked**: nothing on `dashscene-unity`'s
+/// `extern "C"` surface reaches this enum, because the only types that carry
+/// it — `Gradient` and `PaintKind` — are not flattened yet. Removing the
+/// attribute today fires no lint, verified by mutation. It becomes
+/// load-bearing with the `PaintKind` flattening, and is written now so that
+/// change does not also have to discover it.
+#[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GradientKind {
     Linear,
@@ -196,6 +203,13 @@ pub struct Gradient {
 }
 
 /// Figma image-fill scale modes.
+/// `#[repr(u8)]` is **not yet checked**: nothing on `dashscene-unity`'s
+/// `extern "C"` surface reaches this enum, because the only types that carry
+/// it — `Gradient` and `PaintKind` — are not flattened yet. Removing the
+/// attribute today fires no lint, verified by mutation. It becomes
+/// load-bearing with the `PaintKind` flattening, and is written now so that
+/// change does not also have to discover it.
+#[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScaleMode {
     Fill,
@@ -281,6 +295,7 @@ impl ImageTable {
 /// Stroke placement relative to the node's outline. Painters that only
 /// stroke on center lower Inside/Outside by path expansion
 /// (docs/technotes/rendering-and-painters.md).
+#[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StrokeAlign {
     Inside,
@@ -291,6 +306,7 @@ pub enum StrokeAlign {
 /// A stroke. v0.3 strokes are solid-only (see
 /// `docs/decisions/paint-entry-composition.md`); the color widens to a
 /// fill additively if a real file ever needs gradient strokes.
+#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Stroke {
     pub width: f32,
@@ -560,6 +576,7 @@ pub enum PaintKind {
 
 /// Whether a shadow falls behind the node (a drop shadow) or inside it
 /// (an inner shadow). Mirrors `dashbuf`'s `ShadowKind`.
+#[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShadowKind {
     Drop,
@@ -577,6 +594,7 @@ pub enum ShadowKind {
 /// `spread` grows the shadow shape — a drop shadow outward, an inner
 /// shadow's lit hole inward — and may be negative. Ranges are validated
 /// upstream (`dashscene-validator`, P4).
+#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Shadow {
     pub kind: ShadowKind,
@@ -595,6 +613,7 @@ pub struct Shadow {
 /// composited beneath the node, seen through the node's own transparency,
 /// which is why it carries an ordering guarantee the other effects do not
 /// (see [`Painter::paint`]).
+#[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlurKind {
     Layer,
@@ -640,6 +659,7 @@ pub enum BlurKind {
 /// colour space attached, which is also what keeps MSDF distance channels
 /// sampling raw — one allocation, two requirements, no conflict. A painter
 /// built on a pipeline that is linear by default has to convert deliberately.
+#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Blur {
     pub kind: BlurKind,
@@ -673,6 +693,7 @@ pub struct Blur {
 /// `atlas_rect`-to-device-quad ratio already is the scale, so a bake
 /// resolution carried alongside it would be redundant for every reader that
 /// only paints.
+#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VectorField {
     /// Index into the [`ImageTable`] — the packed MSDF atlas PNG.
