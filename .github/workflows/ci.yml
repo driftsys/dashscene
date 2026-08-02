@@ -194,7 +194,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # This job writes the shared cache, because it is the member that runs
+      # most often: every push that changes code. `render-oracle` runs on the
+      # same condition but builds only a subset, and `calibration` needs a
+      # `packer` path on top of it, so neither keeps the cache fresh enough
+      # to be its writer. See the note on `calibration`.
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: workspace-tests
       - name: install flatc
         run: |
           curl -fsSL -o flatc.zip https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip
@@ -430,7 +437,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # Reads the shared cache `test` writes; does not write one of its own.
+      # This job compiles a subset of what `test` already compiled.
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: workspace-tests
+          save-if: "false"
       - name: install flatc
         run: |
           curl -fsSL -o flatc.zip https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip
@@ -496,7 +508,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # Reads the shared cache `test` writes; does not write one of its own.
+      # rust-cache keys on the job name by default, and this job runs only
+      # when the `packer` filter fires — so its own key was almost never
+      # populated, and it compiled all 108 test binaries from scratch on a
+      # run where `test` had just compiled the same ones in 69 s. Measured on
+      # PR #674: `No cache found`, 3 min 14 s of compiling, on a 9 min 47 s
+      # job. It builds exactly what `test` builds, so it can read that cache.
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: workspace-tests
+          save-if: "false"
       - name: install flatc
         run: |
           curl -fsSL -o flatc.zip https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip

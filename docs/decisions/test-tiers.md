@@ -293,6 +293,35 @@ job runs when the `changes` job's `packer` path filter fires, listed above.
 Defining risk by what the diff touches means nobody has to remember to
 judge a change risky.
 
+**`test`, `render-oracle` and `calibration` share one compilation cache.**
+`Swatinem/rust-cache` keys on the job name unless told otherwise, so each
+job kept a separate cache and compiled the workspace independently. That is
+free for a job that runs on every push and expensive for one that does not:
+`calibration` fires only when the `packer` filter matches, so its key was
+almost never populated. Measured on PR #674, it logged `No cache found` and
+spent 3 min 14 s compiling all 108 test binaries — in a run where the `test`
+job had compiled the same binaries in 69 s from a warm cache. The three jobs
+build the same native test binaries, so they now share the key
+`workspace-tests`. `test` writes it, because it is the member that runs most
+often — every push that changes code — while `render-oracle` builds only a
+subset of the same binaries and `calibration` needs a `packer` path on top.
+The other two read it with `save-if: false`.
+
+The sharing works across runs, not within one: the three jobs start together,
+and a cache is written in a job's post-run step, so `calibration` never reads
+what `test` produced beside it. What it reads is the cache `test` last wrote
+on `main`, which every code-changing push refreshes. That is also why `test`
+has to be the writer — GitHub scopes a cache written on a branch to that
+branch, and only the default branch's caches are readable everywhere.
+
+`clippy` and `demo-build` keep their own caches — `cargo clippy` and
+`cargo build -p demo` produce different artifacts from a test build, so
+sharing would make the three jobs overwrite each other's work. `wasm-build`
+keeps its own because it targets `wasm32-unknown-unknown`. `atlas-repro`
+keeps its own for a subtler reason: it is the only matrix job, and its
+`arm64` leg would look up a key that only the `x86_64` jobs ever write, so
+sharing would leave that leg permanently cold rather than warm.
+
 Since 2026-08-01 the `test` job also skips entirely when the diff is
 documentation only, together with `clippy`, `demo-build`, `wasm-build`,
 `atlas-repro` and `render-oracle`. The `changes` job decides this by asking
