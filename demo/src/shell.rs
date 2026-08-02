@@ -78,6 +78,7 @@
 
 use std::error::Error;
 use std::sync::Arc;
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -198,12 +199,17 @@ pub struct SceneEntry {
 /// each scene's script alternates direction, so an even count leaves the scene
 /// at the phase it started from.
 ///
-/// **The deadline is elapsed time, not a count of pulse events**, and that
-/// distinction is load-bearing. [`spawn_pulse_driver`] free-runs: it sleeps and
-/// sends whether or not the host consumed the last message, so on a slow frame
-/// several pulses queue and arrive together. Counting the events gave later
-/// scenes a single pulse each while the first cycle got four, because one burst
-/// spent a whole scene's allowance. Elapsed time is immune to that.
+/// **The deadline is elapsed time, not a count of pulse events.** It was
+/// written that way because [`spawn_pulse_driver`] used to free-run: it slept
+/// and sent whether or not the host had consumed the last message, so on a slow
+/// frame several pulses queued and arrived together, and counting the events
+/// gave later scenes a single pulse each while the first cycle got four.
+///
+/// The driver no longer does that — it is one-shot and rearmed
+/// ([`spawn_pulses`], issue #629) — so counting would now be sound. Elapsed time
+/// stays, because it is the better basis anyway: it says what it means, that a
+/// scene holds the window for a duration a person can watch, and it does not
+/// depend on the pulse rate remaining what it happens to be today.
 const PULSES_PER_SCENE: u32 = 4;
 
 /// How long each scene holds the window, derived from the two constants above
@@ -226,9 +232,10 @@ pub fn run(title: &'static str, scenes: Vec<SceneEntry>) -> Result<(), Box<dyn E
     // The starting mode. The first frame replaces it: `WaitUntil` while the
     // generation advances, `Wait` once it is steady.
     event_loop.set_control_flow(ControlFlow::Wait);
-    spawn_pulse_driver(event_loop.create_proxy());
+    let rearm = spawn_pulse_driver(event_loop.create_proxy());
 
     let mut host = Host {
+        rearm,
         title,
         scenes,
         current: 0,
@@ -260,16 +267,57 @@ pub fn run(title: &'static str, scenes: Vec<SceneEntry>) -> Result<(), Box<dyn E
 /// It exists to exercise the wake path rather than to be a feature — story
 /// #574's scenes script their own signals and send their own wakes. It reads a
 /// clock (it sleeps), which is allowed: it is host-side, above `LiveScene`.
-fn spawn_pulse_driver(proxy: EventLoopProxy<Wake>) {
+///
+/// Returns the rearm handle. The driver sends **one** pulse and then waits to
+/// be rearmed, so at most one is ever in flight; see [`spawn_pulses`].
+fn spawn_pulse_driver(proxy: EventLoopProxy<Wake>) -> mpsc::Sender<()> {
+    spawn_pulses(PULSE_INTERVAL, move || {
+        proxy.send_event(Wake::Pulse).is_ok()
+    })
+}
+
+/// The driver's timing and handshake, with the transport left to the caller so
+/// a test can supply one (issue #629).
+///
+/// One-shot and rearmed, rather than free-running. The loop sleeps, sends, and
+/// then **blocks until the host rearms it**, so a second pulse cannot be queued
+/// while the first is unhandled.
+///
+/// It used to sleep and send unconditionally. Whenever a frame ran longer than
+/// the interval — routine in a debug build, where the `surfaces` scene costs
+/// about 28 ms per frame at 1920x1200 — the driver ran ahead of the loop and
+/// the queued pulses then arrived together. The scene jumped through its script
+/// instead of stepping through it, and only the first of each burst reported
+/// the park, because `Host::parked` is taken once. Issue #628's scene advance
+/// is keyed on elapsed time rather than on a count of pulses precisely because
+/// counting them was unreliable while this stood.
+///
+/// The handshake also ties the driver to the loop's state. A free-running
+/// thread kept sending while the loop was deliberately parked; this one cannot
+/// get ahead of what the host has applied.
+///
+/// `send` reports whether the message reached the loop. Both it returning
+/// `false` and the rearm channel closing mean the loop is gone, and the thread
+/// ends.
+fn spawn_pulses(
+    interval: Duration,
+    mut send: impl FnMut() -> bool + Send + 'static,
+) -> mpsc::Sender<()> {
+    let (rearm, rearmed) = mpsc::channel::<()>();
     thread::spawn(move || {
         loop {
-            thread::sleep(PULSE_INTERVAL);
-            if proxy.send_event(Wake::Pulse).is_err() {
+            thread::sleep(interval);
+            if !send() {
                 // The event loop has exited and will not run another frame.
+                return;
+            }
+            if rearmed.recv().is_err() {
+                // The host dropped its end: the loop is shutting down.
                 return;
             }
         }
     });
+    rearm
 }
 
 /// What the loop was doing when it last parked, so waking can report what did
@@ -281,6 +329,10 @@ struct Parked {
 }
 
 struct Host {
+    /// Rearms the pulse driver, which sends one pulse and then waits. Held so
+    /// that [`Host::user_event`] can release the next one only after this one
+    /// has been applied, which is what stops pulses queueing (issue #629).
+    rearm: mpsc::Sender<()>,
     title: &'static str,
     /// Every scene the host was asked to show, in the order it shows them.
     /// Never empty — [`run`] rejects an empty list, so `scenes[current]` is
@@ -289,9 +341,11 @@ struct Host {
     /// Which of [`Host::scenes`] is on screen.
     current: usize,
     /// When [`Host::current`] came on screen, so its turn is measured against
-    /// the wall clock rather than against a count of pulse events that can
-    /// arrive in bursts. Host-side only: nothing at or below `LiveScene` reads
-    /// a clock, which is the invariant `demo/tests/clock_invariant.rs` asserts.
+    /// the wall clock rather than against a count of pulse events — see
+    /// [`PULSES_PER_SCENE`] for why, and for why elapsed time stays now that
+    /// pulses no longer arrive in bursts. Host-side only: nothing at or below
+    /// `LiveScene` reads a clock, which is the invariant
+    /// `demo/tests/clock_invariant.rs` asserts.
     scene_since: Instant,
     window: Option<Arc<Window>>,
     presenter: Option<Box<dyn Present>>,
@@ -475,6 +529,43 @@ impl Host {
         self.shown = None;
     }
 
+    /// Applies one pulse to the running scene, and advances to the next scene
+    /// when this one's turn is over.
+    ///
+    /// Split out of [`Host::user_event`] so that the rearm cannot be missed:
+    /// this body has two early returns, and the caller rearms the driver after
+    /// it returns by any of its paths (issue #629). Rearming on only some of
+    /// them would stall the driver permanently rather than merely drop a pulse.
+    fn apply_pulse(&mut self) {
+        let pulse = self.scenes[self.current].pulse;
+        let Some(live) = self.live.as_mut() else {
+            // The window does not exist yet. Dropping this pulse costs one
+            // interval; the next one still comes, because the caller
+            // rearms the driver on this path too.
+            return;
+        };
+        self.pulse_index += 1;
+        pulse(live, self.pulse_index);
+
+        // With more than one scene to show, this pulse may be the one that ends
+        // the current scene's turn. Decided on elapsed time rather than on
+        // `pulse_index`, for the reason [`SCENE_DWELL`] records, but acted on
+        // here so the change lands on a pulse boundary rather than part-way
+        // through a transition. The check runs after the pulse has been
+        // applied, so each scene is seen through `PULSES_PER_SCENE` complete
+        // cycles rather than that many minus one.
+        if self.scenes.len() > 1 && self.scene_since.elapsed() >= SCENE_DWELL {
+            self.report_park();
+            self.advance_scene();
+            return;
+        }
+
+        self.report_park();
+        if let Some(window) = self.window.as_ref() {
+            window.request_redraw();
+        }
+    }
+
     /// Reports what did **not** happen while the loop was parked, if it was.
     ///
     /// Shared by the two things a pulse can do — script the current scene, or
@@ -587,35 +678,14 @@ impl ApplicationHandler<Wake> for Host {
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: Wake) {
         match event {
             Wake::Pulse => {
-                let pulse = self.scenes[self.current].pulse;
-                let Some(live) = self.live.as_mut() else {
-                    // The window does not exist yet. Dropping this pulse costs
-                    // one interval; the next one arrives on schedule.
-                    return;
-                };
-                self.pulse_index += 1;
-                pulse(live, self.pulse_index);
-
-                // With more than one scene to show, this pulse may be the last
-                // of the current scene's turn. The check runs after the pulse
-                // has been applied, so each scene is seen through
-                // `PULSES_PER_SCENE` complete cycles rather than that many
-                // minus one.
-                // With more than one scene to show, this pulse may be the one
-                // that ends the current scene's turn. Decided on elapsed time
-                // rather than on `pulse_index`, for the reason [`SCENE_DWELL`]
-                // records, but acted on here so the change lands on a pulse
-                // boundary rather than part-way through a transition.
-                if self.scenes.len() > 1 && self.scene_since.elapsed() >= SCENE_DWELL {
-                    self.report_park();
-                    self.advance_scene();
-                    return;
-                }
-
-                self.report_park();
-                if let Some(window) = self.window.as_ref() {
-                    window.request_redraw();
-                }
+                self.apply_pulse();
+                // Rearm only now. The driver is one-shot and has been waiting
+                // since it sent this pulse, so releasing it here — after the
+                // pulse has been applied, and after every early return above —
+                // is what keeps at most one in flight (issue #629). A closed
+                // channel means the driver thread has ended, which happens only
+                // as the loop shuts down.
+                let _ = self.rearm.send(());
             }
         }
     }
@@ -692,5 +762,113 @@ impl ApplicationHandler<Wake> for Host {
             WindowEvent::RedrawRequested => self.frame(event_loop),
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+
+    /// A short interval, so a test that waits several of them still finishes in
+    /// well under a second. The property under test is the handshake, not the
+    /// duration, and `spawn_pulses` takes the interval precisely so a test does
+    /// not have to wait `PULSE_INTERVAL`.
+    const TICK: Duration = Duration::from_millis(5);
+
+    /// Waits for `count` to reach `want`, or gives up. Polling rather than
+    /// sleeping a fixed span: the assertion is about what the driver did, and a
+    /// slow machine should make this test slower, never wrong.
+    fn wait_for(count: &AtomicUsize, want: usize) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if count.load(Ordering::SeqCst) >= want {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        false
+    }
+
+    /// The defect issue #629 reported: the driver ran ahead of the loop.
+    ///
+    /// Twenty intervals elapse and the driver is never rearmed. It must have
+    /// sent exactly one pulse. Before the handshake it sent one per interval,
+    /// and the queued messages then arrived together — which is what made a
+    /// scene jump through its script instead of stepping through it.
+    #[test]
+    fn an_unrearmed_driver_sends_one_pulse_and_then_waits() {
+        let count = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&count);
+        // Held, not dropped: dropping the sender closes the channel and ends
+        // the thread, which would pass this test for the wrong reason.
+        let _rearm = spawn_pulses(TICK, move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            true
+        });
+
+        assert!(wait_for(&count, 1), "the driver never sent its first pulse");
+        thread::sleep(TICK * 20);
+
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            1,
+            "an unrearmed driver sent more than one pulse, so it can still run \
+             ahead of the loop"
+        );
+    }
+
+    /// The other half: rearming releases exactly one more pulse, so the host
+    /// gets a pulse per rearm rather than a burst.
+    #[test]
+    fn each_rearm_releases_exactly_one_more_pulse() {
+        let count = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&count);
+        let rearm = spawn_pulses(TICK, move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            true
+        });
+
+        for want in 1..=3 {
+            assert!(wait_for(&count, want), "pulse {want} never arrived");
+            // Settle past the next interval to show the driver is waiting on
+            // the rearm rather than on the clock.
+            thread::sleep(TICK * 3);
+            assert_eq!(
+                count.load(Ordering::SeqCst),
+                want,
+                "the driver ran ahead instead of waiting to be rearmed"
+            );
+            rearm.send(()).expect("the driver thread is still waiting");
+        }
+
+        assert!(
+            wait_for(&count, 4),
+            "the driver stopped after its rearms rather than sending again"
+        );
+    }
+
+    /// A transport that reports the loop is gone ends the thread rather than
+    /// spinning. Observable as the count never passing one, with no rearm ever
+    /// sent — the thread returns before it waits.
+    #[test]
+    fn a_closed_transport_ends_the_driver() {
+        let count = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&count);
+        let _rearm = spawn_pulses(TICK, move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            false
+        });
+
+        assert!(wait_for(&count, 1), "the driver never attempted a send");
+        thread::sleep(TICK * 20);
+
+        assert_eq!(
+            count.load(Ordering::SeqCst),
+            1,
+            "the driver kept sending after the loop reported it had exited"
+        );
     }
 }
