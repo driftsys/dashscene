@@ -347,6 +347,39 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
       - name: design-source render oracle (E7 / G-11)
         run: cargo test -p goldens --test render_oracle -- --nocapture
+      # Every golden carrying a calibrated absolute-pixel budget, for the
+      # measured number rather than the pass/fail (issue #539). They are
+      # recorded on macOS arm64 and this runner is x86_64, so every run of
+      # them is already a cross-architecture diff — the comparison prints
+      # its residual on a within-budget pass, but the `test` job runs
+      # under nextest, which captures it. Re-run here with --nocapture for
+      # the same reason the oracle above is: the measured number belongs
+      # in the log, where a budget can be calibrated against it instead of
+      # extrapolated.
+      #
+      # Regenerate this list rather than trusting it — a golden added to
+      # the class and not added here is measured by nothing:
+      #   grep -rl assert_matches_golden_max_pixels goldens/tooling/tests/
+      #
+      # `v03` is in the list although it carries a fraction tolerance
+      # rather than a pixel budget. It renders `v03-paint`, the scene the
+      # 32 px anchor every other budget extrapolates from was measured
+      # on. Measuring the anchor in the same run as the budgets derived
+      # from it is what makes the comparison sound: otherwise today's
+      # residuals are being read against a figure taken on an older Skia,
+      # on hardware nobody has described.
+      - name: calibrated-budget cross-architecture residuals (issue #539)
+        run: |
+          cargo test -p goldens \
+            --test v05_text \
+            --test v06_arabic \
+            --test v07_fallback \
+            --test v07_text_lowering \
+            --test v07_variant_topology \
+            --test v013_uncovered_shapes \
+            --test v07_ellipse \
+            --test v03 \
+            -- --nocapture
 
   calibration:
     name: calibration

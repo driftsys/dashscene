@@ -102,16 +102,17 @@ const SPEED_SIZE: f32 = 34.0;
 /// v05-text-latin's 0.32 (1,200 over 3,763) and v07-text-fallback's 0.34 (500
 /// over 1,491) — which is the direction #532 asks for.
 ///
-/// **The cross-machine margin here is an extrapolation, not a measurement.**
-/// The only cross-architecture difference this project has ever measured is 32
-/// px, on the v0.3 paint golden — a gradient-and-stroke scene drawn by Skia's
-/// own rasteriser, not by the MSDF resolve this scene uses. 440 px is about
-/// 13.75x that number, against 31.25x for the 1,000 px it replaces and 37.5x
-/// for v0.5's 1,200 px, so this budget cuts the established ratio to roughly a
-/// third while resting on an anchor from a different rendering path. No text
-/// golden has been diffed across architectures at all: CI has been
-/// billing-blocked since 2026-07-17 (issue #263), which predates both this
-/// calibration and v0.5's.
+/// **The cross-machine margin here was an extrapolation; it is now
+/// measured.** It was set at 13.75x a 32-px anchor taken on the v0.3 paint
+/// golden — a gradient-and-stroke scene drawn by Skia's own rasteriser, not
+/// by the MSDF resolve this scene uses — against 31.25x for the 1,000 px it
+/// replaces and 37.5x for v0.5's 1,200 px.
+///
+/// The real figure is far smaller: this golden differs by **4 px of 71,400**
+/// between the macOS arm64 machine it is recorded on and CI's x86_64 runner
+/// (issue #539, measured 2026-08-01). MSDF text is much more stable across
+/// architectures than the gradient path the anchor came from, so 440 px
+/// clears the cross-machine floor by about 110x.
 ///
 /// That is accepted deliberately rather than overlooked. Raising the budget to
 /// increase the cross-machine margin would reduce the drift margin the
@@ -121,7 +122,8 @@ const SPEED_SIZE: f32 = 34.0;
 /// that fails without a regression behind it, which is visible and fixable by
 /// re-measuring; the failure mode of a budget above the smallest break is a
 /// regression that passes silently, which is what #532 exists to prevent.
-/// Re-check this against the first full CI run after #263 is resolved.
+/// The re-check this once deferred to "the first full CI run after #263"
+/// has happened: 4 px, so the budget is not too tight.
 const BUDGET: usize = 440;
 
 /// One of the screen's three text runs. Naming them lets the sensitivity
