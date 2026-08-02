@@ -16,7 +16,7 @@ assemble:
     cargo build --workspace
 
 # Run the sanity tier — the loop between edits and before every commit.
-# About 7 s. Tier definitions and the schedule: docs/decisions/test-tiers.md.
+# About 5 s. Tier definitions and the schedule: docs/decisions/test-tiers.md.
 #
 # `cargo test --doc` rides along in every tier recipe because nextest does not
 # run doctests. Leaving it out would mean three recipes that each claim to run
@@ -26,22 +26,23 @@ test:
     cargo test --workspace --doc
 
 # Run the regression tier — what `check`, `build`, `verify`, the pre-push hook
-# and the CI `test` job all run. About 35 s. This is the gate; `just test` is
+# and the CI `test` job all run. About 33 s. This is the gate; `just test` is
 # not.
 test-regression:
     cargo nextest run --workspace -P regression
     cargo test --workspace --doc
 
-# Run the calibration tier — the two tests that re-derive the committed asset
-# tables from the packer alone. About 165 s. Run it when the diff touches a
+# Run the calibration tier — the tests that re-derive the committed asset
+# tables from the packer alone: one per calibration fixture, plus the band
+# contract's own table. About 54 s. Run it when the diff touches a
 # path in the `packer` filter of .github/workflows/ci.yml, and again at slice
 # close. That filter is the list, and docs/decisions/test-tiers.md enumerates
 # it with a reason per entry; a copy of the list here would be a fourth one to
 # keep in step, and the partial copies have already drifted three times.
 #
 # The membership check runs first, and it is the reason the tier cannot rot
-# quietly. The profiles select by exact test name, so renaming either of the
-# two drops it out of the tier with no error — and no count catches that,
+# quietly. The profiles select by exact test name, so renaming any one of them
+# drops it out of the tier with no error — and no count catches that,
 # because the tiers partition the suite and the totals still reconcile.
 # Diffing the live listing against the pinned .config/calibration-tier.txt
 # does catch it. The CI calibration job runs the same command; keep them

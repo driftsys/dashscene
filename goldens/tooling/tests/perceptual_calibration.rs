@@ -933,69 +933,93 @@ fn selected_literal(profiles: &[Profile]) -> String {
     format!("&[{}]", names.join(", "))
 }
 
-#[test]
-fn every_rung_of_every_fixture_is_recorded() {
-    let rungs = scored_rungs();
-    let mut measured = Vec::new();
+/// One fixture's measured rows: the rung, its scores, and which profiles chose
+/// it.
+///
+/// Walking one fixture is the unit of work this file splits along. Each of the
+/// nine per-fixture tests below calls it once and holds the result against that
+/// fixture's rows in [`TABLE`]; the regeneration walk calls it for all nine in
+/// order. They cost about seven encodes each and share nothing, so nextest runs
+/// the nine concurrently — as one test they were sixty-three encodes in a
+/// single process, which was most of the calibration tier's wall clock
+/// (issue #660).
+fn measured_rows(fixture: &Fixture) -> Vec<(&'static str, String, Scores, Vec<Profile>)> {
+    let class = AssetClass::of(fixture.kind).expect("a known kind");
+    let (width, height, texels) = canonical(fixture);
+    let selected: Vec<(Profile, Rung)> = PRODUCTION
+        .iter()
+        .map(|&profile| {
+            (
+                profile,
+                selected_rung(profile, fixture, width, height, &texels),
+            )
+        })
+        .collect();
 
-    for fixture in &FIXTURES {
-        let class = AssetClass::of(fixture.kind).expect("a known kind");
-        let (width, height, texels) = canonical(fixture);
-        let selected: Vec<(Profile, Rung)> = PRODUCTION
-            .iter()
-            .map(|&profile| {
-                (
-                    profile,
-                    selected_rung(profile, fixture, width, height, &texels),
-                )
-            })
-            .collect();
-
-        for &rung in &rungs {
+    scored_rungs()
+        .into_iter()
+        .map(|rung| {
             let scores = measure(class, rung, width, height, &texels);
             let by: Vec<Profile> = selected
                 .iter()
                 .filter(|(_, chosen)| *chosen == rung)
                 .map(|(profile, _)| *profile)
                 .collect();
-            measured.push((fixture.name, rung.to_string(), scores, by));
-        }
-    }
+            (fixture.name, rung.to_string(), scores, by)
+        })
+        .collect()
+}
 
+/// A measured row in the literal form [`TABLE`] is written in.
+fn row_literal(name: &str, rung: &str, scores: &Scores, by: &[Profile]) -> String {
+    format!(
+        "    Row {{\n        fixture: {name:?},\n        rung: {rung:?},\n        \
+         ssimulacra2: {:?},\n        flip_desk: {:?},\n        flip_panel: {:?},\n        \
+         psnr_rgb: {:?},\n        psnr_alpha: {:?},\n        selected_by: {},\n    }},",
+        scores
+            .ssimulacra2
+            .map(|v| metric::fixed(v, 2))
+            .unwrap_or_else(|| "withheld".to_string()),
+        metric::fixed(scores.flip_desk, 4),
+        metric::fixed(scores.flip_panel, 4),
+        metric::fixed(scores.psnr_rgb, 2),
+        metric::fixed(scores.psnr_alpha, 2),
+        selected_literal(by),
+    )
+}
+
+/// Re-derives one fixture's rows and holds them against [`TABLE`].
+///
+/// Under `UPDATE_GOLDENS` this returns without asserting, exactly as the single
+/// walk did before the split: regeneration is
+/// [`the_table_is_regenerated_in_one_ordered_walk`]'s job, because the table is
+/// one ordered literal and nine concurrent tests cannot print it in order.
+fn assert_fixture_matches_table(name: &str) {
     if updating() {
-        eprintln!("// paste into TABLE:");
-        for (name, rung, scores, by) in &measured {
-            eprintln!(
-                "    Row {{\n        fixture: {name:?},\n        rung: {rung:?},\n        \
-                 ssimulacra2: {:?},\n        flip_desk: {:?},\n        flip_panel: {:?},\n        \
-                 psnr_rgb: {:?},\n        psnr_alpha: {:?},\n        selected_by: {},\n    }},",
-                scores
-                    .ssimulacra2
-                    .map(|v| metric::fixed(v, 2))
-                    .unwrap_or_else(|| "withheld".to_string()),
-                metric::fixed(scores.flip_desk, 4),
-                metric::fixed(scores.flip_panel, 4),
-                metric::fixed(scores.psnr_rgb, 2),
-                metric::fixed(scores.psnr_alpha, 2),
-                selected_literal(by),
-            );
-        }
         return;
     }
 
+    let fixture = fixture_of(name);
+    let measured = measured_rows(fixture);
+    let recorded: Vec<&Row> = TABLE.iter().filter(|row| row.fixture == name).collect();
+
     assert_eq!(
-        TABLE.len(),
+        recorded.len(),
         measured.len(),
-        "the table records {} rows and the walk measures {} — a row that is measured and not \
-         recorded is unpinned, and one that is recorded and not measured is a number nothing \
+        "{name}: the table records {} rows and the walk measures {} — a row that is measured and \
+         not recorded is unpinned, and one that is recorded and not measured is a number nothing \
          produces",
-        TABLE.len(),
+        recorded.len(),
         measured.len(),
     );
 
-    for (row, (name, rung, scores, by)) in TABLE.iter().zip(&measured) {
+    // No assertion that `row.fixture` is this fixture: `recorded` was filtered
+    // on exactly that, so one here could never fail. Which fixtures the table
+    // carries, and in what order, is
+    // `the_table_covers_every_fixture_and_rung_exactly_once`'s question. The
+    // rung order below is still this loop's, because it is within a fixture.
+    for (row, (_, rung, scores, by)) in recorded.into_iter().zip(&measured) {
         let where_ = format!("{name} at {rung}");
-        assert_eq!(row.fixture, *name, "{where_}: the table's fixture order");
         assert_eq!(row.rung, rung.as_str(), "{where_}: the table's rung order");
         assert_eq!(
             row.ssimulacra2,
@@ -1029,6 +1053,88 @@ fn every_rung_of_every_fixture_is_recorded() {
             row.selected_by, by,
             "{where_}: which profiles selected this rung",
         );
+    }
+}
+
+/// One test per fixture, each named for the fixture it walks.
+///
+/// Written out rather than generated from [`FIXTURES`] so that every test name
+/// exists as source text: `.config/nextest.toml` selects the calibration tier
+/// by exact name and `.config/calibration-tier.txt` pins the listing, so a name
+/// that only exists after macro expansion could not be grepped from either.
+/// [`the_table_covers_every_fixture_and_rung_exactly_once`] is what catches a
+/// fixture added to `FIXTURES` and given no test here.
+macro_rules! per_fixture_tests {
+    ($($test:ident => $fixture:literal,)+) => {$(
+        #[test]
+        fn $test() {
+            assert_fixture_matches_table($fixture);
+        }
+    )+};
+}
+
+per_fixture_tests! {
+    import_image_fill_rows_match_the_table => "import-image-fill",
+    v03_paint_rows_match_the_table => "v03-paint",
+    block_stress_rows_match_the_table => "block-stress",
+    photo_interior_render_rows_match_the_table => "photo-interior-render",
+    photo_coast_forest_rows_match_the_table => "photo-coast-forest",
+    photo_snowy_forest_rows_match_the_table => "photo-snowy-forest",
+    photo_dawn_mountains_rows_match_the_table => "photo-dawn-mountains",
+    inter_ascii_atlas_rows_match_the_table => "inter-ascii-atlas",
+    arabic_atlas_rows_match_the_table => "arabic-atlas",
+}
+
+/// The invariant the nine tests above cannot hold between them: that [`TABLE`]
+/// covers every fixture and every rung, once each, in `FIXTURES` order.
+///
+/// Before the split this came free — one walk built the whole measured list and
+/// compared its length against the table's. Nine tests each see only their own
+/// fixture, so a fixture added to `FIXTURES` with no test here, or a table row
+/// naming a fixture that no longer exists, would be caught by nothing. This
+/// reads the table alone and encodes nothing, so it runs in the regression tier
+/// rather than the calibration one.
+#[test]
+fn the_table_covers_every_fixture_and_rung_exactly_once() {
+    let rungs = scored_rungs();
+    let expected: Vec<(&str, String)> = FIXTURES
+        .iter()
+        .flat_map(|f| rungs.iter().map(move |r| (f.name, r.to_string())))
+        .collect();
+    let recorded: Vec<(&str, String)> = TABLE
+        .iter()
+        .map(|row| (row.fixture, row.rung.to_string()))
+        .collect();
+
+    assert_eq!(
+        recorded, expected,
+        "the table must hold every fixture's every rung, once each, in FIXTURES order. A fixture \
+         added to FIXTURES needs both a row block here and a test in per_fixture_tests!, and a \
+         row naming a fixture FIXTURES no longer has is a number nothing produces.",
+    );
+}
+
+/// Regenerates [`TABLE`] in one ordered walk, under `UPDATE_GOLDENS`.
+///
+/// This is the one place the split costs something. The table is a single
+/// ordered literal, and the nine tests above run concurrently, so their output
+/// would interleave into something unusable. This walks all nine fixtures in
+/// `FIXTURES` order in one process and prints the whole block, which keeps the
+/// regeneration command exactly what it was.
+///
+/// Outside a regeneration run it returns immediately, so it costs nothing in
+/// either tier and encodes nothing.
+#[test]
+fn the_table_is_regenerated_in_one_ordered_walk() {
+    if !updating() {
+        return;
+    }
+
+    eprintln!("// paste into TABLE:");
+    for fixture in &FIXTURES {
+        for (name, rung, scores, by) in measured_rows(fixture) {
+            eprintln!("{}", row_literal(name, &rung, &scores, &by));
+        }
     }
 }
 

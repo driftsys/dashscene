@@ -35,7 +35,7 @@ cd dashscene-staging
 | `just build`           | assemble + full check (this is what CI runs)                                                                        |
 | `just test`            | sanity tier — ~7 s. Between edits, and before every commit.                                                         |
 | `just test-regression` | regression tier — every test but the two calibration re-derivations, ~35 s. What `build` and the pre-push hook run. |
-| `just calibrate`       | calibration tier — 2 tests, ~165 s. Re-derives the committed asset tables.                                          |
+| `just calibrate`       | calibration tier — 10 tests, ~54 s. Re-derives the committed asset tables.                                          |
 | `just test-all`        | every tier in one run.                                                                                              |
 | `just lint`            | clippy -D warnings, `cargo fmt --check`, `dprint check`, markdownlint                                               |
 | `just fmt`             | reformat everything in place                                                                                        |
