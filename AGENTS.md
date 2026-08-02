@@ -163,6 +163,12 @@ runs as three tiers, so "tests pass" is no longer a claim about all of it:
   drifting through a change the filter did not predict.
 - **Name the tier in the PR body.** Never report a tier as run that was not
   run.
+- **A green `ci` job does not mean the suite ran.** It means nothing red
+  ran. When the diff is documentation only — every changed file is Markdown
+  under `docs/` or Markdown at the repository root — `test`, `clippy`,
+  `demo-build`, `wasm-build`, `atlas-repro` and `render-oracle` all skip,
+  and `deno` skips with them. Read the individual jobs to see which tiers
+  executed (`docs/decisions/test-tiers.md`).
 
 Story workflow — the definition of done for every story:
 
