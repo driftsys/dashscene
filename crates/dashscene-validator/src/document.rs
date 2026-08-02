@@ -265,6 +265,37 @@ pub fn validate_document(doc: &Document<'_>) -> Report {
                 ));
             }
         }
+
+        // Issue #667. A fill channel writes one component of a solid color,
+        // so the runtime keeps a per-node color and stages the whole of it
+        // as a solid fill on every flush. A node filled with a gradient or
+        // an image has no such color, and the flush replaces the authored
+        // fill outright rather than modifying it. Naming it here is what
+        // stops it being a silent drop at runtime (P4).
+        //
+        // Guarded on the same two conditions the containment check above
+        // uses: an unclassified channel and a dangling node index are each
+        // already named by their own rule, and neither should be guessed at.
+        if is_fill_channel(binding.channel()) && (node as usize) < sizes.nodes {
+            let paint = nodes.get(node as usize).paint_entry();
+            if paint != NO_PAINT
+                && (paint as usize) < sizes.paints
+                && let Some(kind) = non_solid_fill_name(paints.get(paint as usize).fill_type())
+            {
+                report.push(error(
+                    rule::BINDING_FILL_CHANNEL_ON_NON_SOLID_FILL,
+                    &at,
+                    format!(
+                        "binding writes {} on {}, whose fill is {kind}; a fill channel writes one \
+                         component of a solid color, so the flush would replace the {kind} with a \
+                         solid one and the authored fill would be lost. Fill the node with a solid \
+                         color, or drop the binding",
+                        binding.channel().variant_name().unwrap_or("unknown"),
+                        node_path(&nodes, node),
+                    ),
+                ));
+            }
+        }
     }
 
     // The MSDF floor is checked against the smallest em size the document can
@@ -1119,6 +1150,33 @@ fn channel_effect(channel: dashbuf::BindingChannel) -> Option<ChannelEffect> {
         Channel::FillR | Channel::FillG | Channel::FillB | Channel::FillA | Channel::Opacity => {
             Some(ChannelEffect::PaintOnly)
         }
+        _ => None,
+    }
+}
+
+/// Whether `channel` writes a component of the node's solid fill colour.
+///
+/// Narrower than [`channel_effect`]'s `PaintOnly`, which also covers
+/// `Opacity`. Opacity is its own prop and does not touch the fill, so it does
+/// not collide with a gradient the way the four fill channels do (issue #667).
+fn is_fill_channel(channel: dashbuf::BindingChannel) -> bool {
+    use dashbuf::BindingChannel as Channel;
+    matches!(
+        channel,
+        Channel::FillR | Channel::FillG | Channel::FillB | Channel::FillA
+    )
+}
+
+/// The name of `fill` if it is not a solid colour, for a diagnostic to quote.
+///
+/// `None` for a solid fill and for a fill this build does not classify — an
+/// unknown union tag is already named by `check_enum!` on the paint entry, and
+/// guessing that it is non-solid would raise a second diagnostic about the
+/// same construct.
+fn non_solid_fill_name(fill: dashbuf::Fill) -> Option<&'static str> {
+    match fill {
+        dashbuf::Fill::Gradient => Some("a gradient"),
+        dashbuf::Fill::ImageFill => Some("an image"),
         _ => None,
     }
 }

@@ -2095,3 +2095,146 @@ fn a_fraction_track_on_a_hug_axis_is_named() {
     }));
     assert!(!report.has(rule::GRID_FRACTION_TRACK_UNDER_HUG), "{report}");
 }
+
+/// A node whose paint is `fill`, with one binding on `channel` pointed at it.
+///
+/// Separate from [`document_with_bindings`], which builds a bare node with no
+/// paint at all: this rule is about the pairing of a binding with a fill, so
+/// the fixture has to carry both (issue #667).
+fn document_with_fill_and_binding(fill: Fill, channel: dashbuf::BindingChannel) -> Vec<u8> {
+    use dashbuf::{
+        Binding, BindingArgs, BindingTransform, GradientKind, GradientStop, Node, NodeArgs, Paint,
+        PaintArgs, SignalDecl, SignalDeclArgs, SolidFill, SolidFillArgs, Vec2,
+    };
+
+    let mut b = FlatBufferBuilder::new();
+
+    // Both union payloads are built either way. Only the one `fill` names is
+    // referenced, and building the other costs nothing but keeps the two arms
+    // from diverging in anything but the tag.
+    let solid = SolidFill::create(
+        &mut b,
+        &SolidFillArgs {
+            color: Some(&red()),
+        },
+    );
+    let stops = b.create_vector::<GradientStop>(&[]);
+    let gradient = Gradient::create(
+        &mut b,
+        &GradientArgs {
+            kind: GradientKind::Linear,
+            handle_origin: Some(&Vec2::new(0.0, 0.0)),
+            handle_primary: Some(&Vec2::new(1.0, 0.0)),
+            handle_secondary: Some(&Vec2::new(0.0, 1.0)),
+            stops: Some(stops),
+        },
+    );
+    let paint = Paint::create(
+        &mut b,
+        &PaintArgs {
+            fill_type: fill,
+            fill: Some(match fill {
+                Fill::Gradient => gradient.as_union_value(),
+                _ => solid.as_union_value(),
+            }),
+            ..Default::default()
+        },
+    );
+    let paints = b.create_vector(&[paint]);
+
+    let node = Node::create(
+        &mut b,
+        &NodeArgs {
+            paint_entry: 0,
+            ..Default::default()
+        },
+    );
+    let nodes = b.create_vector(&[node]);
+
+    let decl = SignalDecl::create(
+        &mut b,
+        &SignalDeclArgs {
+            name: None,
+            initial: 1.0,
+        },
+    );
+    let signals = b.create_vector(&[decl]);
+
+    let row = Binding::create(
+        &mut b,
+        &BindingArgs {
+            signal: 0,
+            node: 0,
+            channel,
+            transform_type: BindingTransform::NONE,
+            transform: None,
+        },
+    );
+    let bindings = b.create_vector(&[row]);
+
+    let document = Document::create(
+        &mut b,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            paints: Some(paints),
+            signals: Some(signals),
+            bindings: Some(bindings),
+            ..Default::default()
+        },
+    );
+    b.finish(document, None);
+    b.finished_data().to_vec()
+}
+
+/// The defect issue #667 reported, named rather than dropped.
+///
+/// A fill channel writes one component of a solid colour, so the runtime
+/// stages a whole solid fill on every flush. A gradient has no such component
+/// to write into, and the flush replaced it outright — measured on the
+/// authored path as a linear gradient plus `FillA` at 0.5 committing as an
+/// opaque black at half alpha, with no diagnostic at all.
+#[test]
+fn a_fill_binding_on_a_gradient_filled_node_is_an_error() {
+    let bytes = document_with_fill_and_binding(Fill::Gradient, dashbuf::BindingChannel::FillA);
+    let report = validate_bytes(&bytes);
+
+    let Some(found) = report.find(rule::BINDING_FILL_CHANNEL_ON_NON_SOLID_FILL) else {
+        panic!("the gradient and the fill binding collide:\n{report}");
+    };
+    assert_eq!(
+        found.severity,
+        dashscene_validator::Severity::Error,
+        "the producer stated two opinions about the fill and one is discarded, so there is no \
+         reading that honors both:\n{report}"
+    );
+    assert!(rule::is_known(rule::BINDING_FILL_CHANNEL_ON_NON_SOLID_FILL));
+}
+
+/// The legitimate pairing stays legitimate. This is the case the rule must not
+/// catch: a fill channel writing into a solid fill is exactly what fill
+/// channels are for, and it is what every showcase scene does.
+#[test]
+fn a_fill_binding_on_a_solid_filled_node_is_accepted() {
+    let bytes = document_with_fill_and_binding(Fill::SolidFill, dashbuf::BindingChannel::FillA);
+    let report = validate_bytes(&bytes);
+
+    assert!(
+        !report.has(rule::BINDING_FILL_CHANNEL_ON_NON_SOLID_FILL),
+        "a solid fill is what a fill channel writes into:\n{report}"
+    );
+}
+
+/// `Opacity` shares `channel_effect`'s `PaintOnly` classification with the
+/// four fill channels but is its own prop and does not touch the fill, so it
+/// does not collide with a gradient. Pinned because the obvious
+/// implementation — reusing `PaintOnly` — would wrongly catch it.
+#[test]
+fn an_opacity_binding_on_a_gradient_filled_node_is_accepted() {
+    let bytes = document_with_fill_and_binding(Fill::Gradient, dashbuf::BindingChannel::Opacity);
+    let report = validate_bytes(&bytes);
+
+    assert!(
+        !report.has(rule::BINDING_FILL_CHANNEL_ON_NON_SOLID_FILL),
+        "opacity is a separate prop and leaves the fill alone:\n{report}"
+    );
+}
