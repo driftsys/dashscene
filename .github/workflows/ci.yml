@@ -530,6 +530,83 @@ jobs:
       - name: calibration tier
         run: cargo nextest run --workspace -P calibration
 
+  exit-gate:
+    name: exit-gate
+    # The v0 exit gate (story #49, epic #47). Every criterion E1 to E7 is
+    # individually met and individually evidenced in
+    # docs/specification/05-qualification.md. What this job adds is the single
+    # mechanical assertion that they are ALL met on a given commit, so that a
+    # regression in any one of them fails a build rather than being noticed by
+    # a person.
+    #
+    # It needs `deno` because E6 is the one criterion no single job can prove.
+    # Byte-identity is transitive only because two suites on two machines
+    # assert against the same committed bytes: the native library call, which
+    # the exit-gate profile runs below, and importers/figma/src/wasm_test.ts,
+    # which runs in `deno`. Requiring that job is how the second half is held.
+    #
+    needs: [changes, test, deno, render-oracle, wasm-build]
+    # `!cancelled()` rather than `always()`: the two agree for success, failure
+    # and skipped, and differ only on a cancelled run, where `always()` would
+    # provision a runner for a result nobody is waiting for.
+    #
+    # `code == 'true'` so that a green exit-gate keeps meaning E1-E7 were
+    # asserted on this commit. On a documentation-only diff the jobs carrying
+    # the criteria skip by design, and a job that reported success there would
+    # be claiming an assertion it did not make.
+    if: ${{ !cancelled() && needs.changes.outputs.code == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      # First, before any provisioning: when a carrying job has already failed
+      # there is nothing to gain from a runner, a toolchain and two downloads.
+      - name: the jobs carrying E1-E7 succeeded
+        run: |
+          echo 'test=${{ needs.test.result }} deno=${{ needs.deno.result }} render-oracle=${{ needs.render-oracle.result }} wasm-build=${{ needs.wasm-build.result }}'
+          for pair in "test:${{ needs.test.result }}" "render-oracle:${{ needs.render-oracle.result }}" "wasm-build:${{ needs.wasm-build.result }}"; do
+            name="${pair%%:*}"; result="${pair#*:}"
+            if [ "$result" != "success" ]; then
+              echo "exit-gate: $name did not succeed ($result) — E1-E7 is not asserted"
+              exit 1
+            fi
+          done
+          # E6's wasm half is the deno job, and it is path-filtered. A skip is
+          # only acceptable when the filter is what skipped it: wasm-build is
+          # required above, so deno cannot be skipped by a failed dependency
+          # without that being caught first. When the figma filter did fire,
+          # deno must have succeeded.
+          if [ '${{ needs.changes.outputs.figma }}' = 'true' ] \
+             && [ '${{ needs.deno.result }}' != 'success' ]; then
+            echo "exit-gate: the figma filter fired but deno is ${{ needs.deno.result }} — E6's wasm half is not asserted"
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: install flatc
+        run: |
+          curl -fsSL -o flatc.zip https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip
+          unzip -o flatc.zip flatc -d /usr/local/bin
+          chmod +x /usr/local/bin/flatc
+      - name: install skia system libraries
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
+      - name: install cargo-nextest
+        run: curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C ${CARGO_HOME:-~/.cargo}/bin
+      # The membership check comes first: the profile selects by exact test
+      # name, so renaming a covering test drops it out of the gate silently.
+      - name: every covering test still exists
+        # `shell: bash` for the pipefail it brings, the same reason the
+        # calibration step sets it: the default `bash -e` takes the pipeline's
+        # status from `diff` alone, so a `cargo nextest list` that failed
+        # outright would not be reported as the build failure it is.
+        shell: bash
+        run: |
+          cargo nextest list --workspace -P exit-gate --message-format json \
+            | jq -r '."rust-suites" | to_entries[] as $s | $s.value.testcases | to_entries[] | select(.value."filter-match".status == "matches") | "\($s.key) \(.key)"' \
+            | LC_ALL=C sort \
+            | diff -u .config/exit-gate.txt -
+      - name: E1-E7 covering tests pass
+        run: cargo nextest run --workspace -P exit-gate
+
   ci:
     name: ci
     if: always()
@@ -555,6 +632,7 @@ jobs:
         atlas-repro,
         render-oracle,
         calibration,
+        exit-gate,
       ]
     runs-on: ubuntu-latest
     steps:

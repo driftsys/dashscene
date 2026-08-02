@@ -83,3 +83,34 @@ default-filter = """
 # Every tier in one run.
 [profile.all]
 default-filter = "all()"
+
+# The v0 exit gate (story #49, epic #47). Every test named here is a criterion's
+# covering test, as `docs/specification/05-qualification.md` evidences them. The
+# gate exists so that a regression in any one criterion fails a build rather
+# than being noticed by a person.
+#
+# E6 is only half here. It is proven by two suites in two CI jobs that never
+# meet — the native library call below, and `importers/figma/src/wasm_test.ts`
+# from Deno — each asserting against the same committed bytes, which is what
+# makes the identity transitive. A Rust filter cannot express the Deno half, so
+# the CI `exit-gate` job requires the `deno` job as well.
+#
+# E2, E3 and E7 name a whole binary rather than a test. "The stress corpus is
+# green" and "the oracle measures every frame" are claims about a suite rather
+# than about one case, and naming the binary means a case added later is
+# covered without anyone remembering to add it here. E2 is here for a sharper
+# reason: its pixel golden is the coarse half — the text ink is a few per cent
+# of the canvas — and the glyph-level companion that pins each feature is the
+# evidence that would actually catch a shaping regression. Naming one test
+# would have pinned the weaker one and let the stronger be deleted silently.
+[profile.exit-gate]
+default-filter = """
+    test(=the_same_screen_authored_both_ways_is_bit_identical)
+  + binary_id(=goldens::v06_arabic)
+  + binary_id(=dashlang::corpus)
+  + test(=the_reject_fixture_is_refused_rather_than_emitted)
+  + test(=each_diagnostic_points_at_its_own_node)
+  + test(=variant_transition_goldens_at_t_0_half_and_1)
+  + test(=the_fixture_compiles_to_the_golden_dsb)
+  + binary_id(=goldens::render_oracle)
+"""

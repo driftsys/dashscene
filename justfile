@@ -64,6 +64,28 @@ calibrate:
         | diff -u .config/calibration-tier.txt -
     cargo nextest run --workspace -P calibration
 
+# The v0 exit gate — story #49, epic #47. Asserts every test covering exit
+# criteria E1 to E7 still exists and still passes, so a regression in any one
+# of them fails a build rather than being noticed by a person.
+#
+# The membership check comes first, for the reason the calibration tier's does:
+# the profile selects by exact name, so renaming a covering test drops it out
+# with no error at all.
+#
+# This is the LOCAL half. E6 is proven by two suites in two CI jobs that never
+# meet, and only the native one is reachable here — the Deno half runs in the
+# `deno` job. E7's frames are asserted measured rather than pending by
+# no_frame_is_pending_so_e7_is_asserted_over_all_of_them, in the profile. Run
+# the CI `exit-gate` job for the whole claim.
+exit-gate:
+    cargo nextest list --workspace -P exit-gate --message-format json \
+        | jq -r '."rust-suites" | to_entries[] as $s | $s.value.testcases | to_entries[] | select(.value."filter-match".status == "matches") | "\($s.key) \(.key)"' \
+        | LC_ALL=C sort \
+        | diff -u .config/exit-gate.txt -
+    cargo nextest run --workspace -P exit-gate
+    @echo "exit-gate: E1-E5 and E7 asserted, plus E6's native half."
+    @echo "exit-gate: E6's wasm half runs in CI's deno job. See docs/specification/05-qualification.md."
+
 # Every tier in one run.
 test-all:
     cargo nextest run --workspace -P all

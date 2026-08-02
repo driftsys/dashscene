@@ -823,6 +823,40 @@ fn every_frame_declares_a_captured_source_or_is_pending_265() {
     m.assert_captured_or_pending();
 }
 
+#[test]
+fn no_frame_is_pending_so_e7_is_asserted_over_all_of_them() {
+    // The question `assert_captured_or_pending` deliberately does not answer.
+    // That method checks each frame's own state and passes a frame marked
+    // `pending-265`, and its documentation says whether a pending frame is
+    // allowed belongs to the owning gate rather than to the harness. The v0
+    // exit gate (story #49) is that owner, and this is its answer: for E7 to
+    // be a claim about the corpus rather than about whichever frames happened
+    // to be captured, none may be pending.
+    //
+    // Without this, dropping one frame's `designSource` and marking it pending
+    // leaves every other assertion in this file green while E7 silently
+    // measures a smaller corpus — a gate reporting an assertion it did not
+    // make, which is worth less than no gate because it stops anyone looking.
+    let m = manifest();
+    let pending: Vec<&str> = m
+        .frames()
+        .iter()
+        .filter(|frame| frame["designSource"].as_str().is_none())
+        .map(|frame| frame["frame"].as_str().expect("frame name"))
+        .collect();
+
+    assert!(
+        pending.is_empty(),
+        "E7 requires every frame measured against its design source, but {} \
+         of {} are pending: {}. Capture them, or if a frame is deliberately \
+         out of scope remove it from the manifest rather than leaving it \
+         pending — the exit gate cannot tell those apart.",
+        pending.len(),
+        m.frames().len(),
+        pending.join(", ")
+    );
+}
+
 /// The design-source assertion itself: for every frame that has a committed
 /// design source, our fresh render of the frame's committed Figma fixture must
 /// fall within the frame's band of Figma's REST `GET /images` export. Each
