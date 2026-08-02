@@ -337,6 +337,17 @@ suite rather than skipping it. And Markdown under `crates/` counts as code,
 because a crate's Markdown can reach a doctest through `include_str!` — no
 crate does that today, which is a fact about today rather than a guarantee.
 
+The diff is taken from the **merge base** (`git diff BASE...HEAD`), not from
+the base branch's tip. It shipped on 2026-08-02 taking the tip, which meant a
+branch behind `main` reported every file that had landed on `main` since it
+diverged: the first pull request to exercise the gate in earnest read 34
+changed files where it had changed 3, and ran the full suite. That failed in
+the safe direction and was corrected the same day. It is recorded because of
+how it survived review — the branch used to verify the gate had been cut from
+`main`'s tip moments earlier, so the two forms coincided and the check only
+ever exercised the case where the defect cannot appear. **A verification whose
+setup is fresher than the situation it models proves less than it appears to.**
+
 The consequence is that **a green aggregate `ci` job no longer means the
 suite ran.** It means nothing red ran. Which tiers actually executed is
 readable only from the individual jobs, which is the same caution this
