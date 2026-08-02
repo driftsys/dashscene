@@ -73,7 +73,14 @@ Plus `importers/figma/` (Deno/TypeScript — the Figma REST importer and
 the `sharedPluginData` annotator plugin; calls `dashc.wasm` directly
 rather than reimplementing lowering/validation, see
 `docs/decisions/figma-importer-deno-plus-dashc-wasm.md`), `corpus/` (stress corpus + Figma fixture
-captures), `goldens/` (CI golden images + diff tooling).
+captures), `goldens/` (CI golden images + diff tooling), and `demo/`
+(the windowed showcase host — the window, the event loop and the frame
+loop, landed at v0.14).
+
+Three of those directories hold workspace members that are never
+published: `demo/`, `corpus/showcase/` (the scenes the host draws) and
+`goldens/tooling/` (the golden-image harness). Nineteen members in
+total, sixteen of them the crates above.
 
 ## Commands
 

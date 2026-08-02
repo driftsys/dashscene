@@ -152,7 +152,7 @@ that wasm build rather than reimplementing the lowering
 
 ## The workspace
 
-Fifteen crates in one Cargo workspace, plus three members that are never
+Sixteen crates in one Cargo workspace, plus three members that are never
 published — `demo/` (the window and the frame loop), `corpus/showcase/` (the
 scenes it draws), and `goldens/tooling/` (the golden-image harness).
 
