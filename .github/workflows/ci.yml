@@ -86,9 +86,6 @@ jobs:
               # cannot trigger — which is how a membership check that had never
               # passed in CI reached `main` (issue #658).
               - '.config/**'
-              # And the job itself, for the same reason: a change to how the
-              # calibration job runs should have to survive the calibration job.
-              - '.github/workflows/ci.yml'
 
       # Whether anything outside documentation changed. The compile jobs gate
       # on this, so it asks the opposite question from the filters above: not
