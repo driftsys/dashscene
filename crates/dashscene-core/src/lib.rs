@@ -49,7 +49,7 @@ pub use bindings::{
 pub use committed::{
     Atlas, AtlasGlyph, AtlasIndex, Blur, BlurKind, ClipBox, ClipIndex, ClipRegion, ClipTable,
     ClipView, Color, CommittedScene, CornerRadii, GlyphQuad, GlyphRange, GlyphRun, GlyphRunTable,
-    GroupComposite, PaintEntry, PaintIndex, PaintKind, PaintTable, RectEntry, Shadow, ShadowKind,
-    Stroke, StrokeAlign,
+    Gradient, GradientKind, GradientStop, GroupComposite, Mat23, PaintEntry, PaintIndex, PaintKind,
+    PaintTable, RectEntry, ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, Vec2, VectorField,
 };
 pub use load::load_document;

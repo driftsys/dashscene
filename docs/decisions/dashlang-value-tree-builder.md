@@ -3,6 +3,8 @@
     status   accepted (story #5, 2026-07-12)
              extended (story/issue #118, 2026-07-15) — build/build_with
              return Built, not a bare u64
+             extended (2026-08-01) — what "vocabulary, never semantics"
+             permits, settled by the v0 paint vocabulary
     scope    dashlang DSL surface; binds the golden harness (#6) and
              the future corpus-generator work
 
@@ -110,6 +112,46 @@ return value; that one and the crate-doc example in `lib.rs` were the
 only places changing `generation == N` to `generation.generation() ==
 N`. The other four discard the return value and needed no change.
 
+## What the charter permits (2026-08-01) — sugar yes, invented values no
+
+"The DSL adds vocabulary, never semantics: anything it expresses is
+expressible by hand against core with identical committed output" had never
+been tested against a convenience method, because until the v0 paint
+vocabulary the builder had none. Every setter mirrored one `Prop` variant
+exactly. Reading the rule as "one method per variant and nothing else" is
+what a literal reading gives, and it is wrong.
+
+**The rule forbids two things: inventing a value the author never wrote, and
+adding validation core does not have.** It does not forbid a convenience
+constructor.
+
+`corners(8.0)` writes a value the author did set, once instead of four times,
+and its committed output is identical to the hand-written form — which is the
+charter's own test, and the one `crates/dashlang/tests/builder.rs` applies.
+Every such method is therefore held to the same acceptance test as the mirror
+it expands to.
+
+`gradient(kind, from, to)` fails the same test and is refused.
+`dashpaint::Gradient` carries three handle points and a stop list, so a
+two-colour constructor has to invent the handles and the stop offsets. Those
+are choices made on the author's behalf, and the committed output is not the
+one the author wrote — it is the one the sugar decided. A gradient goes
+through `fill_with(PaintKind::Gradient(..))` only.
+
+The line is therefore not "is it a mirror" but **"does the author's own
+writing determine every committed value"**. Sugar that only rearranges what
+was written passes; sugar that fills a blank does not.
+
+Consequences beyond `dashlang`: this is what keeps `corpus/showcase`'s own
+`gradient`/`diagonal_gradient` helpers in the scene rather than promoting them
+into the builder. Two stops at 0.0 and 1.0 is a legitimate opinion for one
+scene to hold and an illegitimate one for the vocabulary to hold, and the
+distinction is which of the two a later reader would be surprised by.
+
+The four sugar methods this reading admitted, and the vocabulary they sit in,
+are recorded in `docs/decisions/dashlang-paint-vocabulary.md`.
+
 Related: `docs/decisions/dashlang-flex-vocabulary.md` (the flex
 vocabulary #118 also added, decided separately from this return-type
-change).
+change); `docs/decisions/dashlang-paint-vocabulary.md` (the v0 paint
+vocabulary, which applies the charter reading above).

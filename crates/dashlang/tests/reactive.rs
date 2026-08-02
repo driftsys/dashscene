@@ -512,6 +512,42 @@ fn smooth_without_a_matching_bind_is_refused_by_name() {
     scene.build_live(&mut arena, Box::new(TaffySolver::new()));
 }
 
+/// A fill-channel binding writes one component of a solid color and
+/// stages the whole color as `Prop::Fill`, which replaces the node's
+/// fill slot outright. On a node that also authored `fill_with(...)`,
+/// the binding's build-time seed would therefore erase the gradient
+/// before the first frame is ever drawn, and nothing would report it.
+/// Refused by name, like an inert spring (P4).
+#[test]
+#[should_panic(expected = "cannot be combined")]
+fn fill_with_plus_a_fill_channel_binding_is_refused_by_name() {
+    use dashlang::{Gradient, GradientKind, GradientStop, PaintKind, Vec2, rgba};
+
+    let mut arena = Arena::new();
+    let mut scene = Scene::new();
+    let alpha = scene.signal(0.5f32);
+    scene.roots([node("panel")
+        .size(100.0, 100.0)
+        .fill_with(PaintKind::Gradient(Gradient {
+            kind: GradientKind::Linear,
+            handle_origin: Vec2 { x: 0.0, y: 0.0 },
+            handle_primary: Vec2 { x: 1.0, y: 0.0 },
+            handle_secondary: Vec2 { x: 0.0, y: 1.0 },
+            stops: vec![
+                GradientStop {
+                    offset: 0.0,
+                    color: rgba(1.0, 0.0, 0.0, 1.0),
+                },
+                GradientStop {
+                    offset: 1.0,
+                    color: rgba(0.0, 0.0, 1.0, 1.0),
+                },
+            ],
+        }))
+        .bind(Channel::FillA, alpha)]);
+    scene.build_live(&mut arena, Box::new(TaffySolver::new()));
+}
+
 /// Story #167: every declarative binding is staged into the arena as a
 /// document-construct row; a `Custom` closure binding stays out (D8).
 #[test]

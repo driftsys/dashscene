@@ -580,4 +580,25 @@ so each technote stops being the authority for the conclusion it reached:
   nextest tiers: `sanity` before every commit, `regression` as the gate,
   `calibration` on a path filter and at slice close.
 
+- [dashlang-paint-vocabulary.md](dashlang-paint-vocabulary.md) — `dashlang`
+  mirrors the v0 paint vocabulary: twelve `Prop` mirrors plus `visible`, four
+  sugar methods and no `gradient(..)`, the types widened through core's
+  re-export list rather than a new dependency edge, and the image index as the
+  bound — an image fill and a variant-set declaration still need the arena
+  pass, so most scenes author in one pass and not all. `corpus/showcase`'s
+  three scenes migrated, proved by per-scene equivalence tests that are kept
+  as a one-way ratchet.
+- [fill-with-refuses-a-fill-channel-binding.md](fill-with-refuses-a-fill-channel-binding.md)
+  — a `fill_with(..)` paint beside a `Fill*` channel binding is a named
+  build-time panic, not a silent loss: the binding stages the whole colour as
+  `Prop::Fill` and would erase the authored gradient before the first frame
+  (P4). The loader-side `attach_live` has the same shape and wants a validator
+  diagnostic instead (debt #667).
+- [cross-arena-comparison-resolves-indices.md](cross-arena-comparison-resolves-indices.md)
+  — a test comparing two independent arenas resolves every index and offset
+  into a per-arena table before comparing, because such a position is a
+  function of that arena's commit history and not of the picture. It has
+  bitten the same helper three times, most recently through a flattening an
+  unrelated story made.
+
 See the `sdd-working-memory-lifecycle` rule.
