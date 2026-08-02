@@ -1,0 +1,36 @@
+# Keep a build script's `git` out of this repository.
+#
+# `skia-bindings` downloads prebuilt binaries, and falls back to building Skia
+# from source when that download fails — which it does on a slow network, with
+# `curl error code: Some(28)`. The source build then synchronises Skia's own
+# third-party dependencies with `git`, running inside `target/`. Those commands
+# have no repository of their own yet, so git walks up the directory tree,
+# finds this repository's `.git`, and operates on it: on 2026-08-02 that set
+# `remote.origin.url` to chromium's zlib and replaced `origin/main`,
+# `origin/master` and `origin/HEAD` with that repository's commits. Worktrees
+# share one `.git`, so every checkout was affected at once. Nothing said so —
+# the build reported only a missing `ninja` — and it was found because a later
+# `git diff origin/main` returned an unrecognisable diff (issue #677).
+#
+# `GIT_CEILING_DIRECTORIES` stops that ascent: git will not chdir up INTO a
+# directory named here, so a `git` run below `target/` reports "not a git
+# repository" instead of reaching ours. `relative = true` resolves the value
+# against this file's directory, giving an absolute path per checkout, which
+# is what git requires and what makes this correct in every worktree.
+#
+# Precisely: this covers everything *below* `target/`, not `target/` itself —
+# a command run with `target/` as its working directory still ascends to the
+# repository root, because the root is not the ceiling. That is the right
+# scope here. Skia is extracted to
+# `target/<profile>/build/skia-bindings-*/out/skia/...` and its dependency
+# sync runs in `third_party/externals/<dep>` below that, several levels down.
+# Naming the repository root as the ceiling instead would cover `target/` too,
+# but would then hide the repository from any command run in a crate
+# directory, which is a much larger change for a case that does not arise.
+#
+# This is a containment, not a cure: the source build still fails, for the
+# reason it always did. What it prevents is that failure damaging the
+# repository on its way out. Nothing in this workspace runs `git` from a build
+# script, so the ceiling costs us nothing.
+[env]
+GIT_CEILING_DIRECTORIES = { value = "target", relative = true }
