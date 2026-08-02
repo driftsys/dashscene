@@ -11,10 +11,10 @@ project's convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports eight files
+## Why the WIP gate currently reports seven files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-eight and exits non-zero. All eight are deliberate, accepted exceptions rather
+seven and exits non-zero. All seven are deliberate, accepted exceptions rather
 than ungardened debt, and they are recorded here so the gate's result is
 explained rather than merely tolerated.
 
@@ -38,19 +38,28 @@ than against this ledger, and asserted eight ungardened files when seven were
 accounted for here. Re-derive the number from `git ls-files docs/wip/` when
 touching this section rather than trusting the prose.
 
-Seven are design captures, described below. **One is a driver prompt**, the
-brief a session is handed to carry out a named piece of work. Driver prompts are
-transient by construction — spent the moment their work lands — and the
-convention is to archive them verbatim rather than garden them into records, as
-the eleven now in `docs/archive/` were — ten `*-DRIVER-PROMPT.md` plus the one
-`*-SPIKE.md`, which is counted here because it was archived verbatim beside the
-prompt that carried out its design rather than gardened.
+**All seven are design captures**, described below. No driver prompt is held
+here any longer. Driver prompts — the brief a session is handed to carry out a
+named piece of work — are transient by construction, spent the moment their work
+lands, and the convention is to archive them verbatim rather than garden them
+into records. Twelve are now in `docs/archive/`: eleven `*-DRIVER-PROMPT.md`
+plus the one `*-SPIKE.md`, which is counted here because it was archived
+verbatim beside the prompt that carried out its design rather than gardened.
 
-- `2026-07-27-t2-checks-that-cannot-fail-DRIVER-PROMPT.md` — v0.13's
-  `t2-check-has-no-teeth` tier, 19 items whose common property is an assertion
-  that cannot distinguish right from wrong.
+The twelfth is `2026-07-27-t2-checks-that-cannot-fail-DRIVER-PROMPT.md`, v0.13's
+`t2-check-has-no-teeth` tier — 19 items whose common property was an assertion
+that could not distinguish right from wrong. It was archived on 2026-08-02, when
+epic #362 closed.
 
-It is archived when its work lands.
+**One item under that label, #499, was still open when it was archived, and that
+was a decision rather than an oversight.** The prompt's own instruction was to
+archive it "when the tier is burnt down", and #499 — an end-to-end `ligatures_off`
+check that cannot fail for the corpus Arabic font — is a straggler that outlived
+its tier and is tracked on its own. What the prompt existed to drive, the
+19-item burn-down, is finished; holding the brief open for one deferred item
+would have described the tier as in progress when it is not. #499 keeps the
+label, because the label names the kind of defect rather than the slice that
+found it.
 
 Four are forward-looking design captures for work that has not started. Every
 one says so in its own `status` line — "Nothing here is implemented". Gardening
@@ -146,10 +155,11 @@ issue #274 the z-interleave, and the as-built records now carry all of it
 decision record's two resolution sections). Both it and the driver prompt that
 carried out its design are archived verbatim in `docs/archive/`.
 
-The driver prompt still here is listed at the top of this section rather than
-here. The most recent one archived is
-`2026-07-30-blur-colour-space-DRIVER-PROMPT.md`, when the blur colour space
-was settled; before it, `2026-07-27-glyph-runs-from-commit-SPIKE.md` and
+No driver prompt is held here now. The most recent one archived is
+`2026-07-27-t2-checks-that-cannot-fail-DRIVER-PROMPT.md`, on 2026-08-02 when
+epic #362 closed; before it `2026-07-30-blur-colour-space-DRIVER-PROMPT.md`,
+when the blur colour space was settled, and before that
+`2026-07-27-glyph-runs-from-commit-SPIKE.md` and
 `2026-07-29-glyph-runs-from-commit-DRIVER-PROMPT.md`, when the glyph-run
 producer chain landed.
 
