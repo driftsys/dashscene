@@ -202,7 +202,10 @@ that binds it:
   [wgpu-is-the-lean-painter.md](../decisions/wgpu-is-the-lean-painter.md),
   because the same painter is needed for the web regardless, and Skia-GPU is
   recorded there as **not planned**. Skia remains the bit-exact CPU oracle,
-  permanently.
+  permanently. Its CPU half is built: the frame it packs, and the goldens over
+  it, are
+  [instance-buffer-contract.md](../decisions/instance-buffer-contract.md)
+  (story #578).
 - **Web painter** — `dashscene-gpu` covers the browser from the same codebase
   as native. `dashscene-web`, which reserved a name for a wasm/tiny-skia
   painter, is retired. Bound by G2 ("wasm (review)"); the

@@ -2,19 +2,20 @@
 //! native and web from one codebase
 //! (`docs/decisions/wgpu-is-the-lean-painter.md`).
 //!
-//! # Status: the seam, and nothing behind it
+//! # Status: the frame is packed, and nothing draws it
 //!
-//! This crate is the v0.15 slice's first story (#577) and holds an
-//! implementation of [`dashpaint::Painter`] that draws nothing. That is the
-//! deliverable: boundary B is "the entire painter input"
-//! (`docs/design/architecture.md`), so the value of compiling a second
-//! implementation against it — before any pixel exists — is that the trait is
-//! proven to be implementable by something other than the crate it was shaped
-//! alongside.
+//! Story #577 stood the crate up against boundary B — "the entire painter
+//! input" (`docs/design/architecture.md`) — so that the trait was proven
+//! implementable by something other than the crate it was shaped alongside.
+//! Story #578 put the painter's CPU half behind that seam: [`instance`] holds
+//! the per-instance struct and [`pack`] turns boundary B's tables into one
+//! ordered frame of them, verified bit-exactly with no GPU, which is layer 1
+//! of epic #569's four-layer net
+//! (`docs/decisions/instance-buffer-contract.md`).
 //!
-//! It carries no `wgpu` dependency yet. The instance buffer arrives with story
-//! #578, the shader library with #579, and the device, pipelines and first
-//! pixels with #580.
+//! Nothing submits that frame, and the crate still carries no `wgpu`
+//! dependency. The shader library arrives with #579, and the device, pipelines
+//! and first pixels with #580.
 //!
 //! # Why this crate is named for the role
 //!
@@ -34,22 +35,28 @@
 //! what makes this a translation of the paint table into draw calls rather
 //! than a 2D rasteriser.
 
+pub mod instance;
+pub mod pack;
+
 use dashpaint::{
     ClipTable, GlyphRunTable, GroupComposite, ImageTable, PaintTable, Painter, RectEntry,
 };
 
-/// The lean painter. Draws nothing yet (story #577).
+pub use instance::{Instance, InstanceBuffer, InstanceKind, InstanceSpan};
+
+/// The lean painter. Packs a frame into its instance buffer and draws none of
+/// it: a device, a queue, a surface and the pipelines over them arrive with
+/// story #580.
 ///
-/// Deliberately holds no state: a device, a queue, a surface and the pipelines
-/// over them arrive with story #580, and inventing fields for them now would
-/// be guessing at a shape that story is meant to decide.
+/// It holds the buffer across frames rather than returning a fresh one, so a
+/// steady-state frame repacks into an allocation it already has. Uploading
+/// only the changed rects' spans is the other half of what R-T4 asks for, and
+/// it needs a device — story #580's.
 #[derive(Debug, Default)]
 pub struct GpuPainter {
-    /// How many times [`Painter::paint`] has been called. The only thing this
-    /// painter can honestly report until it owns a device, and the only way a
-    /// test can tell that the seam was actually driven rather than merely
-    /// compiled.
+    /// How many times [`Painter::paint`] has been called.
     frames: u64,
+    instances: InstanceBuffer,
 }
 
 impl GpuPainter {
@@ -62,30 +69,42 @@ impl GpuPainter {
     pub fn frames_painted(&self) -> u64 {
         self.frames
     }
+
+    /// The frame most recently packed — the painter's whole output until
+    /// story #580 gives it a device, and what a layer-1 golden is stated over.
+    pub fn instances(&self) -> &InstanceBuffer {
+        &self.instances
+    }
 }
 
 impl Painter for GpuPainter {
-    /// Accepts the whole of boundary B and draws none of it.
-    ///
-    /// Every parameter is ignored by name rather than by a blanket `_`, so
-    /// that the next story to implement one deletes an underscore instead of
-    /// re-deriving the signature — and so that a widening of the trait breaks
-    /// this file, which is the point of having a second implementation at all.
+    /// Packs the whole of boundary B into [`instances`](Self::instances) and
+    /// submits none of it.
     ///
     /// Ignoring `dirty` is not a placeholder: the set is advisory, and a
-    /// painter that redraws everything is always correct. This one redraws
-    /// nothing, which is trivially identical to what honouring the set would
-    /// have produced.
+    /// painter that repacks everything is always correct. Honouring it means
+    /// rewriting only the changed rects' spans, which needs the previous
+    /// frame's tables to compare against and a device to upload to — story
+    /// #580's, and the property R-T4 is stated over.
     fn paint(
         &mut self,
-        _rects: &[RectEntry],
-        _paints: &PaintTable,
-        _images: &ImageTable,
-        _clips: &ClipTable,
-        _groups: &[GroupComposite],
-        _glyphs: &GlyphRunTable,
+        rects: &[RectEntry],
+        paints: &PaintTable,
+        images: &ImageTable,
+        clips: &ClipTable,
+        groups: &[GroupComposite],
+        glyphs: &GlyphRunTable,
         _dirty: Option<&[u32]>,
     ) {
+        pack::pack(
+            &mut self.instances,
+            rects,
+            paints,
+            images,
+            clips,
+            groups,
+            glyphs,
+        );
         self.frames += 1;
     }
 }

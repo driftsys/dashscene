@@ -1,0 +1,15 @@
+instances 7 rects 7
+rect 0 at 0 count 1
+rect 1 at 1 count 1
+rect 2 at 2 count 1
+rect 3 at 3 count 1
+rect 4 at 4 count 1
+rect 5 at 5 count 1
+rect 6 at 6 count 1
+   0 fill     tag 1 row 0 shape 0 clip 0..0 layer 0 opacity 1.0 bounds [0.0, 0.0, 600.0, 500.0] corners [0.0, 0.0, 0.0, 0.0]
+   1 fill     tag 1 row 1 shape 0 clip 0..0 layer 1 opacity 1.0 bounds [10.0, 10.0, 200.0, 200.0] corners [0.0, 0.0, 0.0, 0.0]
+   2 fill     tag 1 row 2 shape 0 clip 0..1 layer 1 opacity 1.0 bounds [20.0, 20.0, 60.0, 60.0] corners [0.0, 0.0, 0.0, 0.0]
+   3 fill     tag 1 row 0 shape 0 clip 0..0 layer 2 opacity 0.5 bounds [30.0, 30.0, 100.0, 100.0] corners [0.0, 0.0, 0.0, 0.0]
+   4 fill     tag 1 row 1 shape 0 clip 0..1 layer 2 opacity 1.0 bounds [40.0, 40.0, 50.0, 50.0] corners [0.0, 0.0, 0.0, 0.0]
+   5 fill     tag 1 row 2 shape 0 clip 0..0 layer 1 opacity 1.0 bounds [50.0, 50.0, 40.0, 40.0] corners [0.0, 0.0, 0.0, 0.0]
+   6 fill     tag 1 row 0 shape 0 clip 0..0 layer 0 opacity 1.0 bounds [300.0, 300.0, 80.0, 80.0] corners [0.0, 0.0, 0.0, 0.0]
