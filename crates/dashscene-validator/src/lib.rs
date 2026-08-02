@@ -152,6 +152,32 @@ pub mod rule {
     /// waivable, which would leave no way to accept it.
     pub const BINDING_REFLOW_NOT_CONTAINED: &str = "binding.reflow-not-contained";
 
+    /// A binding on a fill channel whose target node is filled with
+    /// something other than a solid color (issue #667).
+    ///
+    /// A fill channel writes one component of a solid color, so the runtime
+    /// keeps a per-node color and stages the whole of it as a solid fill on
+    /// every flush. A node whose authored fill is a gradient or an image has
+    /// no such color to write into: the flush replaces the authored fill
+    /// outright, and the gradient or image is gone. Measured before this rule
+    /// existed, a linear gradient plus a binding on `FillA` at 0.5 committed
+    /// as an opaque black at half alpha.
+    ///
+    /// An error rather than a warning, for the reason
+    /// [`CONFLICTING_PAINT_REPRESENTATION`] is one: the producer has stated
+    /// two opinions about the node's fill and one of them is discarded, so
+    /// there is no reading of the document that honors both. Naming it here,
+    /// where the document is produced, is what P4 asks for — the alternative
+    /// is a silent drop at runtime, which is what this replaces. The
+    /// producer's remedies are to fill the node with a solid color, or to
+    /// drop the binding and drive the fill some other way.
+    ///
+    /// `dashlang`'s authored path refuses the same combination with a named
+    /// build-time panic; this is the same rule for a document that arrives
+    /// already built.
+    pub const BINDING_FILL_CHANNEL_ON_NON_SOLID_FILL: &str =
+        "binding.fill-channel-on-non-solid-fill";
+
     // Load gate — the v0.8 grid vocabulary (story #43). The engine
     // saturates rather than panics on these, so the honest diagnosis
     // lives here, in P4 parity with the other numeric ranges (weight,
@@ -362,6 +388,7 @@ pub mod rule {
         BINDING_SIGNAL_OUT_OF_RANGE,
         BINDING_NODE_OUT_OF_RANGE,
         BINDING_REFLOW_NOT_CONTAINED,
+        BINDING_FILL_CHANNEL_ON_NON_SOLID_FILL,
         SIGNAL_NAME_DUPLICATE,
         UNKNOWN_ENUM,
         GRADIENT_NO_STOPS,
