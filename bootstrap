@@ -12,6 +12,11 @@ set -euo pipefail
 
 GIT_STD_VERSION="${GIT_STD_VERSION:-latest}"
 INSTALL_DIR="${GIT_STD_INSTALL_DIR:-$HOME/.local/bin}"
+# Pinned rather than `latest`: this is the only download here whose checksum
+# file covers a whole release, so the version has to be known to name the file
+# at all. A pin also means the bytes a fresh clone installs do not change under
+# it without a commit that says so.
+JQ_VERSION="${JQ_VERSION:-1.8.2}"
 
 log() { printf '[bootstrap] %s\n' "$*" >&2; }
 die() {
@@ -157,6 +162,68 @@ install_nextest() {
   esac
 }
 
+# jq parses the tier listings. `just calibrate` and `just exit-gate` both read
+# `cargo nextest list --message-format json` through it, because nextest's
+# default listing is a rendering with no stability promise and changed under
+# those checks once already (docs/decisions/test-tiers.md). Without jq neither
+# recipe runs, which is the same reason cargo-nextest is installed here.
+#
+# Unlike git-std and cargo-nextest, jq is an ordinary system utility and most
+# machines already have one. The guard below is what makes this cheap: a
+# download only happens on a machine that has none.
+install_jq() {
+  if command -v jq >/dev/null 2>&1; then
+    log "jq already installed: $(command -v jq)"
+    return
+  fi
+
+  local os arch asset url tmp sha_expected sha_actual bin_dir
+  case "$(uname -s)" in
+    Darwin) os="macos" ;;
+    Linux) os="linux" ;;
+    *) die "unsupported OS for jq: $(uname -s)" ;;
+  esac
+  case "$(uname -m)" in
+    arm64 | aarch64) arch="arm64" ;;
+    x86_64 | amd64) arch="amd64" ;;
+    *) die "unsupported architecture for jq: $(uname -m)" ;;
+  esac
+  asset="jq-${os}-${arch}"
+  url="https://github.com/jqlang/jq/releases/download/jq-${JQ_VERSION}/${asset}"
+
+  log "downloading jq (${JQ_VERSION}, ${os}-${arch})"
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "${tmp}"' RETURN
+
+  curl --fail --silent --show-error --location "${url}" --output "${tmp}/jq"
+  # jq publishes one sha256sum.txt covering every asset in the release, rather
+  # than a .sha256 beside each one, so the line for this asset is selected
+  # here. Anchored on the trailing name so `jq-linux-amd64` cannot match
+  # `jq-linux-amd64-something` if the release ever adds one.
+  curl --fail --silent --show-error --location \
+    "https://github.com/jqlang/jq/releases/download/jq-${JQ_VERSION}/sha256sum.txt" \
+    --output "${tmp}/sha256sum.txt"
+  sha_expected="$(awk -v a="${asset}" '$2 == a || $2 == "*" a { print $1 }' "${tmp}/sha256sum.txt")"
+  [ -n "${sha_expected}" ] || die "sha256sum.txt has no line for ${asset}"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha_actual="$(sha256sum "${tmp}/jq" | cut -d' ' -f1)"
+  else
+    sha_actual="$(shasum -a 256 "${tmp}/jq" | cut -d' ' -f1)"
+  fi
+  [ "${sha_expected}" = "${sha_actual}" ] || die "sha256 mismatch for ${asset}"
+
+  bin_dir="${INSTALL_DIR}"
+  mkdir -p "${bin_dir}"
+  install -m 0755 "${tmp}/jq" "${bin_dir}/jq"
+
+  log "installed jq to ${bin_dir}/jq"
+  case ":${PATH}:" in
+    *":${bin_dir}:"*) ;;
+    *) log "note: ${bin_dir} is not on PATH — add it to your shell profile" ;;
+  esac
+}
+
 install_git_std
 install_nextest
+install_jq
 exec git std bootstrap
