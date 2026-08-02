@@ -622,8 +622,8 @@ fn build_paint<'a>(b: &mut FlatBufferBuilder<'a>, paint: &Paint) -> WIPOffset<Bu
     // the vector before the enclosing Paint — the standard flatbuffer nesting
     // order. Absent (an empty list) omits the field, so a shadow-less entry
     // round-trips identically (R7).
-    let shadows = (!entry.shadows.is_empty()).then(|| {
-        let shadows: Vec<_> = entry
+    let shadows = (!paint.shadows.is_empty()).then(|| {
+        let shadows: Vec<_> = paint
             .shadows
             .iter()
             .map(|s| {
@@ -648,8 +648,8 @@ fn build_paint<'a>(b: &mut FlatBufferBuilder<'a>, paint: &Paint) -> WIPOffset<Bu
     // Blurs (story #393). Same nesting order and same absent-is-empty rule as
     // `shadows` above, so a blur-less entry round-trips byte-identically and
     // no committed `.dsb` fixture changes (R7).
-    let blurs = (!entry.blurs.is_empty()).then(|| {
-        let blurs: Vec<_> = entry
+    let blurs = (!paint.blurs.is_empty()).then(|| {
+        let blurs: Vec<_> = paint
             .blurs
             .iter()
             .map(|bl| {
@@ -715,7 +715,11 @@ fn mat23_of(m: &dashpaint::Mat23) -> Mat23 {
 type PaintKey = (Vec<u32>, bool, Option<u32>);
 
 fn paint_key(paint: &Paint) -> PaintKey {
-    (entry_bits(&paint.entry), paint.clip, paint.shape_field)
+    (
+        entry_bits(&paint.entry, &paint.shadows, &paint.blurs),
+        paint.clip,
+        paint.shape_field,
+    )
 }
 
 /// The text-style pool's interning key. The `f32` size, color, line height,
@@ -795,7 +799,11 @@ fn fill_kind_bits(kind: &PaintKind) -> Vec<u32> {
     key
 }
 
-fn entry_bits(entry: &PaintEntry) -> Vec<u32> {
+fn entry_bits(
+    entry: &PaintEntry,
+    shadows: &[dashpaint::Shadow],
+    blurs: &[dashpaint::Blur],
+) -> Vec<u32> {
     let mut key = Vec::new();
     match &entry.fill {
         None => key.push(0),
@@ -825,8 +833,8 @@ fn entry_bits(entry: &PaintEntry) -> Vec<u32> {
         entry.corners.bottom_right.to_bits(),
         entry.corners.bottom_left.to_bits(),
     ]);
-    key.push(entry.shadows.len() as u32);
-    for s in &entry.shadows {
+    key.push(shadows.len() as u32);
+    for s in shadows {
         key.push(s.kind as u32);
         key.extend([s.offset.x.to_bits(), s.offset.y.to_bits()]);
         key.push(s.blur.to_bits());
@@ -836,8 +844,8 @@ fn entry_bits(entry: &PaintEntry) -> Vec<u32> {
     // Blurs join the key on the same "count then each entry's bits" shape
     // (story #393). Two nodes that differ only in their blur must not share a
     // pool entry, and appending here leaves a blur-less entry's key unchanged.
-    key.push(entry.blurs.len() as u32);
-    for bl in &entry.blurs {
+    key.push(blurs.len() as u32);
+    for bl in blurs {
         key.push(bl.kind as u32);
         key.push(bl.radius.to_bits());
     }

@@ -2096,13 +2096,14 @@ fn transparent_backdrop_blur_scene() -> (Vec<RectEntry>, PaintTable) {
         fill: Some(PaintKind::Solid { color: RED }),
         ..PaintEntry::default()
     });
-    let panel = paints.push(PaintEntry {
-        blurs: vec![Blur {
+    let panel = paints.push_with_effects(
+        PaintEntry::default(),
+        &[],
+        &[Blur {
             kind: BlurKind::Backdrop,
             radius: 12.0,
         }],
-        ..PaintEntry::default()
-    });
+    );
     (
         vec![
             RectEntry {

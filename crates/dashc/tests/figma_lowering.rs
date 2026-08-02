@@ -394,7 +394,7 @@ fn drop_and_inner_shadows_lower_into_the_paint_entry() {
     );
 
     let (_, card) = node(&doc, "card");
-    let shadows = &card.paint.as_ref().unwrap().entry.shadows;
+    let shadows = &card.paint.as_ref().unwrap().shadows;
     assert_eq!(shadows.len(), 2);
 
     assert_eq!(shadows[0].kind, ShadowKind::Drop);
@@ -439,7 +439,7 @@ fn a_hidden_shadow_does_not_lower() {
     assert!(diagnostics.is_empty());
     let (_, card) = node(&doc, "card");
     assert!(
-        card.paint.as_ref().unwrap().entry.shadows.is_empty(),
+        card.paint.as_ref().unwrap().shadows.is_empty(),
         "a hidden shadow lowers to nothing",
     );
 }
@@ -473,7 +473,7 @@ fn a_shadow_with_an_advanced_blend_lowers_normal_and_warns_under_full() {
         lower(&document(root.clone()), Profile::Full, &BTreeMap::new()).expect("lowers under Full");
     let (_, card) = node(&doc, "card");
     assert_eq!(
-        card.paint.as_ref().unwrap().entry.shadows.len(),
+        card.paint.as_ref().unwrap().shadows.len(),
         1,
         "the shadow lowers (drawn NORMAL) even though its blend mode is dropped"
     );
@@ -2461,7 +2461,7 @@ fn a_backdrop_blur_lowers_under_both_policies_and_keeps_its_radius() {
             .rects()
             .iter()
             .filter_map(|rect| scene.paints().get(rect.paint))
-            .flat_map(|entry| entry.blurs.iter())
+            .flat_map(|entry| scene.paints().blurs(entry).iter())
             .collect();
         assert_eq!(
             blurs.len(),
@@ -2524,7 +2524,7 @@ fn a_backdrop_blur_on_a_baked_vector_is_kept_not_dropped() {
         .rects()
         .iter()
         .filter_map(|rect| scene.paints().get(rect.paint))
-        .flat_map(|entry| entry.blurs.iter())
+        .flat_map(|entry| scene.paints().blurs(entry).iter())
         .collect();
     assert_eq!(blurs.len(), 1, "the vector keeps its blur, got {blurs:?}");
     assert_eq!(blurs[0].kind, dashscene_core::BlurKind::Backdrop);

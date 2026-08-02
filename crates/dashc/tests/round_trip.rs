@@ -116,13 +116,15 @@ fn v03_document() -> Document {
                 fill: Some(gradient()),
                 stroke: None,
                 corners: dashpaint::CornerRadii::default(),
-                shadows: Vec::new(),
-                blurs: Vec::new(),
+                shadows: dashpaint::ShadowRange::NONE,
+                blurs: dashpaint::BlurRange::NONE,
                 shape: None,
                 extra_fills: Vec::new(),
             },
             clip: true,
             shape_field: None,
+            shadows: Vec::new(),
+            blurs: Vec::new(),
         }),
         ..Node::default()
     });
@@ -141,6 +143,8 @@ fn v03_document() -> Document {
             entry: PaintEntry::solid(RED),
             clip: false,
             shape_field: None,
+            shadows: Vec::new(),
+            blurs: Vec::new(),
         }),
         ..Node::default()
     });
@@ -159,13 +163,15 @@ fn v03_document() -> Document {
                 fill: None,
                 stroke: Some(stroke()),
                 corners: corners(),
-                shadows: Vec::new(),
-                blurs: Vec::new(),
+                shadows: dashpaint::ShadowRange::NONE,
+                blurs: dashpaint::BlurRange::NONE,
                 shape: None,
                 extra_fills: Vec::new(),
             },
             clip: false,
             shape_field: None,
+            shadows: Vec::new(),
+            blurs: Vec::new(),
         }),
         ..Node::default()
     });
@@ -189,13 +195,15 @@ fn v03_document() -> Document {
                 }),
                 stroke: None,
                 corners: dashpaint::CornerRadii::default(),
-                shadows: Vec::new(),
-                blurs: Vec::new(),
+                shadows: dashpaint::ShadowRange::NONE,
+                blurs: dashpaint::BlurRange::NONE,
                 shape: None,
                 extra_fills: Vec::new(),
             },
             clip: false,
             shape_field: None,
+            shadows: Vec::new(),
+            blurs: Vec::new(),
         }),
         ..Node::default()
     });
@@ -354,36 +362,38 @@ fn shadowed_document() -> Document {
         paint: Some(Paint {
             entry: PaintEntry {
                 fill: Some(PaintKind::Solid { color: RED }),
-                shadows: vec![
-                    Shadow {
-                        kind: ShadowKind::Drop,
-                        offset: Vec2 { x: 0.0, y: 4.0 },
-                        blur: 8.0,
-                        spread: 1.0,
-                        color: Color {
-                            r: 0.0,
-                            g: 0.0,
-                            b: 0.0,
-                            a: 0.25,
-                        },
-                    },
-                    Shadow {
-                        kind: ShadowKind::Inner,
-                        offset: Vec2 { x: 2.0, y: 2.0 },
-                        blur: 4.0,
-                        spread: -1.0,
-                        color: Color {
-                            r: 0.1,
-                            g: 0.1,
-                            b: 0.1,
-                            a: 0.5,
-                        },
-                    },
-                ],
+                shadows: dashpaint::ShadowRange::NONE,
                 ..PaintEntry::default()
             },
             clip: false,
             shape_field: None,
+            shadows: vec![
+                Shadow {
+                    kind: ShadowKind::Drop,
+                    offset: Vec2 { x: 0.0, y: 4.0 },
+                    blur: 8.0,
+                    spread: 1.0,
+                    color: Color {
+                        r: 0.0,
+                        g: 0.0,
+                        b: 0.0,
+                        a: 0.25,
+                    },
+                },
+                Shadow {
+                    kind: ShadowKind::Inner,
+                    offset: Vec2 { x: 2.0, y: 2.0 },
+                    blur: 4.0,
+                    spread: -1.0,
+                    color: Color {
+                        r: 0.1,
+                        g: 0.1,
+                        b: 0.1,
+                        a: 0.5,
+                    },
+                },
+            ],
+            blurs: Vec::new(),
         }),
         ..Node::default()
     });
@@ -425,11 +435,12 @@ fn blurred_node(name: &str, blurs: Vec<Blur>) -> Node {
         paint: Some(Paint {
             entry: PaintEntry {
                 fill: Some(PaintKind::Solid { color: RED }),
-                blurs,
                 ..PaintEntry::default()
             },
             clip: false,
             shape_field: None,
+            shadows: Vec::new(),
+            blurs,
         }),
         ..Node::default()
     }
@@ -495,12 +506,7 @@ fn a_blur_and_a_shadow_section_do_not_alias_each_other_in_the_pool_key() {
     let mut doc = Document::new();
     doc.push(blurred_node("blurred", vec![backdrop(4.0)]));
     let mut shadowed = blurred_node("shadowed", Vec::new());
-    shadowed
-        .paint
-        .as_mut()
-        .expect("the fixture paints")
-        .entry
-        .shadows = vec![Shadow {
+    shadowed.paint.as_mut().expect("the fixture paints").shadows = vec![Shadow {
         kind: ShadowKind::Drop,
         offset: Vec2 { x: 0.0, y: 0.0 },
         blur: 4.0,
@@ -556,8 +562,8 @@ fn emission_of_a_blurred_document_is_byte_reproducible_and_round_trips() {
     let scene = arena.committed();
     let entry = scene.paints().resolve(scene.rects()[0].paint);
     assert_eq!(
-        entry.blurs,
-        vec![
+        scene.paints().blurs(entry),
+        &[
             backdrop(12.0),
             Blur {
                 kind: BlurKind::Layer,
@@ -565,7 +571,7 @@ fn emission_of_a_blurred_document_is_byte_reproducible_and_round_trips() {
             },
         ],
     );
-    assert!(entry.samples_backdrop());
+    assert!(scene.paints().samples_backdrop(entry));
 }
 
 #[test]
@@ -592,6 +598,8 @@ fn nodes_sharing_a_style_share_one_pool_entry() {
         entry: PaintEntry::solid(RED),
         clip: false,
         shape_field: None,
+        shadows: Vec::new(),
+        blurs: Vec::new(),
     };
     for i in 0..3 {
         doc.push(Node {
@@ -640,6 +648,8 @@ fn two_nodes_that_differ_only_in_clip_do_not_share_a_pool_entry() {
                 entry: PaintEntry::solid(RED),
                 clip,
                 shape_field: None,
+                shadows: Vec::new(),
+                blurs: Vec::new(),
             }),
             ..Node::default()
         });
@@ -677,13 +687,15 @@ fn an_invalid_document_is_refused_rather_than_emitted() {
                 })),
                 stroke: None,
                 corners: dashpaint::CornerRadii::default(),
-                shadows: Vec::new(),
-                blurs: Vec::new(),
+                shadows: dashpaint::ShadowRange::NONE,
+                blurs: dashpaint::BlurRange::NONE,
                 shape: None,
                 extra_fills: Vec::new(),
             },
             clip: false,
             shape_field: None,
+            shadows: Vec::new(),
+            blurs: Vec::new(),
         }),
         ..Node::default()
     });

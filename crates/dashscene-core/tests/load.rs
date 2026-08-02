@@ -346,8 +346,8 @@ fn a_loaded_document_replays_its_shadows() {
     let scene = arena.committed();
     let entry = scene.paints().resolve(scene.rects()[0].paint);
     assert_eq!(
-        entry.shadows,
-        vec![dashpaint::Shadow {
+        scene.paints().shadows(entry),
+        &[dashpaint::Shadow {
             kind: dashpaint::ShadowKind::Inner,
             offset: dashpaint::Vec2 { x: 3.0, y: -4.0 },
             blur: 6.0,

@@ -513,8 +513,8 @@ impl Painter for SkiaPainter {
             // Several backdrop blurs on one node apply in list order, each
             // over the result of the last, the same posture the shadow loops
             // below use for Figma's back-to-front `effects` array.
-            for blur in entry
-                .blurs
+            for blur in paints
+                .blurs(entry)
                 .iter()
                 .filter(|blur| blur.kind == BlurKind::Backdrop)
             {
@@ -558,7 +558,11 @@ impl Painter for SkiaPainter {
             // order composites a later draw over an earlier one, so painting
             // the list forward — first element first — reproduces that
             // stacking exactly; no reversal is needed.
-            for shadow in entry.shadows.iter().filter(|s| s.kind == ShadowKind::Drop) {
+            for shadow in paints
+                .shadows(entry)
+                .iter()
+                .filter(|s| s.kind == ShadowKind::Drop)
+            {
                 draw_drop_shadow(canvas, rect, &entry.corners, outset, shadow, rect.opacity);
             }
             if let Some(field) = &entry.shape {
@@ -624,7 +628,11 @@ impl Painter for SkiaPainter {
             }
             // Inner shadows sit on top of the fill and stroke, clipped to
             // the node's own shape (story #45).
-            for shadow in entry.shadows.iter().filter(|s| s.kind == ShadowKind::Inner) {
+            for shadow in paints
+                .shadows(entry)
+                .iter()
+                .filter(|s| s.kind == ShadowKind::Inner)
+            {
                 draw_inner_shadow(canvas, &rrect, rect, &entry.corners, shadow, rect.opacity);
             }
             // Every run anchored to this rect, in table order: after the
