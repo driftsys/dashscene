@@ -117,7 +117,7 @@ fn load_atlas(dir: &str) -> Atlas {
         .iter()
         .filter_map(|glyph| {
             Some(AtlasGlyph {
-                glyph_id: glyph.glyph_id,
+                glyph_id: u32::from(glyph.glyph_id),
                 plane_em: glyph.plane_em?,
                 atlas_px: glyph.atlas_px?,
             })

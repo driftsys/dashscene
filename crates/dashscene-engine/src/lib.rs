@@ -269,7 +269,9 @@ fn text_runs(
         for g in &line.glyphs {
             let atlas = AtlasIndex(u32::from(g.font));
             let quad = GlyphQuad {
-                glyph_id: g.glyph_id,
+                // Widened at boundary B, where a u16 leading a struct of
+                // 4-byte members would only be two bytes of padding.
+                glyph_id: u32::from(g.glyph_id),
                 x: r.x + g.x,
                 y: r.y + voff + g.y,
             };

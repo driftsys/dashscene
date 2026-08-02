@@ -1676,10 +1676,30 @@ impl PaintTable {
 /// origin, so positions reach the painter absolute and the painter never
 /// moves anything (P2). The painter combines each position with the
 /// atlas glyph's y-up `plane_em` quad to place the textured quad.
+///
+/// # `glyph_id` is `u32`, and that is what removes the padding
+///
+/// A glyph id is a `u16` by the OpenType specification, and
+/// `dashscene-typeset` carries it as one. Here it is widened, because a
+/// 2-byte member leading a struct of 4-byte members costs two bytes of
+/// padding and saves none: `{u16, f32, f32}` and `{u32, f32, f32}` are both
+/// 12 bytes at alignment 4. Story #578's rules for anything crossing a
+/// language seam call for explicit padding; removing the need for any is
+/// better than declaring it, and it avoids a public padding member that two
+/// otherwise-equal quads could differ in — the equality hazard
+/// `docs/decisions/optional-members-are-ranges-of-arity-one.md` D2 removed
+/// from the ranges.
+///
+/// The value's domain is unchanged: OpenType ids are 16-bit, every producer
+/// widens with `u32::from`, and nothing here widens what a font may express.
+/// What the `u16` used to give for free — an out-of-domain id being
+/// unrepresentable — is asserted in [`Atlas::new`] instead. The trade, and why
+/// widening beat declaring the padding, are in
+/// `docs/decisions/sub-word-members-widen-rather-than-pad.md`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GlyphQuad {
-    pub glyph_id: u16,
+    pub glyph_id: u32,
     pub x: f32,
     pub y: f32,
 }
@@ -1690,10 +1710,17 @@ pub struct GlyphQuad {
 ///
 /// Plain mirror of `dashscene-typeset`'s `GlyphEntry` bounds. Both
 /// rectangles are `[left, bottom, right, top]`.
+///
+/// `glyph_id` is a `u32` for the reason [`GlyphQuad::glyph_id`] gives, and
+/// with the same effect: `{u16, [f32; 4], [f32; 4]}` padded to 36 bytes and
+/// `{u32, [f32; 4], [f32; 4]}` is 36 bytes with nothing padded. Both
+/// rectangles keep the offsets they already had, so a consumer's declaration
+/// of them is unchanged — only the leading member stops being two bytes
+/// followed by two a C header would have to name.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AtlasGlyph {
-    pub glyph_id: u16,
+    pub glyph_id: u32,
     /// Quad bounds in ems, y-up, baseline origin (the metrics blob's
     /// `plane_em`).
     pub plane_em: [f32; 4],
@@ -1750,6 +1777,15 @@ impl Atlas {
             glyphs.windows(2).all(|w| w[0].glyph_id < w[1].glyph_id),
             "atlas glyphs must be sorted and unique by glyph id"
         );
+        // The `u16` these ids were widened from made this unrepresentable.
+        // Widening bought a struct with no padding and gave up that guarantee,
+        // so it is asserted instead: an id no font can produce would place a
+        // row [`glyph`](Self::glyph) can still be asked for, and a quad naming
+        // it would paint nothing with no diagnostic.
+        debug_assert!(
+            glyphs.iter().all(|g| g.glyph_id <= u32::from(u16::MAX)),
+            "a glyph id above u16::MAX cannot come from a font: OpenType ids are 16-bit"
+        );
         Self {
             image,
             width,
@@ -1763,7 +1799,7 @@ impl Atlas {
     /// The placement for `glyph_id`, or `None` when the atlas has no quad
     /// for it (an empty-outline glyph such as a space, or a glyph outside
     /// the atlas's charset — which paints nothing).
-    pub fn glyph(&self, glyph_id: u16) -> Option<&AtlasGlyph> {
+    pub fn glyph(&self, glyph_id: u32) -> Option<&AtlasGlyph> {
         self.glyphs
             .binary_search_by_key(&glyph_id, |g| g.glyph_id)
             .ok()

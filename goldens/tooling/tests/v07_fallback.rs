@@ -238,10 +238,18 @@ fn the_label_cascades_across_both_atlases() {
 }
 
 /// The glyph ids a committed atlas fixture places, from its metrics blob.
-fn atlas_glyph_ids(dir: &str) -> BTreeSet<u16> {
+fn atlas_glyph_ids(dir: &str) -> BTreeSet<u32> {
     let bundle = dashscene_typeset::atlas::AtlasBundle::load_from_dir(std::path::Path::new(dir))
         .unwrap_or_else(|e| panic!("committed atlas fixture at {dir} loads: {e}"));
-    bundle.metrics.glyphs.iter().map(|g| g.glyph_id).collect()
+    // Widened to the boundary-B type these are compared against: the metrics
+    // blob keeps a glyph id as the `u16` OpenType defines, and `GlyphQuad`
+    // widens it so that a 2-byte member does not lead a struct of 4-byte ones.
+    bundle
+        .metrics
+        .glyphs
+        .iter()
+        .map(|g| u32::from(g.glyph_id))
+        .collect()
 }
 
 /// C3 sensitivity guard: the pixel budget must be tight enough that either
