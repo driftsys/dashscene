@@ -495,7 +495,7 @@ impl Painter for SkiaPainter {
             // the fill box: an outside stroke by its full width, a center
             // stroke by half, an inside stroke not at all. A drop shadow
             // casts from that silhouette, not the bare fill box (P1).
-            let outset = stroke_outset(entry.stroke.as_ref());
+            let outset = stroke_outset(paints.stroke(entry));
             // The backdrop blur runs before any of this node's own ink
             // (story #393, `docs/decisions/backdrop-blur-is-core-vocabulary.md`).
             // Boundary B states the guarantee over rects at a *lower index*,
@@ -519,7 +519,7 @@ impl Painter for SkiaPainter {
                 .iter()
                 .filter(|blur| blur.kind == BlurKind::Backdrop)
             {
-                match &entry.shape {
+                match paints.shape(entry) {
                     // A baked-vector node's blur is confined to the field's
                     // coverage, not to its box — the hero's own frosted panel
                     // is exactly this shape, a VECTOR carrying
@@ -566,7 +566,7 @@ impl Painter for SkiaPainter {
             {
                 draw_drop_shadow(canvas, rect, &entry.corners, outset, shadow, rect.opacity);
             }
-            if let Some(field) = &entry.shape {
+            if let Some(field) = paints.shape(entry) {
                 // A baked-vector shape (story B1): the fill is masked by the
                 // field's coverage, not by the parametric box. The parametric
                 // stroke and corners do not apply (a vector carries its
@@ -576,15 +576,7 @@ impl Painter for SkiaPainter {
                         .expect("field-mask resolve SkSL compiles")
                 });
                 let atlas = image_cache.get(field.image);
-                draw_vector_field(
-                    canvas,
-                    rect,
-                    paints,
-                    entry.fill.as_ref(),
-                    field,
-                    atlas,
-                    effect,
-                );
+                draw_vector_field(canvas, rect, paints, entry.fill, field, atlas, effect);
             } else {
                 // A fill-less entry draws nothing (a layout-only node, or a
                 // mask node whose shape is a stencil, not paint). Stacked
@@ -608,8 +600,9 @@ impl Painter for SkiaPainter {
                 // opened only for the shape that actually disagrees — a node
                 // carrying both a stroke and at least one fill, below full
                 // opacity. Everything else keeps the folded path unchanged.
-                let has_fill = entry.fill.is_some() || !entry.extra_fills.is_empty();
-                let flatten = has_fill && entry.stroke.is_some() && rect.opacity != 1.0;
+                let has_fill =
+                    entry.fill != PaintKind::NONE || !paints.extra_fills(entry).is_empty();
+                let flatten = has_fill && paints.stroke(entry).is_some() && rect.opacity != 1.0;
                 let (draw_rect, layered) = if flatten {
                     canvas.save_layer_alpha_f(None, rect.opacity);
                     (
@@ -622,13 +615,16 @@ impl Painter for SkiaPainter {
                 } else {
                     (rect, false)
                 };
-                if let Some(kind) = &entry.fill {
+                // `draw_fill_kind` is called unconditionally: `paints.fill`
+                // resolves `PaintKind::NONE` to `Fill::None`, whose arm draws
+                // nothing, so a fill-less entry still paints exactly nothing
+                // here — the same outcome the old `if let Some(kind)` guard
+                // gave when `fill` was `Option::None`.
+                draw_fill_kind(canvas, rrect, draw_rect, image_cache, paints, entry.fill);
+                for kind in paints.extra_fills(entry) {
                     draw_fill_kind(canvas, rrect, draw_rect, image_cache, paints, *kind);
                 }
-                for kind in &entry.extra_fills {
-                    draw_fill_kind(canvas, rrect, draw_rect, image_cache, paints, *kind);
-                }
-                if let Some(stroke) = &entry.stroke {
+                if let Some(stroke) = paints.stroke(entry) {
                     draw_stroke(canvas, &rrect, stroke, draw_rect.opacity);
                 }
                 if layered {
@@ -1054,16 +1050,16 @@ fn draw_vector_field(
     canvas: &Canvas,
     rect: &RectEntry,
     paints: &PaintTable,
-    fill: Option<&PaintKind>,
+    fill: PaintKind,
     field: &VectorField,
     atlas: &Image,
     effect: &RuntimeEffect,
 ) {
     // A shape with no fill has no ink to mask — a defensive guard; the
     // lowering always pairs a shape with a fill.
-    let Some(&fill) = fill else {
+    if fill == PaintKind::NONE {
         return;
-    };
+    }
     let Some((dest, coverage)) = field_coverage(rect, field, atlas, effect) else {
         return;
     };
@@ -1082,6 +1078,10 @@ fn draw_vector_field(
     // clip is one every draw already respects.
     canvas.save_layer(&SaveLayerRec::default().bounds(&dest));
     match paints.fill(fill) {
+        // Unreachable: the guard above already returned for
+        // `PaintKind::NONE`, so `paints.fill` never resolves to this arm
+        // here. Present because `Fill` matches exhaustively.
+        Fill::None => {}
         Fill::Solid(color) => {
             let mut paint = solid_paint(color);
             apply_opacity(&mut paint, rect.opacity);
@@ -1535,6 +1535,11 @@ fn draw_fill_kind(
     kind: PaintKind,
 ) {
     match paints.fill(kind) {
+        // The fill-less node (story #578): `entry.fill` reaches here as
+        // `PaintKind::NONE` on every call the main loop makes unconditionally,
+        // and this arm is where that draws exactly nothing, the same outcome
+        // the old `if let Some(kind) = &entry.fill` guard gave.
+        Fill::None => {}
         Fill::Solid(color) => {
             let mut paint = solid_paint(color);
             paint.set_anti_alias(true);
@@ -1921,7 +1926,7 @@ mod tests {
             tile_scale: 1.0,
         }));
         let image_fill = || dashpaint::PaintEntry {
-            fill: Some(image_kind),
+            fill: image_kind,
             ..dashpaint::PaintEntry::default()
         };
         let paint_a = paints.push(image_fill());
@@ -1999,7 +2004,7 @@ mod tests {
             tile_scale: 1.0,
         }));
         let paint = paints.push(dashpaint::PaintEntry {
-            fill: Some(image_kind),
+            fill: image_kind,
             ..dashpaint::PaintEntry::default()
         });
         let rects = [RectEntry {

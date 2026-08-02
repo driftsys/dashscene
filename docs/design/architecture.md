@@ -87,8 +87,11 @@ It is enforced rather than asserted: `crates/dashscene-unity` declares an
 non-representable stops the workspace compiling (story #600). The surface is
 narrow today and widens as story #578 flattens what is left. `PaintKind`
 carried payloads until #578 gave it a tag and a row index, and it is on the
-surface now with `Gradient`, `StopRange` and `ImageFill`; `PaintEntry` and
-`ImageAsset` still hold `Vec`s and are what remains.
+surface now with `Gradient`, `StopRange` and `ImageFill`. `PaintEntry`
+followed it, its `Option`s and its one `Vec` replaced by ranges into the
+table's flat arrays, so it is on the surface too at a pinned 64 bytes.
+`ImageAsset` is what remains, and is a different problem: its `Vec<u8>` is a
+payload rather than a reference into a table.
 
 **What this does not buy.** It removes one obstacle, not the work. A non-Rust
 engine still needs its own projection of the tables into its scene

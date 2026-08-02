@@ -126,7 +126,7 @@ pub fn validate_scene(
             ));
             continue;
         };
-        check_stroke_fits_box(&mut report, entry, rect, &at);
+        check_stroke_fits_box(&mut report, paints, entry, rect, &at);
     }
 
     report
@@ -148,6 +148,10 @@ fn check_fill_kind(
     image_count: usize,
 ) {
     match paints.fill(kind) {
+        // A paint-less entry has no fill vocabulary to check. Matched
+        // rather than filtered at the call site, so this stays exhaustive
+        // over the tag if the vocabulary grows (P4).
+        Fill::None => {}
         Fill::Solid(_) => {}
         Fill::Gradient(view) => {
             let offsets: Vec<f32> = view.stops.iter().map(|s| s.offset).collect();
@@ -167,17 +171,15 @@ fn check_paint_entry(
     at: &Location,
     image_count: usize,
 ) {
-    if let Some(kind) = entry.fill {
-        check_fill_kind(report, paints, at, kind, image_count);
-    }
+    check_fill_kind(report, paints, at, entry.fill, image_count);
     // Stacked fills (story C1, debt #146): each layer's own vocabulary
     // rules, the same posture as the shadows loop below — one check per
     // layer, `at` naming the paint entry rather than the individual layer.
-    for &kind in &entry.extra_fills {
+    for &kind in paints.extra_fills(entry) {
         check_fill_kind(report, paints, at, kind, image_count);
     }
 
-    if let Some(stroke) = &entry.stroke {
+    if let Some(stroke) = paints.stroke(entry) {
         check_stroke_width(report, at, stroke.width);
     }
 
@@ -237,8 +239,14 @@ fn check_rect_extent(report: &mut Report, rect: &RectEntry, at: &Location) {
 /// The threshold is strict. At exactly `min(w, h)` the inset extent is
 /// zero and the stroke covers the box completely, which is what a stroke
 /// that wide should look like — only *above* it does the geometry invert.
-fn check_stroke_fits_box(report: &mut Report, entry: &PaintEntry, rect: &RectEntry, at: &Location) {
-    let Some(stroke) = &entry.stroke else {
+fn check_stroke_fits_box(
+    report: &mut Report,
+    paints: &PaintTable,
+    entry: &PaintEntry,
+    rect: &RectEntry,
+    at: &Location,
+) {
+    let Some(stroke) = paints.stroke(entry) else {
         return;
     };
     if stroke.align != StrokeAlign::Inside {

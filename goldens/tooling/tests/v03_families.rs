@@ -10,9 +10,9 @@
 //! interior-probe asserts pin the key property bit-stably.
 
 use dashpaint::{
-    ClipIndex, ClipTable, Color, CornerRadii, FillSpec, GlyphRunTable, Gradient, GradientKind,
-    GradientStop, ImageFill, ImageTable, Mat23, PaintEntry, PaintKind, PaintTable, Painter,
-    RectEntry, ScaleMode, StopRange, Stroke, StrokeAlign, Vec2,
+    ClipIndex, ClipTable, Color, CornerRadii, EntryParts, FillSpec, GlyphRunTable, Gradient,
+    GradientKind, GradientStop, ImageFill, ImageTable, Mat23, PaintEntry, PaintKind, PaintTable,
+    Painter, RectEntry, ScaleMode, StopRange, Stroke, StrokeAlign, Vec2,
 };
 use dashscene_skia::SkiaPainter;
 
@@ -92,12 +92,12 @@ fn the_gradient_family_matches_its_golden() {
     let mut paints = PaintTable::new();
     let linear_fill = gradient_fill(&mut paints, GradientKind::Linear, two_stops(red, blue));
     let linear = paints.push(PaintEntry {
-        fill: Some(linear_fill),
+        fill: linear_fill,
         ..PaintEntry::default()
     });
     let radial_fill = gradient_fill(&mut paints, GradientKind::Radial, two_stops(gold, teal));
     let radial = paints.push(PaintEntry {
-        fill: Some(radial_fill),
+        fill: radial_fill,
         ..PaintEntry::default()
     });
     // Gauge-style angular sweep: a green→amber→red dial arc.
@@ -120,12 +120,12 @@ fn the_gradient_family_matches_its_golden() {
         ],
     );
     let gauge = paints.push(PaintEntry {
-        fill: Some(gauge_fill),
+        fill: gauge_fill,
         ..PaintEntry::default()
     });
     let diamond_fill = gradient_fill(&mut paints, GradientKind::Diamond, two_stops(teal, red));
     let diamond = paints.push(PaintEntry {
-        fill: Some(diamond_fill),
+        fill: diamond_fill,
         ..PaintEntry::default()
     });
 
@@ -186,20 +186,28 @@ fn the_stroke_family_matches_its_golden() {
     let mut paints = PaintTable::new();
     let background = paints.push_solid(navy);
     let gold_fill = paints.intern_fill(&FillSpec::Solid { color: gold });
-    let stroke_entry = |align, corners| PaintEntry {
-        fill: Some(gold_fill),
-        stroke: Some(Stroke {
-            width: 4.0,
-            align,
-            color: red,
-        }),
-        corners,
-        ..PaintEntry::default()
+    let stroke_entry = |paints: &mut PaintTable, align, corners| {
+        paints.push_with(
+            PaintEntry {
+                fill: gold_fill,
+                corners,
+                ..PaintEntry::default()
+            },
+            EntryParts {
+                stroke: Some(Stroke {
+                    width: 4.0,
+                    align,
+                    color: red,
+                }),
+                ..EntryParts::default()
+            },
+        )
     };
-    let inside = paints.push(stroke_entry(StrokeAlign::Inside, CornerRadii::default()));
-    let center = paints.push(stroke_entry(StrokeAlign::Center, CornerRadii::default()));
-    let outside = paints.push(stroke_entry(StrokeAlign::Outside, CornerRadii::default()));
-    let rounded = paints.push(stroke_entry(
+    let inside = stroke_entry(&mut paints, StrokeAlign::Inside, CornerRadii::default());
+    let center = stroke_entry(&mut paints, StrokeAlign::Center, CornerRadii::default());
+    let outside = stroke_entry(&mut paints, StrokeAlign::Outside, CornerRadii::default());
+    let rounded = stroke_entry(
+        &mut paints,
         StrokeAlign::Inside,
         CornerRadii {
             top_left: 8.0,
@@ -207,7 +215,7 @@ fn the_stroke_family_matches_its_golden() {
             bottom_right: 8.0,
             bottom_left: 8.0,
         },
-    ));
+    );
 
     let cell = |x: f32, y: f32, p| RectEntry {
         x,
@@ -268,7 +276,7 @@ fn the_image_family_matches_its_golden() {
         }))
     };
     let image_entry = |fill, corners| PaintEntry {
-        fill: Some(fill),
+        fill,
         corners,
         ..PaintEntry::default()
     };

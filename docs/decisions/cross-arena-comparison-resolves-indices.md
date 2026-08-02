@@ -46,7 +46,7 @@ paints per rect through `PaintTable::resolve`.
 
 ## Why this is written down rather than left in the helper
 
-The rule has bitten the same helper three times, each time as a passing test
+The rule has bitten the same helper five times, each time as a passing test
 that should not have passed, or a failing test that was right to fail for a
 reason nobody predicted:
 
@@ -57,7 +57,16 @@ reason nobody predicted:
 - `PaintEntry`'s `shadows`/`blurs`, which story #578 turned into
   arena-relative `ShadowRange`/`BlurRange` positions in their own right —
   resolved through `PaintTable::shadows`/`PaintTable::blurs` rather than
-  compared as part of the whole `PaintEntry`.
+  compared as part of the whole `PaintEntry`;
+- `PaintEntry`'s `fill` and `extra_fills`, which the same story turned into
+  row indices into each arena's own per-kind fill tables — resolved through
+  `PaintTable::fill`;
+- `PaintEntry`'s `stroke` and `shape`, which the story's last step turned
+  into `StrokeRange`/`ShapeRange` — resolved through `PaintTable::stroke`
+  and `PaintTable::shape`. These two had been plain values the helper was
+  correct to compare directly right up until they were not, which is the
+  fourth and fifth times this has happened and the pattern the paragraph
+  below predicts.
 
 The third is the reason this is a record rather than a comment. It arrived
 from an unrelated story, in a field the helper already compared and had been
