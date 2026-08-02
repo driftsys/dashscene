@@ -22,8 +22,13 @@ jobs:
     outputs:
       figma: ${{ steps.filter.outputs.figma }}
       packer: ${{ steps.filter.outputs.packer }}
+      code: ${{ steps.code.outputs.code }}
     steps:
+      # Full history: the code detector below diffs two arbitrary commits,
+      # which a shallow clone cannot resolve.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -75,6 +80,61 @@ jobs:
               - 'Cargo.toml'
               - 'Cargo.lock'
 
+      # Whether anything outside documentation changed. The compile jobs gate
+      # on this, so it asks the opposite question from the filters above: not
+      # "did some changed file match" but "is EVERY changed file
+      # documentation". dorny/paths-filter cannot express that. It reports
+      # whether SOME file matched, and its negation syntax does not close the
+      # gap — under the default predicate-quantifier a '!' pattern is matched
+      # literally rather than treated as an exclusion, so an inverted filter
+      # would report "nothing outside docs changed" for every pull request and
+      # skip the entire suite while reporting green.
+      #
+      # Which way this fails is the point. Every path out of this step except
+      # one reports code=true, so an empty diff, an unreadable diff, or a file
+      # this does not recognise runs the full suite. Only a diff that was read
+      # successfully and held nothing but documentation skips anything.
+      - name: detect changes outside documentation
+        id: code
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -uo pipefail
+          changed=$(git diff --name-only "$BASE" "$HEAD" 2>/dev/null || true)
+          if [ -z "$changed" ]; then
+            echo "no readable diff between $BASE and $HEAD; running everything"
+            echo "code=true" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "changed files:"
+          echo "$changed"
+          # Documentation is Markdown under docs/ and the Markdown files at the
+          # repository root (AGENTS.md, CLAUDE.md, README.md). Markdown anywhere
+          # else counts as code — crates/**/*.md in particular, because a
+          # crate's Markdown can reach a doctest through include_str!, and
+          # letting that skip the test job would let a doctest break unseen. No
+          # crate does that today, which is a fact about today and not a
+          # guarantee about tomorrow.
+          #
+          # Matched with case rather than grep deliberately. case is a shell
+          # builtin that behaves identically everywhere; grep's -q and -v
+          # combination does not agree across implementations (ugrep 7.5 reports
+          # no match on input where GNU grep reports one), and it disagrees
+          # silently, by returning an exit code rather than by failing.
+          code=false
+          while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            case "$file" in
+              docs/*.md) ;;          # documentation, at any depth under docs/
+              */*) code=true ;;      # any other path inside a directory
+              *.md) ;;               # Markdown at the repository root
+              *) code=true ;;        # any other file at the repository root
+            esac
+          done <<<"$changed"
+          echo "code=$code" >>"$GITHUB_OUTPUT"
+          echo "result: code=$code"
+
   fmt:
     name: fmt
     runs-on: ubuntu-latest
@@ -93,6 +153,10 @@ jobs:
       - uses: dprint/check@v2.3
 
   clippy:
+    # Compile-heavy: skipped when the diff is documentation only
+    # (see the changes job's detect step).
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     name: clippy
     runs-on: ubuntu-latest
     steps:
@@ -111,6 +175,10 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
   test:
+    # Compile-heavy: skipped when the diff is documentation only
+    # (see the changes job's detect step).
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     name: test
     runs-on: ubuntu-latest
     steps:
@@ -137,6 +205,10 @@ jobs:
       - run: cargo test --workspace --doc
 
   demo-build:
+    # Compile-heavy: skipped when the diff is documentation only
+    # (see the changes job's detect step).
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     name: demo-build
     runs-on: ubuntu-latest
     # The showcase host builds. That is the whole claim, and it is the only one
@@ -219,6 +291,10 @@ jobs:
           deno task test
 
   wasm-build:
+    # Compile-heavy: skipped when the diff is documentation only
+    # (see the changes job's detect step).
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     name: wasm-build
     runs-on: ubuntu-latest
     steps:
@@ -245,6 +321,10 @@ jobs:
           if-no-files-found: error
 
   atlas-repro:
+    # Compile-heavy: skipped when the diff is documentation only
+    # (see the changes job's detect step).
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     name: atlas-repro (${{ matrix.arch }})
     # Both architectures, because the fixtures are checked on both and
     # each catches what the other cannot. The committed atlases are not
@@ -321,6 +401,10 @@ jobs:
           MSDF_ATLAS_GEN: /home/runner/.local/bin/msdf-atlas-gen
 
   render-oracle:
+    # Compile-heavy: skipped when the diff is documentation only
+    # (see the changes job's detect step).
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     name: render-oracle
     runs-on: ubuntu-latest
     # The design-source render oracle (exit criterion E7, guardrail G-11):
@@ -436,6 +520,10 @@ jobs:
     # (docs/decisions/house-style.md). "skipped" is accepted: convco only runs on
     # pull requests, deno only when importers/figma/ changed, and calibration
     # only when the packer paths changed (docs/decisions/test-tiers.md).
+    # clippy, test, demo-build, wasm-build, atlas-repro and render-oracle skip
+    # when the diff is documentation only, which also skips deno through its
+    # dependency on wasm-build. This is the reason a green aggregate cannot be
+    # read as "the suite ran": read the jobs, not the aggregate.
     needs:
       [
         changes,
