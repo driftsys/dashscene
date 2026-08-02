@@ -161,6 +161,12 @@ into the records below. Per-story decisions land here directly:
   work"; the v0.10 close moved that work into v0.11, and it is **as built**
   there (stories #399 and #401). Byte layout:
   `../design/dsb-container-format.md`.
+- [container-parse-reads-a-prefix-through-a-host-reader.md](container-parse-reads-a-prefix-through-a-host-reader.md)
+  — **open**: `Container::parse` stays strict, and a prefix is read by a
+  separate host-side envelope reader rather than by a tolerant parse mode.
+  One bounds check costs nothing under `mmap` and forces a whole file into
+  linear memory in wasm, so stories #587 and #595 had each planned to change
+  it without knowing about the other.
 - [dsb-frozen-fixture-r7-guard.md](dsb-frozen-fixture-r7-guard.md) — a
   frozen, checked-in `.dsb` byte fixture guards R7's append-only schema
   evolution (debt #64); binds every edit to `dashbuf.fbs`.
