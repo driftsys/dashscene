@@ -111,7 +111,20 @@ jobs:
           HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
         run: |
           set -uo pipefail
-          changed=$(git diff --name-only "$BASE" "$HEAD" 2>/dev/null || true)
+          # Three dots, not two. BASE is the base branch's current tip, not the
+          # merge base, so "git diff BASE HEAD" reports everything that landed on
+          # main since this branch diverged as though this branch had changed it.
+          # On a branch five commits behind main that read 34 files where the
+          # pull request changed 3. "BASE...HEAD" diffs from the merge base
+          # instead, which is the pull request's actual diff.
+          #
+          # The two forms agree only when BASE is an ancestor of HEAD, which is
+          # why this shipped: the branch that verified it was cut from main's tip
+          # moments earlier, so the check only ever exercised the case where the
+          # bug cannot appear. For the push event they still agree whenever
+          # "before" is an ancestor of "sha", and three dots degrades to the
+          # merge base when a force-push means it is not.
+          changed=$(git diff --name-only "$BASE...$HEAD" 2>/dev/null || true)
           if [ -z "$changed" ]; then
             echo "no readable diff between $BASE and $HEAD; running everything"
             echo "code=true" >>"$GITHUB_OUTPUT"
