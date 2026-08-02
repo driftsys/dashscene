@@ -648,10 +648,23 @@ jobs:
     # It needs `deno` because E6 is the one criterion no single job can prove.
     # Byte-identity is transitive only because two suites on two machines
     # assert against the same committed bytes: the native library call, which
-    # the exit-gate profile runs below, and importers/figma/src/wasm_test.ts,
-    # which runs in `deno`. Requiring that job is how the second half is held.
+    # the exit-gate profile runs in `exit-gate-tests`, and
+    # importers/figma/src/wasm_test.ts, which runs in `deno`. Requiring that
+    # job is how the second half is held.
     #
-    needs: [changes, test, deno, render-oracle, wasm-build]
+    # Split in two. This job holds only the conjunction — the part that must
+    # wait, because it reads the other jobs' results — and it costs seconds.
+    # The covering tests themselves live in `exit-gate-tests`, which depends on
+    # nothing but the checkout and so starts with everything else.
+    #
+    # They were one job, and that job could not begin until `test`,
+    # `render-oracle` and `wasm-build` had all finished. Measured on main run
+    # 30739249702: it started at 255 s and ran for 110 s, of which the
+    # conjunction step was 0 s, the covering tests 2 s, and 86 s was compiling
+    # the workspace so that `nextest list` could enumerate them. That is 110 s
+    # of almost entirely unrelated work, serialized behind jobs it does not
+    # read, on every code push.
+    needs: [changes, test, deno, render-oracle, wasm-build, exit-gate-tests]
     # `!cancelled()` rather than `always()`: the two agree for success, failure
     # and skipped, and differ only on a cancelled run, where `always()` would
     # provision a runner for a result nobody is waiting for.
@@ -663,12 +676,13 @@ jobs:
     if: ${{ !cancelled() && needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      # First, before any provisioning: when a carrying job has already failed
-      # there is nothing to gain from a runner, a toolchain and two downloads.
+      # The whole job. It reads results and provisions nothing — no checkout,
+      # no toolchain, no build — which is what lets the part that does provision
+      # run in parallel as `exit-gate-tests` instead of after these jobs.
       - name: the jobs carrying E1-E7 succeeded
         run: |
-          echo 'test=${{ needs.test.result }} deno=${{ needs.deno.result }} render-oracle=${{ needs.render-oracle.result }} wasm-build=${{ needs.wasm-build.result }}'
-          for pair in "test:${{ needs.test.result }}" "render-oracle:${{ needs.render-oracle.result }}" "wasm-build:${{ needs.wasm-build.result }}"; do
+          echo 'test=${{ needs.test.result }} deno=${{ needs.deno.result }} render-oracle=${{ needs.render-oracle.result }} wasm-build=${{ needs.wasm-build.result }} exit-gate-tests=${{ needs.exit-gate-tests.result }}'
+          for pair in "test:${{ needs.test.result }}" "render-oracle:${{ needs.render-oracle.result }}" "wasm-build:${{ needs.wasm-build.result }}" "exit-gate-tests:${{ needs.exit-gate-tests.result }}"; do
             name="${pair%%:*}"; result="${pair#*:}"
             if [ "$result" != "success" ]; then
               echo "exit-gate: $name did not succeed ($result) — E1-E7 is not asserted"
@@ -685,9 +699,29 @@ jobs:
             echo "exit-gate: the figma filter fired but deno is ${{ needs.deno.result }} — E6's wasm half is not asserted"
             exit 1
           fi
+  exit-gate-tests:
+    name: exit-gate-tests
+    # The measuring half of the v0 exit gate: the covering tests for E1 to E7
+    # exist, and they pass. Nothing here reads another job's result, so it
+    # needs only `changes` and runs beside `test` rather than after it. The
+    # conjunction that does read those results is the `exit-gate` job below.
+    #
+    # Same `code == 'true'` condition as the jobs carrying the criteria: on a
+    # documentation-only diff they skip, and so does this.
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # Reads the shared cache `test` writes. `cargo nextest list --workspace`
+      # below builds the same full set of native test binaries `test` builds,
+      # which is the condition for sharing that key rather than keeping one of
+      # its own (docs/decisions/test-tiers.md).
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: workspace-tests
+          save-if: "false"
       - name: install flatc
         run: |
           curl -fsSL -o flatc.zip https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip
@@ -756,6 +790,7 @@ jobs:
         atlas-repro,
         render-oracle,
         calibration,
+        exit-gate-tests,
         exit-gate,
       ]
     runs-on: ubuntu-latest

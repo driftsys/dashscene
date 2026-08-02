@@ -305,26 +305,45 @@ job runs when the `changes` job's `packer` path filter fires, listed above.
 Defining risk by what the diff touches means nobody has to remember to
 judge a change risky.
 
-**`test`, `render-oracle` and `calibration` share one compilation cache.**
+**`test`, `render-oracle`, `calibration` and `exit-gate-tests` share one
+compilation cache.**
 `Swatinem/rust-cache` keys on the job name unless told otherwise, so each
 job kept a separate cache and compiled the workspace independently. That is
 free for a job that runs on every push and expensive for one that does not:
 `calibration` fires only when the `packer` filter matches, so its key was
 almost never populated. Measured on PR #674, it logged `No cache found` and
 spent 3 min 14 s compiling all 108 test binaries — in a run where the `test`
-job had compiled the same binaries in 69 s from a warm cache. The three jobs
+job had compiled the same binaries in 69 s from a warm cache. These jobs
 build the same native test binaries, so they now share the key
 `workspace-tests`. `test` writes it, because it is the member that runs most
 often — every push that changes code — while `render-oracle` builds only a
-subset of the same binaries and `calibration` needs a `packer` path on top.
-The other two read it with `save-if: false`.
+subset of the same binaries, `calibration` needs a `packer` path on top, and
+`exit-gate-tests` is newer than the key. The other three read it with
+`save-if: false`.
 
-The sharing works across runs, not within one: the three jobs start together,
+The sharing works across runs, not within one: the jobs start together,
 and a cache is written in a job's post-run step, so `calibration` never reads
 what `test` produced beside it. What it reads is the cache `test` last wrote
 on `main`, which every code-changing push refreshes. That is also why `test`
 has to be the writer — GitHub scopes a cache written on a branch to that
 branch, and only the default branch's caches are readable everywhere.
+
+**The v0 exit gate is two jobs, because only one of them has to wait.**
+`exit-gate` reads the results of `test`, `deno`, `render-oracle` and
+`wasm-build`, so it cannot start until they finish — that conjunction is
+the whole point of the job. It was also the job that ran the covering
+tests, and those read no other job's result at all.
+
+Measured on main run 30739249702, as one job it started at 255 s and ran
+for 110 s: the conjunction step 0 s, the covering tests 2 s, and 86 s
+compiling the workspace so `nextest list` could enumerate them. Roughly
+170 s of wall clock on every code push, for two seconds of assertion.
+
+`exit-gate-tests` now carries the build and the run, needs only `changes`,
+and starts beside `test`. `exit-gate` keeps the conjunction, adds
+`exit-gate-tests` to the results it requires, and provisions nothing — no
+checkout, no toolchain, no build. The claim a green `exit-gate` makes is
+unchanged: every carrying job succeeded and every covering test passed.
 
 `clippy` and `demo-build` keep their own caches — `cargo clippy` and
 `cargo build -p demo` produce different artifacts from a test build, so
