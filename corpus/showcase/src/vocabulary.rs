@@ -1,41 +1,55 @@
-//! The second half of every scene: the paint vocabulary `dashlang`'s builder
-//! does not carry, staged straight onto the arena.
+//! The arena-dependent remainder of a scene's paint: the constructs that need
+//! an index the arena itself issues, plus the variant sets a scene declares.
 //!
-//! # Why a scene is built in two passes
+//! # Why this remainder cannot move onto the `dashlang` node
 //!
-//! `dashlang::Node` exposes geometry, the flex vocabulary, one solid fill, and
-//! the reactive bindings. It has no gradient, stroke, corner, shadow, blur,
-//! image, mask, clip, opacity, vector-field or text-style setter — the whole
-//! v0 paint vocabulary lives on `dashscene_core::Prop` and has never had a
-//! `dashlang` skin (the DSL's vocabulary gap, issue #118).
+//! `dashlang::Node` carries the whole v0 paint vocabulary a scene can author
+//! as a plain value: fills, gradients (through `fill_with`, using this
+//! module's [`gradient`] and [`diagonal_gradient`] — two stops at 0.0 and 1.0
+//! is a scene-side opinion, not builder vocabulary), strokes, per-corner
+//! radii, shadows, backdrop blur, clip, mask, opacity, and text with its
+//! style ([`text_style`] builds the value its setter takes). A scene authors
+//! all of that on the value tree it builds through `dashlang`, before an
+//! arena exists to stage anything against.
 //!
-//! So a showcase scene is authored through `dashlang` for structure, layout
-//! and motion, and then this pass names the nodes it wants and stages their
-//! paint intent through `Txn::set_prop`. That is the same split
-//! `corpus/dsl-generated` already uses, where two of the six cases go through
-//! core's `Txn` because the construct is not builder vocabulary.
+//! Three constructs cannot join it, because each needs an index
+//! `Txn::add_image` issues against the arena, and no arena exists until the
+//! tree is handed to `Scene::build_live`: an image fill, a cropped image
+//! fill, and a baked vector field's coverage mask, which is itself an entry
+//! in the atlas `add_image` registers. A scene that uses any of these still
+//! runs a second pass over the built arena, addressing the nodes it named on
+//! the tree through [`Painting`]. This module keeps exactly what that pass
+//! needs: [`image_fill`] and [`image_crop`] build the `Prop` an image fill
+//! sets once an index exists to build it from.
+//!
+//! Declaring a variant set lives in the same pass for a narrower reason: it
+//! is not paint intent, but `Txn::add_variant_set` is also an arena
+//! operation, and staging it here keeps a scene at one transaction and one
+//! solve rather than two (stories #573, #625).
 //!
 //! # Why it is safe to run after `build_live`
 //!
 //! A `LiveScene` assumes it solely owns the committed **geometry** of its
 //! arena between ticks: a tick that solves nothing replays the retained rect
 //! cache, so a second producer that moved a node would have its move
-//! overwritten. Everything staged here is paint intent — fill, stroke,
-//! corners, shadows, blurs, the vector field, clip and mask flags, opacity,
-//! text and text style — and none of it resolves through the solver, so
+//! overwritten. Everything this pass stages — an image fill, a vector
+//! field's coverage mask, a variant-set declaration — is either paint intent
+//! or arena metadata, and none of it resolves through the solver, so
 //! replaying the cache reproduces exactly the geometry this pass committed
 //! against.
 //!
-//! Text is the one entry that needs care: glyph runs are staged by the solver
-//! at commit and are rebuilt from scratch each time, so this pass commits
-//! through a text-capable solver rather than through a rect replay. See
-//! `crate::solver`.
+//! The one thing this pass has to protect is the text the first pass already
+//! staged: glyph runs are rebuilt from scratch at every commit rather than
+//! replayed, so a second commit through a solver with no typesetter would
+//! wipe out whatever text the scene already carries. This pass therefore
+//! always commits through the same text-capable solver the first pass used.
+//! See `crate::solver`.
 
 use std::collections::HashMap;
 
 use dashpaint::{
-    Blur, BlurKind, Color, Gradient, GradientKind, GradientStop, ImageAsset, Mat23, PaintKind,
-    ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, Vec2, VectorField,
+    Color, Gradient, GradientKind, GradientStop, ImageAsset, Mat23, PaintKind, ScaleMode, Vec2,
+    VectorField,
 };
 use dashscene_core::{
     Arena, LayoutSolver, NodeId, Prop, TextAlign, TextAlignV, TextStyle, Txn, VariantMember,
@@ -188,25 +202,6 @@ pub mod palette {
     pub const FROST: Color = rgba(1.0, 1.0, 1.0, 0.2);
 }
 
-/// All four corners at one radius.
-pub fn corners(radius: f32) -> Prop {
-    Prop::Corners {
-        top_left: radius,
-        top_right: radius,
-        bottom_right: radius,
-        bottom_left: radius,
-    }
-}
-
-/// A stroke of `width` document units, placed by `align`.
-pub fn stroke(width: f32, align: StrokeAlign, color: Color) -> Prop {
-    Prop::Stroke(Stroke {
-        width,
-        align,
-        color,
-    })
-}
-
 /// A two-stop gradient over the node's box.
 ///
 /// The three handles are normalized positions in that box — origin, the
@@ -214,8 +209,12 @@ pub fn stroke(width: f32, align: StrokeAlign, color: Color) -> Prop {
 /// gradient geometry. These are the centre, the right edge and the bottom
 /// edge, so a `Linear` reads left to right and the other three read outward
 /// from the middle.
-pub fn gradient(kind: GradientKind, from: Color, to: Color) -> Prop {
-    Prop::FillWith(PaintKind::Gradient(Gradient {
+///
+/// Two stops at 0.0 and 1.0 is an opinion, which is why it lives here and not
+/// on `dashlang::Node`: the builder carries the vocabulary, a scene carries its
+/// own shorthands.
+pub fn gradient(kind: GradientKind, from: Color, to: Color) -> PaintKind {
+    PaintKind::Gradient(Gradient {
         kind,
         handle_origin: Vec2 { x: 0.5, y: 0.5 },
         handle_primary: Vec2 { x: 1.0, y: 0.5 },
@@ -230,12 +229,12 @@ pub fn gradient(kind: GradientKind, from: Color, to: Color) -> Prop {
                 color: to,
             },
         ],
-    }))
+    })
 }
 
 /// A linear gradient running top-left to bottom-right.
-pub fn diagonal_gradient(from: Color, to: Color) -> Prop {
-    Prop::FillWith(PaintKind::Gradient(Gradient {
+pub fn diagonal_gradient(from: Color, to: Color) -> PaintKind {
+    PaintKind::Gradient(Gradient {
         kind: GradientKind::Linear,
         handle_origin: Vec2 { x: 0.0, y: 0.0 },
         handle_primary: Vec2 { x: 1.0, y: 1.0 },
@@ -250,7 +249,7 @@ pub fn diagonal_gradient(from: Color, to: Color) -> Prop {
                 color: to,
             },
         ],
-    }))
+    })
 }
 
 /// An image fill in one of Figma's four scale modes.
@@ -272,36 +271,6 @@ pub fn image_crop(image: u32, transform: Mat23) -> Prop {
         transform: Some(transform),
         tile_scale: 1.0,
     })
-}
-
-/// One drop shadow.
-pub fn drop_shadow(dx: f32, dy: f32, blur: f32, spread: f32, color: Color) -> Prop {
-    Prop::Shadows(vec![Shadow {
-        kind: ShadowKind::Drop,
-        offset: Vec2 { x: dx, y: dy },
-        blur,
-        spread,
-        color,
-    }])
-}
-
-/// One inner shadow.
-pub fn inner_shadow(dx: f32, dy: f32, blur: f32, spread: f32, color: Color) -> Prop {
-    Prop::Shadows(vec![Shadow {
-        kind: ShadowKind::Inner,
-        offset: Vec2 { x: dx, y: dy },
-        blur,
-        spread,
-        color,
-    }])
-}
-
-/// One backdrop blur of `radius` document units.
-pub fn backdrop_blur(radius: f32) -> Prop {
-    Prop::Blurs(vec![Blur {
-        kind: BlurKind::Backdrop,
-        radius,
-    }])
 }
 
 /// The node's baked-vector coverage mask.

@@ -33,12 +33,22 @@
 //!
 //! # How a scene is built
 //!
-//! In two passes, because `dashlang`'s builder carries geometry, the flex
-//! vocabulary, one solid fill and the reactive bindings, and nothing of the
-//! paint vocabulary (issue #118). Structure and motion are authored through
-//! `dashlang`; the paint intent is staged onto the named nodes afterwards
-//! through `dashscene_core::Txn`. See [`vocabulary`] for why the second pass
-//! is safe to run against a live scene's arena.
+//! In one pass. `dashlang`'s builder carries the whole v0 paint vocabulary —
+//! fills, gradients, strokes, corners, shadows, blur, clip, mask, opacity,
+//! and text with its style — alongside geometry, the flex vocabulary and the
+//! reactive bindings, so a scene authors structure, motion and paint on the
+//! same value tree.
+//!
+//! Two constructs still need a short second pass over the built arena,
+//! addressing its nodes by the name they were given on the tree: an image
+//! fill (including a cropped one and a baked vector field's coverage mask),
+//! because each references an index `dashscene_core::Txn::add_image` issues
+//! and no such index exists until the tree is built into an arena; and a
+//! variant-set declaration, because `Txn::add_variant_set` is likewise an
+//! arena operation. `surfaces` runs this second pass for its image fills and
+//! its vector field; `layout` runs it only to declare its variant set;
+//! `typography` needs no second pass at all. See [`vocabulary`] for why
+//! running it after `build_live` is safe against a live scene's arena.
 //!
 //! # What a scene tells the host about input
 //!

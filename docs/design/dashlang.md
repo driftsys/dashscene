@@ -4,8 +4,10 @@
     covers   v0.1 walking skeleton (story #5), the v0.2 flex vocabulary
              (story #118), the v0.4 reactive layer (story #166), the
              v0.7 document binding tables + loader-side attach (story #167),
-             and the v0.8 grid/wrap builder vocabulary + DSL-generated stress
-             corpus (story #46)
+             the v0.8 grid/wrap builder vocabulary + DSL-generated stress
+             corpus (story #46), and the v0 paint vocabulary on `Node`
+             (`paint.rs`), which let `corpus/showcase` collapse to one
+             authoring pass
 
 ## Purpose
 
@@ -50,26 +52,114 @@ All types and functions live in `crates/dashlang/src/lib.rs`:
   staged only when authored, so a non-grid node reaches the arena exactly
   as it did before this vocabulary existed. Baseline cross-alignment needs
   no new setter — `cross_align(CrossAxisAlign::Baseline)` already reaches
-  the arena.
+  the arena. `visible(bool)` completes the set: it writes `layout.visible`
+  like every other layout setter, and is layout vocabulary rather than paint
+  (`docs/decisions/visible-is-layout-opacity-is-paint.md`) even though it
+  landed with the paint vocabulary below. It stages `Prop::Visible` only when
+  it differs from core's default, and it is the one layout prop that was
+  reachable before only through the reactive `visible_when`. A node declaring
+  both is not refused: `set_base_props` stages the static value first and
+  `build_live` then seeds every bound prop from its signal's initial value, so
+  the signal wins — the precedence every bound prop already has, now reachable
+  for the first time and pinned by
+  `crates/dashlang/tests/visible_precedence.rs`.
+  Every one of core's 37 `Prop` variants now has a `Node` setter: 4 geometry,
+  20 layout, 13 paint.
 - `scene(roots: impl IntoIterator<Item = Node>) -> Scene` — collects a
   scene description from one or more root `Node`s, in order.
 
 `Node` and `Scene` are inert: constructing and combining descriptions
 stages nothing against an arena.
 
+## Paint surface
+
+The paint vocabulary is a second set of `Node` setters, in
+`crates/dashlang/src/paint.rs`. Twelve of them are **mirrors** — one
+setter per `dashscene_core::Prop` paint variant, taking core's own type:
+
+    corners_each(tl, tr, br, bl: f32)   Prop::Corners
+    stroke(Stroke)                      Prop::Stroke
+    fill_with(PaintKind)                Prop::FillWith
+    extra_fills(iter<PaintKind>)        Prop::ExtraFills
+    opacity(f32)                        Prop::Opacity
+    clip(bool)                          Prop::Clip
+    mask(bool)                          Prop::Mask
+    shadows(iter<Shadow>)               Prop::Shadows
+    blurs(iter<Blur>)                   Prop::Blurs
+    shape_field(VectorField)            Prop::ShapeField
+    text(&str)                          Prop::Text
+    text_style(TextStyle)               Prop::TextStyle
+
+`fill(Color)` is the thirteenth and predates the rest: it is the solid
+shorthand, the same split `Prop::Fill`/`Prop::FillWith` makes in core.
+Every type these take is re-exported from `lib.rs`, so authoring a
+gradient or a shadow needs no direct `dashpaint` dependency.
+
+Four **sugar** methods expand to a mirror and add nothing else:
+`corners(r)` is `corners_each` with the radius four times;
+`drop_shadow(dx, dy, blur, spread, color)` and `inner_shadow(...)` are
+`shadows` with one entry of the matching `ShadowKind`; `backdrop_blur(r)`
+is `blurs` with one `BlurKind::Backdrop` entry. Each replaces the whole
+list, so a node needing two shadows, or a mixed drop-and-inner list,
+calls the mirror. A `gradient(...)` constructor is deliberately **not**
+among them: a gradient's geometry is three handle points, and any sugar
+short of the full `Gradient` would have to invent them — inventing
+defaults is the one thing "vocabulary, not semantics" forbids. The
+showcase's own `gradient`/`diagonal_gradient` helpers are scene-local
+conveniences over `PaintKind`, and they stay in the scene.
+
+**Stages only when authored.** Each paint field on `Node` is `Option` or
+an empty `Vec` until a setter writes it, and `stage_paint_props` emits a
+`Prop` only for the ones that were. A node that sets none of them reaches
+the arena with exactly the props it staged before this vocabulary existed
+— asserted by `crates/dashlang/tests/paint.rs`'s unset-defaults case. The
+consequence to know: `shadows([])` and `blurs([])` stage nothing, so
+neither clears a list the arena already holds. Core has no clear
+operation for either, the same gap `fill` has.
+
+**Image fills still need the arena.** `fill_with` takes any `PaintKind`,
+including `PaintKind::Image`, but that variant's `image` field is an index
+`Txn::add_image` issues against an arena — and the value tree has no
+arena. So a scene using an image fill builds the tree first and stages
+that one prop in a short second pass (`corpus/showcase/README.md`
+describes the shape).
+
+**`fill_with` and a fill-channel binding are mutually exclusive.** See
+"Refused combinations" under the reactive layer below.
+
+The module is separate from `lib.rs` for the same reason `reactive.rs` is:
+it is a distinct subsystem — a whole prop family and its staging walk —
+not a second `Node` type. All three files declare setters on the one
+`Node`, so the authoring surface stays a single import path.
+
+The vocabulary's shape, the sugar boundary, the re-export widening and the
+image seam are recorded in `docs/decisions/dashlang-paint-vocabulary.md`; the
+charter reading that admits sugar at all is the 2026-08-01 extension to
+`docs/decisions/dashlang-value-tree-builder.md`.
+
 ## Build/commit mapping
 
 `Scene::build(&mut Arena) -> Built` and `Scene::build_with(&mut Arena,
 &mut dyn LayoutSolver) -> Built` are the DSL's points of contact with
 `dashscene-core`: both open one `Txn`, walk the value tree depth-first
-(a private recursive `add` — `add_node` then `set_prop` for every
-`Layout` field and, if set, `Fill`, then recurse into children), and
+(a private `add`, over an explicit stack rather than the call stack —
+issue #79 — calling `add_node` then `set_base_props` for each node before
+its children), and
 commit exactly once — `build` via `Txn::commit()` (the fixed solver,
 flex intent ignored), `build_with` via `Txn::commit_with(solver)` (a
 real solver, `dashscene-engine`'s `TaffySolver` being the product
 case). Both _add_ their roots to whatever the arena already holds —
 the DSL is a producer, not an owner — matching the one-commit model
 the future C# describe-buffer skin will use across its FFI seam.
+
+`set_base_props` is the one place a node's non-reactive props are staged:
+every `Layout` field, the grid track lists and `Fill` when set, then
+`paint::stage_paint_props` for the paint vocabulary. It is `pub(crate)`
+and called from both walks — `add` here, and `stage_live` on the reactive
+path — so the paint vocabulary reaches the arena through exactly one code
+path, and a `Scene::build` node and a `Scene::build_live` node cannot
+stage different props. Adding the vocabulary to one walk only was the
+drift this shape rules out.
 
 `Built` wraps the commit's generation (`Built::generation() -> u64`). It
 is a named type rather than a bare `u64` so `build`/`build_with` have a
@@ -138,9 +228,26 @@ is the declarative `enum Transform`
 (`Identity`/`Scale`/`MapRange`/`Clamp`/`Format`/`Custom`);
 `Custom(ClosureId)` holds a `dashlang`-only closure in a side table so
 the enum itself stays serializable
-(`docs/decisions/reactive-layer-home-and-staging.md`). A `smooth()` whose
-channel has no matching `bind()` is a named build-time panic, never a
-silently inert spring (debt #194, P4).
+(`docs/decisions/reactive-layer-home-and-staging.md`).
+
+**Refused combinations.** Two authoring combinations are named build-time
+panics in `stage_live` rather than silent losses (P4):
+
+- A `smooth()` whose channel has no matching `bind()` — the spring would
+  be silently inert, with no signal to take targets from (debt #194).
+- A `fill_with(...)` on a node that also binds any `Fill*` channel. A fill
+  channel drives one component of a solid color through the node's fill
+  shadow, and every write it makes — including the seed `build_live`
+  stages before the first frame — is a `Prop::Fill`, which replaces the
+  node's whole fill slot. The authored gradient or image fill would be
+  gone from the first committed frame with nothing reporting it. The shadow
+  seeds from the solid `fill` only, because a gradient carries no
+  four-component color for the channels to address, so there is no merge
+  to perform and no defensible way to prefer one of the two authorings
+  over the other
+  (`docs/decisions/fill-with-refuses-a-fill-channel-binding.md`, which also
+  records why the loader-side `attach_live` is deliberately not covered —
+  debt #667).
 
 **The document binding tables (v0.7, story #167).** `build_live` stages
 every scalar signal (named via `Scene::signal_named`, or anonymous) and
@@ -189,7 +296,15 @@ smoothing.
 ## Module layout
 
     crates/dashlang/src/lib.rs         crate docs + the value-tree DSL
-                                       (node/anon/rgba/Node/scene/Scene)
+                                       (node/anon/rgba/Node/scene/Scene),
+                                       the Node paint fields, and
+                                       set_base_props — the one staging
+                                       walk both build paths call
+    crates/dashlang/src/paint.rs       the paint vocabulary: 12 Prop
+                                       mirrors and 4 sugar methods on
+                                       Node, plus stage_paint_props,
+                                       which stages only what was
+                                       authored
     crates/dashlang/src/reactive.rs    the v0.4 reactive layer (#166):
                                        Signal/Channel/Transform/Spring,
                                        Node bind/smooth/bind_text/
@@ -204,7 +319,10 @@ smoothing.
                                        unset-value defaults; the flex and
                                        the grid/wrap/baseline vocabulary
                                        reach the arena; build_with routes
-                                       through an injected solver
+                                       through an injected solver; and that
+                                       the paint vocabulary is authorable
+                                       through dashlang's own re-exports
+                                       alone, with no dashpaint import
     crates/dashlang/tests/corpus.rs    the DSL-generated E3 stress corpus
                                        (issue #46): negative gap, hug-in-fill,
                                        wrap, grid spans, baseline, and a
@@ -221,11 +339,29 @@ smoothing.
                                        reflow, spring smoothing without
                                        solving, the declarative and format
                                        transforms, and one signal binding
-                                       two nodes
+                                       two nodes; plus the two refused
+                                       combinations (an unbound smooth,
+                                       and fill_with beside a fill-channel
+                                       binding)
+    crates/dashlang/tests/paint.rs     acceptance for the paint
+                                       vocabulary: each mirror reaches the
+                                       arena, DSL output == hand-built
+                                       output; each sugar method equals
+                                       its mirror; clip(false)/mask(false)
+                                       still stage; an unauthored node
+                                       stages what it staged before the
+                                       vocabulary existed
+    crates/dashlang/tests/visible_precedence.rs
+                                       a bound visible_when signal wins
+                                       over a static visible(bool) on the
+                                       same node — the collision the
+                                       static setter made reachable
 
-The value-tree DSL is one file; the reactive layer is its own module
-(`reactive.rs`) because it is a distinct subsystem — signal state,
-resolved binding tables, the `dashcue` scheduler, and the flush loop.
+The value-tree DSL is one file; the paint vocabulary (`paint.rs`) and the
+reactive layer (`reactive.rs`) are each their own module, because each is
+a distinct subsystem — a prop family and its staging walk, and signal
+state with the binding tables, the `dashcue` scheduler and the flush loop.
+Both declare setters on the one `Node`, which stays in `lib.rs`.
 
 ## Trace
 
@@ -253,4 +389,10 @@ resolved binding tables, the `dashcue` scheduler, and the flush loop.
   (`reactive-layer-home-and-staging.md`,
   `bindings-are-explicit-and-flat.md`,
   `scene-tree-is-static-lists-are-bounded-pools.md`,
-  `visible-is-layout-opacity-is-paint.md`).
+  `visible-is-layout-opacity-is-paint.md`);
+  `docs/decisions/dashlang-paint-vocabulary.md` (the v0 paint vocabulary this
+  crate now carries, and the image index that bounds it);
+  `docs/decisions/fill-with-refuses-a-fill-channel-binding.md` (the refusal
+  that vocabulary made reachable);
+  `docs/decisions/cross-arena-comparison-resolves-indices.md` (the rule the
+  DSL-equals-hand-built assertions follow).

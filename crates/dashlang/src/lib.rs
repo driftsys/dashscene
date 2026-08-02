@@ -33,6 +33,7 @@
 
 use dashscene_core::{EdgeInsets, Layout, LayoutSolver, NodeId, Prop, Txn};
 
+mod paint;
 mod reactive;
 
 // The reactive layer (issue #166): signals, bindings, transforms, and
@@ -50,13 +51,17 @@ pub use reactive::{
 // keeps authoring and solving a scene (via `build`/`build_with` with an
 // existing solver, e.g. `dashscene-engine`'s `TaffySolver`) a
 // one-import-path surface, with no direct `dashscene-core` dependency
-// required downstream. Implementing a *custom* `LayoutSolver` still
-// needs `dashscene_core::{LayoutSolver, NodeId, SolvedRect}` directly —
+// required downstream. The paint vocabulary's types come through here
+// too, so authoring a shadow or a gradient needs no `dashpaint` dependency.
+// Implementing a *custom* `LayoutSolver` still needs
+// `dashscene_core::{LayoutSolver, NodeId, SolvedRect}` directly —
 // deliberately not re-exported, so `NodeId` stays a type no `dashlang`
 // producer ever names (see `crates/dashlang/tests/builder.rs`'s
 // `DoubleWidthSolver` for exactly this case).
 pub use dashscene_core::{
-    Arena, AxisSizing, Color, CrossAxisAlign, GridTrack, LayoutMode, MainAxisAlign,
+    Arena, AxisSizing, Blur, BlurKind, Color, CornerRadii, CrossAxisAlign, Gradient, GradientKind,
+    GradientStop, GridTrack, LayoutMode, MainAxisAlign, Mat23, PaintKind, ScaleMode, Shadow,
+    ShadowKind, Stroke, StrokeAlign, TextAlign, TextAlignV, TextStyle, Vec2, VectorField,
 };
 
 /// A named node description. See [`anon`] for unnamed nodes.
@@ -107,6 +112,23 @@ pub struct Node {
     grid_rows: Vec<GridTrack>,
     grid_columns: Vec<GridTrack>,
     fill: Option<Color>,
+    // The paint vocabulary (`paint.rs`). Every field is absent or empty
+    // when unauthored, and `stage_paint_props` stages only what was
+    // authored — so a node that sets none of them reaches the arena
+    // exactly as it did before this vocabulary existed, which the
+    // unset-defaults acceptance tests assert.
+    pub(crate) corners: Option<CornerRadii>,
+    pub(crate) stroke: Option<Stroke>,
+    pub(crate) fill_with: Option<PaintKind>,
+    pub(crate) extra_fills: Vec<PaintKind>,
+    pub(crate) shadows: Vec<Shadow>,
+    pub(crate) blurs: Vec<Blur>,
+    pub(crate) shape_field: Option<VectorField>,
+    pub(crate) clip: Option<bool>,
+    pub(crate) mask: Option<bool>,
+    pub(crate) opacity: Option<f32>,
+    pub(crate) text: Option<String>,
+    pub(crate) text_style: Option<TextStyle>,
     children: Children,
     // Reactive declarations (issue #166), resolved to targets at build.
     // Inert for the non-live `build`/`build_with` paths.
@@ -213,6 +235,15 @@ impl Node {
     /// Maximum height clamp. Cannot be unset once set.
     pub fn max_height(mut self, v: f32) -> Self {
         self.layout.max_height = Some(v);
+        self
+    }
+
+    /// Whether the node participates in layout. `false` hides it and
+    /// every descendant from the flex flow, so its siblings reflow into
+    /// its space (`Display::None`). Layout vocabulary, not paint
+    /// (`docs/decisions/visible-is-layout-opacity-is-paint.md`).
+    pub fn visible(mut self, visible: bool) -> Self {
+        self.layout.visible = visible;
         self
     }
 
@@ -490,6 +521,9 @@ pub(crate) fn set_base_props(txn: &mut Txn<'_>, id: NodeId, node: &Node) {
     if let Some(v) = node.layout.max_height {
         txn.set_prop(id, Prop::MaxHeight(v));
     }
+    if node.layout.visible != Layout::default().visible {
+        txn.set_prop(id, Prop::Visible(node.layout.visible));
+    }
     // The v0.8 grid/wrap vocabulary (story #43). Emitted only when
     // authored, so a non-grid node stages exactly the props it did before
     // this vocabulary existed (the unset-defaults acceptance tests).
@@ -517,4 +551,5 @@ pub(crate) fn set_base_props(txn: &mut Txn<'_>, id: NodeId, node: &Node) {
     if let Some(color) = node.fill {
         txn.set_prop(id, Prop::Fill(color));
     }
+    paint::stage_paint_props(txn, id, node);
 }

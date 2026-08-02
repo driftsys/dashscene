@@ -111,8 +111,14 @@ fn initial_channel_value(layout: &Layout, fill: Option<Color>, channel: Channel)
         Channel::Width => layout.width,
         Channel::Height => layout.height,
         Channel::Gap => layout.gap,
-        // dashlang authors no opacity yet (the DSL's vocabulary gap #118),
-        // so a spring smooths a bound opacity from the default 1.0.
+        // This function only runs for a channel that has a binding, and
+        // `seed_scalar` overwrites every bound channel's `last_applied`
+        // right after, from the signal's own initial value — the same
+        // precedence `visible`/`visible_when` already has
+        // (`crates/dashlang/tests/visible_precedence.rs`). So this
+        // fallback is never read as a spring's actual starting point,
+        // whether or not the node also authors `Node::opacity`; `1.0`
+        // just matches the arena's own default (`Arena::opacity`).
         Channel::Opacity => 1.0,
         _ => {
             let mut color = fill.unwrap_or(TRANSPARENT);
@@ -1310,6 +1316,7 @@ fn stage_live(
         name,
         layout,
         fill,
+        fill_with,
         scalar_bindings,
         smoothing,
         text_binding,
@@ -1331,6 +1338,25 @@ fn stage_live(
                  the spring would be silently inert (debt #194)"
             );
         }
+    }
+
+    // A `fill_with` paint and a fill-channel binding on the same node
+    // cannot both survive: the binding drives one component of a solid
+    // color through the node's fill shadow, and every write it makes is a
+    // `Prop::Fill`, which replaces the node's whole fill slot. The
+    // authored gradient or image fill would be gone from the first
+    // committed frame, with nothing reporting it. Named at build, the
+    // same way an inert spring is (P4).
+    if fill_with.is_some()
+        && let Some((channel, _)) = scalar_bindings.iter().find(|(c, _)| is_fill(*c))
+    {
+        panic!(
+            "fill_with(...) and bind({channel:?}, ...) on node {name:?} cannot be combined: \
+             a fill-channel binding writes one component of a solid color and stages the \
+             whole color as Prop::Fill, which would silently replace the authored gradient \
+             or image fill. Bind the fill channels of a solid fill(...) instead, or drop \
+             the fill-channel binding and keep fill_with(...)"
+        );
     }
 
     for (channel, expr) in scalar_bindings {
@@ -1357,6 +1383,14 @@ fn stage_live(
                 core_transform,
             );
         }
+        // The shadow seeds from the solid `fill` only, and never from
+        // `fill_with`: a gradient or an image has no four-component color
+        // for the channels to address, so there is nothing to merge a
+        // component write into. Preferring one over the other — dropping
+        // the binding, or dropping the paint — would be exactly the silent
+        // loss P4 forbids, so the combination is refused by name above
+        // instead, and this seed only ever sees a node whose authored fill
+        // is solid or absent.
         if is_fill(channel) {
             ctx.fill_shadow
                 .entry(id)

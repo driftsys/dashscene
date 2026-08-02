@@ -39,12 +39,12 @@ use dashlang::{
     AxisSizing, Channel, CrossAxisAlign, GridTrack, LayoutMode, LiveScene, MainAxisAlign, Scene,
     Signal, Spring, node,
 };
-use dashscene_core::{Arena, Prop, VariantMember, VariantSetId, VariantValue};
+use dashscene_core::{Arena, VariantMember, VariantSetId, VariantValue};
 
 use crate::resources;
 use crate::solver::ShowcaseSolver;
-use crate::vocabulary::{Painting, corners, palette, stroke};
-use dashpaint::StrokeAlign;
+use crate::vocabulary::{Painting, palette};
+use dashpaint::{Stroke, StrokeAlign};
 
 /// The scalar signal, named so the pulse can find it.
 pub const SPREAD: &str = "layout.spread";
@@ -107,6 +107,7 @@ pub fn build(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
         .mode(LayoutMode::Vertical)
         .padding(margin, margin, margin, margin)
         .gap(gap)
+        .fill(palette::NAVY)
         .child(
             node("panels")
                 .size(column, panels_height)
@@ -122,6 +123,8 @@ pub fn build(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
                         .sizing_v(AxisSizing::Hug)
                         .gap(panel_gap)
                         .padding(panel_gap, panel_gap, panel_gap, panel_gap)
+                        .fill(palette::PANEL)
+                        .corners(radius)
                         .children((0..3).map(|i| {
                             node(match i {
                                 0 => "column-a",
@@ -129,6 +132,8 @@ pub fn build(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
                                 _ => "column-c",
                             })
                             .size(panel_width - 2.0 * panel_gap, chip)
+                            .fill(palette::SKY)
+                            .corners(radius * 0.6)
                         })),
                 )
                 // A row splitting its free space: one fixed chip, two `Fill`
@@ -140,16 +145,27 @@ pub fn build(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
                         .gap(panel_gap)
                         .padding(panel_gap, panel_gap, panel_gap, panel_gap)
                         .cross_align(CrossAxisAlign::Center)
-                        .child(node("fill-fixed").size(chip * 1.4, chip * 2.0))
+                        .fill(palette::PANEL)
+                        .corners(radius)
+                        .child(
+                            node("fill-fixed")
+                                .size(chip * 1.4, chip * 2.0)
+                                .fill(palette::AMBER)
+                                .corners(radius * 0.6),
+                        )
                         .child(
                             node("fill-a")
                                 .size(chip, chip * 3.0)
-                                .sizing_h(AxisSizing::Fill),
+                                .sizing_h(AxisSizing::Fill)
+                                .fill(palette::MOSS)
+                                .corners(radius * 0.6),
                         )
                         .child(
                             node("fill-b")
                                 .size(chip, chip * 4.0)
-                                .sizing_h(AxisSizing::Fill),
+                                .sizing_h(AxisSizing::Fill)
+                                .fill(palette::MOSS)
+                                .corners(radius * 0.6),
                         ),
                 )
                 // A wrapping row with its own cross-axis gap, so the line
@@ -161,7 +177,14 @@ pub fn build(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
                         .gap(panel_gap)
                         .cross_gap(panel_gap * 1.8)
                         .padding(panel_gap, panel_gap, panel_gap, panel_gap)
-                        .children((0..7).map(|i| node(WRAP_CHIPS[i]).size(chip * 1.7, chip))),
+                        .fill(palette::PANEL)
+                        .corners(radius)
+                        .children((0..7).map(|i| {
+                            node(WRAP_CHIPS[i])
+                                .size(chip * 1.7, chip)
+                                .fill(palette::VIOLET)
+                                .corners(radius * 0.6)
+                        })),
                 ),
         )
         // A grid with a fixed first column, two fractional columns, and two
@@ -179,6 +202,8 @@ pub fn build(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
                     GridTrack::Fraction(2.0),
                 ])
                 .grid_rows([GridTrack::Fraction(1.0), GridTrack::Fraction(1.0)])
+                .fill(palette::PANEL)
+                .corners(radius)
                 // `Fill` on both axes is what stretches a grid child to its
                 // cell. The last child is left at a fixed size instead, so the
                 // difference between stretching and anchoring is visible in
@@ -189,7 +214,9 @@ pub fn build(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
                         .sizing_v(AxisSizing::Fill)
                         .grid_row(0)
                         .grid_column(0)
-                        .grid_row_span(2),
+                        .grid_row_span(2)
+                        .fill(palette::VIOLET)
+                        .corners(radius * 0.6),
                 )
                 .child(
                     node("grid-wide")
@@ -197,20 +224,26 @@ pub fn build(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
                         .sizing_v(AxisSizing::Fill)
                         .grid_row(0)
                         .grid_column(1)
-                        .grid_column_span(2),
+                        .grid_column_span(2)
+                        .fill(palette::CRIMSON)
+                        .corners(radius * 0.6),
                 )
                 .child(
                     node("grid-one")
                         .sizing_h(AxisSizing::Fill)
                         .sizing_v(AxisSizing::Fill)
                         .grid_row(1)
-                        .grid_column(1),
+                        .grid_column(1)
+                        .fill(palette::TEAL)
+                        .corners(radius * 0.6),
                 )
                 .child(
                     node("grid-two")
                         .size(120.0 * unit, 40.0 * unit)
                         .grid_row(1)
-                        .grid_column(2),
+                        .grid_column(2)
+                        .fill(palette::TEAL)
+                        .corners(radius * 0.6),
                 ),
         )
         // The reflow row: the gap animates, and the middle chip leaves and
@@ -225,14 +258,41 @@ pub fn build(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
                 .gap(gap)
                 .bind(Channel::Gap, spread.map_range(0.0, 1.0, gap, gap * 6.0))
                 .smooth(Channel::Gap, Spring::critically_damped(0.55))
-                .child(node("reflow-a").size(120.0 * unit, reflow_height * 0.5))
+                .fill(palette::PANEL)
+                .corners(radius)
+                .child(
+                    node("reflow-a")
+                        .size(120.0 * unit, reflow_height * 0.5)
+                        .fill(palette::AMBER)
+                        .corners(radius * 0.6),
+                )
                 .child(
                     node("reflow-b")
                         .size(120.0 * unit, reflow_height * 0.5)
-                        .visible_when(show_middle),
+                        .visible_when(show_middle)
+                        .fill(palette::CRIMSON)
+                        .corners(radius * 0.6)
+                        // Outlined as well as filled, so the chip that comes
+                        // and goes is still identifiable in a still frame
+                        // taken while it is present.
+                        .stroke(Stroke {
+                            width: 2.0 * unit,
+                            align: StrokeAlign::Inside,
+                            color: palette::NEAR_WHITE,
+                        }),
                 )
-                .child(node("reflow-c").size(120.0 * unit, reflow_height * 0.5))
-                .child(node("reflow-d").size(120.0 * unit, reflow_height * 0.5)),
+                .child(
+                    node("reflow-c")
+                        .size(120.0 * unit, reflow_height * 0.5)
+                        .fill(palette::AMBER)
+                        .corners(radius * 0.6),
+                )
+                .child(
+                    node("reflow-d")
+                        .size(120.0 * unit, reflow_height * 0.5)
+                        .fill(palette::AMBER)
+                        .corners(radius * 0.6),
+                ),
         );
 
     scene.roots([root]);
@@ -243,7 +303,7 @@ pub fn build(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
             resources::atlases(),
         )),
     );
-    paint(arena, radius, unit);
+    paint(arena, unit);
     live
 }
 
@@ -251,52 +311,11 @@ const WRAP_CHIPS: [&str; 7] = [
     "wrap-0", "wrap-1", "wrap-2", "wrap-3", "wrap-4", "wrap-5", "wrap-6",
 ];
 
-fn paint(arena: &mut Arena, radius: f32, unit: f32) {
+/// Stages the one construct the builder above cannot carry: the variant set,
+/// which needs the arena `add_variant_set` issues its handle against.
+/// Everything else this scene paints is authored on the builder.
+fn paint(arena: &mut Arena, unit: f32) {
     let mut painting = Painting::open(arena);
-    painting.set("layout", Prop::Fill(palette::NAVY));
-
-    for panel in [
-        "panel-column",
-        "panel-fill",
-        "panel-wrap",
-        "panel-grid",
-        "reflow",
-    ] {
-        painting.set(panel, Prop::Fill(palette::PANEL));
-        painting.set(panel, corners(radius));
-    }
-
-    for (name, colour) in [
-        ("column-a", palette::SKY),
-        ("column-b", palette::SKY),
-        ("column-c", palette::SKY),
-        ("fill-fixed", palette::AMBER),
-        ("fill-a", palette::MOSS),
-        ("fill-b", palette::MOSS),
-        ("grid-tall", palette::VIOLET),
-        ("grid-wide", palette::CRIMSON),
-        ("grid-one", palette::TEAL),
-        ("grid-two", palette::TEAL),
-        ("reflow-a", palette::AMBER),
-        ("reflow-b", palette::CRIMSON),
-        ("reflow-c", palette::AMBER),
-        ("reflow-d", palette::AMBER),
-    ] {
-        painting.set(name, Prop::Fill(colour));
-        painting.set(name, corners(radius * 0.6));
-    }
-
-    for chip in WRAP_CHIPS {
-        painting.set(chip, Prop::Fill(palette::VIOLET));
-        painting.set(chip, corners(radius * 0.6));
-    }
-
-    // The chip that comes and goes is outlined as well as filled, so it is
-    // still identifiable in a still frame taken while it is present.
-    painting.set(
-        "reflow-b",
-        stroke(2.0 * unit, StrokeAlign::Inside, palette::NEAR_WHITE),
-    );
 
     declare_chip_variants(&mut painting, unit);
 
