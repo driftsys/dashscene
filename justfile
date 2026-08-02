@@ -44,10 +44,23 @@ test-regression:
 # two drops it out of the tier with no error — and no count catches that,
 # because the tiers partition the suite and the totals still reconcile.
 # Diffing the live listing against the pinned .config/calibration-tier.txt
-# does catch it. The CI calibration job runs the same two lines; keep them
+# does catch it. The CI calibration job runs the same command; keep them
 # identical.
+#
+# The listing is read as JSON, not as `nextest list`'s default output. That
+# default is a human-facing rendering with no stability promise — nextest's
+# own `list --help` points at `--message-format json` for machine reading —
+# and it changed under this check: 0.9.87 printed a binary header with its
+# tests indented beneath, 0.9.140 prints one `binary test` line each. CI
+# installs whatever `get.nexte.st/latest` currently serves while a developer
+# keeps whatever `bootstrap` installed once, so the two sides are routinely
+# versions apart and only a machine-readable format makes them agree. The
+# same rendering also carries ANSI colour whenever CARGO_TERM_COLOR is set,
+# which `dtolnay/rust-toolchain` sets on every CI job.
 calibrate:
-    cargo nextest list --workspace -P calibration 2>/dev/null \
+    cargo nextest list --workspace -P calibration --message-format json \
+        | jq -r '."rust-suites" | to_entries[] as $s | $s.value.testcases | to_entries[] | select(.value."filter-match".status == "matches") | "\($s.key) \(.key)"' \
+        | LC_ALL=C sort \
         | diff -u .config/calibration-tier.txt -
     cargo nextest run --workspace -P calibration
 

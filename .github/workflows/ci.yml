@@ -79,6 +79,16 @@ jobs:
               # any path above. The figma filter includes both for that reason.
               - 'Cargo.toml'
               - 'Cargo.lock'
+              # The definition of the check itself: `.config/nextest.toml`
+              # names the two tests by filter, and `.config/calibration-tier.txt`
+              # pins the listing they must produce. Without these, the job that
+              # exists to catch tier drift is the one job an edit to the tier
+              # cannot trigger — which is how a membership check that had never
+              # passed in CI reached `main` (issue #658).
+              - '.config/**'
+              # And the job itself, for the same reason: a change to how the
+              # calibration job runs should have to survive the calibration job.
+              - '.github/workflows/ci.yml'
 
       # Whether anything outside documentation changed. The compile jobs gate
       # on this, so it asks the opposite question from the filters above: not
@@ -506,9 +516,16 @@ jobs:
       # name, so a rename drops a test out of the tier silently, and no count
       # catches that — the tiers partition the suite, so the totals reconcile
       # either way. Keep this identical to the recipe.
+      #
+      # `shell: bash` for the pipefail it brings: the default `bash -e` takes
+      # the pipeline's status from `diff` alone, so a `nextest list` that fails
+      # outright would feed an empty listing into a passing-looking diff.
       - name: calibration tier membership
+        shell: bash
         run: |
-          cargo nextest list --workspace -P calibration 2>/dev/null \
+          cargo nextest list --workspace -P calibration --message-format json \
+            | jq -r '."rust-suites" | to_entries[] as $s | $s.value.testcases | to_entries[] | select(.value."filter-match".status == "matches") | "\($s.key) \(.key)"' \
+            | LC_ALL=C sort \
             | diff -u .config/calibration-tier.txt -
       - name: calibration tier
         run: cargo nextest run --workspace -P calibration
