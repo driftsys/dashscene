@@ -53,7 +53,7 @@ const NEGATIVE_GAP: &str =
 /// (`squaring_the_circles_exceeds_the_budget`), so 500 px (< 0.16× that
 /// signal) sits well below the corner difference while clearing the edge
 /// jitter: squaring the circles fails by a 2,693 px margin.
-const BUDGET: usize = 500;
+const BUDGET: usize = goldens::CROSS_ARCH_BUDGET_PX;
 
 /// `lowering-negative-gap.json` with the root's `HUG` width lifted to `FIXED`,
 /// so the engine-debt-#236 collapse does not clip the circles. The five

@@ -81,7 +81,7 @@ const INK: Color = Color {
 /// (`goldens::render`) already wrapped at the solved width and would never have
 /// produced it. Commit is now the one producer, so the picture is the two-line
 /// label the solve measured, ending inside the box.
-const BUDGET: usize = 200;
+const BUDGET: usize = goldens::CROSS_ARCH_BUDGET_PX;
 
 fn typesetter() -> Typesetter {
     Typesetter::new(

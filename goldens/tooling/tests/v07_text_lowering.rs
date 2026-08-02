@@ -64,7 +64,7 @@ const INK: Color = Color {
 /// for 14px text than for the larger v0.6 scene — while staying well under
 /// that footprint, so dropping the text run fails by a 284 px margin, proven
 /// by `dropping_the_text_run_exceeds_the_budget`.
-const BUDGET: usize = 200;
+const BUDGET: usize = goldens::CROSS_ARCH_BUDGET_PX;
 
 fn typesetter() -> Typesetter {
     Typesetter::new(

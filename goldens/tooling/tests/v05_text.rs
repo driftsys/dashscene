@@ -82,7 +82,7 @@ const CHIP_SIZE: f32 = 44.0;
 /// budget it sits beside — 0.32 px of tolerance per inked pixel, against
 /// v07-text-fallback's 0.34 (500 over 1,491) — which is the direction #233 asks
 /// for.
-const BUDGET: usize = 1_200;
+const BUDGET: usize = goldens::CROSS_ARCH_BUDGET_PX;
 
 /// Authors the Latin screen and commits it through the one typesetter,
 /// returning the arena and the two text nodes. Shared by the golden, the

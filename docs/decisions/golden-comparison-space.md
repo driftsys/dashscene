@@ -402,9 +402,62 @@ the condition for reopening this question once #263 resolves:
    instead of the extrapolated one, and retune any budget the
    measurement contradicts.
 
-Until then the failure mode stays the one #539 named as acceptable in
-the meantime: if a budget above is too tight for real macOS-to-Linux
-MSDF jitter, its golden fails without a regression behind it —
-diagnosable and fixable by re-measuring. A budget wide enough to hide a
-real regression is the opposite failure, and the one #233 and #532 both
-exist to prevent.
+Steps 1 and 2 were done by PR #661. **Step 3 was done by story #671 on
+2026-08-02, and it replaced all seven budgets with one shared constant**,
+`goldens::CROSS_ARCH_BUDGET_PX` = 32 px.
+
+## What the measurement showed, and why one constant replaced seven
+
+Both bounds were measured rather than extrapolated. The floor came from
+six independent CI runners, harvested from the `render-oracle` job's
+existing `--nocapture` output — the instrument #539 added for exactly
+this purpose, which had been printing the numbers on every push since.
+The ceiling is each golden's own sensitivity guard: the differing count
+its mutation produces, which the budget must stay below.
+
+| golden                  | was  | floor | ceiling | over floor | under ceiling |
+| ----------------------- | ---- | ----- | ------- | ---------- | ------------- |
+| v05-text-latin          | 1200 | 1     | 1822    | 32x        | 57x           |
+| v06-text-arabic         | 440  | 4     | 671     | 8x         | 21x           |
+| v07-text-fallback       | 500  | 2     | 714     | 16x        | 22x           |
+| v07-text-lowering       | 200  | 0     | 484     | unbounded  | 15x           |
+| v07-variant-topology    | 200  | 0     | 593     | unbounded  | 19x           |
+| v07-ellipse             | 500  | 0     | 3193    | unbounded  | 100x          |
+| v013-baseline-hug-cross | 400  | 3     | 662     | 11x        | 21x           |
+
+**The floor showed no variance across the six runners.** Every golden
+returned an identical count on all six. That answers the sampling worry
+the story raised, and not the way it expected: the residual is
+deterministic per golden on this runner pool, not a distribution to pin a
+margin against. The evidence is about today's `ubuntu-latest` x86_64
+pool, not a guarantee across future runner generations, which is why the
+margin over the floor is 8x rather than 2x.
+
+**The floor also does not scale with the scene.** The densest scene
+measured 0 and a sparse Arabic one measured 4. What a budget absorbs is
+cross-architecture rasterisation jitter — a property of the renderer and
+the machine, not of the picture — so a per-scene budget models something
+that is not per-scene. That is the argument for one constant.
+
+The seven numbers it replaced were not seven calibrations. They were
+seven multipliers of the same 32 px `v03-paint` anchor, each sitting
+about 1.5x under its guard and 110x to 1200x over its floor. Keeping them
+would have preserved the appearance of per-scene tuning that never
+existed.
+
+**If a scene's measured floor ever rises above about 4 px, re-derive the
+constant — do not exempt the scene.** Exempting one is how seven
+unexplained numbers came about the first time.
+
+One gap this closed on the way: `v013-baseline-hug-cross` carried its
+budget as an inline literal and had **no sensitivity guard at all**, so
+nothing asserted that its budget could still tell a right render from a
+wrong one. It now has `dropping_the_baseline_run_exceeds_the_budget`,
+which is where its 662 px ceiling above comes from.
+
+The failure mode #539 named as acceptable in the meantime still applies,
+now with measured margins behind it: if a budget is too tight for real
+macOS-to-Linux MSDF jitter, its golden fails without a regression behind
+it — diagnosable and fixable by re-measuring. A budget wide enough to
+hide a real regression is the opposite failure, and the one #233 and #532
+both exist to prevent.

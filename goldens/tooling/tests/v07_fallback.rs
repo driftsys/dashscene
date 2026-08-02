@@ -76,7 +76,7 @@ const LABEL_SIZE: f32 = 34.0;
 /// against its own smallest break, and that scene's ink measures 2,421 px
 /// today. This budget does not depend on either figure: it is gated on this
 /// scene's own 714-px smaller segment, which is unchanged.
-const BUDGET: usize = 500;
+const BUDGET: usize = goldens::CROSS_ARCH_BUDGET_PX;
 
 /// The atlas each font of the cascade samples, in font-list order — the
 /// Arabic primary at index 0, the Latin fallback at index 1, matching
