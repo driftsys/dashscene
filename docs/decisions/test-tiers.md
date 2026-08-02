@@ -305,21 +305,29 @@ job runs when the `changes` job's `packer` path filter fires, listed above.
 Defining risk by what the diff touches means nobody has to remember to
 judge a change risky.
 
-**`test`, `render-oracle`, `calibration` and `exit-gate-tests` share one
-compilation cache.**
+**`test`, `calibration` and `exit-gate-tests` share one compilation
+cache.**
 `Swatinem/rust-cache` keys on the job name unless told otherwise, so each
 job kept a separate cache and compiled the workspace independently. That is
 free for a job that runs on every push and expensive for one that does not:
 `calibration` fires only when the `packer` filter matches, so its key was
 almost never populated. Measured on PR #674, it logged `No cache found` and
 spent 3 min 14 s compiling all 108 test binaries — in a run where the `test`
-job had compiled the same binaries in 69 s from a warm cache. These jobs
-build the same native test binaries, so they now share the key
-`workspace-tests`. `test` writes it, because it is the member that runs most
-often — every push that changes code — while `render-oracle` builds only a
-subset of the same binaries, `calibration` needs a `packer` path on top, and
-`exit-gate-tests` is newer than the key. The other three read it with
-`save-if: false`.
+job had compiled the same binaries in 69 s from a warm cache. These jobs each
+run `cargo nextest ... --workspace`, so they build the same full set of native
+test binaries, and they now share the key `workspace-tests`. `test` writes it,
+because it is the member that runs most often — every push that changes code —
+while `calibration` needs a `packer` path on top and `exit-gate-tests` is
+newer than the key. The other two read it with `save-if: false`.
+
+**Sharing is for jobs that build the whole set, not merely an overlapping
+one.** `render-oracle` was in this group briefly and was removed on a
+measurement: it went from 62 s to 101 s. It runs
+`cargo test -p goldens --test render_oracle`, a strict subset, and the shared
+key made it restore 377 MB built for all 108 binaries in place of the smaller
+cache that matched exactly what it compiles. A superset cache is correct — it
+cannot cause a wrong build — but it is not free, and for a small consumer the
+restore costs more than the compilation it saves (issue #680).
 
 The sharing works across runs, not within one: the jobs start together,
 and a cache is written in a job's post-run step, so `calibration` never reads

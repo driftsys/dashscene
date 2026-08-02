@@ -485,12 +485,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      # Reads the shared cache `test` writes; does not write one of its own.
-      # This job compiles a subset of what `test` already compiled.
+      # Keeps a cache of its own. It compiles a strict subset of what `test`
+      # compiles, and sharing that key made this job slower rather than
+      # faster: 62 s to 101 s, because it restored 377 MB built for the full
+      # 108-binary suite in place of the smaller cache that matched exactly
+      # what it builds (issue #680).
       - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: workspace-tests
-          save-if: "false"
       - name: install flatc
         run: |
           curl -fsSL -o flatc.zip https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip
