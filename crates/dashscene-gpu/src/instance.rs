@@ -31,47 +31,65 @@
 
 use dashpaint::RectEntry;
 
-/// Which primitive one [`Instance`] draws — the tag half of a tag-plus-row
-/// form, the same idiom [`dashpaint::PaintKind`] uses.
+/// What one [`Instance`] draws — the whole discriminant, sub-kind included.
+///
+/// # One enum, because two were a collision
+///
+/// This carried a `kind` and a separate `tag` whose meaning depended on it: a
+/// `PaintTag` for a fill, a `ShadowKind` for a shadow, a `BlurKind` for a
+/// backdrop. Their discriminants collide — `PaintTag::Solid`,
+/// `ShadowKind::Inner` and `BlurKind::Backdrop` are all `1` — so a consumer
+/// that read the tag without first checking the kind resolved a shadow against
+/// the solid-fill table. Story #580's fragment shader did exactly that, and
+/// painted a node's inner shadow with whatever colour sat at that row.
+///
+/// Merging them makes the mistake unrepresentable rather than forbidden. It is
+/// the same argument `docs/decisions/optional-members-are-ranges-of-arity-one.md`
+/// used against a sentinel: a rule every consumer has to remember is a rule
+/// they can each get wrong, differently.
+///
+/// # It also removes a silent drift
+///
+/// The tag used to be written as `enum as u32` and read against a literal in
+/// the shader. Reordering a variant in `dashpaint` changed the number, left the
+/// literal alone, and nothing caught it — not the compiler, not the goldens,
+/// which pin the packer's own output. The packer now maps by an exhaustive
+/// `match` on the variant, so a reorder is harmless and a new variant is a
+/// compile error.
 ///
 /// `#[repr(u32)]` pins the discriminants as the width a shader reads them at.
-/// It is documentation rather than a load-bearing guarantee: [`Instance::kind`]
-/// is a plain `u32`, not this type, so that the struct stays a plain-old-data
-/// row a consumer can cast to bytes without an enum's validity rule getting in
-/// the way. Nothing transmutes an [`InstanceKind`], and the only conversions
-/// are the explicit ones below.
-///
-/// Glyph quads are **not** here yet. A glyph's texel rectangle is a coordinate
-/// in the painter's *residency* atlas, not the `atlas_px` boundary B carries,
-/// and residency is story #581 — so packing one now would pin coordinates that
-/// story is going to reassign. Story #582 adds the variant; where its
-/// instances go in the order is already written down on
-/// [`InstanceBuffer::spans`], so nothing about that placement is left to
-/// decide.
+/// [`Instance::kind`] is a plain `u32` so the row stays plain-old-data.
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum InstanceKind {
-    /// One drop or inner shadow of the rect. `row` is a
-    /// [`dashpaint::PaintTable::all_shadows`] row and `tag` is its
-    /// [`dashpaint::ShadowKind`].
+    /// A drop shadow: cast behind the node, from its stroked silhouette.
+    /// `row` is a [`dashpaint::PaintTable::all_shadows`] row.
     ///
     /// First variant because the derived [`Default`] needs one. It is not a
-    /// safe resting value and nothing here pretends otherwise: a zeroed
-    /// instance names shadow row 0, which is a real row of a real table. What
-    /// makes [`Instance::default`] inert is its `opacity` of `0.0`.
+    /// safe resting value and nothing pretends otherwise: a zeroed instance
+    /// names shadow row 0, a real row of a real table. What makes
+    /// [`Instance::default`] inert is its `opacity` of `0.0`.
     #[default]
-    Shadow = 0,
-    /// The already-composited backdrop beneath the rect, blurred. `row` is a
-    /// [`dashpaint::PaintTable::all_blurs`] row and `tag` is its
-    /// [`dashpaint::BlurKind`].
-    Backdrop = 1,
-    /// One fill layer of the rect — its own fill, or one of the layers
-    /// stacked over it. `tag` is a [`dashpaint::PaintTag`] and `row` indexes
-    /// the per-kind table that tag names.
-    Fill = 2,
-    /// The rect's outline stroke. `row` is a
-    /// [`dashpaint::PaintTable::all_strokes`] row; `tag` is unused and zero.
-    Stroke = 3,
+    ShadowDrop = 0,
+    /// An inner shadow: drawn over the node's ink, clipped to its shape.
+    ShadowInner = 1,
+    /// The already-composited backdrop beneath the node, blurred. `row` is a
+    /// [`dashpaint::PaintTable::all_blurs`] row.
+    ///
+    /// One variant rather than two, because only `BlurKind::Backdrop` is
+    /// packed: node-local layer blur is budgeted at v1 and nothing in this tree
+    /// produces one. A layer blur arrives as its own variant, which is a
+    /// compile error at every `match` until each is taught what to do with it.
+    Backdrop = 2,
+    /// A solid fill. `row` is a [`dashpaint::PaintTable::all_solids`] row.
+    FillSolid = 3,
+    /// A gradient fill. `row` is a [`dashpaint::PaintTable::all_gradients`] row.
+    FillGradient = 4,
+    /// An image fill. `row` is a [`dashpaint::PaintTable::all_images`] row.
+    FillImage = 5,
+    /// The node's outline stroke. `row` is a
+    /// [`dashpaint::PaintTable::all_strokes`] row.
+    Stroke = 6,
 }
 
 impl InstanceKind {
@@ -80,13 +98,29 @@ impl InstanceKind {
         self as u32
     }
 
-    /// The name a layer-1 golden prints for this kind — stable, and the only
-    /// place the spelling is decided.
+    /// True when this kind draws one of the node's shadows.
+    pub const fn is_shadow(self) -> bool {
+        matches!(self, InstanceKind::ShadowDrop | InstanceKind::ShadowInner)
+    }
+
+    /// True when this kind draws one of the node's fill layers.
+    pub const fn is_fill(self) -> bool {
+        matches!(
+            self,
+            InstanceKind::FillSolid | InstanceKind::FillGradient | InstanceKind::FillImage
+        )
+    }
+
+    /// The name a layer-1 golden prints — stable, and the only place the
+    /// spelling is decided.
     pub const fn name(self) -> &'static str {
         match self {
-            InstanceKind::Shadow => "shadow",
+            InstanceKind::ShadowDrop => "shadow-drop",
+            InstanceKind::ShadowInner => "shadow-inner",
             InstanceKind::Backdrop => "backdrop",
-            InstanceKind::Fill => "fill",
+            InstanceKind::FillSolid => "fill-solid",
+            InstanceKind::FillGradient => "fill-gradient",
+            InstanceKind::FillImage => "fill-image",
             InstanceKind::Stroke => "stroke",
         }
     }
@@ -95,17 +129,17 @@ impl InstanceKind {
     ///
     /// # Panics
     ///
-    /// Panics on a value no variant carries. The one path that reaches this is
-    /// [`InstanceBuffer::dump`], where the alternative is a golden that prints
-    /// a placeholder for a kind added without teaching the dump about it — a
-    /// silent widening of what a golden covers, which is worse than a failing
-    /// test.
+    /// Panics on a value no variant carries, for the reason
+    /// [`InstanceBuffer::dump`] gives.
     pub const fn from_u32(value: u32) -> Self {
         match value {
-            0 => InstanceKind::Shadow,
-            1 => InstanceKind::Backdrop,
-            2 => InstanceKind::Fill,
-            3 => InstanceKind::Stroke,
+            0 => InstanceKind::ShadowDrop,
+            1 => InstanceKind::ShadowInner,
+            2 => InstanceKind::Backdrop,
+            3 => InstanceKind::FillSolid,
+            4 => InstanceKind::FillGradient,
+            5 => InstanceKind::FillImage,
+            6 => InstanceKind::Stroke,
             _ => panic!("no instance kind carries this value"),
         }
     }
@@ -145,31 +179,50 @@ impl InstanceKind {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Instance {
-    /// Which primitive this quad draws — an [`InstanceKind`].
-    pub kind: u32,
-    /// The kind-specific discriminator, as the value of the boundary-B enum it
-    /// mirrors: a [`dashpaint::PaintTag`] for [`InstanceKind::Fill`], a
-    /// [`dashpaint::ShadowKind`] for [`InstanceKind::Shadow`], a
-    /// [`dashpaint::BlurKind`] for [`InstanceKind::Backdrop`], and zero for
-    /// [`InstanceKind::Stroke`].
+    /// The quad in document space: `[x, y, w, h]` — the *silhouette* this
+    /// instance is stated over.
     ///
-    /// Written by casting that enum, never by a second table of numbers here:
-    /// a hand-written copy of the discriminants would survive a reorder in
-    /// `dashpaint` and quietly change what this field means to a shader, and
-    /// every layer-1 golden would stay green because it pins these numbers
-    /// rather than those.
-    pub tag: u32,
-    /// The row this instance's parameters sit at, in the table `kind` and
-    /// `tag` together name.
+    /// For a fill, a stroke and a backdrop that is the node's own box. For a
+    /// **drop shadow** it is the node's box grown by the stroke outset, because
+    /// a drop shadow casts from what the node draws rather than from its fill
+    /// box (`docs/decisions/effects-vocabulary-shadows.md`) and no row this
+    /// instance names carries the node's stroke. The remaining terms — the
+    /// shadow's offset, its spread and its blur — stay on the shadow row and
+    /// are resolved per-painter at draw time (P1). An inner shadow takes no
+    /// outset.
+    ///
+    /// First, with `corners` after it, so both four-float vectors sit at a
+    /// 16-byte offset. A consumer binding this as a storage-buffer element then
+    /// repacks nothing.
+    pub bounds: [f32; 4],
+    /// The rounded-box radii: `[top_left, top_right, bottom_right,
+    /// bottom_left]`, grown alongside [`bounds`](Self::bounds) where that is,
+    /// with a sharp corner staying sharp.
+    ///
+    /// Meaningless when [`shape`](Self::shape) names a coverage mask: a
+    /// baked-vector node carries its outline in the baked geometry. Carried
+    /// through rather than zeroed so the authored value stays visible in a
+    /// golden.
+    ///
+    /// The slot a glyph instance will reuse for its atlas texel rectangle
+    /// (story #582) — four floats either way, which is what lets text join this
+    /// stream without widening the struct.
+    pub corners: [f32; 4],
+    /// What this quad draws — an [`InstanceKind`], sub-kind included.
+    pub kind: u32,
+    /// The row this instance's parameters sit at, in the table `kind` names.
+    ///
+    /// One field, one meaning per kind, and the kind is not separable from its
+    /// sub-kind — which is the whole reason `kind` and `tag` were merged.
     pub row: u32,
     /// The baked-vector coverage mask that masks this instance, as a
     /// [`dashpaint::PaintTable::all_shapes`] row **plus one**; `0` for the
     /// implicit parametric shape.
     ///
-    /// Carried on the backdrop instance as well as the fill, because a
-    /// masked node's backdrop blur is confined to the field's coverage rather
-    /// than to its box — the reference painter does the same, and the hero's
-    /// frosted panel is exactly that node.
+    /// Carried on the backdrop instance as well as the fill, because a masked
+    /// node's backdrop blur is confined to the field's coverage rather than to
+    /// its box — the reference painter does the same, and the hero's frosted
+    /// panel is exactly that node.
     pub shape: u32,
     /// First clip box, as an index into [`dashpaint::ClipTable::all_boxes`].
     pub clip_offset: u32,
@@ -182,34 +235,24 @@ pub struct Instance {
     /// layer 1's "group applied to the wrong set" claim is stated over.
     pub layer: u32,
     /// The free-path alpha this instance's color is multiplied by —
-    /// [`RectEntry::opacity`], carried through unchanged.
+    /// [`dashpaint::RectEntry::opacity`], carried through unchanged.
     pub opacity: f32,
-    /// The quad in document space: `[x, y, w, h]` — the *silhouette* this
-    /// instance is stated over.
+    /// Declared padding, and always zero.
     ///
-    /// For a fill, a stroke and a backdrop that is the node's own box. For a
-    /// **drop shadow** it is the node's box grown by the stroke outset, because
-    /// a drop shadow casts from what the node draws rather than from its fill
-    /// box (`docs/decisions/effects-vocabulary-shadows.md`) and no row this
-    /// instance names carries the node's stroke. The remaining terms — the
-    /// shadow's offset, its spread and its blur — stay on the shadow row and
-    /// are resolved per-painter at draw time (P1). An inner shadow takes no
-    /// outset, so its bounds are the node's box.
-    pub bounds: [f32; 4],
-    /// The rounded-box radii: `[top_left, top_right, bottom_right,
-    /// bottom_left]`, grown alongside [`bounds`](Self::bounds) where that is,
-    /// with a sharp corner staying sharp.
+    /// A struct carrying a four-float vector has an alignment of 16, so its
+    /// array stride rounds up to 64 whatever its members add to. Without this
+    /// word the Rust type would be 60 bytes and the shader's view of the same
+    /// array would be 64 — every element after the first read from the wrong
+    /// offset. `bytemuck::Pod` refuses a type with *implicit* padding, so
+    /// declaring it is also what keeps that derive.
     ///
-    /// Meaningless when [`shape`](Self::shape) names a coverage mask: a
-    /// baked-vector node carries its outline in the baked geometry, and the
-    /// parametric corners do not apply to it. The field is carried through
-    /// rather than zeroed so that the value the node authored stays visible in
-    /// a golden.
-    ///
-    /// The slot a glyph instance will reuse for its atlas texel rectangle
-    /// (story #582) — four floats either way, which is what lets text join
-    /// this stream without widening the struct.
-    pub corners: [f32; 4],
+    /// It is public because `Pod` requires it, which makes it a field two
+    /// otherwise-equal instances could differ in — the equality hazard
+    /// `docs/decisions/sub-word-members-widen-rather-than-pad.md` rejected a
+    /// `_pad` member for. Here there was no way to remove the hole, only to
+    /// name it, so the packer writes zero and a test asserts every packed
+    /// instance carries zero.
+    pub _pad: u32,
 }
 
 impl Instance {
@@ -373,10 +416,9 @@ impl InstanceBuffer {
             let kind = InstanceKind::from_u32(instance.kind);
             let _ = writeln!(
                 out,
-                "{index:>4} {:<8} tag {} row {} shape {} clip {}..{} layer {} opacity {:?} \
+                "{index:>4} {:<13} row {} shape {} clip {}..{} layer {} opacity {:?} \
                  bounds {:?} corners {:?}",
                 kind.name(),
-                instance.tag,
                 instance.row,
                 instance.shape,
                 instance.clip_offset,

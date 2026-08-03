@@ -143,20 +143,19 @@ fn pack_rect(
     // reading `count` and duplicating the arity rule.
     let shape = shape_slot(paints.shape(entry).map(|_| entry.shape.offset));
 
-    // What every instance of this rect shares. The three kind-specific members
-    // are set on every push below rather than defaulted here: an instance whose
-    // `kind` came from this template would draw a shadow of row 0, which is a
-    // real shadow of a real table and so paints something wrong rather than
-    // nothing.
+    // What every instance of this rect shares. `kind` and `row` are set on every
+    // push below rather than defaulted here: an instance taking them from this
+    // template would draw a drop shadow of row 0, which is a real shadow of a
+    // real table and so paints something wrong rather than nothing.
     let base = Instance {
-        kind: InstanceKind::Shadow.as_u32(),
-        tag: 0,
+        kind: InstanceKind::ShadowDrop.as_u32(),
         row: 0,
         shape: Instance::NONE,
         clip_offset: clip.offset,
         clip_count: clip.count,
         layer,
         opacity: rect.opacity,
+        _pad: 0,
         bounds: bounds_of(rect),
         corners: [
             entry.corners.top_left,
@@ -174,7 +173,6 @@ fn pack_rect(
         }
         out.push(Instance {
             kind: InstanceKind::Backdrop.as_u32(),
-            tag: blur.kind as u32,
             row: entry.blurs.offset + row_offset(offset),
             shape,
             ..base
@@ -205,11 +203,8 @@ fn pack_rect(
         // exactly what was measured. Matched here rather than decided here.
         if matches!(entry.fill.tag, PaintTag::Solid | PaintTag::Gradient) {
             out.push(Instance {
-                kind: InstanceKind::Fill.as_u32(),
-                tag: entry.fill.tag as u32,
-                row: entry.fill.index,
                 shape,
-                ..base
+                ..fill_instance(&base, entry.fill)
             });
         }
     } else {
@@ -222,7 +217,6 @@ fn pack_rect(
         if paints.stroke(entry).is_some() {
             out.push(Instance {
                 kind: InstanceKind::Stroke.as_u32(),
-                tag: 0,
                 row: entry.stroke.offset,
                 ..base
             });
@@ -246,10 +240,27 @@ fn pack_rect(
 }
 
 /// One fill instance naming `kind`'s row in the per-kind table its tag names.
+///
+/// The tag is mapped by an exhaustive `match`, never cast. A cast would put
+/// `dashpaint`'s discriminant into the buffer, where a reordered variant
+/// changes the number and every consumer's constant keeps its old meaning —
+/// silently, because the goldens pin what this packer wrote. A `match` is
+/// indifferent to the numbers and a new variant is a compile error here.
+///
+/// # Panics
+///
+/// Panics on [`PaintTag::None`]: a fill-less entry emits no instance at all,
+/// and a stacked layer naming no fill is a corrupt list rather than an empty
+/// one — which `PaintTable::check_fills` already refuses by name.
 fn fill_instance(base: &Instance, kind: PaintKind) -> Instance {
+    let instance_kind = match kind.tag {
+        PaintTag::Solid => InstanceKind::FillSolid,
+        PaintTag::Gradient => InstanceKind::FillGradient,
+        PaintTag::Image => InstanceKind::FillImage,
+        PaintTag::None => panic!("a fill-less entry emits no fill instance"),
+    };
     Instance {
-        kind: InstanceKind::Fill.as_u32(),
-        tag: kind.tag as u32,
+        kind: instance_kind.as_u32(),
         row: kind.index,
         ..*base
     }
@@ -261,9 +272,13 @@ fn fill_instance(base: &Instance, kind: PaintKind) -> Instance {
 /// shadow and zero for an inner one. The spread, the offset and the blur stay
 /// on the row this names, so a shader reads them there.
 fn shadow_instance(base: &Instance, row: u32, shadow: &Shadow, outset: f32) -> Instance {
+    // Mapped, never cast, for the reason `fill_instance` gives.
+    let kind = match shadow.kind {
+        ShadowKind::Drop => InstanceKind::ShadowDrop,
+        ShadowKind::Inner => InstanceKind::ShadowInner,
+    };
     Instance {
-        kind: InstanceKind::Shadow.as_u32(),
-        tag: shadow.kind as u32,
+        kind: kind.as_u32(),
         row,
         bounds: grow(base.bounds, outset),
         corners: grow_corners(base.corners, outset),
