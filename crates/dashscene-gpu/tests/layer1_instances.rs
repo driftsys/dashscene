@@ -41,6 +41,11 @@ use dashpaint::{
 };
 use dashscene_gpu::{GpuPainter, InstanceKind};
 
+/// A 7x5 PNG, the same fixture `dashpaint`'s own tests use. An image asset
+/// needs real bytes since issue #716, because the table reads the extent out of
+/// the payload's header rather than being told it.
+const SAMPLE_PNG: &[u8] = include_bytes!("fixtures/image_id/sample.png");
+
 /// Boundary B's tables for one frame, as a fixture hands them over.
 struct Scene {
     rects: Vec<RectEntry>,
@@ -130,9 +135,13 @@ fn vocabulary() -> Scene {
     let mut clips = ClipTable::new();
     let mut images = ImageTable::new();
 
+    // A real payload, because `ImageTable::push` reads the extent out of the
+    // header (issue #716). 7x5 — neither square nor a multiple of any block
+    // footprint, so a consumer that transposed the extent or rounded it fails
+    // rather than agreeing by symmetry.
     images.push(ImageAsset {
         format: ImageFormat::Png,
-        bytes: vec![1, 2, 3],
+        bytes: SAMPLE_PNG.to_vec(),
     });
 
     // Three clip regions, none of them the reserved unclipped one, and the

@@ -200,12 +200,15 @@ fn image_table_pushes_and_resolves_assets() {
 
     let asset = ImageAsset {
         format: ImageFormat::Png,
-        bytes: vec![1, 2, 3],
+        bytes: SAMPLE_PNG.to_vec(),
     };
     let index = images.push(asset.clone());
 
     assert_eq!(index, 0);
     assert_eq!(images.len(), 1);
+    // Equal *including* the extent, which the table derived and the owned asset
+    // reads back the same way — the two routes to an `ImageRef` agreeing is the
+    // reason `as_ref` exists.
     assert_eq!(images.resolve(index), asset.as_ref());
     assert_eq!(images.get(1), None);
 }
@@ -1367,39 +1370,83 @@ fn only_the_source_encoded_containers_are_encoded() {
 /// second and third: a table that ignored the stored offset would return the
 /// first asset's bytes for all three and pass any check stated over asset zero
 /// alone.
+///
+/// Baked payloads throughout, so each length is the one its format and extent
+/// require and no two are the same. The encoded push has its own test, because
+/// it derives the extent rather than being told it (issue #716).
 #[test]
 fn a_flattened_table_returns_each_assets_own_bytes() {
     let mut images = ImageTable::new();
-    let first = images.push(ImageAsset {
-        format: ImageFormat::Png,
-        bytes: vec![1, 2, 3],
-    });
-    let second = images.push(ImageAsset {
-        format: ImageFormat::Astc6x6Srgb,
-        bytes: vec![4, 5, 6, 7, 8, 9, 10],
-    });
-    let third = images.push(ImageAsset {
-        format: ImageFormat::Rgba8Unorm,
-        bytes: vec![11, 12],
-    });
+    // 2x1 RGBA8 is 8 bytes.
+    let first = images.push_baked(
+        ImageAsset {
+            format: ImageFormat::Rgba8Unorm,
+            bytes: vec![1, 2, 3, 4, 5, 6, 7, 8],
+        },
+        2,
+        1,
+    );
+    // 6x6 ASTC 6x6 is one 16-byte block.
+    let second = images.push_baked(
+        ImageAsset {
+            format: ImageFormat::Astc6x6Srgb,
+            bytes: (10..26).collect(),
+        },
+        6,
+        6,
+    );
+    // 1x1 RGBA8 is 4 bytes.
+    let third = images.push_baked(
+        ImageAsset {
+            format: ImageFormat::Rgba8Srgb,
+            bytes: vec![30, 31, 32, 33],
+        },
+        1,
+        1,
+    );
 
-    assert_eq!(images.resolve(first).bytes, &[1, 2, 3]);
-    assert_eq!(images.resolve(second).bytes, &[4, 5, 6, 7, 8, 9, 10]);
-    assert_eq!(images.resolve(third).bytes, &[11, 12]);
+    assert_eq!(images.resolve(first).bytes, &[1, 2, 3, 4, 5, 6, 7, 8]);
+    assert_eq!(
+        images.resolve(second).bytes,
+        (10u8..26).collect::<Vec<_>>().as_slice()
+    );
+    assert_eq!(images.resolve(third).bytes, &[30, 31, 32, 33]);
     assert_eq!(images.resolve(second).format, ImageFormat::Astc6x6Srgb);
-    assert_eq!(images.resolve(third).format, ImageFormat::Rgba8Unorm);
+    assert_eq!(images.resolve(third).format, ImageFormat::Rgba8Srgb);
+
+    // The extent travels with the bytes, and differs per asset — a reader that
+    // returned the first row's extent for all three would draw two of them at
+    // the wrong size with no other symptom.
+    assert_eq!(
+        (images.resolve(first).width, images.resolve(first).height),
+        (2, 1)
+    );
+    assert_eq!(
+        (images.resolve(second).width, images.resolve(second).height),
+        (6, 6)
+    );
+    assert_eq!(
+        (images.resolve(third).width, images.resolve(third).height),
+        (1, 1)
+    );
 
     // The stored rows are what the FFI gate is stated over: fixed-width, and
     // partitioning the pool.
     let entries = images.all_entries();
     assert_eq!(entries.len(), 3);
     assert_eq!(entries[0].offset, 0);
-    assert_eq!(entries[1].offset, 3);
-    assert_eq!(entries[2].offset, 10);
+    assert_eq!(entries[1].offset, 8);
+    assert_eq!(entries[2].offset, 24);
 }
 
 /// An empty payload is a value, not a sentinel: it resolves to an empty slice
 /// and the asset after it still finds its own bytes.
+///
+/// Stated over both halves since issue #716. An encoded payload that carries no
+/// bytes carries no header either, and is stored at a zero extent rather than
+/// refused — `dashscene-validator`'s `image.no-bytes` rule is what names it, and
+/// it is handed a table that is already built, so a push that panicked would
+/// replace a named diagnostic with a crash.
 #[test]
 fn a_zero_length_payload_is_an_ordinary_entry() {
     let mut images = ImageTable::new();
@@ -1407,12 +1454,194 @@ fn a_zero_length_payload_is_an_ordinary_entry() {
         format: ImageFormat::Png,
         bytes: Vec::new(),
     });
-    let after = images.push(ImageAsset {
-        format: ImageFormat::Jpeg,
-        bytes: vec![9, 9],
-    });
+    let after = images.push_baked(
+        ImageAsset {
+            format: ImageFormat::Rgba8Unorm,
+            bytes: vec![9, 9, 9, 9],
+        },
+        1,
+        1,
+    );
     assert!(images.resolve(empty).bytes.is_empty());
-    assert_eq!(images.resolve(after).bytes, &[9, 9]);
+    assert_eq!(
+        (images.resolve(empty).width, images.resolve(empty).height),
+        (0, 0),
+        "a payload with no header states no extent"
+    );
+    assert_eq!(images.resolve(after).bytes, &[9, 9, 9, 9]);
+    assert_eq!(
+        images.all_entries()[1].offset,
+        0,
+        "an empty row consumes no pool"
+    );
+
+    // A baked payload can be zero-length too, and states the extent that makes
+    // it so rather than being sized by its bytes.
+    let mut baked = ImageTable::new();
+    let nothing = baked.push_baked(
+        ImageAsset {
+            format: ImageFormat::Rgba8Unorm,
+            bytes: Vec::new(),
+        },
+        0,
+        0,
+    );
+    assert!(baked.resolve(nothing).bytes.is_empty());
+}
+
+/// The PNG the extent tests are stated over. 7x5, so neither axis is the other
+/// and neither is a multiple of any ASTC footprint — a transposed extent and a
+/// square one both fail here, where a 1x1 fixture would accept either.
+const SAMPLE_PNG: &[u8] = include_bytes!("fixtures/image_id/sample.png");
+
+/// An encoded payload's extent comes from its own header, not from the caller
+/// (issue #716).
+///
+/// The whole reason `ImageAsset` did not have to grow two fields, and the whole
+/// reason 47 construction sites did not have to change: the table reads what
+/// the bytes already say.
+#[test]
+fn an_encoded_payload_takes_its_extent_from_its_own_header() {
+    let mut images = ImageTable::new();
+    let index = images.push(ImageAsset {
+        format: ImageFormat::Png,
+        bytes: SAMPLE_PNG.to_vec(),
+    });
+    let asset = images.resolve(index);
+    assert_eq!((asset.width, asset.height), (7, 5));
+    // The row carries it too, which is what a non-Rust consumer reads.
+    assert_eq!(
+        (
+            images.all_entries()[0].width,
+            images.all_entries()[0].height
+        ),
+        (7, 5)
+    );
+    // And the same extent reaches a payload held outside a table.
+    let owned = ImageAsset {
+        format: ImageFormat::Png,
+        bytes: SAMPLE_PNG.to_vec(),
+    };
+    assert_eq!((owned.as_ref().width, owned.as_ref().height), (7, 5));
+}
+
+/// A baked payload states its extent, because its bytes cannot.
+#[test]
+fn a_baked_payload_carries_the_extent_it_was_pushed_with() {
+    let mut images = ImageTable::new();
+    // 7x5 at a 6x6 footprint is 2x1 blocks: the extent rounds up on both axes
+    // and neither axis divides. A payload sized by truncating division would be
+    // 16 bytes here and refused.
+    let index = images.push_baked(
+        ImageAsset {
+            format: ImageFormat::Astc6x6Unorm,
+            bytes: vec![0xAB; 32],
+        },
+        7,
+        5,
+    );
+    let asset = images.resolve(index);
+    assert_eq!((asset.width, asset.height), (7, 5));
+    assert_eq!(asset.format, ImageFormat::Astc6x6Unorm);
+}
+
+/// The block count rounds up on each axis independently.
+///
+/// Stated over extents that are not multiples, and asymmetric ones, because a
+/// formula that truncated, or that rounded one axis and not the other, agrees
+/// with the correct one on every exact multiple.
+#[test]
+fn a_baked_payload_length_rounds_blocks_up_per_axis() {
+    // Exact multiples: 2x2 blocks either way.
+    assert_eq!(ImageFormat::Astc6x6Srgb.payload_len(12, 12), Some(4 * 16));
+    // One texel over on each axis costs a whole further block on each.
+    assert_eq!(ImageFormat::Astc6x6Srgb.payload_len(13, 13), Some(9 * 16));
+    // Asymmetric, and neither axis divides: 2 blocks across, 1 down.
+    assert_eq!(ImageFormat::Astc6x6Srgb.payload_len(7, 5), Some(2 * 16));
+    // The transpose is a different number, so an implementation that swapped
+    // the axes fails here.
+    assert_eq!(ImageFormat::Astc6x6Srgb.payload_len(5, 7), Some(2 * 16));
+    assert_eq!(ImageFormat::Astc12x12Srgb.payload_len(7, 25), Some(3 * 16));
+    assert_eq!(ImageFormat::Astc12x12Srgb.payload_len(25, 7), Some(3 * 16));
+    // The blockless baked half is four bytes a texel.
+    assert_eq!(ImageFormat::Rgba8Srgb.payload_len(7, 5), Some(7 * 5 * 4));
+    assert_eq!(ImageFormat::Rgba8Unorm.payload_len(0, 0), Some(0));
+    // An encoded container's length is a property of its compression.
+    assert_eq!(ImageFormat::Png.payload_len(7, 5), None);
+    assert_eq!(ImageFormat::Jpeg.payload_len(7, 5), None);
+    assert_eq!(ImageFormat::Gif.payload_len(7, 5), None);
+}
+
+/// A baked binding whose bytes are not the length its extent requires is
+/// refused by name.
+///
+/// The baked half's version of what `identify` gives the encoded half for free.
+/// Before the extent was carried, a binding could state any format beside any
+/// bytes and nothing could tell; that half was closed by story #640. This is
+/// the other half of the same disagreement.
+#[test]
+#[should_panic(expected = "describe different images")]
+fn a_baked_payload_whose_length_contradicts_its_extent_is_refused() {
+    let mut images = ImageTable::new();
+    // 6x6 at a 6x6 footprint is one block, so 32 bytes is two images' worth.
+    images.push_baked(
+        ImageAsset {
+            format: ImageFormat::Astc6x6Srgb,
+            bytes: vec![0xAB; 32],
+        },
+        6,
+        6,
+    );
+}
+
+/// A non-empty encoded payload whose header does not parse panics, where an
+/// empty one does not.
+///
+/// The two cases look alike — neither yields an extent — and they are handled
+/// differently on purpose. Nothing owns a diagnostic for bytes that claim to be
+/// a PNG and are not, so this is the broken-contract panic; the empty case has
+/// a validator rule, so refusing it here would take that rule's job away.
+#[test]
+#[should_panic(expected = "header parses")]
+fn a_corrupt_encoded_payload_is_refused_where_an_empty_one_is_stored() {
+    ImageTable::new().push(ImageAsset {
+        format: ImageFormat::Png,
+        // The PNG signature, then nothing an IHDR can be read from.
+        bytes: vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00],
+    });
+}
+
+/// Each push refuses the other's half by name, so neither can be reached by
+/// accident.
+#[test]
+fn each_push_refuses_the_other_half() {
+    let encoded_through_baked = std::panic::catch_unwind(|| {
+        ImageTable::new().push_baked(
+            ImageAsset {
+                format: ImageFormat::Png,
+                bytes: SAMPLE_PNG.to_vec(),
+            },
+            7,
+            5,
+        )
+    });
+    assert!(
+        encoded_through_baked.is_err(),
+        "an encoded payload must not be pushed with a caller-stated extent: its header is the \
+         one record of it"
+    );
+
+    let baked_through_encoded = std::panic::catch_unwind(|| {
+        ImageTable::new().push(ImageAsset {
+            format: ImageFormat::Astc6x6Srgb,
+            bytes: vec![0xAB; 16],
+        })
+    });
+    assert!(
+        baked_through_encoded.is_err(),
+        "a baked payload has no header, so a push that derives the extent must refuse it rather \
+         than guess"
+    );
 }
 
 /// A painter that says nothing about formats claims the source-encoded ones,

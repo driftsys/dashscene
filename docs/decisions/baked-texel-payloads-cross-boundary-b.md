@@ -133,6 +133,48 @@ that is story #581, and it is where the lean painter's `samples` stops being the
 default. This record makes the path representable and binds nothing to walking
 it a particular way.
 
+## Amended by issue #716: the row carries the extent
+
+Story #581 found the representation one field short. A painter needs an image's
+pixel extent before it draws anything — to size a texture, and because
+`ScaleMode::Fill`, `Fit` and `Crop` are each stated over the image's intrinsic
+size — and boundary B carried no extent at all.
+
+The encoded half hid it. `dashscene-skia` recovers the extent by decoding, and
+`dashpaint::image_id::identify` recovers it from a PNG, JPEG or GIF header with
+no decode. Neither route exists for a baked payload: ASTC blocks and raw RGBA8
+texels carry no header, and a payload length does not determine an extent —
+`ceil(w/6) * ceil(h/6) * 16` maps many extents onto one length. So the format
+this record added could be uploaded by nobody.
+
+Three changes, and the shape of them follows D4's own split:
+
+- **`ImageEntry` and `ImageRef` carry `width` and `height`.** The row grows from
+  12 bytes to 20, stays `#[repr(C)]` with fixed-width members, and its pin on
+  `dashscene-unity`'s gate moves with it.
+- **`ImageTable::push` derives the extent for an encoded payload** by calling
+  `identify`, and `push_baked` takes it from the caller. So `ImageAsset` keeps
+  its shape and none of the 47 construction sites across 20 files changed —
+  the same reason flattening the table cost five files and not forty-two.
+- **`load_document_bound` passes the document's own extent** for a baked
+  payload. The document records it on `AssetEntry` and the validator has already
+  checked it against the canonical payload, and a derivation preserves it —
+  `dashpack`'s rungs are block footprints, not mip levels — so `BoundPayload`
+  gains nothing.
+
+**What this closed that D5 could not.** D5 made the format and the bytes state
+themselves together, and could say nothing about the extent, because there was
+none to state. `push_baked` now refuses a payload that is not the length its
+format and extent require, so a binding can no longer describe one image with
+its extent and a different one with its bytes.
+
+**What it deliberately did not do.** An encoded payload whose binding supplied
+no bytes is stored at a zero extent rather than refused. `dashscene-validator`'s
+`image.no-bytes` rule names that case, over a table it is handed already built,
+and a panic in `push` would replace a named diagnostic with a crash — the
+inversion of P4. A non-empty payload whose header does not parse _is_ refused
+there, because nothing else owns it.
+
 **No host selects a derivation yet.** `BoundPayload::derived` exists and is
 exercised by a test; choosing _which_ rung to bind is the profile question
 `dashpack` already answers, and wiring it into a host is #581's or later.

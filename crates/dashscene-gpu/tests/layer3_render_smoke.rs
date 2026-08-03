@@ -70,7 +70,7 @@ fn draw(rects: &[RectEntry], paints: &PaintTable, clips: &ClipTable) -> Vec<u8> 
         None,
     );
     renderer()
-        .render(painter.instances(), paints, clips, W, H)
+        .render(painter.instances(), paints, &ImageTable::new(), clips, W, H)
         .expect("the fixture extent is within any device's maximum")
 }
 
@@ -179,7 +179,14 @@ fn the_maximum_extent_draws_and_one_past_it_is_refused_on_either_axis() {
 
     for (width, height) in [(max, 8), (8, max)] {
         let pixels = renderer
-            .render(painter.instances(), &paints, &clips, width, height)
+            .render(
+                painter.instances(),
+                &paints,
+                &ImageTable::new(),
+                &clips,
+                width,
+                height,
+            )
             .unwrap_or_else(|error| {
                 panic!(
                     "a {width}x{height} drawable is what the device reports it can address: {error}"
@@ -189,7 +196,14 @@ fn the_maximum_extent_draws_and_one_past_it_is_refused_on_either_axis() {
     }
 
     for (width, height) in [(max + 1, 16), (16, max + 1)] {
-        let refused = renderer.render(painter.instances(), &paints, &clips, width, height);
+        let refused = renderer.render(
+            painter.instances(),
+            &paints,
+            &ImageTable::new(),
+            &clips,
+            width,
+            height,
+        );
         let Err(RendererError::Extent {
             width: reported_width,
             height: reported_height,
@@ -206,7 +220,14 @@ fn the_maximum_extent_draws_and_one_past_it_is_refused_on_either_axis() {
     // anything is allocated or dropped, so it costs the caller nothing but the
     // frame it asked for.
     let pixels = renderer
-        .render(painter.instances(), &paints, &clips, W, H)
+        .render(
+            painter.instances(),
+            &paints,
+            &ImageTable::new(),
+            &clips,
+            W,
+            H,
+        )
         .expect("an ordinary extent still renders after a refusal");
     assert_eq!(pixels.len(), (W * H * 4) as usize);
 }
@@ -708,7 +729,14 @@ fn a_width_that_needs_row_padding_reads_back_correctly() {
         None,
     );
     let pixels = renderer()
-        .render(painter.instances(), &paints, &clips, w, h)
+        .render(
+            painter.instances(),
+            &paints,
+            &ImageTable::new(),
+            &clips,
+            w,
+            h,
+        )
         .expect("the fixture extent is within any device's maximum");
     assert_eq!(pixels.len(), (w * h * 4) as usize);
     let at = |x: u32, y: u32| pixels[((y * w + x) * 4 + 3) as usize];

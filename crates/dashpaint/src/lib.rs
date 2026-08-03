@@ -346,6 +346,38 @@ impl ImageFormat {
         }
     }
 
+    /// How many bytes a payload in this format occupies at `width` x `height`
+    /// texels, or `None` for an encoded container, whose length is a property
+    /// of its compression rather than of its extent.
+    ///
+    /// An ASTC payload is one 16-byte block per footprint, with the last block
+    /// of a row or column covering texels past the edge — so the block counts
+    /// round **up**, and an extent that is not a multiple of the footprint
+    /// still costs a whole block. `Rgba8` is four bytes per texel.
+    ///
+    /// The same arithmetic `dashpack` checks a derivation against when it reads
+    /// one back (`dashpack::preview`, `PreviewError::PayloadLen`). It is written
+    /// twice because `dashpaint` depends on no crate — the same trade
+    /// `ImageFormat` itself makes against `dashpack::Rung::format` — and both
+    /// copies are stated over the format's own footprint rather than over a
+    /// number, so neither can drift without the footprint drifting.
+    ///
+    /// `None` for an encoded format rather than a guess: a PNG's length says
+    /// nothing about its extent, which is the whole reason the extent is
+    /// carried on the row at all.
+    pub const fn payload_len(self, width: u32, height: u32) -> Option<u64> {
+        match self.block() {
+            Some((bx, by)) => {
+                let blocks =
+                    (width as u64).div_ceil(bx as u64) * (height as u64).div_ceil(by as u64);
+                Some(blocks * 16)
+            }
+            None if self.is_encoded() => None,
+            // The blockless baked half: `Rgba8` in either colour space.
+            None => Some(width as u64 * height as u64 * 4),
+        }
+    }
+
     /// The value [`ImageEntry::format`] carries.
     pub const fn as_u32(self) -> u32 {
         self as u32
@@ -399,17 +431,68 @@ pub struct ImageAsset {
 }
 
 impl ImageAsset {
-    /// This asset as a painter reads one.
+    /// This asset as a painter reads one, with the extent read out of the
+    /// payload's own header.
     ///
     /// An [`Atlas`] owns its payload directly rather than through an
     /// [`ImageTable`], so the two ways a payload reaches a painter meet here
     /// and a consumer writes one signature rather than two.
+    ///
+    /// # Panics
+    ///
+    /// Panics on a baked payload, and on an encoded one whose header does not
+    /// parse — for the reasons [`ImageTable::push`] gives, which is the other
+    /// half of this pair.
     pub fn as_ref(&self) -> ImageRef<'_> {
+        let (width, height) = identified_extent(self.format, &self.bytes);
         ImageRef {
             format: self.format,
             bytes: &self.bytes,
+            width,
+            height,
         }
     }
+}
+
+/// The extent of an **encoded** payload, from its own header.
+///
+/// The one place [`image_id::identify`] is called on the way into boundary B,
+/// so that the derived extent and the refusals around it are written once.
+///
+/// # The empty payload is not an error here
+///
+/// A payload whose binding supplied nothing has no header and so no extent, and
+/// it is stored at `0 x 0` rather than refused. `dashscene-validator`'s
+/// `image.no-bytes` rule is what names it, over a table it is handed already
+/// built — so a panic here would replace a named diagnostic with a crash, which
+/// is the opposite of what P4 asks for. [`ImageEntry::len`] already says a
+/// zero-length payload is a value rather than a sentinel; its extent follows.
+///
+/// # Panics
+///
+/// Panics on a baked payload, naming the path that carries an extent instead:
+/// ASTC blocks and raw RGBA8 texels have no header, and a payload length does
+/// not determine an extent — `ceil(w/6) * ceil(h/6) * 16` maps many extents
+/// onto one length — so a derived value here would be a guess.
+///
+/// Panics on a non-empty encoded payload whose header does not parse. Those
+/// bytes are refused upstream — `dashc`'s image-identity gate reads the same
+/// header, and `dashscene-validator`'s `asset.extent-mismatch` compares it
+/// against the document — so one arriving here is a broken contract between
+/// crates rather than input to validate, and takes the same panic
+/// [`ImageTable::resolve`] takes for an index (P4).
+fn identified_extent(format: ImageFormat, bytes: &[u8]) -> (u32, u32) {
+    assert!(
+        format.is_encoded(),
+        "a {format:?} payload states no extent of its own: bake it through \
+         ImageTable::push_baked, which takes the extent the document records"
+    );
+    if bytes.is_empty() {
+        return (0, 0);
+    }
+    let header = image_id::identify(bytes)
+        .unwrap_or_else(|error| panic!("a {format:?} payload's header parses (P4): {error}"));
+    (header.width, header.height)
 }
 
 /// One image asset as the table **stores** it: what it is, and where its bytes
@@ -430,14 +513,35 @@ pub struct ImageEntry {
     /// How many bytes. A zero-length payload is a real value — an asset whose
     /// binding supplied nothing — and is not a sentinel for anything.
     pub len: u32,
+    /// The payload's intrinsic extent in texels.
+    ///
+    /// # Why the row carries it rather than each painter recovering it
+    ///
+    /// A painter needs the extent before it draws anything: a
+    /// [`ScaleMode::Fill`], `Fit` or `Crop` fill is stated over the image's
+    /// intrinsic size, and a painter that puts the payload in a texture atlas
+    /// needs it to allocate the rectangle at all.
+    ///
+    /// The encoded half could be recovered per painter —
+    /// `dashscene-skia` reads it off the decoded image, and
+    /// [`image_id::identify`] reads it out of the header with no decode. The
+    /// baked half cannot be recovered by anyone: ASTC blocks and raw RGBA8
+    /// texels carry no header, and a payload length does not determine an
+    /// extent. Since one half has to be carried, carrying both is what keeps
+    /// every painter reading one field rather than two paths (issue #716).
+    pub width: u32,
+    pub height: u32,
 }
 
-/// One image asset as a painter **reads** it: what it is, and its bytes,
-/// borrowed from the table's pool.
+/// One image asset as a painter **reads** it: what it is, its extent, and its
+/// bytes, borrowed from the table's pool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImageRef<'a> {
     pub format: ImageFormat,
     pub bytes: &'a [u8],
+    /// The payload's intrinsic extent in texels — see [`ImageEntry::width`].
+    pub width: u32,
+    pub height: u32,
 }
 
 /// The image-asset table — the runtime side, carrying decoded-ready bytes.
@@ -461,13 +565,80 @@ impl ImageTable {
         Self::default()
     }
 
-    /// Appends an asset and returns its index — the value an
+    /// Appends an **encoded** asset and returns its index — the value an
     /// [`ImageFill::image`] field holds to reference it.
     ///
     /// Takes the owning [`ImageAsset`] and copies its bytes into the pool, so
     /// that a caller assembling a table writes what it means rather than an
     /// offset it has to compute.
+    ///
+    /// The extent is read out of the payload's own header rather than taken
+    /// from the caller. Deriving it here rather than widening [`ImageAsset`]
+    /// is the same producer/table/reader split
+    /// `docs/decisions/baked-texel-payloads-cross-boundary-b.md` D4 took: the
+    /// producer keeps its shape, and the fixed-width row the table stores gains
+    /// what only the table can fill in.
+    ///
+    /// # Panics
+    ///
+    /// Panics on a baked payload, which states no extent of its own — use
+    /// [`push_baked`](Self::push_baked). See [`identified_extent`] for why a
+    /// baked extent cannot be derived from the bytes.
     pub fn push(&mut self, asset: ImageAsset) -> u32 {
+        let (width, height) = identified_extent(asset.format, &asset.bytes);
+        self.push_row(asset, width, height)
+    }
+
+    /// Appends a **baked** asset whose extent the caller states, and returns
+    /// its index.
+    ///
+    /// The loader is the caller: a baked payload only ever reaches boundary B
+    /// through a binding (`dashscene_core::BoundPayload`), and the extent is
+    /// the one the document records for the canonical asset. A derivation
+    /// preserves it — `dashpack`'s rungs are block footprints, not mip levels —
+    /// so the document's number describes the derived payload as exactly as it
+    /// describes the canonical one.
+    ///
+    /// # Panics
+    ///
+    /// Panics on an encoded payload. Its extent is in its own header, and a
+    /// caller stating a second copy of it is a caller who can state a wrong
+    /// one — the divergence `dashscene-validator`'s `asset.extent-mismatch`
+    /// exists to refuse upstream.
+    ///
+    /// Panics when the payload is not the length the format and the extent
+    /// require ([`ImageFormat::payload_len`]). This is the baked half's version
+    /// of the check the encoded half gets for free: `identify` refuses bytes
+    /// that are not the container they claim to be, and until this assertion a
+    /// baked binding could state any extent at all beside any bytes at all.
+    /// That is exactly the disagreement
+    /// `docs/decisions/baked-texel-payloads-cross-boundary-b.md` D5 closed for
+    /// the *format* and could not close for the extent, because the extent was
+    /// not carried yet.
+    pub fn push_baked(&mut self, asset: ImageAsset, width: u32, height: u32) -> u32 {
+        assert!(
+            !asset.format.is_encoded(),
+            "a {:?} payload carries its own extent: push it through ImageTable::push, which \
+             reads the header rather than trusting a second copy of the number",
+            asset.format
+        );
+        let expected = asset
+            .format
+            .payload_len(width, height)
+            .expect("a baked format sizes its payload");
+        assert_eq!(
+            asset.bytes.len() as u64,
+            expected,
+            "a {:?} payload at {width}x{height} is {expected} bytes, and {} were bound: the \
+             extent and the bytes describe different images",
+            asset.format,
+            asset.bytes.len()
+        );
+        self.push_row(asset, width, height)
+    }
+
+    /// The half both push paths share, once the extent is settled.
+    fn push_row(&mut self, asset: ImageAsset, width: u32, height: u32) -> u32 {
         let index =
             u32::try_from(self.entries.len()).expect("image table exceeds u32::MAX entries");
         let offset = u32::try_from(self.blobs.len()).expect("image pool exceeds u32::MAX bytes");
@@ -477,6 +648,8 @@ impl ImageTable {
             format: asset.format.as_u32(),
             offset,
             len,
+            width,
+            height,
         });
         index
     }
@@ -488,6 +661,8 @@ impl ImageTable {
         Some(ImageRef {
             format: ImageFormat::from_u32(entry.format),
             bytes: &self.blobs[start..start + entry.len as usize],
+            width: entry.width,
+            height: entry.height,
         })
     }
 

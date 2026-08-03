@@ -1096,6 +1096,19 @@ impl Txn<'_> {
         Arc::make_mut(&mut self.arena.images).push(asset)
     }
 
+    /// Stages a **baked** image asset, whose extent the caller states, and
+    /// returns its index.
+    ///
+    /// Separate from [`add_image`](Self::add_image) because a baked payload
+    /// carries no header to read the extent out of, and boundary B's row
+    /// carries one either way (issue #716). The loader is the only caller: a
+    /// baked payload reaches an arena only through a
+    /// [`crate::BoundPayload`], and the extent it passes is the one the
+    /// document records for the canonical asset.
+    pub fn add_baked_image(&mut self, asset: ImageAsset, width: u32, height: u32) -> u32 {
+        Arc::make_mut(&mut self.arena.images).push_baked(asset, width, height)
+    }
+
     /// Declare a variant set: a fixed list of named, sparsely-overriding
     /// members (`docs/decisions/variant-set-flat-index.md`). The first
     /// member (index 0) is active until [`Txn::set_variant`] switches

@@ -389,7 +389,14 @@ fn a_bound_derivation_reaches_the_painter_as_the_format_it_is() {
     // Stand-in for the rung a profile selected. Its bytes are deliberately not
     // the canonical ones, so an implementation that kept the document's payload
     // and only changed the tag fails the byte assertion below.
-    const BAKED: &[u8] = &[0xAB; 24];
+    //
+    // Thirty-two bytes because that is what the canonical asset's extent
+    // requires at this rung: the document's second asset is the 9x6 JPEG, which
+    // is 2x1 blocks at a 6x6 footprint, at 16 bytes a block. Boundary B checks
+    // that since issue #716, so a length that did not follow from the extent
+    // would be refused — which is the point: a derivation is the same image at
+    // the same size.
+    const BAKED: &[u8] = &[0xAB; 32];
 
     let bound: Vec<BoundPayload<'_>> = payloads
         .iter()
@@ -419,11 +426,23 @@ fn a_bound_derivation_reaches_the_painter_as_the_format_it_is() {
     let derived = asset_of(1);
     assert_eq!(derived.format, dashpaint::ImageFormat::Astc6x6Srgb);
     assert_eq!(derived.bytes, BAKED, "the derived bytes reach the painter");
+    // And its extent comes from the document, since the bytes carry none
+    // (issue #716). Asserted as an ordered pair, not as an area or a length:
+    // this asset is 9x6, and 6x9 is the same 32-byte payload at this footprint,
+    // so a loader that transposed the two would pass every other check in this
+    // test. It is also a *different* extent from the asset beside it, so a
+    // loader that read one entry's extent for every asset fails here.
+    assert_eq!(
+        (derived.width, derived.height),
+        (9, 6),
+        "a derivation is the canonical asset's own extent"
+    );
 
-    // The others are untouched, tag and bytes both.
+    // The others are untouched, tag, bytes and extent alike.
     let canonical = asset_of(0);
     assert_eq!(canonical.format, dashpaint::ImageFormat::Png);
     assert_eq!(canonical.bytes, PAYLOAD_PNG);
+    assert_eq!((canonical.width, canonical.height), (7, 5));
 }
 
 /// The canonical entry point is the bound one with every payload canonical, so

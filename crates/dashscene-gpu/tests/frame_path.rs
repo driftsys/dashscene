@@ -143,7 +143,15 @@ fn draw(
         changes.map(|changes| changes.rects),
     );
     renderer
-        .render_dirty(painter.instances(), paints, &clips, changes, W, H)
+        .render_dirty(
+            painter.instances(),
+            paints,
+            &ImageTable::new(),
+            &clips,
+            changes,
+            W,
+            H,
+        )
         .expect("the fixture extent is within any device's maximum")
 }
 
@@ -416,7 +424,14 @@ fn a_steady_state_frame_allocates_nothing() {
         None,
     );
     renderer
-        .render(painter.instances(), &paints, &clips, W + 8, H + 8)
+        .render(
+            painter.instances(),
+            &paints,
+            &ImageTable::new(),
+            &clips,
+            W + 8,
+            H + 8,
+        )
         .expect("the fixture extent is within any device's maximum");
     assert!(
         renderer.allocations() > settled,

@@ -83,6 +83,26 @@ pub struct Preview {
     pub rgba: Vec<u8>,
 }
 
+/// One derivation's stored texels, unwrapped from its container and inflated,
+/// in whatever format it was written in.
+///
+/// What [`blocks`] returns, and what a painter that can sample the block format
+/// binds — see `dashscene_core::BoundPayload`. The extent travels with the
+/// texels because block payloads carry no header of their own, which is the
+/// same reason boundary B's image row carries it (issue #716).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Baked {
+    /// Image width in texels, as the file records it.
+    pub width: u32,
+    /// Image height in texels, as the file records it.
+    pub height: u32,
+    /// The format the payload is stored in, recovered from the file's
+    /// `VkFormat`.
+    pub format: Format,
+    /// The stored bytes: ASTC blocks, or eight-bit RGBA for the lossless rung.
+    pub texels: Vec<u8>,
+}
+
 /// Why a payload could not be previewed.
 ///
 /// Every arm names what was found. A preview that guessed would draw a
@@ -199,12 +219,28 @@ pub fn is_ktx2(bytes: &[u8]) -> bool {
     bytes.starts_with(&IDENTIFIER)
 }
 
-/// Decodes a derived KTX2 payload back to the texels a target GPU samples.
+/// Opens a derived KTX2 payload and returns the stored blocks, unwrapped but
+/// **not** decoded.
 ///
-/// The block footprint and colour space are read out of the file's `VkFormat`,
-/// never taken from the caller — see the module documentation for why that is
-/// the property the weld test exists to hold.
-pub fn decode(file: &[u8]) -> Result<Preview, PreviewError> {
+/// The half of [`decode`] a GPU painter wants and the half a CPU painter does
+/// not: it parses the container, checks its shape, inflates the Zstandard
+/// supercompression and checks the level's length against what the recorded
+/// format and extent require — and then stops, because a painter that can
+/// sample the block format has no use for the ASTC decode that follows.
+///
+/// # This is not the transcode step the target-hardware rules forbid
+///
+/// `docs/specification/03-target-hardware-rules.md` requires product assets
+/// ship "as native ASTC directly, with no Basis and no transcode step of any
+/// kind". Unwrapping a container and inflating a lossless supercompression is
+/// neither: the blocks that come out are byte for byte the blocks the encoder
+/// wrote, at the footprint it wrote them, and nothing re-encodes anything. What
+/// the rule forbids is arriving at the block format at run time from some other
+/// one, which is what a Basis transcode does and what
+/// [`decode`] plus a re-encode would do.
+///
+/// It also runs once, at load, rather than per frame — P3.
+pub fn blocks(file: &[u8]) -> Result<Baked, PreviewError> {
     if !is_ktx2(file) {
         return Err(PreviewError::NotKtx2);
     }
@@ -266,17 +302,34 @@ pub fn decode(file: &[u8]) -> Result<Preview, PreviewError> {
         });
     }
 
-    let rgba = match format {
-        // The lossless rung: the level payload already is the texels. Copied
-        // rather than reinterpreted, so the caller owns them.
-        Format::Rgba8 { .. } => payload,
-        Format::Astc { block, color } => astc::decode(&payload, width, height, block, color)?,
-    };
-
-    Ok(Preview {
+    Ok(Baked {
         width,
         height,
         format,
+        texels: payload,
+    })
+}
+
+/// Decodes a derived KTX2 payload back to the texels a target GPU samples.
+///
+/// The block footprint and colour space are read out of the file's `VkFormat`,
+/// never taken from the caller — see the module documentation for why that is
+/// the property the weld test exists to hold.
+pub fn decode(file: &[u8]) -> Result<Preview, PreviewError> {
+    let baked = blocks(file)?;
+    let rgba = match baked.format {
+        // The lossless rung: the level payload already is the texels. Copied
+        // rather than reinterpreted, so the caller owns them.
+        Format::Rgba8 { .. } => baked.texels,
+        Format::Astc { block, color } => {
+            astc::decode(&baked.texels, baked.width, baked.height, block, color)?
+        }
+    };
+
+    Ok(Preview {
+        width: baked.width,
+        height: baked.height,
+        format: baked.format,
         rgba,
     })
 }
