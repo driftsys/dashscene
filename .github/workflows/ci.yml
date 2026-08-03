@@ -201,6 +201,21 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     name: test
     runs-on: ubuntu-latest
+    env:
+      # Point the Vulkan loader at the software device the step below installs.
+      # Without it the loader finds no driver on a GPU-less runner and the
+      # layer-2 suite fails by name rather than passing vacuously.
+      #
+      # `VK_ICD_FILENAMES` rather than `VK_DRIVER_FILES`, which replaced it in
+      # Vulkan-Loader 1.3.208: 24.04 ships 1.3.275, which still honours the old
+      # name with a warning, and the old name also works on older images. Worth
+      # revisiting when the runner image moves.
+      #
+      # No `WGPU_BACKEND`. wgpu reads that only through
+      # `InstanceDescriptor::from_env`, and the suite constructs its instance
+      # with `Instance::default()`, so setting it would be a variable nothing
+      # reads — and a comment claiming it steered the backend would be false.
+      VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -212,6 +227,24 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: workspace-tests
+      # Lavapipe, Mesa's software Vulkan device. Layer 2 of epic #569 — the
+      # shader library's arithmetic, evaluated by compute shader
+      # (`docs/decisions/shader-library-and-layer-2.md`) — needs a device, and
+      # these runners have no GPU. Compute is what makes a software adapter
+      # trustworthy here: it removes the rasteriser, the antialiasing resolve,
+      # the blend stage and the sampler, leaving float arithmetic, which does
+      # not shift with a Mesa version the way coverage and blending do. That is
+      # also why layer 4 is measured on real hardware instead.
+      #
+      # Installed in this job rather than given one of its own, because the
+      # conformance suite is an ordinary workspace test that happens to need a
+      # device: giving it a separate job would mean excluding it from the tiers,
+      # and it would then stop running on a developer's machine, where it works
+      # against whatever adapter is present.
+      - name: install a software vulkan device
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers
       - name: install flatc
         run: |
           curl -fsSL -o flatc.zip https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip

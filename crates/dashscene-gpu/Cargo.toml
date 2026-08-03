@@ -16,3 +16,17 @@ name = "dashscene_gpu"
 # itself. Deliberately not `wgpu` yet: this story reserves the name and
 # compiles the seam, and a device-owning painter is #580's.
 dashpaint.workspace = true
+# The GPU API itself, from story #579: the shader library and the compute
+# harness that checks its arithmetic both need a device. The painter still owns
+# none — a device, a queue and the pipelines over them are story #580's — so
+# this is here for the shaders and their conformance suite, not for drawing.
+
+[dev-dependencies]
+# The GPU API, the byte casts and the blocking adapter, all for the layer-2
+# conformance suite (story #579). Dev-dependencies rather than dependencies:
+# the crate's own code names none of them, because the painter still owns no
+# device — that is story #580's, and it moves `wgpu` up when it does.
+wgpu.workspace = true
+bytemuck.workspace = true
+# The suite is a synchronous test over an asynchronous API.
+pollster.workspace = true
