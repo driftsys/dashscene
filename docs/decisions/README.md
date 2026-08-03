@@ -472,6 +472,12 @@ filed beside their parent rather than apart from it:
   into an `Rgba8Unorm` target so blending stays in sRGB-encoded space, and
   layer 3 gates the pipeline rather than the picture; `wgsl_to_wgpu` and
   `naga_oil` are **not adopted**, with reasons (story #580).
+- [the-host-selects-the-painter-and-the-frame-path-holds-its-buffers.md](the-host-selects-the-painter-and-the-frame-path-holds-its-buffers.md)
+  — the swapchain lives in `dashscene-gpu` beside the pipeline format it has to
+  agree with, must not be an sRGB-converting format, and the showcase host
+  picks its painter with `--painter` and swaps it with a key; the frame path
+  holds its buffers across frames and applies a dirty range only when the
+  commit generation says this frame follows the one on the device (story #585).
 - [unity-painter-uses-brg.md](unity-painter-uses-brg.md) — **proposed**:
   BatchRendererGroup over GameObject-per-node for the Unity painter, pending a
   lit-BRG shader spike and a GLES 3.2 platform check

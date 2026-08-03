@@ -13,8 +13,12 @@ description = "The showcase host: a window, a presentation seam, and the Skia bl
 dashpaint.workspace = true
 # `CommittedScene`, the committed buffer a presenter is handed.
 dashscene-core.workspace = true
-# The v0 reference painter, and the only `Present` implementation for now.
+# The v0 reference painter, behind one of the two `Present` implementations.
 dashscene-skia.workspace = true
+# The lean painter, behind the other (story #585). It brings its own surface,
+# so this host names no `wgpu` type and takes no `wgpu` dependency — see
+# `crates/dashscene-gpu/src/surface.rs` for why the surface sits there.
+dashscene-gpu.workspace = true
 # `LiveScene`, the type the frame loop ticks and the scenes hand back.
 dashlang.workspace = true
 # The showcase scenes themselves (story #574). A workspace member under
