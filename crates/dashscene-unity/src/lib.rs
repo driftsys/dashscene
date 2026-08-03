@@ -27,8 +27,9 @@
 //!
 //! # Deliberately narrow, and widened by the story that flattens the rest
 //!
-//! The lint cannot be switched on over all of boundary B yet: `PaintEntry` and
-//! `ImageAsset` hold `Vec`s. Those are story #578's to flatten — payload enums
+//! The lint could not be switched on over all of boundary B at first:
+//! `PaintEntry` and `ImageAsset` held `Vec`s. Those were story #578's to
+//! flatten — payload enums
 //! become tag plus index into per-kind tables, nested collections become a flat
 //! array plus `(offset, count)` — and #578 widens this surface as it goes. That
 //! ordering is the point: the lint is never "turned on later and forgotten",
@@ -65,10 +66,18 @@
 //! now, padding included, and the member after the id always sat at offset 4.
 //! What sees the difference is the id member's own size.
 //!
-//! `ImageAsset` is what remains: it holds the encoded bytes as a `Vec<u8>`,
-//! which is a different problem from the ranges above — the bytes are the
-//! payload, not a reference into a table, so flattening it means deciding
-//! where a decoded-ready blob lives.
+//! `ImageEntry` closed the last of it (story #640). `ImageAsset` was the one
+//! row that could not become a range, because its `Vec<u8>` *is* the payload
+//! rather than a reference into a table — so the question was where a
+//! decoded-ready blob lives, not how to name it. The answer was to give the
+//! table a blob pool of its own: `ImageAsset` stays as the owning producer
+//! type, which no `extern "C"` signature names, and the stored row is
+//! `ImageEntry { format, offset, len }` — a range into that pool, exactly like
+//! every flattening above it, and gated here.
+//!
+//! Its `format` is a plain `u32` rather than the `ImageFormat` enum, for the
+//! same reason `PaintKind` carries a tag: a C or C# reader holds a number, and
+//! `ImageFormat::from_u32` is the one place it is read back.
 //!
 //! # What this is not
 //!
@@ -82,8 +91,8 @@
 
 use dashpaint::{
     AtlasGlyph, Blur, BlurRange, ClipBox, ClipRegion, Color, FillRange, GlyphQuad, GlyphRange,
-    GlyphRun, Gradient, GradientStop, ImageFill, Mat23, PaintEntry, PaintKind, RectEntry, Shadow,
-    ShadowRange, ShapeRange, StopRange, Stroke, StrokeRange, Vec2, VectorField,
+    GlyphRun, Gradient, GradientStop, ImageEntry, ImageFill, Mat23, PaintEntry, PaintKind,
+    RectEntry, Shadow, ShadowRange, ShapeRange, StopRange, Stroke, StrokeRange, Vec2, VectorField,
 };
 
 /// How this build lays out one boundary-B type.
@@ -161,6 +170,7 @@ abi_surface! {
     StrokeRange => dashscene_abi_stroke_range_layout, dashscene_abi_stroke_range_round_trip;
     ShapeRange => dashscene_abi_shape_range_layout, dashscene_abi_shape_range_round_trip;
     PaintEntry => dashscene_abi_paint_entry_layout, dashscene_abi_paint_entry_round_trip;
+    ImageEntry => dashscene_abi_image_entry_layout, dashscene_abi_image_entry_round_trip;
 }
 
 #[cfg(test)]
@@ -218,6 +228,7 @@ mod tests {
             ("StrokeRange", dashscene_abi_stroke_range_layout(), 8, 4),
             ("ShapeRange", dashscene_abi_shape_range_layout(), 8, 4),
             ("PaintEntry", dashscene_abi_paint_entry_layout(), 64, 4),
+            ("ImageEntry", dashscene_abi_image_entry_layout(), 12, 4),
         ];
         for (name, layout, size, align) in measured {
             assert_eq!(

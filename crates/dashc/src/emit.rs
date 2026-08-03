@@ -440,10 +440,23 @@ fn build_asset<'a>(b: &mut FlatBufferBuilder<'a>, asset: &Asset) -> WIPOffset<As
         b,
         &AssetEntryArgs {
             hash: Some(hash),
+            // A document records the **canonical** payload's format and
+            // nothing else. `dashpack` derives baked payloads beside the
+            // document and never rewrites it
+            // (`docs/decisions/asset-model-content-addressed-blobs.md`), so a
+            // baked format arriving here would mean a derivation had been
+            // written back into the source of truth. Refused by name rather
+            // than mapped to something close: `dashbuf::ImageFormat` has no
+            // baked variant precisely because the document must not carry one.
             format: match asset.format {
                 dashpaint::ImageFormat::Png => dashbuf::ImageFormat::Png,
                 dashpaint::ImageFormat::Jpeg => dashbuf::ImageFormat::Jpeg,
                 dashpaint::ImageFormat::Gif => dashbuf::ImageFormat::Gif,
+                baked => panic!(
+                    "asset {:?} is {baked:?}, a baked payload: a document carries canonical \
+                     payloads only, and a derivation is selected at load time",
+                    asset.hash()
+                ),
             },
             // `Image` is the schema default, so an image asset writes no slot
             // for this field and the committed `.dsb` bytes are unmoved by its

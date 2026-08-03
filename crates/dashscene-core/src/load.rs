@@ -59,6 +59,73 @@ use crate::committed::{
 /// what `dashscene_validator::validate_document` reports as errors, so a
 /// panic here means the caller skipped the gate.
 pub fn load_document(doc: &Document<'_>, payloads: &[&[u8]], arena: &mut Arena) -> u64 {
+    let bound: Vec<BoundPayload<'_>> = payloads
+        .iter()
+        .map(|bytes| BoundPayload::canonical(bytes))
+        .collect();
+    load_document_bound(doc, &bound, arena)
+}
+
+/// One asset's payload, as a host binds it.
+///
+/// # Why a binding may disagree with the document
+///
+/// A document records the **canonical** payload's format and never carries a
+/// derivation: `dashpack` writes derived payloads beside the document and does
+/// not rewrite it
+/// (`docs/decisions/asset-model-content-addressed-blobs.md`). So the format a
+/// document states is the format of the bytes it was *authored* from, and a
+/// host that binds a derived payload — the ASTC rung its profile selected — is
+/// binding bytes the document has no name for.
+///
+/// Until story #640 the loader took the format from the document entry and the
+/// bytes from the binding, with nothing checking that the two described the
+/// same thing. A host binding an ASTC payload got an asset tagged `Png`, and
+/// the painter had no way to find out. This type is where the two are stated
+/// together.
+#[derive(Debug, Clone, Copy)]
+pub struct BoundPayload<'a> {
+    /// The bytes bound to this asset entry.
+    pub bytes: &'a [u8],
+    /// What those bytes are, when they are a derivation. `None` means they are
+    /// the document's own canonical payload, and the format is read from the
+    /// entry — which is the only case that existed before story #640.
+    pub derived: Option<ImageFormat>,
+}
+
+impl<'a> BoundPayload<'a> {
+    /// The document's own payload: bytes whose format the entry already names.
+    pub fn canonical(bytes: &'a [u8]) -> Self {
+        Self {
+            bytes,
+            derived: None,
+        }
+    }
+
+    /// A derived payload in `format` — the rung a profile selected.
+    pub fn derived(bytes: &'a [u8], format: ImageFormat) -> Self {
+        Self {
+            bytes,
+            derived: Some(format),
+        }
+    }
+}
+
+/// [`load_document`], with each payload free to state its own format.
+///
+/// The entry point a host uses when it binds `dashpack`'s output rather than
+/// the document's canonical payloads — see [`BoundPayload`]. Everything else is
+/// identical, and `load_document` is this function with every payload bound as
+/// canonical.
+///
+/// # Panics
+///
+/// As [`load_document`].
+pub fn load_document_bound(
+    doc: &Document<'_>,
+    payloads: &[BoundPayload<'_>],
+    arena: &mut Arena,
+) -> u64 {
     let nodes = doc.nodes().unwrap_or_default();
     let paints = doc.paints().unwrap_or_default();
     let strings = doc.strings().unwrap_or_default();
@@ -95,8 +162,14 @@ pub fn load_document(doc: &Document<'_>, payloads: &[&[u8]], arena: &mut Arena) 
         .zip(payloads)
         .map(|(entry, payload)| {
             txn.add_image(ImageAsset {
-                format: image_format(entry.format()),
-                bytes: payload.to_vec(),
+                // The binding's format when it states one, the document's
+                // otherwise. A derivation is what the host resolved for its
+                // profile and its painter; the document only ever knows what
+                // the asset was authored as.
+                format: payload
+                    .derived
+                    .unwrap_or_else(|| image_format(entry.format())),
+                bytes: payload.bytes.to_vec(),
             })
         })
         .collect();

@@ -257,27 +257,187 @@ pub enum ScaleMode {
     Tile,
 }
 
-/// Encoded image container formats a painter can decode. Mirrors
-/// `dashbuf`'s `ImageFormat`; GPU-native containers (KTX2,
-/// docs/specification/03-target-hardware-rules.md) arrive as new variants.
+/// What an image payload is — a source-encoded container a painter decodes,
+/// or a baked texel block format it uploads.
 ///
-/// `Jpeg` and `Gif` (story #342) are Figma's other two image-fill
-/// containers — Figma re-encodes opaque uploads to Jpeg, and Gif covers
-/// static (single-frame) fills; the importer refuses animated Gif by name
-/// before it ever reaches this enum.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// # Two halves, one enum
+///
+/// `Png`, `Jpeg` and `Gif` are the source-encoded containers (story #342 for
+/// the latter two — Figma re-encodes opaque uploads to Jpeg, and Gif covers
+/// static single-frame fills; the importer refuses animated Gif by name before
+/// it reaches here). A painter holding one of these decodes it.
+///
+/// Everything after them is a **baked** payload: the block format `dashpack`
+/// derived, ready to upload with no decode of any kind. That is what
+/// `docs/specification/03-target-hardware-rules.md` requires of product assets
+/// — "native ASTC directly, with no Basis and no transcode step of any kind" —
+/// and until story #640 boundary B could not express it, so the packer's output
+/// could not reach a painter at all (issue #640).
+///
+/// # Why one flat enum rather than `Baked(TexelFormat)`
+///
+/// The nested form reads better and is what issue #640 proposed. It is not
+/// used, for the reason [`crate::ImageEntry`] gives: this value crosses the FFI
+/// gate as one `u32`, and a nested enum needs a mapping in each direction that
+/// is a second place for the correspondence to be written. `InstanceKind` in
+/// `dashscene-gpu` was two fields for the same reason and their discriminants
+/// collided; one flat discriminant makes that unrepresentable rather than
+/// forbidden.
+///
+/// # Why the colour space is part of the format
+///
+/// It is part of the *format* in KTX2 and in Vulkan — `ASTC_6x6_SRGB_BLOCK` and
+/// `ASTC_6x6_UNORM_BLOCK` are two formats, not one format with a flag — and
+/// `dashpack::Rung::format` already names them that way. Carrying it beside the
+/// block size would be a second record of one fact.
+///
+/// The variants are exactly the rungs `dashpack`'s image-fill ladder can stop
+/// at (`crates/dashpack/src/profile.rs`, `IMAGE_FILL_RUNGS`), in each of the
+/// two colour spaces its asset classes use. A format the packer cannot produce
+/// is deliberately absent: a painter that matched on one would be writing a
+/// branch nothing can reach.
+#[repr(u32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ImageFormat {
-    Png,
-    Jpeg,
-    Gif,
+    Png = 0,
+    Jpeg = 1,
+    Gif = 2,
+    Astc4x4Srgb = 3,
+    Astc4x4Unorm = 4,
+    Astc5x5Srgb = 5,
+    Astc5x5Unorm = 6,
+    Astc6x6Srgb = 7,
+    Astc6x6Unorm = 8,
+    Astc8x8Srgb = 9,
+    Astc8x8Unorm = 10,
+    Astc10x10Srgb = 11,
+    Astc10x10Unorm = 12,
+    Astc12x12Srgb = 13,
+    Astc12x12Unorm = 14,
+    Rgba8Srgb = 15,
+    Rgba8Unorm = 16,
 }
 
-/// One encoded image asset — bytes plus their container format. Each
-/// painter decodes with its own machinery.
+impl ImageFormat {
+    /// True when a painter must decode this payload before it can use it.
+    ///
+    /// The whole of what separates the two halves, and the predicate a
+    /// capability declaration is written against — see
+    /// [`Painter::samples`](crate::Painter::samples).
+    pub const fn is_encoded(self) -> bool {
+        matches!(self, Self::Png | Self::Jpeg | Self::Gif)
+    }
+
+    /// The ASTC block this format's payload is made of, or `None` for a format
+    /// that has no blocks.
+    ///
+    /// `Rgba8` is baked and blockless: it is the terminal rung of every ladder
+    /// (`dashpack::Rung::Uncompressed`), uploaded as texels rather than
+    /// decoded, so it is neither encoded nor blocked.
+    pub const fn block(self) -> Option<(u32, u32)> {
+        match self {
+            Self::Astc4x4Srgb | Self::Astc4x4Unorm => Some((4, 4)),
+            Self::Astc5x5Srgb | Self::Astc5x5Unorm => Some((5, 5)),
+            Self::Astc6x6Srgb | Self::Astc6x6Unorm => Some((6, 6)),
+            Self::Astc8x8Srgb | Self::Astc8x8Unorm => Some((8, 8)),
+            Self::Astc10x10Srgb | Self::Astc10x10Unorm => Some((10, 10)),
+            Self::Astc12x12Srgb | Self::Astc12x12Unorm => Some((12, 12)),
+            Self::Png | Self::Jpeg | Self::Gif | Self::Rgba8Srgb | Self::Rgba8Unorm => None,
+        }
+    }
+
+    /// The value [`ImageEntry::format`] carries.
+    pub const fn as_u32(self) -> u32 {
+        self as u32
+    }
+
+    /// The format a stored entry names.
+    ///
+    /// # Panics
+    ///
+    /// Panics on a value no variant carries. An entry's format is written by
+    /// [`ImageTable::push`] from this same enum, so a miss is a corrupt table
+    /// rather than input to validate — the contract every other row of
+    /// boundary B panics under.
+    pub const fn from_u32(value: u32) -> Self {
+        match value {
+            0 => Self::Png,
+            1 => Self::Jpeg,
+            2 => Self::Gif,
+            3 => Self::Astc4x4Srgb,
+            4 => Self::Astc4x4Unorm,
+            5 => Self::Astc5x5Srgb,
+            6 => Self::Astc5x5Unorm,
+            7 => Self::Astc6x6Srgb,
+            8 => Self::Astc6x6Unorm,
+            9 => Self::Astc8x8Srgb,
+            10 => Self::Astc8x8Unorm,
+            11 => Self::Astc10x10Srgb,
+            12 => Self::Astc10x10Unorm,
+            13 => Self::Astc12x12Srgb,
+            14 => Self::Astc12x12Unorm,
+            15 => Self::Rgba8Srgb,
+            16 => Self::Rgba8Unorm,
+            _ => panic!("no image format carries this value"),
+        }
+    }
+}
+
+/// One image asset on the way **into** an [`ImageTable`] — bytes plus what
+/// they are.
+///
+/// The producer half of the three types this table splits into, and the only
+/// one that owns its bytes: the table stores them in one pool and hands out
+/// [`ImageRef`], which borrows. That split is what lets the stored row be
+/// `#[repr(C)]` without making every caller that builds an asset assemble a
+/// range by hand (`docs/decisions/instance-buffer-contract.md` took the same
+/// shape for the same reason).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImageAsset {
     pub format: ImageFormat,
     pub bytes: Vec<u8>,
+}
+
+impl ImageAsset {
+    /// This asset as a painter reads one.
+    ///
+    /// An [`Atlas`] owns its payload directly rather than through an
+    /// [`ImageTable`], so the two ways a payload reaches a painter meet here
+    /// and a consumer writes one signature rather than two.
+    pub fn as_ref(&self) -> ImageRef<'_> {
+        ImageRef {
+            format: self.format,
+            bytes: &self.bytes,
+        }
+    }
+}
+
+/// One image asset as the table **stores** it: what it is, and where its bytes
+/// are in the pool.
+///
+/// `#[repr(C)]`, fixed-width, no owning members — the rule story #600 holds
+/// every boundary-B row to, and the one row that did not meet it until story
+/// #640. `format` is a plain `u32` rather than the enum so the layout is a
+/// number a C or C# reader can hold; [`ImageFormat::from_u32`] is the one place
+/// it is read back.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImageEntry {
+    /// An [`ImageFormat`] discriminant.
+    pub format: u32,
+    /// First byte of the payload in the table's pool.
+    pub offset: u32,
+    /// How many bytes. A zero-length payload is a real value — an asset whose
+    /// binding supplied nothing — and is not a sentinel for anything.
+    pub len: u32,
+}
+
+/// One image asset as a painter **reads** it: what it is, and its bytes,
+/// borrowed from the table's pool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImageRef<'a> {
+    pub format: ImageFormat,
+    pub bytes: &'a [u8],
 }
 
 /// The image-asset table — the runtime side, carrying decoded-ready bytes.
@@ -289,7 +449,11 @@ pub struct ImageAsset {
 /// (`docs/decisions/image-assets-cross-boundary-b.md`).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ImageTable {
-    entries: Vec<ImageAsset>,
+    /// Every asset's bytes, concatenated. One allocation for a whole frame's
+    /// payloads rather than one per asset, and the reason [`ImageEntry`] can be
+    /// a fixed-width row.
+    blobs: Vec<u8>,
+    entries: Vec<ImageEntry>,
 }
 
 impl ImageTable {
@@ -299,27 +463,50 @@ impl ImageTable {
 
     /// Appends an asset and returns its index — the value an
     /// [`ImageFill::image`] field holds to reference it.
+    ///
+    /// Takes the owning [`ImageAsset`] and copies its bytes into the pool, so
+    /// that a caller assembling a table writes what it means rather than an
+    /// offset it has to compute.
     pub fn push(&mut self, asset: ImageAsset) -> u32 {
         let index =
             u32::try_from(self.entries.len()).expect("image table exceeds u32::MAX entries");
-        self.entries.push(asset);
+        let offset = u32::try_from(self.blobs.len()).expect("image pool exceeds u32::MAX bytes");
+        let len = u32::try_from(asset.bytes.len()).expect("image payload exceeds u32::MAX bytes");
+        self.blobs.extend_from_slice(&asset.bytes);
+        self.entries.push(ImageEntry {
+            format: asset.format.as_u32(),
+            offset,
+            len,
+        });
         index
     }
 
-    pub fn get(&self, index: u32) -> Option<&ImageAsset> {
-        self.entries.get(index as usize)
+    /// The asset at `index`, borrowing its bytes from the pool.
+    pub fn get(&self, index: u32) -> Option<ImageRef<'_>> {
+        let entry = self.entries.get(index as usize)?;
+        let start = entry.offset as usize;
+        Some(ImageRef {
+            format: ImageFormat::from_u32(entry.format),
+            bytes: &self.blobs[start..start + entry.len as usize],
+        })
     }
 
     /// Resolves an image index. Panics on an out-of-range index —
     /// indices are validated upstream (P4), same contract as
     /// [`PaintTable::resolve`].
-    pub fn resolve(&self, index: u32) -> &ImageAsset {
+    pub fn resolve(&self, index: u32) -> ImageRef<'_> {
         self.get(index).unwrap_or_else(|| {
             panic!(
                 "image index {index} out of range ({} assets): image indices are validated upstream (P4)",
                 self.entries.len()
             )
         })
+    }
+
+    /// Every stored row, for a consumer that walks the table rather than
+    /// resolving one index — and the value the FFI gate is stated over.
+    pub fn all_entries(&self) -> &[ImageEntry] {
+        &self.entries
     }
 
     pub fn len(&self) -> usize {
@@ -2167,6 +2354,30 @@ pub trait Painter {
     /// `paint` or `clip` index is a broken contract between crates;
     /// [`PaintTable::resolve`] and [`ClipTable::resolve`] centralize the
     /// panic for that case.
+    /// Whether this painter can use a payload in `format` as it stands.
+    ///
+    /// # Why this is a declaration and not a result
+    ///
+    /// [`Painter::paint`] returns nothing, by decision
+    /// (`docs/decisions/painter-trait-infallible-slice-input.md`), so "this
+    /// painter cannot sample ASTC 6x6" cannot be reported from inside a frame.
+    /// And P4 forbids discovering it there in any case: an unsupported
+    /// construct is a named diagnostic, never a silent drop. So the question is
+    /// asked **before** a payload is bound, by whoever selects which derivation
+    /// to load, and this is the answer they ask for.
+    ///
+    /// # The default is the conservative half
+    ///
+    /// A painter that says nothing claims only the source-encoded containers,
+    /// which is what every painter written before story #640 does. The default
+    /// is safe in the direction that matters: a painter that *could* upload a
+    /// baked payload but forgot to say so is handed an encoded one and decodes
+    /// it — slower, and correct. The reverse could not be made safe, which is
+    /// why the default is not "everything".
+    fn samples(&self, format: ImageFormat) -> bool {
+        format.is_encoded()
+    }
+
     // Boundary B is a fixed set of parallel tables (§7.3), so `paint`
     // takes one per table plus the advisory dirty set — the arity is the
     // contract, not a call-site smell.

@@ -1,6 +1,9 @@
 # Image assets cross boundary B as encoded bytes in an ImageTable
 
-    status   accepted (story #14, 2026-07-12)
+    status   accepted (story #14, 2026-07-12); extended by
+             baked-texel-payloads-cross-boundary-b.md (story #640, 2026-08-03),
+             which adds the baked half this record's "new `ImageFormat`
+             variants arrive additively" anticipated
     scope    dashpaint (Painter trait), every painter
 
 ## Context
