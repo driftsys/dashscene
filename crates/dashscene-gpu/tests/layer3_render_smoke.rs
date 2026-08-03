@@ -20,7 +20,7 @@ use dashpaint::{
     ClipBox, ClipIndex, ClipTable, Color, CornerRadii, EntryParts, GlyphRunTable, ImageTable,
     PaintEntry, PaintTable, Painter, RectEntry, Stroke, StrokeAlign,
 };
-use dashscene_gpu::{GpuPainter, Renderer};
+use dashscene_gpu::{GpuPainter, Renderer, RendererError};
 
 const W: u32 = 64;
 const H: u32 = 48;
@@ -69,7 +69,9 @@ fn draw(rects: &[RectEntry], paints: &PaintTable, clips: &ClipTable) -> Vec<u8> 
         &GlyphRunTable::new(),
         None,
     );
-    renderer().render(painter.instances(), paints, clips, W, H)
+    renderer()
+        .render(painter.instances(), paints, clips, W, H)
+        .expect("the fixture extent is within any device's maximum")
 }
 
 /// The pipeline builds and the shader modules validate.
@@ -87,6 +89,126 @@ fn the_pipeline_builds_and_the_shaders_validate() {
         "layer-3 adapter: {} | backend {:?} | device_type {:?}",
         info.name, info.backend, info.device_type
     );
+}
+
+/// The drawable this painter can address is the adapter's own maximum, and not
+/// the 2048 px `wgpu::Limits::downlevel_defaults` names.
+///
+/// This is half of issue #714. The painter requests downlevel limits so that it
+/// runs on the entry-tier class of device R3 names, and downlevel caps
+/// `max_texture_dimension_2d` at 2048 — which made an ordinary 2288x1410 window
+/// abort the showcase host on a machine whose adapter reports 16384. A
+/// resolution is a property of the window the host opened rather than of the
+/// features the painter uses, so it comes from the adapter.
+///
+/// Stated against a second adapter requested exactly as `Renderer::new`
+/// requests its own — same options, same process, so the same adapter — rather
+/// than against a literal. A literal would say either "at least 2048", which
+/// the defect satisfied, or "16384", which is this machine and not CI's.
+#[test]
+fn the_drawable_maximum_is_the_adapters_and_not_the_downlevel_default() {
+    let instance = wgpu::Instance::default();
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::default(),
+        force_fallback_adapter: false,
+        compatible_surface: None,
+        ..Default::default()
+    }))
+    .expect("layer 3 needs a device");
+
+    let max = renderer().max_extent();
+    println!(
+        "layer-3 max_texture_dimension_2d: adapter {}, downlevel default {}, painter {max}",
+        adapter.limits().max_texture_dimension_2d,
+        wgpu::Limits::downlevel_defaults().max_texture_dimension_2d,
+    );
+    assert_eq!(
+        max,
+        adapter.limits().max_texture_dimension_2d,
+        "the painter must be bounded by what the adapter reports, not by a synthetic limit"
+    );
+}
+
+/// The maximum itself draws, and one past it is refused by name, on either
+/// axis — rather than reaching `wgpu` and aborting the process.
+///
+/// The other half of issue #714, and the half no window is needed to state.
+/// `Device::create_texture` and `Surface::configure` both raise a validation
+/// error for an over-large extent, and a wgpu validation error is not returned
+/// to the caller — it reaches the uncaptured-error handler and panics, which
+/// inside the swapchain configure is non-unwinding and takes the process with
+/// it. So the extent has to be refused before the call.
+///
+/// Both sides of the boundary, on both axes, and neither half is redundant:
+///
+/// - `max` itself must draw. wgpu refuses an extent strictly *greater* than
+///   `max_texture_dimension_2d` (`wgpu-core`'s `conv.rs` compares
+///   `given > limit`), so a check written `>=` would refuse a drawable the
+///   device can address — and no ordinary fixture, at 64x48, comes near
+///   enough to the boundary to notice.
+/// - `max + 1` must be refused. A check that reads only the width, or only the
+///   height, passes a fixture that oversizes both, so each axis is driven past
+///   on its own with the other left small.
+///
+/// The admitted extents are `max` by 8 rather than `max` square: a square one
+/// is a gigabyte of texture on a desktop adapter, and it is the boundary on
+/// each axis that is under test, not the area.
+#[test]
+fn the_maximum_extent_draws_and_one_past_it_is_refused_on_either_axis() {
+    let mut renderer = renderer();
+    let max = renderer.max_extent();
+
+    let mut paints = PaintTable::new();
+    let red = paints.push_solid(Color {
+        r: 1.0,
+        g: 0.0,
+        b: 0.0,
+        a: 1.0,
+    });
+    let clips = ClipTable::new();
+    let mut painter = GpuPainter::new();
+    painter.paint(
+        &[rect(0.0, 0.0, 8.0, 8.0, red, ClipIndex::UNCLIPPED)],
+        &paints,
+        &ImageTable::new(),
+        &clips,
+        &[],
+        &GlyphRunTable::new(),
+        None,
+    );
+
+    for (width, height) in [(max, 8), (8, max)] {
+        let pixels = renderer
+            .render(painter.instances(), &paints, &clips, width, height)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "a {width}x{height} drawable is what the device reports it can address: {error}"
+                )
+            });
+        assert_eq!(pixels.len(), (width as usize) * (height as usize) * 4);
+    }
+
+    for (width, height) in [(max + 1, 16), (16, max + 1)] {
+        let refused = renderer.render(painter.instances(), &paints, &clips, width, height);
+        let Err(RendererError::Extent {
+            width: reported_width,
+            height: reported_height,
+            max: reported_max,
+        }) = refused
+        else {
+            panic!("a {width}x{height} drawable past a maximum of {max} was not refused");
+        };
+        assert_eq!((reported_width, reported_height), (width, height));
+        assert_eq!(reported_max, max);
+    }
+
+    // And the renderer is still usable afterwards: a refusal happens before
+    // anything is allocated or dropped, so it costs the caller nothing but the
+    // frame it asked for.
+    let pixels = renderer
+        .render(painter.instances(), &paints, &clips, W, H)
+        .expect("an ordinary extent still renders after a refusal");
+    assert_eq!(pixels.len(), (W * H * 4) as usize);
 }
 
 /// A filled rect covers its inside and leaves its outside alone.
@@ -585,7 +707,9 @@ fn a_width_that_needs_row_padding_reads_back_correctly() {
         &GlyphRunTable::new(),
         None,
     );
-    let pixels = renderer().render(painter.instances(), &paints, &clips, w, h);
+    let pixels = renderer()
+        .render(painter.instances(), &paints, &clips, w, h)
+        .expect("the fixture extent is within any device's maximum");
     assert_eq!(pixels.len(), (w * h * 4) as usize);
     let at = |x: u32, y: u32| pixels[((y * w + x) * 4 + 3) as usize];
     // Rows near the bottom are where a wrong stride shears the image.

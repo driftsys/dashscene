@@ -142,7 +142,9 @@ fn draw(
         &GlyphRunTable::new(),
         changes.map(|changes| changes.rects),
     );
-    renderer.render_dirty(painter.instances(), paints, &clips, changes, W, H)
+    renderer
+        .render_dirty(painter.instances(), paints, &clips, changes, W, H)
+        .expect("the fixture extent is within any device's maximum")
 }
 
 /// What a host would hand over for a commit: the rects that changed, and which
@@ -413,7 +415,9 @@ fn a_steady_state_frame_allocates_nothing() {
         &GlyphRunTable::new(),
         None,
     );
-    renderer.render(painter.instances(), &paints, &clips, W + 8, H + 8);
+    renderer
+        .render(painter.instances(), &paints, &clips, W + 8, H + 8)
+        .expect("the fixture extent is within any device's maximum");
     assert!(
         renderer.allocations() > settled,
         "a new extent needs a new target, so the counter must be able to move"

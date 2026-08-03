@@ -80,7 +80,7 @@ use std::sync::Arc;
 
 use dashpaint::Painter;
 use dashscene_core::CommittedScene;
-use dashscene_gpu::{Changes, GpuPainter, SurfaceRenderer};
+use dashscene_gpu::{Changes, GpuPainter, RendererError, SurfaceRenderer};
 use dashscene_skia::SkiaPainter;
 use winit::window::Window;
 
@@ -141,10 +141,18 @@ pub enum PresentError {
     Surface(String),
     /// The frame was drawn but could not be handed to the compositor.
     Post(String),
-    /// The drawable is larger than the painter can address. `skia-safe` takes
-    /// surface dimensions as `i32`, so a request past `i32::MAX` is refused by
-    /// name rather than wrapped into a negative extent.
-    Extent { width: u32, height: u32 },
+    /// The drawable is larger than the painter can address on either axis, and
+    /// `max` is the largest either may be.
+    ///
+    /// The two painters reach it from opposite directions and it is one
+    /// variant deliberately, so the host reports the same refusal whichever is
+    /// running. `skia-safe` takes surface dimensions as `i32`, so a request
+    /// past `i32::MAX` would wrap into a negative extent; `dashscene-gpu` is
+    /// bounded by the device's own `max_texture_dimension_2d`, and configuring
+    /// a swapchain past it aborts the process instead of returning (issue
+    /// #714). Neither is a number the painter chose, which is why the one it
+    /// did not meet is reported alongside the one it was asked for.
+    Extent { width: u32, height: u32, max: u32 },
     /// The framebuffer the windowing system handed back does not hold the
     /// number of pixels the painter drew. Reported rather than truncated: a
     /// short copy would post a torn or shifted picture, and a picture that is
@@ -157,10 +165,10 @@ impl std::fmt::Display for PresentError {
         match self {
             Self::Surface(message) => write!(f, "window surface: {message}"),
             Self::Post(message) => write!(f, "posting the frame: {message}"),
-            Self::Extent { width, height } => write!(
+            Self::Extent { width, height, max } => write!(
                 f,
-                "a {width}x{height} drawable exceeds the largest raster surface the painter can \
-                 address"
+                "a {width}x{height} drawable exceeds the {max} px maximum this painter can \
+                 address on either dimension"
             ),
             Self::ExtentMismatch {
                 painted,
@@ -268,7 +276,11 @@ impl Present for SkiaPresenter {
         };
         let (Ok(raster_width), Ok(raster_height)) = (i32::try_from(width), i32::try_from(height))
         else {
-            return Err(PresentError::Extent { width, height });
+            return Err(PresentError::Extent {
+                width,
+                height,
+                max: i32::MAX as u32,
+            });
         };
         self.surface
             .resize(nz_width, nz_height)
@@ -392,8 +404,7 @@ impl GpuPresenter {
     /// the same contract [`SkiaPresenter::new`] holds.
     pub fn new(window: Arc<Window>) -> Result<Self, PresentError> {
         let size = window.inner_size();
-        let renderer = SurfaceRenderer::new(window, size.width, size.height)
-            .map_err(|error| PresentError::Surface(error.to_string()))?;
+        let renderer = SurfaceRenderer::new(window, size.width, size.height).map_err(from_gpu)?;
         let info = renderer.adapter_info();
         let name = format!(
             "dashscene-gpu ({}, {:?}, {:?})",
@@ -409,6 +420,19 @@ impl GpuPresenter {
     }
 }
 
+/// Carries a `dashscene-gpu` failure across the seam.
+///
+/// Only the extent keeps its own variant: it is the one refusal the two
+/// painters share, and the one a person reading the message can act on by
+/// making the window smaller. Everything else is a surface that could not be
+/// built and reads as one.
+fn from_gpu(error: RendererError) -> PresentError {
+    match error {
+        RendererError::Extent { width, height, max } => PresentError::Extent { width, height, max },
+        other => PresentError::Surface(other.to_string()),
+    }
+}
+
 impl Present for GpuPresenter {
     fn name(&self) -> &str {
         &self.name
@@ -419,11 +443,11 @@ impl Present for GpuPresenter {
     }
 
     fn resize(&mut self, width: u32, height: u32) -> Result<(), PresentError> {
-        // No `i32` ceiling to check, unlike the Skia path: a swapchain extent
-        // is `u32` all the way down, and a drawable too large for the device is
-        // refused by wgpu with its own message rather than wrapped.
-        self.renderer.resize(width, height);
-        Ok(())
+        // The ceiling is the device's rather than the Skia path's `i32`, and
+        // the renderer is the only thing that knows it. It is checked there
+        // rather than here because configuring a swapchain past it is not an
+        // error wgpu returns — it is a non-unwinding panic (issue #714).
+        self.renderer.resize(width, height).map_err(from_gpu)
     }
 
     fn present(&mut self, scene: &CommittedScene) -> Result<(), PresentError> {
