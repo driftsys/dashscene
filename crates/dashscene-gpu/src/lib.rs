@@ -2,7 +2,7 @@
 //! native and web from one codebase
 //! (`docs/decisions/wgpu-is-the-lean-painter.md`).
 //!
-//! # Status: the frame is packed, and nothing draws it
+//! # Status: solid fills draw, to a texture or to a window
 //!
 //! Story #577 stood the crate up against boundary B — "the entire painter
 //! input" (`docs/design/architecture.md`) — so that the trait was proven
@@ -18,9 +18,14 @@
 //! includes that string rather than copying from it
 //! (`docs/decisions/shader-library-and-layer-2.md`).
 //!
-//! Nothing submits a frame and nothing draws. The crate names `wgpu` only in
-//! its dev-dependencies, where the conformance suite needs a device; the
-//! painter's own device, its pipelines and its first pixels are story #580.
+//! Story #580 gave it a device and a pipeline, and drew the first pixels
+//! offscreen ([`render`], `docs/decisions/pipelines-and-layer-3.md`). Story
+//! #585 added the second target: [`surface`] presents the same frame to a
+//! window's swapchain, which is what the showcase host draws through.
+//!
+//! What draws is opaque rounded rects with a solid fill, clipped by their
+//! region. Gradients, images, text, group opacity, shadows and blur are all
+//! packed and none of them are drawn — each has its own story in epic #569.
 //!
 //! # Why this crate is named for the role
 //!
@@ -44,23 +49,28 @@ pub mod instance;
 pub mod pack;
 pub mod render;
 pub mod shader;
+pub mod surface;
 
 use dashpaint::{
     ClipTable, GlyphRunTable, GroupComposite, ImageTable, PaintTable, Painter, RectEntry,
 };
 
 pub use instance::{Instance, InstanceBuffer, InstanceKind, InstanceSpan};
-pub use render::{Renderer, RendererError};
+pub use render::{Changes, InstanceUpload, Renderer, RendererError};
 pub use shader::SDF_WGSL;
+pub use surface::{FrameError, SurfaceRenderer};
 
-/// The lean painter. Packs a frame into its instance buffer and draws none of
-/// it: a device, a queue, a surface and the pipelines over them arrive with
-/// story #580.
+/// The lean painter: boundary B's tables in, one ordered instance buffer out.
+///
+/// It draws nothing itself. What draws the buffer is [`Renderer`], offscreen,
+/// or [`SurfaceRenderer`], to a window — the split boundary B's own shape asks
+/// for, since a `Painter` is handed tables and returns nothing and a device is
+/// not part of that contract.
 ///
 /// It holds the buffer across frames rather than returning a fresh one, so a
-/// steady-state frame repacks into an allocation it already has. Uploading
-/// only the changed rects' spans is the other half of what R-T4 asks for, and
-/// it needs a device — story #580's.
+/// steady-state frame repacks into an allocation it already has. The other half
+/// of what R-T4 asks for — uploading only the changed rects' spans — is the
+/// renderer's, and landed with story #585.
 #[derive(Debug, Default)]
 pub struct GpuPainter {
     /// How many times [`Painter::paint`] has been called.
@@ -79,8 +89,8 @@ impl GpuPainter {
         self.frames
     }
 
-    /// The frame most recently packed — the painter's whole output until
-    /// story #580 gives it a device, and what a layer-1 golden is stated over.
+    /// The frame most recently packed — the painter's whole output, what a
+    /// layer-1 golden is stated over, and what a renderer is handed to draw.
     pub fn instances(&self) -> &InstanceBuffer {
         &self.instances
     }
@@ -90,11 +100,13 @@ impl Painter for GpuPainter {
     /// Packs the whole of boundary B into [`instances`](Self::instances) and
     /// submits none of it.
     ///
-    /// Ignoring `dirty` is not a placeholder: the set is advisory, and a
-    /// painter that repacks everything is always correct. Honouring it means
-    /// rewriting only the changed rects' spans, which needs the previous
-    /// frame's tables to compare against and a device to upload to — story
-    /// #580's, and the property R-T4 is stated over.
+    /// Ignoring `dirty` here is not a placeholder: the set is advisory, and a
+    /// painter that repacks everything is always correct. The set is honoured
+    /// one level down, where it decides which byte ranges of the instance
+    /// buffer are uploaded ([`Renderer::render_dirty`],
+    /// [`SurfaceRenderer::present`]). Repacking only the changed rects as well
+    /// needs the previous frame's tables held for comparison, which is issue
+    /// #708 and not this crate's shape today.
     fn paint(
         &mut self,
         rects: &[RectEntry],

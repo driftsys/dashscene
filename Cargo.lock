@@ -680,6 +680,7 @@ dependencies = [
  "dashpaint",
  "dashscene-core",
  "dashscene-engine",
+ "dashscene-gpu",
  "dashscene-skia",
  "dashscene-validator",
  "showcase",

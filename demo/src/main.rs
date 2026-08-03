@@ -4,13 +4,14 @@
 //! story #572 the first thing that animates one, and since story #574 the
 //! first thing that draws the whole v0 paint vocabulary.
 //!
-//! What the host is: the [`present`] seam and the Skia implementation behind
-//! it (story #571), the [`shell`] frame loop that drives it (story #572),
-//! [`scenes`], which chooses what it draws, and [`input`], which maps the
-//! pointer and three keys onto what the chosen scene declares (story #573).
-//! What it is **not** is the content: the scenes live in `corpus/showcase/`
-//! (story #574), and [`document`] points this host at a compiled `.dsb` as a
-//! further source (story #575).
+//! What the host is: the [`present`] seam and the two painters behind it
+//! (stories #571 and #585), the [`shell`] frame loop that drives it (story
+//! #572), [`scenes`], which chooses what it draws, [`painter`], which chooses
+//! what draws it (story #585), and [`input`], which maps the pointer and three
+//! keys onto what the chosen scene declares (story #573). What it is **not** is
+//! the content: the scenes live in `corpus/showcase/` (story #574), and
+//! [`document`] points this host at a compiled `.dsb` as a further source
+//! (story #575).
 //!
 //! Nothing in this crate names a node, a signal or a colour. A scene carries
 //! the name of the signal input drives and the function a key runs, and the
@@ -18,6 +19,7 @@
 
 mod document;
 mod input;
+mod painter;
 mod present;
 mod scenes;
 mod shell;
@@ -25,15 +27,28 @@ mod shell;
 use std::error::Error;
 use std::process::ExitCode;
 
+use painter::Choice;
 use scenes::Selection;
 
 fn main() -> ExitCode {
+    // The painter comes off the argument list first and is removed from it, so
+    // everything below sees the list it saw before this flag existed. Story
+    // #585, and `painter.rs` for why choosing at run time is a property of this
+    // demonstration rather than of anything that ships.
+    let mut arguments: Vec<String> = std::env::args().skip(1).collect();
+    let painter = match Choice::take(&mut arguments) {
+        Ok(painter) => painter,
+        Err(complaint) => {
+            eprintln!("demo: {complaint}");
+            return ExitCode::FAILURE;
+        }
+    };
     // `--dsb` selects the loaded document rather than an authored showcase
     // scene. It sits beside the scene registry rather than inside it because a
     // `.dsb` is a different kind of source: the registry lists scenes authored
     // through the producer API, and the document is replayed through that same
     // API by the loader.
-    if std::env::args().nth(1).as_deref() == Some("--dsb") {
+    if arguments.first().map(String::as_str) == Some("--dsb") {
         eprintln!("demo: document — a compiled .dsb replayed through the producer API");
         // A compiled document carries no signals, no bindings and no variant
         // table — issue #617 records that this is true of every `.dsb` in the
@@ -48,12 +63,12 @@ fn main() -> ExitCode {
             signal: "",
             action: None,
         };
-        return finish(shell::run("dashscene — document", vec![entry]));
+        return finish(shell::run("dashscene — document", vec![entry], painter));
     }
 
     // One entry or several — the host takes a list either way, and its length
     // is what decides whether it advances (issue #628).
-    let showing = match scenes::select(std::env::args().skip(1)) {
+    let showing = match scenes::select(arguments) {
         Selection::Scene(scene) => vec![scene],
         Selection::All => showcase::SCENES.iter().collect(),
         Selection::Listed => return ExitCode::SUCCESS,
@@ -74,7 +89,7 @@ fn main() -> ExitCode {
         })
         .collect();
 
-    finish(shell::run("dashscene — showcase", scenes))
+    finish(shell::run("dashscene — showcase", scenes, painter))
 }
 
 /// Turns the loop's result into the process exit code, reporting the failure

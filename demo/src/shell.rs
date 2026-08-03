@@ -88,10 +88,11 @@ use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
-use winit::keyboard::PhysicalKey;
+use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
-use crate::present::{Present, PresentError, SkiaPresenter};
+use crate::painter::Choice;
+use crate::present::{Present, PresentError};
 
 /// Builds a scene into `arena` for a drawable of `width` x `height` physical
 /// pixels, and returns the live scene the loop ticks.
@@ -147,6 +148,14 @@ const MAX_FRAME_DELTA: Duration = Duration::from_millis(100);
 /// loop wakes immediately and the pacing degrades to running flat out rather
 /// than to dropping frames.
 const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
+
+/// The key that swaps the painter on the running window (story #585).
+///
+/// Handled here rather than in [`crate::input`], because it is not a scene's
+/// input: a scene declares the signal the pointer drives and the function a key
+/// runs, and which painter draws it is neither. `P` is unmapped by every scene,
+/// so nothing it did before is lost.
+const SWAP_PAINTER: KeyCode = KeyCode::KeyP;
 
 /// How often the placeholder driver pulses the scene's signals.
 ///
@@ -217,7 +226,7 @@ const PULSES_PER_SCENE: u32 = 4;
 const SCENE_DWELL: Duration =
     Duration::from_millis(PULSE_INTERVAL.as_millis() as u64 * PULSES_PER_SCENE as u64);
 
-/// Opens a window, binds the Skia presenter to it, and runs the frame loop
+/// Opens a window, binds `painter`'s presenter to it, and runs the frame loop
 /// until the window is closed.
 ///
 /// **The length of `scenes` is the mode.** One scene runs exactly as it did
@@ -226,7 +235,11 @@ const SCENE_DWELL: Duration =
 /// the first, so the vocabulary checklist can be walked in a single run.
 /// Nothing distinguishes the two paths except the count, so there is no flag
 /// that can disagree with the list.
-pub fn run(title: &'static str, scenes: Vec<SceneEntry>) -> Result<(), Box<dyn Error>> {
+pub fn run(
+    title: &'static str,
+    scenes: Vec<SceneEntry>,
+    painter: Choice,
+) -> Result<(), Box<dyn Error>> {
     assert!(!scenes.is_empty(), "the host needs at least one scene");
     let event_loop = EventLoop::<Wake>::with_user_event().build()?;
     // The starting mode. The first frame replaces it: `WaitUntil` while the
@@ -237,6 +250,7 @@ pub fn run(title: &'static str, scenes: Vec<SceneEntry>) -> Result<(), Box<dyn E
     let mut host = Host {
         rearm,
         title,
+        painter,
         scenes,
         current: 0,
         scene_since: Instant::now(),
@@ -334,6 +348,10 @@ struct Host {
     /// has been applied, which is what stops pulses queueing (issue #629).
     rearm: mpsc::Sender<()>,
     title: &'static str,
+    /// Which painter is drawing. Chosen on the command line and swapped by
+    /// [`SWAP_PAINTER`] — see [`crate::painter`] for why a run-time choice is a
+    /// property of this demonstration and of nothing that ships.
+    painter: Choice,
     /// Every scene the host was asked to show, in the order it shows them.
     /// Never empty — [`run`] rejects an empty list, so `scenes[current]` is
     /// always a scene.
@@ -474,6 +492,40 @@ impl Host {
         }
     }
 
+    /// Swaps the painter on the running window, keeping everything else.
+    ///
+    /// The arena, the live scene, the frame clock and the pulse phase are all
+    /// untouched, so the next frame is the same frame drawn by the other
+    /// painter. That is the whole instrument story #585 was for: the difference
+    /// on screen is the difference between the painters, and not between two
+    /// runs.
+    ///
+    /// The outgoing presenter is dropped **before** the incoming one is built.
+    /// Both own a surface on this one window — a CPU framebuffer on one side, a
+    /// swapchain on the other — and holding two at once is the state neither
+    /// windowing backend is asked to support.
+    fn swap_painter(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(window) = self.window.clone() else {
+            return;
+        };
+        let next = self.painter.other();
+        self.presenter = None;
+        match next.presenter(window) {
+            Ok(presenter) => {
+                eprintln!("demo: painter is now {}", presenter.name());
+                self.presenter = Some(presenter);
+                self.painter = next;
+                // The incoming presenter adopted the window's extent at
+                // construction, so nothing is re-solved and the scene keeps its
+                // state. It has drawn nothing, though, and the generation is
+                // unchanged — which is the fifth case the forced list exists
+                // for.
+                self.force("a painter swap");
+            }
+            Err(error) => self.fail(event_loop, error),
+        }
+    }
+
     /// Makes the next frame paint and present whatever the generation says.
     fn force(&mut self, reason: &'static str) {
         self.forced = Some(reason);
@@ -518,6 +570,15 @@ impl Host {
     /// new extent through a signal, and then a resize is an ordinary frame.
     fn rebuild(&mut self, width: u32, height: u32) {
         let pulse = self.scenes[self.current].pulse;
+        // The presenter is about to be handed frames from an arena that has
+        // never existed before. Anything it holds per document — the lean
+        // painter keeps a copy of what its instance buffer contains — describes
+        // the outgoing one, and the incoming arena's generations start again,
+        // so nothing in the frames themselves says so
+        // (`Present::document_replaced`).
+        if let Some(presenter) = self.presenter.as_mut() {
+            presenter.document_replaced();
+        }
         self.arena = Arena::new();
         let mut live = (self.scenes[self.current].build)(&mut self.arena, width, height);
         // Restore the phase, so a resize resumes the scene where it was rather
@@ -644,7 +705,7 @@ impl ApplicationHandler<Wake> for Host {
             Ok(window) => Arc::new(window),
             Err(error) => return self.fail(event_loop, error),
         };
-        let presenter = match SkiaPresenter::new(Arc::clone(&window)) {
+        let presenter = match self.painter.presenter(Arc::clone(&window)) {
             Ok(presenter) => presenter,
             Err(error) => return self.fail(event_loop, error),
         };
@@ -652,10 +713,12 @@ impl ApplicationHandler<Wake> for Host {
         // Physical pixels, so the scene fills the drawable on a high-density
         // display instead of occupying a corner of it.
         let size = window.inner_size();
-        let painter = presenter.name();
+        // Copied out: the name borrows the presenter, and the presenter is
+        // about to move into the host.
+        let painter = presenter.name().to_owned();
         self.extent = (size.width, size.height);
         self.window = Some(window);
-        self.presenter = Some(Box::new(presenter));
+        self.presenter = Some(presenter);
         self.rebuild(size.width, size.height);
 
         eprintln!(
@@ -669,6 +732,10 @@ impl ApplicationHandler<Wake> for Host {
              waiting for an event while it is steady",
             MAX_FRAME_DELTA.as_millis(),
             (1.0 / FRAME_INTERVAL.as_secs_f32()).round(),
+        );
+        eprintln!(
+            "demo: press {SWAP_PAINTER:?} to swap the painter on this window, same scene and \
+             same clock"
         );
 
         // The first frame is one of the five the generation cannot report.
@@ -743,6 +810,11 @@ impl ApplicationHandler<Wake> for Host {
                     && !event.repeat
                     && let PhysicalKey::Code(code) = event.physical_key
                 {
+                    // The painter swap is the host's own, and is checked before
+                    // the scene's keys so that a scene can never take it over.
+                    if code == SWAP_PAINTER {
+                        return self.swap_painter(event_loop);
+                    }
                     // Copied out before the arena is borrowed: both are `Copy`,
                     // and the alternative is holding a borrow of `self.scenes`
                     // across the call.
