@@ -14,29 +14,33 @@ below. This prompt adds only what is not in it.
 
 ## What story #581 left unverified
 
-Two things, both cheap to close and both better closed early than at slice end.
+**One thing, and it needs a Linux runner.** Whether lavapipe advertises
+`TEXTURE_COMPRESSION_ASTC` is unknown: the baked-block arm of
+`goldens/tooling/tests/lean_painter_baked_assets.rs` skips loudly without it,
+and no Linux runner has ever executed this suite. Everything ASTC in this slice
+was verified on an Apple M3 via Metal. The uncompressed rung exercises the same
+upload path with the block arithmetic removed, and runs everywhere. Nothing can
+be done about this until CI can schedule a job.
 
-**Nobody has resized the window with images resident.** A resize is the only
-interactive path that rebuilds the arena, and therefore the only one that
-exercises the residency invalidation — the fix for PR #719's most serious review
-finding, where a scene swap could otherwise have drawn one image as another in a
-release build. It has a test and a mutation that kills it; it has no interactive
-evidence. One resize of the showcase closes it:
+Everything else is closed, so do not spend time re-establishing it:
 
-    cargo run -p demo -- --painter gpu surfaces      # then resize the window
-
-**Whether lavapipe advertises `TEXTURE_COMPRESSION_ASTC` is unknown.** The
-baked-block arm of `goldens/tooling/tests/lean_painter_baked_assets.rs` skips
-loudly without it, and no Linux runner has ever executed this suite. Everything
-ASTC in this slice was verified on an Apple M3 via Metal. The uncompressed rung
-exercises the same upload path with the block arithmetic removed, and runs
-everywhere.
-
-What #581 **did** establish, so it need not be re-established: twenty-six
-painter swaps on one running window across 13500 generations, no panic and no
-validation error, and the owner confirmed the picture. That is epic #569's
-"walked against v0.14's checklist with the wgpu painter selected", for the
-subset drawn so far.
+- **Twenty-six painter swaps** on one running window across 13500 generations,
+  no panic and no validation error, and the owner confirmed the picture. That is
+  epic #569's "walked against v0.14's checklist with the wgpu painter selected",
+  for the subset drawn so far.
+- **Ten scene rebuilds by window resize**, with images resident, no assertion
+  and the picture intact. That is the residency invalidation — PR #719's most
+  serious review finding — exercised interactively: a resize replaces the arena,
+  so the new image table starts again at index 0 with the same format, offset
+  and length, and the `PayloadKey` is byte-identical to the previous arena's
+  behind a different allocation. The debug digest assertion that catches a stale
+  slot is live in that build and did not fire across ten arenas.
+- **A drawable of 3024x1832**, past 2048, reached during those resizes. Useful
+  beyond its own story: it is a live demonstration that `Renderer::max_extent`
+  and `ATLAS_EXTENT` must differ. The drawable followed the adapter, as issue
+  #714 requires; the atlas stayed a 16 MiB budget rather than becoming a
+  gigabyte, as `atlas-residency-and-image-fills.md` requires. Conflating the two
+  is the mistake the review caught in this story.
 
 ## Where things stand
 
