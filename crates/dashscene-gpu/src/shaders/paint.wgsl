@@ -1,0 +1,130 @@
+// The render shaders: one instanced quad per row of the instance buffer.
+//
+// Concatenated after `sdf.wgsl`, so the coverage math here is the same source
+// the layer-2 conformance suite evaluates — not a copy of it. That textual
+// inclusion is what `docs/decisions/shader-library-and-layer-2.md` D1 chose,
+// and it is why nothing below re-derives a distance.
+
+struct Instance {
+    kind: u32,
+    tag: u32,
+    row: u32,
+    shape: u32,
+    clip_offset: u32,
+    clip_count: u32,
+    layer: u32,
+    opacity: f32,
+    bounds: vec4f,
+    corners: vec4f,
+}
+
+struct ClipBox {
+    x: f32, y: f32, w: f32, h: f32,
+    corners: vec4f,
+}
+
+struct Viewport {
+    // Drawable size in document units. The painter draws at unit scale, so this
+    // is also its pixel size (story #580; a device-pixel ratio is #585's).
+    size: vec2f,
+    // Distance, in document units, over which an edge ramps. One unit at unit
+    // scale. A uniform rather than `fwidth`, for the reason `sdf.wgsl` gives.
+    aa: f32,
+    _pad: f32,
+}
+
+@group(0) @binding(0) var<storage, read> instances: array<Instance>;
+@group(0) @binding(1) var<storage, read> solids: array<vec4f>;
+@group(0) @binding(2) var<storage, read> clip_boxes: array<ClipBox>;
+@group(0) @binding(3) var<uniform> viewport: Viewport;
+
+struct VertexOut {
+    @builtin(position) position: vec4f,
+    // `@interpolate(flat)` is stated, not assumed: wgpu 30 stopped defaulting
+    // integer shader I/O to flat, and a value that interpolated would index a
+    // different row per fragment.
+    @location(0) @interpolate(flat) instance: u32,
+    // The fragment's position in document space.
+    @location(1) local: vec2f,
+}
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertex: u32, @builtin(instance_index) index: u32) -> VertexOut {
+    let inst = instances[index];
+    // The quad, grown by the antialiasing width so the ramp is not clipped by
+    // the geometry it belongs to.
+    let margin = viewport.aa;
+    let lo = inst.bounds.xy - vec2f(margin);
+    let hi = inst.bounds.xy + inst.bounds.zw + vec2f(margin);
+    // Two triangles, as a triangle strip of four vertices.
+    let corner = vec2f(
+        select(lo.x, hi.x, (vertex & 1u) == 1u),
+        select(lo.y, hi.y, (vertex & 2u) == 2u),
+    );
+    // Document space (y down, origin top-left) to clip space.
+    let ndc = vec2f(
+        corner.x / viewport.size.x * 2.0 - 1.0,
+        1.0 - corner.y / viewport.size.y * 2.0,
+    );
+    var out: VertexOut;
+    out.position = vec4f(ndc, 0.0, 1.0);
+    out.instance = index;
+    out.local = corner;
+    return out;
+}
+
+// Coverage of the clip region this instance names: the intersection of its
+// boxes. An empty range is unclipped, so the loop runs zero times and the
+// coverage is one — the property a range has and a sentinel would not.
+fn clip_coverage(inst: Instance, p: vec2f) -> f32 {
+    var cover = 1.0;
+    for (var i = 0u; i < inst.clip_count; i = i + 1u) {
+        let b = clip_boxes[inst.clip_offset + i];
+        let half_size = vec2f(b.w, b.h) * 0.5;
+        let centre = vec2f(b.x, b.y) + half_size;
+        let d = rounded_box_sdf(p - centre, half_size, b.corners);
+        cover = min(cover, coverage(d, viewport.aa));
+    }
+    return cover;
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4f {
+    let inst = instances[in.instance];
+    let half_size = inst.bounds.zw * 0.5;
+    let centre = inst.bounds.xy + half_size;
+    let d = rounded_box_sdf(in.local - centre, half_size, inst.corners);
+    var cover = coverage(d, viewport.aa) * clip_coverage(inst, in.local) * inst.opacity;
+    if cover <= 0.0 {
+        discard;
+    }
+    // Story #580 draws opaque rounded rects, which is the solid fill alone.
+    // Gradients and images are #582's, shadows #584's, strokes later still.
+    //
+    // **Both `kind` and `tag`, never `tag` alone.** `tag` means a different
+    // enum for each kind — a `PaintTag` for a fill, a `ShadowKind` for a
+    // shadow, a `BlurKind` for a backdrop — and their discriminants collide:
+    // `PaintTag::Solid`, `ShadowKind::Inner` and `BlurKind::Backdrop` are all
+    // 1. Reading `tag` alone made a shadow instance paint `solids[row]` with
+    // `row` indexing the *shadow* table, so a node with an inner shadow drew
+    // whatever colour happened to sit at that row, over its own fill.
+    //
+    // A kind this shader cannot draw yet draws *nothing*, and does not fall
+    // through to a colour. Painting it black would be loud, but it would also
+    // corrupt every node that carries one: an inner shadow is packed after the
+    // fill, so a black shadow instance covers the fill it belongs to. Drawing
+    // nothing leaves the picture correct for the subset this story implements
+    // and absent for the rest, which is what an incrementally built painter
+    // should look like.
+    //
+    // Not a silent drop: the packer emits the instance, the layer-1 golden
+    // shows it, and `docs/decisions/pipelines-and-layer-3.md` lists what is and
+    // is not drawn. What is refused here is a *wrong* pixel, not a diagnostic.
+    if inst.kind != 2u || inst.tag != 1u {   // InstanceKind::Fill, PaintTag::Solid
+        discard;
+    }
+    let colour = solids[inst.row];
+    // Premultiplied, which is what the blend state below expects.
+    let a = colour.a * cover;
+    return vec4f(colour.rgb * a, a);
+}

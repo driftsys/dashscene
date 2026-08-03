@@ -42,6 +42,7 @@
 
 pub mod instance;
 pub mod pack;
+pub mod render;
 pub mod shader;
 
 use dashpaint::{
@@ -49,6 +50,7 @@ use dashpaint::{
 };
 
 pub use instance::{Instance, InstanceBuffer, InstanceKind, InstanceSpan};
+pub use render::{Renderer, RendererError};
 pub use shader::SDF_WGSL;
 
 /// The lean painter. Packs a frame into its instance buffer and draws none of

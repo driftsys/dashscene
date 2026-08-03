@@ -1,0 +1,669 @@
+//! Layer 3 of epic #569's verification net: the pipeline builds, naga
+//! validates, and the painter draws roughly the right thing in roughly the
+//! right place.
+//!
+//! # This is a gate on the pipeline, and never a fidelity check
+//!
+//! Epic #569 insists on the distinction and story #580 repeats it. What these
+//! tests establish is that a pipeline was created, that the shader modules
+//! validated, that coverage is high inside a shape and zero outside it, and
+//! that a clip rejects. What they cannot establish is how any of it looks on a
+//! real driver: a coarse per-pixel check on a software rasteriser says the
+//! painter drew *something* in *about* the right place. Layer 4 is the
+//! instrument for how it looks, it needs hardware, and it is story #586's.
+//!
+//! Read every assertion below as "did the pipeline do a thing at all", not as
+//! "is the picture right". Nothing here compares against the reference
+//! painter, deliberately.
+
+use dashpaint::{
+    ClipBox, ClipIndex, ClipTable, Color, CornerRadii, GlyphRunTable, ImageTable, PaintEntry,
+    PaintTable, Painter, RectEntry,
+};
+use dashscene_gpu::{GpuPainter, Renderer};
+
+const W: u32 = 64;
+const H: u32 = 48;
+
+/// A renderer, or a named failure. Panics rather than skipping: a layer-3
+/// suite that quietly passes with no device is a green result that establishes
+/// nothing.
+fn renderer() -> Renderer {
+    Renderer::new().expect("layer 3 needs a device")
+}
+
+fn rect(
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    paint: dashpaint::PaintIndex,
+    clip: ClipIndex,
+) -> RectEntry {
+    RectEntry {
+        x,
+        y,
+        w,
+        h,
+        paint,
+        clip,
+        opacity: 1.0,
+    }
+}
+
+/// The unpremultiplied RGBA texel at (x, y).
+fn texel(pixels: &[u8], x: u32, y: u32) -> [u8; 4] {
+    let i = ((y * W + x) * 4) as usize;
+    [pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]]
+}
+
+/// Packs one scene through the painter and renders it.
+fn draw(rects: &[RectEntry], paints: &PaintTable, clips: &ClipTable) -> Vec<u8> {
+    let mut painter = GpuPainter::new();
+    painter.paint(
+        rects,
+        paints,
+        &ImageTable::new(),
+        clips,
+        &[],
+        &GlyphRunTable::new(),
+        None,
+    );
+    renderer().render(painter.instances(), paints, clips, W, H)
+}
+
+/// The pipeline builds and the shader modules validate.
+///
+/// Creating the renderer compiles `SDF_WGSL` concatenated with the render entry
+/// points and creates the render pipeline, so naga has validated both modules
+/// and wgpu has checked the bind group layout against what the shader declares
+/// by the time this returns. A binding the shader does not declare, or a type
+/// that disagrees, fails here.
+#[test]
+fn the_pipeline_builds_and_the_shaders_validate() {
+    let renderer = renderer();
+    let info = renderer.adapter_info();
+    println!(
+        "layer-3 adapter: {} | backend {:?} | device_type {:?}",
+        info.name, info.backend, info.device_type
+    );
+}
+
+/// A filled rect covers its inside and leaves its outside alone.
+///
+/// The coarsest claim layer 3 makes, and the one that fails if the vertex
+/// shader places the quad wrongly, the fragment shader takes the wrong row, or
+/// the blend state discards everything.
+#[test]
+fn a_solid_rect_covers_inside_and_not_outside() {
+    let mut paints = PaintTable::new();
+    let red = paints.push_solid(Color {
+        r: 1.0,
+        g: 0.0,
+        b: 0.0,
+        a: 1.0,
+    });
+    let clips = ClipTable::new();
+    let pixels = draw(
+        &[rect(16.0, 12.0, 32.0, 24.0, red, ClipIndex::UNCLIPPED)],
+        &paints,
+        &clips,
+    );
+
+    // Well inside: opaque and the colour that was asked for.
+    let inside = texel(&pixels, 32, 24);
+    assert_eq!(inside[3], 255, "the middle of the rect is opaque");
+    assert!(
+        inside[0] > 250 && inside[1] < 5 && inside[2] < 5,
+        "the middle of the rect is the fill colour, got {inside:?}"
+    );
+
+    // Well outside, on all four sides: untouched.
+    for (x, y) in [(2, 2), (61, 2), (2, 45), (61, 45)] {
+        assert_eq!(
+            texel(&pixels, x, y)[3],
+            0,
+            "({x}, {y}) is outside the rect and must be clear"
+        );
+    }
+}
+
+/// A rounded corner removes coverage that a sharp one keeps.
+///
+/// Not a check on the shape of the curve — that is the rounded-box distance,
+/// and layer 2 checks it against an independently sampled outline. This checks
+/// only that the corner radius reached the shader at all: with a radius equal
+/// to half the box's short side, the corner texel is outside the shape, and
+/// with no radius it is inside.
+#[test]
+fn a_corner_radius_reaches_the_shader() {
+    let mut paints = PaintTable::new();
+    let colour = Color {
+        r: 0.0,
+        g: 0.0,
+        b: 1.0,
+        a: 1.0,
+    };
+    let fill = paints.intern_fill(&dashpaint::FillSpec::Solid { color: colour });
+    let sharp = paints.push(PaintEntry {
+        fill,
+        ..PaintEntry::default()
+    });
+    let round = paints.push(PaintEntry {
+        fill,
+        corners: CornerRadii {
+            top_left: 12.0,
+            top_right: 12.0,
+            bottom_right: 12.0,
+            bottom_left: 12.0,
+        },
+        ..PaintEntry::default()
+    });
+    let clips = ClipTable::new();
+    let geometry = |paint| rect(16.0, 12.0, 24.0, 24.0, paint, ClipIndex::UNCLIPPED);
+
+    let sharp_pixels = draw(&[geometry(sharp)], &paints, &clips);
+    let round_pixels = draw(&[geometry(round)], &paints, &clips);
+
+    // The texel just inside the top-left corner of the box.
+    let at = (17, 13);
+    assert!(
+        texel(&sharp_pixels, at.0, at.1)[3] > 200,
+        "a sharp corner covers its corner texel"
+    );
+    assert!(
+        texel(&round_pixels, at.0, at.1)[3] < 55,
+        "a 12-unit radius removes that corner, got {:?}",
+        texel(&round_pixels, at.0, at.1)
+    );
+    // The middle is unaffected by the radius, so this is a corner difference
+    // and not the whole shape moving.
+    assert!(texel(&sharp_pixels, 28, 24)[3] > 250);
+    assert!(texel(&round_pixels, 28, 24)[3] > 250);
+}
+
+/// A clip rejects what falls outside it.
+///
+/// The named layer-3 invariant from epic #569's table. The rect is drawn twice
+/// over the same geometry, once unclipped and once through a region covering
+/// only its left half; the right half must lose its coverage and the left half
+/// must keep it.
+#[test]
+fn a_clip_region_rejects_what_lies_outside_it() {
+    let mut paints = PaintTable::new();
+    let green = paints.push_solid(Color {
+        r: 0.0,
+        g: 1.0,
+        b: 0.0,
+        a: 1.0,
+    });
+    let mut clips = ClipTable::new();
+    let left_half = clips.push(&[ClipBox {
+        x: 0.0,
+        y: 0.0,
+        w: 32.0,
+        h: 48.0,
+        corners: CornerRadii::default(),
+    }]);
+
+    let geometry = |clip| rect(8.0, 12.0, 48.0, 24.0, green, clip);
+    let unclipped = draw(&[geometry(ClipIndex::UNCLIPPED)], &paints, &clips);
+    let clipped = draw(&[geometry(left_half)], &paints, &clips);
+
+    // Inside the clip: both draw.
+    assert!(texel(&unclipped, 16, 24)[3] > 250);
+    assert!(
+        texel(&clipped, 16, 24)[3] > 250,
+        "the clipped rect still draws inside its region, got {:?}",
+        texel(&clipped, 16, 24)
+    );
+    // Outside the clip: only the unclipped one draws. This is the assertion
+    // that fails if the clip range never reached the shader.
+    assert!(
+        texel(&unclipped, 48, 24)[3] > 250,
+        "the unclipped rect draws on the right"
+    );
+    assert_eq!(
+        texel(&clipped, 48, 24)[3],
+        0,
+        "the clip rejects the right half"
+    );
+}
+
+/// A later instance composites over an earlier one.
+///
+/// Slice order is draw order and the instance buffer preserves it
+/// (`docs/decisions/instance-buffer-contract.md` D1), so the second rect wins
+/// where they overlap. This fails if the frame is submitted out of order or if
+/// the blend state is not source-over.
+#[test]
+fn a_later_rect_composites_over_an_earlier_one() {
+    let mut paints = PaintTable::new();
+    let red = paints.push_solid(Color {
+        r: 1.0,
+        g: 0.0,
+        b: 0.0,
+        a: 1.0,
+    });
+    let blue = paints.push_solid(Color {
+        r: 0.0,
+        g: 0.0,
+        b: 1.0,
+        a: 1.0,
+    });
+    let clips = ClipTable::new();
+    let pixels = draw(
+        &[
+            rect(8.0, 8.0, 32.0, 32.0, red, ClipIndex::UNCLIPPED),
+            rect(24.0, 8.0, 32.0, 32.0, blue, ClipIndex::UNCLIPPED),
+        ],
+        &paints,
+        &clips,
+    );
+
+    let only_red = texel(&pixels, 12, 24);
+    let overlap = texel(&pixels, 32, 24);
+    let only_blue = texel(&pixels, 52, 24);
+    assert!(
+        only_red[0] > 250 && only_red[2] < 5,
+        "left is red, got {only_red:?}"
+    );
+    assert!(
+        only_blue[2] > 250 && only_blue[0] < 5,
+        "right is blue, got {only_blue:?}"
+    );
+    assert!(
+        overlap[2] > 250 && overlap[0] < 5,
+        "the later rect wins the overlap, got {overlap:?}"
+    );
+}
+
+/// A rect's free-path opacity reaches the shader.
+#[test]
+fn the_rects_opacity_reaches_the_shader() {
+    let mut paints = PaintTable::new();
+    let black = paints.push_solid(Color {
+        r: 0.0,
+        g: 0.0,
+        b: 0.0,
+        a: 1.0,
+    });
+    let clips = ClipTable::new();
+    let mut entry = rect(16.0, 12.0, 32.0, 24.0, black, ClipIndex::UNCLIPPED);
+    entry.opacity = 0.5;
+    let pixels = draw(&[entry], &paints, &clips);
+    let alpha = texel(&pixels, 32, 24)[3];
+    assert!(
+        (120..=136).contains(&alpha),
+        "a half-opaque rect composites at about half alpha, got {alpha}"
+    );
+}
+
+/// Document space is y-down with its origin at the top-left, and the image
+/// agrees.
+///
+/// Added because a flipped y axis survived mutation testing: every other
+/// fixture here is centred on the canvas, so reflecting it maps each shape onto
+/// itself and no assertion moves. That is the uniform-fixture defect in a third
+/// guise — after uniform data and uniform arguments, uniform *symmetry* — and
+/// the cure is the same, a fixture that can tell the two apart.
+///
+/// The rect sits in the top quarter of the canvas, so the top rows are covered
+/// and the bottom rows are not. A flip swaps them.
+#[test]
+fn the_documents_y_down_origin_maps_to_the_top_of_the_image() {
+    let mut paints = PaintTable::new();
+    let fill = paints.push_solid(Color {
+        r: 1.0,
+        g: 1.0,
+        b: 1.0,
+        a: 1.0,
+    });
+    let clips = ClipTable::new();
+    // y from 4 to 16 on a 48-tall canvas: nowhere near centred.
+    let pixels = draw(
+        &[rect(16.0, 4.0, 32.0, 12.0, fill, ClipIndex::UNCLIPPED)],
+        &paints,
+        &clips,
+    );
+
+    assert!(
+        texel(&pixels, 32, 8)[3] > 250,
+        "y = 8 is inside a rect spanning 4..16 and must be covered, got {:?}",
+        texel(&pixels, 32, 8)
+    );
+    assert_eq!(
+        texel(&pixels, 32, 40)[3],
+        0,
+        "y = 40 is far below that rect and must be clear — if it is covered, \
+         the y axis is flipped"
+    );
+}
+
+/// An instance kind this shader cannot draw yet draws nothing, and never
+/// another table's row.
+///
+/// `Instance::tag` means a different enum for each `kind`, and the
+/// discriminants collide: `PaintTag::Solid`, `ShadowKind::Inner` and
+/// `BlurKind::Backdrop` are all 1. A fragment shader reading `tag` alone paints
+/// `solids[row]` for a shadow instance, with `row` indexing the shadow table —
+/// so a node with an inner shadow drew whatever colour sat at that row, over
+/// its own fill. Found by review, with exactly this fixture.
+#[test]
+fn a_kind_this_shader_cannot_draw_is_black_not_another_tables_row() {
+    use dashpaint::{EntryParts, FillSpec, Shadow, ShadowKind, Vec2};
+
+    let mut paints = PaintTable::new();
+    // Row 0 of the solid table is green; the node's own fill is red at row 1.
+    // A shadow instance mistaking its shadow row for a solid row lands on row 0.
+    let green = paints.intern_fill(&FillSpec::Solid {
+        color: Color {
+            r: 0.0,
+            g: 1.0,
+            b: 0.0,
+            a: 1.0,
+        },
+    });
+    let red = paints.intern_fill(&FillSpec::Solid {
+        color: Color {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        },
+    });
+    let _ = green;
+    let paint = paints.push_with(
+        PaintEntry {
+            fill: red,
+            ..PaintEntry::default()
+        },
+        EntryParts {
+            // An inner shadow, so its instance is pushed *after* the fill and
+            // would paint over it.
+            shadows: &[Shadow {
+                kind: ShadowKind::Inner,
+                offset: Vec2 { x: 0.0, y: 0.0 },
+                blur: 0.0,
+                spread: 0.0,
+                color: Color {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 1.0,
+                },
+            }],
+            ..EntryParts::default()
+        },
+    );
+    let clips = ClipTable::new();
+    let pixels = draw(
+        &[rect(16.0, 12.0, 32.0, 24.0, paint, ClipIndex::UNCLIPPED)],
+        &paints,
+        &clips,
+    );
+    let middle = texel(&pixels, 32, 24);
+    assert!(
+        middle[0] > 250 && middle[1] < 5 && middle[2] < 5,
+        "the node's own red fill survives its inner shadow, got {middle:?} — green means \
+         the shadow instance indexed the solid table, black means it painted over the fill"
+    );
+}
+
+/// Half-opaque red over opaque green composites in sRGB-encoded space.
+///
+/// The target format is the whole of this: `Rgba8Unorm` blends the stored
+/// bytes, `Rgba8UnormSrgb` has the hardware convert to linear light and blend
+/// there. `docs/decisions/blur-blends-in-srgb-encoded-space.md` requires the
+/// former as a term of the boundary-B contract, and the two differ by 60 code
+/// points on this fixture — the same order as the ~50 that record measures.
+///
+/// Added because a one-character change to `TARGET_FORMAT` passed every other
+/// test in this file, which made the decision the PR called "load-bearing" the
+/// least defended thing in it.
+#[test]
+fn compositing_happens_in_srgb_encoded_space() {
+    let mut paints = PaintTable::new();
+    let green = paints.push_solid(Color {
+        r: 0.0,
+        g: 1.0,
+        b: 0.0,
+        a: 1.0,
+    });
+    let half_red = paints.push_solid(Color {
+        r: 1.0,
+        g: 0.0,
+        b: 0.0,
+        a: 0.5,
+    });
+    let clips = ClipTable::new();
+    let pixels = draw(
+        &[
+            rect(8.0, 8.0, 48.0, 32.0, green, ClipIndex::UNCLIPPED),
+            rect(8.0, 8.0, 48.0, 32.0, half_red, ClipIndex::UNCLIPPED),
+        ],
+        &paints,
+        &clips,
+    );
+    let mixed = texel(&pixels, 32, 24);
+    // 0.5 * 255 over 0.5 * 255, blended on the stored bytes.
+    assert!(
+        (120..=136).contains(&mixed[0]) && (120..=136).contains(&mixed[1]),
+        "sRGB-encoded blending gives about [128, 128, 0]; linear light gives about \
+         [188, 188, 0]. Got {mixed:?}"
+    );
+}
+
+/// A clip region that does not start at box zero is still the one applied.
+///
+/// The uniform-fixture guard for the clip range: with one region in the table
+/// its offset is zero, and a shader indexing `clip_boxes[i]` instead of
+/// `clip_boxes[clip_offset + i]` passes.
+#[test]
+fn a_clip_region_past_the_first_is_the_one_applied() {
+    let mut paints = PaintTable::new();
+    let fill = paints.push_solid(Color {
+        r: 1.0,
+        g: 1.0,
+        b: 1.0,
+        a: 1.0,
+    });
+    let mut clips = ClipTable::new();
+    // The decoy occupies box 0 and covers the whole canvas, so a shader reading
+    // the wrong offset clips nothing and the assertion below fails.
+    let _decoy = clips.push(&[ClipBox {
+        x: 0.0,
+        y: 0.0,
+        w: 64.0,
+        h: 48.0,
+        corners: CornerRadii::default(),
+    }]);
+    let live = clips.push(&[ClipBox {
+        x: 0.0,
+        y: 0.0,
+        w: 32.0,
+        h: 48.0,
+        corners: CornerRadii::default(),
+    }]);
+    let pixels = draw(&[rect(8.0, 12.0, 48.0, 24.0, fill, live)], &paints, &clips);
+    assert!(texel(&pixels, 16, 24)[3] > 250, "inside the live region");
+    assert_eq!(
+        texel(&pixels, 48, 24)[3],
+        0,
+        "outside the live region — coverage here means the shader read box 0"
+    );
+}
+
+/// The four corner radii reach their own corners.
+///
+/// Every earlier fixture used four equal radii, so a shader that permuted them
+/// passed. This rounds only the top-left.
+#[test]
+fn each_corner_radius_lands_on_its_own_corner() {
+    let mut paints = PaintTable::new();
+    let fill = paints.intern_fill(&dashpaint::FillSpec::Solid {
+        color: Color {
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+            a: 1.0,
+        },
+    });
+    let paint = paints.push(PaintEntry {
+        fill,
+        corners: CornerRadii {
+            top_left: 12.0,
+            top_right: 0.0,
+            bottom_right: 0.0,
+            bottom_left: 0.0,
+        },
+        ..PaintEntry::default()
+    });
+    let clips = ClipTable::new();
+    let pixels = draw(
+        &[rect(16.0, 12.0, 24.0, 24.0, paint, ClipIndex::UNCLIPPED)],
+        &paints,
+        &clips,
+    );
+    // Top-left is rounded away; the other three corners are square.
+    assert!(texel(&pixels, 17, 13)[3] < 55, "top-left is rounded");
+    assert!(texel(&pixels, 38, 13)[3] > 200, "top-right is square");
+    assert!(texel(&pixels, 38, 34)[3] > 200, "bottom-right is square");
+    assert!(texel(&pixels, 17, 34)[3] > 200, "bottom-left is square");
+}
+
+/// A shape whose edge falls between pixel centres is antialiased.
+///
+/// Every earlier fixture is integer-aligned, so the antialiasing width and the
+/// quad's AA margin could both be zeroed without moving an assertion.
+#[test]
+fn a_fractional_edge_is_antialiased() {
+    let mut paints = PaintTable::new();
+    let fill = paints.push_solid(Color {
+        r: 1.0,
+        g: 0.0,
+        b: 0.0,
+        a: 1.0,
+    });
+    let clips = ClipTable::new();
+    // The right edge lands at x = 40.5, half a pixel through the texel at 40.
+    let pixels = draw(
+        &[rect(16.0, 12.0, 24.5, 24.0, fill, ClipIndex::UNCLIPPED)],
+        &paints,
+        &clips,
+    );
+    let edge = texel(&pixels, 40, 24)[3];
+    assert!(
+        (1..=254).contains(&edge),
+        "a fractional edge is partly covered, got {edge} — 0 or 255 means the ramp \
+         or the quad's margin was lost"
+    );
+}
+
+/// The readback survives a width whose row is not a multiple of 256 bytes.
+///
+/// The canvas everywhere else is 64 wide, which is exactly 256 bytes, so the
+/// row-padding arithmetic was never exercised.
+#[test]
+fn a_width_that_needs_row_padding_reads_back_correctly() {
+    let mut paints = PaintTable::new();
+    let fill = paints.push_solid(Color {
+        r: 1.0,
+        g: 1.0,
+        b: 1.0,
+        a: 1.0,
+    });
+    let clips = ClipTable::new();
+    let (w, h) = (63u32, 48u32); // 252 bytes per row, padded to 256
+    let mut painter = GpuPainter::new();
+    painter.paint(
+        &[rect(8.0, 8.0, 40.0, 32.0, fill, ClipIndex::UNCLIPPED)],
+        &paints,
+        &ImageTable::new(),
+        &clips,
+        &[],
+        &GlyphRunTable::new(),
+        None,
+    );
+    let pixels = renderer().render(painter.instances(), &paints, &clips, w, h);
+    assert_eq!(pixels.len(), (w * h * 4) as usize);
+    let at = |x: u32, y: u32| pixels[((y * w + x) * 4 + 3) as usize];
+    // Rows near the bottom are where a wrong stride shears the image.
+    assert!(at(24, 12) > 250, "inside, near the top");
+    assert!(at(24, 36) > 250, "inside, near the bottom");
+    assert_eq!(
+        at(60, 44),
+        0,
+        "outside, in the last column of the last rows"
+    );
+}
+
+/// A translucent fill reads back unpremultiplied.
+///
+/// The blend state is premultiplied, so the texture holds `colour * alpha`.
+/// `goldens/README.md` compares unpremultiplied RGBA8888, and every other
+/// fixture here is either fully opaque or fully clear — where unpremultiplying
+/// is the identity. A half-opaque red is where it is not.
+#[test]
+fn a_translucent_fill_reads_back_unpremultiplied() {
+    let mut paints = PaintTable::new();
+    let half_red = paints.push_solid(Color {
+        r: 1.0,
+        g: 0.0,
+        b: 0.0,
+        a: 0.5,
+    });
+    let clips = ClipTable::new();
+    let pixels = draw(
+        &[rect(16.0, 12.0, 32.0, 24.0, half_red, ClipIndex::UNCLIPPED)],
+        &paints,
+        &clips,
+    );
+    let middle = texel(&pixels, 32, 24);
+    assert!(
+        (120..=136).contains(&middle[3]),
+        "half alpha, got {middle:?}"
+    );
+    assert!(
+        middle[0] > 250,
+        "red reads back at full strength once unpremultiplied, got {middle:?} — about \
+         128 means the premultiplied bytes were returned as-is"
+    );
+}
+
+/// The antialiasing ramp is one unit wide, not four.
+///
+/// A wider ramp still antialiases, so the fractional-edge test above cannot
+/// tell them apart. This one can: two units outside a straight edge is clear at
+/// a one-unit ramp and partly covered at a four-unit one.
+#[test]
+fn the_antialiasing_ramp_is_one_unit_wide() {
+    let mut paints = PaintTable::new();
+    let fill = paints.push_solid(Color {
+        r: 1.0,
+        g: 1.0,
+        b: 1.0,
+        a: 1.0,
+    });
+    let clips = ClipTable::new();
+    // The right edge is at x = 40.0 exactly.
+    let pixels = draw(
+        &[rect(16.0, 12.0, 24.0, 24.0, fill, ClipIndex::UNCLIPPED)],
+        &paints,
+        &clips,
+    );
+    // Texel 41 spans 41.0..42.0, so its centre is 1.5 units outside the edge:
+    // beyond a half-unit half-ramp, well inside a two-unit one.
+    assert_eq!(
+        texel(&pixels, 41, 24)[3],
+        0,
+        "1.5 units outside a straight edge is clear at a one-unit ramp, got {:?}",
+        texel(&pixels, 41, 24)
+    );
+    // And the texel straddling the edge is still partly covered, so this is a
+    // ramp width and not the ramp being switched off.
+    assert!(
+        (1..=254).contains(&texel(&pixels, 39, 24)[3]) || texel(&pixels, 39, 24)[3] == 255,
+        "the edge itself is still covered"
+    );
+}

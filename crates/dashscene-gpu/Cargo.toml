@@ -20,13 +20,10 @@ dashpaint.workspace = true
 # harness that checks its arithmetic both need a device. The painter still owns
 # none — a device, a queue and the pipelines over them are story #580's — so
 # this is here for the shaders and their conformance suite, not for drawing.
-
-[dev-dependencies]
-# The GPU API, the byte casts and the blocking adapter, all for the layer-2
-# conformance suite (story #579). Dev-dependencies rather than dependencies:
-# the crate's own code names none of them, because the painter still owns no
-# device — that is story #580's, and it moves `wgpu` up when it does.
+# The GPU API and the byte casts. Real dependencies since story #580: the
+# painter owns a device, a pipeline and the buffers it uploads.
 wgpu.workspace = true
 bytemuck.workspace = true
-# The suite is a synchronous test over an asynchronous API.
+# `wgpu`'s device and buffer APIs are async and this painter's are not, so the
+# frame path blocks on them. `pollster` does that without an async runtime.
 pollster.workspace = true
