@@ -55,6 +55,16 @@
 //! (`docs/decisions/boundary-b-unification.md`). Sixty-four bytes, seven
 //! members, every one of them fixed-width.
 //!
+//! Last, `GlyphQuad` and `AtlasGlyph` stopped carrying padding they did not
+//! declare. Each led with a `u16` glyph id in a struct of 4-byte members, so
+//! rustc inserted two bytes after it — FFI-safe, since a C compiler inserts
+//! the same, but not FFI-explicit. Both ids are `u32` now, which removes the
+//! hole rather than naming it and leaves both sizes and every float offset
+//! unchanged. That last property is why the layout pin below could not have
+//! caught the hole, and did not: both structs were always the size they are
+//! now, padding included, and the member after the id always sat at offset 4.
+//! What sees the difference is the id member's own size.
+//!
 //! `ImageAsset` is what remains: it holds the encoded bytes as a `Vec<u8>`,
 //! which is a different problem from the ranges above — the bytes are the
 //! payload, not a reference into a table, so flattening it means deciding
@@ -155,6 +165,8 @@ abi_surface! {
 
 #[cfg(test)]
 mod tests {
+    use std::mem::offset_of;
+
     use super::*;
 
     /// The layout of every type on the surface, as this build produces it.
@@ -216,31 +228,64 @@ mod tests {
         }
     }
 
-    /// `GlyphQuad` carries two bytes of padding it does not declare.
+    /// Neither glyph type carries padding any more: in both, the leading glyph
+    /// id occupies every byte before the member after it.
     ///
-    /// `{ u16, f32, f32 }` at alignment 4 puts `glyph_id` at 0 and `x` at 4, so
-    /// bytes 2 and 3 are padding rustc inserted. That is FFI-*safe* — a C
-    /// compiler inserts the same — but it is not FFI-*explicit*, and story
-    /// #578's rules for anything crossing this seam call for explicit padding
-    /// so the struct reads the same in both languages. Asserted rather than
-    /// fixed here, because changing the struct is #578's scope and because an
-    /// undocumented hole should at least be a documented one in the meantime.
+    /// Both used to. `{u16, f32, f32}` and `{u16, [f32; 4], [f32; 4]}` at
+    /// alignment 4 put the id at 0 and the next member at 4, so bytes 2 and 3
+    /// were padding rustc inserted. That is FFI-*safe* — a C compiler inserts
+    /// the same — but not FFI-*explicit*, and story #578's rules for anything
+    /// crossing this seam call for explicit padding. Story #578 widened both
+    /// ids to `u32` instead, which removes the hole rather than naming it: the
+    /// sizes are unchanged at 12 and 36 bytes, and every float offset is where
+    /// it was.
+    ///
+    /// **What has teeth here is the id member's own size**, not the offsets
+    /// and not the total. Both structs were already 12 and 36 bytes with the
+    /// hole in them, and the member after the id sat at offset 4 either way —
+    /// so the layout pin above stays green while the padding exists, and so
+    /// does an offset check. This was measured, not assumed: an offset-only
+    /// version of this test passed with the `u16` put back, on both types.
+    ///
+    /// Narrow either id together with whatever must change for the workspace
+    /// to still compile — `Atlas::glyph`'s parameter for `AtlasGlyph`, the
+    /// widening conversions for `GlyphQuad` — and the matching assertion below
+    /// fails with `left: 2, right: 4` while the layout pin stays green. Narrow
+    /// one on its own and the compiler refuses it instead. Both ids behave the
+    /// same way under either rule; an earlier version of this comment claimed
+    /// an asymmetry between them, which was an artifact of applying a
+    /// different rule to each.
     #[test]
-    fn glyph_quad_has_undeclared_padding() {
+    fn neither_glyph_type_carries_padding() {
         let quad = GlyphQuad {
             glyph_id: 0,
             x: 0.0,
             y: 0.0,
         };
-        let base = &quad as *const GlyphQuad as usize;
-        let glyph_id_at = &quad.glyph_id as *const u16 as usize - base;
-        let x_at = &quad.x as *const f32 as usize - base;
-
-        assert_eq!(glyph_id_at, 0);
+        assert_eq!(offset_of!(GlyphQuad, glyph_id), 0);
+        assert_eq!(offset_of!(GlyphQuad, x), 4);
+        assert_eq!(offset_of!(GlyphQuad, y), 8);
         assert_eq!(
-            x_at, 4,
-            "two bytes of implicit padding sit between glyph_id and x — story #578 makes it explicit"
+            size_of_val(&quad.glyph_id),
+            4,
+            "the id fills every byte before x; a narrower one leaves padding"
         );
+        assert_eq!(size_of_val(&quad), 4 + 4 + 4);
+
+        let glyph = AtlasGlyph {
+            glyph_id: 0,
+            plane_em: [0.0; 4],
+            atlas_px: [0.0; 4],
+        };
+        assert_eq!(offset_of!(AtlasGlyph, glyph_id), 0);
+        assert_eq!(offset_of!(AtlasGlyph, plane_em), 4);
+        assert_eq!(offset_of!(AtlasGlyph, atlas_px), 20);
+        assert_eq!(
+            size_of_val(&glyph.glyph_id),
+            4,
+            "the id fills every byte before plane_em; a narrower one leaves padding"
+        );
+        assert_eq!(size_of_val(&glyph), 4 + 16 + 16);
     }
 
     /// A value survives the C ABI unchanged, which is what a consumer's first

@@ -456,6 +456,12 @@ filed beside their parent rather than apart from it:
   a rect's instances contiguous and named by a per-rect span, in
   `dashscene-skia`'s own per-node order; layer 1 of epic #569 is stated over it
   as committed text goldens (story #578).
+- [sub-word-members-widen-rather-than-pad.md](sub-word-members-widen-rather-than-pad.md)
+  — a boundary-B member narrower than the ones around it widens to the word
+  rather than declaring a `_pad` beside it: a public padding member would
+  participate in the derived equality, the widening costs no bytes and moves
+  no offsets, and the type-level domain guarantee it gives up is asserted in
+  `Atlas::new` instead (story #578).
 - [unity-painter-uses-brg.md](unity-painter-uses-brg.md) — **proposed**:
   BatchRendererGroup over GameObject-per-node for the Unity painter, pending a
   lit-BRG shader spike and a GLES 3.2 platform check

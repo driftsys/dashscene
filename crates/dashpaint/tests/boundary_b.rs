@@ -2,12 +2,12 @@
 //! no dashscene-core, no dashbuf — dashpaint's public API only.
 
 use dashpaint::{
-    AtlasIndex, Blur, BlurKind, BlurRange, ClipBox, ClipIndex, ClipRegion, ClipTable, Color,
-    CornerRadii, EntryParts, Fill, FillSpec, GlyphQuad, GlyphRange, GlyphRun, GlyphRunTable,
-    Gradient, GradientKind, GradientStop, GroupComposite, ImageAsset, ImageFill, ImageFormat,
-    ImageTable, Mat23, PaintEntry, PaintIndex, PaintKind, PaintTable, PaintTag, Painter, RectEntry,
-    ScaleMode, Shadow, ShadowKind, ShadowRange, ShapeRange, StopRange, Stroke, StrokeAlign,
-    StrokeRange, Vec2, VectorField,
+    Atlas, AtlasGlyph, AtlasIndex, Blur, BlurKind, BlurRange, ClipBox, ClipIndex, ClipRegion,
+    ClipTable, Color, CornerRadii, EntryParts, Fill, FillSpec, GlyphQuad, GlyphRange, GlyphRun,
+    GlyphRunTable, Gradient, GradientKind, GradientStop, GroupComposite, ImageAsset, ImageFill,
+    ImageFormat, ImageTable, Mat23, PaintEntry, PaintIndex, PaintKind, PaintTable, PaintTag,
+    Painter, RectEntry, ScaleMode, Shadow, ShadowKind, ShadowRange, ShapeRange, StopRange, Stroke,
+    StrokeAlign, StrokeRange, Vec2, VectorField,
 };
 
 const RED: Color = Color {
@@ -1190,9 +1190,12 @@ fn bare_run(rect: u32) -> GlyphRun {
 }
 
 /// A quad distinguishable by its glyph id alone.
+///
+/// Takes the `u16` a font produces and widens it the way every producer does,
+/// so both conversions stay ones the compiler checks as exact.
 fn quad(glyph_id: u16) -> GlyphQuad {
     GlyphQuad {
-        glyph_id,
+        glyph_id: u32::from(glyph_id),
         x: f32::from(glyph_id),
         y: 0.0,
     }
@@ -1265,4 +1268,33 @@ fn an_empty_glyph_run_table_names_no_quads() {
     let glyphs = GlyphRunTable::new();
     assert!(glyphs.all_quads().is_empty());
     assert!(glyphs.runs().is_empty());
+}
+
+/// An atlas refuses a glyph id no font can produce, by name.
+///
+/// `GlyphQuad` and `AtlasGlyph` widened their ids from `u16` to `u32` so that
+/// neither struct carries padding it does not declare
+/// (`docs/decisions/sub-word-members-widen-rather-than-pad.md`). The `u16` made
+/// an out-of-domain id unrepresentable; this is what replaces that. Without it
+/// such an id would place a row `Atlas::glyph` can still be asked for, and a
+/// quad naming it would paint nothing with no diagnostic — the silent drop P4
+/// forbids.
+#[test]
+#[should_panic(expected = "a glyph id above u16::MAX cannot come from a font")]
+fn an_atlas_refuses_a_glyph_id_no_font_can_produce() {
+    let _ = Atlas::new(
+        ImageAsset {
+            format: ImageFormat::Png,
+            bytes: Vec::new(),
+        },
+        64,
+        64,
+        16,
+        2.0,
+        vec![AtlasGlyph {
+            glyph_id: u32::from(u16::MAX) + 1,
+            plane_em: [0.0, 0.0, 1.0, 1.0],
+            atlas_px: [0.0, 0.0, 8.0, 8.0],
+        }],
+    );
 }
