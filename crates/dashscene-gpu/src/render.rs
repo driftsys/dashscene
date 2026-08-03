@@ -2,9 +2,13 @@
 //!
 //! # What this draws, and what it does not
 //!
-//! Opaque rounded rects with a solid fill, clipped by their region. Gradients
-//! and image fills are story #582's, shadows and backdrop blur #584's, group
-//! opacity #583's.
+//! Opaque rounded rects with a solid fill and their outline stroke, clipped by
+//! their region. Gradients and image fills are story #582's, shadows and
+//! backdrop blur #584's, group opacity #583's.
+//!
+//! A stroke is the one kind whose ink reaches outside the instance's own
+//! `bounds` — see `instance_outset` in `shaders/paint.wgsl`, which is what
+//! grows the quad so an Outside stroke is not clipped by its own geometry.
 //!
 //! An instance whose kind this shader does not implement draws nothing. It does
 //! not fall through to a colour: [`InstanceKind`](crate::InstanceKind) carries
@@ -54,6 +58,46 @@ struct Viewport {
     size: [f32; 2],
     aa: f32,
     _pad: f32,
+}
+
+/// One stroke, in the shader's own layout.
+///
+/// `dashpaint::Stroke` is `{f32, StrokeAlign, Color}`, which is 24 bytes with a
+/// Rust-layout enum in the middle. This is the std430 shape the shader reads:
+/// the colour first so it sits at a 16-byte offset, then the width and the
+/// alignment as a plain `u32`.
+///
+/// The alignment is mapped by an exhaustive `match` rather than by `as u32`
+/// (see [`stroke_align`]). A copy through a local type rather than a cast, for
+/// the reason [`GpuClipBox`] gives.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, Pod, Zeroable)]
+struct GpuStroke {
+    color: [f32; 4],
+    width: f32,
+    align: u32,
+    _pad: [u32; 2],
+}
+
+/// The value [`GpuStroke::align`] carries, and the one place the mapping is
+/// written.
+///
+/// An exhaustive `match`, never `align as u32`: a reordered variant in
+/// `dashpaint` would silently change the number a shader compares against, and
+/// nothing would catch it — not the compiler, not a golden, which pins the
+/// packer's output rather than the shader's reading of it. This is the same
+/// hazard `InstanceKind` was merged into one enum to remove
+/// (`crates/dashscene-gpu/src/instance.rs`). A new alignment is a compile error
+/// here.
+///
+/// The numbers are the ones `sdf.wgsl`'s `stroke_coverage` documents, and the
+/// ones its layer-2 conformance suite is stated over.
+const fn stroke_align(align: dashpaint::StrokeAlign) -> u32 {
+    match align {
+        dashpaint::StrokeAlign::Inside => 0,
+        dashpaint::StrokeAlign::Center => 1,
+        dashpaint::StrokeAlign::Outside => 2,
+    }
 }
 
 /// One clip box, in the shader's own layout.
@@ -281,6 +325,7 @@ impl Renderer {
                 storage(0),
                 storage(1),
                 storage(2),
+                storage(4),
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
                     visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
@@ -572,6 +617,24 @@ impl Renderer {
         if boxes.is_empty() {
             boxes.push(GpuClipBox::default());
         }
+        let mut strokes: Vec<GpuStroke> = paints
+            .all_strokes()
+            .iter()
+            .map(|stroke| GpuStroke {
+                color: [
+                    stroke.color.r,
+                    stroke.color.g,
+                    stroke.color.b,
+                    stroke.color.a,
+                ],
+                width: stroke.width,
+                align: stroke_align(stroke.align),
+                _pad: [0; 2],
+            })
+            .collect();
+        if strokes.is_empty() {
+            strokes.push(GpuStroke::default());
+        }
         let viewport = Viewport {
             size: [width as f32, height as f32],
             aa: 1.0,
@@ -585,6 +648,7 @@ impl Renderer {
             buffer,
             &solids,
             &boxes,
+            &strokes,
             viewport,
             changes,
         );
@@ -683,12 +747,14 @@ struct Frame {
     solids: wgpu::Buffer,
     clips: wgpu::Buffer,
     viewport: wgpu::Buffer,
+    strokes: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     /// Capacities in elements, not bytes. A buffer is reallocated only when a
     /// frame needs more than it holds.
     instance_capacity: usize,
     solid_capacity: usize,
     clip_capacity: usize,
+    stroke_capacity: usize,
     /// What the instance buffer on the device currently holds, and the spans
     /// those rows were packed against. This is the record a partial upload is
     /// stated over: without it there is nothing to say what the device already
@@ -732,22 +798,30 @@ impl Frame {
             "clip boxes",
             (size_of::<GpuClipBox>() * MINIMUM_CAPACITY) as u64,
         );
+        let strokes = storage(
+            "strokes",
+            (size_of::<GpuStroke>() * MINIMUM_CAPACITY) as u64,
+        );
         let viewport = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("viewport"),
             size: size_of::<Viewport>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let bind_group = bind(device, layout, &instances, &solids, &clips, &viewport);
+        let bind_group = bind(
+            device, layout, &instances, &solids, &clips, &viewport, &strokes,
+        );
         Self {
             instances,
             solids,
             clips,
             viewport,
+            strokes,
             bind_group,
             instance_capacity: MINIMUM_CAPACITY,
             solid_capacity: MINIMUM_CAPACITY,
             clip_capacity: MINIMUM_CAPACITY,
+            stroke_capacity: MINIMUM_CAPACITY,
             uploaded: Vec::new(),
             spans: Vec::new(),
             // Zero on both axes, which no drawable is, so the first frame always
@@ -755,8 +829,8 @@ impl Frame {
             uploaded_viewport: Viewport::default(),
             uploaded_generation: None,
             last_upload: InstanceUpload::Whole { rows: 0 },
-            // The four buffers above and the bind group over them.
-            allocations: 5,
+            // The five buffers above and the bind group over them.
+            allocations: 6,
         }
     }
 
@@ -770,6 +844,7 @@ impl Frame {
         buffer: &InstanceBuffer,
         solids: &[[f32; 4]],
         boxes: &[GpuClipBox],
+        strokes: &[GpuStroke],
         viewport: Viewport,
         changes: Option<Changes<'_>>,
     ) {
@@ -804,6 +879,19 @@ impl Frame {
         }
         queue.write_buffer(&self.clips, 0, bytemuck::cast_slice(boxes));
 
+        if strokes.len() > self.stroke_capacity {
+            self.stroke_capacity = grown(strokes.len());
+            self.strokes = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("strokes"),
+                size: (size_of::<GpuStroke>() * self.stroke_capacity) as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.allocations += 1;
+            rebind = true;
+        }
+        queue.write_buffer(&self.strokes, 0, bytemuck::cast_slice(strokes));
+
         if viewport != self.uploaded_viewport {
             queue.write_buffer(&self.viewport, 0, bytemuck::bytes_of(&viewport));
             self.uploaded_viewport = viewport;
@@ -817,6 +905,7 @@ impl Frame {
                 &self.solids,
                 &self.clips,
                 &self.viewport,
+                &self.strokes,
             );
             self.allocations += 1;
         }
@@ -990,6 +1079,7 @@ fn bind(
     solids: &wgpu::Buffer,
     clips: &wgpu::Buffer,
     viewport: &wgpu::Buffer,
+    strokes: &wgpu::Buffer,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("dashscene-gpu paint"),
@@ -1011,6 +1101,10 @@ fn bind(
                 binding: 3,
                 resource: viewport.as_entire_binding(),
             },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: strokes.as_entire_binding(),
+            },
         ],
     })
 }
@@ -1031,6 +1125,13 @@ fn unpremultiply(pixels: &mut [u8]) {
         }
     }
 }
+
+/// The stroke rows, as the shader's array reads them. A `vec4f` puts the WGSL
+/// struct's alignment at 16 and rounds its stride to 32, so a Rust type of any
+/// other size would have every element after the first read from the wrong
+/// offset — the same hazard `Instance::_pad` exists for, and the reason both
+/// are asserted rather than reasoned about.
+const _: () = assert!(size_of::<GpuStroke>() == 32);
 
 /// The instance rows, as bytes. `Instance` is `#[repr(C)]` with no padding
 /// (`docs/decisions/instance-buffer-contract.md` D2), which is what lets the

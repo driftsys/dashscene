@@ -17,8 +17,8 @@
 //! painter, deliberately.
 
 use dashpaint::{
-    ClipBox, ClipIndex, ClipTable, Color, CornerRadii, GlyphRunTable, ImageTable, PaintEntry,
-    PaintTable, Painter, RectEntry,
+    ClipBox, ClipIndex, ClipTable, Color, CornerRadii, EntryParts, GlyphRunTable, ImageTable,
+    PaintEntry, PaintTable, Painter, RectEntry, Stroke, StrokeAlign,
 };
 use dashscene_gpu::{GpuPainter, Renderer};
 
@@ -665,5 +665,193 @@ fn the_antialiasing_ramp_is_one_unit_wide() {
     assert!(
         (1..=254).contains(&texel(&pixels, 39, 24)[3]) || texel(&pixels, 39, 24)[3] == 255,
         "the edge itself is still covered"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Strokes (story #710)
+// ---------------------------------------------------------------------------
+
+/// The stroked box every test below draws: x 16..48, y 12..36.
+const STROKE_BOX: (f32, f32, f32, f32) = (16.0, 12.0, 32.0, 24.0);
+
+/// Four units, so each alignment puts its band in a place the others do not
+/// reach: Outside covers x 48..52, Center 46..50, Inside 44..48.
+const STROKE_WIDTH: f32 = 4.0;
+
+/// A stroke-only paint entry — no fill at all, so the interior of the shape is
+/// covered by nothing but the band, and an assertion about the interior means
+/// what it says.
+fn stroked(paints: &mut PaintTable, align: StrokeAlign, color: Color) -> dashpaint::PaintIndex {
+    paints.push_with(
+        PaintEntry::default(),
+        EntryParts {
+            stroke: Some(Stroke {
+                width: STROKE_WIDTH,
+                align,
+                color,
+            }),
+            ..EntryParts::default()
+        },
+    )
+}
+
+/// The alpha at (x, y), which is the whole of what a coverage claim needs.
+fn alpha(pixels: &[u8], x: u32, y: u32) -> u8 {
+    texel(pixels, x, y)[3]
+}
+
+fn stroke_only(align: StrokeAlign) -> Vec<u8> {
+    let mut paints = PaintTable::new();
+    let ink = stroked(
+        &mut paints,
+        align,
+        Color {
+            r: 0.0,
+            g: 1.0,
+            b: 0.0,
+            a: 1.0,
+        },
+    );
+    let (x, y, w, h) = STROKE_BOX;
+    draw(
+        &[rect(x, y, w, h, ink, ClipIndex::UNCLIPPED)],
+        &paints,
+        &ClipTable::new(),
+    )
+}
+
+/// The one an instanced quad gets wrong by construction: an Outside stroke
+/// paints a full width **beyond** the box its instance is stated over, and the
+/// quad is built from that box.
+///
+/// Without the vertex shader growing the quad by the stroke's outset, the outer
+/// half of the band is clipped by its own geometry — which looks like a thinner
+/// stroke rather than like a defect, and no assertion about the interior would
+/// notice.
+#[test]
+fn an_outside_stroke_draws_past_the_box_its_quad_is_built_from() {
+    let pixels = stroke_only(StrokeAlign::Outside);
+    let (x, y, w, h) = STROKE_BOX;
+    let right = (x + w) as u32;
+    let middle = (y + h / 2.0) as u32;
+
+    // Two units beyond the right edge: inside the band, outside the quad the
+    // instance's own bounds would have made.
+    assert!(
+        alpha(&pixels, right + 2, middle) > 200,
+        "an Outside stroke must draw past the box, got alpha {}",
+        alpha(&pixels, right + 2, middle)
+    );
+    // And it stops: a unit past the band is clear.
+    assert_eq!(
+        alpha(&pixels, right + 5, middle),
+        0,
+        "the band must end at the stroke width"
+    );
+}
+
+/// A stroke-only node leaves its interior untouched. The claim a fill-shaped
+/// assertion cannot make, and the one that fails if the shader ever falls back
+/// to the fill's own coverage for a stroke row.
+#[test]
+fn a_stroke_covers_a_band_and_not_the_interior() {
+    for align in [
+        StrokeAlign::Inside,
+        StrokeAlign::Center,
+        StrokeAlign::Outside,
+    ] {
+        let pixels = stroke_only(align);
+        let (x, y, w, h) = STROKE_BOX;
+        let centre = ((x + w / 2.0) as u32, (y + h / 2.0) as u32);
+        assert_eq!(
+            alpha(&pixels, centre.0, centre.1),
+            0,
+            "{align:?}: the middle of a stroke-only node is not ink"
+        );
+    }
+}
+
+/// The three alignments put the band in three different places, which is the
+/// whole of what the alignment means. An implementation that ignored it — or
+/// that read the variant as a number rather than through the packer's map —
+/// would put all three in the same place and pass every assertion above.
+#[test]
+fn each_alignment_puts_the_band_somewhere_the_others_do_not() {
+    let (x, y, w, h) = STROKE_BOX;
+    let edge = (x + w) as u32;
+    let middle = (y + h / 2.0) as u32;
+    // Texel `i` is sampled at its centre, `i + 0.5`, so these two sit 1.5 units
+    // either side of the edge — half a unit inside each band's boundary, which
+    // is a full coverage rather than the 0.5 the boundary itself would give.
+    // `within` is covered by Inside and Center, `without` by Center and
+    // Outside, so the three are told apart by two samples.
+    let (within, without) = (edge - 2, edge + 1);
+
+    let inside = stroke_only(StrokeAlign::Inside);
+    assert!(
+        alpha(&inside, within, middle) > 200 && alpha(&inside, without, middle) == 0,
+        "an Inside stroke lies within the shape: got {} within, {} without",
+        alpha(&inside, within, middle),
+        alpha(&inside, without, middle)
+    );
+
+    let outside = stroke_only(StrokeAlign::Outside);
+    assert!(
+        alpha(&outside, without, middle) > 200 && alpha(&outside, within, middle) == 0,
+        "an Outside stroke lies without: got {} within, {} without",
+        alpha(&outside, within, middle),
+        alpha(&outside, without, middle)
+    );
+
+    let centre = stroke_only(StrokeAlign::Center);
+    assert!(
+        alpha(&centre, within, middle) > 200 && alpha(&centre, without, middle) > 200,
+        "a Center stroke straddles the outline: got {} within, {} without",
+        alpha(&centre, within, middle),
+        alpha(&centre, without, middle)
+    );
+}
+
+/// The colour comes from the stroke row, not from the solid table.
+///
+/// `Instance::row` means a row of whichever table the kind names, and the two
+/// tables are indexed independently — so a shader that reached for `solids[row]`
+/// would paint a stroke with a fill colour and still cover exactly the right
+/// band. The fill here is a different colour at the same row index, which is
+/// what makes the mistake visible.
+#[test]
+fn a_stroke_takes_its_colour_from_the_stroke_row() {
+    let mut paints = PaintTable::new();
+    // Solid row 0: red. Nothing in this scene draws it; it exists so that a
+    // shader reading the wrong table has something wrong to find.
+    paints.push_solid(Color {
+        r: 1.0,
+        g: 0.0,
+        b: 0.0,
+        a: 1.0,
+    });
+    // Stroke row 0: blue.
+    let ink = stroked(
+        &mut paints,
+        StrokeAlign::Center,
+        Color {
+            r: 0.0,
+            g: 0.0,
+            b: 1.0,
+            a: 1.0,
+        },
+    );
+    let (x, y, w, h) = STROKE_BOX;
+    let pixels = draw(
+        &[rect(x, y, w, h, ink, ClipIndex::UNCLIPPED)],
+        &paints,
+        &ClipTable::new(),
+    );
+
+    let on_band = texel(&pixels, (x + w) as u32, (y + h / 2.0) as u32);
+    assert!(
+        on_band[2] > 200 && on_band[0] < 55,
+        "the band must be the stroke's blue and not the solid table's red, got {on_band:?}"
     );
 }

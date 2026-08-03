@@ -83,6 +83,17 @@ generated-source review surface. Worth revisiting when the binding surface
 grows past one group of four — story #581's atlas residency is the likely
 trigger.
 
+**D6 revisited at five bindings (story #710), and still not adopted.** The
+trigger above fired earlier than expected: drawing strokes needed the stroke
+table, which is a fifth binding on the same group. The argument did not change
+with it. The group is still one group, its entries are still four storage
+buffers and a uniform declared in one place each side, and the mismatch is
+still a named test failure rather than a silent one — `stroke_align` maps the
+alignment by an exhaustive `match`, so the enum half of the hazard is a compile
+error already. What would change the answer is a _second_ group, or bindings
+whose layout is derived rather than written — story #581's atlas is still the
+candidate for both.
+
 **D6, against `naga_oil`.** Its value is `#import` and module composition, so
 the SDF math is one source rather than copies. That property already holds:
 `docs/decisions/shader-library-and-layer-2.md` D1 single-sources through
@@ -97,8 +108,35 @@ the next story to want either has the argument in front of it.
 
 ## What is drawn, and what is not
 
-Opaque rounded rects with a solid fill, clipped by their region, composited in
-slice order at their free-path opacity.
+Opaque rounded rects with a solid fill and their outline stroke, clipped by
+their region, composited in slice order at their free-path opacity.
+
+**The stroke arrived at story #710**, which exists because nothing in
+epic #569's breakdown drew one: the packer has emitted `InstanceKind::Stroke` since
+story #578, and no story after it named the kind. Found by running the two
+painters against one scene once story #585 made that possible — the borders
+were missing and no issue owned them.
+
+Two things it needed, and only one was new. `sdf.wgsl`'s `stroke_coverage` was
+already written and already conformance-tested by layer 2 (story #579), so the
+band is not this story's arithmetic. What was new is that **a stroke instance
+draws outside the bounds its quad is built from**: an instance is stated over
+the node's fill box, and an Outside stroke paints a full width beyond it, a
+Center stroke half of one. The vertex shader grows the quad by that outset,
+read from the stroke row the instance names. Without it the outer half of every
+non-Inside stroke is clipped by its own geometry, which looks like a thinner
+stroke and not like a defect — `an_outside_stroke_draws_past_the_box_its_quad_is_built_from`
+is the assertion that fails when it is not done.
+
+One divergence from the reference painter is **not** ruled out here. Skia
+strokes by expanding the geometry — `rrect.with_inset(w/2)` or `with_outset` —
+and then clamps the offset rounded rect's own radii; this shader shifts the
+band on the _unoffset_ box, whose radii were clamped before the shift. The two
+agree wherever the level sets of a convex rounded box are its offsets, which is
+everywhere the radii are not over-subscribed. A node whose radii exceed its
+box, stroked, is the case where they could part. Layer 4 (story #586) is the
+instrument that would measure it; layer 3 cannot, because it does not compare
+against the reference at all.
 
 An instance whose kind or fill tag this shader does not implement **draws
 nothing**, and does not fall through to a colour. `Instance::tag` means a

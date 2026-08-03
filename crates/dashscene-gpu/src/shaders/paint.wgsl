@@ -32,9 +32,26 @@ const KIND_FILL_GRADIENT: u32 = 4u;
 const KIND_FILL_IMAGE: u32 = 5u;
 const KIND_STROKE: u32 = 6u;
 
+// `StrokeAlign`, as `GpuStroke::align` carries it.
+const ALIGN_INSIDE: u32 = 0u;
+const ALIGN_CENTER: u32 = 1u;
+const ALIGN_OUTSIDE: u32 = 2u;
+
 struct ClipBox {
     x: f32, y: f32, w: f32, h: f32,
     corners: vec4f,
+}
+
+// Mirrors `dashscene_gpu::render::GpuStroke`, which is `dashpaint::Stroke` in
+// std430 order. `align` is 0 = Inside, 1 = Center, 2 = Outside — the numbers
+// `sdf.wgsl`'s `stroke_coverage` is written against, assigned on the Rust side
+// by an exhaustive match so a reordered variant is a compile error rather than
+// a silently different band.
+struct Stroke {
+    color: vec4f,
+    width: f32,
+    align: u32,
+    _pad: vec2u,
 }
 
 struct Viewport {
@@ -51,6 +68,7 @@ struct Viewport {
 @group(0) @binding(1) var<storage, read> solids: array<vec4f>;
 @group(0) @binding(2) var<storage, read> clip_boxes: array<ClipBox>;
 @group(0) @binding(3) var<uniform> viewport: Viewport;
+@group(0) @binding(4) var<storage, read> strokes: array<Stroke>;
 
 struct VertexOut {
     @builtin(position) position: vec4f,
@@ -62,12 +80,53 @@ struct VertexOut {
     @location(1) local: vec2f,
 }
 
+// How far past its own `bounds` an instance draws.
+//
+// Zero for everything but a stroke. A stroke instance is stated over the node's
+// *fill* box — `docs/decisions/instance-buffer-contract.md`, and the packer
+// pushes it with `..base` — while an Outside stroke paints a full width beyond
+// that box and a Center stroke half of one. The quad is built from `bounds`, so
+// without this the outer half of every non-Inside stroke would be clipped away
+// by the geometry it is drawn on, which looks exactly like a thinner stroke
+// rather than like a bug.
+//
+// The same three cases as `dashscene-skia`'s `stroke_outset`, which is also
+// what the packer grows a drop shadow's silhouette by. Here it is read from the
+// stroke row instead, because a stroke instance names one.
+//
+// Only the *lower* bound of this number is a correctness property, and the
+// tests pin only that: a quad too small clips the band, while a quad too large
+// shades a few more fragments that the coverage then discards and draws exactly
+// the same picture. Returning `width` for a Center stroke survives mutation
+// testing for that reason. What it would cost is fill rate, which is R-T2's
+// concern and has no instrument in this slice.
+fn instance_outset(inst: Instance) -> f32 {
+    if inst.kind != KIND_STROKE {
+        return 0.0;
+    }
+    let s = strokes[inst.row];
+    if s.align == ALIGN_CENTER {
+        return s.width * 0.5;
+    }
+    if s.align == ALIGN_OUTSIDE {
+        return s.width;
+    }
+    // ALIGN_INSIDE, and nothing else: `stroke_align` on the Rust side maps an
+    // exhaustive match over `StrokeAlign`, so no fourth value can arrive here.
+    // Stated as the fall-through rather than as a fourth branch, so that this
+    // function is total whatever a future variant does before it is taught to
+    // this file — an unknown alignment then draws inside the quad it already
+    // has, which is a wrong picture rather than a clipped one.
+    return 0.0;
+}
+
 @vertex
 fn vs_main(@builtin(vertex_index) vertex: u32, @builtin(instance_index) index: u32) -> VertexOut {
     let inst = instances[index];
     // The quad, grown by the antialiasing width so the ramp is not clipped by
-    // the geometry it belongs to.
-    let margin = viewport.aa;
+    // the geometry it belongs to, and by whatever this instance draws beyond
+    // its own bounds.
+    let margin = viewport.aa + instance_outset(inst);
     let lo = inst.bounds.xy - vec2f(margin);
     let hi = inst.bounds.xy + inst.bounds.zw + vec2f(margin);
     // Two triangles, as a triangle strip of four vertices.
@@ -108,12 +167,25 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
     let half_size = inst.bounds.zw * 0.5;
     let centre = inst.bounds.xy + half_size;
     let d = rounded_box_sdf(in.local - centre, half_size, inst.corners);
-    var cover = coverage(d, viewport.aa) * clip_coverage(inst, in.local) * inst.opacity;
+
+    // Coverage is per kind, and cannot be computed before the kind is known: a
+    // fill covers the shape's interior, and a stroke covers a band that an
+    // Outside stroke puts entirely *outside* it. Taking the fill's ramp first
+    // and multiplying would have left every Outside stroke at zero coverage
+    // everywhere it draws.
+    var shape = 0.0;
+    if inst.kind == KIND_STROKE {
+        let s = strokes[inst.row];
+        shape = stroke_coverage(d, s.width, f32(s.align), viewport.aa);
+    } else {
+        shape = coverage(d, viewport.aa);
+    }
+    var cover = shape * clip_coverage(inst, in.local) * inst.opacity;
     if cover <= 0.0 {
         discard;
     }
-    // Story #580 draws opaque rounded rects, which is the solid fill alone.
-    // Gradients and images are #582's, shadows #584's, strokes later still.
+    // Story #580 drew the solid fill; story #710 added the stroke beside it.
+    // Gradients and images are #582's, shadows and backdrop blur #584's.
     //
     // **Both `kind` and `tag`, never `tag` alone.** `tag` means a different
     // enum for each kind — a `PaintTag` for a fill, a `ShadowKind` for a
@@ -133,10 +205,14 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
     // Not a silent drop: the packer emits the instance, the layer-1 golden
     // shows it, and `docs/decisions/pipelines-and-layer-3.md` lists what is and
     // is not drawn. What is refused here is a *wrong* pixel, not a diagnostic.
-    if inst.kind != KIND_FILL_SOLID {
+    var colour = vec4f(0.0);
+    if inst.kind == KIND_FILL_SOLID {
+        colour = solids[inst.row];
+    } else if inst.kind == KIND_STROKE {
+        colour = strokes[inst.row].color;
+    } else {
         discard;
     }
-    let colour = solids[inst.row];
     // Premultiplied, which is what the blend state below expects.
     let a = colour.a * cover;
     return vec4f(colour.rgb * a, a);

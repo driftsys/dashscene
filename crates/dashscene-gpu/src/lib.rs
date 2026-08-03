@@ -23,9 +23,15 @@
 //! #585 added the second target: [`surface`] presents the same frame to a
 //! window's swapchain, which is what the showcase host draws through.
 //!
-//! What draws is opaque rounded rects with a solid fill, clipped by their
-//! region. Gradients, images, text, group opacity, shadows and blur are all
-//! packed and none of them are drawn — each has its own story in epic #569.
+//! Story #710 added the outline stroke beside the fill. It exists because no
+//! story in epic #569's breakdown drew one: [`pack`] has emitted
+//! [`InstanceKind::Stroke`] since story #578 and nothing after it named the
+//! kind, which running the two painters against one scene made visible.
+//!
+//! What draws is opaque rounded rects with a solid fill and their stroke,
+//! clipped by their region. Gradients, images, text, group opacity, shadows and
+//! blur are all packed and none of them are drawn — each has its own story in
+//! epic #569.
 //!
 //! # Why this crate is named for the role
 //!
