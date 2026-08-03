@@ -157,6 +157,20 @@ ssimulacra2 = "0.5"
 # implementation inside its own `-sys` package, so it is an ordinary dependency
 # and not a vendored tree NOTICE has to cover.
 nv-flip = "0.1"
+# The GPU API the lean painter is built on (epic #569,
+# `docs/decisions/wgpu-is-the-lean-painter.md`). 30.0.0 is the version the
+# direction note pinned and is still current; it carries a silent WGSL break
+# from 29 — integer shader I/O no longer defaults to `@interpolate(flat)` and
+# must say so — which matters to every shader this workspace writes.
+wgpu = "30.0"
+# Casting the instance rows and the conformance buffers to bytes. `wgpu`
+# depends on it already, so this pins the version the workspace shares rather
+# than adding a dependency.
+bytemuck = { version = "1.25", features = ["derive"] }
+# `wgpu`'s device and buffer APIs are async, and the layer-2 conformance suite
+# is an ordinary synchronous test. `pollster` blocks on a future without
+# pulling in an async runtime, which is what every wgpu example uses for this.
+pollster = "1.0"
 # Pinned exactly: golden images are bit-exact only for one exact skia
 # build (goldens/README.md); a patch release changing rasterization or
 # PNG encoding must arrive as a deliberate, re-goldened bump.

@@ -13,9 +13,14 @@
 //! of epic #569's four-layer net
 //! (`docs/decisions/instance-buffer-contract.md`).
 //!
-//! Nothing submits that frame, and the crate still carries no `wgpu`
-//! dependency. The shader library arrives with #579, and the device, pipelines
-//! and first pixels with #580.
+//! Story #579 added the shader library beside it: [`shader::SDF_WGSL`] is the
+//! one file the painter's signed-distance math lives in, and every consumer
+//! includes that string rather than copying from it
+//! (`docs/decisions/shader-library-and-layer-2.md`).
+//!
+//! Nothing submits a frame and nothing draws. The crate names `wgpu` only in
+//! its dev-dependencies, where the conformance suite needs a device; the
+//! painter's own device, its pipelines and its first pixels are story #580.
 //!
 //! # Why this crate is named for the role
 //!
@@ -37,12 +42,14 @@
 
 pub mod instance;
 pub mod pack;
+pub mod shader;
 
 use dashpaint::{
     ClipTable, GlyphRunTable, GroupComposite, ImageTable, PaintTable, Painter, RectEntry,
 };
 
 pub use instance::{Instance, InstanceBuffer, InstanceKind, InstanceSpan};
+pub use shader::SDF_WGSL;
 
 /// The lean painter. Packs a frame into its instance buffer and draws none of
 /// it: a device, a queue, a surface and the pipelines over them arrive with

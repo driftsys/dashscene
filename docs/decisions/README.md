@@ -462,6 +462,11 @@ filed beside their parent rather than apart from it:
   participate in the derived equality, the widening costs no bytes and moves
   no offsets, and the type-level domain guarantee it gives up is asserted in
   `Atlas::new` instead (story #578).
+- [shader-library-and-layer-2.md](shader-library-and-layer-2.md) — the lean
+  painter's SDF math is one WGSL file included textually by every consumer,
+  and layer 2 evaluates it by compute shader against independently derived
+  references; the shadow integrates twelve rows because four costs 5.1 code
+  points of 255 and twelve costs 0.83, measured (story #579).
 - [unity-painter-uses-brg.md](unity-painter-uses-brg.md) — **proposed**:
   BatchRendererGroup over GameObject-per-node for the Unity painter, pending a
   lit-BRG shader spike and a GLES 3.2 platform check
