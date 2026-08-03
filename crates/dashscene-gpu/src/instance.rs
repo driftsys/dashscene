@@ -136,8 +136,14 @@ impl InstanceKind {
 /// [`row`](Self::row) is deliberately **not** biased — it is never absent, and
 /// so a zeroed [`Instance`] does name row 0 of a real table. What makes such an
 /// instance inert is its `opacity` of `0.0`, not its rows.
+///
+/// `Pod`/`Zeroable` since story #580: the frame path casts the rows to bytes
+/// and uploads them, which is the whole of what R-T4 budgets for. Both derives
+/// are checked, not asserted — `bytemuck` refuses a type with padding, so they
+/// hold D2's "no implicit padding" claim by construction rather than by the
+/// offset test alone.
 #[repr(C)]
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Instance {
     /// Which primitive this quad draws — an [`InstanceKind`].
     pub kind: u32,
