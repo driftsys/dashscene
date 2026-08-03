@@ -206,7 +206,7 @@ fn image_table_pushes_and_resolves_assets() {
 
     assert_eq!(index, 0);
     assert_eq!(images.len(), 1);
-    assert_eq!(images.resolve(index), &asset);
+    assert_eq!(images.resolve(index), asset.as_ref());
     assert_eq!(images.get(1), None);
 }
 
@@ -1297,4 +1297,176 @@ fn an_atlas_refuses_a_glyph_id_no_font_can_produce() {
             atlas_px: [0.0, 0.0, 8.0, 8.0],
         }],
     );
+}
+
+// ---------------------------------------------------------------------------
+// Baked texel payloads and the flattened image table (story #640)
+// ---------------------------------------------------------------------------
+
+/// Every format's discriminant survives the round trip through the stored row.
+///
+/// `ImageEntry::format` is a `u32` so the row is `#[repr(C)]`, which means the
+/// enum and the number are two representations of one fact. This is the
+/// assertion that they agree — for every variant, not for the one a fixture
+/// happened to use.
+#[test]
+fn every_image_format_round_trips_through_its_discriminant() {
+    let every = [
+        ImageFormat::Png,
+        ImageFormat::Jpeg,
+        ImageFormat::Gif,
+        ImageFormat::Astc4x4Srgb,
+        ImageFormat::Astc4x4Unorm,
+        ImageFormat::Astc5x5Srgb,
+        ImageFormat::Astc5x5Unorm,
+        ImageFormat::Astc6x6Srgb,
+        ImageFormat::Astc6x6Unorm,
+        ImageFormat::Astc8x8Srgb,
+        ImageFormat::Astc8x8Unorm,
+        ImageFormat::Astc10x10Srgb,
+        ImageFormat::Astc10x10Unorm,
+        ImageFormat::Astc12x12Srgb,
+        ImageFormat::Astc12x12Unorm,
+        ImageFormat::Rgba8Srgb,
+        ImageFormat::Rgba8Unorm,
+    ];
+    for format in every {
+        assert_eq!(
+            ImageFormat::from_u32(format.as_u32()),
+            format,
+            "{format:?} does not survive its own discriminant"
+        );
+    }
+    // And the discriminants are distinct, which the round trip alone would not
+    // catch if two variants shared one.
+    let mut seen: Vec<u32> = every.iter().map(|f| f.as_u32()).collect();
+    seen.sort_unstable();
+    let count = seen.len();
+    seen.dedup();
+    assert_eq!(seen.len(), count, "two image formats share a discriminant");
+}
+
+/// The encoded half and the baked half are exactly the two halves.
+#[test]
+fn only_the_source_encoded_containers_are_encoded() {
+    assert!(ImageFormat::Png.is_encoded());
+    assert!(ImageFormat::Jpeg.is_encoded());
+    assert!(ImageFormat::Gif.is_encoded());
+    assert!(!ImageFormat::Astc6x6Srgb.is_encoded());
+    // Uncompressed is baked, not encoded: it is a ladder's terminal rung,
+    // uploaded as texels rather than decoded.
+    assert!(!ImageFormat::Rgba8Unorm.is_encoded());
+    assert_eq!(ImageFormat::Rgba8Unorm.block(), None);
+    assert_eq!(ImageFormat::Astc6x6Srgb.block(), Some((6, 6)));
+    assert_eq!(ImageFormat::Png.block(), None);
+}
+
+/// The table stores one pool and hands back the right slice of it.
+///
+/// Three assets of **different lengths**, and the assertions are about the
+/// second and third: a table that ignored the stored offset would return the
+/// first asset's bytes for all three and pass any check stated over asset zero
+/// alone.
+#[test]
+fn a_flattened_table_returns_each_assets_own_bytes() {
+    let mut images = ImageTable::new();
+    let first = images.push(ImageAsset {
+        format: ImageFormat::Png,
+        bytes: vec![1, 2, 3],
+    });
+    let second = images.push(ImageAsset {
+        format: ImageFormat::Astc6x6Srgb,
+        bytes: vec![4, 5, 6, 7, 8, 9, 10],
+    });
+    let third = images.push(ImageAsset {
+        format: ImageFormat::Rgba8Unorm,
+        bytes: vec![11, 12],
+    });
+
+    assert_eq!(images.resolve(first).bytes, &[1, 2, 3]);
+    assert_eq!(images.resolve(second).bytes, &[4, 5, 6, 7, 8, 9, 10]);
+    assert_eq!(images.resolve(third).bytes, &[11, 12]);
+    assert_eq!(images.resolve(second).format, ImageFormat::Astc6x6Srgb);
+    assert_eq!(images.resolve(third).format, ImageFormat::Rgba8Unorm);
+
+    // The stored rows are what the FFI gate is stated over: fixed-width, and
+    // partitioning the pool.
+    let entries = images.all_entries();
+    assert_eq!(entries.len(), 3);
+    assert_eq!(entries[0].offset, 0);
+    assert_eq!(entries[1].offset, 3);
+    assert_eq!(entries[2].offset, 10);
+}
+
+/// An empty payload is a value, not a sentinel: it resolves to an empty slice
+/// and the asset after it still finds its own bytes.
+#[test]
+fn a_zero_length_payload_is_an_ordinary_entry() {
+    let mut images = ImageTable::new();
+    let empty = images.push(ImageAsset {
+        format: ImageFormat::Png,
+        bytes: Vec::new(),
+    });
+    let after = images.push(ImageAsset {
+        format: ImageFormat::Jpeg,
+        bytes: vec![9, 9],
+    });
+    assert!(images.resolve(empty).bytes.is_empty());
+    assert_eq!(images.resolve(after).bytes, &[9, 9]);
+}
+
+/// A painter that says nothing about formats claims the source-encoded ones,
+/// and a painter that overrides the declaration is believed.
+///
+/// This is the whole of how "can this painter use a baked payload" is answered,
+/// and it has to be answered *before* a payload is bound: `Painter::paint`
+/// returns nothing, so the question cannot be asked inside a frame.
+#[test]
+fn a_painter_declares_which_formats_it_can_use() {
+    struct Quiet;
+    struct Uploads;
+
+    impl Painter for Quiet {
+        fn paint(
+            &mut self,
+            _rects: &[RectEntry],
+            _paints: &PaintTable,
+            _images: &ImageTable,
+            _clips: &ClipTable,
+            _groups: &[GroupComposite],
+            _glyphs: &GlyphRunTable,
+            _dirty: Option<&[u32]>,
+        ) {
+        }
+    }
+
+    impl Painter for Uploads {
+        /// A painter with a texture path says so. Story #581 is where the lean
+        /// painter's own declaration stops being the default.
+        fn samples(&self, format: ImageFormat) -> bool {
+            format.is_encoded() || format.block().is_some()
+        }
+
+        fn paint(
+            &mut self,
+            _rects: &[RectEntry],
+            _paints: &PaintTable,
+            _images: &ImageTable,
+            _clips: &ClipTable,
+            _groups: &[GroupComposite],
+            _glyphs: &GlyphRunTable,
+            _dirty: Option<&[u32]>,
+        ) {
+        }
+    }
+
+    // The default is the conservative half, and conservative in the direction
+    // that is safe: a painter that could upload a baked payload but did not say
+    // so is handed an encoded one and decodes it.
+    assert!(Quiet.samples(ImageFormat::Png));
+    assert!(!Quiet.samples(ImageFormat::Astc6x6Srgb));
+    assert!(!Quiet.samples(ImageFormat::Rgba8Unorm));
+
+    assert!(Uploads.samples(ImageFormat::Png));
+    assert!(Uploads.samples(ImageFormat::Astc6x6Srgb));
 }

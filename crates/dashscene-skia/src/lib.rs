@@ -20,9 +20,8 @@ use std::sync::Arc;
 
 use dashpaint::{
     Atlas, BlurKind, ClipTable, CornerRadii, Fill, GlyphRun, GlyphRunTable, Gradient, GradientKind,
-    GradientView, GroupComposite, ImageAsset, ImageTable, MAX_GRADIENT_STOPS, PaintKind,
-    PaintTable, Painter, RectEntry, ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign,
-    VectorField,
+    GradientView, GroupComposite, ImageTable, MAX_GRADIENT_STOPS, PaintKind, PaintTable, Painter,
+    RectEntry, ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, VectorField,
 };
 use skia_safe::{
     AlphaType, BlendMode, BlurStyle, Canvas, ClipOp, Color4f, ColorType, Data, EncodedImageFormat,
@@ -857,7 +856,7 @@ impl MsdfCache {
         if self.source != *atlases {
             self.decoded = atlases
                 .iter()
-                .map(|atlas| decode_image(&atlas.image))
+                .map(|atlas| decode_image(atlas.image.as_ref()))
                 .collect();
         }
         self.source = Arc::clone(atlases);
@@ -1743,10 +1742,22 @@ thread_local! {
 /// `tests::decode` module — a trimmed Skia build without codecs would need
 /// the pure-Rust fallback `docs/decisions/downloaded-raster-needs-no-vector-engine.md`
 /// describes, which the reference painter does not run).
-fn decode_image(asset: &ImageAsset) -> Image {
+fn decode_image(asset: dashpaint::ImageRef<'_>) -> Image {
     #[cfg(test)]
     DECODE_CALLS.with(|c| c.set(c.get() + 1));
-    images::deferred_from_encoded_data(Data::new_copy(&asset.bytes), None)
+    // This painter declares only the source-encoded formats — it takes
+    // `Painter::samples`'s default — so a baked payload reaching here means the
+    // binding ignored the declaration rather than that this function is
+    // incomplete. Named rather than decoded as if it were a container: Skia
+    // would report "unknown image format" for an ASTC block payload, which
+    // says nothing about why it arrived.
+    assert!(
+        asset.format.is_encoded(),
+        "this painter was handed a {:?} payload, which it declared it cannot sample \
+         (Painter::samples); a baked derivation is selected for a painter that can upload it",
+        asset.format
+    );
+    images::deferred_from_encoded_data(Data::new_copy(asset.bytes), None)
         .expect("image asset decodes (validated upstream, P4)")
 }
 
@@ -1844,6 +1855,9 @@ mod tests {
     //! (issue #101), via `DECODE_CALLS`.
 
     use super::*;
+    // Test-only: the painter itself no longer names the owning type, since a
+    // table hands out `ImageRef`. The tests still build assets to put in one.
+    use dashpaint::ImageAsset;
 
     /// A real 2x2 JPEG (`convert`-encoded; lossy, so no pixel-color
     /// assertion — only size proves the decode).
@@ -1858,7 +1872,7 @@ mod tests {
             format: dashpaint::ImageFormat::Jpeg,
             bytes: JPEG_2X2.to_vec(),
         };
-        let image = decode_image(&asset);
+        let image = decode_image(asset.as_ref());
         assert_eq!((image.width(), image.height()), (2, 2));
     }
 
@@ -1868,7 +1882,7 @@ mod tests {
             format: dashpaint::ImageFormat::Gif,
             bytes: GIF_2X2.to_vec(),
         };
-        let image = decode_image(&asset);
+        let image = decode_image(asset.as_ref());
         assert_eq!((image.width(), image.height()), (2, 2));
     }
 

@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 use dashbuf::container::{Container, FLAVOR_ASSET, FLAVOR_UI, SectionKind};
 use dashc_wasm::{Asset, AssetKind, Box2D, Document, Node, Paint, PaintEntry, compile};
 use dashpaint::{Fill, FillSpec, ImageFill, ImageFormat, Mat23, ScaleMode};
-use dashscene_core::{Arena, load_document};
+use dashscene_core::{Arena, BoundPayload, load_document, load_document_bound};
 
 /// The two distinct payloads every document here is built from.
 ///
@@ -219,8 +219,7 @@ fn every_node_resolves_to_the_payload_it_named() {
         };
         let asset = scene.images().resolve(image_fill.image);
         assert_eq!(
-            asset.bytes.as_slice(),
-            *want,
+            asset.bytes, *want,
             "node {index} resolved to the wrong payload"
         );
     }
@@ -372,4 +371,80 @@ fn compile_refuses_an_asset_whose_metadata_contradicts_its_bytes() {
         "expected asset.extent-mismatch, got: {report}"
     );
     assert!(report.has_errors(), "it has to block, not merely warn");
+}
+
+/// A host that binds a **derivation** gets an asset that says so (story #640).
+///
+/// The document records the canonical payload's format and never carries a
+/// derivation, so before this the loader read `Png` off the entry while the
+/// caller had bound ASTC bytes — the tag and the bytes described different
+/// things and nothing could tell. Here the binding states the format for one
+/// asset and leaves the others canonical, so the assertion is that the two
+/// paths coexist rather than that one replaced the other.
+#[test]
+fn a_bound_derivation_reaches_the_painter_as_the_format_it_is() {
+    let file = compile(&document()).expect("the document validates");
+    let (doc, payloads) = dashbuf::open(&file).expect("the file opens");
+
+    // Stand-in for the rung a profile selected. Its bytes are deliberately not
+    // the canonical ones, so an implementation that kept the document's payload
+    // and only changed the tag fails the byte assertion below.
+    const BAKED: &[u8] = &[0xAB; 24];
+
+    let bound: Vec<BoundPayload<'_>> = payloads
+        .iter()
+        .enumerate()
+        .map(|(index, bytes)| {
+            if index == 1 {
+                BoundPayload::derived(BAKED, dashpaint::ImageFormat::Astc6x6Srgb)
+            } else {
+                BoundPayload::canonical(bytes)
+            }
+        })
+        .collect();
+
+    let mut arena = Arena::new();
+    load_document_bound(&doc, &bound, &mut arena);
+    let scene = arena.committed();
+
+    let asset_of = |rect: usize| {
+        let paint = scene.paints().resolve(scene.rects()[rect].paint);
+        let Fill::Image(fill) = scene.paints().fill(paint.fill) else {
+            panic!("rect {rect} did not resolve to an image fill");
+        };
+        scene.images().resolve(fill.image)
+    };
+
+    // The document's second asset is the one that was bound to a derivation.
+    let derived = asset_of(1);
+    assert_eq!(derived.format, dashpaint::ImageFormat::Astc6x6Srgb);
+    assert_eq!(derived.bytes, BAKED, "the derived bytes reach the painter");
+
+    // The others are untouched, tag and bytes both.
+    let canonical = asset_of(0);
+    assert_eq!(canonical.format, dashpaint::ImageFormat::Png);
+    assert_eq!(canonical.bytes, PAYLOAD_PNG);
+}
+
+/// The canonical entry point is the bound one with every payload canonical, so
+/// binding nothing must load exactly what it always did.
+#[test]
+fn the_canonical_binding_loads_what_the_document_states() {
+    let file = compile(&document()).expect("the document validates");
+    let (doc, payloads) = dashbuf::open(&file).expect("the file opens");
+
+    let mut plain = Arena::new();
+    load_document(&doc, &payloads, &mut plain);
+    let mut bound_arena = Arena::new();
+    let bound: Vec<BoundPayload<'_>> = payloads
+        .iter()
+        .map(|b| BoundPayload::canonical(b))
+        .collect();
+    load_document_bound(&doc, &bound, &mut bound_arena);
+
+    assert_eq!(
+        plain.committed().images(),
+        bound_arena.committed().images(),
+        "the two entry points disagree about a document that binds no derivation"
+    );
 }

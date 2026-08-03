@@ -472,6 +472,13 @@ filed beside their parent rather than apart from it:
   into an `Rgba8Unorm` target so blending stays in sRGB-encoded space, and
   layer 3 gates the pipeline rather than the picture; `wgsl_to_wgpu` and
   `naga_oil` are **not adopted**, with reasons (story #580).
+- [baked-texel-payloads-cross-boundary-b.md](baked-texel-payloads-cross-boundary-b.md)
+  — `ImageFormat` grows the rungs `dashpack` can produce as one flat
+  `#[repr(u32)]` enum rather than a nested `Baked(TexelFormat)`, `ImageTable`
+  flattens to a byte pool plus `#[repr(C)]` rows, a payload binding may state
+  its own format where the document only knows the canonical one, and a painter
+  **declares** which formats it can use because `paint` cannot report that it
+  cannot (story #640, unblocking #581).
 - [the-host-selects-the-painter-and-the-frame-path-holds-its-buffers.md](the-host-selects-the-painter-and-the-frame-path-holds-its-buffers.md)
   — the swapchain lives in `dashscene-gpu` beside the pipeline format it has to
   agree with, must not be an sRGB-converting format, and the showcase host
