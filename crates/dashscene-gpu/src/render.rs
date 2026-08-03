@@ -137,12 +137,17 @@ pub struct Renderer {
     /// for the same reason the frame buffers are, and rebuilt when the extent
     /// changes.
     offscreen: Option<Offscreen>,
+    /// The largest either dimension of a drawable may be on this device — the
+    /// device's own `max_texture_dimension_2d`. Copied out at construction
+    /// rather than read per call: it cannot change, and `wgpu::Device::limits`
+    /// returns the whole limit set by value.
+    max_extent: u32,
     /// Device objects allocated for the offscreen target, counted beside
     /// [`Frame::allocations`] — see [`Renderer::allocations`].
     offscreen_allocations: u64,
 }
 
-/// What a renderer could not be built for.
+/// What a renderer could not be built for, or could not be asked to draw.
 #[derive(Debug)]
 pub enum RendererError {
     /// No adapter at all — a machine or a runner with no GPU and no software
@@ -161,6 +166,17 @@ pub enum RendererError {
     /// apart across a saturated seam. A picture that is wrong in a way nobody
     /// named is worse than a window that did not open.
     NoLinearFormat(Vec<wgpu::TextureFormat>),
+    /// A drawable larger on either axis than [`Renderer::max_extent`], the
+    /// maximum this device can address.
+    ///
+    /// Reported *before* the call that would fail rather than caught after it,
+    /// because there is nothing to catch. Both `wgpu::Surface::configure` and
+    /// `wgpu::Device::create_texture` raise a validation error for an
+    /// over-large extent, and a wgpu validation error reaches the uncaptured
+    /// error handler, which panics; inside the swapchain configure that panic
+    /// is non-unwinding and takes the process down with it. Issue #714 aborted
+    /// the showcase host that way on an ordinary window resize.
+    Extent { width: u32, height: u32, max: u32 },
 }
 
 impl std::fmt::Display for RendererError {
@@ -178,6 +194,11 @@ impl std::fmt::Display for RendererError {
                 "the surface offers only sRGB-converting formats ({offered:?}); this painter \
                  blends in sRGB-encoded space and has no format to do it in"
             ),
+            RendererError::Extent { width, height, max } => write!(
+                f,
+                "a {width}x{height} drawable exceeds the {max} px maximum this device can \
+                 address on either dimension"
+            ),
         }
     }
 }
@@ -187,7 +208,9 @@ impl std::error::Error for RendererError {
         match self {
             RendererError::NoDevice(e) => Some(e),
             RendererError::NoSurface(e) => Some(e),
-            RendererError::NoAdapter | RendererError::NoLinearFormat(_) => None,
+            RendererError::NoAdapter
+            | RendererError::NoLinearFormat(_)
+            | RendererError::Extent { .. } => None,
         }
     }
 }
@@ -288,8 +311,19 @@ impl Renderer {
             label: Some("dashscene-gpu"),
             required_features: wgpu::Features::empty(),
             // Downlevel defaults, so this painter runs on the entry-tier class
-            // of device R3 names rather than only on a desktop one.
-            required_limits: wgpu::Limits::downlevel_defaults(),
+            // of device R3 names rather than only on a desktop one — but with
+            // the adapter's own resolution limits rather than downlevel's,
+            // which cap `max_texture_dimension_2d` at 2048.
+            //
+            // A drawable's size is a property of the window the host opened
+            // rather than of the features this painter uses, and a 2288x1410
+            // window is an ordinary one: issue #714 aborted the host on the
+            // first resize past 2048 on a device whose own maximum is 16384.
+            // An entry-tier adapter still reports its own smaller maximum
+            // here, so the painter stays bounded by the real constraint rather
+            // than by a synthetic one — which is what `using_resolution` is
+            // for, and it leaves every other downlevel limit in place.
+            required_limits: wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits()),
             memory_hints: wgpu::MemoryHints::default(),
             trace: wgpu::Trace::Off,
             ..Default::default()
@@ -381,6 +415,7 @@ impl Renderer {
         });
 
         let frame = Frame::new(&device, &layout);
+        let max_extent = device.limits().max_texture_dimension_2d;
         Ok(Self {
             _instance: instance,
             device,
@@ -392,6 +427,7 @@ impl Renderer {
             format,
             offscreen: None,
             offscreen_allocations: 0,
+            max_extent,
         })
     }
 
@@ -399,6 +435,33 @@ impl Renderer {
     /// beside.
     pub fn adapter_info(&self) -> &wgpu::AdapterInfo {
         &self.adapter_info
+    }
+
+    /// The largest either dimension of a drawable may be — a texture rendered
+    /// into, or a window's swapchain.
+    ///
+    /// This is the adapter's own `max_texture_dimension_2d` and not a number
+    /// this painter chose. The device is requested at downlevel limits with the
+    /// adapter's resolution, so a drawable is bounded by the hardware rather
+    /// than by the entry-tier feature floor the painter targets.
+    pub fn max_extent(&self) -> u32 {
+        self.max_extent
+    }
+
+    /// Refuses a drawable this device cannot address, on either axis.
+    ///
+    /// Every caller that is about to hand an extent to `wgpu` goes through
+    /// here first. See [`RendererError::Extent`] for why the check is made
+    /// ahead of the call rather than around it.
+    pub(crate) fn check_extent(&self, width: u32, height: u32) -> Result<(), RendererError> {
+        if width > self.max_extent || height > self.max_extent {
+            return Err(RendererError::Extent {
+                width,
+                height,
+                max: self.max_extent,
+            });
+        }
+        Ok(())
     }
 
     /// How this frame's instance rows reached the device.
@@ -456,6 +519,15 @@ impl Renderer {
     /// Draws `buffer` into a `width` x `height` texture and returns its pixels
     /// as unpremultiplied RGBA8, the space `goldens/README.md` compares in.
     ///
+    /// # Errors
+    ///
+    /// [`RendererError::Extent`] if either dimension is past
+    /// [`Renderer::max_extent`]. That is the one failure a caller can be told
+    /// about rather than aborted by, and it is a `Result` where the empty
+    /// buffer below is a panic because an extent is a number a caller computes
+    /// — from a window, from a fixture — while an empty pack is a bug in the
+    /// call itself.
+    ///
     /// # Panics
     ///
     /// Panics if the frame has no instances to draw: a caller asking for an
@@ -468,7 +540,7 @@ impl Renderer {
         clips: &ClipTable,
         width: u32,
         height: u32,
-    ) -> Vec<u8> {
+    ) -> Result<Vec<u8>, RendererError> {
         self.render_dirty(buffer, paints, clips, None, width, height)
     }
 
@@ -479,6 +551,10 @@ impl Renderer {
     /// an `Option` at each of those call sites would say nothing. Passing `None`
     /// is always correct; see [`Frame::upload_instances`] for what passing the
     /// set buys and for what it must not be trusted for.
+    ///
+    /// # Errors
+    ///
+    /// As [`Renderer::render`].
     ///
     /// # Panics
     ///
@@ -491,7 +567,11 @@ impl Renderer {
         changes: Option<Changes<'_>>,
         width: u32,
         height: u32,
-    ) -> Vec<u8> {
+    ) -> Result<Vec<u8>, RendererError> {
+        // Before the assert, and before anything is allocated: an over-large
+        // extent reaches `Device::create_texture` two statements below, and a
+        // caller cannot be told about a validation error that panicked.
+        self.check_extent(width, height)?;
         assert!(
             !buffer.instances().is_empty(),
             "render was given a frame with no instances"
@@ -563,7 +643,7 @@ impl Renderer {
         offscreen.readback.unmap();
         self.offscreen = Some(offscreen);
         unpremultiply(&mut pixels);
-        pixels
+        Ok(pixels)
     }
 
     /// Uploads what this frame changed and draws it into `view`.

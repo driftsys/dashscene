@@ -33,6 +33,11 @@ pub struct SurfaceRenderer {
     /// and outliving it is the one ordering that is not allowed.
     surface: wgpu::Surface<'static>,
     renderer: Renderer,
+    /// Never holds an extent past [`Renderer::max_extent`]. [`Self::new`] and
+    /// [`Self::resize`] are the only two writers and both refuse one, which is
+    /// what makes [`Self::configure`] — called from three places, two of them
+    /// on the frame path with no way to report — safe to call unconditionally.
+    /// See [`RendererError::Extent`] for what configuring past it does.
     config: wgpu::SurfaceConfiguration,
     /// Set when the swapchain reported itself out of date but still handed over
     /// a texture. It cannot be reconfigured while that texture is alive —
@@ -94,6 +99,12 @@ impl SurfaceRenderer {
     /// A zero dimension is not an error — a minimised window reports one, and
     /// the surface is left unconfigured until [`SurfaceRenderer::resize`]
     /// brings a real extent.
+    ///
+    /// # Errors
+    ///
+    /// Beyond the device and format failures [`RendererError`] names,
+    /// [`RendererError::Extent`] if the drawable is larger than the device can
+    /// address on either axis.
     pub fn new(
         target: impl Into<wgpu::SurfaceTarget<'static>>,
         width: u32,
@@ -118,6 +129,9 @@ impl SurfaceRenderer {
         let format = linear_format(&capabilities.formats)
             .ok_or_else(|| RendererError::NoLinearFormat(capabilities.formats.clone()))?;
         let renderer = Renderer::on_adapter(instance, adapter, format)?;
+        // Before the configuration is built, so the invariant on `config` holds
+        // from the first value ever stored in it.
+        renderer.check_extent(width, height)?;
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -166,13 +180,22 @@ impl SurfaceRenderer {
     ///
     /// A zero dimension leaves the surface unconfigured: `Surface::configure`
     /// panics on one, and a minimised window has nothing to present to anyway.
-    pub fn resize(&mut self, width: u32, height: u32) {
+    ///
+    /// # Errors
+    ///
+    /// [`RendererError::Extent`] if the drawable is larger than the device can
+    /// address on either axis. The configuration is left as it was, so a
+    /// caller that reports the error and stops is presenting the extent it was
+    /// presenting before, rather than an extent nothing configured.
+    pub fn resize(&mut self, width: u32, height: u32) -> Result<(), RendererError> {
         if (width, height) == (self.config.width, self.config.height) {
-            return;
+            return Ok(());
         }
+        self.renderer.check_extent(width, height)?;
         self.config.width = width;
         self.config.height = height;
         self.configure();
+        Ok(())
     }
 
     /// Draws `buffer` and puts it on the window.
@@ -226,10 +249,23 @@ impl SurfaceRenderer {
 
     /// Applies [`SurfaceRenderer::config`] to the surface, unless the drawable
     /// has no area.
+    ///
+    /// Infallible because of the invariant on [`SurfaceRenderer::config`], and
+    /// it has to be: two of the three callers are on the frame path, where an
+    /// out-of-date swapchain is reconfigured and retried with nowhere to report
+    /// a refusal to. The `debug_assert` is what holds the invariant against a
+    /// future third writer — an over-large extent reaching the line below does
+    /// not return an error, it aborts the process (issue #714).
     fn configure(&mut self) {
         if self.config.width == 0 || self.config.height == 0 {
             return;
         }
+        debug_assert!(
+            self.renderer
+                .check_extent(self.config.width, self.config.height)
+                .is_ok(),
+            "the surface configuration outgrew what the device can address"
+        );
         self.surface.configure(self.renderer.device(), &self.config);
     }
 
