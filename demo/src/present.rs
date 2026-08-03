@@ -479,6 +479,7 @@ impl Present for GpuPresenter {
             .present(
                 self.painter.instances(),
                 scene.paints(),
+                scene.images(),
                 scene.clips(),
                 Some(changes),
             )

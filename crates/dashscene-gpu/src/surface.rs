@@ -21,7 +21,7 @@
 //! #587 configures and presents through this same type rather than a second
 //! one.
 
-use dashpaint::{ClipTable, PaintTable};
+use dashpaint::{ClipTable, ImageTable, PaintTable};
 
 use crate::instance::InstanceBuffer;
 use crate::render::{Changes, Renderer, RendererError, TARGET_FORMAT};
@@ -216,6 +216,7 @@ impl SurfaceRenderer {
         &mut self,
         buffer: &InstanceBuffer,
         paints: &PaintTable,
+        images: &ImageTable,
         clips: &ClipTable,
         changes: Option<Changes<'_>>,
     ) -> Result<(), FrameError> {
@@ -238,6 +239,7 @@ impl SurfaceRenderer {
             &view,
             buffer,
             paints,
+            images,
             clips,
             changes,
             self.config.width,

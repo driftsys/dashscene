@@ -391,10 +391,11 @@ fn a_bound_derivation_reaches_the_painter_as_the_format_it_is() {
     // and only changed the tag fails the byte assertion below.
     //
     // Thirty-two bytes because that is what the canonical asset's extent
-    // requires at this rung: `sample.png` is 7x5, which is 2x1 blocks at a 6x6
-    // footprint, at 16 bytes a block. Boundary B checks that since issue #716,
-    // so a length that did not follow from the extent would be refused —
-    // which is the point: a derivation is the same image at the same size.
+    // requires at this rung: the document's second asset is the 9x6 JPEG, which
+    // is 2x1 blocks at a 6x6 footprint, at 16 bytes a block. Boundary B checks
+    // that since issue #716, so a length that did not follow from the extent
+    // would be refused — which is the point: a derivation is the same image at
+    // the same size.
     const BAKED: &[u8] = &[0xAB; 32];
 
     let bound: Vec<BoundPayload<'_>> = payloads
@@ -427,12 +428,13 @@ fn a_bound_derivation_reaches_the_painter_as_the_format_it_is() {
     assert_eq!(derived.bytes, BAKED, "the derived bytes reach the painter");
     // And its extent comes from the document, since the bytes carry none
     // (issue #716). Asserted as an ordered pair, not as an area or a length:
-    // `sample.png` is 7x5, and 5x7 is the same 32-byte payload at this
-    // footprint, so a loader that transposed the two would pass every other
-    // check in this test.
+    // this asset is 9x6, and 6x9 is the same 32-byte payload at this footprint,
+    // so a loader that transposed the two would pass every other check in this
+    // test. It is also a *different* extent from the asset beside it, so a
+    // loader that read one entry's extent for every asset fails here.
     assert_eq!(
         (derived.width, derived.height),
-        (7, 5),
+        (9, 6),
         "a derivation is the canonical asset's own extent"
     );
 

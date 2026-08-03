@@ -153,9 +153,16 @@ the picture correct for the subset this story implements and absent for the
 rest. That is not a silent drop: the packer emits the instance, the layer-1
 golden shows it, and this record lists what is drawn.
 
-Gradients and image fills are story #582's, shadows and backdrop blur #584's,
+Text and baked vector fields are story #582's, shadows and backdrop blur #584's,
 render-target group opacity #583's. The instance buffer already carries all of
 them; this story draws the first kind.
+
+**Corrected 2026-08-03.** That sentence said "gradients and image fills are
+story #582's" from the day it was written, and neither was: story #582 is glyph
+runs and vector fields by its own body. The misattribution is what hid the gap
+for three story closes — image fills landed with story #581 and its residency
+work, and gradients had no owner at all until issue #715 was filed. This
+paragraph is now stated against the story bodies rather than from memory.
 
 ## Verified where, and where not
 

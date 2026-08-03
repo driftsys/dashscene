@@ -27,3 +27,12 @@ bytemuck.workspace = true
 # `wgpu`'s device and buffer APIs are async and this painter's are not, so the
 # frame path blocks on them. `pollster` does that without an async runtime.
 pollster.workspace = true
+# Atlas residency, from story #581: packing by shelf and evicting by recency.
+etagere.workspace = true
+lru.workspace = true
+# The one decoder this painter links. Boundary B's encoded half is PNG, JPEG and
+# GIF; `Painter::samples` declares that this painter takes PNG and neither of
+# the other two, so only this crate is needed and `libjpeg`/`libgif` stay out of
+# a build whose whole point is that it is lean (issue #718). Pure Rust, so the
+# wasm target of story #587 needs nothing else.
+png.workspace = true

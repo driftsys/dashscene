@@ -17,10 +17,11 @@
 //! # What this packer does not emit, by name
 //!
 //! - **Glyph quads.** A glyph's texel rectangle is a coordinate in the
-//!   painter's residency atlas rather than the `atlas_px` boundary B carries,
-//!   and residency is story #581. Story #582 appends glyph instances to the
-//!   anchor rect's span, after its inner shadows — the position
-//!   `dashscene-skia` already draws an anchored run at.
+//!   painter's residency atlas rather than the `atlas_px` boundary B carries.
+//!   Residency landed at story #581 and serves image fills; story #582 brings
+//!   glyphs to it and appends glyph instances to the anchor rect's span, after
+//!   its inner shadows — the position `dashscene-skia` already draws an
+//!   anchored run at.
 //! - **`BlurKind::Layer` blurs.** Node-local layer blur is budgeted at v1 and
 //!   nothing in this tree produces one (`dashc` lowers only
 //!   `BACKGROUND_BLUR`). The reference painter skips it by the same filter.

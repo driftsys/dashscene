@@ -62,6 +62,11 @@ zstd.workspace = true
 # encoder's input has to come from one decode path and not two (story #434).
 png.workspace = true
 dashcue.workspace = true
+# The lean painter, for the baked-asset chain test (story #581). This is the
+# only workspace member that depends on both `dashpack` and a GPU painter, and
+# it is where that join is checked: `dashscene-gpu` must not depend on the
+# packer, and the packer must not depend on a painter.
+dashscene-gpu.workspace = true
 # The render_dsb unit test and the v0.7 text-lowering golden (#160) drive
 # `dashc`'s compile_figma to build a `.dsb` in-process; the `dashscene-validator`
 # profile selects the compile profile. Both are test-only.

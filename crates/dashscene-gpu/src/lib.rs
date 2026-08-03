@@ -28,10 +28,15 @@
 //! [`InstanceKind::Stroke`] since story #578 and nothing after it named the
 //! kind, which running the two painters against one scene made visible.
 //!
-//! What draws is opaque rounded rects with a solid fill and their stroke,
-//! clipped by their region. Gradients, images, text, group opacity, shadows and
-//! blur are all packed and none of them are drawn — each has its own story in
-//! epic #569.
+//! Story #581 added atlas residency ([`residency`]) and the image fill that
+//! uses it: a payload reaches a texture, and `Painter::samples` stops being the
+//! trait default and starts naming what this painter's device can actually take
+//! (`docs/decisions/atlas-residency-and-image-fills.md`).
+//!
+//! What draws is opaque rounded rects with a solid fill, their stroke and their
+//! image fill, clipped by their region. Gradients, text, group opacity, shadows
+//! and blur are all packed and none of them are drawn — each has its own story
+//! in epic #569, gradients as issue #715.
 //!
 //! # Why this crate is named for the role
 //!
@@ -54,17 +59,74 @@
 pub mod instance;
 pub mod pack;
 pub mod render;
+pub mod residency;
 pub mod shader;
 pub mod surface;
 
 use dashpaint::{
-    ClipTable, GlyphRunTable, GroupComposite, ImageTable, PaintTable, Painter, RectEntry,
+    ClipTable, GlyphRunTable, GroupComposite, ImageFormat, ImageTable, PaintTable, Painter,
+    RectEntry,
 };
 
 pub use instance::{Instance, InstanceBuffer, InstanceKind, InstanceSpan};
-pub use render::{Changes, InstanceUpload, Renderer, RendererError};
+pub use render::{ATLAS_EXTENT, Changes, InstanceUpload, Renderer, RendererError};
+pub use residency::{AtlasFormat, Residency, ResidencyError};
 pub use shader::SDF_WGSL;
 pub use surface::{FrameError, SurfaceRenderer};
+
+/// Which payload formats this painter can be handed, on the device it will draw
+/// on.
+///
+/// The value behind [`Painter::samples`], and the reason that question is asked
+/// before a payload is bound rather than inside a frame
+/// (`docs/decisions/baked-texel-payloads-cross-boundary-b.md` D6).
+///
+/// # Why the adapter is part of the answer
+///
+/// ASTC is a device capability, not a property of this crate: an adapter that
+/// does not advertise `TEXTURE_COMPRESSION_ASTC` cannot hold a block texture at
+/// all. A painter that claimed the block formats unconditionally would have a
+/// host bind a derivation the device then refuses, which is the failure
+/// `samples` exists to make impossible. So the declaration is built from an
+/// adapter, and [`Default`] is the conservative answer for a painter that has
+/// not met one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SampledFormats {
+    /// Whether the device can sample ASTC LDR block textures.
+    astc: bool,
+}
+
+impl SampledFormats {
+    /// What a painter drawing on `renderer`'s device can be handed.
+    pub fn of(renderer: &Renderer) -> Self {
+        Self {
+            astc: renderer.samples_astc(),
+        }
+    }
+
+    /// Whether a payload in `format` can be used as it stands.
+    ///
+    /// PNG is decoded, the baked formats are uploaded, and JPEG and GIF are
+    /// refused: this painter links one decoder, because the trim profile whose
+    /// existence justifies the crate removes `libpng`, `libjpeg` and `libwebp`
+    /// alike, and `dashpack` derives every canonical container away before a
+    /// product build ships (issue #718).
+    pub fn contains(self, format: ImageFormat) -> bool {
+        match format {
+            ImageFormat::Png => true,
+            ImageFormat::Jpeg | ImageFormat::Gif => false,
+            ImageFormat::Rgba8Srgb | ImageFormat::Rgba8Unorm => true,
+            other => {
+                debug_assert!(
+                    AtlasFormat::of(other).required_feature()
+                        == Some(wgpu::Features::TEXTURE_COMPRESSION_ASTC),
+                    "a baked format that is neither RGBA8 nor ASTC reached this declaration"
+                );
+                self.astc
+            }
+        }
+    }
+}
 
 /// The lean painter: boundary B's tables in, one ordered instance buffer out.
 ///
@@ -82,12 +144,33 @@ pub struct GpuPainter {
     /// How many times [`Painter::paint`] has been called.
     frames: u64,
     instances: InstanceBuffer,
+    /// What this painter declares it can be handed — see [`SampledFormats`].
+    samples: SampledFormats,
 }
 
 impl GpuPainter {
-    /// A painter that draws nothing.
+    /// A painter that draws nothing, and that claims no baked block format.
+    ///
+    /// The conservative declaration, because this constructor has met no
+    /// adapter and ASTC is an adapter's property. A host that will draw through
+    /// a [`Renderer`] should build the painter with [`GpuPainter::on`] instead,
+    /// which is what makes `dashpack`'s block output bindable.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A painter that will draw on `renderer`'s device, and declares what that
+    /// device can sample.
+    pub fn on(renderer: &Renderer) -> Self {
+        Self {
+            samples: SampledFormats::of(renderer),
+            ..Self::default()
+        }
+    }
+
+    /// What this painter declares it can be handed.
+    pub fn sampled_formats(&self) -> SampledFormats {
+        self.samples
     }
 
     /// How many times this painter has been asked to paint.
@@ -103,6 +186,17 @@ impl GpuPainter {
 }
 
 impl Painter for GpuPainter {
+    /// What this painter can be handed, on the device it was built for.
+    ///
+    /// The first override of the trait's default, which claims the
+    /// source-encoded half and nothing else. This one claims less of that half
+    /// and more of the other: PNG but not JPEG or GIF, and every baked format
+    /// the adapter can sample. That is the whole point of a declaration rather
+    /// than a fixed list — see [`SampledFormats`].
+    fn samples(&self, format: ImageFormat) -> bool {
+        self.samples.contains(format)
+    }
+
     /// Packs the whole of boundary B into [`instances`](Self::instances) and
     /// submits none of it.
     ///

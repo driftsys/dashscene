@@ -171,6 +171,19 @@ bytemuck = { version = "1.25", features = ["derive"] }
 # is an ordinary synchronous test. `pollster` blocks on a future without
 # pulling in an async runtime, which is what every wgpu example uses for this.
 pollster = "1.0"
+# Texture-atlas allocation for the lean painter's residency (story #581).
+# `glyphon` pairs `etagere` with `lru` for exactly this — dynamic packing plus
+# eviction — which is the pairing epic #569's direction note picked.
+#
+# The shelf allocator rather than `BucketedAtlasAllocator`, which is what
+# `glyphon` itself uses: buckets are quantised in height and are the right
+# trade when every allocation is a glyph. This atlas also holds image fills,
+# whose sizes span two orders of magnitude, and a bucketed allocator wastes the
+# quantisation on each of them.
+etagere = "0.3"
+# The eviction half of the pair above. A residency set needs a recency order to
+# choose a victim by, and writing one is writing an intrusive linked list.
+lru = "0.18"
 # Pinned exactly: golden images are bit-exact only for one exact skia
 # build (goldens/README.md); a patch release changing rasterization or
 # PNG encoding must arrive as a deliberate, re-goldened bump.
