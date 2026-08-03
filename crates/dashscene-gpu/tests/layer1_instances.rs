@@ -561,7 +561,7 @@ fn a_fill_only_node_packs_exactly_one_instance() {
     let painter = scene.pack();
     let instances = painter.instances().rect_instances(0);
     assert_eq!(instances.len(), 1, "one fill, one instance");
-    assert_eq!(instances[0].kind, InstanceKind::Fill.as_u32());
+    assert_eq!(instances[0].kind, InstanceKind::FillSolid.as_u32());
 }
 
 /// A layout-only container packs no instance, and still has a span.
@@ -592,7 +592,7 @@ fn a_shadow_row_is_its_position_in_the_entrys_own_list() {
 
     let shadows: Vec<_> = instances
         .iter()
-        .filter(|i| i.kind == InstanceKind::Shadow.as_u32())
+        .filter(|i| InstanceKind::from_u32(i.kind).is_shadow())
         .collect();
     assert_eq!(shadows.len(), 3, "two drop shadows and one inner");
     assert_eq!(
@@ -673,7 +673,9 @@ fn a_masked_node_packs_one_fill_and_no_stroke() {
     let painter = scene.pack();
     let instances = painter.instances().rect_instances(8);
     assert_eq!(instances.len(), 1, "one masked fill");
-    assert_eq!(instances[0].kind, InstanceKind::Fill.as_u32());
+    // A gradient, not a solid: the merged kind carries the fill vocabulary, so
+    // this now says which fill rather than only that there is one.
+    assert_eq!(instances[0].kind, InstanceKind::FillGradient.as_u32());
     let entry = scene.paints.resolve(scene.rects[8].paint);
     assert_eq!(
         instances[0].shape,
@@ -710,7 +712,7 @@ fn a_masked_backdrop_carries_the_coverage_mask() {
     );
     let fill = instances
         .iter()
-        .find(|i| i.kind == InstanceKind::Fill.as_u32())
+        .find(|i| i.kind == InstanceKind::FillSolid.as_u32())
         .expect("the node carries a fill");
     assert_eq!(backdrop.shape, fill.shape, "one mask, both instances");
 }
@@ -798,11 +800,11 @@ fn one_node_packs_its_parts_in_the_reference_painters_order() {
         order,
         vec![
             InstanceKind::Backdrop.as_u32(),
-            InstanceKind::Shadow.as_u32(),
-            InstanceKind::Fill.as_u32(),
-            InstanceKind::Fill.as_u32(),
+            InstanceKind::ShadowDrop.as_u32(),
+            InstanceKind::FillSolid.as_u32(),
+            InstanceKind::FillSolid.as_u32(),
             InstanceKind::Stroke.as_u32(),
-            InstanceKind::Shadow.as_u32(),
+            InstanceKind::ShadowInner.as_u32(),
         ],
         "backdrop, drop shadow, fill, stacked layer, stroke, inner shadow"
     );
@@ -874,19 +876,19 @@ fn the_instance_is_sixty_four_bytes_in_declaration_order() {
     assert_eq!(align_of::<Instance>(), 4);
     // Eight 4-byte scalars and two four-float vectors: the members account for
     // every byte, so nothing is padding rustc chose.
-    assert_eq!(8 * 4 + 2 * 16, size_of::<Instance>());
+    assert_eq!(2 * 16 + 8 * 4, size_of::<Instance>());
 
     let measured = [
-        ("kind", offset_of!(Instance, kind), 0),
-        ("tag", offset_of!(Instance, tag), 4),
-        ("row", offset_of!(Instance, row), 8),
-        ("shape", offset_of!(Instance, shape), 12),
-        ("clip_offset", offset_of!(Instance, clip_offset), 16),
-        ("clip_count", offset_of!(Instance, clip_count), 20),
-        ("layer", offset_of!(Instance, layer), 24),
-        ("opacity", offset_of!(Instance, opacity), 28),
-        ("bounds", offset_of!(Instance, bounds), 32),
-        ("corners", offset_of!(Instance, corners), 48),
+        ("bounds", offset_of!(Instance, bounds), 0),
+        ("corners", offset_of!(Instance, corners), 16),
+        ("kind", offset_of!(Instance, kind), 32),
+        ("row", offset_of!(Instance, row), 36),
+        ("shape", offset_of!(Instance, shape), 40),
+        ("clip_offset", offset_of!(Instance, clip_offset), 44),
+        ("clip_count", offset_of!(Instance, clip_count), 48),
+        ("layer", offset_of!(Instance, layer), 52),
+        ("opacity", offset_of!(Instance, opacity), 56),
+        ("_pad", offset_of!(Instance, _pad), 60),
     ];
     for (name, at, expected) in measured {
         assert_eq!(
@@ -898,6 +900,11 @@ fn the_instance_is_sixty_four_bytes_in_declaration_order() {
     // consumer bind the row as a storage-buffer element without repacking it.
     assert_eq!(offset_of!(Instance, bounds) % 16, 0);
     assert_eq!(offset_of!(Instance, corners) % 16, 0);
+    // A shader's array stride is the struct's size rounded up to its alignment,
+    // and a four-float member makes that 16. Sixty-four exactly, so both sides
+    // agree on where element `n` begins — without the declared pad the Rust
+    // type would be 60 and every element after the first would be misread.
+    assert_eq!(size_of::<Instance>() % 16, 0);
 
     let zero = Instance::default();
     assert_eq!(zero.layer, Instance::NONE);
@@ -967,7 +974,7 @@ fn a_drop_shadow_casts_from_the_stroked_silhouette() {
         let instances = painter.instances().rect_instances(0);
 
         let drop = instances[0];
-        assert_eq!(drop.kind, InstanceKind::Shadow.as_u32());
+        assert_eq!(drop.kind, InstanceKind::ShadowDrop.as_u32());
         assert_eq!(
             drop.bounds,
             [
@@ -990,7 +997,7 @@ fn a_drop_shadow_casts_from_the_stroked_silhouette() {
         assert_eq!(stroke.kind, InstanceKind::Stroke.as_u32());
         assert_eq!(stroke.bounds, [16.0, 20.0, 100.0, 60.0]);
         let inner = instances[instances.len() - 1];
-        assert_eq!(inner.kind, InstanceKind::Shadow.as_u32());
+        assert_eq!(inner.kind, InstanceKind::ShadowInner.as_u32());
         assert_eq!(
             inner.bounds,
             [16.0, 20.0, 100.0, 60.0],
@@ -1015,46 +1022,77 @@ fn a_masked_node_with_an_image_fill_packs_nothing() {
     assert!(painter.instances().rect_instances(10).is_empty());
 }
 
-/// The `tag` an instance carries is the boundary-B enum's own value, not a
-/// second table of numbers this crate keeps.
+/// Each instance's kind names the table its `row` indexes.
 ///
-/// A hand-written copy would survive a variant reorder in `dashpaint` and
-/// quietly change what the field means, while every golden stayed green — the
-/// "two records of one fact can disagree" hazard the contract record invokes
-/// against a depth field.
+/// The replacement for a test that checked `tag` against `dashpaint`'s own
+/// discriminant. There is no separate tag now — `kind` carries the sub-kind —
+/// so a shadow cannot be read as a fill by forgetting to check something. What
+/// is left to check is that the packer put each row in the table its kind
+/// names.
 #[test]
-fn a_tag_is_the_boundary_b_enums_own_discriminant() {
+fn each_kind_names_the_table_its_row_indexes() {
     let scene = vocabulary();
     let painter = scene.pack();
     for (index, rect) in scene.rects.iter().enumerate() {
         let entry = scene.paints.resolve(rect.paint);
         for instance in painter.instances().rect_instances(index as u32) {
+            let row = instance.row as usize;
             match InstanceKind::from_u32(instance.kind) {
-                InstanceKind::Shadow => {
-                    let shadow = scene.paints.all_shadows()[instance.row as usize];
-                    assert_eq!(instance.tag, shadow.kind as u32);
+                InstanceKind::ShadowDrop => {
+                    assert_eq!(scene.paints.all_shadows()[row].kind, ShadowKind::Drop)
+                }
+                InstanceKind::ShadowInner => {
+                    assert_eq!(scene.paints.all_shadows()[row].kind, ShadowKind::Inner)
                 }
                 InstanceKind::Backdrop => {
-                    let blur = scene.paints.all_blurs()[instance.row as usize];
-                    assert_eq!(instance.tag, blur.kind as u32);
+                    assert_eq!(scene.paints.all_blurs()[row].kind, BlurKind::Backdrop)
                 }
-                InstanceKind::Fill => {
-                    assert!(
-                        matches!(
-                            instance.tag,
-                            t if t == dashpaint::PaintTag::Solid as u32
-                                || t == dashpaint::PaintTag::Gradient as u32
-                                || t == dashpaint::PaintTag::Image as u32
-                        ),
-                        "a fill instance names a fill kind, not {}",
-                        instance.tag
-                    );
-                }
+                InstanceKind::FillSolid => assert!(row < scene.paints.all_solids().len()),
+                InstanceKind::FillGradient => assert!(row < scene.paints.all_gradients().len()),
+                InstanceKind::FillImage => assert!(row < scene.paints.all_images().len()),
                 InstanceKind::Stroke => {
-                    assert_eq!(instance.tag, 0);
+                    assert!(row < scene.paints.all_strokes().len());
                     assert!(scene.paints.stroke(entry).is_some());
                 }
             }
+        }
+    }
+}
+
+/// No two kinds share a discriminant, and every packed instance's pad is zero.
+///
+/// The first is the property the merge exists for: `kind` and `tag` used to be
+/// separate fields whose values collided — `PaintTag::Solid`,
+/// `ShadowKind::Inner` and `BlurKind::Backdrop` are all 1 — and story #580's
+/// fragment shader read the tag without the kind and painted a shadow from the
+/// solid table.
+///
+/// The second is the price of the merge: the struct needs a declared pad to
+/// reach the 64-byte stride a shader sees, and a public pad is a field two
+/// otherwise-equal instances could differ in. Canonicalising it to zero is what
+/// `optional-members-are-ranges-of-arity-one.md` D2 does for an empty range,
+/// and for the same reason.
+#[test]
+fn kinds_are_distinct_and_every_packed_pad_is_zero() {
+    let kinds = [
+        InstanceKind::ShadowDrop,
+        InstanceKind::ShadowInner,
+        InstanceKind::Backdrop,
+        InstanceKind::FillSolid,
+        InstanceKind::FillGradient,
+        InstanceKind::FillImage,
+        InstanceKind::Stroke,
+    ];
+    let values: std::collections::BTreeSet<u32> = kinds.iter().map(|k| k.as_u32()).collect();
+    assert_eq!(values.len(), kinds.len(), "two kinds share a value");
+    for kind in kinds {
+        assert_eq!(InstanceKind::from_u32(kind.as_u32()), kind);
+    }
+
+    for scene in [vocabulary(), groups()] {
+        let painter = scene.pack();
+        for instance in painter.instances().instances() {
+            assert_eq!(instance._pad, 0, "a packed instance carries a non-zero pad");
         }
     }
 }

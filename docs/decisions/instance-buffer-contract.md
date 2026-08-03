@@ -31,18 +31,45 @@ nothing below depends on which way that lands.
 one `Instance` in one buffer, in draw order. Not one buffer per primitive
 kind, which is what GPUI does.
 
-**D2 — the instance is 64 bytes of fixed-width members.** Eight 4-byte scalars
-(`kind`, `tag`, `row`, `shape`, `clip_offset`, `clip_count`, `layer`,
-`opacity`) followed by two four-float vectors (`bounds`, `corners`).
+**D2 — the instance is 64 bytes of fixed-width members.** Two four-float
+vectors (`bounds`, `corners`) followed by eight 4-byte scalars (`kind`, `row`,
+`shape`, `clip_offset`, `clip_count`, `layer`, `opacity`, `_pad`).
 `#[repr(C)]`, no implicit padding, no `bool`, no payload enum, no nested
 collection — story #578's rules for anything crossing a language seam.
 
-**D3 — a parameter set is named by a row, never inlined.** A fill instance
-carries a `PaintTag` and a row of the per-kind table that tag names; a shadow
-carries a row of `PaintTable::all_shadows`; a stroke a row of `all_strokes`; a
-backdrop a row of `all_blurs`. The same tag-plus-index idiom boundary B itself
-uses, and the reason is the same: a parameter change then moves one table row
-rather than every instance that references it.
+The vectors lead so both sit at a 16-byte offset. `_pad` is declared because a
+struct containing a four-float member has an alignment of 16, so the array
+stride a shader sees rounds up to 64 whatever the members add to: without it
+the Rust type would be 60 bytes and every element after the first would be read
+from the wrong offset. It is public because `bytemuck::Pod` requires it, which
+makes it a field two otherwise-equal instances could differ in — the hazard
+`sub-word-members-widen-rather-than-pad.md` rejected a `_pad` for. There the
+hole could be removed; here it can only be named, so the packer writes zero and
+a test asserts every packed instance carries zero.
+
+**D3 — a parameter set is named by a row, and `kind` alone says which table.**
+`InstanceKind` carries the sub-kind: `FillSolid`, `FillGradient`, `FillImage`,
+`ShadowDrop`, `ShadowInner`, `Backdrop`, `Stroke`. One discriminant, one row.
+The same row-index idiom boundary B itself uses, and for the same reason — a
+parameter change moves one table row rather than every instance referencing it.
+
+**This was two fields, and they collided.** `kind` plus a `tag` whose meaning
+depended on it: a `PaintTag` for a fill, a `ShadowKind` for a shadow, a
+`BlurKind` for a backdrop. `PaintTag::Solid`, `ShadowKind::Inner` and
+`BlurKind::Backdrop` are all `1`, so a consumer reading the tag without first
+checking the kind resolved a shadow against the solid-fill table. Story #580's
+fragment shader did exactly that and painted a node's inner shadow with
+whatever colour sat at that row. Merging makes the mistake unrepresentable
+rather than forbidden — the argument
+`optional-members-are-ranges-of-arity-one.md` used against a sentinel, applied
+to a discriminant.
+
+It also removed a silent drift. The tag was written as `enum as u32` and read
+against a literal in the shader, so reordering a variant in `dashpaint` changed
+the number, left the literal alone, and nothing caught it: not the compiler,
+not the goldens, which pin what the packer wrote. The packer maps by an
+exhaustive `match` on the variant now, so a reorder is harmless and a new
+variant is a compile error.
 
 **D4 — a rect's instances are contiguous, and `spans[i]` names them.**
 `InstanceBuffer::spans` is index-aligned with the rect table, so a dirty rect

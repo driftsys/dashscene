@@ -5,18 +5,32 @@
 // inclusion is what `docs/decisions/shader-library-and-layer-2.md` D1 chose,
 // and it is why nothing below re-derives a distance.
 
+// Mirrors `dashscene_gpu::Instance`. The two four-float vectors come first so
+// both sit at a 16-byte offset; the trailing pad is what makes the Rust type
+// and this one agree on a 64-byte array stride.
 struct Instance {
+    bounds: vec4f,
+    corners: vec4f,
     kind: u32,
-    tag: u32,
     row: u32,
     shape: u32,
     clip_offset: u32,
     clip_count: u32,
     layer: u32,
     opacity: f32,
-    bounds: vec4f,
-    corners: vec4f,
+    _pad: u32,
 }
+
+// `InstanceKind`, as one discriminant. There is no separate tag to read
+// without it, which is the point: the two used to be separate fields whose
+// values collided, and this shader painted a shadow with a solid-fill row.
+const KIND_SHADOW_DROP: u32 = 0u;
+const KIND_SHADOW_INNER: u32 = 1u;
+const KIND_BACKDROP: u32 = 2u;
+const KIND_FILL_SOLID: u32 = 3u;
+const KIND_FILL_GRADIENT: u32 = 4u;
+const KIND_FILL_IMAGE: u32 = 5u;
+const KIND_STROKE: u32 = 6u;
 
 struct ClipBox {
     x: f32, y: f32, w: f32, h: f32,
@@ -114,13 +128,12 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
     // corrupt every node that carries one: an inner shadow is packed after the
     // fill, so a black shadow instance covers the fill it belongs to. Drawing
     // nothing leaves the picture correct for the subset this story implements
-    // and absent for the rest, which is what an incrementally built painter
-    // should look like.
+    // and absent for the rest.
     //
     // Not a silent drop: the packer emits the instance, the layer-1 golden
     // shows it, and `docs/decisions/pipelines-and-layer-3.md` lists what is and
     // is not drawn. What is refused here is a *wrong* pixel, not a diagnostic.
-    if inst.kind != 2u || inst.tag != 1u {   // InstanceKind::Fill, PaintTag::Solid
+    if inst.kind != KIND_FILL_SOLID {
         discard;
     }
     let colour = solids[inst.row];
