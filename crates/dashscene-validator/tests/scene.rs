@@ -15,6 +15,10 @@ use dashscene_validator::{
     Location, RENDER_TARGET_BUDGET_PLACEHOLDER, Report, Severity, rule, validate_scene,
 };
 
+/// The 7x5 payload this crate's asset tests already use. An image asset needs
+/// real bytes since issue #716: the table reads its extent from the header.
+const SAMPLE_PNG: &[u8] = include_bytes!("fixtures/image_id/sample.png");
+
 fn red() -> Color {
     Color {
         r: 1.0,
@@ -284,7 +288,10 @@ fn an_image_fill_past_the_image_table_is_named() {
     let mut images = ImageTable::new();
     images.push(ImageAsset {
         format: ImageFormat::Png,
-        bytes: vec![0],
+        // A real payload: the table reads the extent out of the header since
+        // issue #716, so a one-byte stand-in no longer parses. The asset is
+        // incidental to this test, which is about the fill's index.
+        bytes: SAMPLE_PNG.to_vec(),
     });
 
     let report = validate_scene(

@@ -161,16 +161,34 @@ pub fn load_document_bound(
         .iter()
         .zip(payloads)
         .map(|(entry, payload)| {
-            txn.add_image(ImageAsset {
-                // The binding's format when it states one, the document's
-                // otherwise. A derivation is what the host resolved for its
-                // profile and its painter; the document only ever knows what
-                // the asset was authored as.
+            // The binding's format when it states one, the document's
+            // otherwise. A derivation is what the host resolved for its
+            // profile and its painter; the document only ever knows what
+            // the asset was authored as.
+            let asset = ImageAsset {
                 format: payload
                     .derived
                     .unwrap_or_else(|| image_format(entry.format())),
                 bytes: payload.bytes.to_vec(),
-            })
+            };
+            // An encoded payload's extent is in its own header and the table
+            // reads it there. A baked one has no header, so the document's
+            // recorded extent is passed through — the same number, since a rung
+            // is a block footprint and not a mip level, and since
+            // `dashscene-validator`'s `asset.extent-mismatch` has already
+            // checked it against the canonical payload (issue #716).
+            //
+            // The branch is on the *format*, not on whether the payload was
+            // bound as a derivation: what decides is whether the bytes carry a
+            // header, and that is what the format says. A document's own
+            // payload is always encoded — `dashbuf` carries no baked variant
+            // and `dashc`'s emitter refuses one by name — so only a binding can
+            // reach the second arm.
+            if asset.format.is_encoded() {
+                txn.add_image(asset)
+            } else {
+                txn.add_baked_image(asset, entry.width(), entry.height())
+            }
         })
         .collect();
 

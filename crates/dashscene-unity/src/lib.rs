@@ -72,8 +72,11 @@
 //! decoded-ready blob lives, not how to name it. The answer was to give the
 //! table a blob pool of its own: `ImageAsset` stays as the owning producer
 //! type, which no `extern "C"` signature names, and the stored row is
-//! `ImageEntry { format, offset, len }` — a range into that pool, exactly like
-//! every flattening above it, and gated here.
+//! `ImageEntry { format, offset, len, width, height }` — a range into that
+//! pool, exactly like every flattening above it, and gated here. The extent
+//! joined the row at issue #716: a baked payload carries no header to recover
+//! it from, and a payload length does not determine one, so the row carries
+//! what only the document knows.
 //!
 //! Its `format` is a plain `u32` rather than the `ImageFormat` enum, for the
 //! same reason `PaintKind` carries a tag: a C or C# reader holds a number, and
@@ -228,7 +231,7 @@ mod tests {
             ("StrokeRange", dashscene_abi_stroke_range_layout(), 8, 4),
             ("ShapeRange", dashscene_abi_shape_range_layout(), 8, 4),
             ("PaintEntry", dashscene_abi_paint_entry_layout(), 64, 4),
-            ("ImageEntry", dashscene_abi_image_entry_layout(), 12, 4),
+            ("ImageEntry", dashscene_abi_image_entry_layout(), 20, 4),
         ];
         for (name, layout, size, align) in measured {
             assert_eq!(
