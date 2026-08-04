@@ -1,7 +1,7 @@
 # v0.15 driver prompt — drive the slice to completion, one story at a time
 
     status   live; hand this to a session as its first message
-    revised  2026-08-04, after story #583 merged
+    revised  2026-08-05, after story #584 merged
     empties  when epic #569 closes. Archive it verbatim to docs/archive/
              rather than gardening it — a driver prompt is spent the moment
              its work lands, and records nothing a design record should hold.
@@ -22,12 +22,14 @@ was verified on an Apple M3 via Metal. The uncompressed rung exercises the same
 upload path with the block arithmetic removed, and runs everywhere. Nothing can
 be done about this until CI can schedule a job.
 
-**A second thing is now available and has not been done.** Story #583 made
-render-target group opacity draw, and the `surfaces` scene holds one — a group
-at alpha 0.55. Nothing has put that on a window in front of the owner: it is
+**A second thing is now available and has not been done, and story #584 made it
+worth twice as much.** Neither render-target group opacity (#583) nor the two
+shadow kinds (#584) has been put on a window in front of the owner. Both are
 verified by offscreen pixel tests that assert the arithmetic, not by an eye on
-the picture. Running the showcase host on `surfaces` would close it in a minute,
-and it is the cheapest confirmation left in this slice.
+the picture. **One run closes both**: the `surfaces` scene holds the group at
+alpha 0.55 _and_ the showcase's only shadows — 2 drop and 1 inner, measured — so
+running the showcase host on it is the cheapest confirmation left in this
+slice.
 
 Everything else is closed, so do not spend time re-establishing it:
 
@@ -67,24 +69,26 @@ Everything else is closed, so do not spend time re-establishing it:
   shadows, group opacity and the frosted panel's backdrop blur.
 
   **By eye, and one scene at one size on one adapter.** It is not a band and does
-  not pre-empt story #586. What it does say is that the remaining visible
-  difference between the two painters lives in #583 and #584 and nowhere else.
+  not pre-empt story #586. What it said at the time is that the remaining visible
+  difference between the two painters lived in #583 and #584; both have landed,
+  so what is left of that difference is the frosted panel's backdrop blur
+  alone.
 
 ## Where things stand
 
-`main` is at `821f630`. No open pull requests. Epic #569 tracks the slice;
-`docs/roadmap.md` has the slice map. Sixteen of the milestone's twenty-two
+`main` is at `e669256`. No open pull requests. Epic #569 tracks the slice;
+`docs/roadmap.md` has the slice map. Seventeen of the milestone's twenty-two
 issues are closed. **Take that pair from `gh issue list --milestone`, never from
 here** — it has been wrong three times, most recently within an hour of being
 corrected, because filing one issue moves it.
 
-**Closed**, the milestone's own sixteen, in issue order:
+**Closed**, the milestone's own seventeen, in issue order:
 
-    133  577  578  579  580  581  582  583  585  600  640  671  710  714  715
-    716
+    133  577  578  579  580  581  582  583  584  585  600  640  671  710  714
+    715  716
 
-Story #583 landed as PR #730, merged on local evidence, and closed issue #133
-with it.
+Story #584 landed as PR #735, merged on local evidence. Story #583 landed as
+PR #730 and closed issue #133 with it.
 
 **Issue #714 was the drawable-extent fix and carried no milestone until now**,
 so it was real v0.15 work filed against nothing. An earlier revision of this
@@ -102,10 +106,10 @@ story #587 (`story/gpu-web-target`) and a demo backend badge. Run
 The painter packs the whole of boundary B into one ordered instance buffer,
 evaluates its SDF math by compute shader, and draws **solid, gradient and image
 fills, outline strokes, positioned glyph runs, a fill masked by a baked vector
-field, and render-target group opacity** — clipped, composited in slice order at
-free-path opacity, offscreen or to a window's swapchain. Shadows and blur are
-**packed** and **not drawn**; both are story #584's, and they are now the whole
-of the gap.
+field, render-target group opacity, and both shadow kinds** — clipped,
+composited in slice order at free-path opacity, offscreen or to a window's
+swapchain. **The backdrop blur is the whole of the gap**: one `InstanceKind`
+variant, packed since story #578, reaching `fs_main`'s final `discard`.
 
 Ten decision records carry the contracts. Read the ones your story touches:
 
@@ -127,42 +131,79 @@ Ten decision records carry the contracts. Read the ones your story touches:
   fragment-side parameter table**: the heap, its regions, the fixed gradient
   stride, and why strokes and images stayed out of it
 - `docs/decisions/group-opacity-draws-into-a-layer-and-a-second-pipeline-composites-it.md`
-  — **read this before story #584**: the layer targets, the pass planner, and
+  — **read this before story #733**: the layer targets, the pass planner, and
   why a second pipeline rather than another binding
+- `docs/decisions/instance-buffer-contract.md` D9 — **read this before adding a
+  kind whose ink leaves its bounds**: `Instance::outset`, what the packer
+  resolves into it, and why the vertex stage cannot compute it
 - `docs/decisions/sub-word-members-widen-rather-than-pad.md`
 
 ## Order from the epic
 
-**Story #584 next**, and it is now **the two shadow kinds alone**. The backdrop
-blur was split out to **#733**: the two halves are different machines, and only
-the blur carries an open design question. Story **#586** needs both, because it
-measures the vocabulary against the reference painter — and it needs a GPU and a
-recorded adapter, so it cannot run in CI. Then **#587** and **#588**, and then
-the epic itself closes.
+**Story #733 next** — the backdrop blur, the half split out of #584 and the one
+that carries the open design question. Story **#586** needs it, because it
+measures the vocabulary against the reference painter and the blur is the last
+thing that vocabulary is missing — and #586 needs a GPU and a recorded adapter,
+so it cannot run in CI. Then **#587** and **#588**, and then the epic itself
+closes.
 
-**#584's scope is already checked, and the answer is on the issue.** The short
-version: the shadow closed form already exists — `blurred_rounded_box` and
-`erf_approx` in `sdf.wgsl`, with `layer2_conformance.rs` measuring the error
-against Simpson's-rule integration — so the story is wiring, not deriving. What
-is missing is that **shadow parameters reach the GPU through nothing**:
-`PaintTable::all_shadows` exists and `pack.rs` already sets `Instance::row` to a
-shadow row, but no binding carries that table and `render.rs` never uploads it.
-Both stages are full, so the standing answer applies — **extend the paint heap**
-with a third region at a two-word stride
-(`[offset.x, offset.y, blur, spread]` and the colour), with one more base in
-`Globals`.
+**What #584 settled, and what it leaves #733.** The shadow closed form was
+already built and already conformance-tested, so that story was wiring: the
+parameters extend the paint heap as a third region at a two-word stride, and
+`Globals` now carries two bases and is **thirty-two bytes**. Two records and this
+prompt's own binding section claimed sixteen; all three are corrected.
 
-**That last step falsifies a claim in two places, so fix them in the same
-change.** `docs/decisions/the-paint-parameter-heap.md` and the binding section
-below both say the per-frame uniform is still sixteen bytes. A third base makes
-it twenty, which a uniform rounds to **thirty-two**.
+**The blur inherits one thing #584 did not need and one it invented.** It
+inherits the second-pipeline route (below). It also inherits the answer to a
+question #584 hit first: **the vertex stage cannot read the paint heap**, which
+is bound to the fragment stage alone, so anything the _quad_ needs cannot live
+in a heap row. #584's drop shadow needed its spread, its blur's support and its
+offset to size a quad, and that reach moved onto `Instance::outset` — the word
+that used to be declared padding. The stroke's outset moved with it, so **the
+vertex stage now reads three storage buffers of four** and binding 4 is
+fragment-only. A backdrop blur's quad will have the same question; ask it early.
 
-**Measured for #584, so do not re-measure it:** `surfaces` packs 2 drop shadows,
+**Measured for #584, and still true for #733:** `surfaces` packs 2 drop shadows,
 1 inner and 1 backdrop across 95 instances; `typography` (380 instances) and
-`layout` (28) have **none of any kind**. So only one showcase scene exercises a
-shadow at all, and three shadow rows at three distinct indices cannot falsify a
-stride. Build the fixtures with two rows differing in every field rather than
-reaching for the corpus.
+`layout` (28) have **none of any kind**. So one showcase scene exercises the
+whole of this, and one backdrop instance cannot falsify a stride or a row.
+Build the fixtures with two rows differing in every field rather than reaching
+for the corpus.
+
+**What remains undrawn is exactly one thing**: the backdrop blur. It is the
+`Backdrop` instance kind, packed since story #578, reaching `fs_main`'s final
+`discard`. Nothing else in the v0 paint vocabulary is missing.
+
+Render-target group opacity was never an instance kind at all — it rides on
+`Instance::layer` — and story 583 drew it. Story 584 drew the two shadow
+kinds.
+
+**The scope check has now paid off twice, so do it again for #733.** Story 583's
+body described clips as work to be done and `git log -S clip_coverage` put that
+work in story 580's commit; the story was retitled before any code was
+written. Story #584's body was checked the same way and held — the closed form
+really was built, and the gap really was that no binding carried the table. One
+command settles it either way. Spend it.
+
+**Two things checked for #733 already, so you do not have to.** Its body cites
+issue #422 as though it were pending — "the `blur-falloff` oracle band splits
+into a residual and a gate under issue #422 … read it before tuning anything".
+**#422 is CLOSED**; read its resolution rather than waiting on it. And its sigma
+claim holds, but the constant has moved: it is
+**`dashpaint::BLUR_SIGMA_PER_RADIUS`** since #584, cited by both painters, and
+`dashscene-gpu` applies it in `pack::blur_sigma` when it writes a row. Do not
+restate `0.4375` a third time.
+
+**And one thing #583 did _not_ give #733, despite the story body saying it
+would.** The body says backdrop blur reuses "S15.7's compositing machinery
+rather than a parallel path". The second-_pipeline_ route transfers exactly —
+see the section below. The _layers_ do not: a backdrop blur has to **read what
+is already in the destination**, and a texture cannot be a render attachment and
+a sampled binding in the same pass. `composite::plan` has no step that resolves
+or copies the current target, and `Step` has two variants with no third. That is
+a real gap between what the prerequisite delivered and what this story needs —
+which is the fourth item under **Stop and ask** below, and worth raising before
+building rather than after.
 
 **#587 depends only on #585 and could start at any time**, if there is a reason
 to parallelise. #588 is last by design.
@@ -183,7 +224,7 @@ work was already done — `clip_coverage` in `paint.wgsl`, and
 `git log -S clip_coverage` put it in story #580's commit. The story was
 retitled before any code was written, which is the first time in this slice the
 miss was caught before the close rather than three closes later. One command
-settled it. Spend that command on #584.
+settled it. Spend that command on #733.
 
 **Two things checked for #584 already, so you do not have to.** Its body cites
 issue #422 as though it were pending — "the `blur-falloff` oracle band splits
@@ -232,7 +273,7 @@ leaves an orphan — 26 of the corpus's 55 stored boxes, uploaded every frame).
 guide with a worked example painter, for this epic's phase-end revision. Do not
 start it inside a story; it is scope for the revision to place.
 
-## BOTH stages are full, and the heap is where a table goes now
+## The fragment stage is full, and the heap is where a table goes now
 
 `wgpu::Limits::downlevel_defaults` allows **four storage buffers per shader
 stage**. The pipeline binds seven, and story #584 moved one of them:
@@ -258,17 +299,17 @@ uniform rounds up to a multiple of sixteen.
 `docs/decisions/the-paint-parameter-heap.md` is the record.
 
 **So the answer for the next fragment-side table is: extend the heap.** Do not
-go looking for a free binding — there is not one, and there will not be one.
-Strokes and images were deliberately left out of the heap because folding them
-in frees nothing; a new region costs one more base, and a base can travel in
-`Globals` beside `gradient_base`.
+go looking for a free binding on that stage — there is not one, and there will
+not be one. Strokes and images were deliberately left out of the heap because
+folding them in frees nothing; a new region costs one more base, and a base can
+travel in `Globals` beside the two already there.
 
 **And the answer for anything that has to sample a rendered target is: a second
 pipeline.** Story #583 needed to read a layer texture and had no binding to read
 it through, so it did not try — a pipeline owns its own bind group layout, and a
 separate one costs the paint pipeline nothing at all. `shaders/composite.wgsl`
 is the whole of it: its own `@group(0)`, a texture and a uniform, no sampler,
-`textureLoad` at the fragment's own pixel. **Story #584's backdrop blur takes
+`textureLoad` at the fragment's own pixel. **Story #733's backdrop blur takes
 this route**, and so does anything after it that reads pixels rather than
 parameters. The two answers do not compete: the heap is for per-instance
 _parameters_ the fragment stage indexes, and a second pipeline is for _pixels_
@@ -281,14 +322,16 @@ constant across the instance**. A glyph run's colour and range are; a coverage
 mask's plane, rectangle and range are. A gradient's stop array was not — it is
 indexed by a value the fragment computes from its own coordinate — and that is
 why the heap exists. `docs/decisions/tables-the-vertex-stage-reads.md` D2 states
-that test. The vertex stage is full, so that route now costs a varying rather
-than a binding.
+that test. **The vertex stage has a slot free again since story #584** — the
+stroke table left it — so that route costs a binding there rather than only a
+varying. It is still the second choice: a value that fits on `Instance` costs
+neither, which is what #584 did with the outset.
 
-**Story #583 is constrained by something else, most likely.** Render-target
-group opacity is a second render target and an offscreen pass rather than
-another parameter table, so the storage-buffer count is probably not its limit.
-No decision record pins how this painter will build that pass yet, so treat this
-paragraph as an expectation to check rather than a fact.
+**Story #583's group opacity was constrained by something else, and the guess
+here was right.** It needed a second render target and an offscreen pass rather
+than another parameter table, so the storage-buffer count was not its limit. The
+second-pipeline paragraph above is what that story settled, and it is now a fact
+rather than an expectation.
 
 **This paragraph has been wrong twice, in opposite directions.** An early draft
 of the residency record claimed one free slot when there were none. Then the
@@ -395,9 +438,23 @@ a reason to skip the review, and do not expect the review to find arithmetic.
 
 **Story #583 ran it a third time and the shape held: six findings, and not one
 of them was a defect in the rendering path.** Five were prose or unfalsifiable
-tests; the sixth was a miscount in a record written that same day. So across
-three stories the fan-out has found zero arithmetic and a great deal of wrong
-prose, which is worth knowing when deciding what to spend the review on.
+tests; the sixth was a miscount in a record written that same day.
+
+**Story #584 ran it a fourth time and the shape held exactly: seven findings,
+all prose, zero code defects.** Every one was a sentence the story's own change
+had falsified and left standing — a binding table in the file whose binding
+moved, a crate status line, a WGSL comment calling a field "the trailing pad"
+after it stopped being one, a size assertion citing a renamed symbol. **Two of
+the seven were recurrences of PR #730's findings about the same two files**
+(`lib.rs`'s per-story paragraph, `demo/src/present.rs`'s "packed and not
+drawn"), which says the sweep after a change should start from the previous
+story's finding list.
+
+So across four stories the fan-out has found zero arithmetic and a great deal of
+wrong prose, which is worth knowing when deciding what to spend the review on.
+**The cheap defence is a grep, before the review**: after changing a field name,
+a binding, a byte count or what the painter draws, grep the tree for the old
+_token_ — not the concept — and read every hit.
 
 **Two of #583's six were repeats of issue #719's own findings**, and that is the
 part to carry forward. This crate has two standing test obligations that are
@@ -420,8 +477,9 @@ typo.
 
 ## What has actually cost time here
 
-- **`Instance::kind` carries the sub-kind — there is no separate tag.** Stories
-  #583 and #584 each add a kind; map by an exhaustive `match`, never
+- **`Instance::kind` carries the sub-kind — there is no separate tag.** Story
+  #733 adds no kind — `Backdrop` has existed since #578 — but map every
+  discriminant by an exhaustive `match`, never
   `enum as u32`, so a reorder in `dashpaint` is harmless and an addition is a
   compile error. `stroke_align`, `scale_mode` and `gradient_kind` in `render.rs`
   are the pattern. `scale_mode` and `gradient_kind` are also pinned against the
@@ -486,6 +544,25 @@ typo.
   the **absence of the original**, and compare the **whole block** — `grep -F`
   matches a multi-line pattern line by line, so a common line such as
   `continue;` inside it reports "still present" for a mutation that applied.
+- **Commit before mutation testing, and never revert a mutation with
+  `git checkout --` against uncommitted work.** Story #584's mutation script
+  reverted each mutation that way with the story still uncommitted, and the
+  third revert **destroyed three source files** — the packer, the renderer and
+  the shader — leaving a tree that still compiled from the files that survived.
+  The evidence it had already produced was worthless too, because every run
+  after the first ran against a half-reverted tree. Commit first; then a revert
+  is free and a mutation is a diff you can see.
+- **A probe that is outside the shape proves nothing about which shape.** #584's
+  corner probe sat outside the drop shadow at the spread radius _and_ at the
+  unspread one, so removing the spread from the corners survived. Choose the
+  probe by computing where the two candidate answers **differ**, not by finding
+  somewhere the correct answer is zero.
+- **The quad clips the probe before the coverage does.** An inner shadow's quad
+  is its own bounds plus the antialiasing width, so #584's "nothing outside the
+  node" probe two units out was discarded by the geometry whatever the shader
+  did — and a shadow that never clipped itself to the node's shape passed. The
+  only place that clip is observable is _inside_ the quad and _outside_ the
+  shape: half a unit out, not two.
 - **A test name is a claim.** Four in story #581 could not fail on what they
   claimed, and only mutation found it.
 - **When two inputs agree in every parameter, no fixture can tell them apart.**
@@ -545,9 +622,12 @@ typo.
   baked formats representable and left them unusable, because boundary B carried
   no extent; issue #716 closed that inside story #581's own pull request as a
   separate first commit. Ask before choosing between a separate PR and a
-  separate commit. **Story #584 is very likely the next instance**: its body
+  separate commit. **Story #733 is very likely the next instance**: its body
   says it reuses #583's compositing machinery, and #583 built no way to read the
-  destination — see the paragraph under "Order from the epic".
+  destination — see the paragraph under "Order from the epic". Story #584 was
+  one too, in a smaller way: it needed a word on `Instance` that no prerequisite
+  had made available, and that was agreed with the owner before any code was
+  written rather than decided inside the story.
 - Layer 4 (#586) needs a GPU and a recorded adapter; it cannot run in CI.
 
 ## When the slice is done
