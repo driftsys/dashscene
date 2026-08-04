@@ -73,22 +73,24 @@ Everything else is closed, so do not spend time re-establishing it:
 ## Where things stand
 
 `main` is at `821f630`. No open pull requests. Epic #569 tracks the slice;
-`docs/roadmap.md` has the slice map. Fifteen of the milestone's twenty issues
-are closed.
+`docs/roadmap.md` has the slice map. Sixteen of the milestone's twenty-one
+issues are closed.
 
-**Closed**, the milestone's own fifteen, in issue order:
+**Closed**, the milestone's own sixteen, in issue order:
 
-    133  577  578  579  580  581  582  583  585  600  640  671  710  715  716
+    133  577  578  579  580  581  582  583  585  600  640  671  710  714  715
+    716
 
 Story #583 landed as PR #730, merged on local evidence, and closed issue #133
 with it.
 
-**Issue #714 is closed too and is not on that list, because it carries no
-milestone at all** — it is the drawable-extent fix, real v0.15 work that was
-never filed against the slice. An earlier revision of this prompt listed it
-among the milestone's closed issues and omitted #133, which kept the count at
-fifteen while naming the wrong fifteen. Either add the milestone to #714 or
-leave it off; do not let it back into the count.
+**Issue #714 was the drawable-extent fix and carried no milestone until now**,
+so it was real v0.15 work filed against nothing. An earlier revision of this
+prompt listed it among the milestone's closed issues while omitting #133, which
+kept the count at fifteen and named the wrong fifteen. Both are fixed: #714 now
+carries the milestone, and the count above is the milestone's own. **Take these
+two numbers from `gh issue list --milestone`, not from this file** — the list
+and the count have disagreed twice.
 
 **Another session is working this repo in parallel.** It holds worktrees for
 story #587 (`story/gpu-web-target`) and a demo backend badge. Run
