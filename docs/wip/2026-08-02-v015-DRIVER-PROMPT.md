@@ -1,7 +1,7 @@
 # v0.15 driver prompt — drive the slice to completion, one story at a time
 
     status   live; hand this to a session as its first message
-    revised  2026-08-04, after story #581 merged
+    revised  2026-08-04, after story #582 merged
     empties  when epic #569 closes. Archive it verbatim to docs/archive/
              rather than gardening it — a driver prompt is spent the moment
              its work lands, and records nothing a design record should hold.
@@ -12,7 +12,7 @@ Read `AGENTS.md` first — it holds the story workflow, the test tiers, the
 merge method and the five principles, and it is authoritative over anything
 below. This prompt adds only what is not in it.
 
-## What story #581 left unverified
+## What is left unverified
 
 **One thing, and it needs a Linux runner.** Whether lavapipe advertises
 `TEXTURE_COMPRESSION_ASTC` is unknown: the baked-block arm of
@@ -24,10 +24,17 @@ be done about this until CI can schedule a job.
 
 Everything else is closed, so do not spend time re-establishing it:
 
-- **Twenty-six painter swaps** on one running window across 13500 generations,
-  no panic and no validation error, and the owner confirmed the picture. That is
-  epic #569's "walked against v0.14's checklist with the wgpu painter selected",
-  for the subset drawn so far.
+- **Forty-one painter swaps** on one running window across 18600 generations and
+  18632 presents, no panic and no validation error, and the owner confirmed the
+  picture with text drawn. That is epic #569's "walked against v0.14's checklist
+  with the wgpu painter selected", for the subset drawn so far. A swap tears
+  down and rebuilds what the device holds, so it is also the residency
+  invalidation exercised forty-one times with glyph atlases resident.
+- **The baked vector field measured against the reference painter, once.**
+  The showcase's own star, solid-filled at 320x320: worst channel delta **9 of
+  255**, and **4 pixels of 102400** differing by more than 8. One shape at one
+  size on one adapter, so it is not a band and does not pre-empt story #586 —
+  but it does say the baked-field arm is not where that band will be spent.
 - **Ten scene rebuilds by window resize**, with images resident, no assertion
   and the picture intact. That is the residency invalidation — PR #719's most
   serious review finding — exercised interactively: a resize replaces the arena,
@@ -44,18 +51,26 @@ Everything else is closed, so do not spend time re-establishing it:
 
 ## Where things stand
 
-`main` is at `f85710b`. No open pull requests. Epic #569 tracks the slice;
+`main` is at `eb0b2b1`. No open pull requests. Epic #569 tracks the slice;
 `docs/roadmap.md` has the slice map.
 
-**Closed: #577, #578, #579, #580, #581, #585, #710, #714, #716**, plus issues
-600, 671 and 640 earlier. Story #581 and issue #716 landed together as PR #719,
-merged on local evidence with the owner's confirmation of the picture.
+**Closed: #577, #578, #579, #580, #581, #582, #585, #710, #714, #716**, plus
+issues 600, 671 and 640 earlier. Story #582 landed as PR #723, merged on local
+evidence with the owner's confirmation of the picture.
 
 The painter packs the whole of boundary B into one ordered instance buffer,
 evaluates its SDF math by compute shader, and draws **solid fills, outline
-strokes and image fills** — clipped, composited in slice order at free-path
-opacity, offscreen or to a window's swapchain. Gradients, text, group opacity,
-shadows and blur are all **packed** and **not drawn**; each has a story below.
+strokes, image fills, positioned glyph runs, and a solid fill masked by a baked
+vector field** — clipped, composited in slice order at free-path opacity,
+offscreen or to a window's swapchain. Gradients, group opacity, shadows and blur
+are all **packed** and **not drawn**; each has a story below.
+
+**A masked _gradient_ fill therefore still draws nothing**, and that is the one
+combination where two open stories meet: story #582 resolves the mask and its
+coverage is correct, and the colour it would modulate is issue #715's. The
+showcase's only baked vector field is exactly that node, so `surfaces` shows an
+empty tile there under this painter and a star under Skia. Expected, not a
+regression.
 
 Seven decision records carry the contracts. Read the ones your story touches:
 
@@ -71,20 +86,17 @@ Seven decision records carry the contracts. Read the ones your story touches:
   extent on the row
 - `docs/decisions/atlas-residency-and-image-fills.md` — the atlas per texel
   format, the draw runs, the binding budget, the sampler
+- `docs/decisions/tables-the-vertex-stage-reads.md` — **read this before #715**:
+  which stage may read a table, the test that decides it, and the second sampler
 - `docs/decisions/sub-word-members-widen-rather-than-pad.md`
 
 ## Order from the epic
 
-**Story #582 next** (text and baked vector fields), and it is unblocked:
-residency is the mechanism it was waiting for, and it arrives with one consumer
-already using it. A glyph reaches it through the same
-`Residency::resident` call an image does. Glyph instances carry their texel
-rectangle in `Instance::corners`, which is meaningless for a glyph and is the
-slot the instance-buffer contract reserved for exactly this — an image fill
-could not take that route, because an image still needs its own rounded box.
+**Issue #715 next** (gradient fills), and read the binding section below before
+starting it — the arithmetic changed when story #582 landed.
 
-Then **#715**, **#583 → #584**, **#586** (needs a GPU and a recorded adapter;
-cannot run in CI), **#587**, **#588**, then close #569.
+Then **#583 → #584**, **#586** (needs a GPU and a recorded adapter; cannot run
+in CI), **#587**, **#588**, then close #569.
 
 **Issue #715 is a gap this slice found twice over.** Nobody drew strokes (#710)
 and nobody drew gradients (#715), both because a sentence in `render.rs` and in
@@ -94,26 +106,51 @@ against that story's own body before believing it.**
 
 Open debt worth knowing, none of it blocking: **#708** (`pack::pack` still walks
 every rect, so R-T4's CPU half is unmet), **#703** (`cargo doc` runs nowhere),
-**#718** (the lean painter declares it cannot sample JPEG or GIF), **#720** (an
-image larger than the atlas panics rather than getting its own texture).
+**#718** (the lean painter declares it cannot sample JPEG or GIF), **#720** (a
+payload larger than the atlas panics rather than getting its own texture —
+widened by story #582 to cover glyph atlases and baked-vector atlases, and a CJK
+sheet is the likeliest of the three to exceed 2048 square), **#724** (a glyph
+atlas with `px_per_em` of zero divides unguarded, where every sibling degenerate
+case is named).
 
-## The binding budget is spent — read this before starting #715
+## BOTH stages are now full — read this before starting #715
 
 `wgpu::Limits::downlevel_defaults` allows **four storage buffers per shader
-stage**, and `pipelines-and-layer-3.md` D2 holds this painter to those limits.
-The fragment stage now reads exactly four: solids, clips, strokes, images.
+stage**. As of story #582 the pipeline binds seven, and the count is:
 
-Story #581 made room for the image table by taking the instance array out of the
-fragment stage entirely — `VertexOut` carries the values a fragment needs. That
-bought the fifth binding and **no headroom at all**. Gradients need the gradient
-rows _and_ their flat stop array: two more bindings against zero free slots.
+    vertex    instances(0), strokes(4), glyph runs(8), shapes(9)   4 of 4
+    fragment  solids(1), clips(2), strokes(4), images(5)           4 of 4
 
-So #715 cannot be a binding away. It has to change the structure — a
-paint-parameter heap, one storage buffer of `vec4f` with a per-kind base offset,
-is the obvious candidate — and `pipelines-and-layer-3.md` D6's `wgsl_to_wgpu`
-question rides along with it. An earlier draft of the residency record said "one
-free slot"; it was wrong, the review caught it, and the corrected arithmetic is
-in `atlas-residency-and-image-fills.md` D4.
+**Do not go looking for the route story #582 used.** It bound its two tables to
+the vertex stage and passed their values across in `VertexOut`, which cost the
+fragment stage no binding at all. That works only when **every value a fragment
+needs of a table is constant across the instance** — a glyph run's colour and
+range are, a coverage mask's plane, rectangle and range are. A gradient's stop
+array is **not**: it is indexed by a value the fragment computes from its own
+coordinate, so it does not cross as a varying at any width.
+
+So #715 has to change the structure, as it always did. A paint-parameter heap —
+one storage buffer of `vec4f` with a per-kind base offset — is still the obvious
+candidate, and `pipelines-and-layer-3.md` D6's `wgsl_to_wgpu` question rides
+along with it. `docs/decisions/tables-the-vertex-stage-reads.md` D2 and D4 state
+the test and the arithmetic; its "Alternatives considered" argues why the heap
+was not built inside #582, which is the reasoning to overturn if you disagree
+rather than to rediscover.
+
+**This paragraph has been wrong twice, in opposite directions.** An early draft
+of the residency record claimed one free slot when there were none. Then the
+record written by story 582 claimed the varyings were counted against "the sixty
+`downlevel_defaults` allows" — wgpu 30 has no such field at all, the real limit
+is `max_inter_stage_shader_variables` at **15**, it counts `@location` slots
+rather than float components, and `VertexOut` now uses **9 of 15**. Both were
+caught by review rather than by the compiler, because a wrong number in prose
+compiles. **Read the limit out of the pinned crate before trusting any figure
+here:**
+
+    grep -n "max_inter_stage" ~/.cargo/registry/src/*/wgpu-types-30.0.0/src/limits.rs
+
+and check which constructor it belongs to — `defaults`, `downlevel_defaults` and
+`downlevel_webgl2_defaults` sit together and carry different numbers.
 
 ## CI IS DOWN — READ THIS BEFORE ANYTHING ELSE
 
@@ -196,11 +233,20 @@ Four things that fan-out taught, worth more than the individual bugs:
 ## What has actually cost time here
 
 - **`Instance::kind` carries the sub-kind — there is no separate tag.** Stories
-  #582, #583 and #584 each add a kind; map by an exhaustive `match`, never
+  #583 and #584 each add a kind; map by an exhaustive `match`, never
   `enum as u32`, so a reorder in `dashpaint` is harmless and an addition is a
   compile error. `stroke_align` and `scale_mode` in `render.rs` are the pattern.
-- **An instance can draw outside the bounds its quad is built from.** A stroke
-  does. Ask it of every kind you add — a shadow already grows its bounds in the
+- **"Packed but not drawn" is only safe if the shader actually discards.** A
+  masked node drew as a plain rounded rectangle over its whole box from story
+  #578 until #582: the packer set `Instance::shape` and the fragment stage never
+  read it, so the picture was **wrong** rather than absent — the one place in
+  this pipeline where an unimplemented construct did not simply draw nothing.
+  Check the shader's fall-through for every kind you leave undrawn.
+- **An instance can draw outside the bounds its quad is built from**, or draw
+  somewhere else entirely. A stroke does the first; a masked instance does the
+  second — its quad is the coverage field's padded plane quad instead of the
+  node's box, substituted in the vertex stage, while `VertexOut.bounds` stays
+  the node box because a gradient's frame is stated over it. Ask it of every kind you add — a shadow already grows its bounds in the
   packer, a blur will need to.
 - **A dirty set is stated against the commit before it**, so `Changes` carries
   the generation and `Present::document_replaced` is how a host says the arena
@@ -217,6 +263,13 @@ Four things that fan-out taught, worth more than the individual bugs:
   `continue;` inside it reports "still present" for a mutation that applied.
 - **A test name is a claim.** Four in story #581 could not fail on what they
   claimed, and only mutation found it.
+- **When two inputs agree in every parameter, no fixture can tell them apart.**
+  Story #582's two corpus atlases agree on extent, `px_per_em` and
+  `distance_range_px`, so swapping one for the other moved the measured ink by
+  **5 px of 736** — no tolerance separates that from noise. The test that closes
+  it packs **once** and renders **twice**, varying only the one input under
+  test and comparing the outputs. Reach for that shape when an assertion on a
+  single output cannot discriminate.
 - **An atlas is a budget, not the device maximum.** It is allocated whole on
   first use, so `ATLAS_EXTENT` is 2048 clamped by the device; sizing it from a
   16384-capable adapter would commit a gigabyte for one image fill. That is the
