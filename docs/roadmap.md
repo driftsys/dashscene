@@ -980,6 +980,17 @@ later, separate decision.
 CPU oracle, so `skia-safe` stays. What wgpu retires is the trim profile: the
 from-source GLES build, `skia_use_gl`, and the Ganesh-to-Graphite churn watch.
 
+**The web target is WebGPU only, and a WebGL2 fallback is a v1 question rather
+than a deferred task.** Story #587 was written expecting one. It is not
+buildable for this painter: `wgpu::Limits::downlevel_webgl2_defaults` allows
+**zero** storage buffers per shader stage, and this painter's whole design is
+storage-buffer tables — four bound to each stage. A fallback therefore means a
+second shader variant expressing every table as a uniform buffer or a texture,
+with its own binding budget and its own conformance suite. That is a redesign,
+and whether it is worth building depends on which browsers the product has to
+reach — a question nothing in v0 answers. A browser without WebGPU is told so
+and draws nothing.
+
 Depends on: v0.13. Independent of v0.14, though the showcase is the obvious
 first consumer of a second painter.
 
@@ -1020,8 +1031,15 @@ The format already carries the hard part.
 specifies "one `mmap` of the whole file, once" with blobs "untouched until the
 loader thread prefetches them", `Container` already hands out borrowed slices
 into its input, and blobs are aligned so a pointer into the mapping is directly
-usable. One bounds check in `parse` is the obstacle, and story #587 may already
-have settled it for the web target.
+usable.
+
+**The bounds check in `parse` is no longer the obstacle, and story #587 settled
+it without touching that function.** `parse` stays strict; a separate
+`dashbuf::prefix` reader answers the other question — "can I see enough to know
+what to fetch next" — from a leading byte range, and every rule the two apply is
+one shared implementation. So this slice's `mmap` work needs **no change to
+`parse` at all**, which is smaller than the story assumed
+([`decisions/container-parse-reads-a-prefix-through-a-host-reader.md`](decisions/container-parse-reads-a-prefix-through-a-host-reader.md)).
 
 **Placeholder activation stays in v1**, deliberately. The placeholder colour
 field has no producer — computing one needs pixel access `dashc` cannot have,
@@ -1032,9 +1050,10 @@ That makes it a producer question rather than a loading one, and R5 does not
 need it: prefetching the shown root's assets before first paint satisfies the
 criterion, while painting something not yet resident is a streaming problem.
 
-Depends on: v0.15 for the `Container::parse` answer, if #587 settles it there,
-and for the second painter that S16.2's boundary-B ownership choice is designed
-against. Independent of v0.14.
+Depends on: v0.15 for the second painter that S16.2's boundary-B ownership
+choice is designed against. The `Container::parse` question it also waited on is
+answered — story #587 settled it, and the answer leaves `parse` unchanged.
+Independent of v0.14.
 
 ## v1 — Unity, full feature set, performance, production toolchain
 

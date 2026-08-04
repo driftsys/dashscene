@@ -627,6 +627,7 @@ dependencies = [
  "lru",
  "png",
  "pollster",
+ "web-sys",
  "wgpu",
 ]
 
@@ -689,6 +690,24 @@ dependencies = [
  "showcase",
  "softbuffer",
  "winit",
+]
+
+[[package]]
+name = "demo-web"
+version = "0.0.0"
+dependencies = [
+ "dashbuf",
+ "dashlang",
+ "dashpaint",
+ "dashscene-core",
+ "dashscene-engine",
+ "dashscene-gpu",
+ "dashscene-validator",
+ "js-sys",
+ "showcase",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

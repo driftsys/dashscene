@@ -107,7 +107,7 @@ audit:
 # Full non-build verification: the regression tier + lint + audit. Not the
 # sanity tier — `check` is what `build` and the pre-push hook run, so it takes
 # the tier that is the gate (docs/decisions/test-tiers.md).
-check: test-regression lint audit
+check: test-regression lint audit wasm-painter wasm-host
 
 # Everything short of a PR: assemble + check.
 build: assemble check
@@ -196,6 +196,76 @@ clean:
 # one is a decoy is a trap — the importer loads dashc_wasm.wasm.
 wasm:
     cargo build -p dashc --lib --release --target wasm32-unknown-unknown
+
+# Build the lean painter for wasm32 — the target the web host runs on.
+#
+# A gate rather than an artifact, and the only thing enforcing that no blocking
+# wait reaches the web path. `pollster` is a native-only dependency of
+# dashscene-gpu, so a `pollster::block_on` reachable from wasm fails to compile
+# here. In a browser it would instead deadlock at runtime against the very event
+# loop that resolves the promise it waits on — which no native test can catch,
+# because natively it works (story #587).
+#
+# Separate from `wasm`, which several recipes depend on for dashc's module
+# alone; folding this in would build the painter for every Deno run.
+wasm-painter:
+    cargo build -p dashscene-gpu --target wasm32-unknown-unknown
+
+# Build the browser host for wasm32 — a gate, like `wasm-painter`.
+#
+# Separate from it because they fail for different reasons: that one catches a
+# blocking wait reaching the web path, this one catches the host itself, whose
+# browser half compiles on no other target and would otherwise be checked by
+# nothing until someone opened a page.
+wasm-host:
+    cargo build -p demo-web --target wasm32-unknown-unknown
+
+# Assemble the browser host into `target/web`, ready to serve.
+#
+# `wasm-bindgen` post-processes the module cargo produced into the JS glue a
+# page imports. The CLI's version and the `wasm-bindgen` crate's are two halves
+# of one ABI: a mismatch fails in the browser rather than at build time, so the
+# pair is checked here instead of being discovered there.
+#
+# The CLI is not installed by `bootstrap`. It builds from source in minutes and
+# is needed only by this demonstration, so every clone paying for it would be
+# the wrong trade; the check below prints the exact command instead.
+web-build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    locked=$(awk '/^name = "wasm-bindgen"$/{found=1; next} found && /^version = /{gsub(/"/, "", $3); print $3; exit}' Cargo.lock)
+    if ! command -v wasm-bindgen >/dev/null 2>&1; then
+      echo "web-build: wasm-bindgen is not installed" >&2
+      echo "web-build:   cargo install wasm-bindgen-cli --version ${locked}" >&2
+      exit 1
+    fi
+    have=$(wasm-bindgen --version | awk '{print $2}')
+    if [ "${have}" != "${locked}" ]; then
+      echo "web-build: wasm-bindgen ${have} does not match the ${locked} crate" >&2
+      echo "web-build: the two are one ABI, and a mismatch fails in the browser" >&2
+      echo "web-build:   cargo install wasm-bindgen-cli --version ${locked}" >&2
+      exit 1
+    fi
+    cargo build -p demo-web --release --target wasm32-unknown-unknown
+    wasm-bindgen --target web --no-typescript \
+      --out-dir target/web \
+      target/wasm32-unknown-unknown/release/demo_web.wasm
+    cp demo-web/index.html target/web/index.html
+    # The documents the page can load. Copied rather than served from the
+    # repository root, so the served tree holds what the demonstration needs
+    # and not the whole working copy.
+    mkdir -p target/web/goldens/dsb
+    cp goldens/dsb/*.dsb target/web/goldens/dsb/
+    echo "web-build: target/web is ready — 'just web' serves it"
+
+# Serve the browser host on 127.0.0.1, with byte ranges honoured.
+#
+# The server is `demo-web/serve.py` rather than `python3 -m http.server`, which
+# does not implement `Range`. Without ranges the host still draws — it notices
+# the whole file arrived — but the prefix loading this story exists to
+# demonstrate never happens.
+web port="8787": web-build
+    python3 demo-web/serve.py target/web {{ port }}
 
 # Type-check the Deno importer's entry points.
 deno-check:

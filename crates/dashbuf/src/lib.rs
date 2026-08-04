@@ -17,6 +17,7 @@
 
 pub mod bank;
 pub mod container;
+pub mod prefix;
 
 #[allow(clippy::all, dead_code)]
 mod generated {
@@ -84,7 +85,7 @@ pub fn open(file: &[u8]) -> Result<(Document<'_>, Vec<&[u8]>), OpenError> {
 
 /// One derivation-manifest row: the canonical hash an `AssetEntry` names, and
 /// the content hash of the payload the file carries for it.
-type BindingRow = ([u8; container::HASH_LEN], [u8; container::HASH_LEN]);
+pub(crate) type BindingRow = ([u8; container::HASH_LEN], [u8; container::HASH_LEN]);
 
 /// The file's derivation-manifest rows, verified and checked, or an empty list
 /// when it carries no manifest section — the null binding.
@@ -96,7 +97,19 @@ type BindingRow = ([u8; container::HASH_LEN], [u8; container::HASH_LEN]);
 /// and a repeated canonical hash is two claims with no rule to choose between
 /// them (P4).
 fn bindings(container: &container::Container<'_>) -> Result<Vec<BindingRow>, OpenError> {
-    let Some(bytes) = container.bindings_manifest()? else {
+    binding_rows(container.bindings_manifest()?)
+}
+
+/// The manifest rows in `bytes`, or an empty list for [`None`] — the null
+/// binding.
+///
+/// Split out from [`bindings`] so [`crate::prefix::plan`] resolves an asset by
+/// the same rules over a manifest section it found in a hot run. The rules
+/// themselves are stated on [`bindings`]; there is one implementation of them,
+/// which is what keeps a prefix-loaded document and an `open`ed one from
+/// disagreeing about what an asset resides as.
+pub(crate) fn binding_rows(bytes: Option<&[u8]>) -> Result<Vec<BindingRow>, OpenError> {
+    let Some(bytes) = bytes else {
         return Ok(Vec::new());
     };
     let manifest = flatbuffers::root::<AssetBindings<'_>>(bytes).map_err(OpenError::Bindings)?;
@@ -126,7 +139,7 @@ fn bindings(container: &container::Container<'_>) -> Result<Vec<BindingRow>, Ope
 /// a derived file one read path rather than two. A manifest row naming a
 /// canonical hash no entry uses is inert by the same construction: resolution
 /// is keyed by the entry's hash, so a row nothing asks for answers nothing.
-fn resident_of<'a>(manifest: &'a [BindingRow], canonical: &'a [u8]) -> &'a [u8] {
+pub(crate) fn resident_of<'a>(manifest: &'a [BindingRow], canonical: &'a [u8]) -> &'a [u8] {
     manifest
         .iter()
         .find(|(row, _)| row.as_slice() == canonical)

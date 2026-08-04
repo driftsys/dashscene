@@ -73,14 +73,18 @@ Plus `importers/figma/` (Deno/TypeScript — the Figma REST importer and
 the `sharedPluginData` annotator plugin; calls `dashc.wasm` directly
 rather than reimplementing lowering/validation, see
 `docs/decisions/figma-importer-deno-plus-dashc-wasm.md`), `corpus/` (stress corpus + Figma fixture
-captures), `goldens/` (CI golden images + diff tooling), and `demo/`
+captures), `goldens/` (CI golden images + diff tooling), `demo/`
 (the windowed showcase host — the window, the event loop and the frame
-loop, landed at v0.14).
+loop, landed at v0.14), and `demo-web/` (the same showcase in a browser
+— a canvas, `requestAnimationFrame`, and a `.dsb` fetched by byte range,
+landed at v0.15).
 
-Three of those directories hold workspace members that are never
-published: `demo/`, `corpus/showcase/` (the scenes the host draws) and
-`goldens/tooling/` (the golden-image harness). Nineteen members in
-total, sixteen of them the crates above.
+Four of those directories hold workspace members that are never
+published: `demo/`, `demo-web/` (the browser host — a canvas, the lean
+painter, and a `.dsb` fetched by byte range, landed at v0.15),
+`corpus/showcase/` (the scenes both hosts draw) and `goldens/tooling/`
+(the golden-image harness). Twenty members in total, sixteen of them the
+crates above.
 
 ## Commands
 
@@ -95,9 +99,16 @@ total, sixteen of them the crates above.
     just test-all     every tier in one run.
     just lint         clippy -D warnings, cargo fmt --check, dprint check, markdownlint
     just fmt          reformat everything in place
-    just check        regression tier + lint + audit
+    just check        regression tier + lint + audit + the two wasm gates
     just verify       commit-message lint over the branch range, then build — run before opening a PR
     just wasm         build dashc for wasm32-unknown-unknown
+    just wasm-painter build dashscene-gpu for wasm32 — the gate that keeps a
+                      blocking wait off the web path, where it would deadlock
+    just wasm-host    build demo-web for wasm32 — its browser half compiles on
+                      no other target
+    just web-build    assemble the browser host into target/web (needs
+                      wasm-bindgen-cli, which bootstrap does not install)
+    just web          serve target/web on 127.0.0.1, byte ranges honoured
     just deno-check   just deno-test   just deno-fmt   just deno-capture
                       — scoped to importers/figma/
     just book         serve the mdBook docs locally

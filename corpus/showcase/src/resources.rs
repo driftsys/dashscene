@@ -11,7 +11,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use dashc_wasm::figma::vector_field::{VectorAtlasBaker, VectorPath, WindingRule};
 use dashpaint::{Atlas, AtlasGlyph, ImageAsset, ImageFormat, VectorField};
-use dashscene_typeset::atlas::AtlasBundle;
+use dashscene_typeset::atlas::{AtlasBundle, AtlasMetrics};
 use dashscene_typeset::text::{Font, FontFamily, Typesetter, WeightedFont};
 
 /// A path under the repository root, resolved from this crate's manifest
@@ -22,18 +22,32 @@ macro_rules! corpus {
     };
 }
 
-const FONT_INTER_REGULAR: &str = corpus!("corpus/fonts/inter/Inter-Regular.otf");
-const FONT_INTER_SEMIBOLD: &str = corpus!("corpus/fonts/inter/Inter-SemiBold.otf");
-const FONT_ARABIC: &str = corpus!("corpus/fonts/noto-sans-arabic/NotoSansArabic-Regular.ttf");
-
-const ATLAS_INTER_REGULAR: &str = corpus!("corpus/atlas/inter-ascii");
-const ATLAS_INTER_SEMIBOLD: &str = corpus!("corpus/atlas/inter-ascii-semibold");
-const ATLAS_ARABIC: &str = corpus!("corpus/atlas/arabic");
-
-/// The corpus photograph the image fills draw. A 512x512 CC0 payload
-/// committed for the asset pipeline's band measurements (`corpus/photo/`),
-/// reused here rather than a new picture being added to the tree.
-const PHOTO: &str = corpus!("corpus/photo/dawn-mountains.png");
+/// The bytes of a corpus file, however this target can reach them.
+///
+/// Natively that is a read from disk: the binary stays small, and an edited
+/// corpus file is picked up without rebuilding. **wasm has no filesystem**, so
+/// the same bytes are embedded at compile time instead — roughly 1.1 MB across
+/// the three fonts, three atlases and one photograph the scenes use.
+///
+/// The two arms can be one list because [`corpus`] already resolves to a
+/// compile-time literal, which is exactly what `include_bytes!` requires.
+///
+/// Without this the browser host compiled and then panicked on its first
+/// scene — `operation not supported on this platform`, from `std::fs::read`.
+/// A wasm build succeeding says nothing about a wasm build running.
+macro_rules! corpus_bytes {
+    ($tail:literal) => {{
+        #[cfg(target_arch = "wasm32")]
+        {
+            include_bytes!(corpus!($tail)).to_vec()
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            std::fs::read(corpus!($tail))
+                .unwrap_or_else(|error| panic!("corpus file {}: {error}", corpus!($tail)))
+        }
+    }};
+}
 
 /// The family name every Latin run in the showcase asks for. It must be one
 /// the cascade below declares, or the run falls back and the atlas slot it
@@ -59,25 +73,37 @@ pub const ARABIC_FAMILY: &str = "Noto Sans Arabic";
 /// any other order samples the wrong face rather than failing, which is why
 /// both are built in this one module.
 fn typesetter() -> Typesetter {
-    let load = |path: &str, what: &str| {
-        Font::from_bytes(
-            std::fs::read(path).unwrap_or_else(|error| panic!("corpus font {what}: {error}")),
-            0,
-        )
-        .unwrap_or_else(|error| panic!("corpus font {what} parses: {error}"))
+    let load = |bytes: Vec<u8>, what: &str| {
+        Font::from_bytes(bytes, 0)
+            .unwrap_or_else(|error| panic!("corpus font {what} parses: {error}"))
     };
     Typesetter::with_named_font_families(vec![
         FontFamily::new(
             LATIN_FAMILY,
             vec![
-                WeightedFont::new(load(FONT_INTER_REGULAR, "Inter Regular"), 400),
-                WeightedFont::new(load(FONT_INTER_SEMIBOLD, "Inter SemiBold"), 600),
+                WeightedFont::new(
+                    load(
+                        corpus_bytes!("corpus/fonts/inter/Inter-Regular.otf"),
+                        "Inter Regular",
+                    ),
+                    400,
+                ),
+                WeightedFont::new(
+                    load(
+                        corpus_bytes!("corpus/fonts/inter/Inter-SemiBold.otf"),
+                        "Inter SemiBold",
+                    ),
+                    600,
+                ),
             ],
         ),
         FontFamily::new(
             ARABIC_FAMILY,
             vec![WeightedFont::new(
-                load(FONT_ARABIC, "Noto Sans Arabic Regular"),
+                load(
+                    corpus_bytes!("corpus/fonts/noto-sans-arabic/NotoSansArabic-Regular.ttf"),
+                    "Noto Sans Arabic Regular",
+                ),
                 400,
             )],
         ),
@@ -97,9 +123,21 @@ pub fn new_typesetter() -> Typesetter {
 pub fn atlases() -> Arc<Vec<Atlas>> {
     static ATLASES: LazyLock<Arc<Vec<Atlas>>> = LazyLock::new(|| {
         Arc::new(vec![
-            load_atlas(ATLAS_INTER_REGULAR),
-            load_atlas(ATLAS_INTER_SEMIBOLD),
-            load_atlas(ATLAS_ARABIC),
+            load_atlas(
+                corpus_bytes!("corpus/atlas/inter-ascii/atlas.png"),
+                &corpus_bytes!("corpus/atlas/inter-ascii/atlas.metrics"),
+                "inter-ascii",
+            ),
+            load_atlas(
+                corpus_bytes!("corpus/atlas/inter-ascii-semibold/atlas.png"),
+                &corpus_bytes!("corpus/atlas/inter-ascii-semibold/atlas.metrics"),
+                "inter-ascii-semibold",
+            ),
+            load_atlas(
+                corpus_bytes!("corpus/atlas/arabic/atlas.png"),
+                &corpus_bytes!("corpus/atlas/arabic/atlas.metrics"),
+                "arabic",
+            ),
         ])
     });
     Arc::clone(&ATLASES)
@@ -108,9 +146,16 @@ pub fn atlases() -> Arc<Vec<Atlas>> {
 /// Converts a committed build-time atlas fixture at `dir` into a boundary-B
 /// [`Atlas`]. Only glyphs that paint (bounded outlines) carry a quad, so an
 /// empty-outline glyph such as the space is dropped.
-fn load_atlas(dir: &str) -> Atlas {
-    let bundle = AtlasBundle::load_from_dir(std::path::Path::new(dir))
-        .unwrap_or_else(|error| panic!("committed atlas fixture at {dir} loads: {error}"));
+fn load_atlas(image_png: Vec<u8>, metrics_bytes: &[u8], what: &str) -> Atlas {
+    // Built from the two files' bytes rather than through
+    // `AtlasBundle::load_from_dir`, which reads a directory. The bundle is two
+    // public fields, so this needs nothing from `dashscene-typeset` that it did
+    // not already offer.
+    let bundle = AtlasBundle {
+        image_png,
+        metrics: AtlasMetrics::from_bytes(metrics_bytes)
+            .unwrap_or_else(|error| panic!("committed atlas metrics for {what}: {error}")),
+    };
     let metrics = &bundle.metrics;
     let glyphs = metrics
         .glyphs
@@ -137,10 +182,13 @@ fn load_atlas(dir: &str) -> Atlas {
 }
 
 /// The corpus photograph, as the payload an image fill references.
+///
+/// A 512x512 CC0 payload committed for the asset pipeline's band measurements
+/// (`corpus/photo/`), reused here rather than a new picture being added to the
+/// tree.
 pub fn photo() -> ImageAsset {
-    static PAYLOAD: LazyLock<Arc<Vec<u8>>> = LazyLock::new(|| {
-        Arc::new(std::fs::read(PHOTO).unwrap_or_else(|error| panic!("corpus photograph: {error}")))
-    });
+    static PAYLOAD: LazyLock<Arc<Vec<u8>>> =
+        LazyLock::new(|| Arc::new(corpus_bytes!("corpus/photo/dawn-mountains.png")));
     ImageAsset {
         format: ImageFormat::Png,
         bytes: PAYLOAD.as_ref().clone(),

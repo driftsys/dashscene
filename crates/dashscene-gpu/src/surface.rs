@@ -105,7 +105,47 @@ impl SurfaceRenderer {
     /// Beyond the device and format failures [`RendererError`] names,
     /// [`RendererError::Extent`] if the drawable is larger than the device can
     /// address on either axis.
+    /// Native only, for the reason [`Renderer::new`] gives: a browser's main
+    /// thread cannot block on the adapter request without deadlocking against
+    /// the event loop that would resolve it. A web host calls
+    /// [`SurfaceRenderer::for_canvas`], which is where a canvas becomes a
+    /// surface target.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn new(
+        target: impl Into<wgpu::SurfaceTarget<'static>>,
+        width: u32,
+        height: u32,
+    ) -> Result<Self, RendererError> {
+        pollster::block_on(Self::new_async(target, width, height))
+    }
+
+    /// Binds the painter and a swapchain to a `<canvas>`.
+    ///
+    /// The web counterpart of [`SurfaceRenderer::new`], and the reason it
+    /// exists here rather than in the host: `wgpu` has a blanket
+    /// `From<W> for SurfaceTarget` for anything window-shaped, and **no such
+    /// conversion for a canvas** — it must be wrapped as
+    /// `SurfaceTarget::Canvas` explicitly. Leaving that to the host would make
+    /// the host name a `wgpu` type and take a `wgpu` dependency, which is
+    /// exactly what `demo/Cargo.toml` records this crate owning the surface in
+    /// order to avoid.
+    ///
+    /// `width` and `height` are **device** pixels, as everywhere else on this
+    /// type. A canvas's CSS size is not its drawable size on a display with a
+    /// scale factor, and the host is what knows the difference.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn for_canvas(
+        canvas: web_sys::HtmlCanvasElement,
+        width: u32,
+        height: u32,
+    ) -> Result<Self, RendererError> {
+        Self::new_async(wgpu::SurfaceTarget::Canvas(canvas), width, height).await
+    }
+
+    /// [`SurfaceRenderer::new`] without the blocking wait — the constructor a
+    /// web host reaches through [`SurfaceRenderer::for_canvas`], and the one
+    /// every target has.
+    pub async fn new_async(
         target: impl Into<wgpu::SurfaceTarget<'static>>,
         width: u32,
         height: u32,
@@ -117,18 +157,20 @@ impl SurfaceRenderer {
         // Compatible with *this* surface, unlike the offscreen path: an adapter
         // that cannot present to the window would build every pipeline and fail
         // at the first acquire.
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::default(),
-            force_fallback_adapter: false,
-            compatible_surface: Some(&surface),
-            ..Default::default()
-        }))
-        .map_err(|_| RendererError::NoAdapter)?;
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::default(),
+                force_fallback_adapter: false,
+                compatible_surface: Some(&surface),
+                ..Default::default()
+            })
+            .await
+            .map_err(|_| RendererError::NoAdapter)?;
 
         let capabilities = surface.get_capabilities(&adapter);
         let format = linear_format(&capabilities.formats)
             .ok_or_else(|| RendererError::NoLinearFormat(capabilities.formats.clone()))?;
-        let renderer = Renderer::on_adapter(instance, adapter, format)?;
+        let renderer = Renderer::on_adapter(instance, adapter, format).await?;
         // Before the configuration is built, so the invariant on `config` holds
         // from the first value ever stored in it.
         renderer.check_extent(width, height)?;

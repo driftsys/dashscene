@@ -270,7 +270,7 @@ impl Header {
         out
     }
 
-    fn decode(bytes: &[u8; HEADER_SIZE]) -> Self {
+    pub(crate) fn decode(bytes: &[u8; HEADER_SIZE]) -> Self {
         Self {
             magic: bytes[at::MAGIC..at::MAGIC + 8].try_into().expect("8 bytes"),
             format_version: get!(bytes, at::FORMAT_VERSION, u16),
@@ -285,6 +285,68 @@ impl Header {
             signature_offset: get!(bytes, at::SIGNATURE_OFFSET, u32),
             signature_length: get!(bytes, at::SIGNATURE_LENGTH, u32),
         }
+    }
+
+    /// Every rule a decoded header must satisfy, none of which depends on how
+    /// many bytes of the file the caller holds.
+    ///
+    /// Shared by [`Container::parse`] and [`crate::prefix::Envelope::read`]:
+    /// the two readers ask different questions about the *file* and the same
+    /// question about the *header*, so this is one implementation rather than
+    /// two that have to be kept in step.
+    pub(crate) fn check(&self) -> Result<(), ContainerError> {
+        if self.magic != MAGIC {
+            return Err(ContainerError::BadMagic);
+        }
+        if self.format_version != FORMAT_VERSION {
+            return Err(ContainerError::UnsupportedVersion {
+                found: self.format_version,
+            });
+        }
+        if self.header_size as usize != HEADER_SIZE {
+            return Err(ContainerError::BadLayout {
+                field: "header_size",
+                found: self.header_size,
+            });
+        }
+        if self.section_stride as usize != SECTION_STRIDE {
+            return Err(ContainerError::BadLayout {
+                field: "section_stride",
+                found: self.section_stride,
+            });
+        }
+        // Every header field this version does not define must be zero. These
+        // four sit outside `root_hash`'s range, so nothing else would notice
+        // them being set; refusing them here is what keeps a later writer from
+        // slipping meaning past a version-1 reader.
+        for (value, field) in [
+            (u32::from(self.reserved_0), "header.reserved_0"),
+            (self.flags, "header.flags"),
+            (self.signature_offset, "header.signature_offset"),
+            (self.signature_length, "header.signature_length"),
+        ] {
+            if value != 0 {
+                return Err(ContainerError::ReservedNotZero { field });
+            }
+        }
+        Ok(())
+    }
+
+    /// Where the section table ends — the first byte after it, and therefore
+    /// the smallest prefix of the file that carries the whole envelope.
+    ///
+    /// Computed from [`HEADER_SIZE`] and [`SECTION_STRIDE`] rather than from
+    /// the header's own recorded fields, which is only correct once
+    /// [`Header::check`] has established that the two agree. Call them in that
+    /// order.
+    pub(crate) fn table_end(&self) -> Result<usize, ContainerError> {
+        HEADER_SIZE
+            .checked_add(
+                (self.section_count as usize)
+                    .checked_mul(SECTION_STRIDE)
+                    .ok_or(ContainerError::TableOutOfRange)?,
+            )
+            .ok_or(ContainerError::TableOutOfRange)
     }
 }
 
@@ -302,7 +364,7 @@ impl SectionEntry {
         out
     }
 
-    fn decode(bytes: &[u8]) -> Self {
+    pub(crate) fn decode(bytes: &[u8]) -> Self {
         debug_assert_eq!(bytes.len(), SECTION_STRIDE);
         Self {
             kind: get!(bytes, at::KIND, u16),
@@ -318,6 +380,81 @@ impl SectionEntry {
                 .expect("8 bytes"),
         }
     }
+}
+
+/// Every section-table rule that does not depend on how many bytes of the file
+/// the caller holds, applied in table order.
+///
+/// Shared by [`Container::parse`] and [`crate::prefix::Envelope::read`] so the
+/// two readers cannot drift apart: a rule added here reaches both, and there is
+/// no second copy to forget.
+///
+/// `file_len` is the length of the whole file, and every section must lie
+/// inside it. The two readers differ in where that number comes from and in
+/// nothing else: the strict reader holds the file, so it is the length of the
+/// slice; the prefix reader holds only the envelope, so the host supplies it
+/// (`docs/decisions/container-parse-reads-a-prefix-through-a-host-reader.md`).
+///
+/// Returns the end of the **hot run**: the envelope plus every structured
+/// section. The ordering rules checked here — ascending, non-overlapping, and
+/// no structured section after a blob — are what make that run a contiguous
+/// range from offset zero, which is what a host fetches in one request.
+pub(crate) fn check_table(
+    count: usize,
+    entry_at: impl Fn(usize) -> SectionEntry,
+    table_end: usize,
+    file_len: u64,
+) -> Result<u64, ContainerError> {
+    let mut previous_end = table_end as u64;
+    let mut hot_end = table_end as u64;
+    let mut seen_blob = false;
+    for index in 0..count {
+        let entry = entry_at(index);
+        if entry.reserved_0 != 0 {
+            return Err(ContainerError::ReservedNotZero {
+                field: "section.reserved_0",
+            });
+        }
+        if entry.reserved_1 != [0; 8] {
+            return Err(ContainerError::ReservedNotZero {
+                field: "section.reserved_1",
+            });
+        }
+        let structured = match SectionKind::from_u16(entry.kind) {
+            None => {
+                return Err(ContainerError::UnknownSectionKind {
+                    index,
+                    kind: entry.kind,
+                });
+            }
+            Some(SectionKind::Blob) => {
+                seen_blob = true;
+                false
+            }
+            Some(SectionKind::Structured) if seen_blob => {
+                return Err(ContainerError::StructuredAfterBlob { index });
+            }
+            Some(SectionKind::Structured) => true,
+        };
+        let end = entry
+            .offset
+            .checked_add(entry.length)
+            .ok_or(ContainerError::SectionOutOfRange { index })?;
+        if end > file_len {
+            return Err(ContainerError::SectionOutOfRange { index });
+        }
+        if entry.offset < table_end as u64 {
+            return Err(ContainerError::SectionOverlapsTable { index });
+        }
+        if entry.offset < previous_end {
+            return Err(ContainerError::SectionsOutOfOrder { index });
+        }
+        previous_end = end;
+        if structured {
+            hot_end = end;
+        }
+    }
+    Ok(hot_end)
 }
 
 // ---------------------------------------------------------------------
@@ -658,50 +795,10 @@ impl<'a> Container<'a> {
             return Err(ContainerError::TooSmall { len: bytes.len() });
         }
         let header = Header::decode(bytes[0..HEADER_SIZE].try_into().expect("64 bytes"));
-
-        if header.magic != MAGIC {
-            return Err(ContainerError::BadMagic);
-        }
-        if header.format_version != FORMAT_VERSION {
-            return Err(ContainerError::UnsupportedVersion {
-                found: header.format_version,
-            });
-        }
-        if header.header_size as usize != HEADER_SIZE {
-            return Err(ContainerError::BadLayout {
-                field: "header_size",
-                found: header.header_size,
-            });
-        }
-        if header.section_stride as usize != SECTION_STRIDE {
-            return Err(ContainerError::BadLayout {
-                field: "section_stride",
-                found: header.section_stride,
-            });
-        }
-        // Every header field this version does not define must be zero. These
-        // four sit outside `root_hash`'s range, so nothing else would notice
-        // them being set; refusing them here is what keeps a later writer from
-        // slipping meaning past a version-1 reader.
-        for (value, field) in [
-            (u32::from(header.reserved_0), "header.reserved_0"),
-            (header.flags, "header.flags"),
-            (header.signature_offset, "header.signature_offset"),
-            (header.signature_length, "header.signature_length"),
-        ] {
-            if value != 0 {
-                return Err(ContainerError::ReservedNotZero { field });
-            }
-        }
+        header.check()?;
 
         let count = header.section_count as usize;
-        let table_end = HEADER_SIZE
-            .checked_add(
-                count
-                    .checked_mul(SECTION_STRIDE)
-                    .ok_or(ContainerError::TableOutOfRange)?,
-            )
-            .ok_or(ContainerError::TableOutOfRange)?;
+        let table_end = header.table_end()?;
         if table_end > bytes.len() {
             return Err(ContainerError::TableOutOfRange);
         }
@@ -716,48 +813,16 @@ impl<'a> Container<'a> {
 
         let container = Self { bytes, count };
 
-        let mut previous_end = table_end as u64;
-        let mut seen_blob = false;
-        for index in 0..count {
-            let entry = container.section(index);
-            if entry.reserved_0 != 0 {
-                return Err(ContainerError::ReservedNotZero {
-                    field: "section.reserved_0",
-                });
-            }
-            if entry.reserved_1 != [0; 8] {
-                return Err(ContainerError::ReservedNotZero {
-                    field: "section.reserved_1",
-                });
-            }
-            match SectionKind::from_u16(entry.kind) {
-                None => {
-                    return Err(ContainerError::UnknownSectionKind {
-                        index,
-                        kind: entry.kind,
-                    });
-                }
-                Some(SectionKind::Blob) => seen_blob = true,
-                Some(SectionKind::Structured) if seen_blob => {
-                    return Err(ContainerError::StructuredAfterBlob { index });
-                }
-                Some(SectionKind::Structured) => {}
-            }
-            let end = entry
-                .offset
-                .checked_add(entry.length)
-                .ok_or(ContainerError::SectionOutOfRange { index })?;
-            if end > bytes.len() as u64 {
-                return Err(ContainerError::SectionOutOfRange { index });
-            }
-            if entry.offset < table_end as u64 {
-                return Err(ContainerError::SectionOverlapsTable { index });
-            }
-            if entry.offset < previous_end {
-                return Err(ContainerError::SectionsOutOfOrder { index });
-            }
-            previous_end = end;
-        }
+        // This reader holds the file, so the slice's length *is* the file's
+        // length. That is the whole of what separates it from
+        // `prefix::Envelope::read`, which applies the same rules to a length
+        // its host supplies.
+        check_table(
+            count,
+            |index| container.section(index),
+            table_end,
+            bytes.len() as u64,
+        )?;
 
         Ok(container)
     }
