@@ -47,8 +47,9 @@ Reuse all 12, mapped onto the roles in `docs/design/architecture.md`:
     dashscene-unity        Rust-side FFI bindings for the Unity painter;
                           the Unity/C# work itself lives in a separate
                           repo
-    dashscene-web          wasm/tiny-skia painter, parked — retired at
-                          v0.15, see the `dashscene-gpu` section below
+    dashscene-web          a reserved name holding no implementation — the
+                          wasm/tiny-skia painter it named is retired at
+                          v0.15; see the `dashscene-gpu` section below
     dashscore              parked — an authoring IDE, not in scope
     dashscene-compose      parked — Android Jetpack Compose backend, not
                           a target
@@ -116,9 +117,37 @@ the name says that.
 
 **`dashscene-web` is retired.** Its reserved name described a wasm/tiny-skia
 painter, and `dashscene-gpu` reaches the browser from the same codebase as
-native. The crate is a 3-line placeholder, so nothing migrates. The reserved
+native. The crate is a placeholder, so nothing migrates. The reserved
 crates.io name is not released — it stays held, describing nothing, which is
 the cheap state for a reserved name to be in.
+
+**What is retired is the painter role, not the name** (story #588, v0.15). The
+directory stays a registered, empty workspace member rather than being deleted,
+and its own `lib.rs` says why. Deleting it would not release the crates.io name
+— that is a different registry — and would cost the workspace registrations
+again: the `members` entry, the `[workspace.dependencies]` line, the
+`.git-std.toml` scope and `[[version_files]]` row, and a place in the `publish`
+recipe's order.
+
+**There is a live candidate use, and it is deliberately not taken here.** The
+browser host landed at v0.15 as `demo-web` (`publish = false`), and about half
+of it is integration every embedder must write rather than anything a
+demonstration owns: the canvas-to-surface handoff, the
+`requestAnimationFrame` loop, the generation-and-`shown` contract, rebuilding
+on resize with `document_replaced`, and the byte-range `.dsb` loader. **Two of
+those five were wrong in its first cut** — the loop never drove the scene's
+pulse, and the host never followed the canvas — and neither was caught by a
+test; both were found by running it in a browser.
+`dashscene-unity` — "Rust-side FFI bindings for the Unity painter; the Unity/C#
+work itself lives in a separate repo", three lines above — is the precedent for
+a published per-platform integration crate.
+
+Against it: there is exactly one consumer, a published crate is a semver
+commitment, and the seam it needs (how a host hands the library a scene for an
+extent) is real API design. `docs/design/architecture.md` has no host layer at
+all today, so this would add an architectural element rather than fill a slot.
+Left as **issue #741** for the epic-close revision to place, which is where
+scope-level changes belong.
 
 **Availability.** `dashscene-gpu` was unclaimed on crates.io and is reserved by
 this story, unlike `dashpack` above. The exposure is the same one that record

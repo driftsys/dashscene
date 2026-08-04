@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "wasm/tiny-skia painter — parked until pushed (docs/design/architecture.md)."
+description = "A reserved name holding no implementation. The wasm/tiny-skia painter it was reserved for is retired; dashscene-gpu covers the browser (docs/decisions/wgpu-is-the-lean-painter.md)."
 
 [lib]
 name = "dashscene_web"
