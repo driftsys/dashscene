@@ -169,6 +169,91 @@ fn gradient_diamond_t(p: vec2f, origin: vec2f, primary: vec2f, secondary: vec2f)
     return clamp(local.x + local.y, 0.0, 1.0);
 }
 
+// The most stops one gradient carries — `dashpaint::MAX_GRADIENT_STOPS`.
+//
+// Boundary B fixes the ceiling rather than each painter, so that the validator
+// that rejects an over-long gradient upstream (P4) and the painters that assume
+// the bound are held to one number. The Rust side asserts this copy against
+// that one.
+const MAX_GRADIENT_STOPS: u32 = 8u;
+
+// Where `t` sits within the stop segment `lo`..`hi`, in [0, 1].
+//
+// `hi <= lo` is a **hard stop**: two stops authored at the same offset, which
+// Figma produces for a banded gradient. That segment has no width, so there is
+// no position within it, and one is the answer that makes the ramp
+// right-continuous — the colour *at* a hard stop's offset is the later stop's,
+// which is what `TileMode::Clamp` gives in the reference painter. Returning
+// zero instead would make the earlier colour win at the offset, and dividing
+// would produce a NaN that `mix` propagates into the picture.
+//
+// **The branch is only observable when the zero-width segment is the last one
+// the walk visits**, and that is worth knowing before writing a fixture for it.
+// `gradient_ramp` overwrites as it goes, so a repeated offset in the middle of
+// a stop list has its result replaced by the segment after it — the answer is
+// the same whichever value comes back here. Mutation testing is what showed it:
+// a fixture with a repeated offset at 0.5 of four stops could not tell one from
+// zero. What can is two stops sharing the *final* offset, and a two-stop ramp
+// whose stops share their only offset.
+fn gradient_segment_t(t: f32, lo: f32, hi: f32) -> f32 {
+    if hi <= lo {
+        return 1.0;
+    }
+    return clamp((t - lo) / (hi - lo), 0.0, 1.0);
+}
+
+// A gradient's colour at normalized position `t`, from its stop ramp.
+//
+// `offsets` and `colours` are index-aligned and only the first `count` entries
+// of each are read. The offsets are non-decreasing, which is the same
+// precondition `dashscene-skia` inherits from Skia's own gradient shaders —
+// this function does not sort them, and an out-of-order stop makes it disagree
+// with the reference painter rather than fail.
+//
+// **Clamped at both ends, not repeated.** Below the first stop the first
+// colour, above the last stop the last colour: `TileMode::Clamp`, which is what
+// every gradient in `dashscene-skia` is built with. A stop range that does not
+// start at 0 or end at 1 is therefore an ordinary case rather than a degenerate
+// one, and it is the case a producer authors whenever it moves a handle instead
+// of a stop.
+//
+// **Interpolation is a plain `mix` of the stored components**, which is
+// sRGB-encoded space — `docs/decisions/blur-blends-in-srgb-encoded-space.md`
+// makes that a term of the boundary-B contract rather than a per-painter
+// choice, and the reference painter interpolates its stops unpremultiplied in
+// the same space.
+//
+// The walk keeps the *last* segment `t` has entered rather than stopping at the
+// first match. Both find the same segment, and this form has no early exit and
+// no separate "past the end" branch: `gradient_segment_t` saturates, so a `t`
+// above the final stop leaves the final colour in place by the same arithmetic
+// that interpolates an interior one.
+fn gradient_ramp(
+    t: f32,
+    offsets: array<f32, MAX_GRADIENT_STOPS>,
+    colours: array<vec4f, MAX_GRADIENT_STOPS>,
+    count: u32,
+) -> vec4f {
+    // A gradient the paint table holds carries at least one stop, so this is a
+    // row no interned gradient produces. Transparent rather than the first
+    // colour, because there is no first colour to take: drawing nothing is the
+    // one answer that cannot paint a wrong one.
+    if count == 0u {
+        return vec4f(0.0);
+    }
+    var colour = colours[0];
+    for (var i = 1u; i < count; i = i + 1u) {
+        if t >= offsets[i - 1u] {
+            colour = mix(
+                colours[i - 1u],
+                colours[i],
+                gradient_segment_t(t, offsets[i - 1u], offsets[i]),
+            );
+        }
+    }
+    return colour;
+}
+
 // Coverage of a stroke of width `width` centred on the outline `d` describes.
 //
 // `align` shifts the band: 0 = Inside, 1 = Center, 2 = Outside, matching

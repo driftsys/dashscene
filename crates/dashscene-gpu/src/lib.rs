@@ -2,7 +2,7 @@
 //! native and web from one codebase
 //! (`docs/decisions/wgpu-is-the-lean-painter.md`).
 //!
-//! # Status: the paint vocabulary less gradients, shadows, blur and group opacity
+//! # Status: the paint vocabulary less shadows, blur and group opacity
 //!
 //! Story #577 stood the crate up against boundary B — "the entire painter
 //! input" (`docs/design/architecture.md`) — so that the trait was proven
@@ -39,11 +39,17 @@
 //! (`docs/decisions/tables-the-vertex-stage-reads.md`). Both tables are read by
 //! the *vertex* stage, because the fragment stage has no binding left.
 //!
-//! What draws is rounded rects with a solid fill, their stroke and their image
-//! fill, positioned glyph runs, and a solid fill masked by a baked vector field
-//! — all clipped by their region. Gradients, group opacity, shadows and blur are
-//! packed and not drawn; each has its own story in epic #569, gradients as issue
-//! #715.
+//! Issue #715 added the gradient fill, and with it the paint-parameter heap two
+//! earlier records forecast: a gradient's stop array is indexed by a value the
+//! fragment stage computes, so it can cross as no varying, and that stage had
+//! no binding left to give it. The solid colours and the gradient rows share
+//! one storage buffer instead
+//! (`docs/decisions/the-paint-parameter-heap.md`).
+//!
+//! What draws is rounded rects with a solid, gradient or image fill, their
+//! stroke, positioned glyph runs, and a fill masked by a baked vector field —
+//! all clipped by their region. Group opacity, shadows and blur are packed and
+//! not drawn; each has its own story in epic #569.
 //!
 //! # Why this crate is named for the role
 //!

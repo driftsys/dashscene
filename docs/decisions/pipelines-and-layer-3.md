@@ -94,6 +94,23 @@ error already. What would change the answer is a _second_ group, or bindings
 whose layout is derived rather than written — story #581's atlas is still the
 candidate for both.
 
+**D6 revisited again at the paint heap (issue #715), and still not adopted.**
+The trigger's second half — "bindings whose layout is derived rather than
+written" — came close. Drawing gradients needed two more storage buffers in a
+fragment stage with none free, so binding 1 stopped being the solid table and
+became a heap of `vec4f` words holding the solid colours and the gradient rows
+together. The bind group itself did not change shape: still one group, still
+eleven entries written out by hand on each side, still a named test failure at
+`create_render_pipeline` when they disagree.
+
+What is new is that the layout _inside_ binding 1 is not a WGSL struct at all,
+and that is exactly what a binding-layout generator does not check.
+`wgsl_to_wgpu` reflects declared bindings; it has nothing to say about what the
+words inside one mean. So it would have bought nothing for the riskiest part of
+that change, which is why the answer is unchanged rather than merely
+unreconsidered. `docs/decisions/the-paint-parameter-heap.md` D7 carries the
+argument and says what holds the heap instead.
+
 **D6, against `naga_oil`.** Its value is `#import` and module composition, so
 the SDF math is one source rather than copies. That property already holds:
 `docs/decisions/shader-library-and-layer-2.md` D1 single-sources through
@@ -153,10 +170,10 @@ the picture correct for the subset this story implements and absent for the
 rest. That is not a silent drop: the packer emits the instance, the layer-1
 golden shows it, and this record lists what is drawn.
 
-Shadows and backdrop blur are story #584's, render-target group opacity #583's,
-gradients issue #715's. The instance buffer already carries all of them; this
-story drew the first kind, story #710 the stroke, story #581 the image fill and
-story #582 text and the baked-vector coverage mask.
+Shadows and backdrop blur are story #584's, render-target group opacity #583's.
+The instance buffer already carries both. This story drew the first kind; the
+stroke arrived with story #710, the image fill with story #581, text and the
+baked-vector coverage mask with story #582, and the gradient with issue #715.
 
 **Story #582 also changed what a masked instance draws.** Until it landed, a
 node carrying a coverage field drew as an ordinary rounded rectangle over its
@@ -165,8 +182,9 @@ the picture was _wrong_ rather than absent — the one place in this pipeline wh
 an unimplemented kind did not simply draw nothing. A masked instance's quad is
 now the field's padded plane quad and its coverage is the field's, which is what
 `dashscene-skia` does by skipping the parametric branch entirely for a masked
-entry. A masked **gradient** fill still draws nothing, because its colour is
-issue #715's.
+entry. A masked **gradient** fill drew nothing until issue #715 supplied the
+colour that mask modulates; it is the one combination that needed both halves,
+and `the-paint-parameter-heap.md` D5 is where the frame it uses is decided.
 
 **Corrected 2026-08-03.** That sentence said "gradients and image fills are
 story #582's" from the day it was written, and neither was: story #582 is glyph

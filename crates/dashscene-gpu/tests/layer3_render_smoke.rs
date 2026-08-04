@@ -1019,3 +1019,303 @@ fn a_stroke_takes_its_colour_from_the_stroke_row() {
         "the band must be the stroke's blue and not the solid table's red, got {on_band:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Gradient fills (issue #715)
+// ---------------------------------------------------------------------------
+
+/// A three-stop gradient whose range starts at 0.25 and ends at 0.75, so both
+/// clamped ends and both interior segments are reachable inside one box.
+///
+/// `kind` is the only thing that varies between calls, which is what
+/// `each_gradient_kind_draws_its_own_picture` needs: with a shared fixture, a
+/// difference in the picture can only come from the kind.
+fn ramp(kind: dashpaint::GradientKind) -> dashpaint::FillSpec {
+    dashpaint::FillSpec::Gradient {
+        gradient: dashpaint::Gradient {
+            kind,
+            // The box's own left edge to its own right edge, with the secondary
+            // handle down its left side: the identity frame over the node box.
+            handle_origin: dashpaint::Vec2 { x: 0.0, y: 0.0 },
+            handle_primary: dashpaint::Vec2 { x: 1.0, y: 0.0 },
+            handle_secondary: dashpaint::Vec2 { x: 0.0, y: 1.0 },
+            stops: dashpaint::StopRange::NONE,
+        },
+        stops: vec![
+            dashpaint::GradientStop {
+                offset: 0.25,
+                color: Color {
+                    r: 1.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 1.0,
+                },
+            },
+            dashpaint::GradientStop {
+                offset: 0.5,
+                color: Color {
+                    r: 0.0,
+                    g: 1.0,
+                    b: 0.0,
+                    a: 1.0,
+                },
+            },
+            dashpaint::GradientStop {
+                offset: 0.75,
+                color: Color {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 1.0,
+                    a: 1.0,
+                },
+            },
+        ],
+    }
+}
+
+/// A channel comparison that tolerates the rounding of an eight-bit target and
+/// nothing more.
+fn near(actual: [u8; 4], expected: [u8; 4], what: &str) {
+    for channel in 0..4 {
+        assert!(
+            actual[channel].abs_diff(expected[channel]) <= 2,
+            "{what}: channel {channel} was {} and should be about {} (whole texel {actual:?} \
+             against {expected:?})",
+            actual[channel],
+            expected[channel]
+        );
+    }
+}
+
+/// A gradient fill takes a different colour at different points inside one
+/// shape — which is the whole of what a solid fill cannot do — and paints
+/// nothing outside it.
+///
+/// # The probes, and where their numbers come from
+///
+/// The box spans x 16..48, so a fragment at pixel column `x` samples the box's
+/// normalised coordinate `t = (x + 0.5 - 16) / 32` — a fragment's position is
+/// its pixel's centre, and the painter draws at unit scale.
+///
+/// - `x = 18` gives t = 0.078, below the first stop, so the ramp clamps to red.
+/// - `x = 46` gives t = 0.953, past the last stop, so it clamps to blue.
+/// - `x = 32` gives t = 0.515625, inside the second segment at
+///   `u = (0.515625 - 0.5) / 0.25 = 0.0625` — green a sixteenth of the way to
+///   blue, which is `[0, 239, 16]`. That value is the one a wrong *segment*
+///   fails: the first segment at the same `t` would be most of the way from red
+///   to green.
+///
+/// # Two solid fills are interned first, deliberately
+///
+/// They put the gradient region's base past zero. The heap holds the solids at
+/// its head and the gradients after them, so a painter that lost
+/// `Globals::gradient_base` would read solid colours as gradient handles — and
+/// with no solids in the table that mistake draws the right picture.
+#[test]
+fn a_gradient_fill_varies_across_the_shape_where_a_solid_cannot() {
+    let mut paints = PaintTable::new();
+    let teal = paints.intern_fill(&dashpaint::FillSpec::Solid {
+        color: Color {
+            r: 0.0,
+            g: 0.5,
+            b: 0.5,
+            a: 1.0,
+        },
+    });
+    let _unused = paints.intern_fill(&dashpaint::FillSpec::Solid {
+        color: Color {
+            r: 0.9,
+            g: 0.9,
+            b: 0.1,
+            a: 1.0,
+        },
+    });
+    let solid = paints.push(PaintEntry {
+        fill: teal,
+        ..PaintEntry::default()
+    });
+    let sweep = paints.intern_fill(&ramp(dashpaint::GradientKind::Linear));
+    let gradient = paints.push(PaintEntry {
+        fill: sweep,
+        ..PaintEntry::default()
+    });
+
+    let pixels = draw(
+        &[
+            rect(16.0, 12.0, 32.0, 24.0, gradient, ClipIndex::UNCLIPPED),
+            rect(4.0, 40.0, 8.0, 6.0, solid, ClipIndex::UNCLIPPED),
+        ],
+        &paints,
+        &ClipTable::new(),
+    );
+
+    near(
+        texel(&pixels, 18, 24),
+        [255, 0, 0, 255],
+        "below the first stop the ramp clamps to it",
+    );
+    near(
+        texel(&pixels, 46, 24),
+        [0, 0, 255, 255],
+        "past the last stop the ramp clamps to it",
+    );
+    near(
+        texel(&pixels, 32, 24),
+        [0, 239, 16, 255],
+        "the middle of the box is inside the second segment",
+    );
+
+    // The gradient's own edges: nothing outside the box it fills.
+    for (x, y) in [(2, 2), (61, 2), (61, 24)] {
+        assert_eq!(
+            texel(&pixels, x, y)[3],
+            0,
+            "({x}, {y}) is outside the gradient's box and must be clear"
+        );
+    }
+
+    // And the solid path still reads its own row out of the heap's head.
+    near(
+        texel(&pixels, 8, 43),
+        [0, 128, 128, 255],
+        "a solid fill beside a gradient is still its own colour",
+    );
+}
+
+/// The four gradient kinds are four different pictures.
+///
+/// One fixture, four renders, differing only in the kind — the shape a claim
+/// takes when no single output can discriminate. An assertion on one render
+/// could not tell a mis-mapped kind from a correct one, because every kind
+/// produces a plausible ramp over the same stops.
+#[test]
+fn each_gradient_kind_draws_its_own_picture() {
+    use dashpaint::GradientKind;
+
+    let kinds = [
+        GradientKind::Linear,
+        GradientKind::Radial,
+        GradientKind::Angular,
+        GradientKind::Diamond,
+    ];
+    // Off the box's centre and off its diagonal, so no two of the four
+    // parameterisations coincide there by symmetry.
+    const PROBE: (u32, u32) = (26, 19);
+
+    let drawn: Vec<[u8; 4]> = kinds
+        .iter()
+        .map(|&kind| {
+            let mut paints = PaintTable::new();
+            let fill = paints.intern_fill(&ramp(kind));
+            let paint = paints.push(PaintEntry {
+                fill,
+                ..PaintEntry::default()
+            });
+            let pixels = draw(
+                &[rect(16.0, 12.0, 32.0, 24.0, paint, ClipIndex::UNCLIPPED)],
+                &paints,
+                &ClipTable::new(),
+            );
+            texel(&pixels, PROBE.0, PROBE.1)
+        })
+        .collect();
+
+    for (i, a) in drawn.iter().enumerate() {
+        assert_eq!(a[3], 255, "{:?} covers the probe", kinds[i]);
+        for (j, b) in drawn.iter().enumerate().skip(i + 1) {
+            assert!(
+                a != b,
+                "{:?} and {:?} drew the same texel {a:?} at {PROBE:?}; one kind is reaching \
+                 another's parameterisation",
+                kinds[i],
+                kinds[j]
+            );
+        }
+    }
+}
+
+/// The second gradient in a table draws its own parameters, not the first
+/// one's.
+///
+/// This is the assertion the heap's *stride* is falsifiable by. A frame with one
+/// gradient reads row 0, whose words begin at the region's base whatever the
+/// stride is — so every fixture above passes with the stride multiplied by
+/// anything. Two rows separate them: at any stride but twelve, row 1 lands on
+/// words the first gradient wrote, which is a well-formed frame with plausible
+/// stops and draws a picture rather than failing.
+///
+/// The two gradients agree in nothing. Different kinds, different handles,
+/// different stop counts, different colours — so the second row cannot be
+/// mistaken for the first in any single channel either.
+#[test]
+fn a_second_gradient_row_draws_its_own_parameters() {
+    let mut paints = PaintTable::new();
+    // Row 0: the three-stop fixture, over the left half of the canvas.
+    let first = paints.intern_fill(&ramp(dashpaint::GradientKind::Linear));
+    let first_paint = paints.push(PaintEntry {
+        fill: first,
+        ..PaintEntry::default()
+    });
+    // Row 1: two stops, both grey-free and both distinct from anything above,
+    // over a box on the right.
+    let second = paints.intern_fill(&dashpaint::FillSpec::Gradient {
+        gradient: dashpaint::Gradient {
+            kind: dashpaint::GradientKind::Linear,
+            handle_origin: dashpaint::Vec2 { x: 0.0, y: 0.0 },
+            handle_primary: dashpaint::Vec2 { x: 1.0, y: 0.0 },
+            handle_secondary: dashpaint::Vec2 { x: 0.0, y: 1.0 },
+            stops: dashpaint::StopRange::NONE,
+        },
+        stops: vec![
+            dashpaint::GradientStop {
+                offset: 0.0,
+                color: Color {
+                    r: 1.0,
+                    g: 1.0,
+                    b: 0.0,
+                    a: 1.0,
+                },
+            },
+            dashpaint::GradientStop {
+                offset: 1.0,
+                color: Color {
+                    r: 0.0,
+                    g: 1.0,
+                    b: 1.0,
+                    a: 1.0,
+                },
+            },
+        ],
+    });
+    let second_paint = paints.push(PaintEntry {
+        fill: second,
+        ..PaintEntry::default()
+    });
+
+    let pixels = draw(
+        &[
+            rect(0.0, 4.0, 16.0, 16.0, first_paint, ClipIndex::UNCLIPPED),
+            rect(32.0, 4.0, 16.0, 16.0, second_paint, ClipIndex::UNCLIPPED),
+        ],
+        &paints,
+        &ClipTable::new(),
+    );
+
+    // Row 0's box spans x 0..16, so the probe at x = 4 sits at t = 4.5/16 =
+    // 0.28125 — just inside its first segment, at u = 0.125 of the way from red
+    // to green.
+    near(
+        texel(&pixels, 4, 12),
+        [223, 32, 0, 255],
+        "the first gradient's own first segment",
+    );
+    // Row 1's box spans x 32..48, so x = 36 sits at t = 4.5/16 = 0.28125 of a
+    // full-range yellow-to-cyan ramp: red falls to 0.71875 and blue rises to
+    // 0.28125. The same t as the probe above, deliberately — the two rows differ
+    // only in what they hold, not in where the fragment is inside them.
+    near(
+        texel(&pixels, 36, 12),
+        [183, 255, 72, 255],
+        "the second gradient's own stops, at the same t as the first's probe",
+    );
+}

@@ -45,6 +45,12 @@ them, and adding a kind costs no varying.
 **D4 — the vertex stage is now full, and this route cannot be taken a third
 time.** The next table to arrive, whatever it is, changes the structure.
 
+**Issue #715 was that next table, and it did.** The gradient rows and their stop
+array share binding 1 with the solid colours, which is the heap D4 below names —
+`docs/decisions/the-paint-parameter-heap.md` records it. Nothing in this record
+changed: the two tables story #582 added are still vertex-only, and D2's test is
+still what decided that they could be.
+
 **D5 — the MSDF atlas is sampled through a second, filtering sampler.** Image
 fills keep the nearest sampler `docs/decisions/atlas-residency-and-image-fills.md`
 D5 chose. The texture binding is declared filterable to allow it.

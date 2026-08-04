@@ -156,6 +156,13 @@ by a value the fragment computes, so it does not cross as a varying at any
 width. The count is now four and four, and issue 715 is still where the heap
 gets built.
 
+**The heap was built at issue 715, and the forecast held.** Binding 1 stopped
+being the solid table and became a `vec4f` word heap carrying the solid colours
+and the gradient rows, with the gradient region's base in the per-frame uniform.
+The fragment stage's count is unchanged at four, and the image table this record
+is about kept its own binding — folding it in would have freed nothing.
+`docs/decisions/the-paint-parameter-heap.md` is the record.
+
 **D5, as amended by story #582.** An _image fill_ is still sampled nearest, and
 the paragraph below is why. A **glyph atlas or a coverage mask** is sampled
 through a second, filtering sampler added by that story, because a distance
