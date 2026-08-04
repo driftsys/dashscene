@@ -2,10 +2,10 @@
 //!
 //! # What this draws, and what it does not
 //!
-//! Rounded rects with a solid fill, their outline stroke and their image fill,
-//! positioned glyph runs, and a solid fill masked by a baked vector field — all
-//! clipped by their region. Gradients are issue #715's, shadows and backdrop
-//! blur story #584's, group opacity #583's.
+//! Rounded rects with a solid, gradient or image fill, their outline stroke,
+//! positioned glyph runs, and a fill masked by a baked vector field — all
+//! clipped by their region. Shadows and backdrop blur are story #584's, group
+//! opacity #583's.
 //!
 //! A stroke is one of two kinds whose ink does not coincide with the instance's
 //! own `bounds` — see `instance_outset` in `shaders/paint.wgsl`, which grows the
@@ -55,13 +55,30 @@ use dashpaint::{ClipTable, GlyphRunTable, ImageTable, PaintTable, ScaleMode};
 use crate::instance::{Instance, InstanceBuffer, InstanceKind, InstanceSpan};
 use crate::residency::{PayloadKey, Residency, ResidencyError};
 
-/// The viewport uniform the shaders read.
+/// The per-frame uniform the shaders read: the drawable, the antialiasing
+/// width, and where the paint heap's gradient region begins.
+///
+/// It was `Viewport` and held only the first two. The third is what makes the
+/// heap readable at all — a region base is a property of the frame's tables
+/// rather than of any row — and once the struct carries it, "viewport" names
+/// less than half of what is in it.
+///
+/// Sixteen bytes, unchanged: [`gradient_base`](Self::gradient_base) took the
+/// slot the old trailing pad word held. That pad existed only so the Rust type
+/// and the WGSL one agreed on a size, which is exactly the space a real member
+/// is free to occupy.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Pod, Zeroable)]
-struct Viewport {
+struct Globals {
     size: [f32; 2],
     aa: f32,
-    _pad: f32,
+    /// The first word of the paint heap's gradient region — see
+    /// [`GRADIENT_WORDS`] and [`paint_heap`].
+    ///
+    /// Zero is a real base, reached whenever a frame has no solid fills at all,
+    /// so nothing reads it as "absent". A frame with no gradients never indexes
+    /// past it, because no instance names a gradient row.
+    gradient_base: u32,
 }
 
 /// One stroke, in the shader's own layout.
@@ -143,6 +160,158 @@ const fn scale_mode(mode: ScaleMode) -> u32 {
         ScaleMode::Crop => 2,
         ScaleMode::Tile => 3,
     }
+}
+
+/// The render entry points, as source — concatenated after
+/// [`crate::SDF_WGSL`], which holds the math they share with the layer-2
+/// conformance harness.
+///
+/// Named rather than inlined at the one call site so that a test can read it,
+/// which is what pins the two constants this file and the shaders both state.
+const PAINT_WGSL: &str = include_str!("shaders/paint.wgsl");
+
+/// The value the paint heap carries for a gradient's kind, and the one place
+/// the mapping is written.
+///
+/// An exhaustive `match`, never `kind as u32`, for the reason [`stroke_align`]
+/// gives.
+const fn gradient_kind(kind: dashpaint::GradientKind) -> u32 {
+    match kind {
+        dashpaint::GradientKind::Linear => 0,
+        dashpaint::GradientKind::Radial => 1,
+        dashpaint::GradientKind::Angular => 2,
+        dashpaint::GradientKind::Diamond => 3,
+    }
+}
+
+/// How many `vec4f` words one gradient occupies in the paint heap.
+///
+/// Two for the frame and its discriminant, two for the eight stop offsets, and
+/// one per stop colour:
+///
+/// ```text
+/// +0        (origin.x, origin.y, primary.x, primary.y)
+/// +1        (secondary.x, secondary.y, kind, stop count)
+/// +2        stop offsets 0..3
+/// +3        stop offsets 4..7
+/// +4 .. +11 stop colours 0..7
+/// ```
+///
+/// **A fixed stride rather than a packed one.** A gradient row's words are then
+/// `gradient_base + row * GRADIENT_WORDS`, and the fragment stage finds its
+/// stops by arithmetic — where a packed layout would need the row's own offset,
+/// which is one more storage read per gradient fragment or one more table. It
+/// costs 192 bytes per *interned* gradient, and gradients are interned whole
+/// (`dashpaint::PaintTable::intern_fill`), so a scene with a hundred distinct
+/// ones spends 19 KiB. The trade is deliberately on the fragment stage's side.
+///
+/// The stop slots past a gradient's own count are written as zeroes and never
+/// read: `gradient_ramp` walks `count` of them. Zeroes rather than a repeat of
+/// the last stop, so that a shader reading past the count paints transparent
+/// black — a visible absence — rather than a plausible colour.
+const GRADIENT_WORDS: usize = 4 + dashpaint::MAX_GRADIENT_STOPS;
+
+/// The paint heap and the first word of its gradient region: every fill
+/// parameter the fragment stage reads as one array of `vec4f` words.
+///
+/// # Why one buffer holds two tables
+///
+/// `wgpu::Limits::downlevel_defaults` allows four storage buffers per shader
+/// stage, and the fragment stage already read four — solids, clips, strokes,
+/// images. A gradient needs its rows *and* its stop array there, and a stop is
+/// looked up by a normalised position the fragment computes from its own
+/// coordinate, so neither can cross as a varying the way story #582's tables do
+/// (`docs/decisions/tables-the-vertex-stage-reads.md` D2). Two more bindings
+/// against zero free slots is not a thing that can be arranged, so the tables
+/// share one binding instead.
+///
+/// The solids region is first and at base zero, so a solid fill's word is still
+/// `heap[row]` and that path is unchanged. The gradient region follows, and
+/// where it begins travels in [`Globals::gradient_base`] because it moves with
+/// the solid count.
+///
+/// **The strokes and images tables stay where they are.** Folding them in would
+/// free no binding — the stage would still read a heap and the clips — and it
+/// would rewrite two shipped paths for nothing.
+///
+/// # Panics
+///
+/// Panics on a gradient carrying more than `dashpaint::MAX_GRADIENT_STOPS`
+/// stops. `dashscene-skia` asserts the same bound with the same reason: the
+/// ceiling is a vocabulary rule that `dashscene-validator` reports by name
+/// (`paint.gradient.stop-budget`, P4), so a scene that reaches a painter with
+/// more has already been refused upstream. Refusing it loudly here rather than
+/// storing the first eight keeps the two painters agreeing about what happens
+/// next.
+fn paint_heap(paints: &PaintTable) -> (Vec<[f32; 4]>, u32) {
+    let mut heap: Vec<[f32; 4]> = paints
+        .all_solids()
+        .iter()
+        .map(|c| [c.r, c.g, c.b, c.a])
+        .collect();
+    let gradient_base = heap.len() as u32;
+    heap.reserve(paints.all_gradients().len() * GRADIENT_WORDS);
+
+    for gradient in paints.all_gradients() {
+        let stops = paints.stops(gradient);
+        assert!(
+            stops.len() <= dashpaint::MAX_GRADIENT_STOPS,
+            "gradient stop budget exceeded: {} stops, budget {} (validated upstream, P4)",
+            stops.len(),
+            dashpaint::MAX_GRADIENT_STOPS
+        );
+        let (origin, primary, secondary) = (
+            gradient.handle_origin,
+            gradient.handle_primary,
+            gradient.handle_secondary,
+        );
+        heap.push([origin.x, origin.y, primary.x, primary.y]);
+        // The kind and the count as floats. Both are small non-negative
+        // integers — the kind is one of four and the count is at most eight —
+        // so an `f32` holds either exactly and the shader's `u32()` recovers
+        // it. Stated rather than bitcast so that a heap dumped for a person to
+        // read shows a 2 where the kind is Angular.
+        heap.push([
+            secondary.x,
+            secondary.y,
+            gradient_kind(gradient.kind) as f32,
+            stops.len() as f32,
+        ]);
+
+        let mut offsets = [0.0f32; dashpaint::MAX_GRADIENT_STOPS];
+        for (slot, stop) in offsets.iter_mut().zip(stops) {
+            *slot = stop.offset;
+        }
+        heap.push([offsets[0], offsets[1], offsets[2], offsets[3]]);
+        heap.push([offsets[4], offsets[5], offsets[6], offsets[7]]);
+
+        for slot in 0..dashpaint::MAX_GRADIENT_STOPS {
+            let colour = stops
+                .get(slot)
+                .map(|stop| [stop.color.r, stop.color.g, stop.color.b, stop.color.a])
+                .unwrap_or([0.0; 4]);
+            heap.push(colour);
+        }
+    }
+
+    // The stride the shader indexes by, held against the stride this function
+    // wrote. Not a restatement of the pushes above: it is the one place the two
+    // meet, and a row written a word short would leave every gradient after it
+    // reading the previous one's stop colours as handles — a plausible picture,
+    // which no coverage assertion catches.
+    assert_eq!(
+        heap.len() - gradient_base as usize,
+        paints.all_gradients().len() * GRADIENT_WORDS,
+        "the gradient region must be {GRADIENT_WORDS} words per row"
+    );
+
+    // An empty table would make a zero-sized binding, which wgpu refuses, so
+    // one dead word stands in — no instance can name it, because an instance's
+    // row comes from the table it was packed against.
+    if heap.is_empty() {
+        heap.push([0.0; 4]);
+    }
+    (heap, gradient_base)
 }
 
 /// One glyph run, in the shader's own layout, with its atlas's residency slot
@@ -489,11 +658,7 @@ impl Renderer {
         // The shader library and the render entry points, concatenated. Naga
         // validates the result when the module is created, which is the "naga
         // validates" half of layer 3.
-        let source = format!(
-            "{}\n{}",
-            crate::shader::SDF_WGSL,
-            include_str!("shaders/paint.wgsl")
-        );
+        let source = format!("{}\n{}", crate::shader::SDF_WGSL, PAINT_WGSL);
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("dashscene-gpu paint"),
             source: wgpu::ShaderSource::Wgsl(source.into()),
@@ -505,7 +670,7 @@ impl Renderer {
         // Declaring each where it is actually read is what makes seven fit:
         //
         //     vertex    instances(0), strokes(4), glyph runs(8), shapes(9)
-        //     fragment  solids(1), clips(2), strokes(4), images(5)
+        //     fragment  paints(1), clips(2), strokes(4), images(5)
         //
         // Four and four, with nothing spare on either side. The fragment stage
         // reads no instance array at all; `VertexOut` in `shaders/paint.wgsl`
@@ -516,10 +681,17 @@ impl Renderer {
         // that are **constant across the instance**, so the stage that runs
         // four times per quad can read them and hand the fragment stage the
         // values — which costs the fragment stage no binding at all. That works
-        // because neither is a variable-length array. A gradient's stops are
-        // (issue #715), which is why that story still has to change the
-        // structure rather than take this route a third time
-        // (`docs/decisions/tables-the-vertex-stage-reads.md`).
+        // because neither is a variable-length array
+        // (`docs/decisions/tables-the-vertex-stage-reads.md` D2).
+        //
+        // **Issue #715's gradients could not**, and that is why binding 1 is a
+        // heap rather than the solid table it used to be. A gradient's stop
+        // array is indexed by a value the fragment computes from its own
+        // coordinate, so it crosses as no varying at any width — and two more
+        // fragment bindings against zero free slots is not an arrangement that
+        // exists. The solid colours and the gradient rows share one binding
+        // instead; [`paint_heap`] is the layout and
+        // `docs/decisions/the-paint-parameter-heap.md` is the reasoning.
         let storage = |binding: u32, visibility: wgpu::ShaderStages| wgpu::BindGroupLayoutEntry {
             binding,
             visibility,
@@ -993,21 +1165,12 @@ impl Renderer {
         width: u32,
         height: u32,
     ) {
-        // The solid fills, as the shader reads them. Written whole every frame,
-        // and deliberately not filtered by the dirty set: a colour that animates
-        // changes this table without changing the rect entry that names its row,
-        // so no rect is dirty and the row still has to arrive.
-        let mut solids: Vec<[f32; 4]> = paints
-            .all_solids()
-            .iter()
-            .map(|c| [c.r, c.g, c.b, c.a])
-            .collect();
-        // An empty table would make a zero-sized binding, which wgpu refuses, so
-        // one dead row stands in — no instance can name it, because an
-        // instance's row comes from the table it was packed against.
-        if solids.is_empty() {
-            solids.push([0.0; 4]);
-        }
+        // The fill parameters the fragment stage reads, as one heap. Written
+        // whole every frame, and deliberately not filtered by the dirty set: a
+        // colour that animates changes this table without changing the rect
+        // entry that names its row, so no rect is dirty and the row still has
+        // to arrive.
+        let (heap, gradient_base) = paint_heap(paints);
         let mut boxes: Vec<GpuClipBox> = clips
             .all_boxes()
             .iter()
@@ -1045,10 +1208,10 @@ impl Renderer {
         if strokes.is_empty() {
             strokes.push(GpuStroke::default());
         }
-        let viewport = Viewport {
+        let globals = Globals {
             size: [width as f32, height as f32],
             aa: 1.0,
-            _pad: 0.0,
+            gradient_base,
         };
 
         // Residency, and the rows it resolves into. Before the upload, because
@@ -1066,11 +1229,11 @@ impl Renderer {
             &self.placeholder,
             &self.residency,
             buffer,
-            &solids,
+            &heap,
             &boxes,
             &strokes,
             &resolved,
-            viewport,
+            globals,
             changes,
         );
 
@@ -1604,9 +1767,10 @@ impl Offscreen {
 /// a view and a bind group are none of those.
 struct Frame {
     instances: wgpu::Buffer,
-    solids: wgpu::Buffer,
+    /// The paint heap — solid colours then gradient rows. See [`paint_heap`].
+    paints: wgpu::Buffer,
     clips: wgpu::Buffer,
-    viewport: wgpu::Buffer,
+    globals: wgpu::Buffer,
     strokes: wgpu::Buffer,
     images: wgpu::Buffer,
     glyph_runs: wgpu::Buffer,
@@ -1625,7 +1789,7 @@ struct Frame {
     /// Capacities in elements, not bytes. A buffer is reallocated only when a
     /// frame needs more than it holds.
     instance_capacity: usize,
-    solid_capacity: usize,
+    paint_capacity: usize,
     clip_capacity: usize,
     stroke_capacity: usize,
     image_capacity: usize,
@@ -1639,9 +1803,9 @@ struct Frame {
     /// has, and every frame would have to send everything.
     uploaded: Vec<Instance>,
     spans: Vec<InstanceSpan>,
-    /// The viewport currently on the device, so a frame at an unchanged extent
-    /// writes nothing.
-    uploaded_viewport: Viewport,
+    /// The globals currently on the device, so a frame whose extent and heap
+    /// layout are both unchanged writes nothing.
+    uploaded_globals: Globals,
     /// The commit the device's rows came from, or `None` when they came from a
     /// caller that named no commit. A frame may be applied incrementally only
     /// if it follows this one — see [`Changes`].
@@ -1680,7 +1844,10 @@ impl Frame {
             "instances",
             (size_of::<Instance>() * MINIMUM_CAPACITY) as u64,
         );
-        let solids = storage("solids", (size_of::<[f32; 4]>() * MINIMUM_CAPACITY) as u64);
+        let paints = storage(
+            "paint heap",
+            (size_of::<[f32; 4]>() * MINIMUM_CAPACITY) as u64,
+        );
         let clips = storage(
             "clip boxes",
             (size_of::<GpuClipBox>() * MINIMUM_CAPACITY) as u64,
@@ -1701,17 +1868,17 @@ impl Frame {
             "coverage masks",
             (size_of::<GpuShape>() * MINIMUM_CAPACITY) as u64,
         );
-        let viewport = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("viewport"),
-            size: size_of::<Viewport>() as u64,
+        let globals = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("globals"),
+            size: size_of::<Globals>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let mut frame = Self {
             instances,
-            solids,
+            paints,
             clips,
-            viewport,
+            globals,
             strokes,
             images,
             glyph_runs,
@@ -1719,7 +1886,7 @@ impl Frame {
             bind_groups: Vec::new(),
             bound_atlases: 0,
             instance_capacity: MINIMUM_CAPACITY,
-            solid_capacity: MINIMUM_CAPACITY,
+            paint_capacity: MINIMUM_CAPACITY,
             clip_capacity: MINIMUM_CAPACITY,
             stroke_capacity: MINIMUM_CAPACITY,
             image_capacity: MINIMUM_CAPACITY,
@@ -1730,7 +1897,7 @@ impl Frame {
             spans: Vec::new(),
             // Zero on both axes, which no drawable is, so the first frame always
             // writes it.
-            uploaded_viewport: Viewport::default(),
+            uploaded_globals: Globals::default(),
             uploaded_generation: None,
             last_upload: InstanceUpload::Whole { rows: 0 },
             // The eight buffers above.
@@ -1769,9 +1936,9 @@ impl Frame {
                 device,
                 layout,
                 &self.instances,
-                &self.solids,
+                &self.paints,
                 &self.clips,
-                &self.viewport,
+                &self.globals,
                 &self.strokes,
                 &self.images,
                 &self.glyph_runs,
@@ -1797,11 +1964,11 @@ impl Frame {
         placeholder: &wgpu::TextureView,
         residency: &Residency,
         buffer: &InstanceBuffer,
-        solids: &[[f32; 4]],
+        heap: &[[f32; 4]],
         boxes: &[GpuClipBox],
         strokes: &[GpuStroke],
         resolved: &Resolved,
-        viewport: Viewport,
+        globals: Globals,
         changes: Option<Changes<'_>>,
     ) {
         let mut rebind = self.upload_instances(device, queue, buffer, changes);
@@ -1809,18 +1976,18 @@ impl Frame {
         // The two tables are written whole. A dirty set says which *rect*
         // changed and nothing about which table row did, so filtering these by
         // it would be reading it for a claim it does not make.
-        if solids.len() > self.solid_capacity {
-            self.solid_capacity = grown(solids.len());
-            self.solids = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("solids"),
-                size: (size_of::<[f32; 4]>() * self.solid_capacity) as u64,
+        if heap.len() > self.paint_capacity {
+            self.paint_capacity = grown(heap.len());
+            self.paints = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("paint heap"),
+                size: (size_of::<[f32; 4]>() * self.paint_capacity) as u64,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             self.allocations += 1;
             rebind = true;
         }
-        queue.write_buffer(&self.solids, 0, bytemuck::cast_slice(solids));
+        queue.write_buffer(&self.paints, 0, bytemuck::cast_slice(heap));
 
         if boxes.len() > self.clip_capacity {
             self.clip_capacity = grown(boxes.len());
@@ -1896,9 +2063,9 @@ impl Frame {
         }
         queue.write_buffer(&self.shapes, 0, bytemuck::cast_slice(gpu_shapes));
 
-        if viewport != self.uploaded_viewport {
-            queue.write_buffer(&self.viewport, 0, bytemuck::bytes_of(&viewport));
-            self.uploaded_viewport = viewport;
+        if globals != self.uploaded_globals {
+            queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
+            self.uploaded_globals = globals;
         }
 
         // A new atlas is as much a reason to rebuild as a reallocated buffer:
@@ -2088,9 +2255,9 @@ fn bind(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     instances: &wgpu::Buffer,
-    solids: &wgpu::Buffer,
+    paints: &wgpu::Buffer,
     clips: &wgpu::Buffer,
-    viewport: &wgpu::Buffer,
+    globals: &wgpu::Buffer,
     strokes: &wgpu::Buffer,
     images: &wgpu::Buffer,
     glyph_runs: &wgpu::Buffer,
@@ -2109,7 +2276,7 @@ fn bind(
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: solids.as_entire_binding(),
+                resource: paints.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 2,
@@ -2117,7 +2284,7 @@ fn bind(
             },
             wgpu::BindGroupEntry {
                 binding: 3,
-                resource: viewport.as_entire_binding(),
+                resource: globals.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 4,
@@ -2194,14 +2361,24 @@ const _: () = assert!(size_of::<GpuImage>() == 64);
 const _: () = assert!(size_of::<GpuGlyphRun>() == 48);
 const _: () = assert!(size_of::<GpuShape>() == 48);
 
+/// The per-frame uniform. Sixteen bytes on both sides: a `vec2f` puts the WGSL
+/// struct's alignment at 8 and its size at 16, and the Rust type packs its four
+/// scalars into the same 16 with no hole. A member added without a matching
+/// pad would make the two disagree about where `gradient_base` sits, and the
+/// symptom would be a gradient reading solid colours as handles.
+const _: () = assert!(size_of::<Globals>() == 16);
+
 #[cfg(test)]
 mod tests {
     use super::{
-        DrawRun, GpuGlyphRun, GpuImage, GpuShape, MINIMUM_CAPACITY, Resolved, dirty_ranges,
-        draw_runs, grown, scale_mode,
+        DrawRun, GRADIENT_WORDS, GpuGlyphRun, GpuImage, GpuShape, MINIMUM_CAPACITY, PAINT_WGSL,
+        Resolved, dirty_ranges, draw_runs, gradient_kind, grown, paint_heap, scale_mode,
     };
     use crate::instance::{Instance, InstanceBuffer, InstanceKind, InstanceSpan};
-    use dashpaint::ScaleMode;
+    use dashpaint::{
+        Color, FillSpec, Gradient, GradientKind, GradientStop, PaintTable, ScaleMode, StopRange,
+        Vec2,
+    };
 
     /// A resolved frame whose image rows landed in `images`, whose glyph runs
     /// landed in `runs`, and whose coverage masks landed in `shapes`.
@@ -2383,6 +2560,214 @@ mod tests {
                 "{name} must be {value} in the shader, which is what the Rust mapping assigns"
             );
         }
+    }
+
+    /// The four gradient kinds are four distinct numbers, and they are the ones
+    /// `paint.wgsl` compares against — the same claim the scale modes make, for
+    /// the same reason.
+    ///
+    /// The two shader-side strides ride along, because they are the other two
+    /// numbers stated twice. `MAX_GRADIENT_STOPS` is boundary B's, restated in
+    /// `sdf.wgsl` so that the library stays free of Rust; `GRADIENT_WORDS` is
+    /// this file's heap stride, restated in `paint.wgsl`. Neither has a
+    /// compiler holding it, and neither fails visibly: a wrong stop ceiling
+    /// truncates a ramp and a wrong stride reads the previous gradient's stop
+    /// colours as handles, both of which draw a plausible picture.
+    #[test]
+    fn the_gradient_kinds_are_distinct_and_match_the_shader() {
+        let mapped = [
+            gradient_kind(GradientKind::Linear),
+            gradient_kind(GradientKind::Radial),
+            gradient_kind(GradientKind::Angular),
+            gradient_kind(GradientKind::Diamond),
+        ];
+        assert_eq!(mapped, [0, 1, 2, 3]);
+        for (name, value) in [
+            ("GRADIENT_LINEAR", 0),
+            ("GRADIENT_RADIAL", 1),
+            ("GRADIENT_ANGULAR", 2),
+            ("GRADIENT_DIAMOND", 3),
+            ("GRADIENT_WORDS", GRADIENT_WORDS as u32),
+        ] {
+            assert!(
+                PAINT_WGSL.contains(&format!("const {name}: u32 = {value}u;")),
+                "{name} must be {value} in paint.wgsl, which is what the Rust side assigns"
+            );
+        }
+        assert!(
+            crate::shader::SDF_WGSL.contains(&format!(
+                "const MAX_GRADIENT_STOPS: u32 = {}u;",
+                dashpaint::MAX_GRADIENT_STOPS
+            )),
+            "sdf.wgsl's stop ceiling must be boundary B's {}",
+            dashpaint::MAX_GRADIENT_STOPS
+        );
+    }
+
+    fn colour(r: f32, g: f32, b: f32, a: f32) -> Color {
+        Color { r, g, b, a }
+    }
+
+    fn stop(offset: f32, colour: Color) -> GradientStop {
+        GradientStop {
+            offset,
+            color: colour,
+        }
+    }
+
+    /// A table holding two solids and two gradients that agree in nothing: a
+    /// different kind, three different handles, a different stop count, and
+    /// different stop offsets and colours.
+    ///
+    /// Every one of those axes is varied deliberately. A fixture whose two
+    /// gradients agreed in any field could not tell a stride error from a
+    /// correct read of that field, and a fixture with one gradient could not
+    /// tell a stride error at all.
+    fn two_gradients() -> PaintTable {
+        let mut paints = PaintTable::new();
+        paints.intern_fill(&FillSpec::Solid {
+            color: colour(0.1, 0.2, 0.3, 1.0),
+        });
+        paints.intern_fill(&FillSpec::Solid {
+            color: colour(0.4, 0.5, 0.6, 1.0),
+        });
+        paints.intern_fill(&FillSpec::Gradient {
+            gradient: Gradient {
+                kind: GradientKind::Linear,
+                handle_origin: Vec2 { x: 0.1, y: 0.2 },
+                handle_primary: Vec2 { x: 0.3, y: 0.4 },
+                handle_secondary: Vec2 { x: 0.5, y: 0.6 },
+                stops: StopRange::NONE,
+            },
+            stops: vec![
+                stop(0.0, colour(1.0, 0.0, 0.0, 1.0)),
+                stop(0.75, colour(0.0, 0.0, 1.0, 1.0)),
+            ],
+        });
+        paints.intern_fill(&FillSpec::Gradient {
+            gradient: Gradient {
+                kind: GradientKind::Angular,
+                handle_origin: Vec2 { x: 0.7, y: 0.8 },
+                handle_primary: Vec2 { x: 0.9, y: 0.15 },
+                handle_secondary: Vec2 { x: 0.25, y: 0.35 },
+                stops: StopRange::NONE,
+            },
+            stops: vec![
+                stop(0.2, colour(0.0, 1.0, 0.0, 1.0)),
+                stop(0.5, colour(1.0, 1.0, 0.0, 0.5)),
+                stop(0.9, colour(0.0, 1.0, 1.0, 0.25)),
+            ],
+        });
+        paints
+    }
+
+    /// The heap's shape: solids at the head, gradients after them at a fixed
+    /// stride, and the base that says where one ends and the other begins.
+    #[test]
+    fn the_paint_heap_puts_solids_first_and_gradients_at_a_fixed_stride() {
+        let paints = two_gradients();
+        let (heap, gradient_base) = paint_heap(&paints);
+
+        assert_eq!(
+            gradient_base, 2,
+            "the base is the solid count, so a heap with solids in it cannot report zero"
+        );
+        assert_eq!(heap.len(), 2 + 2 * GRADIENT_WORDS);
+        assert_eq!(heap[0], [0.1, 0.2, 0.3, 1.0], "solid row 0 is heap word 0");
+        assert_eq!(heap[1], [0.4, 0.5, 0.6, 1.0], "solid row 1 is heap word 1");
+    }
+
+    /// The second gradient's words, read at the stride the shader uses. This is
+    /// the assertion a wrong stride fails: at any other stride these words are
+    /// the *first* gradient's, which is a well-formed row and draws a picture.
+    #[test]
+    fn a_gradient_row_is_found_at_its_own_stride() {
+        let paints = two_gradients();
+        let (heap, gradient_base) = paint_heap(&paints);
+        let base = gradient_base as usize + GRADIENT_WORDS;
+
+        assert_eq!(
+            heap[base],
+            [0.7, 0.8, 0.9, 0.15],
+            "the origin and primary handles of the second gradient"
+        );
+        assert_eq!(
+            heap[base + 1],
+            [0.25, 0.35, 2.0, 3.0],
+            "the secondary handle, the Angular kind, and three stops"
+        );
+        assert_eq!(
+            heap[base + 2],
+            [0.2, 0.5, 0.9, 0.0],
+            "its three stop offsets, and a zero in the fourth slot"
+        );
+        assert_eq!(heap[base + 3], [0.0; 4], "offsets 4..7, all unused");
+        assert_eq!(heap[base + 4], [0.0, 1.0, 0.0, 1.0], "stop 0's colour");
+        assert_eq!(heap[base + 5], [1.0, 1.0, 0.0, 0.5], "stop 1's colour");
+        assert_eq!(heap[base + 6], [0.0, 1.0, 1.0, 0.25], "stop 2's colour");
+        for slot in 7..GRADIENT_WORDS {
+            assert_eq!(
+                heap[base + slot],
+                [0.0; 4],
+                "colour slot {slot} is past the count and is written as a zero"
+            );
+        }
+    }
+
+    /// The first gradient is where the base says it is, and it is not the
+    /// second. Stated separately from the row above so that a base off by a
+    /// stride fails one of the two rather than passing both.
+    #[test]
+    fn the_first_gradient_sits_at_the_base() {
+        let paints = two_gradients();
+        let (heap, gradient_base) = paint_heap(&paints);
+        let base = gradient_base as usize;
+
+        assert_eq!(heap[base], [0.1, 0.2, 0.3, 0.4], "its origin and primary");
+        assert_eq!(
+            heap[base + 1],
+            [0.5, 0.6, 0.0, 2.0],
+            "its secondary handle, the Linear kind, and two stops"
+        );
+        assert_eq!(heap[base + 2], [0.0, 0.75, 0.0, 0.0], "its two offsets");
+    }
+
+    /// A frame with neither solids nor gradients still uploads one word,
+    /// because a zero-sized binding is a validation error.
+    #[test]
+    fn an_empty_paint_table_still_makes_a_bindable_heap() {
+        let (heap, gradient_base) = paint_heap(&PaintTable::new());
+        assert_eq!(heap.len(), MINIMUM_CAPACITY);
+        assert_eq!(gradient_base, 0);
+    }
+
+    /// A gradient over the vocabulary's stop budget is refused by name rather
+    /// than stored eight stops deep, which is what `dashscene-skia` does with
+    /// the same bound. `dashscene-validator` reports it upstream (P4), so a
+    /// scene reaching here with nine stops was never validated.
+    #[test]
+    #[should_panic(expected = "gradient stop budget exceeded")]
+    fn a_gradient_over_the_stop_budget_is_refused() {
+        let mut paints = PaintTable::new();
+        let stops: Vec<GradientStop> = (0..=dashpaint::MAX_GRADIENT_STOPS)
+            .map(|i| {
+                stop(
+                    i as f32 / dashpaint::MAX_GRADIENT_STOPS as f32,
+                    colour(1.0, 0.0, 0.0, 1.0),
+                )
+            })
+            .collect();
+        paints.intern_fill(&FillSpec::Gradient {
+            gradient: Gradient {
+                kind: GradientKind::Linear,
+                handle_origin: Vec2 { x: 0.0, y: 0.0 },
+                handle_primary: Vec2 { x: 1.0, y: 0.0 },
+                handle_secondary: Vec2 { x: 0.0, y: 1.0 },
+                stops: StopRange::NONE,
+            },
+            stops,
+        });
+        let _ = paint_heap(&paints);
     }
 
     /// The row a fill instance names is the row the shader indexes, so an

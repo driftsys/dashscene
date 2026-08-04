@@ -21,6 +21,11 @@ struct Probe {
 
 @group(0) @binding(0) var<storage, read> probes: array<Probe>;
 @group(0) @binding(1) var<storage, read_write> results: array<f32>;
+// The stop colours `probe_gradient_ramp` mixes. One function takes an array
+// rather than a fixed number of floats, and a `Probe` has no room for eight
+// colours; `Gpu::run_with` binds this and nothing else does, which is why every
+// other entry point's reflected layout still has two bindings.
+@group(0) @binding(2) var<storage, read> stop_colours: array<vec4f>;
 
 // `rounded_box_sdf(p, half_size, radii)` — p is `p`, half_size is `q`, radii is
 // `v0` as (top_left, top_right, bottom_right, bottom_left).
@@ -90,6 +95,39 @@ fn probe_gradient_diamond(@builtin(global_invocation_id) id: vec3u) {
     if i >= arrayLength(&probes) { return; }
     let probe = probes[i];
     results[i] = gradient_diamond_t(probe.p, probe.q, probe.v0.xy, probe.v0.zw);
+}
+
+// `gradient_ramp(t, offsets, colours, count)` — the eight stop offsets are `v0`
+// then `v1`, `t` is `p.x`, the stop count is `p.y`, `q.x` selects which channel
+// of the resulting colour is written out (0..3, the way `probe_clamp_radii`
+// selects a radius), and `q.y` is where this probe's eight stop colours begin
+// in `stop_colours`.
+//
+// Eight colours are read whatever the count, because the read is what the
+// probe's own layout fixes; the count is what `gradient_ramp` walks, and the
+// slots past it are the fixture's business.
+@compute @workgroup_size(64)
+fn probe_gradient_ramp(@builtin(global_invocation_id) id: vec3u) {
+    let i = id.x;
+    if i >= arrayLength(&probes) { return; }
+    let probe = probes[i];
+    let base = u32(probe.q.y);
+    let offsets = array<f32, MAX_GRADIENT_STOPS>(
+        probe.v0.x, probe.v0.y, probe.v0.z, probe.v0.w,
+        probe.v1.x, probe.v1.y, probe.v1.z, probe.v1.w,
+    );
+    let colours = array<vec4f, MAX_GRADIENT_STOPS>(
+        stop_colours[base], stop_colours[base + 1u],
+        stop_colours[base + 2u], stop_colours[base + 3u],
+        stop_colours[base + 4u], stop_colours[base + 5u],
+        stop_colours[base + 6u], stop_colours[base + 7u],
+    );
+    let colour = gradient_ramp(probe.p.x, offsets, colours, u32(probe.p.y));
+    let which = u32(probe.q.x);
+    if which == 0u { results[i] = colour.r; }
+    else if which == 1u { results[i] = colour.g; }
+    else if which == 2u { results[i] = colour.b; }
+    else { results[i] = colour.a; }
 }
 
 // `stroke_coverage(d, width, align, aa)` — d is `v1.x`, width `v1.y`, align

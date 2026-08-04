@@ -55,14 +55,19 @@ struct Stroke {
     _pad: vec2u,
 }
 
-struct Viewport {
+// Mirrors `dashscene_gpu::render::Globals` — what every fragment of the frame
+// shares.
+struct Globals {
     // Drawable size in document units. The painter draws at unit scale, so this
     // is also its pixel size (story #580; a device-pixel ratio is #585's).
     size: vec2f,
     // Distance, in document units, over which an edge ramps. One unit at unit
     // scale. A uniform rather than `fwidth`, for the reason `sdf.wgsl` gives.
     aa: f32,
-    _pad: f32,
+    // The first word of the paint heap's gradient region. It moves with the
+    // number of solid fills, which is why it is a frame value rather than a
+    // constant.
+    gradient_base: u32,
 }
 
 // Mirrors `dashscene_gpu::render::GpuImage` — an image fill's parameters with
@@ -94,6 +99,24 @@ const SCALE_FIT: u32 = 1u;
 const SCALE_CROP: u32 = 2u;
 const SCALE_TILE: u32 = 3u;
 
+// `GradientKind`, mapped on the Rust side by an exhaustive match for the same
+// reason.
+const GRADIENT_LINEAR: u32 = 0u;
+const GRADIENT_RADIAL: u32 = 1u;
+const GRADIENT_ANGULAR: u32 = 2u;
+const GRADIENT_DIAMOND: u32 = 3u;
+
+// How many words of the paint heap one gradient occupies —
+// `dashscene_gpu::render::GRADIENT_WORDS`, which documents the layout. A row's
+// words are `globals.gradient_base + row * GRADIENT_WORDS`.
+//
+// The two copies are held together by
+// `the_gradient_kinds_are_distinct_and_match_the_shader`, which reads this
+// file's own source and asserts the literal. A stride that disagreed would read
+// another gradient's handles — a plausible picture rather than an absent one,
+// which no coverage assertion catches.
+const GRADIENT_WORDS: u32 = 12u;
+
 // Mirrors `dashscene_gpu::render::GpuGlyphRun` — one positioned run's shared
 // parameters, with its atlas's residency slot resolved into them. `uv` maps a
 // texel of the run's *source* atlas into the residency texture: texel `t` sits
@@ -124,9 +147,19 @@ struct Shape {
 }
 
 @group(0) @binding(0) var<storage, read> instances: array<Instance>;
-@group(0) @binding(1) var<storage, read> solids: array<vec4f>;
+// The paint-parameter heap: the fill parameters the fragment stage reads, as
+// one array of words. The solid colours come first, so a solid fill's colour is
+// still `paints[row]`; the gradient rows follow at `globals.gradient_base`.
+//
+// One binding for two tables because there was no second one to take: the
+// fragment stage reads the four storage buffers `downlevel_defaults` allows,
+// and a gradient's stop array is indexed by a value this stage computes, so it
+// cannot cross as a varying the way story #582's tables do.
+// `dashscene_gpu::render::paint_heap` writes the layout and
+// `docs/decisions/the-paint-parameter-heap.md` is the reasoning.
+@group(0) @binding(1) var<storage, read> paints: array<vec4f>;
 @group(0) @binding(2) var<storage, read> clip_boxes: array<ClipBox>;
-@group(0) @binding(3) var<uniform> viewport: Viewport;
+@group(0) @binding(3) var<uniform> globals: Globals;
 @group(0) @binding(4) var<storage, read> strokes: array<Stroke>;
 @group(0) @binding(5) var<storage, read> images: array<Image>;
 @group(0) @binding(6) var atlas: texture_2d<f32>;
@@ -170,7 +203,9 @@ struct VertexOut {
     // The node's own box, always — never the field quad a masked instance is
     // drawn over. A gradient's frame is stated over the node box even when a
     // coverage mask confines where it lands, which is what `dashscene-skia`
-    // does and what issue #715 will need.
+    // does and what `gradient_colour` resolves its handles against. A masked
+    // gradient is the instance where the two differ, and it draws correctly
+    // only because this varying is the box rather than the quad.
     @location(1) bounds: vec4f,
     @location(2) corners: vec4f,
     // `Instance`'s four index members, packed so that they cost one variable
@@ -285,7 +320,7 @@ fn vs_main(@builtin(vertex_index) vertex: u32, @builtin(instance_index) index: u
     // own bounds. An MSDF quad needs neither — the field's own padding is its
     // antialiasing — and the margin is harmless there because `msdf_sample`
     // clamps every sample back inside the payload.
-    let margin = viewport.aa + instance_outset(inst);
+    let margin = globals.aa + instance_outset(inst);
     let lo = quad.xy - vec2f(margin);
     let hi = quad.xy + quad.zw + vec2f(margin);
     // Two triangles, as a triangle strip of four vertices.
@@ -295,8 +330,8 @@ fn vs_main(@builtin(vertex_index) vertex: u32, @builtin(instance_index) index: u
     );
     // Document space (y down, origin top-left) to clip space.
     let ndc = vec2f(
-        corner.x / viewport.size.x * 2.0 - 1.0,
-        1.0 - corner.y / viewport.size.y * 2.0,
+        corner.x / globals.size.x * 2.0 - 1.0,
+        1.0 - corner.y / globals.size.y * 2.0,
     );
     out.position = vec4f(ndc, 0.0, 1.0);
     out.local = corner;
@@ -318,7 +353,7 @@ fn clip_coverage(offset: u32, count: u32, p: vec2f) -> f32 {
         let half_size = vec2f(b.w, b.h) * 0.5;
         let centre = vec2f(b.x, b.y) + half_size;
         let d = rounded_box_sdf(p - centre, half_size, b.corners);
-        cover = min(cover, coverage(d, viewport.aa));
+        cover = min(cover, coverage(d, globals.aa));
     }
     return cover;
 }
@@ -387,6 +422,76 @@ fn image_colour(fill: Image, bounds: vec4f, p: vec2f) -> vec4f {
     return textureSampleLevel(atlas, atlas_sampler, fill.uv.xy + inside * fill.uv.zw, 0.0);
 }
 
+// One gradient fill's colour at document-space point `p`.
+//
+// # The frame is resolved here, not on the CPU
+//
+// `dashpaint::Gradient` carries three handles normalized to the node's box —
+// Figma's `gradientHandlePositions` — and a gradient row is *interned*, so one
+// row is shared by every node that authored the same gradient. The box is per
+// instance, so the box-to-document mapping cannot live on the row. Resolving it
+// here is also what P1 asks for: the document carries the intent and the
+// painter resolves the geometry.
+//
+// `bounds` is the node's own box even for a masked instance, whose quad is the
+// coverage field's plane instead — a gradient's frame is stated over the node
+// box however the mask confines where it lands, which is what `dashscene-skia`
+// does. `VertexOut.bounds` is documented against exactly this.
+//
+// # A degenerate frame takes the first stop
+//
+// `gradient_local` returns (0, 0) when the three handles enclose no area, so
+// every kind reports t = 0 and the ramp clamps to the first stop. That is the
+// reference painter's own fallback for a frame it cannot invert, reached here
+// by the same arithmetic rather than by a second branch.
+fn gradient_colour(row: u32, bounds: vec4f, p: vec2f) -> vec4f {
+    let base = globals.gradient_base + row * GRADIENT_WORDS;
+    let handles = paints[base];
+    let frame = paints[base + 1u];
+    let origin = bounds.xy + handles.xy * bounds.zw;
+    let primary = bounds.xy + handles.zw * bounds.zw;
+    let secondary = bounds.xy + frame.xy * bounds.zw;
+
+    let kind = u32(frame.z);
+    // Clamped to the heap row's own slot count. The Rust side asserts the same
+    // bound before it writes the row, so this can only differ if the two ever
+    // disagree — and a loop that walked past the row would read the *next*
+    // gradient's handles as stops.
+    let count = min(u32(frame.w), MAX_GRADIENT_STOPS);
+
+    var t = 0.0;
+    if kind == GRADIENT_RADIAL {
+        t = gradient_radial_t(p, origin, primary, secondary);
+    } else if kind == GRADIENT_ANGULAR {
+        t = gradient_angular_t(p, origin, primary, secondary);
+    } else if kind == GRADIENT_DIAMOND {
+        t = gradient_diamond_t(p, origin, primary, secondary);
+    } else {
+        // GRADIENT_LINEAR, and nothing else: `gradient_kind` on the Rust side
+        // maps an exhaustive match over `GradientKind`, so no fifth value can
+        // arrive here. Stated as the fall-through rather than as a fourth
+        // branch so that this function stays total whatever a future kind does
+        // before it is taught to this file — an unknown kind then draws the
+        // linear ramp, which is a wrong picture rather than an undefined one.
+        t = gradient_linear_t(p, origin, primary, secondary);
+    }
+
+    // The eight offset slots are two whole words, so they are read
+    // unconditionally; the colours are read only as far as the count, because
+    // that is where the loop can be bounded without a branch per slot.
+    let lo = paints[base + 2u];
+    let hi = paints[base + 3u];
+    let offsets = array<f32, MAX_GRADIENT_STOPS>(
+        lo.x, lo.y, lo.z, lo.w,
+        hi.x, hi.y, hi.z, hi.w,
+    );
+    var colours: array<vec4f, MAX_GRADIENT_STOPS>;
+    for (var i = 0u; i < count; i = i + 1u) {
+        colours[i] = paints[base + 4u + i];
+    }
+    return gradient_ramp(t, offsets, colours, count);
+}
+
 // The MSDF channels under `p`, for a quad that maps onto one sub-rect of the
 // bound atlas.
 //
@@ -451,31 +556,31 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
         );
     } else if kind == KIND_STROKE {
         let s = strokes[row];
-        shape = stroke_coverage(d, s.width, f32(s.align), viewport.aa);
+        shape = stroke_coverage(d, s.width, f32(s.align), globals.aa);
     } else {
-        shape = coverage(d, viewport.aa);
+        shape = coverage(d, globals.aa);
     }
     var cover = shape * clip_coverage(in.rows.z, in.rows.w, in.local) * in.opacity;
     if cover <= 0.0 {
         discard;
     }
     // Story #580 drew the solid fill; story #710 added the stroke beside it,
-    // story #581 the image fill, and story #582 text and the coverage mask
-    // above. Gradients are #715's, shadows and backdrop blur #584's, group
+    // story #581 the image fill, story #582 text and the coverage mask above,
+    // and issue #715 the gradient. Shadows and backdrop blur are #584's, group
     // opacity #583's.
     //
-    // A masked *gradient* fill therefore still draws nothing: the mask resolved
-    // and its coverage is correct, and the colour it would modulate is the one
-    // thing that does not exist yet. It falls to the `discard` below like any
-    // other gradient, rather than to a wrong colour.
+    // A masked *gradient* fill now draws too, and it is the one combination
+    // that needed both halves: story #582 resolved the mask and its coverage,
+    // and this is the colour it modulates.
     //
     // **Both `kind` and `tag`, never `tag` alone.** `tag` means a different
     // enum for each kind — a `PaintTag` for a fill, a `ShadowKind` for a
     // shadow, a `BlurKind` for a backdrop — and their discriminants collide:
     // `PaintTag::Solid`, `ShadowKind::Inner` and `BlurKind::Backdrop` are all
-    // 1. Reading `tag` alone made a shadow instance paint `solids[row]` with
-    // `row` indexing the *shadow* table, so a node with an inner shadow drew
-    // whatever colour happened to sit at that row, over its own fill.
+    // 1. Reading `tag` alone made a shadow instance paint the solid table's
+    // `row` with `row` indexing the *shadow* table, so a node with an inner
+    // shadow drew whatever colour happened to sit at that row, over its own
+    // fill.
     //
     // A kind this shader cannot draw yet draws *nothing*, and does not fall
     // through to a colour. Painting it black would be loud, but it would also
@@ -489,7 +594,12 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
     // is not drawn. What is refused here is a *wrong* pixel, not a diagnostic.
     var colour = vec4f(0.0);
     if kind == KIND_FILL_SOLID {
-        colour = solids[row];
+        // The solid region is at the head of the heap, so a solid fill's row is
+        // still its word — this path pays nothing for the gradient region
+        // behind it.
+        colour = paints[row];
+    } else if kind == KIND_FILL_GRADIENT {
+        colour = gradient_colour(row, in.bounds, in.local);
     } else if kind == KIND_STROKE {
         colour = strokes[row].color;
     } else if kind == KIND_TEXT {

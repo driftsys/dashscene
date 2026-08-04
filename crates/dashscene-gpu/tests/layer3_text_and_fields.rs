@@ -627,3 +627,126 @@ fn a_glyph_atlas_and_an_image_row_of_the_same_shape_do_not_collide() {
         "the image fill is still drawn, and the glyph's right half is outside its field"
     );
 }
+
+/// A node whose **gradient** fill is masked by the same coverage field, drawn
+/// over the same 40x32 box at (8, 8).
+///
+/// The gradient's handles are the identity frame over the node's box, so `t` is
+/// the box's own normalised x. Two stops spanning the full range, so every
+/// probe below is inside the single segment and its colour is a linear function
+/// of `t` alone.
+fn draw_masked_gradient_node() -> Vec<u8> {
+    let mut images = ImageTable::new();
+    let atlas = images.push_baked(mask_field(), ATLAS, ATLAS);
+
+    let mut paints = PaintTable::new();
+    let ink = paints.intern_fill(&FillSpec::Gradient {
+        gradient: dashpaint::Gradient {
+            kind: dashpaint::GradientKind::Linear,
+            handle_origin: dashpaint::Vec2 { x: 0.0, y: 0.0 },
+            handle_primary: dashpaint::Vec2 { x: 1.0, y: 0.0 },
+            handle_secondary: dashpaint::Vec2 { x: 0.0, y: 1.0 },
+            stops: dashpaint::StopRange::NONE,
+        },
+        stops: vec![
+            dashpaint::GradientStop {
+                offset: 0.0,
+                color: Color {
+                    r: 1.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 1.0,
+                },
+            },
+            dashpaint::GradientStop {
+                offset: 1.0,
+                color: Color {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 1.0,
+                    a: 1.0,
+                },
+            },
+        ],
+    });
+    let paint = paints.push_with(
+        PaintEntry {
+            fill: ink,
+            ..PaintEntry::default()
+        },
+        EntryParts {
+            shape: Some(VectorField {
+                image: atlas,
+                atlas_rect: MASK_RECT,
+                plane_bounds: [0.0, 0.0, 20.0, 32.0],
+                distance_range: 0.5,
+            }),
+            ..EntryParts::default()
+        },
+    );
+
+    let rects = vec![RectEntry {
+        x: 8.0,
+        y: 8.0,
+        w: 40.0,
+        h: 32.0,
+        paint,
+        clip: ClipIndex::UNCLIPPED,
+        opacity: 1.0,
+    }];
+    let clips = ClipTable::new();
+    let glyphs = GlyphRunTable::new();
+    let mut painter = GpuPainter::new();
+    painter.paint(&rects, &paints, &images, &clips, &[], &glyphs, None);
+    renderer()
+        .render(painter.instances(), &paints, &images, &clips, &glyphs, W, H)
+        .expect("the fixture extent is within any device's maximum")
+}
+
+/// A masked gradient fill draws, and its frame is the **node's box** rather than
+/// the field's quad.
+///
+/// This is the one combination that needed both halves of the slice: story #582
+/// resolved the mask and its coverage, and issue #715 the colour it modulates.
+/// Until #715 it drew nothing at all.
+///
+/// # Why the frame is the falsifiable part
+///
+/// The node's box is 40 units wide and the field's quad is 20, so the two frames
+/// disagree by a factor of two — and a masked instance's *quad* is the field's,
+/// which makes taking the frame from the quad the natural mistake. At x = 10 the
+/// fragment sits at 10.5, so the box's own `t` is `(10.5 - 8) / 40 = 0.0625` and
+/// the ramp gives `[239, 0, 16]`; the field's quad would give `t = 0.125` and
+/// `[223, 0, 32]`, sixteen code points away on two channels. `dashscene-skia`
+/// builds its gradient frame from the entry's box for a masked node exactly as
+/// it does for an unmasked one, so this is the reference painter's answer and
+/// not a choice made here.
+#[test]
+fn a_masked_gradient_takes_its_frame_from_the_node_box_and_its_coverage_from_the_field() {
+    let pixels = draw_masked_gradient_node();
+
+    // Inside the field, at two columns whose colours differ — which is what a
+    // solid fill could not produce and what says the ramp reached the shader.
+    for (x, expected) in [(10u32, [239u8, 0, 16]), (15, [207, 0, 48])] {
+        let [r, g, b, a] = texel(&pixels, x, 24);
+        assert_eq!(a, 255, "the field's left half is opaque at x {x}");
+        for (channel, (got, want)) in [r, g, b].into_iter().zip(expected).enumerate() {
+            assert!(
+                got.abs_diff(want) <= 2,
+                "at x {x} channel {channel} was {got} and should be about {want} \
+                 (whole texel {:?}) — a frame taken from the field's quad instead of the \
+                 node's box reads twice as far along the ramp",
+                [r, g, b, a]
+            );
+        }
+    }
+
+    // Outside the field's quad but inside the node's box: the mask still
+    // confines the fill, which a gradient must not have loosened.
+    assert_eq!(
+        texel(&pixels, 40, 24)[3],
+        0,
+        "x 40 is inside the node's box and outside the field's quad"
+    );
+    assert_eq!(texel(&pixels, 2, 24)[3], 0, "x 2 is outside both");
+}

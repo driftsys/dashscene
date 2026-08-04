@@ -111,6 +111,21 @@ impl Gpu {
 
     /// Evaluates `entry` over `probes` and returns one result per probe.
     fn run(&self, entry: &str, probes: &[Probe]) -> Vec<f32> {
+        self.run_with(entry, probes, &[])
+    }
+
+    /// The same, for an entry point that also reads a table at binding 2.
+    ///
+    /// One function has a table and it is the stop ramp, whose input is an
+    /// *array* rather than the twelve floats a [`Probe`] carries. Bound rather
+    /// than synthesised in WGSL, so that the colours the shader mixes are the
+    /// same values the Rust reference mixes and neither side invented them.
+    ///
+    /// The binding is added only when there is a table, because `layout: None`
+    /// reflects each pipeline's layout from the bindings its own entry point
+    /// uses — every other entry point declares two, and naming a third would be
+    /// a bind group that does not match its layout.
+    fn run_with(&self, entry: &str, probes: &[Probe], table: &[[f32; 4]]) -> Vec<f32> {
         use wgpu::util::DeviceExt as _;
 
         assert!(
@@ -149,19 +164,34 @@ impl Gpu {
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 cache: None,
             });
+        let table_buffer = (!table.is_empty()).then(|| {
+            self.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("table"),
+                    contents: bytemuck::cast_slice(table),
+                    usage: wgpu::BufferUsages::STORAGE,
+                })
+        });
+        let mut entries = vec![
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: probe_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: result_buffer.as_entire_binding(),
+            },
+        ];
+        if let Some(buffer) = &table_buffer {
+            entries.push(wgpu::BindGroupEntry {
+                binding: 2,
+                resource: buffer.as_entire_binding(),
+            });
+        }
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(entry),
             layout: &pipeline.get_bind_group_layout(0),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: probe_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: result_buffer.as_entire_binding(),
-                },
-            ],
+            entries: &entries,
         });
 
         let mut encoder = self
@@ -624,6 +654,245 @@ fn each_gradient_parameterization_uses_the_whole_handle_frame() {
         (a - b).abs() > 0.1,
         "the fixture's frame must not be a similarity, or dropping the secondary \
          handle would pass: {a} vs {b}"
+    );
+}
+
+/// One gradient stop, as the ramp fixture authors it: an offset and a colour.
+type Stop = (f32, [f32; 4]);
+
+/// One stop list and the `t` values probed against it.
+type RampCase = (Vec<Stop>, Vec<f32>);
+
+/// The stop ramp, derived independently of the shader's walk.
+///
+/// The shader keeps the *last* segment `t` has entered, overwriting as it goes.
+/// This finds the *first* stop past `t` and interpolates the segment before it,
+/// with the two clamped ends stated as their own cases. Both reach the same
+/// answer for every ordered stop list, including one with a repeated offset —
+/// which is the point of writing the second one rather than transliterating.
+///
+/// `dashscene-skia` builds every gradient with `TileMode::Clamp`, which is what
+/// the two end cases are.
+///
+/// # The two ends are not symmetric, and that is the ramp's own rule
+///
+/// The lower clamp is **strict** and the upper one is not. Both sides of a
+/// hard stop are reachable at the same `t`, and the ramp is right-continuous:
+/// the colour *at* a repeated offset is the later stop's. So a `t` equal to the
+/// first offset must not short-circuit to the first colour — with the first two
+/// stops repeated, the answer is the second colour, and `<=` here would have
+/// disagreed with the shader at exactly that point.
+///
+/// The upper clamp stays inclusive for the same reason read the other way: at a
+/// `t` equal to the last offset, the last colour is the later of whatever pair
+/// meets there.
+fn reference_ramp(t: f32, stops: &[Stop]) -> [f32; 4] {
+    let (first_offset, first_colour) = stops[0];
+    let (last_offset, last_colour) = stops[stops.len() - 1];
+    if t < first_offset {
+        return first_colour;
+    }
+    if t >= last_offset {
+        return last_colour;
+    }
+    let above = stops
+        .iter()
+        .position(|&(offset, _)| offset > t)
+        .expect("t is below the last stop, so some stop is above it");
+    let (lo, lo_colour) = stops[above - 1];
+    let (hi, hi_colour) = stops[above];
+    // `above` is the first stop past `t` and `t` is past `lo`, so this segment
+    // has width — a repeated offset is never the divisor here, which is the
+    // shape difference from the shader's form.
+    let u = (t - lo) / (hi - lo);
+    let mut out = [0.0; 4];
+    for channel in 0..4 {
+        out[channel] = lo_colour[channel] + (hi_colour[channel] - lo_colour[channel]) * u;
+    }
+    out
+}
+
+/// The eight-slot arrays one probe hands `gradient_ramp`, with everything past
+/// the stop count set to a value that cannot be mistaken for a colour.
+///
+/// A slot past the count is one the function must not read. Filling the tail
+/// with a colour of nines and an offset of -100 makes reading one *loud*: the
+/// offset compares true against every `t`, so an over-running walk mixes the
+/// nines in and the measurement leaves the tolerance by three orders of
+/// magnitude. Zeroes there would have been indistinguishable from a black stop.
+fn ramp_slots(stops: &[Stop]) -> ([f32; 8], [[f32; 4]; 8]) {
+    let mut offsets = [-100.0f32; 8];
+    let mut colours = [[9.0f32; 4]; 8];
+    for (slot, &(offset, colour)) in stops.iter().enumerate() {
+        offsets[slot] = offset;
+        colours[slot] = colour;
+    }
+    (offsets, colours)
+}
+
+/// The stop ramp gives the authored colour at every stop, interpolates between
+/// them, and clamps outside them.
+///
+/// # The cases, and why each is here
+///
+/// Six stop lists, no two of which agree in their count, their offsets or their
+/// colours — the uniform-fixture rule, applied to the argument that is an
+/// array. Issue #715 names the last three by hand:
+///
+/// - **A range that starts at 0 and ends at 1**, the ordinary case.
+/// - **A range that starts above 0 and ends below 1**, which a producer authors
+///   whenever it moves a handle instead of a stop. Both clamps are reachable
+///   inside it.
+/// - **Three uneven stops**, so the segment widths differ and a walk that
+///   assumed even spacing is wrong everywhere but the ends.
+/// - **One stop**, where there is no segment at all and every `t` gives the
+///   same colour.
+/// - **A hard stop** — two stops at one offset, which Figma produces for a
+///   banded gradient. `gradient_segment_t` has a zero-width segment to answer
+///   for, and the probes straddle it at 0.49, 0.50 and 0.51.
+/// - **Eight stops**, the vocabulary's ceiling
+///   (`dashpaint::MAX_GRADIENT_STOPS`), so the walk's upper bound is exercised
+///   rather than assumed.
+#[test]
+fn the_stop_ramp_interpolates_between_stops_and_clamps_outside_them() {
+    let gpu = Gpu::new();
+
+    // Every colour below is distinct and no two share a channel pattern, so a
+    // ramp that mixed the right pair in the wrong channels fails.
+    let cases: Vec<RampCase> = vec![
+        (
+            vec![(0.0, [1.0, 0.0, 0.0, 1.0]), (1.0, [0.0, 0.25, 1.0, 0.5])],
+            vec![0.0, 0.25, 0.5, 0.75, 1.0],
+        ),
+        (
+            vec![(0.25, [0.0, 0.8, 0.2, 1.0]), (0.75, [0.9, 0.1, 0.7, 0.25])],
+            vec![0.0, 0.1, 0.25, 0.4, 0.5, 0.75, 0.9, 1.0],
+        ),
+        (
+            vec![
+                (0.1, [0.3, 0.05, 0.95, 0.6]),
+                (0.4, [0.7, 0.55, 0.15, 0.9]),
+                (0.95, [0.05, 0.65, 0.45, 0.2]),
+            ],
+            vec![0.0, 0.1, 0.25, 0.4, 0.7, 0.95, 1.0],
+        ),
+        (
+            vec![(0.6, [0.42, 0.17, 0.83, 0.35])],
+            vec![0.0, 0.3, 0.6, 0.9, 1.0],
+        ),
+        (
+            vec![
+                (0.0, [1.0, 1.0, 0.0, 1.0]),
+                (0.5, [0.0, 1.0, 1.0, 0.75]),
+                (0.5, [1.0, 0.0, 1.0, 0.5]),
+                (1.0, [0.2, 0.4, 0.6, 0.8]),
+            ],
+            vec![0.0, 0.25, 0.49, 0.5, 0.51, 0.75, 1.0],
+        ),
+        (
+            (0..8)
+                .map(|i| {
+                    let f = i as f32;
+                    (
+                        f / 7.0,
+                        [f / 7.0, 1.0 - f / 9.0, (f * 0.13) % 1.0, 0.1 + f / 10.0],
+                    )
+                })
+                .collect(),
+            vec![0.0, 0.05, 0.3, 0.5, 0.6, 0.85, 1.0],
+        ),
+        // A hard stop on the **last** pair. The case above puts its repeated
+        // offset in the middle, where the segment after it overwrites whatever
+        // the zero-width one produced — so nothing there depends on
+        // `gradient_segment_t`'s answer for a zero-width segment, and mutation
+        // testing is what said so. Here the zero-width segment is the last one
+        // the walk visits, and its answer is the result.
+        (
+            vec![
+                (0.0, [0.15, 0.85, 0.35, 1.0]),
+                (0.5, [0.95, 0.45, 0.05, 0.9]),
+                (1.0, [0.25, 0.15, 0.75, 0.6]),
+                (1.0, [0.65, 0.35, 0.95, 0.3]),
+            ],
+            vec![0.0, 0.5, 0.99, 1.0],
+        ),
+        // Both stops at one offset: a ramp with no width anywhere, which is the
+        // smallest thing a hard stop can be. Below the offset the first colour,
+        // at it and above it the second — the right-continuity the ramp is
+        // stated on, with no interior segment to reach it through.
+        (
+            vec![
+                (0.4, [0.05, 0.55, 0.95, 0.45]),
+                (0.4, [0.85, 0.25, 0.15, 0.95]),
+            ],
+            vec![0.0, 0.39, 0.4, 0.41, 1.0],
+        ),
+    ];
+
+    let mut probes = Vec::new();
+    let mut table: Vec<[f32; 4]> = Vec::new();
+    let mut expected: Vec<f32> = Vec::new();
+    for (stops, samples) in &cases {
+        let (offsets, colours) = ramp_slots(stops);
+        let base = table.len() as f32;
+        table.extend_from_slice(&colours);
+        for &t in samples {
+            let want = reference_ramp(t, stops);
+            for channel in 0..4u32 {
+                probes.push(Probe {
+                    v0: [offsets[0], offsets[1], offsets[2], offsets[3]],
+                    v1: [offsets[4], offsets[5], offsets[6], offsets[7]],
+                    p: [t, stops.len() as f32],
+                    q: [channel as f32, base],
+                });
+                expected.push(want[channel as usize]);
+            }
+        }
+    }
+
+    // A gradient with no stops at all, stated as its own case because
+    // `reference_ramp` has no first colour to return for it.
+    //
+    // `PaintTable::intern_fill` will hand out a `StopRange` of count zero — it
+    // leaves the "at least one stop" rule to `dashscene-validator`, which
+    // reports it as `paint.gradient.no-stops` (P4). So the value is reachable
+    // from an unvalidated document, and the answer is transparent: there is no
+    // colour to clamp to, and drawing nothing is the one answer that cannot
+    // paint a wrong one. `dashscene-skia` panics on the same input, which is a
+    // divergence this records rather than hides.
+    //
+    // The probe's table slots hold the fixture's poison nines, so a walk that
+    // ran once regardless of the count reads 9.0 rather than 0.0 and this case
+    // is what fails.
+    let empty_base = table.len() as f32;
+    table.extend_from_slice(&[[9.0; 4]; 8]);
+    for channel in 0..4u32 {
+        probes.push(Probe {
+            v0: [-100.0; 4],
+            v1: [-100.0; 4],
+            p: [0.5, 0.0],
+            q: [channel as f32, empty_base],
+        });
+        expected.push(0.0);
+    }
+
+    let measured = gpu.run_with("probe_gradient_ramp", &probes, &table);
+    assert_matches("gradient_ramp", &probes, &measured, &expected, 1e-6);
+
+    // The fixture has to be able to fail, and two properties say it can. The
+    // ramp must actually vary — a function returning its first colour for every
+    // `t` would pass a fixture whose probes were all clamped — and the hard stop
+    // must be a step, which is the case a division would have made a NaN of.
+    let varies = expected
+        .iter()
+        .any(|value| (value - expected[0]).abs() > 0.25);
+    assert!(varies, "the probe set must reach more than one colour");
+    let hard = &cases[4];
+    let below = reference_ramp(0.49, &hard.0);
+    let above = reference_ramp(0.51, &hard.0);
+    assert!(
+        (below[0] - above[0]).abs() > 0.5,
+        "the hard-stop fixture must step across its repeated offset: {below:?} to {above:?}"
     );
 }
 
