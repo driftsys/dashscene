@@ -1,7 +1,7 @@
 # v0.15 driver prompt — drive the slice to completion, one story at a time
 
     status   live; hand this to a session as its first message
-    revised  2026-08-04, after story #582 merged
+    revised  2026-08-04, after issue #715 merged
     empties  when epic #569 closes. Archive it verbatim to docs/archive/
              rather than gardening it — a driver prompt is spent the moment
              its work lands, and records nothing a design record should hold.
@@ -48,31 +48,40 @@ Everything else is closed, so do not spend time re-establishing it:
   #714 requires; the atlas stayed a 16 MiB budget rather than becoming a
   gigabyte, as `atlas-residency-and-image-fills.md` requires. Conflating the two
   is the mistake the review caught in this story.
+- **Six more painter swaps on the typography scene**, after issue #715, across
+  2211 generations with 2438 ticks and 2412 presents — no panic, no validation
+  error, nothing refused. The heap that story introduced is bound by every one
+  of those frames, and a swap rebuilds it from nothing each time.
+- **The `surfaces` scene rendered through both painters and compared by eye**,
+  offscreen at 960x600 — the scene's own design size. That one scene holds all
+  **nine** of the showcase's gradient fills, and `typography` and `layout` hold
+  none, so it is the whole of the gradient evidence. No gradient tile differed
+  visibly, including the masked one. What did differ is exactly the undrawn set:
+  shadows, group opacity and the frosted panel's backdrop blur.
+
+  **By eye, and one scene at one size on one adapter.** It is not a band and does
+  not pre-empt story #586. What it does say is that the remaining visible
+  difference between the two painters lives in #583 and #584 and nowhere else.
 
 ## Where things stand
 
-`main` is at `eb0b2b1`. No open pull requests. Epic #569 tracks the slice;
-`docs/roadmap.md` has the slice map.
+`main` is at `a46d262`. No open pull requests. Epic #569 tracks the slice;
+`docs/roadmap.md` has the slice map. Thirteen of the milestone's twenty issues
+are closed.
 
-**Closed: #577, #578, #579, #580, #581, #582, #585, #710, #714, #716**, plus
-issues 600, 671 and 640 earlier. Story #582 landed as PR #723, merged on local
-evidence with the owner's confirmation of the picture.
+**Closed: #577, #578, #579, #580, #581, #582, #585, #710, #714, #715, #716**,
+plus issues 600, 671 and 640 earlier. Issue #715 landed as PR #726, merged on
+local evidence.
 
 The painter packs the whole of boundary B into one ordered instance buffer,
-evaluates its SDF math by compute shader, and draws **solid fills, outline
-strokes, image fills, positioned glyph runs, and a solid fill masked by a baked
+evaluates its SDF math by compute shader, and draws **solid, gradient and image
+fills, outline strokes, positioned glyph runs, and a fill masked by a baked
 vector field** — clipped, composited in slice order at free-path opacity,
-offscreen or to a window's swapchain. Gradients, group opacity, shadows and blur
-are all **packed** and **not drawn**; each has a story below.
+offscreen or to a window's swapchain. Group opacity, shadows and blur are
+**packed** and **not drawn**; each has a story below, and they are now the whole
+of the gap.
 
-**A masked _gradient_ fill therefore still draws nothing**, and that is the one
-combination where two open stories meet: story #582 resolves the mask and its
-coverage is correct, and the colour it would modulate is issue #715's. The
-showcase's only baked vector field is exactly that node, so `surfaces` shows an
-empty tile there under this painter and a star under Skia. Expected, not a
-regression.
-
-Seven decision records carry the contracts. Read the ones your story touches:
+Nine decision records carry the contracts. Read the ones your story touches:
 
 - `docs/decisions/instance-buffer-contract.md` — the row, the spans, the order
 - `docs/decisions/shader-library-and-layer-2.md` — the one WGSL file, the
@@ -86,23 +95,53 @@ Seven decision records carry the contracts. Read the ones your story touches:
   extent on the row
 - `docs/decisions/atlas-residency-and-image-fills.md` — the atlas per texel
   format, the draw runs, the binding budget, the sampler
-- `docs/decisions/tables-the-vertex-stage-reads.md` — **read this before #715**:
-  which stage may read a table, the test that decides it, and the second sampler
+- `docs/decisions/tables-the-vertex-stage-reads.md` — which stage may read a
+  table, the test that decides it, and the second sampler
+- `docs/decisions/the-paint-parameter-heap.md` — **read this before adding any
+  fragment-side parameter table**: the heap, its regions, the fixed gradient
+  stride, and why strokes and images stayed out of it
 - `docs/decisions/sub-word-members-widen-rather-than-pad.md`
 
 ## Order from the epic
 
-**Issue #715 next** (gradient fills), and read the binding section below before
-starting it — the arithmetic changed when story #582 landed.
+**Story #583 next** (clips and render-target group opacity, plus debt #133),
+then **#584** (shadows and backdrop blur). **#586** needs both of them, because
+it measures the vocabulary against the reference painter — and it needs a GPU
+and a recorded adapter, so it cannot run in CI. Then **#587**, **#588**, then
+close #569.
 
-Then **#583 → #584**, **#586** (needs a GPU and a recorded adapter; cannot run
-in CI), **#587**, **#588**, then close #569.
+**#587 depends only on #585 and could start at any time**, if there is a reason
+to parallelise. #588 is last by design.
 
-**Issue #715 is a gap this slice found twice over.** Nobody drew strokes (#710)
-and nobody drew gradients (#715), both because a sentence in `render.rs` and in
-`pipelines-and-layer-3.md` named the owning story and the sentence was wrong.
-Both are corrected. **When prose tells you which story owns something, check it
-against that story's own body before believing it.**
+**What remains undrawn is exactly four things**, all of them #583's or #584's:
+the two shadow kinds, the backdrop blur, and render-target group opacity — the
+first three are `InstanceKind` variants that reach `fs_main`'s final `discard`,
+and the fourth is not an instance kind at all. It rides on `Instance::layer`,
+which the packer has set since story #578, with no compositing pass built to
+read it. Nothing else in the v0 paint vocabulary is missing.
+
+**Check story #583's own scope against the code before starting it.** Its body
+is titled "clips and group opacity" and describes clips as work to be done —
+"per-instance clip parameters evaluated in the shader … multiplying coverage".
+That is what `clip_coverage` in `paint.wgsl` already does, on every instance
+kind, and `git log -S clip_coverage` puts it in story #580's commit. So the
+clip half looks satisfied and the group-opacity half does not. **This is the
+third time a story body or a comment in this slice has named work that was
+already done or already owned elsewhere** (#710's strokes, #715's gradients, and
+now this) — the difference is that this one is caught before the story starts
+rather than three closes later. Confirm it, then agree the real scope with the
+owner rather than deciding alone; "a story's scope turns out to be wrong, or
+already done" is the first item under **Stop and ask** below.
+
+Debt #133 is the other half of the clip work and is untouched by any of that: a
+clip chain of depth _d_ stores O(d²) boxes, because each region re-stores its
+whole ancestry.
+
+**That accident is worth remembering, because it happened twice.** Nobody drew
+strokes (#710) and nobody drew gradients (#715), both because a sentence in
+`render.rs` and in `pipelines-and-layer-3.md` named the owning story and the
+sentence was wrong. Both are corrected. **When prose tells you which story owns
+something, check it against that story's own body before believing it.**
 
 Open debt worth knowing, none of it blocking: **#708** (`pack::pack` still walks
 every rect, so R-T4's CPU half is unmet), **#703** (`cargo doc` runs nowhere),
@@ -113,39 +152,57 @@ sheet is the likeliest of the three to exceed 2048 square), **#724** (a glyph
 atlas with `px_per_em` of zero divides unguarded, where every sibling degenerate
 case is named).
 
-## BOTH stages are now full — read this before starting #715
+**Issue #727 is filed and deliberately unscheduled** — a backend implementation
+guide with a worked example painter, for this epic's phase-end revision. Do not
+start it inside a story; it is scope for the revision to place.
+
+## BOTH stages are full, and the heap is where a table goes now
 
 `wgpu::Limits::downlevel_defaults` allows **four storage buffers per shader
-stage**. As of story #582 the pipeline binds seven, and the count is:
+stage**. The pipeline binds seven, and the count is unchanged by issue #715:
 
     vertex    instances(0), strokes(4), glyph runs(8), shapes(9)   4 of 4
-    fragment  solids(1), clips(2), strokes(4), images(5)           4 of 4
+    fragment  paints(1), clips(2), strokes(4), images(5)           4 of 4
 
-**Do not go looking for the route story #582 used.** It bound its two tables to
-the vertex stage and passed their values across in `VertexOut`, which cost the
-fragment stage no binding at all. That works only when **every value a fragment
-needs of a table is constant across the instance** — a glyph run's colour and
-range are, a coverage mask's plane, rectangle and range are. A gradient's stop
-array is **not**: it is indexed by a value the fragment computes from its own
-coordinate, so it does not cross as a varying at any width.
+**Binding 1 is no longer the solid table.** Since issue #715 it is the
+**paint-parameter heap**: one `array<vec4f>` holding the solid colours at base
+zero, then the gradient rows at a fixed twelve-word stride, with the region base
+travelling in the per-frame uniform. `Viewport` is renamed `Globals` and
+`gradient_base` took its old pad word, so the uniform is still sixteen bytes.
+`docs/decisions/the-paint-parameter-heap.md` is the record.
 
-So #715 has to change the structure, as it always did. A paint-parameter heap —
-one storage buffer of `vec4f` with a per-kind base offset — is still the obvious
-candidate, and `pipelines-and-layer-3.md` D6's `wgsl_to_wgpu` question rides
-along with it. `docs/decisions/tables-the-vertex-stage-reads.md` D2 and D4 state
-the test and the arithmetic; its "Alternatives considered" argues why the heap
-was not built inside #582, which is the reasoning to overturn if you disagree
-rather than to rediscover.
+**So the answer for the next fragment-side table is: extend the heap.** Do not
+go looking for a free binding — there is not one, and there will not be one.
+Strokes and images were deliberately left out of the heap because folding them
+in frees nothing; a new region costs one more base, and a base can travel in
+`Globals` beside `gradient_base`.
+
+**Story #582's route is still available for a table that qualifies**, and the
+test is unchanged: bind to the vertex stage and pass the values across in
+`VertexOut`, but **only when every value a fragment needs of that table is
+constant across the instance**. A glyph run's colour and range are; a coverage
+mask's plane, rectangle and range are. A gradient's stop array was not — it is
+indexed by a value the fragment computes from its own coordinate — and that is
+why the heap exists. `docs/decisions/tables-the-vertex-stage-reads.md` D2 states
+that test. The vertex stage is full, so that route now costs a varying rather
+than a binding.
+
+**Story #583 is constrained by something else, most likely.** Render-target
+group opacity is a second render target and an offscreen pass rather than
+another parameter table, so the storage-buffer count is probably not its limit.
+No decision record pins how this painter will build that pass yet, so treat this
+paragraph as an expectation to check rather than a fact.
 
 **This paragraph has been wrong twice, in opposite directions.** An early draft
 of the residency record claimed one free slot when there were none. Then the
 record written by story 582 claimed the varyings were counted against "the sixty
 `downlevel_defaults` allows" — wgpu 30 has no such field at all, the real limit
 is `max_inter_stage_shader_variables` at **15**, it counts `@location` slots
-rather than float components, and `VertexOut` now uses **9 of 15**. Both were
-caught by review rather than by the compiler, because a wrong number in prose
-compiles. **Read the limit out of the pinned crate before trusting any figure
-here:**
+rather than float components, and `VertexOut` uses **9 of 15**. Both were caught
+by review rather than by the compiler, because a wrong number in prose compiles.
+Issue #715's own review re-read both figures out of the pinned crate and they
+held, which is the only reason this section is trustworthy today. **Read the
+limit out of the pinned crate before trusting any figure here:**
 
     grep -n "max_inter_stage" ~/.cargo/registry/src/*/wgpu-types-30.0.0/src/limits.rs
 
@@ -228,14 +285,33 @@ Four things that fan-out taught, worth more than the individual bugs:
   while it kept passing.
 - **Give each review agent its own worktree or make it read-only**, emphatically
   and by name — five agents once destroyed each other's edits in one worktree.
-  Read-only held across all five this time.
+  Read-only held across all five this time, and again across all five on #715.
+
+**Issue #715 ran the same fan-out and the result had a different shape, which is
+worth knowing before the next one.** Two findings, **both prose, zero code
+defects across five agents** — a decision record misquoting the record it cited,
+and a shader comment naming a test that does not exist. The mutation pass had
+already taken the code defects. So the two instruments are not redundant and
+they do not overlap: **mutation finds what the code does wrong, the fan-out finds
+what the prose claims wrongly.** Run both; do not treat a clean mutation pass as
+a reason to skip the review, and do not expect the review to find arithmetic.
+
+The prose half is not cosmetic in this repository. A record is what the next
+story reads to decide its approach — the binding section above misled twice for
+exactly that reason — so a wrong citation is a wrong input to a decision, not a
+typo.
 
 ## What has actually cost time here
 
 - **`Instance::kind` carries the sub-kind — there is no separate tag.** Stories
   #583 and #584 each add a kind; map by an exhaustive `match`, never
   `enum as u32`, so a reorder in `dashpaint` is harmless and an addition is a
-  compile error. `stroke_align` and `scale_mode` in `render.rs` are the pattern.
+  compile error. `stroke_align`, `scale_mode` and `gradient_kind` in `render.rs`
+  are the pattern. `scale_mode` and `gradient_kind` are also pinned against the
+  shader's own source text by a test, which is what a constant stated in both
+  languages needs, because nothing in either language holds the two together.
+  `stroke_align` has no such test — a real gap, and the cheapest one in this
+  crate to close.
 - **"Packed but not drawn" is only safe if the shader actually discards.** A
   masked node drew as a plain rounded rectangle over its whole box from story
   #578 until #582: the packer set `Instance::shape` and the fragment stage never
@@ -257,6 +333,20 @@ Four things that fan-out taught, worth more than the individual bugs:
 - **The uniform-fixture trap has four levels**: uniform data, uniform
   _arguments_, uniform _symmetry_, uniform _environment_. Before writing a
   fixture, list what the code reads and vary each axis.
+- **One row cannot falsify a stride.** Any layout addressed as
+  `base + row * stride` is read correctly for row 0 at _every_ stride, because
+  row 0 sits at the base whatever the multiplier is. Issue #715's whole gradient
+  suite passed with the stride multiplied by anything until a second row was
+  added. **Two rows are the minimum for any indexed layout**, and the second one
+  must differ from the first in every field, or a wrong row still reads
+  plausibly. The same argument applies to a table with one entry, an atlas with
+  one payload, and a group with one member — which #583 will have to think about.
+- **A branch can be unobservable because a later iteration overwrites it.**
+  `gradient_segment_t`'s hard-stop answer only matters when the zero-width
+  segment is the _last_ one the ramp walks, since the walk keeps overwriting. A
+  fixture with the repeated offset in the middle of four stops could not tell
+  `1.0` from `0.0`, and only mutation said so. Before trusting a fixture over a
+  loop, ask which iteration's result actually survives.
 - **A mutation that does not apply looks exactly like a survivor.** Verify by
   the **absence of the original**, and compare the **whole block** — `grep -F`
   matches a multi-line pattern line by line, so a common line such as
@@ -302,7 +392,12 @@ Four things that fan-out taught, worth more than the individual bugs:
   Check the tree hash across a squash — it must not change.
 - **`corpus/showcase/tests/migration.rs` compares two independent arenas.**
 - **markdownlint reads a line-initial `#123` as a heading.** dprint reflows the
-  paragraph, so the safe fix is to reword rather than to move the number.
+  paragraph, so the safe fix is to reword rather than to move the number. It
+  caught this prompt twice more while issue #715 was being written up.
+- **An indented block in a Rust doc comment is a doctest, and it will fail the
+  build.** A layout diagram written as four-space-indented lines under `///`
+  compiles as Rust. Fence it as `` ```text ``. `just build` catches it, but
+  only at the doc-test gate, which is the last of the four.
 
 ## Stop and ask, rather than deciding alone
 
