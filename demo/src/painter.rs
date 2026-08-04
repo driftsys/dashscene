@@ -68,6 +68,19 @@ impl Choice {
         }
     }
 
+    /// The value this painter announces through the showcase's badge
+    /// signal, so the running window names the painter that drew it.
+    ///
+    /// The numbers are `showcase::badge`'s, not this module's. They are
+    /// taken from there rather than written again so the two crates
+    /// cannot be given different values in two places.
+    pub fn badge_value(self) -> f32 {
+        match self {
+            Choice::Skia => showcase::badge::SKIA,
+            Choice::Gpu => showcase::badge::GPU,
+        }
+    }
+
     /// Binds this painter to `window`.
     ///
     /// The one place either presenter is constructed, so the swap key and the
@@ -134,5 +147,31 @@ mod tests {
     fn each_painter_is_the_other_one_of_the_other() {
         assert_eq!(Choice::Skia.other(), Choice::Gpu);
         assert_eq!(Choice::Gpu.other().other(), Choice::Gpu);
+    }
+
+    /// The host and the showcase must agree on what each value means.
+    /// They are separate crates, and this is the one seam where they can
+    /// drift apart without either failing to compile.
+    #[test]
+    fn each_painter_announces_the_name_the_showcase_gives_that_value() {
+        assert_eq!(
+            showcase::badge::label(Choice::Skia.badge_value()),
+            "dashscene-skia"
+        );
+        assert_eq!(
+            showcase::badge::label(Choice::Gpu.badge_value()),
+            "dashscene-gpu"
+        );
+    }
+
+    /// A value the badge does not recognise renders as nothing, so a
+    /// painter announcing one would go unnamed on screen rather than
+    /// loudly wrong.
+    #[test]
+    fn no_painter_announces_the_unannounced_value() {
+        for painter in [Choice::Skia, Choice::Gpu] {
+            assert_ne!(painter.badge_value(), 0.0);
+            assert!(!showcase::badge::label(painter.badge_value()).is_empty());
+        }
     }
 }

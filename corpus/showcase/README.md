@@ -113,6 +113,7 @@ line.
 | 31 | reflow on a topology change, through `Prop::Visible` | `layout` | the bottom row: the outlined middle chip leaves and rejoins, its siblings close up and re-open, and the gap between them animates |
 | 32 | variant switch, through `Txn::set_variant` | `layout` | press **Space** in the bottom row: the rightmost chip narrows and turns teal, then leaves the laid-out set entirely, then comes back — three members overriding `Width`, `Fill` and `Visible`, and the row re-centres at each step. The same picture as line 31 by a different mechanism, which is the pairing `corpus/dsl-generated/variant-topology.md` already proves |
 | 33 | signal driven by input | all three | move the pointer left and right, or press Left Arrow and Right Arrow: the same signal the scripted phase drives moves under the pointer, through the same springs |
+| 34 | painter badge | all three | a dark pill in the top-left corner naming the painter that drew the frame: `dashscene-skia` by default, `dashscene-gpu` after pressing **P**. It is empty and fully transparent until the host announces a painter, which is why the still-image example renders nothing in its place |
 
 ## What the scenes do not cover, and why
 

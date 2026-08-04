@@ -521,8 +521,39 @@ impl Host {
                 // unchanged — which is the fifth case the forced list exists
                 // for.
                 self.force("a painter swap");
+                self.announce_painter();
             }
             Err(error) => self.fail(event_loop, error),
+        }
+    }
+
+    /// Tells the running scene which painter is drawing it, so the badge
+    /// names the painter on screen.
+    ///
+    /// A scene that declares no badge signal takes no write. That is what
+    /// makes the `--dsb` run need no special case here: a loaded document
+    /// carries no such signal, and its solver holds no typesetter, so a
+    /// label could not be staged there anyway.
+    ///
+    /// Writing the signal is also what makes a swap re-solve, but not
+    /// because of the text it carries: a write that only changes text or
+    /// opacity is paint-only and commits through the cached-rect replay,
+    /// which stages no glyph runs at all. The badge binds the same
+    /// signal to its pill's width as well
+    /// (`corpus/showcase/src/badge.rs`'s "Why the pill's width is
+    /// bound"), and a width write on a container with children cannot
+    /// patch a single cached rect, so it forces the tick to solve. That
+    /// is what commits through the scene's own solver and re-stages
+    /// every glyph run, the incoming name's included — without a
+    /// rebuild, which is what keeps a swap showing the difference
+    /// between the two painters rather than between two runs.
+    fn announce_painter(&mut self) {
+        let value = self.painter.badge_value();
+        let Some(live) = self.live.as_mut() else {
+            return;
+        };
+        if let Some(signal) = live.signal_named(showcase::badge::BACKEND) {
+            live.set(signal, value);
         }
     }
 
@@ -588,6 +619,7 @@ impl Host {
         // Generations count from a new arena, so the number the window shows
         // no longer names anything in this scene.
         self.shown = None;
+        self.announce_painter();
     }
 
     /// Applies one pulse to the running scene, and advances to the next scene

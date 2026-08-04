@@ -35,6 +35,7 @@
 use dashlang::{Channel, FormatSpec, LiveScene, Scene, Spring, node};
 use dashscene_core::{Arena, CrossAxisAlign, LayoutMode, TextAlign, TextAlignV};
 
+use crate::badge;
 use crate::resources::{self, ARABIC_FAMILY, LATIN_FAMILY};
 use crate::solver::ShowcaseSolver;
 use crate::vocabulary::{palette, text_style};
@@ -231,7 +232,8 @@ pub fn build(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
                 ),
         );
 
-    scene.roots([root]);
+    let label = badge::badge(&mut scene, width, height);
+    scene.roots([root, label]);
     scene.build_live(
         arena,
         Box::new(ShowcaseSolver::new(

@@ -124,28 +124,41 @@ registration. It is deliberately out of scope: it is a new concept in the
 builder's ownership model, where everything above is a mirror of a prop that
 already exists.
 
-## D5 — The migration is proven by per-scene equivalence, and the proof is kept
+## D5 — The migration was proven by per-scene equivalence, kept until a deliberate change retired it
 
 The showcase has no goldens by design — `goldens/` holds the frames the
 project pins, and these are frames it shows — so a migration that dropped a
 shadow on one scene would have been caught by nothing but a person looking at
-the window. `corpus/showcase/tests/migration.rs` therefore builds each scene
-both ways into separate arenas and compares the committed painter input
+the window. `corpus/showcase/tests/migration.rs` therefore built each scene
+both ways into separate arenas and compared the committed painter input
 exactly.
 
-The tests are **kept** after the migration, by the owner's explicit choice
-when offered their deletion. Keeping them obliges the file to hold a verbatim
-copy of each pre-migration builder, and two rules follow:
+The tests were **kept** after the migration, by the owner's explicit choice
+when offered their deletion. Keeping them obliged the file to hold a
+verbatim copy of each pre-migration builder, and two rules followed:
 
-- The frozen copies are frozen. They are never edited to track a later scene
-  change; their whole value is that they are the pre-migration authoring.
-- A deliberate scene change breaks its equivalence test, and that is the test
-  working. It asserts "this scene still paints what it painted at the
-  migration". Whoever makes that change deletes the scene's frozen builder and
-  its test in the same commit and says so in the message. It is a one-way
-  ratchet, not a specification of what the scene should look like.
+- The frozen copies were frozen. They were never edited to track a later
+  scene change; their whole value was that they were the pre-migration
+  authoring.
+- A deliberate scene change would break its equivalence test, and that was
+  the test working. It asserted "this scene still paints what it painted at
+  the migration". Whoever made that change would delete the scene's frozen
+  builder and its test in the same commit and say so in the message. It was
+  a one-way ratchet, not a specification of what the scene should look like.
 
-The comparison itself follows a rule that outlives this file:
+The comparison itself followed a rule that outlives this file:
+`docs/decisions/cross-arena-comparison-resolves-indices.md`.
+
+The ratchet reached its end in commit `535b547` (2026-08-04). That commit
+gave every scene a second root — a painter-naming badge — which is a
+deliberate change to all three scenes at once. Following the rule above, it
+deleted `surfaces_two_pass`/`surfaces_two_pass_paint`,
+`layout_two_pass`/`layout_two_pass_paint`,
+`typography_two_pass`/`typography_two_pass_paint`, the three equivalence
+tests that called them, and `corpus/showcase/tests/migration.rs` itself,
+since nothing in the file had a caller left once the three tests were gone.
+The comparison rule the tests exercised outlives this file and is recorded
+independently at
 `docs/decisions/cross-arena-comparison-resolves-indices.md`.
 
 ## Alternatives considered

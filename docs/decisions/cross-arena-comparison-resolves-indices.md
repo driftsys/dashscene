@@ -2,9 +2,8 @@
 
     status   accepted (2026-08-01)
     scope    every test that compares the committed output of two independent
-             arenas; today corpus/showcase/tests/migration.rs and the
-             DSL-equals-hand-built assertions in crates/dashlang/tests/ and
-             goldens/tooling/tests/v02_flex.rs
+             arenas — today the DSL-equals-hand-built assertions in
+             crates/dashlang/tests/ and goldens/tooling/tests/v02_flex.rs
 
 ## Context
 
@@ -12,7 +11,7 @@ The repo's standing way to prove two producers agree is to build both into
 separate arenas and compare the committed painter input
 (`docs/decisions/dashlang-flex-vocabulary.md` D3,
 `docs/decisions/dashlang-paint-vocabulary.md` D5). The showcase migration
-proof is the largest such comparison: three scenes, each built by a frozen
+proof was the largest such comparison: three scenes, each built by a frozen
 pre-migration builder and by the migrated one-pass builder.
 
 A committed value may carry an **index or an offset into a per-arena table** —
@@ -26,8 +25,8 @@ earns a new one, and the entry it replaced stays in the table
 Two arenas reaching the same picture by different commit sequences therefore
 earn different positions for the same content — and reaching it by different
 commit sequences is exactly what these comparisons are for. The frozen showcase
-builder stages all of its paint in the second commit; the migrated one stages
-all of it in the first except what needs an arena-issued image index.
+builder staged all of its paint in the second commit; the migrated one staged
+all of it in the first except what needed an arena-issued image index.
 
 ## Decision
 
@@ -41,8 +40,8 @@ assumption and the exact one.
 
 The corollary: a table a rect reaches only _through_ an index still has to be
 compared whole somewhere, or a swapped payload behind a matching index passes.
-`migration.rs` compares the image table whole for this reason, having compared
-paints per rect through `PaintTable::resolve`.
+`migration.rs` compared the image table whole for this reason, having
+compared paints per rect through `PaintTable::resolve`.
 
 ## Why this is written down rather than left in the helper
 
@@ -74,15 +73,19 @@ correct to compare, and it will happen again the next time a committed
 structure is flattened into a table. Any such flattening is a change to what
 this rule covers.
 
-The worked example lives in `corpus/showcase/tests/migration.rs`
-(`assert_same_committed` and its doc comment). That file is a one-way ratchet
-that is deleted scene by scene as the scenes deliberately change
-(`docs/decisions/dashlang-paint-vocabulary.md` D5), so the rule is recorded
-here, where it outlives its current host.
+The worked example lived in `corpus/showcase/tests/migration.rs`
+(`assert_same_committed` and its doc comment). That file was a one-way
+ratchet, deleted scene by scene as the scenes deliberately changed
+(`docs/decisions/dashlang-paint-vocabulary.md` D5). Commit `535b547`
+(2026-08-04) changed all three scenes at once, which emptied the file. The
+file was deleted whole in the same commit, rather than left with no test in
+it. The rule is recorded here, where it outlives its former host.
 
 ## Trace
 
-- Worked example: `corpus/showcase/tests/migration.rs`.
+- Worked example: `corpus/showcase/tests/migration.rs`, deleted in commit
+  `535b547` (2026-08-04) — its content is retrievable at that commit's
+  parent, `git show 535b547~1:corpus/showcase/tests/migration.rs`.
 - Related decisions: `docs/decisions/golden-comparison-space.md` (the same
   posture one layer down — goldens compare decoded pixels, never encoded
   bytes); `docs/decisions/resolved-clip-regions-at-commit.md` and
