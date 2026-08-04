@@ -1247,7 +1247,7 @@ fn the_instance_is_sixty_four_bytes_in_declaration_order() {
         ("clip_count", offset_of!(Instance, clip_count), 48),
         ("layer", offset_of!(Instance, layer), 52),
         ("opacity", offset_of!(Instance, opacity), 56),
-        ("_pad", offset_of!(Instance, _pad), 60),
+        ("outset", offset_of!(Instance, outset), 60),
     ];
     for (name, at, expected) in measured {
         assert_eq!(
@@ -1367,6 +1367,243 @@ fn a_drop_shadow_casts_from_the_stroked_silhouette() {
     }
 }
 
+/// One node's shadows and its stroke, so a test can state what the packer
+/// wrote for each without rebuilding a scene per claim.
+///
+/// `shadows` are pushed in the order given, and every value differs from every
+/// other so that a claim about one cannot be satisfied by another's number.
+fn shadowed_scene(stroke: Option<Stroke>, shadows: &[Shadow], opacity: f32) -> Scene {
+    let mut paints = PaintTable::new();
+    let fill = paints.intern_fill(&FillSpec::Solid {
+        color: color(1.0, 0.0, 0.0, 1.0),
+    });
+    let paint = paints.push_with(
+        PaintEntry {
+            fill,
+            corners: corners(10.0, 0.0, 3.0, 0.0),
+            ..PaintEntry::default()
+        },
+        EntryParts {
+            stroke,
+            shadows,
+            ..EntryParts::default()
+        },
+    );
+    Scene {
+        rects: vec![rect(
+            16.0,
+            20.0,
+            100.0,
+            60.0,
+            paint,
+            ClipIndex::UNCLIPPED,
+            opacity,
+        )],
+        paints,
+        images: ImageTable::new(),
+        clips: ClipTable::new(),
+        groups: Vec::new(),
+        glyphs: GlyphRunTable::new(),
+    }
+}
+
+/// A stroke's quad grows by the outset its alignment gives, and the packer is
+/// what says so.
+///
+/// The vertex stage computed this from the stroke row until story #584 and
+/// cannot any more: the paint heap a shadow's parameters live in is bound to the
+/// fragment stage alone, so the growth had to become a value both kinds carry.
+/// This is the stroke half of that move, and it is stated over the same three
+/// alignments `dashscene-skia`'s `stroke_outset` is.
+#[test]
+fn a_strokes_outset_is_the_reach_its_alignment_gives() {
+    let cases = [
+        (StrokeAlign::Inside, 0.0),
+        (StrokeAlign::Center, 2.0),
+        (StrokeAlign::Outside, 4.0),
+    ];
+    for (align, expected) in cases {
+        let scene = shadowed_scene(
+            Some(Stroke {
+                width: 4.0,
+                align,
+                color: color(0.0, 0.0, 0.0, 1.0),
+            }),
+            &[],
+            1.0,
+        );
+        let painter = scene.pack();
+        let instances = painter.instances().rect_instances(0);
+        let stroke = instances
+            .iter()
+            .find(|i| i.kind == InstanceKind::Stroke.as_u32())
+            .expect("the node is stroked");
+        assert_eq!(
+            stroke.outset, expected,
+            "a {align:?} stroke of width 4 reaches {expected} past the fill box"
+        );
+    }
+}
+
+/// A drop shadow's quad grows by its spread, its blur's support and its offset
+/// together; an inner shadow's does not grow at all.
+///
+/// Stated over two drop shadows that agree in nothing, because one cannot
+/// falsify a sum: a single fixture whose spread, offset and blur all took the
+/// same value would read the same at every weighting of the three.
+///
+/// The blur term is three sigma, and sigma is the authored radius through
+/// `dashpaint::BLUR_SIGMA_PER_RADIUS` — the number `blurred_rounded_box` in
+/// `shaders/sdf.wgsl` integrates over, so the quad and the coverage agree about
+/// where the shadow ends.
+#[test]
+fn a_drop_shadows_outset_covers_its_spread_its_blur_and_its_offset() {
+    let sigma = dashpaint::BLUR_SIGMA_PER_RADIUS;
+    let cases = [
+        (
+            Shadow {
+                kind: ShadowKind::Drop,
+                offset: Vec2 { x: 6.0, y: -2.0 },
+                blur: 8.0,
+                spread: 3.0,
+                color: color(0.0, 0.0, 0.0, 0.5),
+            },
+            3.0 + 3.0 * 8.0 * sigma + 6.0,
+        ),
+        (
+            Shadow {
+                kind: ShadowKind::Drop,
+                // The larger axis wins, and it is y here: a quad grows
+                // symmetrically, so the displacement it has to cover is the
+                // furthest of the two.
+                offset: Vec2 { x: -1.0, y: 9.0 },
+                blur: 2.0,
+                spread: 0.5,
+                color: color(0.0, 0.0, 0.0, 0.5),
+            },
+            0.5 + 3.0 * 2.0 * sigma + 9.0,
+        ),
+    ];
+    for (shadow, expected) in cases {
+        let scene = shadowed_scene(None, &[shadow], 1.0);
+        let painter = scene.pack();
+        let drop = painter.instances().rect_instances(0)[0];
+        assert_eq!(drop.kind, InstanceKind::ShadowDrop.as_u32());
+        assert_eq!(
+            drop.outset, expected,
+            "spread {} + three sigma of blur {} + offset",
+            shadow.spread, shadow.blur
+        );
+    }
+
+    // An inner shadow reaches nowhere: it is clipped to the node's own shape,
+    // whatever its offset and blur are, and this one's are the larger of the
+    // two above.
+    let scene = shadowed_scene(
+        None,
+        &[Shadow {
+            kind: ShadowKind::Inner,
+            offset: Vec2 { x: 6.0, y: -2.0 },
+            blur: 8.0,
+            spread: 3.0,
+            color: color(0.0, 0.0, 0.0, 0.5),
+        }],
+        1.0,
+    );
+    let painter = scene.pack();
+    let inner = painter.instances().rect_instances(0)[1];
+    assert_eq!(inner.kind, InstanceKind::ShadowInner.as_u32());
+    assert_eq!(inner.outset, 0.0);
+}
+
+/// A spread negative enough to collapse the shadow leaves the quad at the
+/// instance's own bounds rather than shrinking it.
+///
+/// The floor is not decoration: a negative outset would make the vertex stage
+/// build a quad *inside* `bounds`, and the shadow would be clipped by geometry
+/// that is smaller than the node it belongs to.
+#[test]
+fn a_shadow_that_collapses_does_not_shrink_its_own_quad() {
+    let scene = shadowed_scene(
+        None,
+        &[Shadow {
+            kind: ShadowKind::Drop,
+            offset: Vec2 { x: 0.0, y: 0.0 },
+            blur: 0.0,
+            spread: -40.0,
+            color: color(0.0, 0.0, 0.0, 1.0),
+        }],
+        1.0,
+    );
+    let painter = scene.pack();
+    assert_eq!(painter.instances().rect_instances(0)[0].outset, 0.0);
+}
+
+/// A shadow that inks nothing produces no instance at all — issue #285,
+/// implemented natively rather than reproduced and filed again.
+///
+/// Two ways to reach zero effective alpha, and both are the issue's own: a
+/// fully transparent shadow colour, and a node whose free-path alpha is zero.
+/// The rows of the shadows that *do* ink are asserted alongside, because the
+/// hazard of skipping an instance is that it shifts what the ones after it
+/// name — and a row here is the shadow's position in its entry's own list, not
+/// its position among the instances that were emitted.
+#[test]
+fn a_shadow_with_no_effective_alpha_emits_no_instance() {
+    let visible = |kind: ShadowKind, alpha: f32| Shadow {
+        kind,
+        offset: Vec2 { x: 1.0, y: 2.0 },
+        blur: 4.0,
+        spread: 0.0,
+        color: color(0.0, 0.0, 0.0, alpha),
+    };
+    let scene = shadowed_scene(
+        None,
+        &[
+            visible(ShadowKind::Drop, 0.0),
+            visible(ShadowKind::Drop, 0.75),
+            visible(ShadowKind::Inner, 0.0),
+            visible(ShadowKind::Inner, 0.5),
+        ],
+        1.0,
+    );
+    let painter = scene.pack();
+    let instances = painter.instances().rect_instances(0);
+    let shadows: Vec<(u32, u32)> = instances
+        .iter()
+        .filter(|i| InstanceKind::from_u32(i.kind).is_shadow())
+        .map(|i| (i.kind, i.row))
+        .collect();
+    assert_eq!(
+        shadows,
+        vec![
+            (InstanceKind::ShadowDrop.as_u32(), 1),
+            (InstanceKind::ShadowInner.as_u32(), 3),
+        ],
+        "only the two that ink are packed, each still naming its own row"
+    );
+
+    // And the same node at zero opacity packs neither, however opaque the
+    // shadow colours are.
+    let scene = shadowed_scene(
+        None,
+        &[
+            visible(ShadowKind::Drop, 1.0),
+            visible(ShadowKind::Inner, 1.0),
+        ],
+        0.0,
+    );
+    let painter = scene.pack();
+    assert!(
+        painter
+            .instances()
+            .rect_instances(0)
+            .iter()
+            .all(|i| !InstanceKind::from_u32(i.kind).is_shadow()),
+        "a node at zero opacity casts no shadow"
+    );
+}
+
 /// A baked-vector node whose fill is an image packs nothing, matching the
 /// reference painter, which draws nothing rather than an unmasked rectangle.
 #[test]
@@ -1432,7 +1669,8 @@ fn each_kind_names_its_table(scene: &Scene) {
     }
 }
 
-/// No two kinds share a discriminant, and every packed instance's pad is zero.
+/// No two kinds share a discriminant, and only the kinds that draw past their
+/// own bounds carry an outset.
 ///
 /// The first is the property the merge exists for: `kind` and `tag` used to be
 /// separate fields whose values collided — `PaintTag::Solid`,
@@ -1440,13 +1678,15 @@ fn each_kind_names_its_table(scene: &Scene) {
 /// fragment shader read the tag without the kind and painted a shadow from the
 /// solid table.
 ///
-/// The second is the price of the merge: the struct needs a declared pad to
-/// reach the 64-byte stride a shader sees, and a public pad is a field two
-/// otherwise-equal instances could differ in. Canonicalising it to zero is what
-/// `optional-members-are-ranges-of-arity-one.md` D2 does for an empty range,
-/// and for the same reason.
+/// The second was "every packed instance's pad is zero" until story #584 gave
+/// that word a meaning. The claim it becomes is stronger: a fill, a glyph, a
+/// backdrop and an **inner** shadow all draw inside the box their instance is
+/// stated over, so an outset on any of them would grow a quad for ink that does
+/// not exist. Only a stroke and a drop shadow may carry one, and neither may
+/// carry a negative one — a quad smaller than the instance's own bounds is not
+/// what the member means.
 #[test]
-fn kinds_are_distinct_and_every_packed_pad_is_zero() {
+fn kinds_are_distinct_and_only_the_kinds_that_draw_outside_carry_an_outset() {
     let kinds = [
         InstanceKind::ShadowDrop,
         InstanceKind::ShadowInner,
@@ -1463,12 +1703,29 @@ fn kinds_are_distinct_and_every_packed_pad_is_zero() {
         assert_eq!(InstanceKind::from_u32(kind.as_u32()), kind);
     }
 
+    let mut outside = 0;
     for scene in [vocabulary(), groups(), text()] {
         let painter = scene.pack();
         for instance in painter.instances().instances() {
-            assert_eq!(instance._pad, 0, "a packed instance carries a non-zero pad");
+            let kind = InstanceKind::from_u32(instance.kind);
+            assert!(
+                instance.outset >= 0.0,
+                "{kind:?} carries a negative outset, which would shrink its quad"
+            );
+            if matches!(kind, InstanceKind::Stroke | InstanceKind::ShadowDrop) {
+                outside += usize::from(instance.outset > 0.0);
+                continue;
+            }
+            assert_eq!(
+                instance.outset, 0.0,
+                "{kind:?} draws inside its own bounds and must not grow its quad"
+            );
         }
     }
+    assert!(
+        outside > 0,
+        "no instance in three scenes carries an outset, so the assertion above proved nothing"
+    );
 }
 
 /// A group starting past the rect table is named rather than silently dropped.

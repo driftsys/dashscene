@@ -1687,3 +1687,440 @@ fn a_groups_layer_objects_are_counted_and_then_reused() {
         "a repeated frame reallocated its layer"
     );
 }
+
+/// A node casting `shadows`, with an opaque fill of `fill`.
+fn shadowed(
+    paints: &mut PaintTable,
+    fill: [f32; 3],
+    shadows: &[dashpaint::Shadow],
+) -> dashpaint::PaintIndex {
+    let index = solid(paints, fill[0], fill[1], fill[2]);
+    let entry = *paints.resolve(index);
+    paints.push_with(
+        entry,
+        EntryParts {
+            shadows,
+            ..EntryParts::default()
+        },
+    )
+}
+
+/// One shadow, stated in full so that a fixture never inherits a default it
+/// then depends on.
+fn shadow(
+    kind: dashpaint::ShadowKind,
+    offset: (f32, f32),
+    blur: f32,
+    spread: f32,
+    colour: [f32; 4],
+) -> dashpaint::Shadow {
+    dashpaint::Shadow {
+        kind,
+        offset: dashpaint::Vec2 {
+            x: offset.0,
+            y: offset.1,
+        },
+        blur,
+        spread,
+        color: Color {
+            r: colour[0],
+            g: colour[1],
+            b: colour[2],
+            a: colour[3],
+        },
+    }
+}
+
+/// A drop shadow lands where its offset puts it, behind the node, and nowhere
+/// else.
+///
+/// Blur zero, so the edge is hard and the assertions are about *placement*
+/// rather than about falloff — `blurred_rounded_box` degenerates to the
+/// unblurred shape at sigma zero and the fixture takes that branch deliberately.
+///
+/// The offset is asymmetric — right and down by different amounts — because a
+/// fixture displaced equally on both axes cannot tell the two components apart,
+/// and one that reused the same number for the offset and the box's size could
+/// not tell a displacement from a growth.
+#[test]
+fn a_drop_shadow_lands_at_its_offset_behind_the_node() {
+    let mut paints = PaintTable::new();
+    let paint = shadowed(
+        &mut paints,
+        [1.0, 0.0, 0.0],
+        &[shadow(
+            dashpaint::ShadowKind::Drop,
+            (6.0, 10.0),
+            0.0,
+            0.0,
+            [0.0, 0.0, 1.0, 1.0],
+        )],
+    );
+    // The node's box is x 10..30, y 8..24; the shadow's is x 16..36, y 18..34.
+    let pixels = draw(
+        &[rect(10.0, 8.0, 20.0, 16.0, paint, ClipIndex::UNCLIPPED)],
+        &paints,
+        &ClipTable::new(),
+    );
+
+    near(
+        texel(&pixels, 33, 30),
+        [0, 0, 255, 255],
+        "the shadow alone, past the node's box on both axes",
+    );
+    near(
+        texel(&pixels, 20, 15),
+        [255, 0, 0, 255],
+        "the node's own fill, over the shadow rather than under it",
+    );
+    near(
+        texel(&pixels, 12, 10),
+        [255, 0, 0, 255],
+        "the corner the shadow was displaced away from is the fill's alone",
+    );
+    near(
+        texel(&pixels, 5, 4),
+        [0, 0, 0, 0],
+        "outside both boxes nothing is drawn",
+    );
+    near(
+        texel(&pixels, 33, 12),
+        [0, 0, 0, 0],
+        "and past the shadow's own box on one axis only, likewise",
+    );
+}
+
+/// A blurred drop shadow ramps rather than stepping, and it stops where the
+/// shader's own support ends.
+///
+/// The claim is the falloff's *shape* at gate resolution: saturated well inside
+/// the shadow, about half at its edge — a Gaussian's value at the boundary of
+/// the shape it blurs — and nothing at all past three sigma, which is the
+/// window `blurred_rounded_box` integrates over and the reach the packer sizes
+/// the quad by. **That last probe is what a clipped quad fails**: an instance
+/// whose outset did not cover the blur draws a hard cut where this expects a
+/// smooth zero, and the cut is inside the picture rather than at its edge.
+#[test]
+fn a_blurred_drop_shadow_falls_off_and_stops_at_three_sigma() {
+    let blur = 8.0;
+    let sigma = blur * dashpaint::BLUR_SIGMA_PER_RADIUS;
+    let mut paints = PaintTable::new();
+    let paint = shadowed(
+        &mut paints,
+        [1.0, 1.0, 1.0],
+        &[shadow(
+            dashpaint::ShadowKind::Drop,
+            (0.0, 0.0),
+            blur,
+            0.0,
+            [0.0, 0.0, 0.0, 1.0],
+        )],
+    );
+    // A small node, so the shadow's falloff has room on every side: box x
+    // 24..40, y 16..32, centred in the 64x48 target.
+    let pixels = draw(
+        &[rect(24.0, 16.0, 16.0, 16.0, paint, ClipIndex::UNCLIPPED)],
+        &paints,
+        &ClipTable::new(),
+    );
+
+    // Straight out from the box's left edge at its vertical centre, so the
+    // corner radii and the two axes' falloffs do not interact.
+    let left_edge = 24.0f32;
+    let alpha_at = |x: u32| texel(&pixels, x, 24)[3];
+
+    let edge = alpha_at(left_edge as u32 - 1);
+    assert!(
+        (100..=155).contains(&edge),
+        "a Gaussian's value at the edge of the shape it blurs is about half, and this was {edge}"
+    );
+    let further_out = alpha_at(20);
+    let deeper_in = alpha_at(27);
+    assert!(
+        further_out < edge,
+        "four units out the shadow has faded further than at the edge: {further_out} against {edge}"
+    );
+    assert!(
+        deeper_in > edge,
+        "and three units in it is denser: {deeper_in} against {edge}"
+    );
+    // The support's own boundary, derived from the constant rather than
+    // restated: three sigma out from the box's edge is where
+    // `blurred_rounded_box`'s window closes. A literal here would keep passing
+    // if the mapping changed and would stop proving anything.
+    let support = 3.0 * sigma;
+    let past = (left_edge - support - 1.0).floor() as u32;
+    let within = (left_edge - support + 2.0).ceil() as u32;
+    assert_eq!(
+        alpha_at(past),
+        0,
+        "past three sigma ({past} px) the shader's own window is empty"
+    );
+    assert!(
+        alpha_at(within) > 0,
+        "and inside it ({within} px) the shadow is still being drawn, so the probe above \
+         is a boundary rather than a region the quad never reached"
+    );
+}
+
+/// An inner shadow draws inside the node's shape and nowhere outside it, on the
+/// side its offset came from.
+///
+/// The complement of the drop-shadow case, and the one that would go unnoticed
+/// if the two shared a coverage: an inner shadow displaced by +x darkens the
+/// node's **left** edge, because the lit hole moved right and what is left
+/// behind is the shadow.
+#[test]
+fn an_inner_shadow_draws_inside_the_node_only() {
+    let mut paints = PaintTable::new();
+    let paint = shadowed(
+        &mut paints,
+        [1.0, 1.0, 1.0],
+        &[shadow(
+            dashpaint::ShadowKind::Inner,
+            (6.0, 0.0),
+            0.0,
+            0.0,
+            [0.0, 0.0, 1.0, 1.0],
+        )],
+    );
+    // Box x 16..48, y 12..36.
+    let pixels = draw(
+        &[rect(16.0, 12.0, 32.0, 24.0, paint, ClipIndex::UNCLIPPED)],
+        &paints,
+        &ClipTable::new(),
+    );
+
+    near(
+        texel(&pixels, 18, 24),
+        [0, 0, 255, 255],
+        "the band the hole's displacement left behind, inside the node's left edge",
+    );
+    near(
+        texel(&pixels, 30, 24),
+        [255, 255, 255, 255],
+        "the lit interior, where the hole is",
+    );
+    // **Half a unit outside the box, not two.** The quad an inner shadow is
+    // drawn on is its own bounds plus the antialiasing margin and nothing more,
+    // so a probe further out than that is discarded by the geometry whatever the
+    // coverage says — and a shadow that had forgotten to clip itself to the
+    // node's shape would still pass it. Pixel 15 is inside the quad and outside
+    // the shape, which is the only place the clip is observable at all.
+    near(
+        texel(&pixels, 15, 24),
+        [0, 0, 0, 0],
+        "an inner shadow is clipped to the node's shape, so it paints nothing \
+         just outside it",
+    );
+    near(
+        texel(&pixels, 50, 24),
+        [0, 0, 0, 0],
+        "and nothing further out either, on the side its offset points at",
+    );
+}
+
+/// An inner shadow's spread insets its lit hole, so the band thickens on every
+/// side rather than on the side an offset points at.
+///
+/// The offset case above cannot state this: its shadow has no spread, so the
+/// hole's *size* is never exercised and a painter that added the spread where it
+/// should subtract it draws the same picture. Here the offset is zero and the
+/// spread is the only term, which is the other half of the same arithmetic.
+#[test]
+fn an_inner_shadows_spread_thickens_the_band_on_every_side() {
+    let mut paints = PaintTable::new();
+    let paint = shadowed(
+        &mut paints,
+        [1.0, 1.0, 1.0],
+        &[shadow(
+            dashpaint::ShadowKind::Inner,
+            (0.0, 0.0),
+            0.0,
+            6.0,
+            [0.0, 0.0, 1.0, 1.0],
+        )],
+    );
+    // Box x 16..48, y 12..36; the hole insets to x 22..42, y 18..30.
+    let pixels = draw(
+        &[rect(16.0, 12.0, 32.0, 24.0, paint, ClipIndex::UNCLIPPED)],
+        &paints,
+        &ClipTable::new(),
+    );
+
+    for (x, y, side) in [
+        (19, 24, "left"),
+        (45, 24, "right"),
+        (32, 15, "top"),
+        (32, 33, "bottom"),
+    ] {
+        near(
+            texel(&pixels, x, y),
+            [0, 0, 255, 255],
+            &format!("the spread band on the {side} side"),
+        );
+    }
+    near(
+        texel(&pixels, 32, 24),
+        [255, 255, 255, 255],
+        "and the hole the spread left in the middle",
+    );
+}
+
+/// Two shadows in one frame draw their own rows.
+///
+/// **The pixel-side statement of the stride**, and the reason it is worth
+/// making twice: `paint_heap`'s unit tests read the words the CPU wrote, and
+/// this reads what the fragment stage found at `shadow_base + row *
+/// SHADOW_WORDS`. A base or a stride that disagreed with the writer would give
+/// the second shadow the first's colour and geometry — a well-formed picture,
+/// which no coverage assertion catches.
+///
+/// The two shadows differ in colour *and* in offset, so a frame that read one
+/// row for both fails on where the ink is as well as on what colour it is.
+///
+/// **A gradient is interned first, deliberately.** Without one the frame's
+/// gradient region is empty, so `shadow_base` and `gradient_base` hold the same
+/// number and a uniform that carried either would draw the same picture. That
+/// is the uniform-environment trap: the fixture would be varied in every field
+/// the shadow rows hold and still blind to which base found them.
+#[test]
+fn two_shadows_in_one_frame_draw_their_own_rows() {
+    let mut paints = PaintTable::new();
+    paints.intern_fill(&ramp(dashpaint::GradientKind::Linear));
+    let first = shadowed(
+        &mut paints,
+        [1.0, 1.0, 1.0],
+        &[shadow(
+            dashpaint::ShadowKind::Drop,
+            (5.0, 0.0),
+            0.0,
+            0.0,
+            [1.0, 0.0, 0.0, 1.0],
+        )],
+    );
+    let second = shadowed(
+        &mut paints,
+        [1.0, 1.0, 1.0],
+        &[shadow(
+            dashpaint::ShadowKind::Drop,
+            (0.0, 5.0),
+            0.0,
+            0.0,
+            [0.0, 0.0, 1.0, 1.0],
+        )],
+    );
+    let pixels = draw(
+        &[
+            rect(4.0, 4.0, 12.0, 12.0, first, ClipIndex::UNCLIPPED),
+            rect(36.0, 4.0, 12.0, 12.0, second, ClipIndex::UNCLIPPED),
+        ],
+        &paints,
+        &ClipTable::new(),
+    );
+
+    near(
+        texel(&pixels, 19, 10),
+        [255, 0, 0, 255],
+        "the first node's shadow: red, and displaced along x",
+    );
+    near(
+        texel(&pixels, 40, 19),
+        [0, 0, 255, 255],
+        "the second node's shadow: blue, and displaced along y — its own row",
+    );
+    near(
+        texel(&pixels, 40, 2),
+        [0, 0, 0, 0],
+        "the second shadow did not take the first's x displacement",
+    );
+}
+
+/// A shadow's spread grows the shape it casts, and a negative spread shrinks it.
+///
+/// Stated over a hard-edged shadow at no offset, so the only thing that can move
+/// the boundary is the spread itself.
+///
+/// The node carries **one rounded corner and three sharp ones**, which is what
+/// makes the corner rule falsifiable: a spread grows a rounded corner's radius
+/// and leaves a sharp corner sharp (CSS's rule, and the reference painter's
+/// `spread_corners`). A fixture with four sharp corners would draw the same
+/// picture whatever the corner arithmetic did, and a fixture with four equal
+/// radii could not tell a per-corner adjustment from a global one.
+#[test]
+fn a_shadows_spread_grows_the_shape_it_casts() {
+    let cast = |spread: f32| {
+        let mut paints = PaintTable::new();
+        let index = solid(&mut paints, 1.0, 1.0, 1.0);
+        let mut entry = *paints.resolve(index);
+        entry.corners = CornerRadii {
+            top_left: 8.0,
+            top_right: 0.0,
+            bottom_right: 0.0,
+            bottom_left: 0.0,
+        };
+        let paint = paints.push_with(
+            entry,
+            EntryParts {
+                shadows: &[shadow(
+                    dashpaint::ShadowKind::Drop,
+                    (0.0, 0.0),
+                    0.0,
+                    spread,
+                    [0.0, 0.0, 1.0, 1.0],
+                )],
+                ..EntryParts::default()
+            },
+        );
+        // Box x 24..40, y 16..32.
+        draw(
+            &[rect(24.0, 16.0, 16.0, 16.0, paint, ClipIndex::UNCLIPPED)],
+            &paints,
+            &ClipTable::new(),
+        )
+    };
+
+    // Four units left of the box's edge: empty at no spread, shadow at +6.
+    let none = cast(0.0);
+    near(
+        texel(&none, 20, 24),
+        [0, 0, 0, 0],
+        "with no spread the shadow ends at the node's own edge",
+    );
+    let grown = cast(6.0);
+    near(
+        texel(&grown, 20, 24),
+        [0, 0, 255, 255],
+        "a spread of 6 puts the shadow's edge 6 units out",
+    );
+    // The corners, at the spread shape's own top-left and top-right. The box
+    // grows to x 18..46, y 10..38, so the rounded corner's radius grows from 8
+    // to 14 and the sharp one stays at 0.
+    //
+    // **The probe is chosen to separate the two radii, not merely to be outside
+    // the shape.** A sample far into the corner is outside at 8 *and* at 14, and
+    // says nothing: it survived exactly that mutation. Pixel (21, 13) is 14.85
+    // units from the grown corner's centre and 6.36 from the unspread one, so it
+    // is outside the correct shape and inside the one a painter draws if it
+    // hands the shadow the node's own radii.
+    near(
+        texel(&grown, 21, 13),
+        [0, 0, 0, 0],
+        "the rounded corner grew with the spread; at the node's own radius this \
+         sample would be inside the shadow",
+    );
+    near(
+        texel(&grown, 45, 11),
+        [0, 0, 255, 255],
+        "and the sharp corner stayed sharp — a spread that rounded it would cut \
+         this sample away",
+    );
+    // A negative spread pulls the shadow inside the node, where the node's own
+    // opaque fill covers it — so the visible statement is at the node's edge.
+    let shrunk = cast(-6.0);
+    near(
+        texel(&shrunk, 25, 24),
+        [255, 255, 255, 255],
+        "a spread of -6 pulls the shadow's edge inside the node, which covers it",
+    );
+}

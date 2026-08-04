@@ -1181,9 +1181,12 @@ fn apply_opacity(paint: &mut skia_safe::Paint, opacity: f32) {
 
 /// Sigma per unit of blur radius — Figma's measured constant.
 ///
-/// Named so the value has one home and one place to cite; the mapping it
-/// belongs to is documented on [`blur_sigma`].
-const FIGMA_BLUR_SIGMA_PER_RADIUS: f32 = 0.4375;
+/// The value's one home is `dashpaint`, on boundary B, since story #584 gave
+/// the lean painter the same mapping to apply: two painters restating a
+/// measured number is exactly the drift the scale-mode and gradient-kind pins
+/// exist to catch. This alias keeps the name the measurements below are written
+/// against; the mapping it belongs to is documented on [`blur_sigma`].
+const FIGMA_BLUR_SIGMA_PER_RADIUS: f32 = dashpaint::BLUR_SIGMA_PER_RADIUS;
 
 /// The Gaussian sigma a blur radius maps to. Skia takes a sigma, not a
 /// radius, so a painter has to choose the mapping.

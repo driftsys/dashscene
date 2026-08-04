@@ -1,8 +1,8 @@
 # The fill parameters the fragment stage reads share one storage buffer
 
-    status   accepted (2026-08-04)
+    status   accepted (2026-08-04), extended by story #584 with a third region
     scope    dashscene-gpu's bind group layout, shaders/paint.wgsl, the gradient
-             fill, and the stop ramp in shaders/sdf.wgsl
+             fill, the stop ramp in shaders/sdf.wgsl, and the shadow rows
 
 ## Context
 
@@ -32,13 +32,14 @@ that heap as built.
 
 ## Decision
 
-**D1 — binding 1 is a heap of `vec4f` words, not the solid table.** Two regions:
-the solid colours at base zero, then the gradient rows. The fragment stage's
-binding count is unchanged at four.
+**D1 — binding 1 is a heap of `vec4f` words, not the solid table.** Three
+regions since story #584: the solid colours at base zero, then the gradient
+rows, then the shadow rows. The fragment stage's binding count is unchanged at
+four.
 
 **D2 — the solid region is first, so a solid fill's colour is still
-`paints[row]`.** Only the gradient region needs a base, and it travels in the
-per-frame uniform as `Globals::gradient_base`.
+`paints[row]`.** Every region after it needs a base, and each travels in the
+per-frame uniform: `Globals::gradient_base`, then `Globals::shadow_base`.
 
 **D3 — a gradient occupies a fixed twelve words**, whatever its stop count:
 
@@ -47,6 +48,22 @@ per-frame uniform as `Globals::gradient_base`.
     +2        stop offsets 0..3
     +3        stop offsets 4..7
     +4 .. +11 stop colours 0..7
+
+**D3a — a shadow occupies two words** (story #584):
+
+    +0   (offset.x, offset.y, sigma, spread)
+    +1   the shadow's colour
+
+**The sigma, not the authored blur radius.** `dashpaint::BLUR_SIGMA_PER_RADIUS`
+is the mapping, and applying it on the Rust side keeps a measured number out of
+the shader entirely — `blur-sigma-is-figmas-mapping.md` is where that number
+comes from, and it is now shared rather than restated per painter.
+
+**The kind is not on the row.** A drop and an inner shadow are separate
+`InstanceKind` variants, so the fragment stage knows which coverage to build
+before it reads the row, and `ShadowKind`'s discriminant never crosses into the
+shader — which is what keeps the tag collision that once painted a shadow from
+the solid table unrepresentable (`instance-buffer-contract.md` D3).
 
 **D4 — the strokes and images tables stay in their own bindings.** The heap
 holds what it had to hold to fit, and nothing else.
@@ -185,8 +202,14 @@ stride.
 
 **No new binding**, on either stage. The count is still four and four.
 
-**One extra uniform member**, and the uniform is the same sixteen bytes it was:
-`gradient_base` took the slot the old trailing pad word held.
+**Two extra uniform members, and the uniform is thirty-two bytes.** It was
+sixteen when this record was first written, because `gradient_base` took the
+slot the old trailing pad word held and nothing grew. `shadow_base` had no such
+slot to take: five scalars is twenty bytes, and a uniform-address-space struct's
+size rounds up to a multiple of sixteen, so both declarations carry three pad
+words to the same 32. The pads are scalars on the WGSL side and never one
+three-component vector, which aligns to sixteen there and would put the struct
+at 48 while the Rust type stayed at 32.
 
 It does not change `Instance`, the instance-buffer contract, the layer-1
 goldens, or any table on boundary B. It does not change what a solid fill,

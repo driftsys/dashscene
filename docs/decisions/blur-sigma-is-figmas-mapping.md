@@ -3,9 +3,11 @@
     status   accepted (2026-07-31). Settles issue #412, open since PR #410
              (story #393 stage B-4) and held at the 2026-07-27 triage
              pending the blur colour space, which was settled 2026-07-30.
-    scope    crates/dashscene-skia (the mapping, shared by shadow blur and
-             backdrop blur), goldens (three golden images re-recorded, and
-             the test that pins the constant)
+    scope    crates/dashpaint (the constant's home since story #584),
+             crates/dashscene-skia and crates/dashscene-gpu (the two
+             painters that apply it, to shadow blur and backdrop blur
+             alike), goldens (three golden images re-recorded, and the
+             test that pins the constant)
     binds    the reference painter's output. It does not bind other
              painters the way the blend space does — see "What this does
              and does not bind" below
@@ -132,6 +134,14 @@ has always been stated once, on the argument that a shadow blur and a backdrop
 blur are the same mapping and two copies could drift apart. Until now that was
 an assertion; the shadow frames and the backdrop frame agreeing on the same
 window is the evidence for it. Nothing needs to split per effect.
+
+**Story #584 moved the constant to `dashpaint::BLUR_SIGMA_PER_RADIUS`**, where
+both painters cite it. The argument for stating it once is the one above, and a
+second painter restating a measured number is the same drift one crate over —
+`dashscene-skia` keeps its own name as an alias, so the measurements below stay
+readable against the code they were taken from. This does not make the value a
+contract term: "What this does and does not bind" is unchanged, and the constant
+carries that caveat in its own doc comment on boundary B.
 
 ## What is still not settled
 

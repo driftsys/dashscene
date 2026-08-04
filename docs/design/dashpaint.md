@@ -146,6 +146,17 @@ All types and the trait live in `crates/dashpaint/src/lib.rs`:
   rather than of one backend: `dashscene-skia` asserts against it and
   `dashscene-validator` rejects it upstream (P4), and two hard-coded
   copies that drifted would make the validator's guarantee false.
+- `BLUR_SIGMA_PER_RADIUS` — the Gaussian sigma one unit of blur radius
+  maps to, 0.4375, Figma's measured constant
+  (`docs/decisions/blur-sigma-is-figmas-mapping.md`). It lives here from
+  story #584, when a second painter needed it: `dashscene-skia` measured
+  it and `dashscene-gpu` applies it when it writes a shadow's row.
+  **Unlike the blend space, it is not a contract term** — a painter
+  should match it where it reasonably can, and one approximating the
+  blur on constrained hardware will not match it exactly. What sharing
+  it prevents is two copies of a measured number drifting apart, which
+  is what the `Blur` doc comment says and what the scale-mode and
+  gradient-kind pins exist to catch elsewhere.
 - `PaintEntry` — the paint-table entry, `#[repr(C)]`, `Copy`, 64 bytes
   and seven fixed-width members since story #578: `fill: PaintKind`
   ([`PaintKind::NONE`] = a paint-less, layout-only node),

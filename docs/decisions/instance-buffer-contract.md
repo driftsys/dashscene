@@ -33,19 +33,22 @@ kind, which is what GPUI does.
 
 **D2 — the instance is 64 bytes of fixed-width members.** Two four-float
 vectors (`bounds`, `corners`) followed by eight 4-byte scalars (`kind`, `row`,
-`shape`, `clip_offset`, `clip_count`, `layer`, `opacity`, `_pad`).
+`shape`, `clip_offset`, `clip_count`, `layer`, `opacity`, `outset`).
 `#[repr(C)]`, no implicit padding, no `bool`, no payload enum, no nested
 collection — story #578's rules for anything crossing a language seam.
 
-The vectors lead so both sit at a 16-byte offset. `_pad` is declared because a
-struct containing a four-float member has an alignment of 16, so the array
-stride a shader sees rounds up to 64 whatever the members add to: without it
-the Rust type would be 60 bytes and every element after the first would be read
-from the wrong offset. It is public because `bytemuck::Pod` requires it, which
-makes it a field two otherwise-equal instances could differ in — the hazard
-`sub-word-members-widen-rather-than-pad.md` rejected a `_pad` for. There the
-hole could be removed; here it can only be named, so the packer writes zero and
-a test asserts every packed instance carries zero.
+The vectors lead so both sit at a 16-byte offset. The eighth scalar exists
+because a struct containing a four-float member has an alignment of 16, so the
+array stride a shader sees rounds up to 64 whatever the members add to: without
+it the Rust type would be 60 bytes and every element after the first would be
+read from the wrong offset.
+
+**That word was declared padding until story #584, and is now `outset`.** It
+holds how far past `bounds` the instance's ink reaches — see D9 — which removed
+the hazard the padding carried rather than working around it: a public `_pad` is
+a field two otherwise-equal instances could differ in, the reason
+`sub-word-members-widen-rather-than-pad.md` rejected one, and the answer here
+was to give the word a meaning rather than to canonicalise it to zero.
 
 **D3 — a parameter set is named by a row, and `kind` alone says which table.**
 `InstanceKind` carries the sub-kind: `FillSolid`, `FillGradient`, `FillImage`,
@@ -104,6 +107,18 @@ full stroke width and a Center stroke by half
 instance; the shadow's own offset, spread and blur stay on the row it names.
 An inner shadow takes no outset.
 
+**D9 — `outset` says how far past `bounds` the ink reaches, and the packer
+resolves it (story #584).** Non-zero for the two kinds whose ink does not
+coincide with the box they are stated over: a stroke, by what its alignment puts
+outside the fill box, and a drop shadow, by its spread, its blur's support and
+its offset together. Zero for every other kind, including an inner shadow, whose
+ink is confined to the node's own shape.
+
+Only the **lower** bound is a correctness property. A quad too small clips ink —
+which reads as a thinner stroke or a cropped shadow rather than as a defect — and
+a quad too large shades fragments the coverage then discards, drawing the same
+picture at a fill-rate cost that is R-T2's concern.
+
 ## Why
 
 **D1, against per-kind buffers.** Boundary B says "slice order defines
@@ -119,6 +134,21 @@ table.
 binding this as a storage-buffer element repacks nothing. `kind` is `u32`
 rather than `u8` because a shader's smallest addressable scalar is 32 bits and
 the struct has no byte to save by narrowing it.
+
+**D9, and why the growth is not computed in the shader.** Story #584 moved it:
+before that the vertex stage read the stroke row and derived the outset from its
+width and alignment. A shadow's parameters are in the paint-parameter heap
+(`the-paint-parameter-heap.md`), which is bound to the **fragment** stage alone,
+and both stages already read the four storage buffers
+`wgpu::Limits::downlevel_defaults` allows — so the stage that builds the quad
+could not read a shadow row at any price. Resolving both kinds in the packer is
+what the free word was there to make possible, and it takes the stroke table out
+of the vertex stage with it: that stage now reads three storage buffers of four.
+
+The alternative was to grow `bounds` itself and have the fragment stage subtract
+the same padding back out, which needs the growth computed identically in two
+languages against the same floats. A value written once and read once is the
+arrangement that cannot drift.
 
 **D5, on why the order is copied rather than derived.** Two painters that
 composite one node's parts in different orders produce different pixels from

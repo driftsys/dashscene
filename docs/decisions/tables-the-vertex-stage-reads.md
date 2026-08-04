@@ -31,6 +31,9 @@ carries their values to the fragment stage.**
     vertex    instances(0), strokes(4), glyph runs(8), shapes(9)   4 of 4
     fragment  solids(1), clips(2), strokes(4), images(5)           4 of 4
 
+Story #584 changed the vertex row: the stroke table left that stage, which now
+reads three of four. See D4.
+
 **D2 — the test that decides whether a table may take this route is whether
 every value a fragment needs of it is constant across the instance.** A glyph
 run's colour and range are; a coverage mask's plane, rectangle and range are. A
@@ -50,6 +53,20 @@ array share binding 1 with the solid colours, which is the heap D4 below names �
 `docs/decisions/the-paint-parameter-heap.md` records it. Nothing in this record
 changed: the two tables story #582 added are still vertex-only, and D2's test is
 still what decided that they could be.
+
+**D4 is no longer true as written, and story #584 is why.** That story needed the
+quad's outset for a shadow, whose parameters live in the heap the fragment stage
+binds — a table this stage cannot read at any price. The outset moved onto
+`Instance` instead (`instance-buffer-contract.md` D9), and the stroke's outset
+moved with it, so the stroke table left the vertex stage:
+
+    vertex    instances(0), glyph runs(8), shapes(9)              3 of 4
+    fragment  paints(1), clips(2), strokes(4), images(5)          4 of 4
+
+So this route **can** be taken once more. What has not changed is D2's test, and
+the reason a free slot is not an invitation: a value that fits on the instance
+costs no binding at all, and the free slot exists because story #584 preferred
+that.
 
 **D5 — the MSDF atlas is sampled through a second, filtering sampler.** Image
 fills keep the nearest sampler `docs/decisions/atlas-residency-and-image-fills.md`

@@ -19,7 +19,7 @@
 //!   and it is one this painter shares: a group's ink reaches past its rect
 //!   range through shadows and blurs, so a tight bound would have to be derived
 //!   from the effects rather than from the geometry, and getting it wrong moves
-//!   pixels. Story #584 adds exactly those effects.
+//!   pixels. Story #584 added the shadows, and story 733 adds the blur.
 //! - the composite is **one source-over draw of the layer at the origin,
 //!   modulated by the group's alpha** — `blend_layer`'s counterpart. A 1:1
 //!   pixel copy, so it samples by `textureLoad` and needs no sampler, no

@@ -2,7 +2,7 @@
 //! native and web from one codebase
 //! (`docs/decisions/wgpu-is-the-lean-painter.md`).
 //!
-//! # Status: the paint vocabulary less shadows and blur
+//! # Status: the paint vocabulary less the backdrop blur
 //!
 //! Story #577 stood the crate up against boundary B — "the entire painter
 //! input" (`docs/design/architecture.md`) — so that the trait was proven
@@ -55,12 +55,23 @@
 //! full
 //! (`docs/decisions/group-opacity-draws-into-a-layer-and-a-second-pipeline-composites-it.md`).
 //!
+//! Story #584 drew the two shadow kinds. The closed form was already in
+//! [`shader::SDF_WGSL`] and layer 2 already measured it; what was missing is
+//! that a shadow's parameters reached the device through nothing, so the row
+//! every shadow instance named pointed into a table no binding carried. They
+//! extend the paint heap by a third region, and the quad growth a drop shadow
+//! needs moved onto `Instance::outset` — the vertex stage cannot read that
+//! heap, and it stopped reading the stroke rows in the same move
+//! (`docs/decisions/instance-buffer-contract.md` D9).
+//!
 //! What draws is rounded rects with a solid, gradient or image fill, their
-//! stroke, positioned glyph runs, and a fill masked by a baked vector field —
-//! all clipped by their region, and render-target group opacity as an
-//! offscreen layer composited at the group's alpha
+//! stroke, positioned glyph runs, a fill masked by a baked vector field, and
+//! both shadow kinds — all clipped by their region, and render-target group
+//! opacity as an offscreen layer composited at the group's alpha
 //! (`docs/decisions/group-opacity-draws-into-a-layer-and-a-second-pipeline-composites-it.md`).
-//! Shadows and blur are packed and not drawn; both are story #584's.
+//! The backdrop blur is packed and not drawn, and it is story 733's: it reads
+//! what is already in the render target, which no binding on the paint
+//! pipeline can do.
 //!
 //! # Why this crate is named for the role
 //!
