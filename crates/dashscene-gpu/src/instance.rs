@@ -269,22 +269,43 @@ pub struct Instance {
     /// The free-path alpha this instance's color is multiplied by —
     /// [`dashpaint::RectEntry::opacity`], carried through unchanged.
     pub opacity: f32,
-    /// Declared padding, and always zero.
+    /// How far past [`bounds`](Self::bounds) this instance's ink reaches, in
+    /// document units, on every side — what the vertex stage grows the quad by
+    /// so the geometry does not clip the ink.
     ///
-    /// A struct carrying a four-float vector has an alignment of 16, so its
-    /// array stride rounds up to 64 whatever its members add to. Without this
-    /// word the Rust type would be 60 bytes and the shader's view of the same
-    /// array would be 64 — every element after the first read from the wrong
-    /// offset. `bytemuck::Pod` refuses a type with *implicit* padding, so
-    /// declaring it is also what keeps that derive.
+    /// Zero for a fill, a glyph and a backdrop, which draw inside their own
+    /// box. Non-zero for the two kinds that do not:
     ///
-    /// It is public because `Pod` requires it, which makes it a field two
-    /// otherwise-equal instances could differ in — the equality hazard
-    /// `docs/decisions/sub-word-members-widen-rather-than-pad.md` rejected a
-    /// `_pad` member for. Here there was no way to remove the hole, only to
-    /// name it, so the packer writes zero and a test asserts every packed
-    /// instance carries zero.
-    pub _pad: u32,
+    /// - a **stroke**, by the outset its alignment gives — a full width
+    ///   outside, half a width centred, nothing inside;
+    /// - a **drop shadow**, by its spread, its blur's support and its offset
+    ///   together, since a drop shadow is drawn displaced from the silhouette
+    ///   `bounds` states.
+    ///
+    /// An **inner shadow** is zero: its ink is confined to the node's own
+    /// shape, however far its offset and blur reach.
+    ///
+    /// **Only the lower bound is a correctness property.** A quad too small
+    /// clips ink — which looks like a thinner stroke or a cropped shadow rather
+    /// than like a bug — while a quad too large shades fragments the coverage
+    /// then discards and draws exactly the same picture. What a generous value
+    /// costs is fill rate, which is R-T2's concern.
+    ///
+    /// # Why the packer resolves this rather than the shader
+    ///
+    /// It was the shader's until story #584, reading the stroke row in the
+    /// vertex stage. A shadow's parameters live in the paint heap, which is
+    /// bound to the **fragment** stage only, and both stages are at the four
+    /// storage buffers `wgpu::Limits::downlevel_defaults` allows — so the
+    /// vertex stage could not have read a shadow row without exceeding its own
+    /// limit. Resolving both kinds here instead is what the word this member
+    /// occupies was free for: the struct's alignment rounds its stride to 64
+    /// whatever its members add to, and the padding that filled the hole is now
+    /// a value.
+    ///
+    /// It also takes the stroke table out of the vertex stage, which then reads
+    /// three storage buffers rather than four.
+    pub outset: f32,
 }
 
 impl Instance {
@@ -519,7 +540,7 @@ impl InstanceBuffer {
             let _ = writeln!(
                 out,
                 "{index:>4} {:<13} row {} shape {} clip {}..{} layer {} opacity {:?} \
-                 bounds {:?} corners {:?}",
+                 outset {:?} bounds {:?} corners {:?}",
                 kind.name(),
                 instance.row,
                 instance.shape,
@@ -527,6 +548,7 @@ impl InstanceBuffer {
                 instance.clip_offset + instance.clip_count,
                 instance.layer,
                 instance.opacity,
+                instance.outset,
                 instance.bounds,
                 instance.corners,
             );

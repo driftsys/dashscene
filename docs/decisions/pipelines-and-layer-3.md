@@ -86,8 +86,8 @@ trigger.
 **D6 revisited at five bindings (story #710), and still not adopted.** The
 trigger above fired earlier than expected: drawing strokes needed the stroke
 table, which is a fifth binding on the same group. The argument did not change
-with it. The group is still one group, its entries are still four storage
-buffers and a uniform declared in one place each side, and the mismatch is
+with it. The group was still one group, its entries were still four storage
+buffers and a uniform declared in one place each side, and the mismatch was
 still a named test failure rather than a silent one — `stroke_align` maps the
 alignment by an exhaustive `match`, so the enum half of the hazard is a compile
 error already. What would change the answer is a _second_ group, or bindings
@@ -102,6 +102,14 @@ became a heap of `vec4f` words holding the solid colours and the gradient rows
 together. The bind group itself did not change shape: still one group, still
 eleven entries written out by hand on each side, still a named test failure at
 `create_render_pipeline` when they disagree.
+
+**D6 revisited a third time (story #584), and unchanged again.** Shadows added a
+region to that same heap and moved binding 4 from both stages to the fragment
+stage alone. The entry count did not move, and neither did the argument: a
+generator reflects declared bindings, and what this change actually risks is the
+_meaning of the words inside one_ — which region a base points at, and how many
+words a row spans. That is held by the source-text assertion the strides already
+use and by the unit tests that read a second row at its own stride.
 
 What is new is that the layout _inside_ binding 1 is not a WGSL struct at all,
 and that is exactly what a binding-layout generator does not check.
@@ -170,8 +178,9 @@ the picture correct for the subset this story implements and absent for the
 rest. That is not a silent drop: the packer emits the instance, the layer-1
 golden shows it, and this record lists what is drawn.
 
-Shadows and backdrop blur are story #584's, and the instance buffer already
-carries both. This story drew the first kind, and the rest arrived since:
+The **backdrop blur** is the one construct still undrawn, and story 733 owns it:
+it reads what is already in the render target, which no binding on this group
+can do. This story drew the first kind, and the rest arrived since:
 
 - the stroke, with story #710;
 - the image fill, with story #581;
@@ -180,7 +189,11 @@ carries both. This story drew the first kind, and the rest arrived since:
 - render-target group opacity, with story #583 — which draws through a second
   pipeline rather than an `InstanceKind`, because it composites a rendered
   layer rather than shading a quad
-  (`group-opacity-draws-into-a-layer-and-a-second-pipeline-composites-it.md`).
+  (`group-opacity-draws-into-a-layer-and-a-second-pipeline-composites-it.md`);
+- the two shadow kinds, with story #584 — whose parameters extend the paint
+  heap and whose quad growth moved onto `Instance::outset`, taking the stroke
+  table out of the vertex stage
+  (`the-paint-parameter-heap.md`, `instance-buffer-contract.md` D9).
 
 **Story #582 also changed what a masked instance draws.** Until it landed, a
 node carrying a coverage field drew as an ordinary rounded rectangle over its

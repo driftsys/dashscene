@@ -6,8 +6,9 @@
 // and it is why nothing below re-derives a distance.
 
 // Mirrors `dashscene_gpu::Instance`. The two four-float vectors come first so
-// both sit at a 16-byte offset; the trailing pad is what makes the Rust type
-// and this one agree on a 64-byte array stride.
+// both sit at a 16-byte offset; the eighth scalar is what makes the Rust type
+// and this one agree on a 64-byte array stride — it was declared padding until
+// story #584 gave it a meaning.
 struct Instance {
     bounds: vec4f,
     corners: vec4f,
@@ -18,7 +19,9 @@ struct Instance {
     clip_count: u32,
     layer: u32,
     opacity: f32,
-    _pad: u32,
+    // How far past `bounds` this instance's ink reaches, resolved by the packer.
+    // It was the trailing pad word until story #584 — see `instance_outset`.
+    outset: f32,
 }
 
 // `InstanceKind`, as one discriminant. There is no separate tag to read
@@ -68,6 +71,22 @@ struct Globals {
     // number of solid fills, which is why it is a frame value rather than a
     // constant.
     gradient_base: u32,
+    // The first word of the paint heap's shadow region, after the gradients.
+    // A frame value for the same reason.
+    shadow_base: u32,
+    // Thirty-two bytes, not twenty. A uniform-address-space struct's size
+    // rounds up to a multiple of 16, so the three words below are what the
+    // fifth member costs, and the Rust type declares them too — a struct that
+    // agreed on five members and disagreed on its size would read every value
+    // correctly and still bind at the wrong length.
+    //
+    // Three scalars rather than one `vec3u`: a three-component vector aligns to
+    // **16**, so it would sit at offset 32 rather than 20 and take this struct
+    // to 48. Story #583 met that exact trap with a `vec3f` in `GpuComposite`,
+    // where wgpu reported "bound with size 16 where the shader expects 32".
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 }
 
 // Mirrors `dashscene_gpu::render::GpuImage` — an image fill's parameters with
@@ -117,6 +136,23 @@ const GRADIENT_DIAMOND: u32 = 3u;
 // which no coverage assertion catches.
 const GRADIENT_WORDS: u32 = 12u;
 
+// How many words of the paint heap one shadow occupies —
+// `dashscene_gpu::render::SHADOW_WORDS`. A row's words are
+// `globals.shadow_base + row * SHADOW_WORDS`, and the two copies of this
+// literal are held together by the same source-text test the stride above and
+// the gradient kinds use.
+//
+// Two words: the geometry the painter resolves per instance, then the colour.
+//
+//     +0   (offset.x, offset.y, sigma, spread)
+//     +1   the shadow's colour
+//
+// `sigma`, not the authored blur radius: the mapping from one to the other is
+// `dashpaint::BLUR_SIGMA_PER_RADIUS`, applied once on the Rust side
+// (`pack::blur_sigma`) so that this painter and the reference painter cannot
+// drift on a measured number.
+const SHADOW_WORDS: u32 = 2u;
+
 // Mirrors `dashscene_gpu::render::GpuGlyphRun` — one positioned run's shared
 // parameters, with its atlas's residency slot resolved into them. `uv` maps a
 // texel of the run's *source* atlas into the residency texture: texel `t` sits
@@ -147,14 +183,17 @@ struct Shape {
 }
 
 @group(0) @binding(0) var<storage, read> instances: array<Instance>;
-// The paint-parameter heap: the fill parameters the fragment stage reads, as
-// one array of words. The solid colours come first, so a solid fill's colour is
-// still `paints[row]`; the gradient rows follow at `globals.gradient_base`.
+// The paint-parameter heap: the fill and effect parameters the fragment stage
+// reads, as one array of words. The solid colours come first, so a solid fill's
+// colour is still `paints[row]`; the gradient rows follow at
+// `globals.gradient_base`, and the shadow rows after them at
+// `globals.shadow_base`.
 //
-// One binding for two tables because there was no second one to take: the
+// One binding for three tables because there was no second one to take: the
 // fragment stage reads the four storage buffers `downlevel_defaults` allows,
 // and a gradient's stop array is indexed by a value this stage computes, so it
-// cannot cross as a varying the way story #582's tables do.
+// cannot cross as a varying the way story #582's tables do. A shadow's row
+// arrived under the same constraint and took the same route.
 // `dashscene_gpu::render::paint_heap` writes the layout and
 // `docs/decisions/the-paint-parameter-heap.md` is the reasoning.
 @group(0) @binding(1) var<storage, read> paints: array<vec4f>;
@@ -235,44 +274,32 @@ struct VertexOut {
     @location(8) @interpolate(flat) params2: vec4f,
 }
 
-// How far past its own `bounds` an instance draws.
+// How far past its own `bounds` an instance draws, as the packer resolved it.
 //
-// Zero for everything but a stroke. A stroke instance is stated over the node's
-// *fill* box — `docs/decisions/instance-buffer-contract.md`, and the packer
-// pushes it with `..base` — while an Outside stroke paints a full width beyond
-// that box and a Center stroke half of one. The quad is built from `bounds`, so
-// without this the outer half of every non-Inside stroke would be clipped away
-// by the geometry it is drawn on, which looks exactly like a thinner stroke
-// rather than like a bug.
+// Non-zero for the two kinds whose ink does not coincide with the box their
+// instance is stated over: a **stroke**, which is stated over the node's fill
+// box while an Outside stroke paints a full width beyond it, and a **drop
+// shadow**, which is drawn spread, displaced and blurred away from the
+// silhouette. The quad is built from `bounds`, so without this the outer half
+// of every non-Inside stroke and the whole of a shadow's falloff would be
+// clipped away by the geometry they are drawn on — which looks like a thinner
+// stroke and a cropped shadow rather than like a bug.
 //
-// The same three cases as `dashscene-skia`'s `stroke_outset`, which is also
-// what the packer grows a drop shadow's silhouette by. Here it is read from the
-// stroke row instead, because a stroke instance names one.
+// **It was computed here until story #584**, from the stroke row. A shadow's
+// parameters are in the paint heap, which is bound to the fragment stage only,
+// and both stages already read the four storage buffers
+// `wgpu::Limits::downlevel_defaults` allows — so this stage could not have read
+// a shadow row at all. `pack::shadow_ink_reach` and `pack::stroke_outset`
+// resolve both instead, and this stage no longer reads the stroke table, which
+// takes it to three storage buffers of four.
 //
 // Only the *lower* bound of this number is a correctness property, and the
-// tests pin only that: a quad too small clips the band, while a quad too large
+// tests pin only that: a quad too small clips the ink, while a quad too large
 // shades a few more fragments that the coverage then discards and draws exactly
-// the same picture. Returning `width` for a Center stroke survives mutation
-// testing for that reason. What it would cost is fill rate, which is R-T2's
-// concern and has no instrument in this slice.
+// the same picture. What it would cost is fill rate, which is R-T2's concern
+// and has no instrument in this slice.
 fn instance_outset(inst: Instance) -> f32 {
-    if inst.kind != KIND_STROKE {
-        return 0.0;
-    }
-    let s = strokes[inst.row];
-    if s.align == ALIGN_CENTER {
-        return s.width * 0.5;
-    }
-    if s.align == ALIGN_OUTSIDE {
-        return s.width;
-    }
-    // ALIGN_INSIDE, and nothing else: `stroke_align` on the Rust side maps an
-    // exhaustive match over `StrokeAlign`, so no fourth value can arrive here.
-    // Stated as the fall-through rather than as a fourth branch, so that this
-    // function is total whatever a future variant does before it is taught to
-    // this file — an unknown alignment then draws inside the quad it already
-    // has, which is a wrong picture rather than a clipped one.
-    return 0.0;
+    return inst.outset;
 }
 
 @vertex
@@ -492,6 +519,97 @@ fn gradient_colour(row: u32, bounds: vec4f, p: vec2f) -> vec4f {
     return gradient_ramp(t, offsets, colours, count);
 }
 
+// One shadow's parameters, as the paint heap carries them.
+struct Shadow {
+    offset: vec2f,
+    sigma: f32,
+    spread: f32,
+    color: vec4f,
+}
+
+// Shadow row `row` of the heap's shadow region.
+fn shadow_row(row: u32) -> Shadow {
+    let base = globals.shadow_base + row * SHADOW_WORDS;
+    let geometry = paints[base];
+    var out: Shadow;
+    out.offset = geometry.xy;
+    out.sigma = geometry.z;
+    out.spread = geometry.w;
+    out.color = paints[base + 1u];
+    return out;
+}
+
+// Per-corner radii adjusted by a spread delta: a corner grows with a positive
+// spread (a drop shadow) and shrinks with a negative one (an inner shadow's lit
+// hole), floored at zero. **A sharp corner stays sharp** — CSS's spread rule,
+// and `dashscene-skia`'s `spread_corners`, which this is the transliteration
+// of.
+//
+// In `paint.wgsl` rather than in the shared `sdf.wgsl`: the library is the
+// distance math a second painter ports and layer 2 evaluates, and this is the
+// parameter arithmetic that decides which box to hand it. `blurred_rounded_box`
+// is the part that had to be single-sourced, and it is.
+fn spread_corners(corners: vec4f, delta: f32) -> vec4f {
+    return select(
+        vec4f(0.0),
+        max(corners + vec4f(delta), vec4f(0.0)),
+        corners > vec4f(0.0),
+    );
+}
+
+// A drop shadow's coverage at `p`: the silhouette grown by the spread, moved by
+// the offset, and blurred.
+//
+// `bounds` is the instance's own box, which the packer already grew by the
+// stroke outset — a drop shadow casts from what the node draws, and the stroke
+// row is the one term of that geometry no shadow row carries. The spread and
+// the offset are on the row and resolved here, which is the split
+// `Instance::bounds` documents.
+//
+// Built as an origin and a size rather than as a centre and a half-extent, so
+// that a spread negative enough to collapse the box collapses it exactly where
+// `dashscene-skia` does: it clamps the *size* at zero and keeps the origin,
+// where clamping a half-extent would leave the box centred somewhere else.
+fn shadow_drop_coverage(s: Shadow, bounds: vec4f, corners: vec4f, p: vec2f) -> f32 {
+    let size = max(bounds.zw + vec2f(2.0 * s.spread), vec2f(0.0));
+    let origin = bounds.xy - vec2f(s.spread) + s.offset;
+    let half_size = size * 0.5;
+    return blurred_rounded_box(
+        p - (origin + half_size),
+        half_size,
+        spread_corners(corners, s.spread),
+        s.sigma,
+    );
+}
+
+// An inner shadow's coverage at `p`: the node's own shape, minus a blurred hole
+// inset by the spread and moved by the offset, so the blur bleeds inward from
+// the shape's edge.
+//
+// `d` is the signed distance to the node's own rounded box, which `fs_main` has
+// already computed — an inner shadow takes no stroke outset, so the instance's
+// bounds are the node's box exactly and that distance is the shape this shadow
+// is clipped to.
+//
+// **The complement is the whole of the effect.** `dashscene-skia` fills an
+// even-odd path — an outer rectangle minus the hole — under a blur mask and
+// clips it to the shape, and it sizes that rectangle to clear the blur's reach
+// so the shadow saturates at the shape's edge rather than fading in from the
+// rectangle's own boundary. `1 - blurred(hole)` is that construction with the
+// rectangle taken to infinity, which is what its margin approximates.
+fn shadow_inner_coverage(s: Shadow, bounds: vec4f, corners: vec4f, d: f32, p: vec2f) -> f32 {
+    let size = max(bounds.zw - vec2f(2.0 * s.spread), vec2f(0.0));
+    let origin = bounds.xy + vec2f(s.spread) + s.offset;
+    let half_size = size * 0.5;
+    let hole = blurred_rounded_box(
+        p - (origin + half_size),
+        half_size,
+        spread_corners(corners, -s.spread),
+        s.sigma,
+    );
+    return coverage(d, globals.aa) * (1.0 - hole);
+}
+
 // The MSDF channels under `p`, for a quad that maps onto one sub-rect of the
 // bound atlas.
 //
@@ -527,6 +645,15 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
     let centre = in.bounds.xy + half_size;
     let d = rounded_box_sdf(in.local - centre, half_size, in.corners);
 
+    // Read once, for the two kinds that need it, rather than in both of the
+    // chains below — the coverage and the colour of a shadow come from the same
+    // row, and every other kind would pay for a load it does not read.
+    var shadow: Shadow;
+    let is_shadow = kind == KIND_SHADOW_DROP || kind == KIND_SHADOW_INNER;
+    if is_shadow {
+        shadow = shadow_row(row);
+    }
+
     // Coverage is per kind, and cannot be computed before the kind is known: a
     // fill covers the shape's interior, and a stroke covers a band that an
     // Outside stroke puts entirely *outside* it. Taking the fill's ramp first
@@ -557,6 +684,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
     } else if kind == KIND_STROKE {
         let s = strokes[row];
         shape = stroke_coverage(d, s.width, f32(s.align), globals.aa);
+    } else if kind == KIND_SHADOW_DROP {
+        shape = shadow_drop_coverage(shadow, in.bounds, in.corners, in.local);
+    } else if kind == KIND_SHADOW_INNER {
+        shape = shadow_inner_coverage(shadow, in.bounds, in.corners, d, in.local);
     } else {
         shape = coverage(d, globals.aa);
     }
@@ -566,8 +697,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
     }
     // Story #580 drew the solid fill; story #710 added the stroke beside it,
     // story #581 the image fill, story #582 text and the coverage mask above,
-    // and issue #715 the gradient. Shadows and backdrop blur are #584's, group
-    // opacity #583's.
+    // issue #715 the gradient, and story #584 the two shadow kinds. Group
+    // opacity is #583's and composites elsewhere. **The backdrop blur is the
+    // one construct left undrawn**, and it is story #733's: it has to read what
+    // is already in the render target, which no binding here can do.
     //
     // A masked *gradient* fill now draws too, and it is the one combination
     // that needed both halves: story #582 resolved the mask and its coverage,
@@ -593,7 +726,11 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
     // shows it, and `docs/decisions/pipelines-and-layer-3.md` lists what is and
     // is not drawn. What is refused here is a *wrong* pixel, not a diagnostic.
     var colour = vec4f(0.0);
-    if kind == KIND_FILL_SOLID {
+    if is_shadow {
+        // Both kinds take the row's colour; the coverage above is what makes
+        // one fall behind the node and the other sit inside it.
+        colour = shadow.color;
+    } else if kind == KIND_FILL_SOLID {
         // The solid region is at the head of the heap, so a solid fill's row is
         // still its word — this path pays nothing for the gradient region
         // behind it.

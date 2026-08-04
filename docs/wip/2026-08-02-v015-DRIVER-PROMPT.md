@@ -235,16 +235,26 @@ start it inside a story; it is scope for the revision to place.
 ## BOTH stages are full, and the heap is where a table goes now
 
 `wgpu::Limits::downlevel_defaults` allows **four storage buffers per shader
-stage**. The pipeline binds seven, and the count is unchanged by issue #715:
+stage**. The pipeline binds seven, and story #584 moved one of them:
 
-    vertex    instances(0), strokes(4), glyph runs(8), shapes(9)   4 of 4
+    vertex    instances(0), glyph runs(8), shapes(9)               3 of 4
     fragment  paints(1), clips(2), strokes(4), images(5)           4 of 4
+
+**The vertex stage has one slot free**, which it did not before. The stroke rows
+were bound to both stages so that stage could size a stroke's quad; story #584
+needed the same growth for a shadow, whose parameters are in the fragment-only
+heap, so the growth moved onto `Instance::outset` and the stroke table left the
+vertex stage with it. A free slot is not an invitation —
+`docs/decisions/tables-the-vertex-stage-reads.md` D4 says why a value that fits
+on the instance is better than a table that needs a binding.
 
 **Binding 1 is no longer the solid table.** Since issue #715 it is the
 **paint-parameter heap**: one `array<vec4f>` holding the solid colours at base
-zero, then the gradient rows at a fixed twelve-word stride, with the region base
-travelling in the per-frame uniform. `Viewport` is renamed `Globals` and
-`gradient_base` took its old pad word, so the uniform is still sixteen bytes.
+zero, then the gradient rows at a fixed twelve-word stride, and since story 584
+the shadow rows at a two-word stride, each region's base travelling in the
+per-frame uniform. `Viewport` is renamed `Globals`; it carries two bases
+now, which took it to **thirty-two bytes**, since five scalars is twenty and a
+uniform rounds up to a multiple of sixteen.
 `docs/decisions/the-paint-parameter-heap.md` is the record.
 
 **So the answer for the next fragment-side table is: extend the heap.** Do not

@@ -3,15 +3,18 @@
 //! # What this draws, and what it does not
 //!
 //! Rounded rects with a solid, gradient or image fill, their outline stroke,
-//! positioned glyph runs, and a fill masked by a baked vector field — all
-//! clipped by their region, and a render-target group as a layer composited at
-//! its own alpha (story #583). Shadows and backdrop blur are story #584's.
+//! positioned glyph runs, a fill masked by a baked vector field, and both
+//! shadow kinds (story #584) — all clipped by their region, and a
+//! render-target group as a layer composited at its own alpha (story #583).
+//! The backdrop blur is what is left, and it is story #733's.
 //!
-//! A stroke is one of two kinds whose ink does not coincide with the instance's
-//! own `bounds` — see `instance_outset` in `shaders/paint.wgsl`, which grows the
-//! quad so an Outside stroke is not clipped by its own geometry. The other is a
-//! masked instance, whose quad is the coverage field's padded plane quad
-//! *instead of* the node's box, and which the vertex stage substitutes there.
+//! A stroke and a drop shadow are the two kinds whose ink does not coincide
+//! with the instance's own `bounds`. The packer resolves how far each reaches
+//! into [`Instance::outset`](crate::Instance::outset), and the vertex stage
+//! grows the quad by it, so an Outside stroke is not clipped by its own
+//! geometry and a shadow's falloff is not cut off. A masked instance is a third
+//! case of a different shape: its quad is the coverage field's padded plane
+//! quad *instead of* the node's box, substituted in the vertex stage.
 //!
 //! An instance whose kind this shader does not implement draws nothing. It does
 //! not fall through to a colour: [`InstanceKind`](crate::InstanceKind) carries
@@ -66,10 +69,11 @@ use crate::residency::{PayloadKey, Residency, ResidencyError};
 /// rather than of any row — and once the struct carries it, "viewport" names
 /// less than half of what is in it.
 ///
-/// Sixteen bytes, unchanged: [`gradient_base`](Self::gradient_base) took the
-/// slot the old trailing pad word held. That pad existed only so the Rust type
-/// and the WGSL one agreed on a size, which is exactly the space a real member
-/// is free to occupy.
+/// **Thirty-two bytes since story #584**, where it was sixteen for issue #715
+/// and for every frame before it. A fifth member takes the struct to twenty
+/// bytes, and a uniform-address-space struct's size rounds up to a multiple of
+/// sixteen — so the three declared pad words below are what the shadow region's
+/// base costs, and they are declared on both sides rather than left implicit.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Pod, Zeroable)]
 struct Globals {
@@ -82,6 +86,21 @@ struct Globals {
     /// so nothing reads it as "absent". A frame with no gradients never indexes
     /// past it, because no instance names a gradient row.
     gradient_base: u32,
+    /// The first word of the paint heap's shadow region, which follows the
+    /// gradients — see [`SHADOW_WORDS`] and [`paint_heap`].
+    ///
+    /// A real base at zero for the same reason
+    /// [`gradient_base`](Self::gradient_base) gives, and it coincides with that
+    /// one exactly when the frame has neither solids nor gradients.
+    shadow_base: u32,
+    /// Declared padding to the sixteen-byte multiple a uniform binding needs.
+    ///
+    /// Three scalars, never one three-component vector on the WGSL side: such a
+    /// vector aligns to sixteen there, so it would sit at offset 32 and take
+    /// the struct to 48 while this one stayed at 32. That is the mismatch story
+    /// #583 met in `GpuComposite`, where wgpu reported "bound with size 16
+    /// where the shader expects 32".
+    _pad: [u32; 3],
 }
 
 /// One stroke, in the shader's own layout.
@@ -218,10 +237,50 @@ const fn gradient_kind(kind: dashpaint::GradientKind) -> u32 {
 /// black — a visible absence — rather than a plausible colour.
 const GRADIENT_WORDS: usize = 4 + dashpaint::MAX_GRADIENT_STOPS;
 
-/// The paint heap and the first word of its gradient region: every fill
-/// parameter the fragment stage reads as one array of `vec4f` words.
+/// How many `vec4f` words one shadow occupies in the paint heap.
 ///
-/// # Why one buffer holds two tables
+/// One for the geometry the painter resolves per instance, one for the colour:
+///
+/// ```text
+/// +0   (offset.x, offset.y, sigma, spread)
+/// +1   the shadow's colour
+/// ```
+///
+/// **The sigma, not the authored blur radius.** The mapping between them is
+/// [`dashpaint::BLUR_SIGMA_PER_RADIUS`] — Figma's measured constant, which the
+/// reference painter fitted (`docs/decisions/blur-sigma-is-figmas-mapping.md`)
+/// — and applying it once on this side keeps the number out of the shader
+/// entirely. A shader that multiplied by its own copy would be a second home
+/// for a measured value, which is the drift `stroke_align` and `gradient_kind`
+/// are written the way they are to avoid.
+///
+/// The **kind** is not on the row. A shadow instance carries it in
+/// [`InstanceKind`], where a drop and an inner shadow are separate variants, so
+/// the fragment stage knows which coverage to build before it reads the row at
+/// all — and `ShadowKind`'s own discriminant never crosses into the shader,
+/// which is what makes the tag collision that once painted a shadow from the
+/// solid table unrepresentable.
+const SHADOW_WORDS: usize = 2;
+
+/// The paint heap and where each region past the first begins.
+///
+/// Two bases of the same type, and a tuple would let a call site swap them. The
+/// symptom of that swap is a *plausible* picture rather than an absent one —
+/// every shadow reads a gradient's handles as its geometry — so it is worth a
+/// named field to make unrepresentable.
+struct PaintHeap {
+    /// Every fill and effect parameter the fragment stage reads, in one array.
+    words: Vec<[f32; 4]>,
+    /// The first word of the gradient region.
+    gradient_base: u32,
+    /// The first word of the shadow region.
+    shadow_base: u32,
+}
+
+/// The paint heap and the first word of each region past the first: every fill
+/// and effect parameter the fragment stage reads as one array of `vec4f` words.
+///
+/// # Why one buffer holds three tables
 ///
 /// `wgpu::Limits::downlevel_defaults` allows four storage buffers per shader
 /// stage, and the fragment stage already read four — solids, clips, strokes,
@@ -232,10 +291,17 @@ const GRADIENT_WORDS: usize = 4 + dashpaint::MAX_GRADIENT_STOPS;
 /// against zero free slots is not a thing that can be arranged, so the tables
 /// share one binding instead.
 ///
+/// The shadow region is story #584's, and it arrived under the same constraint
+/// with the answer already settled: a fragment-side parameter table extends this
+/// heap rather than looking for a binding there is not
+/// (`docs/decisions/the-paint-parameter-heap.md`). It costs one more base in
+/// [`Globals`], which is what took that uniform from sixteen bytes to
+/// thirty-two.
+///
 /// The solids region is first and at base zero, so a solid fill's word is still
-/// `heap[row]` and that path is unchanged. The gradient region follows, and
-/// where it begins travels in [`Globals::gradient_base`] because it moves with
-/// the solid count.
+/// `heap[row]` and that path is unchanged. The gradient region follows, then the
+/// shadows; where each begins travels in [`Globals`] because both move with the
+/// counts of the regions before them.
 ///
 /// **The strokes and images tables stay where they are.** Folding them in would
 /// free no binding — the stage would still read a heap and the clips — and it
@@ -250,7 +316,7 @@ const GRADIENT_WORDS: usize = 4 + dashpaint::MAX_GRADIENT_STOPS;
 /// more has already been refused upstream. Refusing it loudly here rather than
 /// storing the first eight keeps the two painters agreeing about what happens
 /// next.
-fn paint_heap(paints: &PaintTable) -> (Vec<[f32; 4]>, u32) {
+fn paint_heap(paints: &PaintTable) -> PaintHeap {
     let mut heap: Vec<[f32; 4]> = paints
         .all_solids()
         .iter()
@@ -312,13 +378,44 @@ fn paint_heap(paints: &PaintTable) -> (Vec<[f32; 4]>, u32) {
         "the gradient region must be {GRADIENT_WORDS} words per row"
     );
 
+    let shadow_base = heap.len() as u32;
+    heap.reserve(paints.all_shadows().len() * SHADOW_WORDS);
+    for shadow in paints.all_shadows() {
+        // The offset and the spread verbatim, the blur radius through the one
+        // mapping both painters share. The kind is not written: the instance
+        // carries it, and a `ShadowKind` discriminant on a row beside a
+        // `PaintTag` one is the collision `InstanceKind` was merged to remove.
+        heap.push([
+            shadow.offset.x,
+            shadow.offset.y,
+            crate::pack::blur_sigma(shadow.blur),
+            shadow.spread,
+        ]);
+        let colour = shadow.color;
+        heap.push([colour.r, colour.g, colour.b, colour.a]);
+    }
+
+    // The shadow stride, held the same way the gradient stride above is, and
+    // for the same reason: a row written short leaves every shadow after it
+    // reading the previous one's colour as its geometry, which draws a shadow
+    // rather than nothing.
+    assert_eq!(
+        heap.len() - shadow_base as usize,
+        paints.all_shadows().len() * SHADOW_WORDS,
+        "the shadow region must be {SHADOW_WORDS} words per row"
+    );
+
     // An empty table would make a zero-sized binding, which wgpu refuses, so
     // one dead word stands in — no instance can name it, because an instance's
     // row comes from the table it was packed against.
     if heap.is_empty() {
         heap.push([0.0; 4]);
     }
-    (heap, gradient_base)
+    PaintHeap {
+        words: heap,
+        gradient_base,
+        shadow_base,
+    }
 }
 
 /// One glyph run, in the shader's own layout, with its atlas's residency slot
@@ -693,12 +790,16 @@ impl Renderer {
         // storage buffers **per shader stage**, and this pipeline binds seven.
         // Declaring each where it is actually read is what makes seven fit:
         //
-        //     vertex    instances(0), strokes(4), glyph runs(8), shapes(9)
+        //     vertex    instances(0), glyph runs(8), shapes(9)
         //     fragment  paints(1), clips(2), strokes(4), images(5)
         //
-        // Four and four, with nothing spare on either side. The fragment stage
-        // reads no instance array at all; `VertexOut` in `shaders/paint.wgsl`
-        // carries the values it needs across, and story #581 is why.
+        // Three and four. The fragment stage reads no instance array at all;
+        // `VertexOut` in `shaders/paint.wgsl` carries the values it needs
+        // across, and story #581 is why. The vertex stage read the stroke rows
+        // too until story #584 took the quad's outset off that row and onto
+        // `Instance::outset`, which is the one spare slot on either side —
+        // `docs/decisions/tables-the-vertex-stage-reads.md` D4 says why a free
+        // slot is not an invitation.
         //
         // Story #582's two tables took the same route deliberately. A glyph
         // run's parameters and a coverage mask's are five and eleven floats
@@ -733,10 +834,14 @@ impl Renderer {
                 storage(0, wgpu::ShaderStages::VERTEX),
                 storage(1, wgpu::ShaderStages::FRAGMENT),
                 storage(2, wgpu::ShaderStages::FRAGMENT),
-                // The stroke rows are the one table both stages read: the
-                // vertex stage for the quad's outset, the fragment stage for
-                // the band and its colour.
-                storage(4, wgpu::ShaderStages::VERTEX_FRAGMENT),
+                // The stroke rows, fragment only since story #584. They were
+                // the one table both stages read — the vertex stage took the
+                // quad's outset from the row — until a shadow needed the same
+                // growth from a table that stage cannot bind at all. The packer
+                // resolves both onto [`Instance::outset`] now, so the vertex
+                // stage reads three storage buffers of the four
+                // `downlevel_defaults` allows rather than four.
+                storage(4, wgpu::ShaderStages::FRAGMENT),
                 storage(5, wgpu::ShaderStages::FRAGMENT),
                 // Story #582's two tables, vertex only — see the comment above.
                 storage(8, wgpu::ShaderStages::VERTEX),
@@ -1272,7 +1377,7 @@ impl Renderer {
         // colour that animates changes this table without changing the rect
         // entry that names its row, so no rect is dirty and the row still has
         // to arrive.
-        let (heap, gradient_base) = paint_heap(paints);
+        let heap = paint_heap(paints);
         let mut boxes: Vec<GpuClipBox> = clips
             .all_boxes()
             .iter()
@@ -1313,7 +1418,9 @@ impl Renderer {
         let globals = Globals {
             size: [width as f32, height as f32],
             aa: 1.0,
-            gradient_base,
+            gradient_base: heap.gradient_base,
+            shadow_base: heap.shadow_base,
+            _pad: [0; 3],
         };
 
         // Residency, and the rows it resolves into. Before the upload, because
@@ -1331,7 +1438,7 @@ impl Renderer {
             &self.placeholder,
             &self.residency,
             buffer,
-            &heap,
+            &heap.words,
             &boxes,
             &strokes,
             &resolved,
@@ -2675,8 +2782,8 @@ fn unpremultiply(pixels: &mut [u8]) {
 /// The stroke rows, as the shader's array reads them. A `vec4f` puts the WGSL
 /// struct's alignment at 16 and rounds its stride to 32, so a Rust type of any
 /// other size would have every element after the first read from the wrong
-/// offset — the same hazard `Instance::_pad` exists for, and the reason both
-/// are asserted rather than reasoned about.
+/// offset — the same hazard the trailing word of `Instance` was declared for,
+/// and the reason both are asserted rather than reasoned about.
 const _: () = assert!(size_of::<GpuStroke>() == 32);
 
 /// The instance rows, as bytes. `Instance` is `#[repr(C)]` with no padding
@@ -2698,12 +2805,13 @@ const _: () = assert!(size_of::<GpuImage>() == 64);
 const _: () = assert!(size_of::<GpuGlyphRun>() == 48);
 const _: () = assert!(size_of::<GpuShape>() == 48);
 
-/// The per-frame uniform. Sixteen bytes on both sides: a `vec2f` puts the WGSL
-/// struct's alignment at 8 and its size at 16, and the Rust type packs its four
-/// scalars into the same 16 with no hole. A member added without a matching
-/// pad would make the two disagree about where `gradient_base` sits, and the
-/// symptom would be a gradient reading solid colours as handles.
-const _: () = assert!(size_of::<Globals>() == 16);
+/// The per-frame uniform. **Thirty-two bytes on both sides since story #584**,
+/// where it was sixteen: five scalars is twenty bytes, and a uniform's size
+/// rounds up to a multiple of sixteen, so both declarations carry three pad
+/// words to the same 32. A member added without a matching pad would make the
+/// two disagree about where a base sits, and the symptom would be a gradient
+/// reading solid colours as handles or a shadow reading a gradient's.
+const _: () = assert!(size_of::<Globals>() == 32);
 // Added in review: `composite.wgsl` reads this as a uniform, and it was the one
 // struct crossing into WGSL that nothing pinned. A `vec3f` pad here would make
 // it 32 — which is exactly the mismatch this catches at compile time rather
@@ -2714,12 +2822,13 @@ const _: () = assert!(size_of::<GpuComposite>() == 16);
 mod tests {
     use super::{
         DrawRun, GRADIENT_WORDS, GpuGlyphRun, GpuImage, GpuShape, MINIMUM_CAPACITY, PAINT_WGSL,
-        Resolved, dirty_ranges, draw_runs, gradient_kind, grown, paint_heap, scale_mode,
+        PaintHeap, Resolved, SHADOW_WORDS, dirty_ranges, draw_runs, gradient_kind, grown,
+        paint_heap, scale_mode,
     };
     use crate::instance::{Instance, InstanceBuffer, InstanceKind, InstanceSpan};
     use dashpaint::{
-        Color, FillSpec, Gradient, GradientKind, GradientStop, PaintTable, ScaleMode, StopRange,
-        Vec2,
+        Color, EntryParts, FillSpec, Gradient, GradientKind, GradientStop, PaintEntry, PaintTable,
+        ScaleMode, Shadow, ShadowKind, StopRange, Vec2,
     };
 
     /// A resolved frame whose image rows landed in `images`, whose glyph runs
@@ -2908,13 +3017,14 @@ mod tests {
     /// `paint.wgsl` compares against — the same claim the scale modes make, for
     /// the same reason.
     ///
-    /// The two shader-side strides ride along, because they are the other two
+    /// The three shader-side strides ride along, because they are the other
     /// numbers stated twice. `MAX_GRADIENT_STOPS` is boundary B's, restated in
-    /// `sdf.wgsl` so that the library stays free of Rust; `GRADIENT_WORDS` is
-    /// this file's heap stride, restated in `paint.wgsl`. Neither has a
-    /// compiler holding it, and neither fails visibly: a wrong stop ceiling
-    /// truncates a ramp and a wrong stride reads the previous gradient's stop
-    /// colours as handles, both of which draw a plausible picture.
+    /// `sdf.wgsl` so that the library stays free of Rust; `GRADIENT_WORDS` and
+    /// `SHADOW_WORDS` are this file's heap strides, restated in `paint.wgsl`.
+    /// None has a compiler holding it, and none fails visibly: a wrong stop
+    /// ceiling truncates a ramp, a wrong gradient stride reads the previous
+    /// gradient's stop colours as handles, and a wrong shadow stride reads a
+    /// colour as an offset and a sigma — all three draw a plausible picture.
     #[test]
     fn the_gradient_kinds_are_distinct_and_match_the_shader() {
         let mapped = [
@@ -2930,6 +3040,7 @@ mod tests {
             ("GRADIENT_ANGULAR", 2),
             ("GRADIENT_DIAMOND", 3),
             ("GRADIENT_WORDS", GRADIENT_WORDS as u32),
+            ("SHADOW_WORDS", SHADOW_WORDS as u32),
         ] {
             assert!(
                 PAINT_WGSL.contains(&format!("const {name}: u32 = {value}u;")),
@@ -3008,7 +3119,11 @@ mod tests {
     #[test]
     fn the_paint_heap_puts_solids_first_and_gradients_at_a_fixed_stride() {
         let paints = two_gradients();
-        let (heap, gradient_base) = paint_heap(&paints);
+        let PaintHeap {
+            words: heap,
+            gradient_base,
+            ..
+        } = paint_heap(&paints);
 
         assert_eq!(
             gradient_base, 2,
@@ -3025,7 +3140,11 @@ mod tests {
     #[test]
     fn a_gradient_row_is_found_at_its_own_stride() {
         let paints = two_gradients();
-        let (heap, gradient_base) = paint_heap(&paints);
+        let PaintHeap {
+            words: heap,
+            gradient_base,
+            ..
+        } = paint_heap(&paints);
         let base = gradient_base as usize + GRADIENT_WORDS;
 
         assert_eq!(
@@ -3062,7 +3181,11 @@ mod tests {
     #[test]
     fn the_first_gradient_sits_at_the_base() {
         let paints = two_gradients();
-        let (heap, gradient_base) = paint_heap(&paints);
+        let PaintHeap {
+            words: heap,
+            gradient_base,
+            ..
+        } = paint_heap(&paints);
         let base = gradient_base as usize;
 
         assert_eq!(heap[base], [0.1, 0.2, 0.3, 0.4], "its origin and primary");
@@ -3074,13 +3197,167 @@ mod tests {
         assert_eq!(heap[base + 2], [0.0, 0.75, 0.0, 0.0], "its two offsets");
     }
 
-    /// A frame with neither solids nor gradients still uploads one word,
-    /// because a zero-sized binding is a validation error.
+    /// A frame with no fills and no shadows still uploads one word, because a
+    /// zero-sized binding is a validation error.
     #[test]
     fn an_empty_paint_table_still_makes_a_bindable_heap() {
-        let (heap, gradient_base) = paint_heap(&PaintTable::new());
+        let PaintHeap {
+            words: heap,
+            gradient_base,
+            shadow_base,
+        } = paint_heap(&PaintTable::new());
         assert_eq!(heap.len(), MINIMUM_CAPACITY);
         assert_eq!(gradient_base, 0);
+        assert_eq!(
+            shadow_base, 0,
+            "with nothing before it the shadow region starts at the base too, and zero is a \
+             real base rather than an absence"
+        );
+    }
+
+    /// Two shadows that agree in nothing: a different offset on both axes, a
+    /// different blur, a different spread, and a different colour on all four
+    /// channels.
+    ///
+    /// Every axis varied for the reason [`two_gradients`] gives, and one more
+    /// that is specific to this row: the shadow *kind* is deliberately **not**
+    /// an axis here, because it never reaches the heap. A drop and an inner
+    /// shadow differ by `InstanceKind`, so a fixture that varied the kind would
+    /// be varying something these words do not carry.
+    fn two_shadows() -> PaintTable {
+        let mut paints = PaintTable::new();
+        let mut push = |shadow: Shadow| {
+            paints.push_with(
+                PaintEntry::default(),
+                EntryParts {
+                    shadows: &[shadow],
+                    ..EntryParts::default()
+                },
+            );
+        };
+        push(Shadow {
+            kind: ShadowKind::Drop,
+            offset: Vec2 { x: 3.0, y: -5.0 },
+            blur: 8.0,
+            spread: 2.0,
+            color: colour(0.1, 0.2, 0.3, 0.4),
+        });
+        push(Shadow {
+            kind: ShadowKind::Inner,
+            offset: Vec2 { x: -7.0, y: 11.0 },
+            blur: 16.0,
+            spread: -4.0,
+            color: colour(0.5, 0.6, 0.7, 0.8),
+        });
+        paints
+    }
+
+    /// The shadow region sits after the gradients, and a shadow's row is found
+    /// at its own stride.
+    ///
+    /// **Two rows, because one cannot falsify a stride**: row 0 sits at the
+    /// base whatever the multiplier is, so a stride of any value reads it
+    /// correctly. Issue #715's whole gradient suite passed with the stride
+    /// multiplied by anything until a second row was added.
+    #[test]
+    fn a_shadow_row_is_found_at_its_own_stride_after_the_gradients() {
+        let paints = two_shadows();
+        let PaintHeap {
+            words: heap,
+            gradient_base,
+            shadow_base,
+        } = paint_heap(&paints);
+
+        assert_eq!(
+            gradient_base, 0,
+            "this table has no solids, so the gradient region starts at zero"
+        );
+        assert_eq!(
+            shadow_base, 0,
+            "and no gradients either, so the shadow region starts there too"
+        );
+        assert_eq!(heap.len(), 2 * SHADOW_WORDS);
+
+        let base = shadow_base as usize;
+        assert_eq!(
+            heap[base],
+            [3.0, -5.0, 3.5, 2.0],
+            "the first shadow's offset, its sigma — 8 blur through 0.4375 — and its spread"
+        );
+        assert_eq!(heap[base + 1], [0.1, 0.2, 0.3, 0.4], "its colour");
+
+        let second = base + SHADOW_WORDS;
+        assert_eq!(
+            heap[second],
+            [-7.0, 11.0, 7.0, -4.0],
+            "the second shadow's own geometry, at its own stride"
+        );
+        assert_eq!(heap[second + 1], [0.5, 0.6, 0.7, 0.8], "and its colour");
+    }
+
+    /// The shadow region begins after the gradient region, not over it.
+    ///
+    /// Stated with both kinds of table present because that is the only
+    /// arrangement where the two bases differ: a fixture with shadows alone
+    /// reports both at zero and cannot tell a shadow base that was written as
+    /// the gradient base from a correct one.
+    #[test]
+    fn the_shadow_base_clears_the_gradient_region() {
+        let mut paints = two_gradients();
+        paints.push_with(
+            PaintEntry::default(),
+            EntryParts {
+                shadows: &[Shadow {
+                    kind: ShadowKind::Drop,
+                    offset: Vec2 { x: 1.0, y: 2.0 },
+                    blur: 4.0,
+                    spread: 0.5,
+                    color: colour(0.9, 0.8, 0.7, 0.6),
+                }],
+                ..EntryParts::default()
+            },
+        );
+        let PaintHeap {
+            words: heap,
+            gradient_base,
+            shadow_base,
+        } = paint_heap(&paints);
+
+        assert_eq!(gradient_base, 2, "two solids");
+        assert_eq!(
+            shadow_base as usize,
+            2 + 2 * GRADIENT_WORDS,
+            "the solids and both gradient rows come first"
+        );
+        assert_eq!(heap.len(), shadow_base as usize + SHADOW_WORDS);
+        assert_eq!(
+            heap[shadow_base as usize],
+            [1.0, 2.0, 1.75, 0.5],
+            "the shadow's own geometry, at a base past every gradient word"
+        );
+    }
+
+    /// The sigma the row carries is the authored radius through the one mapping
+    /// both painters share, and it is applied here rather than in the shader.
+    ///
+    /// `radius / 2` — the CSS convention this project measured against Figma
+    /// and rejected (issue #412) — fails this: at radius 8 it gives 4.0 where
+    /// the mapping gives 3.5.
+    #[test]
+    fn the_row_carries_figmas_sigma_rather_than_the_authored_radius() {
+        let paints = two_shadows();
+        let heap = paint_heap(&paints);
+        let sigma = heap.words[heap.shadow_base as usize][2];
+
+        assert_eq!(sigma, 8.0 * dashpaint::BLUR_SIGMA_PER_RADIUS);
+        assert_ne!(
+            sigma, 8.0,
+            "the radius itself would blur four times too far"
+        );
+        assert_ne!(
+            sigma, 4.0,
+            "and the CSS convention twice as far as measured"
+        );
     }
 
     /// A gradient over the vocabulary's stop budget is refused by name rather

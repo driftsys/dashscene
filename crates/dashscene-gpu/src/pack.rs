@@ -241,7 +241,8 @@ fn pack_run(
             // rect's `opacity` and is kept as its own field until that fold-in
             // lands (`docs/decisions/glyph-runs-cross-boundary-b.md`).
             opacity: run.opacity,
-            _pad: 0,
+            // A glyph's ink is the field inside its own quad.
+            outset: 0.0,
             bounds: [x, y, (right - left) * size, (top - bottom) * size],
             corners: [al, height - at, ar - al, at - ab],
         });
@@ -284,7 +285,10 @@ fn pack_rect(
         clip_count: clip.count,
         layer,
         opacity: rect.opacity,
-        _pad: 0,
+        // Zero, and every kind that draws past its own bounds overrides it: the
+        // stroke and the drop shadow. A fill, a glyph and a backdrop draw inside
+        // the box this template states, so the default is the value they keep.
+        outset: 0.0,
         bounds: bounds_of(rect),
         corners: [
             entry.corners.top_left,
@@ -311,7 +315,7 @@ fn pack_rect(
     // 2. Drop shadows, in the document's back-to-front `effects` order, each
     //    cast from the node's stroked silhouette rather than from its fill box.
     for (offset, shadow) in paints.shadows(entry).iter().enumerate() {
-        if shadow.kind != ShadowKind::Drop {
+        if shadow.kind != ShadowKind::Drop || !inks(shadow, rect.opacity) {
             continue;
         }
         out.push(shadow_instance(
@@ -347,6 +351,10 @@ fn pack_rect(
             out.push(Instance {
                 kind: InstanceKind::Stroke.as_u32(),
                 row: entry.stroke.offset,
+                // The same number the drop shadow's silhouette grew by, in its
+                // other role: how far this stroke's own band reaches past the
+                // fill box its instance is stated over.
+                outset,
                 ..base
             });
         }
@@ -356,7 +364,7 @@ fn pack_rect(
     //    clipped to the node's own shape and takes no stroke outset — the
     //    reference painter passes it none.
     for (offset, shadow) in paints.shadows(entry).iter().enumerate() {
-        if shadow.kind != ShadowKind::Inner {
+        if shadow.kind != ShadowKind::Inner || !inks(shadow, rect.opacity) {
             continue;
         }
         out.push(shadow_instance(
@@ -399,7 +407,9 @@ fn fill_instance(base: &Instance, kind: PaintKind) -> Instance {
 ///
 /// `outset` grows the box and its corners: it is the stroke outset for a drop
 /// shadow and zero for an inner one. The spread, the offset and the blur stay
-/// on the row this names, so a shader reads them there.
+/// on the row this names, so a shader reads them there — and
+/// [`shadow_ink_reach`] says how far past the silhouette they take the ink, so
+/// the vertex stage can build a quad that does not clip it.
 fn shadow_instance(base: &Instance, row: u32, shadow: &Shadow, outset: f32) -> Instance {
     // Mapped, never cast, for the reason `fill_instance` gives.
     let kind = match shadow.kind {
@@ -411,8 +421,78 @@ fn shadow_instance(base: &Instance, row: u32, shadow: &Shadow, outset: f32) -> I
         row,
         bounds: grow(base.bounds, outset),
         corners: grow_corners(base.corners, outset),
+        outset: shadow_ink_reach(shadow),
         ..*base
     }
+}
+
+/// Whether a shadow puts any ink on the frame at all — issue #285's early-out,
+/// implemented natively rather than reproduced and then filed again.
+///
+/// A shadow whose colour is fully transparent, or one on a node whose free-path
+/// alpha is zero, draws nothing at any blur or spread. The reference painter
+/// still builds a paint, a Gaussian mask filter and a rasterisation for it,
+/// which is the waste #285 reports against `dashscene-skia`; here the instance
+/// is not emitted, so nothing downstream — no upload, no quad, no fragment —
+/// pays for it either.
+///
+/// Written as `> 0.0` rather than as a `<= 0.0` rejection, which a NaN passes.
+/// The same guard `dashscene-skia`'s `backdrop_blur_filter` gives its reason
+/// for: the load path refuses a non-finite colour, but the producer API stores
+/// effects unchecked, so this is the last place the two can disagree.
+///
+/// Skipping a shadow does not move any other shadow's row. A row is the
+/// shadow's position in its entry's own list
+/// (`a_shadow_row_is_its_position_in_the_entrys_own_list`), which is the
+/// `enumerate` index, and that is unchanged by whether the instance is pushed.
+fn inks(shadow: &Shadow, opacity: f32) -> bool {
+    shadow.color.a * opacity > 0.0
+}
+
+/// How far a shadow's ink reaches past the silhouette its instance is stated
+/// over, on every side.
+///
+/// **Zero for an inner shadow**, whose ink is clipped to the node's own shape
+/// however far its offset and blur reach — the reference painter clips it to
+/// exactly that shape, and the fragment stage does the same.
+///
+/// A **drop shadow** is drawn displaced from that silhouette: outward by its
+/// spread, along its offset, and blurred. Its quad has to cover all three, so
+/// they add. The offset is one displacement rather than a growth on both sides,
+/// but the quad grows symmetrically, so the larger axis is taken and both sides
+/// get it — the cheap over-estimate, on the side of the trade
+/// [`Instance::outset`] documents: only the lower bound is a correctness
+/// property.
+///
+/// **Three sigma is the blur's whole support here**, not a truncation of it:
+/// `blurred_rounded_box` in `shaders/sdf.wgsl` integrates over `p.y ± 3 sigma`
+/// and reports zero coverage where that window clears the box, so past this
+/// reach the shader itself draws nothing. The x integral is a difference of
+/// error functions rather than a windowed sum, and it does leave a tail out
+/// there — bounded by 0.0014 of full coverage at three sigma, a third of a code
+/// point of 255, which is below what an eight-bit output can carry.
+///
+/// Floored at zero: a negative spread shrinks the shadow, and a quad smaller
+/// than the instance's own bounds is not what this member means.
+fn shadow_ink_reach(shadow: &Shadow) -> f32 {
+    if shadow.kind == ShadowKind::Inner {
+        return 0.0;
+    }
+    let offset = shadow.offset.x.abs().max(shadow.offset.y.abs());
+    (shadow.spread + 3.0 * blur_sigma(shadow.blur) + offset).max(0.0)
+}
+
+/// The Gaussian sigma a blur radius maps to — [`dashpaint::BLUR_SIGMA_PER_RADIUS`],
+/// which is Figma's measured constant and the reference painter's own mapping
+/// (`docs/decisions/blur-sigma-is-figmas-mapping.md`).
+///
+/// Named here so that the packer, which sizes a shadow's quad by the blur's
+/// support, and `render::paint_heap`, which writes the sigma the fragment stage
+/// integrates, apply one mapping. Two call sites multiplying by the constant
+/// themselves would be two chances to write `radius / 2`, which is the CSS
+/// convention this project measured and rejected.
+pub(crate) fn blur_sigma(radius: f32) -> f32 {
+    radius * dashpaint::BLUR_SIGMA_PER_RADIUS
 }
 
 /// How far a stroke pushes the node's rendered silhouette past its fill box:

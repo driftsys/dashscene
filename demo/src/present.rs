@@ -377,8 +377,8 @@ fn pack_premul_over_black(premul: &[u8], framebuffer: &mut [u32]) {
 ///
 /// Epic #569 builds the vocabulary one story at a time. Solid, gradient and
 /// image fills draw, as do strokes, text, a fill masked by a baked vector
-/// field, and render-target group opacity; shadows and backdrop blur are
-/// packed and not drawn, so a scene using them appears with those layers
+/// field, render-target group opacity, and both shadow kinds; the backdrop
+/// blur is packed and not drawn, so a scene using one appears with that layer
 /// missing rather than wrong. That is the point of running the two painters
 /// against one document — the difference is the work that is left.
 pub struct GpuPresenter {

@@ -1154,10 +1154,32 @@ pub enum BlurKind {
     Backdrop,
 }
 
+/// The Gaussian sigma one unit of blur radius maps to — Figma's measured
+/// constant (`docs/decisions/blur-sigma-is-figmas-mapping.md`, issue #412).
+///
+/// **Not a contract term, and the distinction matters.** A blend space two
+/// painters disagree on produces visibly different pixels from the same
+/// document, which is why [`Blur`] states that one as a requirement. This is
+/// the reference painter's *measured* value instead: a painter should match it
+/// where it reasonably can, and one approximating the blur on constrained
+/// hardware will not match it exactly.
+///
+/// It lives here, on boundary B, because two painters had it — `dashscene-skia`
+/// measured it and `dashscene-gpu` would otherwise restate it — and a constant
+/// stated twice with nothing holding the copies together is the failure the
+/// scale-mode and gradient-kind tests exist to catch. One radius maps through
+/// one number, whoever is drawing.
+///
+/// The mapping applies to a shadow's blur (story #45) and to a backdrop blur
+/// (story #393) alike; that single-mapping claim is measured rather than
+/// assumed, and `dashscene_skia::blur_sigma` carries the table it was fitted
+/// against.
+pub const BLUR_SIGMA_PER_RADIUS: f32 = 0.4375;
+
 /// One blur (v0.11, story #393). Authored intent: which content is blurred
 /// and by how much. `radius` is the Gaussian blur radius in document units,
 /// non-negative, carried verbatim from the document — the sigma mapping
-/// (`sigma = 0.4375 * radius`, Figma's measured constant —
+/// ([`BLUR_SIGMA_PER_RADIUS`], Figma's measured constant —
 /// `docs/decisions/blur-sigma-is-figmas-mapping.md`) is derived at draw time
 /// rather than carried in the document (P1), exactly as it is for
 /// [`Shadow::blur`]. Unlike the blend space below, the constant is the
