@@ -1,4 +1,4 @@
-instances 20 rects 11
+instances 20 rects 11 layers 0
 rect 0 at 0 count 0
 rect 1 at 0 count 1
 rect 2 at 1 count 1

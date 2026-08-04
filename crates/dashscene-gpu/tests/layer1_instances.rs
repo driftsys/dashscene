@@ -1470,3 +1470,23 @@ fn kinds_are_distinct_and_every_packed_pad_is_zero() {
         }
     }
 }
+
+/// A group starting past the rect table is named rather than silently dropped.
+///
+/// Added in review. The forward cursor cannot report it from inside the walk —
+/// it simply never matches — so the check is at the end, exactly as the glyph
+/// run's is. It matters more than a symmetry argument: the layer table is
+/// index-aligned with the group slice, so a group that is never opened leaves
+/// every later layer recorded at the wrong index, and the painter then
+/// composites groups into each other's layers.
+#[test]
+#[should_panic(expected = "starts at rect")]
+fn a_group_starting_past_the_rect_table_is_named() {
+    let mut scene = groups();
+    scene.groups.push(GroupComposite {
+        start: 99,
+        end: 100,
+        alpha: 0.5,
+    });
+    scene.pack();
+}

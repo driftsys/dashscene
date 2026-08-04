@@ -375,12 +375,12 @@ fn pack_premul_over_black(premul: &[u8], framebuffer: &mut [u32]) {
 ///
 /// # It draws less than the reference painter, on purpose
 ///
-/// Epic #569 builds the vocabulary one story at a time, and this one is the
-/// third of twelve. Solid fills draw; gradients, images, text, group opacity,
-/// shadows and blur are packed and not drawn, so a scene using them appears
-/// with those layers missing rather than wrong. That is the point of running
-/// the two painters against one document — the difference is the work that is
-/// left.
+/// Epic #569 builds the vocabulary one story at a time. Solid, gradient and
+/// image fills draw, as do strokes, text, a fill masked by a baked vector
+/// field, and render-target group opacity; shadows and backdrop blur are
+/// packed and not drawn, so a scene using them appears with those layers
+/// missing rather than wrong. That is the point of running the two painters
+/// against one document — the difference is the work that is left.
 pub struct GpuPresenter {
     /// The boundary-B implementation. It produces the instance buffer and knows
     /// nothing about the window.

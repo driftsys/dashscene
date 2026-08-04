@@ -843,6 +843,19 @@ impl<'a> ClipView<'a> {
 /// allocator on a path that runs per commit, to save bytes on a table whose
 /// regions are already deduplicated by value upstream — and a painter
 /// uploading this wants one contiguous run per region regardless.
+///
+/// Story #583 measured that argument rather than leaving it an argument
+/// (issue #133, closed won't-fix). On `dacef5e`, across the twenty Figma
+/// fixtures that compile clean and all three showcase scenes: the deepest
+/// ancestor chain anywhere is **3**, it is **1** in every scene the lean
+/// painter draws, and the duplication costs **19 boxes — 608 bytes — across
+/// the whole corpus**. The third claim above was a prediction when it was
+/// written and now has a consumer confirming it: `clip_coverage` in
+/// `dashscene-gpu` loops one contiguous run per region, so prefix sharing
+/// would have to be flattened away again before upload, and a parent-pointer
+/// chain would replace a run of at most three boxes with a dependent pointer
+/// chase per fragment. These are the depths that were measurable then, not a
+/// bound on what a deeper imported design could produce.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClipTable {
     entries: Vec<ClipRegion>,

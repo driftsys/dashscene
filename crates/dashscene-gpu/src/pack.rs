@@ -54,7 +54,7 @@ use dashpaint::{
     PaintKind, PaintTable, PaintTag, RectEntry, Shadow, ShadowKind, Stroke, StrokeAlign,
 };
 
-use crate::instance::{Instance, InstanceBuffer, InstanceKind, bounds_of, shape_slot};
+use crate::instance::{Instance, InstanceBuffer, InstanceKind, Layer, bounds_of, shape_slot};
 
 /// Packs one frame of boundary-B tables into `out`, which is emptied first.
 ///
@@ -101,8 +101,12 @@ pub fn pack(
     // below rather than assumed, because a violation of either is silent —
     // every instance after it carries a wrong `layer`, which is the "group
     // applied to the wrong set" defect layer 1 exists to catch.
+    // The open stack holds `(layer slot, group end)` — the slot being the
+    // `Instance::layer` value, already biased, rather than the group index it
+    // came from. Biasing once where the layer is created means the two places
+    // that read the stack cannot disagree about whether it is biased.
     let mut next_group = 0usize;
-    let mut open: Vec<(usize, u32)> = Vec::new();
+    let mut open: Vec<(u32, u32)> = Vec::new();
 
     for (index, rect) in rects.iter().enumerate() {
         let i = u32::try_from(index).expect("rect table exceeds u32::MAX entries");
@@ -127,13 +131,21 @@ pub fn pack(
                     .is_none_or(|&(_, end)| groups[next_group].end <= end),
                 "group {next_group} runs past the group enclosing it; boundary B's groups nest",
             );
-            open.push((next_group, groups[next_group].end));
+            // Read the enclosing layer *before* pushing this one: a group
+            // composites into whatever was innermost when it opened, and after
+            // the push that is the group itself.
+            let parent = open.last().map_or(Instance::NONE, |&(slot, _)| slot);
+            let slot = out.push_layer(
+                next_group,
+                Layer {
+                    alpha: groups[next_group].alpha,
+                    parent,
+                },
+            );
+            open.push((slot, groups[next_group].end));
             next_group += 1;
         }
-        let layer = open
-            .last()
-            .map(|&(group, _)| u32::try_from(group).expect("group list exceeds u32::MAX") + 1)
-            .unwrap_or(Instance::NONE);
+        let layer = open.last().map_or(Instance::NONE, |&(slot, _)| slot);
 
         out.begin_rect(i);
         pack_rect(out, rect, paints, clips, layer);
@@ -153,6 +165,20 @@ pub fn pack(
             next_run += 1;
         }
     }
+
+    // A group starting past the rect table is never opened, so it composites
+    // nothing and — since the layer table is index-aligned with the group slice
+    // — every later group would be recorded at the wrong index. The same
+    // failure the run cursor asserts below, one table over, and the same reason
+    // it cannot be reported from inside the walk (P4).
+    assert_eq!(
+        next_group,
+        groups.len(),
+        "group {next_group} starts at rect {} of a {}-rect table: a group's range is meaningful \
+         only against the rect table of the commit it came from",
+        groups.get(next_group).map_or(0, |group| group.start),
+        rects.len(),
+    );
 
     // A run anchored past the rect table draws nothing and is the one failure
     // the cursor cannot report from inside the walk. The reference painter

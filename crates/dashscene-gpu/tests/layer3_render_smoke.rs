@@ -59,13 +59,23 @@ fn texel(pixels: &[u8], x: u32, y: u32) -> [u8; 4] {
 
 /// Packs one scene through the painter and renders it.
 fn draw(rects: &[RectEntry], paints: &PaintTable, clips: &ClipTable) -> Vec<u8> {
+    draw_groups(rects, paints, clips, &[])
+}
+
+/// [`draw`], with render-target groups.
+fn draw_groups(
+    rects: &[RectEntry],
+    paints: &PaintTable,
+    clips: &ClipTable,
+    groups: &[dashpaint::GroupComposite],
+) -> Vec<u8> {
     let mut painter = GpuPainter::new();
     painter.paint(
         rects,
         paints,
         &ImageTable::new(),
         clips,
-        &[],
+        groups,
         &GlyphRunTable::new(),
         None,
     );
@@ -1317,5 +1327,363 @@ fn a_second_gradient_row_draws_its_own_parameters() {
         texel(&pixels, 36, 12),
         [183, 255, 72, 255],
         "the second gradient's own stops, at the same t as the first's probe",
+    );
+}
+
+/// An opaque solid, for the group tests below.
+fn solid(paints: &mut PaintTable, r: f32, g: f32, b: f32) -> dashpaint::PaintIndex {
+    paints.push_solid(Color { r, g, b, a: 1.0 })
+}
+
+/// **The whole reason the render-target path exists.** Two overlapping opaque
+/// members of one group at alpha `a` composite as *one* image at `a` — where
+/// they overlap, only the upper member shows.
+///
+/// This is the case per-rect alpha cannot express, and
+/// `masks-and-group-opacity.md` says so: multiplying each member's alpha
+/// independently lets the lower one show through the overlap. The two answers
+/// are far apart and this asserts the right one, so a painter that quietly took
+/// the free path fails here rather than looking approximately correct.
+///
+/// The numbers: inside the layer the blue rect covers the red one completely
+/// where they meet, so the layer holds opaque blue there. Composited at 0.5
+/// that is blue at half alpha. Had each rect been multiplied instead, blue at
+/// 0.5 would sit over red at 0.5 — alpha 0.75, and visibly purple.
+#[test]
+fn overlapping_members_of_a_group_composite_as_one_image() {
+    let mut paints = PaintTable::new();
+    let red = solid(&mut paints, 1.0, 0.0, 0.0);
+    let blue = solid(&mut paints, 0.0, 0.0, 1.0);
+
+    let pixels = draw_groups(
+        &[
+            rect(8.0, 8.0, 20.0, 20.0, red, ClipIndex::UNCLIPPED),
+            rect(18.0, 8.0, 20.0, 20.0, blue, ClipIndex::UNCLIPPED),
+        ],
+        &paints,
+        &ClipTable::new(),
+        &[dashpaint::GroupComposite {
+            start: 0,
+            end: 2,
+            alpha: 0.5,
+        }],
+    );
+
+    near(
+        texel(&pixels, 12, 18),
+        [255, 0, 0, 128],
+        "the red member alone, at the group's alpha",
+    );
+    near(
+        texel(&pixels, 33, 18),
+        [0, 0, 255, 128],
+        "the blue member alone, at the group's alpha",
+    );
+    // x 18..28 is the overlap. The free path would put alpha 191 here and mix
+    // red into it; the render-target path puts the upper member alone at 128.
+    near(
+        texel(&pixels, 23, 18),
+        [0, 0, 255, 128],
+        "the overlap shows the upper member only",
+    );
+}
+
+/// A member drawn after the group draws **over** the composited group, not
+/// under it — the composite lands where the group's instances end, not at the
+/// end of the frame.
+#[test]
+fn a_rect_after_a_group_draws_over_the_composited_group() {
+    let mut paints = PaintTable::new();
+    let red = solid(&mut paints, 1.0, 0.0, 0.0);
+    let green = solid(&mut paints, 0.0, 1.0, 0.0);
+
+    let pixels = draw_groups(
+        &[
+            rect(8.0, 8.0, 20.0, 20.0, red, ClipIndex::UNCLIPPED),
+            rect(18.0, 8.0, 20.0, 20.0, green, ClipIndex::UNCLIPPED),
+        ],
+        &paints,
+        &ClipTable::new(),
+        // Only the first rect is in the group; the second follows it.
+        &[dashpaint::GroupComposite {
+            start: 0,
+            end: 1,
+            alpha: 0.5,
+        }],
+    );
+
+    near(
+        texel(&pixels, 12, 18),
+        [255, 0, 0, 128],
+        "the group's own member, at its alpha",
+    );
+    // The later rect is opaque and outside the group, so it covers the
+    // composited group entirely. A painter that composited every layer after
+    // the last instance would show this blended under the group instead.
+    near(
+        texel(&pixels, 23, 18),
+        [0, 255, 0, 255],
+        "the rect after the group covers it",
+    );
+}
+
+/// Nested groups compound: an inner group at 0.5 inside an outer at 0.5 reaches
+/// the target at 0.25.
+///
+/// Two layers rather than one, because one cannot falsify the nesting — an
+/// inner layer composited straight into the frame's target instead of into its
+/// parent reaches it at 0.5, and no single-group fixture can tell those apart.
+#[test]
+fn a_nested_group_composites_through_its_parent() {
+    let mut paints = PaintTable::new();
+    let red = solid(&mut paints, 1.0, 0.0, 0.0);
+    let blue = solid(&mut paints, 0.0, 0.0, 1.0);
+
+    let pixels = draw_groups(
+        &[
+            rect(4.0, 8.0, 12.0, 20.0, red, ClipIndex::UNCLIPPED),
+            rect(28.0, 8.0, 12.0, 20.0, blue, ClipIndex::UNCLIPPED),
+        ],
+        &paints,
+        &ClipTable::new(),
+        &[
+            dashpaint::GroupComposite {
+                start: 0,
+                end: 2,
+                alpha: 0.5,
+            },
+            // The inner group holds the second rect only.
+            dashpaint::GroupComposite {
+                start: 1,
+                end: 2,
+                alpha: 0.5,
+            },
+        ],
+    );
+
+    near(
+        texel(&pixels, 10, 18),
+        [255, 0, 0, 128],
+        "the outer group's own member, at 0.5",
+    );
+    // 0.5 * 0.5. A painter compositing the inner layer into the frame's target
+    // rather than into its parent would leave 128 here.
+    near(
+        texel(&pixels, 34, 18),
+        [0, 0, 255, 64],
+        "the inner group's member, through both alphas",
+    );
+}
+
+/// A group's alpha reaches the layer it belongs to and not another's. Two
+/// groups with **different** alphas, because two groups sharing one would pass
+/// with the layers swapped.
+#[test]
+fn each_group_composites_at_its_own_alpha() {
+    let mut paints = PaintTable::new();
+    let red = solid(&mut paints, 1.0, 0.0, 0.0);
+    let blue = solid(&mut paints, 0.0, 0.0, 1.0);
+
+    let pixels = draw_groups(
+        &[
+            rect(4.0, 8.0, 12.0, 20.0, red, ClipIndex::UNCLIPPED),
+            rect(28.0, 8.0, 12.0, 20.0, blue, ClipIndex::UNCLIPPED),
+        ],
+        &paints,
+        &ClipTable::new(),
+        &[
+            dashpaint::GroupComposite {
+                start: 0,
+                end: 1,
+                alpha: 0.25,
+            },
+            dashpaint::GroupComposite {
+                start: 1,
+                end: 2,
+                alpha: 0.75,
+            },
+        ],
+    );
+
+    near(
+        texel(&pixels, 10, 18),
+        [255, 0, 0, 64],
+        "the first group's alpha",
+    );
+    near(
+        texel(&pixels, 34, 18),
+        [0, 0, 255, 191],
+        "the second group's alpha",
+    );
+}
+
+/// What a group draws into is cleared, and what the frame drew before it is
+/// not. A layer pass that cleared the frame's target on the way back would
+/// erase everything drawn before the group.
+#[test]
+fn a_group_does_not_erase_what_was_drawn_before_it() {
+    let mut paints = PaintTable::new();
+    let green = solid(&mut paints, 0.0, 1.0, 0.0);
+    let blue = solid(&mut paints, 0.0, 0.0, 1.0);
+
+    let pixels = draw_groups(
+        &[
+            rect(4.0, 8.0, 12.0, 20.0, green, ClipIndex::UNCLIPPED),
+            rect(28.0, 8.0, 12.0, 20.0, blue, ClipIndex::UNCLIPPED),
+        ],
+        &paints,
+        &ClipTable::new(),
+        // The group starts at the *second* rect, so the first is drawn into the
+        // frame's target before the layer pass begins.
+        &[dashpaint::GroupComposite {
+            start: 1,
+            end: 2,
+            alpha: 0.5,
+        }],
+    );
+
+    near(
+        texel(&pixels, 10, 18),
+        [0, 255, 0, 255],
+        "the rect drawn before the group survives it",
+    );
+    near(
+        texel(&pixels, 34, 18),
+        [0, 0, 255, 128],
+        "the group's own member",
+    );
+}
+
+/// A clip box's **corner radii** reach the shader, and each reaches its own
+/// corner.
+///
+/// Story #580 built `clip_coverage` to intersect rounded boxes and every clip
+/// fixture since has used `CornerRadii::default()`, so the `b.corners` term
+/// could have been replaced by zero and nothing would have failed — the clip
+/// axis of the uniform-fixture trap. Both probes are needed and neither is
+/// redundant: the rounded corner rejects a point a square clip would admit, and
+/// the square corner admits a point that would be rejected if the radius were
+/// applied to every corner instead of its own.
+#[test]
+fn a_clip_boxs_corner_radii_reach_their_own_corners() {
+    let mut paints = PaintTable::new();
+    let red = solid(&mut paints, 1.0, 0.0, 0.0);
+
+    let mut clips = ClipTable::new();
+    // A 32x32 clip box whose top-left corner is rounded by half its side and
+    // whose other three corners are square.
+    let rounded = clips.push(&[ClipBox {
+        x: 0.0,
+        y: 0.0,
+        w: 32.0,
+        h: 32.0,
+        corners: CornerRadii {
+            top_left: 16.0,
+            top_right: 0.0,
+            bottom_right: 0.0,
+            bottom_left: 0.0,
+        },
+    }]);
+
+    let pixels = draw(&[rect(0.0, 0.0, 64.0, 48.0, red, rounded)], &paints, &clips);
+
+    // (1, 1) is inside the box and outside the corner's arc: the arc's centre
+    // is (16, 16) at radius 16, and the probe sits about 20.5 units from it —
+    // far outside the one-unit antialiasing ramp.
+    assert_eq!(
+        texel(&pixels, 1, 1),
+        [0, 0, 0, 0],
+        "the rounded corner rejects what lies outside its arc"
+    );
+    // The opposite corner is square, so the symmetric probe is admitted. A
+    // shader applying one radius to all four corners fails here.
+    near(
+        texel(&pixels, 30, 30),
+        [255, 0, 0, 255],
+        "a square corner of the same box admits its own corner",
+    );
+    near(
+        texel(&pixels, 16, 16),
+        [255, 0, 0, 255],
+        "the middle of the clip box is unaffected",
+    );
+}
+
+/// The layer textures a group needs are counted by [`Renderer::allocations`],
+/// and a steady-state frame that has one still allocates nothing.
+///
+/// Added in review, and the first half is the point. Story #719 found this
+/// counter omitting residency's textures, which made the "allocates nothing"
+/// claim unable to fail; the same fix then stayed unfalsifiable because the
+/// omitted term was zero in every fixture that read it. `frame_path.rs` passes
+/// no groups anywhere, so nothing there could tell whether the layer term is in
+/// the sum at all.
+///
+/// This differences the same scene against itself, with and without a group, so
+/// the layer term is the only thing that can move — and a build that drops it
+/// from the sum reports no difference.
+#[test]
+fn a_groups_layer_objects_are_counted_and_then_reused() {
+    let mut paints = PaintTable::new();
+    let red = solid(&mut paints, 1.0, 0.0, 0.0);
+    let blue = solid(&mut paints, 0.0, 0.0, 1.0);
+    let clips = ClipTable::new();
+    let rects = [
+        rect(8.0, 8.0, 20.0, 20.0, red, ClipIndex::UNCLIPPED),
+        rect(18.0, 8.0, 20.0, 20.0, blue, ClipIndex::UNCLIPPED),
+    ];
+    let group = [dashpaint::GroupComposite {
+        start: 0,
+        end: 2,
+        alpha: 0.5,
+    }];
+
+    // One renderer for the whole test: the counter is cumulative, and a second
+    // renderer would start it again from its own construction.
+    let mut renderer = self::renderer();
+    let mut render = |groups: &[dashpaint::GroupComposite]| {
+        let mut painter = GpuPainter::new();
+        painter.paint(
+            &rects,
+            &paints,
+            &ImageTable::new(),
+            &clips,
+            groups,
+            &GlyphRunTable::new(),
+            None,
+        );
+        renderer
+            .render(
+                painter.instances(),
+                &paints,
+                &ImageTable::new(),
+                &clips,
+                &GlyphRunTable::new(),
+                W,
+                H,
+            )
+            .expect("the fixture extent is within any device's maximum");
+        renderer.allocations()
+    };
+
+    // The same scene with no group, twice, so everything a groupless frame
+    // needs is already allocated and settled before the group arrives.
+    render(&[]);
+    let without = render(&[]);
+
+    let with = render(&group);
+    assert_eq!(
+        with - without,
+        4,
+        "a layer is a texture, a view, a uniform buffer and a bind group, and \
+         all four have to reach the counter"
+    );
+
+    // And they are reused: the extent and the layer count are unchanged, so the
+    // second grouped frame builds nothing.
+    assert_eq!(
+        render(&group),
+        with,
+        "a repeated frame reallocated its layer"
     );
 }
