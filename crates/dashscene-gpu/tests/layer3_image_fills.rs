@@ -102,7 +102,15 @@ fn draw_fill(asset: ImageAsset, fill: ImageFill, x: f32, y: f32, w: f32, h: f32)
         None,
     );
     renderer()
-        .render(painter.instances(), &paints, &images, &clips, W, H)
+        .render(
+            painter.instances(),
+            &paints,
+            &images,
+            &clips,
+            &GlyphRunTable::new(),
+            W,
+            H,
+        )
         .expect("the fixture extent is within any device's maximum")
 }
 
@@ -245,7 +253,15 @@ fn two_payloads_in_one_atlas_each_draw_their_own_texels() {
     );
     let mut renderer = renderer();
     let pixels = renderer
-        .render(painter.instances(), &paints, &images, &clips, W, H)
+        .render(
+            painter.instances(),
+            &paints,
+            &images,
+            &clips,
+            &GlyphRunTable::new(),
+            W,
+            H,
+        )
         .expect("the fixture extent is within any device's maximum");
 
     // The first payload varies along x and is flat in y; the second varies along
@@ -457,7 +473,15 @@ fn a_png_payload_is_decoded_and_drawn() {
         None,
     );
     let pixels = renderer()
-        .render(painter.instances(), &paints, &images, &clips, W, H)
+        .render(
+            painter.instances(),
+            &paints,
+            &images,
+            &clips,
+            &GlyphRunTable::new(),
+            W,
+            H,
+        )
         .expect("the fixture extent is within any device's maximum");
 
     // Opaque inside the box and untouched outside it. What the payload's colours
@@ -545,7 +569,15 @@ fn a_table_row_the_frame_does_not_draw_is_not_made_resident() {
     );
     let mut renderer = renderer();
     let pixels = renderer
-        .render(painter.instances(), &paints, &images, &clips, W, H)
+        .render(
+            painter.instances(),
+            &paints,
+            &images,
+            &clips,
+            &GlyphRunTable::new(),
+            W,
+            H,
+        )
         .expect("the fixture extent is within any device's maximum");
 
     // The one drawn payload still draws its own texels.
@@ -560,7 +592,15 @@ fn a_table_row_the_frame_does_not_draw_is_not_made_resident() {
     // A steady-state second frame allocates nothing, residency included.
     let after_first = renderer.allocations();
     let pixels = renderer
-        .render(painter.instances(), &paints, &images, &clips, W, H)
+        .render(
+            painter.instances(),
+            &paints,
+            &images,
+            &clips,
+            &GlyphRunTable::new(),
+            W,
+            H,
+        )
         .expect("the fixture extent is within any device's maximum");
     near(texel(&pixels, 4, 8), [40, 10, 10, 255], "the second frame");
     assert_eq!(
@@ -661,7 +701,15 @@ fn a_replaced_document_does_not_draw_the_previous_documents_image() {
             None,
         );
         renderer
-            .render(painter.instances(), paints, images, &ClipTable::new(), W, H)
+            .render(
+                painter.instances(),
+                paints,
+                images,
+                &ClipTable::new(),
+                &GlyphRunTable::new(),
+                W,
+                H,
+            )
             .expect("the fixture extent is within any device's maximum")
     };
     let _ = &clips;
@@ -741,7 +789,15 @@ fn a_resident_png_is_decoded_once_and_not_once_a_frame() {
     let mut renderer = renderer();
     for frame in 0..5 {
         renderer
-            .render(painter.instances(), &paints, &images, &clips, W, H)
+            .render(
+                painter.instances(),
+                &paints,
+                &images,
+                &clips,
+                &GlyphRunTable::new(),
+                W,
+                H,
+            )
             .expect("the fixture extent is within any device's maximum");
         assert_eq!(
             renderer.decodes(),
@@ -806,6 +862,7 @@ fn the_allocation_count_includes_the_atlas_residency_created() {
             &solid_paints,
             &ImageTable::new(),
             &ClipTable::new(),
+            &GlyphRunTable::new(),
             W,
             H,
         )
@@ -842,6 +899,7 @@ fn the_allocation_count_includes_the_atlas_residency_created() {
             &image_paints,
             &images,
             &ClipTable::new(),
+            &GlyphRunTable::new(),
             W,
             H,
         )
@@ -932,7 +990,15 @@ fn an_image_with_no_bytes_draws_nothing() {
         None,
     );
     let pixels = renderer()
-        .render(painter.instances(), &paints, &images, &clips, W, H)
+        .render(
+            painter.instances(),
+            &paints,
+            &images,
+            &clips,
+            &GlyphRunTable::new(),
+            W,
+            H,
+        )
         .expect("the fixture extent is within any device's maximum");
 
     // Every texel of the canvas, not a sample of it: a NaN coordinate can land

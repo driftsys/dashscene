@@ -34,10 +34,11 @@
 use std::path::{Path, PathBuf};
 
 use dashpaint::{
-    Blur, BlurKind, ClipBox, ClipIndex, ClipTable, Color, CornerRadii, EntryParts, FillSpec,
-    GlyphRunTable, Gradient, GradientKind, GradientStop, GroupComposite, ImageAsset, ImageFill,
-    ImageFormat, ImageTable, Mat23, PaintEntry, PaintIndex, PaintTable, Painter, RectEntry,
-    ScaleMode, Shadow, ShadowKind, StopRange, Stroke, StrokeAlign, Vec2, VectorField,
+    Atlas, AtlasGlyph, AtlasIndex, Blur, BlurKind, ClipBox, ClipIndex, ClipTable, Color,
+    CornerRadii, EntryParts, FillSpec, GlyphQuad, GlyphRange, GlyphRun, GlyphRunTable, Gradient,
+    GradientKind, GradientStop, GroupComposite, ImageAsset, ImageFill, ImageFormat, ImageTable,
+    Mat23, PaintEntry, PaintIndex, PaintTable, Painter, RectEntry, ScaleMode, Shadow, ShadowKind,
+    StopRange, Stroke, StrokeAlign, Vec2, VectorField,
 };
 use dashscene_gpu::{GpuPainter, InstanceKind};
 
@@ -53,6 +54,7 @@ struct Scene {
     images: ImageTable,
     clips: ClipTable,
     groups: Vec<GroupComposite>,
+    glyphs: GlyphRunTable,
 }
 
 impl Scene {
@@ -68,7 +70,7 @@ impl Scene {
             &self.images,
             &self.clips,
             &self.groups,
-            &GlyphRunTable::new(),
+            &self.glyphs,
             None,
         );
         painter
@@ -397,6 +399,7 @@ fn vocabulary() -> Scene {
         images,
         clips,
         groups: Vec::new(),
+        glyphs: GlyphRunTable::new(),
     }
 }
 
@@ -435,6 +438,7 @@ fn groups() -> Scene {
         paints,
         images: ImageTable::new(),
         clips,
+        glyphs: GlyphRunTable::new(),
         groups: vec![
             GroupComposite {
                 start: 1,
@@ -448,6 +452,159 @@ fn groups() -> Scene {
             },
         ],
     }
+}
+
+/// One atlas glyph, asymmetric in all eight numbers.
+///
+/// `plane_em` is `[left, bottom, right, top]` in ems, y-up from the baseline,
+/// and `atlas_px` is `[left, bottom, right, top]` in texels, bottom-left origin.
+/// No two of the eight agree, and `bottom` is negative on one glyph, so a
+/// packer that swapped a pair, dropped the y flip, or reused one component
+/// produces a different number rather than the same one.
+fn atlas_glyph(glyph_id: u32, plane_em: [f32; 4], atlas_px: [f32; 4]) -> AtlasGlyph {
+    AtlasGlyph {
+        glyph_id,
+        plane_em,
+        atlas_px,
+    }
+}
+
+/// An atlas `height` texels tall, holding glyphs 11 and 23.
+///
+/// Two atlases in the text fixture, and **they differ in height** — which is
+/// what the `atlas_px` y flip is stated against. An atlas of one height cannot
+/// catch a flip taken against a constant, against the other atlas, or against
+/// the width.
+///
+/// Glyph 17 is deliberately absent from both: it is the empty-outline case a
+/// space produces, and it must draw nothing rather than an empty quad.
+fn text_atlas(width: u32, height: u32, px_per_em: u16, range: f32) -> Atlas {
+    Atlas::new(
+        ImageAsset {
+            format: ImageFormat::Png,
+            bytes: SAMPLE_PNG.to_vec(),
+        },
+        width,
+        height,
+        px_per_em,
+        range,
+        vec![
+            atlas_glyph(11, [0.1, -0.2, 0.65, 0.75], [3.0, 5.0, 19.0, 29.0]),
+            atlas_glyph(23, [0.05, 0.15, 0.45, 0.5], [21.0, 7.0, 33.0, 27.0]),
+        ],
+    )
+}
+
+fn glyph_quad(glyph_id: u32, x: f32, y: f32) -> GlyphQuad {
+    GlyphQuad { glyph_id, x, y }
+}
+
+/// The scene `groups()` builds, with four positioned glyph runs over it.
+///
+/// Anchored so that no axis of the mapping is uniform:
+///
+/// - **rect 2** is clipped and inside the outer group; **rect 4** is clipped and
+///   inside the *inner* group; **rect 6** is unclipped and inside no group. A
+///   run that took its clip or its layer from the wrong place lands on a
+///   different number in at least one of the three.
+/// - **two runs share rect 4**, so a cursor that advanced once per rect drops
+///   one.
+/// - The two atlases differ in height, in `px_per_em` and in `distance_range_px`;
+///   the runs differ in size, colour and opacity.
+/// - No run is anchored to rect 0, so an implementation that ignored the anchor
+///   and appended every run to the first rect moves the golden.
+fn text() -> Scene {
+    let mut scene = groups();
+
+    // A second clip region, so that the one the anchored rects carry sits at a
+    // **non-zero** box offset.
+    //
+    // `groups()` pushes one region, which starts at box 0 — and a run that
+    // dropped `ClipRegion::offset` entirely would then still produce the right
+    // number. That is the range-offset trap issues #650, #651, #561, #688 and
+    // #699 record, and mutation testing is what caught this instance of it: the
+    // dropped-offset mutation survived a first version of this fixture while
+    // every other one died.
+    let deep = scene.clips.push(&[
+        ClipBox {
+            x: 6.0,
+            y: 7.0,
+            w: 300.0,
+            h: 250.0,
+            corners: corners(9.0, 10.0, 11.0, 12.0),
+        },
+        ClipBox {
+            x: 12.0,
+            y: 14.0,
+            w: 120.0,
+            h: 90.0,
+            corners: corners(13.0, 14.0, 15.0, 16.0),
+        },
+    ]);
+    scene.rects[2].clip = deep;
+    scene.rects[4].clip = deep;
+
+    let mut glyphs = GlyphRunTable::new();
+    let tall = glyphs.push_atlas(text_atlas(64, 48, 32, 4.0));
+    let short = glyphs.push_atlas(text_atlas(40, 25, 20, 3.0));
+
+    let mut run =
+        |atlas: AtlasIndex, rect: u32, size: f32, c: Color, opacity: f32, quads: &[GlyphQuad]| {
+            glyphs.push_run(
+                GlyphRun {
+                    rect,
+                    atlas,
+                    size,
+                    color: c,
+                    glyphs: GlyphRange::UNASSIGNED,
+                    opacity,
+                },
+                quads,
+            );
+        };
+
+    // Glyph 17 sits between the two placed glyphs of the first run: it is
+    // absent from the atlas, so the run packs two instances and not three, and
+    // the second is at the third quad's position.
+    run(
+        tall,
+        2,
+        24.0,
+        color(0.9, 0.2, 0.3, 1.0),
+        0.75,
+        &[
+            glyph_quad(11, 100.0, 200.0),
+            glyph_quad(17, 130.0, 200.0),
+            glyph_quad(23, 152.0, 206.0),
+        ],
+    );
+    run(
+        short,
+        4,
+        13.0,
+        color(0.1, 0.7, 0.4, 0.5),
+        1.0,
+        &[glyph_quad(23, 40.0, 61.0)],
+    );
+    run(
+        tall,
+        4,
+        18.0,
+        color(0.2, 0.2, 0.9, 1.0),
+        0.25,
+        &[glyph_quad(11, 47.0, 72.0)],
+    );
+    run(
+        short,
+        6,
+        31.0,
+        color(1.0, 1.0, 0.0, 0.8),
+        1.0,
+        &[glyph_quad(23, 310.0, 330.0), glyph_quad(11, 325.0, 330.0)],
+    );
+
+    scene.glyphs = glyphs;
+    scene
 }
 
 fn golden_path(name: &str) -> PathBuf {
@@ -517,12 +674,203 @@ fn nesting_groups_pack_to_their_golden() {
     assert_matches_golden("groups", &groups().pack().instances().dump());
 }
 
+#[test]
+fn positioned_glyph_runs_pack_to_their_golden() {
+    assert_matches_golden("text", &text().pack().instances().dump());
+}
+
+/// A glyph's quad is its pen position plus the atlas glyph's `plane_em` scaled
+/// by the run's size, with the y-up-to-y-down flip applied.
+///
+/// Stated over the numbers rather than left to the golden, because a golden
+/// says the output did not change and this says the output is right. The two
+/// catch different mistakes: a golden re-recorded against a wrong
+/// implementation is green forever.
+#[test]
+fn a_glyph_quad_is_its_pen_position_plus_the_scaled_plane_bounds() {
+    let scene = text();
+    let painter = scene.pack();
+    // Rect 2's first glyph: quad 11 at (100, 200), atlas 0, size 24.
+    let glyph = painter.instances().rect_instances(2)[1];
+    assert_eq!(glyph.kind, InstanceKind::Text.as_u32());
+    // plane_em is [0.1, -0.2, 0.65, 0.75]: left 0.1, bottom -0.2, right 0.65,
+    // top 0.75. y-up from the baseline, so the quad's top is `y - top * size`
+    // and its height is `(top - bottom) * size`.
+    assert_eq!(
+        glyph.bounds,
+        [
+            100.0 + 0.1 * 24.0,
+            200.0 - 0.75 * 24.0,
+            (0.65 - 0.1) * 24.0,
+            (0.75 - -0.2) * 24.0,
+        ],
+        "the quad is the pen position plus plane_em scaled by the run's size"
+    );
+    // The height is not the width, and the origin is above the baseline: both
+    // are false for a packer that dropped the flip.
+    assert!(
+        glyph.bounds[1] < 200.0,
+        "the glyph's top is above its baseline"
+    );
+    assert_ne!(glyph.bounds[2], glyph.bounds[3]);
+}
+
+/// A glyph's `corners` is its atlas rectangle, flipped from `atlas_px`'s
+/// bottom-left origin to a top-left one **against its own atlas's height**.
+///
+/// The two atlases are 48 and 25 texels tall, so a flip taken against a
+/// constant, against the other atlas, or against the width lands on a different
+/// row for at least one of them.
+#[test]
+fn a_glyphs_corners_are_its_atlas_rectangle_flipped_against_its_own_atlas() {
+    let scene = text();
+    let painter = scene.pack();
+    // Rect 2's first glyph is glyph 11 of the 48-tall atlas:
+    // atlas_px [3, 5, 19, 29] -> [x 3, y 48 - 29, w 16, h 24].
+    assert_eq!(
+        painter.instances().rect_instances(2)[1].corners,
+        [3.0, 48.0 - 29.0, 16.0, 24.0]
+    );
+    // Rect 4's first glyph is glyph 23 of the 25-tall atlas:
+    // atlas_px [21, 7, 33, 27] -> [x 21, y 25 - 27, w 12, h 20]. The y is
+    // negative, which is what an atlas shorter than its own glyph's top edge
+    // produces — a fixture value chosen so that a flip against the *other*
+    // atlas's height gives a positive number and fails here.
+    assert_eq!(
+        painter.instances().rect_instances(4)[1].corners,
+        [21.0, 25.0 - 27.0, 12.0, 20.0]
+    );
+}
+
+/// A glyph id the atlas has no quad for produces no instance.
+///
+/// The empty-outline case — a space — and `dashpaint::Atlas::glyph`'s own
+/// contract. The run places three quads and packs two, and the second packed
+/// one is the *third* quad, so a packer that skipped the wrong one fails.
+#[test]
+fn a_glyph_the_atlas_does_not_place_packs_nothing() {
+    let scene = text();
+    let painter = scene.pack();
+    let instances = painter.instances().rect_instances(2);
+    assert_eq!(instances.len(), 3, "one solid fill and two of three glyphs");
+    assert_eq!(instances[2].bounds[0], 152.0 + 0.05 * 24.0);
+}
+
+/// A run's glyphs take the anchor rect's clip region and its group layer.
+///
+/// Both are derived from the anchor rather than carried on the run
+/// (`docs/decisions/glyph-runs-cross-boundary-b.md`), so this is the one place
+/// the derivation is checked. Rect 2 is inside the outer group, rect 4 inside
+/// the inner one and rect 6 inside neither, and rect 6 is also unclipped — so
+/// no two of the three agree on both.
+#[test]
+fn a_runs_glyphs_take_the_anchor_rects_clip_and_layer() {
+    let scene = text();
+    let painter = scene.pack();
+    for rect in [2u32, 4, 6] {
+        let instances = painter.instances().rect_instances(rect);
+        let fill = instances[0];
+        for glyph in &instances[1..] {
+            assert_eq!(glyph.kind, InstanceKind::Text.as_u32());
+            assert_eq!(
+                (glyph.clip_offset, glyph.clip_count),
+                (fill.clip_offset, fill.clip_count),
+                "rect {rect}'s glyphs must sit in the same clip region as its own ink"
+            );
+            assert_eq!(
+                glyph.layer, fill.layer,
+                "rect {rect}'s glyphs must composite into the same layer as its own ink"
+            );
+        }
+    }
+    // And the three anchors genuinely differ, so the assertion above is not
+    // comparing a constant against itself.
+    let layer = |rect: u32| painter.instances().rect_instances(rect)[0].layer;
+    assert_eq!((layer(2), layer(4), layer(6)), (1, 2, 0));
+    let clip = |rect: u32| {
+        let ink = painter.instances().rect_instances(rect)[0];
+        (ink.clip_offset, ink.clip_count)
+    };
+    assert_eq!((clip(2), clip(6)), ((1, 2), (0, 0)));
+    // And the offset the anchored rects carry is not zero, which is what makes
+    // the assertion above able to fail for an implementation that dropped it.
+    assert_ne!(
+        clip(2).0,
+        0,
+        "the fixture's clip region starts past box zero"
+    );
+}
+
+/// A rect with two runs draws both, in table order, after its own ink.
+#[test]
+fn two_runs_on_one_rect_both_pack_after_the_rects_ink() {
+    let scene = text();
+    let painter = scene.pack();
+    let instances = painter.instances().rect_instances(4);
+    assert_eq!(
+        instances.len(),
+        3,
+        "one fill and one glyph from each of two runs"
+    );
+    assert_eq!(instances[0].kind, InstanceKind::FillSolid.as_u32());
+    // Run 1 then run 2: the rows are the runs' own table indices, in order.
+    assert_eq!(instances[1].row, 1);
+    assert_eq!(instances[2].row, 2);
+    // And they are different runs, not one run twice.
+    assert_ne!(instances[1].bounds, instances[2].bounds);
+}
+
+/// A run's `opacity` reaches its glyphs, and it is the run's own rather than
+/// the anchor rect's.
+///
+/// The two are equal in every scene commit builds — the field is derivable and
+/// kept only until that fold-in lands — so the fixture makes them differ, which
+/// is the only way to say which one the packer read.
+#[test]
+fn a_glyph_carries_its_runs_own_opacity() {
+    let scene = text();
+    let painter = scene.pack();
+    let instances = painter.instances().rect_instances(4);
+    assert_eq!(instances[0].opacity, 1.0, "rect 4's own opacity");
+    assert_eq!(instances[1].opacity, 1.0, "run 1's opacity");
+    assert_eq!(
+        instances[2].opacity, 0.25,
+        "run 2's opacity, not the rect's"
+    );
+}
+
+/// A run anchored past the rect table is named rather than silently dropped.
+///
+/// The cursor cannot report it from inside the walk — it simply never matches —
+/// so the check is at the end, and this is what says the check is there. The
+/// reference painter asserts the same thing (P4).
+#[test]
+#[should_panic(expected = "is anchored to rect")]
+fn a_run_anchored_past_the_rect_table_is_named() {
+    let mut scene = groups();
+    let mut glyphs = GlyphRunTable::new();
+    let atlas = glyphs.push_atlas(text_atlas(64, 48, 32, 4.0));
+    glyphs.push_run(
+        GlyphRun {
+            rect: 99,
+            atlas,
+            size: 12.0,
+            color: color(1.0, 1.0, 1.0, 1.0),
+            glyphs: GlyphRange::UNASSIGNED,
+            opacity: 1.0,
+        },
+        &[glyph_quad(11, 0.0, 0.0)],
+    );
+    scene.glyphs = glyphs;
+    scene.pack();
+}
+
 /// The spans cover the instances exactly, with no gap and no overlap — the
 /// property R-T4's dirty-range upload rests on, and one a golden alone would
 /// not state.
 #[test]
 fn the_spans_partition_the_buffer_in_rect_order() {
-    for scene in [vocabulary(), groups()] {
+    for scene in [vocabulary(), groups(), text()] {
         let painter = scene.pack();
         let buffer = painter.instances();
         assert_eq!(
@@ -566,6 +914,7 @@ fn a_fill_only_node_packs_exactly_one_instance() {
         images: ImageTable::new(),
         clips: ClipTable::new(),
         groups: Vec::new(),
+        glyphs: GlyphRunTable::new(),
     };
     let painter = scene.pack();
     let instances = painter.instances().rect_instances(0);
@@ -797,6 +1146,7 @@ fn one_node_packs_its_parts_in_the_reference_painters_order() {
         images: ImageTable::new(),
         clips: ClipTable::new(),
         groups: Vec::new(),
+        glyphs: GlyphRunTable::new(),
     };
     let painter = scene.pack();
     let order: Vec<u32> = painter
@@ -978,6 +1328,7 @@ fn a_drop_shadow_casts_from_the_stroked_silhouette() {
             images: ImageTable::new(),
             clips: ClipTable::new(),
             groups: Vec::new(),
+            glyphs: GlyphRunTable::new(),
         };
         let painter = scene.pack();
         let instances = painter.instances().rect_instances(0);
@@ -1040,7 +1391,12 @@ fn a_masked_node_with_an_image_fill_packs_nothing() {
 /// names.
 #[test]
 fn each_kind_names_the_table_its_row_indexes() {
-    let scene = vocabulary();
+    for scene in [vocabulary(), text()] {
+        each_kind_names_its_table(&scene);
+    }
+}
+
+fn each_kind_names_its_table(scene: &Scene) {
     let painter = scene.pack();
     for (index, rect) in scene.rects.iter().enumerate() {
         let entry = scene.paints.resolve(rect.paint);
@@ -1062,6 +1418,14 @@ fn each_kind_names_the_table_its_row_indexes() {
                 InstanceKind::Stroke => {
                     assert!(row < scene.paints.all_strokes().len());
                     assert!(scene.paints.stroke(entry).is_some());
+                }
+                InstanceKind::Text => {
+                    assert!(row < scene.glyphs.runs().len());
+                    assert_eq!(
+                        scene.glyphs.runs()[row].rect,
+                        index as u32,
+                        "a glyph instance sits in the span of the rect its run is anchored to"
+                    );
                 }
             }
         }
@@ -1091,6 +1455,7 @@ fn kinds_are_distinct_and_every_packed_pad_is_zero() {
         InstanceKind::FillGradient,
         InstanceKind::FillImage,
         InstanceKind::Stroke,
+        InstanceKind::Text,
     ];
     let values: std::collections::BTreeSet<u32> = kinds.iter().map(|k| k.as_u32()).collect();
     assert_eq!(values.len(), kinds.len(), "two kinds share a value");
@@ -1098,7 +1463,7 @@ fn kinds_are_distinct_and_every_packed_pad_is_zero() {
         assert_eq!(InstanceKind::from_u32(kind.as_u32()), kind);
     }
 
-    for scene in [vocabulary(), groups()] {
+    for scene in [vocabulary(), groups(), text()] {
         let painter = scene.pack();
         for instance in painter.instances().instances() {
             assert_eq!(instance._pad, 0, "a packed instance carries a non-zero pad");

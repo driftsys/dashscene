@@ -90,6 +90,18 @@ pub enum InstanceKind {
     /// The node's outline stroke. `row` is a
     /// [`dashpaint::PaintTable::all_strokes`] row.
     Stroke = 6,
+    /// One glyph of a positioned run. `row` is a [`dashpaint::GlyphRunTable`]
+    /// run index, and [`Instance::corners`] is the glyph's rectangle in that
+    /// run's atlas, in that atlas's own texels.
+    ///
+    /// One instance per glyph rather than per run: a run's glyphs are not one
+    /// quad, and the alternative — a run instance that the shader expanded —
+    /// would need the quad array in a shader stage and would put a loop in a
+    /// fragment. Per glyph, each is an ordinary quad of the one stream, and
+    /// everything already stated over that stream (draw order, clipping, the
+    /// group layer, the dirty-range upload) applies to text without a second
+    /// mechanism.
+    Text = 7,
 }
 
 impl InstanceKind {
@@ -122,6 +134,7 @@ impl InstanceKind {
             InstanceKind::FillGradient => "fill-gradient",
             InstanceKind::FillImage => "fill-image",
             InstanceKind::Stroke => "stroke",
+            InstanceKind::Text => "text",
         }
     }
 
@@ -140,6 +153,7 @@ impl InstanceKind {
             4 => InstanceKind::FillGradient,
             5 => InstanceKind::FillImage,
             6 => InstanceKind::Stroke,
+            7 => InstanceKind::Text,
             _ => panic!("no instance kind carries this value"),
         }
     }
@@ -191,6 +205,11 @@ pub struct Instance {
     /// are resolved per-painter at draw time (P1). An inner shadow takes no
     /// outset.
     ///
+    /// For an [`InstanceKind::Text`] instance it is the glyph's own quad in
+    /// document space, already placed: `dashpaint::GlyphQuad`'s pen position
+    /// plus the atlas glyph's `plane_em` scaled by the run's size. The painter
+    /// places nothing else and moves nothing (P2).
+    ///
     /// First, with `corners` after it, so both four-float vectors sit at a
     /// 16-byte offset. A consumer binding this as a storage-buffer element then
     /// repacks nothing.
@@ -204,9 +223,22 @@ pub struct Instance {
     /// through rather than zeroed so the authored value stays visible in a
     /// golden.
     ///
-    /// The slot a glyph instance will reuse for its atlas texel rectangle
-    /// (story #582) — four floats either way, which is what lets text join this
-    /// stream without widening the struct.
+    /// **For an [`InstanceKind::Text`] instance this is the glyph's rectangle
+    /// in its run's atlas** — `[x, y, w, h]` in that atlas's own texels, with a
+    /// top-left origin, which is `dashpaint::VectorField::atlas_rect`'s
+    /// convention rather than `dashpaint::AtlasGlyph::atlas_px`'s bottom-left
+    /// `[l, b, r, t]`. The packer converts; the conversion is stated once,
+    /// where the reference painter also states it.
+    ///
+    /// Texels of the *source* atlas, not of the residency atlas the payload was
+    /// uploaded into. The packer runs with no device — that is what makes layer
+    /// 1 testable on a runner with no GPU — so it cannot know where residency
+    /// put the payload, and the row this instance names carries the mapping
+    /// from one to the other.
+    ///
+    /// Four floats either way, which is what lets text join this stream without
+    /// widening the struct. A glyph needs no rounded box, and an image fill
+    /// could not have taken this route because it still needs one.
     pub corners: [f32; 4],
     /// What this quad draws — an [`InstanceKind`], sub-kind included.
     pub kind: u32,
@@ -314,13 +346,13 @@ impl InstanceBuffer {
     ///
     /// A rect's instances are contiguous and in the order
     /// `docs/decisions/instance-buffer-contract.md` D5 states. Story #582's
-    /// glyph instances go at the end of that list, so they widen a count and
-    /// move no boundary — which is why this contract does not change when text
-    /// arrives.
+    /// glyph instances went at the end of that list, so they widened a count
+    /// and moved no boundary — which is why this contract did not change when
+    /// text arrived.
     ///
-    /// A count of zero means the rect draws nothing *yet*: a layout-only
-    /// container, and today also a text node, whose only ink is the glyph
-    /// instances story #582 adds.
+    /// A count of zero means the rect draws nothing: a layout-only container.
+    /// A text node is no longer one of those — its glyphs are instances of the
+    /// rect their run is anchored to.
     pub fn spans(&self) -> &[InstanceSpan] {
         &self.spans
     }

@@ -14,14 +14,23 @@
 //! boundary B. The code below is the one other place it is written, because it
 //! is the place that produces it.
 //!
+//! # Where a glyph run goes
+//!
+//! Story #582 appends a run's glyph instances to the span of the rect the run
+//! is anchored to, after that rect's inner shadows — the position
+//! `dashscene-skia` draws an anchored run at, which puts the run inside the
+//! rect's clip region (issue #275) and inside every group layer enclosing it
+//! (issue #274). Nothing about the span contract changed: the instances go at
+//! the end of a rect's list, so they widen a count and move no boundary.
+//!
+//! The instance carries the glyph's rectangle in the run's **source** atlas,
+//! in that atlas's own texels. Where residency put that atlas is a device
+//! question and this packer has no device — which is exactly what makes layer 1
+//! runnable on a runner with no GPU — so the row the instance names carries the
+//! mapping, and it is resolved once per run rather than once per glyph.
+//!
 //! # What this packer does not emit, by name
 //!
-//! - **Glyph quads.** A glyph's texel rectangle is a coordinate in the
-//!   painter's residency atlas rather than the `atlas_px` boundary B carries.
-//!   Residency landed at story #581 and serves image fills; story #582 brings
-//!   glyphs to it and appends glyph instances to the anchor rect's span, after
-//!   its inner shadows — the position `dashscene-skia` already draws an
-//!   anchored run at.
 //! - **`BlurKind::Layer` blurs.** Node-local layer blur is budgeted at v1 and
 //!   nothing in this tree produces one (`dashc` lowers only
 //!   `BACKGROUND_BLUR`). The reference painter skips it by the same filter.
@@ -41,24 +50,26 @@
 //!   matched here rather than decided here.
 
 use dashpaint::{
-    BlurKind, ClipTable, GlyphRunTable, GroupComposite, ImageTable, PaintKind, PaintTable,
-    PaintTag, RectEntry, Shadow, ShadowKind, Stroke, StrokeAlign,
+    BlurKind, ClipRegion, ClipTable, GlyphRun, GlyphRunTable, GroupComposite, ImageTable,
+    PaintKind, PaintTable, PaintTag, RectEntry, Shadow, ShadowKind, Stroke, StrokeAlign,
 };
 
 use crate::instance::{Instance, InstanceBuffer, InstanceKind, bounds_of, shape_slot};
 
 /// Packs one frame of boundary-B tables into `out`, which is emptied first.
 ///
-/// `images` and `glyphs` are part of boundary B and are accepted so that the
-/// packer's signature is the painter's, not a subset of it; neither
-/// contributes an instance yet — see the module documentation for which story
-/// each belongs to.
+/// `images` is part of boundary B and is accepted so that the packer's
+/// signature is the painter's, not a subset of it; an image fill's payload is
+/// a device question and no instance reads this table.
 ///
 /// # Panics
 ///
 /// Panics through boundary B's own resolvers when a rect names a paint or clip
 /// index its tables do not hold. Indices are validated upstream (P4), so a
 /// miss is a broken contract between crates and never a frame to skip.
+///
+/// Panics when a glyph run is anchored to a rect the table does not hold, for
+/// the same reason and by the same rule the reference painter panics under.
 #[allow(clippy::too_many_arguments)]
 pub fn pack(
     out: &mut InstanceBuffer,
@@ -69,8 +80,17 @@ pub fn pack(
     groups: &[GroupComposite],
     glyphs: &GlyphRunTable,
 ) {
-    let _ = (images, glyphs);
+    let _ = images;
     out.clear();
+
+    // Runs arrive ordered by anchor — commit stable-sorts them
+    // (`docs/decisions/glyph-runs-cross-boundary-b.md`) — so one forward cursor
+    // walks them alongside the rects. Both properties the cursor rests on are
+    // checked below rather than assumed: the order, at each step, and that
+    // every run was consumed, at the end. A run the cursor walked past would
+    // draw nothing, which is a picture missing its text and no diagnostic.
+    let mut next_run = 0usize;
+    let runs = glyphs.runs();
 
     // Two properties make one forward pointer plus a stack enough, and they
     // come from different places. Nesting is boundary B's, stated on
@@ -117,6 +137,88 @@ pub fn pack(
 
         out.begin_rect(i);
         pack_rect(out, rect, paints, clips, layer);
+
+        // The run's glyphs, after this rect's own ink — the position the
+        // reference painter draws an anchored run at, which is what puts it
+        // inside this rect's clip and inside every group layer enclosing it.
+        debug_assert!(
+            next_run >= runs.len() || runs[next_run].rect >= i,
+            "glyph run {next_run} is anchored to rect {} but the walk is already at rect {i}; \
+             commit orders the run table by anchor",
+            runs[next_run].rect,
+        );
+        while next_run < runs.len() && runs[next_run].rect == i {
+            let row = u32::try_from(next_run).expect("glyph run table exceeds u32::MAX runs");
+            pack_run(out, glyphs, row, clips.region(rect.clip), layer);
+            next_run += 1;
+        }
+    }
+
+    // A run anchored past the rect table draws nothing and is the one failure
+    // the cursor cannot report from inside the walk. The reference painter
+    // asserts the same thing, by name, for the same reason (P4).
+    assert_eq!(
+        next_run,
+        runs.len(),
+        "glyph run {next_run} is anchored to rect {} of a {}-rect table: a run's anchor is \
+         meaningful only against the rect table of the commit it came from",
+        runs.get(next_run).map_or(0, |run| run.rect),
+        rects.len(),
+    );
+}
+
+/// One instance per glyph run `row` places, in the run's own draw order.
+///
+/// The geometry is the reference painter's, resolved here rather than
+/// re-derived: `plane_em` is y-up in ems from the baseline and document space
+/// is y-down, so the top of the quad is `y - top * size` and the bottom is
+/// `y - bottom * size`. Getting that flip wrong moves every glyph by its own
+/// height, which reads as a baseline offset rather than as a transposition.
+///
+/// A glyph id the atlas has no quad for draws nothing and produces no instance
+/// — an empty outline such as a space, or a glyph outside the atlas's charset.
+/// That is `dashpaint::Atlas::glyph`'s own contract, not a filter invented here.
+fn pack_run(
+    out: &mut InstanceBuffer,
+    glyphs: &GlyphRunTable,
+    row: u32,
+    clip: ClipRegion,
+    layer: u32,
+) {
+    let run: &GlyphRun = &glyphs.runs()[row as usize];
+    let atlas = glyphs.atlas(run.atlas);
+    let height = atlas.height as f32;
+    for quad in glyphs.quads(run) {
+        let Some(glyph) = atlas.glyph(quad.glyph_id) else {
+            continue;
+        };
+        let [left, bottom, right, top] = glyph.plane_em;
+        let size = run.size;
+        let x = quad.x + left * size;
+        let y = quad.y - top * size;
+        // `atlas_px` is `[left, bottom, right, top]` with a bottom-left origin;
+        // `Instance::corners` is `[x, y, w, h]` with a top-left origin, which is
+        // the convention `dashpaint::VectorField::atlas_rect` already uses. The
+        // flip is against the atlas's own height, so an atlas of a different
+        // height places the same glyph at a different row — which is why the
+        // height comes from the run's atlas and not from a constant.
+        let [al, ab, ar, at] = glyph.atlas_px;
+        out.push(Instance {
+            kind: InstanceKind::Text.as_u32(),
+            row,
+            shape: Instance::NONE,
+            clip_offset: clip.offset,
+            clip_count: clip.count,
+            layer,
+            // The run's own free-path alpha, which is what the reference
+            // painter multiplies the fill colour by. It mirrors the anchor
+            // rect's `opacity` and is kept as its own field until that fold-in
+            // lands (`docs/decisions/glyph-runs-cross-boundary-b.md`).
+            opacity: run.opacity,
+            _pad: 0,
+            bounds: [x, y, (right - left) * size, (top - bottom) * size],
+            corners: [al, height - at, ar - al, at - ab],
+        });
     }
 }
 

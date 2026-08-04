@@ -481,6 +481,7 @@ impl Present for GpuPresenter {
                 scene.paints(),
                 scene.images(),
                 scene.clips(),
+                scene.glyphs(),
                 Some(changes),
             )
             .map_err(|error| PresentError::Post(error.to_string()))

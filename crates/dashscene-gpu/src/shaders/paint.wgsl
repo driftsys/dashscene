@@ -31,6 +31,7 @@ const KIND_FILL_SOLID: u32 = 3u;
 const KIND_FILL_GRADIENT: u32 = 4u;
 const KIND_FILL_IMAGE: u32 = 5u;
 const KIND_STROKE: u32 = 6u;
+const KIND_TEXT: u32 = 7u;
 
 // `StrokeAlign`, as `GpuStroke::align` carries it.
 const ALIGN_INSIDE: u32 = 0u;
@@ -71,7 +72,7 @@ struct Viewport {
 //
 // The atlas rectangle is on the row rather than on the instance because an
 // image instance still needs `Instance::corners` for its own rounded box. Story
-// #582's glyph instances take the other route — `corners` is meaningless for a
+// #582's glyph instances took the other route — `corners` is meaningless for a
 // glyph, so a glyph quad carries its texel rectangle there.
 struct Image {
     uv: vec4f,
@@ -93,6 +94,35 @@ const SCALE_FIT: u32 = 1u;
 const SCALE_CROP: u32 = 2u;
 const SCALE_TILE: u32 = 3u;
 
+// Mirrors `dashscene_gpu::render::GpuGlyphRun` — one positioned run's shared
+// parameters, with its atlas's residency slot resolved into them. `uv` maps a
+// texel of the run's *source* atlas into the residency texture: texel `t` sits
+// at `uv.xy + t * uv.zw`.
+//
+// `half_uv` before `px_range`, not after: WGSL aligns a `vec2f` to eight bytes,
+// so the other order would put `half_uv` at offset 40 and round this struct to
+// 64, while the Rust type packs it at 36 and is 48. Every row after the first
+// would then be read from the wrong offset.
+struct GlyphRun {
+    color: vec4f,
+    uv: vec4f,
+    half_uv: vec2f,
+    px_range: f32,
+    _pad: f32,
+}
+
+// Mirrors `dashscene_gpu::render::GpuShape` — one baked-vector coverage mask.
+// `plane` is the padded field quad in shape space, node-box-relative and
+// y-down: `[left, top, right, bottom]`. `uv` is the field's own sub-rect in the
+// residency texture. Member order for the reason `GlyphRun` gives.
+struct Shape {
+    plane: vec4f,
+    uv: vec4f,
+    half_uv: vec2f,
+    px_range: f32,
+    _pad: f32,
+}
+
 @group(0) @binding(0) var<storage, read> instances: array<Instance>;
 @group(0) @binding(1) var<storage, read> solids: array<vec4f>;
 @group(0) @binding(2) var<storage, read> clip_boxes: array<ClipBox>;
@@ -101,6 +131,18 @@ const SCALE_TILE: u32 = 3u;
 @group(0) @binding(5) var<storage, read> images: array<Image>;
 @group(0) @binding(6) var atlas: texture_2d<f32>;
 @group(0) @binding(7) var atlas_sampler: sampler;
+// Story #582's two tables. **Vertex only** — the fragment stage already reads
+// the four storage buffers `wgpu::Limits::downlevel_defaults` allows, and both
+// of these carry values that are constant across an instance, so the stage that
+// runs four times per quad reads them and hands the values across. See
+// `docs/decisions/tables-the-vertex-stage-reads.md`.
+@group(0) @binding(8) var<storage, read> glyph_runs: array<GlyphRun>;
+@group(0) @binding(9) var<storage, read> shapes: array<Shape>;
+// The sampler an MSDF payload is read through: linear, because a distance field
+// is not a colour and nearest quantises the edge ramp to the atlas's texel
+// grid. Image fills keep `atlas_sampler`. `render.rs` builds both, and says why
+// the clamp in `msdf_sample` is what makes filtering safe without a gutter.
+@group(0) @binding(10) var msdf_sampler: sampler;
 
 // What the fragment stage needs of an instance, carried through the rasteriser
 // rather than re-read from the instance array.
@@ -125,12 +167,37 @@ struct VertexOut {
     @builtin(position) position: vec4f,
     // The fragment's position in document space.
     @location(0) local: vec2f,
+    // The node's own box, always — never the field quad a masked instance is
+    // drawn over. A gradient's frame is stated over the node box even when a
+    // coverage mask confines where it lands, which is what `dashscene-skia`
+    // does and what issue #715 will need.
     @location(1) bounds: vec4f,
     @location(2) corners: vec4f,
     // `Instance`'s four index members, packed so that they cost one variable
     // rather than four: kind, row, clip_offset, clip_count.
     @location(3) @interpolate(flat) rows: vec4u,
     @location(4) @interpolate(flat) opacity: f32,
+    // `Instance::shape` — the coverage-mask row plus one, or zero. Carried
+    // because the fragment stage decides its coverage by it and cannot read the
+    // instance array.
+    @location(5) @interpolate(flat) shape: u32,
+    // Story #582's three parameter slots, written by the vertex stage from a
+    // table the fragment stage does not bind. Each is a different thing per
+    // kind, and every kind that reads one also wrote it:
+    //
+    //     text          params0 = the run's colour
+    //                   params1 = the glyph's sub-rect in the atlas texture
+    //     masked        params0 = the field's device quad, [x, y, w, h]
+    //                   params1 = the field's sub-rect in the atlas texture
+    //     everything    zero, and nothing reads them
+    //
+    // `params2` is `(half_u, half_v, px_range, 0)` for both.
+    //
+    // Flat, and stated: these are per-instance constants, and a flat varying is
+    // exact where an interpolated one is only exact because every vertex agreed.
+    @location(6) @interpolate(flat) params0: vec4f,
+    @location(7) @interpolate(flat) params1: vec4f,
+    @location(8) @interpolate(flat) params2: vec4f,
 }
 
 // How far past its own `bounds` an instance draws.
@@ -176,12 +243,51 @@ fn instance_outset(inst: Instance) -> f32 {
 @vertex
 fn vs_main(@builtin(vertex_index) vertex: u32, @builtin(instance_index) index: u32) -> VertexOut {
     let inst = instances[index];
-    // The quad, grown by the antialiasing width so the ramp is not clipped by
-    // the geometry it belongs to, and by whatever this instance draws beyond
-    // its own bounds.
+
+    var out: VertexOut;
+    out.params0 = vec4f(0.0);
+    out.params1 = vec4f(0.0);
+    out.params2 = vec4f(0.0);
+
+    // The rectangle this instance's ink lives in. The node's own box for
+    // everything but a masked instance, whose ink is confined to the coverage
+    // field's padded quad — `plane` is relative to the node's origin, at unit
+    // scale, which is what `docs/decisions/baked-vector-msdf-field.md` fixes.
+    //
+    // A masked instance whose field could not be resolved has a zeroed row, so
+    // its quad has no area and it draws nothing. That is the reference
+    // painter's own answer to a degenerate field, reached here without a
+    // second branch.
+    var quad = inst.bounds;
+    if inst.shape != 0u {
+        let field = shapes[inst.shape - 1u];
+        let lo = inst.bounds.xy + field.plane.xy;
+        let hi = inst.bounds.xy + field.plane.zw;
+        quad = vec4f(lo, hi - lo);
+        out.params0 = quad;
+        out.params1 = field.uv;
+        out.params2 = vec4f(field.half_uv, field.px_range, 0.0);
+    } else if inst.kind == KIND_TEXT {
+        let run = glyph_runs[inst.row];
+        out.params0 = run.color;
+        // The glyph's own rectangle, from source texels into the atlas texture.
+        // `corners` carries it in source texels because the packer has no
+        // device and cannot know where residency put the atlas.
+        out.params1 = vec4f(
+            run.uv.xy + inst.corners.xy * run.uv.zw,
+            inst.corners.zw * run.uv.zw,
+        );
+        out.params2 = vec4f(run.half_uv, run.px_range, 0.0);
+    }
+
+    // Grown by the antialiasing width so the ramp is not clipped by the
+    // geometry it belongs to, and by whatever this instance draws beyond its
+    // own bounds. An MSDF quad needs neither — the field's own padding is its
+    // antialiasing — and the margin is harmless there because `msdf_sample`
+    // clamps every sample back inside the payload.
     let margin = viewport.aa + instance_outset(inst);
-    let lo = inst.bounds.xy - vec2f(margin);
-    let hi = inst.bounds.xy + inst.bounds.zw + vec2f(margin);
+    let lo = quad.xy - vec2f(margin);
+    let hi = quad.xy + quad.zw + vec2f(margin);
     // Two triangles, as a triangle strip of four vertices.
     let corner = vec2f(
         select(lo.x, hi.x, (vertex & 1u) == 1u),
@@ -192,13 +298,13 @@ fn vs_main(@builtin(vertex_index) vertex: u32, @builtin(instance_index) index: u
         corner.x / viewport.size.x * 2.0 - 1.0,
         1.0 - corner.y / viewport.size.y * 2.0,
     );
-    var out: VertexOut;
     out.position = vec4f(ndc, 0.0, 1.0);
     out.local = corner;
     out.bounds = inst.bounds;
     out.corners = inst.corners;
     out.rows = vec4u(inst.kind, inst.row, inst.clip_offset, inst.clip_count);
     out.opacity = inst.opacity;
+    out.shape = inst.shape;
     return out;
 }
 
@@ -281,6 +387,33 @@ fn image_colour(fill: Image, bounds: vec4f, p: vec2f) -> vec4f {
     return textureSampleLevel(atlas, atlas_sampler, fill.uv.xy + inside * fill.uv.zw, 0.0);
 }
 
+// The MSDF channels under `p`, for a quad that maps onto one sub-rect of the
+// bound atlas.
+//
+// `rect` is that sub-rect, normalised: `[u0, v0, du, dv]`. `quad` is the device
+// rectangle it covers, `[x, y, w, h]`. `half` is half a source texel in the
+// same normalised units.
+//
+// **The clamp is what keeps the sample inside this payload**, and it is doing
+// two jobs. The allocation beside this one in the residency atlas is a
+// different picture with no padding between them, so a sample that walked out
+// of the sub-rect would read it — and the quad is deliberately grown by the
+// antialiasing width, so without the clamp every glyph would read its
+// neighbour along a one-unit fringe. Half a texel in is also exactly what makes
+// *filtering* safe: a bilinear footprint taken from a texel's own centre
+// weights that texel alone at the payload's edge, so no gutter is needed.
+//
+// `min`/`max` around the bounds rather than the bounds themselves: a sub-rect
+// under two texels wide has `lo` past `hi`, and `clamp` with a reversed range
+// is not defined to do anything sensible.
+fn msdf_sample(rect: vec4f, quad: vec4f, half: vec2f, p: vec2f) -> vec3f {
+    let t = (p - quad.xy) / quad.zw;
+    let lo = rect.xy + half;
+    let hi = rect.xy + rect.zw - half;
+    let uv = clamp(rect.xy + t * rect.zw, min(lo, hi), max(lo, hi));
+    return textureSampleLevel(atlas, msdf_sampler, uv, 0.0).rgb;
+}
+
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4f {
     let kind = in.rows.x;
@@ -295,7 +428,28 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
     // and multiplying would have left every Outside stroke at zero coverage
     // everywhere it draws.
     var shape = 0.0;
-    if kind == KIND_STROKE {
+    if in.shape != 0u {
+        // A baked-vector node carries its outline in the baked geometry, so the
+        // parametric rounded box and its corners do not apply at all — the
+        // field's coverage *is* the node's silhouette. `dashscene-skia` says
+        // the same thing by skipping the whole parametric branch for a masked
+        // entry, and the packer already emits neither a stroke nor a stacked
+        // layer for one.
+        //
+        // Checked before the kind, because a mask applies to whatever it is
+        // masking. Its own colour still comes from the kind below.
+        shape = msdf_coverage(
+            msdf_sample(in.params1, in.params0, in.params2.xy, in.local),
+            in.params2.z,
+        );
+    } else if kind == KIND_TEXT {
+        // The glyph's quad is its own bounds — a glyph has no rounded box, and
+        // `corners` carried its atlas rectangle instead.
+        shape = msdf_coverage(
+            msdf_sample(in.params1, in.bounds, in.params2.xy, in.local),
+            in.params2.z,
+        );
+    } else if kind == KIND_STROKE {
         let s = strokes[row];
         shape = stroke_coverage(d, s.width, f32(s.align), viewport.aa);
     } else {
@@ -306,8 +460,14 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
         discard;
     }
     // Story #580 drew the solid fill; story #710 added the stroke beside it,
-    // and story #581 the image fill. Gradients are #715's, shadows and backdrop
-    // blur #584's, group opacity #583's.
+    // story #581 the image fill, and story #582 text and the coverage mask
+    // above. Gradients are #715's, shadows and backdrop blur #584's, group
+    // opacity #583's.
+    //
+    // A masked *gradient* fill therefore still draws nothing: the mask resolved
+    // and its coverage is correct, and the colour it would modulate is the one
+    // thing that does not exist yet. It falls to the `discard` below like any
+    // other gradient, rather than to a wrong colour.
     //
     // **Both `kind` and `tag`, never `tag` alone.** `tag` means a different
     // enum for each kind — a `PaintTag` for a fill, a `ShadowKind` for a
@@ -332,6 +492,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
         colour = solids[row];
     } else if kind == KIND_STROKE {
         colour = strokes[row].color;
+    } else if kind == KIND_TEXT {
+        // The run's fill, which the MSDF coverage above modulates. The run's
+        // own free-path alpha is on `opacity` and is already in `cover`.
+        colour = in.params0;
     } else if kind == KIND_FILL_IMAGE {
         colour = image_colour(images[row], in.bounds, in.local);
         // A payload's own transparency, and the letterboxing Fit leaves. Both

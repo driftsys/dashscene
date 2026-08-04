@@ -2,7 +2,7 @@
 //! native and web from one codebase
 //! (`docs/decisions/wgpu-is-the-lean-painter.md`).
 //!
-//! # Status: solid fills draw, to a texture or to a window
+//! # Status: the paint vocabulary less gradients, shadows, blur and group opacity
 //!
 //! Story #577 stood the crate up against boundary B — "the entire painter
 //! input" (`docs/design/architecture.md`) — so that the trait was proven
@@ -33,10 +33,17 @@
 //! trait default and starts naming what this painter's device can actually take
 //! (`docs/decisions/atlas-residency-and-image-fills.md`).
 //!
-//! What draws is opaque rounded rects with a solid fill, their stroke and their
-//! image fill, clipped by their region. Gradients, text, group opacity, shadows
-//! and blur are all packed and none of them are drawn — each has its own story
-//! in epic #569, gradients as issue #715.
+//! Story #582 added text and baked vector fields: a glyph run's atlas reaches
+//! the same residency set an image fill's payload does, and a node's coverage
+//! mask now confines its fill instead of being ignored
+//! (`docs/decisions/tables-the-vertex-stage-reads.md`). Both tables are read by
+//! the *vertex* stage, because the fragment stage has no binding left.
+//!
+//! What draws is rounded rects with a solid fill, their stroke and their image
+//! fill, positioned glyph runs, and a solid fill masked by a baked vector field
+//! — all clipped by their region. Gradients, group opacity, shadows and blur are
+//! packed and not drawn; each has its own story in epic #569, gradients as issue
+//! #715.
 //!
 //! # Why this crate is named for the role
 //!
