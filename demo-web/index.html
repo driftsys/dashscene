@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>dashscene — the lean painter, in a browser</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #101014;
+        color: #d8d8e0;
+        font: 14px/1.5 system-ui, sans-serif;
+      }
+      /* A column, so the note sits below the canvas rather than on top of it.
+         It was `position: fixed; bottom: 0` at first, which covered the bottom
+         strip of every picture — on a host whose whole purpose is showing
+         pixels, an overlay that hides some is the wrong trade. */
+      body {
+        display: flex;
+        flex-direction: column;
+      }
+      /* The canvas is sized in CSS pixels here and in device pixels by the
+         host, which reads this box and multiplies by the device pixel ratio.
+         Setting width/height attributes in the markup instead would fix the
+         drawable at one size and let the browser rescale it.
+
+         `min-height: 0` because a flex item's default minimum is its content
+         size, which would push the note off the bottom instead of shrinking
+         the canvas. */
+      #dashscene {
+        display: block;
+        flex: 1 1 auto;
+        width: 100%;
+        min-height: 0;
+      }
+      #note {
+        flex: 0 0 auto;
+        margin: 0;
+        padding: 0.5rem 0.75rem;
+        background: #17171d;
+        border-top: 1px solid #2a2a33;
+        font-size: 12px;
+      }
+      code {
+        color: #9ecbff;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="dashscene"></canvas>
+    <p id="note">
+      WebGPU only — this painter's tables are storage buffers, and WebGL2 allows
+      none. Open the console for the adapter and the load trace.
+      <code>?scene=&lt;name&gt;</code> picks a showcase scene;
+      <code>?dsb=goldens/dsb/v03-paint.dsb</code> loads a compiled document by
+      byte range.
+    </p>
+    <script type="module">
+      // `#[wasm_bindgen(start)]` runs the host as soon as the module is
+      // instantiated, so there is nothing to call after `init`.
+      import init from "./demo_web.js";
+      init().catch((error) => {
+        document.getElementById("note").textContent =
+          "dashscene: the module did not start — " + error;
+      });
+    </script>
+  </body>
+</html>

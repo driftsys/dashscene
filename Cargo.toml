@@ -29,6 +29,12 @@ members = [
   # `publish = false`, it is absent from the justfile's `publish` recipe, and it
   # is therefore outside `docs/decisions/crate-name-map.md`.
   "demo",
+  # The browser showcase host (v0.15, story #587). A second host rather than a
+  # `cfg` arm inside `demo`: that crate depends on `skia-safe` and `softbuffer`,
+  # neither of which builds for `wasm32-unknown-unknown`, so sharing one crate
+  # would mean a `cfg` on every dependency line to reach a build with no Skia
+  # painter in it at all. `publish = false`, like `demo`.
+  "demo-web",
 ]
 
 [workspace.package]
@@ -212,6 +218,37 @@ winit = "0.30"
 # `kms`, all three dlopen or pure Rust, so the headless-build property above
 # holds here too.
 softbuffer = "0.4"
+# The browser bindings the web host is written against (story #587). Every one
+# of these versions is the one `wgpu` already resolves on `wasm32-unknown-
+# unknown`, so declaring them here pins what the workspace was already building
+# rather than introducing a second resolution of the same crates.
+#
+# `wasm-bindgen`'s version has to match the `wasm-bindgen-cli` that post-
+# processes the module — the two halves of one ABI, and a mismatch is a run-time
+# failure in the browser rather than a build error. `bootstrap` does **not**
+# install it — it builds from source in minutes and only this demonstration
+# needs it — so `just web-build` checks the pair and prints the exact install
+# command instead.
+wasm-bindgen = "0.2.126"
+wasm-bindgen-futures = "0.4.76"
+js-sys = "0.3.103"
+# Feature-gated to what the host names, which is the convention `web-sys` is
+# built around: it is one crate covering the whole web platform and compiles
+# only the bindings asked for.
+web-sys = { version = "0.3.103", features = [
+  "Document",
+  "DomRect",
+  "Element",
+  "Headers",
+  "HtmlCanvasElement",
+  "Location",
+  "Performance",
+  "Request",
+  "RequestInit",
+  "Response",
+  "Window",
+  "console",
+] }
 
 [profile.release]
 lto = true

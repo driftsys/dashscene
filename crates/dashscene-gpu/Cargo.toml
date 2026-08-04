@@ -24,9 +24,6 @@ dashpaint.workspace = true
 # painter owns a device, a pipeline and the buffers it uploads.
 wgpu.workspace = true
 bytemuck.workspace = true
-# `wgpu`'s device and buffer APIs are async and this painter's are not, so the
-# frame path blocks on them. `pollster` does that without an async runtime.
-pollster.workspace = true
 # Atlas residency, from story #581: packing by shelf and evicting by recency.
 etagere.workspace = true
 lru.workspace = true
@@ -36,3 +33,23 @@ lru.workspace = true
 # a build whose whole point is that it is lean (issue #718). Pure Rust, so the
 # wasm target of story #587 needs nothing else.
 png.workspace = true
+
+# `wgpu`'s adapter and device requests are async and this painter's constructors
+# are not, so the native ones block on them. `pollster` does that without an
+# async runtime.
+#
+# Native only, and that is the guard rather than a convention: on a browser's
+# main thread a blocking wait cannot succeed, because the promise it waits on
+# only resolves by returning to the JS event loop it is holding. Keeping
+# `pollster` off the wasm target turns that deadlock into a compile error, so
+# `cargo build --target wasm32-unknown-unknown` is what enforces it (story
+# #587).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+pollster.workspace = true
+
+# The canvas type `SurfaceRenderer::for_canvas` takes. `wgpu` has a blanket
+# conversion into `SurfaceTarget` for anything window-shaped and none for a
+# canvas, so the wrapping has to happen somewhere; it happens here, so that a
+# web host names no `wgpu` type — the same property `demo` holds natively.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { workspace = true, features = ["HtmlCanvasElement"] }

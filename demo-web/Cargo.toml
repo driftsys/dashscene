@@ -1,0 +1,47 @@
+[package]
+name = "demo-web"
+version = "0.0.0"
+publish = false
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "The browser showcase host: a canvas, the lean painter, and a .dsb fetched by byte range (v0.15, story #587)."
+
+# A cdylib, which is what `wasm-bindgen` post-processes into a module a page can
+# import. `rlib` alongside it so the crate's own logic stays reachable from
+# ordinary `cargo test` on the host platform — the parsing this crate does is
+# testable without a browser, and would otherwise be testable nowhere.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# The lean painter and its canvas surface. This host exists because
+# `SurfaceRenderer::new_async` does: the blocking constructor is absent on wasm,
+# for the reason `crates/dashscene-gpu/src/render.rs` gives.
+dashscene-gpu.workspace = true
+# Boundary B — the `Painter` trait this host drives.
+dashpaint.workspace = true
+# The arena and `CommittedScene`, the committed buffer a painter is handed.
+dashscene-core.workspace = true
+# `LiveScene`, the type the frame loop ticks.
+dashlang.workspace = true
+# The showcase scenes, shared with the native host rather than restated. The
+# whole crate builds for wasm32 unchanged.
+showcase = { path = "../corpus/showcase" }
+# The product layout solver, injected for a loaded document — which, unlike a
+# showcase scene, has no builder of its own to inject one.
+dashscene-engine.workspace = true
+# The `.dsb` envelope, read from a prefix: `dashbuf::prefix`. This host is the
+# reason that module exists, since `Container::parse` would require the whole
+# file in linear memory before the envelope could be read at all.
+dashbuf.workspace = true
+# The referential load gate, run before `dashscene_core::load_document` exactly
+# as the native host runs it.
+dashscene-validator.workspace = true
+
+# The browser itself.
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+js-sys.workspace = true
+web-sys.workspace = true

@@ -722,16 +722,32 @@ impl Renderer {
     /// Fallible where the conformance harness panics, because a renderer is
     /// something a host constructs and a host can report; the harness is a test
     /// and a missing device there is the runner being wrong.
+    ///
+    /// Native only, and deliberately absent on wasm rather than present and
+    /// broken. A browser's main thread has nothing to block with: the adapter
+    /// request resolves by returning to the JS event loop, which the blocking
+    /// wait is holding, so the two deadlock on each other. A web host calls
+    /// [`Renderer::new_async`] instead, which is this same construction with
+    /// the wait handed back to the caller.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn new() -> Result<Self, RendererError> {
+        pollster::block_on(Self::new_async())
+    }
+
+    /// [`Renderer::new`] without the blocking wait: the constructor a web host
+    /// drives, and the one every target has.
+    pub async fn new_async() -> Result<Self, RendererError> {
         let instance = wgpu::Instance::default();
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::default(),
-            force_fallback_adapter: false,
-            compatible_surface: None,
-            ..Default::default()
-        }))
-        .map_err(|_| RendererError::NoAdapter)?;
-        Self::on_adapter(instance, adapter, TARGET_FORMAT)
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::default(),
+                force_fallback_adapter: false,
+                compatible_surface: None,
+                ..Default::default()
+            })
+            .await
+            .map_err(|_| RendererError::NoAdapter)?;
+        Self::on_adapter(instance, adapter, TARGET_FORMAT).await
     }
 
     /// Requests a device from `adapter` and builds everything over it.
@@ -739,7 +755,12 @@ impl Renderer {
     /// Shared with the surface path, which differs only in how the adapter was
     /// chosen — compatible with a window — and in the format the pipeline
     /// writes.
-    pub(crate) fn on_adapter(
+    ///
+    /// Async because the device request is, and because this is the one step
+    /// both constructors share: making it `async` here is what leaves a single
+    /// blocking wait, in one native-only wrapper per constructor, rather than
+    /// one per await.
+    pub(crate) async fn on_adapter(
         instance: wgpu::Instance,
         adapter: wgpu::Adapter,
         format: wgpu::TextureFormat,
@@ -753,28 +774,32 @@ impl Renderer {
         // advertises and the device did not ask for is not a feature the device
         // has, and the atlas texture is created on the device.
         let baked = adapter.features() & wgpu::Features::TEXTURE_COMPRESSION_ASTC;
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("dashscene-gpu"),
-            required_features: baked,
-            // Downlevel defaults, so this painter runs on the entry-tier class
-            // of device R3 names rather than only on a desktop one — but with
-            // the adapter's own resolution limits rather than downlevel's,
-            // which cap `max_texture_dimension_2d` at 2048.
-            //
-            // A drawable's size is a property of the window the host opened
-            // rather than of the features this painter uses, and a 2288x1410
-            // window is an ordinary one: issue #714 aborted the host on the
-            // first resize past 2048 on a device whose own maximum is 16384.
-            // An entry-tier adapter still reports its own smaller maximum
-            // here, so the painter stays bounded by the real constraint rather
-            // than by a synthetic one — which is what `using_resolution` is
-            // for, and it leaves every other downlevel limit in place.
-            required_limits: wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits()),
-            memory_hints: wgpu::MemoryHints::default(),
-            trace: wgpu::Trace::Off,
-            ..Default::default()
-        }))
-        .map_err(RendererError::NoDevice)?;
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("dashscene-gpu"),
+                required_features: baked,
+                // Downlevel defaults, so this painter runs on the entry-tier
+                // class of device R3 names rather than only on a desktop one —
+                // but with the adapter's own resolution limits rather than
+                // downlevel's, which cap `max_texture_dimension_2d` at 2048.
+                //
+                // A drawable's size is a property of the window the host opened
+                // rather than of the features this painter uses, and a 2288x1410
+                // window is an ordinary one: issue #714 aborted the host on the
+                // first resize past 2048 on a device whose own maximum is 16384.
+                // An entry-tier adapter still reports its own smaller maximum
+                // here, so the painter stays bounded by the real constraint
+                // rather than by a synthetic one — which is what
+                // `using_resolution` is for, and it leaves every other downlevel
+                // limit in place.
+                required_limits: wgpu::Limits::downlevel_defaults()
+                    .using_resolution(adapter.limits()),
+                memory_hints: wgpu::MemoryHints::default(),
+                trace: wgpu::Trace::Off,
+                ..Default::default()
+            })
+            .await
+            .map_err(RendererError::NoDevice)?;
 
         // The shader library and the render entry points, concatenated. Naga
         // validates the result when the module is created, which is the "naga

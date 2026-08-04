@@ -25,7 +25,11 @@ scheme = "semver"
 #                            toolchain and their own CI job
 #   demo        demo/        the windowed showcase host — a workspace
 #                            member with its own binary and its own CI
-#                            job, not a published crate (story #571)
+#                            job, not a published crate (story #571).
+#                            Covers demo-web/ too, the browser host added
+#                            by story #587: one scope for the hosts, as
+#                            `corpus` covers corpus/showcase and `goldens`
+#                            covers goldens/tooling
 #
 scopes = [
     "dashscene",
