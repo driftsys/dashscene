@@ -28,20 +28,35 @@
 //! what `dashpack` writes for a distance field — is sampled as the raw value it
 //! is. Both are "give me the stored number", which is wgpu's Unorm channel.
 //!
-//! # Nearest sampling, and the gutter that is therefore absent
+//! # Two samplers, and the gutter that is absent for both
 //!
-//! The sampler filters `Nearest`, matching `dashscene-skia`'s
+//! An **image fill** is read with `Nearest`, matching `dashscene-skia`'s
 //! `SamplingOptions::default()` — the reference painter's own deliberate choice
 //! ("deterministic and exact for the v0.3 corpus; filtering quality is a later,
-//! deliberate decision"). With nearest sampling and a clamp into the sub-rect,
-//! no sample can reach a neighbouring allocation, so allocations are packed
+//! deliberate decision").
+//!
+//! An **MSDF payload** — a glyph atlas or a baked-vector coverage mask — is read
+//! with `Linear`, through a second sampler story #582 added. The reference
+//! painter draws the same distinction and for the same reason: a distance field
+//! is not a colour, and quantising it to the atlas's texel grid turns a smooth
+//! edge into a staircase.
+//!
+//! **Neither needs a gutter between allocations**, and that is a property of the
+//! read rather than of this allocator. Every sampler here is clamped, and both
+//! read paths clamp their coordinate half a source texel inside the payload's
+//! own sub-rect before sampling — `image_colour` and `msdf_sample` in
+//! `shaders/paint.wgsl`. A nearest sample taken from there lands on a texel of
+//! this payload, and a bilinear footprint taken from a texel's own centre
+//! weights that texel alone at the payload's edge. So allocations are packed
 //! adjacent with no padding between them.
 //!
-//! **That is the one thing to change first if filtering ever becomes linear.**
-//! A linear sample at a sub-rect edge reads the texel beyond it, which is
-//! another payload; the fix is a one-texel gutter, rounded up to a whole block
-//! for a block format. It is not here because it would be padding against a
-//! hazard this painter does not currently have.
+//! Earlier revisions of this paragraph named a one-texel gutter as the first
+//! thing to add if filtering ever became linear. Filtering did become linear,
+//! at story #582, and the gutter was still not needed — the clamp that was
+//! there for the nearest case turned out to be exactly the condition filtering
+//! wants. `docs/decisions/tables-the-vertex-stage-reads.md` D5 records it.
+//! **What would bring the hazard back is a sampler that is not clamped, or a
+//! read path that samples without that inset** — not the filter mode on its own.
 
 use std::collections::HashMap;
 
@@ -158,7 +173,23 @@ fn astc_block(block: (u32, u32)) -> wgpu::AstcBlock {
 
 /// What identifies a payload in the residency set.
 ///
-/// The image table's own index, plus the stored row it was resolved through.
+/// The table's own index, plus enough of the stored row that two different
+/// payloads cannot compare equal.
+///
+/// # Two tables reach this set, and an index alone does not say which
+///
+/// An image fill and a baked vector field are both rows of the
+/// [`dashpaint::ImageTable`]; a glyph atlas is not — `dashpaint::Atlas` owns its
+/// payload directly, because a run's glyph ids are meaningless without the
+/// atlas that places them and the two travel together. So there are two index
+/// spaces, and index 0 of each is an ordinary value in both.
+///
+/// [`source`](Self::source) separates them. Without it, a document whose first
+/// image asset and whose first glyph atlas happen to agree on format and length
+/// — two PNGs of the same byte count is not a contrived case — would have the
+/// second draw the first, and the only thing that would notice is the debug
+/// digest. That is a cache collision, which is precisely what the rest of this
+/// key is shaped to make impossible.
 ///
 /// # Why the row travels with the index
 ///
@@ -176,6 +207,9 @@ fn astc_block(block: (u32, u32)) -> wgpu::AstcBlock {
 /// disagrees on it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PayloadKey {
+    /// Which of the two index spaces [`index`](Self::index) belongs to — see
+    /// this type's documentation.
+    source: u32,
     index: u32,
     format: u32,
     offset: u32,
@@ -183,13 +217,40 @@ pub struct PayloadKey {
 }
 
 impl PayloadKey {
+    /// [`PayloadKey::source`] for a row of the image table.
+    const IMAGE_TABLE: u32 = 0;
+    /// [`PayloadKey::source`] for a glyph run table's atlas.
+    const GLYPH_ATLAS: u32 = 1;
+
     /// The key for image-table row `index`, whose entry `asset` resolved to.
     pub fn image(index: u32, entry: &dashpaint::ImageEntry) -> Self {
         Self {
+            source: Self::IMAGE_TABLE,
             index,
             format: entry.format,
             offset: entry.offset,
             len: entry.len,
+        }
+    }
+
+    /// The key for glyph atlas `index` of the frame's glyph-run table.
+    ///
+    /// There is no pool offset to carry — an [`dashpaint::Atlas`] owns its
+    /// bytes rather than borrowing a range of a blob — so `offset` is zero for
+    /// every atlas. The rest of the key is what it is for an image: the format,
+    /// the length, and the index, so an atlas set rebuilt with different
+    /// content disagrees on it. The same-shape-different-bytes case that
+    /// remains is the one the debug digest in [`Residency::resident`] exists
+    /// for, and a host that replaces a document says so through
+    /// [`Residency::forget_resident`].
+    pub fn atlas(index: u32, atlas: &dashpaint::Atlas) -> Self {
+        Self {
+            source: Self::GLYPH_ATLAS,
+            index,
+            format: atlas.image.format as u32,
+            offset: 0,
+            len: u32::try_from(atlas.image.bytes.len())
+                .expect("a glyph atlas payload exceeds u32::MAX bytes"),
         }
     }
 }

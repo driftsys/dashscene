@@ -148,6 +148,7 @@ fn draw(
             paints,
             &ImageTable::new(),
             &clips,
+            &GlyphRunTable::new(),
             changes,
             W,
             H,
@@ -429,6 +430,7 @@ fn a_steady_state_frame_allocates_nothing() {
             &paints,
             &ImageTable::new(),
             &clips,
+            &GlyphRunTable::new(),
             W + 8,
             H + 8,
         )

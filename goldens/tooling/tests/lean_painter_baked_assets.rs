@@ -111,7 +111,15 @@ fn draw(images: ImageTable, index: u32) -> Vec<u8> {
         None,
     );
     renderer
-        .render(painter.instances(), &paints, &images, &clips, W, H)
+        .render(
+            painter.instances(),
+            &paints,
+            &images,
+            &clips,
+            &GlyphRunTable::new(),
+            W,
+            H,
+        )
         .expect("the fixture extent is within any device's maximum")
 }
 

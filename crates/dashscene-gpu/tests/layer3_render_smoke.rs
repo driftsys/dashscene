@@ -70,7 +70,15 @@ fn draw(rects: &[RectEntry], paints: &PaintTable, clips: &ClipTable) -> Vec<u8> 
         None,
     );
     renderer()
-        .render(painter.instances(), paints, &ImageTable::new(), clips, W, H)
+        .render(
+            painter.instances(),
+            paints,
+            &ImageTable::new(),
+            clips,
+            &GlyphRunTable::new(),
+            W,
+            H,
+        )
         .expect("the fixture extent is within any device's maximum")
 }
 
@@ -184,6 +192,7 @@ fn the_maximum_extent_draws_and_one_past_it_is_refused_on_either_axis() {
                 &paints,
                 &ImageTable::new(),
                 &clips,
+                &GlyphRunTable::new(),
                 width,
                 height,
             )
@@ -201,6 +210,7 @@ fn the_maximum_extent_draws_and_one_past_it_is_refused_on_either_axis() {
             &paints,
             &ImageTable::new(),
             &clips,
+            &GlyphRunTable::new(),
             width,
             height,
         );
@@ -225,6 +235,7 @@ fn the_maximum_extent_draws_and_one_past_it_is_refused_on_either_axis() {
             &paints,
             &ImageTable::new(),
             &clips,
+            &GlyphRunTable::new(),
             W,
             H,
         )
@@ -734,6 +745,7 @@ fn a_width_that_needs_row_padding_reads_back_correctly() {
             &paints,
             &ImageTable::new(),
             &clips,
+            &GlyphRunTable::new(),
             w,
             h,
         )

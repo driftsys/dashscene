@@ -2,14 +2,16 @@
 //!
 //! # What this draws, and what it does not
 //!
-//! Opaque rounded rects with a solid fill, their outline stroke, and their
-//! image fill, clipped by their region. Gradients are story #715's, text and
-//! baked vector fields #582's, shadows and backdrop blur #584's, group opacity
-//! #583's.
+//! Rounded rects with a solid fill, their outline stroke and their image fill,
+//! positioned glyph runs, and a solid fill masked by a baked vector field — all
+//! clipped by their region. Gradients are issue #715's, shadows and backdrop
+//! blur story #584's, group opacity #583's.
 //!
-//! A stroke is the one kind whose ink reaches outside the instance's own
-//! `bounds` — see `instance_outset` in `shaders/paint.wgsl`, which is what
-//! grows the quad so an Outside stroke is not clipped by its own geometry.
+//! A stroke is one of two kinds whose ink does not coincide with the instance's
+//! own `bounds` — see `instance_outset` in `shaders/paint.wgsl`, which grows the
+//! quad so an Outside stroke is not clipped by its own geometry. The other is a
+//! masked instance, whose quad is the coverage field's padded plane quad
+//! *instead of* the node's box, and which the vertex stage substitutes there.
 //!
 //! An instance whose kind this shader does not implement draws nothing. It does
 //! not fall through to a colour: [`InstanceKind`](crate::InstanceKind) carries
@@ -48,7 +50,7 @@
 //! layer 4's job and needs hardware.
 
 use bytemuck::{Pod, Zeroable};
-use dashpaint::{ClipTable, ImageTable, PaintTable, ScaleMode};
+use dashpaint::{ClipTable, GlyphRunTable, ImageTable, PaintTable, ScaleMode};
 
 use crate::instance::{Instance, InstanceBuffer, InstanceKind, InstanceSpan};
 use crate::residency::{PayloadKey, Residency, ResidencyError};
@@ -143,6 +145,70 @@ const fn scale_mode(mode: ScaleMode) -> u32 {
     }
 }
 
+/// One glyph run, in the shader's own layout, with its atlas's residency slot
+/// resolved into it.
+///
+/// Per run rather than per glyph: the colour, the screen-pixel range and the
+/// atlas mapping are constant across a run, and the one thing that is not — the
+/// glyph's own rectangle — rides on [`Instance::corners`], which a glyph has no
+/// other use for.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, Pod, Zeroable)]
+struct GpuGlyphRun {
+    /// The run's fill colour, with its free-path alpha still on
+    /// [`Instance::opacity`]. The MSDF coverage modulates it.
+    color: [f32; 4],
+    /// Source-atlas texels to residency-atlas normalised coordinates:
+    /// `[origin_u, origin_v, scale_u, scale_v]`, so texel `t` of the run's own
+    /// atlas sits at `origin + t * scale`.
+    ///
+    /// Two mappings composed on the CPU rather than two in the shader: the
+    /// atlas's own extent normalises the texel, and the residency slot places
+    /// that normalised point inside the atlas texture. Both are constant per
+    /// run.
+    uv: [f32; 4],
+    /// Half a source texel, in residency-atlas normalised units — what a sample
+    /// is held inside the glyph's own rectangle by.
+    ///
+    /// Before [`px_range`](Self::px_range), not after it. WGSL aligns a `vec2f`
+    /// to eight bytes, so the other order puts it at offset 40 with a hole at
+    /// 36 and rounds the struct to 64 — while Rust packs it at 36 and makes the
+    /// struct 48. Every row after the first would then be read from the wrong
+    /// offset. The `size_of` assertion at the foot of this file is what holds
+    /// the Rust half of that; this ordering is the WGSL half.
+    half_uv: [f32; 2],
+    /// The field's range in **screen** pixels:
+    /// `distance_range_px * size / px_per_em`, which is `dashscene-skia`'s own
+    /// formula. The painter draws at unit scale, so the run's size in document
+    /// units is its size in pixels.
+    px_range: f32,
+    _pad: f32,
+}
+
+/// One baked-vector coverage mask, in the shader's own layout, with its atlas's
+/// residency slot resolved into it.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, Pod, Zeroable)]
+struct GpuShape {
+    /// The padded field quad in shape space, node-box-relative and y-down:
+    /// `[left, top, right, bottom]`, straight from
+    /// `dashpaint::VectorField::plane_bounds`. The device quad is the node's
+    /// origin plus this, at unit scale.
+    plane: [f32; 4],
+    /// The shape's sub-rect in its residency atlas, normalised:
+    /// `[u0, v0, du, dv]`.
+    uv: [f32; 4],
+    /// Half an atlas texel, in residency-atlas normalised units. Before
+    /// `px_range` for the alignment reason [`GpuGlyphRun::half_uv`] gives.
+    half_uv: [f32; 2],
+    /// The field's range in screen pixels: `distance_range` scaled by the
+    /// device pixels one atlas texel covers. That scale is the field's own
+    /// quad over its atlas rectangle — a vector field carries no `px_per_em`,
+    /// because that ratio already is the scale.
+    px_range: f32,
+    _pad: f32,
+}
+
 /// One clip box, in the shader's own layout.
 ///
 /// `dashpaint::ClipBox` is `{f32 x4, CornerRadii}` and is already exactly this
@@ -190,9 +256,12 @@ pub struct Renderer {
     offscreen_allocations: u64,
     /// Which payloads are on the device and where (story #581).
     residency: Residency,
-    /// The one sampler every atlas is read through: nearest, clamped. See
-    /// [`crate::residency`] for why nearest, and for what changing it costs.
+    /// The sampler an image fill's payload is read through: nearest, clamped.
+    /// See [`crate::residency`] for why nearest, and for what changing it costs.
     sampler: wgpu::Sampler,
+    /// The sampler an MSDF payload — a glyph atlas or a coverage mask — is read
+    /// through: linear, clamped. Built where it is, with the reason.
+    msdf_sampler: wgpu::Sampler,
     /// A 1x1 texture bound when a frame samples no atlas at all.
     ///
     /// A bind group must name a texture for every texture binding its layout
@@ -432,14 +501,25 @@ impl Renderer {
 
         // Visibility is per binding, and it is a correctness constraint rather
         // than a tidiness one: `wgpu::Limits::downlevel_defaults` allows four
-        // storage buffers **per shader stage**, and this pipeline binds five.
-        // Declaring each where it is actually read leaves the vertex stage with
-        // two — the instances and the stroke rows its outset needs — and the
-        // fragment stage with four.
+        // storage buffers **per shader stage**, and this pipeline binds seven.
+        // Declaring each where it is actually read is what makes seven fit:
         //
-        // The fragment stage reads no instance array at all; `VertexOut` in
-        // `shaders/paint.wgsl` carries the values it needs across, and that
-        // module documents why.
+        //     vertex    instances(0), strokes(4), glyph runs(8), shapes(9)
+        //     fragment  solids(1), clips(2), strokes(4), images(5)
+        //
+        // Four and four, with nothing spare on either side. The fragment stage
+        // reads no instance array at all; `VertexOut` in `shaders/paint.wgsl`
+        // carries the values it needs across, and story #581 is why.
+        //
+        // Story #582's two tables took the same route deliberately. A glyph
+        // run's parameters and a coverage mask's are five and eleven floats
+        // that are **constant across the instance**, so the stage that runs
+        // four times per quad can read them and hand the fragment stage the
+        // values — which costs the fragment stage no binding at all. That works
+        // because neither is a variable-length array. A gradient's stops are
+        // (issue #715), which is why that story still has to change the
+        // structure rather than take this route a third time
+        // (`docs/decisions/tables-the-vertex-stage-reads.md`).
         let storage = |binding: u32, visibility: wgpu::ShaderStages| wgpu::BindGroupLayoutEntry {
             binding,
             visibility,
@@ -462,6 +542,9 @@ impl Renderer {
                 // the band and its colour.
                 storage(4, wgpu::ShaderStages::VERTEX_FRAGMENT),
                 storage(5, wgpu::ShaderStages::FRAGMENT),
+                // Story #582's two tables, vertex only — see the comment above.
+                storage(8, wgpu::ShaderStages::VERTEX),
+                storage(9, wgpu::ShaderStages::VERTEX),
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
                     visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
@@ -478,11 +561,17 @@ impl Renderer {
                 // `wgpu::Limits::downlevel_defaults` has no binding arrays and
                 // `docs/decisions/pipelines-and-layer-3.md` D2 holds this
                 // painter to those limits.
+                // Declared filterable because binding 10 filters it. That is a
+                // constraint on the atlas *formats*, and every format this set
+                // holds meets it: `Rgba8Unorm` is filterable on every adapter,
+                // and an ASTC format is filterable wherever
+                // `TEXTURE_COMPRESSION_ASTC` is supported at all — which is the
+                // only condition under which one of those textures exists here.
                 wgpu::BindGroupLayoutEntry {
                     binding: 6,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
                         view_dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
@@ -492,6 +581,12 @@ impl Renderer {
                     binding: 7,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 10,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
             ],
@@ -555,6 +650,33 @@ impl Renderer {
             mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
+        // The second sampler, and the one thing it is for.
+        //
+        // A distance field is not a colour. `dashscene-skia` samples its MSDF
+        // atlases `Linear` and its image fills `Nearest`, deliberately and for
+        // two different reasons, and this painter needs both for the same two.
+        // Nearest on a distance field quantises the edge ramp to the atlas's
+        // own texel grid: at a 48-unit render size off a 32 px/em atlas one
+        // texel covers 1.5 pixels while the ramp is 6 pixels wide, so a smooth
+        // edge becomes a four-step staircase.
+        //
+        // The gutter `crate::residency` names as the first thing to add if
+        // filtering arrived is **not** needed for this, and that is a property
+        // of the read rather than of the allocator: `msdf_sample` in
+        // `shaders/paint.wgsl` clamps half a source texel inside the payload's
+        // own sub-rect, and a bilinear footprint taken from there weights only
+        // texels of that payload. It is the same clamp `image_colour` already
+        // relies on for the nearest case, doing more work than it had to.
+        let msdf_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("dashscene-gpu msdf"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
         let placeholder = device
             .create_texture(&wgpu::TextureDescriptor {
                 label: Some("dashscene-gpu no atlas"),
@@ -582,7 +704,7 @@ impl Renderer {
         // appeared. `ATLAS_EXTENT` is what that budget is and says why.
         let residency = Residency::new(ATLAS_EXTENT.min(max_extent));
 
-        let frame = Frame::new(&device, &layout, &sampler, &placeholder);
+        let frame = Frame::new(&device, &layout, &sampler, &msdf_sampler, &placeholder);
         Ok(Self {
             _instance: instance,
             device,
@@ -597,6 +719,7 @@ impl Renderer {
             max_extent,
             residency,
             sampler,
+            msdf_sampler,
             placeholder,
         })
     }
@@ -692,9 +815,9 @@ impl Renderer {
         // included" could not have failed if residency had reallocated an atlas
         // every frame. Found in review.
         //
-        // The two constants are the sampler and the placeholder texture with
+        // The constants are the two samplers and the placeholder texture with
         // its view, built once in `new` and never again.
-        const AT_CONSTRUCTION: u64 = 3;
+        const AT_CONSTRUCTION: u64 = 4;
         self.frame.allocations
             + self.offscreen_allocations
             + self.residency.allocations()
@@ -730,16 +853,18 @@ impl Renderer {
     /// Panics if the frame has no instances to draw: a caller asking for an
     /// empty frame wants a cleared texture and should say so, and silently
     /// returning one hides an empty pack.
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         buffer: &InstanceBuffer,
         paints: &PaintTable,
         images: &ImageTable,
         clips: &ClipTable,
+        glyphs: &GlyphRunTable,
         width: u32,
         height: u32,
     ) -> Result<Vec<u8>, RendererError> {
-        self.render_dirty(buffer, paints, images, clips, None, width, height)
+        self.render_dirty(buffer, paints, images, clips, glyphs, None, width, height)
     }
 
     /// [`Renderer::render`], with boundary B's dirty set passed through.
@@ -764,6 +889,7 @@ impl Renderer {
         paints: &PaintTable,
         images: &ImageTable,
         clips: &ClipTable,
+        glyphs: &GlyphRunTable,
         changes: Option<Changes<'_>>,
         width: u32,
         height: u32,
@@ -792,6 +918,7 @@ impl Renderer {
             paints,
             images,
             clips,
+            glyphs,
             changes,
             width,
             height,
@@ -861,6 +988,7 @@ impl Renderer {
         paints: &PaintTable,
         images: &ImageTable,
         clips: &ClipTable,
+        glyphs: &GlyphRunTable,
         changes: Option<Changes<'_>>,
         width: u32,
         height: u32,
@@ -923,10 +1051,10 @@ impl Renderer {
             _pad: 0.0,
         };
 
-        // Residency, and the image rows it resolves into. Before the upload,
-        // because making a payload resident can create an atlas, and a bind
-        // group names the atlas it draws from.
-        let (gpu_images, atlas_of_row) = self.resolve_images(buffer, paints, images);
+        // Residency, and the rows it resolves into. Before the upload, because
+        // making a payload resident can create an atlas, and a bind group names
+        // the atlas it draws from.
+        let resolved = self.resolve_frame(buffer, paints, images, glyphs);
         let atlases = self.residency.atlas_count();
 
         self.frame.upload(
@@ -934,18 +1062,19 @@ impl Renderer {
             &self.queue,
             &self.layout,
             &self.sampler,
+            &self.msdf_sampler,
             &self.placeholder,
             &self.residency,
             buffer,
             &solids,
             &boxes,
             &strokes,
-            &gpu_images,
+            &resolved,
             viewport,
             changes,
         );
 
-        let runs = draw_runs(buffer, &atlas_of_row);
+        let runs = draw_runs(buffer, &resolved);
         debug_assert!(
             runs.iter()
                 .all(|run| run.atlas.is_none_or(|a| (a as usize) < atlases)),
@@ -987,8 +1116,13 @@ impl Renderer {
         self.frame.last_runs = runs.len();
     }
 
-    /// The image table as the shader reads it, and which atlas each row landed
-    /// in — `None` for a row this frame does not draw.
+    /// Every payload-backed table as the shaders read it, with each row's
+    /// residency slot resolved into it.
+    ///
+    /// One walk over the instance rows, not three. Three tables reach the
+    /// device through residency — image fills, glyph atlases and baked vector
+    /// fields — and an instance names at most one row of one of them, so the
+    /// walk that finds an image fill is the same walk that would find a glyph.
     ///
     /// # Residency follows the frame, not the table
     ///
@@ -1025,75 +1159,174 @@ impl Renderer {
     /// sample after `Painter::samples` said it could. `Painter::paint` returns
     /// nothing by decision, so there is no channel to report any of them on,
     /// and P4 forbids resolving them into a silently different picture.
-    fn resolve_images(
+    ///
+    /// **Issue #720 is that first arm, and story #582 widened what it covers.**
+    /// It was filed against image fills: a payload larger than [`ATLAS_EXTENT`]
+    /// panics rather than getting its own texture. Glyph atlases and
+    /// baked-vector atlases now take the same path, and a glyph atlas is the
+    /// more likely of the three to reach 2048 square — it is one sheet for a
+    /// whole script at a whole weight, so a CJK coverage set is exactly the
+    /// case that exceeds it, where an oversized *photograph* has to be authored
+    /// deliberately. Named here rather than left to be discovered, and recorded
+    /// on the issue.
+    fn resolve_frame(
         &mut self,
         buffer: &InstanceBuffer,
         paints: &PaintTable,
         images: &ImageTable,
-    ) -> (Vec<GpuImage>, Vec<Option<u32>>) {
+        glyphs: &GlyphRunTable,
+    ) -> Resolved {
         self.residency.begin_frame();
         let fills = paints.all_images();
-        let mut rows = vec![GpuImage::default(); fills.len()];
-        let mut atlas_of_row = vec![None; fills.len()];
-        if fills.is_empty() {
-            return (rows, atlas_of_row);
-        }
+        let fields = paints.all_shapes();
+        let runs = glyphs.runs();
+        let mut out = Resolved {
+            images: vec![GpuImage::default(); fills.len()],
+            runs: vec![GpuGlyphRun::default(); runs.len()],
+            shapes: vec![GpuShape::default(); fields.len()],
+            atlas_of_image: vec![None; fills.len()],
+            atlas_of_run: vec![None; runs.len()],
+            atlas_of_shape: vec![None; fields.len()],
+        };
 
         let entries = images.all_entries();
         for instance in buffer.instances() {
-            if instance.kind != InstanceKind::FillImage.as_u32() {
-                continue;
+            // A coverage mask is read for whatever kind carries it, so the
+            // fill and the backdrop of one masked node resolve the same row.
+            // They name the same field, so the second is a cache hit and adds
+            // nothing to the working set.
+            if instance.shape != Instance::NONE {
+                let row = instance.shape as usize - 1;
+                debug_assert!(
+                    instance.kind != InstanceKind::FillImage.as_u32(),
+                    "a masked image fill would need two atlases for one quad; the packer emits \
+                     none, matching the reference painter"
+                );
+                let field = &fields[row];
+                if out.atlas_of_shape[row].is_none()
+                    && field_draws(field)
+                    && let Some(slot) =
+                        self.resident_image(images, entries, field.image, "a vector field's atlas")
+                {
+                    let extent = self.residency.atlas_extent(slot.atlas);
+                    let asset = images.resolve(field.image);
+                    out.atlas_of_shape[row] = Some(slot.atlas);
+                    out.shapes[row] = gpu_shape(field, slot.uv(extent), asset.width, asset.height);
+                }
             }
-            let row = instance.row as usize;
-            if atlas_of_row[row].is_some() {
-                continue;
-            }
-            let fill = &fills[row];
-            let asset = images.resolve(fill.image);
-            // An asset with no extent draws nothing, and is never made resident.
-            //
-            // Boundary B stores a payload whose binding supplied no bytes at
-            // 0 x 0 rather than refusing it, because `dashscene-validator`'s
-            // image.no-bytes rule is what names that case. Left to reach the
-            // residency path, an encoded one panics in the decoder — on a
-            // payload the validator has already reported — and a baked one
-            // divides by zero in the shader. Its row stays zeroed, its atlas
-            // stays `None`, and `paint.wgsl`'s own guard covers the same case
-            // from the other side.
-            if asset.width == 0 || asset.height == 0 {
-                continue;
-            }
-            let entry = &entries[fill.image as usize];
-            let slot = self
-                .residency
-                .resident(
-                    &self.device,
-                    &self.queue,
-                    PayloadKey::image(fill.image, entry),
-                    asset,
-                )
-                .unwrap_or_else(|error: ResidencyError| {
-                    panic!(
-                        "image asset {} could not be made resident: {error}",
-                        fill.image
+
+            if instance.kind == InstanceKind::FillImage.as_u32() {
+                let row = instance.row as usize;
+                if out.atlas_of_image[row].is_some() {
+                    continue;
+                }
+                let fill = &fills[row];
+                let Some(slot) =
+                    self.resident_image(images, entries, fill.image, "an image fill's payload")
+                else {
+                    continue;
+                };
+                let asset = images.resolve(fill.image);
+                out.atlas_of_image[row] = Some(slot.atlas);
+                let t = fill.transform;
+                out.images[row] = GpuImage {
+                    // Normalised against the atlas this slot landed in, not
+                    // against the residency set's nominal extent: a compressed
+                    // atlas is rounded down to whole blocks and the two differ.
+                    uv: slot.uv(self.residency.atlas_extent(slot.atlas)),
+                    transform: [t.a, t.b, t.c, t.d],
+                    translate: [t.tx, t.ty],
+                    size: [asset.width as f32, asset.height as f32],
+                    scale_mode: scale_mode(fill.scale_mode),
+                    tile_scale: fill.tile_scale,
+                    _pad: [0; 2],
+                };
+            } else if instance.kind == InstanceKind::Text.as_u32() {
+                let row = instance.row as usize;
+                if out.atlas_of_run[row].is_some() {
+                    continue;
+                }
+                let run = &runs[row];
+                let atlas = glyphs.atlas(run.atlas);
+                // An atlas with no extent has no texels to sample, and every
+                // mapping below divides by it. The same case, and the same
+                // treatment, as a zero-extent image payload.
+                if atlas.width == 0 || atlas.height == 0 {
+                    continue;
+                }
+                let slot = self
+                    .residency
+                    .resident(
+                        &self.device,
+                        &self.queue,
+                        PayloadKey::atlas(run.atlas.0, atlas),
+                        // Built here rather than through `ImageAsset::as_ref`,
+                        // which re-parses the payload's header on every call:
+                        // an `Atlas` already states its extent, and this runs
+                        // once per run per frame.
+                        dashpaint::ImageRef {
+                            format: atlas.image.format,
+                            bytes: &atlas.image.bytes,
+                            width: atlas.width,
+                            height: atlas.height,
+                        },
                     )
-                });
-            atlas_of_row[row] = Some(slot.atlas);
-            let t = fill.transform;
-            rows[row] = GpuImage {
-                // Normalised against the atlas this slot landed in, not against
-                // the residency set's nominal extent: a compressed atlas is
-                // rounded down to whole blocks and the two differ.
-                uv: slot.uv(self.residency.atlas_extent(slot.atlas)),
-                transform: [t.a, t.b, t.c, t.d],
-                translate: [t.tx, t.ty],
-                size: [asset.width as f32, asset.height as f32],
-                scale_mode: scale_mode(fill.scale_mode),
-                tile_scale: fill.tile_scale,
-                _pad: [0; 2],
-            };
+                    .unwrap_or_else(|error: ResidencyError| {
+                        panic!(
+                            "glyph atlas {} could not be made resident: {error}",
+                            run.atlas.0
+                        )
+                    });
+                let extent = self.residency.atlas_extent(slot.atlas);
+                out.atlas_of_run[row] = Some(slot.atlas);
+                out.runs[row] = gpu_glyph_run(run, atlas, slot.uv(extent));
+            }
         }
-        (rows, atlas_of_row)
+        out
+    }
+
+    /// Makes image-table row `index` resident and returns where it sits, or
+    /// `None` for a payload with no extent.
+    ///
+    /// # A payload with no extent draws nothing, and is never made resident
+    ///
+    /// Boundary B stores a payload whose binding supplied no bytes at 0 x 0
+    /// rather than refusing it, because `dashscene-validator`'s image.no-bytes
+    /// rule is what names that case. Left to reach the residency path, an
+    /// encoded one panics in the decoder — on a payload the validator has
+    /// already reported — and a baked one divides by zero in the shader. Its row
+    /// stays zeroed, its atlas stays `None`, and `paint.wgsl`'s own guards cover
+    /// the same case from the other side.
+    ///
+    /// # Panics
+    ///
+    /// Panics on a payload that cannot be made resident, for the reason
+    /// [`Renderer::resolve_frame`] gives. `what` names the caller in the
+    /// message, because an image fill and a vector field's atlas are the same
+    /// table row with very different symptoms.
+    fn resident_image(
+        &mut self,
+        images: &ImageTable,
+        entries: &[dashpaint::ImageEntry],
+        index: u32,
+        what: &str,
+    ) -> Option<crate::residency::Slot> {
+        let asset = images.resolve(index);
+        if asset.width == 0 || asset.height == 0 {
+            return None;
+        }
+        let slot = self
+            .residency
+            .resident(
+                &self.device,
+                &self.queue,
+                PayloadKey::image(index, &entries[index as usize]),
+                asset,
+            )
+            .unwrap_or_else(|error: ResidencyError| {
+                panic!("{what} (image asset {index}) could not be made resident: {error}")
+            });
+        Some(slot)
     }
 
     /// How many draw calls the frame most recently drawn took.
@@ -1119,6 +1352,119 @@ impl Renderer {
     }
 }
 
+/// Every payload-backed table of one frame, as the shaders read it, plus which
+/// atlas each row landed in — `None` for a row this frame does not draw.
+///
+/// A row the frame does not draw still gets a zeroed row, so that a row index
+/// means the same thing in these arrays as in the table it came from. Nothing
+/// samples it: an instance naming it is what would have made it resident.
+struct Resolved {
+    images: Vec<GpuImage>,
+    runs: Vec<GpuGlyphRun>,
+    shapes: Vec<GpuShape>,
+    atlas_of_image: Vec<Option<u32>>,
+    atlas_of_run: Vec<Option<u32>>,
+    atlas_of_shape: Vec<Option<u32>>,
+}
+
+impl Resolved {
+    /// The atlas `instance` samples, or `None` when it samples none.
+    ///
+    /// A masked instance samples its coverage field whatever its kind, and the
+    /// packer emits no masked image fill — which is what makes "at most one
+    /// atlas per instance" true, and what the debug assertion in
+    /// [`Renderer::resolve_frame`] holds.
+    fn atlas_of(&self, instance: &Instance) -> Option<u32> {
+        if instance.shape != Instance::NONE {
+            return self.atlas_of_shape[instance.shape as usize - 1];
+        }
+        if instance.kind == InstanceKind::FillImage.as_u32() {
+            return self.atlas_of_image[instance.row as usize];
+        }
+        if instance.kind == InstanceKind::Text.as_u32() {
+            return self.atlas_of_run[instance.row as usize];
+        }
+        None
+    }
+
+    /// Every atlas this frame samples, ascending and without repeats.
+    fn atlases(&self) -> Vec<u32> {
+        let mut distinct: Vec<u32> = self
+            .atlas_of_image
+            .iter()
+            .chain(&self.atlas_of_run)
+            .chain(&self.atlas_of_shape)
+            .flatten()
+            .copied()
+            .collect();
+        distinct.sort_unstable();
+        distinct.dedup();
+        distinct
+    }
+}
+
+/// One glyph run as the shader reads it, over the slot its atlas landed in.
+///
+/// `uv` arrives as the atlas payload's own rectangle in the residency texture,
+/// normalised. What the shader wants is a map from a *source* texel to that
+/// texture, so the atlas's own extent is folded in here — once per run, rather
+/// than once per fragment.
+fn gpu_glyph_run(run: &dashpaint::GlyphRun, atlas: &dashpaint::Atlas, uv: [f32; 4]) -> GpuGlyphRun {
+    let scale = [uv[2] / atlas.width as f32, uv[3] / atlas.height as f32];
+    GpuGlyphRun {
+        color: [run.color.r, run.color.g, run.color.b, run.color.a],
+        uv: [uv[0], uv[1], scale[0], scale[1]],
+        half_uv: [0.5 * scale[0], 0.5 * scale[1]],
+        // `dashscene-skia`'s own formula. `plane_em` and `atlas_px` bake the
+        // range into the bounds, so this scales the sharpness of the edge and
+        // not the size.
+        px_range: atlas.distance_range_px * run.size / f32::from(atlas.px_per_em),
+        _pad: 0.0,
+    }
+}
+
+/// One coverage mask as the shader reads it, over the slot its atlas landed in.
+///
+/// `uv` is the whole atlas payload's rectangle in the residency texture; the
+/// field occupies `atlas_rect` texels of that payload, so the two are composed
+/// here into the field's own sub-rect.
+fn gpu_shape(
+    field: &dashpaint::VectorField,
+    uv: [f32; 4],
+    atlas_width: u32,
+    atlas_height: u32,
+) -> GpuShape {
+    let [ax, ay, aw, ah] = field.atlas_rect;
+    let (width, height) = (atlas_width as f32, atlas_height as f32);
+    let sub = [
+        uv[0] + ax as f32 / width * uv[2],
+        uv[1] + ay as f32 / height * uv[3],
+        aw as f32 / width * uv[2],
+        ah as f32 / height * uv[3],
+    ];
+    let [left, _, right, _] = field.plane_bounds;
+    GpuShape {
+        plane: field.plane_bounds,
+        uv: sub,
+        half_uv: [0.5 * sub[2] / aw as f32, 0.5 * sub[3] / ah as f32],
+        // Device pixels per atlas texel, at unit scale. `dashscene-skia` takes
+        // the x ratio alone, and this matches it rather than re-deriving it.
+        px_range: field.distance_range * (right - left) / aw as f32,
+        _pad: 0.0,
+    }
+}
+
+/// Whether a coverage mask has a quad and an atlas rectangle to sample.
+///
+/// The reference painter's own degenerate guard, and the reason it is checked
+/// before the payload is made resident rather than after: every mapping in
+/// [`gpu_shape`] divides by the atlas rectangle, and a field with no quad
+/// sampled nothing anyway.
+fn field_draws(field: &dashpaint::VectorField) -> bool {
+    let [left, top, right, bottom] = field.plane_bounds;
+    right > left && bottom > top && field.atlas_rect[2] > 0 && field.atlas_rect[3] > 0
+}
+
 /// A contiguous range of instances drawn with one atlas bound.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DrawRun {
@@ -1128,27 +1474,31 @@ struct DrawRun {
     atlas: Option<u32>,
 }
 
-/// Splits the frame into runs, one per atlas the image instances need.
+/// Splits the frame into runs, one per atlas the instances need.
+///
+/// **Every kind that samples**, not only image fills: a glyph instance samples
+/// its run's atlas and a masked instance samples its coverage field's, and
+/// [`Resolved::atlas_of`] is the one place that mapping is written. Three tables
+/// reach residency and an instance names at most one row of one of them.
 ///
 /// # Why this is not a per-frame walk in the common case
 ///
-/// A frame whose image rows all landed in one atlas — which is every frame with
-/// one image format, and so every frame this repository draws today — takes one
-/// run over the whole buffer, decided from the resolved rows alone without
-/// looking at an instance. Segmenting happens only when a frame genuinely mixes
-/// texel formats, which a document does when a host binds `dashpack`
-/// derivations for some assets and not others.
+/// A frame whose payloads all landed in one atlas — which is every frame of one
+/// texel format, and so every frame this repository draws today, since a glyph
+/// atlas and a decoded image are both `Rgba8` — takes one run over the whole
+/// buffer, decided from the resolved rows alone without looking at an instance.
+/// Segmenting happens only when a frame genuinely mixes texel formats, which a
+/// document does when a host binds `dashpack` derivations for some assets and
+/// not others.
 ///
 /// That is a claim about *this* pass and not about the frame:
-/// [`Renderer::resolve_images`] already walks the instance rows once in any
-/// frame that has an image fill, and says why.
-fn draw_runs(buffer: &InstanceBuffer, atlas_of_row: &[Option<u32>]) -> Vec<DrawRun> {
+/// [`Renderer::resolve_frame`] already walks the instance rows once in any
+/// frame that samples anything, and says why.
+fn draw_runs(buffer: &InstanceBuffer, resolved: &Resolved) -> Vec<DrawRun> {
     let total = buffer.instances().len() as u32;
     // The rows this frame did not draw are `None` and contribute no atlas: a
     // sentinel counted here would conjure a run for an atlas nothing samples.
-    let mut distinct: Vec<u32> = atlas_of_row.iter().flatten().copied().collect();
-    distinct.sort_unstable();
-    distinct.dedup();
+    let distinct = resolved.atlases();
 
     match distinct.as_slice() {
         // No image row at all: nothing samples an atlas.
@@ -1167,12 +1517,10 @@ fn draw_runs(buffer: &InstanceBuffer, atlas_of_row: &[Option<u32>]) -> Vec<DrawR
             let mut start = 0u32;
             let mut current: Option<u32> = None;
             for (index, instance) in buffer.instances().iter().enumerate() {
-                if instance.kind != InstanceKind::FillImage.as_u32() {
-                    continue;
-                }
-                // A row that was not made resident — a zero-extent asset —
-                // draws nothing, so it constrains no run.
-                let Some(wanted) = atlas_of_row[instance.row as usize] else {
+                // An instance that samples nothing, and a row that was not made
+                // resident — a zero-extent payload — both draw without an
+                // atlas, so neither constrains a run.
+                let Some(wanted) = resolved.atlas_of(instance) else {
                     continue;
                 };
                 match current {
@@ -1261,6 +1609,8 @@ struct Frame {
     viewport: wgpu::Buffer,
     strokes: wgpu::Buffer,
     images: wgpu::Buffer,
+    glyph_runs: wgpu::Buffer,
+    shapes: wgpu::Buffer,
     /// One bind group per atlas, plus [`Frame::NO_ATLAS`] at the front for a
     /// frame that samples none.
     ///
@@ -1279,6 +1629,8 @@ struct Frame {
     clip_capacity: usize,
     stroke_capacity: usize,
     image_capacity: usize,
+    glyph_run_capacity: usize,
+    shape_capacity: usize,
     /// How many draw calls the frame most recently drawn took.
     last_runs: usize,
     /// What the instance buffer on the device currently holds, and the spans
@@ -1313,6 +1665,7 @@ impl Frame {
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
         sampler: &wgpu::Sampler,
+        msdf_sampler: &wgpu::Sampler,
         placeholder: &wgpu::TextureView,
     ) -> Self {
         let storage = |label: &'static str, size: u64| {
@@ -1340,6 +1693,14 @@ impl Frame {
             "image fills",
             (size_of::<GpuImage>() * MINIMUM_CAPACITY) as u64,
         );
+        let glyph_runs = storage(
+            "glyph runs",
+            (size_of::<GpuGlyphRun>() * MINIMUM_CAPACITY) as u64,
+        );
+        let shapes = storage(
+            "coverage masks",
+            (size_of::<GpuShape>() * MINIMUM_CAPACITY) as u64,
+        );
         let viewport = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("viewport"),
             size: size_of::<Viewport>() as u64,
@@ -1353,6 +1714,8 @@ impl Frame {
             viewport,
             strokes,
             images,
+            glyph_runs,
+            shapes,
             bind_groups: Vec::new(),
             bound_atlases: 0,
             instance_capacity: MINIMUM_CAPACITY,
@@ -1360,6 +1723,8 @@ impl Frame {
             clip_capacity: MINIMUM_CAPACITY,
             stroke_capacity: MINIMUM_CAPACITY,
             image_capacity: MINIMUM_CAPACITY,
+            glyph_run_capacity: MINIMUM_CAPACITY,
+            shape_capacity: MINIMUM_CAPACITY,
             last_runs: 0,
             uploaded: Vec::new(),
             spans: Vec::new(),
@@ -1368,10 +1733,10 @@ impl Frame {
             uploaded_viewport: Viewport::default(),
             uploaded_generation: None,
             last_upload: InstanceUpload::Whole { rows: 0 },
-            // The six buffers above.
-            allocations: 6,
+            // The eight buffers above.
+            allocations: 8,
         };
-        frame.rebind(device, layout, sampler, placeholder, &[]);
+        frame.rebind(device, layout, sampler, msdf_sampler, placeholder, &[]);
         frame
     }
 
@@ -1388,11 +1753,13 @@ impl Frame {
     ///
     /// One per atlas view plus the no-atlas one, all built here so that a
     /// reallocated buffer cannot be reflected in some of them and not others.
+    #[allow(clippy::too_many_arguments)]
     fn rebind(
         &mut self,
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
         sampler: &wgpu::Sampler,
+        msdf_sampler: &wgpu::Sampler,
         placeholder: &wgpu::TextureView,
         atlases: &[&wgpu::TextureView],
     ) {
@@ -1407,8 +1774,11 @@ impl Frame {
                 &self.viewport,
                 &self.strokes,
                 &self.images,
+                &self.glyph_runs,
+                &self.shapes,
                 view,
                 sampler,
+                msdf_sampler,
             ));
             self.allocations += 1;
         }
@@ -1423,13 +1793,14 @@ impl Frame {
         queue: &wgpu::Queue,
         layout: &wgpu::BindGroupLayout,
         sampler: &wgpu::Sampler,
+        msdf_sampler: &wgpu::Sampler,
         placeholder: &wgpu::TextureView,
         residency: &Residency,
         buffer: &InstanceBuffer,
         solids: &[[f32; 4]],
         boxes: &[GpuClipBox],
         strokes: &[GpuStroke],
-        gpu_images: &[GpuImage],
+        resolved: &Resolved,
         viewport: Viewport,
         changes: Option<Changes<'_>>,
     ) {
@@ -1477,15 +1848,11 @@ impl Frame {
         }
         queue.write_buffer(&self.strokes, 0, bytemuck::cast_slice(strokes));
 
-        // The image rows, written whole for the same reason the two tables above
-        // are. A frame with no image fill still writes one dead row, because a
-        // zero-sized binding is a validation error.
-        let dead = [GpuImage::default()];
-        let gpu_images = if gpu_images.is_empty() {
-            &dead[..]
-        } else {
-            gpu_images
-        };
+        // The three resolved tables, written whole for the same reason the two
+        // above are. A frame that has none of a kind still writes one dead row,
+        // because a zero-sized binding is a validation error.
+        let dead_image = [GpuImage::default()];
+        let gpu_images = or_dead(&resolved.images, &dead_image);
         if gpu_images.len() > self.image_capacity {
             self.image_capacity = grown(gpu_images.len());
             self.images = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1499,6 +1866,36 @@ impl Frame {
         }
         queue.write_buffer(&self.images, 0, bytemuck::cast_slice(gpu_images));
 
+        let dead_run = [GpuGlyphRun::default()];
+        let gpu_runs = or_dead(&resolved.runs, &dead_run);
+        if gpu_runs.len() > self.glyph_run_capacity {
+            self.glyph_run_capacity = grown(gpu_runs.len());
+            self.glyph_runs = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("glyph runs"),
+                size: (size_of::<GpuGlyphRun>() * self.glyph_run_capacity) as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.allocations += 1;
+            rebind = true;
+        }
+        queue.write_buffer(&self.glyph_runs, 0, bytemuck::cast_slice(gpu_runs));
+
+        let dead_shape = [GpuShape::default()];
+        let gpu_shapes = or_dead(&resolved.shapes, &dead_shape);
+        if gpu_shapes.len() > self.shape_capacity {
+            self.shape_capacity = grown(gpu_shapes.len());
+            self.shapes = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("coverage masks"),
+                size: (size_of::<GpuShape>() * self.shape_capacity) as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.allocations += 1;
+            rebind = true;
+        }
+        queue.write_buffer(&self.shapes, 0, bytemuck::cast_slice(gpu_shapes));
+
         if viewport != self.uploaded_viewport {
             queue.write_buffer(&self.viewport, 0, bytemuck::bytes_of(&viewport));
             self.uploaded_viewport = viewport;
@@ -1511,7 +1908,7 @@ impl Frame {
             let views: Vec<&wgpu::TextureView> = (0..residency.atlas_count())
                 .map(|index| residency.view(index as u32))
                 .collect();
-            self.rebind(device, layout, sampler, placeholder, &views);
+            self.rebind(device, layout, sampler, msdf_sampler, placeholder, &views);
         }
     }
 
@@ -1666,6 +2063,16 @@ fn dirty_ranges(dirty: &[u32], spans: &[InstanceSpan]) -> Vec<std::ops::Range<us
     ranges
 }
 
+/// `rows` unless it is empty, in which case the one dead row `dead` holds.
+///
+/// A zero-sized binding is a validation error rather than an empty draw, so a
+/// frame that has no row of a kind still binds one. Nothing can name it: an
+/// instance's row comes from the table it was packed against, and that table
+/// had no rows.
+fn or_dead<'a, T: Pod>(rows: &'a [T], dead: &'a [T; 1]) -> &'a [T] {
+    if rows.is_empty() { &dead[..] } else { rows }
+}
+
 /// The capacity a buffer is grown to when a frame outgrows it.
 ///
 /// Rounded up to a power of two, so a scene that adds a rect per frame
@@ -1686,8 +2093,11 @@ fn bind(
     viewport: &wgpu::Buffer,
     strokes: &wgpu::Buffer,
     images: &wgpu::Buffer,
+    glyph_runs: &wgpu::Buffer,
+    shapes: &wgpu::Buffer,
     atlas: &wgpu::TextureView,
     sampler: &wgpu::Sampler,
+    msdf_sampler: &wgpu::Sampler,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("dashscene-gpu paint"),
@@ -1724,6 +2134,18 @@ fn bind(
             wgpu::BindGroupEntry {
                 binding: 7,
                 resource: wgpu::BindingResource::Sampler(sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 8,
+                resource: glyph_runs.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 9,
+                resource: shapes.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 10,
+                resource: wgpu::BindingResource::Sampler(msdf_sampler),
             },
         ],
     })
@@ -1766,11 +2188,42 @@ const _: () = assert!(size_of::<Instance>() == 64);
 /// nothing.
 const _: () = assert!(size_of::<GpuImage>() == 64);
 
+/// The glyph-run rows and the coverage-mask rows, for the same reason: three
+/// 16-byte-aligned groups each, so both strides are 48 and neither type may
+/// change size without this failing.
+const _: () = assert!(size_of::<GpuGlyphRun>() == 48);
+const _: () = assert!(size_of::<GpuShape>() == 48);
+
 #[cfg(test)]
 mod tests {
-    use super::{DrawRun, MINIMUM_CAPACITY, dirty_ranges, draw_runs, grown, scale_mode};
+    use super::{
+        DrawRun, GpuGlyphRun, GpuImage, GpuShape, MINIMUM_CAPACITY, Resolved, dirty_ranges,
+        draw_runs, grown, scale_mode,
+    };
     use crate::instance::{Instance, InstanceBuffer, InstanceKind, InstanceSpan};
     use dashpaint::ScaleMode;
+
+    /// A resolved frame whose image rows landed in `images`, whose glyph runs
+    /// landed in `runs`, and whose coverage masks landed in `shapes`.
+    ///
+    /// Only the atlas maps matter to `draw_runs`; the row arrays are sized to
+    /// match so that an index into either means the same thing.
+    fn resolved(images: &[Option<u32>], runs: &[Option<u32>], shapes: &[Option<u32>]) -> Resolved {
+        Resolved {
+            images: vec![GpuImage::default(); images.len()],
+            runs: vec![GpuGlyphRun::default(); runs.len()],
+            shapes: vec![GpuShape::default(); shapes.len()],
+            atlas_of_image: images.to_vec(),
+            atlas_of_run: runs.to_vec(),
+            atlas_of_shape: shapes.to_vec(),
+        }
+    }
+
+    /// A resolved frame with image rows only — the shape every pre-#582 case
+    /// here was written against.
+    fn images_only(images: &[Option<u32>]) -> Resolved {
+        resolved(images, &[], &[])
+    }
 
     fn span(offset: u32, count: u32) -> InstanceSpan {
         InstanceSpan { offset, count }
@@ -1806,7 +2259,7 @@ mod tests {
             (InstanceKind::FillImage, 1),
         ]);
         assert_eq!(
-            draw_runs(&frame, &[Some(0), Some(0)]),
+            draw_runs(&frame, &images_only(&[Some(0), Some(0)])),
             vec![run(0..3, Some(0))]
         );
     }
@@ -1815,7 +2268,7 @@ mod tests {
     #[test]
     fn no_image_row_is_one_run_naming_no_atlas() {
         let frame = buffer(&[(InstanceKind::FillSolid, 0), (InstanceKind::Stroke, 0)]);
-        assert_eq!(draw_runs(&frame, &[]), vec![run(0..2, None)]);
+        assert_eq!(draw_runs(&frame, &images_only(&[])), vec![run(0..2, None)]);
     }
 
     /// A table row this frame does not draw contributes no atlas and no run.
@@ -1828,12 +2281,15 @@ mod tests {
         let frame = buffer(&[(InstanceKind::FillSolid, 0), (InstanceKind::FillImage, 1)]);
         // Row 0 exists in the table and no instance names it; row 1 is drawn.
         assert_eq!(
-            draw_runs(&frame, &[None, Some(0)]),
+            draw_runs(&frame, &images_only(&[None, Some(0)])),
             vec![run(0..2, Some(0))]
         );
         // And a table whose rows are all undrawn is the no-atlas case.
         let solid_only = buffer(&[(InstanceKind::FillSolid, 0)]);
-        assert_eq!(draw_runs(&solid_only, &[None, None]), vec![run(0..1, None)]);
+        assert_eq!(
+            draw_runs(&solid_only, &images_only(&[None, None])),
+            vec![run(0..1, None)]
+        );
     }
 
     /// Two atlases split the frame where the atlas changes, and nowhere else.
@@ -1853,7 +2309,7 @@ mod tests {
         ]);
         // Row 0 is in atlas 0 and row 1 in atlas 1.
         assert_eq!(
-            draw_runs(&frame, &[Some(0), Some(1)]),
+            draw_runs(&frame, &images_only(&[Some(0), Some(1)])),
             vec![run(0..3, Some(0)), run(3..5, Some(1))]
         );
     }
@@ -1870,7 +2326,7 @@ mod tests {
         ]);
         // Rows 0 and 1 share atlas 0; row 2 is in atlas 1.
         assert_eq!(
-            draw_runs(&frame, &[Some(0), Some(0), Some(1)]),
+            draw_runs(&frame, &images_only(&[Some(0), Some(0), Some(1)])),
             vec![run(0..2, Some(0)), run(2..3, Some(1))]
         );
     }
@@ -1890,7 +2346,7 @@ mod tests {
             (InstanceKind::FillImage, 2),
             (InstanceKind::FillImage, 0),
         ]);
-        let runs = draw_runs(&frame, &[Some(0), Some(1), Some(0)]);
+        let runs = draw_runs(&frame, &images_only(&[Some(0), Some(1), Some(0)]));
         assert_eq!(runs.first().expect("at least one run").instances.start, 0);
         assert_eq!(
             runs.last().expect("at least one run").instances.end,

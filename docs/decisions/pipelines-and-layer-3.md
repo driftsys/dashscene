@@ -153,9 +153,20 @@ the picture correct for the subset this story implements and absent for the
 rest. That is not a silent drop: the packer emits the instance, the layer-1
 golden shows it, and this record lists what is drawn.
 
-Text and baked vector fields are story #582's, shadows and backdrop blur #584's,
-render-target group opacity #583's. The instance buffer already carries all of
-them; this story draws the first kind.
+Shadows and backdrop blur are story #584's, render-target group opacity #583's,
+gradients issue #715's. The instance buffer already carries all of them; this
+story drew the first kind, story #710 the stroke, story #581 the image fill and
+story #582 text and the baked-vector coverage mask.
+
+**Story #582 also changed what a masked instance draws.** Until it landed, a
+node carrying a coverage field drew as an ordinary rounded rectangle over its
+whole box: the packer set `Instance::shape` and this shader never read it, so
+the picture was _wrong_ rather than absent — the one place in this pipeline where
+an unimplemented kind did not simply draw nothing. A masked instance's quad is
+now the field's padded plane quad and its coverage is the field's, which is what
+`dashscene-skia` does by skipping the parametric branch entirely for a masked
+entry. A masked **gradient** fill still draws nothing, because its colour is
+issue #715's.
 
 **Corrected 2026-08-03.** That sentence said "gradients and image fills are
 story #582's" from the day it was written, and neither was: story #582 is glyph

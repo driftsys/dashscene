@@ -157,12 +157,20 @@ data and does transfer.
 
 Each is a named gap with the story that closes it, not a silent drop (P4).
 
-- **Glyph quads.** A glyph's texel rectangle is a coordinate in the painter's
-  _residency_ atlas, not the `atlas_px` boundary B carries, and residency is
-  story #581. Packing one now would pin coordinates story #581 is going to
-  reassign. Story #582 adds the kind; D5 already says where its instances go,
-  and because they extend the anchor rect's span rather than move a boundary,
-  D4's contract does not change when they arrive.
+- **Glyph quads — closed by story #582, and this bullet's reasoning was
+  wrong.** It said a glyph's texel rectangle is a coordinate in the painter's
+  _residency_ atlas rather than the `atlas_px` boundary B carries, and that
+  packing one before story #581 would pin coordinates residency was going to
+  reassign. What story #582 actually packs is the rectangle in the glyph's own
+  **source** atlas, in that atlas's own texels, because the packer has no device
+  and must not need one — that is what keeps layer 1 runnable on a runner with
+  no GPU. The residency slot is folded in once per run, on the row the instance
+  names, where a device is in scope.
+
+  The prediction that did hold is the one about this contract: the instances
+  extend the anchor rect's span rather than move a boundary, so D4 and D5 are
+  unchanged, and `Instance` did not widen — `corners` is meaningless for a glyph
+  and carries the rectangle instead.
 - **`BlurKind::Layer` blurs.** Node-local layer blur is budgeted at v1 and
   nothing in this tree produces one — `dashc` lowers only `BACKGROUND_BLUR`.
   The reference painter skips it by the same filter.

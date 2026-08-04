@@ -146,7 +146,26 @@ along with it.
 The arithmetic is worth stating because the wrong version of it would have sent
 issue 715 looking for a seat that does not exist.
 
-**D5.** Nearest matches `dashscene-skia`'s `SamplingOptions::default()`, which
+**Since story #582 the vertex stage is full too.** That story needed two more
+parameter tables and did not build the heap: it bound both to the vertex stage
+and carried their values across in `VertexOut`, which works because every value
+a fragment needs of a glyph run or of a coverage mask is constant across the
+instance. `docs/decisions/tables-the-vertex-stage-reads.md` records it, and
+records why a gradient's stop array cannot take the same route — it is indexed
+by a value the fragment computes, so it does not cross as a varying at any
+width. The count is now four and four, and issue 715 is still where the heap
+gets built.
+
+**D5, as amended by story #582.** An _image fill_ is still sampled nearest, and
+the paragraph below is why. A **glyph atlas or a coverage mask** is sampled
+through a second, filtering sampler added by that story, because a distance
+field is not a colour — `dashscene-skia` draws the same distinction. The gutter
+this paragraph names is still not needed, and
+`docs/decisions/tables-the-vertex-stage-reads.md` D5 says why: the clamp half a
+texel inside the sub-rect, which was already there for the nearest case, is
+exactly the condition a bilinear footprint needs.
+
+Nearest matches `dashscene-skia`'s `SamplingOptions::default()`, which
 that painter chose deliberately — "deterministic and exact for the v0.3 corpus;
 filtering quality is a later, deliberate decision". With nearest sampling and a
 clamp to texel centres inside the sub-rect, no sample can reach a neighbouring
