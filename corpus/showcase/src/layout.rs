@@ -41,6 +41,7 @@ use dashlang::{
 };
 use dashscene_core::{Arena, VariantMember, VariantSetId, VariantValue};
 
+use crate::badge;
 use crate::resources;
 use crate::solver::ShowcaseSolver;
 use crate::vocabulary::{Painting, palette};
@@ -295,7 +296,8 @@ pub fn build(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
                 ),
         );
 
-    scene.roots([root]);
+    let label = badge::badge(&mut scene, width, height);
+    scene.roots([root, label]);
     let live = scene.build_live(
         arena,
         Box::new(ShowcaseSolver::new(

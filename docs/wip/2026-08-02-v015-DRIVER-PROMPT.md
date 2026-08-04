@@ -612,7 +612,15 @@ typo.
   exist, and the story itself with its review fixes folded in, because a fix
   that reintroduces nine defects when reverted is not separately revertable.
   Check the tree hash across a squash — it must not change.
-- **`corpus/showcase/tests/migration.rs` compares two independent arenas.**
+- **A test that compares two independent arenas must resolve every index
+  first** — a row index means nothing outside the table that assigned it. The
+  rule lives in `docs/decisions/cross-arena-comparison-resolves-indices.md`.
+  Its former worked example, `corpus/showcase/tests/migration.rs`, was deleted
+  in commit `535b547`; the comparisons that still exist are `assert_same_output`
+  in `crates/dashlang/tests/builder.rs` and in `crates/dashlang/tests/paint.rs`,
+  `assert_dsl_matches_hand_built` in `goldens/tooling/tests/v02_flex.rs`, and
+  the `via_taffy`/`via_fixed` rect equalities in
+  `crates/dashscene-engine/tests/solve.rs`.
 - **markdownlint reads a line-initial `#123` as a heading.** dprint reflows the
   paragraph, so the safe fix is to reword rather than to move the number. It
   caught this prompt twice more while issue #715 was being written up.

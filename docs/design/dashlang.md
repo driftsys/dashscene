@@ -161,6 +161,35 @@ path, and a `Scene::build` node and a `Scene::build_live` node cannot
 stage different props. Adding the vocabulary to one walk only was the
 drift this shape rules out.
 
+### Roots do not compose, which is what makes a later root an overlay
+
+`scene(roots)` and `Scene::roots(iter)` both take a list, and the roots in it
+have **no layout relationship to each other**. Three properties follow, and
+together they are the whole of how an overlay is authored:
+
+- Each root is an independent coordinate island solved from its own origin
+  (`docs/design/dashscene-engine.md`, "The solve"), so a second root honours
+  its own `Node::at` offset and **overlaps** the first rather than stacking
+  below it. Nothing in a root's geometry can move another root, in either
+  direction.
+- Roots stage and commit in declaration order
+  (`docs/design/dashscene-core-arena.md`, "Commit resolution pipeline" step 1),
+  so the **last** root's rects are last in the committed rect table, which is
+  what draws it above every earlier root.
+- A root added to a scene adds nothing to the scene's own layout, so content
+  that must sit over a scene without disturbing it is authored as a later root
+  and not as a child of the scene's tree.
+
+`crates/dashlang/tests/builder.rs`'s `multiple_roots_keep_declaration_order`
+pinned declaration order for `Scene::build` from v0.1, but nothing pinned what
+a second root's geometry or paint order does, and no **live** scene had more
+than one root before the painter badge (2026-08-04). The three properties above
+were therefore measured rather than assumed. The worked example is
+`corpus/showcase/src/badge.rs` — a pill naming the painter that drew the frame,
+appended by each showcase scene as its second root — and
+`corpus/showcase/tests/badge.rs` pins the placement, the root order and the
+overlap.
+
 `Built` wraps the commit's generation (`Built::generation() -> u64`). It
 is a named type rather than a bare `u64` so `build`/`build_with` have a
 stable return type (`docs/decisions/dashlang-value-tree-builder.md`,
@@ -284,6 +313,18 @@ solve, after which the cache is refreshed from the committed buffer (DFS
 order is invariant for a static tree, so the node-to-index map does not
 change).
 
+**The replay stages no glyph runs.** `CachedSolver` implements `LayoutSolver`
+and takes the trait's defaulted `atlases` and `stage_text`, so it stages no
+text; commit rebuilds the glyph-run table from what the solver it was handed
+stages (`docs/decisions/glyph-runs-cross-boundary-b.md`). A replaying commit
+therefore publishes a run table with **no runs in it at all** — every text node
+in the scene, not only the node that changed. Since `bind_text` and
+`Channel::Opacity` are both paint-only, the frame that changes a string is the
+frame that erases the scene's text unless something else on that tick forces the
+solve. The authoring rule that holds until the replay is fixed, and what
+qualifies as a forcing write, are in
+`docs/decisions/signal-driven-text-needs-a-solving-write.md`.
+
 **Smoothing.** `Node::smooth(channel, Spring)` drives a bound channel
 through `dashcue`'s `Scheduler`: the signal sets the spring's target, the
 scheduler drives the value each frame, and a mid-flight retarget resumes
@@ -395,4 +436,6 @@ Both declare setters on the one `Node`, which stays in `lib.rs`.
   `docs/decisions/fill-with-refuses-a-fill-channel-binding.md` (the refusal
   that vocabulary made reachable);
   `docs/decisions/cross-arena-comparison-resolves-indices.md` (the rule the
-  DSL-equals-hand-built assertions follow).
+  DSL-equals-hand-built assertions follow);
+  `docs/decisions/signal-driven-text-needs-a-solving-write.md` (what the A1
+  replay's missing text staging obliges of a scene author until it is fixed).

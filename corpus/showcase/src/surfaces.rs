@@ -19,6 +19,7 @@ use dashlang::{Channel, LiveScene, Scene, Spring, node};
 use dashpaint::{GradientKind, Mat23, ScaleMode, Stroke, StrokeAlign};
 use dashscene_core::{Arena, CrossAxisAlign, LayoutMode, TextAlignV};
 
+use crate::badge;
 use crate::resources::{self, LATIN_FAMILY};
 use crate::solver::ShowcaseSolver;
 use crate::vocabulary::{
@@ -42,7 +43,7 @@ const COLUMNS: f32 = 6.0;
 const ROWS: f32 = 3.0;
 
 const TITLE: &str = "dashscene";
-const SUBTITLE: &str = "the v0 paint vocabulary, drawn by the Skia reference painter";
+const SUBTITLE: &str = "the v0 paint vocabulary";
 
 pub fn build(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
     let (width, height) = (width as f32, height as f32);
@@ -364,7 +365,8 @@ pub fn build(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
                 ),
         );
 
-    scene.roots([root]);
+    let label = badge::badge(&mut scene, width, height);
+    scene.roots([root, label]);
     let live = scene.build_live(
         arena,
         Box::new(ShowcaseSolver::new(

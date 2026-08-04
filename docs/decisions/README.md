@@ -628,8 +628,9 @@ filed beside their parent rather than apart from it:
   re-export list rather than a new dependency edge, and the image index as the
   bound — an image fill and a variant-set declaration still need the arena
   pass, so most scenes author in one pass and not all. `corpus/showcase`'s
-  three scenes migrated, proved by per-scene equivalence tests that are kept
-  as a one-way ratchet.
+  three scenes migrated, proved by per-scene equivalence tests kept as a
+  one-way ratchet — which reached its end on 2026-08-04, when the painter
+  badge changed all three scenes at once and the tests were deleted with them.
 - [fill-with-refuses-a-fill-channel-binding.md](fill-with-refuses-a-fill-channel-binding.md)
   — a `fill_with(..)` paint beside a `Fill*` channel binding is a named
   build-time panic, not a silent loss: the binding stages the whole colour as
@@ -642,5 +643,14 @@ filed beside their parent rather than apart from it:
   function of that arena's commit history and not of the picture. It has
   bitten the same helper three times, most recently through a flattening an
   unrelated story made.
+- [signal-driven-text-needs-a-solving-write.md](signal-driven-text-needs-a-solving-write.md)
+  — a signal bound through `bind_text` must also drive a write that forces the
+  solve, because `dashlang`'s A1 rect replay stages no glyph runs and a
+  paint-only tick therefore erases every run in the scene, not only the one
+  that changed. The record names what qualifies as a forcing write (it depends
+  on the target node, not only the channel), obliges that write to be real
+  content rather than a lever, and obliges the test to assert on the committed
+  run count rather than the text prop. Retired by the replay fix, which is
+  deferred because it gives every paint-only frame back a per-text-node cost.
 
 See the `sdd-working-memory-lifecycle` rule.

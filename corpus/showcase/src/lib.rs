@@ -69,6 +69,7 @@
 //! set at build time, where it has the arena, and owns the switch; the host
 //! binds a key to [`Showcase::action`] and constructs nothing.
 
+pub mod badge;
 pub mod layout;
 pub mod resources;
 pub mod solver;

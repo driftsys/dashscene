@@ -89,8 +89,10 @@ a scene with effects and a comparison against the default entry.
   `push_with`, which takes an `EntryParts` and assigns every range.
 - A `PaintEntry` is meaningful only against the table that assigned its
   ranges. `dashscene-core`'s `compact_paints` re-homes all of them when it
-  rebuilds, and `corpus/showcase/tests/migration.rs` resolves them before
-  comparing two arenas
+  rebuilds, and every cross-arena comparison has to resolve them before
+  comparing two arenas — `corpus/showcase/tests/migration.rs` did, until it
+  was deleted in commit `535b547`; `crates/dashlang/tests/` and
+  `goldens/tooling/tests/v02_flex.rs` still do
   (`docs/decisions/cross-arena-comparison-resolves-indices.md`).
 - `ImageAsset` is the last unflattened boundary-B type. It is a different
   problem: its `Vec<u8>` is a payload, not a reference into a table, so
