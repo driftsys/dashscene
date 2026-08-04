@@ -73,8 +73,10 @@ Everything else is closed, so do not spend time re-establishing it:
 ## Where things stand
 
 `main` is at `821f630`. No open pull requests. Epic #569 tracks the slice;
-`docs/roadmap.md` has the slice map. Sixteen of the milestone's twenty-one
-issues are closed.
+`docs/roadmap.md` has the slice map. Sixteen of the milestone's twenty-two
+issues are closed. **Take that pair from `gh issue list --milestone`, never from
+here** — it has been wrong three times, most recently within an hour of being
+corrected, because filing one issue moves it.
 
 **Closed**, the milestone's own sixteen, in issue order:
 
@@ -131,10 +133,36 @@ Ten decision records carry the contracts. Read the ones your story touches:
 
 ## Order from the epic
 
-**Story #584 next** (shadows and backdrop blur). Story **#586** needs it,
-because it measures the vocabulary against the reference painter — and it needs
-a GPU and a recorded adapter, so it cannot run in CI. Then **#587** and
-**#588**, and then the epic itself closes.
+**Story #584 next**, and it is now **the two shadow kinds alone**. The backdrop
+blur was split out to **#733**: the two halves are different machines, and only
+the blur carries an open design question. Story **#586** needs both, because it
+measures the vocabulary against the reference painter — and it needs a GPU and a
+recorded adapter, so it cannot run in CI. Then **#587** and **#588**, and then
+the epic itself closes.
+
+**#584's scope is already checked, and the answer is on the issue.** The short
+version: the shadow closed form already exists — `blurred_rounded_box` and
+`erf_approx` in `sdf.wgsl`, with `layer2_conformance.rs` measuring the error
+against Simpson's-rule integration — so the story is wiring, not deriving. What
+is missing is that **shadow parameters reach the GPU through nothing**:
+`PaintTable::all_shadows` exists and `pack.rs` already sets `Instance::row` to a
+shadow row, but no binding carries that table and `render.rs` never uploads it.
+Both stages are full, so the standing answer applies — **extend the paint heap**
+with a third region at a two-word stride
+(`[offset.x, offset.y, blur, spread]` and the colour), with one more base in
+`Globals`.
+
+**That last step falsifies a claim in two places, so fix them in the same
+change.** `docs/decisions/the-paint-parameter-heap.md` and the binding section
+below both say the per-frame uniform is still sixteen bytes. A third base makes
+it twenty, which a uniform rounds to **thirty-two**.
+
+**Measured for #584, so do not re-measure it:** `surfaces` packs 2 drop shadows,
+1 inner and 1 backdrop across 95 instances; `typography` (380 instances) and
+`layout` (28) have **none of any kind**. So only one showcase scene exercises a
+shadow at all, and three shadow rows at three distinct indices cannot falsify a
+stride. Build the fixtures with two rows differing in every field rather than
+reaching for the corpus.
 
 **#587 depends only on #585 and could start at any time**, if there is a reason
 to parallelise. #588 is last by design.
