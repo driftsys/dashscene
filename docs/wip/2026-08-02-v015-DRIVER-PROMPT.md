@@ -22,16 +22,26 @@ was verified on an Apple M3 via Metal. The uncompressed rung exercises the same
 upload path with the block arithmetic removed, and runs everywhere. Nothing can
 be done about this until CI can schedule a job.
 
-**A second thing is now available and has not been done, and story #584 made it
-worth twice as much.** Neither render-target group opacity (#583) nor the two
-shadow kinds (#584) has been put on a window in front of the owner. Both are
-verified by offscreen pixel tests that assert the arithmetic, not by an eye on
-the picture. **One run closes both**: the `surfaces` scene holds the group at
-alpha 0.55 _and_ the showcase's only shadows — 2 drop and 1 inner, measured — so
-running the showcase host on it is the cheapest confirmation left in this
-slice.
+**That is the whole list.** The window confirmation that stood here until story
+584 closed is done, and it is the first settled item below.
 
 Everything else is closed, so do not spend time re-establishing it:
+
+- **Both shadow kinds and render-target group opacity, on a window, and the
+  shadow measured against the reference painter.** `surfaces` drawn by the lean
+  painter across 12766 generations, 25795 ticks and 25465 presents, with painter
+  swaps both ways at the end — no panic and no validation error. Until then both
+  effects were verified only by offscreen tests asserting arithmetic.
+
+  The shadow was then **measured rather than judged**, because on that scene it
+  reads as absent. Over a fixture carrying `tile-drop-shadow`'s own parameters
+  the two painters agree to **within one code point at every probe down the
+  falloff**; the worst whole-frame delta, 27, is at the rounded corners and is
+  the antialiasing divergence story #586 already expects. **The scene is why it
+  looks absent, not the painter**: a black shadow at 0.8 alpha over a near-black
+  background has **19 code points of 255** to work in. Filed as debt #738 rather
+  than fixed, because both remedies move committed goldens and change what the
+  showcase looks like.
 
 - **Forty-one painter swaps** on one running window across 18600 generations and
   18632 presents, no panic and no validation error, and the owner confirmed the
