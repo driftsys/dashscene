@@ -170,10 +170,17 @@ the picture correct for the subset this story implements and absent for the
 rest. That is not a silent drop: the packer emits the instance, the layer-1
 golden shows it, and this record lists what is drawn.
 
-Shadows and backdrop blur are story #584's, render-target group opacity #583's.
-The instance buffer already carries both. This story drew the first kind; the
-stroke arrived with story #710, the image fill with story #581, text and the
-baked-vector coverage mask with story #582, and the gradient with issue #715.
+Shadows and backdrop blur are story #584's, and the instance buffer already
+carries both. This story drew the first kind, and the rest arrived since:
+
+- the stroke, with story #710;
+- the image fill, with story #581;
+- text and the baked-vector coverage mask, with story #582;
+- the gradient, with issue #715;
+- render-target group opacity, with story #583 — which draws through a second
+  pipeline rather than an `InstanceKind`, because it composites a rendered
+  layer rather than shading a quad
+  (`group-opacity-draws-into-a-layer-and-a-second-pipeline-composites-it.md`).
 
 **Story #582 also changed what a masked instance draws.** Until it landed, a
 node carrying a coverage field drew as an ordinary rounded rectangle over its

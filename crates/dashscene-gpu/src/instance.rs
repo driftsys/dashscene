@@ -317,14 +317,41 @@ pub struct InstanceSpan {
     pub count: u32,
 }
 
-/// The packed instance buffer: every quad of one frame, in draw order, plus
-/// the per-rect index into it.
+/// One render-target group layer, as the painter composites it.
+///
+/// [`Instance::layer`] routes a quad to a layer; this says what to *do* with
+/// the layer once its quads are drawn. Both halves live in the instance buffer
+/// rather than the alpha travelling beside it as a second argument, for the
+/// reason `docs/decisions/instance-buffer-contract.md` gives for every other
+/// parameter: the packer already reads `dashpaint::GroupComposite` to assign
+/// `layer`, so recording the rest of that row here keeps one producer and lets
+/// layer 1 pin the whole group structure with no device.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Layer {
+    /// The alpha this layer's composite blends at — `GroupComposite::alpha`,
+    /// carried through unchanged.
+    pub alpha: f32,
+    /// The layer this one composites *into*: another layer's index **plus
+    /// one**, or [`Instance::NONE`] for the frame's own target.
+    ///
+    /// The same bias [`Instance::layer`] uses, and for the same reason — one
+    /// convention for "names a layer, or does not". Groups nest, so this is the
+    /// enclosing group, and it is recorded rather than re-derived from the
+    /// group ranges: the packer already holds the open stack that answers it,
+    /// and a second derivation of the same fact could disagree with the first.
+    pub parent: u32,
+}
+
+/// The packed instance buffer: every quad of one frame, in draw order, the
+/// per-rect index into it, and the layers those quads composite through.
 ///
 /// This is what [`crate::pack`] produces and what a layer-1 golden pins.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct InstanceBuffer {
     instances: Vec<Instance>,
     spans: Vec<InstanceSpan>,
+    layers: Vec<Layer>,
 }
 
 impl InstanceBuffer {
@@ -381,12 +408,25 @@ impl InstanceBuffer {
         })
     }
 
+    /// The frame's render-target group layers, index-aligned with the
+    /// `dashpaint::GroupComposite` slice it was packed from — so an
+    /// [`Instance::layer`] of `g + 1` is `layers()[g]`.
+    ///
+    /// Empty for a frame whose groups all took the free path, which is every
+    /// scene where no group's contents overlap: `masks-and-group-opacity.md`
+    /// resolves that case into per-rect `opacity` at commit and emits no group
+    /// at all.
+    pub fn layers(&self) -> &[Layer] {
+        &self.layers
+    }
+
     /// Empties the buffer, keeping its allocation — what a painter does at the
     /// top of a frame, so a steady-state frame reuses this buffer rather than
     /// growing a new one.
     pub fn clear(&mut self) {
         self.instances.clear();
         self.spans.clear();
+        self.layers.clear();
     }
 
     /// Opens rect `index`'s span. Every instance pushed until the next
@@ -423,6 +463,24 @@ impl InstanceBuffer {
         self.instances.push(instance);
     }
 
+    /// Appends one layer, and returns the value an [`Instance::layer`] carries
+    /// to name it — the index **plus one**.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless `index` is the next group in order. The layers are
+    /// index-aligned with the group slice, so a packer that skipped or repeated
+    /// one would route every instance after it into the wrong layer.
+    pub(crate) fn push_layer(&mut self, index: usize, layer: Layer) -> u32 {
+        assert_eq!(
+            index,
+            self.layers.len(),
+            "layers are index-aligned with the group slice; group {index} arrived out of order"
+        );
+        self.layers.push(layer);
+        u32::try_from(index).expect("group list exceeds u32::MAX") + 1
+    }
+
     /// The buffer as a layer-1 golden reads it: one header line, then one line
     /// per rect span, then one line per instance, in draw order.
     ///
@@ -437,12 +495,24 @@ impl InstanceBuffer {
         let mut out = String::new();
         let _ = writeln!(
             out,
-            "instances {} rects {}",
+            "instances {} rects {} layers {}",
             self.instances.len(),
-            self.spans.len()
+            self.spans.len(),
+            self.layers.len(),
         );
         for (index, span) in self.spans.iter().enumerate() {
             let _ = writeln!(out, "rect {index} at {} count {}", span.offset, span.count);
+        }
+        // After the spans and before the instances, so a reviewer reads the
+        // layer a following instance line names before reading the instances.
+        for (index, layer) in self.layers.iter().enumerate() {
+            let _ = writeln!(
+                out,
+                "layer {} alpha {:?} into {}",
+                index + 1,
+                layer.alpha,
+                layer.parent,
+            );
         }
         for (index, instance) in self.instances.iter().enumerate() {
             let kind = InstanceKind::from_u32(instance.kind);

@@ -4,8 +4,8 @@
 //!
 //! Rounded rects with a solid, gradient or image fill, their outline stroke,
 //! positioned glyph runs, and a fill masked by a baked vector field — all
-//! clipped by their region. Shadows and backdrop blur are story #584's, group
-//! opacity #583's.
+//! clipped by their region, and a render-target group as a layer composited at
+//! its own alpha (story #583). Shadows and backdrop blur are story #584's.
 //!
 //! A stroke is one of two kinds whose ink does not coincide with the instance's
 //! own `bounds` — see `instance_outset` in `shaders/paint.wgsl`, which grows the
@@ -49,10 +49,13 @@
 //! rejects. None of that says how the painter looks on a real driver, which is
 //! layer 4's job and needs hardware.
 
+use std::ops::Range;
+
 use bytemuck::{Pod, Zeroable};
 use dashpaint::{ClipTable, GlyphRunTable, ImageTable, PaintTable, ScaleMode};
 
-use crate::instance::{Instance, InstanceBuffer, InstanceKind, InstanceSpan};
+use crate::composite;
+use crate::instance::{Instance, InstanceBuffer, InstanceKind, InstanceSpan, Layer};
 use crate::residency::{PayloadKey, Residency, ResidencyError};
 
 /// The per-frame uniform the shaders read: the drawable, the antialiasing
@@ -169,6 +172,10 @@ const fn scale_mode(mode: ScaleMode) -> u32 {
 /// Named rather than inlined at the one call site so that a test can read it,
 /// which is what pins the two constants this file and the shaders both state.
 const PAINT_WGSL: &str = include_str!("shaders/paint.wgsl");
+
+/// The composite pipeline's whole source: no SDF math, no sampler, its own
+/// `@group(0)`. See the file for why it is separate from [`PAINT_WGSL`].
+const COMPOSITE_WGSL: &str = include_str!("shaders/composite.wgsl");
 
 /// The value the paint heap carries for a gradient's kind, and the one place
 /// the mapping is written.
@@ -405,6 +412,23 @@ pub struct Renderer {
     queue: wgpu::Queue,
     pipeline: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
+    /// The pipeline that blends a render-target group's layer into the target
+    /// around it, and the layout its bind group is built from (story #583).
+    ///
+    /// A second pipeline rather than another [`InstanceKind`], and that is the
+    /// general answer for anything this painter has to *sample a rendered
+    /// target* for. The paint pipeline binds seven storage buffers across two
+    /// stages that allow four each — four and four, with nothing spare — so a
+    /// composite folded into it would need an eighth binding that does not
+    /// exist. A pipeline owns its own bind group layout, so this one costs the
+    /// paint pipeline nothing at all. Story #584's backdrop blur reads the
+    /// target the same way and takes the same route.
+    composite_pipeline: wgpu::RenderPipeline,
+    composite_layout: wgpu::BindGroupLayout,
+    /// The layer textures a frame's render-target groups draw into, held across
+    /// frames for the reason the offscreen target is, and rebuilt when the
+    /// extent or the layer count changes.
+    layers: LayerTargets,
     adapter_info: wgpu::AdapterInfo,
     frame: Frame,
     /// The colour format the pipeline writes. [`TARGET_FORMAT`] offscreen, the
@@ -805,6 +829,80 @@ impl Renderer {
             cache: None,
         });
 
+        // The composite pipeline: its own module, its own layout, its own
+        // `@group(0)`. See `shaders/composite.wgsl` for why it is not another
+        // entry point in `paint.wgsl`.
+        let composite_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("dashscene-gpu composite"),
+            source: wgpu::ShaderSource::Wgsl(COMPOSITE_WGSL.into()),
+        });
+        let composite_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("dashscene-gpu composite"),
+            entries: &[
+                // The layer, read by `textureLoad`. Declared unfilterable
+                // because nothing filters it: the composite is a 1:1 pixel copy
+                // and the layout has no sampler at all.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let composite_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("dashscene-gpu composite"),
+                bind_group_layouts: &[Some(&composite_layout)],
+                immediate_size: 0,
+            });
+        let composite_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("dashscene-gpu composite"),
+            layout: Some(&composite_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &composite_module,
+                entry_point: Some("vs_composite"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &composite_module,
+                entry_point: Some("fs_composite"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    // The same premultiplied source-over the paint pipeline
+                    // blends with, and for the same reason: the layer's texels
+                    // are premultiplied, and `fs_composite` scales them by the
+                    // group's alpha before they arrive here.
+                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
         let max_extent = device.limits().max_texture_dimension_2d;
         // Nearest and clamped, matching the reference painter's own
         // `SamplingOptions::default()`. Declared `NonFiltering` in the layout to
@@ -883,6 +981,9 @@ impl Renderer {
             queue,
             pipeline,
             layout,
+            composite_pipeline,
+            composite_layout,
+            layers: LayerTargets::default(),
             adapter_info,
             frame,
             format,
@@ -993,6 +1094,7 @@ impl Renderer {
         self.frame.allocations
             + self.offscreen_allocations
             + self.residency.allocations()
+            + self.layers.allocations
             + AT_CONSTRUCTION
     }
 
@@ -1244,20 +1346,50 @@ impl Renderer {
             "a draw run names an atlas that does not exist"
         );
 
+        // The render-target groups, and the passes they turn this one ordered
+        // stream into. A frame with no groups plans to exactly one pass over
+        // the whole buffer, which is what every frame before story #583 was.
+        self.layers.prepare(
+            &self.device,
+            &self.queue,
+            &self.composite_layout,
+            self.format,
+            width,
+            height,
+            buffer.layers(),
+        );
+        let plan = composite::plan(buffer);
+
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("dashscene-gpu frame"),
             });
-        {
+        let mut draws = 0usize;
+        for planned in &plan {
+            let target = if planned.target == Instance::NONE {
+                view
+            } else {
+                self.layers.view(planned.target)
+            };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("dashscene-gpu frame"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view,
+                    view: target,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        // A layer starts transparent, which is the state
+                        // `save_layer` starts the reference painter's in. A
+                        // target returned to must **load**, or this pass
+                        // discards what the earlier one drew — and a frame
+                        // whose only group starts at instance 0 cannot tell the
+                        // two apart, which is why the planner decides it.
+                        load: if planned.clear {
+                            wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
+                        } else {
+                            wgpu::LoadOp::Load
+                        },
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -1266,17 +1398,34 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.pipeline);
-            // Four vertices per instance, as a triangle strip, and one draw per
-            // run. Slice order is draw order, and the runs partition the buffer
-            // in order, so the buffer's own order is still the stacking order.
-            for run in &runs {
-                pass.set_bind_group(0, self.frame.bind_group(run.atlas), &[]);
-                pass.draw(0..4, run.instances.clone());
+            for step in &planned.steps {
+                match step {
+                    // Four vertices per instance, as a triangle strip, and one
+                    // draw per atlas run. Slice order is draw order, and both
+                    // partitions of the buffer — this pass's range and the
+                    // atlas runs — are ordered, so the buffer's own order is
+                    // still the stacking order.
+                    composite::Step::Instances(range) => {
+                        pass.set_pipeline(&self.pipeline);
+                        for run in overlapping(&runs, range) {
+                            pass.set_bind_group(0, self.frame.bind_group(run.atlas), &[]);
+                            pass.draw(0..4, run.instances.clone());
+                            draws += 1;
+                        }
+                    }
+                    // One quad over the whole target, blending the layer at its
+                    // group's alpha.
+                    composite::Step::Composite(slot) => {
+                        pass.set_pipeline(&self.composite_pipeline);
+                        pass.set_bind_group(0, self.layers.bind_group(*slot), &[]);
+                        pass.draw(0..4, 0..1);
+                        draws += 1;
+                    }
+                }
             }
         }
         self.queue.submit([encoder.finish()]);
-        self.frame.last_runs = runs.len();
+        self.frame.last_runs = draws;
     }
 
     /// Every payload-backed table as the shaders read it, with each row's
@@ -1494,10 +1643,12 @@ impl Renderer {
 
     /// How many draw calls the frame most recently drawn took.
     ///
-    /// One unless the frame's image fills sat in more than one atlas. Public
-    /// because a test that asserted only the picture could not tell a frame
-    /// that batched from one that did not, and the batching is the property
-    /// R-T2 cares about.
+    /// One unless the frame's image fills sat in more than one atlas, or it
+    /// held a render-target group: since story #583 a group costs one draw for
+    /// its composite, plus one more for each run its own quads are split into.
+    /// Public because a test that asserted only the picture could not tell a
+    /// frame that batched from one that did not, and the batching is the
+    /// property R-T2 cares about.
     pub fn last_draw_runs(&self) -> usize {
         self.frame.last_runs
     }
@@ -1709,6 +1860,29 @@ fn draw_runs(buffer: &InstanceBuffer, resolved: &Resolved) -> Vec<DrawRun> {
     }
 }
 
+/// The atlas runs overlapping `range`, each clipped to it.
+///
+/// Two independent partitions of one instance buffer meet here: [`draw_runs`]
+/// splits it by the atlas a quad samples, and [`crate::composite::plan`] splits
+/// it by the target a quad draws into. Neither is a refinement of the other —
+/// an atlas run can span a group boundary and a group can hold quads from two
+/// atlases — so the draws are their intersection. Both are ordered ranges over
+/// the same index space, which is what makes the intersection a filter rather
+/// than a merge.
+fn overlapping<'a>(
+    runs: &'a [DrawRun],
+    range: &'a Range<u32>,
+) -> impl Iterator<Item = DrawRun> + 'a {
+    runs.iter().filter_map(move |run| {
+        let start = run.instances.start.max(range.start);
+        let end = run.instances.end.min(range.end);
+        (start < end).then_some(DrawRun {
+            instances: start..end,
+            atlas: run.atlas,
+        })
+    })
+}
+
 /// The offscreen target and the staging buffer its pixels are read back
 /// through, held across calls for the reason [`Frame`] is.
 struct Offscreen {
@@ -1757,6 +1931,169 @@ impl Offscreen {
             unpadded,
             padded,
         }
+    }
+}
+
+/// The layer textures a frame's render-target groups draw into, one per layer
+/// (story #583).
+///
+/// # Why full extent, and one per layer
+///
+/// Each layer is the **whole target**, which is `dashscene-skia`'s own choice
+/// and made for a reason this painter shares: a group's ink reaches past its
+/// rect range through shadows and blurs, so a bound tight to the geometry would
+/// have to be derived from the effects instead, and getting it wrong moves
+/// pixels. Story #584 adds exactly those effects.
+///
+/// One texture per layer rather than one per nesting *depth*, which would let
+/// siblings share. Depth-keyed pooling is the smaller allocation and it is not
+/// what this builds, because the measured shape does not call for it: the
+/// showcase's only render-target group is one group nesting one deep, and
+/// `dashscene_validator::RENDER_TARGET_BUDGET_PLACEHOLDER` warns at eight. A
+/// pool would also have to keep a layer alive until its parent's pass, so it
+/// saves nothing until sibling groups are both numerous and deep. It is the
+/// optimization to reach for if a scene ever makes this cost visible, and the
+/// planner would not change: [`crate::composite::plan`] names layers by slot
+/// and never says where their pixels live.
+///
+/// Held across frames for the reason [`Offscreen`] is, and rebuilt when the
+/// extent or the layer count changes. The alphas are written every frame
+/// regardless: a group's alpha animates without changing how many layers there
+/// are, and a stale uniform would draw the previous frame's opacity.
+#[derive(Default)]
+struct LayerTargets {
+    /// One view per layer, indexed by slot minus one.
+    views: Vec<wgpu::TextureView>,
+    /// One bind group per layer, naming that layer's view and its own alpha
+    /// uniform. Per layer rather than one shared group with a dynamic offset:
+    /// the texture differs per layer, so the group has to be rebuilt anyway.
+    bind_groups: Vec<wgpu::BindGroup>,
+    /// One uniform buffer per layer. Separate buffers rather than one written
+    /// between draws: writes queued against a single buffer inside one
+    /// submission do not interleave with the draws that read it, so every
+    /// composite would blend at the last alpha written.
+    alphas: Vec<wgpu::Buffer>,
+    width: u32,
+    height: u32,
+    /// Device objects allocated here, counted beside the others — see
+    /// [`Renderer::allocations`].
+    allocations: u64,
+}
+
+/// One layer's composite parameters, as `shaders/composite.wgsl` reads them.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
+struct GpuComposite {
+    alpha: f32,
+    _pad: [f32; 3],
+}
+
+impl LayerTargets {
+    /// Makes `count` layers of `width` x `height` available, rebuilding when
+    /// either has changed, and writes each layer's alpha.
+    #[allow(clippy::too_many_arguments)]
+    fn prepare(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        layout: &wgpu::BindGroupLayout,
+        format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+        layers: &[Layer],
+    ) {
+        if self.width != width || self.height != height || self.views.len() != layers.len() {
+            self.views.clear();
+            self.bind_groups.clear();
+            self.alphas.clear();
+            for _ in 0..layers.len() {
+                let texture = device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("dashscene-gpu layer"),
+                    size: wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format,
+                    // Drawn into, then read by `textureLoad` when it
+                    // composites.
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                });
+                let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                let alpha = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("dashscene-gpu layer alpha"),
+                    size: size_of::<GpuComposite>() as wgpu::BufferAddress,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                self.bind_groups
+                    .push(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("dashscene-gpu layer"),
+                        layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(&view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: alpha.as_entire_binding(),
+                            },
+                        ],
+                    }));
+                self.views.push(view);
+                self.alphas.push(alpha);
+                // A texture, its view, its uniform buffer and its bind group.
+                self.allocations += 4;
+            }
+            self.width = width;
+            self.height = height;
+        }
+        for (layer, buffer) in layers.iter().zip(&self.alphas) {
+            queue.write_buffer(
+                buffer,
+                0,
+                bytemuck::bytes_of(&GpuComposite {
+                    alpha: layer.alpha,
+                    _pad: [0.0; 3],
+                }),
+            );
+        }
+    }
+
+    /// The view a pass draws into for layer `slot`, where `slot` is an
+    /// [`Instance::layer`] value — so slot 1 is the first layer.
+    ///
+    /// # Panics
+    ///
+    /// Panics for a slot this frame holds no layer for, which is the same
+    /// broken contract [`crate::composite::plan`] panics on one step earlier.
+    fn view(&self, slot: u32) -> &wgpu::TextureView {
+        self.views.get(slot as usize - 1).unwrap_or_else(|| {
+            panic!(
+                "a pass draws into layer {slot} of {} allocated",
+                self.views.len()
+            )
+        })
+    }
+
+    /// The bind group that blends layer `slot` at its own alpha.
+    ///
+    /// # Panics
+    ///
+    /// As [`LayerTargets::view`].
+    fn bind_group(&self, slot: u32) -> &wgpu::BindGroup {
+        self.bind_groups.get(slot as usize - 1).unwrap_or_else(|| {
+            panic!(
+                "a pass composites layer {slot} of {} allocated",
+                self.bind_groups.len()
+            )
+        })
     }
 }
 
@@ -2367,6 +2704,11 @@ const _: () = assert!(size_of::<GpuShape>() == 48);
 /// pad would make the two disagree about where `gradient_base` sits, and the
 /// symptom would be a gradient reading solid colours as handles.
 const _: () = assert!(size_of::<Globals>() == 16);
+// Added in review: `composite.wgsl` reads this as a uniform, and it was the one
+// struct crossing into WGSL that nothing pinned. A `vec3f` pad here would make
+// it 32 — which is exactly the mismatch this catches at compile time rather
+// than as a wgpu validation error at the first composite draw.
+const _: () = assert!(size_of::<GpuComposite>() == 16);
 
 #[cfg(test)]
 mod tests {

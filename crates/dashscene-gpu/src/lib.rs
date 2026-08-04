@@ -2,7 +2,7 @@
 //! native and web from one codebase
 //! (`docs/decisions/wgpu-is-the-lean-painter.md`).
 //!
-//! # Status: the paint vocabulary less shadows, blur and group opacity
+//! # Status: the paint vocabulary less shadows and blur
 //!
 //! Story #577 stood the crate up against boundary B — "the entire painter
 //! input" (`docs/design/architecture.md`) — so that the trait was proven
@@ -46,10 +46,21 @@
 //! one storage buffer instead
 //! (`docs/decisions/the-paint-parameter-heap.md`).
 //!
+//! Story #583 drew render-target group opacity, the one part of the vocabulary
+//! that is not an `InstanceKind` at all: `Instance::layer` has named the
+//! innermost enclosing group since story #578, and nothing read it. A group
+//! whose members overlap now draws into its own layer and composites at the
+//! group's alpha, through a second pipeline — the route anything that samples
+//! a rendered target has to take, since the paint pipeline's fragment stage is
+//! full
+//! (`docs/decisions/group-opacity-draws-into-a-layer-and-a-second-pipeline-composites-it.md`).
+//!
 //! What draws is rounded rects with a solid, gradient or image fill, their
 //! stroke, positioned glyph runs, and a fill masked by a baked vector field —
-//! all clipped by their region. Group opacity, shadows and blur are packed and
-//! not drawn; each has its own story in epic #569.
+//! all clipped by their region, and render-target group opacity as an
+//! offscreen layer composited at the group's alpha
+//! (`docs/decisions/group-opacity-draws-into-a-layer-and-a-second-pipeline-composites-it.md`).
+//! Shadows and blur are packed and not drawn; both are story #584's.
 //!
 //! # Why this crate is named for the role
 //!
@@ -69,6 +80,7 @@
 //! what makes this a translation of the paint table into draw calls rather
 //! than a 2D rasteriser.
 
+pub mod composite;
 pub mod instance;
 pub mod pack;
 pub mod render;
@@ -81,7 +93,8 @@ use dashpaint::{
     RectEntry,
 };
 
-pub use instance::{Instance, InstanceBuffer, InstanceKind, InstanceSpan};
+pub use composite::{Pass, Step};
+pub use instance::{Instance, InstanceBuffer, InstanceKind, InstanceSpan, Layer};
 pub use render::{ATLAS_EXTENT, Changes, InstanceUpload, Renderer, RendererError};
 pub use residency::{AtlasFormat, Residency, ResidencyError};
 pub use shader::SDF_WGSL;
