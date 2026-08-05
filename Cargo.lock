@@ -1193,6 +1193,7 @@ dependencies = [
  "nv-flip",
  "png",
  "serde_json",
+ "showcase",
  "skia-safe",
  "ssimulacra2",
  "tempfile",

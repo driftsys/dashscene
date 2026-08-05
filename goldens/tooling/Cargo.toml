@@ -67,6 +67,11 @@ dashcue.workspace = true
 # it is where that join is checked: `dashscene-gpu` must not depend on the
 # packer, and the packer must not depend on a painter.
 dashscene-gpu.workspace = true
+# The showcase scenes, for the `painter-diff` example only: it draws the same
+# committed frame through both painters offscreen so the two can be compared
+# without either windowing path in the way. A dev-dependency, so nothing the
+# harness itself links carries the demonstration's content.
+showcase = { path = "../../corpus/showcase" }
 # The render_dsb unit test and the v0.7 text-lowering golden (#160) drive
 # `dashc`'s compile_figma to build a `.dsb` in-process; the `dashscene-validator`
 # profile selects the compile profile. Both are test-only.
