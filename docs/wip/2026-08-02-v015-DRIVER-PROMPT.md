@@ -154,12 +154,29 @@ Eleven decision records carry the contracts. Read the ones your story touches:
 
 ## Order from the epic
 
-**Story #586 is the last one, and it is next** — layer 4, the perceptual band
+**Two stories are open: #586 and #746.** Take that from
+`gh issue list --milestone`, not from this sentence — see below for why this
+very line was wrong within minutes of being written.
+
+**Story #586 is the one that was waiting** — layer 4, the perceptual band
 against the Skia oracle on a real GPU, with the adapter and driver recorded
-beside every number. It was waiting on #733 because it measures the vocabulary
+beside every number. It was blocked on #733 because it measures the vocabulary
 against the reference painter and the blur was the last thing that vocabulary
 was missing. **It needs a GPU and a recorded adapter, so it cannot run in CI.**
-The epic closes behind it.
+
+**Story #746 was filed by the parallel session while #733 was in progress** —
+the lean painter's window is not colour-managed on macOS, so the two painters
+draw different colours on screen and neither painter is at fault. Read the issue
+before assuming it belongs to this slice at all: it extends a nearly-closed
+slice, and moving it to v1 is explicitly a live option.
+
+**This section claimed "#586 is the last story" and was false when written**,
+because issue #746 had already been filed. That is the fourth time this file has
+gone stale on a queryable number, twice within an hour of being corrected.
+**Query the milestone; do not read a count or a "last story" claim out of this
+file.** Note the shape of the fix as well: an issue number at the start of a line
+is read as a Markdown heading, so it is reworded rather than moved, because
+dprint reflows the paragraph and would put it back.
 
 **Story #733 is closed and the paint vocabulary is complete.** The backdrop blur
 draws: `composite::plan` ends the pass at a backdrop instance, the renderer
@@ -227,8 +244,9 @@ checked the same way and held — `pack.rs` really did emit the instance and
 `paint.wgsl` really did discard it. One command settles it either way.
 
 **#587 and #588 are already closed** — the parallel session landed the web
-target as PR #736 and retired `dashscene-web` as PR #744. So story #586 is the
-last story in the slice, and the epic closes behind it.
+target as PR #736 and retired `dashscene-web` as PR #744. It also filed the
+colour-management story, issue #746, against this milestone — so the slice's
+open stories are #586 and that one, and issue #741 waits at the epic close.
 
 **The prerequisite gap #733 opened is closed, and the answer generalises.** A
 backdrop needed something #583 did not deliver: a way to read the destination. A
