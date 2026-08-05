@@ -23,6 +23,19 @@
              space, is no longer open: settled 2026-07-30 as
              sRGB-encoded, measured against Figma, at
              docs/decisions/blur-blends-in-srgb-encoded-space.md.
+             GARDENED FURTHER 2026-08-05 at the v0.15 close (epic
+             #569): the capability table's **future-wgpu row is no
+             longer forward-looking** — story #733 built it, and what
+             it does is recorded at
+             docs/decisions/a-backdrop-blur-snapshots-the-target-it-draws-into.md.
+             That painter honours the contract at full resolution with
+             a separable Gaussian and neither quality lever, so the
+             two that remain — dual-Kawase downsample and re-blur
+             cadence — are still forward-looking, and are now
+             forward-looking for a *constrained* painter specifically
+             rather than for an unbuilt one. Unity and tiny-skia-web
+             rows: tiny-skia-web is retired (story #588), so only
+             Unity's row is unbuilt.
     scope    the Figma BACKGROUND_BLUR construct end to end: profile
              status, schema effect representation, the boundary-B paint
              contract, per-painter capability, and the oracle frame it
