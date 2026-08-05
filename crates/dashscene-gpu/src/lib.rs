@@ -2,7 +2,7 @@
 //! native and web from one codebase
 //! (`docs/decisions/wgpu-is-the-lean-painter.md`).
 //!
-//! # Status: the paint vocabulary less the backdrop blur
+//! # Status: the whole v0 paint vocabulary draws
 //!
 //! Story #577 stood the crate up against boundary B — "the entire painter
 //! input" (`docs/design/architecture.md`) — so that the trait was proven
@@ -64,14 +64,22 @@
 //! heap, and it stopped reading the stroke rows in the same move
 //! (`docs/decisions/instance-buffer-contract.md` D9).
 //!
+//! Story #733 drew the last of it. A backdrop blur reads what is already in
+//! the render target, which no binding on the paint pipeline can do and no
+//! pass can do for its own attachment — so the planner ends the pass at a
+//! backdrop instance, the renderer snapshots the target between the two, and
+//! two more pipelines run a separable Gaussian over the snapshot and write the
+//! result back
+//! (`docs/decisions/a-backdrop-blur-snapshots-the-target-it-draws-into.md`).
+//!
 //! What draws is rounded rects with a solid, gradient or image fill, their
-//! stroke, positioned glyph runs, a fill masked by a baked vector field, and
-//! both shadow kinds — all clipped by their region, and render-target group
-//! opacity as an offscreen layer composited at the group's alpha
+//! stroke, positioned glyph runs, a fill masked by a baked vector field, both
+//! shadow kinds and the backdrop blur — all clipped by their region, and
+//! render-target group opacity as an offscreen layer composited at the group's
+//! alpha
 //! (`docs/decisions/group-opacity-draws-into-a-layer-and-a-second-pipeline-composites-it.md`).
-//! The backdrop blur is packed and not drawn, and it is story 733's: it reads
-//! what is already in the render target, which no binding on the paint
-//! pipeline can do.
+//! That is the whole of the v0 paint vocabulary; what remains between this
+//! painter and the reference one is fidelity, which story #586 measures.
 //!
 //! # Why this crate is named for the role
 //!

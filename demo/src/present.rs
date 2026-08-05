@@ -373,14 +373,14 @@ fn pack_premul_over_black(premul: &[u8], framebuffer: &mut [u32]) {
 /// device that has to agree with it, so this presenter is the seam and nothing
 /// else: it packs boundary B through the painter and hands the frame over.
 ///
-/// # It draws less than the reference painter, on purpose
+/// # It draws the whole v0 paint vocabulary since story #733
 ///
-/// Epic #569 builds the vocabulary one story at a time. Solid, gradient and
-/// image fills draw, as do strokes, text, a fill masked by a baked vector
-/// field, render-target group opacity, and both shadow kinds; the backdrop
-/// blur is packed and not drawn, so a scene using one appears with that layer
-/// missing rather than wrong. That is the point of running the two painters
-/// against one document — the difference is the work that is left.
+/// Epic #569 built the vocabulary one story at a time, and the last construct
+/// landed with the backdrop blur. Solid, gradient and image fills draw, as do
+/// strokes, text, a fill masked by a baked vector field, render-target group
+/// opacity, both shadow kinds and the backdrop blur. What is left between the
+/// two painters is fidelity rather than coverage, and story #586 is where that
+/// is measured — which is still the point of running both against one document.
 pub struct GpuPresenter {
     /// The boundary-B implementation. It produces the instance buffer and knows
     /// nothing about the window.

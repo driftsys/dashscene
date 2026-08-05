@@ -178,9 +178,14 @@ the picture correct for the subset this story implements and absent for the
 rest. That is not a silent drop: the packer emits the instance, the layer-1
 golden shows it, and this record lists what is drawn.
 
-The **backdrop blur** is the one construct still undrawn, and story 733 owns it:
-it reads what is already in the render target, which no binding on this group
-can do. This story drew the first kind, and the rest arrived since:
+**Nothing in the v0 paint vocabulary is undrawn now.** The backdrop blur was the
+last, and story #733 drew it — not on this pipeline, because it reads what is
+already in the render target and no binding on this group can do that, and no
+pass can sample its own attachment. It takes two pipelines of its own over a
+snapshot of the target
+(`a-backdrop-blur-snapshots-the-target-it-draws-into.md`).
+
+This story drew the first kind, and the rest arrived since:
 
 - the stroke, with story #710;
 - the image fill, with story #581;
@@ -193,7 +198,11 @@ can do. This story drew the first kind, and the rest arrived since:
 - the two shadow kinds, with story #584 — whose parameters extend the paint
   heap and whose quad growth moved onto `Instance::outset`, taking the stroke
   table out of the vertex stage
-  (`the-paint-parameter-heap.md`, `instance-buffer-contract.md` D9).
+  (`the-paint-parameter-heap.md`, `instance-buffer-contract.md` D9);
+- the backdrop blur, with story #733 — which draws through two further
+  pipelines and is the one `InstanceKind` this shader deliberately never sees,
+  because `composite::plan` keeps it out of every instance range
+  (`a-backdrop-blur-snapshots-the-target-it-draws-into.md`).
 
 **Story #582 also changed what a masked instance draws.** Until it landed, a
 node carrying a coverage field drew as an ordinary rounded rectangle over its

@@ -19,7 +19,7 @@
 //!   and it is one this painter shares: a group's ink reaches past its rect
 //!   range through shadows and blurs, so a tight bound would have to be derived
 //!   from the effects rather than from the geometry, and getting it wrong moves
-//!   pixels. Story #584 added the shadows, and story 733 adds the blur.
+//!   pixels. Story #584 added the shadows, and story #733 added the blur.
 //! - the composite is **one source-over draw of the layer at the origin,
 //!   modulated by the group's alpha** — `blend_layer`'s counterpart. A 1:1
 //!   pixel copy, so it samples by `textureLoad` and needs no sampler, no
@@ -28,13 +28,35 @@
 //!
 //! # The plan is derived from the instance stream alone
 //!
-//! [`plan`] reads `Instance::layer` and `Layer::parent` and nothing else — not
-//! the group ranges the packer walked to assign them. That is deliberate: the
-//! ranges are boundary B's and the packer has already consumed them, so
-//! re-deriving nesting here would be a second derivation of one fact, which is
-//! the shape `docs/decisions/instance-buffer-contract.md` rejects. It also
-//! makes this function total over any instance buffer, which is what lets layer
-//! 1 pin it on a runner with no GPU.
+//! [`plan`] reads `Instance::layer`, `Instance::kind` and `Layer::parent` and
+//! nothing else — not the group ranges the packer walked to assign them. That
+//! is deliberate: the ranges are boundary B's and the packer has already
+//! consumed them, so re-deriving nesting here would be a second derivation of
+//! one fact, which is the shape `docs/decisions/instance-buffer-contract.md`
+//! rejects. It also makes this function total over any instance buffer, which
+//! is what lets layer 1 pin it on a runner with no GPU.
+//!
+//! # A backdrop blur splits the target's pass (story #733)
+//!
+//! An [`InstanceKind::Backdrop`] instance reads what is already composited
+//! beneath it, and a texture cannot be a render attachment and a sampled
+//! binding in the same pass. So a backdrop is **not** drawn by the paint
+//! pipeline and is **not** inside any [`Step::Instances`] range: it ends the
+//! pass drawing into its target, and the pass that resumes that target carries
+//! it as [`Pass::backdrop`].
+//!
+//! What happens between those two passes is the renderer's — a copy of the
+//! target and the two separable blur passes over it, which are device concerns
+//! this planner has no way to check without one.
+//! `docs/decisions/a-backdrop-blur-snapshots-the-target-it-draws-into.md` is the record.
+//!
+//! **The target a backdrop reads is the pass's own target, which is the
+//! innermost open layer.** That is not a convenience: `dashscene-skia`
+//! specifies that a render-target group is a backdrop root, so a node inside
+//! one frosts its in-group siblings and nothing further down. Splitting the
+//! pass the backdrop is *in* gives that reading with no lookup, and a plan
+//! that snapshotted the frame's target instead would composite the backdrop
+//! twice — once directly and once inside the group's own alpha.
 //!
 //! # Ordering
 //!
@@ -48,7 +70,7 @@
 
 use std::ops::Range;
 
-use crate::instance::{Instance, InstanceBuffer, Layer};
+use crate::instance::{Instance, InstanceBuffer, InstanceKind, Layer};
 
 /// One step inside a pass, in the order it is encoded.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,7 +88,8 @@ pub enum Step {
 }
 
 /// One render pass: a target, whether it is being written for the first time,
-/// and the steps drawn into it.
+/// the backdrop resolved into it before anything draws, and the steps drawn
+/// into it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pass {
     /// The layer slot this pass draws into, or [`Instance::NONE`] for the
@@ -75,14 +98,27 @@ pub struct Pass {
     /// True when nothing has drawn into this target yet, so the pass loads by
     /// clearing. A later pass on the same target must **load**, or it discards
     /// what the earlier one drew.
+    ///
+    /// **A pass that both clears and carries a backdrop still clears**, and the
+    /// renderer has to clear the target *before* it snapshots it: an unwritten
+    /// texture's contents are undefined, so a backdrop blurring one would read
+    /// whatever the allocator handed over. There is nothing to see beneath such
+    /// a backdrop, and blurring transparent black yields transparent black —
+    /// but only once something has made it transparent black.
     pub clear: bool,
+    /// The [`InstanceKind::Backdrop`] instance this pass resolves into its
+    /// target before its steps draw, as an index into the instance buffer.
+    ///
+    /// The blur reads the target as it stood when the previous pass on it
+    /// ended, which is what "the backdrop beneath this node" means.
+    pub backdrop: Option<u32>,
     pub steps: Vec<Step>,
 }
 
 /// The passes one frame's instance stream draws as.
 ///
-/// A frame with no layers is one pass over the whole buffer, which is what
-/// every frame before story #583 was.
+/// A frame with no layers and no backdrop is one pass over the whole buffer,
+/// which is what every frame before story #583 was.
 ///
 /// # Panics
 ///
@@ -104,40 +140,62 @@ pub fn plan(buffer: &InstanceBuffer) -> Vec<Pass> {
 
     for (index, instance) in buffer.instances().iter().enumerate() {
         let index = index as u32;
+        let backdrop = instance.kind == InstanceKind::Backdrop.as_u32();
         // The stack's top *is* the slot it stands for — every layer has one
         // parent, so equal slots mean equal chains. Comparing the slot rather
         // than the chain is what keeps `chain` off the per-instance path: it
         // runs once per layer change, not once per quad.
-        if instance.layer == target_of(&stack) {
+        //
+        // A backdrop is never skipped even when its layer is already current:
+        // it splits the pass whatever else is happening at it.
+        if instance.layer == target_of(&stack) && !backdrop {
             continue;
         }
-        let wanted = chain(instance.layer, layers);
-        // Everything up to here belongs to the target that is current now.
-        emit(
-            &mut passes,
-            &mut written,
-            target_of(&stack),
-            Step::Instances(run_start..index),
-        );
-        run_start = index;
-
-        // Close the layers that are open but not wanted, innermost first. Each
-        // composites into whatever encloses it, which is the stack's new top.
-        while !starts_with(&wanted, &stack) {
-            let closed = stack
-                .pop()
-                .expect("an empty stack is a prefix of every chain, so the loop has ended");
+        if instance.layer != target_of(&stack) {
+            let wanted = chain(instance.layer, layers);
+            // Everything up to here belongs to the target that is current now.
             emit(
                 &mut passes,
                 &mut written,
                 target_of(&stack),
-                Step::Composite(closed),
+                Step::Instances(run_start..index),
             );
+            run_start = index;
+
+            // Close the layers that are open but not wanted, innermost first.
+            // Each composites into whatever encloses it, which is the stack's
+            // new top.
+            while !starts_with(&wanted, &stack) {
+                let closed = stack
+                    .pop()
+                    .expect("an empty stack is a prefix of every chain, so the loop has ended");
+                emit(
+                    &mut passes,
+                    &mut written,
+                    target_of(&stack),
+                    Step::Composite(closed),
+                );
+            }
+            // Open the rest. Nothing is emitted for them here: this instance is
+            // the first of the innermost one, so the next range emitted starts
+            // at it and every opened layer is written before it composites.
+            stack.extend_from_slice(&wanted[stack.len()..]);
         }
-        // Open the rest. Nothing is emitted for them here: this instance is the
-        // first of the innermost one, so the next range emitted starts at it and
-        // every opened layer is written before it composites.
-        stack.extend_from_slice(&wanted[stack.len()..]);
+        if backdrop {
+            // Everything before it belongs to the pass that is ending. A layer
+            // change at this same instance has already emitted that range and
+            // left `run_start` here, so this one is empty and is dropped.
+            emit(
+                &mut passes,
+                &mut written,
+                target_of(&stack),
+                Step::Instances(run_start..index),
+            );
+            open_backdrop(&mut passes, &mut written, target_of(&stack), index);
+            // The backdrop draws through its own pipeline, so it is in no
+            // instance range: the resumed run starts *after* it.
+            run_start = index + 1;
+        }
     }
 
     emit(
@@ -207,6 +265,11 @@ fn chain(slot: u32, layers: &[Layer]) -> Vec<u32> {
 /// An empty instance range is dropped rather than recorded: it encodes no work,
 /// and recording it would start a pass — and therefore a clear — on a target
 /// that has nothing to draw.
+///
+/// A pass carrying a backdrop is never appended to by a *later* target's step,
+/// which falls out of the target comparison; but it is appended to by the steps
+/// that follow the backdrop on the same target, which is exactly the resumed
+/// run.
 fn emit(passes: &mut Vec<Pass>, written: &mut [bool], target: u32, step: Step) {
     if let Step::Instances(range) = &step
         && range.is_empty()
@@ -215,15 +278,29 @@ fn emit(passes: &mut Vec<Pass>, written: &mut [bool], target: u32, step: Step) {
     }
     match passes.last_mut() {
         Some(pass) if pass.target == target => pass.steps.push(step),
-        _ => {
-            let clear = !written[target as usize];
-            written[target as usize] = true;
-            passes.push(Pass {
-                target,
-                clear,
-                steps: vec![step],
-            });
-        }
+        _ => passes.push(new_pass(written, target, None, vec![step])),
+    }
+}
+
+/// Ends whatever pass is drawing into `target` and starts the one that resolves
+/// the backdrop at `index` into it.
+///
+/// Unconditionally a new pass, unlike [`emit`]: the whole point is the break.
+/// The renderer reads the target between the two, which it cannot do while the
+/// target is an attachment.
+fn open_backdrop(passes: &mut Vec<Pass>, written: &mut [bool], target: u32, index: u32) {
+    passes.push(new_pass(written, target, Some(index), Vec::new()));
+}
+
+/// A pass over `target`, clearing when nothing has been written there yet.
+fn new_pass(written: &mut [bool], target: u32, backdrop: Option<u32>, steps: Vec<Step>) -> Pass {
+    let clear = !written[target as usize];
+    written[target as usize] = true;
+    Pass {
+        target,
+        clear,
+        backdrop,
+        steps,
     }
 }
 
@@ -234,10 +311,21 @@ mod tests {
     /// A buffer of one instance per rect, each carrying the given layer slot,
     /// over a layer table of the given parents.
     ///
-    /// The instances differ in nothing but their layer, which is the only field
-    /// `plan` reads — so a case that varies anything else would be varying an
-    /// axis this function is blind to, and saying nothing.
+    /// The instances differ in nothing but their layer, which is one of the two
+    /// fields `plan` reads — so a case that varies anything else would be
+    /// varying an axis this function is blind to, and saying nothing. The other
+    /// field is the kind, and [`backdrops`] is how a case varies that.
     fn buffer(slots: &[u32], parents: &[u32]) -> InstanceBuffer {
+        backdrops(slots, parents, &[])
+    }
+
+    /// [`buffer`], with the instances at `marked` packed as backdrop blurs.
+    ///
+    /// A fill's kind is `InstanceKind::FillSolid`, not the zeroed default:
+    /// `InstanceKind::ShadowDrop` is 0, so a default instance is a shadow, and
+    /// a helper leaving it there would state every non-backdrop case over a
+    /// kind no test meant to choose.
+    fn backdrops(slots: &[u32], parents: &[u32], marked: &[u32]) -> InstanceBuffer {
         let mut out = InstanceBuffer::new();
         for (index, parent) in parents.iter().enumerate() {
             out.push_layer(
@@ -252,13 +340,27 @@ mod tests {
             );
         }
         for (index, slot) in slots.iter().enumerate() {
-            out.begin_rect(index as u32);
+            let index = index as u32;
+            out.begin_rect(index);
             out.push(Instance {
                 layer: *slot,
+                kind: if marked.contains(&index) {
+                    InstanceKind::Backdrop.as_u32()
+                } else {
+                    InstanceKind::FillSolid.as_u32()
+                },
                 ..Instance::default()
             });
         }
         out
+    }
+
+    /// Every backdrop the plan resolves, in the order it resolves them, paired
+    /// with the target it resolves into.
+    fn resolved(plan: &[Pass]) -> Vec<(u32, u32)> {
+        plan.iter()
+            .filter_map(|pass| pass.backdrop.map(|index| (index, pass.target)))
+            .collect()
     }
 
     fn instances(range: Range<u32>) -> Step {
@@ -273,6 +375,7 @@ mod tests {
             vec![Pass {
                 target: Instance::NONE,
                 clear: true,
+                backdrop: None,
                 steps: vec![instances(0..3)],
             }]
         );
@@ -289,16 +392,19 @@ mod tests {
                 Pass {
                     target: 0,
                     clear: true,
+                    backdrop: None,
                     steps: vec![instances(0..1)],
                 },
                 Pass {
                     target: 1,
                     clear: true,
+                    backdrop: None,
                     steps: vec![instances(1..3)],
                 },
                 Pass {
                     target: 0,
                     clear: false,
+                    backdrop: None,
                     steps: vec![Step::Composite(1), instances(3..4)],
                 },
             ]
@@ -331,11 +437,13 @@ mod tests {
                 Pass {
                     target: 1,
                     clear: true,
+                    backdrop: None,
                     steps: vec![instances(0..2)],
                 },
                 Pass {
                     target: 0,
                     clear: true,
+                    backdrop: None,
                     steps: vec![Step::Composite(1), instances(2..3)],
                 },
             ]
@@ -352,6 +460,7 @@ mod tests {
             Some(&Pass {
                 target: 0,
                 clear: false,
+                backdrop: None,
                 steps: vec![Step::Composite(1)],
             })
         );
@@ -369,21 +478,25 @@ mod tests {
                 Pass {
                     target: 1,
                     clear: true,
+                    backdrop: None,
                     steps: vec![instances(0..2)],
                 },
                 Pass {
                     target: 2,
                     clear: true,
+                    backdrop: None,
                     steps: vec![instances(2..4)],
                 },
                 Pass {
                     target: 1,
                     clear: false,
+                    backdrop: None,
                     steps: vec![Step::Composite(2), instances(4..5)],
                 },
                 Pass {
                     target: Instance::NONE,
                     clear: true,
+                    backdrop: None,
                     steps: vec![Step::Composite(1)],
                 },
             ]
@@ -418,21 +531,25 @@ mod tests {
                 Pass {
                     target: 1,
                     clear: true,
+                    backdrop: None,
                     steps: vec![instances(0..1)],
                 },
                 Pass {
                     target: Instance::NONE,
                     clear: true,
+                    backdrop: None,
                     steps: vec![Step::Composite(1), instances(1..2)],
                 },
                 Pass {
                     target: 2,
                     clear: true,
+                    backdrop: None,
                     steps: vec![instances(2..3)],
                 },
                 Pass {
                     target: Instance::NONE,
                     clear: false,
+                    backdrop: None,
                     steps: vec![Step::Composite(2)],
                 },
             ]
@@ -450,21 +567,25 @@ mod tests {
                 Pass {
                     target: 1,
                     clear: true,
+                    backdrop: None,
                     steps: vec![instances(0..1)],
                 },
                 Pass {
                     target: Instance::NONE,
                     clear: true,
+                    backdrop: None,
                     steps: vec![Step::Composite(1)],
                 },
                 Pass {
                     target: 2,
                     clear: true,
+                    backdrop: None,
                     steps: vec![instances(1..2)],
                 },
                 Pass {
                     target: Instance::NONE,
                     clear: false,
+                    backdrop: None,
                     steps: vec![Step::Composite(2)],
                 },
             ]
@@ -518,6 +639,204 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    /// A backdrop ends the pass it sits in, and the pass that resumes its
+    /// target carries it. The break is the whole point: the renderer reads the
+    /// target between the two, which it cannot do while the target is an
+    /// attachment.
+    #[test]
+    fn a_backdrop_splits_the_pass_it_sits_in() {
+        let plan = plan(&backdrops(&[0, 0, 0], &[], &[1]));
+        assert_eq!(
+            plan,
+            vec![
+                Pass {
+                    target: Instance::NONE,
+                    clear: true,
+                    backdrop: None,
+                    steps: vec![instances(0..1)],
+                },
+                Pass {
+                    target: Instance::NONE,
+                    clear: false,
+                    backdrop: Some(1),
+                    steps: vec![instances(2..3)],
+                },
+            ]
+        );
+    }
+
+    /// A backdrop is drawn by its own pipeline, so no instance range contains
+    /// it. A plan that left it in would draw it twice: once discarded by
+    /// `fs_main`'s fall-through and once resolved.
+    #[test]
+    fn a_backdrop_is_in_no_instance_range() {
+        for marked in [vec![0u32], vec![1], vec![3], vec![0, 3], vec![1, 2]] {
+            let plan = plan(&backdrops(&[0, 0, 0, 0], &[], &marked));
+            let drawn: Vec<u32> = plan
+                .iter()
+                .flat_map(|pass| &pass.steps)
+                .filter_map(|step| match step {
+                    Step::Instances(range) => Some(range.clone()),
+                    Step::Composite(_) => None,
+                })
+                .flatten()
+                .collect();
+            for index in &marked {
+                assert!(
+                    !drawn.contains(index),
+                    "backdrop {index} of {marked:?} is inside an instance range: {drawn:?}",
+                );
+            }
+            let mut expected: Vec<u32> = (0..4).filter(|i| !marked.contains(i)).collect();
+            expected.sort_unstable();
+            assert_eq!(drawn, expected, "every other instance is still drawn once");
+        }
+    }
+
+    /// **Two backdrops, because one cannot falsify ordering.** Each splits its
+    /// own pass and they resolve in document order, which is what makes the
+    /// second read the first's result rather than the frame as it stood before
+    /// either.
+    #[test]
+    fn two_backdrops_resolve_in_document_order_each_splitting_its_own_pass() {
+        let plan = plan(&backdrops(&[0, 0, 0, 0, 0], &[], &[1, 3]));
+        assert_eq!(
+            resolved(&plan),
+            vec![(1, Instance::NONE), (3, Instance::NONE)]
+        );
+        assert_eq!(
+            plan.iter()
+                .map(|pass| pass.steps.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                vec![instances(0..1)],
+                vec![instances(2..3)],
+                vec![instances(4..5)],
+            ],
+            "the runs between the two backdrops stay separated by them",
+        );
+    }
+
+    /// **A render-target group is a backdrop root.** A backdrop inside a group
+    /// resolves into *that group's layer*, so it frosts its in-group siblings
+    /// and nothing further down — `dashscene-skia`'s specified reading. A plan
+    /// that snapshotted the frame's target instead would composite the backdrop
+    /// twice, once directly and once inside the group's own alpha.
+    #[test]
+    fn a_backdrop_inside_a_group_resolves_into_that_groups_layer() {
+        let plan = plan(&backdrops(&[0, 1, 1, 0], &[Instance::NONE], &[2]));
+        assert_eq!(resolved(&plan), vec![(2, 1)]);
+    }
+
+    /// Nested: the innermost enclosing group is the one sampled, not the
+    /// outermost. Two levels, because one group cannot tell "innermost" from
+    /// "any".
+    #[test]
+    fn a_backdrop_nested_two_deep_resolves_into_the_innermost_group() {
+        let plan = plan(&backdrops(&[1, 2, 2, 1], &[Instance::NONE, 1], &[2]));
+        assert_eq!(resolved(&plan), vec![(2, 2)]);
+    }
+
+    /// A backdrop as the first thing written to a target still **clears** it.
+    /// An unwritten texture's contents are undefined, so a backdrop blurring
+    /// one would read whatever the allocator handed over — and the renderer
+    /// therefore has to clear before it snapshots.
+    #[test]
+    fn a_backdrop_at_the_start_of_a_target_still_clears_it() {
+        let plan = plan(&backdrops(&[0, 0], &[], &[0]));
+        assert_eq!(
+            plan,
+            vec![Pass {
+                target: Instance::NONE,
+                clear: true,
+                backdrop: Some(0),
+                steps: vec![instances(1..2)],
+            }]
+        );
+    }
+
+    /// The same, one target in: a group whose first instance is a backdrop
+    /// clears its layer before the blur reads it.
+    #[test]
+    fn a_backdrop_first_inside_a_group_clears_that_groups_layer() {
+        let plan = plan(&backdrops(&[0, 1, 1], &[Instance::NONE], &[1]));
+        let layer = plan
+            .iter()
+            .find(|pass| pass.target == 1)
+            .expect("the group has a pass");
+        assert_eq!((layer.clear, layer.backdrop), (true, Some(1)));
+    }
+
+    /// A backdrop as the last instance still resolves — the split is driven by
+    /// the instance, not by something following it.
+    #[test]
+    fn a_backdrop_at_the_end_of_the_frame_still_resolves() {
+        let plan = plan(&backdrops(&[0, 0], &[], &[1]));
+        assert_eq!(resolved(&plan), vec![(1, Instance::NONE)]);
+        assert_eq!(
+            plan.last().map(|pass| pass.steps.as_slice()),
+            Some(&[][..]),
+            "nothing follows it, so its pass holds no instance range at all",
+        );
+    }
+
+    /// The partition property, restated for backdrops: the ranges still cover
+    /// every instance in order, minus exactly the backdrops.
+    #[test]
+    fn the_ranges_partition_the_buffer_around_the_backdrops() {
+        for (slots, parents, marked) in [
+            (vec![0u32, 0, 0, 0, 0], vec![], vec![2u32]),
+            (vec![0u32, 1, 1, 0], vec![Instance::NONE], vec![2u32]),
+            (
+                vec![0u32, 1, 1, 0, 2, 0],
+                vec![Instance::NONE, Instance::NONE],
+                vec![1u32, 4],
+            ),
+            (
+                vec![1u32, 2, 2, 1, 0],
+                vec![Instance::NONE, 1],
+                vec![0u32, 4],
+            ),
+        ] {
+            let buffer = backdrops(&slots, &parents, &marked);
+            let drawn: Vec<u32> = plan(&buffer)
+                .iter()
+                .flat_map(|pass| &pass.steps)
+                .filter_map(|step| match step {
+                    Step::Instances(range) => {
+                        assert!(!range.is_empty(), "an empty range encodes no work");
+                        Some(range.clone())
+                    }
+                    Step::Composite(_) => None,
+                })
+                .flatten()
+                .collect();
+            let expected: Vec<u32> = (0..slots.len() as u32)
+                .filter(|i| !marked.contains(i))
+                .collect();
+            assert_eq!(
+                drawn, expected,
+                "slots {slots:?} with backdrops {marked:?} draw the wrong set",
+            );
+        }
+    }
+
+    /// Each backdrop's target is the layer its own instance names, which is
+    /// what "the backdrop reads what is beneath it *in its own group*" means.
+    #[test]
+    fn every_backdrop_resolves_into_the_layer_it_names() {
+        let slots = [0u32, 1, 2, 2, 1, 0, 3];
+        let marked = [2u32, 5, 6];
+        let buffer = backdrops(&slots, &[Instance::NONE, 1, Instance::NONE], &marked);
+        for (index, target) in resolved(&plan(&buffer)) {
+            assert_eq!(
+                slots[index as usize], target,
+                "backdrop {index} resolved into layer {target} and names {}",
+                slots[index as usize],
+            );
         }
     }
 

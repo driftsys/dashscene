@@ -110,9 +110,17 @@ which is what it always claimed to count.
 
 ## What this does not do
 
-Group opacity is the only thing that draws into a layer today. What stays
-undrawn is three `InstanceKind` variants — `ShadowDrop`, `ShadowInner` and
-`Backdrop` — all of them story #584's. The free path is unchanged — a non-overlapping group still resolves to per-rect
+Group opacity was the only thing that drew into a layer when this was written,
+and three `InstanceKind` variants stayed undrawn: `ShadowDrop`, `ShadowInner`
+and `Backdrop`. Story #584 drew the two shadow kinds and story #733 the
+backdrop, so nothing in the v0 paint vocabulary is undrawn now. The backdrop
+took the second-pipeline route this record established but **not** the layers:
+it has to read the destination, and a texture cannot be a render attachment and
+a sampled binding in the same pass, so the planner splits the pass and the
+renderer snapshots the target
+(`a-backdrop-blur-snapshots-the-target-it-draws-into.md`).
+
+The free path is unchanged — a non-overlapping group still resolves to per-rect
 alpha at commit and emits no group at all.
 
 ## Alternatives considered
