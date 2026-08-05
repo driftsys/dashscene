@@ -698,9 +698,12 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
     // Story #580 drew the solid fill; story #710 added the stroke beside it,
     // story #581 the image fill, story #582 text and the coverage mask above,
     // issue #715 the gradient, and story #584 the two shadow kinds. Group
-    // opacity is #583's and composites elsewhere. **The backdrop blur is the
-    // one construct left undrawn**, and it is story #733's: it has to read what
-    // is already in the render target, which no binding here can do.
+    // opacity is #583's and composites elsewhere. **The backdrop blur reaches
+    // the `discard` below and is drawn anyway**: story #733 gave it its own two
+    // pipelines, because it has to read what is already in the render target
+    // and no binding here can do that. `composite::plan` keeps it out of every
+    // instance range, so in a correct frame this shader never sees one — and
+    // the `discard` is what keeps a frame that somehow does from painting it.
     //
     // A masked *gradient* fill now draws too, and it is the one combination
     // that needed both halves: story #582 resolved the mask and its coverage,
@@ -715,12 +718,19 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
     // shadow drew whatever colour happened to sit at that row, over its own
     // fill.
     //
-    // A kind this shader cannot draw yet draws *nothing*, and does not fall
+    // A kind this shader does not draw draws *nothing*, and does not fall
     // through to a colour. Painting it black would be loud, but it would also
     // corrupt every node that carries one: an inner shadow is packed after the
     // fill, so a black shadow instance covers the fill it belongs to. Drawing
-    // nothing leaves the picture correct for the subset this story implements
-    // and absent for the rest.
+    // nothing leaves the picture correct for the subset this shader draws and
+    // absent for the rest.
+    //
+    // Since story #733 the only kind that reaches it is the backdrop, which is
+    // drawn by another pipeline entirely and is kept out of every instance
+    // range by `composite::plan`. The arm stays because "packed but not drawn"
+    // was only ever safe while this fall-through discarded: a masked node drew
+    // as a plain rounded rectangle from story #578 until #582 because the
+    // fragment stage ignored a field the packer had set.
     //
     // Not a silent drop: the packer emits the instance, the layer-1 golden
     // shows it, and `docs/decisions/pipelines-and-layer-3.md` lists what is and

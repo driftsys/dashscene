@@ -1,7 +1,7 @@
 # v0.15 driver prompt — drive the slice to completion, one story at a time
 
     status   live; hand this to a session as its first message
-    revised  2026-08-05, after story #584 merged
+    revised  2026-08-05, after story #733 merged
     empties  when epic #569 closes. Archive it verbatim to docs/archive/
              rather than gardening it — a driver prompt is spent the moment
              its work lands, and records nothing a design record should hold.
@@ -80,48 +80,48 @@ Everything else is closed, so do not spend time re-establishing it:
 
   **By eye, and one scene at one size on one adapter.** It is not a band and does
   not pre-empt story #586. What it said at the time is that the remaining visible
-  difference between the two painters lived in #583 and #584; both have landed,
-  so what is left of that difference is the frosted panel's backdrop blur
-  alone.
+  difference between the two painters lived in #583, #584 and #733. All three
+  have landed, so nothing of that difference is coverage any more — which is
+  what makes #586 a measurement rather than a survey of what is missing.
 
 ## Where things stand
 
-`main` is at `e669256`. No open pull requests. Epic #569 tracks the slice;
-`docs/roadmap.md` has the slice map. Seventeen of the milestone's twenty-two
-issues are closed. **Take that pair from `gh issue list --milestone`, never from
-here** — it has been wrong three times, most recently within an hour of being
-corrected, because filing one issue moves it.
+Epic #569 tracks the slice; `docs/roadmap.md` has the slice map. **Take the open
+and closed counts, and `main`'s commit, from `gh issue list --milestone` and
+`git log` — never from this file.** The pair has been wrong three times, most
+recently within an hour of being corrected, because filing one issue moves it,
+and the commit goes stale the moment anything merges. The milestone is
+`v0.15 — the lean painter`, which is the exact string `--milestone` wants.
 
-**Closed**, the milestone's own seventeen, in issue order:
-
-    133  577  578  579  580  581  582  583  584  585  600  640  671  710  714
-    715  716
-
-Story #584 landed as PR #735, merged on local evidence. Story #583 landed as
-PR #730 and closed issue #133 with it.
+Story #584 landed as PR #735, and story #583 as PR #730, which closed issue #133
+with it. Story #733's own PR number is deliberately not written here: it was
+opened while a second session was merging into the same repository, and the
+number this file would have named for it — #740 — went to that session's demo
+badge instead. **Read a PR number off the issue, never off this file.**
 
 **Issue #714 was the drawable-extent fix and carried no milestone until now**,
 so it was real v0.15 work filed against nothing. An earlier revision of this
 prompt listed it among the milestone's closed issues while omitting #133, which
-kept the count at fifteen and named the wrong fifteen. Both are fixed: #714 now
-carries the milestone, and the count above is the milestone's own. **Take these
-two numbers from `gh issue list --milestone`, not from this file** — the list
-and the count have disagreed twice.
+kept the count at fifteen and named the wrong fifteen. Both are fixed.
 
-**Another session is working this repo in parallel.** It holds worktrees for
-story #587 (`story/gpu-web-target`) and a demo backend badge. Run
-`git worktree list` before assuming a story is unstarted, and read
-`git config --get remote.origin.url` before any fetch, reset or push.
+**Another session is working this repo in parallel, and it has been merging.**
+It landed story #587 (PR #736), the demo backend badge (PR #740) and story #588
+(PR #744) while story #733 was in progress, so `main` moved three times under
+one branch. Run `git worktree list` before assuming a story is unstarted, read
+`git config --get remote.origin.url` before any fetch, reset or push, and
+**re-run `just build` after every rebase** — a clean rebase is not evidence that
+the two sides still compile together.
 
 The painter packs the whole of boundary B into one ordered instance buffer,
 evaluates its SDF math by compute shader, and draws **solid, gradient and image
 fills, outline strokes, positioned glyph runs, a fill masked by a baked vector
-field, render-target group opacity, and both shadow kinds** — clipped,
-composited in slice order at free-path opacity, offscreen or to a window's
-swapchain. **The backdrop blur is the whole of the gap**: one `InstanceKind`
-variant, packed since story #578, reaching `fs_main`'s final `discard`.
+field, render-target group opacity, both shadow kinds and the backdrop blur** —
+clipped, composited in slice order at free-path opacity, offscreen or to a
+window's swapchain. **There is no gap left in the v0 paint vocabulary.** What
+separates this painter from the reference one is fidelity, and story #586 is the
+instrument for it.
 
-Ten decision records carry the contracts. Read the ones your story touches:
+Eleven decision records carry the contracts. Read the ones your story touches:
 
 - `docs/decisions/instance-buffer-contract.md` — the row, the spans, the order
 - `docs/decisions/shader-library-and-layer-2.md` — the one WGSL file, the
@@ -146,16 +146,48 @@ Ten decision records carry the contracts. Read the ones your story touches:
 - `docs/decisions/instance-buffer-contract.md` D9 — **read this before adding a
   kind whose ink leaves its bounds**: `Instance::outset`, what the packer
   resolves into it, and why the vertex stage cannot compute it
+- `docs/decisions/a-backdrop-blur-snapshots-the-target-it-draws-into.md` —
+  **read this before anything that samples a rendered target**: the pass split,
+  which target a backdrop reads and why that decides backdrop-root semantics,
+  the frame's own base texture, and the separable kernel's normaliser
 - `docs/decisions/sub-word-members-widen-rather-than-pad.md`
 
 ## Order from the epic
 
-**Story #733 next** — the backdrop blur, the half split out of #584 and the one
-that carries the open design question. Story **#586** needs it, because it
-measures the vocabulary against the reference painter and the blur is the last
-thing that vocabulary is missing — and #586 needs a GPU and a recorded adapter,
-so it cannot run in CI. Then **#587** and **#588**, and then the epic itself
-closes.
+**Story #586 is the last one, and it is next** — layer 4, the perceptual band
+against the Skia oracle on a real GPU, with the adapter and driver recorded
+beside every number. It was waiting on #733 because it measures the vocabulary
+against the reference painter and the blur was the last thing that vocabulary
+was missing. **It needs a GPU and a recorded adapter, so it cannot run in CI.**
+The epic closes behind it.
+
+**Story #733 is closed and the paint vocabulary is complete.** The backdrop blur
+draws: `composite::plan` ends the pass at a backdrop instance, the renderer
+snapshots the target between the two passes, and two more pipelines run a
+separable Gaussian over the snapshot and write the result back with no blending.
+`docs/decisions/a-backdrop-blur-snapshots-the-target-it-draws-into.md` is the
+record; its D1–D9 are what a later story reads.
+
+**Four things #733 settled that #586 should not re-establish:**
+
+- **A render-target group is a backdrop root, and it falls out of the pass
+  split.** A backdrop resolves into the pass's own target, which is the
+  innermost open layer, so no lookup and no special case. Pinned by
+  `a_backdrop_inside_a_group_samples_that_groups_layer`.
+- **The quad did not have to grow**, which is the opposite of what #584's
+  `Instance::outset` question suggested. A backdrop _writes_ only inside its own
+  shape and _reads_ outside it, and the read is from a sampled texture rather
+  than from the quad.
+- **The blend space needed no code.** `TARGET_FORMAT` is `Rgba8Unorm` and
+  `surface.rs` refuses any surface format that sRGB-converts on write, so a
+  texel is the encoded value and averaging texels averages in the encoded space
+  — which is what `dashpaint::Blur` requires as a _contract_ term rather than as
+  per-painter math.
+- **A frame with a backdrop draws into a texture this painter owns** and
+  composites it into the caller's view at the end. Forced, not chosen:
+  `Renderer::draw` receives a `TextureView` and `copy_texture_to_texture` needs
+  a `Texture`. A frame with no backdrop pays none of it, which is two of the
+  three showcase scenes.
 
 **What #584 settled, and what it leaves #733.** The shadow closed form was
 already built and already conformance-tested, so that story was wiring: the
@@ -180,82 +212,34 @@ whole of this, and one backdrop instance cannot falsify a stride or a row.
 Build the fixtures with two rows differing in every field rather than reaching
 for the corpus.
 
-**What remains undrawn is exactly one thing**: the backdrop blur. It is the
-`Backdrop` instance kind, packed since story #578, reaching `fs_main`'s final
-`discard`. Nothing else in the v0 paint vocabulary is missing.
+**Nothing in the v0 paint vocabulary is undrawn.** Story #583 drew render-target
+group opacity, which was never an instance kind at all — it rides on
+`Instance::layer`. Story #584 drew the two shadow kinds. Story #733 drew the
+backdrop blur, which was the last. `fs_main`'s final `discard` still stands, and
+the only kind that reaches it is the backdrop — which `composite::plan` keeps
+out of every instance range, so a correct frame never sends one there.
 
-Render-target group opacity was never an instance kind at all — it rides on
-`Instance::layer` — and story 583 drew it. Story 584 drew the two shadow
-kinds.
+**The scope check has now paid off twice in three tries, so keep spending it.**
+Story 583's body described clips as work to be done and `git log -S clip_coverage`
+put that work in story 580's commit; the story was retitled before any code was
+written. Story #584's body was checked the same way and held. Story #733's was
+checked the same way and held — `pack.rs` really did emit the instance and
+`paint.wgsl` really did discard it. One command settles it either way.
 
-**The scope check has now paid off twice, so do it again for #733.** Story 583's
-body described clips as work to be done and `git log -S clip_coverage` put that
-work in story 580's commit; the story was retitled before any code was
-written. Story #584's body was checked the same way and held — the closed form
-really was built, and the gap really was that no binding carried the table. One
-command settles it either way. Spend it.
+**#587 and #588 are already closed** — the parallel session landed the web
+target as PR #736 and retired `dashscene-web` as PR #744. So story #586 is the
+last story in the slice, and the epic closes behind it.
 
-**Two things checked for #733 already, so you do not have to.** Its body cites
-issue #422 as though it were pending — "the `blur-falloff` oracle band splits
-into a residual and a gate under issue #422 … read it before tuning anything".
-**#422 is CLOSED**; read its resolution rather than waiting on it. And its sigma
-claim holds, but the constant has moved: it is
-**`dashpaint::BLUR_SIGMA_PER_RADIUS`** since #584, cited by both painters, and
-`dashscene-gpu` applies it in `pack::blur_sigma` when it writes a row. Do not
-restate `0.4375` a third time.
-
-**And one thing #583 did _not_ give #733, despite the story body saying it
-would.** The body says backdrop blur reuses "S15.7's compositing machinery
-rather than a parallel path". The second-_pipeline_ route transfers exactly —
-see the section below. The _layers_ do not: a backdrop blur has to **read what
-is already in the destination**, and a texture cannot be a render attachment and
-a sampled binding in the same pass. `composite::plan` has no step that resolves
-or copies the current target, and `Step` has two variants with no third. That is
-a real gap between what the prerequisite delivered and what this story needs —
-which is the fourth item under **Stop and ask** below, and worth raising before
-building rather than after.
-
-**#587 depends only on #585 and could start at any time**, if there is a reason
-to parallelise. #588 is last by design.
-
-**What remains undrawn is exactly three things**, all of them #584's: the two
-shadow kinds and the backdrop blur. All three are `InstanceKind` variants —
-`ShadowDrop`, `ShadowInner`, `Backdrop` — that reach `fs_main`'s final
-`discard`, and the packer has emitted all three since story #578. Nothing else
-in the v0 paint vocabulary is missing.
-
-The fourth thing on this list until story #583 was render-target group opacity,
-which was never an instance kind at all: it rides on `Instance::layer`, and
-nothing read that field. It draws now.
-
-**The scope check paid off, so do it again for #584.** Story #583's body was
-titled "clips and group opacity" and described clips as work to be done. That
-work was already done — `clip_coverage` in `paint.wgsl`, and
-`git log -S clip_coverage` put it in story #580's commit. The story was
-retitled before any code was written, which is the first time in this slice the
-miss was caught before the close rather than three closes later. One command
-settled it. Spend that command on #733.
-
-**Two things checked for #584 already, so you do not have to.** Its body cites
-issue #422 as though it were pending — "the `blur-falloff` oracle band splits
-into a residual and a gate under issue #422 … read it before tuning anything".
-**#422 is CLOSED**; read its resolution rather than waiting on it. And its sigma
-claim holds: `FIGMA_BLUR_SIGMA_PER_RADIUS = 0.4375` is real, but it lives in
-`crates/dashscene-skia/src/lib.rs` and nothing shares it. A second painter
-restating that number is a constant stated in two places with nothing holding
-them together — the exact shape the scale-mode and gradient-kind tests exist to
-catch. Pin it across the two, or share it.
-
-**And one thing #583 did _not_ give #584, despite the story body saying it
-would.** #584's body says backdrop blur reuses "S15.7's compositing machinery
-rather than a parallel path". The second-_pipeline_ route transfers exactly —
-see the section below. The _layers_ do not: a backdrop blur has to **read what
-is already in the destination**, and a texture cannot be a render attachment and
-a sampled binding in the same pass. `composite::plan` has no step that resolves
-or copies the current target, and `Step` has two variants with no third. That is
-a real gap between what the prerequisite delivered and what this story needs —
-which is the fourth item under **Stop and ask** below, and worth raising before
-building rather than after.
+**The prerequisite gap #733 opened is closed, and the answer generalises.** A
+backdrop needed something #583 did not deliver: a way to read the destination. A
+texture cannot be a render attachment and a sampled binding in the same pass, so
+the second-_pipeline_ route transferred and the _layers_ did not. The resolution
+was to split the pass and snapshot the target between the halves, and it is
+recorded with its rejected alternatives in
+`docs/decisions/a-backdrop-blur-snapshots-the-target-it-draws-into.md`. **Read
+D3 before anything that samples a rendered target**: which target a pass reads
+is what decides backdrop-root semantics, and getting it from the pass rather
+than from the frame is what made that free.
 
 Debt #133 is closed, on a measurement rather than an argument: the deepest clip
 chain anywhere in the corpus is **3**, and the ancestry duplication it named
@@ -573,6 +557,33 @@ typo.
   did — and a shadow that never clipped itself to the node's shape passed. The
   only place that clip is observable is _inside_ the quad and _outside_ the
   shape: half a unit out, not two.
+- **A size assertion does not pin a layout, and story #733 is the proof.**
+  `GpuBlur` gained four members in Rust and in WGSL in _different positions_.
+  Both landed at 144 bytes, `const _: () = assert!(size_of == 144)` stayed
+  green, and eight of eighteen offsets moved — so every backdrop read its sigma
+  out of a texture coordinate. `offset_of!` **every** member of a struct WGSL
+  also declares; the size alone catches only the additions, never the reorder.
+- **A fixture's own "outside" region can make a geometry bug unfalsifiable.**
+  The masked backdrop's quad must come from the field's plane quad rather than
+  the node's box, because `msdf_sample` clamps into the sub-rect and reports the
+  edge column's coverage beyond it. The first fixture had that edge column
+  _outside_, so the clamp returned zero coverage, the wrong quad drew the right
+  picture, and the mutation survived the whole file. Only a field whose outline
+  **reaches the edge of its own rectangle** can tell the two apart.
+- **A defensive line can be unfalsifiable because the layer beneath already does
+  it.** `wgpu-hal`'s Metal backend sets naga's `image_load` bounds-check policy
+  to `Restrict` whenever runtime checks are on, so deleting the blur's tap clamp
+  changes no pixel on this adapter. It is still load-bearing — the policy is
+  `Unchecked` with runtime checks off and GLES can choose `ReadZeroSkipWrite` —
+  so the honest move is to say the mutation is equivalent _here_ rather than to
+  contrive a test or to delete the line. Read the policy out of `wgpu-hal`
+  rather than assuming it.
+- **An error that scales colour and alpha together is invisible against an
+  opaque backdrop.** The readback divides colour by alpha, so both moving by the
+  same factor cancels exactly. A blur kernel normalised by the wrong constant
+  read `[255, 0, 0, 255]` at every probe. State such a fixture over a
+  _partially transparent_ field, where the alpha channel carries the error
+  instead of cancelling it.
 - **A test name is a claim.** Four in story #581 could not fail on what they
   claimed, and only mutation found it.
 - **When two inputs agree in every parameter, no fixture can tell them apart.**
@@ -640,12 +651,15 @@ typo.
   baked formats representable and left them unusable, because boundary B carried
   no extent; issue #716 closed that inside story #581's own pull request as a
   separate first commit. Ask before choosing between a separate PR and a
-  separate commit. **Story #733 is very likely the next instance**: its body
-  says it reuses #583's compositing machinery, and #583 built no way to read the
-  destination — see the paragraph under "Order from the epic". Story #584 was
-  one too, in a smaller way: it needed a word on `Instance` that no prerequisite
-  had made available, and that was agreed with the owner before any code was
-  written rather than decided inside the story.
+  separate commit. **Story #733 was the third instance and the largest**: its
+  body said it reuses #583's compositing machinery, and #583 built no way to
+  read the destination at all. It was raised with the owner before any code was
+  written, the route was chosen with its rejected alternatives recorded on the
+  issue, and the whole of it landed inside the story's own pull request because
+  it changed nothing another story depends on. Story #584 was one too, in a
+  smaller way: it needed a word on `Instance` that no prerequisite had made
+  available. **The pattern is now three for three — raise it before building,
+  not after.**
 - Layer 4 (#586) needs a GPU and a recorded adapter; it cannot run in CI.
 
 ## When the slice is done

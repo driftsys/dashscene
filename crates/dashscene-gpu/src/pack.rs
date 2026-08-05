@@ -50,7 +50,7 @@
 //!   matched here rather than decided here.
 
 use dashpaint::{
-    BlurKind, ClipRegion, ClipTable, GlyphRun, GlyphRunTable, GroupComposite, ImageTable,
+    Blur, BlurKind, ClipRegion, ClipTable, GlyphRun, GlyphRunTable, GroupComposite, ImageTable,
     PaintKind, PaintTable, PaintTag, RectEntry, Shadow, ShadowKind, Stroke, StrokeAlign,
 };
 
@@ -301,7 +301,7 @@ fn pack_rect(
     // 1. The backdrop, blurred, beneath the node's own ink. A masked node's
     //    blur is confined to the field's coverage, so `shape` rides along.
     for (offset, blur) in paints.blurs(entry).iter().enumerate() {
-        if blur.kind != BlurKind::Backdrop {
+        if blur.kind != BlurKind::Backdrop || !frosts(blur) {
             continue;
         }
         out.push(Instance {
@@ -447,6 +447,26 @@ fn shadow_instance(base: &Instance, row: u32, shadow: &Shadow, outset: f32) -> I
 /// `enumerate` index, and that is unchanged by whether the instance is pushed.
 fn inks(shadow: &Shadow, opacity: f32) -> bool {
     shadow.color.a * opacity > 0.0
+}
+
+/// Whether a backdrop blur changes anything, which is [`inks`] one effect over.
+///
+/// A blur of no radius is **not** a degenerate blur to evaluate — the reference
+/// painter's `backdrop_blur_filter` returns no filter at all for one, so the
+/// node draws over an untouched backdrop. Emitting the instance anyway would
+/// not be merely wasteful the way an inkless shadow is: at a free-path alpha
+/// below one the resolve pass composites the copy over the original, and a copy
+/// of the original composited over itself is *darker* than the original. So
+/// this guard is a correctness property here, where [`inks`] is a cost one.
+///
+/// Written as `> 0.0` rather than as a `<= 0.0` rejection for the reason
+/// [`inks`] gives: a NaN passes the rejection and fails this.
+///
+/// Skipping a blur does not move any other blur's row, for the reason skipping
+/// a shadow does not move a shadow's — a row is the effect's position in its
+/// entry's own list, which is the `enumerate` index.
+fn frosts(blur: &Blur) -> bool {
+    blur.radius > 0.0
 }
 
 /// How far a shadow's ink reaches past the silhouette its instance is stated

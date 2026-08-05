@@ -4,9 +4,10 @@
 //!
 //! Rounded rects with a solid, gradient or image fill, their outline stroke,
 //! positioned glyph runs, a fill masked by a baked vector field, and both
-//! shadow kinds (story #584) — all clipped by their region, and a
-//! render-target group as a layer composited at its own alpha (story #583).
-//! The backdrop blur is what is left, and it is story #733's.
+//! shadow kinds (story #584) — all clipped by their region, a render-target
+//! group as a layer composited at its own alpha (story #583), and a backdrop
+//! blur as a snapshot of the target run through a separable Gaussian
+//! (story #733). That is the whole v0 paint vocabulary.
 //!
 //! A stroke and a drop shadow are the two kinds whose ink does not coincide
 //! with the instance's own `bounds`. The packer resolves how far each reaches
@@ -195,6 +196,31 @@ const PAINT_WGSL: &str = include_str!("shaders/paint.wgsl");
 /// The composite pipeline's whole source: no SDF math, no sampler, its own
 /// `@group(0)`. See the file for why it is separate from [`PAINT_WGSL`].
 const COMPOSITE_WGSL: &str = include_str!("shaders/composite.wgsl");
+
+/// The backdrop blur's two entry points (story #733) — concatenated after
+/// [`crate::SDF_WGSL`], which it reads `rounded_box_sdf` and `coverage` from,
+/// and its own `@group(0)`. See the file for why a backdrop cannot be drawn by
+/// the paint pipeline at all.
+const BLUR_WGSL: &str = include_str!("shaders/blur.wgsl");
+
+/// The distance, in document units, over which an antialiased edge ramps.
+///
+/// One unit at unit scale, which is what `globals.aa` carries to the paint
+/// pipeline. Named since story #733, because the blur pipeline binds no
+/// `Globals` and has to state the same number — and a number stated twice with
+/// nothing holding the copies together is the failure the scale-mode and
+/// gradient-kind tests exist to catch.
+const AA_WIDTH: f32 = 1.0;
+
+/// How many sigmas of a Gaussian a blur's kernel spans on each side.
+///
+/// Three, where the weight has fallen to about 1.1 % of the peak and the
+/// truncated tail is under 0.3 % of the total. The reference painter states no
+/// equivalent — Skia picks its own window from the sigma — so this is this
+/// painter's approximation of an unbounded kernel rather than a term either
+/// side of boundary B carries, and story #586 is where the difference is
+/// measured rather than argued about.
+const BLUR_SUPPORT_SIGMAS: f32 = 3.0;
 
 /// The value the paint heap carries for a gradient's kind, and the one place
 /// the mapping is written.
@@ -518,14 +544,31 @@ pub struct Renderer {
     /// stages that allow four each — four and four, with nothing spare — so a
     /// composite folded into it would need an eighth binding that does not
     /// exist. A pipeline owns its own bind group layout, so this one costs the
-    /// paint pipeline nothing at all. Story #584's backdrop blur reads the
-    /// target the same way and takes the same route.
+    /// paint pipeline nothing at all. Story #733's backdrop blur took the same
+    /// route, in two more pipelines of its own — and it reuses this one for a
+    /// second job, blitting the frame's own base target into the caller's view
+    /// at alpha one.
     composite_pipeline: wgpu::RenderPipeline,
     composite_layout: wgpu::BindGroupLayout,
+    /// The two pipelines a backdrop blur draws through — one per axis of the
+    /// separable kernel — and the layout their bind groups are built from
+    /// (story #733).
+    ///
+    /// Two pipelines rather than one with a flag, because they differ in more
+    /// than a uniform: the axis pass writes a blurred colour and the resolve
+    /// pass writes the finished destination, mixed against the sharp original
+    /// it samples. They share one bind group layout, so a bind group built for
+    /// either works with the other.
+    blur_axis_pipeline: wgpu::RenderPipeline,
+    blur_resolve_pipeline: wgpu::RenderPipeline,
+    blur_layout: wgpu::BindGroupLayout,
     /// The layer textures a frame's render-target groups draw into, held across
     /// frames for the reason the offscreen target is, and rebuilt when the
     /// extent or the layer count changes.
     layers: LayerTargets,
+    /// The targets and parameters a frame's backdrop blurs draw through, and —
+    /// for a frame that holds one — the frame's own target (story #733).
+    blurs: BlurTargets,
     adapter_info: wgpu::AdapterInfo,
     frame: Frame,
     /// The colour format the pipeline writes. [`TARGET_FORMAT`] offscreen, the
@@ -1033,6 +1076,131 @@ impl Renderer {
             cache: None,
         });
 
+        // The blur pipelines: their own module, their own layout, their own
+        // `@group(0)`, for the reason the composite has its own — and one more,
+        // which is that the blend state below is not the paint pipeline's.
+        let blur_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("dashscene-gpu blur"),
+            source: wgpu::ShaderSource::Wgsl(
+                format!("{}\n{}", crate::shader::SDF_WGSL, BLUR_WGSL).into(),
+            ),
+        });
+        let blur_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("dashscene-gpu blur"),
+            entries: &[
+                // The taps' source, and the sharp original. Both unfilterable,
+                // because nothing filters them: every read is a `textureLoad`
+                // at an integer texel, which is what makes the kernel a pixel
+                // kernel rather than a resampling one.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // Visible to both stages: the vertex stage builds the pass's
+                // quad from it, and the fragment stage reads everything else.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // The coverage mask's atlas, and the sampler a distance field
+                // is read through. Filterable here where the two above are not:
+                // an MSDF edge ramp sampled nearest becomes a staircase, which
+                // is the reason `msdf_sampler` exists at all.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let blur_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("dashscene-gpu blur"),
+            bind_group_layouts: &[Some(&blur_layout)],
+            immediate_size: 0,
+        });
+        let blur_pipeline = |label: &'static str, entry: &'static str| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&blur_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &blur_module,
+                    entry_point: Some("vs_blur"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &blur_module,
+                    entry_point: Some(entry),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        // **No blending at all**, unlike either pipeline above.
+                        // A backdrop filter *replaces* the region it covers —
+                        // `dashscene-skia`'s `backdrop_layer_paint` says so with
+                        // `BlendMode::Src` — and the lerp its antialiased edge
+                        // needs cannot be expressed in blend factors, so the
+                        // resolve shader samples the destination and writes the
+                        // whole answer. See `shaders/blur.wgsl`.
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleStrip,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let blur_axis_pipeline = blur_pipeline("dashscene-gpu blur axis", "fs_blur_axis");
+        let blur_resolve_pipeline = blur_pipeline("dashscene-gpu blur resolve", "fs_blur_resolve");
+
         let max_extent = device.limits().max_texture_dimension_2d;
         // Nearest and clamped, matching the reference painter's own
         // `SamplingOptions::default()`. Declared `NonFiltering` in the layout to
@@ -1113,7 +1281,11 @@ impl Renderer {
             layout,
             composite_pipeline,
             composite_layout,
+            blur_axis_pipeline,
+            blur_resolve_pipeline,
+            blur_layout,
             layers: LayerTargets::default(),
+            blurs: BlurTargets::default(),
             adapter_info,
             frame,
             format,
@@ -1218,6 +1390,15 @@ impl Renderer {
         // included" could not have failed if residency had reallocated an atlas
         // every frame. Found in review.
         //
+        // **`blurs` was the third time the same term went missing** — after
+        // residency in story #581 and the layer targets in story #583 — so the
+        // rule is worth stating rather than rediscovering: every struct that
+        // owns device objects and counts them adds its count here, and a term
+        // here is unfalsifiable until some fixture makes it non-zero.
+        // `a_frame_with_a_backdrop_allocates_and_a_steady_one_does_not` is that
+        // fixture for this one; it differences a scene with a backdrop against
+        // the same scene without, rather than asserting an absolute number.
+        //
         // The constants are the two samplers and the placeholder texture with
         // its view, built once in `new` and never again.
         const AT_CONSTRUCTION: u64 = 4;
@@ -1225,6 +1406,7 @@ impl Renderer {
             + self.offscreen_allocations
             + self.residency.allocations()
             + self.layers.allocations
+            + self.blurs.allocations
             + AT_CONSTRUCTION
     }
 
@@ -1442,7 +1624,7 @@ impl Renderer {
         }
         let globals = Globals {
             size: [width as f32, height as f32],
-            aa: 1.0,
+            aa: AA_WIDTH,
             gradient_base: heap.gradient_base,
             shadow_base: heap.shadow_base,
             _pad: [0; 3],
@@ -1454,7 +1636,7 @@ impl Renderer {
         let resolved = self.resolve_frame(buffer, paints, images, glyphs);
         let atlases = self.residency.atlas_count();
 
-        self.frame.upload(
+        let rebound = self.frame.upload(
             &self.device,
             &self.queue,
             &self.layout,
@@ -1492,18 +1674,95 @@ impl Renderer {
         );
         let plan = composite::plan(buffer);
 
+        // The backdrop blurs this frame resolves, and the targets they need.
+        // A frame with none allocates nothing here and draws into the caller's
+        // view exactly as every frame before story #733 did.
+        //
+        // The atlas each one samples comes from the same resolution the paint
+        // pipeline's draw runs come from, rather than a second walk: a masked
+        // backdrop and the masked fill beneath it are the same node's coverage
+        // field, so they name one row and one atlas.
+        let backdrop_masks: Vec<(Option<u32>, &wgpu::TextureView)> = plan
+            .iter()
+            .filter_map(|pass| pass.backdrop)
+            .map(|index| {
+                let atlas = resolved.atlas_of(&buffer.instances()[index as usize]);
+                let view = match atlas {
+                    Some(index) => self.residency.view(index),
+                    // A backdrop with no coverage mask still needs a texture
+                    // named for the binding its layout declares, exactly as a
+                    // frame with no atlas does for the paint pipeline.
+                    None => &self.placeholder,
+                };
+                (atlas, view)
+            })
+            .collect();
+        let backdrops = backdrop_masks.len();
+        self.blurs.prepare(
+            &self.device,
+            &self.blur_layout,
+            &self.composite_layout,
+            self.format,
+            width,
+            height,
+            &backdrop_masks,
+            &self.msdf_sampler,
+            &self.frame.clips,
+            rebound,
+        );
+        // A backdrop snapshots the target it draws into, and a snapshot is a
+        // texture-to-texture copy — which needs a `Texture`, where this function
+        // is handed a `TextureView`. So a frame with a backdrop draws into a
+        // texture this painter owns and composites it into `view` at the end.
+        let frame_view = if backdrops == 0 {
+            view
+        } else {
+            &self.blurs.base().view
+        };
+
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("dashscene-gpu frame"),
             });
         let mut draws = 0usize;
+        let mut resolved_backdrops = 0usize;
         for planned in &plan {
             let target = if planned.target == Instance::NONE {
-                view
+                frame_view
             } else {
                 self.layers.view(planned.target)
             };
+            // The backdrop this pass resolves, before anything draws into the
+            // target — the blur reads it as the previous pass on it left it.
+            if let Some(index) = planned.backdrop {
+                if planned.clear {
+                    // Nothing has been written here yet, so the texture holds
+                    // whatever the allocator handed over and the blur would
+                    // read it. There is nothing to see beneath this backdrop,
+                    // but it has to be *transparent* nothing.
+                    clear(&mut encoder, target);
+                }
+                let texture = if planned.target == Instance::NONE {
+                    &self.blurs.base().texture
+                } else {
+                    self.layers.texture(planned.target)
+                };
+                self.resolve_backdrop(
+                    &mut encoder,
+                    resolved_backdrops,
+                    index,
+                    buffer,
+                    paints,
+                    &resolved,
+                    texture,
+                    target,
+                    width,
+                    height,
+                );
+                resolved_backdrops += 1;
+                draws += 2;
+            }
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("dashscene-gpu frame"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1517,7 +1776,12 @@ impl Renderer {
                         // discards what the earlier one drew — and a frame
                         // whose only group starts at instance 0 cannot tell the
                         // two apart, which is why the planner decides it.
-                        load: if planned.clear {
+                        //
+                        // A pass that resolved a backdrop above has already had
+                        // its clear, and the resolve drew into the target after
+                        // it: clearing again here would erase the frosted
+                        // region this pass exists to draw over.
+                        load: if planned.clear && planned.backdrop.is_none() {
                             wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
                         } else {
                             wgpu::LoadOp::Load
@@ -1556,8 +1820,259 @@ impl Renderer {
                 }
             }
         }
+        // The frame drew into a texture this painter owns so that its backdrops
+        // could read it; this is what puts it on the caller's target. One
+        // composite at alpha one, through the pipeline story #583 built —
+        // `fs_composite` scales a premultiplied texel by that alpha, which at
+        // one is the identity, and the source-over onto a cleared target is a
+        // copy.
+        if backdrops > 0 {
+            self.queue.write_buffer(
+                self.blurs
+                    .blit_alpha
+                    .as_ref()
+                    .expect("prepared alongside the bind group"),
+                0,
+                bytemuck::bytes_of(&GpuComposite {
+                    alpha: 1.0,
+                    _pad: [0.0; 3],
+                }),
+            );
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("dashscene-gpu base blit"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.composite_pipeline);
+            pass.set_bind_group(
+                0,
+                self.blurs.blit.as_ref().expect("prepared with the base"),
+                &[],
+            );
+            pass.draw(0..4, 0..1);
+            drop(pass);
+            draws += 1;
+        }
         self.queue.submit([encoder.finish()]);
         self.frame.last_runs = draws;
+    }
+
+    /// Resolves the `slot`th backdrop blur of this frame — instance `index` —
+    /// into the target it draws into.
+    ///
+    /// Three encoded things, in order: a copy of the target, the horizontal
+    /// half of the separable kernel over a scratch, and the vertical half
+    /// composited back into the target. `shaders/blur.wgsl` is the arithmetic
+    /// and the reason for each.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `index` does not name a backdrop instance, or when its row
+    /// is not a row of the blur table it names. Both are broken contracts
+    /// between the packer and this renderer rather than frames to skip (P4).
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_backdrop(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        slot: usize,
+        index: u32,
+        buffer: &InstanceBuffer,
+        paints: &PaintTable,
+        resolved: &Resolved,
+        target: &wgpu::Texture,
+        view: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+    ) {
+        let instance = &buffer.instances()[index as usize];
+        debug_assert_eq!(
+            instance.kind,
+            InstanceKind::Backdrop.as_u32(),
+            "the planner named instance {index} a backdrop and it is a {}",
+            InstanceKind::from_u32(instance.kind).name(),
+        );
+        let blur = paints
+            .all_blurs()
+            .get(instance.row as usize)
+            .unwrap_or_else(|| {
+                panic!(
+                    "backdrop instance {index} names blur row {} of {}: a row is valid only in the \
+                 table that assigned it",
+                    instance.row,
+                    paints.all_blurs().len(),
+                )
+            });
+        // The one mapping, applied where every other blur in this painter
+        // applies it. `pack::frosts` is what guarantees it is positive here.
+        let sigma = crate::pack::blur_sigma(blur.radius);
+        let support = (BLUR_SUPPORT_SIGMAS * sigma).ceil();
+        let size = [width as f32, height as f32];
+
+        // The coverage mask, when the node carries one. `Instance::shape` rides
+        // on the backdrop instance for exactly this — a masked node's blur is
+        // confined to the field's outline rather than to its box — and the row
+        // is the same one the node's own fill resolves, so the parameters come
+        // from the frame's own resolution rather than a second derivation.
+        let mask = (instance.shape != Instance::NONE)
+            .then(|| resolved.shapes[instance.shape as usize - 1]);
+
+        // **A masked backdrop's quad is the field's padded plane quad, not the
+        // node's box**, and that is a correctness property rather than a saving.
+        // `msdf_sample` clamps its coordinate into the payload's own sub-rect,
+        // so a fragment outside the field's quad reads the field's edge texel
+        // and comes back with whatever coverage that texel carries — full
+        // coverage, for any field whose outline touches its rectangle. The
+        // geometry is the only thing that says "not here". `paint.wgsl`'s vertex
+        // stage substitutes the same quad for the same reason, and this is that
+        // substitution on the pipeline that has no instance array to read.
+        let silhouette = mask.map_or(instance.bounds, |shape| {
+            let [left, top, right, bottom] = shape.plane;
+            [
+                instance.bounds[0] + left,
+                instance.bounds[1] + top,
+                right - left,
+                bottom - top,
+            ]
+        });
+
+        // The resolve pass writes that silhouette and the half-ramp its
+        // antialiased edge reaches past it. The horizontal pass writes every
+        // texel the resolve pass then reads, which is the same rectangle plus
+        // the support **in y**, since y is the axis the resolve pass steps
+        // along.
+        let resolve_quad = clamped_quad(silhouette, [AA_WIDTH; 2], size);
+        let axis_quad = clamped_quad(silhouette, [AA_WIDTH, AA_WIDTH + support], size);
+        let base = GpuBlur {
+            bounds: instance.bounds,
+            corners: instance.corners,
+            quad: axis_quad,
+            plane: mask.map_or([0.0; 4], |shape| shape.plane),
+            uv: mask.map_or([0.0; 4], |shape| shape.uv),
+            size,
+            step: [1.0, 0.0],
+            half_uv: mask.map_or([0.0; 2], |shape| shape.half_uv),
+            sigma,
+            support,
+            opacity: instance.opacity,
+            aa: AA_WIDTH,
+            px_range: mask.map_or(0.0, |shape| shape.px_range),
+            masked: u32::from(mask.is_some()),
+            clip_offset: instance.clip_offset,
+            clip_count: instance.clip_count,
+            _pad: [0; 2],
+        };
+
+        // 1. The target as it stands, so the passes below can read it while it
+        //    is also the thing they write. A full-target copy: the showcase
+        //    holds one backdrop, and debt filed with this story is where a
+        //    bounded one goes if that ever stops being true.
+        let snapshot = self.blurs.snapshot();
+        encoder.copy_texture_to_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: target,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyTextureInfo {
+                texture: &snapshot.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        // 2. The horizontal half, over the dilated quad, into the scratch.
+        let (bind_group, uniform) = self.blurs.pass(slot, false);
+        self.queue
+            .write_buffer(uniform, 0, bytemuck::bytes_of(&base));
+        self.axis_pass(
+            encoder,
+            "dashscene-gpu backdrop axis",
+            &self.blurs.scratch().view,
+            bind_group,
+        );
+
+        // 3. The vertical half, mixed against the sharp original and written
+        //    over the node's own box.
+        let (bind_group, uniform) = self.blurs.pass(slot, true);
+        self.queue.write_buffer(
+            uniform,
+            0,
+            bytemuck::bytes_of(&GpuBlur {
+                quad: resolve_quad,
+                step: [0.0, 1.0],
+                ..base
+            }),
+        );
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("dashscene-gpu backdrop resolve"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    // Everything already drawn into this target stays: the
+                    // resolve pass writes the node's box and nothing else, and
+                    // what it writes there it computed from what was underneath.
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&self.blur_resolve_pipeline);
+        pass.set_bind_group(0, bind_group, &[]);
+        pass.draw(0..4, 0..1);
+    }
+
+    /// One axis of the separable kernel, into a scratch that is cleared because
+    /// nothing else writes it.
+    fn axis_pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        label: &'static str,
+        view: &wgpu::TextureView,
+        bind_group: &wgpu::BindGroup,
+    ) {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some(label),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_pipeline(&self.blur_axis_pipeline);
+        pass.set_bind_group(0, bind_group, &[]);
+        pass.draw(0..4, 0..1);
     }
 
     /// Every payload-backed table as the shaders read it, with each row's
@@ -2094,6 +2609,12 @@ impl Offscreen {
 /// are, and a stale uniform would draw the previous frame's opacity.
 #[derive(Default)]
 struct LayerTargets {
+    /// One texture per layer, indexed by slot minus one.
+    ///
+    /// Held beside the views since story #733: a backdrop blur inside a group
+    /// snapshots that group's layer, and `copy_texture_to_texture` names a
+    /// texture where a render pass attaches a view.
+    textures: Vec<wgpu::Texture>,
     /// One view per layer, indexed by slot minus one.
     views: Vec<wgpu::TextureView>,
     /// One bind group per layer, naming that layer's view and its own alpha
@@ -2135,28 +2656,18 @@ impl LayerTargets {
         layers: &[Layer],
     ) {
         if self.width != width || self.height != height || self.views.len() != layers.len() {
+            self.textures.clear();
             self.views.clear();
             self.bind_groups.clear();
             self.alphas.clear();
             for _ in 0..layers.len() {
-                let texture = device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("dashscene-gpu layer"),
-                    size: wgpu::Extent3d {
-                        width,
-                        height,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format,
-                    // Drawn into, then read by `textureLoad` when it
-                    // composites.
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                        | wgpu::TextureUsages::TEXTURE_BINDING,
-                    view_formats: &[],
-                });
-                let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                // Drawn into, then read by `textureLoad` when it composites —
+                // and copied from since story #733, because a backdrop blur
+                // inside this group snapshots the layer rather than the frame's
+                // target, which is what makes a render-target group a backdrop
+                // root.
+                let Owned { texture, view } =
+                    Owned::new(device, "dashscene-gpu layer", format, width, height);
                 let alpha = device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("dashscene-gpu layer alpha"),
                     size: size_of::<GpuComposite>() as wgpu::BufferAddress,
@@ -2178,6 +2689,7 @@ impl LayerTargets {
                             },
                         ],
                     }));
+                self.textures.push(texture);
                 self.views.push(view);
                 self.alphas.push(alpha);
                 // A texture, its view, its uniform buffer and its bind group.
@@ -2226,6 +2738,417 @@ impl LayerTargets {
                 self.bind_groups.len()
             )
         })
+    }
+
+    /// The texture behind layer `slot`, which a backdrop inside that group
+    /// snapshots.
+    ///
+    /// # Panics
+    ///
+    /// As [`LayerTargets::view`].
+    fn texture(&self, slot: u32) -> &wgpu::Texture {
+        self.textures.get(slot as usize - 1).unwrap_or_else(|| {
+            panic!(
+                "a backdrop snapshots layer {slot} of {} allocated",
+                self.textures.len()
+            )
+        })
+    }
+}
+
+/// Makes `view` transparent and draws nothing into it.
+///
+/// A pass with no steps, which is the only way to clear a target that a copy —
+/// rather than a draw — is about to read. A backdrop at the head of a target
+/// needs exactly this: the texture holds whatever the allocator handed over
+/// until something writes it, and "nothing beneath this node" has to be
+/// transparent nothing rather than undefined nothing.
+fn clear(encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("dashscene-gpu clear"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
+}
+
+/// `bounds` grown by `pad` per axis and clipped to a target of `size`, as
+/// `[x, y, w, h]`.
+///
+/// Both halves matter and for different reasons. The growth is what keeps the
+/// geometry from clipping ink the coverage means to draw — the argument
+/// [`Instance::outset`] makes, one pipeline over. The clip is a cost bound: a
+/// quad reaching past the target shades fragments the rasteriser then discards,
+/// and a blur's quad is the one this painter builds from a radius rather than
+/// from a measured box.
+///
+/// The pad is per axis because the two blur passes need different ones, and
+/// the difference is not symmetry. The horizontal pass reads the **snapshot**,
+/// which is the whole target, so its own taps need no room. What needs room is
+/// the vertical pass reading the horizontal pass's *output*: it steps in y over
+/// `± support`, and a row the horizontal pass never wrote is transparent, which
+/// would darken the panel's top and bottom edges. So the support is added on
+/// the second pass's axis alone.
+///
+/// An empty result is possible — a node entirely off-target — and is left
+/// empty rather than clamped to a minimum: a zero-area quad draws nothing,
+/// which is the right answer for a backdrop nobody can see.
+fn clamped_quad(bounds: [f32; 4], pad: [f32; 2], size: [f32; 2]) -> [f32; 4] {
+    let left = (bounds[0] - pad[0]).max(0.0);
+    let top = (bounds[1] - pad[1]).max(0.0);
+    let right = (bounds[0] + bounds[2] + pad[0]).min(size[0]);
+    let bottom = (bounds[1] + bounds[3] + pad[1]).min(size[1]);
+    [left, top, (right - left).max(0.0), (bottom - top).max(0.0)]
+}
+
+/// A texture this painter owns, with the view it is drawn through.
+///
+/// Both, because a backdrop needs each in a place the other will not do: a
+/// render pass attaches the *view*, and `copy_texture_to_texture` names the
+/// *texture*. Keeping the pair together is what makes "snapshot the target"
+/// expressible at all.
+struct Owned {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+}
+
+impl Owned {
+    /// A target-sized texture that can be drawn into, sampled, and copied both
+    /// ways.
+    fn new(
+        device: &wgpu::Device,
+        label: &'static str,
+        format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        Self { texture, view }
+    }
+}
+
+/// One backdrop blur pass's parameters, as `shaders/blur.wgsl` reads them.
+///
+/// A hundred and forty-four bytes, and the assertions below are the only thing
+/// holding that: the shader's `Blur` is a second declaration of this layout in
+/// another language, and nothing in either one holds the two together.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, bytemuck::Pod, bytemuck::Zeroable)]
+struct GpuBlur {
+    bounds: [f32; 4],
+    corners: [f32; 4],
+    quad: [f32; 4],
+    /// [`GpuShape::plane`], for a backdrop confined to a coverage mask.
+    plane: [f32; 4],
+    /// [`GpuShape::uv`].
+    uv: [f32; 4],
+    size: [f32; 2],
+    step: [f32; 2],
+    /// [`GpuShape::half_uv`].
+    half_uv: [f32; 2],
+    sigma: f32,
+    support: f32,
+    opacity: f32,
+    aa: f32,
+    /// [`GpuShape::px_range`].
+    px_range: f32,
+    /// Non-zero when the four mask members describe one. Carried rather than
+    /// inferred from `px_range` or `uv`, because a degenerate field is not an
+    /// absent one.
+    masked: u32,
+    clip_offset: u32,
+    clip_count: u32,
+    /// Declared, and always zero. Scalars rather than a `vec2u`, for the reason
+    /// `GpuComposite` states: a vector member aligns to its own size and can
+    /// move everything after it.
+    _pad: [u32; 2],
+}
+
+// **Every offset, not only the size.** `shaders/blur.wgsl`'s `Blur` is this
+// layout declared a second time in another language, and nothing in either one
+// holds the two together. The size alone does not: reordering the four mask
+// members in one and not the other during this story left both at 144 bytes
+// and moved eight of the eighteen offsets, so every backdrop read its sigma out
+// of a texture coordinate while this assertion stayed green. The offsets below
+// are what a reorder now fails on.
+const _: () = assert!(size_of::<GpuBlur>() == 144);
+const _: () = assert!(align_of::<GpuBlur>() == 4);
+const _: () = assert!(std::mem::offset_of!(GpuBlur, bounds) == 0);
+const _: () = assert!(std::mem::offset_of!(GpuBlur, corners) == 16);
+const _: () = assert!(std::mem::offset_of!(GpuBlur, quad) == 32);
+const _: () = assert!(std::mem::offset_of!(GpuBlur, plane) == 48);
+const _: () = assert!(std::mem::offset_of!(GpuBlur, uv) == 64);
+const _: () = assert!(std::mem::offset_of!(GpuBlur, size) == 80);
+const _: () = assert!(std::mem::offset_of!(GpuBlur, step) == 88);
+const _: () = assert!(std::mem::offset_of!(GpuBlur, half_uv) == 96);
+const _: () = assert!(std::mem::offset_of!(GpuBlur, sigma) == 104);
+const _: () = assert!(std::mem::offset_of!(GpuBlur, support) == 108);
+const _: () = assert!(std::mem::offset_of!(GpuBlur, opacity) == 112);
+const _: () = assert!(std::mem::offset_of!(GpuBlur, aa) == 116);
+const _: () = assert!(std::mem::offset_of!(GpuBlur, px_range) == 120);
+const _: () = assert!(std::mem::offset_of!(GpuBlur, masked) == 124);
+const _: () = assert!(std::mem::offset_of!(GpuBlur, clip_offset) == 128);
+const _: () = assert!(std::mem::offset_of!(GpuBlur, clip_count) == 132);
+
+/// What a frame's backdrop blurs draw through (story #733).
+///
+/// # Why the frame's own target moves in here
+///
+/// [`Renderer::draw`] is handed a [`wgpu::TextureView`], and
+/// `copy_texture_to_texture` names a [`wgpu::Texture`] — so whatever the caller
+/// is drawing into, this painter cannot snapshot it. A frame that holds a
+/// backdrop therefore draws into [`base`](Self::base) and composites that into
+/// the caller's view as its last act. That is the whole of the cost, it is paid
+/// only by a frame that has a backdrop in it, and two of the three showcase
+/// scenes have none.
+///
+/// A backdrop *inside a render-target group* snapshots that group's layer
+/// instead, which is already a texture this painter owns — so the base is only
+/// ever the frame's own target.
+///
+/// Held across frames for the reason [`LayerTargets`] is, and rebuilt when the
+/// extent or the number of backdrops changes. The parameters are written every
+/// frame regardless: a blur radius animates without changing how many backdrops
+/// there are, and a stale uniform would blur at the previous frame's sigma.
+#[derive(Default)]
+struct BlurTargets {
+    /// The frame's own target, when the frame holds a backdrop.
+    base: Option<Owned>,
+    /// The destination as it stood before the backdrop being resolved — the
+    /// blur's input, and the sharp original the resolve pass mixes against.
+    snapshot: Option<Owned>,
+    /// The horizontal pass's output, which the vertical pass reads.
+    scratch: Option<Owned>,
+    /// The bind group that blits [`base`](Self::base) into the caller's view.
+    /// One composite at alpha one, through the pipeline story #583 built.
+    blit: Option<wgpu::BindGroup>,
+    /// The alpha uniform that blit reads. Always one; held because a bind group
+    /// must name a buffer that outlives it.
+    blit_alpha: Option<wgpu::Buffer>,
+    /// Two uniform buffers per backdrop the frame holds — the axis pass's, then
+    /// the resolve pass's.
+    ///
+    /// Separate buffers rather than one written between passes, for the reason
+    /// [`LayerTargets::alphas`] gives: writes queued against a single buffer
+    /// inside one submission do not interleave with the passes that read it, so
+    /// every blur in the frame would run at the last parameters written.
+    uniforms: Vec<wgpu::Buffer>,
+    /// Two bind groups per backdrop, in the same order as
+    /// [`uniforms`](Self::uniforms).
+    bind_groups: Vec<wgpu::BindGroup>,
+    width: u32,
+    height: u32,
+    /// The atlas each backdrop's bind groups were built naming, in plan order,
+    /// with `None` for a backdrop that carries no coverage mask.
+    ///
+    /// A bind group names one texture view, so a backdrop whose mask moved to a
+    /// different atlas — or that gained or lost a mask — needs its groups
+    /// rebuilt. Recorded rather than rebuilt every frame, which is what keeps
+    /// a steady scene off the allocation path. Its length is also the count the
+    /// buffers were built for.
+    bound_atlases: Vec<Option<u32>>,
+    /// Device objects allocated here, counted beside the others — see
+    /// [`Renderer::allocations`].
+    allocations: u64,
+}
+
+impl BlurTargets {
+    /// Makes `count` backdrops' worth of targets and parameters available at
+    /// `width` x `height`, rebuilding when any of those has changed or when the
+    /// frame's buffers moved under the bind groups.
+    ///
+    /// A frame with no backdrop releases everything: the three full-target
+    /// textures are the largest allocation this painter makes per frame, and
+    /// holding them for a scene that stopped having a frosted panel would keep
+    /// three drawable-sized textures alive for nothing.
+    #[allow(clippy::too_many_arguments)]
+    fn prepare(
+        &mut self,
+        device: &wgpu::Device,
+        blur_layout: &wgpu::BindGroupLayout,
+        composite_layout: &wgpu::BindGroupLayout,
+        format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+        masks: &[(Option<u32>, &wgpu::TextureView)],
+        msdf_sampler: &wgpu::Sampler,
+        clips: &wgpu::Buffer,
+        rebind: bool,
+    ) {
+        let count = masks.len();
+        if count == 0 {
+            *self = Self {
+                allocations: self.allocations,
+                ..Self::default()
+            };
+            return;
+        }
+        let resized = self.width != width || self.height != height;
+        if resized || self.base.is_none() {
+            self.base = Some(Owned::new(
+                device,
+                "dashscene-gpu base",
+                format,
+                width,
+                height,
+            ));
+            self.snapshot = Some(Owned::new(
+                device,
+                "dashscene-gpu backdrop snapshot",
+                format,
+                width,
+                height,
+            ));
+            self.scratch = Some(Owned::new(
+                device,
+                "dashscene-gpu backdrop scratch",
+                format,
+                width,
+                height,
+            ));
+            // Three textures and three views.
+            self.allocations += 6;
+            self.blit = None;
+            self.width = width;
+            self.height = height;
+        }
+        if self.blit.is_none() {
+            let alpha = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("dashscene-gpu base blit"),
+                size: size_of::<GpuComposite>() as wgpu::BufferAddress,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.blit = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("dashscene-gpu base blit"),
+                layout: composite_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&self.base().view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: alpha.as_entire_binding(),
+                    },
+                ],
+            }));
+            self.blit_alpha = Some(alpha);
+            self.allocations += 2;
+        }
+        // The bind groups name the clip buffer and one atlas view each, so a
+        // frame that reallocated the buffer or moved a mask has to rebuild them
+        // — the same reason `Frame::rebind` exists, one pipeline over.
+        let atlases: Vec<Option<u32>> = masks.iter().map(|(atlas, _)| *atlas).collect();
+        if resized || rebind || self.bound_atlases != atlases {
+            self.uniforms.clear();
+            self.bind_groups.clear();
+            let snapshot = &self.snapshot.as_ref().expect("allocated above").view;
+            let scratch = &self.scratch.as_ref().expect("allocated above").view;
+            for (_, mask) in masks {
+                // The axis pass reads the snapshot; the resolve pass reads the
+                // axis pass's output. Both read the snapshot as the sharp
+                // original, and only the resolve pass looks at it.
+                for source in [snapshot, scratch] {
+                    let uniform = device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("dashscene-gpu backdrop"),
+                        size: size_of::<GpuBlur>() as wgpu::BufferAddress,
+                        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    });
+                    self.bind_groups
+                        .push(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            label: Some("dashscene-gpu backdrop"),
+                            layout: blur_layout,
+                            entries: &[
+                                wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: wgpu::BindingResource::TextureView(source),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 1,
+                                    resource: wgpu::BindingResource::TextureView(snapshot),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 2,
+                                    resource: uniform.as_entire_binding(),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 3,
+                                    resource: clips.as_entire_binding(),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 4,
+                                    resource: wgpu::BindingResource::TextureView(mask),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 5,
+                                    resource: wgpu::BindingResource::Sampler(msdf_sampler),
+                                },
+                            ],
+                        }));
+                    self.uniforms.push(uniform);
+                    self.allocations += 2;
+                }
+            }
+            self.bound_atlases = atlases;
+        }
+    }
+
+    /// The frame's own target for a frame that holds a backdrop.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the frame holds none, which is a caller that asked for the
+    /// base without planning a backdrop.
+    fn base(&self) -> &Owned {
+        self.base
+            .as_ref()
+            .expect("a frame with no backdrop draws into the caller's view")
+    }
+
+    /// The snapshot the blur reads, as a texture — the copy's destination.
+    fn snapshot(&self) -> &Owned {
+        self.snapshot.as_ref().expect("as `base`")
+    }
+
+    /// The horizontal pass's target.
+    fn scratch(&self) -> &Owned {
+        self.scratch.as_ref().expect("as `base`")
+    }
+
+    /// The axis pass's bind group and uniform for the `index`th backdrop of the
+    /// frame, then the resolve pass's.
+    fn pass(&self, index: usize, resolve: bool) -> (&wgpu::BindGroup, &wgpu::Buffer) {
+        let at = index * 2 + usize::from(resolve);
+        (&self.bind_groups[at], &self.uniforms[at])
     }
 }
 
@@ -2421,7 +3344,12 @@ impl Frame {
         self.bound_atlases = atlases.len();
     }
 
-    /// Puts this frame's data on the device, writing as little as it can.
+    /// Puts this frame's data on the device, writing as little as it can, and
+    /// reports whether any buffer moved.
+    ///
+    /// The return value is what a bind group built outside this struct needs:
+    /// a reallocated buffer leaves every bind group naming the old one, and
+    /// [`BlurTargets`] names `clips`. `Frame::rebind` handles this struct's own.
     #[allow(clippy::too_many_arguments)]
     fn upload(
         &mut self,
@@ -2439,7 +3367,7 @@ impl Frame {
         resolved: &Resolved,
         globals: Globals,
         changes: Option<Changes<'_>>,
-    ) {
+    ) -> bool {
         let mut rebind = self.upload_instances(device, queue, buffer, changes);
 
         // The two tables are written whole. A dirty set says which *rect*
@@ -2546,6 +3474,7 @@ impl Frame {
                 .collect();
             self.rebind(device, layout, sampler, msdf_sampler, placeholder, &views);
         }
+        rebind
     }
 
     /// Writes the instance rows, and reports whether the buffer was
