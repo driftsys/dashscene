@@ -11,7 +11,7 @@ is nothing to keep in sync between the two.
 
 | This file (shape)               | GitHub (state)                                |
 | ------------------------------- | --------------------------------------------- |
-| Which slices exist (v0.1-v0.16) | Which stories exist under each epic           |
+| Which slices exist (v0.1-v0.17) | Which stories exist under each epic           |
 | What each slice delivers        | Which stories are open, closed, who owns them |
 | Inter-slice dependency edges    | Story-level dependency edges                  |
 | Which E-criteria a slice closes | Debt triage and milestone assignment          |
@@ -1078,6 +1078,75 @@ Depends on: v0.15 for the second painter that S16.2's boundary-B ownership
 choice is designed against. The `Container::parse` question it also waited on is
 answered — story #587 settled it, and the answer leaves `parse` unchanged.
 Independent of v0.14.
+
+### v0.17 — embedding and integration — open, not yet planned
+
+**No epic yet.** Opened at the v0.15 phase-end revision (epic #569), which is
+where AGENTS.md puts the placing of issues filed deliberately unscheduled.
+
+Delivers: **platform reach — web, desktop, Android, iOS, and eventually
+Unity.** Everything below boundary B is a library; everything above it today is
+`demo/` and `demo-web/`, both `publish = false`. Nothing shippable sits between
+them, so an integrator starts from a demonstration and reads off what to copy.
+
+**The five targets are in three very different states, and the slice should not
+pretend otherwise.**
+
+| target  | today                                                                        |
+| ------- | ---------------------------------------------------------------------------- |
+| web     | works — `demo-web` on `dashscene-gpu`/wasm. Not publishable.                 |
+| desktop | works — `demo` on `winit`. Not publishable.                                  |
+| Android | **nothing** — no target triple, no toolchain, no CI job                      |
+| iOS     | **nothing** — as Android                                                     |
+| Unity   | Rust-side FFI bindings only; the Unity project is a separate, uncreated repo |
+
+So web and desktop are a **packaging** problem: deciding what an embedder gets
+that is not a demonstration. Android and iOS are a **bring-up** problem, and
+almost certainly need a C API first — boundary B is already FFI-representable
+(story #600 made a non-FFI type a compile error) and `dashc` already has an ABI,
+so the foundation exists, but nothing sits on it. Unity is blocked on decisions
+rather than on code: `decisions/unity-separate-repo-deferred.md` puts the
+project in another repository and `decisions/unity-painter-uses-brg.md` is still
+`proposed`.
+
+**This is larger than one slice as written, and the planning session should
+expect to split it.** Recorded here rather than discovered later: a slice naming
+five targets, two of them at zero, is the shape
+[`decisions/pre-v1-hardening-slice.md`](decisions/pre-v1-hardening-slice.md)
+exists to catch — a named goal with no work item behind it. The C API is the
+most likely seam to cut on, since mobile and Unity both need it and neither web
+nor desktop does.
+
+The integration surface itself is already known, from the browser host built by
+story #587: the canvas- or window-to-surface handoff, the tick loop, the
+generation-and-`shown` contract that decides which frames are worth drawing,
+rebuilding on resize and reporting `document_replaced` because a new arena's
+generations restart, and the byte-range `.dsb` load path over `dashbuf::prefix`.
+**Two of those five were wrong in that host's first cut and no test caught
+either**, which is the argument that they are integration rather than
+demonstration.
+
+Holds:
+
+- **#741 — does `dashscene-web` become the web integration crate?** The name is
+  held, registered in the workspace and empty since story #588 retired the
+  painter role. It is the slice's first question and the answer shapes the web
+  and desktop half.
+- **#727 — a backend implementation guide, with a worked example painter.**
+  Scope unchanged from filing: a document, covering the two seams a backend can
+  sit on — implement `Painter` at boundary B, or consume the instance buffer
+  behind the lean painter. It serves Unity and any new backend, and it is
+  documentation rather than platform work.
+
+Figma import needs no work here. `importers/figma/` and `dashc.wasm` already do
+it; what an embedder lacks is a way to reach them, which is the packaging
+question above.
+
+**Not planned.** No epic, no story breakdown, no dependency order — those come
+from a planning session, the way v0.16's did.
+
+Depends on: v0.15 for the painter an embedder embeds, and on v0.16 for the load
+path the `.dsb` half of it wraps.
 
 ## v1 — Unity, full feature set, performance, production toolchain
 
