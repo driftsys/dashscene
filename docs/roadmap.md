@@ -1084,8 +1084,8 @@ Independent of v0.14.
 **No epic yet.** Opened at the v0.15 phase-end revision (epic #569), which is
 where AGENTS.md puts the placing of issues filed deliberately unscheduled.
 
-Delivers: **platform reach — web, desktop, Android, iOS, and eventually
-Unity.** Everything below boundary B is a library; everything above it today is
+Delivers: **platform reach — web, desktop and Android.** iOS and the Unity host
+follow in v1. Everything below boundary B is a library; everything above it today is
 `demo/` and `demo-web/`, both `publish = false`. Nothing shippable sits between
 them, so an integrator starts from a demonstration and reads off what to copy.
 
@@ -1141,6 +1141,16 @@ Holds:
 Figma import needs no work here. `importers/figma/` and `dashc.wasm` already do
 it; what an embedder lacks is a way to reach them, which is the packaging
 question above.
+
+**A proposed shape for the mobile half exists**, so the planning session accepts
+or rejects a structure rather than inventing one:
+[`decisions/host-integration-in-three-layers.md`](decisions/host-integration-in-three-layers.md).
+It divides a platform host into surface interop, app state bound to signals, and
+a DSL projecting `dashlang` — each usable without the layer above it — over one
+shared C ABI, and is written platform-general so the v1 iOS story inherits it.
+It also records why an AIDL out-of-process host is deferred rather than
+rejected, and why v0.17 builds the `SurfaceView` path only, with `TextureView`
+deferred to v1 alongside the case that motivates it.
 
 **Not planned.** No epic, no story breakdown, no dependency order — those come
 from a planning session, the way v0.16's did.
