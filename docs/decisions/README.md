@@ -167,6 +167,23 @@ into the records below. Per-story decisions land here directly:
   One bounds check costs nothing under `mmap` and forces a whole file into
   linear memory in wasm, so stories #587 and #595 had each planned to change
   it without knowing about the other.
+- [assets-borrow-from-the-mapping.md](assets-borrow-from-the-mapping.md) —
+  an image table's pool is either bytes it owns or a reference-counted handle
+  to a region it does not, never both, so a payload reaches a painter without
+  being copied out of the mapping (story #596). The handle rather than a
+  borrow, because a lifetime reaches every painter and a C header cannot
+  express one; `ImageEntry` and the `Painter` trait are unchanged.
+- [startup-scaling-is-measured-by-a-counter.md](startup-scaling-is-measured-by-a-counter.md)
+  — R5's exit criterion is a count of asset payload bytes the load path reads,
+  not an elapsed time, so no benchmark framework is added and the assertion is
+  an equality between two documents showing the same root (story #598,
+  guardrail G-20).
+- [verification-moves-from-open-to-touch.md](verification-moves-from-open-to-touch.md)
+  — `dashbuf::open` verifies the hot half and returns payload **ranges**, and
+  a `Residency` does touch + hash + mark ready per blob, so unverified bytes
+  reaching a painter stops being a rule to remember and becomes a thing that
+  does not compile (story #597). The eager reader stays as `open_verified`,
+  named for what it does.
 - [dsb-frozen-fixture-r7-guard.md](dsb-frozen-fixture-r7-guard.md) — a
   frozen, checked-in `.dsb` byte fixture guards R7's append-only schema
   evolution (debt #64); binds every edit to `dashbuf.fbs`.
