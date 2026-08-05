@@ -8,7 +8,9 @@
 # `just calibrate` select between them.
 #
 # The tiers nest. `regression` is a superset of `sanity`; `regression` and
-# `calibration` together are the whole suite.
+# `calibration` together are the whole suite, except for the `scaling` profile
+# at the bottom of this file, which is held outside all three on purpose and
+# says why.
 #
 # Filters use exact matches (`test(=name)`, `binary(=name)`) rather than
 # substring matches, so a test added later cannot join a tier by accident of
@@ -34,7 +36,8 @@ nextest-version = "0.9.87"
 # `default` is the regression tier, so a bare `cargo nextest run` gives the
 # same gate `just build` runs rather than a thinner one. The ten tests excluded
 # here re-derive committed asset tables from the packer alone; they are the
-# `calibration` tier.
+# `calibration` tier. The eleventh exclusion is the startup-scaling criterion,
+# which is the `scaling` profile below.
 [profile.default]
 default-filter = """
 not (
@@ -48,6 +51,7 @@ not (
   + test(=inter_ascii_atlas_rows_match_the_table)
   + test(=arabic_atlas_rows_match_the_table)
   + test(=the_recorded_contract_table)
+  + binary(=startup_scaling)
 )
 """
 
@@ -74,6 +78,7 @@ not (
   + test(=inter_ascii_atlas_rows_match_the_table)
   + test(=arabic_atlas_rows_match_the_table)
   + test(=the_recorded_contract_table)
+  + binary(=startup_scaling)
   + binary(=profile_preview_oracle)
   + binary(=atlas_pipeline)
   + test(=an_out_of_range_grid_anchor_does_not_panic)
@@ -107,6 +112,32 @@ default-filter = """
   + test(=arabic_atlas_rows_match_the_table)
   + test(=the_recorded_contract_table)
 """
+
+# The startup-scaling criterion — the falsifiable form of R5 under guardrail
+# G-20 (story #598, epic #594). Run by `just scaling`.
+#
+# A profile of its own, and deliberately not a fourth tier — the reasoning is in
+# docs/decisions/test-tiers.md. The criterion is **written to fail** against the
+# pre-slice load path, and epic #594's definition of done requires that failure
+# to be demonstrated by running it rather than asserted. Holding it out of
+# `sanity` and `regression` keeps the gate `just build` runs green while the
+# criterion is openly red; when stories #595, #596 and #597 land and it passes,
+# it moves into `regression` like any other test, this profile goes away, and a
+# regression in it fails a build.
+#
+# The whole binary rather than the criterion alone. The other two tests in it
+# are the criterion's own guards — that the many-frame document really carries
+# one distinct payload per frame, and that both halves of the byte counter
+# record — and a guard that runs at a different moment from the thing it guards
+# is a guard nobody reads. They cost about 3 s together with the criterion; each
+# test builds its own documents, so nothing here is shared state and the three
+# run concurrently.
+#
+# `all` below still runs it, so `just test-all` is red until the slice closes.
+# That is the criterion being visible rather than a fault: its assertion message
+# names the epic and the three stories it waits on.
+[profile.scaling]
+default-filter = "binary(=startup_scaling)"
 
 # Every tier in one run.
 [profile.all]

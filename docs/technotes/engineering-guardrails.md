@@ -89,6 +89,14 @@ target-hardware rules.
   The `dashbuf` schema reserves these tables. (R5)
 - **G-19** — Load-gate verification hashes hot sections only; its cost is
   measured and off the render path. (boundary A, R5)
+  **Fails today, and the work is scheduled.** `dashbuf::open` resolves every
+  asset entry through `Container::blob_by_hash`, which hash-verifies the whole
+  payload, so opening a document hashes every byte of every asset — cold
+  sections included. `Container::verify_hot` exists to hash the hot region
+  alone and `open` does not call it. Measured by story #598's counter: showing
+  a one-frame root out of a 65-frame document hashes 1 935 927 B rather than
+  the root's own 197 387 B. Story #597 owns moving verification off the open
+  path.
 - **G-20** — A scaling benchmark with a small-root document and a many-frame
   corpus document asserts that cold-start cost tracks the shown root, not the
   document size. This guardrail is tracked as the v1 startup-scaling exit

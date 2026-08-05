@@ -53,4 +53,4 @@ pub use committed::{
     Mat23, PaintEntry, PaintIndex, PaintKind, PaintTable, PaintTag, RectEntry, ScaleMode, Shadow,
     ShadowKind, StopRange, Stroke, StrokeAlign, Vec2, VectorField,
 };
-pub use load::{BoundPayload, load_document, load_document_bound};
+pub use load::{BoundPayload, load_document, load_document_bound, load_document_bound_with_cost};

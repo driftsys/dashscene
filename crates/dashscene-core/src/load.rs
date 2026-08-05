@@ -26,6 +26,7 @@
 //! crate cannot call it — which is exactly why the contract is stated here
 //! rather than enforced here.
 
+use dashbuf::cost::LoadCost;
 use dashbuf::{
     BindingTransform, Document, Fill, NO_FIELD, NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE,
     VariantPropValue,
@@ -126,6 +127,31 @@ pub fn load_document_bound(
     payloads: &[BoundPayload<'_>],
     arena: &mut Arena,
 ) -> u64 {
+    load_document_bound_with_cost(doc, payloads, arena, &LoadCost::new())
+}
+
+/// [`load_document_bound`], recording into `cost` the asset payload bytes it
+/// copies.
+///
+/// The loader's half of the startup-scaling counter
+/// (`docs/decisions/startup-scaling-is-measured-by-a-counter.md`): D2 counts a
+/// payload's bytes whether they are read to hash them or read to copy them,
+/// because each alone makes cold start scale with file size and a counter
+/// seeing only one cannot falsify the other. `dashbuf::open_with_cost` records
+/// the hash; this records the copy into [`ImageAsset`], one payload at a time.
+///
+/// [`load_document_bound`] is this call with the count discarded, so there is
+/// one implementation and not two that could drift.
+///
+/// # Panics
+///
+/// As [`load_document`].
+pub fn load_document_bound_with_cost(
+    doc: &Document<'_>,
+    payloads: &[BoundPayload<'_>],
+    arena: &mut Arena,
+    cost: &LoadCost,
+) -> u64 {
     let nodes = doc.nodes().unwrap_or_default();
     let paints = doc.paints().unwrap_or_default();
     let strings = doc.strings().unwrap_or_default();
@@ -165,6 +191,14 @@ pub fn load_document_bound(
             // otherwise. A derivation is what the host resolved for its
             // profile and its painter; the document only ever knows what
             // the asset was authored as.
+            // The copy the startup-scaling counter exists to see: every bound
+            // payload's bytes are read out of the file and into an owned
+            // `Vec`, so cold-start cost tracks total asset bytes rather than
+            // the shown root. Recorded beside the copy rather than summed from
+            // `payloads` by the caller, so that when story #596 replaces the
+            // copy with a borrow the count follows the code instead of
+            // restating it.
+            cost.record_copied(payload.bytes.len() as u64);
             let asset = ImageAsset {
                 format: payload
                     .derived
