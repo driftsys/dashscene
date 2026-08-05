@@ -53,3 +53,10 @@ pollster.workspace = true
 # web host names no `wgpu` type — the same property `demo` holds natively.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-sys = { workspace = true, features = ["HtmlCanvasElement"] }
+
+# Telling the window server that the swapchain holds sRGB, which macOS does not
+# assume on its own (issue #746). Reached only by
+# `SurfaceRenderer::match_layer_to_srgb`, which documents why; every other target
+# links nothing new, and the offscreen `Renderer` links nothing new anywhere.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-core-graphics.workspace = true

@@ -177,6 +177,16 @@ bytemuck = { version = "1.25", features = ["derive"] }
 # is an ordinary synchronous test. `pollster` blocks on a future without
 # pulling in an async runtime, which is what every wgpu example uses for this.
 pollster = "1.0"
+# Naming one Core Graphics colour space, so the lean painter can tell macOS that
+# its swapchain holds sRGB and have the window server colour match it to the
+# display (issue #746). `wgpu-hal` already depends on this exact version for the
+# same layer, so this pins the version the workspace shares rather than adding a
+# second: two versions would be two `CGColorSpace` types and `setColorspace`
+# would not take ours.
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "CGColorSpace",
+] }
 # Texture-atlas allocation for the lean painter's residency (story #581).
 # `glyphon` pairs `etagere` with `lru` for exactly this — dynamic packing plus
 # eviction — which is the pairing epic #569's direction note picked.
