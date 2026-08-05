@@ -118,7 +118,7 @@ is enforced by a frozen byte fixture, not by convention alone — see
 
 ## Public interface
 
-The crate has three surfaces. The schema types below are generated from
+The crate has six surfaces. The schema types below are generated from
 `crates/dashbuf/schema/dashbuf.fbs`. Alongside them, `dashbuf::container`
 is the hand-written `.dsb` file envelope — the sectioned container that
 carries one or more of these flatbuffers plus raw payload blobs in one
@@ -133,6 +133,25 @@ bytes; `bank` decides which bytes a given quality profile places. It is
 a separate module because it parses the ui section — which `container`,
 standing outside every parser by design, must not
 (`docs/design/dsb-container-format.md`, "Assembly").
+
+The last two are how a host gets the bytes `container` reads, and they
+are a pair split by target rather than two designs.
+`dashbuf::map::MappedFile` (story #595) is one memory mapping of the
+whole file, which is the loading model
+`docs/decisions/dsb-sectioned-container.md` has specified since v0.11;
+it is native-only, and `memmap2` is target-gated so a wasm build links
+no part of it. `dashbuf::prefix` (story #587) is the other side of that
+split: wasm has no mapping, so a browser host reads the envelope out of
+a fetched prefix and asks for the rest by byte range.
+`Container::parse` stays strict for both, which is the choice
+`docs/decisions/container-parse-reads-a-prefix-through-a-host-reader.md`
+records.
+
+The sixth is `dashbuf::cost` (story #598): the byte counter the
+startup-scaling criterion is measured with, and the reason
+`open_with_cost` exists beside `open`. It counts asset payload bytes the
+load path reads, whether to hash them or to copy them, and the reasoning
+is in `docs/decisions/startup-scaling-is-measured-by-a-counter.md`.
 
 All types below are generated from the schema:
 

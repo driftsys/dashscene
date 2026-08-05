@@ -113,6 +113,13 @@ flatbuffers = "=25.12.19"
 # `rayon` and `mmap` stay off so the portable implementation builds for
 # wasm32-unknown-unknown, which dashc requires.
 blake3 = "1"
+# The memory mapping R5 names in the requirement text itself: "cold-start cost
+# proportional to what is shown, not to file size (mmap + section discipline)"
+# (story #595, epic #594). Held by `dashbuf::map`, and target-gated there rather
+# than here: wasm has no mapping, which is why story #587's prefix reader exists.
+#
+# This is unrelated to `blake3`'s own `mmap` feature above, which stays off.
+memmap2 = "0.9"
 lyon = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -48,8 +48,27 @@ fn main() -> ExitCode {
     // `.dsb` is a different kind of source: the registry lists scenes authored
     // through the producer API, and the document is replayed through that same
     // API by the loader.
-    if arguments.first().map(String::as_str) == Some("--dsb") {
-        eprintln!("demo: document — a compiled .dsb replayed through the producer API");
+    //
+    // With a path after it, that file is **mapped** rather than read (story
+    // #595): this is the native half of R5's "mmap + section discipline", and
+    // until this story the host had no file to map at all, because it embedded
+    // its document at compile time.
+    let source = document::take(&mut arguments);
+    if source != document::Source::NotAsked {
+        match source {
+            document::Source::Mapped(path) => {
+                let named = path.display().to_string();
+                if let Err(error) = document::map_file(path) {
+                    eprintln!("demo: {named} cannot be mapped: {error}");
+                    return ExitCode::FAILURE;
+                }
+                eprintln!("demo: document — {named}, mapped");
+            }
+            _ => eprintln!(
+                "demo: document — the embedded golden, a compiled .dsb replayed through the \
+                 producer API. Pass a path after --dsb to map a file instead."
+            ),
+        }
         // A compiled document carries no signals, no bindings and no variant
         // table — issue #617 records that this is true of every `.dsb` in the
         // tree — so there is nothing for the pointer to drive and no action for
