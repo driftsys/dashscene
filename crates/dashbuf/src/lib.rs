@@ -15,11 +15,17 @@
 //! [`bank`] owns the assembly that fills one: a document plus the cold bank of
 //! payloads one quality profile binds its assets to. [`cost`] is the byte
 //! counter the startup-scaling criterion is measured with, and the reason
-//! [`open_with_cost`] exists beside [`open`].
+//! [`open_with_cost`] exists beside [`open`]. The bytes those read come from
+//! one of two places, and the split is the target's: `map` maps the file on a
+//! native host, and [`prefix`] reads the envelope out of a fetched prefix where
+//! there is no mapping to make.
 
 pub mod bank;
 pub mod container;
 pub mod cost;
+/// One memory mapping of a `.dsb` — native only; wasm reads a prefix instead.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod map;
 pub mod prefix;
 
 #[allow(clippy::all, dead_code)]

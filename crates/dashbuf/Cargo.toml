@@ -13,3 +13,16 @@ name = "dashbuf"
 [dependencies]
 blake3.workspace = true
 flatbuffers.workspace = true
+
+# The mapping `dashbuf::map` hands to `open` (story #595). Target-gated because
+# wasm has no `mmap` and `dashc` must keep building for
+# wasm32-unknown-unknown — the asymmetry story #587's prefix reader answers on
+# the other side. Nothing outside `map` names it, so a wasm build links no part
+# of it.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+memmap2.workspace = true
+
+[dev-dependencies]
+# `tests/mapped.rs` writes a file to map. A mapping is of a path, so the one
+# thing that test cannot do is work from bytes in memory.
+tempfile.workspace = true
