@@ -907,10 +907,10 @@ when the slice contains fixes whose purpose is to change output.
 
 The v1 breakdown is revised at this close — see v1 below.
 
-### v0.14 — the showcase runtime — open
+### v0.14 — the showcase runtime — closed
 
-**Epic #568.** Closes no `E` criterion, but **carries the one still open** — see
-the v0 exit gate below. Design capture:
+**Epic #568.** Closes no `E` criterion, but **carried the one that was still
+open** — see the v0 exit gate below; it closed here. Closed 2026-08-01. Design capture:
 `docs/wip/2026-07-29-v014-v015-showcase-and-wgpu-wbs.md`.
 
 Delivers: the first frame this project has ever drawn into a window, and the
@@ -957,12 +957,36 @@ resolving before v0.14 starts rather than discovering it at the close.
 Depends on: v0.13 (a burnt-down base). Independent of v0.15 — the showcase runs
 on the Skia reference painter.
 
-### v0.15 — the lean painter — open
+### v0.15 — the lean painter — closed
 
-**Epic #569.** Closes no `E` criterion. Design capture: the same work breakdown,
-plus
+**Epic #569.** Closes no `E` criterion. Closed 2026-08-05, all twenty-two
+stories done. Design capture: the same work breakdown, plus
 `docs/wip/2026-07-19-wgpu-painter-direction.md` for the ecosystem research and
-the pinned helper stack.
+the pinned helper stack. The driver prompt that ran the slice is archived
+verbatim at `docs/archive/2026-08-02-v015-DRIVER-PROMPT.md`.
+
+**What landed, against the definition of done.** The full v0 paint vocabulary
+draws through `dashscene-gpu` — solid, gradient and image fills, outline
+strokes, positioned glyph runs, a fill masked by a baked vector field,
+render-target group opacity, both shadow kinds and the backdrop blur — offscreen
+and to a window's swapchain, native and in a browser. Layer 4 was measured on
+recorded hardware and **found that one band set serves both painters**
+(`decisions/one-band-set-serves-both-painters.md`), which is the opposite of
+what this slice expected. Zero goldens moved.
+
+**Two things the definition of done asked for and did not get, stated plainly.**
+Layers 1 to 3 were never observed green _in CI_, because GitHub Actions has been
+unable to schedule a job since 2026-08-02 — every story in the back half merged
+on local evidence, recorded on each pull request. And the driver string layer 4
+asks for is not recordable on Metal: `wgpu-hal` leaves it empty and nothing on
+that path fills it in.
+
+**Three stories were added mid-slice**, all the same shape: the packer had
+emitted an `InstanceKind` since #578 that no story drew — strokes (#710),
+gradient fills (#715) — and a story body claimed a prerequisite delivered
+something it had not (#733, split out of #584). Each was found by running the
+two painters against one document rather than by reading the plan, which is the
+slice's most transferable lesson about its own work breakdown.
 
 Delivers: `dashscene-gpu` behind boundary B, covering native and web. Four
 drivers, all selected at the design session: web reach, the entry-tier candidate
