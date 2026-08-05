@@ -46,13 +46,51 @@ pub struct SurfaceRenderer {
     stale: bool,
 }
 
+/// Whether a frame reached the window, for the recoverable outcomes that are
+/// not errors (story #586).
+///
+/// A timed-out acquire, an occluded window and a zero-area drawable are all
+/// ordinary: the frame is skipped and the next one is tried. They were reported
+/// as `Ok(())` and were therefore **indistinguishable from a frame that drew**,
+/// which is fine for correctness — the generation chain already handles a
+/// declined frame, and `render.rs` says why — and wrong for measurement.
+///
+/// A frame-cost instrument that cannot tell them apart averages in every frame
+/// the window happened to be off-screen for, and a declined frame costs
+/// almost nothing. That produces a number which quietly depends on whether
+/// anyone moved the window, which is exactly the kind of unreproducible
+/// measurement story #586 exists to replace: the first sweep taken with this
+/// instrument reported a present time two orders of magnitude too low, and only
+/// the owner mentioning that they had moved the window explained it.
+///
+/// **This is a measurement distinction, not a correctness one.** The generation
+/// chain already handles a declined frame — `render::Changes` says why a commit
+/// that never reached the device must not be treated as the predecessor of the
+/// next — and nothing about that behaviour changed when this type was added.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Drawn {
+    /// The frame was drawn and presented.
+    Yes,
+    /// The frame was skipped, and nothing reached the window.
+    No,
+}
+
+impl Drawn {
+    pub fn drew(self) -> bool {
+        self == Drawn::Yes
+    }
+}
+
 /// Why a frame did not reach the window.
 ///
-/// Every variant is terminal for this renderer. The recoverable outcomes —
-/// a timed-out acquire, an occluded window, an out-of-date swapchain — are
-/// handled inside [`SurfaceRenderer::present`] and are not reported at all:
-/// the first two mean the frame is skipped, and the third is reconfigured and
-/// retried.
+/// Every variant is terminal for this renderer. The recoverable outcomes are
+/// handled inside [`SurfaceRenderer::present`] and never reach here, but they
+/// do not all end the same way: **a timed-out acquire and an occluded window
+/// are reported as [`Drawn::No`]**, while an **out-of-date swapchain is
+/// reconfigured and retried** — so it ends as a real [`Drawn::Yes`] if the
+/// retry succeeds, and as [`FrameError::Outdated`] below if it does not. The
+/// third case is therefore the one recoverable outcome that can still become an
+/// error.
 #[derive(Debug)]
 pub enum FrameError {
     /// The surface was lost. Recovering means creating a new surface from the
@@ -242,10 +280,15 @@ impl SurfaceRenderer {
 
     /// Draws `buffer` and puts it on the window.
     ///
-    /// Returns `Ok(())` without drawing when there is nothing to draw into: a
-    /// zero extent, an occluded window, or an acquire that timed out. None of
-    /// the three is a failure, and all three are states a frame loop passes
-    /// through in normal use.
+    /// Returns [`Drawn::No`] without drawing when there is nothing to draw
+    /// into: a zero extent, an occluded window, or an acquire that timed out.
+    /// None of the three is a failure, and all three are states a frame loop
+    /// passes through in normal use.
+    ///
+    /// An **out-of-date** swapchain is not among them. It is reconfigured and
+    /// retried inside [`SurfaceRenderer::acquire`], so it ends either as an
+    /// ordinary [`Drawn::Yes`] or, if the retry still reports it, as
+    /// [`FrameError::Outdated`].
     ///
     /// A declined frame needs no other bookkeeping, and that is by construction
     /// rather than by care: the renderer's record of what the device holds is
@@ -262,9 +305,9 @@ impl SurfaceRenderer {
         clips: &ClipTable,
         glyphs: &GlyphRunTable,
         changes: Option<Changes<'_>>,
-    ) -> Result<(), FrameError> {
+    ) -> Result<Drawn, FrameError> {
         if self.config.width == 0 || self.config.height == 0 {
-            return Ok(());
+            return Ok(Drawn::No);
         }
         if self.stale {
             // Deferred from the frame that reported it, which was holding the
@@ -273,7 +316,7 @@ impl SurfaceRenderer {
             self.configure();
         }
         let Some(frame) = self.acquire()? else {
-            return Ok(());
+            return Ok(Drawn::No);
         };
         let view = frame
             .texture
@@ -290,7 +333,7 @@ impl SurfaceRenderer {
             self.config.height,
         );
         self.renderer.queue().present(frame);
-        Ok(())
+        Ok(Drawn::Yes)
     }
 
     /// Applies [`SurfaceRenderer::config`] to the surface, unless the drawable

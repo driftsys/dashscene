@@ -124,11 +124,15 @@ What it reverses: the choice of Skia-GPU as the entry-tier bridge.
 
 ## Consequences
 
-- The render oracle needs per-painter tolerance bands. A wgpu painter will not
-  pixel-match Skia — different anti-aliasing, different gradient dithering,
-  different blur falloff. `render-oracle-tolerance-and-gating.md` governs how
-  bands are set; this adds a painter axis to it. This is the most repo-specific
-  risk in the change and it is tuning work, not a rewrite of the fidelity story.
+- ~~The render oracle needs per-painter tolerance bands.~~ **Measured at story
+  #586 and the prediction did not hold**: on the seven design-source frames the
+  two painters land inside the same three bands, five of seven agreeing to
+  within 0.006 percentage points. No band moved and no painter axis was added.
+  `one-band-set-serves-both-painters.md` records what was measured **and what it
+  does not cover** — the corpus has no gradient frame, which is the construct
+  this bullet named first, so the prediction is unrefuted for gradient dithering
+  specifically (issue #753). `render-oracle-tolerance-and-gating.md` still
+  governs how bands are set.
 - Skia remains the golden generator. Goldens stay bit-exact against the CPU
   raster painter, and the GPU painter is compared perceptually against them.
 - **Pathlessness is a property of the current vocabulary, not a guarantee.**

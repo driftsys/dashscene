@@ -266,6 +266,7 @@ pub fn run(
         ticks: 0,
         presents: 0,
         parked: None,
+        timing: Timing::enabled(),
         failure: None,
     };
     event_loop.run_app(&mut host)?;
@@ -342,6 +343,103 @@ struct Parked {
     presents: u64,
 }
 
+/// The environment variable that turns the frame-cost instrument on.
+///
+/// Off by default, so an ordinary run of the host is unmeasured and pays
+/// nothing.
+const TIMING_VAR: &str = "DASHSCENE_FRAME_TIMING";
+
+/// How many presents one report covers — the sample size
+/// `docs/technotes/2026-07-31-v014-frame-budget.md` states for its own blit
+/// measurement, so the two are read in the same units.
+const TIMING_SAMPLE: usize = 240;
+
+/// Per-frame costs, collected while the host runs (story #586).
+///
+/// **This exists because the measurement it serves was ad-hoc.** The v0.14
+/// frame budget's most consequential finding — that the `softbuffer` blit was a
+/// larger term than the painter for two of the three scenes — came from
+/// instrumenting the host by hand and was not reproducible afterwards. Story
+/// #585 then replaced that blit with a surface present, and the question of
+/// what happened to the term is exactly the kind that a one-off instrument
+/// cannot answer twice.
+///
+/// It times `tick` and `present` separately, because they are the two halves
+/// the v0.14 table separates. `present` is the whole of the drawing: it is
+/// `paint` plus whatever putting the frame on the window costs, which is the
+/// blit for the reference painter and a swapchain present for the lean one.
+struct Timing {
+    tick: Vec<f64>,
+    present: Vec<f64>,
+    /// What the sample in hand is a sample *of* — the scene and the presenter.
+    ///
+    /// A sample is discarded when either changes part-way through. The host
+    /// advances scenes on a dwell timer and swaps painters on a key, so a mean
+    /// taken across either boundary describes neither side of it — which is not
+    /// hypothetical: the first sweep run with this instrument was taken while
+    /// the painter was swapped mid-run, and it reported one painter's numbers
+    /// under the other's name.
+    of: Option<(String, String)>,
+}
+
+impl Timing {
+    /// A collector, or `None` when the environment has not asked for one.
+    fn enabled() -> Option<Self> {
+        std::env::var_os(TIMING_VAR).map(|_| Timing {
+            tick: Vec::with_capacity(TIMING_SAMPLE),
+            present: Vec::with_capacity(TIMING_SAMPLE),
+            of: None,
+        })
+    }
+
+    fn push(&mut self, scene: &str, presenter: &str, tick: Duration, present: Duration) {
+        let now = (scene.to_owned(), presenter.to_owned());
+        if self.of.as_ref() != Some(&now) {
+            if self.of.is_some() && !self.present.is_empty() {
+                eprintln!(
+                    "demo: frame timing — {} sample(s) discarded, the scene or painter changed \
+                     part-way through",
+                    self.present.len(),
+                );
+            }
+            self.tick.clear();
+            self.present.clear();
+            self.of = Some(now);
+        }
+        self.tick.push(tick.as_secs_f64() * 1000.0);
+        self.present.push(present.as_secs_f64() * 1000.0);
+    }
+
+    /// Reports and clears once a full sample is in hand.
+    ///
+    /// Reported per sample rather than at exit, because the host advances
+    /// through scenes and a mean over all of them would describe none of them.
+    /// `presenter` is [`Present::name`] rather than the painter enum, because
+    /// it names the whole path being timed — the reference painter's includes
+    /// the blit, which is the term this instrument exists to watch.
+    fn report(&mut self, scene: &str, presenter: &str) {
+        if self.present.len() < TIMING_SAMPLE {
+            return;
+        }
+        let stat = |values: &mut Vec<f64>| {
+            values.sort_by(|a, b| a.partial_cmp(b).expect("no NaN in a duration"));
+            let mean = values.iter().sum::<f64>() / values.len() as f64;
+            let at = |p: f64| values[((values.len() - 1) as f64 * p).round() as usize];
+            (mean, at(0.5), at(0.95), at(1.0))
+        };
+        let (tick_mean, ..) = stat(&mut self.tick);
+        let (mean, p50, p95, max) = stat(&mut self.present);
+        eprintln!(
+            "demo: {scene} through {presenter} over {TIMING_SAMPLE} presents — tick \
+             {tick_mean:.2} ms, present mean {mean:.2} p50 {p50:.2} p95 {p95:.2} max {max:.2} ms \
+             ({:.1} fps if unpaced)",
+            1000.0 / (mean + tick_mean),
+        );
+        self.tick.clear();
+        self.present.clear();
+    }
+}
+
 struct Host {
     /// Rearms the pulse driver, which sends one pulse and then waits. Held so
     /// that [`Host::user_event`] can release the next one only after this one
@@ -391,6 +489,9 @@ struct Host {
     ticks: u64,
     presents: u64,
     parked: Option<Parked>,
+    /// The frame-cost instrument, when the environment asked for one. `None`
+    /// on an ordinary run, which then pays nothing for it (story #586).
+    timing: Option<Timing>,
     /// The first error that stopped the loop. `ApplicationHandler`'s methods
     /// return nothing, so a failure is parked here and reported by [`run`]
     /// rather than printed and forgotten.
@@ -429,7 +530,9 @@ impl Host {
         let Some(live) = self.live.as_mut() else {
             return;
         };
+        let before_tick = Instant::now();
         let generation = live.tick(dt.as_secs_f32(), &mut self.arena);
+        let tick_took = before_tick.elapsed();
         self.ticks += 1;
 
         let advanced = self.shown != Some(generation);
@@ -440,10 +543,11 @@ impl Host {
             // when it fires rather than only when it fails to.
             eprintln!("demo: forced redraw — {reason}");
         }
-        if (advanced || forced.is_some())
-            && let Err(error) = self.paint(generation)
-        {
-            return self.fail(event_loop, error);
+        if advanced || forced.is_some() {
+            match self.paint(generation) {
+                Ok(present_took) => self.record_frame(tick_took, present_took),
+                Err(error) => return self.fail(event_loop, error),
+            }
         }
 
         if advanced {
@@ -457,20 +561,45 @@ impl Host {
         }
     }
 
-    /// Draws the committed scene and posts it.
-    fn paint(&mut self, generation: u64) -> Result<(), PresentError> {
+    /// Draws the committed scene and posts it, reporting how long the present
+    /// took.
+    ///
+    /// The duration is `None` when no frame reached the window — no window, no
+    /// presenter, or a presenter that declined this one because the drawable is
+    /// zero-area, occluded or timed out. **None of those is a cheap frame; they
+    /// are the absence of one**, and timing them is how a mean ends up
+    /// describing how often the window was off-screen rather than what drawing
+    /// costs. `dashscene_gpu::Drawn` carries the reason that distinction was
+    /// made observable.
+    fn paint(&mut self, generation: u64) -> Result<Option<Duration>, PresentError> {
         let (Some(window), Some(presenter)) = (self.window.as_ref(), self.presenter.as_mut())
         else {
-            return Ok(());
+            return Ok(None);
         };
         // Tells the compositor a frame is about to be posted, so it can
         // schedule the next one; winit asks for it immediately before
         // presenting.
         window.pre_present_notify();
-        presenter.present(self.arena.committed())?;
+        let before = Instant::now();
+        let drawn = presenter.present(self.arena.committed())?;
+        let took = before.elapsed();
         self.shown = Some(generation);
         self.presents += 1;
-        Ok(())
+        Ok(drawn.drew().then_some(took))
+    }
+
+    /// Hands one frame's costs to the instrument, when one is running.
+    fn record_frame(&mut self, tick: Duration, present: Option<Duration>) {
+        let (Some(timing), Some(present)) = (self.timing.as_mut(), present) else {
+            return;
+        };
+        let scene = self.scenes[self.current].name;
+        let presenter = self
+            .presenter
+            .as_ref()
+            .map_or("no presenter", |presenter| presenter.name());
+        timing.push(scene, presenter, tick, present);
+        timing.report(scene, presenter);
     }
 
     /// Stops the loop until an event arrives.

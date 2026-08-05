@@ -117,7 +117,7 @@ pub use instance::{Instance, InstanceBuffer, InstanceKind, InstanceSpan, Layer};
 pub use render::{ATLAS_EXTENT, Changes, InstanceUpload, Renderer, RendererError};
 pub use residency::{AtlasFormat, Residency, ResidencyError};
 pub use shader::SDF_WGSL;
-pub use surface::{FrameError, SurfaceRenderer};
+pub use surface::{Drawn, FrameError, SurfaceRenderer};
 
 /// Which payload formats this painter can be handed, on the device it will draw
 /// on.
