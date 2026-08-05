@@ -18,8 +18,8 @@ use crate::bindings::{Binding, Channel, ScalarTransform, SignalDecl, SignalId};
 use crate::committed::{
     Atlas, Blur, ClipBox, ClipIndex, ClipTable, ClipView, Color, CommittedScene, CornerRadii,
     EntryParts, FillSpec, GlyphQuad, GlyphRun, GlyphRunTable, GroupComposite, ImageAsset,
-    ImageTable, PaintEntry, PaintIndex, PaintTable, RectEntry, Shadow, Stroke, StrokeAlign, Vec2,
-    VectorField,
+    ImageFormat, ImageTable, PaintEntry, PaintIndex, PaintTable, RectEntry, Shadow, Stroke,
+    StrokeAlign, Vec2, VectorField,
 };
 
 /// Stable handle to a node in one [`Arena`]. Returned by
@@ -626,11 +626,20 @@ pub struct Arena {
     nodes: Vec<NodeData>,
     /// The image assets `FillSpec::Image` fills reference by index.
     ///
-    /// The arena owns them because a `.dsb` names them (`Document.assets`, whose
-    /// payloads the loader binds from the file's blob sections),
-    /// so a loaded scene must be self-contained — a painter is handed
-    /// `scene.images()` alongside `scene.paints()` and `scene.clips()`, and
-    /// there is nowhere else for a loaded document's assets to live.
+    /// The arena holds them because a `.dsb` names them (`Document.assets`,
+    /// whose payloads the loader binds from the file's blob sections): a
+    /// painter is handed `scene.images()` alongside `scene.paints()` and
+    /// `scene.clips()`, and there is nowhere else for a loaded document's
+    /// assets to be reached from.
+    ///
+    /// **Holds, not necessarily owns.** Since story #596 the table's pool is
+    /// either bytes it allocated or a reference-counted handle to a region it
+    /// does not own — a mapped `.dsb`, in practice
+    /// (`docs/decisions/assets-borrow-from-the-mapping.md`). A mapped arena is
+    /// self-contained only as far as that handle: whoever mapped the file keeps
+    /// the mapping alive, and the table keeps a reference to it so that
+    /// dropping the host's copy is not enough to unmap it underneath a
+    /// painter.
     ///
     /// Behind an `Arc` because every commit hands the table to the committed
     /// buffer, and the buffer is double-buffered: cloning it would memcpy
@@ -1094,6 +1103,50 @@ impl Txn<'_> {
     /// (the content-addressed asset model is v0.7, issue #107).
     pub fn add_image(&mut self, asset: ImageAsset) -> u32 {
         Arc::make_mut(&mut self.arena.images).push(asset)
+    }
+
+    /// Points this arena's image table at `region` and empties it, so that
+    /// payloads can be staged by range instead of by value (story #596,
+    /// `docs/decisions/assets-borrow-from-the-mapping.md` D1).
+    ///
+    /// Called once, by the loader, before any [`add_mapped_image`](Self::add_mapped_image).
+    ///
+    /// # Panics
+    ///
+    /// If the table already holds assets. A table is owned or mapped and never
+    /// both, so adopting a region on top of staged payloads would silently drop
+    /// them; refusing by name is what makes that a stated limitation (P4).
+    pub fn use_mapped_pool(&mut self, region: std::sync::Arc<dyn dashpaint::Region>) {
+        assert!(
+            self.arena.images.is_empty(),
+            "this arena already holds {} image asset(s), and an image table is owned or mapped \
+             and never both: load a mapped document into a fresh arena \
+             (docs/decisions/assets-borrow-from-the-mapping.md D1)",
+            self.arena.images.len()
+        );
+        self.arena.images = Arc::new(ImageTable::mapped(region));
+    }
+
+    /// Stages an image asset that lives at `offset` in the region
+    /// [`use_mapped_pool`](Self::use_mapped_pool) adopted, and returns its
+    /// index.
+    ///
+    /// Nothing is read and nothing is copied — the row is the range.
+    ///
+    /// # Panics
+    ///
+    /// As [`ImageTable::push_mapped`]: on a table that owns its pool, on a
+    /// range past the region, and on an offset past the 4 GiB a `u32` row
+    /// offset can name.
+    pub fn add_mapped_image(
+        &mut self,
+        format: ImageFormat,
+        offset: u64,
+        len: u64,
+        width: u32,
+        height: u32,
+    ) -> u32 {
+        Arc::make_mut(&mut self.arena.images).push_mapped(format, offset, len, width, height)
     }
 
     /// Stages a **baked** image asset, whose extent the caller states, and

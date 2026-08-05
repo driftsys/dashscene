@@ -23,6 +23,7 @@
 
 pub mod image_id;
 
+use std::fmt;
 use std::sync::Arc;
 
 /// An RGBA color, 4×f32 — the same shape as `dashbuf`'s `Color` struct.
@@ -544,6 +545,74 @@ pub struct ImageRef<'a> {
     pub height: u32,
 }
 
+/// A contiguous byte region an [`ImageTable`] may point into without owning it
+/// — a memory-mapped `.dsb` in practice (story #596,
+/// `docs/decisions/assets-borrow-from-the-mapping.md`).
+///
+/// The trait exists so that `dashpaint`, which depends on nothing and must keep
+/// depending on nothing, can hold a region whose type it does not know.
+/// `dashbuf::map::MappedFile` satisfies it through the blanket implementation
+/// below, and so does anything else that can hand out its bytes.
+///
+/// `Send + Sync` is required rather than convenient: the arena holds
+/// `Arc<ImageTable>` and story #597 puts a loader thread behind it, so a table
+/// crosses threads by construction (D4).
+pub trait Region: Send + Sync {
+    /// The whole region. An [`ImageEntry`]'s `offset` is an index into this.
+    fn bytes(&self) -> &[u8];
+}
+
+impl<T: AsRef<[u8]> + Send + Sync> Region for T {
+    fn bytes(&self) -> &[u8] {
+        self.as_ref()
+    }
+}
+
+/// Where an [`ImageTable`]'s payload bytes live: bytes it allocated, or a
+/// region it does not own.
+///
+/// **One or the other, never both** (D1). A per-row choice would mean a base
+/// pointer per row, which widens the one row the FFI gate pins, to serve a case
+/// nothing in v0 has. A table that has taken one arm refuses the other by name
+/// rather than growing a third state.
+#[derive(Clone)]
+enum Pool {
+    /// Bytes this table allocated and copied into — what a producer building a
+    /// table by hand gets.
+    Owned(Vec<u8>),
+    /// A region this table points into and does not own — what the loader
+    /// builds from a mapped file.
+    Mapped(Arc<dyn Region>),
+}
+
+impl Pool {
+    /// The whole pool. An entry's `offset` indexes this in both arms.
+    fn bytes(&self) -> &[u8] {
+        match self {
+            Pool::Owned(blobs) => blobs,
+            Pool::Mapped(region) => region.bytes(),
+        }
+    }
+}
+
+impl Default for Pool {
+    fn default() -> Self {
+        Pool::Owned(Vec::new())
+    }
+}
+
+impl fmt::Debug for Pool {
+    /// A pool prints its shape and its size, never its bytes. A mapped pool is
+    /// the whole file, and a `Debug` that dumped megabytes of payload would
+    /// make every `{:?}` on a scene useless.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Pool::Owned(blobs) => write!(f, "Owned({} bytes)", blobs.len()),
+            Pool::Mapped(region) => write!(f, "Mapped({} bytes)", region.bytes().len()),
+        }
+    }
+}
+
 /// The image-asset table — the runtime side, carrying decoded-ready bytes.
 /// A document names its assets by content hash (`dashbuf`'s `Document.assets`)
 /// and the loader binds each to its payload; by the time a table reaches a
@@ -551,13 +620,59 @@ pub struct ImageRef<'a> {
 /// dense, indexed by [`ImageFill::image`]. Part of the
 /// painter input since the v0.3 vocabulary
 /// (`docs/decisions/image-assets-cross-boundary-b.md`).
-#[derive(Debug, Clone, Default, PartialEq)]
+///
+/// Since story #596 the pool is either owned or mapped
+/// (`docs/decisions/assets-borrow-from-the-mapping.md`). Nothing a painter sees
+/// changes: [`ImageEntry`] keeps its twenty-byte `#[repr(C)]` shape with
+/// `offset` relative to the pool in both arms, and [`ImageTable::resolve`]
+/// hands back the same [`ImageRef`].
+#[derive(Debug, Clone, Default)]
 pub struct ImageTable {
-    /// Every asset's bytes, concatenated. One allocation for a whole frame's
-    /// payloads rather than one per asset, and the reason [`ImageEntry`] can be
-    /// a fixed-width row.
-    blobs: Vec<u8>,
+    /// Every asset's bytes: concatenated in the pool this table allocated, or
+    /// in place in a region it borrows. One base for a whole frame's payloads
+    /// rather than one per asset, which is what lets [`ImageEntry`] be a
+    /// fixed-width row.
+    pool: Pool,
     entries: Vec<ImageEntry>,
+}
+
+/// Two tables are equal when they hold the same rows over the same payload
+/// bytes.
+///
+/// Compared row by row rather than pool against pool, which is what makes one
+/// behaviour serve both arms. An owned pool is exactly its rows concatenated,
+/// so this is the comparison the derive did; a mapped pool is a whole file, of
+/// which the rows are a part, and comparing pools there would call two tables
+/// different because their files differ elsewhere — and would walk megabytes to
+/// do it, every frame, in `dashscene-skia`'s frame cache.
+///
+/// `offset` is deliberately **not** compared. It says where a payload sits in
+/// this table's own pool, which is the one field that must differ between an
+/// owned table and a mapped one holding the same picture. Two owned tables
+/// built from the same payloads always agree on it anyway, since rows are
+/// appended in order, so nothing that used to compare unequal now compares
+/// equal.
+///
+/// The identity shortcut a mapped pool makes possible — equal handle plus equal
+/// rows, with no byte walk at all — is deliberately not taken here. It is real
+/// and it is debt #752 (D8), because it makes `PartialEq` two behaviours and
+/// needs its own test for the mixed comparison.
+impl PartialEq for ImageTable {
+    fn eq(&self, other: &Self) -> bool {
+        self.entries.len() == other.entries.len()
+            && self
+                .entries
+                .iter()
+                .enumerate()
+                .zip(other.entries.iter().enumerate())
+                .all(|((index, row), (other_index, other_row))| {
+                    row.format == other_row.format
+                        && row.len == other_row.len
+                        && row.width == other_row.width
+                        && row.height == other_row.height
+                        && self.payload(index) == other.payload(other_index)
+                })
+    }
 }
 
 impl ImageTable {
@@ -638,12 +753,26 @@ impl ImageTable {
     }
 
     /// The half both push paths share, once the extent is settled.
+    ///
+    /// # Panics
+    ///
+    /// On a mapped table. Copying a payload into a pool this table does not own
+    /// is the mixed table D1 refuses, and refusing it here by name is what
+    /// keeps that a stated limitation rather than a silent one (P4).
     fn push_row(&mut self, asset: ImageAsset, width: u32, height: u32) -> u32 {
+        let Pool::Owned(blobs) = &mut self.pool else {
+            panic!(
+                "this image table borrows a mapped region, and a payload cannot be copied into a \
+                 pool it does not own: build a mapped table with ImageTable::mapped and add rows \
+                 with push_mapped, or an owned one with ImageTable::new \
+                 (docs/decisions/assets-borrow-from-the-mapping.md D1)"
+            )
+        };
         let index =
             u32::try_from(self.entries.len()).expect("image table exceeds u32::MAX entries");
-        let offset = u32::try_from(self.blobs.len()).expect("image pool exceeds u32::MAX bytes");
+        let offset = u32::try_from(blobs.len()).expect("image pool exceeds u32::MAX bytes");
         let len = u32::try_from(asset.bytes.len()).expect("image payload exceeds u32::MAX bytes");
-        self.blobs.extend_from_slice(&asset.bytes);
+        blobs.extend_from_slice(&asset.bytes);
         self.entries.push(ImageEntry {
             format: asset.format.as_u32(),
             offset,
@@ -654,13 +783,119 @@ impl ImageTable {
         index
     }
 
+    /// A table whose payloads live in `region` and are never copied out of it —
+    /// the loader's arm (D1).
+    ///
+    /// Rows are added with [`push_mapped`](Self::push_mapped), by range. The
+    /// region is the whole file, so a row's `offset` is a file offset.
+    pub fn mapped(region: Arc<dyn Region>) -> Self {
+        Self {
+            pool: Pool::Mapped(region),
+            entries: Vec::new(),
+        }
+    }
+
+    /// Appends a row naming `len` bytes at `offset` in the mapped region, and
+    /// returns its index.
+    ///
+    /// Nothing is read and nothing is copied: the row is the range. `format`
+    /// and the extent come from the caller because a range carries neither —
+    /// the loader has the document's entry, which states both.
+    ///
+    /// # Panics
+    ///
+    /// On an owned table, for the reason [`push_row`](Self::push_row) panics on
+    /// a mapped one.
+    ///
+    /// On an `offset` or `len` past `u32::MAX`, which is the 4 GiB cap
+    /// [`ImageEntry`]'s `u32` offset implies (D7). It is named here rather than
+    /// truncated into a plausible offset, because a truncated offset draws the
+    /// wrong picture instead of failing.
+    ///
+    /// On a **baked** payload whose range is not the length its format and
+    /// extent require ([`ImageFormat::payload_len`]) — the same check
+    /// [`push_baked`](Self::push_baked) makes, for the same reason and at the
+    /// same cost. A baked payload carries no header, so nothing downstream can
+    /// tell that a stated extent and the bytes beside it describe different
+    /// images; and this path deliberately reads no header even for an encoded
+    /// payload, so it is the only place the disagreement can be named.
+    ///
+    /// The check is arithmetic over numbers already in hand, so it costs no
+    /// page fault — which is what makes it belong here rather than being the
+    /// price of the mapped path.
+    ///
+    /// On a range that runs past the end of the region, which would otherwise
+    /// be discovered by a painter slicing out of bounds one frame later.
+    pub fn push_mapped(
+        &mut self,
+        format: ImageFormat,
+        offset: u64,
+        len: u64,
+        width: u32,
+        height: u32,
+    ) -> u32 {
+        assert!(
+            matches!(self.pool, Pool::Mapped(_)),
+            "this image table owns its pool, and a range into a mapped region means nothing in \
+             it: build a mapped table with ImageTable::mapped \
+             (docs/decisions/assets-borrow-from-the-mapping.md D1)"
+        );
+        let end = offset
+            .checked_add(len)
+            .unwrap_or_else(|| panic!("payload range {offset}..+{len} overflows"));
+        let region = self.pool.bytes().len() as u64;
+        assert!(
+            end <= region,
+            "payload range {offset}..{end} runs past the {region}-byte region it names"
+        );
+        let offset = u32::try_from(offset).unwrap_or_else(|_| {
+            panic!(
+                "payload offset {offset} is past {}: a mapped document is capped at 4 GiB by \
+                 ImageEntry's u32 offset (docs/decisions/assets-borrow-from-the-mapping.md D7)",
+                u32::MAX
+            )
+        });
+        let len = u32::try_from(len)
+            .unwrap_or_else(|_| panic!("payload length {len} is past {}", u32::MAX));
+        if !format.is_encoded() {
+            let expected = format
+                .payload_len(width, height)
+                .expect("a baked format sizes its payload");
+            assert_eq!(
+                u64::from(len),
+                expected,
+                "a {format:?} payload at {width}x{height} is {expected} bytes, and the range \
+                 names {len}: the extent and the bytes describe different images"
+            );
+        }
+        let index =
+            u32::try_from(self.entries.len()).expect("image table exceeds u32::MAX entries");
+        self.entries.push(ImageEntry {
+            format: format.as_u32(),
+            offset,
+            len,
+            width,
+            height,
+        });
+        index
+    }
+
+    /// The bytes row `index` names, or an empty slice for a row that is not
+    /// there — the shared half of [`get`](Self::get) and [`PartialEq`].
+    fn payload(&self, index: usize) -> &[u8] {
+        let Some(entry) = self.entries.get(index) else {
+            return &[];
+        };
+        let start = entry.offset as usize;
+        &self.pool.bytes()[start..start + entry.len as usize]
+    }
+
     /// The asset at `index`, borrowing its bytes from the pool.
     pub fn get(&self, index: u32) -> Option<ImageRef<'_>> {
         let entry = self.entries.get(index as usize)?;
-        let start = entry.offset as usize;
         Some(ImageRef {
             format: ImageFormat::from_u32(entry.format),
-            bytes: &self.blobs[start..start + entry.len as usize],
+            bytes: self.payload(index as usize),
             width: entry.width,
             height: entry.height,
         })

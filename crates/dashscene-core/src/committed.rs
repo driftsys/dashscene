@@ -12,8 +12,8 @@ pub use dashpaint::{
     ClipView, Color, CornerRadii, EntryParts, Fill, FillSpec, GlyphQuad, GlyphRange, GlyphRun,
     GlyphRunTable, Gradient, GradientKind, GradientStop, GradientView, GroupComposite, ImageAsset,
     ImageFill, ImageFormat, ImageTable, Mat23, PaintEntry, PaintIndex, PaintKind, PaintTable,
-    PaintTag, RectEntry, ScaleMode, Shadow, ShadowKind, StopRange, Stroke, StrokeAlign, Vec2,
-    VectorField,
+    PaintTag, RectEntry, Region, ScaleMode, Shadow, ShadowKind, StopRange, Stroke, StrokeAlign,
+    Vec2, VectorField,
 };
 
 use std::sync::Arc;
@@ -80,8 +80,14 @@ impl CommittedScene {
     }
 
     /// The image assets an image fill resolves against — the fourth table a
-    /// painter is handed. Owned by the scene so a document loaded from a
-    /// `.dsb` is self-contained.
+    /// painter is handed.
+    ///
+    /// Held by the scene, and owned by it only when the table owns its pool.
+    /// A table loaded from a mapped `.dsb` points into the mapping and keeps a
+    /// reference-counted handle to it instead
+    /// (`docs/decisions/assets-borrow-from-the-mapping.md`); either way a
+    /// painter resolves an index the same way and reads bytes that outlive the
+    /// frame.
     pub fn images(&self) -> &ImageTable {
         &self.images
     }

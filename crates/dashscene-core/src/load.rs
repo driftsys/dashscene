@@ -26,11 +26,15 @@
 //! crate cannot call it — which is exactly why the contract is stated here
 //! rather than enforced here.
 
+use std::ops::Range;
+use std::sync::Arc;
+
 use dashbuf::cost::LoadCost;
 use dashbuf::{
     BindingTransform, Document, Fill, NO_FIELD, NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE,
     VariantPropValue,
 };
+use dashpaint::Region;
 
 use crate::arena::{
     Arena, AxisSizing, CrossAxisAlign, GridTrack, LayoutMode, MainAxisAlign, NodeId, Prop,
@@ -152,6 +156,119 @@ pub fn load_document_bound_with_cost(
     arena: &mut Arena,
     cost: &LoadCost,
 ) -> u64 {
+    load_inner(doc, Payloads::Bound(payloads), arena, cost)
+}
+
+/// One asset's payload, as a host binds it out of a **mapped** file: where the
+/// bytes are, rather than what they are.
+///
+/// The mapped counterpart of [`BoundPayload`], and the shape
+/// `dashbuf::prefix::Plan::wanted` already produces — one range per asset entry,
+/// in entry order. `docs/decisions/assets-borrow-from-the-mapping.md` D6 takes
+/// ranges rather than slices deliberately: recovering an offset by subtracting
+/// one slice's pointer from another's works, and is correct only until someone
+/// passes a slice from somewhere else.
+#[derive(Debug, Clone)]
+pub struct MappedPayload {
+    /// Where the payload lies in the region, as a byte range.
+    pub range: Range<u64>,
+    /// What those bytes are, when they are a derivation. `None` means the
+    /// document's own canonical payload, whose format the entry names — the
+    /// same rule [`BoundPayload::derived`] states, and stated again here so that
+    /// the format and the bytes stay one decision rather than two (issue #640).
+    pub derived: Option<ImageFormat>,
+}
+
+impl MappedPayload {
+    /// The document's own payload: a range whose format the entry already
+    /// names.
+    pub fn canonical(range: Range<u64>) -> Self {
+        Self {
+            range,
+            derived: None,
+        }
+    }
+
+    /// A derived payload in `format` — the rung a profile selected.
+    pub fn derived(range: Range<u64>, format: ImageFormat) -> Self {
+        Self {
+            range,
+            derived: Some(format),
+        }
+    }
+}
+
+/// [`load_document`] for a document whose payloads stay in the region they were
+/// mapped from.
+///
+/// The arm epic #594 exists to reach: no asset payload is copied between the
+/// mapping and the painter. The arena's image table adopts `region` and each
+/// row is a range into it, so the bytes a painter resolves are the file's own
+/// pages (`docs/decisions/assets-borrow-from-the-mapping.md`).
+///
+/// `region` is whatever the ranges are relative to — the whole mapped file, for
+/// the one caller there is — and is held by the table for as long as the arena
+/// holds the table.
+///
+/// **It takes no [`LoadCost`]**, unlike [`load_document_bound_with_cost`], and
+/// that is the point rather than an omission: this path reads no payload byte,
+/// so there is nothing to record and a counter here could only ever report
+/// zero. What holds the claim instead is a test that resolves the arena's own
+/// image bytes and asserts they are pointers into the region — an address, not
+/// a count, because a copy has equal bytes.
+///
+/// # Panics
+///
+/// As [`load_document`], and additionally if `arena` already holds image
+/// assets: a table is owned or mapped and never both (D1).
+pub fn load_document_mapped(
+    doc: &Document<'_>,
+    region: Arc<dyn Region>,
+    payloads: &[MappedPayload],
+    arena: &mut Arena,
+) -> u64 {
+    load_inner(
+        doc,
+        Payloads::Mapped { region, payloads },
+        arena,
+        &LoadCost::new(),
+    )
+}
+
+/// How the caller bound this document's asset payloads: by value, or by range
+/// into a region.
+///
+/// The two arms differ in the asset step and nowhere else, which is why they
+/// are an argument to one loader rather than two loaders. Everything after the
+/// assets — nodes, paints, strings, text styles, the vector pools, the variant
+/// replay — is the same replay through the same producer API.
+enum Payloads<'a> {
+    /// Bytes in hand, copied into the arena's own pool.
+    Bound(&'a [BoundPayload<'a>]),
+    /// Ranges into a region the arena's table points at and does not own.
+    Mapped {
+        region: Arc<dyn Region>,
+        payloads: &'a [MappedPayload],
+    },
+}
+
+impl Payloads<'_> {
+    /// How many payloads the caller bound — checked against the document's
+    /// asset count before anything is staged.
+    fn len(&self) -> usize {
+        match self {
+            Payloads::Bound(payloads) => payloads.len(),
+            Payloads::Mapped { payloads, .. } => payloads.len(),
+        }
+    }
+}
+
+fn load_inner(
+    doc: &Document<'_>,
+    payloads: Payloads<'_>,
+    arena: &mut Arena,
+    cost: &LoadCost,
+) -> u64 {
     let nodes = doc.nodes().unwrap_or_default();
     let paints = doc.paints().unwrap_or_default();
     let strings = doc.strings().unwrap_or_default();
@@ -183,48 +300,96 @@ pub fn load_document_bound_with_cost(
         payloads.len(),
         entries.len()
     );
-    let image_of: Vec<u32> = entries
-        .iter()
-        .zip(payloads)
-        .map(|(entry, payload)| {
-            // The binding's format when it states one, the document's
-            // otherwise. A derivation is what the host resolved for its
-            // profile and its painter; the document only ever knows what
-            // the asset was authored as.
-            // The copy the startup-scaling counter exists to see: every bound
-            // payload's bytes are read out of the file and into an owned
-            // `Vec`, so cold-start cost tracks total asset bytes rather than
-            // the shown root. Recorded beside the copy rather than summed from
-            // `payloads` by the caller, so that when story #596 replaces the
-            // copy with a borrow the count follows the code instead of
-            // restating it.
-            cost.record_copied(payload.bytes.len() as u64);
-            let asset = ImageAsset {
-                format: payload
-                    .derived
-                    .unwrap_or_else(|| image_format(entry.format())),
-                bytes: payload.bytes.to_vec(),
-            };
-            // An encoded payload's extent is in its own header and the table
-            // reads it there. A baked one has no header, so the document's
-            // recorded extent is passed through — the same number, since a rung
-            // is a block footprint and not a mip level, and since
-            // `dashscene-validator`'s `asset.extent-mismatch` has already
-            // checked it against the canonical payload (issue #716).
-            //
-            // The branch is on the *format*, not on whether the payload was
-            // bound as a derivation: what decides is whether the bytes carry a
-            // header, and that is what the format says. A document's own
-            // payload is always encoded — `dashbuf` carries no baked variant
-            // and `dashc`'s emitter refuses one by name — so only a binding can
-            // reach the second arm.
-            if asset.format.is_encoded() {
-                txn.add_image(asset)
-            } else {
-                txn.add_baked_image(asset, entry.width(), entry.height())
-            }
-        })
-        .collect();
+    // Both arms decide the format the same way: the binding's when it states
+    // one, the document's otherwise. A derivation is what the host resolved for
+    // its profile and its painter; the document only ever knows what the asset
+    // was authored as.
+    let image_of: Vec<u32> = match &payloads {
+        Payloads::Bound(bound) => entries
+            .iter()
+            .zip(*bound)
+            .map(|(entry, payload)| {
+                // The copy the startup-scaling counter exists to see: every
+                // bound payload's bytes are read out of the file and into an
+                // owned `Vec`, so cold-start cost tracks total asset bytes
+                // rather than the shown root. Recorded beside the copy rather
+                // than summed from `payloads` by the caller, so that a change
+                // to what is copied moves the count with it.
+                cost.record_copied(payload.bytes.len() as u64);
+                let asset = ImageAsset {
+                    format: payload
+                        .derived
+                        .unwrap_or_else(|| image_format(entry.format())),
+                    bytes: payload.bytes.to_vec(),
+                };
+                // An encoded payload's extent is in its own header and the
+                // table reads it there. A baked one has no header, so the
+                // document's recorded extent is passed through — the same
+                // number, since a rung is a block footprint and not a mip
+                // level, and since `dashscene-validator`'s
+                // `asset.extent-mismatch` has already checked it against the
+                // canonical payload (issue #716).
+                //
+                // The branch is on the *format*, not on whether the payload was
+                // bound as a derivation: what decides is whether the bytes
+                // carry a header, and that is what the format says. A
+                // document's own payload is always encoded — `dashbuf` carries
+                // no baked variant and `dashc`'s emitter refuses one by name —
+                // so only a binding can reach the second arm.
+                if asset.format.is_encoded() {
+                    txn.add_image(asset)
+                } else {
+                    txn.add_baked_image(asset, entry.width(), entry.height())
+                }
+            })
+            .collect(),
+        Payloads::Mapped { region, payloads } => {
+            // The table adopts the region before any row names a range into it,
+            // and refuses to do so over already-staged assets — a table is
+            // owned or mapped and never both (D1).
+            txn.use_mapped_pool(Arc::clone(region));
+            entries
+                .iter()
+                .zip(*payloads)
+                .map(|(entry, payload)| {
+                    let format = payload
+                        .derived
+                        .unwrap_or_else(|| image_format(entry.format()));
+                    // The extent comes from the entry for **both** formats
+                    // here, where the bound arm reads an encoded payload's own
+                    // header. Reading that header means touching the payload,
+                    // which is the one thing this path exists not to do.
+                    //
+                    // So the entry is trusted, and what that trust rests on
+                    // differs by arm and is worth stating rather than blurring.
+                    // For a canonical payload it rests on the producer:
+                    // `dashscene-validator`'s `asset.extent-mismatch` compares
+                    // the entry against the payload's own header, and `dashc`
+                    // runs it at compile time over the bytes it is emitting
+                    // (issue #716). **No host runs it at load** — the two
+                    // load-time gates are the envelope's hashes and
+                    // `validate_document` — so this is a property of a
+                    // well-formed file rather than something checked here.
+                    //
+                    // For a derived payload nothing could check it anyway: the
+                    // document records no derivation, and `asset.extent-mismatch`
+                    // reads headers `image_id` recognises, which a baked rung
+                    // has none of. What does hold there is
+                    // `ImageTable::push_mapped`'s own assertion that the range
+                    // is the length the format and extent require — arithmetic,
+                    // no page fault, and the only place the disagreement can be
+                    // named.
+                    txn.add_mapped_image(
+                        format,
+                        payload.range.start,
+                        payload.range.end - payload.range.start,
+                        entry.width(),
+                        entry.height(),
+                    )
+                })
+                .collect()
+        }
+    };
 
     // The baked-vector pools (story B1). Each `VectorShape` resolves to a
     // flat, self-contained `VectorField` the painter samples: its atlas's
