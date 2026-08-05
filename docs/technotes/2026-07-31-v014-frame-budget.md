@@ -232,15 +232,144 @@ The "after" arm ran under a **higher** load average than the "before" arm (6.34
 against 3.58) and was still faster, so if the load skews this comparison it
 skews it against the result.
 
+## Extended at v0.15 (story #586): the lean painter, and what happened to the blit
+
+Same machine, same three scenes, the same 1920x1200 physical extent and the same
+240-present samples — so this table is read against the ones above rather than
+beside them. Both painters measured on `dashscene-gpu` at the close of the
+backdrop-blur story, when the lean painter drew the whole v0 paint vocabulary
+for the first time. Sample counts differ per cell — a first sweep took three per
+scene, and the colour-management investigation below added 32 more for
+`surfaces` alone — so each cell states its own rather than one figure standing
+for all six.
+
+| scene      | rects | skia present |      gpu present |
+| ---------- | ----: | -----------: | ---------------: |
+| surfaces   |    33 | 19.90 (±0.2) |  1.4 (0.30–2.48) |
+| typography |    16 | 10.68 (±0.4) | 0.74 (0.64–2.32) |
+| layout     |    30 |  8.75 (±0.1) | 0.71 (0.67–0.75) |
+
+Milliseconds. Each figure is the **median of that cell's 240-present sample
+means**, with the observed range beside it: n = 8 for `skia surfaces` and
+`skia typography`, 4 for `skia layout`, 41 for `gpu surfaces`, 8 for
+`gpu typography` and 5 for `gpu layout`. `tick` stayed
+between 0.05 and 0.30 ms throughout and is not the cost in either painter, which
+is the finding above unchanged.
+
+**Read the two columns with different precision.** The reference painter's
+samples agree to about 1 %, so its figures carry two significant digits
+honestly. The lean painter's do not: `surfaces` produced sample means from 0.30
+to 2.48 ms across 41 samples. A swapchain present returns once the frame is
+queued, so what it costs depends on how full the queue already is — which is a
+property of the moment, not of the scene. **No gpu figure here should be read to
+better than "about a millisecond".**
+
+That is enough for the claim being made. Even taking the lean painter's worst
+observed sample against the reference painter's best, `surfaces` is 2.48 against
+19.73, and the other two scenes never overlap at all.
+
+**The flat blit tax is gone, which is what story #585 was for.** This note's
+central v0.14 finding was a blit of about 9.1 ms on every scene regardless of
+content, most of it inside softbuffer's post to the window server. The lean
+painter has no blit: it draws into a swapchain texture it acquired from the
+window. Nothing in the gpu column resembles a flat 9 ms term.
+
+**`surfaces` no longer exceeds the 60 Hz budget on the CPU.** It was the one
+scene this note recorded as genuinely work-bound — 19.94 ms here against a
+16.67 ms budget, and it is the densest scene in the corpus. Through the lean
+painter its CPU cost is about 1.4 ms. The last item under "What this does not settle"
+asked whether that was a painter problem or a scene problem; it was a painter
+problem, and a second painter answered it.
+
+### The gpu column is CPU time, and is not a frame rate
+
+**A swapchain present returns once the frame is queued, not once it is drawn.**
+So the gpu column measures what the CPU spends handing the frame over, and it
+excludes the GPU's own execution entirely. The Skia column has no such gap — a
+CPU raster plus a CPU blit is all CPU — which is exactly why the ratio column is
+labelled a ratio and not a speed-up.
+
+What the gpu column does support is the claim the ratio is being used for: the
+**CPU** is no longer the frame's limiting term. It does not support "69x faster",
+and no frames-per-second figure should be taken from it. An offscreen render of
+`surfaces` at 960x600 through the same painter, which does serialise on a
+readback, measures 3.66 ms — and `layout`, with 27 instances and no backdrop,
+measures 3.4 ms through that same path, so about 3 ms of it is the readback
+rather than the drawing. Neither number is a GPU time; measuring one needs
+timestamp queries and nothing here has them.
+
+**`surfaces` is both the most expensive and by far the most variable, and the
+backdrop blur is the likely reason — inferred, not proven.** It is the only
+scene with one, and the blur is the only construct in the vocabulary whose cost
+is not a function of the instance count: story #733 gives it a full-target copy
+and two extra passes per backdrop instance, and how long those take depends on
+GPU scheduling rather than on how many rects the frame holds. That matches the
+shape observed — `layout`, with no blur, is the tightest column here (0.67 to
+0.75 across every sample) while `surfaces` spans an order of magnitude. It is
+the same shape the v0.14 note attributed a per-megapixel term to on the CPU
+painter, for the same scene and the same suspected reason.
+
+No per-feature profile was taken, so this stays an inference. Confirming it
+needs either a `surfaces` variant with the blur removed or GPU timestamp
+queries, and neither exists.
+
+### How this was measured, and why that is now reproducible
+
+The v0.14 blit number came from instrumenting the host by hand, which is the
+reason this section exists at all: that instrument was not kept, and the question
+"what happened to the blit" could not be answered by re-running anything.
+
+The instrument is now in the host, behind `DASHSCENE_FRAME_TIMING`, off by
+default. It reports per 240 presents, and it excludes two things that silently
+corrupted the first sweep taken with it:
+
+- **frames the presenter declined.** A zero-area drawable, an occluded surface
+  and a timed-out acquire all returned `Ok(())` and were indistinguishable from
+  a frame that drew. They are near-free, so a window moved off-screen pulled the
+  mean down by two orders of magnitude. `dashscene_gpu::Drawn` makes the
+  distinction observable and the instrument now counts only frames that reached
+  the window.
+- **samples that span a scene change or a painter swap.** The host advances
+  scenes on a dwell timer and swaps painters on a key. A sample crossing either
+  boundary describes neither side, so it is discarded with a printed warning.
+
+Both were found the same way: the first sweep produced numbers that disagreed
+with the reference painter's by a factor of a thousand, and the owner mentioned
+having swapped painters and moved the window during it. Every sweep behind the
+table above reports zero discarded samples.
+
+### One attribution this instrument nearly got wrong
+
+A sweep taken before story #750 merged put `surfaces` at 0.27 ms and one taken
+after put it at 1.43 ms, on an otherwise identical tree. #750 changes the
+swapchain's colour space, so the per-frame cost of a colour-managed present is
+exactly the kind of thing that difference would be evidence for.
+
+It was not. An alternating A/B — the same binary and instrument built at both
+commits, four runs in `pre, post, pre, post` order — put the two arms on top of
+each other: pre-#750 sample means from 0.56 to 2.48 ms, post-#750 from 0.30 to
+1.74, with medians of 1.05 and 0.86. The apparent regression was this column's
+own variance, sampled twice.
+
+Recorded because the wrong conclusion was one paragraph away from being written
+down, and because it is the reason the ranges above are published rather than
+the means alone. **A before-and-after on a noisy measurement is not evidence
+until it is alternated.**
+
 ## What this does not settle
 
 - Why `surfaces` costs 5.0 ms per megapixel is inferred, not proven. The shape
   matches a backdrop blur and it is the only scene with one, but no per-feature
   profile was taken.
 - No target-hardware number exists, so epic #476's entry condition is unchanged.
+  The v0.15 numbers do not change this: an M3 through Metal is further from the
+  target SoC than the CPU raster was, not closer.
 - The other four items story #570 pulled forward have no controlled
   before-and-after on a scene, only the count assertions and microbenchmarks in
   their own pull requests. This note does not supply one.
-- `surfaces` exceeding the 60 Hz budget has not been investigated. The paint is
-  the cost and the scene is deliberately the densest in the corpus; whether that
-  is a painter problem or a scene problem is not established here.
+- **No GPU-side time is measured anywhere in this note.** Every figure in the
+  v0.15 table is CPU. Whether the lean painter's GPU work fits a frame is
+  unmeasured, and on this hardware it is not the term under pressure.
+- Why the lean painter's cost does not track rect count at all is unexplained:
+  `typography` has 16 rects and `layout` 30, and they cost the same 0.7 ms,
+  while `surfaces` at 33 costs twice that with far more variance.

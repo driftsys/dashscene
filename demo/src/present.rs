@@ -80,7 +80,7 @@ use std::sync::Arc;
 
 use dashpaint::Painter;
 use dashscene_core::CommittedScene;
-use dashscene_gpu::{Changes, GpuPainter, RendererError, SurfaceRenderer};
+use dashscene_gpu::{Changes, Drawn, GpuPainter, RendererError, SurfaceRenderer};
 use dashscene_skia::SkiaPainter;
 use winit::window::Window;
 
@@ -125,13 +125,20 @@ pub trait Present {
     /// picture rather than an error.
     fn document_replaced(&mut self);
 
-    /// Draws `scene` and puts the result on the window.
+    /// Draws `scene` and puts the result on the window, reporting whether
+    /// anything reached it.
     ///
     /// The frame is drawn in full. Neither v0 painter has a partial-redraw
     /// path — `dashscene-skia`'s retained mode patches its instance buffer and
     /// still redraws every quad — so skipping work is a decision about whether
     /// a frame runs at all, which the host makes by not calling this.
-    fn present(&mut self, scene: &CommittedScene) -> Result<(), PresentError>;
+    ///
+    /// [`Drawn::No`] is not an error and not rare: a minimised window, a
+    /// zero-area drawable, an occluded surface and a timed-out acquire all
+    /// reach it. It is reported because a caller that **measures** frames has
+    /// to exclude the ones that did not happen — see [`Drawn`] for the
+    /// measurement this distinction was added for.
+    fn present(&mut self, scene: &CommittedScene) -> Result<Drawn, PresentError>;
 }
 
 /// Why a frame did not reach the window.
@@ -291,9 +298,9 @@ impl Present for SkiaPresenter {
         Ok(())
     }
 
-    fn present(&mut self, scene: &CommittedScene) -> Result<(), PresentError> {
+    fn present(&mut self, scene: &CommittedScene) -> Result<Drawn, PresentError> {
         if self.width == 0 || self.height == 0 {
-            return Ok(());
+            return Ok(Drawn::No);
         }
 
         // `None` rather than `scene.dirty()`: this painter is in
@@ -324,7 +331,8 @@ impl Present for SkiaPresenter {
         pack_premul_over_black(&self.frame, &mut framebuffer);
         framebuffer
             .present()
-            .map_err(|error| PresentError::Post(error.to_string()))
+            .map_err(|error| PresentError::Post(error.to_string()))?;
+        Ok(Drawn::Yes)
     }
 }
 
@@ -450,7 +458,7 @@ impl Present for GpuPresenter {
         self.renderer.resize(width, height).map_err(from_gpu)
     }
 
-    fn present(&mut self, scene: &CommittedScene) -> Result<(), PresentError> {
+    fn present(&mut self, scene: &CommittedScene) -> Result<Drawn, PresentError> {
         // No early return on a zero extent, deliberately. The renderer is the
         // one that decides a frame cannot be drawn, because it is also the one
         // that has to know a frame was not drawn: a commit that never reaches
