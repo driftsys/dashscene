@@ -11,10 +11,10 @@ project's convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports eight files
+## Why the WIP gate currently reports nine files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-eight and exits non-zero. All eight are deliberate, accepted exceptions rather
+nine and exits non-zero. All nine are deliberate, accepted exceptions rather
 than ungardened debt, and they are recorded here so the gate's result is
 explained rather than merely tolerated.
 
@@ -36,18 +36,42 @@ until 2026-08-02, while eight files were tracked — the v0.14/v0.15 breakdown
 was added and never listed. It went from seven to eight again later the same
 day, when the v0.15 driver prompt below was added. Issue #663 was then filed against the count rather
 than against this ledger, and asserted eight ungardened files when seven were
-accounted for here. Re-derive the number from `git ls-files docs/wip/` when
-touching this section rather than trusting the prose.
+accounted for here. It went from eight to nine on 2026-08-05, when v0.16's
+driver prompt was added while v0.15's was still held. Re-derive the number from
+`git ls-files docs/wip/` when touching this section rather than trusting the
+prose.
 
-**Seven are design captures**, described below. The eighth is a driver
-prompt: `2026-08-02-v015-DRIVER-PROMPT.md`, the brief that carries v0.15's
-remaining stories. Driver prompts — the brief a session is handed to carry out
+**Seven are design captures**, described below. The other two are driver
+prompts: `2026-08-02-v015-DRIVER-PROMPT.md`, the brief that carries v0.15's
+remaining stories, and `2026-08-05-v016-DRIVER-PROMPT.md`, the brief that
+opens v0.16. Driver prompts — the brief a session is handed to carry out
 a named piece of work — are transient by construction, spent the moment their
 work lands, and the convention is to archive them verbatim rather than garden
 them into records. Twelve are already in `docs/archive/`: eleven
 `*-DRIVER-PROMPT.md` plus the one `*-SPIKE.md`, which is counted there because
 it was archived verbatim beside the prompt that carried out its design rather
 than gardened.
+
+**Holding two at once is ordinary rather than exceptional**, and the history
+says so plainly: `git ls-tree -r --name-only <sha> -- docs/wip/` returns two
+`*-DRIVER-PROMPT.md` files at `dca9ec7`, `a99f3b3`, `33363f3` and `902a4a3`,
+and two of those commits name the plural in their own messages ("track the
+**two** driver prompts for the next v0.11 sessions", "driver **prompts** for
+the vector-blur and t2 handoffs"). What is true here is narrower: v0.16 opened
+while epic #569 was still open, so the two slices overlap and each has a live
+brief. The v0.16 prompt's own "v0.15 is still open" section records the overlap
+and what it costs a session working either side of it.
+
+An earlier revision of this paragraph claimed the overlap was a first. It was
+not, and the paragraph above this one already says why that happened —
+**re-derive from `git ls-tree` and `git ls-files` rather than trusting the
+prose**, and that applies to a claimed "first" exactly as it applies to a
+count.
+
+**The v0.16 prompt leaves when epic #594 closes**, archived verbatim to
+`docs/archive/` beside the twelve, on the same rule as the v0.15 prompt below:
+it holds no decision and no design, so there is nothing in it to garden. Its
+own `status` block says the same.
 
 **The v0.15 prompt leaves when epic #569 closes**, archived verbatim beside
 those twelve. It holds no decision and no design — it is current state, the
@@ -172,7 +196,8 @@ issue #274 the z-interleave, and the as-built records now carry all of it
 decision record's two resolution sections). Both it and the driver prompt that
 carried out its design are archived verbatim in `docs/archive/`.
 
-No driver prompt is held here now. The most recent one archived is
+Two driver prompts are held here now, v0.15's and v0.16's, for the overlap
+recorded above. The most recent one archived is
 `2026-07-27-t2-checks-that-cannot-fail-DRIVER-PROMPT.md`, on 2026-08-02 when
 epic #362 closed; before it `2026-07-30-blur-colour-space-DRIVER-PROMPT.md`,
 when the blur colour space was settled, and before that
