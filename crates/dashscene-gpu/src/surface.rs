@@ -313,6 +313,119 @@ impl SurfaceRenderer {
             "the surface configuration outgrew what the device can address"
         );
         self.surface.configure(self.renderer.device(), &self.config);
+        // After the configure, never before: `wgpu` writes the layer's colour
+        // space as part of it, so applying this first would be overwritten by
+        // the line above. This is also why it lives here rather than in
+        // `new` — every reconfigure resets it, and a resize is a reconfigure.
+        #[cfg(target_os = "macos")]
+        self.match_layer_to_srgb();
+    }
+
+    /// Tells the window server that this swapchain's contents are sRGB, so it
+    /// colour matches them to whatever display the window is on (issue #746).
+    ///
+    /// # Why this is needed at all
+    ///
+    /// `CAMetalLayer` does not colour match when its `colorspace` is nil: the
+    /// contents are consumed in the display's own space. `wgpu` leaves it nil —
+    /// `SurfaceColorSpace::Srgb` maps to `setColorspace(None)` in
+    /// `wgpu-hal`'s Metal backend, and `Auto` resolves to `Srgb` for every
+    /// format that is not `Rgba16Float`, so this painter never had a choice to
+    /// make. On a wide-gamut display the effect is that every sRGB value this
+    /// painter writes is shown as though it were already Display-P3, and
+    /// everything saturated is oversaturated.
+    ///
+    /// Measured against the reference painter, whose `softbuffer` blit *is*
+    /// colour managed: for four flat swatches the Skia window landed on the
+    /// sRGB-to-display conversion of the painter's own bytes and this one
+    /// landed on the raw bytes, byte-exact in both directions. The two painters
+    /// draw identical pixels offscreen, so the whole difference was here.
+    ///
+    /// The shift tracks saturation, which is why it reads as a wrong colour
+    /// rather than a wrong brightness: a mid-green's red channel moved 29 code
+    /// points while a near-black moved 1. On a display profiled to sRGB the
+    /// conversion is near identity and this function changes nothing, which is
+    /// why the defect is invisible on some machines and obvious on others.
+    ///
+    /// # Why not the alternatives
+    ///
+    /// `SurfaceColorSpace::ExtendedSrgb` would be a colour-managed layer with
+    /// sRGB primaries and would need no `unsafe` at all, but `wgpu-hal`
+    /// advertises the extended colour spaces only for `Rgba16Float`; a
+    /// `Bgra8Unorm` surface is offered `SRGB` and `DISPLAY_P3` and nothing
+    /// else. Taking `DISPLAY_P3` instead would mean converting sRGB to P3 in
+    /// the fragment stage, which hardcodes one display's gamut into the painter
+    /// and is wrong the moment a second display with a different profile is
+    /// attached — ColorSync already does that correctly for every attached
+    /// display, once it is told what the pixels are, which is all this does.
+    ///
+    /// gfx-rs/wgpu#10013 is the upstream report. If it lands, this goes.
+    #[cfg(target_os = "macos")]
+    fn match_layer_to_srgb(&self) {
+        use objc2_core_graphics::{CGColorSpace, kCGColorSpaceSRGB};
+
+        // SAFETY: `as_hal` is unsafe because the handle it yields could be used
+        // to break invariants `wgpu` maintains. Setting a Core Animation
+        // property creates and destroys no resource, touches no state `wgpu`
+        // tracks, and takes the same lock `wgpu` takes to reach the layer.
+        let Some(surface) = (unsafe { self.surface.as_hal::<wgpu::hal::api::Metal>() }) else {
+            // Not a Metal surface. Unreachable while macOS has one backend, and
+            // returning is still right: there is no layer to tell.
+            return;
+        };
+        // SAFETY: reading an immutable constant Core Graphics exports.
+        let name = unsafe { kCGColorSpaceSRGB };
+        let space = CGColorSpace::with_name(Some(name));
+        debug_assert!(
+            space.is_some(),
+            "Core Graphics knows the colour space its own kCGColorSpaceSRGB names"
+        );
+        // Only on `Some`, deliberately. `setColorspace(None)` is exactly the
+        // unmanaged state this exists to leave, so a failed lookup must not be
+        // written through as one — better to change nothing than to re-apply
+        // the defect.
+        if let Some(space) = space {
+            surface.render_layer().lock().setColorspace(Some(&space));
+        }
+    }
+
+    /// Checks, on the frame path and in debug builds only, that the layer is
+    /// still colour matched.
+    ///
+    /// # Why a self-check rather than a test
+    ///
+    /// [`Self::match_layer_to_srgb`] holds only while **every** reconfigure is
+    /// followed by it, because `wgpu` rewrites the layer's colour space inside
+    /// `Surface::configure` and writes nil there. Today that holds structurally:
+    /// `self.surface.configure` appears once in this crate, inside
+    /// [`Self::configure`], with the call on the next line. Nothing pins it —
+    /// a second configure path, or a `wgpu` upgrade that reconfigures somewhere
+    /// this type does not see, silently returns the swapchain to the unmanaged
+    /// state and the only symptom is that colours look wrong to somebody.
+    ///
+    /// It cannot be a test. It needs a window server, a real surface and a
+    /// display, which is the same reason story #586 is measured by hand and why
+    /// issue #746's acceptance is a screen capture rather than an assertion.
+    /// So the check runs where the evidence exists — on a frame, in the process
+    /// that has the layer — and costs nothing in release, where it is compiled
+    /// out entirely.
+    ///
+    /// This is the shape that caught the dirty-set break the goldens could not
+    /// see: a renderer that checks its own invariant on the frame path found in
+    /// two minutes of running what no fixture had expressed.
+    #[cfg(all(debug_assertions, target_os = "macos"))]
+    fn assert_layer_is_colour_matched(&self) {
+        // SAFETY: as `match_layer_to_srgb` — reading a Core Animation property
+        // creates and destroys nothing and touches no state `wgpu` tracks.
+        let Some(surface) = (unsafe { self.surface.as_hal::<wgpu::hal::api::Metal>() }) else {
+            return;
+        };
+        debug_assert!(
+            surface.render_layer().lock().colorspace().is_some(),
+            "the swapchain layer has no colour space, so macOS is not colour matching it and \
+             every saturated colour is drawn wrong on a wide-gamut display (issue #746). Some \
+             path reconfigured the surface without applying SurfaceRenderer::match_layer_to_srgb"
+        );
     }
 
     /// The next swapchain texture, or `None` when this frame should be skipped.
@@ -322,6 +435,8 @@ impl SurfaceRenderer {
     /// because the host has nothing to act on: the condition is the surface's,
     /// and the surface is this type's.
     fn acquire(&mut self) -> Result<Option<wgpu::SurfaceTexture>, FrameError> {
+        #[cfg(all(debug_assertions, target_os = "macos"))]
+        self.assert_layer_is_colour_matched();
         let mut outdated = false;
         loop {
             match self.surface.get_current_texture() {

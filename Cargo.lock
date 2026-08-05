@@ -625,6 +625,7 @@ dependencies = [
  "dashpaint",
  "etagere",
  "lru",
+ "objc2-core-graphics",
  "png",
  "pollster",
  "web-sys",
