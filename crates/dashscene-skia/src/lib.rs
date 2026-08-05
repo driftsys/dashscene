@@ -258,11 +258,18 @@ impl SkiaPainter {
 ///
 /// **This grows with the document and nothing evicts from it.** Every distinct
 /// asset the current table names is held until the table changes or the
-/// painter is dropped, and the retained bytes are two copies of each asset's
-/// **encoded** payload: one in `source`, one inside the [`Image`], which
-/// `decode_image` builds over its own `Data::new_copy`. The `surfaces`
+/// painter is dropped, and the retained bytes are up to two copies of each
+/// asset's **encoded** payload: one in `source`, one inside the [`Image`],
+/// which `decode_image` builds over its own `Data::new_copy`. The `surfaces`
 /// showcase scene measures 200 873 B of encoded assets and so retains
 /// 401 746 B here.
+///
+/// "Up to two" since story #596: `source` is a clone of the incoming
+/// [`ImageTable`], and cloning a table whose pool is a mapped region takes a
+/// refcount rather than the bytes
+/// (`docs/decisions/assets-borrow-from-the-mapping.md`). A mapped document
+/// therefore retains one copy here — the one inside the [`Image`] — and the
+/// figures above are the owned case, which is what the `surfaces` scene is.
 ///
 /// The **decoded** pixels are not held here. `decode_image` returns a lazy
 /// image, and Skia keeps the raster it produces in its own global resource
