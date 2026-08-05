@@ -141,7 +141,9 @@ machine after issue #660 split the perceptual walk per fixture:
 `regression` is a superset of `sanity`; `regression` and `calibration`
 together are the whole suite (1312 + 10 = 1322 runnable tests, plus 3
 doctests nextest does not run). All three tiers ran green at the measured
-times.
+times. Story #598 later added a fourth profile, `scaling`, held outside all
+three; "the whole suite" above means the three tiers, and the section below
+says why that one is a profile rather than a tier.
 
 Those counts are a measurement taken on 2026-08-01, not a property of the
 design, and they move whenever anyone adds a test — they moved by three
@@ -224,6 +226,29 @@ gives up only the two packer re-derivations. Choosing `sanity` for the gate
 would save a further 28 s and drop twenty-four tests, including every
 assertion that renders through the painter stack or exercises the atlas and
 asset pipelines.
+
+### `scaling` is a fourth profile and not a fourth tier
+
+Story #598 added `[profile.scaling]` and `just scaling`, selecting
+`binary(=startup_scaling)` — the startup-scaling criterion, the falsifiable
+form of R5 under guardrail G-20
+(`docs/decisions/startup-scaling-is-measured-by-a-counter.md`). The three
+tiers above are unchanged, and this is deliberately not a fourth one.
+
+A tier answers "when does this run": every edit, every push, or when the
+packer's inputs move. `scaling` answers a different question. The criterion
+is **written to fail** against the pre-slice load path, because epic #594's
+definition of done requires that failure to be demonstrated by running it
+rather than asserted — a benchmark seen only passing is the shape the t2
+tier spent v0.13 removing. A knowingly-red test cannot sit in a gate, and it
+must not be silently skipped either, so it is held in a profile of its own
+and run by name.
+
+The holding is temporary. When stories #595, #596 and #597 land and the
+criterion passes, it joins `regression`, the profile goes away, and a
+regression in R5 fails a build like any other. Until then `just test-all` is
+red, which is the criterion being visible rather than a fault: the assertion
+message names the epic and the three stories it waits on.
 
 ## Mechanism
 

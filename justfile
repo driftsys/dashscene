@@ -92,6 +92,28 @@ test-all:
     cargo nextest run --workspace -P all
     cargo test --workspace --doc
 
+# The startup-scaling criterion — the falsifiable form of R5 under guardrail
+# G-20 (story #598, epic #594, docs/decisions/startup-scaling-is-measured-by-a-counter.md).
+#
+# Counts the asset payload bytes one load reads out of a small-root document and
+# out of a many-frame one that shows the same root, and asserts the two are
+# equal. `--success-output=immediate` because the counts, the ratio, the wall
+# clock and the machine are the output, and nextest hides a passing test's
+# stdout otherwise; only the equality is asserted on. Not `--no-capture`, which
+# would print the same report at the cost of running the profile serially —
+# the wall-clock shape issue #660 exists to keep out.
+#
+# It is EXPECTED TO FAIL until stories #595, #596 and #597 land — the criterion
+# is written first so that the change which satisfies it is measured rather than
+# assumed. That is why it is a profile of its own and not part of `just build`.
+#
+# `--no-fail-fast` so the criterion's two guards still run and report when the
+# criterion itself fails, which for now is every run: a red criterion beside a
+# green "the many-frame document really does carry one payload per frame" is the
+# evidence that the failure is R5 and not a broken fixture.
+scaling:
+    cargo nextest run --workspace -P scaling --success-output=immediate --no-fail-fast
+
 # Rust + markdown + Deno lint gate: clippy, cargo fmt check, dprint check,
 # markdownlint, deno fmt check.
 lint: deno-fmt-check

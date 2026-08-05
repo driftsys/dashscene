@@ -13,10 +13,13 @@
 //! sectioned container that carries one or more of these flatbuffers plus raw
 //! payload blobs in one file (`docs/design/dsb-container-format.md`), and
 //! [`bank`] owns the assembly that fills one: a document plus the cold bank of
-//! payloads one quality profile binds its assets to.
+//! payloads one quality profile binds its assets to. [`cost`] is the byte
+//! counter the startup-scaling criterion is measured with, and the reason
+//! [`open_with_cost`] exists beside [`open`].
 
 pub mod bank;
 pub mod container;
+pub mod cost;
 pub mod prefix;
 
 #[allow(clippy::all, dead_code)]
@@ -57,6 +60,14 @@ pub const NO_FIELD: u32 = u32::MAX;
 /// `dashscene_core::load_document` takes. Nothing is copied: both the document
 /// and the payloads borrow `file`, so a memory mapping of it works unchanged.
 ///
+/// **Nothing is copied is not nothing is read.** Resolving an entry goes
+/// through [`container::Container::blob_by_hash`], which hash-verifies the blob
+/// before returning it, so this call reads every byte of every asset payload —
+/// under a mapping, it faults every page of the file in, which is what
+/// [`container::Container::verify_hot`] exists to avoid and this call does not
+/// use. That is the cost epic #594 opened against; [`open_with_cost`] is how it
+/// is measured, and story #597 owns where verification moves to.
+///
 /// The referential gate is still the caller's step, as it was before the
 /// envelope: `dashscene_validator::validate_document` runs after this and
 /// before loading.
@@ -65,6 +76,27 @@ pub const NO_FIELD: u32 = u32::MAX;
 /// hashes in the same order, in the other direction, and writes the manifest
 /// this reads.
 pub fn open(file: &[u8]) -> Result<(Document<'_>, Vec<&[u8]>), OpenError> {
+    open_with_cost(file, &cost::LoadCost::new())
+}
+
+/// [`open`], recording into `cost` the asset payload bytes it reads.
+///
+/// The instrumented entry point the startup-scaling criterion measures through
+/// (`docs/decisions/startup-scaling-is-measured-by-a-counter.md`); [`open`] is
+/// this call with the count discarded, so there is one implementation and not
+/// two that could drift.
+///
+/// Resolving an asset entry hashes the whole payload — [`container::Container::blob_by_hash`]
+/// verifies before returning, and it hashes exactly the bytes it hands back —
+/// so the payload's own length is the number of bytes that read cost, and an
+/// entry resolved twice is hashed twice and counted twice.
+///
+/// Only asset payloads are counted. The ui section and the derivation manifest
+/// are hashed here too, and are not payloads; [`cost`] states the boundary.
+pub fn open_with_cost<'a>(
+    file: &'a [u8],
+    cost: &cost::LoadCost,
+) -> Result<(Document<'a>, Vec<&'a [u8]>), OpenError> {
     let container = container::Container::parse(file)?;
     let ui = container.ui_document()?;
     let document = root_as_document(ui)?;
@@ -76,9 +108,11 @@ pub fn open(file: &[u8]) -> Result<(Document<'_>, Vec<&[u8]>), OpenError> {
         .iter()
         .map(|entry| {
             let canonical = entry.hash().bytes();
-            container.blob_by_hash(resident_of(&manifest, canonical))
+            let payload = container.blob_by_hash(resident_of(&manifest, canonical))?;
+            cost.record_hashed(payload.len() as u64);
+            Ok(payload)
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, container::ContainerError>>()?;
 
     Ok((document, payloads))
 }
