@@ -179,11 +179,13 @@ into the records below. Per-story decisions land here directly:
   an equality between two documents showing the same root (story #598,
   guardrail G-20).
 - [verification-moves-from-open-to-touch.md](verification-moves-from-open-to-touch.md)
-  — `dashbuf::open` verifies the hot half and returns payload **ranges**, and
-  a `Residency` does touch + hash + mark ready per blob, so unverified bytes
-  reaching a painter stops being a rule to remember and becomes a thing that
-  does not compile (story #597). The eager reader stays as `open_verified`,
-  named for what it does.
+  — both readers give up their eager hashing to one `Residency` that does
+  touch + hash + mark ready per blob: `dashbuf::open` verifies the hot half and
+  returns payload **ranges**, so unverified bytes reaching a painter stops being
+  a rule to remember and becomes a thing that does not compile, and
+  `prefix::Plan::bind` — the one that runs over a mapping since story #596 —
+  becomes the binding its name claims (story #597). The eager reader stays as
+  `open_verified`, named for what it does.
 - [dsb-frozen-fixture-r7-guard.md](dsb-frozen-fixture-r7-guard.md) — a
   frozen, checked-in `.dsb` byte fixture guards R7's append-only schema
   evolution (debt #64); binds every edit to `dashbuf.fbs`.

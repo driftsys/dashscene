@@ -1,12 +1,19 @@
-# Blob verification moves off `open` and onto the touch that makes a payload resident
+# Blob verification moves off the two readers and onto the touch that makes a payload resident
 
     status   accepted (2026-08-06), before implementation — nothing here is
              built. Story #597 builds it; story #599 records the as-built
              result against this record rather than replacing it.
-    scope    `dashbuf::open`'s contract, the residency step that replaces the
-             verification it drops, and what the two hosts do differently as a
-             result. Boundary B is untouched: `ImageTable`, `ImageEntry` and
-             the `Painter` trait are exactly what story #596 left them.
+             **Corrected the same day**: the first version named only
+             `dashbuf::open` and missed that `prefix::Plan::bind` is the
+             second eager verification, and the one that runs over a mapping
+             since story #596. D7 and D9 are the correction; the shape D1-D6
+             chose is unchanged.
+    scope    the contracts of both readers — `dashbuf::open` and
+             `dashbuf::prefix::Plan::bind` — the residency step that replaces
+             the verification they drop, and what the two hosts and story
+             #598's benchmark do differently as a result. Boundary B is
+             untouched: `ImageTable`, `ImageEntry` and the `Painter` trait are
+             exactly what story #596 left them.
     builds on `docs/decisions/dsb-sectioned-container.md` ("Blob sections are
              untouched until the loader thread prefetches them (touch + hash +
              mark ready)."), `docs/decisions/assets-borrow-from-the-mapping.md`
@@ -20,11 +27,29 @@ Stories #595 and #596 landed the two halves the epic named, and the criterion
 did not move. It is still **9.81x** — measured, not assumed — because the cost
 that dominates cold start was never a copy.
 
-`dashbuf::open` resolves every asset entry through
-`Container::blob_by_hash`, which calls `verify_section`, which BLAKE3-hashes the
-whole payload. Opening a document therefore reads every byte of every asset. On
-a mapping that faults every page of the file in, which is the exact cost mapping
-it was supposed to avoid, and it happens before anything is known to be needed.
+**There are two eager verifications, in two functions, on two paths**, and the
+first draft of this record named only one of them.
+
+`dashbuf::open` resolves every asset entry through `Container::blob_by_hash`,
+which calls `verify_section`, which BLAKE3-hashes the whole payload. So opening
+a document reads every byte of every payload an entry names — the hot sections
+as well, since `ui_document` and the manifest are hashed on the way. Under a
+mapping that faults in every page holding any of it. Not _every_ page of the
+file: a blob no entry names is never resolved and never hashed, and the
+alignment padding between sections is not read. In the documents this repository
+carries, every blob is named by an entry and blobs are nearly all of the bytes,
+so the distinction changes the wording rather than the conclusion — but "the
+whole file" is a claim the code does not make.
+
+`dashbuf::prefix::Plan::bind` hashes every fetched payload against the section
+table, one at a time. **Since story #596 that is the one that runs over a
+mapping.** The native mapped host reads the envelope with `prefix`, plans, and
+calls `bind` for its check; `open` is left holding the embedded golden, which is
+a `&'static [u8]` with no pages to fault. So the function this record was
+written about is, on the only path where a mapping exists, no longer the
+function doing the damage.
+
+Both have to move, and they move to the same place.
 
 The format was built to prevent this and says so. `container.rs`'s own module
 doc: payload hashes are "checked on demand by `Container::verify_section` so
@@ -33,8 +58,8 @@ that a caller verifying only the hot sections never faults a cold page".
 no blob payload". `open` does not call it.
 
 So the eager verification is not an oversight in the format. It is one call in
-one function, and moving it is the whole of what stands between the slice and
-its criterion.
+each of two readers, and moving both is what stands between the slice and its
+criterion.
 
 ## The rule it has to keep
 
@@ -120,11 +145,32 @@ streaming**: drawing a frame in which a payload is not yet ready needs the
 placeholder field that has no producer, and that stays in v1 for the reason
 `asset-model-content-addressed-blobs.md` records.
 
-**D7 — the counter records at the touch.** `LoadCost::record_hashed` moves from
-`open_with_cost` to `Residency::touch`, so the number story #598 asserts on is
-what was actually made resident rather than what was resolved. A payload
-resolved and never touched costs nothing and is counted as nothing, which is the
-claim R5 makes.
+**D7 — `Plan::bind` gives up its hashing to the same `Residency`.** It is the
+prefix route's eager verification and, since story #596, the one on the mapped
+path. `bind`'s job becomes what its name says — binding fetched ranges to entry
+order — and the hash moves to the touch, so there is one place a payload is
+proven rather than two that could disagree.
+
+The browser host feels this as a shape change rather than a loss. `demo-web`
+fetches a range and calls `bind`; afterwards it fetches a range and touches it,
+which is the same check at the same moment, minus the rule
+`container-parse-reads-a-prefix-through-a-host-reader.md` currently leaves to
+every host to remember.
+
+**D8 — the counter records at the touch.** `LoadCost::record_hashed` moves out
+of `open_with_cost` and out of `bind`, into `Residency::touch`, so the number
+story #598 asserts on is what was actually made resident rather than what was
+resolved. A payload resolved and never touched costs nothing and is counted as
+nothing, which is the claim R5 makes.
+
+**D9 — story #598's benchmark has to move onto the mapped path.** It measures
+`open_with_cost` plus `load_document_bound_with_cost` today, which is the
+**owned** path: it writes its two documents to memory, not to files, and never
+maps anything. Left alone it would keep reporting the owned path's number and
+could not see any of this. The re-run therefore writes each generated document
+to a temporary file, maps it, and loads it the way the native host does — which
+is also what makes the criterion a measurement of what a host really does rather
+than of a path only the benchmark takes.
 
 ## Consequences
 
