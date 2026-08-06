@@ -41,26 +41,34 @@ driver prompt was added while v0.15's was still held. Re-derive the number from
 `git ls-files docs/wip/` when touching this section rather than trusting the
 prose.
 
-**Seven are design captures**, described below. The other two are driver
-prompts: `2026-08-02-v015-DRIVER-PROMPT.md`, the brief that carries v0.15's
-remaining stories, and `2026-08-05-v016-DRIVER-PROMPT.md`, the brief that
-opens v0.16. Driver prompts — the brief a session is handed to carry out
-a named piece of work — are transient by construction, spent the moment their
-work lands, and the convention is to archive them verbatim rather than garden
-them into records. Twelve are already in `docs/archive/`: eleven
-`*-DRIVER-PROMPT.md` plus the one `*-SPIKE.md`, which is counted there because
-it was archived verbatim beside the prompt that carried out its design rather
-than gardened.
+**And it was wrong again between 2026-08-05 and 2026-08-06**, in the one way
+the paragraph above did not anticipate: by a file *leaving*. The v0.15 driver
+prompt was archived when epic #569 closed (commit `2ae4326`), which took the
+flagged count to eight while this section still read nine — so the prose was
+right about the number for a day, for the wrong reason, and wrong about which
+files made it up. Adding the cluster-platform capture on 2026-08-06 returns it
+to nine. A count that happens to be correct is not the same as a ledger that
+is, which is why the rule is to re-derive both the number and its composition.
+
+**Eight are design captures**, described below. The ninth is one driver
+prompt, `2026-08-05-v016-DRIVER-PROMPT.md`, the brief that opens v0.16. Driver
+prompts — the brief a session is handed to carry out a named piece of work —
+are transient by construction, spent the moment their work lands, and the
+convention is to archive them verbatim rather than garden them into records.
+Thirteen are already in `docs/archive/`: twelve `*-DRIVER-PROMPT.md` plus the
+one `*-SPIKE.md`, which is counted there because it was archived verbatim
+beside the prompt that carried out its design rather than gardened.
 
 **Holding two at once is ordinary rather than exceptional**, and the history
 says so plainly: `git ls-tree -r --name-only <sha> -- docs/wip/` returns two
 `*-DRIVER-PROMPT.md` files at `dca9ec7`, `a99f3b3`, `33363f3` and `902a4a3`,
 and two of those commits name the plural in their own messages ("track the
 **two** driver prompts for the next v0.11 sessions", "driver **prompts** for
-the vector-blur and t2 handoffs"). What is true here is narrower: v0.16 opened
-while epic #569 was still open, so the two slices overlap and each has a live
-brief. The v0.16 prompt's own "v0.15 is still open" section records the overlap
-and what it costs a session working either side of it.
+the vector-blur and t2 handoffs"). That overlap has since ended: epic #569
+closed, the v0.15 prompt was archived, and **one prompt is held here now**,
+v0.16's. This paragraph is kept because the plural recurs every time two slices
+overlap, and the next session to hold two should not re-litigate whether that
+is allowed.
 
 An earlier revision of this paragraph claimed the overlap was a first. It was
 not, and the paragraph above this one already says why that happened —
@@ -69,15 +77,16 @@ prose**, and that applies to a claimed "first" exactly as it applies to a
 count.
 
 **The v0.16 prompt leaves when epic #594 closes**, archived verbatim to
-`docs/archive/` beside the twelve, on the same rule as the v0.15 prompt below:
-it holds no decision and no design, so there is nothing in it to garden. Its
-own `status` block says the same.
+`docs/archive/` beside the thirteen, on the same rule the v0.15 prompt was
+held to: it holds no decision and no design, so there is nothing in it to
+garden. Its own `status` block says the same.
 
-**The v0.15 prompt leaves when epic #569 closes**, archived verbatim beside
-those twelve. It holds no decision and no design — it is current state, the
+**The v0.15 prompt has left**, on exactly that rule. Epic #569 closed and it
+was archived verbatim in commit `2ae4326`, making it the thirteenth file in
+`docs/archive/`. It held no decision and no design — it was current state, the
 story order, the per-story loop, and the failure modes this repo has actually
-hit — so there is nothing in it to garden into a record, and everything in it
-goes stale the moment the slice does. Its own `status` block says the same.
+hit — so there was nothing in it to garden into a record, and everything in it
+went stale the moment the slice did.
 
 The twelfth is `2026-07-27-t2-checks-that-cannot-fail-DRIVER-PROMPT.md`, v0.13's
 `t2-check-has-no-teeth` tier — 19 items whose common property was an assertion
@@ -102,11 +111,22 @@ closes when a font carrying an Arabic `liga` or `clig` ligature the corpus text
 triggers is added under the corpus font rules — which is v1 work, and is why the
 issue sits in the v1 milestone rather than being closed.
 
-Four are forward-looking design captures for work that has not started. Every
-one says so in its own `status` line — "Nothing here is implemented". Gardening
-runs **after** tests are green by definition, so there is no as-built code to
+Five are forward-looking captures for work that has not started. Every one says
+so in its own `status` line — "Nothing here is implemented". Gardening runs
+**after** tests are green by definition, so there is no as-built code to
 reconcile any of them against; promoting one now would put a plan into
 `docs/design/` describing a system that does not exist.
+
+Two of the five are **inputs rather than designs** —
+`2026-07-28-photorealistic-3d-content.md` and
+`2026-08-06-cluster-platform-and-boot-budgets.md`. They record
+statements about the target product, made outside this repository, that no
+reader would find by reading the code, because the records all look complete
+without them. An input is gardened when the questions it raises are ruled on,
+not when something is built — so it can empty without a line of code changing.
+The cluster-platform capture carries the stronger warning of the two: parts of
+its source were garbled in transcription and are marked as unresolved in the
+file, and its terms must not be guessed at on the way into a decision record.
 
 **Two more have since started, and this is the distinction that decides when
 they leave.** `2026-07-19-wgpu-painter-direction.md` and
@@ -196,8 +216,9 @@ issue #274 the z-interleave, and the as-built records now carry all of it
 decision record's two resolution sections). Both it and the driver prompt that
 carried out its design are archived verbatim in `docs/archive/`.
 
-Two driver prompts are held here now, v0.15's and v0.16's, for the overlap
-recorded above. The most recent one archived is
+One driver prompt is held here now, v0.16's; the overlap recorded above ended
+when epic #569 closed. The most recent one archived is
+`2026-08-02-v015-DRIVER-PROMPT.md`, on that close; before it
 `2026-07-27-t2-checks-that-cannot-fail-DRIVER-PROMPT.md`, on 2026-08-02 when
 epic #362 closed; before it `2026-07-30-blur-colour-space-DRIVER-PROMPT.md`,
 when the blur colour space was settled, and before that
@@ -229,6 +250,7 @@ it. What was actually true is in
 | `2026-07-27-indic-script-support.md`                   | Indic support is designed: the closure becomes text-driven and the unformed-cluster fallback is built. Its decided half — coverage is declared at build time, dynamic generation is a deferred painter capability — is already gardened into `docs/decisions/glyph-coverage-is-declared-at-build-time.md`                                                                  |
 | `2026-07-27-glyph-coverage-sets-and-text-residency.md` | glyph-atlas residency is designed: the unit of residency is chosen and the runtime-supplied-string case is answered. Its decided half — that only raster is block-compressed — is already gardened into `docs/decisions/compress-raster-only.md`                                                                                                                           |
 | `2026-07-29-v014-v015-showcase-and-wgpu-wbs.md`        | the wgpu painter is **built**. Ratified and partly built: filed as epics #568 and #569, and v0.14's showcase runtime has landed, so its v0.14 half is spent. Held for v0.15, which is in progress. Reads `dashscene-wgpu` throughout; the crate is `dashscene-gpu`                                                                                                         |
+| `2026-08-06-cluster-platform-and-boot-budgets.md`      | its open questions are ruled on and the target list it waits for arrives. An **input**, not a design: it records where the cluster application runs (QNX, behind an interim platform) and the boot ladder it must meet. Three of its terms were garbled in transcription and are unresolved in the file itself — do not guess them into a record                           |
 
 Each row's entry is removed when its capture is gardened.
 
