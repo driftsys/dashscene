@@ -133,7 +133,7 @@ run, not a prediction.
 **D2's two recording sites are not the two this record named.** It named
 `dashbuf::open_with_cost` for the read and
 `dashscene_core::load_document_bound_with_cost` for the copy. The read site is
-`dashbuf::residency::Residency::touch_with_cost` — story #597 moved the hash to
+`dashbuf::residency::BlobResidency::touch_with_cost` — story #597 moved the hash to
 the touch that makes a payload resident
 (`verification-moves-from-open-to-touch.md` D8), and the eager reader's
 instrumented sibling was deleted once nothing measured through it. The copy site

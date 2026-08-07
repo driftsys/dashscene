@@ -182,7 +182,7 @@ into the records below. Per-story decisions land here directly:
   guardrail G-20). **Measured** at v0.16: 9.81x against the pre-slice load path
   and **1.00x** against the one the slice left.
 - [verification-moves-from-open-to-touch.md](verification-moves-from-open-to-touch.md)
-  — both readers give up their eager hashing to one `Residency` that does
+  — both readers give up their eager hashing to one `BlobResidency` that does
   touch + hash + mark ready per blob: `dashbuf::open` verifies the hot half and
   returns **where each payload lies** rather than the payload, so unverified
   bytes reaching a painter stops being a rule to remember and becomes a thing

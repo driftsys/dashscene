@@ -89,15 +89,30 @@ target-hardware rules.
   The `dashbuf` schema reserves these tables. (R5)
 - **G-19** — Load-gate verification hashes hot sections only; its cost is
   measured and off the render path. (boundary A, R5)
-  **Met, and measured.** It failed when this entry was written: `dashbuf::open`
-  resolved every asset entry through `Container::blob_by_hash`, which
-  hash-verifies the whole payload, so opening a document hashed every byte of
-  every asset — cold sections included, 1 935 927 B to show a one-frame root
-  out of a 65-frame document rather than the root's own 197 387 B.
+  **Met, and measured.** It failed when this entry was written, and in **two**
+  places rather than the one this entry first named, one per path.
+  `dashbuf::open` resolved every asset entry through
+  `Container::blob_by_hash`, which hash-verifies the whole payload — that was
+  the **owning** path, the one a host takes when it holds bytes it cannot
+  borrow from. `prefix::Plan::bind` hashed every fetched payload against the
+  section table — that was the **mapped** path, after story #596 moved the
+  native host onto the prefix reader, and so the one that mattered to this
+  slice. So a load
+  hashed every byte of every asset — cold sections included, 1 935 927 B to show
+  a one-frame root out of a 65-frame document rather than the root's own
+  197 387 B.
 
-  Story #597 moved that. `dashbuf::open` calls `Container::verify_hot`, hashes
+  Naming only `open` is the error issue #782 was filed against, and it is the
+  same one PR #764 had already corrected in
+  `docs/decisions/verification-moves-from-open-to-touch.md`: a claim can be true
+  of the function it names and still be the wrong function, because a sibling
+  story had moved the path. Fixing the guardrail's pass/fail state without
+  fixing its attribution would have reproduced in a durable record the defect
+  that record was corrected to remove.
+
+  Story #597 moved both. `dashbuf::open` calls `Container::verify_hot`, hashes
   the hot region alone, and resolves each entry to where its payload lies
-  without reading it; `dashbuf::residency::Residency::touch` hashes a payload
+  without reading it; `dashbuf::residency::BlobResidency::touch` hashes a payload
   when a prefetch makes it resident, and the prefetch is the shown root's
   assets and nothing else. Story #598's re-run then moved the criterion onto
   the mapped path, which is what measures it:

@@ -55,7 +55,7 @@ use dashbuf::container::{
 use dashbuf::cost::LoadCost;
 use dashbuf::prefetch::{assets_of_root, first_root};
 use dashbuf::prefix::{self, Envelope};
-use dashbuf::residency::Residency;
+use dashbuf::residency::BlobResidency;
 use dashbuf::{
     AssetEntry, AssetEntryArgs, AssetKind, AtlasRect, Color, Document, DocumentArgs, Fill,
     FillLayer, FillLayerArgs, ImageFill, ImageFillArgs, ImageFormat, NO_PARENT, Node, NodeArgs,
@@ -284,7 +284,7 @@ fn open_reads_no_payload_byte() {
 
     // And the ranges are real: each names its payload's own extent, and the
     // bytes there are the corrupted ones the touch will refuse.
-    let residency = Residency::new();
+    let residency = BlobResidency::new();
     for (want, payload) in wanted.iter().zip(payloads()) {
         assert_eq!(
             want.range.end - want.range.start,
@@ -336,7 +336,7 @@ fn prefetching_the_shown_root_reads_only_its_payloads() {
     let payloads = payloads();
     let (document, wanted) = dashbuf::open(&file).expect("the fixture opens");
 
-    let residency = Residency::new();
+    let residency = BlobResidency::new();
     let cost = LoadCost::new();
     let shown = first_root(&document).expect("the fixture has a root");
     for index in assets_of_root(&document, shown) {

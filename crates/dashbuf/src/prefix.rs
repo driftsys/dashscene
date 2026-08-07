@@ -200,7 +200,7 @@ impl Envelope {
     ///
     /// **Unlike that reader, this one cannot verify**, because it holds no
     /// bytes at all. Checking what comes back against the table is
-    /// [`crate::residency::Residency::touch`]'s step, which is where every
+    /// [`crate::residency::BlobResidency::touch`]'s step, which is where every
     /// payload is proven whichever reader named it (story #597).
     pub fn blob_by_hash(&self, hash: &[u8]) -> Result<Range<u64>, ContainerError> {
         let entry = self.sections[self.blob_index_by_hash(hash)?];
@@ -310,7 +310,7 @@ impl Error for BindError {}
 /// Two entries naming one payload are two identical [`Wanted`]s here, as they
 /// are two lookups in `open`. A host that minds fetching a range twice can cache
 /// by [`Wanted::hash`], and a host that touches both pays for one:
-/// [`crate::residency::Residency`] records readiness per blob section.
+/// [`crate::residency::BlobResidency`] records readiness per blob section.
 #[derive(Debug)]
 pub struct Plan<'a> {
     document: crate::Document<'a>,
@@ -336,7 +336,7 @@ impl<'a> Plan<'a> {
     ///
     /// `fetched` must be [`Plan::wanted`]'s ranges, in the same order, and each
     /// of them must already have been proven by
-    /// [`crate::residency::Residency::touch`].
+    /// [`crate::residency::BlobResidency::touch`].
     ///
     /// **This call no longer hashes.** It used to, and it was the prefix route's
     /// half of the eager verification story #597 removed

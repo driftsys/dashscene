@@ -558,7 +558,7 @@ pub struct ImageRef<'a> {
 /// `Arc<ImageTable>`, so a table crosses threads by construction (D4). Story
 /// (#597) did not add the loader thread this originally anticipated — the hosts
 /// build their scene before the frame loop starts, so the faults are already
-/// off the frame thread — but `dashbuf::residency::Residency` is `Send + Sync`
+/// off the frame thread — but `dashbuf::residency::BlobResidency` is `Send + Sync`
 /// for the same reason, and a thread is the next step rather than a different
 /// design.
 pub trait Region: Send + Sync {

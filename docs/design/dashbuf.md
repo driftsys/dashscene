@@ -154,13 +154,13 @@ startup-scaling criterion is measured with. It counts asset payload bytes
 the load path reads, whether to hash them or to copy them, and the
 reasoning is in
 `docs/decisions/startup-scaling-is-measured-by-a-counter.md`. The hash is
-recorded at `Residency::touch_with_cost` rather than at a reader (#597),
+recorded at `BlobResidency::touch_with_cost` rather than at a reader (#597),
 so what it counts is what a load made **resident** rather than what a
 reader resolved.
 
 The seventh and eighth (#597) are what makes cold start proportional to
 the shown root rather than to the file.
-`dashbuf::residency` is touch + hash + mark ready: `Residency::touch` is
+`dashbuf::residency` is touch + hash + mark ready: `BlobResidency::touch` is
 the only call that turns a `Wanted` into readable bytes, and it is where
 every payload is proven whichever reader named it. `dashbuf::prefetch`
 computes which payloads that is — the asset entries one root's subtree

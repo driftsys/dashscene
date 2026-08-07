@@ -13,7 +13,7 @@
 use std::ops::Range;
 
 use dashbuf::prefix::{self, Envelope, MIN_PREFIX, PrefixError};
-use dashbuf::residency::Residency;
+use dashbuf::residency::BlobResidency;
 use dashlang::LiveScene;
 use dashscene_core::Arena;
 use dashscene_engine::TaffySolver;
@@ -137,7 +137,7 @@ pub(crate) async fn load(url: &str, arena: &mut Arena) -> Result<LiveScene, Host
     // payload into an owned `ImageAsset` — so every entry needs bytes whatever
     // is drawn. Bounding the read by what is shown needs the mapped loader,
     // which needs a region, which a browser does not have.
-    let residency = Residency::new();
+    let residency = BlobResidency::new();
     let mut proven: Vec<&[u8]> = Vec::with_capacity(fetched.len());
     for (want, bytes) in plan.wanted().iter().zip(&fetched) {
         proven.push(residency.touch(want, bytes).map_err(HostError::Payload)?);

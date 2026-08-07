@@ -18,7 +18,7 @@
 //!   threshold that drifts and cannot run on the two-core CI runners without
 //!   flaking.
 //! - **D2 — both reads and copies count.**
-//!   `dashbuf::residency::Residency::touch_with_cost` records the hash of each
+//!   `dashbuf::residency::BlobResidency::touch_with_cost` records the hash of each
 //!   payload a load makes resident; `load_document_bound_with_cost` records a
 //!   copy out of one. Each alone makes cold start scale with file size, so a
 //!   counter seeing only one cannot falsify the other.
@@ -104,7 +104,7 @@ use std::time::Instant;
 
 use dashbuf::cost::LoadCost;
 use dashbuf::map::MappedFile;
-use dashbuf::residency::Residency;
+use dashbuf::residency::BlobResidency;
 use dashc_wasm::{Asset, AssetKind, Box2D, Document, Node, Paint, PaintEntry, compile};
 use dashpaint::{FillSpec, ImageFill, ImageFormat, Mat23, ScaleMode};
 use dashscene_core::{
@@ -324,7 +324,7 @@ struct Measured {
 ///    payload lies. No payload byte is read.
 /// 2. the referential load gate.
 /// 3. the prefetch: the assets the shown root's subtree draws, each made
-///    resident through `Residency::touch_with_cost`. This is the only thing
+///    resident through `BlobResidency::touch_with_cost`. This is the only thing
 ///    here that reads a payload, and the counter records it.
 /// 4. `load_document_mapped` into a committed arena, binding ranges.
 ///
@@ -369,7 +369,7 @@ fn load_cost(file: &[u8]) -> Measured {
     // The shown root, and nothing else. Both documents carry the same subtree as
     // their first root by construction — `document()` pushes it before any tile
     // frame — so this is the same set of payloads out of either.
-    let residency = Residency::new();
+    let residency = BlobResidency::new();
     let shown = dashbuf::prefetch::first_root(&document).expect("the document has a root");
     for index in dashbuf::prefetch::assets_of_root(&document, shown) {
         let want = &wanted[index as usize];
@@ -479,7 +479,7 @@ fn cold_start_tracks_the_shown_root_not_the_document_size() {
          document's size rather than the shown root. This held at 1.00x when epic #594 closed, \
          so something has made the load path read payloads the shown root does not draw — check \
          the prefetch set (dashbuf::prefetch) and what touches a payload \
-         (dashbuf::residency::Residency::touch), and see \
+         (dashbuf::residency::BlobResidency::touch), and see \
          docs/decisions/startup-scaling-is-measured-by-a-counter.md",
         many.cost.total(),
         EXTRA_FRAMES + 1,
@@ -517,7 +517,7 @@ fn each_recording_site_counts_its_own_read_and_no_other() {
     // The read side: one touch of the one payload the shown root draws.
     let touching = LoadCost::new();
     let (document, wanted) = dashbuf::open(&file).expect("the file opens");
-    let residency = Residency::new();
+    let residency = BlobResidency::new();
     let shown = dashbuf::prefetch::first_root(&document).expect("the document has a root");
     let prefetch = dashbuf::prefetch::assets_of_root(&document, shown);
     assert_eq!(prefetch.len(), 1, "the small document shows one asset");

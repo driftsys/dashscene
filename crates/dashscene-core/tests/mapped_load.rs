@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use dashbuf::map::MappedFile;
 use dashbuf::prefix::{self, Envelope, MIN_PREFIX, PrefixError};
-use dashbuf::residency::Residency;
+use dashbuf::residency::BlobResidency;
 use dashpaint::ImageFormat;
 use dashscene_core::{Arena, MappedPayload, Region, load_document, load_document_mapped};
 
@@ -65,7 +65,7 @@ fn plan_over(file: &[u8]) -> (dashbuf::Document<'_>, Vec<MappedPayload>) {
     let hot = &file[..envelope.hot_len() as usize];
     let plan = prefix::plan(&envelope, hot).expect("the document plans");
     // The verification step, as a host runs it. Since story #597 that is
-    // `Residency::touch`, one payload at a time, and **not** `Plan::bind`,
+    // `BlobResidency::touch`, one payload at a time, and **not** `Plan::bind`,
     // which now checks the count and nothing else
     // (`docs/decisions/verification-moves-from-open-to-touch.md` D7). Both run
     // here for the same reason a host runs both: the touch proves each payload,
@@ -77,7 +77,7 @@ fn plan_over(file: &[u8]) -> (dashbuf::Document<'_>, Vec<MappedPayload>) {
     // do that: `bind` alone no longer refuses a corrupted payload, and
     // `a_corrupted_payload_is_refused_before_the_loader_sees_it` is what fails if
     // this is ever reduced to it again.
-    let residency = Residency::new();
+    let residency = BlobResidency::new();
     let resident: Vec<&[u8]> = plan
         .wanted()
         .iter()
@@ -301,7 +301,7 @@ fn a_baked_mapped_row_whose_range_is_the_wrong_length_is_refused() {
 /// loader.
 ///
 /// The teeth behind `plan_over`'s verification step. Story #597 moved that check
-/// out of `Plan::bind` and into `Residency::touch`, and `bind` no longer refuses
+/// out of `Plan::bind` and into `BlobResidency::touch`, and `bind` no longer refuses
 /// a corrupted payload — so without this test, reducing `plan_over` back to
 /// `bind` alone would leave every test in this file passing while the mapped
 /// load path hashed nothing at all. It is the assertion that says the helper's
@@ -321,7 +321,7 @@ fn a_corrupted_payload_is_refused_before_the_loader_sees_it() {
     let mut corrupted = file[want.range.start as usize..want.range.end as usize].to_vec();
     corrupted[0] ^= 0xFF;
 
-    let residency = Residency::new();
+    let residency = BlobResidency::new();
     let error = residency
         .touch(want, &corrupted)
         .expect_err("a corrupted payload is refused");
@@ -340,7 +340,7 @@ fn a_corrupted_payload_is_refused_before_the_loader_sees_it() {
 /// And the helper every test above runs through is the thing that refuses it.
 ///
 /// [`a_corrupted_payload_is_refused_before_the_loader_sees_it`] proves
-/// `Residency::touch` refuses a bad payload; it does not prove `plan_over` calls
+/// `BlobResidency::touch` refuses a bad payload; it does not prove `plan_over` calls
 /// it. This does, and it is what fails if the touch is ever taken back out of
 /// the helper — which a mutation pass showed nothing else in this file catches,
 /// because every committed fixture's payloads are valid, so a helper that

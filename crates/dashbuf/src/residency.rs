@@ -23,7 +23,7 @@
 //!
 //! # It takes the bytes rather than holding the region
 //!
-//! D3 describes a `Residency` that holds the region and slices it. The browser
+//! D3 describes a `BlobResidency` that holds the region and slices it. The browser
 //! host has no region to hold: a payload there is its own HTTP range response,
 //! in its own buffer, and D7 says that host "fetches a range and touches it".
 //! One method taking `(want, bytes)` therefore serves both hosts identically,
@@ -43,7 +43,7 @@ use crate::cost::LoadCost;
 /// A payload's bytes are not the payload the file names.
 ///
 /// Its own type rather than a variant on an existing error, because it is the
-/// only way [`Residency::touch`] can fail: an error a function cannot return
+/// only way [`BlobResidency::touch`] can fail: an error a function cannot return
 /// does not belong in its error type, which is the reasoning
 /// [`crate::prefix::BindError`] already records.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,11 +78,11 @@ impl std::error::Error for PayloadMismatch {}
 /// verification and readiness are per-blob, and a shared page faulting early is
 /// free prefetch."
 #[derive(Debug, Default)]
-pub struct Residency {
+pub struct BlobResidency {
     ready: Mutex<HashSet<usize>>,
 }
 
-impl Residency {
+impl BlobResidency {
     /// A residency in which nothing is ready yet.
     pub fn new() -> Self {
         Self::default()
@@ -117,7 +117,7 @@ impl Residency {
         self.touch_with_cost(want, bytes, &LoadCost::new())
     }
 
-    /// [`Residency::touch`], recording into `cost` the payload bytes it read.
+    /// [`BlobResidency::touch`], recording into `cost` the payload bytes it read.
     ///
     /// The startup-scaling criterion's one recording site on the read side
     /// (`docs/decisions/verification-moves-from-open-to-touch.md` D8): what it
@@ -167,7 +167,7 @@ impl Residency {
 
 #[cfg(test)]
 mod tests {
-    use super::{Residency, Wanted};
+    use super::{BlobResidency, Wanted};
     use crate::cost::LoadCost;
 
     /// A `Wanted` for `payload`, as a section table would record it.
@@ -188,7 +188,7 @@ mod tests {
     fn touching_a_payload_hashes_it_counts_it_and_marks_it_ready() {
         let payload = b"the shown root's picture";
         let want = want(3, payload);
-        let residency = Residency::new();
+        let residency = BlobResidency::new();
         let cost = LoadCost::new();
 
         assert!(!residency.is_ready(3), "nothing is ready before a touch");
@@ -212,7 +212,7 @@ mod tests {
     #[test]
     fn bytes_that_are_not_the_payload_are_refused_and_leave_the_blob_unready() {
         let want = want(3, b"the shown root's picture");
-        let residency = Residency::new();
+        let residency = BlobResidency::new();
 
         let error = residency
             .touch(&want, b"the shown root's picturE")
@@ -238,7 +238,7 @@ mod tests {
     fn a_second_touch_of_a_ready_blob_is_proved_again() {
         let payload = b"the shown root's picture";
         let want = want(3, payload);
-        let residency = Residency::new();
+        let residency = BlobResidency::new();
         let cost = LoadCost::new();
 
         residency
@@ -269,7 +269,7 @@ mod tests {
     fn readiness_is_per_blob_section() {
         let shown = want(3, b"the shown root's picture");
         let cold = want(9, b"a frame nobody is looking at");
-        let residency = Residency::new();
+        let residency = BlobResidency::new();
 
         residency
             .touch(&shown, b"the shown root's picture")

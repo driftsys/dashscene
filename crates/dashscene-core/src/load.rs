@@ -36,7 +36,7 @@
 //! let (doc, wanted) = dashbuf::open(file_bytes)?;   // reads no payload byte
 //! let report = dashscene_validator::validate_document(&doc);
 //! if report.has_errors() { /* refuse; never load */ }
-//! let residency = dashbuf::residency::Residency::new();
+//! let residency = dashbuf::residency::BlobResidency::new();
 //! for index in dashbuf::prefetch::assets_of_root(&doc, shown_root) {
 //!     let want = &wanted[index as usize];        // touch + hash + mark ready
 //!     residency.touch(want, &file_bytes[want.range.start as usize..want.range.end as usize])?;
@@ -165,7 +165,7 @@ pub fn load_document_bound(
 /// payload's bytes whether they are read to hash them or read to copy them,
 /// because each alone makes cold start scale with file size and a counter
 /// seeing only one cannot falsify the other.
-/// `dashbuf::residency::Residency::touch_with_cost` records the hash, at the
+/// `dashbuf::residency::BlobResidency::touch_with_cost` records the hash, at the
 /// moment a payload is made resident; this records the copy into [`ImageAsset`],
 /// one payload at a time.
 ///
