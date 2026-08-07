@@ -555,8 +555,12 @@ pub struct ImageRef<'a> {
 /// below, and so does anything else that can hand out its bytes.
 ///
 /// `Send + Sync` is required rather than convenient: the arena holds
-/// `Arc<ImageTable>` and story #597 puts a loader thread behind it, so a table
-/// crosses threads by construction (D4).
+/// `Arc<ImageTable>`, so a table crosses threads by construction (D4). Story
+/// (#597) did not add the loader thread this originally anticipated — the hosts
+/// build their scene before the frame loop starts, so the faults are already
+/// off the frame thread — but `dashbuf::residency::Residency` is `Send + Sync`
+/// for the same reason, and a thread is the next step rather than a different
+/// design.
 pub trait Region: Send + Sync {
     /// The whole region. An [`ImageEntry`]'s `offset` is an index into this.
     fn bytes(&self) -> &[u8];

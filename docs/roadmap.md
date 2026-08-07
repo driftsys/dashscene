@@ -1021,15 +1021,47 @@ and draws nothing.
 Depends on: v0.13. Independent of v0.14, though the showcase is the obvious
 first consumer of a second painter.
 
-### v0.16 — loading performance — open
+### v0.16 — loading performance — closed
 
 **Epic #594.** Closes no `E` criterion, but makes **R5** falsifiable for the
 first time — the requirement, not an exit criterion, under guardrail G-20.
+Closed 2026-08-07, all five stories done. Design capture:
+`docs/archive/2026-08-05-v016-DRIVER-PROMPT.md`.
 
-Delivers: R5 made falsifiable. The file is mapped rather than read, assets stop
-being copied out of the mapping, blob residency is prefetched, and a benchmark
-asserts that cold-start cost tracks the shown root rather than the document
-size.
+Delivers: R5 made falsifiable, and met. The file is mapped rather than read,
+assets are not copied out of the mapping, blob verification happens at the touch
+that makes a payload resident, the prefetch is the shown root's assets and
+nothing else, and a benchmark asserts that cold-start cost tracks the shown root
+rather than the document size.
+
+**The measurement: 1.00x**, against 9.81x at the pre-slice load path. Showing
+one root costs 197 387 B out of a one-frame document and out of a
+sixty-five-frame one carrying 1 935 927 B of assets (macos aarch64,
+`goldens/tooling/tests/startup_scaling.rs`). Guardrails G-19 and G-20 are both
+settled against it, and the criterion is an ordinary `regression` test, so a
+regression in R5 fails a build.
+
+**Zero goldens moved**, across all five stories — checked per file after every
+tier, and the epic's definition of done required it because the boundary-B
+ownership change in story #596 was the one that could have moved a pixel.
+
+**Two things came out of the slice rather than into it.** `madvise` was dropped
+(#767): the criterion counts bytes and asserts on no wall clock, and the
+benchmark writes the documents it reads, so a timing-only hint is invisible to
+it by construction — the same fact that had already ruled out `mincore(2)` as an
+instrument. And a mapped load still binds an image-table row per asset entry, so
+a many-frame document's other frames are ranges nothing has verified (#779);
+drawing a not-ready payload needs the placeholder field that has no producer,
+which is the v1 item below.
+
+**What mapping alone bought was nothing, and that is the slice's lesson.** The
+first story (#595) mapped the file and the criterion did not move, because the reader still
+hashed every payload an entry named. The ratio changed only when reading was
+made proportional to what is shown. R5's own parenthetical, "mmap + section
+discipline", names the necessary half rather than the sufficient one — recorded
+under the criterion in
+[`specification/05-qualification.md`](specification/05-qualification.md), where
+the requirement's proof lives.
 
 **R5 names `mmap` in the requirement text itself** — "cold-start cost
 proportional to what is shown, not to file size (mmap + section discipline)" —

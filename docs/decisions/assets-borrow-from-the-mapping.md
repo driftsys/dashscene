@@ -1,8 +1,9 @@
 # Assets borrow from the mapping through an owner handle
 
-    status   accepted (2026-08-05), before implementation — nothing here is
-             built. Story #596 builds it, and story #599 records the as-built
-             result against this record rather than replacing it.
+    status   accepted (2026-08-05); **AS-BUILT 2026-08-06 (v0.16, story #596,
+             PR #762)** — every decision below shipped as written, and the
+             as-built section at the end records the two things the record did
+             not anticipate.
     scope    `dashpaint`'s `ImageTable` and the asset half of
              `dashscene-core`'s load path. Boundary B's `Painter` trait is
              deliberately unchanged, and that is the point of the shape
@@ -80,8 +81,10 @@ header has no way to express one — which would quietly close the non-Rust
 backend path G2 requires, the same failure story #600 exists to make loud.
 
 **D4 — the handle is `Send + Sync`.** Not decorative: the arena holds
-`Arc<ImageTable>` and story #597 puts a loader thread behind it, so the table
-crosses threads by construction.
+`Arc<ImageTable>`, so the table crosses threads by construction. (Story #597
+did not add the loader thread this sentence anticipated — see its own record's
+D6 — but `dashbuf::residency::Residency` is `Send + Sync` for the same reason,
+and a thread is the next step rather than a different design.)
 
 **D5 — `ImageAsset` stays the owning producer type, unchanged.** A producer
 that has bytes in hand and wants a table writes what it means. The mapped arm
@@ -147,3 +150,37 @@ exists to make that claim testable.
 **Widen `ImageEntry` with a per-row base so a table can mix arms.** Refused
 under D1: it widens the one row the FFI gate pins, to serve a case nothing in
 v0 has.
+
+## As built (story #596, 2026-08-06, PR #762)
+
+Every decision above shipped as written. `dashpaint::Region` and
+`Pool::{Owned, Mapped}` are the handle and the two-armed pool;
+`dashscene_core::load_document_mapped` takes ranges; `ImageEntry` keeps its
+twenty bytes; the `Painter` trait and every boundary-B type are untouched, which
+is what D3 was for.
+
+Two things the record did not anticipate.
+
+**`PartialEq` had to change, and D8 does not cover it.** The derived
+implementation compared **pools**, and a mapped pool is a whole file — so two
+tables holding the same payloads at necessarily different offsets compared
+unequal, and an owned table could never equal a mapped one. It now compares rows
+plus payload bytes, with `offset` deliberately excluded. Removing the byte
+comparison is killed by an existing `dashscene-skia` test, so the narrowing is
+held by something other than this note. Debt #752 carries the frame cache that
+still runs that comparison every frame.
+
+**The mapped path turns loud failures silent, and needed two replacements.** It
+reads no payload header by design, so the owning path's header parse — the
+guard from issue (#640), which catches a KTX2 arriving where the entry says
+`Png` — is simply gone. Two guards replace it: `demo` refuses a file that binds through a
+derivation manifest, because a host with no quality profile cannot name the rung
+it would be binding; and `ImageTable::push_mapped` asserts a baked row's length
+equals `payload_len(w, h)`. The review found the second. The author's own test
+had staged a PNG's byte range tagged `Astc4x4Unorm` and passed.
+
+**What story #597 changed here afterwards.** Nothing in this record, and that is
+worth saying: the residency work moved _when_ a payload is proven and left the
+ownership shape alone. What it added is that the image table may now hold rows
+whose payloads were never made resident — a many-frame document's other frames —
+which is debt #779 rather than a change to D1.

@@ -1,8 +1,11 @@
 # Blob verification moves off the two readers and onto the touch that makes a payload resident
 
-    status   accepted (2026-08-06), before implementation — nothing here is
-             built. Story #597 builds it; story #599 records the as-built
-             result against this record rather than replacing it.
+    status   accepted (2026-08-06); **AS-BUILT 2026-08-07 (v0.16, story #597,
+             PR #778)** — the shape shipped, and **three of its clauses did
+             not survive contact**. The as-built section at the end records
+             each, with what the code does instead and why. D1's return type,
+             D3's ownership of the region, and D3's second-touch fast path are
+             the three.
              **Corrected the same day**: the first version named only
              `dashbuf::open` and missed that `prefix::Plan::bind` is the
              second eager verification, and the one that runs over a mapping
@@ -42,10 +45,14 @@ so the distinction changes the wording rather than the conclusion — but "the
 whole file" is a claim the code does not make.
 
 `dashbuf::prefix::Plan::bind` hashes every fetched payload against the section
-table, one at a time. **Since story #596 that is the one that runs over a
-mapping.** The native mapped host reads the envelope with `prefix`, plans, and
-calls `bind` for its check; `open` is left holding the embedded golden, which is
-a `&'static [u8]` with no pages to fault. So the function this record was
+table, one at a time. **At the time this was written — after story #596 and
+before D1 was built — that was the one that ran over a mapping.** The native
+mapped host read the envelope with `prefix`, planned, and called `bind` for its
+check; `open` was left holding the embedded golden, a `&'static [u8]` with no
+pages to fault. D1 is what reversed that: `open` returns ranges now, which was
+the only reason the host had moved off it, so the native host reads through
+`open` again and `prefix` is the browser's reader. The as-built section records
+it. So the function this record was
 written about is, on the only path where a mapping exists, no longer the
 function doing the damage.
 
@@ -259,3 +266,79 @@ story #597's second stated property, and because
 `startup-scaling-is-measured-by-a-counter.md` D3 puts the criterion's boundary
 at "a committed arena with the shown root's assets resident" — a benchmark that
 ended before the assets were resident would measure zero and prove nothing.
+
+## As built (story #597, 2026-08-07, PR #778)
+
+The shape shipped: `open` reads no payload, a `Residency` proves one, the
+prefetch is the shown root's assets, `Plan::bind` keeps only its count check,
+and the counter records at the touch. The criterion reached **1.00x** once
+story #598's re-run measured the mapped path — 197 387 B out of a one-frame
+document and out of a sixty-five-frame one, on macos aarch64.
+
+Three clauses did not survive contact with the code, and each is recorded here
+rather than quietly diverged from.
+
+### D1 returns `Wanted`, not `Range<u64>`
+
+D1 specified `Result<(Document<'_>, Vec<Range<u64>>), OpenError>`. It returns
+`Vec<Wanted>` — the `{section, range, hash}` triple `prefix::Plan::wanted`
+already produced, promoted to the crate root and now returned by both readers.
+
+A bare range cannot carry the two things its consumers need. `Residency` has to
+know what a range must **hash to**, and a bare range does not say; deriving it
+would mean re-parsing the container the reader just parsed. And the guard in `demo` from issue
+(#640) — which refuses a file binding a derived payload, because this host has
+no profile to name a rung with — compares the resident hash against the entry's,
+and had nothing to compare.
+
+D1's guarantee is unchanged and slightly stronger: a `Wanted` is not bytes, so
+a caller still cannot hand one to a painter. What changed is that the two
+readers now answer in **one type**, which is what D7 wanted for the proving
+step and did not ask for in the reading step.
+
+### D3 takes the bytes rather than holding the region
+
+D3 described a `Residency` that "holds the region and the hashes the section
+table declares", with `touch(range)` slicing the region itself. It holds
+neither: `touch(want, bytes)` is handed the bytes the caller read.
+
+D7 is why. The browser host has no region to hold — a payload there is its own
+HTTP range response, in its own buffer — and D7 says that host "fetches a range
+and touches it". A region-holding residency would have needed a second entry
+point for the host that has no region, and two entry points for one check is
+the shape D7 exists to remove. The proof is the hash either way: bytes that do
+not hash to what the section table records are refused whatever slice they came
+out of.
+
+### D3's second touch hashes again, and the fast path was a hole
+
+D3 said "a second touch of a ready range returns immediately and does not hash
+again". That is sound **only** for a residency that holds the region, because
+only such a residency can return the bytes it proved. This one is handed them,
+so returning early meant returning bytes nothing had checked — and a `Wanted`
+list is one per asset entry and is not deduplicated, so two entries naming one
+payload really do touch one blob twice. In the browser host those are two
+separate range responses, which need not carry the same bytes.
+
+Found by the review, not by a test. Every touch hashes now. It costs a second
+BLAKE3 pass over a payload some document names twice, and no second page fault
+— the caller has already read the bytes by the time it calls. Readiness stays
+per blob, which is the part of D3 the format's packing rule actually rests on.
+
+### What the counter still cannot see
+
+`load_document_mapped` takes no `LoadCost`, because it reads no payload byte.
+So a regression that made the **replay** copy a payload would not move the
+number the criterion asserts on. That property is held by an address rather
+than a count, in `crates/dashscene-core/tests/mapped_load.rs`: the bytes a
+painter resolves out of the arena must be pointers into the mapping, at the
+offset the file declares. A copy has equal bytes, so only the address can tell.
+Two instruments, two claims, and neither covers the other.
+
+### One thing the record got right that was worth the argument
+
+D2 kept the eager reader as `open_verified` rather than putting a flag on
+`open`. Fifty-four call sites moved, nearly all of them tests, and the rename
+is most of the story's diff — but the type system now separates the verified
+answer from the unverified one, and `dashc`'s CLI, which checks files rather
+than drawing them, reads as what it is.

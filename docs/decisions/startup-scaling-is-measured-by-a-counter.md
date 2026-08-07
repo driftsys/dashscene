@@ -1,8 +1,11 @@
 # Startup scaling is measured by a byte counter, not by a stopwatch
 
-    status   accepted (2026-08-05), before implementation — nothing here is
-             built. Story #598 builds it, and story #599 marks the
-             qualification criterion measured against the result.
+    status   accepted (2026-08-05); **AS-BUILT 2026-08-07 (v0.16, story #598,
+             PRs #759 and #786)** — the counter, both documents and the
+             criterion shipped as written. Measured 9.81x against the pre-slice
+             load path and **1.00x** against the one v0.16 left; the
+             qualification criterion is marked measured against that. The
+             as-built section at the end records what changed under D2.
     scope    the startup-scaling benchmark that makes R5 falsifiable under
              guardrail G-20, and the two documents it measures.
 
@@ -111,3 +114,47 @@ R7 already gives determinism without the file.
 the real producer path. Refused because it adds a large JSON fixture to git and
 couples a loading benchmark to the importer's vocabulary, so a change to Figma
 lowering could move a number that is supposed to be about loading.
+
+## As built (story #598, PRs #759 and #786)
+
+The counter, the two documents and the criterion shipped as written. What the
+measurement says, on macos aarch64:
+
+| load path                       | small root | many-frame  | ratio     |
+| ------------------------------- | ---------- | ----------- | --------- |
+| pre-slice (PR #759, 2026-08-05) | 394 774 B  | 3 871 854 B | **9.81x** |
+| as of v0.16's close (PR #786)   | 197 387 B  | 197 387 B   | **1.00x** |
+
+The many-frame document carries 1 935 927 B of asset payloads against the small
+one's 197 387 B, and costs the same to show the same root. D7 asked for the
+failure to be demonstrated rather than asserted, and it was: the first row is a
+run, not a prediction.
+
+**D2's two recording sites are not the two this record named.** It named
+`dashbuf::open_with_cost` for the read and
+`dashscene_core::load_document_bound_with_cost` for the copy. The read site is
+`dashbuf::residency::Residency::touch_with_cost` — story #597 moved the hash to
+the touch that makes a payload resident
+(`verification-moves-from-open-to-touch.md` D8), and the eager reader's
+instrumented sibling was deleted once nothing measured through it. The copy site
+is unchanged. D2's _reasoning_ is untouched: each read alone makes cold start
+scale with file size, so a counter seeing only one cannot falsify the other, and
+`each_recording_site_counts_its_own_read_and_no_other` pins them apart because
+the criterion cannot.
+
+**D3's boundary held, and the benchmark had to move to stay inside it.** It
+measured `open` plus the owning loader over bytes in memory, which is a path no
+host takes; the owning path also cannot be bounded by what is shown, since
+`load_document` copies every payload into an owned `ImageAsset`. The re-run
+writes each document to a file, maps it, and runs the native host's sequence.
+That is D9 of the verification record, and it is the difference between
+measuring a host and measuring a benchmark.
+
+**What the criterion is held out of, and why it is no longer a profile.** It ran
+in `[profile.scaling]` while it was knowingly red, because a red test cannot sit
+in a gate. It is an ordinary `regression` test now
+(`docs/decisions/test-tiers.md`). One capability had to be replaced rather than
+deleted with the profile: the `just scaling` recipe carried
+`--success-output=immediate`, and without it a passing run prints nothing —
+which would have deleted the record D6 asks for. CI re-runs the binary with
+`--nocapture`, beside the render oracle and the calibrated budgets.

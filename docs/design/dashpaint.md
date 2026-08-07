@@ -229,6 +229,31 @@ All types and the trait live in `crates/dashpaint/src/lib.rs`:
   `ImageFill.image`; same push/get/resolve contract as
   `PaintTable`. See
   `docs/decisions/image-assets-cross-boundary-b.md` (story #14).
+
+  **Its pool is owned or mapped, and never both** (v0.16, story #596,
+  `docs/decisions/assets-borrow-from-the-mapping.md`). `Pool::Owned` holds
+  the bytes, as it always did; `Pool::Mapped` holds an `Arc<dyn Region>` and
+  nothing else. Each row's offset and length live in its `ImageEntry`, in both
+  arms alike, so a payload a host mapped is never copied on its way to a
+  painter. `push` and `push_baked` fill the first, `push_mapped` the
+  second, and a table that already holds rows of one kind refuses the other.
+
+  **`resolve` is unchanged and so is the `Painter` trait**, which is the
+  point of the shape: no boundary-B type gained a lifetime, and a painter
+  cannot tell the two pools apart. `Region` is a one-method trait — `Send +
+  Sync`, returning the whole region's bytes — with a blanket implementation
+  for every `AsRef<[u8]> + Send + Sync`, which a mapping satisfies and so does
+  a `Vec`. Nothing here depends on `mmap` or on any crate outside this one.
+
+  Two consequences worth knowing. `PartialEq` compares rows plus payload
+  **bytes** rather than the pool, because a mapped pool is a whole file and
+  the same payload sits at different offsets in an owned table — the row's
+  `offset` is deliberately excluded. And a mapped row's bytes are the file's
+  own pages, so a host binding a **derived** payload must say so
+  (`MappedPayload::derived`): the mapped path parses no payload header, so
+  nothing downstream would catch a KTX2 arriving where the entry says `Png`
+  (issue #640). `push_mapped` asserts a baked row's length against its
+  declared extent for the same reason.
 - `Mat23` — row-major 2×3 affine; the image crop transform's shape.
 - `ClipBox` — `#[repr(C)]`, one clipping ancestor's resolved box:
   `x`, `y`, `w`, `h: f32` plus `corners: CornerRadii` (all-zero radii =
