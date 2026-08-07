@@ -11,10 +11,10 @@ project's convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports six files
+## Why the WIP gate currently reports nine files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-six and exits non-zero. All six are deliberate, accepted exceptions rather
+nine and exits non-zero. All nine are deliberate, accepted exceptions rather
 than ungardened debt, and they are recorded here so the gate's result is
 explained rather than merely tolerated.
 
@@ -55,7 +55,7 @@ went stale because a commit that removes a file from this directory has to edit
 this file in the same commit, and that is not enforced by anything. **Archiving
 a capture and updating this ledger are one change, not two.**
 
-**Five are design captures**, described below. The sixth is a driver prompt,
+**Eight are design captures**, described below. The ninth is a driver prompt,
 `2026-08-05-v016-DRIVER-PROMPT.md`, the brief that opens v0.16. Driver prompts
 — the brief a session is handed to carry out a named piece of work — are
 transient by construction, spent the moment their work lands, and the
@@ -63,6 +63,27 @@ convention is to archive them verbatim rather than garden them into records.
 Thirteen are already in `docs/archive/`: twelve `*-DRIVER-PROMPT.md` plus the
 one `*-SPIKE.md`, which is counted there because it was archived verbatim
 beside the prompt that carried out its design rather than gardened.
+
+## The three animation captures, added 2026-08-07
+
+They come from one design discussion and are split by concern rather than by
+slice, because their dependency order is not their subject order:
+`2026-08-07-motion-in-the-document.md` blocks
+`2026-08-07-animated-content-import.md`, and
+`2026-08-07-asset-sourcing-and-residency.md` is independent of both.
+
+All three are forward-looking — each says "Nothing here is implemented" in its
+own `status` line — so the same rule that holds the others here holds them:
+gardening runs after tests are green by definition, and there is no as-built
+code to reconcile them against.
+
+Two things about them are worth stating here rather than only in the files.
+**They extend `docs/technotes/runtime-content.md` rather than competing with
+it**: that note already fixed the three-bucket triage and chose ThorVG, and the
+import capture records only what a later session found on top of it. And **each
+claim in them names where it was checked** — a five-agent review of the branch
+that added them found eight claims that were not, including a variant count
+derived twice with the same flawed command, so the repeat read as confirmation.
 
 **The v0.16 prompt leaves when epic #594 closes**, archived verbatim to
 `docs/archive/` beside those thirteen, on the same rule every prompt before it
@@ -268,6 +289,9 @@ it. What was actually true is in
 | `2026-07-28-photorealistic-3d-content.md`              | the remaining two questions are ruled on. Partly gardened 2026-08-05: the profile bands (#455), the ladder's fine end and the painter's working colour space are answered; the memory budget (#462) and whether ASTC remains the right family are open, both in v1. It records an input rather than a plan — photorealistic renders are target product content, and every number in the asset pipeline was chosen against content that is not representative of it                                                                                                                  |
 | `2026-07-27-indic-script-support.md`                   | Indic support is designed: the closure becomes text-driven and the unformed-cluster fallback is built. Its decided half — coverage is declared at build time, dynamic generation is a deferred painter capability — is already gardened into `docs/decisions/glyph-coverage-is-declared-at-build-time.md`                                                                                                                                                                                                                                                                           |
 | `2026-07-27-glyph-coverage-sets-and-text-residency.md` | glyph-atlas residency is designed: the unit of residency is chosen and the runtime-supplied-string case is answered. Its decided half — that only raster is block-compressed — is already gardened into `docs/decisions/compress-raster-only.md`                                                                                                                                                                                                                                                                                                                                    |
+| `2026-08-07-motion-in-the-document.md`                 | the vocabulary is **built**, not when it is decided. It holds three gaps — a rotation channel, motion rows in `dashbuf`, and loop tracks — and the rejected wasm-expression alternative. Empties when a document can carry an animation                                                                                                                                                                                                                                                                                                                                             |
+| `2026-08-07-animated-content-import.md`                | an animated-content importer is built. Extends `docs/technotes/runtime-content.md` §4-§6 rather than replacing it. Its ThorVG half may garden separately and later, or never — the standing decision already covers it and this file only records two notes against it                                                                                                                                                                                                                                                                                                              |
+| `2026-08-07-asset-sourcing-and-residency.md`           | side-loading is built. Blocked on the schema's own deliberately-absent flavor/locator bit, so it cannot empty before that field has a producer and a consumer — the same condition the `AssetEntry` comment already states for itself                                                                                                                                                                                                                                                                                                                                               |
 
 Each row's entry is removed when its capture is gardened.
 
