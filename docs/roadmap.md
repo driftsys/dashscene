@@ -1021,6 +1021,19 @@ and draws nothing.
 Depends on: v0.13. Independent of v0.14, though the showcase is the obvious
 first consumer of a second painter.
 
+**Its phase-end revision placed the deferred issues and opened v0.17**, which is
+what AGENTS.md puts at an epic's close: issues filed deliberately unscheduled get
+a milestone chosen there. Both of the issues filed for it — the backend
+implementation guide (#727) and the question of whether `dashscene-web` becomes
+the web integration crate (#741) — carry the v0.17 milestone, and the v0.17
+entry below was written by that revision.
+
+What it did not do, and what is therefore owed by v0.17's **opening** rather than
+by this slice's close, is that slice's epic and story breakdown: v0.17 holds
+three issues and no epic, and two of the three are open questions rather than
+work. Recorded here at the v0.16 close (2026-08-07), because "the v0.15 revision
+is still owed" had been carried forward for two slices and was not accurate.
+
 ### v0.16 — loading performance — closed
 
 **Epic #594.** Closes no `E` criterion, but makes **R5** falsifiable for the
@@ -1199,7 +1212,7 @@ path the `.dsb` half of it wraps.
 slice are unsettled, and it is recorded that way rather than presented as
 planned: v0.17 is described above as larger than one slice and expected to
 split, which may renumber this. It is confirmed, renumbered or re-scoped at the
-**owed v0.15/v0.16 phase-end revision**, which is where AGENTS.md puts the
+**owed v0.16 phase-end revision**, which is where AGENTS.md puts the
 placing of issues filed deliberately unscheduled.
 
 Nothing here should be started ahead of that revision without a decision saying

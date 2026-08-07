@@ -29,7 +29,7 @@
 //!   introduces a compiler-inserted gap therefore fails to build, and a
 //!   reordering that does not still cannot silently move a field in the file
 //!   while both directions agree with each other.
-//! - **Deterministic bytes.** [`write`] is a pure function of its input: fixed
+//! - **Deterministic bytes.** [`write()`] is a pure function of its input: fixed
 //!   field order, zero-filled alignment gaps, and content hashes that depend on
 //!   content alone. R7 ("same input, byte-identical document") applies to the
 //!   envelope exactly as it applies to the flatbuffer inside it.
@@ -146,7 +146,7 @@ pub const FLAVOR_ASSET: u16 = 1;
 ///
 /// `#[repr(C)]` pins the layout and the assertions below pin every offset to
 /// the number in the format doc. The struct is never a transmute target —
-/// [`Header::decode`] and [`Header::encode`] are the only ways bytes become
+/// `Header::decode` and `Header::encode` are the only ways bytes become
 /// fields and back — but it *is* the layout: both directions take their byte
 /// ranges from `offset_of!` on this struct, so the assertions are load-bearing
 /// rather than decorative.
@@ -465,7 +465,7 @@ pub(crate) fn check_table(
 // Writing
 // ---------------------------------------------------------------------
 
-/// One section handed to [`write`].
+/// One section handed to [`write()`].
 #[derive(Debug, Clone, Copy)]
 pub struct Section<'a> {
     pub kind: SectionKind,

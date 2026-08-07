@@ -30,7 +30,7 @@
 //!
 //! # Why the canonical decode is Skia's
 //!
-//! [`derive`] decodes each canonical payload with the reference painter's own
+//! [`crate::profile::derive`] decodes each canonical payload with the reference painter's own
 //! codec, not with the `png` crate that `dashpack`'s band tests use. The two
 //! arms of the comparison have to start from one decode: RAW paints the
 //! canonical bytes through Skia, so the packer must measure and encode the
@@ -145,7 +145,7 @@ pub fn derive(dsb: &[u8], profile: Profile) -> Result<Vec<u8>, DeriveError> {
 
 /// Renders `dsb` under `profile` and returns the PNG.
 ///
-/// [`derive`] then [`crate::render::render_dsb`]. Under RAW this is exactly
+/// [`crate::profile::derive`] then [`crate::render::render_dsb`]. Under RAW this is exactly
 /// `render_dsb` on the input, which is what makes RAW the reference arm of the
 /// triptych rather than a fourth thing being compared.
 pub fn render_under(dsb: &[u8], profile: Profile) -> Result<Vec<u8>, DeriveError> {

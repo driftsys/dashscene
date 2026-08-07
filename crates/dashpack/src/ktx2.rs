@@ -262,7 +262,7 @@ pub enum Format {
         /// How the stored channel values are to be read back.
         color: ColorSpace,
     },
-    /// ASTC LDR at one of the footprints in [`ASTC_FOOTPRINTS`], 16 bytes per
+    /// ASTC LDR at one of the footprints in `ASTC_FOOTPRINTS`, 16 bytes per
     /// block, blocks in raster order — what [`astc::encode`] returns.
     Astc {
         /// The block footprint the payload was encoded at.
@@ -316,7 +316,7 @@ impl Format {
     }
 
     /// The format a `VkFormat` value names, or `None` for any value outside the
-    /// narrow set [`write`] emits.
+    /// narrow set [`write()`] emits.
     ///
     /// The exact inverse of [`Format::vk_format`], and the reason the preview
     /// path can recover a payload's block footprint and colour space from the
@@ -360,7 +360,7 @@ impl Format {
     ///
     /// The footprint is checked first, so this never divides by a zero block
     /// dimension. The block-grid arithmetic itself is
-    /// [`astc::block_grid_bytes`], shared with [`BlockSize::payload_len`]
+    /// `astc::block_grid_bytes`, shared with [`BlockSize::payload_len`]
     /// (debt #452) — this format's own part is picking the texel block an
     /// uncompressed or an ASTC payload stores.
     pub fn payload_len(self, width: u32, height: u32) -> Result<usize, Ktx2Error> {

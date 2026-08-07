@@ -107,7 +107,7 @@ pub mod rule {
     /// (`dashbuf.fbs`, `TextStyle.size`). Neither the loader nor the
     /// typesetter defaults or clamps it, so a NaN, negative, or infinite
     /// size loads clean and reaches the arena verbatim (issue #557). NaN
-    /// specifically also defeats [`crate::TEXT_STYLE_BELOW_MSDF_FLOOR`]:
+    /// specifically also defeats [`crate::rule::TEXT_STYLE_BELOW_MSDF_FLOOR`]:
     /// that check compares the reached size against
     /// [`crate::MSDF_MIN_PX_PER_EM`] with `<`, and a NaN comparison is
     /// `false` on both sides, so a NaN size passed neither check before

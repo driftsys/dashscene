@@ -18,7 +18,7 @@
 //! quad *instead of* the node's box, substituted in the vertex stage.
 //!
 //! An instance whose kind this shader does not implement draws nothing. It does
-//! not fall through to a colour: [`InstanceKind`](crate::InstanceKind) carries
+//! not fall through to a colour: [`InstanceKind`] carries
 //! the sub-kind, so a shader that reads the discriminant alone cannot resolve a
 //! shadow against the solid-fill table — the collision that made story #580
 //! paint an inner shadow from `solids[shadow_row]` is unrepresentable now.
@@ -41,7 +41,7 @@
 //! buffers, a texture, a view and a bind group **per frame**, because its only
 //! caller rendered one frame and then dropped the renderer. It now holds them
 //! across frames, grows them only when a frame outgrows one, and uploads only
-//! the byte ranges the dirty rects name — see [`Frame::upload_instances`] for
+//! the byte ranges the dirty rects name — see `Frame::upload_instances` for
 //! the condition under which a partial upload is sound, and for the check that
 //! fires when it is not.
 //!
@@ -1458,7 +1458,7 @@ impl Renderer {
     /// Separate from `render` rather than a parameter on it, because every
     /// caller but the incremental-upload test wants the whole frame written and
     /// an `Option` at each of those call sites would say nothing. Passing `None`
-    /// is always correct; see [`Frame::upload_instances`] for what passing the
+    /// is always correct; see `Frame::upload_instances` for what passing the
     /// set buys and for what it must not be trusted for.
     ///
     /// # Errors

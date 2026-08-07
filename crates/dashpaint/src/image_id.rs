@@ -52,10 +52,10 @@
 //! and are pinned to stay that way, because two of the three containers have
 //! a header-level extent a real decoder can legally disagree with:
 //!
-//! - **GIF** — [`identify_gif`] reads the logical screen descriptor. A
+//! - **GIF** — `identify_gif` reads the logical screen descriptor. A
 //!   single frame smaller than its logical screen is legal GIF, and a
 //!   decoder reports the frame's own image descriptor, not the screen.
-//! - **JPEG** — [`identify_jpeg`] reads the SOF frame header. An EXIF
+//! - **JPEG** — `identify_jpeg` reads the SOF frame header. An EXIF
 //!   `Orientation` of 5-8 transposes width and height on display, and a
 //!   decoder that applies it reports the transposed pair; this module never
 //!   reads EXIF and always reports the stored SOF pair.

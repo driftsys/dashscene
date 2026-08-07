@@ -56,7 +56,7 @@
 //! re-exposure after occlusion. The fifth, a lost surface or recreated
 //! swapchain, cannot arise behind `SkiaPresenter`: `softbuffer` hands back a
 //! fresh buffer on every `buffer_mut()` and has no lost-surface condition, and
-//! story #571 deliberately gave [`PresentError`](crate::present::PresentError)
+//! story #571 deliberately gave [`crate::present::PresentError`]
 //! no `Lost` variant because a wgpu presenter recovers its own surface inside
 //! `present`. When `dashscene-wgpu` lands, a presenter that recreated its
 //! swapchain reports it and the host forces a redraw through the same

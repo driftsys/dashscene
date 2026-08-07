@@ -184,7 +184,7 @@ fn astc_block(block: (u32, u32)) -> wgpu::AstcBlock {
 /// atlas that places them and the two travel together. So there are two index
 /// spaces, and index 0 of each is an ordinary value in both.
 ///
-/// [`source`](Self::source) separates them. Without it, a document whose first
+/// `source` separates them. Without it, a document whose first
 /// image asset and whose first glyph atlas happen to agree on format and length
 /// — two PNGs of the same byte count is not a contrived case — would have the
 /// second draw the first, and the only thing that would notice is the debug
@@ -258,7 +258,7 @@ impl PayloadKey {
 /// Where a resident payload sits: which atlas, and which texels of it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Slot {
-    /// Index into [`Residency::atlases`] — the texture to bind to draw this.
+    /// Index into `Residency::atlases` — the texture to bind to draw this.
     pub atlas: u32,
     /// The payload's rectangle in that texture, in texels: `[x, y, w, h]`.
     pub rect: [u32; 4],
