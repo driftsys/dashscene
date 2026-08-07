@@ -125,7 +125,7 @@ fn identical_payloads_collapse_to_one_entry_and_one_blob() {
         assert_eq!(container.section(index).flavor, FLAVOR_ASSET);
     }
 
-    let (document, payloads) = dashbuf::open(&file).expect("the file opens");
+    let (document, payloads) = dashbuf::open_verified(&file).expect("the file opens");
     let entries = document.assets().expect("the document carries assets");
     assert_eq!(entries.len(), 2, "three references over two payloads");
     assert_eq!(payloads.len(), 2, "one payload bound per entry");
@@ -150,7 +150,7 @@ fn identical_payloads_collapse_to_one_entry_and_one_blob() {
 fn each_entry_hash_is_its_blob_sections_content_hash() {
     let file = compile(&document()).expect("the document validates");
     let container = Container::parse(&file).expect("the file parses");
-    let (document, _) = dashbuf::open(&file).expect("the file opens");
+    let (document, _) = dashbuf::open_verified(&file).expect("the file opens");
     let entries = document.assets().expect("assets present");
 
     for (index, entry) in entries.iter().enumerate() {
@@ -177,7 +177,7 @@ fn each_entry_hash_is_its_blob_sections_content_hash() {
 #[test]
 fn each_entry_carries_its_own_intrinsic_metadata() {
     let file = compile(&document()).expect("the document validates");
-    let (document, _) = dashbuf::open(&file).expect("the file opens");
+    let (document, _) = dashbuf::open_verified(&file).expect("the file opens");
     let entries = document.assets().expect("assets present");
 
     assert_eq!(entries.get(0).format(), dashbuf::ImageFormat::Png);
@@ -192,7 +192,7 @@ fn each_entry_carries_its_own_intrinsic_metadata() {
 #[test]
 fn every_node_resolves_to_the_payload_it_named() {
     let file = compile(&document()).expect("the document validates");
-    let (doc, payloads) = dashbuf::open(&file).expect("the file opens");
+    let (doc, payloads) = dashbuf::open_verified(&file).expect("the file opens");
 
     let report = dashscene_validator::validate_document(&doc);
     assert!(!report.has_errors(), "the load gate accepts it: {report}");
@@ -257,7 +257,7 @@ fn a_document_with_no_assets_carries_one_section() {
 
     let container = Container::parse(&file).expect("parses");
     assert_eq!(container.len(), 1, "the ui section and nothing else");
-    let (document, payloads) = dashbuf::open(&file).expect("opens");
+    let (document, payloads) = dashbuf::open_verified(&file).expect("opens");
     assert!(document.assets().is_none_or(|a| a.is_empty()));
     assert!(payloads.is_empty());
 }
@@ -278,7 +278,7 @@ fn a_figma_compile_emits_its_image_as_a_blob_section() {
     assert_eq!(container.len(), 2, "the ui section plus one asset blob");
     assert_eq!(container.section(1).kind, SectionKind::Blob as u16);
 
-    let (document, payloads) = dashbuf::open(&file).expect("opens");
+    let (document, payloads) = dashbuf::open_verified(&file).expect("opens");
     let entries = document.assets().expect("assets present");
     assert_eq!(entries.len(), 1);
     // The extent came from the payload's own PNG header, through story #400's
@@ -384,7 +384,7 @@ fn compile_refuses_an_asset_whose_metadata_contradicts_its_bytes() {
 #[test]
 fn a_bound_derivation_reaches_the_painter_as_the_format_it_is() {
     let file = compile(&document()).expect("the document validates");
-    let (doc, payloads) = dashbuf::open(&file).expect("the file opens");
+    let (doc, payloads) = dashbuf::open_verified(&file).expect("the file opens");
 
     // Stand-in for the rung a profile selected. Its bytes are deliberately not
     // the canonical ones, so an implementation that kept the document's payload
@@ -450,7 +450,7 @@ fn a_bound_derivation_reaches_the_painter_as_the_format_it_is() {
 #[test]
 fn the_canonical_binding_loads_what_the_document_states() {
     let file = compile(&document()).expect("the document validates");
-    let (doc, payloads) = dashbuf::open(&file).expect("the file opens");
+    let (doc, payloads) = dashbuf::open_verified(&file).expect("the file opens");
 
     let mut plain = Arena::new();
     load_document(&doc, &payloads, &mut plain);

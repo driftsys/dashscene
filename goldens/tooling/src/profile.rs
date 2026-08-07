@@ -92,15 +92,16 @@ impl std::error::Error for DeriveError {}
 /// difference. Under a production profile every asset is decoded, packed, and
 /// the whole document reassembled with a derivation manifest.
 ///
-/// The returned file is a complete, ordinary `.dsb`: `dashbuf::open` resolves
-/// its canonical hashes through the manifest, and [`crate::render::render_dsb`]
+/// The returned file is a complete, ordinary `.dsb`: `dashbuf::open_verified`
+/// resolves its canonical hashes through the manifest, and
+/// [`crate::render::render_dsb`]
 /// renders it.
 pub fn derive(dsb: &[u8], profile: Profile) -> Result<Vec<u8>, DeriveError> {
     if profile == Profile::Raw {
         return Ok(dsb.to_vec());
     }
 
-    let (document, payloads) = dashbuf::open(dsb).map_err(|error| DeriveError::Open {
+    let (document, payloads) = dashbuf::open_verified(dsb).map_err(|error| DeriveError::Open {
         message: error.to_string(),
     })?;
     let ui = dashbuf::container::ui_document(dsb)

@@ -14,13 +14,15 @@
 //! It removes the read: the file's pages are not copied into a `Vec`, and a
 //! page never touched is never faulted in.
 //!
-//! It does **not** by itself make cold start proportional to what is shown,
-//! because [`crate::open`] resolves every asset entry through
+//! It did **not** by itself make cold start proportional to what is shown. At
+//! story #595 the reader this hands bytes to resolved every asset entry through
 //! [`crate::container::Container::blob_by_hash`], which hash-verifies the whole
-//! payload — so the first `open` faults every page of the mapping in anyway.
-//! Story #598's counter measures exactly that, and story #597 owns moving
-//! verification off the open path. Mapping is the half that makes the other
-//! half worth doing; on its own it moves no number.
+//! payload, so the first open faulted every page holding one in anyway; the
+//! criterion did not move. Story #597 is what made mapping pay: [`crate::open`]
+//! resolves an entry to where its payload lies and reads none of them, and
+//! [`crate::residency::Residency::touch`] faults in the ones a frame actually
+//! draws. Mapping is the half that makes the other half possible, and neither
+//! half moves a number alone.
 //!
 //! # Native only
 //!
@@ -45,11 +47,12 @@ use memmap2::Mmap;
 /// mapping must outlive the document read out of it — which the borrow checker
 /// enforces, since those slices carry this value's lifetime.
 ///
-/// `Send` and `Sync`, both inherited from [`Mmap`]. Story #596 puts the region
-/// behind a reference-counted handle that `dashpaint`'s image table holds, and
-/// story #597 puts a loader thread behind that
+/// `Send` and `Sync`, both inherited from [`Mmap`]. Story #596 put the region
+/// behind a reference-counted handle that `dashpaint`'s image table holds
 /// (`docs/decisions/assets-borrow-from-the-mapping.md` D4), so the property is
-/// load-bearing rather than incidental.
+/// load-bearing rather than incidental —
+/// [`crate::residency::Residency`] is `Send + Sync` for the same reason, and a
+/// loader thread is the next step rather than a different design.
 #[derive(Debug)]
 pub struct MappedFile {
     map: Mmap,

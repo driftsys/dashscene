@@ -96,7 +96,7 @@ fn a_pre_existing_committed_entry_reads_as_an_image() {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../goldens/dsb/v03-paint.dsb");
     let file = std::fs::read(&path).expect("the committed golden is readable");
-    let (document, payloads) = dashbuf::open(&file).expect("the committed golden opens");
+    let (document, payloads) = dashbuf::open_verified(&file).expect("the committed golden opens");
 
     let entries = document.assets().expect("v03-paint carries one asset");
     assert_eq!(entries.len(), 1);

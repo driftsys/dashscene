@@ -17,10 +17,11 @@
 //!   exact and identical on every machine, where a timing ratio needs a
 //!   threshold that drifts and cannot run on the two-core CI runners without
 //!   flaking.
-//! - **D2 — both reads and copies count.** `dashbuf::open_with_cost` records
-//!   the hash of each asset payload it resolves; `load_document_bound_with_cost`
-//!   records the loader's copy out of it. Both happen to every payload today
-//!   and each alone makes cold start scale with file size.
+//! - **D2 — both reads and copies count.** `dashbuf::open_verified_with_cost`
+//!   records the hash of each asset payload it resolves;
+//!   `load_document_bound_with_cost` records the loader's copy out of it. Both
+//!   happen to every payload on this path, and each alone makes cold start
+//!   scale with file size.
 //! - **D3 — the boundary is the load path, not the frame.** [`load_cost`] runs
 //!   exactly the three steps `demo/src/document.rs` runs — open, the load gate,
 //!   the replay into a committed arena — and stops. Nothing here selects a
@@ -262,16 +263,17 @@ struct Measured {
 
 /// Loads `file` and returns what it cost.
 ///
-/// The three steps `demo/src/document.rs` runs, and no others: `dashbuf::open`
-/// (the envelope, the flatbuffers verifier and the payload binding), the
-/// referential load gate, then the replay into a committed arena. D3 puts the
-/// boundary exactly here — a painter's own copies are not a property of
+/// Three steps and no others: `dashbuf::open_verified` (the envelope, the
+/// flatbuffers verifier and the payload binding), the referential load gate,
+/// then the replay into a committed arena. D3 puts the boundary exactly here —
+/// a painter's own copies are not a property of
 /// loading.
 fn load_cost(file: &[u8]) -> Measured {
     let cost = LoadCost::new();
     let started = Instant::now();
 
-    let (document, payloads) = dashbuf::open_with_cost(file, &cost).expect("the file opens");
+    let (document, payloads) =
+        dashbuf::open_verified_with_cost(file, &cost).expect("the file opens");
     let report = dashscene_validator::validate_document(&document);
     assert!(
         !report.has_errors(),
@@ -320,9 +322,13 @@ fn report(label: &str, measured: &Measured) {
 ///   pass by doing nothing. This is the assertion that keeps D3's boundary —
 ///   "a committed arena with the shown root's assets resident" — honest.
 /// - The many-frame document must read **exactly** what the small one reads.
-///   This is R5. It is what fails today, because `dashbuf::open` hashes every
-///   blob and the loader copies every payload, both of them for every entry in
-///   the file rather than for the frame being shown.
+///   This is R5. It is what fails today, because this benchmark measures the
+///   **owning** path: `dashbuf::open_verified` hashes every blob and
+///   `load_document` copies every payload, both of them for every entry in the
+///   file rather than for the frame being shown. Story #597 built the path that
+///   is bounded by the shown root, and story #598's re-run is what moves this
+///   measurement onto it
+///   (`docs/decisions/verification-moves-from-open-to-touch.md` D9).
 #[test]
 fn cold_start_tracks_the_shown_root_not_the_document_size() {
     let small = load_cost(&document(0));
@@ -369,9 +375,9 @@ fn cold_start_tracks_the_shown_root_not_the_document_size() {
 /// a counter seeing only one cannot falsify the other — and the criterion above
 /// cannot tell them apart, because dropping either recording scales both
 /// documents equally and leaves the ratio unchanged. This is where each
-/// recording site is pinned on its own: `dashbuf::open_with_cost` records a
-/// hash and no copy, and `load_document_bound_with_cost` records a copy and no
-/// hash.
+/// recording site is pinned on its own: `dashbuf::open_verified_with_cost`
+/// records a hash and no copy, and `load_document_bound_with_cost` records a
+/// copy and no hash.
 ///
 /// It is also the finding epic #594 was opened against, stated as a test: a
 /// payload's bytes are read **twice** before anything is drawn, and the first
@@ -384,7 +390,8 @@ fn the_pre_slice_load_path_hashes_every_payload_and_copies_it_once() {
     let root_payload = corpus_payload(ROOT_PHOTO).len() as u64;
 
     let opening = LoadCost::new();
-    let (document, payloads) = dashbuf::open_with_cost(&file, &opening).expect("the file opens");
+    let (document, payloads) =
+        dashbuf::open_verified_with_cost(&file, &opening).expect("the file opens");
     assert_eq!(
         opening.hashed(),
         root_payload,
@@ -422,8 +429,8 @@ fn the_many_frame_document_carries_one_payload_per_frame() {
     let small = document(0);
     let many = document(EXTRA_FRAMES);
 
-    let (_, small_payloads) = dashbuf::open(&small).expect("the small document opens");
-    let (_, many_payloads) = dashbuf::open(&many).expect("the many-frame document opens");
+    let (_, small_payloads) = dashbuf::open_verified(&small).expect("the small document opens");
+    let (_, many_payloads) = dashbuf::open_verified(&many).expect("the many-frame document opens");
 
     assert_eq!(small_payloads.len(), 1, "the small document is one frame");
     assert_eq!(

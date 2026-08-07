@@ -344,7 +344,7 @@ fn text_and_style_round_trip_through_dashscene_core() {
     let (bytes, report) =
         compile_figma(HUG_IN_FILL, Profile::Core, &BTreeMap::new()).expect("compiles");
     assert!(report.is_empty(), "{report}");
-    let (document, payloads) = dashbuf::open(&bytes).expect("a valid .dsb file");
+    let (document, payloads) = dashbuf::open_verified(&bytes).expect("a valid .dsb file");
 
     let mut arena = Arena::new();
     load_document(&document, &payloads, &mut arena);

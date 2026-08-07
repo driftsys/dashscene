@@ -89,14 +89,28 @@ target-hardware rules.
   The `dashbuf` schema reserves these tables. (R5)
 - **G-19** — Load-gate verification hashes hot sections only; its cost is
   measured and off the render path. (boundary A, R5)
-  **Fails today, and the work is scheduled.** `dashbuf::open` resolves every
-  asset entry through `Container::blob_by_hash`, which hash-verifies the whole
-  payload, so opening a document hashes every byte of every asset — cold
-  sections included. `Container::verify_hot` exists to hash the hot region
-  alone and `open` does not call it. Measured by story #598's counter: showing
-  a one-frame root out of a 65-frame document hashes 1 935 927 B rather than
-  the root's own 197 387 B. Story #597 owns moving verification off the open
-  path.
+  **Built, and not yet settled against the committed criterion.** It failed
+  when this entry was written: `dashbuf::open` resolved every asset entry
+  through `Container::blob_by_hash`, which hash-verifies the whole payload, so
+  opening a document hashed every byte of every asset — cold sections included,
+  1 935 927 B to show a one-frame root out of a 65-frame document rather than
+  the root's own 197 387 B.
+
+  Story #597 moved that. `dashbuf::open` now calls `Container::verify_hot`,
+  hashes the hot region alone, and resolves each entry to where its payload
+  lies without reading it; `Residency::touch` hashes a payload when a prefetch
+  makes it resident, and the prefetch is the shown root's assets and nothing
+  else. Measured over the mapped path, both documents cost 197 387 B — the
+  root's own payload, a ratio of 1.00x.
+
+  **The committed criterion still reports 9.81x**, because
+  `goldens/tooling/tests/startup_scaling.rs` builds its documents in memory and
+  maps nothing, so it measures the owning path — which cannot be bounded by
+  what is shown, since `load_document` copies every payload into an owned
+  `ImageAsset`. Story #598 moves the benchmark onto the mapped path
+  (`docs/decisions/verification-moves-from-open-to-touch.md` D9), and story
+  #599 settles this entry against that measurement rather than against this
+  one.
 - **G-20** — A scaling benchmark with a small-root document and a many-frame
   corpus document asserts that cold-start cost tracks the shown root, not the
   document size. This guardrail is tracked as the v1 startup-scaling exit

@@ -16,7 +16,9 @@
 //! cannot check that the two agree, so the check takes the payloads
 //! explicitly rather than being folded into [`validate_document`] and
 //! silently doing nothing when they are absent. Both halves run over a file
-//! opened with `dashbuf::open`, which hands back exactly the pair they need.
+//! opened with `dashbuf::open_verified`, which hands back exactly the pair they
+//! need — the eager reader, because this gate needs every payload's bytes and
+//! `dashbuf::open` deliberately reads none.
 //!
 //! They are not interchangeable. A `.dsb` document cannot carry an
 //! out-of-profile construct — by the time a construct is in the schema it
@@ -263,9 +265,10 @@ pub mod rule {
     /// before the payload is resident, so the frame would reflow once the
     /// real size arrived.
     pub const ASSET_EXTENT_MISMATCH: &str = "asset.extent-mismatch";
-    /// No payload was supplied for this entry. `dashbuf::open` returns one
-    /// payload per entry, so this names a caller that paired a document with
-    /// the wrong payload list rather than a defect in the document.
+    /// No payload was supplied for this entry. `dashbuf::open_verified`
+    /// returns one payload per entry, so this names a caller that paired a
+    /// document with the wrong payload list rather than a defect in the
+    /// document.
     pub const ASSET_PAYLOAD_MISSING: &str = "asset.payload-missing";
 
     // Paint gate — needs the solved box, so it exists only on a scene.

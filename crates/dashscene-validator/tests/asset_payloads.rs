@@ -25,9 +25,11 @@ const SAMPLE_JPEG: &[u8] = include_bytes!("fixtures/image_id/sample.jpg");
 const SAMPLE_GIF: &[u8] = include_bytes!("fixtures/image_id/sample.gif");
 
 /// What one `AssetEntry` records. The hash is irrelevant to every rule in this
-/// file — `dashbuf::open` verifies each payload against its entry's hash
-/// before this gate ever runs, so a payload that does not match its hash never
-/// arrives here — which is why these tests hand the payloads in directly.
+/// file — a payload is verified against its entry's hash before this gate ever
+/// runs, by `dashbuf::open_verified` for a caller that reads a whole file and by
+/// `dashbuf::residency::Residency::touch` for one that makes payloads resident,
+/// so a payload that does not match its hash never arrives here — which is why
+/// these tests hand the payloads in directly.
 struct Entry {
     format: ImageFormat,
     width: u32,

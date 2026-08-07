@@ -49,9 +49,12 @@ fn check(path: &str) -> ExitCode {
     // The envelope first: magic, version, the section table against the root
     // hash, the ui section's own content hash, then the flatbuffers verifier
     // over that section, then the null binding that resolves each asset entry
-    // to its blob (`docs/design/dsb-container-format.md`). `dashbuf::open`
-    // runs all of it in that order and hands back both halves of the
-    // document — the entries and the payloads they name.
+    // to its blob (`docs/design/dsb-container-format.md`).
+    // `dashbuf::open_verified` runs all of it in that order and hands back both
+    // halves of the document — the entries and the payloads they name. The
+    // eager reader is the right one here because this command is checking a
+    // file rather than drawing it, which is the distinction story #597 gave the
+    // two readers their names for.
     //
     // The failures are reported apart. A pre-envelope `.dsb` is not the same
     // complaint as a valid envelope carrying a bad buffer, nor as a file whose
@@ -64,7 +67,7 @@ fn check(path: &str) -> ExitCode {
     // it is needed most. The failure is named, and the document gate still runs
     // — without its asset half, which has no payloads to work with.
     let mut file_is_broken = false;
-    let (document, payloads) = match dashbuf::open(&bytes) {
+    let (document, payloads) = match dashbuf::open_verified(&bytes) {
         Ok((document, payloads)) => (document, Some(payloads)),
         Err(dashbuf::OpenError::Document(e)) => {
             // The ui section is not a document, so no gate can run at all.

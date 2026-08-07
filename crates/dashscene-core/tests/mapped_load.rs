@@ -18,6 +18,7 @@ use std::sync::Arc;
 
 use dashbuf::map::MappedFile;
 use dashbuf::prefix::{self, Envelope, MIN_PREFIX, PrefixError};
+use dashbuf::residency::Residency;
 use dashpaint::ImageFormat;
 use dashscene_core::{Arena, MappedPayload, Region, load_document, load_document_mapped};
 
@@ -38,11 +39,14 @@ fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
-/// The prefix flow over a mapping: the envelope, the plan, and one range per
-/// asset entry in entry order.
+/// The prefix flow over a mapping: the envelope, the plan, one range per asset
+/// entry in entry order, and every payload proven before the loader sees it.
 ///
-/// The same three calls `demo/src/document.rs` makes, kept here rather than
-/// reached for so the test fails on the loader rather than on the host.
+/// The calls a host makes, kept here rather than reached for so the test fails
+/// on the loader rather than on the host. It is the **prefix** host's sequence:
+/// since story #597 `demo/src/document.rs` reads through `dashbuf::open`
+/// instead, and `demo-web/src/document.rs` is the one that still plans. Either
+/// way the loader below is handed ranges, which is what these tests are about.
 fn plan_over(file: &[u8]) -> (dashbuf::Document<'_>, Vec<MappedPayload>) {
     let file_len = file.len() as u64;
     let mut need = MIN_PREFIX.min(file.len());
@@ -60,17 +64,31 @@ fn plan_over(file: &[u8]) -> (dashbuf::Document<'_>, Vec<MappedPayload>) {
     let envelope = envelope.expect("the envelope resolves in two rounds");
     let hot = &file[..envelope.hot_len() as usize];
     let plan = prefix::plan(&envelope, hot).expect("the document plans");
-    // The verification step, as the host runs it: `Plan::bind` hashes every
-    // payload against the table. Its slices are discarded because the loader
-    // takes ranges; the check is the point, and dropping it here would let
-    // these tests pass over a load path that hands a painter unhashed bytes.
+    // The verification step, as a host runs it. Since story #597 that is
+    // `Residency::touch`, one payload at a time, and **not** `Plan::bind`,
+    // which now checks the count and nothing else
+    // (`docs/decisions/verification-moves-from-open-to-touch.md` D7). Both run
+    // here for the same reason a host runs both: the touch proves each payload,
+    // and `bind` is the only thing that can say the number of payloads is the
+    // number the document asked for.
+    //
+    // The check is the point, and dropping it would let these tests pass over a
+    // load path that hands a painter unhashed bytes. It has to name the touch to
+    // do that: `bind` alone no longer refuses a corrupted payload, and
+    // `a_corrupted_payload_is_refused_before_the_loader_sees_it` is what fails if
+    // this is ever reduced to it again.
+    let residency = Residency::new();
     let resident: Vec<&[u8]> = plan
         .wanted()
         .iter()
-        .map(|want| &file[want.range.start as usize..want.range.end as usize])
+        .map(|want| {
+            let bytes = &file[want.range.start as usize..want.range.end as usize];
+            residency
+                .touch(want, bytes)
+                .expect("every payload matches its hash")
+        })
         .collect();
-    plan.bind(&resident)
-        .expect("every payload matches its hash");
+    plan.bind(&resident).expect("one payload per asset entry");
     let payloads = plan
         .wanted()
         .iter()
@@ -153,7 +171,7 @@ fn an_owned_load_and_a_mapped_load_agree() {
         let file = mapped.bytes();
 
         let mut by_value = Arena::new();
-        let (document, payloads) = dashbuf::open(file).expect("the fixture opens");
+        let (document, payloads) = dashbuf::open_verified(file).expect("the fixture opens");
         load_document(&document, &payloads, &mut by_value);
 
         let mut by_range = Arena::new();
@@ -187,7 +205,7 @@ fn a_mapped_load_into_an_arena_that_already_holds_assets_is_refused() {
     let file = mapped.bytes();
 
     let mut arena = Arena::new();
-    let (document, payloads) = dashbuf::open(file).expect("the fixture opens");
+    let (document, payloads) = dashbuf::open_verified(file).expect("the fixture opens");
     load_document(&document, &payloads, &mut arena);
 
     let (document, ranges) = plan_over(file);
@@ -277,4 +295,68 @@ fn a_baked_mapped_row_whose_range_is_the_wrong_length_is_refused() {
         &[MappedPayload::derived(range, ImageFormat::Astc4x4Unorm)],
         &mut arena,
     );
+}
+
+/// A payload that does not hash to what the file records never reaches the
+/// loader.
+///
+/// The teeth behind `plan_over`'s verification step. Story #597 moved that check
+/// out of `Plan::bind` and into `Residency::touch`, and `bind` no longer refuses
+/// a corrupted payload — so without this test, reducing `plan_over` back to
+/// `bind` alone would leave every test in this file passing while the mapped
+/// load path hashed nothing at all. It is the assertion that says the helper's
+/// comment is true rather than aspirational.
+///
+/// The section table is left untouched, so the file still records what the
+/// payload should hash to and nothing before the touch can notice: the root hash
+/// covers the table, not the file.
+#[test]
+fn a_corrupted_payload_is_refused_before_the_loader_sees_it() {
+    let file = std::fs::read(fixture("v03-paint.dsb")).expect("the fixture reads");
+    let envelope = Envelope::read(&file, file.len() as u64).expect("the envelope reads");
+    let plan =
+        prefix::plan(&envelope, &file[..envelope.hot_len() as usize]).expect("the document plans");
+
+    let want = &plan.wanted()[0];
+    let mut corrupted = file[want.range.start as usize..want.range.end as usize].to_vec();
+    corrupted[0] ^= 0xFF;
+
+    let residency = Residency::new();
+    let error = residency
+        .touch(want, &corrupted)
+        .expect_err("a corrupted payload is refused");
+    assert_eq!(error.section, want.section);
+    assert!(
+        !residency.is_ready(want.section),
+        "a refused payload is not resident"
+    );
+
+    // And the check `plan_over` used to rely on does not catch it, which is why
+    // the touch above has to be the one that does.
+    plan.bind(&[&corrupted])
+        .expect("bind counts payloads and no longer hashes them");
+}
+
+/// And the helper every test above runs through is the thing that refuses it.
+///
+/// [`a_corrupted_payload_is_refused_before_the_loader_sees_it`] proves
+/// `Residency::touch` refuses a bad payload; it does not prove `plan_over` calls
+/// it. This does, and it is what fails if the touch is ever taken back out of
+/// the helper — which a mutation pass showed nothing else in this file catches,
+/// because every committed fixture's payloads are valid, so a helper that
+/// verified nothing would load them all exactly as well.
+#[test]
+#[should_panic(expected = "every payload matches its hash")]
+fn the_helper_refuses_a_corrupted_payload() {
+    let mut file = std::fs::read(fixture("v03-paint.dsb")).expect("the fixture reads");
+    let envelope = Envelope::read(&file, file.len() as u64).expect("the envelope reads");
+    let blob = envelope
+        .sections()
+        .iter()
+        .find(|entry| entry.kind == dashbuf::container::SectionKind::Blob as u16)
+        .copied()
+        .expect("v03-paint.dsb carries a payload");
+    file[blob.offset as usize] ^= 0xFF;
+
+    plan_over(&file);
 }

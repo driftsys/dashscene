@@ -117,7 +117,9 @@ for a blob, `1` is an asset payload.
 An asset payload is found by **content hash**, not by section index: the ui
 document's `AssetEntry` carries a BLAKE3-256 hash, and the null binding resolves
 it to the blob section whose recorded content hash equals it
-(`Container::blob_by_hash`, and `dashbuf::open` for the whole file at once).
+(`Container::blob_by_hash`, and either reader for the whole file at once:
+`dashbuf::open` resolves every entry to where its payload lies and reads none of
+them, `dashbuf::open_verified` resolves and hashes each one).
 That is why the section table can be reordered or re-assembled without touching
 the ui section — the document names payloads, never places. Flavor is an **enumerated role**, compared
 for equality — a section has exactly one role, and two roles would need two

@@ -50,6 +50,7 @@ mod host;
 
 use dashbuf::container::ContainerError;
 use dashbuf::prefix::BindError;
+use dashbuf::residency::PayloadMismatch;
 use dashscene_gpu::RendererError;
 
 /// The id of the canvas this host draws into.
@@ -85,6 +86,8 @@ pub enum HostError {
     /// The document, its manifest, or an asset's binding.
     Open(dashbuf::OpenError),
     /// A fetched payload is not the one the file names.
+    Payload(PayloadMismatch),
+    /// A different number of payloads reached the plan than it asked for.
     Bind(BindError),
     /// The document does not pass the referential load gate.
     Gate(String),
@@ -116,6 +119,7 @@ impl std::fmt::Display for HostError {
                 write!(f, "the envelope reader asked for a prefix it already had")
             }
             Self::Open(error) => write!(f, "{error}"),
+            Self::Payload(error) => write!(f, "{error}"),
             Self::Bind(error) => write!(f, "{error}"),
             Self::Gate(report) => write!(f, "the document fails the load gate: {report}"),
             Self::UnknownScene(name, known) => {

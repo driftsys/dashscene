@@ -36,3 +36,19 @@ dashbuf.workspace = true
 dashscene-validator.workspace = true
 winit.workspace = true
 softbuffer.workspace = true
+
+[dev-dependencies]
+# `document.rs`'s mapped-load tests need a file to map, and a mapping is of a
+# path — so the one thing they cannot do is work from bytes in memory. The same
+# reason `dashbuf` carries it (story #597).
+tempfile.workspace = true
+# The same tests build a two-root document, which no committed fixture is:
+# every `goldens/dsb` fixture has one root, and a one-root document cannot tell
+# "the shown root's assets" apart from "every asset in the file" — which is the
+# whole of what the prefetch does (story #597).
+flatbuffers.workspace = true
+# An `AssetEntry` names its payload's canonical BLAKE3, and that hash has to
+# exist before the document naming it can be written — so building a document
+# by hand means computing one. `dashbuf` uses it for the same reason and does
+# not re-export it.
+blake3.workspace = true

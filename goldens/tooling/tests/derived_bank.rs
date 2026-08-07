@@ -18,7 +18,8 @@
 //!   (`docs/decisions/asset-model-content-addressed-blobs.md`). Recorded intent
 //!   until #433 measured it against a stand-in bank; this measures it against a
 //!   real packer.
-//! - **It loads.** `dashbuf::open` resolves each canonical hash through the
+//! - **It loads.** `dashbuf::open_verified` resolves each canonical hash through
+//!   the
 //!   derivation manifest to the KTX2 payload the packer produced. Assembling a
 //!   file no reader can open is the failure mode
 //!   `docs/decisions/derivation-manifest-section.md` exists to prevent, so the
@@ -141,7 +142,7 @@ struct Corpus {
 
 fn corpus() -> Corpus {
     let file = std::fs::read(root().join(RAW_GOLDEN)).expect("the RAW golden is readable");
-    let (document, payloads) = dashbuf::open(&file).expect("the RAW golden opens");
+    let (document, payloads) = dashbuf::open_verified(&file).expect("the RAW golden opens");
     let ui = dashbuf::container::ui_document(&file)
         .expect("a ui section")
         .to_vec();
@@ -215,7 +216,7 @@ fn the_hifi_file_loads_and_resolves_to_the_packed_payloads() {
     let bank = pack_bank(Profile::HiFi, &corpus.assets()).expect("packs");
     let file = bank.assemble(&corpus.ui).expect("assembles");
 
-    let (document, resident) = dashbuf::open(&file).expect("the HiFi file opens");
+    let (document, resident) = dashbuf::open_verified(&file).expect("the HiFi file opens");
     assert_eq!(
         document.assets().expect("assets").len(),
         corpus.canonical.len(),

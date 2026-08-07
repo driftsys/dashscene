@@ -285,7 +285,7 @@ fn v03_by_hand(arena: &mut Arena) {
 /// Compiles, loads, and returns the arena the document produced.
 fn load(doc: &Document) -> Arena {
     let bytes = compile(doc).expect("the v0.3 document validates");
-    let (document, payloads) = dashbuf::open(&bytes).expect("a valid .dsb file");
+    let (document, payloads) = dashbuf::open_verified(&bytes).expect("a valid .dsb file");
     let mut arena = Arena::new();
     load_document(&document, &payloads, &mut arena);
     arena
@@ -545,7 +545,7 @@ fn emission_of_a_blurred_document_is_byte_reproducible_and_round_trips() {
 
     // The bytes carry the blurs, in order, rather than dropping them.
     let bytes = compile(&doc()).expect("validates");
-    let (document, payloads) = dashbuf::open(&bytes).expect("a valid .dsb file");
+    let (document, payloads) = dashbuf::open_verified(&bytes).expect("a valid .dsb file");
     let paints = document.paints().expect("paint pool present");
     let blurs = paints.get(0).blurs().expect("blurs present");
     assert_eq!(blurs.len(), 2);
@@ -715,7 +715,7 @@ fn image_indices_are_remapped_when_loading_into_a_non_empty_arena() {
     let mut arena = Arena::new();
 
     let bytes = compile(&v03_document()).expect("validates");
-    let (document, payloads) = dashbuf::open(&bytes).expect("a valid .dsb file");
+    let (document, payloads) = dashbuf::open_verified(&bytes).expect("a valid .dsb file");
     load_document(&document, &payloads, &mut arena);
     load_document(&document, &payloads, &mut arena);
 
@@ -864,7 +864,7 @@ fn flex_intent_round_trips_through_the_document() {
     });
 
     let bytes = compile(&doc).expect("validates");
-    let (document, payloads) = dashbuf::open(&bytes).expect("a valid .dsb file");
+    let (document, payloads) = dashbuf::open_verified(&bytes).expect("a valid .dsb file");
     let mut arena = Arena::new();
     load_document(&document, &payloads, &mut arena);
 
