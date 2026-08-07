@@ -232,6 +232,9 @@ wrong way:
   to what it affects.
 - [`docs/features.md`](docs/features.md) — what the system does today and what
   is planned, feature by feature, written for a non-engineering reader.
+- [`docs/figma-support.md`](docs/figma-support.md) — which Figma features
+  import, which are turned away with a message, and which are read nowhere.
+  Derived from the importer's code.
 - [`docs/roadmap.md`](docs/roadmap.md) — the v0, v1 and v2 plan.
 - [`AGENTS.md`](AGENTS.md) — the working conventions this repository runs on.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to get a change in. `just --list`
