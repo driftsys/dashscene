@@ -231,9 +231,10 @@ Checked against `crates/dashscene-core/src/arena.rs`,
       correct** — a second drawing mode models the update and is checked
       pixel for pixel against the ordinary one, so a missed entry is a
       caught bug rather than a flicker found on a device months later.
-- [ ] **Faster startup on large files** — **part built.** Opening a large
-      file and showing one screen should cost about what that screen costs.
-      It currently costs about ten times that. See section 6.
+- [x] **Startup cost tracks the screen shown, not the file size** — on a
+      computer. Showing one screen out of a sixty-five-screen file costs the
+      same as showing it out of a one-screen file. Not yet true in a
+      browser. See section 6.
 - [ ] **Tuned against the target device** — planned (v1). Around twenty
       specific improvements are identified and deliberately held: none has
       a frame budget or a device measurement behind it, so fixing one now
@@ -258,18 +259,22 @@ Checked against `crates/dashbuf/src/container.rs`, `bank.rs`, `prefix.rs`,
       all depend on this.
 - [x] **Split into a small head and a bulk tail** — everything needed to
       lay out and draw sits at the front; images sit behind a page boundary
-      so a device can verify what it needs without touching the rest.
-      Mapping the file rather than reading it into memory is built, but it
-      is the path a host opts into; the ordinary path still copies.
+      so a device can verify what it needs without touching the rest. On a
+      computer the file is mapped rather than read into memory; the browser
+      host still uses the older copying path, which is what section 5's
+      caveat and the item below are about.
 - [x] **Assets identified by content** — an image is named by what it is,
       not where it sits, so payloads can be swapped for a different device
       build without touching the design. The name is a hash, and it is
       re-checked when the bytes are read, not just used to find them.
-- [ ] **Startup cost proportional to what is shown** — **part built, and
-      this is the current slice.** The requirement, the benchmark and a
-      measurement exist; the measurement reads 9.81x against a target of
-      1.00x. Mapping the file and removing duplicate copies have landed.
-      Fetching only the shown screen's images is specified and not built.
+- [ ] **Startup cost proportional to what is shown, in a browser** —
+      **part built.** On a computer this is done and measured: showing one
+      screen costs 197 387 bytes whether the file holds one screen or
+      sixty-five, and a test fails the build if that changes. The browser
+      host still loads the older way — it fetches every image the file
+      names, one request each, before it draws — so a sixty-five-screen
+      file costs sixty-five downloads to show one. Being worked in the
+      current slice.
 - [ ] **Placeholders for content still loading** — planned (v1). Blocked on
       deciding what a not-yet-loaded image should show, which the design
       source does not supply.
@@ -395,9 +400,10 @@ and the absence of any mobile target in the workspace.
       host is platform-specific, but it has never been built or tested —
       there is no Windows job in automation and no Windows-specific code.
 - [x] **Browsers with WebGPU** — the same showcase on a canvas, with the
-      design file fetched in byte ranges so only the needed part is
-      downloaded.
-- [ ] **Embedding in a real application** — **part built, and the next
+      design file fetched in pieces rather than as one download. It still
+      fetches every image the file names, one request each, before it draws
+      — see section 6.
+- [ ] **Embedding in a real application** — **part built, and the current
       slice.** Everything below the renderer contract is a library, but
       everything above it is two demonstrations that are not published, so
       an integrator starts from a demonstration and copies out of it.
@@ -407,7 +413,7 @@ and the absence of any mobile target in the workspace.
       top of it. This is the likely dividing line between the desktop and
       web work and the mobile work.
 - [ ] **Android and iOS** — nothing yet: no build target, no toolchain, no
-      automation. Android is planned for the next slice over a proposed
+      automation. Android is planned for the current slice over a proposed
       three-layer structure; iOS follows in v1.
 
 ## 11. Quality tooling and workflow
