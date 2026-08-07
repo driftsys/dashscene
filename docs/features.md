@@ -38,23 +38,31 @@ with a caveat attached is the normal case here, not an exception.
 
 ## How this file is kept honest
 
-This file is deliberately short. An earlier draft listed 188 features and
-four review rounds found factual errors in it at a roughly constant rate —
-most of them because the claims had been written from this repository's own
-design and specification records, which had themselves drifted from the
-code in at least four places. A catalogue that is 95 % accurate is worse
-than a short one that is right, because nobody can tell which 5 % they are
-reading.
+This file is deliberately short. An earlier draft listed 186 features, and
+three review rounds found factual errors in it at a rate that was not
+falling — most of them because the claims had been written from this
+repository's own design and specification records, which had themselves
+drifted from the code in four places. A catalogue that is 95 % accurate is
+worse than a short one that is right, because nobody can tell which 5 %
+they are reading.
 
-So: **every line below was checked against the code that implements it**,
-and each section names where to check. Nothing here is derived from
-another document. Two consequences worth stating:
+So the claim surface was halved and **every line below was checked against
+the code that implements it**, with each section naming where to check.
+A fourth review round then found errors in that too, at a similar rate,
+which is the honest thing to know about this file:
 
 - **Nothing enforces this mechanically.** No test fails when a line here
-  goes stale. It is re-checked at each phase-end, by hand.
-- **When in doubt, read the code named under the section, or ask.** Do not
-  promise a customer a ticked box without checking the date this file was
-  last revised against what has landed since.
+  goes stale. It is re-checked by hand, and hand-checking has a
+  demonstrated error rate on this material.
+- **The recurring mistake is depth, not honesty.** Checking that something
+  exists is not checking which branches it does not cover, what the
+  default path does, or whether any command reaches it. Several corrected
+  lines were wrong in exactly that way.
+- **Sequencing labels are the one exception to "checked against code".**
+  "Planned (v1)" and "v2" come from [`docs/roadmap.md`](roadmap.md); no
+  code can substantiate a schedule.
+- **Do not promise a customer a ticked box** without reading the code named
+  under the section, or asking.
 
 This file lists unbuilt work on purpose, which deviates from the house rule
 that a shipped document describes the system as-built.
@@ -69,8 +77,11 @@ built; every unbuilt line below is marked unbuilt and says what is missing.
 Checked against `crates/dashscene-engine/src/lib.rs`,
 `crates/dashscene-core/src/arena.rs`, `crates/dashc/src/figma/mod.rs`.
 
-- [x] **Rows, columns, wrapping rows and grids** — the full auto-layout
-      vocabulary, including grid items that span more than one cell.
+- [x] **Rows, columns, wrapping rows and grids** — including grid items
+      that span more than one cell. Three auto-layout constructs are
+      refused rather than lowered: distributing wrapped lines, a grid track
+      sized `auto` or `min-content`, and a fill-sized child on an axis its
+      parent shrinks to fit.
 - [x] **Three sizing rules, with minimums and maximums** — hug (shrink to
       contents), fill (take the available space), fixed (an exact number),
       on either axis, with spacing, padding and alignment.
@@ -82,10 +93,11 @@ Checked against `crates/dashscene-engine/src/lib.rs`,
       it, round corners included.
 - [x] **Components, instances and variants** — a component defined once and
       reused, with named states switched at runtime and the layout change
-      animating. Components from a shared library file resolve too, with
-      two limits: a library component containing an image, and a library
-      component that instances one from a second library, are both import
-      errors today.
+      animating. Components from a shared library file resolve too, but
+      three cases fail the whole import today: a library component
+      containing an image, one that instances a component from a second
+      library, and one whose own referenced component the library data does
+      not carry.
 - [ ] **Baseline alignment** — **part built.** A row of mixed-size text
       lines up on the line the letters sit on. Two cases are not corrected
       and produce bottom-of-box alignment with no warning: a nested
@@ -114,13 +126,14 @@ Checked against `crates/dashscene-typeset/src/text/mod.rs`,
       vertical alignment within the text box. Where a line mixes fonts, its
       height spans the tallest letters and deepest tails on that line.
 - [x] **Several fonts and weights per style** — four Latin weights; a
-      character missing from the first font is drawn from the next. A
-      weight the build does not carry, and a character no font covers, are
-      each reported by name rather than silently substituted or blanked.
+      character missing from the first font is drawn from the next, and a
+      weight the build does not carry is reported by name rather than
+      silently substituted. A character **no** font covers is not reported:
+      it draws as the font's empty box. See section 8.
 - [x] **Sharp at any size, with a legibility floor** — letters are stored
       as shapes rather than fixed-size images. Below 14 pixels per em they
-      smear, and the import warns; a target that accepts the trade can
-      record that decision.
+      smear, and the import warns. Recording a decision to accept that is
+      designed but not usable yet — see the waiver item in section 8.
 - [ ] **Several styles inside one text block** — planned (v1). A text
       element carries one style, so bold-inside-a-sentence needs separate
       elements.
@@ -136,7 +149,7 @@ Checked against `crates/dashscene-typeset/src/text/mod.rs`,
 
 Checked against `crates/dashc/src/figma/mod.rs`,
 `crates/dashscene-validator/src/triage.rs`, `crates/dashpaint/src/lib.rs`,
-and both painters.
+`crates/dashscene-skia/src/`, `crates/dashscene-gpu/src/`.
 
 - [x] **Fills** — solid, and four gradient types: linear, radial, angular
       (which is what makes a gauge sweep possible) and diamond. Images fill
@@ -155,13 +168,17 @@ and both painters.
 - [x] **Vector artwork** — vector shapes from the design file are converted
       at build time into a form that stays sharp at any size.
 - [ ] **Stacking several fills on one shape** — **part built.** Works on
-      frames and rectangles. On a circle or on imported vector artwork a
-      second fill is reported at import and the element is not drawn.
+      frames, rectangles, instances, sections and groups. On a circle, on
+      text, or on imported vector artwork a second fill is reported at
+      import and the element is not drawn at all.
 - [ ] **Blend modes, layer blur, corner smoothing, luminance masks, dashed
       and variable-width strokes, noise and progressive blur, and boolean
-      shape operations** — none of these are drawn. Each is reported by
-      name at import with a workaround; blend modes and the rejected
-      effects stop the file compiling rather than degrading it.
+      shape operations** — none of these are drawn, and each is reported by
+      name with a workaround. What the report does depends on the
+      construct: blend modes, noise and progressive blur stop the file
+      compiling; the rest drop the element and let the file emit, because
+      the importer's default is to carry on rather than stop. A stricter
+      mode exists and is not the default.
 - [ ] **Different stroke widths per side** — **the one gap in this section
       that is not reported.** Nothing detects it. The design compiles using
       whichever single width the file reports, with no message. Workaround:
@@ -186,16 +203,17 @@ Checked against `crates/dashcue/`, `crates/dashlang/src/reactive.rs`,
 - [x] **Layout transitions** — when a variant switch changes the layout,
       elements animate from where they were to where they are now.
 - [x] **Values from the running application** — a number drives position,
-      size, spacing or one channel of a fill colour; a true/false value
-      drives visibility; and a number can be turned into text and shown.
-      The designer declares the connection as a Figma Variable and the
-      application writes it by name.
+      size, spacing, opacity, or one channel of a fill colour; a true/false
+      value drives visibility; and a number can be turned into text through
+      any function of it, then shown. The designer declares the connection
+      as a Figma Variable and the application writes it by name.
 - [ ] **Gauges and radial motion** — a value driving a rotation about a
       pivot, or an arc sweep. Designed, and a v1 candidate.
-- [ ] **Known limit** — a frame that changes only a piece of live text
-      clears the screen's other text unless something on that same frame
-      also changes the layout. There is a documented way to author around
-      it, and a fix is tracked.
+- [ ] **Known limit, and it is worse than it sounds** — a frame that
+      changes only live text clears **all** the text on the screen,
+      including the string that just changed, unless something on that same
+      frame also changes the layout. There is a documented way to author
+      around it, and a fix is tracked.
 
 ## 5. Runtime performance
 
@@ -240,8 +258,9 @@ Checked against `crates/dashbuf/src/container.rs`, `bank.rs`, `prefix.rs`,
       all depend on this.
 - [x] **Split into a small head and a bulk tail** — everything needed to
       lay out and draw sits at the front; images sit behind a page boundary
-      so a device can verify what it needs without touching the rest. The
-      file is mapped rather than read into memory.
+      so a device can verify what it needs without touching the rest.
+      Mapping the file rather than reading it into memory is built, but it
+      is the path a host opts into; the ordinary path still copies.
 - [x] **Assets identified by content** — an image is named by what it is,
       not where it sits, so payloads can be swapped for a different device
       build without touching the design. The name is a hash, and it is
@@ -258,11 +277,15 @@ Checked against `crates/dashbuf/src/container.rs`, `bank.rs`, `prefix.rs`,
 ## 7. Images, fonts and asset preparation
 
 Checked against `crates/dashpack/`, `crates/dashbuf/src/bank.rs`,
-`crates/dashscene-typeset/src/atlas/`.
+`crates/dashscene-typeset/src/atlas/`, `crates/dashpaint/src/image_id.rs`,
+`importers/figma/src/images.ts`, `goldens/tooling/src/profile.rs`.
 
 **Read the last item in this section first.** The capabilities below are
-implemented and covered by tests, but no command runs them: the `dashpack`
-binary reports its pinned versions and exits without packing anything.
+implemented and covered by tests. The `dashpack` binary does not run them —
+it reports its pinned versions and exits without packing anything — so
+there is no packing tool to put in a build pipeline. The repository's own
+preview and comparison commands do reach the packing code directly, which
+is how the quality profiles get measured at all.
 
 - [x] **Three quality profiles** — RAW (untouched), HiFi and LoFi. Each is
       a measured quality band rather than a fixed format: the packer walks
@@ -304,14 +327,16 @@ Checked against `importers/figma/src/`, `crates/dashc/src/`,
       that compiles everything else. Auto-layout, components, instances,
       variants, text, shapes, images and effects all import.
 - [x] **Design tokens and designer intent** — Figma Variables reach the
-      running application both as values and by name, and a companion
-      plugin lets a designer mark which elements are screens, which are
-      scaffolding that should not ship, and which properties the
-      application drives.
+      running application both as values and by name, without a plugin. A
+      companion plugin lets a designer mark scaffolding that should not
+      ship. Which elements are screens is chosen by whoever runs the
+      import, not marked in Figma.
 - [x] **Nothing is dropped silently** — every unsupported construct is a
       named message naming the workaround. This is enforced as a design
-      principle rather than a habit, with one known exception, named in
-      section 3.
+      principle rather than a habit, with **two** known exceptions: stroke
+      widths that differ per side (section 3), and a character no font in
+      the cascade covers, which draws as an empty box with nothing
+      reported.
 - [x] **Authoring in code** — a Rust interface fills the same model
       directly, with no file in between, and the two routes are proven to
       produce the same result over the vocabulary both express.
@@ -320,9 +345,10 @@ Checked against `importers/figma/src/`, `crates/dashc/src/`,
       build should refuse a warning nobody waived. Nothing calls it and
       there is no format for writing waivers down, so today a warning
       blocks nothing.
-- [ ] **A command that compiles a Figma file** — the importer runs as a
-      scripted tool. Verifying an already-compiled file has a command;
-      compiling does not.
+- [ ] **A supported command that compiles a Figma file** — commands exist
+      and work, but they are the repository's own development recipes
+      rather than a shipped tool with a stable interface. Making the
+      compiler a product is planned (v1) — see section 11.
 - [ ] **Authoring from inside a game engine** — planned (v1), alongside the
       Unity renderer.
 
@@ -363,8 +389,11 @@ Checked against `crates/dashpaint/src/lib.rs`,
 Checked against `demo/`, `demo-web/`, `crates/dashscene-unity/src/lib.rs`,
 and the absence of any mobile target in the workspace.
 
-- [x] **Desktop** — macOS, Linux and Windows: a windowed host with an event
-      loop, pointer and keyboard input, and the showcase running in it.
+- [x] **Desktop** — a windowed host with an event loop, pointer and
+      keyboard input, and the showcase running in it. Built and run on
+      macOS and Linux. Windows is expected to work, because nothing in the
+      host is platform-specific, but it has never been built or tested —
+      there is no Windows job in automation and no Windows-specific code.
 - [x] **Browsers with WebGPU** — the same showcase on a canvas, with the
       design file fetched in byte ranges so only the needed part is
       downloaded.
