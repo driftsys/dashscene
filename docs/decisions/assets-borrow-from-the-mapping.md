@@ -83,7 +83,7 @@ backend path G2 requires, the same failure story #600 exists to make loud.
 **D4 — the handle is `Send + Sync`.** Not decorative: the arena holds
 `Arc<ImageTable>`, so the table crosses threads by construction. (Story #597
 did not add the loader thread this sentence anticipated — see its own record's
-D6 — but `dashbuf::residency::Residency` is `Send + Sync` for the same reason,
+D6 — but `dashbuf::residency::BlobResidency` is `Send + Sync` for the same reason,
 and a thread is the next step rather than a different design.)
 
 **D5 — `ImageAsset` stays the owning producer type, unchanged.** A producer

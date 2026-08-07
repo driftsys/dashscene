@@ -941,7 +941,7 @@ fn as_paint_format(format: dashbuf::ImageFormat) -> Option<dashpaint::ImageForma
 /// The `hash` needs no rule here. Every reader resolves an entry through the
 /// null binding and every payload is verified against its recorded content hash
 /// before anything may read it — by `dashbuf::open_verified` before it returns
-/// the bytes, and by `dashbuf::residency::Residency::touch` on the reading path
+/// the bytes, and by `dashbuf::residency::BlobResidency::touch` on the reading path
 /// that `dashbuf::open` starts. So a payload that does not match its hash never
 /// reaches this function.
 ///

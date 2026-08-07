@@ -20,7 +20,7 @@
 //! payload, so the first open faulted every page holding one in anyway; the
 //! criterion did not move. Story #597 is what made mapping pay: [`crate::open`]
 //! resolves an entry to where its payload lies and reads none of them, and
-//! [`crate::residency::Residency::touch`] faults in the ones a frame actually
+//! [`crate::residency::BlobResidency::touch`] faults in the ones a frame actually
 //! draws. Mapping is the half that makes the other half possible, and neither
 //! half moves a number alone.
 //!
@@ -51,7 +51,7 @@ use memmap2::Mmap;
 /// behind a reference-counted handle that `dashpaint`'s image table holds
 /// (`docs/decisions/assets-borrow-from-the-mapping.md` D4), so the property is
 /// load-bearing rather than incidental —
-/// [`crate::residency::Residency`] is `Send + Sync` for the same reason, and a
+/// [`crate::residency::BlobResidency`] is `Send + Sync` for the same reason, and a
 /// loader thread is the next step rather than a different design.
 #[derive(Debug)]
 pub struct MappedFile {

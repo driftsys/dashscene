@@ -18,7 +18,7 @@
 //! to **copy** them. Each alone is enough to make cold start scale with file
 //! size, so a counter seeing only one of them cannot falsify the other. That
 //! puts the recording sites in two crates:
-//! [`crate::residency::Residency::touch_with_cost`] records the hash of each
+//! [`crate::residency::BlobResidency::touch_with_cost`] records the hash of each
 //! payload it makes resident, and
 //! `dashscene_core::load_document_bound_with_cost` records the loader's copy
 //! out of one.
@@ -59,7 +59,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Asset payload bytes one load read, split by why they were read.
 ///
-/// Passed into [`crate::residency::Residency::touch_with_cost`] and
+/// Passed into [`crate::residency::BlobResidency::touch_with_cost`] and
 /// `dashscene_core::load_document_bound_with_cost`, which is why it counts
 /// through `&self` rather than `&mut self`: one load crosses two crates and
 /// several calls, and threading a `&mut` through all of them would put the

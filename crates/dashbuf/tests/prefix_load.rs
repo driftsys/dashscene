@@ -10,7 +10,7 @@
 //! restated by every host.
 //!
 //! Since story #597 the proving half of that binding is
-//! [`dashbuf::residency::Residency::touch`] rather than `Plan::bind`, and it is
+//! [`dashbuf::residency::BlobResidency::touch`] rather than `Plan::bind`, and it is
 //! the same call the native host makes over its mapping — so the tests below
 //! that used to name `bind` name the touch instead.
 //!
@@ -21,7 +21,7 @@ use std::path::PathBuf;
 
 use dashbuf::container::{ContainerError, FLAVOR_UI, HASH_LEN, SectionKind};
 use dashbuf::prefix::{BindError, Envelope, MIN_PREFIX, PrefixError};
-use dashbuf::residency::{PayloadMismatch, Residency};
+use dashbuf::residency::{BlobResidency, PayloadMismatch};
 use dashbuf::{Document, prefix};
 
 /// Every committed `.dsb` golden, read from the tree rather than listed here.
@@ -64,7 +64,7 @@ fn load_by_prefix(file: &[u8]) -> (Document<'_>, Vec<&[u8]>) {
 
     // Round four onwards: each payload the document names, on its own, proven
     // as it arrives — which is what `demo-web` does with a fetched range.
-    let residency = Residency::new();
+    let residency = BlobResidency::new();
     let fetched: Vec<&[u8]> = plan
         .wanted()
         .iter()
@@ -174,7 +174,7 @@ fn the_image_fixture_wants_its_payload() {
 /// behalf and that a prefix host cannot run for itself, because it never held
 /// the bytes until now.
 ///
-/// It used to be `Plan::bind`'s check and it is `Residency::touch`'s since story
+/// It used to be `Plan::bind`'s check and it is `BlobResidency::touch`'s since story
 /// #597. The property is the same one and this is the same assertion; only the
 /// call that makes it moved. **`bind` must not still be refusing it** — the
 /// second assertion below is what says the check moved rather than being
@@ -191,7 +191,7 @@ fn a_payload_that_does_not_match_its_hash_is_refused() {
     let mut payload = file[want.range.start as usize..want.range.end as usize].to_vec();
     payload[0] ^= 0xFF;
 
-    let residency = Residency::new();
+    let residency = BlobResidency::new();
     assert_eq!(
         residency
             .touch(want, &payload)
@@ -227,7 +227,7 @@ fn a_truncated_payload_is_refused() {
     let want = &plan.wanted()[0];
     let short = &file[want.range.start as usize..want.range.end as usize - 1];
 
-    Residency::new()
+    BlobResidency::new()
         .touch(want, short)
         .expect_err("a short payload is refused");
 }

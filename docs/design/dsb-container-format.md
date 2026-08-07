@@ -300,7 +300,7 @@ What a reader does now, and which reader:
   eager reader that hashes every payload and hands back slices; it is for a tool
   checking a file, not for a host drawing one.
 - **A blob becomes readable at the touch that makes it resident.**
-  `dashbuf::residency::Residency::touch` hashes the bytes, records the blob
+  `dashbuf::residency::BlobResidency::touch` hashes the bytes, records the blob
   ready, and returns them — one place a payload is proven, whichever reader
   named it (`docs/decisions/verification-moves-from-open-to-touch.md`). There is
   no loader thread yet: the hosts build their scene before the frame loop

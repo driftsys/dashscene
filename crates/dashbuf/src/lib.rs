@@ -24,7 +24,7 @@
 //! [`open`] verifies the hot half of a file and hands back a [`Wanted`] per
 //! asset entry — where the payload lies and what it must hash to. It reads no
 //! payload byte, so under a mapping it faults in no blob page.
-//! [`residency::Residency::touch`] is the only thing that turns a [`Wanted`]
+//! [`residency::BlobResidency::touch`] is the only thing that turns a [`Wanted`]
 //! into readable bytes, and it hashes them on the way
 //! (`docs/decisions/verification-moves-from-open-to-touch.md`).
 //!
@@ -71,7 +71,7 @@ pub const NO_FIELD: u32 = u32::MAX;
 ///
 /// Both readers produce it — [`open`] over a whole file it holds, and
 /// [`prefix::plan`] over an envelope read from a fetched prefix — and
-/// [`residency::Residency::touch`] is the only thing that consumes it. One type
+/// [`residency::BlobResidency::touch`] is the only thing that consumes it. One type
 /// rather than one per reader, so a payload is proven by one rule wherever it
 /// was read from (`docs/decisions/verification-moves-from-open-to-touch.md`
 /// D7).
@@ -86,7 +86,7 @@ pub struct Wanted {
     /// Where it lies in the file — what a mapped host slices and a prefix host
     /// turns into a range request.
     pub range: std::ops::Range<u64>,
-    /// What it must hash to. [`residency::Residency::touch`] checks it; a host
+    /// What it must hash to. [`residency::BlobResidency::touch`] checks it; a host
     /// caching payloads across loads can key on it, since it is the content's
     /// own name.
     pub hash: [u8; container::HASH_LEN],
@@ -112,7 +112,7 @@ pub struct Wanted {
 /// read, so under a mapping this faults in the envelope and the structured
 /// sections and no blob page at all — which is what R5 asks for and what
 /// [`open_verified`] cannot give. Proving a payload is
-/// [`residency::Residency::touch`]'s job, and [`prefetch`] is how a host decides
+/// [`residency::BlobResidency::touch`]'s job, and [`prefetch`] is how a host decides
 /// which ones a frame needs.
 ///
 /// The returned list is one [`Wanted`] per asset entry, in entry order, and is
@@ -185,7 +185,7 @@ pub fn open(file: &[u8]) -> Result<(Document<'_>, Vec<Wanted>), OpenError> {
 /// an instrumented sibling while the startup-scaling criterion measured the
 /// owning path; story #598's re-run moved that measurement onto the mapped
 /// path, leaving the sibling with no caller. The counter now records in exactly
-/// two places — [`residency::Residency::touch_with_cost`] for a read and
+/// two places — [`residency::BlobResidency::touch_with_cost`] for a read and
 /// `dashscene_core::load_document_bound_with_cost` for a copy — so what it
 /// counts is what a load made resident, and a reader that hashes a whole file
 /// on purpose cannot be mistaken for one.

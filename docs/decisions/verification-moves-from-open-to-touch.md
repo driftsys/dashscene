@@ -108,7 +108,7 @@ it. A twenty-seventh file, `crates/dashscene-core/src/load.rs`, names
 example has to change too — it states the read contract, and after this there
 are two of them.
 
-**D3 — a `Residency` owns touch + hash + mark ready, one blob at a time.** It
+**D3 — a `BlobResidency` owns touch + hash + mark ready, one blob at a time.** It
 holds the region and the hashes the section table declares, and its only way to
 produce a readable payload is `touch(range)`, which hashes the bytes, records
 the range as ready, and returns them. A second touch of a ready range returns
@@ -176,7 +176,7 @@ bullets, and the load-bearing one here. The demo builds its scene
 before the frame loop starts, so the faults are already off the frame thread by
 construction.
 
-`Residency` is `Send + Sync` regardless, because the arena holds
+`BlobResidency` is `Send + Sync` regardless, because the arena holds
 `Arc<ImageTable>` across threads already
 (`assets-borrow-from-the-mapping.md` D4) and because a thread is the next step
 rather than a different design. **What is deliberately not built here is
@@ -184,7 +184,7 @@ streaming**: drawing a frame in which a payload is not yet ready needs the
 placeholder field that has no producer, and that stays in v1 for the reason
 `asset-model-content-addressed-blobs.md` records.
 
-**D7 — `Plan::bind` gives up its hashing to the same `Residency`.** It is the
+**D7 — `Plan::bind` gives up its hashing to the same `BlobResidency`.** It is the
 prefix route's eager verification and, since story #596, the one on the mapped
 path. `bind`'s job becomes what its name says — binding fetched ranges to entry
 order — and the hash moves to the touch, so there is one place a payload is
@@ -197,7 +197,7 @@ which is the same check at the same moment, minus the rule
 every host to remember.
 
 **D8 — the counter records at the touch.** `LoadCost::record_hashed` moves out
-of `open_with_cost` and out of `bind`, into `Residency::touch`, so the number
+of `open_with_cost` and out of `bind`, into `BlobResidency::touch`, so the number
 story #598 asserts on is what was actually made resident rather than what was
 resolved. A payload resolved and never touched costs nothing and is counted as
 nothing, which is the claim R5 makes.
@@ -228,7 +228,7 @@ than of a path only the benchmark takes.
 - **The web path gains the same shape for free.** `demo-web` already fetches a
   payload's range and already has to check it against the table
   (`container-parse-reads-a-prefix-through-a-host-reader.md`: "checking a
-  fetched payload against the table is the host's own step"). A `Residency` over
+  fetched payload against the table is the host's own step"). A `BlobResidency` over
   fetched bytes is the same touch + hash + mark ready with a different source,
   and it removes the one rule that record leaves to every host to remember.
 - **54 call sites move to `open_verified`.** Mechanical, and each one is a
@@ -269,7 +269,7 @@ ended before the assets were resident would measure zero and prove nothing.
 
 ## As built (story #597, 2026-08-07, PR #778)
 
-The shape shipped: `open` reads no payload, a `Residency` proves one, the
+The shape shipped: `open` reads no payload, a `BlobResidency` proves one, the
 prefetch is the shown root's assets, `Plan::bind` keeps only its count check,
 and the counter records at the touch. The criterion reached **1.00x** once
 story #598's re-run measured the mapped path — 197 387 B out of a one-frame
@@ -284,7 +284,7 @@ D1 specified `Result<(Document<'_>, Vec<Range<u64>>), OpenError>`. It returns
 `Vec<Wanted>` — the `{section, range, hash}` triple `prefix::Plan::wanted`
 already produced, promoted to the crate root and now returned by both readers.
 
-A bare range cannot carry the two things its consumers need. `Residency` has to
+A bare range cannot carry the two things its consumers need. `BlobResidency` has to
 know what a range must **hash to**, and a bare range does not say; deriving it
 would mean re-parsing the container the reader just parsed. And the guard in `demo` from issue
 (#640) — which refuses a file binding a derived payload, because this host has
@@ -298,7 +298,7 @@ step and did not ask for in the reading step.
 
 ### D3 takes the bytes rather than holding the region
 
-D3 described a `Residency` that "holds the region and the hashes the section
+D3 described a `BlobResidency` that "holds the region and the hashes the section
 table declares", with `touch(range)` slicing the region itself. It holds
 neither: `touch(want, bytes)` is handed the bytes the caller read.
 
@@ -324,6 +324,16 @@ Found by the review, not by a test. Every touch hashes now. It costs a second
 BLAKE3 pass over a payload some document names twice, and no second page fault
 — the caller has already read the bytes by the time it calls. Readiness stays
 per blob, which is the part of D3 the format's packing rule actually rests on.
+
+### The type is `BlobResidency`, not `Residency`
+
+D3 named it `Residency`, and `dashscene-gpu` already had a public type of that
+name — its atlas residency. Two unrelated types spelled the same way in one
+workspace make every sentence containing "the residency" ambiguous, and
+`dashbuf`'s own `cost` module already cited the GPU one by name. Issue #783
+raised it; the type is `dashbuf::residency::BlobResidency`, and the D-clauses
+above are written with the name that shipped so they can be followed to the
+code.
 
 ### What the counter still cannot see
 

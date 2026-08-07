@@ -27,7 +27,7 @@ const SAMPLE_GIF: &[u8] = include_bytes!("fixtures/image_id/sample.gif");
 /// What one `AssetEntry` records. The hash is irrelevant to every rule in this
 /// file — a payload is verified against its entry's hash before this gate ever
 /// runs, by `dashbuf::open_verified` for a caller that reads a whole file and by
-/// `dashbuf::residency::Residency::touch` for one that makes payloads resident,
+/// `dashbuf::residency::BlobResidency::touch` for one that makes payloads resident,
 /// so a payload that does not match its hash never arrives here — which is why
 /// these tests hand the payloads in directly.
 struct Entry {

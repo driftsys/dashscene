@@ -11,7 +11,7 @@
 //! `commit`). That is [`load_embedded`]'s path, and it is not the only one
 //! here: [`load_mapped`] reads through `dashbuf::open`, which hands back where
 //! each payload lies rather than the payload, makes the shown root's assets
-//! resident through a `Residency`, and leaves the rest of the file cold. The
+//! resident through a `BlobResidency`, and leaves the rest of the file cold. The
 //! gate and the replay are the same in both; see [`scene`] for why the readers
 //! differ. [`dashlang::attach_live`] is the loader-side counterpart of
 //! `Scene::build_live` — it builds a [`LiveScene`] from the binding tables an
@@ -26,7 +26,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use dashbuf::map::MappedFile;
-use dashbuf::residency::Residency;
+use dashbuf::residency::BlobResidency;
 use dashlang::LiveScene;
 use dashscene_core::{Arena, MappedPayload, Region};
 use dashscene_engine::TaffySolver;
@@ -170,7 +170,7 @@ fn source_name() -> String {
 ///
 /// A mapped file takes `dashbuf::open`, which resolves each asset entry to
 /// where its payload lies and reads none of them. The shown root's assets are
-/// then made resident one at a time through a `Residency`, and
+/// then made resident one at a time through a `BlobResidency`, and
 /// `load_document_mapped` binds ranges rather than bytes — so the cost of
 /// opening this file tracks the root being drawn rather than the file's size,
 /// which is R5 (`docs/decisions/verification-moves-from-open-to-touch.md`).
@@ -209,7 +209,7 @@ fn load_embedded(arena: &mut Arena) -> LiveScene {
     dashlang::attach_live(arena, Box::new(TaffySolver::new()))
 }
 
-/// A mapped file: `dashbuf::open` for the ranges, a `Residency` for the shown
+/// A mapped file: `dashbuf::open` for the ranges, a `BlobResidency` for the shown
 /// root's payloads, then the loader's mapped path, which copies no payload byte
 /// at all.
 fn load_mapped(mapped: &'static Mapped, arena: &mut Arena) -> LiveScene {
@@ -252,7 +252,7 @@ fn load_mapped(mapped: &'static Mapped, arena: &mut Arena) -> LiveScene {
     // Nothing draws them this slice — a frame whose payload is not ready needs
     // the placeholder field that has no producer, which stays in v1 (D6) — and
     // debt #779 carries the gap.
-    let residency = Residency::new();
+    let residency = BlobResidency::new();
     let shown = dashbuf::prefetch::first_root(&document)
         .unwrap_or_else(|| panic!("{name} carries no root node"));
     for index in dashbuf::prefetch::assets_of_root(&document, shown) {
