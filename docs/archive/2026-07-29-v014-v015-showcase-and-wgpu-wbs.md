@@ -1,24 +1,83 @@
 # v0.14 + v0.15 — the showcase runtime and the wgpu painter
 
-    status   WIP — design + work breakdown, RATIFIED and partly built.
-             Produced 2026-07-29 in a design session (user + Opus).
-             Superseded in part as of 2026-08-02: the breakdown was filed
-             as epics #568 (v0.14) and #569 (v0.15), v0.14's showcase
-             runtime has landed, and the crate this assumed does exist —
-             as `dashscene-gpu`, not the `dashscene-wgpu` named
-             throughout the text below. Read every crate name here as
-             `dashscene-gpu`.
+    status   archived 2026-08-05, gardened. Design + work breakdown,
+             produced 2026-07-29 in a design session (user + Opus) and kept
+             verbatim below. **Both slices are built**: epic #568 closed
+             with the showcase runtime, epic #569 closed on 2026-08-05 with
+             the whole v0 paint vocabulary drawing through the lean
+             painter. The file records what was planned; it is not a
+             description of what shipped.
 
-             The sentences claiming no issue is filed and no crate is
-             created were true when written and are now false; they are
-             corrected rather than deleted, because the archive records
-             what was planned rather than a rewritten version of it.
+             The durable records are docs/design/dashscene-gpu.md (the
+             painter as built), docs/technotes/2026-07-31-v014-frame-budget.md
+             (the frame budget this breakdown asked to be measured by hand),
+             docs/decisions/frame-delta-is-clamped-and-the-host-owns-the-clock.md
+             (the `dt` ruling below), and
+             docs/decisions/the-host-selects-the-painter-and-the-frame-path-holds-its-buffers.md
+             (the `Present` seam). The roadmap's two closed-slice sections
+             are the account of what each delivered.
 
-             What is left is v0.15, in progress: the painter is chosen
-             but not built. The file is gardened and archived when it is
-             built, on the same rule the glyph-run spike was held to — a
-             decision landing and a design being built are two events,
-             and only the second empties the file.
+             The direction note this builds on was archived in the same
+             pass, to docs/archive/2026-07-19-wgpu-painter-direction.md.
+             References below to its old `docs/wip/` path are kept as
+             written rather than repointed, for the same reason the rest of
+             the body is.
+
+             It names `dashscene-wgpu` throughout; the crate is
+             `dashscene-gpu`, named for the role rather than the backend.
+             Read every crate name here as `dashscene-gpu`. Sentences
+             claiming no issue is filed and no crate is created were true
+             when written and are corrected here rather than deleted,
+             because the archive records what was planned rather than a
+             rewritten version of it.
+
+             THREE CLAIMS BELOW WENT STALE AND ARE CORRECTED HERE.
+
+             §"Stories" S15.11 asks for "WebGPU with a WebGL2 fallback".
+             **The fallback is not buildable for this painter**, and that
+             is a design fact rather than a scheduling one:
+             `wgpu::Limits::downlevel_webgl2_defaults` allows **zero**
+             storage buffers per shader stage, and this painter's whole
+             design is storage-buffer tables — seven of them, three bound
+             to the vertex stage and four to the fragment stage. A fallback
+             means a second shader variant expressing every table as a
+             uniform buffer or a texture, with its own binding budget and
+             its own conformance suite. The web target shipped WebGPU only;
+             a browser without it is told so and draws nothing.
+
+             §"Stories" S15.10 asks whether the render oracle gains
+             per-painter bands "or a separate band set", expecting the
+             bands to move. **Neither.** One band set serves both painters
+             unchanged and zero goldens moved —
+             docs/decisions/one-band-set-serves-both-painters.md.
+
+             §"Open questions" holds two, and both are answered. The
+             entry-tier GLES measurement was **not** needed to close v0.15,
+             as the section itself predicted; the switch remains a later,
+             separate decision. The `dt` invariant is tested at
+             `demo/tests/clock_invariant.rs`, which greps the stack at or
+             below `LiveScene` for clock reads — the grep-based mechanism
+             the question proposed, decided by S14.3 as it asked.
+
+             One structural note the breakdown did not predict: **five
+             v0.15 stories were filed after the slice opened** on
+             2026-07-30 — strokes (#710), gradient fills (#715), the image
+             extent (#716), the backdrop blur (#733, split out of #584) and
+             the macOS presentation fix (#746). Three of those share one
+             shape: the packer had emitted an `InstanceKind` since story
+             #578 that no story drew (#710, #715), or a story body claimed
+             a prerequisite delivered something it had not (#733).
+
+             **How each was found differs, and the difference matters more
+             than the count.** Epic #569 records #710 as found by running
+             both painters against one scene, and #715 as found while
+             scoping #581 — reading a neighbouring story, not watching a
+             picture. #746 came from the owner looking at a screen. So the
+             transferable lesson is narrower than "run the two painters":
+             a work breakdown that assigns `InstanceKind`s to stories
+             should be checked against the packer's emitted set, which is a
+             one-command test that would have found #710 and #715 before
+             either slice opened.
     scope    what comes after v0.13: a windowed showcase runtime (v0.14),
              then a wgpu painter covering native and web (v0.15); which
              open debt must land before v0.14; which debt v0.14 makes

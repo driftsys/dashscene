@@ -1,22 +1,58 @@
 # Future painter: a wgpu quad + SDF backend
 
-    status   WIP — was a direction, now the chosen one. Design-discussion
-             capture plus verified ecosystem research (2026-07-19,
-             user + Opus). Written so the question would not be
+    status   archived 2026-08-05, gardened. Design-discussion capture plus
+             verified ecosystem research (2026-07-19, user + Opus), kept
+             verbatim below. It was written so the question would not be
              researched from scratch when the slice opened, which is what
              it was used for.
 
-             Updated 2026-08-02. The line that stood here — "nothing is
-             implemented and no crate has been adopted" — was true when
-             written and is now false. The slice opened as v0.15
-             (epic #569), the crate exists as `dashscene-gpu`, and
-             story #577 landed its seam. The painter is chosen; it is not
-             yet built, so the research below is still the authority for
-             the parts not yet reached.
+             The painter it argued for is **built**: epic #569 closed on
+             2026-08-05 with the whole v0 paint vocabulary drawing through
+             `dashscene-gpu`, native and web. The durable record is
+             docs/design/dashscene-gpu.md, which is the authority; the
+             strategy this note declined to decide is
+             docs/decisions/wgpu-is-the-lean-painter.md.
 
-             Gardened and archived when the painter is built, not when it
-             was chosen — the two are separate events and only the second
-             empties this file.
+             TWO CLAIMS BELOW WENT STALE AND ARE CORRECTED HERE, so this
+             file is not read as accurate.
+
+             §"Cautions" states that "a wgpu painter will not pixel-match
+             Skia — different AA, different gradient dithering, different
+             blur falloff. The render oracle would need per-painter
+             tolerance bands." **Its consequence is false; its premise
+             held.** The painters do differ — story #586 measured
+             v08-baseline at 1.816 % against 1.822 %, v05-text-latin at
+             0.033 % against 0.034 %, and v08-drop-shadow at 0.043 %
+             against 0.000 % — so this is not byte-parity. What did not
+             follow is the conclusion: every frame sits inside its existing
+             band through both painters, six of the seven agree to within
+             0.006 percentage points, and the one that differs does so in
+             the lean painter's favour. One band set serves both and zero
+             goldens moved
+             (docs/decisions/one-band-set-serves-both-painters.md). This
+             was the note's own "most repo-specific risk", and the work it
+             predicted was not needed.
+
+             §"Helper crate stack (verified current)" pins eight crates:
+             `wgpu`, `bytemuck`, `glam`, `encase`, `etagere`,
+             `guillotiere`, `wgsl_to_wgpu`, `naga_oil`. **Three of those
+             eight were adopted** — `wgpu`, `bytemuck` and `etagere`. Five
+             were not: `glam`, `encase`, `guillotiere`, `wgsl_to_wgpu` and
+             `naga_oil` appear nowhere in the workspace. `lru` was adopted
+             too, and the section names it in prose beside `etagere` rather
+             than in the table, so it is not one of the eight. `wgpu` is
+             pinned at the 30.0 line the section describes, not the
+             conservative 29 alternative it offers. The versions in the
+             table are as verified on 2026-07-19 and are not maintained.
+
+             The rest held. Vello stayed ruled out, no drop-in crate was
+             adopted, the painter was written rather than taken, GPUI's
+             per-instance clip model was followed over iced's scissor, its
+             alpha-multiplied group opacity was not copied, and "the lift
+             is the painter, not the shaders" is what the built crate looks
+             like — roughly six thousand lines of Rust against seventeen
+             hundred of WGSL. The pathlessness caution stands as written:
+             it is a property of the current vocabulary, not a guarantee.
     scope    whether a wgpu painter is a viable alternative to the parked
              tiny-skia web painter and a candidate for the lean native
              painter; what would have to be written vs adopted

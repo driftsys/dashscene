@@ -911,7 +911,7 @@ The v1 breakdown is revised at this close — see v1 below.
 
 **Epic #568.** Closes no `E` criterion, but **carried the one that was still
 open** — see the v0 exit gate below; it closed here. Closed 2026-08-01. Design capture:
-`docs/wip/2026-07-29-v014-v015-showcase-and-wgpu-wbs.md`.
+`docs/archive/2026-07-29-v014-v015-showcase-and-wgpu-wbs.md`.
 
 Delivers: the first frame this project has ever drawn into a window, and the
 `README.md` it does not have.
@@ -960,10 +960,13 @@ on the Skia reference painter.
 ### v0.15 — the lean painter — closed
 
 **Epic #569.** Closes no `E` criterion. Closed 2026-08-05, all twenty-two
-stories done. Design capture: the same work breakdown, plus
-`docs/wip/2026-07-19-wgpu-painter-direction.md` for the ecosystem research and
-the pinned helper stack. The driver prompt that ran the slice is archived
-verbatim at `docs/archive/2026-08-02-v015-DRIVER-PROMPT.md`.
+stories done. As-built record: `docs/design/dashscene-gpu.md`. Design capture:
+the same work breakdown, plus
+`docs/archive/2026-07-19-wgpu-painter-direction.md` for the ecosystem research
+and the pinned helper stack — both archived at the close, with the claims the
+slice disproved corrected in their own `status` blocks. The driver prompt that
+ran the slice is archived verbatim at
+`docs/archive/2026-08-02-v015-DRIVER-PROMPT.md`.
 
 **What landed, against the definition of done.** The full v0 paint vocabulary
 draws through `dashscene-gpu` — solid, gradient and image fills, outline

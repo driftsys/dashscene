@@ -1,9 +1,46 @@
 # Photographic content is target content — what that changes
 
-    status   input, recorded 2026-07-28. Nothing here is implemented and
-             nothing is decided. It records a statement about target content
-             from the repository owner, and traces what that statement reaches.
-             Garden into decisions when each question below is ruled on.
+    status   input, recorded 2026-07-28. It records a statement about target
+             content from the repository owner, and traces what that
+             statement reaches. PARTLY GARDENED 2026-08-05: three of the
+             five questions below are ruled on, and the line that stood here
+             — "nothing is implemented and nothing is decided" — was true
+             when written and is now false. The file stays until the
+             remaining two are ruled on.
+
+             §1 "The profile bands" is answered, and it is the consequence
+             this note predicted. Issue #455 closed 2026-07-28 (PR #554)
+             with four real assets in `corpus/photo/` — a photorealistic 3D
+             interior render and three landscape photographs — measured
+             through the whole ladder. **LoFi's budget is now the binding
+             term on real committed content**, at 4.2152 %, 4.3911 %,
+             2.2385 % and 1.0078 % against its 5 % ceiling, and it needed no
+             retune: the band behaved as designed on all four, and #544's
+             two perceptual floors held against content they had never been
+             measured against. The numbers are in
+             `crates/dashpack/tests/band_contract.rs` and
+             `goldens/tooling/tests/perceptual_calibration.rs`; the record
+             is docs/decisions/asset-quality-profile-bands.md.
+
+             §3 "The ladder's fine end" is answered by the same work, and
+             the gap closed on its own exactly as this section asked
+             whether it would: `photo-coast-forest` terminates at astc-4x4
+             and `photo-snowy-forest` at astc-5x5, so every rung of the
+             ladder is now some fixture's terminal choice.
+
+             §4 "The painter's working colour space" is settled — 2026-07-30
+             by measurement against Figma's own render, sRGB-encoded, at
+             docs/decisions/blur-blends-in-srgb-encoded-space.md. Issue #412
+             closed with it.
+
+             §2 "The memory budget" (#462) and §5 "Whether ASTC remains the
+             right family" remain open, both in the v1 milestone. Issue #553
+             is new evidence for §5 rather than an answer to it: HiFi
+             rejects every lossy rung on three of the four payloads, so it
+             saves no memory at all on this content class — and how much
+             that matters cannot be judged until #462's budget exists.
+
+             Garden the rest into decisions when those two are ruled on.
 
 ## The input
 
