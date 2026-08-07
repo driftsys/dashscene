@@ -1,19 +1,37 @@
-# Host integration in three layers (proposed)
+# Host integration in three layers
 
-    status   proposed — a direction for v0.17's planning session, not yet
-             ratified and not yet built
-    date     2026-08-05
+    status   **accepted 2026-08-07**, at v0.17's opening (epic #793). Nothing
+             here is built. The slice it belongs to is **v0.19**, not v0.17:
+             the planning session took the split this record's own scope line
+             anticipated, and the C ABI is the seam it cut on.
+    date     2026-08-05; ratified and re-scoped 2026-08-07
     source   the v0.15 phase-end revision (epic #569), which opened v0.17
     scope    embedding into a platform host: how a platform surface reaches
              `dashscene-gpu`, how app state drives a scene, and how a scene is
-             authored from the host's language. **v0.17 applies it to Android
-             only**; iOS and Unity are v1. Bears on #741, and on the C ABI
-             `docs/roadmap.md` names as v0.17's likely split seam.
+             authored from the host's language. **v0.19 applies it to Android
+             only**; iOS and Unity are v1.
+
+    A note on slice numbers. This record was written expecting v0.17 to carry
+    both the packaging half and the mobile half. `docs/roadmap.md` predicted
+    that would be too large and named the C API as the seam; v0.17's opening
+    took that split. **So every "v0.17" below that means the mobile bring-up
+    now means v0.19**, and v0.17 is web and desktop packaging alone (epic
+    #793). The layering, the C ABI, `SurfaceView`-only and the deferrals are
+    ratified unchanged — only which slice builds them moved. Story #796 checks
+    this reading at the v0.17 close.
+
+    What ratification commits to, and what it does not: the structure, so a
+    story breaks against it rather than inventing one. **D3a is a risk to
+    check, not a measured fact** — that a device without Vulkan meets the same
+    four-fragment-storage-buffer wall that made WebGL2 unbuildable — and the
+    first Android story confirms the target device class exposes Vulkan before
+    anything is built on it. Ratifying does not make that measurement.
 
 ## Context
 
-v0.17 delivers platform reach. Web and desktop already work and are a packaging
-problem. **Android is at zero** — no target triple, no toolchain, no CI job, and
+Platform reach was one slice when this was written. Web and desktop already work
+and are a packaging problem — **that half is v0.17 (epic #793)**, and this record
+does not bear on it. **Android is at zero** — no target triple, no toolchain, no CI job, and
 no FFI beyond `dashscene-unity`'s Unity-facing bindings — so it is the slice's
 one new platform.
 
@@ -86,7 +104,7 @@ platform-general; nothing in v0.17 depends on it.
 **D3a — Android means Vulkan, and the GLES fallback carries the same exposure
 that made WebGL2 unbuildable. Verify it before the slice commits.**
 
-All three of v0.17's targets draw through `dashscene-gpu`, so there is one
+All of this project's targets draw through `dashscene-gpu`, so there is one
 painter and one shader library; what differs is the backend. Web is WebGPU,
 desktop is Metal, Vulkan or DX12, and Android is Vulkan or wgpu's GLES backend.
 

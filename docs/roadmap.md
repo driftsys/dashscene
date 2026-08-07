@@ -11,7 +11,7 @@ is nothing to keep in sync between the two.
 
 | This file (shape)               | GitHub (state)                                |
 | ------------------------------- | --------------------------------------------- |
-| Which slices exist (v0.1-v0.18) | Which stories exist under each epic           |
+| Which slices exist (v0.1-v0.19) | Which stories exist under each epic           |
 | What each slice delivers        | Which stories are open, closed, who owns them |
 | Inter-slice dependency edges    | Story-level dependency edges                  |
 | Which E-criteria a slice closes | Debt triage and milestone assignment          |
@@ -1127,13 +1127,42 @@ choice is designed against. The `Container::parse` question it also waited on is
 answered — story #587 settled it, and the answer leaves `parse` unchanged.
 Independent of v0.14.
 
-### v0.17 — embedding and integration — open, not yet planned
+### v0.17 — embedding and integration — open
 
-**No epic yet.** Opened at the v0.15 phase-end revision (epic #569), which is
-where AGENTS.md puts the placing of issues filed deliberately unscheduled.
+**Epic #793.** Opened at the v0.15 phase-end revision (epic #569), which placed
+the deferred issues, and planned at the v0.16 revision (2026-08-07), which split
+it.
 
-Delivers: **platform reach — web, desktop and Android.** iOS and the Unity host
-follow in v1. Everything below boundary B is a library; everything above it today is
+**The split, and why.** The entry below predicted that a slice naming five
+targets — two of them at zero — was larger than one slice, and named the C API
+as the seam: mobile and Unity need it, web and desktop do not. v0.17's opening
+took that split.
+
+- **v0.17 — this slice. Web and desktop packaging.** Both targets already work;
+  what is missing is anything an embedder can consume.
+- **v0.19 — Android bring-up, the C ABI, and the three layers.** See its entry
+  below.
+
+**No renumber.** v0.18's animation vocabulary keeps its number and its place,
+which also puts the document-vocabulary work ahead of the second platform
+bring-up rather than behind it — a format that is still moving is a poor thing
+to stand a new platform on.
+
+Delivers: **an integration surface that is a thing rather than an example.**
+Everything below boundary B is a library; everything above it is `demo/` and
+`demo-web/`, both `publish = false`, so an integrator starts from a
+demonstration and reads off what to copy. `dashscene-web` becomes the web
+integration crate (#741, ruled 2026-08-07), the browser load path gets bounded
+by the shown root so R5 holds there as it does on native (#792), desktop gets
+the same treatment in a shape the epic settles, and the workspace learns what
+`publishable` would mean.
+
+The rest of this entry is the survey the v0.15 revision wrote, kept because the
+five-target picture is what the split was cut from. **Android, iOS and Unity
+below are v0.19 and v1, not this slice.**
+
+Delivers, as first written: **platform reach — web, desktop and Android.** iOS
+and the Unity host follow in v1. Everything below boundary B is a library; everything above it today is
 `demo/` and `demo-web/`, both `publish = false`. Nothing shippable sits between
 them, so an integrator starts from a demonstration and reads off what to copy.
 
@@ -1200,23 +1229,26 @@ It also records why an AIDL out-of-process host is deferred rather than
 rejected, and why v0.17 builds the `SurfaceView` path only, with `TextureView`
 deferred to v1 alongside the case that motivates it.
 
-**Not planned.** No epic, no story breakdown, no dependency order — those come
-from a planning session, the way v0.16's did.
+**Planned 2026-08-07.** Epic #793 carries the story breakdown and the order.
+Two questions are open in it and are to be answered before the stories that
+depend on them, the way #741 was: whether desktop gets an integration crate of
+its own and what it is called, and what #776's payload budget covers.
 
 Depends on: v0.15 for the painter an embedder embeds, and on v0.16 for the load
 path the `.dsb` half of it wraps.
 
 ### v0.18 — animation vocabulary — open, provisional
 
-**Epic #769, milestone provisional.** Both the number and the placement of this
-slice are unsettled, and it is recorded that way rather than presented as
-planned: v0.17 is described above as larger than one slice and expected to
-split, which may renumber this. It is confirmed, renumbered or re-scoped at the
-**owed v0.16 phase-end revision**, which is where AGENTS.md puts the
-placing of issues filed deliberately unscheduled.
+**Epic #769, milestone provisional.** The number and the placement are settled;
+the scope is not. This entry was written expecting v0.17's split to renumber it,
+and the v0.16 phase-end revision (2026-08-07) took that split **without**
+renumbering: the packaging half stayed v0.17 and the mobile half became v0.19,
+below. So this slice keeps its number and its position, which also puts the
+document-vocabulary work ahead of the second platform bring-up — a format that
+is still moving is a poor thing to stand a new platform on.
 
-Nothing here should be started ahead of that revision without a decision saying
-so.
+What stays provisional is the story breakdown, as every epic's does before its
+own planning session.
 
 Delivers: **motion as data in the document.** Today a dashscene animation
 cannot ship in a file. `dashbuf` does not depend on `dashcue` — three other
@@ -1262,6 +1294,37 @@ and chose ThorVG.
 Depends on: nothing in v0.16. It touches `dashbuf`, `dashscene-core`,
 `dashcue`, `dashscene-engine` and both painters, none of which is on the
 loading-performance path.
+
+### v0.19 — Android, the C ABI, and the three layers — open, not yet planned
+
+**No epic yet.** Split out of v0.17 at that slice's opening (2026-08-07), on the
+seam the v0.17 entry above named.
+
+Delivers: **the second platform.** Android is at zero — no target triple, no
+toolchain, no CI job, and no FFI beyond `dashscene-unity`'s Unity-facing
+bindings.
+
+[`decisions/host-integration-in-three-layers.md`](decisions/host-integration-in-three-layers.md)
+is **accepted** and is this slice's structure: three layers — surface interop,
+app state bound to signals, a DSL projecting `dashlang` — each usable without
+the layer above it, over one shared C ABI, written platform-general so the v1
+iOS story inherits it. `SurfaceView` semantics only; `TextureView` is v1 with
+the case that motivates it.
+
+**The first story confirms Vulkan before anything is built on it.** That record's
+D3a is a risk rather than a measurement: the painter binds four storage buffers
+to the fragment stage and `wgpu::Limits::downlevel_defaults` allows exactly
+four, so a device without Vulkan meets the same wall that makes WebGL2
+unbuildable for this painter. The figure lives in a driver and in the GLES
+specification, not in the pinned crate, and this project reads a limit out of
+the thing that enforces it.
+
+Issue #767 (`madvise`) is waiting on this slice rather than on v1's hardware:
+**Android is the first target where a genuinely cold page cache is ordinary
+rather than contrived**, which is the harness that measurement needs.
+
+Depends on: v0.17 for what an embedder consumes, and on the C ABI this slice
+builds. Independent of v0.18.
 
 ## v1 — Unity, full feature set, performance, production toolchain
 
