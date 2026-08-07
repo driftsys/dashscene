@@ -44,14 +44,18 @@ by name" instead of "not supported yet".
 deviation from a house rule.** The `sdd-working-memory-lifecycle` rule
 says a shipped document describes the system as-built, and that
 forward-looking concepts stay in `docs/wip/` until they are implemented.
-`docs/design/architecture.md` states the same deviation for the same
-reason, and this file follows it: a catalogue that listed only what
-exists would answer "what can I use today" and silently fail the question
-it is actually for, which is "can this screen be built, and if not yet,
-when". The rule's real concern is that an unbuilt thing must never be
-described as built. Every unbuilt item below is marked unbuilt, says what
-is missing, and names when it is planned — so the concern is met without
-removing the half of the picture a product owner needs.
+`docs/design/architecture.md` takes the same deviation, for its own
+reason — deleting its unbuilt entries would delete the reason the system
+is shaped the way it is. This file takes it for a different one: a
+catalogue that listed only what exists would answer "what can I use
+today" and silently fail the question it is actually for, which is "can
+this screen be built, and if not, what happens instead".
+
+The rule's real concern is that an unbuilt thing must never be described
+as built. Every unbuilt item below is marked unbuilt and says what is
+missing. Where the answer is "later", it says when. Where the answer is
+"never", it says refused or rejected and names the workaround — those are
+decisions, not backlog, and they carry no date on purpose.
 
 ---
 
@@ -118,8 +122,9 @@ Not available:
 - [x] **Line wrapping** — at spaces and at explicit line breaks.
 - [x] **Line height and spacing** — taken from the font's own metrics.
 - [x] **Letter spacing.**
-- [x] **Letter case** — upper, lower and title case, applied before the
-      text is shaped, so it is correct for every script.
+- [x] **Line height follows the tallest font on the line** — where a line
+      mixes fonts, its height spans the tallest letters and the deepest
+      descenders on it, rather than being fixed by the first font.
 - [x] **Vertical alignment inside a text box.**
 - [x] **Multiple font weights** — four Latin weights today. Asking for a
       weight the build does not carry is reported by name rather than
@@ -161,9 +166,11 @@ Not available:
 - [ ] **Kashida justification** — the Arabic convention of stretching the
       joining strokes between letters to fill a line, rather than widening
       the spaces. Deferred, with a warning at import.
-- [ ] **Line height from the tallest font on a line** — the line box
-      currently comes from the primary font. Individual letters do scale
-      correctly per font.
+- [ ] **Letter case set in the design** — upper, lower or title case
+      applied as a text property rather than by retyping the words.
+      Refused by name: there is no vocabulary for it anywhere in the
+      system, so a design using it is reported at import. Workaround: type
+      the text in the case you want.
 
 ## 3. Visual styling and effects
 
@@ -196,16 +203,19 @@ Not available:
 - [ ] **Layer blur** — deferred, with a warning at import. Blurring an
       element itself, as opposed to what is behind it.
 - [ ] **Advanced blend modes** — multiply, screen and the rest. Refused by
-      name today: the design profile the importer runs treats them as an
-      error, so a file using one does not compile at all. They are planned
-      for high-end backends, which can honour them.
+      name today: the rule set the importer runs treats them as an error,
+      so a file using one does not compile at all. They are planned for
+      high-end backends, which can honour them.
 - [ ] **Corner smoothing (squircles)** — deferred, with a warning.
 - [ ] **Luminance masks** — refused by name; the masked element is
       reported rather than drawn. Shape masks work.
 - [ ] **Dashed strokes** — refused by name. Workaround: a baked dash
       pattern.
-- [ ] **Different stroke widths per side** — warned today, and may become
-      a refusal. Workaround: four edge rectangles.
+- [ ] **Different stroke widths per side** — not detected. A stroke
+      carries one width, and a design setting different widths per side
+      compiles with whichever single width the design file reports, with
+      no message. This is the one gap in this section that is not reported
+      at import. Workaround: four edge rectangles.
 - [ ] **Variable-width strokes** — rejected.
 - [ ] **Noise, texture and progressive-blur effects** — rejected.
       Workaround: bake them into an image.
@@ -234,9 +244,12 @@ Not available:
 - [x] **Reproducible** — the same inputs produce the same frames on every
       machine, which is what lets animation be tested rather than
       eyeballed.
-- [x] **Live values from the application** — a number or a string from
-      the running app drives a property: position, size, spacing, or a
-      fill colour channel.
+- [x] **Live values from the application** — a number or a true/false
+      value from the running app drives a property: position, size,
+      spacing, or one channel of a fill colour.
+- [x] **Live text from the application** — a number can be formatted into
+      a string and shown as an element's text. Text is driven through its
+      own route, not by the property route above.
 - [x] **Smoothed values** — a driven value follows its target through a
       spring rather than jumping.
 - [x] **Visibility driven by a value.**
@@ -365,6 +378,13 @@ Part built and planned:
 
 Turning source images and fonts into what actually ships on a device.
 
+**One scope note for this whole section.** Everything ticked below is
+implemented and exercised by the test suite, but it is not yet reachable
+from a command. Running `dashpack` today prints that no packing operation
+is implemented and exits with a failure code. The capability is real and
+measured; the way a build would invoke it is not built. That is the last
+item in this section.
+
 - [x] **Three quality profiles** — RAW (untouched), HiFi, and LoFi.
 - [x] **A profile is a measured quality band, not a fixed format** — the
       tool walks a ladder of encodings and picks the cheapest one that
@@ -401,6 +421,12 @@ Turning source images and fonts into what actually ships on a device.
 
 Not available:
 
+- [ ] **A way to run the packer** — the command exists as a build target
+      and reports which encoder and container version it is pinned to, but
+      it packs nothing: it prints that no packing operation is implemented
+      and exits with a failure code. Everything above it is library code
+      the tests drive. Until this lands, no build pipeline can produce a
+      packed bank.
 - [ ] **An overall memory budget for a device** — planned (v1). Today a
       build can succeed and still not fit the target, and nothing detects
       it. This is a stated, accepted gap rather than an oversight.

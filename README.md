@@ -121,11 +121,16 @@ the pipeline above is drawn out in
 Built: the document format and its sectioned container, the arena and its
 staged-mutation API, the Taffy solve, variants and FLIP, the text stack for
 Latin and Arabic (bidi, shaping, MSDF glyph atlases), the descriptive animation
-vocabulary and its scheduler, the Figma importer, the asset packer, the Skia
-reference painter, and `dashscene-gpu` — the lean painter, which draws the same
-vocabulary over `wgpu` on a desktop and in a browser. The three scenes above
-draw the whole of the v0 paint vocabulary between them, and `--dsb` loads a
-document the Figma importer compiled.
+vocabulary and its scheduler, the Figma importer, the Skia reference painter,
+and `dashscene-gpu` — the lean painter, which draws the same vocabulary over
+`wgpu` on a desktop and in a browser. The three scenes above draw the whole of
+the v0 paint vocabulary between them, and `--dsb` loads a document the Figma
+importer compiled.
+
+The asset packer sits between the two lists. Its quality profiles, ASTC encode,
+KTX2 writer and cold-bank assembly are built and measured, but they are library
+code the tests drive: `dashpack` the binary reports its pinned encoder and
+container versions and then exits without packing anything.
 
 Not built:
 
@@ -172,7 +177,7 @@ and `goldens/tooling/` (the golden-image harness).
 | `dashpack`             | the asset packer — quality profiles, cold banks, manifests       |
 | `dashpack-astcenc-sys` | bindings to the vendored astcenc encoder and reference decoder   |
 | `dashscene`            | the umbrella crate — a stub                                      |
-| `dashscene-unity`      | Rust FFI bindings for the Unity painter — a stub                 |
+| `dashscene-unity`      | the `extern "C"` gate holding boundary B representable from C#   |
 | `dashscene-web`        | the wasm and tiny-skia painter — a stub, retired                 |
 | `dashscene-gpu`        | the lean painter over wgpu — native and web, the full vocabulary |
 
