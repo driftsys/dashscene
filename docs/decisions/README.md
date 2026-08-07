@@ -161,9 +161,21 @@ into the records below. Per-story decisions land here directly:
   work"; the v0.10 close moved that work into v0.11, and it is **as built**
   there (stories #399 and #401). Byte layout:
   `../design/dsb-container-format.md`.
+- [host-integration-in-three-layers.md](host-integration-in-three-layers.md) —
+  **accepted** (v0.17's opening, 2026-08-07), and built in **v0.19**: a
+  platform host is three layers — surface interop, app state bound to signals,
+  a DSL projecting `dashlang` — each usable without the layer above it, over
+  one shared C ABI, written platform-general so the v1 iOS story inherits it.
+  Android only; `SurfaceView` semantics only, with `TextureView` deferred to v1
+  alongside the case that motivates it. **D3a is a risk to check rather than a
+  measured fact**: a device without Vulkan may meet the same
+  four-fragment-storage-buffer wall that makes WebGL2 unbuildable, and the
+  first Android story confirms the target device class before anything is built
+  on it.
 - [container-parse-reads-a-prefix-through-a-host-reader.md](container-parse-reads-a-prefix-through-a-host-reader.md)
-  — **open**: `Container::parse` stays strict, and a prefix is read by a
-  separate host-side envelope reader rather than by a tolerant parse mode.
+  — **accepted**, built by story #587 as `dashbuf::prefix`: `Container::parse`
+  stays strict, and a prefix is read by a separate host-side envelope reader
+  rather than by a tolerant parse mode.
   One bounds check costs nothing under `mmap` and forces a whole file into
   linear memory in wasm, so stories #587 and #595 had each planned to change
   it without knowing about the other.
