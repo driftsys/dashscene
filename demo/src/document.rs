@@ -3,17 +3,17 @@
 //! (story #575, epic #568).
 //!
 //! `dashscene_core::load`'s own doc comment states the read contract: run
-//! `dashbuf::open` (the envelope plus the flatbuffers verifier — it calls
-//! `root_as_document` internally, since a `.dsb` has been a sectioned
+//! `dashbuf::open_verified` (the envelope plus the flatbuffers verifier — it
+//! calls `root_as_document` internally, since a `.dsb` has been a sectioned
 //! container since v0.11), then `dashscene_validator::validate_document`
 //! (the referential load gate), then `dashscene_core::load_document` (the
 //! replay through the ordinary producer API: `add_node` / `set_prop` /
-//! `commit`). That is [`load_embedded`]'s path, and since story #596 it is
-//! not the only one here: [`load_mapped`] reads the envelope with
-//! `dashbuf::prefix` instead, because only that reader hands back a payload's
-//! byte range, which is what an image table pointing into the mapping needs.
-//! The gate and the replay are the same in both; see [`scene`] for why the
-//! readers differ. [`dashlang::attach_live`] is the loader-side counterpart of
+//! `commit`). That is [`load_embedded`]'s path, and it is not the only one
+//! here: [`load_mapped`] reads through `dashbuf::open`, which hands back where
+//! each payload lies rather than the payload, makes the shown root's assets
+//! resident through a `Residency`, and leaves the rest of the file cold. The
+//! gate and the replay are the same in both; see [`scene`] for why the readers
+//! differ. [`dashlang::attach_live`] is the loader-side counterpart of
 //! `Scene::build_live` — it builds a [`LiveScene`] from the binding tables an
 //! arena already carries, rather than from a freshly authored one — so a
 //! loaded document drives the same [`LiveScene::tick`] the placeholder scene
@@ -26,7 +26,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use dashbuf::map::MappedFile;
-use dashbuf::prefix::{self, Envelope, MIN_PREFIX, PrefixError};
+use dashbuf::residency::Residency;
 use dashlang::LiveScene;
 use dashscene_core::{Arena, MappedPayload, Region};
 use dashscene_engine::TaffySolver;
@@ -160,23 +160,30 @@ fn source_name() -> String {
 /// offset from the drawable it is given. A resize therefore reloads the same
 /// picture rather than rescaling it.
 ///
-/// # Two load paths, and the mapped one is not `dashbuf::open`
+/// # Two load paths, and only one of them is bounded by what is shown
 ///
-/// The embedded golden is a `&'static [u8]` with nothing to borrow from, so it
-/// takes `dashbuf::open` and the loader copies each payload, as it always has.
+/// The embedded golden is a `&'static [u8]` with nothing to borrow from and no
+/// pages to fault, so it takes `dashbuf::open_verified` and the loader copies
+/// each payload, as it always has. That path cannot be bounded by what is
+/// shown even in principle: `load_document` copies every payload into an owned
+/// `ImageAsset`, so every entry needs bytes.
 ///
-/// A mapped file takes the **prefix reader** instead — `Envelope::read`, then
-/// `prefix::plan` — because that is the only reader that hands back a payload's
-/// byte *range*, and a range is what an image table pointing into the mapping
-/// needs. `dashbuf::open` returns slices, and recovering an offset by
-/// subtracting one slice's pointer from another's is refused by
-/// `docs/decisions/assets-borrow-from-the-mapping.md` D6 as arithmetic that is
-/// correct until someone passes a slice from elsewhere.
+/// A mapped file takes `dashbuf::open`, which resolves each asset entry to
+/// where its payload lies and reads none of them. The shown root's assets are
+/// then made resident one at a time through a `Residency`, and
+/// `load_document_mapped` binds ranges rather than bytes — so the cost of
+/// opening this file tracks the root being drawn rather than the file's size,
+/// which is R5 (`docs/decisions/verification-moves-from-open-to-touch.md`).
 ///
-/// The reader is the browser host's, used natively — `demo-web/src/document.rs`
-/// drives the same three calls over fetched ranges. Over a mapping every range
-/// is already in hand, so the rounds that are network requests there are slices
-/// here.
+/// Until story #597 this path read the envelope with `dashbuf::prefix`, because
+/// at the time that was the only reader handing back a payload's byte *range*.
+/// `dashbuf::open` returns ranges now, so the native host reads through the
+/// strict reader again — which is the home
+/// `docs/decisions/container-parse-reads-a-prefix-through-a-host-reader.md`
+/// gives it, since bounds-checking a section against a full-length mapping
+/// costs nothing and touches no page. `prefix` stays what that record says it
+/// is: the reader for a host holding only a prefix, which is
+/// `demo-web/src/document.rs`.
 ///
 /// # Panics
 ///
@@ -191,53 +198,30 @@ pub fn scene(arena: &mut Arena, _width: u32, _height: u32) -> LiveScene {
     }
 }
 
-/// The embedded golden: `dashbuf::open` over bytes that borrow from nothing,
-/// and the loader's owning path.
+/// The embedded golden: `dashbuf::open_verified` over bytes that borrow from
+/// nothing, and the loader's owning path.
 fn load_embedded(arena: &mut Arena) -> LiveScene {
     let name = source_name();
-    let (document, payloads) =
-        dashbuf::open(DOCUMENT).unwrap_or_else(|error| panic!("{name} does not open: {error}"));
+    let (document, payloads) = dashbuf::open_verified(DOCUMENT)
+        .unwrap_or_else(|error| panic!("{name} does not open: {error}"));
     gate(&document, &name);
     dashscene_core::load_document(&document, &payloads, arena);
     dashlang::attach_live(arena, Box::new(TaffySolver::new()))
 }
 
-/// A mapped file: the prefix reader for the ranges, then the loader's mapped
-/// path, which copies no payload byte at all.
+/// A mapped file: `dashbuf::open` for the ranges, a `Residency` for the shown
+/// root's payloads, then the loader's mapped path, which copies no payload byte
+/// at all.
 fn load_mapped(mapped: &'static Mapped, arena: &mut Arena) -> LiveScene {
     let name = mapped.path.display().to_string();
     let file = mapped.file.bytes();
-    let file_len = file.len() as u64;
 
-    // At most two answers, by `Envelope::read`'s contract: the header, then the
-    // table whose length the header states. Bounded rather than looped on
-    // trust, exactly as the browser host bounds it — the difference is that
-    // here a "fetch" is a slice of memory already mapped.
-    let mut need = MIN_PREFIX.min(file.len());
-    let mut envelope = None;
-    for _ in 0..2 {
-        match Envelope::read(&file[..need], file_len) {
-            Ok(read) => {
-                envelope = Some(read);
-                break;
-            }
-            Err(PrefixError::NeedMore { need: more }) => {
-                need = more.min(file.len());
-            }
-            Err(PrefixError::Malformed(error)) => panic!("{name} is not a .dsb: {error}"),
-        }
-    }
-    let envelope = envelope.unwrap_or_else(|| panic!("{name}: the envelope never resolved"));
-
-    let hot = &file[..envelope.hot_len() as usize];
-    let plan = prefix::plan(&envelope, hot).unwrap_or_else(|e| panic!("{name} does not open: {e}"));
-    let document = plan.document();
+    // Reads the envelope, every structured section and the binding, and stops
+    // at where each payload lies. No blob page is faulted in by this call.
+    let (document, wanted) =
+        dashbuf::open(file).unwrap_or_else(|error| panic!("{name} does not open: {error}"));
     gate(&document, &name);
 
-    // One `MappedPayload` per asset entry, in entry order — which is exactly
-    // what `Plan::wanted` returns, undeduplicated, so no reordering or
-    // expansion is needed here.
-    //
     // Bound as **canonical**, and refused when that would be a lie. A file with
     // a derivation manifest carries the rung a profile selected, not the
     // payload the document names, and binding it as canonical tags a KTX2 as a
@@ -246,39 +230,45 @@ fn load_mapped(mapped: &'static Mapped, arena: &mut Arena) -> LiveScene {
     // at all, by design, so nothing downstream would catch it. This host ships
     // no profile and has no way to name a rung, so the honest answer is to
     // refuse the file rather than draw the wrong thing.
-    // Verification, unchanged from the owning path. `Plan::bind` hashes every
-    // payload against the section table, which is the promise `dashbuf::open`
-    // keeps by hashing before it returns bytes; a prefix load keeps it here or
-    // nowhere. Its return value — the same payloads as slices — is not used,
-    // because the loader takes ranges; what is wanted is the check.
-    //
-    // This is the eager verification story #597 moves to touch time. Until it
-    // does, a mapped load still faults every payload in, so this story removes
-    // the copies and moves no number on story #598's criterion.
-    let resident: Vec<&[u8]> = plan
-        .wanted()
-        .iter()
-        .map(|want| &file[want.range.start as usize..want.range.end as usize])
-        .collect();
-    plan.bind(&resident).unwrap_or_else(|error| {
-        panic!("{name} carries a payload that fails its own hash: {error}")
-    });
-
     let entries = document.assets().unwrap_or_default();
-    let payloads: Vec<MappedPayload> = plan
-        .wanted()
+    for (want, entry) in wanted.iter().zip(entries.iter()) {
+        assert_eq!(
+            want.hash,
+            entry.hash().bytes(),
+            "{name} binds a derived payload through its derivation manifest, and this host \
+             has no quality profile to name the rung with: it can map a RAW file only \
+             (issue #640)"
+        );
+    }
+
+    // The prefetch, and the whole of what this host reads out of the file's
+    // cold half: the assets the shown root's subtree draws, proven one at a
+    // time. Everything else stays cold, which is what makes cold start track
+    // the root being drawn rather than the file's size (R5, D4).
+    //
+    // **A row bound below whose payload was not touched is not proven.** The
+    // image table takes one row per asset entry, so a many-frame document's
+    // other frames are ranges into this mapping that nothing has hashed.
+    // Nothing draws them this slice — a frame whose payload is not ready needs
+    // the placeholder field that has no producer, which stays in v1 (D6) — and
+    // debt #779 carries the gap.
+    let residency = Residency::new();
+    let shown = dashbuf::prefetch::first_root(&document)
+        .unwrap_or_else(|| panic!("{name} carries no root node"));
+    for index in dashbuf::prefetch::assets_of_root(&document, shown) {
+        let want = &wanted[index as usize];
+        let bytes = &file[want.range.start as usize..want.range.end as usize];
+        residency.touch(want, bytes).unwrap_or_else(|error| {
+            panic!("{name} carries a payload that fails its own hash: {error}")
+        });
+    }
+
+    // One `MappedPayload` per asset entry, in entry order — which is exactly
+    // the order `dashbuf::open` returns its `Wanted`s in, undeduplicated, so no
+    // reordering or expansion is needed here.
+    let payloads: Vec<MappedPayload> = wanted
         .iter()
-        .zip(entries.iter())
-        .map(|(want, entry)| {
-            assert_eq!(
-                want.hash,
-                entry.hash().bytes(),
-                "{name} binds a derived payload through its derivation manifest, and this host \
-                 has no quality profile to name the rung with: it can map a RAW file only \
-                 (issue #640)"
-            );
-            MappedPayload::canonical(want.range.clone())
-        })
+        .map(|want| MappedPayload::canonical(want.range.clone()))
         .collect();
 
     // The region the table points into is this same mapping, shared rather
@@ -369,6 +359,193 @@ mod tests {
         let mut list = arguments(&["typography", "--dsb"]);
         assert_eq!(take(&mut list), Source::NotAsked);
         assert_eq!(list, arguments(&["typography", "--dsb"]));
+    }
+
+    /// A two-root `.dsb`, RAW, with `corrupt`'s payload one byte wrong.
+    ///
+    /// No committed fixture is this shape: every `goldens/dsb` document has one
+    /// root, and over a one-root document "the shown root's assets" and "every
+    /// asset in the file" are the same set — so nothing built from one can tell
+    /// a prefetch bounded by the shown root from a prefetch of the whole table.
+    /// Two roots, one payload each, is the smallest document that can.
+    ///
+    /// Each root's paint is an image fill naming its own asset, so root A's
+    /// subtree reaches asset 0 and nothing else.
+    fn two_root_document(corrupt: usize) -> Vec<u8> {
+        use dashbuf::{
+            AssetEntry, AssetEntryArgs, AssetKind, Document, DocumentArgs, Fill, ImageFill,
+            ImageFillArgs, ImageFormat, NO_PARENT, Node, NodeArgs, Paint, PaintArgs,
+        };
+        use flatbuffers::FlatBufferBuilder;
+
+        // Distinct bytes and distinct lengths, so a swapped pair is visible.
+        let payloads = [vec![0xA1u8; 64], vec![0xB2u8; 96]];
+        let mut builder = FlatBufferBuilder::new();
+
+        let entries: Vec<_> = payloads
+            .iter()
+            .map(|payload| {
+                let hash = builder.create_vector(blake3::hash(payload).as_bytes());
+                AssetEntry::create(
+                    &mut builder,
+                    &AssetEntryArgs {
+                        hash: Some(hash),
+                        format: ImageFormat::Png,
+                        kind: AssetKind::Image,
+                        width: 8,
+                        height: 8,
+                    },
+                )
+            })
+            .collect();
+        let assets = builder.create_vector(&entries);
+
+        let paints: Vec<_> = [0u32, 1]
+            .into_iter()
+            .map(|image| {
+                let fill = ImageFill::create(
+                    &mut builder,
+                    &ImageFillArgs {
+                        image,
+                        ..Default::default()
+                    },
+                );
+                Paint::create(
+                    &mut builder,
+                    &PaintArgs {
+                        fill_type: Fill::ImageFill,
+                        fill: Some(fill.as_union_value()),
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect();
+        let paints = builder.create_vector(&paints);
+
+        let nodes: Vec<_> = [0u32, 1]
+            .into_iter()
+            .map(|paint_entry| {
+                Node::create(
+                    &mut builder,
+                    &NodeArgs {
+                        parent: NO_PARENT,
+                        paint_entry,
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect();
+        let nodes = builder.create_vector(&nodes);
+
+        let document = Document::create(
+            &mut builder,
+            &DocumentArgs {
+                nodes: Some(nodes),
+                paints: Some(paints),
+                assets: Some(assets),
+                ..Default::default()
+            },
+        );
+        builder.finish(document, None);
+
+        let bank = dashbuf::bank::ColdBank::raw(payloads.iter().map(Vec::as_slice));
+        let mut file =
+            dashbuf::bank::assemble(builder.finished_data(), &bank).expect("the fixture assembles");
+
+        // The blob sections are in asset-entry order for a RAW assembly, and the
+        // section table is left untouched — so the file still records what each
+        // payload should hash to, and only a read of the bytes can notice.
+        let container = dashbuf::container::Container::parse(&file).expect("the fixture parses");
+        let blobs: Vec<_> = container
+            .sections()
+            .filter(|entry| entry.kind == dashbuf::container::SectionKind::Blob as u16)
+            .collect();
+        assert_eq!(blobs.len(), payloads.len(), "one blob per payload");
+        let at = blobs[corrupt].offset as usize;
+        file[at] ^= 0xFF;
+        file
+    }
+
+    /// Maps `bytes` and loads them as the host would, keeping the temporary
+    /// directory alive for the call.
+    fn load_bytes_mapped(bytes: &[u8]) {
+        let directory = tempfile::tempdir().expect("a temporary directory");
+        let path = directory.path().join("fixture.dsb");
+        std::fs::write(&path, bytes).expect("the fixture writes");
+
+        let file = Arc::new(MappedFile::open(&path).expect("the fixture maps"));
+        // Leaked for the same reason the tests below leak: `MAPPED` is set once
+        // per process and `main` owns that.
+        let mapped: &'static Mapped = Box::leak(Box::new(Mapped { path, file }));
+
+        let mut arena = dashscene_core::Arena::new();
+        load_mapped(mapped, &mut arena);
+    }
+
+    /// The frame nobody is showing is never read, even when its payload is
+    /// wrong.
+    ///
+    /// This is R5 stated as a behaviour rather than as a count, and it is the
+    /// one assertion that fails if the host ever touches its whole asset table
+    /// instead of the shown root's set — the change that would put the
+    /// startup-scaling criterion back where epic #594 found it. Its partner
+    /// below corrupts root A's payload in the same fixture and requires the
+    /// panic, so neither can pass by the host reading nothing at all.
+    #[test]
+    fn a_mapped_load_leaves_the_frame_nobody_shows_cold() {
+        load_bytes_mapped(&two_root_document(1));
+    }
+
+    /// The same fixture with the **shown** root's payload corrupted is refused.
+    #[test]
+    #[should_panic(expected = "fails its own hash")]
+    fn a_mapped_load_refuses_the_shown_roots_corrupted_payload() {
+        load_bytes_mapped(&two_root_document(0));
+    }
+
+    /// The shown root's payload is made resident, and a corrupted one is
+    /// refused by name.
+    ///
+    /// This is the only thing that says the prefetch above is wired at all.
+    /// Every other assertion about this host passes with the touch loop
+    /// removed: `dashbuf::open` reads no payload, so a corrupted file opens,
+    /// the load gate is about references rather than bytes, and
+    /// `load_document_mapped` binds ranges without reading them. A host that
+    /// prefetched nothing would draw a corrupted picture in silence, which is
+    /// exactly what moving verification off the reader risks — so the check is
+    /// that the payload the shown root draws is proven before the load.
+    ///
+    /// `v03-paint.dsb` is one of the two committed fixtures carrying a payload,
+    /// and its single root draws it, so its whole asset table is the shown
+    /// root's prefetch set.
+    #[test]
+    #[should_panic(expected = "fails its own hash")]
+    fn a_mapped_file_whose_shown_payload_is_corrupted_is_refused() {
+        let source =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../goldens/dsb/v03-paint.dsb");
+        let mut bytes = std::fs::read(&source).expect("the fixture reads");
+
+        // One byte of the payload itself. The section table is left alone, so
+        // it still records what the payload should hash to and nothing before
+        // the touch can notice: the root hash covers the table, not the file.
+        let container = dashbuf::container::Container::parse(&bytes).expect("the fixture parses");
+        let blob = container
+            .sections()
+            .find(|entry| entry.kind == dashbuf::container::SectionKind::Blob as u16)
+            .expect("v03-paint.dsb carries a payload");
+        bytes[blob.offset as usize] ^= 0xFF;
+
+        let directory = tempfile::tempdir().expect("a temporary directory");
+        let path = directory.path().join("corrupted.dsb");
+        std::fs::write(&path, &bytes).expect("the corrupted fixture writes");
+
+        let file = Arc::new(MappedFile::open(&path).expect("the corrupted fixture maps"));
+        // Leaked for the same reason the test below leaks: `MAPPED` is set once
+        // per process and `main` owns that.
+        let mapped: &'static Mapped = Box::leak(Box::new(Mapped { path, file }));
+
+        let mut arena = dashscene_core::Arena::new();
+        load_mapped(mapped, &mut arena);
     }
 
     /// A mapped file that binds a **derived** payload is refused by name.

@@ -338,7 +338,7 @@ pub fn render_dsb(dsb: &[u8]) -> Vec<u8> {
     // One call runs the envelope check, the flatbuffer verifier, and the
     // binding that resolves each asset entry's hash to its blob section —
     // through the derivation manifest when the file carries one.
-    let (document, payloads) = dashbuf::open(dsb).expect("a valid .dsb file");
+    let (document, payloads) = dashbuf::open_verified(dsb).expect("a valid .dsb file");
     // Under RAW every payload passes through untouched. Under HiFi or LoFi the
     // resident payload is a block-compressed KTX2 file, which is decoded here —
     // in the loader, before any byte reaches the painter.

@@ -58,8 +58,10 @@ fn a_mapped_file_loads_what_a_read_file_loads() {
 
         assert_eq!(mapped.bytes(), read.as_slice(), "{name}: mapped bytes");
 
-        let (want_document, want_payloads) = dashbuf::open(&read).expect("open accepts a golden");
-        let (got_document, got_payloads) = dashbuf::open(&mapped).expect("open accepts a mapping");
+        let (want_document, want_payloads) =
+            dashbuf::open_verified(&read).expect("open accepts a golden");
+        let (got_document, got_payloads) =
+            dashbuf::open_verified(&mapped).expect("open accepts a mapping");
 
         assert_eq!(got_payloads, want_payloads, "{name}: payloads");
         assert_eq!(

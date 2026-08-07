@@ -257,7 +257,7 @@ fn scenes() -> Vec<Scene> {
 /// from re-hashing the payloads, because an entry's hash is the asset's
 /// identity by definition (`docs/decisions/asset-model-content-addressed-blobs.md`).
 fn render_forced(dsb: &[u8], block: BlockSize) -> Vec<u8> {
-    let (document, payloads) = dashbuf::open(dsb).expect("the scene opens");
+    let (document, payloads) = dashbuf::open_verified(dsb).expect("the scene opens");
     let ui = dashbuf::container::ui_document(dsb)
         .expect("a ui section")
         .to_vec();
@@ -551,7 +551,7 @@ fn assert_scores(scene: &str, name: &str, scores: &Scores, row: &Value) {
 /// recorded*. A packer that changed rung and happened to stay inside the band
 /// would otherwise pass with a manifest that had quietly become fiction.
 fn assert_chosen_rungs(dsb: &[u8], profile: Profile, row: &Value, scene: &str, name: &str) {
-    let (document, payloads) = dashbuf::open(dsb).expect("the scene opens");
+    let (document, payloads) = dashbuf::open_verified(dsb).expect("the scene opens");
     let entries = document.assets().expect("the scene carries assets");
     let chosen: Vec<String> = entries
         .iter()

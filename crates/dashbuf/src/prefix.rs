@@ -42,9 +42,10 @@ use std::error::Error;
 use std::fmt;
 use std::ops::Range;
 
+use crate::Wanted;
 use crate::container::{
-    ContainerError, FLAVOR_BINDINGS, FLAVOR_UI, HASH_LEN, HEADER_SIZE, Header, SECTION_STRIDE,
-    SectionEntry, SectionKind, check_table,
+    ContainerError, FLAVOR_BINDINGS, FLAVOR_UI, HEADER_SIZE, Header, SECTION_STRIDE, SectionEntry,
+    SectionKind, check_table,
 };
 
 /// The smallest prefix worth fetching: the fixed header, which is what states
@@ -197,10 +198,10 @@ impl Envelope {
     /// [`crate::container::Container::blob_by_hash`] does: a search over every
     /// section would resolve an asset's hash to a structured section.
     ///
-    /// **Unlike that reader, this one cannot verify.** It holds the payload and
-    /// hashes it before handing it over; this holds no bytes at all, so
-    /// checking what comes back against the table is the host's own step —
-    /// [`Plan::bind`] is where that happens for a loaded document.
+    /// **Unlike that reader, this one cannot verify**, because it holds no
+    /// bytes at all. Checking what comes back against the table is
+    /// [`crate::residency::Residency::touch`]'s step, which is where every
+    /// payload is proven whichever reader named it (story #597).
     pub fn blob_by_hash(&self, hash: &[u8]) -> Result<Range<u64>, ContainerError> {
         let entry = self.sections[self.blob_index_by_hash(hash)?];
         Ok(entry.offset..entry.offset + entry.length)
@@ -230,6 +231,23 @@ impl Envelope {
         if found == 1 { Ok(at) } else { Err(found) }
     }
 
+    /// Verifies every [`SectionKind::Structured`] section against the table,
+    /// out of a hot run, and touches no blob payload.
+    ///
+    /// The prefix side of [`crate::container::Container::verify_hot`], and the
+    /// same sweep over the same sections — the difference is only where the
+    /// bytes come from, which is this module's whole subject. A host that
+    /// fetched a short run is told so rather than having the missing section
+    /// pass unchecked, by [`Envelope::section_in`]'s own bound.
+    fn verify_hot_in(&self, hot: &[u8]) -> Result<(), ContainerError> {
+        for index in 0..self.sections.len() {
+            if self.sections[index].kind == SectionKind::Structured as u16 {
+                self.section_in(hot, index)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Section `index`'s bytes out of a hot run, verified against the table.
     ///
     /// Fails rather than panics when the run is short of the section: a host
@@ -252,11 +270,11 @@ impl Envelope {
 
 /// Why fetched payloads could not be bound to a document.
 ///
-/// Its own type rather than a pair of [`crate::OpenError`] variants, because
-/// these are the only two ways [`Plan::bind`] can fail and neither is a way
-/// [`crate::open`] can. An error a function cannot return does not belong in its
-/// error type — the compiler said so, by way of an exhaustive match in `dashc`
-/// that a `PayloadCount` variant on `OpenError` broke for no reason.
+/// Its own type rather than a variant on [`crate::OpenError`], because this is
+/// the only way [`Plan::bind`] can fail and it is not a way [`crate::open`] can.
+/// An error a function cannot return does not belong in its error type — the
+/// compiler said so, by way of an exhaustive match in `dashc` that a
+/// `PayloadCount` variant on `OpenError` broke for no reason.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BindError {
     /// A different number of payloads than the plan asked for. They bind by
@@ -264,9 +282,6 @@ pub enum BindError {
     /// than fail — which is why it is refused instead of taken as far as it
     /// goes.
     Count { wanted: usize, given: usize },
-    /// A payload does not hash to what the section table records for it, so it
-    /// is not the payload the file names.
-    Payload { section: usize },
 }
 
 impl fmt::Display for BindError {
@@ -276,41 +291,26 @@ impl fmt::Display for BindError {
                 f,
                 "the plan asked for {wanted} payloads and was given {given}"
             ),
-            Self::Payload { section } => write!(
-                f,
-                "the payload fetched for section {section} does not match its recorded \
-                 content hash"
-            ),
         }
     }
 }
 
 impl Error for BindError {}
 
-/// A payload the document names and the host has not fetched.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Wanted {
-    /// The blob section it lives in, as an index into [`Envelope::sections`].
-    pub section: usize,
-    /// Where it lies in the file — what a host turns into a range request.
-    pub range: Range<u64>,
-    /// What it must hash to. [`Plan::bind`] checks it; a host caching payloads
-    /// across loads can key on it, since it is the content's own name.
-    pub hash: [u8; HASH_LEN],
-}
-
 /// A document read out of a hot run, together with the payloads still to fetch.
 ///
-/// The prefix-side counterpart of [`crate::open`], split in half around the
-/// fetch that `open` never has to make. `open` resolves an asset entry to bytes
-/// it already holds; a prefix host has to go and get them, and the split is
-/// what lets it do that without either restating the binding rules or blocking
-/// inside this crate.
+/// The prefix-side counterpart of [`crate::open`], and since story #597 the two
+/// answer in the same words: both hand back one [`Wanted`] per asset entry and
+/// neither reads a payload. What still differs is where the bytes are. `open`
+/// holds the file, so a [`Wanted::range`] is a slice away; a prefix host has to
+/// go and get them, and this split is what lets it do that without either
+/// restating the binding rules or blocking inside this crate.
 ///
 /// The wanted list is one entry per asset entry, in entry order — not deduped.
-/// Two entries naming one payload are two ranges here, as they are two lookups
-/// in `open`. A host that minds fetching a range twice can cache by
-/// [`Wanted::hash`].
+/// Two entries naming one payload are two identical [`Wanted`]s here, as they
+/// are two lookups in `open`. A host that minds fetching a range twice can cache
+/// by [`Wanted::hash`], and a host that touches both pays for one:
+/// [`crate::residency::Residency`] records readiness per blob section.
 #[derive(Debug)]
 pub struct Plan<'a> {
     document: crate::Document<'a>,
@@ -331,14 +331,22 @@ impl<'a> Plan<'a> {
         &self.wanted
     }
 
-    /// Checks fetched payloads against the table and hands them back in the
-    /// shape [`dashscene_core::load_document`] takes — one per asset entry, in
-    /// entry order.
+    /// Binds fetched payloads to entry order — the shape
+    /// [`dashscene_core::load_document`] takes, one per asset entry.
     ///
-    /// `fetched` must be [`Plan::wanted`]'s ranges, in the same order.
-    /// Verification is not optional here and is not a separate call a host can
-    /// forget: `open` hashes a payload before returning it, and a prefix load
-    /// keeps that promise at this step or nowhere.
+    /// `fetched` must be [`Plan::wanted`]'s ranges, in the same order, and each
+    /// of them must already have been proven by
+    /// [`crate::residency::Residency::touch`].
+    ///
+    /// **This call no longer hashes.** It used to, and it was the prefix route's
+    /// half of the eager verification story #597 removed
+    /// (`docs/decisions/verification-moves-from-open-to-touch.md` D7): hashing
+    /// here meant a host proved every payload the document named before it drew
+    /// any of them. The hash moved to the touch that makes a payload resident,
+    /// so a payload is proven in one place rather than two that could disagree,
+    /// and what is left here is the count — the one thing a residency cannot
+    /// see, because it proves blobs one at a time and knows nothing about how
+    /// many the document asked for.
     ///
     /// [`dashscene_core::load_document`]: https://docs.rs/dashscene-core
     pub fn bind<'b>(&self, fetched: &[&'b [u8]]) -> Result<Vec<&'b [u8]>, BindError> {
@@ -347,17 +355,6 @@ impl<'a> Plan<'a> {
                 wanted: self.wanted.len(),
                 given: fetched.len(),
             });
-        }
-        // The hash alone, with no length check beside it: a payload of a
-        // different length hashes differently, so a length comparison here
-        // could never fail on its own. A mutation pass removed one and nothing
-        // could be written that failed.
-        for (want, bytes) in self.wanted.iter().zip(fetched) {
-            if *blake3::hash(bytes).as_bytes() != want.hash {
-                return Err(BindError::Payload {
-                    section: want.section,
-                });
-            }
         }
         Ok(fetched.to_vec())
     }
@@ -370,10 +367,21 @@ impl<'a> Plan<'a> {
 /// manifest live. Everything this step needs is therefore in one fetched range,
 /// and everything it cannot do — the payloads — comes back as [`Plan::wanted`].
 ///
-/// Runs the same checks [`crate::open`] runs over a whole file: the ui section's
-/// content hash, the flatbuffers verifier over it, the manifest's own hash and
-/// rows, and the resolution of each asset's canonical hash to a resident blob.
+/// Runs the same checks [`crate::open`] runs over a whole file: **every**
+/// structured section's content hash, the flatbuffers verifier over the ui
+/// section, the manifest's rows, and the resolution of each asset's canonical
+/// hash to a resident blob.
+///
+/// "Every structured section" rather than only the two it reads, because
+/// `docs/decisions/container-parse-reads-a-prefix-through-a-host-reader.md` says
+/// the two readers "do **not** apply different rules". `open` sweeps the hot
+/// region with [`crate::container::Container::verify_hot`], and a section of a
+/// flavour neither reader knows would otherwise be checked over a mapping and
+/// unchecked over a fetch — the same file trusted differently by target, which
+/// is the one thing that record exists to prevent.
 pub fn plan<'a>(envelope: &Envelope, hot: &'a [u8]) -> Result<Plan<'a>, crate::OpenError> {
+    envelope.verify_hot_in(hot)?;
+
     let ui = envelope
         .only_structured(FLAVOR_UI)
         .map_err(|found| ContainerError::NotOneUiSection { found })?;

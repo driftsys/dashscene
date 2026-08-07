@@ -83,8 +83,8 @@ fn every_golden_reassembles_to_itself_under_a_raw_bank() {
 
         // Take it apart. `open` runs the null binding: each asset entry's
         // canonical hash resolved to the blob section carrying it, verified.
-        let (_, payloads) =
-            dashbuf::open(&committed).unwrap_or_else(|e| panic!("{name} does not open: {e}"));
+        let (_, payloads) = dashbuf::open_verified(&committed)
+            .unwrap_or_else(|e| panic!("{name} does not open: {e}"));
         let ui = dashbuf::container::ui_document(&committed).expect("a ui section");
 
         // Put it back together. The payloads are canonical by definition here —

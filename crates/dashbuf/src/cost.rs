@@ -15,12 +15,22 @@
 //! # What it counts, and what it does not
 //!
 //! D2 counts a payload's bytes whether they are read to **hash** them or read
-//! to **copy** them. Both happen to every payload today, and each alone is
-//! enough to make cold start scale with file size, so a counter seeing only one
-//! of them cannot falsify the other. That puts the two recording sites in two
-//! crates: [`crate::open_with_cost`] records the hash of each asset payload it
-//! resolves, and `dashscene_core::load_document_bound_with_cost` records the
-//! loader's copy out of it.
+//! to **copy** them. Each alone is enough to make cold start scale with file
+//! size, so a counter seeing only one of them cannot falsify the other. That
+//! puts the recording sites in two crates:
+//! [`crate::residency::Residency::touch_with_cost`] records the hash of each
+//! payload it makes resident, and
+//! `dashscene_core::load_document_bound_with_cost` records the loader's copy
+//! out of one.
+//!
+//! **The hash is recorded at the touch, not at a reader**
+//! (`docs/decisions/verification-moves-from-open-to-touch.md` D8), so what the
+//! criterion asserts on is what was made resident rather than what a reader
+//! resolved. A payload resolved and never touched costs nothing and is counted
+//! as nothing, which is the claim R5 makes. [`crate::open_verified_with_cost`]
+//! is the exception and is not on that path: the eager reader hashes every
+//! payload by definition, and counting what it reads is how a caller measures
+//! the difference between checking a file and drawing one.
 //!
 //! Three reads are deliberately outside it:
 //!
@@ -45,7 +55,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Asset payload bytes one load read, split by why they were read.
 ///
-/// Passed into [`crate::open_with_cost`] and
+/// Passed into [`crate::residency::Residency::touch_with_cost`] and
 /// `dashscene_core::load_document_bound_with_cost`, which is why it counts
 /// through `&self` rather than `&mut self`: one load crosses two crates and
 /// several calls, and threading a `&mut` through all of them would put the
@@ -55,10 +65,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 ///
 /// The counters are [`Ordering::Relaxed`], which orders nothing. That is
 /// correct for a load that records and is then read on the same thread, and it
-/// stays correct when story #597 moves hashing onto a loader thread **provided
-/// the reader synchronises with that thread first** — joining it, or whatever
-/// marks its payload ready. Relaxed guarantees every increment lands; it does
-/// not guarantee a reader elsewhere sees them without such an edge.
+/// stays correct if a later slice moves touching onto a loader thread
+/// **provided the reader synchronises with that thread first** — joining it, or
+/// whatever marks its payload ready. Relaxed guarantees every increment lands;
+/// it does not guarantee a reader elsewhere sees them without such an edge.
 #[derive(Debug, Default)]
 pub struct LoadCost {
     hashed: AtomicU64,

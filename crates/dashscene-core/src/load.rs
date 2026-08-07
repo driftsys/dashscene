@@ -12,14 +12,36 @@
 //! It does not re-check referential integrity, and it panics on an index
 //! that misses — the same contract as `PaintTable::resolve` and the
 //! `Painter` trait. The caller runs the gates first, and there are two of
-//! them:
+//! them.
+//!
+//! **There are also two read contracts, and which one a host takes decides
+//! what its cold start costs** (`docs/decisions/verification-moves-from-open-to-touch.md`).
+//! A host that holds bytes it cannot borrow from — an embedded document, a
+//! browser's fetched buffers — reads eagerly and copies into the arena:
 //!
 //! ```text
-//! // `dashbuf::open` runs the envelope check and binds the asset payloads.
-//! let (doc, payloads) = dashbuf::open(file_bytes)?;  // container + verifier
+//! // `dashbuf::open_verified` runs the envelope check, hashes every payload,
+//! // and binds them to the document's asset entries.
+//! let (doc, payloads) = dashbuf::open_verified(file_bytes)?;  // container + verifier
 //! let report = dashscene_validator::validate_document(&doc);  // load gate: references
 //! if report.has_errors() { /* refuse; never load */ }
 //! load_document(&doc, &payloads, &mut arena);    // safe iff the gate passed
+//! ```
+//!
+//! A host that mapped the file reads where each payload lies, makes resident
+//! only what the shown root draws, and binds ranges — so no payload it does not
+//! draw is ever read, and none is copied:
+//!
+//! ```text
+//! let (doc, wanted) = dashbuf::open(file_bytes)?;   // reads no payload byte
+//! let report = dashscene_validator::validate_document(&doc);
+//! if report.has_errors() { /* refuse; never load */ }
+//! let residency = dashbuf::residency::Residency::new();
+//! for index in dashbuf::prefetch::assets_of_root(&doc, shown_root) {
+//!     let want = &wanted[index as usize];        // touch + hash + mark ready
+//!     residency.touch(want, &file_bytes[want.range.start as usize..want.range.end as usize])?;
+//! }
+//! load_document_mapped(&doc, region, &payloads, &mut arena);
 //! ```
 //!
 //! `dashscene-validator` is published *after* `dashscene-core`, so this
@@ -50,7 +72,8 @@ use crate::committed::{
 /// returning the commit's generation.
 ///
 /// `payloads` binds the document's asset entries to their bytes, one per entry
-/// in entry order. `dashbuf::open` produces exactly that from a `.dsb` file, and
+/// in entry order. `dashbuf::open_verified` produces exactly that from a `.dsb`
+/// file, and
 /// the panic below fires if the two lengths disagree — a caller that bound the
 /// wrong set would otherwise repaint nodes with another document's assets.
 ///
@@ -141,8 +164,10 @@ pub fn load_document_bound(
 /// (`docs/decisions/startup-scaling-is-measured-by-a-counter.md`): D2 counts a
 /// payload's bytes whether they are read to hash them or read to copy them,
 /// because each alone makes cold start scale with file size and a counter
-/// seeing only one cannot falsify the other. `dashbuf::open_with_cost` records
-/// the hash; this records the copy into [`ImageAsset`], one payload at a time.
+/// seeing only one cannot falsify the other.
+/// `dashbuf::residency::Residency::touch_with_cost` records the hash, at the
+/// moment a payload is made resident; this records the copy into [`ImageAsset`],
+/// one payload at a time.
 ///
 /// [`load_document_bound`] is this call with the count discarded, so there is
 /// one implementation and not two that could drift.
@@ -282,7 +307,8 @@ fn load_inner(
     // Since story #107 the document carries asset *identity and metadata*, not
     // bytes (P1 applied to assets). `payloads` is the caller's binding of each
     // entry's content hash to the bytes it names — resolved from the file's blob
-    // sections, which `dashbuf::open` does for the ordinary case. The arena is
+    // sections, which `dashbuf::open_verified` does for the ordinary case. The
+    // arena is
     // where the two rejoin.
     //
     // The document's indices are 0..n, but the arena may already hold assets

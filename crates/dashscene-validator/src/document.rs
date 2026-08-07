@@ -938,9 +938,12 @@ fn as_paint_format(format: dashbuf::ImageFormat) -> Option<dashpaint::ImageForma
 /// recorded extent before the payload is resident, so a lie in either is
 /// discovered as a wrong picture rather than as a bad document.
 ///
-/// The `hash` needs no rule here. `dashbuf::open` resolves each entry through
-/// the null binding and verifies the blob against its recorded content hash,
-/// so a payload that does not match its hash never reaches this function.
+/// The `hash` needs no rule here. Every reader resolves an entry through the
+/// null binding and every payload is verified against its recorded content hash
+/// before anything may read it — by `dashbuf::open_verified` before it returns
+/// the bytes, and by `dashbuf::residency::Residency::touch` on the reading path
+/// that `dashbuf::open` starts. So a payload that does not match its hash never
+/// reaches this function.
 ///
 /// # What this deliberately does not do
 ///
@@ -973,7 +976,7 @@ fn as_paint_format(format: dashbuf::ImageFormat) -> Option<dashpaint::ImageForma
 /// # Pairing
 ///
 /// `payloads` must be in entry order, one per entry — exactly what
-/// `dashbuf::open` returns. Fewer payloads than entries is named once, at the
+/// `dashbuf::open_verified` returns. Fewer payloads than entries is named once, at the
 /// first entry that has none, and the entries past it go unchecked; it means
 /// the caller paired a document with the wrong payload list, so repeating it
 /// per entry would bury the rest of the report. Surplus payloads are ignored

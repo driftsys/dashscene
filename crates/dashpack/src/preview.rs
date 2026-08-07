@@ -17,7 +17,8 @@
 //! (`goldens/tooling/tests/profile_preview_weld.rs`) does **not** prove the
 //! codec is right — both sides run the same codec. What it proves is
 //! everything between the two: the KTX2 container round trip, the Zstd level,
-//! the cold-bank assembly, `dashbuf::open`'s resolution of a canonical hash
+//! the cold-bank assembly, `dashbuf::open_verified`'s resolution of a canonical
+//! hash
 //! through the derivation manifest, and — the part a second codec would not
 //! have caught either — that this module *recovers* the block footprint and
 //! colour space from the file instead of being told them.

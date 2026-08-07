@@ -1,13 +1,18 @@
 //! Loading a document through the prefix reader (story #587): the two-phase
-//! counterpart of [`dashbuf::open`], for a host that fetches byte ranges rather
-//! than holding the file.
+//! counterpart of [`dashbuf::open_verified`], for a host that fetches byte
+//! ranges rather than holding the file.
 //!
-//! `dashbuf::open` does three things at once over a full slice — envelope,
-//! flatbuffers verify, and asset binding. A host reading a prefix can do the
-//! first two from the hot run and cannot do the third, because the payloads are
-//! exactly the part it has not fetched. So the binding splits in half around the
-//! fetch, and the rules stay in this crate rather than being restated by every
-//! host.
+//! `dashbuf::open_verified` does three things at once over a full slice —
+//! envelope, flatbuffers verify, and asset binding. A host reading a prefix can
+//! do the first two from the hot run and cannot do the third, because the
+//! payloads are exactly the part it has not fetched. So the binding splits in
+//! half around the fetch, and the rules stay in this crate rather than being
+//! restated by every host.
+//!
+//! Since story #597 the proving half of that binding is
+//! [`dashbuf::residency::Residency::touch`] rather than `Plan::bind`, and it is
+//! the same call the native host makes over its mapping — so the tests below
+//! that used to name `bind` name the touch instead.
 //!
 //! The load-bearing test is [`the_prefix_flow_loads_what_open_loads`]: the two
 //! paths must agree, on every committed fixture, or one of them is wrong.
@@ -16,6 +21,7 @@ use std::path::PathBuf;
 
 use dashbuf::container::{ContainerError, FLAVOR_UI, HASH_LEN, SectionKind};
 use dashbuf::prefix::{BindError, Envelope, MIN_PREFIX, PrefixError};
+use dashbuf::residency::{PayloadMismatch, Residency};
 use dashbuf::{Document, prefix};
 
 /// Every committed `.dsb` golden, read from the tree rather than listed here.
@@ -56,19 +62,25 @@ fn load_by_prefix(file: &[u8]) -> (Document<'_>, Vec<&[u8]>) {
     let hot = &file[..envelope.hot_len() as usize];
     let plan = prefix::plan(&envelope, hot).expect("the document plans");
 
-    // Round four onwards: each payload the document names, on its own.
+    // Round four onwards: each payload the document names, on its own, proven
+    // as it arrives — which is what `demo-web` does with a fetched range.
+    let residency = Residency::new();
     let fetched: Vec<&[u8]> = plan
         .wanted()
         .iter()
-        .map(|want| &file[want.range.start as usize..want.range.end as usize])
+        .map(|want| {
+            let bytes = &file[want.range.start as usize..want.range.end as usize];
+            residency.touch(want, bytes).expect("the payload is proven")
+        })
         .collect();
 
     let payloads = plan.bind(&fetched).expect("the payloads bind");
     (plan.document(), payloads)
 }
 
-/// The guard: for every committed fixture, the prefix flow and `dashbuf::open`
-/// must produce the same document and the same payloads.
+/// The guard: for every committed fixture, the prefix flow and
+/// `dashbuf::open_verified` must produce the same document and the same
+/// payloads.
 ///
 /// Anything the two-phase split gets wrong — the wrong ui section, an unresolved
 /// manifest row, payloads in the wrong order — shows up here as a disagreement
@@ -79,7 +91,8 @@ fn the_prefix_flow_loads_what_open_loads() {
         let name = path.file_name().expect("a file name").to_string_lossy();
         let file = std::fs::read(&path).expect("the fixture reads");
 
-        let (want_document, want_payloads) = dashbuf::open(&file).expect("open accepts a golden");
+        let (want_document, want_payloads) =
+            dashbuf::open_verified(&file).expect("open accepts a golden");
         let (got_document, got_payloads) = load_by_prefix(&file);
 
         assert_eq!(got_payloads, want_payloads, "{name}: payloads");
@@ -156,10 +169,16 @@ fn the_image_fixture_wants_its_payload() {
     );
 }
 
-/// A payload that does not hash to what the table records is refused. This is
-/// the check `Container::blob_by_hash` runs on the caller's behalf and that a
-/// prefix host cannot run for itself, because it never held the bytes until
-/// now.
+/// A payload that does not hash to what the table records is refused at the
+/// touch. This is the check `Container::blob_by_hash` runs on the caller's
+/// behalf and that a prefix host cannot run for itself, because it never held
+/// the bytes until now.
+///
+/// It used to be `Plan::bind`'s check and it is `Residency::touch`'s since story
+/// #597. The property is the same one and this is the same assertion; only the
+/// call that makes it moved. **`bind` must not still be refusing it** — the
+/// second assertion below is what says the check moved rather than being
+/// duplicated, and it is what fails if the hash is ever put back into `bind`.
 #[test]
 fn a_payload_that_does_not_match_its_hash_is_refused() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../goldens/dsb/v03-paint.dsb");
@@ -172,13 +191,22 @@ fn a_payload_that_does_not_match_its_hash_is_refused() {
     let mut payload = file[want.range.start as usize..want.range.end as usize].to_vec();
     payload[0] ^= 0xFF;
 
+    let residency = Residency::new();
     assert_eq!(
-        plan.bind(&[&payload])
+        residency
+            .touch(want, &payload)
             .expect_err("a corrupted payload is refused"),
-        BindError::Payload {
+        PayloadMismatch {
             section: want.section
         }
     );
+    assert!(
+        !residency.is_ready(want.section),
+        "a refused payload is not resident"
+    );
+
+    plan.bind(&[&payload])
+        .expect("bind counts payloads and no longer hashes them");
 }
 
 /// A truncated payload is refused — by its hash, which is the only thing that
@@ -199,7 +227,9 @@ fn a_truncated_payload_is_refused() {
     let want = &plan.wanted()[0];
     let short = &file[want.range.start as usize..want.range.end as usize - 1];
 
-    plan.bind(&[short]).expect_err("a short payload is refused");
+    Residency::new()
+        .touch(want, short)
+        .expect_err("a short payload is refused");
 }
 
 /// Handing back a different number of payloads than were asked for is a host

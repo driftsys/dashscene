@@ -927,11 +927,24 @@ impl<'a> Container<'a> {
     /// Verifies before returning, so a caller never trusts bytes the file's own
     /// table does not vouch for.
     pub fn blob_by_hash(&self, hash: &[u8]) -> Result<&'a [u8], ContainerError> {
+        let index = self.blob_index_by_hash(hash)?;
+        self.verify_section(index)?;
+        Ok(self.section_bytes(index))
+    }
+
+    /// The index of the blob section whose content hash is `hash`, without
+    /// reading a byte of it.
+    ///
+    /// The resolution step of [`Container::blob_by_hash`] with the verification
+    /// left out, for [`crate::open`], which resolves an asset entry to where its
+    /// payload lies and stops there. The search is over blob sections only, as
+    /// that reader's is: a search over every section would resolve an asset's
+    /// hash to a structured one.
+    pub(crate) fn blob_index_by_hash(&self, hash: &[u8]) -> Result<usize, ContainerError> {
         for index in 0..self.count {
             let entry = self.section(index);
             if entry.kind == SectionKind::Blob as u16 && entry.hash == hash {
-                self.verify_section(index)?;
-                return Ok(self.section_bytes(index));
+                return Ok(index);
             }
         }
         Err(ContainerError::NoBlobForHash)

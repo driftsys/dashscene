@@ -70,7 +70,9 @@ is enforced by a frozen byte fixture, not by convention alone — see
   `docs/decisions/asset-model-content-addressed-blobs.md`). The payloads
   live in blob sections of the file's envelope, resolved by hash through
   the null binding (`docs/design/dsb-container-format.md`), and
-  `dashbuf::open` returns the document and its bound payloads together.
+  `dashbuf::open` returns the document together with one `Wanted` per
+  entry — where the payload lies and what it must hash to — rather than
+  the payload itself (#597).
   The v0.3 `images: [Image]` pool that carried bytes inline is
   **deprecated, not deleted**: deleting a field shifts every later field's
   vtable slot and breaks every `.dsb` already written. Decoded pixel data
@@ -148,10 +150,27 @@ a fetched prefix and asks for the rest by byte range.
 records.
 
 The sixth is `dashbuf::cost` (story #598): the byte counter the
-startup-scaling criterion is measured with, and the reason
-`open_with_cost` exists beside `open`. It counts asset payload bytes the
-load path reads, whether to hash them or to copy them, and the reasoning
-is in `docs/decisions/startup-scaling-is-measured-by-a-counter.md`.
+startup-scaling criterion is measured with. It counts asset payload bytes
+the load path reads, whether to hash them or to copy them, and the
+reasoning is in
+`docs/decisions/startup-scaling-is-measured-by-a-counter.md`. The hash is
+recorded at `Residency::touch_with_cost` rather than at a reader (#597),
+so what it counts is what a load made **resident** rather than what a
+reader resolved.
+
+The seventh and eighth (#597) are what makes cold start proportional to
+the shown root rather than to the file.
+`dashbuf::residency` is touch + hash + mark ready: `Residency::touch` is
+the only call that turns a `Wanted` into readable bytes, and it is where
+every payload is proven whichever reader named it. `dashbuf::prefetch`
+computes which payloads that is — the asset entries one root's subtree
+draws, through its nodes' paint entries, their stacked fill layers and
+their baked vector shapes' atlases — from the document alone, touching no
+payload to decide which payloads to touch. The two readers are named for
+what they do: `open` reads no payload byte, and `open_verified` hashes
+every one, which is what a tool checking a file wants and what a host
+drawing one must not pay
+(`docs/decisions/verification-moves-from-open-to-touch.md`).
 
 All types below are generated from the schema:
 

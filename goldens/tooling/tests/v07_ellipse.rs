@@ -116,7 +116,7 @@ fn render(json: &str) -> Vec<u8> {
         report.is_empty(),
         "the derived fixture lowers clean: {report}"
     );
-    let (document, payloads) = dashbuf::open(&bytes).expect("a valid .dsb file");
+    let (document, payloads) = dashbuf::open_verified(&bytes).expect("a valid .dsb file");
 
     let mut arena = Arena::new();
     load_document(&document, &payloads, &mut arena);

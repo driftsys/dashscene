@@ -158,7 +158,7 @@ fn a_raw_assembly_round_trips_through_open() {
     let bank = ColdBank::raw(payloads.iter().map(Vec::as_slice));
     let file = assemble(&ui, &bank).expect("assembles");
 
-    let (document, resident) = dashbuf::open(&file).expect("the assembled file opens");
+    let (document, resident) = dashbuf::open_verified(&file).expect("the assembled file opens");
     assert_eq!(document.assets().expect("assets").len(), payloads.len());
     let expected: Vec<&[u8]> = payloads.iter().map(Vec::as_slice).collect();
     assert_eq!(resident, expected, "payloads come back in entry order");
@@ -446,7 +446,7 @@ fn a_derived_assembly_round_trips_through_open() {
 
     let file = assemble(&ui, &stand_in_derived_bank(&ui, &derived)).expect("assembles");
 
-    let (document, resident) = dashbuf::open(&file).expect("the derived file opens");
+    let (document, resident) = dashbuf::open_verified(&file).expect("the derived file opens");
     assert_eq!(document.assets().expect("assets").len(), payloads.len());
     let expected: Vec<&[u8]> = derived.iter().map(Vec::as_slice).collect();
     assert_eq!(
@@ -507,7 +507,7 @@ fn the_manifest_carries_a_row_for_every_derived_binding_and_none_for_an_identity
     );
 
     // And the identity binding still resolves, through the absent row.
-    let (_, resident) = dashbuf::open(&file).expect("opens");
+    let (_, resident) = dashbuf::open_verified(&file).expect("opens");
     assert_eq!(resident[1], payloads[1].as_slice());
 }
 
@@ -564,7 +564,7 @@ fn tampering_with_a_manifest_row_is_caught_before_it_resolves_anything() {
     // Flip one bit inside a resident hash.
     file[at + manifest.length as usize - 1] ^= 0x01;
 
-    let error = dashbuf::open(&file).expect_err("a tampered manifest is refused");
+    let error = dashbuf::open_verified(&file).expect_err("a tampered manifest is refused");
     assert!(
         matches!(
             error,
@@ -622,7 +622,7 @@ fn a_manifest_row_whose_hash_is_the_wrong_length_is_refused() {
     // It could never match an asset entry or a blob section, so tolerating it
     // would be a claim that silently does nothing — the drop P4 forbids.
     let file = file_with_manifest(&manifest_bytes(&[(&[0xAA; 8], &[0xBB; HASH_LEN])]));
-    let error = dashbuf::open(&file).expect_err("refused");
+    let error = dashbuf::open_verified(&file).expect_err("refused");
     assert!(
         matches!(
             error,
@@ -645,7 +645,7 @@ fn a_manifest_that_binds_one_canonical_hash_twice_is_refused() {
         (&[0xCC; HASH_LEN], &[0xB2; HASH_LEN]),
         (&[0xAA; HASH_LEN], &[0xB3; HASH_LEN]),
     ]));
-    let error = dashbuf::open(&file).expect_err("refused");
+    let error = dashbuf::open_verified(&file).expect_err("refused");
     assert!(
         matches!(error, dashbuf::OpenError::BindingRepeated { row: 2 }),
         "{error}",
@@ -655,7 +655,7 @@ fn a_manifest_that_binds_one_canonical_hash_twice_is_refused() {
 #[test]
 fn a_manifest_section_that_is_not_a_binding_table_is_refused() {
     let file = file_with_manifest(b"not a flatbuffer at all");
-    let error = dashbuf::open(&file).expect_err("refused");
+    let error = dashbuf::open_verified(&file).expect_err("refused");
     assert!(matches!(error, dashbuf::OpenError::Bindings(_)), "{error}");
 }
 
@@ -670,7 +670,7 @@ fn two_manifest_sections_are_refused() {
     ])
     .expect("writable");
 
-    let error = dashbuf::open(&file).expect_err("refused");
+    let error = dashbuf::open_verified(&file).expect_err("refused");
     assert!(
         matches!(
             error,

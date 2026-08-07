@@ -765,7 +765,7 @@ fn render_fixture(name: &str, fixture_json: &str) -> Vec<u8> {
             .all(|d| d.rule == dashscene_validator::rule::TEXT_STYLE_BELOW_MSDF_FLOOR),
         "frame {name} fixture lowers clean: {report}"
     );
-    let (document, payloads) = dashbuf::open(&bytes).expect("a valid .dsb file");
+    let (document, payloads) = dashbuf::open_verified(&bytes).expect("a valid .dsb file");
     let mut arena = Arena::new();
     load_document(&document, &payloads, &mut arena);
     // `load_document` commits with the fixed solver, which measures a text node

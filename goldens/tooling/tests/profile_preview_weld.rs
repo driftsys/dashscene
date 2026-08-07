@@ -103,7 +103,8 @@ fn corpus_texels() -> (u32, u32, Vec<u8>) {
 /// canonical hash to the wrong payload. Reading the payload back out of an
 /// assembled file exercises all three.
 struct Shipped {
-    /// The KTX2 file as `dashbuf::open` resolved it out of the assembled `.dsb`.
+    /// The KTX2 file as `dashbuf::open_verified` resolved it out of the
+    /// assembled `.dsb`.
     resident: Vec<u8>,
     /// The rung the escalation chose, so a test can encode the same one.
     rung: profile::Rung,
@@ -129,7 +130,7 @@ fn ship(profile: Profile, width: u32, height: u32, texels: &[u8]) -> Shipped {
     let bank = ColdBank::derived([(hash, derivation.file.as_slice())]);
     let file = dashbuf::bank::assemble(&ui, &bank).expect("the derived bank assembles");
 
-    let (_, payloads) = dashbuf::open(&file).expect("the derived file opens");
+    let (_, payloads) = dashbuf::open_verified(&file).expect("the derived file opens");
     assert_eq!(payloads.len(), 1, "the document names exactly one asset");
     Shipped {
         resident: payloads[0].to_vec(),

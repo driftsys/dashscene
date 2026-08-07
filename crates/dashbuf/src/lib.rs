@@ -14,11 +14,29 @@
 //! payload blobs in one file (`docs/design/dsb-container-format.md`), and
 //! [`bank`] owns the assembly that fills one: a document plus the cold bank of
 //! payloads one quality profile binds its assets to. [`cost`] is the byte
-//! counter the startup-scaling criterion is measured with, and the reason
-//! [`open_with_cost`] exists beside [`open`]. The bytes those read come from
-//! one of two places, and the split is the target's: `map` maps the file on a
-//! native host, and [`prefix`] reads the envelope out of a fetched prefix where
-//! there is no mapping to make.
+//! counter the startup-scaling criterion is measured with. The bytes a reader
+//! reads come from one of two places, and the split is the target's: `map`
+//! maps the file on a native host, and [`prefix`] reads the envelope out of a
+//! fetched prefix where there is no mapping to make.
+//!
+//! # Two readers, and only one of them reads a payload
+//!
+//! [`open`] verifies the hot half of a file and hands back a [`Wanted`] per
+//! asset entry — where the payload lies and what it must hash to. It reads no
+//! payload byte, so under a mapping it faults in no blob page.
+//! [`residency::Residency::touch`] is the only thing that turns a [`Wanted`]
+//! into readable bytes, and it hashes them on the way
+//! (`docs/decisions/verification-moves-from-open-to-touch.md`).
+//!
+//! [`open_verified`] is the eager reader: every payload hashed before it
+//! returns, slices handed back. It is the right call for a tool checking a file
+//! rather than drawing it — `dashc`'s CLI is exactly that — and for a test that
+//! wants the whole file proven before it asserts anything. It is not
+//! proportional to what is shown, and its name says so.
+//!
+//! [`prefetch`] is how a host decides which [`Wanted`]s to touch: the assets
+//! one root's subtree draws, computed from the document and touching no payload
+//! to decide.
 
 pub mod bank;
 pub mod container;
@@ -26,7 +44,9 @@ pub mod cost;
 /// One memory mapping of a `.dsb` — native only; wasm reads a prefix instead.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod map;
+pub mod prefetch;
 pub mod prefix;
+pub mod residency;
 
 #[allow(clippy::all, dead_code)]
 mod generated {
@@ -47,32 +67,59 @@ pub const NO_TEXT_STYLE: u32 = u32::MAX;
 /// entry carries the implicit rounded box, not a baked field.
 pub const NO_FIELD: u32 = u32::MAX;
 
-/// Opens a `.dsb` file: the envelope, the ui document, and its asset payloads.
+/// A payload the document names, as the file records it.
 ///
-/// The one call a reader needs, and the one that keeps the two halves of a
-/// document together. It runs every check the format promises, in the order the
-/// container decision prescribes — magic, version, bounds, the section table
-/// against the root hash, the ui section's own content hash — then the
-/// flatbuffers verifier over that section, and finally the **binding**: each
-/// `AssetEntry`'s canonical hash mapped through the file's derivation manifest
-/// to a resident hash, and that resolved to the blob section whose content hash
-/// equals it, verified.
+/// Both readers produce it — [`open`] over a whole file it holds, and
+/// [`prefix::plan`] over an envelope read from a fetched prefix — and
+/// [`residency::Residency::touch`] is the only thing that consumes it. One type
+/// rather than one per reader, so a payload is proven by one rule wherever it
+/// was read from (`docs/decisions/verification-moves-from-open-to-touch.md`
+/// D7).
+///
+/// It is deliberately not bytes. A caller cannot hand this to a painter, which
+/// is what turns "a painter must never receive bytes that have not been hashed"
+/// from a rule someone has to remember into a thing that does not compile.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Wanted {
+    /// The blob section it lives in, as an index into the file's section table.
+    pub section: usize,
+    /// Where it lies in the file — what a mapped host slices and a prefix host
+    /// turns into a range request.
+    pub range: std::ops::Range<u64>,
+    /// What it must hash to. [`residency::Residency::touch`] checks it; a host
+    /// caching payloads across loads can key on it, since it is the content's
+    /// own name.
+    pub hash: [u8; container::HASH_LEN],
+}
+
+/// Opens a `.dsb` file: the envelope, the ui document, and where each asset
+/// payload lies — **without reading one**.
+///
+/// The reader a host that draws a document uses. It runs every check the format
+/// promises over the hot half, in the order the container decision prescribes —
+/// magic, version, bounds, the section table against the root hash, every
+/// structured section's own content hash ([`container::Container::verify_hot`])
+/// — then the flatbuffers verifier over the ui section, then the manifest and
+/// its rows, and finally the **binding**: each `AssetEntry`'s canonical hash
+/// mapped through the file's derivation manifest to a resident hash, and that
+/// resolved to the blob section carrying it.
 ///
 /// A file with no manifest section is the **null binding**, which is every RAW
 /// file: a canonical hash resides as itself, and the mapping step is the
 /// identity (`docs/decisions/derivation-manifest-section.md`).
 ///
-/// The returned payloads are in entry order, one per entry, which is the shape
-/// `dashscene_core::load_document` takes. Nothing is copied: both the document
-/// and the payloads borrow `file`, so a memory mapping of it works unchanged.
+/// The blob is resolved to its [`Wanted`] and stopped there. No payload byte is
+/// read, so under a mapping this faults in the envelope and the structured
+/// sections and no blob page at all — which is what R5 asks for and what
+/// [`open_verified`] cannot give. Proving a payload is
+/// [`residency::Residency::touch`]'s job, and [`prefetch`] is how a host decides
+/// which ones a frame needs.
 ///
-/// **Nothing is copied is not nothing is read.** Resolving an entry goes
-/// through [`container::Container::blob_by_hash`], which hash-verifies the blob
-/// before returning it, so this call reads every byte of every asset payload —
-/// under a mapping, it faults every page of the file in, which is what
-/// [`container::Container::verify_hot`] exists to avoid and this call does not
-/// use. That is the cost epic #594 opened against; [`open_with_cost`] is how it
-/// is measured, and story #597 owns where verification moves to.
+/// The returned list is one [`Wanted`] per asset entry, in entry order, and is
+/// not deduplicated: two entries naming one payload are two identical entries
+/// here, as they were two lookups before. That is the shape
+/// `dashscene_core::load_document_mapped` takes, once each range a frame draws
+/// has been touched.
 ///
 /// The referential gate is still the caller's step, as it was before the
 /// envelope: `dashscene_validator::validate_document` runs after this and
@@ -81,16 +128,65 @@ pub const NO_FIELD: u32 = u32::MAX;
 /// [`bank::assemble`] is the write-side inverse: it resolves the same entry
 /// hashes in the same order, in the other direction, and writes the manifest
 /// this reads.
-pub fn open(file: &[u8]) -> Result<(Document<'_>, Vec<&[u8]>), OpenError> {
-    open_with_cost(file, &cost::LoadCost::new())
+pub fn open(file: &[u8]) -> Result<(Document<'_>, Vec<Wanted>), OpenError> {
+    let container = container::Container::parse(file)?;
+    // Every structured section, which is every part of the file that is not a
+    // blob. `ui_document` and `bindings_manifest` below each verify the one
+    // section they read, so those two are hashed twice — a few kilobytes, over
+    // the half of the file this reader is allowed to read, and the price of
+    // keeping "exactly one ui section" stated in one place rather than
+    // reimplemented here.
+    container.verify_hot()?;
+    let ui = container.ui_document()?;
+    let document = root_as_document(ui)?;
+    let manifest = bindings(&container)?;
+
+    let wanted = document
+        .assets()
+        .unwrap_or_default()
+        .iter()
+        .map(|entry| {
+            let canonical = entry.hash().bytes();
+            let section = container.blob_index_by_hash(resident_of(&manifest, canonical))?;
+            let blob = container.section(section);
+            Ok(Wanted {
+                section,
+                range: blob.offset..blob.offset + blob.length,
+                hash: blob.hash,
+            })
+        })
+        .collect::<Result<Vec<_>, container::ContainerError>>()?;
+
+    Ok((document, wanted))
 }
 
-/// [`open`], recording into `cost` the asset payload bytes it reads.
+/// [`open`]'s eager counterpart: every asset payload hashed before it returns,
+/// and slices handed back rather than ranges.
 ///
-/// The instrumented entry point the startup-scaling criterion measures through
-/// (`docs/decisions/startup-scaling-is-measured-by-a-counter.md`); [`open`] is
-/// this call with the count discarded, so there is one implementation and not
-/// two that could drift.
+/// The one call a reader that is **checking** a file rather than drawing it
+/// needs, and the one that keeps the two halves of a document together. It runs
+/// the same envelope and binding steps [`open`] runs, and then reads each blob
+/// it resolves: [`container::Container::blob_by_hash`] hash-verifies before
+/// returning, so every byte of every payload an entry names is read.
+///
+/// The returned payloads are in entry order, one per entry, which is the shape
+/// `dashscene_core::load_document` takes. Nothing is copied: both the document
+/// and the payloads borrow `file`.
+///
+/// **Nothing is copied is not nothing is read.** Under a mapping this faults in
+/// every page holding a payload an entry names, which is what R5 says cold start
+/// must not do. That is not a fault in this reader — it is what verifying a
+/// whole file means — it is a reason not to use it to draw one. `dashc`'s CLI
+/// checks files and is the caller this exists for; [`open`] is the one a host
+/// draws through.
+pub fn open_verified(file: &[u8]) -> Result<(Document<'_>, Vec<&[u8]>), OpenError> {
+    open_verified_with_cost(file, &cost::LoadCost::new())
+}
+
+/// [`open_verified`], recording into `cost` the asset payload bytes it reads.
+///
+/// [`open_verified`] is this call with the count discarded, so there is one
+/// implementation and not two that could drift.
 ///
 /// Resolving an asset entry hashes the whole payload — [`container::Container::blob_by_hash`]
 /// verifies before returning, and it hashes exactly the bytes it hands back —
@@ -99,7 +195,7 @@ pub fn open(file: &[u8]) -> Result<(Document<'_>, Vec<&[u8]>), OpenError> {
 ///
 /// Only asset payloads are counted. The ui section and the derivation manifest
 /// are hashed here too, and are not payloads; [`cost`] states the boundary.
-pub fn open_with_cost<'a>(
+pub fn open_verified_with_cost<'a>(
     file: &'a [u8],
     cost: &cost::LoadCost,
 ) -> Result<(Document<'a>, Vec<&'a [u8]>), OpenError> {

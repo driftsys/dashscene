@@ -117,7 +117,7 @@ fn cascade_atlases() -> Vec<Atlas> {
 fn scene_for(name: &str, fixture_json: &str) -> Arena {
     let (bytes, _report) = compile_figma(fixture_json, Profile::Core, &BTreeMap::new())
         .unwrap_or_else(|e| panic!("frame {name} fixture compiles: {e:?}"));
-    let (document, payloads) = dashbuf::open(&bytes).expect("a valid .dsb file");
+    let (document, payloads) = dashbuf::open_verified(&bytes).expect("a valid .dsb file");
     let mut arena = Arena::new();
     load_document(&document, &payloads, &mut arena);
     // `load_document` commits with the fixed solver, which measures a text node

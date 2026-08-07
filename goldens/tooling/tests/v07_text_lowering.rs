@@ -80,7 +80,7 @@ fn lower_and_solve(ts: &mut Typesetter) -> (Arena, NodeId) {
     let (bytes, report) =
         compile_figma(HUG_IN_FILL, Profile::Core, &BTreeMap::new()).expect("the fixture compiles");
     assert!(report.is_empty(), "the raw fixture lowers clean: {report}");
-    let (document, payloads) = dashbuf::open(&bytes).expect("a valid .dsb file");
+    let (document, payloads) = dashbuf::open_verified(&bytes).expect("a valid .dsb file");
 
     let mut arena = Arena::new();
     load_document(&document, &payloads, &mut arena);

@@ -13,6 +13,7 @@
 use std::ops::Range;
 
 use dashbuf::prefix::{self, Envelope, MIN_PREFIX, PrefixError};
+use dashbuf::residency::Residency;
 use dashlang::LiveScene;
 use dashscene_core::Arena;
 use dashscene_engine::TaffySolver;
@@ -121,8 +122,27 @@ pub(crate) async fn load(url: &str, arena: &mut Arena) -> Result<LiveScene, Host
     for want in plan.wanted() {
         fetched.push(ranges.get(want.range.clone()).await?);
     }
-    let borrowed: Vec<&[u8]> = fetched.iter().map(Vec::as_slice).collect();
-    let payloads = plan.bind(&borrowed).map_err(HostError::Bind)?;
+
+    // Each fetched range is proven as it arrives, by the same call the native
+    // host makes over its mapping (story #597). Until then `Plan::bind` hashed
+    // them, and this is the same check at the same moment — minus the rule
+    // `container-parse-reads-a-prefix-through-a-host-reader.md` used to leave to
+    // every host to remember, which is that checking a fetched payload against
+    // the table is the host's own step. `bind` still runs, for the one thing a
+    // residency cannot see: that the number of payloads is the number the
+    // document asked for.
+    //
+    // Every payload is fetched and touched here rather than the shown root's
+    // alone, because this host loads through `load_document`, which copies each
+    // payload into an owned `ImageAsset` — so every entry needs bytes whatever
+    // is drawn. Bounding the read by what is shown needs the mapped loader,
+    // which needs a region, which a browser does not have.
+    let residency = Residency::new();
+    let mut proven: Vec<&[u8]> = Vec::with_capacity(fetched.len());
+    for (want, bytes) in plan.wanted().iter().zip(&fetched) {
+        proven.push(residency.touch(want, bytes).map_err(HostError::Payload)?);
+    }
+    let payloads = plan.bind(&proven).map_err(HostError::Bind)?;
 
     crate::host::log(&format!(
         "{url}: {} bytes, {} sections, {} hot, {} payload(s)",
