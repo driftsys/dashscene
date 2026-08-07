@@ -7,7 +7,7 @@
 //! [`crate::container`] was written for it: [`crate::container::Container::parse`]
 //! takes a `&[u8]` and hands out borrowed slices into it, blobs align to a
 //! 64-byte quantum, and large ones are page-aligned. So a mapping is a drop-in
-//! — [`MappedFile`] derefs to `&[u8]` and [`crate::open`] takes it unchanged.
+//! — [`crate::map::MappedFile`] derefs to `&[u8]` and [`crate::open`] takes it unchanged.
 //!
 //! # What mapping does and does not buy, today
 //!

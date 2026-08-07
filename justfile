@@ -97,6 +97,16 @@ test-all:
 lint: deno-fmt-check
     cargo clippy --workspace --all-targets -- -D warnings
     cargo fmt --all -- --check
+    # Intra-doc links, as a gate. A doc comment naming an item that does not
+    # exist is this repository's most common defect, and until v0.16 nothing in
+    # `just build` could see one: clippy does not resolve doc links, so a link
+    # to a deleted function passed the whole gate (story #598 shipped one, and a
+    # review agent running `cargo doc` is what found it). `-D warnings` here
+    # covers `broken_intra_doc_links` and `private_intra_doc_links`, which is
+    # the pair that catches a renamed or removed item.
+    #
+    # `--no-deps` so it documents this workspace and not its dependency tree.
+    RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps --quiet
     dprint check
     markdownlint '**/*.md' --ignore target --ignore node_modules
 

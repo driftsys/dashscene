@@ -24,14 +24,14 @@
 //! **Alpha.** SSIMULACRA2 and FLIP are both defined over RGB and neither reads
 //! an alpha channel, while `dashpack::band::diff` compares alpha like any other
 //! channel — and on an image fill a codec that drops coverage is one of the
-//! more visible failures. [`Scores::psnr_alpha`] is the column that can see it,
+//! more visible failures. [`crate::metric::Scores::psnr_alpha`] is the column that can see it,
 //! and `an_alpha_only_difference_is_invisible_to_both_perceptual_metrics`
 //! measures the blind spot rather than describing it.
 //!
 //! **Small images.** SSIMULACRA2 is multi-scale: it rescales by half up to six
 //! times and refuses anything below 8x8, so at 16x16 only two of its six scales
-//! survive and the score stops meaning what it means elsewhere. So [`score`]
-//! withholds the number below [`SSIMULACRA2_MIN_EXTENT`] rather than reporting
+//! survive and the score stops meaning what it means elsewhere. So [`crate::metric::score`]
+//! withholds the number below [`crate::metric::SSIMULACRA2_MIN_EXTENT`] rather than reporting
 //! one that reads as comparable. FLIP and PSNR have no such floor and are
 //! reported at every extent.
 //!
@@ -95,7 +95,7 @@ pub fn panel_ppd() -> f32 {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Scores {
     /// SSIMULACRA2, 0 to 100, higher is better. `None` below
-    /// [`SSIMULACRA2_MIN_EXTENT`].
+    /// [`crate::metric::SSIMULACRA2_MIN_EXTENT`].
     pub ssimulacra2: Option<f64>,
     /// Mean FLIP error at [`desk_ppd`], 0 to 1, lower is better.
     pub flip_desk: f64,
@@ -196,7 +196,7 @@ pub fn score(
     })
 }
 
-/// SSIMULACRA2, or `None` below [`SSIMULACRA2_MIN_EXTENT`].
+/// SSIMULACRA2, or `None` below [`crate::metric::SSIMULACRA2_MIN_EXTENT`].
 fn ssimulacra2_of(width: u32, height: u32, reference: &[u8], candidate: &[u8]) -> Option<f64> {
     if width < SSIMULACRA2_MIN_EXTENT || height < SSIMULACRA2_MIN_EXTENT {
         return None;
@@ -232,7 +232,7 @@ fn ssimulacra2_of(width: u32, height: u32, reference: &[u8], candidate: &[u8]) -
 }
 
 /// The mean FLIP error at `ppd`. FLIP reads RGB, so alpha is dropped here and
-/// carried by [`Scores::psnr_alpha`] instead.
+/// carried by [`crate::metric::Scores::psnr_alpha`] instead.
 fn flip_mean(width: u32, height: u32, reference: &[u8], candidate: &[u8], ppd: f32) -> f64 {
     let rgb = |texels: &[u8]| -> Vec<u8> {
         texels

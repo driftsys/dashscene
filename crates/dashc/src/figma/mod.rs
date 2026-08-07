@@ -131,7 +131,7 @@ fn image_diagnostic(rule: &'static str, index: u32, path: &str, message: String)
     )
 }
 
-/// The JSON nesting depth [`parse_file`] accepts.
+/// The JSON nesting depth `parse_file` accepts.
 ///
 /// A `rest::Node` costs two JSON levels (the object plus its `children`
 /// array), so this admits roughly 125 nested frames — double the 61 frames
@@ -299,7 +299,7 @@ pub fn lower(
 /// [`lower`], plus the importer's joined variable-binding rows (story
 /// #167): after the walk, each row is mapped onto the document node its
 /// Figma id lowered to and applied as `Document.signals`/
-/// `Document.bindings` — see [`bindings::apply`] for the property →
+/// `Document.bindings` — see `bindings::apply` for the property →
 /// channel mapping and the named verdicts.
 pub fn lower_with_bindings(
     file: &FigmaFile,
@@ -313,7 +313,7 @@ pub fn lower_with_bindings(
 /// [`lower_with_bindings`], choosing the emit policy
 /// (`docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`).
 ///
-/// The policy rides on the [`Walk`] and reaches [`Walk::unsupported_at`]: under
+/// The policy rides on the `Walk` and reaches `Walk::unsupported_at`: under
 /// [`crate::EmitPolicy::Partial`] a `figma.unsupported` omission is minted at
 /// `Severity::Warning` instead of `Severity::Error`, so the skipped node's gap
 /// no longer blocks emission. Nothing else in the walk changes — the subtree is

@@ -146,7 +146,7 @@ impl SurfaceRenderer {
     /// Native only, for the reason [`Renderer::new`] gives: a browser's main
     /// thread cannot block on the adapter request without deadlocking against
     /// the event loop that would resolve it. A web host calls
-    /// [`SurfaceRenderer::for_canvas`], which is where a canvas becomes a
+    /// `SurfaceRenderer::for_canvas`, which is where a canvas becomes a
     /// surface target.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn new(
@@ -181,7 +181,7 @@ impl SurfaceRenderer {
     }
 
     /// [`SurfaceRenderer::new`] without the blocking wait — the constructor a
-    /// web host reaches through [`SurfaceRenderer::for_canvas`], and the one
+    /// web host reaches through `SurfaceRenderer::for_canvas`, and the one
     /// every target has.
     pub async fn new_async(
         target: impl Into<wgpu::SurfaceTarget<'static>>,
@@ -286,7 +286,7 @@ impl SurfaceRenderer {
     /// passes through in normal use.
     ///
     /// An **out-of-date** swapchain is not among them. It is reconfigured and
-    /// retried inside [`SurfaceRenderer::acquire`], so it ends either as an
+    /// retried inside `SurfaceRenderer::acquire`, so it ends either as an
     /// ordinary [`Drawn::Yes`] or, if the retry still reports it, as
     /// [`FrameError::Outdated`].
     ///

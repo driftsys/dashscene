@@ -58,7 +58,7 @@ pub struct SolvedRect {
 pub trait LayoutSolver {
     /// Resolve the nodes of `arena` whose absolute rect changed since the
     /// previous solve to their new rects. A solver may return every node
-    /// (the internal [`FixedSolver`] always does), or only the ones that
+    /// (the internal `FixedSolver` always does), or only the ones that
     /// moved or resized — an incremental solver reports just those and
     /// leaves the rest for [`Txn::commit_with`] to carry forward from the
     /// previous commit (issue #164). The one hard rule is index integrity
@@ -74,7 +74,7 @@ pub trait LayoutSolver {
     fn solve(&mut self, arena: &Arena) -> Vec<(NodeId, SolvedRect)>;
 
     /// The atlases every run [`stage_text`](Self::stage_text) returns
-    /// samples, in [`AtlasIndex`] order — the set commit hands the painter
+    /// samples, in [`crate::AtlasIndex`] order — the set commit hands the painter
     /// alongside the runs, because a run's glyph ids mean nothing without
     /// the atlas that places them.
     ///
@@ -111,7 +111,7 @@ pub trait LayoutSolver {
     ///
     /// [`GlyphRun::glyphs`] is likewise not the stager's to fill. A staged
     /// run carries its quads beside it in [`StagedRun`] and its range as
-    /// [`GlyphRange::UNASSIGNED`]; commit sorts the runs by anchor before
+    /// [`crate::GlyphRange::UNASSIGNED`]; commit sorts the runs by anchor before
     /// pushing them, so no offset a stager could compute would survive the
     /// reorder anyway (story #578).
     ///
@@ -146,7 +146,7 @@ pub struct StagedRun {
     /// The node this run was shaped from. Commit turns it into
     /// [`GlyphRun::rect`].
     pub node: NodeId,
-    /// The run, carrying [`GlyphRange::UNASSIGNED`].
+    /// The run, carrying [`crate::GlyphRange::UNASSIGNED`].
     pub run: GlyphRun,
     /// Its quads, in draw order.
     pub quads: Vec<GlyphQuad>,
@@ -762,7 +762,7 @@ impl Arena {
     /// (`X`/`Y`/`Width`/`Height`/`Visible`) applied on top of the base
     /// value. This
     /// is the read seam every [`LayoutSolver`] resolves geometry
-    /// through (the internal [`FixedSolver`] included), so a variant
+    /// through (the internal `FixedSolver` included), so a variant
     /// switch reaches committed geometry without either solver knowing
     /// variants exist (`docs/decisions/variant-set-flat-index.md`).
     ///

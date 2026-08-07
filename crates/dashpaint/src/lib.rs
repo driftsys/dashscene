@@ -324,7 +324,7 @@ impl ImageFormat {
     ///
     /// The whole of what separates the two halves, and the predicate a
     /// capability declaration is written against — see
-    /// [`Painter::samples`](crate::Painter::samples).
+    /// [`Painter::samples`].
     pub const fn is_encoded(self) -> bool {
         matches!(self, Self::Png | Self::Jpeg | Self::Gif)
     }
@@ -701,7 +701,7 @@ impl ImageTable {
     /// # Panics
     ///
     /// Panics on a baked payload, which states no extent of its own — use
-    /// [`push_baked`](Self::push_baked). See [`identified_extent`] for why a
+    /// [`push_baked`](Self::push_baked). See `identified_extent` for why a
     /// baked extent cannot be derived from the bytes.
     pub fn push(&mut self, asset: ImageAsset) -> u32 {
         let (width, height) = identified_extent(asset.format, &asset.bytes);
@@ -808,7 +808,7 @@ impl ImageTable {
     ///
     /// # Panics
     ///
-    /// On an owned table, for the reason [`push_row`](Self::push_row) panics on
+    /// On an owned table, for the reason `push_row` panics on
     /// a mapped one.
     ///
     /// On an `offset` or `len` past `u32::MAX`, which is the 4 GiB cap
@@ -2744,7 +2744,7 @@ pub trait Painter {
     /// exception, below.
     ///
     /// **The backdrop barrier.** A rect whose paint entry answers
-    /// [`PaintEntry::samples_backdrop`] reads what is already composited
+    /// [`PaintTable::samples_backdrop`] reads what is already composited
     /// beneath it, so every rect at a lower index MUST be composited
     /// before that rect is drawn
     /// (`docs/decisions/backdrop-blur-is-core-vocabulary.md`). Such a

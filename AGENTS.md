@@ -218,6 +218,15 @@ Story workflow — the definition of done for every story:
   shipped. Write `Refs #N` when referring to an issue, and reserve a
   closing keyword for the one issue the PR actually completes. When naming
   an issue mid-sentence, write "issue #N" or restructure the sentence.
+- **Re-read the milestone's open issues before merging**, not only the story's
+  own: `gh issue list --milestone "<slice>" --state open`. Debt filed against a
+  slice in progress is often a warning about the story that is open right now.
+  Issue #783 predicted that a `dashbuf::Residency` would collide with the
+  existing `dashscene_gpu::Residency`, and it was filed **twelve minutes after
+  story #597's PR was opened and twenty-six before it merged** — so checking at
+  the start would have found nothing, and checking before the merge button would
+  have saved the rename a whole extra PR cost. A slice's other sessions file
+  against the work in flight, not against the work that is finished.
 - Merge only when the review pass is complete, every critical finding is
   resolved, and CI is green on the commit being merged. A green run
   earlier is not a promise: a later push, or a rebase onto a moved `main`,

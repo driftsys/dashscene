@@ -1,5 +1,5 @@
 //! Loads a compiled `.dsb` into the host, as the same [`shell::SceneBuilder`]
-//! / [`shell::ScenePulse`] pair [`crate::placeholder_scene`] builds by hand
+//! / [`shell::ScenePulse`] pair `crate::placeholder_scene` builds by hand
 //! (story #575, epic #568).
 //!
 //! `dashscene_core::load`'s own doc comment states the read contract: run
@@ -156,7 +156,7 @@ fn source_name() -> String {
 /// `width` and `height` go unused: a loaded document already carries its own
 /// resolved canvas size (P1 — the document is intent, and this document's
 /// intent already includes concrete geometry from the Figma capture it was
-/// compiled from), unlike [`crate::placeholder_scene`], which derives every
+/// compiled from), unlike `crate::placeholder_scene`, which derives every
 /// offset from the drawable it is given. A resize therefore reloads the same
 /// picture rather than rescaling it.
 ///

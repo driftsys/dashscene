@@ -158,7 +158,7 @@ pub struct CacheStats {
 
 /// The named diagnostic `text.weight-substituted` (story #368): a layout
 /// asked one family for a CSS weight it has no face at, and the CSS Fonts 4
-/// rule ([`weight::match_weight`]) resolved it to a different one.
+/// rule (`weight::match_weight`) resolved it to a different one.
 ///
 /// This is a **render-time** diagnostic, not a compile-time one. Which
 /// weights exist is a property of the renderer's asset set, not of the
@@ -352,7 +352,7 @@ impl Typesetter {
     ///    in a cascade with no Arabic Bold resolves to Arabic Regular, never
     ///    to Latin Bold.
     /// 2. **The requested weight picks the face** within that family, by the
-    ///    CSS Fonts 4 rule ([`weight::match_weight`]), reporting any
+    ///    CSS Fonts 4 rule (`weight::match_weight`), reporting any
     ///    substitution as [`WeightSubstitution`].
     ///
     /// The families are flattened family-major into the one positional slot
@@ -461,7 +461,7 @@ impl Typesetter {
     /// typesetter has only this one; a multi-font typesetter falls back
     /// past it by coverage (story #219). Line metrics are taken per line
     /// from the fonts that actually shaped that line ([`layout`](Self::layout)
-    /// through [`line_box`](Self::line_box)), not from the primary alone.
+    /// through `line_box`), not from the primary alone.
     pub fn font(&self) -> &Font {
         &self.fonts[0]
     }
@@ -537,7 +537,7 @@ impl Typesetter {
 
     /// [`layout`](Self::layout) with the additive shaping knobs (story #310):
     /// `shape.line_height_px` overrides the per-line advance and centers each
-    /// line's intrinsic box within the fixed box ([`half_leading`], Figma's
+    /// line's intrinsic box within the fixed box (`half_leading`, Figma's
     /// model), `shape.letter_spacing` tracks each glyph in the placement pen
     /// but excludes each line's own trailing step from the measured width
     /// (story #336 — Figma's model), and `shape.align` shifts each line

@@ -15,7 +15,7 @@
 //! builds is the identity map and its assembly cannot fail on any bank shape it
 //! can construct — which is what lets it use an `expect`. This crate builds the
 //! other kind. A derived bank can be unbound, can hold a payload no entry
-//! names, and can bind one canonical hash to two payloads, so [`assemble`]
+//! names, and can bind one canonical hash to two payloads, so [`PackedBank::assemble`]
 //! returns the refusal rather than panicking on it (P4).
 //!
 //! # What this does not do
