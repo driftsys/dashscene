@@ -27,10 +27,14 @@
 //! (`docs/decisions/verification-moves-from-open-to-touch.md` D8), so what the
 //! criterion asserts on is what was made resident rather than what a reader
 //! resolved. A payload resolved and never touched costs nothing and is counted
-//! as nothing, which is the claim R5 makes. [`crate::open_verified_with_cost`]
-//! is the exception and is not on that path: the eager reader hashes every
-//! payload by definition, and counting what it reads is how a caller measures
-//! the difference between checking a file and drawing one.
+//! as nothing, which is the claim R5 makes.
+//!
+//! **There is no third site, and there was.** [`crate::open_verified`] had an
+//! instrumented sibling while the startup-scaling criterion measured the eager
+//! reader; story #598's re-run moved that measurement onto the mapped path and
+//! the sibling went with it. So a count taken here is a count of what a load
+//! made resident, and a reader that hashes a whole file on purpose cannot be
+//! mistaken for one.
 //!
 //! Three reads are deliberately outside it:
 //!

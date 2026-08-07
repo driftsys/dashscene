@@ -179,26 +179,17 @@ pub fn open(file: &[u8]) -> Result<(Document<'_>, Vec<Wanted>), OpenError> {
 /// whole file means — it is a reason not to use it to draw one. `dashc`'s CLI
 /// checks files and is the caller this exists for; [`open`] is the one a host
 /// draws through.
+///
+/// **It takes no [`cost::LoadCost`]**, and that is D8 rather than an omission
+/// (`docs/decisions/verification-moves-from-open-to-touch.md`). This reader had
+/// an instrumented sibling while the startup-scaling criterion measured the
+/// owning path; story #598's re-run moved that measurement onto the mapped
+/// path, leaving the sibling with no caller. The counter now records in exactly
+/// two places — [`residency::Residency::touch_with_cost`] for a read and
+/// `dashscene_core::load_document_bound_with_cost` for a copy — so what it
+/// counts is what a load made resident, and a reader that hashes a whole file
+/// on purpose cannot be mistaken for one.
 pub fn open_verified(file: &[u8]) -> Result<(Document<'_>, Vec<&[u8]>), OpenError> {
-    open_verified_with_cost(file, &cost::LoadCost::new())
-}
-
-/// [`open_verified`], recording into `cost` the asset payload bytes it reads.
-///
-/// [`open_verified`] is this call with the count discarded, so there is one
-/// implementation and not two that could drift.
-///
-/// Resolving an asset entry hashes the whole payload — [`container::Container::blob_by_hash`]
-/// verifies before returning, and it hashes exactly the bytes it hands back —
-/// so the payload's own length is the number of bytes that read cost, and an
-/// entry resolved twice is hashed twice and counted twice.
-///
-/// Only asset payloads are counted. The ui section and the derivation manifest
-/// are hashed here too, and are not payloads; [`cost`] states the boundary.
-pub fn open_verified_with_cost<'a>(
-    file: &'a [u8],
-    cost: &cost::LoadCost,
-) -> Result<(Document<'a>, Vec<&'a [u8]>), OpenError> {
     let container = container::Container::parse(file)?;
     let ui = container.ui_document()?;
     let document = root_as_document(ui)?;
@@ -211,7 +202,6 @@ pub fn open_verified_with_cost<'a>(
         .map(|entry| {
             let canonical = entry.hash().bytes();
             let payload = container.blob_by_hash(resident_of(&manifest, canonical))?;
-            cost.record_hashed(payload.len() as u64);
             Ok(payload)
         })
         .collect::<Result<Vec<_>, container::ContainerError>>()?;
