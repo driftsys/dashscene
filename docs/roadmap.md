@@ -11,7 +11,7 @@ is nothing to keep in sync between the two.
 
 | This file (shape)               | GitHub (state)                                |
 | ------------------------------- | --------------------------------------------- |
-| Which slices exist (v0.1-v0.17) | Which stories exist under each epic           |
+| Which slices exist (v0.1-v0.18) | Which stories exist under each epic           |
 | What each slice delivers        | Which stories are open, closed, who owns them |
 | Inter-slice dependency edges    | Story-level dependency edges                  |
 | Which E-criteria a slice closes | Debt triage and milestone assignment          |
@@ -1160,6 +1160,63 @@ from a planning session, the way v0.16's did.
 
 Depends on: v0.15 for the painter an embedder embeds, and on v0.16 for the load
 path the `.dsb` half of it wraps.
+
+### v0.18 — animation vocabulary — open, provisional
+
+**Epic #769, milestone provisional.** Both the number and the placement of this
+slice are unsettled, and it is recorded that way rather than presented as
+planned: v0.17 is described above as larger than one slice and expected to
+split, which may renumber this. It is confirmed, renumbered or re-scoped at the
+**owed v0.15/v0.16 phase-end revision**, which is where AGENTS.md puts the
+placing of issues filed deliberately unscheduled.
+
+Nothing here should be started ahead of that revision without a decision saying
+so.
+
+Delivers: **motion as data in the document.** Today a dashscene animation
+cannot ship in a file. `dashbuf` does not depend on `dashcue` — three other
+workspace members do and it is not among them — and nothing in the schema
+carries a spec, an easing, a duration or a keyframe. The document holds the two ends (variants)
+and the wiring (bindings); the motion between them has to be written in Rust
+against `dashlang`.
+
+| gap              | what is missing                                                                                                               |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| rotation channel | no node transform of any kind — checked in the schema, `BindingChannel`, the variant prop union, and `Prop`'s 37 variants     |
+| motion rows      | no `TransitionSpec` or `VariantTransition` in the schema; an append, which the `AssetEntry` comment calls the R7-cheap change |
+| loop tracks      | deferred by `dashcue` at v0.4, so nothing ambient is expressible and no route reaches a document with it                      |
+
+**Why rotation leads.**
+[`technotes/runtime-content.md`](technotes/runtime-content.md) §4 names a
+spinner and a live progress ring as the canonical examples of the bucket it
+says to **prefer whenever it applies**, and neither is expressible. The plan
+and the code disagree on that bucket's two headline cases. It is untracked by
+accident: issue #143 covered node opacity, rotation, mask nodes and hidden
+nodes and was closed as completed on 2026-07-19 with three of its four items
+landed — closing it took the only tracker with it.
+
+Holds: **#770** the rotation channel, **#771** variant transitions serialize
+(sibling of #255, which is the same absence on the binding side — one decision
+should cover both), **#772** loop tracks, **#773** reading Figma's prototype
+reactions, which the importer already fetches and discards.
+
+Filed alongside but deliberately outside the epic, placement for the same
+revision: **#774** static SVG import (no new vocabulary, no schema change, no
+second renderer, and the first second producer on the _compile_ path —
+`dashlang` already tests P5 from the arena side), **#775** the duplicated `dt`
+clamp, **#776** a payload size budget, against v0.17 where an integrator meets
+it.
+
+Design capture: three files in `docs/wip/` dated 2026-08-07 —
+`motion-in-the-document.md`, `animated-content-import.md` and
+`asset-sourcing-and-residency.md`, split by concern rather than by slice. The
+second extends [`technotes/runtime-content.md`](technotes/runtime-content.md)
+§4-§6 rather than replacing it: that note already fixed the three-bucket triage
+and chose ThorVG.
+
+Depends on: nothing in v0.16. It touches `dashbuf`, `dashscene-core`,
+`dashcue`, `dashscene-engine` and both painters, none of which is on the
+loading-performance path.
 
 ## v1 — Unity, full feature set, performance, production toolchain
 
