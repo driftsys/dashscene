@@ -66,6 +66,13 @@ Notes:
   cheap frame), and a controlled before-and-after for issue #101 on a real
   scene. Informative, and explicitly not the target-hardware budget epic #476
   waits for.
+- [measured-verification.md](measured-verification.md) — the pattern behind the
+  goldens, the oracles and the guards, named in six parts: the corpus and
+  expectations split, the oracle triad, exactness before tolerance, two-bound
+  calibration, the sensitivity guard, and kind-assigned bands with the two-axis
+  gate. Also what a surviving mutant indicts, and where the same discipline
+  already governs measurements that produce no image. Informative and binds
+  nothing; it links to the records that do.
 - [taffy-scaled-shrink-report.md](taffy-scaled-shrink-report.md) — the upstream
   report for the taffy 0.12 defect the negative-margin workarounds exist for
   (debt #269): where the two scaled-shrink expressions disagree, the minimal
