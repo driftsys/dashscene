@@ -82,7 +82,7 @@ STAGE 2 — common runtime, one instance, shared Rust
   boundary B — the painter contract: rects, glyph runs, paint indices
 
 STAGE 3 — painters, one trait, one per target
-  Skia (built)     Unity (planned)     wgpu (planned)
+  Skia (built)     wgpu (built)     Unity (planned)
 ```
 
 A producer does not have to go through stage 1. The arena's staged-mutation API
@@ -121,18 +121,23 @@ the pipeline above is drawn out in
 Built: the document format and its sectioned container, the arena and its
 staged-mutation API, the Taffy solve, variants and FLIP, the text stack for
 Latin and Arabic (bidi, shaping, MSDF glyph atlases), the descriptive animation
-vocabulary and its scheduler, the Figma importer, the asset packer, and the Skia
-reference painter. The three scenes above draw the whole of the v0 paint
-vocabulary between them, and `--dsb` loads a document the Figma importer
-compiled.
+vocabulary and its scheduler, the Figma importer, the Skia reference painter,
+and `dashscene-gpu` — the lean painter, which draws the same vocabulary over
+`wgpu` on a desktop and in a browser. The three scenes above draw the whole of
+the v0 paint vocabulary between them, and `--dsb` loads a document the Figma
+importer compiled.
+
+The asset packer sits between the two lists. Its quality profiles, ASTC encode,
+KTX2 writer and cold-bank assembly are built and measured, but they are library
+code the tests drive: `dashpack` the binary reports its pinned encoder and
+container versions and then exits without packing anything.
 
 Not built:
 
-- **The Unity painter.** `crates/dashscene-unity` is a stub; the Unity and C#
-  project it will bind to is a separate repository that does not exist yet.
-- **`dashscene-gpu`**, the lean painter for native and web. The v0.15 slice
-  (epic #569). The crate exists and draws nothing — the `Painter` seam
-  compiles, and no pixel path is built yet.
+- **The Unity painter.** `crates/dashscene-unity` holds the `extern "C"` surface
+  that keeps boundary B representable from C#, and the build enforces it; the
+  painter itself, and the Unity and C# project it will bind to, are a separate
+  repository that does not exist yet.
 - **The web painter.** `crates/dashscene-web` is a stub, retired: `dashscene-gpu`
   reaches the browser from the same codebase as native.
 - **The umbrella crate.** `crates/dashscene` is a stub; code in this repository
@@ -157,24 +162,24 @@ published — `demo/` (the window and the frame loop), `demo-web/` (the same
 showcase in a browser, on a canvas), `corpus/showcase/` (the scenes they draw),
 and `goldens/tooling/` (the golden-image harness).
 
-| Crate                  | What it is                                                     |
-| ---------------------- | -------------------------------------------------------------- |
-| `dashbuf`              | the FlatBuffers schema — the `.dsb` document format            |
-| `dashc`                | the compiler; also builds to wasm for the Deno Figma importer  |
-| `dashscene-validator`  | profiles, diagnostics, waivers                                 |
-| `dashscene-core`       | arena, node tree, layout and paint tables, staged mutation     |
-| `dashscene-engine`     | Taffy solve, variants, FLIP, the measure callback              |
-| `dashscene-typeset`    | bidi, shaping, the glyph atlas pipeline                        |
-| `dashcue`              | the descriptive animation vocabulary and its scheduling        |
-| `dashlang`             | the Rust DSL and the stress-corpus generator                   |
-| `dashpaint`            | the paint table and the painter trait — boundary B             |
-| `dashscene-skia`       | the Skia reference painter, and the whole of the v0 painter    |
-| `dashpack`             | the asset packer — quality profiles, cold banks, manifests     |
-| `dashpack-astcenc-sys` | bindings to the vendored astcenc encoder and reference decoder |
-| `dashscene`            | the umbrella crate — a stub                                    |
-| `dashscene-unity`      | Rust FFI bindings for the Unity painter — a stub               |
-| `dashscene-web`        | the wasm and tiny-skia painter — a stub, retired               |
-| `dashscene-gpu`        | the lean painter over wgpu — the seam only, draws nothing      |
+| Crate                  | What it is                                                       |
+| ---------------------- | ---------------------------------------------------------------- |
+| `dashbuf`              | the FlatBuffers schema — the `.dsb` document format              |
+| `dashc`                | the compiler; also builds to wasm for the Deno Figma importer    |
+| `dashscene-validator`  | profiles, diagnostics, waivers                                   |
+| `dashscene-core`       | arena, node tree, layout and paint tables, staged mutation       |
+| `dashscene-engine`     | Taffy solve, variants, FLIP, the measure callback                |
+| `dashscene-typeset`    | bidi, shaping, the glyph atlas pipeline                          |
+| `dashcue`              | the descriptive animation vocabulary and its scheduling          |
+| `dashlang`             | the Rust DSL and the stress-corpus generator                     |
+| `dashpaint`            | the paint table and the painter trait — boundary B               |
+| `dashscene-skia`       | the Skia reference painter, and the whole of the v0 painter      |
+| `dashpack`             | the asset packer — quality profiles, cold banks, manifests       |
+| `dashpack-astcenc-sys` | bindings to the vendored astcenc encoder and reference decoder   |
+| `dashscene`            | the umbrella crate — a stub                                      |
+| `dashscene-unity`      | the `extern "C"` gate holding boundary B representable from C#   |
+| `dashscene-web`        | the wasm and tiny-skia painter — a stub, retired                 |
+| `dashscene-gpu`        | the lean painter over wgpu — native and web, the full vocabulary |
 
 Beside them: `importers/figma/` (the Deno and TypeScript Figma REST importer and
 its annotator plugin), `corpus/` (the stress corpus, fonts, glyph atlases and
@@ -194,10 +199,9 @@ there is a real version running, and the mechanism is deliberately still
 undecided
 ([`docs/decisions/repo-staging-and-public-facade.md`](docs/decisions/repo-staging-and-public-facade.md)).
 
-v0 is built one slice at a time. Slices v0.1 to v0.13 have closed, except v0.9,
-which stays open on its exit gate — the first bullet below. v0.14 — the
-demonstration above and this file — is the current slice; v0.15 and v0.16 are
-planned.
+v0 is built one slice at a time. Slices v0.1 to v0.15 have closed. v0.16 —
+loading performance — is the current slice, and v0.17, platform reach, is opened
+but not yet planned.
 [`docs/roadmap.md`](docs/roadmap.md) carries the slice map and what each one
 delivered; GitHub issues carry the live state.
 
@@ -207,9 +211,10 @@ wrong way:
 - Seven exit criteria, `E1` to `E7`, gate v0. Each one is met and each one is
   individually evidenced
   ([`docs/specification/05-qualification.md`](docs/specification/05-qualification.md)).
-  What does **not** exist is the single CI job that asserts all seven together
-  on one commit, so a regression in any of them fails a build rather than
-  waiting for a person to notice.
+  The single job that asserts all seven together on one commit is the CI
+  `exit-gate` job, built at the v0.14 close; it diffs its own membership against
+  `.config/exit-gate.txt`, so a renamed covering test cannot leave the gate
+  silently.
 - GitHub Actions on this repository is blocked at the account level. Jobs fail
   in seconds having executed zero steps. That is why this file carries no CI
   badge and makes no claim that CI is green, and it is what the exit gate above
@@ -225,6 +230,8 @@ wrong way:
   design record.
 - [`docs/decisions/`](docs/decisions/) — every decision taken since, each traced
   to what it affects.
+- [`docs/features.md`](docs/features.md) — what the system does today and what
+  is planned, feature by feature, written for a non-engineering reader.
 - [`docs/roadmap.md`](docs/roadmap.md) — the v0, v1 and v2 plan.
 - [`AGENTS.md`](AGENTS.md) — the working conventions this repository runs on.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to get a change in. `just --list`
