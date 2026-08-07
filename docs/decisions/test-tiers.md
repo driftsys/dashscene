@@ -132,18 +132,19 @@ in `[profile.calibration]`.
 Three tiers, nested, each a nextest profile. Re-measured on an idle 8-core
 machine after issue #660 split the perceptual walk per fixture:
 
-| tier          | tests | wall clock | contents                                                                                                              |
-| ------------- | ----- | ---------- | --------------------------------------------------------------------------------------------------------------------- |
-| `sanity`      | 1287  | **5 s**    | everything an ordinary edit can break, minus the four categories below                                                |
-| `regression`  | 1312  | **33 s**   | `sanity` plus the profile-preview oracle, the atlas pipeline, the bake oracle, and the grid-anchor saturation test    |
-| `calibration` | 10    | **54 s**   | the tests that re-derive a committed table from the packer alone: one per calibration fixture, plus the band contract |
+| tier          | tests | wall clock | contents                                                                                                                                          |
+| ------------- | ----- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sanity`      | 1287  | **5 s**    | everything an ordinary edit can break, minus the five categories below                                                                            |
+| `regression`  | 1312  | **33 s**   | `sanity` plus the profile-preview oracle, the atlas pipeline, the bake oracle, the grid-anchor saturation test, and the startup-scaling criterion |
+| `calibration` | 10    | **54 s**   | the tests that re-derive a committed table from the packer alone: one per calibration fixture, plus the band contract                             |
 
 `regression` is a superset of `sanity`; `regression` and `calibration`
 together are the whole suite (1312 + 10 = 1322 runnable tests, plus 3
 doctests nextest does not run). All three tiers ran green at the measured
 times. Story #598 later added a fourth profile, `scaling`, held outside all
-three; "the whole suite" above means the three tiers, and the section below
-says why that one is a profile rather than a tier.
+three while its criterion was knowingly red, and removed it again when the
+criterion passed; the section below says why it was a profile rather than a
+tier, and what to copy if one is ever needed again.
 
 Those counts are a measurement taken on 2026-08-01, not a property of the
 design, and they move whenever anyone adds a test — they moved by three
@@ -153,7 +154,7 @@ the same `just test-all` measured 185 s idle and 280 s with two formatter
 runs competing for cores. Treat every figure here as the idle case. What does not move,
 and what the other documents state instead of a number, is the shape:
 **the gate runs every test except the two calibration re-derivations**, and
-the sanity tier additionally drops four slower binaries. A count repeated
+the sanity tier additionally drops five slower binaries. A count repeated
 outside this record would be wrong within a slice, which is the same drift
 that put a stale copy of the path filter in three files.
 
@@ -164,11 +165,15 @@ tests, 185 s; close to `calibration` alone because nextest runs
 everything concurrently and the two calibration tests are the longest
 individual tests in the suite.
 
-The four categories `sanity` drops beyond the calibration tier — the
-profile-preview oracle, the glyph atlas pipeline, the bake oracle, and the
-grid-anchor saturation test — cost about 73 s of test time together, and
-each is reachable from a narrow part of the tree, so the regression tier is
-where they are caught rather than the sanity tier. None of the four
+The five categories `sanity` drops beyond the calibration tier — the
+profile-preview oracle, the glyph atlas pipeline, the bake oracle, the
+grid-anchor saturation test, and the startup-scaling criterion — cost about
+76 s of test time together, and each is reachable from a narrow part of the
+tree, so the regression tier is where they are caught rather than the sanity
+tier. The criterion is the cheapest of them at about 3 s, and it is here for
+the same reason as the rest: it compiles two documents from corpus
+photographs and writes them to disk on every run, for a number no ordinary
+edit can move. None of the five
 re-derives a committed table from a bounded input set the way the
 calibration tier's tests do; they are simply expensive, or they exercise
 a large or external input space, and 35 s is a price worth paying to catch
@@ -227,28 +232,43 @@ would save a further 28 s and drop twenty-four tests, including every
 assertion that renders through the painter stack or exercises the atlas and
 asset pipelines.
 
-### `scaling` is a fourth profile and not a fourth tier
+### `scaling` was a fourth profile, on purpose and temporarily
 
 Story #598 added `[profile.scaling]` and `just scaling`, selecting
 `binary(=startup_scaling)` — the startup-scaling criterion, the falsifiable
 form of R5 under guardrail G-20
-(`docs/decisions/startup-scaling-is-measured-by-a-counter.md`). The three
-tiers above are unchanged, and this is deliberately not a fourth one.
+(`docs/decisions/startup-scaling-is-measured-by-a-counter.md`). It was
+deliberately **not** a fourth tier, and it no longer exists. Both halves of
+that are worth keeping, because the shape is reusable.
 
 A tier answers "when does this run": every edit, every push, or when the
-packer's inputs move. `scaling` answers a different question. The criterion
-is **written to fail** against the pre-slice load path, because epic #594's
-definition of done requires that failure to be demonstrated by running it
+packer's inputs move. `scaling` answered a different question. The criterion
+was **written to fail** against the pre-slice load path, because epic #594's
+definition of done required that failure to be demonstrated by running it
 rather than asserted — a benchmark seen only passing is the shape the t2
 tier spent v0.13 removing. A knowingly-red test cannot sit in a gate, and it
-must not be silently skipped either, so it is held in a profile of its own
-and run by name.
+must not be silently skipped either, so it was held in a profile of its own
+and run by name. While that lasted, `just test-all` was red, which was the
+criterion being visible rather than a fault: its assertion message named the
+epic and the three stories it waited on.
 
-The holding is temporary. When stories #595, #596 and #597 land and the
-criterion passes, it joins `regression`, the profile goes away, and a
-regression in R5 fails a build like any other. Until then `just test-all` is
-red, which is the criterion being visible rather than a fault: the assertion
-message names the epic and the three stories it waits on.
+**The holding was stated as temporary and was ended.** The three stories it
+waited on (#595, #596, #597) landed, the criterion passed at 1.00x, and the
+re-run (#598) moved `startup_scaling` into `regression`, deleted
+`[profile.scaling]` and deleted the `just scaling` recipe. A regression in R5
+now fails a build like any other test.
+
+It stays out of `sanity`, and for the ordinary reason rather than the
+temporary one: it compiles two documents from corpus photographs and writes
+them to disk on every run, about 3 s, for a criterion no ordinary edit can
+move. That is the same judgement the profile-preview oracle and the atlas
+pipeline get.
+
+**What to copy if a criterion has to be red again.** A profile of its own,
+run by name, with the redness stated in the assertion message and in this
+record — and a written end condition. What made this work is that the end
+condition was checkable ("when the criterion passes") rather than a date, so
+the profile could not quietly become permanent.
 
 ## Mechanism
 

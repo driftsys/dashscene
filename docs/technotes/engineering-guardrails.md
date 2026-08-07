@@ -89,32 +89,36 @@ target-hardware rules.
   The `dashbuf` schema reserves these tables. (R5)
 - **G-19** — Load-gate verification hashes hot sections only; its cost is
   measured and off the render path. (boundary A, R5)
-  **Built, and not yet settled against the committed criterion.** It failed
-  when this entry was written: `dashbuf::open` resolved every asset entry
-  through `Container::blob_by_hash`, which hash-verifies the whole payload, so
-  opening a document hashed every byte of every asset — cold sections included,
-  1 935 927 B to show a one-frame root out of a 65-frame document rather than
-  the root's own 197 387 B.
+  **Met, and measured.** It failed when this entry was written: `dashbuf::open`
+  resolved every asset entry through `Container::blob_by_hash`, which
+  hash-verifies the whole payload, so opening a document hashed every byte of
+  every asset — cold sections included, 1 935 927 B to show a one-frame root
+  out of a 65-frame document rather than the root's own 197 387 B.
 
-  Story #597 moved that. `dashbuf::open` now calls `Container::verify_hot`,
-  hashes the hot region alone, and resolves each entry to where its payload
-  lies without reading it; `Residency::touch` hashes a payload when a prefetch
-  makes it resident, and the prefetch is the shown root's assets and nothing
-  else. Measured over the mapped path, both documents cost 197 387 B — the
-  root's own payload, a ratio of 1.00x.
+  Story #597 moved that. `dashbuf::open` calls `Container::verify_hot`, hashes
+  the hot region alone, and resolves each entry to where its payload lies
+  without reading it; `dashbuf::residency::Residency::touch` hashes a payload
+  when a prefetch makes it resident, and the prefetch is the shown root's
+  assets and nothing else. Story #598's re-run then moved the criterion onto
+  the mapped path, which is what measures it:
+  `goldens/tooling/tests/startup_scaling.rs`, macos aarch64, **197 387 B out of
+  both documents — the shown root's own payload, and no copy at all.**
 
-  **The committed criterion still reports 9.81x**, because
-  `goldens/tooling/tests/startup_scaling.rs` builds its documents in memory and
-  maps nothing, so it measures the owning path — which cannot be bounded by
-  what is shown, since `load_document` copies every payload into an owned
-  `ImageAsset`. Story #598 moves the benchmark onto the mapped path
-  (`docs/decisions/verification-moves-from-open-to-touch.md` D9), and story
-  #599 settles this entry against that measurement rather than against this
-  one.
+  The one thing this entry does not claim is a cold-cache number. The criterion
+  counts bytes and asserts on no wall clock (D1), and the benchmark writes the
+  documents it reads, so every fault it takes is a minor one. That is the same
+  fact that deferred `madvise` to issue #767, and a cold-cache measurement is a
+  hardware and harness question rather than a loading-path one.
 - **G-20** — A scaling benchmark with a small-root document and a many-frame
   corpus document asserts that cold-start cost tracks the shown root, not the
   document size. This guardrail is tracked as the v1 startup-scaling exit
   criterion ([05-qualification.md](../specification/05-qualification.md)). (R5)
+
+  **Met.** `goldens/tooling/tests/startup_scaling.rs` is that benchmark, and it
+  is an ordinary `regression` test since story #598's re-run, so a regression in
+  R5 fails a build. It was demonstrated failing first, at 9.81x against the
+  pre-slice load path, which is what says the 1.00x it reports now was earned
+  rather than assumed.
 
 ## Format and process
 

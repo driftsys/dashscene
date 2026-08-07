@@ -585,6 +585,22 @@ jobs:
             --test v07_ellipse \
             --test v03 \
             -- --nocapture
+      # The startup-scaling criterion — R5's falsifiable form under guardrail
+      # G-20 (story #598, epic #594). It runs in the `test` job as an ordinary
+      # `regression` test, and its assertion is an equality that says only
+      # pass or fail. The numbers it prints — the two counts, the ratio, the
+      # wall clock and the machine — are the record issue #598 asks for, and
+      # nextest captures a passing test's stdout, so re-run here with
+      # --nocapture for exactly the reason the two steps above are re-run.
+      #
+      # It carried its own profile and a `just scaling` recipe while it was
+      # knowingly red, and `--success-output=immediate` on that recipe is what
+      # used to make the number visible. The profile and the recipe went away
+      # when the criterion passed; this step is what replaces them, so that
+      # deleting them did not quietly delete the measurement
+      # (docs/decisions/test-tiers.md).
+      - name: startup-scaling criterion (R5 / G-20)
+        run: cargo test -p goldens --test startup_scaling -- --nocapture
 
   calibration:
     name: calibration
