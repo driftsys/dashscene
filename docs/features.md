@@ -9,6 +9,8 @@
                docs/specification/05-qualification.md carries the evidence.
                Where this file and one of those disagree, they are right
                and this one is stale.
+    related    docs/figma-support.md — the same ground by Figma panel, for a
+               designer asking "will this import?"
 
 dashscene turns a screen designed in Figma — or written in code — into
 pixels, on more than one kind of device, with every device agreeing to the
