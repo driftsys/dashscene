@@ -225,6 +225,8 @@ wrong way:
   design record.
 - [`docs/decisions/`](docs/decisions/) — every decision taken since, each traced
   to what it affects.
+- [`docs/features.md`](docs/features.md) — what the system does today and what
+  is planned, feature by feature, written for a non-engineering reader.
 - [`docs/roadmap.md`](docs/roadmap.md) — the v0, v1 and v2 plan.
 - [`AGENTS.md`](AGENTS.md) — the working conventions this repository runs on.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to get a change in. `just --list`
