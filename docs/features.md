@@ -40,6 +40,19 @@ quietly or approximated. That rule is one of the five principles the
 whole system is built on, and it is why several lines below say "refused
 by name" instead of "not supported yet".
 
+**This file lists unbuilt work on purpose, and that is a deliberate
+deviation from a house rule.** The `sdd-working-memory-lifecycle` rule
+says a shipped document describes the system as-built, and that
+forward-looking concepts stay in `docs/wip/` until they are implemented.
+`docs/design/architecture.md` states the same deviation for the same
+reason, and this file follows it: a catalogue that listed only what
+exists would answer "what can I use today" and silently fail the question
+it is actually for, which is "can this screen be built, and if not yet,
+when". The rule's real concern is that an unbuilt thing must never be
+described as built. Every unbuilt item below is marked unbuilt, says what
+is missing, and names when it is planned — so the concern is met without
+removing the half of the picture a product owner needs.
+
 ---
 
 ## 1. Layout and structure
@@ -48,8 +61,8 @@ How elements are placed, sized, and arranged.
 
 - [x] **Rows and columns** — stack elements horizontally or vertically,
       with the container sizing itself around them.
-- [x] **Wrapping rows** — elements flow onto a new line when they run out
-      of room.
+- [x] **Wrapping rows** — elements flow onto a new line when there is no
+      space left for them on the current one.
 - [x] **Grids** — elements placed on a grid of rows and columns,
       including elements that cover more than one cell.
 - [x] **Free placement** — put an element at an exact position inside its
@@ -138,13 +151,16 @@ Not available:
 - [ ] **Italic and oblique** — no vocabulary for it; reported at import.
 - [ ] **Bold Arabic** — planned (v1). One Arabic weight ships today
       against Latin's four.
-- [ ] **CJK, Indic and other scripts** — planned (v1) as a single piece
-      of work, because the glyph-storage design cannot be settled without
-      knowing which scripts it has to hold. Chinese, Japanese and Korean
-      have never been ruled in or out.
+- [ ] **Other scripts** — planned (v1) as a single piece of work, because
+      the glyph-storage design cannot be settled without knowing which
+      scripts it has to hold. This covers Chinese, Japanese and Korean,
+      which have never been ruled in or out, and the scripts of the Indian
+      subcontinent such as Devanagari, Bengali and Tamil.
 - [ ] **Animated variable-font axes** — rejected. A variable font is
       supported as a fixed instance, chosen at build time.
-- [ ] **Kashida justification** — deferred, with a warning at import.
+- [ ] **Kashida justification** — the Arabic convention of stretching the
+      joining strokes between letters to fill a line, rather than widening
+      the spaces. Deferred, with a warning at import.
 - [ ] **Line height from the tallest font on a line** — the line box
       currently comes from the primary font. Individual letters do scale
       correctly per font.
@@ -179,11 +195,13 @@ Not available:
 
 - [ ] **Layer blur** — deferred, with a warning at import. Blurring an
       element itself, as opposed to what is behind it.
-- [ ] **Advanced blend modes** — multiply, screen and the rest. Deferred,
-      warned at import, and available only on high-end backends when it
-      lands.
+- [ ] **Advanced blend modes** — multiply, screen and the rest. Refused by
+      name today: the design profile the importer runs treats them as an
+      error, so a file using one does not compile at all. They are planned
+      for high-end backends, which can honour them.
 - [ ] **Corner smoothing (squircles)** — deferred, with a warning.
-- [ ] **Luminance masks** — deferred, with a warning. Shape masks work.
+- [ ] **Luminance masks** — refused by name; the masked element is
+      reported rather than drawn. Shape masks work.
 - [ ] **Dashed strokes** — refused by name. Workaround: a baked dash
       pattern.
 - [ ] **Different stroke widths per side** — warned today, and may become
@@ -208,9 +226,9 @@ Not available:
 - [x] **Keyframes** — including overshoot past the target.
 - [x] **Staggered transitions** — successive elements start a fixed delay
       apart.
-- [x] **Interruptible mid-flight** — retargeting an animation that is
-      already running picks up from where it actually is, and a spring
-      keeps its velocity. No visible snap.
+- [x] **Interruptible while running** — giving an animation a new target
+      while it is still moving continues from its current position, and a
+      spring keeps its speed. There is no visible jump.
 - [x] **Layout transitions** — when a variant switch changes the layout,
       elements animate from where they were to where they now are.
 - [x] **Reproducible** — the same inputs produce the same frames on every
@@ -409,9 +427,6 @@ Not available:
 - [x] **Nothing is ever dropped silently** — every unsupported construct
       is a named message naming the workaround. This is enforced as a
       design principle, not a habit.
-- [x] **Warnings can be waived per target, with a recorded reason** — and
-      a release build refuses a warning that has not been waived. A
-      waiver covers one rule at one place, never a rule everywhere.
 - [x] **Authoring in code** — a Rust interface fills the same model
       directly, with no file in between. Used for tests, stress cases,
       and application-driven screens.
@@ -422,6 +437,17 @@ Not available:
 - [x] **A generated stress corpus** — deliberately awkward screens, used
       to keep the layout engine honest.
 - [x] **Two real public Figma files import and render end to end.**
+
+Part built and planned:
+
+- [ ] **Waiving a warning per target, with a recorded reason** — **part
+      built.** The rule exists and is tested: a waiver covers one rule at
+      one place, never a rule everywhere, and a release build should
+      refuse a warning nobody has waived. Nothing calls it yet — no
+      producer invokes the check and there is no file format for writing
+      waivers down — so today a warning does not block anything. Wiring
+      it up is planned (v1), and section 11 says the same thing from the
+      tooling side.
 
 Not available:
 
@@ -443,15 +469,22 @@ Not available:
       or moves anything. This is why two renderers cannot drift apart on
       layout: they are never given the chance to disagree.
 - [x] **Reference renderer (Skia)** — draws the whole feature set on the
-      CPU, which makes its output exactly reproducible and therefore
-      usable as the yardstick everything else is measured against. It
-      stays permanently, for that reason.
-- [x] **Lean GPU renderer** — instanced quads and analytic distance
-      fields, built for bandwidth-constrained hardware. Draws the whole
-      feature set, native and in a browser, from one codebase.
-- [x] **The two renderers agree** — measured on real hardware. One set of
-      tolerance bands serves both, which is the opposite of what was
-      expected, and none of the reference pictures had to change.
+      main processor rather than the graphics card, which makes its output
+      exactly reproducible and therefore usable as the reference every
+      other renderer is compared against. It stays permanently, for that
+      reason.
+- [x] **Lean GPU renderer** — it draws every shape as a rectangle whose
+      colour is computed by a small formula on the graphics card, rather
+      than by tracing outlines. That keeps the amount of data moved per
+      frame low, which is the constraint on the hardware this targets. It
+      draws the whole feature set, on a computer and in a browser, from
+      one codebase.
+- [x] **The two renderers agree** — measured on a developer machine (an
+      Apple M3), not on a target device. One set of tolerance bands serves
+      both, which is the opposite of what was expected, and none of the
+      reference pictures had to change. What has **not** been measured is
+      how either renderer behaves on the hardware the product ships on —
+      see the two items below and section 5.
 - [x] **The renderer contract is language-neutral** — enforced by the
       build rather than promised, so a renderer written in another
       language can consume the same data.
@@ -467,12 +500,15 @@ Part built and planned:
 
 Not available:
 
-- [ ] **A direct GLES renderer** — the named contingency if the current
-      GPU layer's older-hardware path fails on a target device.
-- [ ] **Browsers without WebGPU** — a browser without it is told so and
-      draws nothing. A fallback is a redesign rather than a small piece
-      of work, and is a v1 question that depends on which browsers the
-      product must reach.
+- [ ] **A renderer written directly against OpenGL ES** — the older
+      graphics standard most embedded devices support. This is the named
+      fallback if the current graphics layer's own support for it turns
+      out not to work on a target device.
+- [ ] **Browsers without WebGPU** — WebGPU is the newer browser graphics
+      standard the lean renderer needs. A browser that lacks it is told so
+      and draws nothing. Supporting the older standard is a redesign
+      rather than a small piece of work, and is a v1 question that depends
+      on which browsers the product must reach.
 - [ ] **Switching entry-level devices to the lean renderer** — waits on a
       measurement on real entry-level hardware, and no such hardware is
       in the loop.
@@ -491,24 +527,25 @@ Not available:
 
 Part built and planned:
 
-- [ ] **Embedding in a real application** — **part built, and this is the
-      current open slice.** Everything below the renderer contract is a
-      library. Everything above it is two demonstrations that are not
-      published, so an integrator today starts from a demonstration and
-      copies out of it. Deciding what an embedder actually gets is the
-      open work.
+- [ ] **Embedding in a real application** — **part built.** Everything
+      below the renderer contract is a library. Everything above it is two
+      demonstrations that are not published, so an integrator today starts
+      from a demonstration and copies out of it. Deciding what an embedder
+      actually gets is the next slice, which is opened but not yet
+      planned.
+- [ ] **A C interface for non-Rust hosts** — **part built.** The
+      foundations exist and the build enforces them, so the data a host
+      would consume is already in a shape another language can read.
+      Nothing is built on top of that yet. It is the likely dividing line
+      between the desktop and web work and the mobile work.
 - [ ] **Android** — nothing yet: no build target, no toolchain, no
-      automation. Planned for the current open slice, over a proposed
-      three-layer structure — surface handling, application state, and a
+      automation. Planned for the next slice, over a proposed three-layer
+      structure — surface handling, application state, and a
       screen-description layer — sharing one C interface.
 - [ ] **iOS** — planned (v1). The same three-layer structure is written
       to apply to it.
-- [ ] **A C interface for non-Rust hosts** — the foundations exist and
-      are enforced by the build; nothing is built on them yet. This is
-      the likely seam between the desktop/web half and the mobile half.
 - [ ] **A guide for writing a new renderer**, with a worked example —
-      planned for the current slice. It serves Unity and any future
-      backend.
+      planned for the next slice. It serves Unity and any future backend.
 
 ## 11. Quality tooling and workflow
 
@@ -519,8 +556,8 @@ Part built and planned:
       perceptually compared against real Figma captures, each inside a
       declared tolerance, in automation. This has already caught two real
       bugs on their first measurement.
-- [x] **A second comparison set** — seven more self-authored frames
-      covering vocabulary the Figma comparison does not reach.
+- [x] **A second comparison set** — ten more self-authored frames covering
+      vocabulary the Figma comparison does not reach.
 - [x] **Every tolerance ships with the change that breaks it** — the same
       discipline as the asset quality bands, for the same reason.
 - [x] **Three test tiers** — about five seconds between edits, about
@@ -538,7 +575,15 @@ Part built and planned:
       it steps a fixed frame time and never reads a clock, so it is
       regenerated rather than screenshotted.
 - [x] **Every diagnostic carries a rule name and a location** — so a
-      report is actionable rather than a wall of text.
+      report is actionable rather than a large block of undifferentiated
+      text.
+
+Part built and planned:
+
+- [ ] **Strict enforcement on shipped documents** — **part built.** The
+      rule that a release build must refuse an unwaived warning exists and
+      is tested; nothing calls it, so nothing is enforced. Planned (v1).
+      Section 8 says the same thing from the designer's side.
 
 Not available:
 
@@ -546,12 +591,9 @@ Not available:
       command-line interface, versioned diagnostics, a waiver workflow,
       lint rule packs, and reporting tooling for design review. Today it
       is an internal tool.
-- [ ] **Strict profile enforcement on shipped documents** — planned (v1).
-      The waiver machinery is built; the gate that requires it is not
-      wired up.
 - [ ] **Anything that catches "it looks wrong on a real automotive
-      driver"** — the only check that could is a measurement on real
-      hardware, and it is not automated.
+      driver"** — the only check that could is a measurement on the target
+      device itself, and it is not automated.
 
 ## 12. Build, delivery and integrity
 
