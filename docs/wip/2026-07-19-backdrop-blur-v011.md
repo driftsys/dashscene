@@ -173,7 +173,7 @@ Three independent axes, all inside the dynamic implementation:
 | Skia reference         | Native. `save_layer` with a `SaveLayerRec` backdrop `ImageFilter`, wired at `crates/dashscene-skia/src/lib.rs:720-727` (box) and `:755` (baked-vector field) — story #393. No longer unwired, as this note originally scoped it.                                              |
 | Unity (product)        | Native on GPU, but authored rather than a single call: `GrabPass` on the built-in pipeline, or the opaque texture / a custom `ScriptableRendererFeature` on URP, plus a blur shader. Exact path depends on the render pipeline that repo picks; that repo does not exist yet. |
 | tiny-skia web (parked) | No image-filter graph. Hand-rolled: read the pixmap region, blur in Rust, composite back. Feasible; performance in single-threaded wasm is unmeasured.                                                                                                                        |
-| Future wgpu painter    | Native. Render backdrop to a texture, ping-pong a blur pass, composite. See `docs/wip/2026-07-19-wgpu-painter-direction.md`.                                                                                                                                                  |
+| Future wgpu painter    | Native. Render backdrop to a texture, ping-pong a blur pass, composite. See `docs/archive/2026-07-19-wgpu-painter-direction.md`.                                                                                                                                              |
 
 The two painters that gate the decision — Skia and Unity — both do true
 dynamic backdrop blur well. The hand-rolled cases are parked or future.

@@ -4,7 +4,7 @@
     scope    dashscene-gpu (new), dashscene-skia, dashscene-web (retired),
              docs/decisions/backend-tiering-unity-skia-lean.md (amended),
              every v0.15 story under epic #569
-    source   docs/wip/2026-07-19-wgpu-painter-direction.md, which declined
+    source   docs/archive/2026-07-19-wgpu-painter-direction.md, which declined
              to make this decision and said so: "Adopting wgpu is a
              painter-strategy decision … It should be made on those grounds
              and recorded in docs/decisions/, not inherited as a side effect
@@ -168,5 +168,5 @@ bands and a second set of shader bugs for no capability the first does not have.
 - amends `backend-tiering-unity-skia-lean.md`
 - amends `crate-name-map.md` (adds `dashscene-gpu`, retires `dashscene-web`)
 - constrains `render-oracle-tolerance-and-gating.md` (per-painter bands)
-- gardened from `docs/wip/2026-07-19-wgpu-painter-direction.md`
+- gardened from `docs/archive/2026-07-19-wgpu-painter-direction.md`
 - epic #569; stories #577, #578, #579, #580, #588

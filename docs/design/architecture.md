@@ -144,9 +144,10 @@ tables regardless of which painter draws them. Skia is the shipped reference
 (CPU raster = bit-exact goldens; GPU on GLES = the on-target entry path) —
 [dashscene-skia.md](dashscene-skia.md). The SDF-quad model, the backend
 tiering, and the Unity-painter internals:
-[rendering-and-painters.md](../technotes/rendering-and-painters.md). Unity,
-the lean native painter, and the web painter are not built yet — see
-"Planned components" below.
+[rendering-and-painters.md](../technotes/rendering-and-painters.md). The lean
+painter is built, native and browser, at the v0.15 close —
+[dashscene-gpu.md](dashscene-gpu.md). Unity is not built yet — see "Planned
+components" below.
 
 ## Component map
 
@@ -175,17 +176,31 @@ runtime that solves it),
 | `crates/dashpack`             | asset packer — per-profile derivations, cold-bank assembly, derivation manifest                                   | in progress (epic #345) — [asset-quality-profile-bands.md](../decisions/asset-quality-profile-bands.md) |
 | `crates/dashscene-unity`      | Rust-side FFI bindings for the Unity painter; today, the `extern "C"` surface that holds boundary B representable | the gate is built (story #600); the bindings are planned — see below                                    |
 | `crates/dashscene-web`        | wasm/tiny-skia painter — retired at v0.15, superseded by `dashscene-gpu`                                          | retired — see below                                                                                     |
-| `crates/dashscene-gpu`        | the lean painter — instanced quads and analytic SDF over wgpu, native and web                                     | in progress (epic #569) — [wgpu-is-the-lean-painter.md](../decisions/wgpu-is-the-lean-painter.md)       |
+| `crates/dashscene-gpu`        | the lean painter — instanced quads and analytic SDF over wgpu, native and web                                     | [dashscene-gpu.md](dashscene-gpu.md)                                                                    |
 | `importers/figma/`            | Deno/TypeScript Figma REST importer + `sharedPluginData` annotator plugin                                         | [dashc-wasm-abi.md](../decisions/dashc-wasm-abi.md) (the ABI it calls through)                          |
 | `corpus/`                     | DSL-generated stress corpus + Figma fixture captures                                                              | —                                                                                                       |
 | `goldens/`                    | CI golden images + diff tooling (`goldens/tooling` workspace member)                                              | [goldens.md](goldens.md)                                                                                |
 
 ## Planned components (not yet built)
 
-Unity, the lean native painter, the web painter, placeholders and node
-replacement, and remote streaming are all unbuilt. Each is listed here
-anyway, marked **planned**, and named against the requirement or decision
-that binds it:
+Unity, placeholders and node replacement, and remote streaming are unbuilt.
+Each is listed here anyway, marked **planned**, and named against the
+requirement or decision that binds it.
+
+**The lean native painter and the web painter left this section at the v0.15
+close** — they are one component, `dashscene-gpu`, and it is built for native
+and for the browser from one codebase. Its as-built record is
+[dashscene-gpu.md](dashscene-gpu.md). What bound it stays true and is recorded
+there: R3 ("far less memory and CPU than the engine backend") and G2 ("wasm
+(review)"), the 2026-07-13 sequencing that deferred it to on-target measurement
+of a trimmed Skia entry tier, and the amendment in
+[wgpu-is-the-lean-painter.md](../decisions/wgpu-is-the-lean-painter.md) that
+overtook it, because the same painter was needed for the web regardless.
+Skia-GPU is recorded there as **not planned**, Skia remains the bit-exact CPU
+oracle permanently, and `dashscene-web` — which reserved a name for a
+wasm/tiny-skia painter — is retired. **Two things this does not claim**: the
+entry tier has not switched, because no entry SoC has been measured
+(epic #476), and the browser target is WebGPU only.
 
 - **Unity painter (v1)**, plus its C# declarative producer front end — ships
   as a separate, not-yet-created repo behind `dashscene-unity`'s Rust FFI
@@ -195,22 +210,8 @@ that binds it:
   deferred to v1 in a separate repo by
   `docs/archive/2026-07-14-scope-decisions.md` §5. Internals:
   [rendering-and-painters.md](../technotes/rendering-and-painters.md) §9-§10.
-- **Lean native painter** (`dashscene-gpu`, instanced quads + analytic SDF
-  over wgpu) — in progress, epic #569. Bound by R3 ("far less memory and CPU
-  than the engine backend"). The 2026-07-13 sequencing deferred it to
-  on-target measurement of a trimmed Skia entry tier; that is amended by
-  [wgpu-is-the-lean-painter.md](../decisions/wgpu-is-the-lean-painter.md),
-  because the same painter is needed for the web regardless, and Skia-GPU is
-  recorded there as **not planned**. Skia remains the bit-exact CPU oracle,
-  permanently. Its CPU half is built: the frame it packs, and the goldens over
-  it, are
-  [instance-buffer-contract.md](../decisions/instance-buffer-contract.md)
-  (story #578).
-- **Web painter** — `dashscene-gpu` covers the browser from the same codebase
-  as native. `dashscene-web`, which reserved a name for a wasm/tiny-skia
-  painter, is retired. Bound by G2 ("wasm (review)"); the
-  climb-only-when-pushed ladder is
-  `docs/archive/2026-07-14-design-1-seed.md` §8.4.
+  It is instanced SDF quads too, so it shares `dashscene-gpu`'s instance
+  struct and its layer-1 and layer-2 suites (R-T5).
 - **Placeholders and node replacement** — a reserved schema surface:
   `Node` already carries the fields (`contribution_id`/`fragment_ref`/
   `declared_size`/`interim_fill`), added append-only so existing loaders
@@ -231,8 +232,11 @@ that binds it:
 rule**, taken on purpose, not an oversight. That rule says shipped docs
 describe the system as-built and forward-looking concepts stay in
 `docs/wip/`. But boundary B exists specifically so a painter is
-interchangeable — "painter swap = re-golden, not redesign" — and the
-painters that prove that claim mostly do not exist yet. Deleting them from
+interchangeable — "painter swap = re-golden, not redesign" — and one of the
+two painters that prove that claim now exists, with Unity still to come. The
+claim stopped being a promise at the v0.15 close: a second painter draws the
+whole vocabulary behind the same seam and one band set serves both. Deleting
+the unbuilt entries from
 this record would delete the reason boundary A and boundary B, the profile
 system, and the file/wire schema split are shaped the way they are. Each
 unbuilt item above is marked planned and traced to what binds it, which

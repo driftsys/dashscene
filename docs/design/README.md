@@ -41,6 +41,11 @@ directly:
 - [dashscene-skia.md](dashscene-skia.md) — the Skia CPU-raster reference
   painter, the first `Painter` implementation (story #4); the v0.3 paint
   vocabulary (story #14) and resolved subtree clips (story #97).
+- [dashscene-gpu.md](dashscene-gpu.md) — the lean painter: instanced quads
+  and analytic SDF over wgpu, covering native and web from one codebase; the
+  instance buffer as the painter's output, the four-storage-buffer wall that shaped
+  the paint heap, atlas residency, layers and the backdrop blur, and the
+  four-layer verification net (v0.15, epic #569).
 - [goldens.md](goldens.md) — the golden-image diff tooling and the v0.1
   walking-skeleton golden scene, the v0.1 slice's closing component
   (story #6); the v0.2 flex-vocabulary goldens, closing epic #7
