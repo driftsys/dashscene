@@ -123,11 +123,43 @@ equality is the measurement of that.
 The set is computed from the document, which is hot and already read. No
 payload is touched to decide which payloads to touch.
 
-**D5 — `madvise` per range, native only, and advisory in the strict sense.**
-`memmap2::Mmap::advise_range(Advice::WillNeed, offset, len)` is issued for each
-range about to be touched, and its failure is not an error: `advise` is `#[cfg(unix)]`,
-it is a hint the kernel may ignore, and a payload that is hashed successfully is
-resident whether or not the hint was taken. A failing hint must not fail a load.
+**D5 — `madvise` is dropped from this slice, and the reason is that nothing
+here can see it.** The owner ruled on it (2026-08-07) after the shape was
+questioned. Story #597's body lists it and epic #594's scope lists it; this is
+where that is given up, so it is a recorded change rather than a silent one.
+
+Three things were wrong with building it now, and the third settles it.
+
+- **The ordering first drafted here was the useless one.** "Issued for each
+  range about to be touched" means hinting and then immediately blocking on the
+  pages just asked for. `MADV_WILLNEED` earns its keep from asynchrony — the
+  shape that helps is to hint the whole prefetch set, then hash in order, so
+  read-ahead for the later ranges overlaps the hashing of the first.
+- **It is Unix-only.** `advise` and `advise_range` are both `#[cfg(unix)]` in
+  `memmap2`, with no Windows counterpart exposed.
+- **This slice cannot measure it, and the benchmark specifically cannot.**
+  `startup-scaling-is-measured-by-a-counter.md` D1 makes cost a count of bytes
+  rather than an elapsed time, and D6 asserts on no wall clock, so a hint that
+  changes only timing is invisible to the criterion by construction. Worse, the
+  benchmark **writes its own documents**, so they are in the page cache the
+  moment they exist: every fault is minor, there is no disk read for a hint to
+  overlap, and `WILLNEED` against a cached file is a no-op. That is the same
+  fact that made `mincore(2)` unusable as the instrument, and the reasoning was
+  not carried across.
+
+Nothing is lost by waiting. The format's investment stands and is untouched:
+`docs/design/dsb-container-format.md` still page-aligns a blob of
+`LARGE_BLOB_THRESHOLD` (64 KiB) or more "so it can be prefetched and evicted
+with a single `madvise` range", and that padding is paid whether or not anyone
+calls it. What is missing is a cold-cache measurement, which is a hardware and
+harness question rather than a loading-path one — the same reason two v1 epics
+already wait on target hardware for absolute numbers (#476, #462). Filed
+against v1.
+
+When it is built, two properties this record already fixed still apply: the
+hints go in as a batch before the touches, not one before each, and a failing
+hint must not fail a load — it is advice the kernel may ignore, and a payload
+that hashes successfully is resident whether or not the hint was taken.
 
 **D6 — no loader thread in this slice.** Epic #594 says, where it argues that
 placeholder activation stays in v1, that "prefetching the shown root's assets
