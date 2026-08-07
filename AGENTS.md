@@ -251,6 +251,20 @@ learned before starting the next slice — update, split, merge, or
 re-order the issues, and record scope-level changes as new or updated
 records in `docs/decisions/`.
 
+**Re-check `docs/features.md` in the same pass**, against the code rather
+than against `docs/design/` or `docs/specification/`. It asserts, feature
+by feature, what is built and what is not, and no test fails when one of
+those assertions goes stale. Four review rounds on the pull request that
+introduced it found 35 factual errors, and the majority came from claims
+written out of this repository's own design and specification records —
+four of which had themselves drifted from the code
+(`04-figma-vocabulary-profile.md`'s letter-case row, `typeset-latin.md`'s
+"deliberately absent" list, the v0.10 close's import-oracle frame count,
+and the atlas record's byte-identity reading). The recurring mistake is
+depth: confirming a capability exists without checking which branches it
+does not cover, what the default path does, or whether any command
+reaches it. That is what this re-check is for.
+
 ## Principles (`docs/specification/02-principles.md` — don't violate these)
 
 - **P1** — the document carries intent, never results. No resolved
