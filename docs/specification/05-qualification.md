@@ -611,12 +611,67 @@ gate is the check.
 v1's criteria live here, under their own heading in this one file. The first is
 the startup-scaling benchmark that makes R5 falsifiable.
 
-### Startup scaling — open
+### Startup scaling — measured
 
 R5 requires cold-start cost proportional to what is shown, not to file size. A
 scaling benchmark with a small-root document and a many-frame corpus document
 asserts that cold-start cost tracks the shown root, not the document size — the
 falsifiable form of R5 that guardrail G-20 names
 ([`../technotes/engineering-guardrails.md`](../technotes/engineering-guardrails.md)).
-It is tied to the v1 loading work — mmap section measurement and prefetch
-choreography — recorded in [`../roadmap.md`](../roadmap.md), "v1".
+
+**Measured at v0.16 (epic #594, stories #595-#599).** The loading work it was
+tied to — the mapping, the prefetch choreography and the benchmark — moved out
+of v1 at the v0.13 close, because a ratio needs no target hardware; only
+placeholder activation stays in v1 ([`../roadmap.md`](../roadmap.md)).
+
+`goldens/tooling/tests/startup_scaling.rs`, macos aarch64:
+
+| document              | asset payloads it carries | cold-start cost |
+| --------------------- | ------------------------- | --------------- |
+| small root, 1 frame   | 197 387 B                 | 197 387 B       |
+| many-frame, 65 frames | 1 935 927 B               | 197 387 B       |
+
+**Ratio 1.00x**, against a criterion of 1.00x. The many-frame document carries
+nearly ten times the asset bytes and costs the same to show the same root.
+
+Three things about the form of this number, because it is not the form the E1-E7
+criteria use. **It is a count of asset payload bytes the load path reads, not an
+elapsed time** — exact, identical on every machine, and with no tolerance to
+argue about, which is what lets it run on the two-core CI runners
+([`../decisions/startup-scaling-is-measured-by-a-counter.md`](../decisions/startup-scaling-is-measured-by-a-counter.md)).
+**The assertion is an equality between two documents**, and the ratio is derived
+from it for reporting. **It was demonstrated failing first**, at 9.81x against
+the pre-slice load path, which is what makes the pass evidence rather than a
+tautology.
+
+What it does not establish is a cold-cache time. The benchmark writes the
+documents it reads, so every page fault it takes is a minor one, and no wall
+clock is asserted on. A cold-cache measurement is a hardware and harness
+question — the same reason `madvise` was deferred (#767).
+
+#### R5's parenthetical names a narrower mechanism than the one that delivered this
+
+R5 reads "cold-start cost proportional to what is shown, not to file size
+**(mmap + section discipline)**". The requirement text is preserved verbatim —
+[`01-goals-and-requirements.md`](01-goals-and-requirements.md) says the
+identifiers and their wording are cited across the codebase and kept as they
+are — so this is a note about the parenthetical rather than an amendment to it.
+Two things are now known about it that were not when it was written.
+
+**Mapping alone moved no number.** Story #595 mapped the file and the criterion
+stayed at 9.81x, exactly as that story predicted, because the reader still
+hashed every payload an entry named and so faulted in every page holding one.
+What made the ratio 1.00x was reading only what the shown root needs: the
+verification moved to the touch that makes a payload resident, and the prefetch
+is the shown root's assets and nothing else. `mmap` is what makes that
+_possible_ — a payload never read is never paged in — but it is not what makes
+it true.
+
+**And the mechanism differs by target.** There is no `mmap` in a browser.
+`demo-web` fetches each payload as its own HTTP range response and proves it
+with the same call the native host uses over its mapping. Section discipline is
+what both have in common; the mapping is one host's way of holding the bytes.
+
+So the requirement's claim holds on both targets and its parenthetical
+describes one of them. Read it as naming the native mechanism, not as the
+definition of the requirement.

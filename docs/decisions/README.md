@@ -172,22 +172,29 @@ into the records below. Per-story decisions land here directly:
   to a region it does not, never both, so a payload reaches a painter without
   being copied out of the mapping (story #596). The handle rather than a
   borrow, because a lifetime reaches every painter and a C header cannot
-  express one; `ImageEntry` and the `Painter` trait are unchanged.
+  express one; `ImageEntry` and the `Painter` trait are unchanged. **As built**
+  at v0.16 (story #596): shipped as written, and `PartialEq` had to change with
+  it, which the record did not anticipate.
 - [startup-scaling-is-measured-by-a-counter.md](startup-scaling-is-measured-by-a-counter.md)
   — R5's exit criterion is a count of asset payload bytes the load path reads,
   not an elapsed time, so no benchmark framework is added and the assertion is
   an equality between two documents showing the same root (story #598,
-  guardrail G-20).
+  guardrail G-20). **Measured** at v0.16: 9.81x against the pre-slice load path
+  and **1.00x** against the one the slice left.
 - [verification-moves-from-open-to-touch.md](verification-moves-from-open-to-touch.md)
   — both readers give up their eager hashing to one `Residency` that does
   touch + hash + mark ready per blob: `dashbuf::open` verifies the hot half and
-  returns payload **ranges**, so unverified bytes reaching a painter stops being
-  a rule to remember and becomes a thing that does not compile, and
-  `prefix::Plan::bind` — the one that runs over a mapping since story #596 —
-  becomes the binding its name claims (story #597). The eager reader stays as
-  `open_verified`, named for what it does. `madvise` is dropped from the slice
-  and deferred to v1: the criterion is a byte count and the benchmark writes its
-  own documents, so a hint that changes only timing is invisible to both.
+  returns **where each payload lies** rather than the payload, so unverified
+  bytes reaching a painter stops being a rule to remember and becomes a thing
+  that does not compile, and `prefix::Plan::bind` becomes the binding its name
+  claims (story #597). The eager reader stays as `open_verified`, named for what
+  it does. `madvise` is dropped from the slice and deferred to v1: the criterion
+  is a byte count and the benchmark writes its own documents, so a hint that
+  changes only timing is invisible to both. **As built** at v0.16: the shape
+  shipped and **three clauses did not** — `open` returns a `Wanted` rather than
+  a bare range, the residency takes the bytes rather than holding the region,
+  and its second-touch fast path is not built because it returned bytes nothing
+  had checked.
 - [dsb-frozen-fixture-r7-guard.md](dsb-frozen-fixture-r7-guard.md) — a
   frozen, checked-in `.dsb` byte fixture guards R7's append-only schema
   evolution (debt #64); binds every edit to `dashbuf.fbs`.
@@ -252,7 +259,9 @@ into the records below. Per-story decisions land here directly:
   through a binding whose v0.11 form is the identity map, `Document.images`
   is deprecated rather than deleted so no field id shifts, and three of the
   five named entry fields are deferred until each has a producer and a
-  consumer.
+  consumer. **Corrected** at v0.16 (story #599): the record described the trust
+  chain as a signature chain, and **nothing in a version-1 `.dsb` is signed** —
+  what the hashes catch is corruption and bad transport, not tampering.
 - [id-model-strings-compile-to-indices.md](id-model-strings-compile-to-indices.md)
   — source strings compile to dense indices; content hashes for
   assets, session handles for mutation; opt-in exports table (design

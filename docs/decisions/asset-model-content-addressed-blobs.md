@@ -5,6 +5,11 @@
              storage is retired, `AssetTable` and resident blob sections
              ship, and the two open points below are resolved. Remote
              fetch still lands v1+.
+             **Corrected 2026-08-07 (v0.16, story #599): this record
+             described the trust chain as a signature chain, and nothing
+             is signed.** See "What the hash chain actually buys" below.
+             The correction is to what the chain proves, not to the
+             chain.
     scope    crates/dashbuf schema, the .dsb blob sections, the future
              asset transport
 
@@ -49,7 +54,7 @@ asset _bytes_ — P1 ("intent, never results") applied to assets:
 - The payload is **exactly the well-known format's bytes** — a KTX2, a
   PNG, a raw compressed-texture slab — with no dashscene framing
   inside. Interpretation lives in the `AssetEntry`, which is hot,
-  signed, and always available before a fetch is issued.
+  hash-covered, and always available before a fetch is issued.
 - The client-side asset cache is a content-addressed store: blob on
   disk named by its hash.
 
@@ -77,10 +82,11 @@ so texture mip tiers can be separate blobs fetched by priority.
   entry means layout and first paint are fully computable with zero
   assets resident; a missing payload degrades to a defined placeholder
   paint (P4: defined behavior, not surprise).
-- **The trust story unifies.** The signed root covers the hot
-  sections; the hot sections contain the content hashes; so a lazily
-  fetched blob is transitively authenticated by the same signature
-  whether it arrived from a cold file section or the remote channel.
+- **The trust story unifies.** The root hash covers the section table;
+  the table carries each section's content hash; so a lazily fetched
+  blob is checked against the same chain whether it arrived from a cold
+  file section or the remote channel. What that chain proves is bounded
+  — see below.
 - **Content addressing makes the cache trivial and correct.**
   Deduplication across documents is automatic, re-requests are
   idempotent, and cached blobs are themselves mmap-able.
@@ -91,6 +97,38 @@ so texture mip tiers can be separate blobs fetched by priority.
   provide; option 1 (the as-built v0.3 state) is the direction the
   container decision exists to move away from — bytes inside the ui
   buffer can never be evicted, page-aligned, or fetched lazily.
+
+## What the hash chain actually buys (corrected, story #599, 2026-08-07)
+
+This record described the chain as a **signature** chain — "the signed root",
+"transitively authenticated by the same signature". **Nothing in a version-1
+`.dsb` is signed.** `Header::signature_offset` and `Header::signature_length`
+are reserved, written zero, and refused when non-zero
+(`ContainerError::ReservedNotZero`), and `root_hash` deliberately covers the
+section table rather than the header — which is what leaves room for a
+signature to cover the header later.
+
+So the chain is a chain of **content hashes with no root of trust**:
+`root_hash` proves the section table is the table that was written, and each
+table entry's hash proves a section is the section that was written. Anyone who
+can rewrite a payload can rewrite its entry's hash and the root hash with it.
+
+**What that catches:** corruption, truncation, a bad transport, a cache serving
+the wrong bytes, and a payload swapped between two files. That is most of what
+goes wrong in practice, and it is why the check is worth its cost.
+
+**What it does not catch:** tampering. A `.dsb` from an untrusted source is not
+authenticated by anything today, and no code should be written as though it is.
+The deferred signature is what would change that, and it is deferred rather than
+dropped: the header field is reserved for it and the root hash's scope was
+chosen for it.
+
+The same distinction was worth stating a second time when story #597 moved blob
+verification to the touch that makes a payload resident
+(`verification-moves-from-open-to-touch.md`). Moving _when_ a payload is proven
+changes nothing about _what_ proving it establishes, and the question "do we
+need this verification at all" is answered by the corruption case rather than by
+the tamper case.
 
 ## As built (story #107, 2026-07-26)
 

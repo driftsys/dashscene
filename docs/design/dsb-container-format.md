@@ -260,8 +260,11 @@ One `mmap` of the whole file, once. The envelope is read through the mapping —
 page 0 faults, and it is the hottest data in the file. Then: validate magic,
 version, and bounds; hash the section table against the root hash; hash and
 verify the structured sections; hand the ui section to the flatbuffers verifier
-and then to the arena. Blob sections stay untouched until a loader thread
-prefetches them, touching, hashing, and marking each ready.
+and then to the arena. Blob sections stay untouched until something prefetches
+them, touching, hashing, and marking each ready. That was written as "a loader
+thread"; the as-built section below records that no thread was built, because
+both hosts finish loading before their frame loop starts. What matters to the
+format is the order, not the thread.
 
 There is no read-then-map two-step and no per-section mapping — sections are
 offset ranges inside the one mapping.
@@ -269,9 +272,52 @@ offset ranges inside the one mapping.
 `Container::parse` is built for exactly that: it borrows the buffer it is given,
 copies no payload, and hashes no payload. `verify_section` and `verify_hot` are
 separate calls so that verifying the hot region cannot accidentally fault a cold
-page. The prefetch choreography, the placeholder activation, and the startup
-scaling benchmark are v1 (`docs/roadmap.md`, R5 / guardrail G-20); what exists
-here is the shape they need.
+page.
+
+### As built (v0.16, epic #594)
+
+The model above is what ships, and the parts this record called v1 are built —
+all but placeholder activation, which is blocked on a producer supplying the
+colour rather than on anything here (`docs/roadmap.md`, R5 / guardrail G-20).
+What a reader does now, and which reader:
+
+- **Two readers, and the split is the host's, not the file's.** A host holding
+  the whole file uses `Container::parse` through `dashbuf::open`; a host holding
+  only a prefix uses `dashbuf::prefix`. `Container::parse` **stays strict** —
+  the bounds check that requires every declared extent to fit the slice was not
+  relaxed, and the second reader was built instead
+  (`docs/decisions/container-parse-reads-a-prefix-through-a-host-reader.md`).
+  Under a mapping that check is free and touches no page; in wasm, where there
+  is no mapping, the same line would force the whole file into linear memory,
+  which is why the prefix reader exists rather than a tolerant parse mode.
+- **Both readers apply the same rules.** Both verify every structured section
+  and neither reads a blob. The only difference is where the length comes from:
+  the strict reader takes it from the slice it holds, the prefix reader is told
+  it by its host.
+- **A reader resolves an asset entry to where its payload lies and stops
+  there.** `dashbuf::open` returns one `Wanted` — section, byte range, and the
+  hash the payload must have — per asset entry. `dashbuf::open_verified` is the
+  eager reader that hashes every payload and hands back slices; it is for a tool
+  checking a file, not for a host drawing one.
+- **A blob becomes readable at the touch that makes it resident.**
+  `dashbuf::residency::Residency::touch` hashes the bytes, records the blob
+  ready, and returns them — one place a payload is proven, whichever reader
+  named it (`docs/decisions/verification-moves-from-open-to-touch.md`). There is
+  no loader thread yet: the hosts build their scene before the frame loop
+  starts, so the faults are already off the frame thread by construction.
+- **The prefetch is the shown root's assets and nothing else**, computed from
+  the hot document by `dashbuf::prefetch` — through each node's paint entry, its
+  stacked fill layers, and any baked vector shape's atlas. No payload is touched
+  to decide which payloads to touch.
+- **`madvise` is not called.** The format's page alignment for blobs of
+  `LARGE_BLOB_THRESHOLD` and over is what would make a single-range hint
+  possible and is unchanged; the hint itself waits on a cold-cache measurement
+  (issue #767).
+
+The measurement this buys is in
+[`../specification/05-qualification.md`](../specification/05-qualification.md):
+showing one root costs the same out of a one-frame document and out of a
+sixty-five-frame one.
 
 ## The wire role is unchanged
 
