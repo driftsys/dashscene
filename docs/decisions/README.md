@@ -185,7 +185,9 @@ into the records below. Per-story decisions land here directly:
   a rule to remember and becomes a thing that does not compile, and
   `prefix::Plan::bind` — the one that runs over a mapping since story #596 —
   becomes the binding its name claims (story #597). The eager reader stays as
-  `open_verified`, named for what it does.
+  `open_verified`, named for what it does. `madvise` is dropped from the slice
+  and deferred to v1: the criterion is a byte count and the benchmark writes its
+  own documents, so a hint that changes only timing is invisible to both.
 - [dsb-frozen-fixture-r7-guard.md](dsb-frozen-fixture-r7-guard.md) — a
   frozen, checked-in `.dsb` byte fixture guards R7's append-only schema
   evolution (debt #64); binds every edit to `dashbuf.fbs`.
