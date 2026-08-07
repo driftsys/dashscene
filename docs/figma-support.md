@@ -42,8 +42,9 @@ out wrong on the device.
 
 Unlike a hand-written feature list, this one comes out of the code:
 
-- **Layer-dropped** entries are the importer's own refusal messages. There
-  are 45 distinct ones, and the wording below is close to what you will see.
+- **Layer-dropped** entries are the importer's own refusal messages. It
+  refuses a layer by name in 56 places, several of which fill in the offending
+  value, so the wording below is close to what you will actually see.
 - **Warned** and **import fails** are a separate, short, fixed list of
   constructs the importer recognises and hands to a checker, which decides
   which of the two it is.
@@ -57,6 +58,7 @@ Checked against `crates/dashc/src/figma/mod.rs` (what lowers, and what is
 refused as a whole layer), `crates/dashc/src/figma/triage.rs` (which
 constructs are recognised and handed to the checker),
 `crates/dashc/src/figma/rest.rs` (what is read at all),
+`crates/dashc/src/figma/bindings.rs` (what a Figma Variable can drive),
 `crates/dashscene-validator/src/triage.rs` (warn, or stop the import), and
 `importers/figma/src/` (the import tool).
 
@@ -68,19 +70,23 @@ above, or ask.
 
 ## Stops the whole import
 
-Six constructs. One of these anywhere in what you are importing and nothing
+Three constructs. One of these anywhere in what you are importing and nothing
 comes across.
 
 - **Blend modes other than Normal** — multiply, screen, overlay, and the
   rest. Planned for high-end backends; today they stop the import.
 - **Noise and texture effects.**
 - **Progressive blur.**
-- **Variable-width strokes.**
-- **Animated boolean operations.**
-- **Animated variable-font axes** — a variable font at a fixed instance is
-  fine; an animated axis is not.
 
-Workaround for all six: bake the result into an image, or design without it.
+Workaround for all three: bake the result into an image, or design without
+it.
+
+The checker also knows about variable-width strokes, animated boolean
+operations and animated variable-font axes, but the Figma importer never
+reports them: a variable-width stroke is caught earlier as a non-basic stroke
+and drops that layer, and nothing reads the animation data the other two
+would need. Do not read those as supported — read them as reaching you a
+different way, or not at all.
 
 ## Layer types
 
@@ -260,24 +266,29 @@ write them at runtime. A designer declares the connection; nobody guesses it.
 A number can drive position, size, spacing, opacity or one channel of a solid
 fill; a true/false value can drive visibility.
 
-A variable bound to a fill on a layer that carries a gradient or an image
-fill is an error — one of the two would be silently discarded, so neither is.
+**A variable bound to a fill only works on a solid fill.** Bind one to a
+layer carrying a gradient or an image and you get a warning, the layer
+imports with the fill exactly as you drew it, and the binding is dropped —
+so the colour is right on the first frame and never changes afterwards. Text
+is worth watching here: a text layer's fill lives in its text style, so a
+fill binding on text takes the same path.
 
 ## Read nowhere
 
 Everything here imports without complaint and does nothing. Consolidated,
 because this is the list worth scanning before you commit to an approach.
 
-| Property                                       | What you lose                                                                                                           |
-| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| **Constraints**                                | Nothing moves when its parent resizes. Use auto layout.                                                                 |
-| **Per-side stroke widths**                     | One uniform width instead. Use four rectangles.                                                                         |
-| **Stroke cap, join, miter limit**              | Defaults instead of what you set.                                                                                       |
-| **Layout grids and columns**                   | The guide does not come across. Usually harmless, since it is a design aid, but a visible grid overlay will not render. |
-| **Prototyping** — links, transitions, hotspots | Nothing interactive. Motion is described in code, not in Figma.                                                         |
-| **Export settings**                            | Ignored; the asset pipeline decides formats.                                                                            |
-| **Shared style references**                    | The resolved values still come across, so this is usually invisible in the result.                                      |
-| **`layoutAlign` / `layoutGrow`**               | Figma's older auto-layout child sizing. Current files use the newer sizing properties, which do import.                 |
+| Property                                              | What you lose                                                                                                           |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| **Constraints**                                       | Nothing moves when its parent resizes. Use auto layout.                                                                 |
+| **Per-side stroke widths**                            | One uniform width instead. Use four rectangles.                                                                         |
+| **Stroke cap, join, miter limit**                     | Defaults instead of what you set.                                                                                       |
+| **Layout grids and columns**                          | The guide does not come across. Usually harmless, since it is a design aid, but a visible grid overlay will not render. |
+| **Prototyping** — links, transitions, hotspots        | Nothing interactive. Motion is described in code, not in Figma.                                                         |
+| **Export settings**                                   | Ignored; the asset pipeline decides formats.                                                                            |
+| **Paragraph spacing, paragraph indent, list spacing** | Paragraphs run together; lists lose their indentation.                                                                  |
+| **Shared style references**                           | The resolved values still come across, so this is usually invisible in the result.                                      |
+| **`layoutAlign` / `layoutGrow`**                      | Figma's older auto-layout child sizing. Current files use the newer sizing properties, which do import.                 |
 
 The reason this list exists at all: the importer's data model does not reject
 properties it was not taught to read, so an unread Figma property is dropped
@@ -288,16 +299,20 @@ above.
 
 `docs/specification/04-figma-vocabulary-profile.md` is the engineering
 profile for this vocabulary. It is **not** the source for this page, and in
-three places the two say different things. The code is what runs:
+five places the two say different things. The code is what runs:
 
-| Construct       | The specification says                 | The importer does                                   |
-| --------------- | -------------------------------------- | --------------------------------------------------- |
-| Text case       | supported, "applied in the typesetter" | drops the layer; no such vocabulary exists anywhere |
-| Luminance masks | later, with a warning                  | drops the layer by name                             |
-| Dashed strokes  | later, with a warning                  | drops the layer by name                             |
+| Construct                | The specification says                                     | The importer does                                   |
+| ------------------------ | ---------------------------------------------------------- | --------------------------------------------------- |
+| Text case                | supported, "applied in the typesetter"                     | drops the layer; no such vocabulary exists anywhere |
+| Luminance masks          | later, with a warning                                      | drops the layer by name                             |
+| Dashed strokes           | later, with a warning                                      | drops the layer by name                             |
+| Per-side stroke widths   | later, with a warning                                      | reads them nowhere; nothing is reported             |
+| Stroke on text alignment | inside and outside "collapses to centered", with a warning | drops the layer for any stroke on text              |
 
-Those rows should be corrected. Until they are, this page is the one derived
-from what actually runs.
+Every one of these five reads as more supported in the specification than it
+is in the code, which is the direction that costs a designer time. They should
+be corrected there. Until they are, this page is the one derived from what
+actually runs.
 
 ---
 
