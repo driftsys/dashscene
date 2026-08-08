@@ -11,10 +11,10 @@ project's convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports eight files
+## Why the WIP gate currently reports nine files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-eight and exits non-zero. All eight are deliberate, accepted exceptions rather
+nine and exits non-zero. All nine are deliberate, accepted exceptions rather
 than ungardened debt, and they are recorded here so the gate's result is
 explained rather than merely tolerated.
 
@@ -56,13 +56,22 @@ went stale because a commit that removes a file from this directory has to edit
 this file in the same commit, and that is not enforced by anything. **Archiving
 a capture and updating this ledger are one change, not two.**
 
-**All eight are design captures**, described below, and **no driver prompt is
-held**. Driver prompts — the brief a session is handed to carry out a named
+**Eight of the nine are design captures**, described below, and **one driver
+prompt is held** — `2026-08-07-v017-DRIVER-PROMPT.md`, added the day v0.17 was
+planned. Driver prompts — the brief a session is handed to carry out a named
 piece of work — are transient by construction, spent the moment their work
 lands, and the convention is to archive them verbatim rather than garden them
 into records. Fourteen are in `docs/archive/`: thirteen `*-DRIVER-PROMPT.md`
 plus the one `*-SPIKE.md`, which is counted there because it was archived
 verbatim beside the prompt that carried out its design rather than gardened.
+
+**`2026-08-07-v017-DRIVER-PROMPT.md` empties when epic #793 closes**, archived
+verbatim to `docs/archive/` on the same rule every prompt before it followed. It
+holds no decision and no design: it is current state, the story order, the
+per-story loop, and the failure modes this repo has actually hit — so there is
+nothing in it to garden into a record, and everything in it goes stale the
+moment the slice does. Its own `status` block says the same, and says that
+removing it and editing this file are one commit.
 
 ## The three animation captures, added 2026-08-07
 
