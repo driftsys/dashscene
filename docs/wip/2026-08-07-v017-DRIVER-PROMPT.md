@@ -7,9 +7,13 @@
              Everything specific below was checked against `main` at 69a76bf,
              and re-confirmed at 91f6615: PR #801 landed in between and touched
              none of the paths cited here. Stale the moment a story lands.
-    amended  2026-08-08, with the four rulings that unblocked the slice. The
-             body is left unedited by design: rewriting it in place would
-             lose the record of what was known when it was written.
+    amended  2026-08-08, twice. First with the four rulings that unblocked the
+             slice; then again, after five pull requests landed, with what the
+             work found. The amendment is the current brief and the body below
+             it is left unedited by design — rewriting it in place would lose
+             the record of what was known when it was written, which is the
+             only thing it is still good for. Refreshed against `main` at
+             010ad51.
     empties  when epic #793 closes. Archive it verbatim to docs/archive/
              rather than gardening it — a driver prompt is spent the moment its
              work lands, and records nothing a design record should hold.
@@ -22,51 +26,148 @@ Read `AGENTS.md` first — it holds the story workflow, the test tiers, the merg
 method and the five principles, and it is authoritative over anything below.
 This prompt adds only what is not in it.
 
-## Amendment, 2026-08-08 — the blocking questions are ruled
+## Amendment, 2026-08-08 — read this instead of the body
 
 **Everything below this section was written before the slice started and is left
 unedited**, because a driver prompt is a point-in-time brief and rewriting it in
 place would destroy the record of what was known when. Where this amendment and
-the body disagree, **this amendment is right**.
+the body disagree, **this amendment is right**. The body is still worth reading
+for the traps it lists, which have not gone stale.
 
-Four rulings were taken by the owner on 2026-08-08. Each is recorded on its
-issue, and the epic carries all four:
+`main` is at `010ad51`. **Three of the milestone's issues are closed and seven
+are open** — but take those counts from
+`gh issue list --milestone "v0.17 — embedding and integration"` rather than from
+here, on the rule the body already gives.
+
+### The four rulings that unblocked the slice
+
+All taken by the owner on 2026-08-08. Each is recorded on its issue, and all
+four are carried by epic #793.
 
 - **#803 — desktop gets its own crate, `dashscene-desktop`.** Closed. The two
-  hosts do not share a dependency set, so one crate would carry both behind
-  `cfg` and leave a `winit` embedder depending on a crate named `-web`.
-  **#792 and #794 are therefore parallel.**
+  hosts do not share a dependency set. **#792 and #794 are therefore parallel.**
 - **The shared host policy lives in `dashlang`, on `LiveScene::tick`** — ruled
-  with #803, because two published crates would otherwise promote the
-  duplication into a semver-bound agreement nothing checks. It moves there
-  before either integration crate is published.
+  with #803, and **already done** (story #810).
 - **#795 — the first real published version is 0.2.0.** Every reserved name sits
-  at 0.1.0, so 0.1.0 is unavailable under together-versioning. Nothing is
-  published in this slice.
-- **All 17 crates.io names are reserved.** The body below flags
-  `dashscene-desktop` as the unheld name; checking that found **two more**,
-  `dashpack` and `dashpack-astcenc-sys`, both crates that already ship. All
-  three were reserved 2026-08-08. The "time-sensitive" section below is
-  therefore discharged.
+  at 0.1.0. Nothing is published in this slice.
+- **All 17 crates.io names are reserved.** The body flags `dashscene-desktop` as
+  the unheld name; checking that found two more, `dashpack` and
+  `dashpack-astcenc-sys`, both crates that already ship. All three were reserved
+  2026-08-08, so the body's "time-sensitive" section is discharged.
 
-**#798 is fixed and merged** (PR #805), so the "Fix #798 before #792 and #794"
-section below is discharged too.
+### What has landed since
 
-**One finding the body does not have.** Fixing #795's Defect 2 by adding the
-root `Cargo.toml` as a single `[[version_files]]` entry would make things
-**worse**, not better. git-std's `write_version` calls `.captures()`, not
-`captures_iter`, and splices exactly one span
-(`crates/standard-version/src/regex_engine.rs`, the doc comment at line 71 and
-the call at line 85). One entry rewrites one match per file, and the root
-manifest holds 16 `version = "0.0.0"` occurrences — so a single entry would move
-`dashscene`'s and leave 15 at `^0.0.0`, behind a registry that now looks
-covered.
+Five pull requests, in this order. **#798 is fixed and merged**, so the body's
+"fix #798 first" section is discharged too.
 
-**CI is still down for billing**, re-confirmed 2026-08-08 against run
-`31241530680` on `main` — created that day, and its first job carries the same
-billing annotation. The run the body below cites, `31206107288`, is from
-2026-08-07 and was never re-triggered, so it is evidence that CI was down then
-rather than now. The section below on it still applies in full.
+| PR   | what                                                                | merged    |
+| ---- | ------------------------------------------------------------------- | --------- |
+| #805 | #798, the stale glyph-quad instance buffer                          | `1751432` |
+| #809 | the #803 decision record in `crate-name-map.md`                     | `c398793` |
+| #804 | this prompt and its ledger row                                      | `e480f83` |
+| #811 | story #810 — the frame clamp and generation gate move to `dashlang` | `b9df1d1` |
+| #812 | story #741 — `dashscene-web` becomes the web integration crate      | `010ad51` |
+
+### What is left, in order
+
+1. **#794 and #792, in parallel** — the two-crate ruling is what makes that
+   possible.
+2. **#795**, which also carries #776's remaining third (the payload number and
+   the gate).
+3. **#727 and #796.** #796 closes the epic and archives this file verbatim to
+   `docs/archive/`.
+
+### Findings the body does not have
+
+**Fixing #795's Defect 2 with one entry makes it worse.** git-std's
+`write_version` calls `.captures()`, not `captures_iter`, and splices exactly
+one span (`crates/standard-version/src/regex_engine.rs`, doc comment at 71, call
+at 85). One `[[version_files]]` entry rewrites **one match per file**, and the
+root manifest holds 16 `version = "0.0.0"` occurrences — so a single entry moves
+`dashscene`'s and leaves 15 at `^0.0.0`, behind a registry that now looks
+covered. Verify any fix with an actual `git std bump --dry-run` and by reading
+all 16 requirements, not by inspecting the config.
+
+**The registry audit is done, and exactly one gap remains repo-wide.** Derived
+from `ls crates/` rather than from any list: every crate is in `members`,
+`[workspace.dependencies]`, `.git-std.toml` `scopes`, the `publish` recipe and
+`AGENTS.md`. **Only `[[version_files]]` is short, and only by `dashpack` and
+`dashpack-astcenc-sys`.** The full table is on issue #795. Also there: the root
+`Cargo.toml` still claims, at **lines 61-63**, that the `publish` recipe does
+not list `dashpack-astcenc-sys`. It does, at `justfile` line 194. (Issue #795's
+own comment cites that as line 59, which is the wrong line — it lands on the
+sentence about `dashpack`.) A comment asserting a gap that has been closed is how the next audit
+gets told not to look.
+
+**Adding a dependency can invert the publish order.** Story #741 made
+`dashscene-web` depend on `dashscene-gpu`, and the recipe published it first —
+correct while it was an empty placeholder, and a failure at the first real
+publish. **#794 will do the same thing**: a new `dashscene-desktop` that depends
+on `dashscene-gpu` and `dashscene-skia` has to be placed after both. Verify
+topologically against all crates from `cargo metadata`, not by looking at the
+one crate you changed.
+
+**`just lint` now runs clippy for `wasm32` as well**, and that is new. It ran
+for the host target only, so `crates/dashscene-web`'s `host.rs` and
+`document.rs` — both gated on `wasm32` — had never been compiled by clippy at
+all, and two errors were sitting in them. A published crate whose main logic is
+never linted is what the second line prevents. **Any new `cfg`-gated crate needs
+its own line**, which `dashscene-desktop` will not (it is a host-target crate),
+but which a future mobile crate would.
+
+**What #794 inherits from #741.** The two extractions are **not symmetric**, and
+the body says so. `demo/src/present.rs` already has a `Present` trait with two
+implementations; `demo-web` had none. But the API lessons transfer:
+
+- The scene seam is a function pointer that already exists —
+  `showcase::SceneBuilder` — so the crate declares the same shape and depends on
+  `showcase` not at all.
+- **The per-frame seam has to be a closure**, not a function pointer, for two
+  reasons, and each one causes a real defect. An embedder must remember what it already wrote, or
+  `tick` never takes its idle early return and the host never parks. And a hook
+  that remembers writes nothing after a rebuild, into a new scene holding none
+  of those writes — so `dashscene-web` carries a `FrameKind::{Continuing,
+  Rebuilt}` to name that. Desktop rebuilds on resize the same way.
+- **The error type cannot move whole.** `demo`'s error will mix integration
+  failures with demonstration ones, exactly as `demo-web`'s did. Split it: a
+  published crate cannot remove a variant.
+- **Six debt issues came out of the slice so far** — #806, #807, #808 from
+  #805, and #813, #814, #815 from #812. #813 is a breaking change to a
+  `dashscene-web` enum, so it is cheapest **before** anything is published.
+
+### What epic #793's definition of done actually asks for
+
+Worth restating because it is easy to half-satisfy. **`demo-web` consuming the
+crate is not the check** — that would pass with two of five pieces moved and
+three left inline. The check is a **test or a lint naming the five** that fails
+when one is in the wrong place. `demo/tests/integration_surface.rs` is that for
+the web, and it fails in **both** directions. #794 needs its desktop equivalent.
+
+Two of the five are now delegated rather than owned: story #810 put the
+generation gate on `dashlang::LiveScene`, so an integration crate calls
+`advanced`/`mark_shown` and restates nothing. A test naming the five should say
+so, or it reads as unmet.
+
+### Process, from three failures that cost real time
+
+- **Commit before mutation testing.** `git checkout -- <path>` restores from the
+  **index**, so on a branch with staged renames it silently discards every
+  unstaged edit to that file. This destroyed a rewrite twice.
+- **Never edit a worktree while a review subagent is working in it.** One agent
+  mutation-tested in the same tree and restored with a checkout, taking the
+  concurrent edits with it. Tell every review agent explicitly: read-only, copy
+  to `/tmp` to experiment, no `git checkout/stash/restore/reset`.
+- **`#N` at the start of a line is a Markdown heading.** MD018 fails the lint on
+  it, in files and in issue bodies alike. Write "issue #N" or "story #N", which
+  AGENTS.md asks for anyway.
+
+### CI
+
+**Still down for billing**, re-confirmed 2026-08-08 against run `31245904215` on
+`main` — created that day, first job carrying the annotation verbatim. The body's
+section on it applies in full, including that **every `failure` in this state
+says nothing about the code**. Merge on local evidence and record the exception
+on each pull request.
 
 ## Where the slice stands
 
