@@ -47,9 +47,10 @@ Reuse all 12, mapped onto the roles in `docs/design/architecture.md`:
     dashscene-unity        Rust-side FFI bindings for the Unity painter;
                           the Unity/C# work itself lives in a separate
                           repo
-    dashscene-web          a reserved name holding no implementation — the
-                          wasm/tiny-skia painter it named is retired at
-                          v0.15; see the `dashscene-gpu` section below
+    dashscene-web          the web integration surface, since story #741 at
+                          v0.17 — the wasm/tiny-skia painter it named is
+                          retired at v0.15; see the `dashscene-gpu` section
+                          below, which records both changes
     dashscore              parked — an authoring IDE, not in scope
     dashscene-compose      parked — Android Jetpack Compose backend, not
                           a target
@@ -135,6 +136,29 @@ and its own `lib.rs` says why. Deleting it would not release the crates.io name
 again: the `members` entry, the `[workspace.dependencies]` line, the
 `.git-std.toml` scope and `[[version_files]]` row, and a place in the `publish`
 recipe's order.
+
+**Taken at v0.17 (story #741).** The candidate use below was the one taken:
+`dashscene-web` is now the web integration crate, and `demo-web` keeps the
+demonstration and consumes it. The paragraph that follows is left as written,
+because the reasons it gives for _not_ taking it at v0.15 are the reasons the
+decision waited rather than reasons it was wrong — one consumer, a semver
+commitment, and a seam that was real API design. Slice v0.17 answered all three.
+
+**One consumer**: the epic makes an embedder the second one, which is the whole
+point of the slice.
+
+**A semver commitment**: still true, and taken deliberately rather than
+dismissed. Epic #793's definition of done says plainly that **nothing is
+published** — the slice makes the crates publishable, and the publish is a
+separate decision. What v0.17 settles is that the commitment is worth designing
+for now, not that it has been made. The error type is split on exactly that
+reasoning: a published crate cannot remove a variant.
+
+**A seam that was real API design**: smaller than feared, but not trivial.
+`SceneBuilder` is a function pointer that already existed in `showcase`.
+`FrameHook` is not — it is a boxed closure, because an embedder must keep state
+between frames, and it carries a `FrameKind` because a rebuild discards what
+that state wrote. That distinction is the design the seam actually needed.
 
 **There is a live candidate use, and it is deliberately not taken here.** The
 browser host landed at v0.15 as `demo-web` (`publish = false`), and about half

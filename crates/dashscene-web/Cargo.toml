@@ -5,9 +5,36 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "A reserved name holding no implementation. The wasm/tiny-skia painter it was reserved for is retired; dashscene-gpu covers the browser (docs/decisions/wgpu-is-the-lean-painter.md)."
+description = "Web integration for DashScene: the canvas-to-surface handoff, the requestAnimationFrame loop, rebuilding on resize, and a .dsb fetched by byte range (story #741)."
 
 [lib]
 name = "dashscene_web"
 
 [dependencies]
+# The lean painter and its canvas surface. This crate exists because
+# `SurfaceRenderer::new_async` does: the blocking constructor is absent on
+# wasm, for the reason `crates/dashscene-gpu/src/render.rs` gives.
+dashscene-gpu.workspace = true
+# Boundary B — the `Painter` trait the frame loop drives.
+dashpaint.workspace = true
+# The arena and `CommittedScene`, the committed buffer a painter is handed.
+dashscene-core.workspace = true
+# `LiveScene`, the type the frame loop ticks — and, since story #810, the owner
+# of the frame-delta clamp and the generation gate this loop reads.
+dashlang.workspace = true
+# The product layout solver, injected for a loaded document, which unlike a
+# scene built in code has no builder of its own to inject one.
+dashscene-engine.workspace = true
+# The `.dsb` envelope, read from a prefix: `dashbuf::prefix`. This crate is the
+# reason that module exists, since `Container::parse` would require the whole
+# file in linear memory before the envelope could be read at all.
+dashbuf.workspace = true
+# The referential load gate, run before `dashscene_core::load_document` exactly
+# as the native host runs it.
+dashscene-validator.workspace = true
+
+# The browser itself.
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+js-sys.workspace = true
+web-sys.workspace = true

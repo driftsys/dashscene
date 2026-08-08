@@ -396,8 +396,9 @@ Checked against `crates/dashpaint/src/lib.rs`,
 
 ## 10. Platform support
 
-Checked against `demo/`, `demo-web/`, `crates/dashscene-unity/src/lib.rs`,
-and the absence of any mobile target in the workspace.
+Checked against `demo/`, `demo-web/`, `crates/dashscene-web/`,
+`crates/dashscene-unity/src/lib.rs`, and the absence of any mobile target in
+the workspace.
 
 - [x] **Desktop** — a windowed host with an event loop, pointer and
       keyboard input, and the showcase running in it. Built and run on
@@ -409,10 +410,14 @@ and the absence of any mobile target in the workspace.
       fetches every image the file names, one request each, before it draws
       — see section 6.
 - [ ] **Embedding in a real application** — **part built, and the current
-      slice**, which covers the browser and desktop only. Everything below
-      the renderer contract is a library, but everything above it is two
-      demonstrations that are not published, so an integrator starts from a
-      demonstration and copies out of it.
+      slice**, which covers the browser and desktop only. **The browser half
+      is built**: story #741 made `crates/dashscene-web` the web integration
+      crate, so a browser embedder consumes the canvas handoff, the frame
+      loop, resize rebuilding and the byte-range load rather than copying them
+      out of `demo-web/`. The desktop half is not — `demo/` is still
+      `publish = false` and holds both halves, which is story #794. Nothing is
+      published either way: this slice makes the crates publishable and the
+      publish is a separate decision (epic #793).
 - [ ] **A C interface for hosts written in other languages** — **part
       built.** The data a host would consume is already in a shape another
       language can read, and the build enforces that. Nothing is built on

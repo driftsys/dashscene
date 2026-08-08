@@ -18,7 +18,7 @@ mod browser {
     use web_sys::{Headers, Request, RequestInit, Response};
 
     use super::content_range_total;
-    use crate::HostError;
+    use crate::WebError;
 
     /// What one range request came back with.
     pub(crate) struct Fetched {
@@ -38,7 +38,7 @@ mod browser {
     }
 
     /// Requests `start..=end` of `url`.
-    pub(crate) async fn range(url: &str, start: u64, end: u64) -> Result<Fetched, HostError> {
+    pub(crate) async fn range(url: &str, start: u64, end: u64) -> Result<Fetched, WebError> {
         let headers = Headers::new().map_err(js)?;
         headers
             .append("Range", &format!("bytes={start}-{end}"))
@@ -49,15 +49,15 @@ mod browser {
         init.set_headers_headers(&headers);
 
         let request = Request::new_with_str_and_init(url, &init).map_err(js)?;
-        let window = web_sys::window().ok_or(HostError::NoWindow)?;
+        let window = web_sys::window().ok_or(WebError::NoWindow)?;
         let response: Response = JsFuture::from(window.fetch_with_request(&request))
             .await
             .map_err(js)?
             .dyn_into()
-            .map_err(|_| HostError::NotAResponse)?;
+            .map_err(|_| WebError::NotAResponse)?;
 
         if !response.ok() {
-            return Err(HostError::Http {
+            return Err(WebError::Http {
                 url: url.to_owned(),
                 status: response.status(),
             });
@@ -89,7 +89,7 @@ mod browser {
         let total = match (ranged, stated) {
             (false, _) => bytes.len() as u64,
             (true, Some(total)) => total,
-            (true, None) => return Err(HostError::NoTotal(url.to_owned())),
+            (true, None) => return Err(WebError::NoTotal(url.to_owned())),
         };
 
         Ok(Fetched {
@@ -104,8 +104,8 @@ mod browser {
     /// A `JsValue` is not an `Error` and does not outlive the page, so what is
     /// kept is its rendering. This host reports to a console; nothing matches
     /// on these.
-    fn js(value: JsValue) -> HostError {
-        HostError::Js(
+    fn js(value: JsValue) -> WebError {
+        WebError::Js(
             value
                 .as_string()
                 .unwrap_or_else(|| String::from(js_sys::Object::from(value).to_string())),

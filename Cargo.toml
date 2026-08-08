@@ -51,7 +51,10 @@ rust-version = "1.88"
 #   dashbuf -> dashpaint -> dashscene-core -> dashscene-typeset ->
 #   dashcue -> dashscene-engine -> dashscene-validator -> dashscene-skia -> dashlang ->
 #   dashc -> dashpack-astcenc-sys -> dashpack -> dashscene-unity ->
-#   dashscene-web -> dashscene-gpu -> dashscene
+#   dashscene-gpu -> dashscene-web -> dashscene
+# dashscene-gpu precedes dashscene-web: story #741 made the web crate the
+# integration surface over that painter, so it now depends on it. The order was
+# the other way round while dashscene-web was an empty placeholder.
 # dashcue precedes dashscene-engine: the engine's FLIP (story #22) consumes it.
 # dashpack follows dashc: it will compile against dashbuf's asset and manifest
 # schemas, and nothing in the workspace depends on it (epic #345).

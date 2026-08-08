@@ -63,12 +63,13 @@ intentionally undecided until that point
                           derivation manifest; lands across slice v0.12
     dashscene-unity        Rust-side FFI bindings only — the Unity/C# project
                           itself is a separate, not-yet-created repo
-    dashscene-web          a reserved name holding no implementation. The
-                          wasm/tiny-skia painter it named is retired —
-                          dashscene-gpu covers the browser. Kept as a
-                          registered empty member rather than deleted;
-                          issue #741 asks whether it becomes the web
-                          integration crate
+    dashscene-web          the web integration surface — the canvas-to-surface
+                          handoff, the requestAnimationFrame loop, rebuilding
+                          on resize, and the byte-range .dsb load. The
+                          wasm/tiny-skia painter the name once described is
+                          retired; dashscene-gpu covers the browser. Became
+                          this at slice v0.17 (story #741); demo-web keeps the
+                          demonstration and consumes it
     dashscene-gpu          the lean painter — instanced quads and analytic
                           SDF over wgpu, native and web from one codebase;
                           lands across slice v0.15
