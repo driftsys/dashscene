@@ -16,6 +16,10 @@ Notes:
 - [figma-rest-shapes-the-capture-pinned.md](figma-rest-shapes-the-capture-pinned.md)
   — the Figma REST field shapes the tier-1 capture settled, several of which
   contradict what the documentation suggests (story #139).
+- [implementing-a-backend.md](implementing-a-backend.md) — how to implement a
+  backend, and which of the two seams you are on: `Painter` at boundary B, or
+  the instance buffer behind the lean painter. The worked example that keeps it
+  honest is `goldens/tooling/tests/worked_example.rs` (story #727).
 - [producers-and-ir.md](producers-and-ir.md) — where producer knowledge lives:
   the Figma export boundary, no neutral IR above dashscene, compile-path vs
   arena-path, Penpot as a candidate second producer, and the Slint
