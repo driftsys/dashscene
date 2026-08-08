@@ -1,85 +1,23 @@
-//! The host: a window, a clock, and the frame loop that drives them (story
-//! #572).
+//! The demonstration, as `dashscene_desktop::App` sees it (story #572; the
+//! integration half extracted at story #794).
 //!
-//! One frame is four steps, and nothing else:
+//! # What is left here, and why that is the point
 //!
-//! ```text
-//! dt = elapsed                          // this host's clock
-//! LiveScene::tick(dt, &mut arena)       // clamps dt, returns the generation
-//! arena.committed()
-//! present                               // only when LiveScene::advanced()
-//! ```
+//! The window-to-surface handoff, the frame loop, the generation gate,
+//! rebuilding on resize and the `.dsb` load are **not here any more**. They are
+//! `dashscene-desktop`, because every windowed embedder would otherwise write
+//! them.
 //!
-//! P3 holds by construction. The host owns time and nothing producer-side runs
-//! inside the loop: `tick` takes `dt` as a parameter, every signal change is
-//! applied on this thread before `tick` reads it, and a producer that lives
-//! outside the loop reaches it only by asking the loop to run a frame
-//! ([`Wake`]).
+//! What remains is the demonstration, and it is exactly what an embedder writes
+//! for itself: which scene to draw and when to move to the next one, the
+//! scripted signal producer and the thread it runs on, the input mapping, the
+//! painter choice behind the swap key, and the frame-cost instrument.
 //!
-//! # The clock is read here and nowhere below
-//!
-//! The frame clock is read in [`Host::frame`], and the clock is read twice
-//! more — in [`Host::park`] and on waking — only to time the loop's own wait
-//! for a log line. No crate at or below `LiveScene` may read a clock at all —
-//! that is what makes an animation test reproducible, and
-//! `demo/tests/clock_invariant.rs` asserts it rather than leaving it to
-//! review. The clamp itself is **not** applied here: story #810 moved it into
-//! `LiveScene::tick`, so one value serves every host rather than one per host.
-//! What stays here is the clock — what "elapsed" means, and when it is stopped.
-//! The clamp, the absence of an accumulator, and the invariant are argued in
-//! `docs/decisions/frame-delta-is-clamped-and-the-host-owns-the-clock.md`.
-//!
-//! # There is no accumulator
-//!
-//! `dashcue` already splits an `advance(dt)` into equal substeps below its
-//! stability bound (`docs/decisions/dashcue-spring-uses-semi-implicit-euler.md`),
-//! so a fixed-step accumulator here would reimplement that substepping one
-//! layer up. The clamp is the whole of the guard, and it guards frame *cost*:
-//! substep count scales with `dt`, so an unbounded `dt` is an unbounded substep
-//! burst.
-//!
-//! # An idle frame neither paints nor presents
-//!
-//! `LiveScene::tick` holds the commit generation steady on an idle frame, and
-//! `LiveScene::advanced` reports whether it moved since the last
-//! `LiveScene::mark_shown`. The host skips both `paint` and `present` when it
-//! has not. That gate was this host's own until story #810 gave it one owner,
-//! so a second host could not disagree with it; it still needs no change to
-//! `dashpaint` or boundary B.
-//!
-//! It is a requirement rather than an optimisation because no painter has a
-//! partial-redraw path — `dashscene-skia`'s retained mode patches its instance
-//! buffer and still redraws every quad — so a static screen costs a full frame
-//! of fill every frame, and not running the frame is the only thing that
-//! removes that cost.
-//!
-//! The generation reports document and animation change only, so five cases
-//! force a redraw independently of it. Four are handled here — the first
-//! frame, a resize or surface reconfigure, a scale-factor change, and
-//! re-exposure after occlusion. The fifth, a lost surface or recreated
-//! swapchain, cannot arise behind `SkiaPresenter`: `softbuffer` hands back a
-//! fresh buffer on every `buffer_mut()` and has no lost-surface condition, and
-//! story #571 deliberately gave [`crate::present::PresentError`]
-//! no `Lost` variant because a wgpu presenter recovers its own surface inside
-//! `present`. When `dashscene-wgpu` lands, a presenter that recreated its
-//! swapchain reports it and the host forces a redraw through the same
-//! [`Host::force`] entry point. It is named here so the case is findable, not
-//! implemented speculatively for a presenter that does not exist.
-//!
-//! # The wait mode follows from that, and so does the wake mechanism
-//!
-//! The loop paces itself at [`FRAME_INTERVAL`] while the generation advances
-//! and waits for an event while it is steady, rather than waking sixty times a
-//! second to redraw an unchanged screen.
-//!
-//! A producer outside the loop therefore needs a way to wake it. That
-//! mechanism is a `winit` [`EventLoopProxy`] carrying a [`Wake`] message, and
-//! it is the mechanism stories #573 and #574 use: input arrives as ordinary
-//! window events and needs no proxy, while a scripted or externally fed signal
-//! producer sends a [`Wake`] from its own thread and the host applies the
-//! change on the loop's thread before the next `tick`.
+//! P3 still holds, and for the same reason it did when the loop was here: the
+//! scripted producer sends a [`dashscene_desktop::Waker`] from its own thread
+//! and writes nothing, and the loop applies the change on its own thread before
+//! the next `tick`.
 
-use std::error::Error;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
@@ -87,35 +25,29 @@ use std::time::{Duration, Instant};
 
 use dashlang::LiveScene;
 use dashscene_core::Arena;
-use winit::application::ApplicationHandler;
+use dashscene_desktop::{App, DesktopError, Present, PresentError, Reaction, Scene, Waker};
 use winit::dpi::LogicalSize;
-use winit::event::{ElementState, StartCause, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
+use winit::event::{ElementState, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::{Window, WindowId};
+use winit::window::{Window, WindowAttributes};
 
 use crate::painter::Choice;
-use crate::present::{Present, PresentError};
 
 /// Builds a scene into `arena` for a drawable of `width` x `height` physical
 /// pixels, and returns the live scene the loop ticks.
 ///
-/// The extent is passed in rather than fixed because the window's physical
-/// size is only known once the window exists, and on a high-density display it
-/// is not the logical size that was asked for. The builder owns its solver:
-/// `LiveScene` retains one and reuses it for every reflow.
+/// The builder owns its solver: `LiveScene` retains one and reuses it for every
+/// reflow.
 pub type SceneBuilder = fn(&mut Arena, u32, u32) -> LiveScene;
 
 /// Applies the scene's scripted signal change for pulse number `index`.
 ///
-/// A plain `fn` rather than a closure or a trait object, and a `u64` rather
-/// than captured state, so the phase lives in the host and the scene stays a
-/// pure function of it — which is what lets [`Host::rebuild`] re-apply the
-/// current phase to a scene it just rebuilt for a new extent.
+/// A plain `fn` rather than a closure, and a `u64` rather than captured state,
+/// so the phase lives in this demonstration and the scene stays a pure function
+/// of it — which is what lets [`Showcase::build`] re-apply the current phase to
+/// a scene the loop just rebuilt for a new extent.
 ///
-/// Story #574 replaces this with the showcase scenes' own scripting. Story
-/// #573's input mapping does not go through here: input is a window event, and
-/// the host applies it directly.
+/// [`Showcase::build`]: dashscene_desktop::App::build
 pub type ScenePulse = fn(&mut LiveScene, u64);
 
 /// Runs the scene's own variant switch (story #573). The one thing input does
@@ -123,30 +55,24 @@ pub type ScenePulse = fn(&mut LiveScene, u64);
 /// arena.
 ///
 /// A scene owns the switch because a scene owns its content: it declares the
-/// variant set inside its own builder, where it holds the arena, and hands the
-/// host a function that switches it. The host holds no `VariantSetId`, no
-/// member list and no node name — see [`crate::input`], and issue #625 for the
-/// seam this closes.
+/// variant set inside its own builder, where it holds the arena, and hands this
+/// demonstration a function that switches it. Nothing here holds a
+/// `VariantSetId`, a member list or a node name — see [`crate::input`], and
+/// issue #625 for the seam this closes.
 pub type SceneAction = fn(&mut LiveScene, &mut Arena);
 
 /// The window's requested size, in logical pixels.
-const WINDOW_SIZE: LogicalSize<u32> = LogicalSize::new(960, 600);
-
-/// The pace the loop runs at while the generation advances: 60 Hz.
 ///
-/// `ControlFlow::WaitUntil` rather than `ControlFlow::Poll`, because polling
-/// spins as fast as the machine allows and this is meant to be a frame rate. A
-/// frame that overruns the interval leaves the deadline already past, so the
-/// loop wakes immediately and the pacing degrades to running flat out rather
-/// than to dropping frames.
-const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
+/// This demonstration's own choice, and not the integration crate's default —
+/// which is what an embedder that names no window gets, and is deliberately a
+/// separate decision from this one.
+const WINDOW_SIZE: LogicalSize<u32> = LogicalSize::new(960, 600);
 
 /// The key that swaps the painter on the running window (story #585).
 ///
-/// Handled here rather than in [`crate::input`], because it is not a scene's
-/// input: a scene declares the signal the pointer drives and the function a key
-/// runs, and which painter draws it is neither. `P` is unmapped by every scene,
-/// so nothing it did before is lost.
+/// A demonstration key, not an integration one: a scene declares the signal the
+/// pointer drives and the function a key runs, and which painter draws it is
+/// neither. `P` is unmapped by every scene, so nothing it did before is lost.
 const SWAP_PAINTER: KeyCode = KeyCode::KeyP;
 
 /// How often the placeholder driver pulses the scene's signals.
@@ -155,54 +81,18 @@ const SWAP_PAINTER: KeyCode = KeyCode::KeyP;
 /// is what makes the idle skip observable in the log rather than asserted.
 const PULSE_INTERVAL: Duration = Duration::from_millis(2500);
 
-/// A message from outside the event loop asking the host to run a frame.
-///
-/// This is the wake mechanism the loop's wait mode requires. While the
-/// generation is steady the loop is parked in `ControlFlow::Wait`, so a
-/// producer that is not driven by a window event — a scripted sequence, a
-/// timer, a data feed — cannot reach the scene without one.
-///
-/// The message carries the *intent* and not the signal write. `LiveScene` is
-/// owned by the host and lives on the loop's thread, so the sender asks and
-/// the host applies, which is what keeps P3 true across the thread boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Wake {
-    /// Advance the scene's scripted pulse by one, then run a frame.
-    Pulse,
-}
-
-/// One entry in the host's scene list: what to build, how to script it, and
-/// the name to report when it comes up.
-///
-/// The host holds these rather than the `corpus/showcase/` type, because the
-/// host is not allowed to know what the content is — `demo/` holds the loop and
-/// `corpus/showcase/` holds the scenes (epic #568). The name is carried only so
-/// the log can say which scene is on screen.
-pub struct SceneEntry {
-    pub name: &'static str,
-    pub build: SceneBuilder,
-    pub pulse: ScenePulse,
-    /// The name of the scalar signal this scene lets input drive. Opaque to
-    /// the host, which passes it to `LiveScene::signal_named` and never reads
-    /// it.
-    pub signal: &'static str,
-    /// What the variant key does in this scene, or `None` when the scene
-    /// declares no variant set.
-    pub action: Option<SceneAction>,
-}
-
-/// How long a scene is shown for before the host moves to the next one, when
-/// it has more than one to show (issue #628).
+/// How long a scene is shown for before this demonstration moves to the next
+/// one, when it has more than one to show (issue #628).
 ///
 /// Expressed as a number of pulse intervals because the scene changes *on* a
-/// pulse: the host waits for this long to elapse and then advances at the next
-/// pulse, so a scene is never cut mid-transition. Four rather than one because
-/// each scene's script alternates direction, so an even count leaves the scene
-/// at the phase it started from.
+/// pulse: it waits for this long to elapse and then advances at the next pulse,
+/// so a scene is never cut mid-transition. Four rather than one because each
+/// scene's script alternates direction, so an even count leaves the scene at the
+/// phase it started from.
 ///
 /// **The deadline is elapsed time, not a count of pulse events.** It was
 /// written that way because [`spawn_pulse_driver`] used to free-run: it slept
-/// and sent whether or not the host had consumed the last message, so on a slow
+/// and sent whether or not the loop had consumed the last message, so on a slow
 /// frame several pulses queued and arrived together, and counting the events
 /// gave later scenes a single pulse each while the first cycle got four.
 ///
@@ -218,68 +108,318 @@ const PULSES_PER_SCENE: u32 = 4;
 const SCENE_DWELL: Duration =
     Duration::from_millis(PULSE_INTERVAL.as_millis() as u64 * PULSES_PER_SCENE as u64);
 
-/// Opens a window, binds `painter`'s presenter to it, and runs the frame loop
-/// until the window is closed.
+/// One entry in the scene list: what to build, how to script it, and the name
+/// to report when it comes up.
+///
+/// These are held rather than the `corpus/showcase/` type, because this host is
+/// not allowed to know what the content is — `demo/` holds the demonstration
+/// and `corpus/showcase/` holds the scenes (epic #568). The name is carried only
+/// so the log can say which scene is on screen.
+pub struct SceneEntry {
+    pub name: &'static str,
+    pub build: SceneBuilder,
+    pub pulse: ScenePulse,
+    /// The name of the scalar signal this scene lets input drive. Opaque here,
+    /// passed to `LiveScene::signal_named` and never read.
+    pub signal: &'static str,
+    /// What the variant key does in this scene, or `None` when the scene
+    /// declares no variant set.
+    pub action: Option<SceneAction>,
+}
+
+/// Opens a window and runs the showcase until it is closed.
 ///
 /// **The length of `scenes` is the mode.** One scene runs exactly as it did
-/// before this parameter existed and never advances. More than one, and the
-/// host moves to the next every [`PULSES_PER_SCENE`] pulses and cycles back to
-/// the first, so the vocabulary checklist can be walked in a single run.
-/// Nothing distinguishes the two paths except the count, so there is no flag
-/// that can disagree with the list.
+/// before this parameter existed and never advances. More than one, and this
+/// moves to the next every [`PULSES_PER_SCENE`] pulses and cycles back to the
+/// first, so the vocabulary checklist can be walked in a single run. Nothing
+/// distinguishes the two paths except the count, so there is no flag that can
+/// disagree with the list.
 pub fn run(
     title: &'static str,
     scenes: Vec<SceneEntry>,
     painter: Choice,
-) -> Result<(), Box<dyn Error>> {
-    assert!(!scenes.is_empty(), "the host needs at least one scene");
-    let event_loop = EventLoop::<Wake>::with_user_event().build()?;
-    // The starting mode. The first frame replaces it: `WaitUntil` while the
-    // generation advances, `Wait` once it is steady.
-    event_loop.set_control_flow(ControlFlow::Wait);
-    let rearm = spawn_pulse_driver(event_loop.create_proxy());
-
-    let mut host = Host {
-        rearm,
+) -> Result<(), DesktopError> {
+    assert!(!scenes.is_empty(), "the showcase needs at least one scene");
+    dashscene_desktop::run(Showcase {
         title,
         painter,
         scenes,
         current: 0,
         scene_since: Instant::now(),
-        window: None,
-        presenter: None,
-        arena: Arena::new(),
-        live: None,
-        extent: (0, 0),
-        previous_frame: None,
-        forced: None,
         pulse_index: 0,
-        ticks: 0,
-        presents: 0,
-        parked: None,
+        rearm: None,
         timing: Timing::enabled(),
-        failure: None,
-    };
-    event_loop.run_app(&mut host)?;
-    match host.failure {
-        Some(failure) => Err(failure),
-        None => Ok(()),
+    })
+}
+
+/// The demonstration's state, and everything the loop asks it for.
+struct Showcase {
+    title: &'static str,
+    /// Which painter is drawing. Chosen on the command line and swapped by
+    /// [`SWAP_PAINTER`] — see [`crate::painter`] for why a run-time choice is a
+    /// property of this demonstration and of nothing that ships.
+    painter: Choice,
+    /// Every scene to show, in the order they are shown. Never empty — [`run`]
+    /// rejects an empty list, so `scenes[current]` is always a scene.
+    scenes: Vec<SceneEntry>,
+    /// Which of [`Showcase::scenes`] is on screen.
+    current: usize,
+    /// When [`Showcase::current`] came on screen, so its turn is measured
+    /// against the wall clock rather than against a count of pulse events — see
+    /// [`PULSES_PER_SCENE`] for why. Host-side only: nothing at or below
+    /// `LiveScene` reads a clock, which is the invariant
+    /// `demo/tests/clock_invariant.rs` asserts.
+    scene_since: Instant,
+    /// The scripted pulse currently in effect. The scene is a pure function of
+    /// it, so a rebuild can restore the phase.
+    pulse_index: u64,
+    /// Rearms the pulse driver, which sends one pulse and then waits. Held so
+    /// that the wake handler releases the next one only after this one has been
+    /// applied, which is what stops pulses queueing (issue #629). `None` until
+    /// the loop hands over its waker.
+    rearm: Option<mpsc::Sender<()>>,
+    /// The frame-cost instrument, when the environment asked for one. `None` on
+    /// an ordinary run, which then pays nothing for it (story #586).
+    timing: Option<Timing>,
+}
+
+impl App for Showcase {
+    fn window(&self) -> WindowAttributes {
+        Window::default_attributes()
+            .with_title(self.title)
+            .with_inner_size(WINDOW_SIZE)
+    }
+
+    /// Binds the currently chosen painter.
+    ///
+    /// The one place either presenter is constructed, so the swap key and the
+    /// first frame cannot build them differently. Overriding this is the whole
+    /// reason `dashscene-desktop` publishes the trait rather than hardcoding
+    /// its own presenter.
+    fn presenter(&mut self, window: Arc<Window>) -> Result<Box<dyn Present>, PresentError> {
+        self.painter.presenter(window)
+    }
+
+    /// Builds the current scene, and restores the phase it was at.
+    ///
+    /// Re-applying the pulse is this method's job rather than the loop's: a
+    /// rebuild produces a scene holding none of the writes made into the old
+    /// one, and at the same phase, so a resize would otherwise snap every
+    /// signal back to its initial value part-way through a transition.
+    ///
+    /// A rebuild rather than a re-solve, because a scene built in code derives
+    /// every offset and size from the extent in Rust. It costs the scene's
+    /// animation state: springs restart from their seeded values and run to the
+    /// current phase again, which is visible if the window is dragged during a
+    /// transition.
+    fn build(&mut self, arena: &mut Arena, width: u32, height: u32) -> LiveScene {
+        let entry = &self.scenes[self.current];
+        let (build, pulse) = (entry.build, entry.pulse);
+        let mut live = build(arena, width, height);
+        pulse(&mut live, self.pulse_index);
+        live
+    }
+
+    /// Spawns the placeholder signal producer: one wake every
+    /// [`PULSE_INTERVAL`], from a thread that is not the loop's.
+    ///
+    /// It exists to exercise the wake path rather than to be a feature — the
+    /// showcase scenes script their own signals. It reads a clock (it sleeps),
+    /// which is allowed: it is host-side, above `LiveScene`.
+    fn started(&mut self, waker: Waker) {
+        self.rearm = Some(spawn_pulse_driver(waker));
+    }
+
+    /// Tells the running scene which painter is drawing it, so the badge names
+    /// the painter on screen.
+    ///
+    /// Called after a rebuild and after a painter swap, which is exactly when
+    /// the badge is stale: a fresh scene carries no write, and a swap changes
+    /// what the write should say.
+    ///
+    /// A scene that declares no badge signal takes no write. That is what makes
+    /// the `--dsb` run need no special case: a loaded document carries no such
+    /// signal, and its solver holds no typesetter, so a label could not be
+    /// staged there anyway.
+    ///
+    /// Writing the signal is also what makes a swap re-solve, but not because
+    /// of the text it carries: a write that only changes text or opacity is
+    /// paint-only and commits through the cached-rect replay, which stages no
+    /// glyph runs at all. The badge binds the same signal to its pill's width
+    /// as well (`corpus/showcase/src/badge.rs`'s "Why the pill's width is
+    /// bound"), and a width write on a container with children cannot patch a
+    /// single cached rect, so it forces the tick to solve. That is what commits
+    /// through the scene's own solver and re-stages every glyph run, the
+    /// incoming name's included — without a rebuild, which is what keeps a swap
+    /// showing the difference between the two painters rather than between two
+    /// runs.
+    fn attached(&mut self, scene: Scene<'_>, _presenter: &str) {
+        let value = self.painter.badge_value();
+        if let Some(signal) = scene.live.signal_named(showcase::badge::BACKEND) {
+            scene.live.set(signal, value);
+        }
+    }
+
+    /// Applies one pulse to the running scene, and advances to the next scene
+    /// when this one's turn is over.
+    fn woken(&mut self, scene: Option<Scene<'_>>) -> Reaction {
+        let reaction = self.pulse(scene);
+        // Rearm only now. The driver is one-shot and has been waiting since it
+        // sent this pulse, so releasing it here — after the pulse has been
+        // applied, and on every path above — is what keeps at most one in
+        // flight (issue #629). A closed channel means the driver thread has
+        // ended, which happens only as the loop shuts down.
+        if let Some(rearm) = self.rearm.as_ref() {
+            let _ = rearm.send(());
+        }
+        reaction
+    }
+
+    fn event(&mut self, event: &WindowEvent, scene: Scene<'_>) -> Reaction {
+        match event {
+            // Story #573: the pointer drives the current scene's own named
+            // signal.
+            WindowEvent::CursorMoved { position, .. } => {
+                let signal = self.scenes[self.current].signal;
+                let changed =
+                    crate::input::cursor_moved(scene.live, signal, position.x, scene.extent.0);
+                if changed {
+                    Reaction::Redraw
+                } else {
+                    Reaction::Ignored
+                }
+            }
+            // Story #573: two keys drive that same signal to either end of its
+            // range, and one runs the scene's own variant switch. `repeat` is
+            // excluded so holding a key neither floods the signal nor spins the
+            // variant.
+            WindowEvent::KeyboardInput { event, .. } => {
+                // A zero extent means there is no drawable, and that is the one
+                // state in which a scene advance leaves `current` pointing at a
+                // scene the arena was not built from — where the incoming
+                // scene's action would run against the outgoing scene's arena
+                // and `Txn::set_variant` would panic on a handle that arena does
+                // not carry. A window with no drawable is minimised and receives
+                // no key events, so this guards a state rather than a case that
+                // fires.
+                let drawable = scene.extent.0 > 0 && scene.extent.1 > 0;
+                if !drawable || event.state != ElementState::Pressed || event.repeat {
+                    return Reaction::Ignored;
+                }
+                let PhysicalKey::Code(code) = event.physical_key else {
+                    return Reaction::Ignored;
+                };
+                // The painter swap is this demonstration's own, and is checked
+                // before the scene's keys so that a scene can never take it
+                // over.
+                if code == SWAP_PAINTER {
+                    self.painter = self.painter.other();
+                    return Reaction::Rebind;
+                }
+                let entry = &self.scenes[self.current];
+                let (signal, action) = (entry.signal, entry.action);
+                if crate::input::key(code, signal, action, scene.live, scene.arena) {
+                    Reaction::Redraw
+                } else {
+                    Reaction::Ignored
+                }
+            }
+            _ => Reaction::Ignored,
+        }
+    }
+
+    fn measured(&mut self, tick: Duration, present: Option<Duration>, presenter: &str) {
+        let (Some(timing), Some(present)) = (self.timing.as_mut(), present) else {
+            return;
+        };
+        let scene = self.scenes[self.current].name;
+        timing.push(scene, presenter, tick, present);
+        timing.report(scene, presenter);
+    }
+
+    fn note(&mut self, message: &str) {
+        eprintln!("demo: {message}");
     }
 }
 
-/// The placeholder signal producer: one [`Wake::Pulse`] every
-/// [`PULSE_INTERVAL`], from a thread that is not the loop's.
+impl Showcase {
+    /// One pulse: script the current scene, or end its turn.
+    ///
+    /// Split out of [`App::woken`] so that the rearm cannot be missed: this
+    /// body has several early returns, and the caller rearms the driver after it
+    /// returns by any of them (issue #629). Rearming on only some of them would
+    /// stall the driver permanently rather than merely drop a pulse.
+    fn pulse(&mut self, scene: Option<Scene<'_>>) -> Reaction {
+        let Some(scene) = scene else {
+            // The window does not exist yet. Dropping this pulse costs one
+            // interval; the next one still comes, because the caller rearms the
+            // driver on this path too.
+            return Reaction::Ignored;
+        };
+        let pulse = self.scenes[self.current].pulse;
+        self.pulse_index += 1;
+        pulse(scene.live, self.pulse_index);
+
+        // With more than one scene to show, this pulse may be the one that ends
+        // the current scene's turn. Decided on elapsed time rather than on
+        // `pulse_index`, for the reason [`SCENE_DWELL`] records, but acted on
+        // here so the change lands on a pulse boundary rather than part-way
+        // through a transition. The check runs after the pulse has been applied,
+        // so each scene is seen through `PULSES_PER_SCENE` complete cycles
+        // rather than that many minus one.
+        if self.scenes.len() > 1 && self.scene_since.elapsed() >= SCENE_DWELL {
+            return self.advance_scene(scene.extent);
+        }
+
+        // Not `Redraw`: the pulse wrote signals, so the generation will report
+        // the change by itself and a frame that paints because it advanced is
+        // the contract. Forcing here would paint a pulse that changed nothing.
+        Reaction::Frame
+    }
+
+    /// Moves to the next scene in the list, cycling back to the first.
+    ///
+    /// The phase resets to zero because the incoming scene has its own script
+    /// and the outgoing scene's pulse count means nothing to it. That is the one
+    /// way this differs from the resize path, which keeps the phase precisely
+    /// because it is the *same* scene at a new extent.
+    ///
+    /// Rebuilding drops the outgoing scene's arena, so nothing of it survives
+    /// into the next — which is also what makes this a fair way to watch each
+    /// scene, since every one starts from its own seeded values.
+    /// `extent` is the drawable, and it decides whether the change is announced.
+    /// A zero dimension is a minimised window: the loop drops the rebuild, so
+    /// nothing comes on screen and saying that it did would be a line the
+    /// picture does not match. The scene index still moves, and the first frame
+    /// after the window is restored builds it — which is the behaviour this had
+    /// before the loop was extracted, where the whole method returned early on a
+    /// zero extent and printed nothing.
+    fn advance_scene(&mut self, extent: (u32, u32)) -> Reaction {
+        self.current = (self.current + 1) % self.scenes.len();
+        self.pulse_index = 0;
+        self.scene_since = Instant::now();
+        if extent.0 > 0 && extent.1 > 0 {
+            eprintln!(
+                "demo: scene {} — {}",
+                self.current + 1,
+                self.scenes[self.current].name
+            );
+        }
+        // A new arena means a generation the window has never shown, so the
+        // generation alone cannot report that the next frame must paint — which
+        // is why this is a rebuild and not a frame.
+        Reaction::Rebuild
+    }
+}
+
+/// The placeholder signal producer: one wake every [`PULSE_INTERVAL`], from a
+/// thread that is not the loop's.
 ///
-/// It exists to exercise the wake path rather than to be a feature — story
-/// #574's scenes script their own signals and send their own wakes. It reads a
-/// clock (it sleeps), which is allowed: it is host-side, above `LiveScene`.
-///
-/// Returns the rearm handle. The driver sends **one** pulse and then waits to
-/// be rearmed, so at most one is ever in flight; see [`spawn_pulses`].
-fn spawn_pulse_driver(proxy: EventLoopProxy<Wake>) -> mpsc::Sender<()> {
-    spawn_pulses(PULSE_INTERVAL, move || {
-        proxy.send_event(Wake::Pulse).is_ok()
-    })
+/// Returns the rearm handle. The driver sends **one** wake and then waits to be
+/// rearmed, so at most one is ever in flight; see [`spawn_pulses`].
+fn spawn_pulse_driver(waker: Waker) -> mpsc::Sender<()> {
+    spawn_pulses(PULSE_INTERVAL, move || waker.wake())
 }
 
 /// The driver's timing and handshake, with the transport left to the caller so
@@ -293,14 +433,14 @@ fn spawn_pulse_driver(proxy: EventLoopProxy<Wake>) -> mpsc::Sender<()> {
 /// the interval — routine in a debug build, where the `surfaces` scene costs
 /// about 28 ms per frame at 1920x1200 — the driver ran ahead of the loop and
 /// the queued pulses then arrived together. The scene jumped through its script
-/// instead of stepping through it, and only the first of each burst reported
-/// the park, because `Host::parked` is taken once. Issue #628's scene advance
-/// is keyed on elapsed time rather than on a count of pulses precisely because
+/// instead of stepping through it, and only the first of each burst reported the
+/// park, because the park report is taken once. Issue #628's scene advance is
+/// keyed on elapsed time rather than on a count of pulses precisely because
 /// counting them was unreliable while this stood.
 ///
-/// The handshake also ties the driver to the loop's state. A free-running
-/// thread kept sending while the loop was deliberately parked; this one cannot
-/// get ahead of what the host has applied.
+/// The handshake also ties the driver to the loop's state. A free-running thread
+/// kept sending while the loop was deliberately parked; this one cannot get
+/// ahead of what has been applied.
 ///
 /// `send` reports whether the message reached the loop. Both it returning
 /// `false` and the rearm channel closing mean the loop is gone, and the thread
@@ -326,18 +466,9 @@ fn spawn_pulses(
     rearm
 }
 
-/// What the loop was doing when it last parked, so waking can report what did
-/// **not** happen while it was parked.
-struct Parked {
-    since: Instant,
-    ticks: u64,
-    presents: u64,
-}
-
 /// The environment variable that turns the frame-cost instrument on.
 ///
-/// Off by default, so an ordinary run of the host is unmeasured and pays
-/// nothing.
+/// Off by default, so an ordinary run is unmeasured and pays nothing.
 const TIMING_VAR: &str = "DASHSCENE_FRAME_TIMING";
 
 /// How many presents one report covers — the sample size
@@ -345,28 +476,28 @@ const TIMING_VAR: &str = "DASHSCENE_FRAME_TIMING";
 /// measurement, so the two are read in the same units.
 const TIMING_SAMPLE: usize = 240;
 
-/// Per-frame costs, collected while the host runs (story #586).
+/// Per-frame costs, collected while the showcase runs (story #586).
 ///
 /// **This exists because the measurement it serves was ad-hoc.** The v0.14
 /// frame budget's most consequential finding — that the `softbuffer` blit was a
 /// larger term than the painter for two of the three scenes — came from
 /// instrumenting the host by hand and was not reproducible afterwards. Story
-/// #585 then replaced that blit with a surface present, and the question of
-/// what happened to the term is exactly the kind that a one-off instrument
-/// cannot answer twice.
+/// #585 then replaced that blit with a surface present, and the question of what
+/// happened to the term is exactly the kind that a one-off instrument cannot
+/// answer twice.
 ///
-/// It times `tick` and `present` separately, because they are the two halves
-/// the v0.14 table separates. `present` is the whole of the drawing: it is
-/// `paint` plus whatever putting the frame on the window costs, which is the
-/// blit for the reference painter and a swapchain present for the lean one.
+/// It times `tick` and `present` separately, because they are the two halves the
+/// v0.14 table separates. `present` is the whole of the drawing: it is `paint`
+/// plus whatever putting the frame on the window costs, which is the blit for
+/// the reference painter and a swapchain present for the lean one.
 struct Timing {
     tick: Vec<f64>,
     present: Vec<f64>,
     /// What the sample in hand is a sample *of* — the scene and the presenter.
     ///
-    /// A sample is discarded when either changes part-way through. The host
-    /// advances scenes on a dwell timer and swaps painters on a key, so a mean
-    /// taken across either boundary describes neither side of it — which is not
+    /// A sample is discarded when either changes part-way through. Scenes
+    /// advance on a dwell timer and painters swap on a key, so a mean taken
+    /// across either boundary describes neither side of it — which is not
     /// hypothetical: the first sweep run with this instrument was taken while
     /// the painter was swapped mid-run, and it reported one painter's numbers
     /// under the other's name.
@@ -403,11 +534,11 @@ impl Timing {
 
     /// Reports and clears once a full sample is in hand.
     ///
-    /// Reported per sample rather than at exit, because the host advances
+    /// Reported per sample rather than at exit, because the showcase advances
     /// through scenes and a mean over all of them would describe none of them.
-    /// `presenter` is [`Present::name`] rather than the painter enum, because
-    /// it names the whole path being timed — the reference painter's includes
-    /// the blit, which is the term this instrument exists to watch.
+    /// `presenter` is `Present::name` rather than the painter enum, because it
+    /// names the whole path being timed — the reference painter's includes the
+    /// blit, which is the term this instrument exists to watch.
     fn report(&mut self, scene: &str, presenter: &str) {
         if self.present.len() < TIMING_SAMPLE {
             return;
@@ -428,570 +559,6 @@ impl Timing {
         );
         self.tick.clear();
         self.present.clear();
-    }
-}
-
-struct Host {
-    /// Rearms the pulse driver, which sends one pulse and then waits. Held so
-    /// that [`Host::user_event`] can release the next one only after this one
-    /// has been applied, which is what stops pulses queueing (issue #629).
-    rearm: mpsc::Sender<()>,
-    title: &'static str,
-    /// Which painter is drawing. Chosen on the command line and swapped by
-    /// [`SWAP_PAINTER`] — see [`crate::painter`] for why a run-time choice is a
-    /// property of this demonstration and of nothing that ships.
-    painter: Choice,
-    /// Every scene the host was asked to show, in the order it shows them.
-    /// Never empty — [`run`] rejects an empty list, so `scenes[current]` is
-    /// always a scene.
-    scenes: Vec<SceneEntry>,
-    /// Which of [`Host::scenes`] is on screen.
-    current: usize,
-    /// When [`Host::current`] came on screen, so its turn is measured against
-    /// the wall clock rather than against a count of pulse events — see
-    /// [`PULSES_PER_SCENE`] for why, and for why elapsed time stays now that
-    /// pulses no longer arrive in bursts. Host-side only: nothing at or below
-    /// `LiveScene` reads a clock, which is the invariant
-    /// `demo/tests/clock_invariant.rs` asserts.
-    scene_since: Instant,
-    window: Option<Arc<Window>>,
-    presenter: Option<Box<dyn Present>>,
-    arena: Arena,
-    live: Option<LiveScene>,
-    /// The drawable extent the host last acted on, in physical pixels. A
-    /// `Resized` that repeats it changes nothing and is dropped here, before
-    /// it costs a scene rebuild.
-    extent: (u32, u32),
-    /// When the previous frame ran. `None` means the frame clock is stopped:
-    /// on the first frame, and across the loop's own wait.
-    previous_frame: Option<Instant>,
-    /// Why the next frame must paint whatever the generation says. Consumed by
-    /// the frame that acts on it.
-    forced: Option<&'static str>,
-    /// The scripted pulse currently in effect. The scene is a pure function of
-    /// it, so a rebuild can restore the phase.
-    pulse_index: u64,
-    /// How many frames have called `tick`, and how many of those presented.
-    /// The gap between them is the idle skip, and it is reported rather than
-    /// claimed.
-    ticks: u64,
-    presents: u64,
-    parked: Option<Parked>,
-    /// The frame-cost instrument, when the environment asked for one. `None`
-    /// on an ordinary run, which then pays nothing for it (story #586).
-    timing: Option<Timing>,
-    /// The first error that stopped the loop. `ApplicationHandler`'s methods
-    /// return nothing, so a failure is parked here and reported by [`run`]
-    /// rather than printed and forgotten.
-    failure: Option<Box<dyn Error>>,
-}
-
-impl Host {
-    /// Records `failure` and asks the event loop to stop. The first failure
-    /// wins: a later one is a consequence of the state the first left behind.
-    fn fail(&mut self, event_loop: &ActiveEventLoop, failure: impl Error + 'static) {
-        if self.failure.is_none() {
-            self.failure = Some(Box::new(failure));
-        }
-        event_loop.exit();
-    }
-
-    /// One frame.
-    fn frame(&mut self, event_loop: &ActiveEventLoop) {
-        // The frame clock, read once, here. `saturating_duration_since` rather
-        // than subtraction because a monotonic clock is only guaranteed
-        // non-decreasing, and a zero-length frame is a correct answer where a
-        // panic is not.
-        let now = Instant::now();
-        let dt = match self.previous_frame {
-            // Raw, and unclamped here. `LiveScene::tick` applies the ceiling,
-            // so the rule has one statement rather than one per host (story
-            // #810). The clock stays the host's, which is the split the
-            // decision record's own title names.
-            Some(previous) => now.saturating_duration_since(previous),
-            // The clock was stopped: this is the first frame, or the first one
-            // after the loop parked. No animation time passed during the
-            // loop's own wait, because nothing was animating through it, so
-            // the frame that ends the wait starts from zero rather than from
-            // however long the window sat untouched. This is what makes the
-            // clamp a guard against *external* stalls only, and it is a fact
-            // about this host's timeline rather than a policy, so it stays
-            // here.
-            None => Duration::ZERO,
-        };
-        self.previous_frame = Some(now);
-
-        let Some(live) = self.live.as_mut() else {
-            return;
-        };
-        let before_tick = Instant::now();
-        let generation = live.tick(dt.as_secs_f32(), &mut self.arena);
-        let tick_took = before_tick.elapsed();
-        self.ticks += 1;
-
-        let advanced = live.advanced();
-        let forced = self.forced.take();
-        if !advanced && let Some(reason) = forced {
-            // The generation could not report this one, which is the whole
-            // reason the forced list exists. Reported so the path is visible
-            // when it fires rather than only when it fails to.
-            eprintln!("demo: forced redraw — {reason}");
-        }
-        if advanced || forced.is_some() {
-            match self.paint() {
-                Ok(present_took) => self.record_frame(tick_took, present_took),
-                Err(error) => return self.fail(event_loop, error),
-            }
-        }
-
-        if advanced {
-            self.parked = None;
-            event_loop.set_control_flow(ControlFlow::WaitUntil(now + FRAME_INTERVAL));
-        } else {
-            // Steady generation: the scene has settled. A frame that painted
-            // only because something forced it still lands here, because a
-            // forced repaint is not motion.
-            self.park(event_loop, generation);
-        }
-    }
-
-    /// Draws the committed scene and posts it, reporting how long the present
-    /// took.
-    ///
-    /// The duration is `None` when no frame reached the window — no window, no
-    /// presenter, or a presenter that declined this one because the drawable is
-    /// zero-area, occluded or timed out. **None of those is a cheap frame; they
-    /// are the absence of one**, and timing them is how a mean ends up
-    /// describing how often the window was off-screen rather than what drawing
-    /// costs. `dashscene_gpu::Drawn` carries the reason that distinction was
-    /// made observable.
-    fn paint(&mut self) -> Result<Option<Duration>, PresentError> {
-        let (Some(window), Some(presenter)) = (self.window.as_ref(), self.presenter.as_mut())
-        else {
-            return Ok(None);
-        };
-        // Tells the compositor a frame is about to be posted, so it can
-        // schedule the next one; winit asks for it immediately before
-        // presenting.
-        window.pre_present_notify();
-        let before = Instant::now();
-        let drawn = presenter.present(self.arena.committed())?;
-        let took = before.elapsed();
-        if let Some(live) = self.live.as_mut() {
-            live.mark_shown();
-        }
-        self.presents += 1;
-        Ok(drawn.drew().then_some(took))
-    }
-
-    /// Hands one frame's costs to the instrument, when one is running.
-    fn record_frame(&mut self, tick: Duration, present: Option<Duration>) {
-        let (Some(timing), Some(present)) = (self.timing.as_mut(), present) else {
-            return;
-        };
-        let scene = self.scenes[self.current].name;
-        let presenter = self
-            .presenter
-            .as_ref()
-            .map_or("no presenter", |presenter| presenter.name());
-        timing.push(scene, presenter, tick, present);
-        timing.report(scene, presenter);
-    }
-
-    /// Stops the loop until an event arrives.
-    fn park(&mut self, event_loop: &ActiveEventLoop, generation: u64) {
-        event_loop.set_control_flow(ControlFlow::Wait);
-        // The frame clock stops with the loop; see the `None` arm in `frame`.
-        self.previous_frame = None;
-        if self.parked.is_none() {
-            eprintln!(
-                "demo: settled at generation {generation} after {} ticks and {} presents — \
-                 waiting for an event",
-                self.ticks, self.presents
-            );
-            self.parked = Some(Parked {
-                since: Instant::now(),
-                ticks: self.ticks,
-                presents: self.presents,
-            });
-        }
-    }
-
-    /// Swaps the painter on the running window, keeping everything else.
-    ///
-    /// The arena, the live scene, the frame clock and the pulse phase are all
-    /// untouched, so the next frame is the same frame drawn by the other
-    /// painter. That is the whole instrument story #585 was for: the difference
-    /// on screen is the difference between the painters, and not between two
-    /// runs.
-    ///
-    /// The outgoing presenter is dropped **before** the incoming one is built.
-    /// Both own a surface on this one window — a CPU framebuffer on one side, a
-    /// swapchain on the other — and holding two at once is the state neither
-    /// windowing backend is asked to support.
-    fn swap_painter(&mut self, event_loop: &ActiveEventLoop) {
-        let Some(window) = self.window.clone() else {
-            return;
-        };
-        let next = self.painter.other();
-        self.presenter = None;
-        match next.presenter(window) {
-            Ok(presenter) => {
-                eprintln!("demo: painter is now {}", presenter.name());
-                self.presenter = Some(presenter);
-                self.painter = next;
-                // The incoming presenter adopted the window's extent at
-                // construction, so nothing is re-solved and the scene keeps its
-                // state. It has drawn nothing, though, and the generation is
-                // unchanged — which is the fifth case the forced list exists
-                // for.
-                self.force("a painter swap");
-                self.announce_painter();
-            }
-            Err(error) => self.fail(event_loop, error),
-        }
-    }
-
-    /// Tells the running scene which painter is drawing it, so the badge
-    /// names the painter on screen.
-    ///
-    /// A scene that declares no badge signal takes no write. That is what
-    /// makes the `--dsb` run need no special case here: a loaded document
-    /// carries no such signal, and its solver holds no typesetter, so a
-    /// label could not be staged there anyway.
-    ///
-    /// Writing the signal is also what makes a swap re-solve, but not
-    /// because of the text it carries: a write that only changes text or
-    /// opacity is paint-only and commits through the cached-rect replay,
-    /// which stages no glyph runs at all. The badge binds the same
-    /// signal to its pill's width as well
-    /// (`corpus/showcase/src/badge.rs`'s "Why the pill's width is
-    /// bound"), and a width write on a container with children cannot
-    /// patch a single cached rect, so it forces the tick to solve. That
-    /// is what commits through the scene's own solver and re-stages
-    /// every glyph run, the incoming name's included — without a
-    /// rebuild, which is what keeps a swap showing the difference
-    /// between the two painters rather than between two runs.
-    fn announce_painter(&mut self) {
-        let value = self.painter.badge_value();
-        let Some(live) = self.live.as_mut() else {
-            return;
-        };
-        if let Some(signal) = live.signal_named(showcase::badge::BACKEND) {
-            live.set(signal, value);
-        }
-    }
-
-    /// Makes the next frame paint and present whatever the generation says.
-    fn force(&mut self, reason: &'static str) {
-        self.forced = Some(reason);
-        if let Some(window) = self.window.as_ref() {
-            window.request_redraw();
-        }
-    }
-
-    /// The resize path: reconfigure the presenter, re-solve the document for
-    /// the new extent, and repaint.
-    fn resized(&mut self, event_loop: &ActiveEventLoop, width: u32, height: u32) {
-        if (width, height) == self.extent {
-            return;
-        }
-        self.extent = (width, height);
-
-        let resized = match self.presenter.as_mut() {
-            Some(presenter) => presenter.resize(width, height),
-            None => Ok(()),
-        };
-        if let Err(error) = resized {
-            return self.fail(event_loop, error);
-        }
-
-        // A zero dimension is a minimised window. There is nothing to solve
-        // for and nothing to draw into; the next non-zero `Resized` rebuilds.
-        if width > 0 && height > 0 {
-            self.rebuild(width, height);
-            eprintln!("demo: resized to {width}x{height} physical pixels — scene rebuilt");
-        }
-        self.force("a resize");
-    }
-
-    /// Builds the scene for `width` x `height` into a fresh arena.
-    ///
-    /// A rebuild rather than a re-solve, because this host's placeholder scene
-    /// derives every offset and size from the extent in Rust. It costs the
-    /// scene's animation state: springs restart from their seeded values and
-    /// run to the current phase again, which is visible if the window is
-    /// dragged during a transition. Story #574's scenes remove the cost rather
-    /// than the host doing so — a scene whose root fills the drawable takes a
-    /// new extent through a signal, and then a resize is an ordinary frame.
-    fn rebuild(&mut self, width: u32, height: u32) {
-        let pulse = self.scenes[self.current].pulse;
-        // The presenter is about to be handed frames from an arena that has
-        // never existed before. Anything it holds per document — the lean
-        // painter keeps a copy of what its instance buffer contains — describes
-        // the outgoing one, and the incoming arena's generations start again,
-        // so nothing in the frames themselves says so
-        // (`Present::document_replaced`).
-        if let Some(presenter) = self.presenter.as_mut() {
-            presenter.document_replaced();
-        }
-        self.arena = Arena::new();
-        let mut live = (self.scenes[self.current].build)(&mut self.arena, width, height);
-        // Restore the phase, so a resize resumes the scene where it was rather
-        // than snapping every signal back to its initial value.
-        pulse(&mut live, self.pulse_index);
-        // Generations count from a new arena, so nothing this scene commits
-        // can be compared against what the window showed of the last one. The
-        // gate is `LiveScene`'s and a new one starts unshown, so replacing the
-        // scene clears it rather than the host remembering to (story #810).
-        self.live = Some(live);
-        self.announce_painter();
-    }
-
-    /// Applies one pulse to the running scene, and advances to the next scene
-    /// when this one's turn is over.
-    ///
-    /// Split out of [`Host::user_event`] so that the rearm cannot be missed:
-    /// this body has two early returns, and the caller rearms the driver after
-    /// it returns by any of its paths (issue #629). Rearming on only some of
-    /// them would stall the driver permanently rather than merely drop a pulse.
-    fn apply_pulse(&mut self) {
-        let pulse = self.scenes[self.current].pulse;
-        let Some(live) = self.live.as_mut() else {
-            // The window does not exist yet. Dropping this pulse costs one
-            // interval; the next one still comes, because the caller
-            // rearms the driver on this path too.
-            return;
-        };
-        self.pulse_index += 1;
-        pulse(live, self.pulse_index);
-
-        // With more than one scene to show, this pulse may be the one that ends
-        // the current scene's turn. Decided on elapsed time rather than on
-        // `pulse_index`, for the reason [`SCENE_DWELL`] records, but acted on
-        // here so the change lands on a pulse boundary rather than part-way
-        // through a transition. The check runs after the pulse has been
-        // applied, so each scene is seen through `PULSES_PER_SCENE` complete
-        // cycles rather than that many minus one.
-        if self.scenes.len() > 1 && self.scene_since.elapsed() >= SCENE_DWELL {
-            self.report_park();
-            self.advance_scene();
-            return;
-        }
-
-        self.report_park();
-        if let Some(window) = self.window.as_ref() {
-            window.request_redraw();
-        }
-    }
-
-    /// Reports what did **not** happen while the loop was parked, if it was.
-    ///
-    /// Shared by the two things a pulse can do — script the current scene, or
-    /// end its turn — so that a scene change reports the idle interval it woke
-    /// from rather than swallowing it. That report is the only evidence the
-    /// idle-frame skip produces at run time, so it must not be lost on the one
-    /// pulse in every [`PULSES_PER_SCENE`] that changes the scene.
-    fn report_park(&mut self) {
-        let Some(parked) = self.parked.take() else {
-            return;
-        };
-        eprintln!(
-            "demo: woken by pulse {} after {:.2} s parked — {} ticks and {} presents ran while \
-             parked",
-            self.pulse_index,
-            parked.since.elapsed().as_secs_f32(),
-            self.ticks - parked.ticks,
-            self.presents - parked.presents,
-        );
-    }
-
-    /// Moves to the next scene in the list, cycling back to the first.
-    ///
-    /// The phase resets to zero because the incoming scene has its own script
-    /// and the outgoing scene's pulse count means nothing to it. That is the
-    /// one way this differs from [`Host::rebuild`]'s resize path, which keeps
-    /// the phase precisely because it is the *same* scene at a new extent.
-    ///
-    /// Rebuilding drops the outgoing scene's arena, so nothing of it survives
-    /// into the next — which is also what makes this a fair way to watch each
-    /// scene, since every one starts from its own seeded values.
-    fn advance_scene(&mut self) {
-        self.current = (self.current + 1) % self.scenes.len();
-        self.pulse_index = 0;
-        self.scene_since = Instant::now();
-
-        let (width, height) = self.extent;
-        if width == 0 || height == 0 {
-            // No drawable yet, so there is nothing to rebuild against. The
-            // scene index has moved; the first frame builds it.
-            return;
-        }
-        self.rebuild(width, height);
-
-        let scene = &self.scenes[self.current];
-        eprintln!("demo: scene {} — {}", self.current + 1, scene.name);
-        // A new arena means a generation the host has never shown, so the
-        // generation alone cannot report that this frame must paint.
-        self.force("a scene change");
-    }
-}
-
-impl ApplicationHandler<Wake> for Host {
-    fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: StartCause) {
-        // The `WaitUntil` deadline the previous frame set has arrived, so ask
-        // for the next one. This is the whole of the loop's pacing.
-        if matches!(cause, StartCause::ResumeTimeReached { .. })
-            && let Some(window) = self.window.as_ref()
-        {
-            window.request_redraw();
-        }
-    }
-
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        // `resumed` fires again after a suspend on the platforms that suspend.
-        // The window and its surface survive that here, so rebuilding them
-        // would drop a live surface for no reason.
-        if self.window.is_some() {
-            return;
-        }
-
-        let attributes = Window::default_attributes()
-            .with_title(self.title)
-            .with_inner_size(WINDOW_SIZE);
-        let window = match event_loop.create_window(attributes) {
-            Ok(window) => Arc::new(window),
-            Err(error) => return self.fail(event_loop, error),
-        };
-        let presenter = match self.painter.presenter(Arc::clone(&window)) {
-            Ok(presenter) => presenter,
-            Err(error) => return self.fail(event_loop, error),
-        };
-
-        // Physical pixels, so the scene fills the drawable on a high-density
-        // display instead of occupying a corner of it.
-        let size = window.inner_size();
-        // Copied out: the name borrows the presenter, and the presenter is
-        // about to move into the host.
-        let painter = presenter.name().to_owned();
-        self.extent = (size.width, size.height);
-        self.window = Some(window);
-        self.presenter = Some(presenter);
-        self.rebuild(size.width, size.height);
-
-        eprintln!(
-            "demo: {painter} — {}x{} physical pixels, {} rects",
-            size.width,
-            size.height,
-            self.arena.committed().rects().len()
-        );
-        eprintln!(
-            "demo: frame loop — dt clamped to {} ms, {} Hz while the generation advances, \
-             waiting for an event while it is steady",
-            (dashlang::MAX_FRAME_DELTA * 1000.0).round(),
-            (1.0 / FRAME_INTERVAL.as_secs_f32()).round(),
-        );
-        eprintln!(
-            "demo: press {SWAP_PAINTER:?} to swap the painter on this window, same scene and \
-             same clock"
-        );
-
-        // The first frame is one of the five the generation cannot report.
-        self.force("the first frame");
-    }
-
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: Wake) {
-        match event {
-            Wake::Pulse => {
-                self.apply_pulse();
-                // Rearm only now. The driver is one-shot and has been waiting
-                // since it sent this pulse, so releasing it here — after the
-                // pulse has been applied, and after every early return above —
-                // is what keeps at most one in flight (issue #629). A closed
-                // channel means the driver thread has ended, which happens only
-                // as the loop shuts down.
-                let _ = self.rearm.send(());
-            }
-        }
-    }
-
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        _window_id: WindowId,
-        event: WindowEvent,
-    ) {
-        match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::Resized(size) => self.resized(event_loop, size.width, size.height),
-            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                // The new physical extent, if there is one, arrives as its own
-                // `Resized`. This case is in the forced list precisely because
-                // there may not be one: a scale-factor change can report an
-                // unchanged physical size, and then the resize path correctly
-                // does nothing while the picture still has to be redrawn.
-                eprintln!("demo: scale factor is now {scale_factor}");
-                self.force("a scale-factor change");
-            }
-            // Not every platform preserves the contents of an occluded
-            // surface, and the generation cannot report that they were lost.
-            WindowEvent::Occluded(false) => self.force("re-exposure after occlusion"),
-            // Story #573: the pointer drives the current scene's own named
-            // signal. No wake proxy is needed — this event already reaches a
-            // parked loop, exactly as story #572 anticipated.
-            WindowEvent::CursorMoved { position, .. } => {
-                let (signal, width) = (self.scenes[self.current].signal, self.extent.0);
-                let changed = match self.live.as_mut() {
-                    Some(live) => crate::input::cursor_moved(live, signal, position.x, width),
-                    None => false,
-                };
-                if changed {
-                    self.force("a pointer move");
-                }
-            }
-            // Story #573: two keys drive that same signal to either end of its
-            // range, and one runs the scene's own variant switch. `repeat` is
-            // excluded so holding a key neither floods the signal nor spins the
-            // variant.
-            WindowEvent::KeyboardInput { event, .. } => {
-                // A zero extent means there is no drawable, and that is the
-                // one state in which [`Host::advance_scene`] leaves `current`
-                // pointing at a scene the arena was not built from — where the
-                // incoming scene's action would run against the outgoing
-                // scene's arena and `Txn::set_variant` would panic on a handle
-                // that arena does not carry. A window with no drawable is
-                // minimised and receives no key events, so this guards a state
-                // rather than a case that fires.
-                let drawable = self.extent.0 > 0 && self.extent.1 > 0;
-                if drawable
-                    && event.state == ElementState::Pressed
-                    && !event.repeat
-                    && let PhysicalKey::Code(code) = event.physical_key
-                {
-                    // The painter swap is the host's own, and is checked before
-                    // the scene's keys so that a scene can never take it over.
-                    if code == SWAP_PAINTER {
-                        return self.swap_painter(event_loop);
-                    }
-                    // Copied out before the arena is borrowed: both are `Copy`,
-                    // and the alternative is holding a borrow of `self.scenes`
-                    // across the call.
-                    let entry = &self.scenes[self.current];
-                    let (signal, action) = (entry.signal, entry.action);
-                    let changed = match self.live.as_mut() {
-                        Some(live) => {
-                            crate::input::key(code, signal, action, live, &mut self.arena)
-                        }
-                        None => false,
-                    };
-                    if changed {
-                        self.force("a key press");
-                    }
-                }
-            }
-            WindowEvent::RedrawRequested => self.frame(event_loop),
-            _ => {}
-        }
     }
 }
 
@@ -1050,7 +617,7 @@ mod tests {
         );
     }
 
-    /// The other half: rearming releases exactly one more pulse, so the host
+    /// The other half: rearming releases exactly one more pulse, so the loop
     /// gets a pulse per rearm rather than a burst.
     #[test]
     fn each_rearm_releases_exactly_one_more_pulse() {

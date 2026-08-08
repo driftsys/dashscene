@@ -51,6 +51,9 @@ Reuse all 12, mapped onto the roles in `docs/design/architecture.md`:
                           v0.17 — the wasm/tiny-skia painter it named is
                           retired at v0.15; see the `dashscene-gpu` section
                           below, which records both changes
+    dashscene-desktop     the desktop integration surface, added at story #794
+                          — not one of the 12 originally reserved names; see
+                          its own section below
     dashscore              parked — an authoring IDE, not in scope
     dashscene-compose      parked — Android Jetpack Compose backend, not
                           a target
@@ -271,6 +274,25 @@ make either consumer take on the other's.
   stories rather than about the artifacts: it says story #794 is not story #741
   again with a different `cfg`, so the two should not be scoped as one.
 
+**Where the `Present` seam lands, ruled at story #794 (2026-08-08).** The
+question above named the trait and deliberately did not place it. The crate
+publishes **the trait, its error type and the lean painter's implementation**;
+`demo` keeps `SkiaPresenter` and implements the published trait for it.
+
+The reason is the same one that decided the crate's name, applied one level
+down: `dashscene-skia` is the reference painter the goldens are taken through,
+and `skia-safe` is a vendored C++ build. Shipping its presenter here would make
+every `winit` embedder that only wants a window resolve it — a public dependency
+surface wrong for its consumers, which is exactly what a merged `-web` crate was
+rejected for.
+
+Publishing the trait rather than hardcoding a presenter is also what keeps the
+instrument from story #585 alive. The loop drives `Box<dyn Present>` and names neither
+painter, so the swap key still shows one document, one arena and one clock drawn
+by either — which `dashscene_web::Host` could not offer, since it owns a
+`GpuPainter` directly. That asymmetry is deliberate: the browser has one painter
+to choose from.
+
 **Where the shared policy lives, so two crates do not merely promote a
 duplication.** Between two `publish = false` demonstrations, host policy written
 twice is a minor flaw; between two _published_ integration crates it is a
@@ -290,10 +312,21 @@ published, so that neither is published owning a private copy of it.
 
 **Availability.** Unclaimed on crates.io, and reserved 2026-08-08 as a
 standalone placeholder 0.1.0 built to the same shape as the twelve, with
-`repository` pointing at the public `driftsys/dashscene`. The name is held ahead
-of the directory: there is no `crates/dashscene-desktop` yet, and story #794
-creates it at `0.0.0` like every other crate here. That story therefore does not
-carry the reservation; it still owns the eight workspace registries.
+`repository` pointing at the public `driftsys/dashscene`. The name was held
+ahead of the directory; story #794 created `crates/dashscene-desktop` at
+`0.0.0`, like every other crate here, so that story carried the workspace
+registries and not the reservation.
+
+**The registries story #794 updated**, which is more than the eight that story
+enumerated. `Cargo.toml`'s `members` and `[workspace.dependencies]` and its
+publish-order comment, the `justfile` `publish` recipe, `.git-std.toml`'s
+`scopes` and `[[version_files]]`, this record, `AGENTS.md`, `README.md`,
+`docs/design/architecture.md`, `docs/technotes/glossary.md`,
+`docs/book/overview.md` and `docs/features.md`. **`README.md` and
+`docs/book/overview.md` were not on the list of eight**, and both still
+described `dashscene-web` as a retired stub — a claim story #741 had falsified a
+day earlier. A registry nobody enumerated is a registry nobody updates, which is
+the #445 pattern with a different set of files.
 
 **All 17 names are now reserved.** Checking issue #803's premise that
 `dashscene-desktop` was the unreserved name found two more — `dashpack` and

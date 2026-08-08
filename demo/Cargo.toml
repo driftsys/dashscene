@@ -9,46 +9,29 @@ rust-version.workspace = true
 description = "The showcase host: a window, a presentation seam, and the Skia blit behind it (v0.14, epic #568)."
 
 [dependencies]
-# Boundary B — the `Painter` trait the presenter drives.
+# The desktop integration surface: the window, the frame loop, the generation
+# gate, rebuilding on resize, the `Present` seam and the `.dsb` load (story
+# #794). This is a demonstration of that crate, and consuming it rather than
+# restating it is the point — an embedder writes what is left here, and no more.
+dashscene-desktop.workspace = true
+# Boundary B — the `Painter` trait the Skia presenter drives.
 dashpaint.workspace = true
 # `CommittedScene`, the committed buffer a presenter is handed.
 dashscene-core.workspace = true
-# The v0 reference painter, behind one of the two `Present` implementations.
+# The v0 reference painter, behind this crate's own `Present` implementation.
+# It stays here rather than in the integration crate because `skia-safe` is a
+# vendored C++ build and a `winit` embedder must not resolve it to open a
+# window — issue #794's ruling, and `present.rs` records it.
 dashscene-skia.workspace = true
-# The lean painter, behind the other (story #585). It brings its own surface,
-# so this host names no `wgpu` type and takes no `wgpu` dependency — see
-# `crates/dashscene-gpu/src/surface.rs` for why the surface sits there.
-dashscene-gpu.workspace = true
-# `LiveScene`, the type the frame loop ticks and the scenes hand back.
+# `LiveScene`, the type the scenes hand back and the scripted pulse writes into.
 dashlang.workspace = true
 # The showcase scenes themselves (story #574). A workspace member under
-# `corpus/`, not a published crate: the host holds the loop, the corpus holds
-# the content. Each scene injects its own solver.
+# `corpus/`, not a published crate: this holds the demonstration, the corpus
+# holds the content. Each scene injects its own solver.
 showcase = { path = "../corpus/showcase" }
-# The product layout solver. `document.rs` (story #575) injects one for the
-# loaded document, which has no scene builder of its own to do it.
-dashscene-engine.workspace = true
-# The `.dsb` envelope reader (story #575): `dashbuf::open` for the compiled
-# document `document.rs` loads.
-dashbuf.workspace = true
-# The load gate `document.rs` runs before `dashscene_core::load_document`
-# (story #575).
-dashscene-validator.workspace = true
+# The window type the presenter binds to, and the events the input mapping
+# reads. `dashscene-desktop` owns the loop; this names the same `winit` types it
+# hands over.
 winit.workspace = true
+# The CPU blit the Skia presenter posts through.
 softbuffer.workspace = true
-
-[dev-dependencies]
-# `document.rs`'s mapped-load tests need a file to map, and a mapping is of a
-# path — so the one thing they cannot do is work from bytes in memory. The same
-# reason `dashbuf` carries it (story #597).
-tempfile.workspace = true
-# The same tests build a two-root document, which no committed fixture is:
-# every `goldens/dsb` fixture has one root, and a one-root document cannot tell
-# "the shown root's assets" apart from "every asset in the file" — which is the
-# whole of what the prefetch does (story #597).
-flatbuffers.workspace = true
-# An `AssetEntry` names its payload's canonical BLAKE3, and that hash has to
-# exist before the document naming it can be written — so building a document
-# by hand means computing one. `dashbuf` uses it for the same reason and does
-# not re-export it.
-blake3.workspace = true

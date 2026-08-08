@@ -42,7 +42,10 @@ Two components named in this book are not built: the Unity painter
 (`dashscene-unity` carries Rust FFI bindings only, and the Unity project
 is a separate repository that does not exist yet) and the lean painter
 (`dashscene-gpu`, whose crate exists and draws nothing — epic #569).
-`dashscene-web` is retired, superseded by `dashscene-gpu`.
+The `dashscene-web` name once described a wasm/tiny-skia painter, which is
+retired and superseded by `dashscene-gpu`; the crate is the web
+integration surface since story #741, and `dashscene-desktop` is its
+desktop counterpart since story #794.
 `docs/roadmap.md` is the authority on what has landed.
 
 ## Where things live

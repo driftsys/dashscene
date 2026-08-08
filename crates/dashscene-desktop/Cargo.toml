@@ -1,0 +1,50 @@
+[package]
+name = "dashscene-desktop"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Desktop integration for DashScene: the window-to-surface handoff, the winit frame loop, rebuilding on resize, and a mapped .dsb load bounded by the shown root (story #794)."
+
+[lib]
+name = "dashscene_desktop"
+
+[dependencies]
+# The lean painter and its window surface, behind the one `Present`
+# implementation this crate ships. `dashscene-skia` is deliberately absent: the
+# reference painter is what the goldens are taken through, and a `winit`
+# embedder must not resolve a vendored C++ build to open a window. `demo`
+# implements the published trait for it instead (issue #794's ruling).
+dashscene-gpu.workspace = true
+# Boundary B — the `Painter` trait the presenter drives.
+dashpaint.workspace = true
+# The arena and `CommittedScene`, the committed buffer a presenter is handed.
+dashscene-core.workspace = true
+# `LiveScene`, the type the frame loop ticks — and, since story #810, the owner
+# of the frame-delta clamp and the generation gate this loop reads.
+dashlang.workspace = true
+# The product layout solver, injected for a loaded document, which unlike a
+# scene built in code has no builder of its own to inject one.
+dashscene-engine.workspace = true
+# The `.dsb` envelope reader: `dashbuf::open` for the ranges, `dashbuf::map`
+# for the mapping, and `dashbuf::prefetch` for the shown root's asset set.
+dashbuf.workspace = true
+# The referential load gate, run before the replay through the producer API.
+dashscene-validator.workspace = true
+# The window and its event loop.
+winit.workspace = true
+
+[dev-dependencies]
+# The mapped-load tests need a file to map, and a mapping is of a path — so the
+# one thing they cannot do is work from bytes in memory. The same reason
+# `dashbuf` carries it (story #597).
+tempfile.workspace = true
+# Those tests build a two-root document, which no committed fixture is: every
+# `goldens/dsb` fixture has one root, and a one-root document cannot tell "the
+# shown root's assets" apart from "every asset in the file".
+flatbuffers.workspace = true
+# An `AssetEntry` names its payload's canonical BLAKE3, so building a document
+# by hand means computing one. `dashbuf` uses it for the same reason and does
+# not re-export it.
+blake3.workspace = true

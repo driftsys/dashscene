@@ -1,0 +1,157 @@
+//! Desktop integration for dashscene: what a windowed embedder must have and
+//! would otherwise write for itself (story #794).
+//!
+//! The desktop counterpart of `dashscene-web`, and the same five pieces in
+//! `winit` terms rather than canvas terms:
+//!
+//! 1. **The window-to-surface handoff** — [`GpuPresenter::new`], over
+//!    `dashscene_gpu::SurfaceRenderer`. Blocking, where the browser's is
+//!    asynchronous.
+//! 2. **The frame loop** — [`run`], on `winit`'s event loop, pacing itself at
+//!    60 Hz while the generation advances and parking on an event wait while it
+//!    is steady.
+//! 3. **The generation gate** — which frames are worth drawing. *Delegated*
+//!    rather than held: story #810 moved it to `dashlang::LiveScene::advanced`
+//!    and `mark_shown`, so this crate and the browser one read one rule. The
+//!    loop calls it; nothing here restates it.
+//! 4. **Rebuilding on resize**, and reporting [`Present::document_replaced`] —
+//!    because a new arena's generations restart and nothing in the frames
+//!    themselves says so.
+//! 5. **The `.dsb` load** — [`Document`] for a file, which is **mapped** and
+//!    bounded by the root that is shown, and [`load_bytes`] for a document
+//!    already in memory.
+//!
+//! # What an embedder still writes
+//!
+//! Named here rather than left as whatever did not fit, which is what epic
+//! #793 asks of both integration crates.
+//!
+//! - **[`App::build`] — what to draw.** This crate has no scene registry and
+//!   no opinion about content. An embedder builds a scene into the arena it is
+//!   handed, or loads a document into it, and returns the `LiveScene` the loop
+//!   ticks.
+//! - **Input.** Every window event the loop does not own — which is every
+//!   input event — arrives at [`App::event`] untouched, along with the scene
+//!   and the drawable extent. Mapping a pointer position onto a signal, or a
+//!   key onto a variant switch, is the embedder's: this crate holds no signal
+//!   name, no node name and no variant set.
+//! - **Anything driven from off the loop's thread.** [`App::started`] hands
+//!   over a [`Waker`], because a parked loop cannot otherwise be reached. What
+//!   sends it — a timer, a scripted sequence, a data feed — is the embedder's.
+//! - **Where the diagnostics go.** [`App::note`] receives the loop's own lines;
+//!   a library that wrote them to stderr itself would be deciding an embedder's
+//!   output format. Default: discarded.
+//! - **Which painter.** [`App::presenter`] defaults to the lean painter, and
+//!   overriding it is how a second one is selected at run time — see
+//!   [`present`] for why only one implementation ships here.
+//! - **Error reporting.** [`DesktopError`] implements `Display`; where that
+//!   text goes is the embedder's decision.
+
+use std::io;
+
+use dashbuf::residency::PayloadMismatch;
+use dashlang::LiveScene;
+use dashscene_core::Arena;
+use dashscene_engine::TaffySolver;
+
+mod document;
+mod host;
+pub mod present;
+
+pub use document::Document;
+pub use host::{App, FRAME_INTERVAL, Reaction, Scene, Waker, run};
+pub use present::{Drawn, GpuPresenter, Present, PresentError};
+
+/// Replays a document already in memory, through the **owning** load path.
+///
+/// [`Document`] is the path to prefer for a file: it maps, and it reads only
+/// the payloads the shown root draws, so the cost of opening tracks the root
+/// being drawn rather than the file's size (R5). This one cannot be bounded
+/// that way even in principle — `dashscene_core::load_document` copies every
+/// payload into an owned `ImageAsset`, so it needs bytes for every asset entry
+/// whether or not anything draws them.
+///
+/// It is here for the case that has no file to map: a document compiled into
+/// the binary, or one that arrived over a channel that yielded bytes rather
+/// than a path. An embedder holding a path should not use it.
+pub fn load_bytes(bytes: &[u8], arena: &mut Arena) -> Result<LiveScene, DesktopError> {
+    let (document, payloads) = dashbuf::open_verified(bytes).map_err(DesktopError::Open)?;
+    let report = dashscene_validator::validate_document(&document);
+    if report.has_errors() {
+        return Err(DesktopError::Gate {
+            path: "<in memory>".to_owned(),
+            report: format!("{report:?}"),
+        });
+    }
+    dashscene_core::load_document(&document, &payloads, arena);
+    Ok(dashlang::attach_live(arena, Box::new(TaffySolver::new())))
+}
+
+/// Why the integration could not run.
+///
+/// Every variant is something the *integration* can hit. An embedder's own
+/// failures — no scene by that name, a command line it cannot parse — are the
+/// embedder's to model, and `demo` wraps this in an enum that adds its own.
+/// That split is deliberate: this type is a semver commitment the moment the
+/// crate is published, and a variant naming a scene registry this crate does
+/// not have would be one it could never remove.
+#[derive(Debug)]
+pub enum DesktopError {
+    /// The file could not be mapped, and this is the path that was tried.
+    Map { path: String, error: io::Error },
+    /// The envelope, the document, or an asset's binding.
+    Open(dashbuf::OpenError),
+    /// The document does not pass the referential load gate.
+    Gate { path: String, report: String },
+    /// A payload is not the one the file names.
+    Payload(PayloadMismatch),
+    /// The file binds a **derived** payload through a derivation manifest, and
+    /// this crate has no quality profile to name the rung with. Binding it as
+    /// canonical would tag a KTX2 as whatever format the entry claims, which is
+    /// the mistake issue #640 exists to prevent.
+    Derived { path: String },
+    /// The document carries no root node, so there is nothing to show and no
+    /// subtree to bound the load by.
+    NoRoot { path: String },
+    /// A frame was not put on the window.
+    Present(PresentError),
+    /// The window could not be created.
+    Window(String),
+    /// The event loop could not be built, or ended with a failure.
+    EventLoop(String),
+}
+
+impl std::fmt::Display for DesktopError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Map { path, error } => write!(f, "{path} cannot be mapped: {error}"),
+            Self::Open(error) => write!(f, "{error}"),
+            Self::Gate { path, report } => {
+                write!(f, "{path} fails the load gate: {report}")
+            }
+            Self::Payload(error) => write!(f, "{error}"),
+            Self::Derived { path } => write!(
+                f,
+                "{path} binds a derived payload through its derivation manifest, and this crate \
+                 has no quality profile to name the rung with: it can map a RAW file only \
+                 (issue #640)"
+            ),
+            Self::NoRoot { path } => write!(f, "{path} carries no root node"),
+            Self::Present(error) => write!(f, "{error}"),
+            Self::Window(message) => write!(f, "the window could not be created: {message}"),
+            Self::EventLoop(message) => write!(f, "the event loop: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for DesktopError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Map { error, .. } => Some(error),
+            Self::Open(error) => Some(error),
+            Self::Payload(error) => Some(error),
+            Self::Present(error) => Some(error),
+            _ => None,
+        }
+    }
+}
