@@ -104,12 +104,68 @@ content or fixtures that would be wrong to ship.
 - **Per-crate metadata.** `description`, `license` and `repository` are present
   on every crate; `keywords`, `categories` and a crate-level `README` are not.
   None blocks a publish, and all three affect what the registry page looks like.
-- **The payload budget (#776).** Its scope is ruled — the runtime alone, gated
-  on raw bytes with brotli reported beside it — and the number and the gate are
-  not. That needs a minimal `cdylib` linking an integration crate and nothing
-  else, because dead-code elimination happens at link time and a library crate
-  therefore has no measurable size.
+- **Per-crate `README`s.** Deliberately absent rather than pending. Every crate
+  carries a module document that is the better front page, and docs.rs renders
+  it; a `README` would duplicate it and then drift from it, which is the failure
+  this record's own registry work exists to prevent. Revisit if crates.io's
+  landing page ever matters more than docs.rs's.
 
-Both are recorded here rather than left implied, because a decision record that
-reads as complete is how the next audit is told not to look — which is the same
-failure as the stale comment this story removed from the root manifest.
+Recorded here rather than left implied, because a decision record that reads as
+complete is how the next audit is told not to look — the same failure as the
+stale comment this story removed from the root manifest.
+
+## The payload budget: measured, not gated (#776)
+
+Issue #776's scope was ruled — **the runtime alone**, gate raw bytes and report
+brotli beside them. The number was open, and the figure the issue opens with
+could not settle it: **1.37 MB is `demo_web.wasm`**, a host that reaches
+`showcase` and through it `dashc`, the whole compiler. An embedder loading a
+document compiled elsewhere links none of that. The 789 KB `dashc_wasm` build is
+not subtractable either, being a differently-linked artifact.
+
+A library crate cannot be weighed at all: dead-code elimination happens at link
+time, so `dashscene-web` on its own has no size. Only a linked artifact does.
+So `measure/web-minimal` exists — one `cdylib`, three dashscene dependencies, and
+the shortest code that reaches a drawn frame. `just measure-runtime` builds it
+and `demo-web` identically and reports both.
+
+    artifact             raw       brotli
+    web-minimal      1878181       509465
+    demo-web         3506890      1311191
+
+    rustc 1.97.1 (8bab26f4f 2026-07-14), wasm-bindgen 0.2.126, brotli 1.2.0
+
+**The embeddable runtime is 497 KiB brotli, not 1.25 MiB.** The headline figure
+overstated it by about 2.6x, and the difference is the compiler and the showcase
+scenes — confirmed by diffing the two resolved package sets, which differ by
+`demo-web`, `showcase`, `dashc` and dashc's own tree and by nothing else.
+Post-`wasm-bindgen`; no `wasm-opt`, because that is not a stage this repository
+produces.
+
+**It is a floor rather than a typical figure.** `web-minimal`'s frame hook writes
+nothing, so fat LTO drops the signal-writing paths in `dashlang` and
+`dashscene-core` that any embedder driving its own state would keep. The number
+answers "what is the least this can cost", which is the question #776 asked; it
+does not predict a product host.
+
+**The gate is deliberately deferred, and this is the reason rather than an
+omission.** Three things argue against building one now:
+
+- **It is not in epic #793's definition of done**, which asks that an embedder
+  can draw on either target without copying code, that R5 holds on the web, that
+  nothing is published, and that no golden moves.
+- **A gate needs infrastructure this repository does not have.** `wasm-opt` is in
+  neither the `justfile` nor CI, and neither brotli nor gzip is a workspace
+  dependency. Gating on a compressor properly means the treatment `dashpack`
+  gives zstd — vendored sources, cross-architecture byte-identity measured,
+  `Cargo.lock` pinning the version the result belongs to. That is real work to
+  protect a number with nothing published behind it.
+- **It would gate a moving target.** Issue #822 — the runtime paints every root,
+  so the browser load is only conditionally bounded — will change what an
+  embedder links when it is closed.
+
+So the budget is a **reported number with a reproducible recipe**, and the gate
+belongs with the first real publish — issue #825 carries it, so the deferral is
+tracked rather than living only here. What this buys now is the thing the slice
+was missing: an honest answer to "what does this cost me", instead of one that
+included a compiler.

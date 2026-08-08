@@ -23,6 +23,9 @@ scheme = "semver"
 #   importers   importers/   the Deno/TypeScript Figma importer and its
 #                            capture tool, which have their own
 #                            toolchain and their own CI job
+#   measure     measure/     artifacts that exist to be weighed rather than
+#                            run — the minimal browser embedder the runtime
+#                            payload budget is measured over (issue #776)
 #   demo        demo/        the windowed showcase host — a workspace
 #                            member with its own binary and its own CI
 #                            job, not a published crate (story #571).
@@ -53,6 +56,7 @@ scopes = [
     "corpus",
     "importers",
     "demo",
+    "measure",
     "repo",
     "docs",
     "ci",

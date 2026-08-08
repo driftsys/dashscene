@@ -1,0 +1,36 @@
+[package]
+name = "web-minimal"
+version = "0.0.0"
+publish = false
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "The smallest browser embedder that draws a .dsb — the artifact the runtime payload budget is measured over (issue #776, story #795)."
+
+# A cdylib and nothing else, because there is nothing here to test off wasm —
+# `demo-web` carries an `rlib` beside its cdylib so its own parsing stays
+# reachable from `cargo test`, and this crate has no such logic.
+#
+# Not for link reasons: a second crate type does **not** change the emitted
+# `.wasm`. Checked rather than assumed — the same crate built `["cdylib"]` and
+# `["cdylib", "rlib"]` under this profile produces byte-identical output. Which
+# is also what makes the comparison against `demo-web` fair, since that crate
+# has both.
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# The web integration surface, and the whole point of this crate: what an
+# embedder links when it consumes `dashscene-web` and writes nothing else.
+dashscene-web.workspace = true
+# The arena this hands to the integration.
+dashscene-core.workspace = true
+# `LiveScene`, which `Host::new` takes.
+dashlang.workspace = true
+
+# The browser itself. `wasm-bindgen` is what makes a `#[wasm_bindgen(start)]`
+# entry point exist at all; `wasm-bindgen-futures` is what lets the async
+# adapter acquisition be awaited, which `Surface::attach` requires.
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true

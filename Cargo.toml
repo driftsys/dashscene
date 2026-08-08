@@ -36,6 +36,12 @@ members = [
   # would mean a `cfg` on every dependency line to reach a build with no Skia
   # painter in it at all. `publish = false`, like `demo`.
   "demo-web",
+  # The smallest browser embedder that draws a `.dsb` (issue #776, story #795).
+  # `publish = false`, and outside `crates/` deliberately: it is an artifact to
+  # weigh rather than a crate anyone depends on, and putting it under `crates/`
+  # would oblige it to appear in the publish registries
+  # (`demo/tests/registry_consistency.rs`).
+  "measure/web-minimal",
 ]
 
 [workspace.package]
