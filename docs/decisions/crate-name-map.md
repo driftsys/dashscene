@@ -92,12 +92,19 @@ separate repo only if an external consumer needs the source tree, not
 merely the binary. Publishing `dashpack` as its own crate happens at the
 staging-to-public promotion regardless, like every other crate here.
 
-**Availability.** Unlike the other three new names, `dashpack` is not
-reserved on crates.io. Nothing here is published yet
-(`docs/decisions/repo-staging-and-public-facade.md`), so the reservation
-belongs with the promotion rather than with this story — but the name can
-be squatted out from under the project in the meantime, which is the same
-exposure the original three had before they were reserved.
+**Availability.** Unlike the other three new names, `dashpack` was not
+reserved on crates.io when this section was written. Nothing here is published
+yet (`docs/decisions/repo-staging-and-public-facade.md`), so the reservation was
+left to the promotion rather than to this story — but the name can be squatted
+out from under the project in the meantime, which is the same exposure the
+original three had before they were reserved.
+
+**Superseded 2026-08-08 (owner's ruling, with issue #803).** That deferral
+weighed its own tradeoff wrong: it named the exposure and then accepted it, to
+save one placeholder publish. `dashpack` is reserved as of 2026-08-08, on the
+same terms `dashscene-gpu` sets below. The deferral was found still standing
+while checking issue #803's premise that `dashscene-desktop` was the unreserved
+name; it was not the only one.
 
 ## `dashscene-gpu`, added at the v0.15 open (story #577, 2026-08-01)
 
@@ -164,6 +171,117 @@ not publish the private working repo's name. And the workspace crate stays at
 workspace out of the shared version flow — the same split the twelve are
 already in, where a reserved 0.1.0 sits above a workspace 0.0.0 and the real
 release at promotion is what closes the gap.
+
+## `dashpack-astcenc-sys`, recorded late (story #430, v0.12; recorded 2026-08-08)
+
+    dashpack-astcenc-sys  raw bindings to the vendored, version-pinned astcenc
+                          sources — the ASTC encoder and its in-process
+                          reference decoder, with no external binary
+
+**This section exists because the crate had none.** `dashpack-astcenc-sys`
+landed at v0.12 as the workspace's **fifteenth crate** — 48 minutes after
+`dashpack`, on 2026-07-26 — and was never added to this map.
+
+**Issue #445 named this exact gap, and it was closed as completed with the gap
+still open.** That issue was filed because this crate landed touching
+`Cargo.toml` and nothing else, and it enumerated seven registries that needed
+the entry. The fourth was this file: _"`docs/decisions/crate-name-map.md` — no
+entry."_ PR #448 closed issue #445 as completed while touching six files, none
+of them this one. Issue #795 records the same pattern for the sibling item in
+`.git-std.toml`, so issue #445 left at least two of its seven unfixed.
+
+**A note on the ordinals in this file.** They track the order sections were
+_written_, not the order crates landed. `dashscene-gpu` below calls itself "a
+fifteenth published crate" because this crate had no section when that one was
+written; by landing order `dashpack-astcenc-sys` is the fifteenth crate and
+`dashscene-gpu` the sixteenth. Both sections are left as written, with the
+discrepancy recorded here rather than by renumbering history.
+
+The `-sys` suffix is the Rust convention for a crate that is only bindings to a
+native library, and it is load-bearing here rather than decorative: it is what
+says the vendored C++ sources and the `build.rs` that compiles them live in this
+crate and not in `dashpack`. The split follows the convention's purpose — one
+crate that builds and links the native code, one that is safe Rust over it.
+
+**Availability.** Not reserved on crates.io when it landed, and not noticed as
+unreserved until 2026-08-08. Reserved that day on the same terms as the others.
+It builds and is depended on inside the workspace; like every crate here it has
+never been released, and the reservation is a placeholder rather than a
+release.
+
+## `dashscene-desktop`, added at the v0.17 open (story #794, 2026-08-08)
+
+    dashscene-desktop     the desktop integration surface — the window-to-surface
+                          handoff, the frame loop, and the byte-range document
+                          load path
+
+A seventeenth name, and the seventh that was not among the 12 reserved. Ruled by
+the owner on 2026-08-08, closing **issue #803**. The web half of the same
+question is issue #741, ruled a day earlier: `dashscene-web` becomes the web
+integration crate.
+
+**What the argument is not.** The two hosts take disjoint dependency sets —
+`demo/Cargo.toml` takes `winit` and `dashscene-skia`, `demo-web/Cargo.toml`
+takes `wasm-bindgen`, `wasm-bindgen-futures`, `js-sys` and `web-sys` — and it is
+tempting to call one crate carrying both a fault in the published dependency
+surface. **It is not one, and the record should not rest on it.** Cargo's
+target-conditional sections, `[target.'cfg(target_arch = "wasm32")'.dependencies]`
+and its desktop counterpart, already keep a `winit` consumer from resolving or
+linking any of the browser crates. A merged manifest listing both sets does not
+make either consumer take on the other's.
+
+**Why a second crate, then.** Three reasons that survive that rebuttal:
+
+- **The name would be wrong for half its consumers.** A `winit` embedder
+  depending on `dashscene-web` is a published, semver-bound mistake, and the
+  only repair is a rename — which is the cost this decision exists to avoid
+  paying later.
+- **Scheduling.** Stories #792 and #794 are parallel only with two crates. With
+  one, both edit `dashscene-web` and must sequence, because story #792 changes
+  the load path story #794 would wrap.
+- **The two extractions are not the same work.** `demo/src/present.rs` defines a
+  `Present` trait — `document_replaced()`, and
+  `present(&mut self, scene: &CommittedScene) -> Result<Drawn, PresentError>` —
+  with two implementations behind it. `demo-web` has no such trait and is
+  written directly against the GPU painter. This is an argument about the
+  stories rather than about the artifacts: it says story #794 is not story #741
+  again with a different `cfg`, so the two should not be scoped as one.
+
+**Where the shared policy lives, so two crates do not merely promote a
+duplication.** Between two `publish = false` demonstrations, host policy written
+twice is a minor flaw; between two _published_ integration crates it is a
+semver-bound agreement that nothing checks. Today the frame-delta clamp is
+written twice in two different units — `Duration::from_millis(100)` in
+`demo/src/shell.rs` and `f64 = 0.1` in `demo-web/src/host.rs` — and the
+generation-and-`shown` contract is duplicated the same way, with the web host's
+comment citing the native host rather than the record that binds them.
+
+Ruled with issue #803: that policy lives in `dashlang`, on `LiveScene::tick`.
+`tick(dt, arena) -> u64` already takes the delta that must be clamped and
+already returns the generation the `shown` gate reads, and both hosts already
+depend on `dashlang`. It moves there **before** either integration crate is
+published, so that neither is published owning a private copy of it.
+`docs/decisions/frame-delta-is-clamped-and-the-host-owns-the-clock.md` binds
+"every product painter's host" and governs the move. Story #810 carries it.
+
+**Availability.** Unclaimed on crates.io, and reserved 2026-08-08 as a
+standalone placeholder 0.1.0 built to the same shape as the twelve, with
+`repository` pointing at the public `driftsys/dashscene`. The name is held ahead
+of the directory: there is no `crates/dashscene-desktop` yet, and story #794
+creates it at `0.0.0` like every other crate here. That story therefore does not
+carry the reservation; it still owns the eight workspace registries.
+
+**All 17 names are now reserved.** Checking issue #803's premise that
+`dashscene-desktop` was the unreserved name found two more — `dashpack` and
+`dashpack-astcenc-sys`. Both are real workspace crates that build and are
+depended on today, which is what separates them from a name held for work not
+yet done; neither is released, because nothing here is. Those two are also the
+pair missing from `.git-std.toml`'s `[[version_files]]`, so one pass missed both
+registries at once. The `[[version_files]]` half is issue #795's.
+
+When checking this against crates.io, send a `User-Agent` header: the API
+rejects requests without one, and a check that does not distinguish that
+rejection from a 404 reads every name as unreserved.
 
 ## Why
 
