@@ -28,6 +28,9 @@ into the records below. Per-story decisions land here directly:
 - [house-style.md](house-style.md) — repo tooling follows
   driftsys/git-std, driftsys/upskill, driftsys/markspec conventions
   (`docs/archive/2026-07-14-scope-decisions.md` §7).
+- [publishable-and-the-first-version.md](publishable-and-the-first-version.md)
+  — the workspace versions together, the first real version is 0.2.0, and the
+  registry checks that say so (story #795).
 - [figma-corpus-self-authored-only.md](figma-corpus-self-authored-only.md)
   — nothing enters `corpus/` that the project did not author
   (`docs/archive/2026-07-14-scope-decisions.md` §8's licensing ruling).
