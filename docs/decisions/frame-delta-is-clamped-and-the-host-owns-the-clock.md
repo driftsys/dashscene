@@ -1,29 +1,70 @@
 # The frame delta is clamped, and the host owns the clock
 
-    status   accepted (story #572, 2026-07-31)
-    scope    demo/src/shell.rs (the frame loop), demo/tests/clock_invariant.rs
-             (the invariant's enforcement), and the host of every future
-             product painter
+    status   accepted (story #572, 2026-07-31); rule 1 amended by story #810,
+             2026-08-08 — the clamp moved from each host into
+             `LiveScene::tick`
+    scope    crates/dashlang (MAX_FRAME_DELTA and the clamp, since story #810),
+             demo/src/shell.rs and demo-web/src/host.rs (the frame loops, which
+             own their clocks), demo/tests/clock_invariant.rs and
+             demo/tests/host_policy_invariant.rs (the two invariants'
+             enforcement), and the host of every future product painter
     binds    every animation test, because a test that wants a stall must pass
              the clamped value rather than a wall-clock one; and every product
              painter's host, because the clamp value is a cross-painter
              agreement rather than a per-host setting
     related  docs/decisions/dashcue-spring-uses-semi-implicit-euler.md,
              docs/decisions/dashcue-scheduler-storage-stays-vec.md,
+             docs/decisions/crate-name-map.md (the dashscene-desktop section,
+             which is where story #810's move was ruled),
              docs/specification/01-goals-and-requirements.md (G2, R4),
              docs/specification/02-principles.md (P3)
-    refs     #572, #568, #476
+    refs     #572, #568, #476, #810, #803, #775
 
 ## The decision
 
 Three rules, and the third is the one that outlives the other two.
 
-1. **The host clamps the frame delta**: `dt = min(elapsed, 100 ms)`, and there
-   is **no accumulator**. The clamped value is what `LiveScene::tick` receives.
+1. **The frame delta is clamped**: `dt = min(elapsed, 100 ms)`, and there is
+   **no accumulator**.
 2. **No crate at or below `LiveScene` reads a clock.** This was already true
    and held by accident; it is now asserted by `demo/tests/clock_invariant.rs`.
 3. **Both product painters clamp at the same value, and that value is
    configured rather than inherited from either engine's default.**
+
+## Amended by story #810, 2026-08-08: who applies the clamp
+
+Rule 1 was written as "**the host** clamps the frame delta", and both hosts
+did — in two different units, `Duration::from_millis(100)` in the native one
+and `f64 = 0.1` in the browser one, so keeping them equal already needed a
+unit conversion that nothing performed. Rule 3 is what made that a defect
+rather than a detail: it requires the two values to be equal, and nothing
+checked that they were.
+
+**The clamp now lives in `dashlang`, as `MAX_FRAME_DELTA`, applied inside
+`LiveScene::tick`.** A host passes the raw interval its own clock measured.
+Ruled with issue #803 and recorded in `docs/decisions/crate-name-map.md`,
+because stories #741 and #794 turn both hosts into _published_ integration
+crates — at which point a rule written twice becomes a semver-bound agreement
+that nothing checks.
+
+**This title still holds, and now describes a seam rather than a single
+owner.** The host owns the clock: it decides what "elapsed" means, and when its
+clock is stopped — the first frame, and the frames that end a parked loop, both
+of which start from zero. Those are facts about a host's own timeline. What a
+host no longer decides is how large a step is too large.
+
+Rule 3 is now structural rather than an agreement: there is one value, so two
+painters cannot disagree about it. `demo/tests/host_policy_invariant.rs` fails
+if a host declares one of its own again, and `crates/dashlang/tests/frame_policy.rs`
+pins what the clamp does.
+
+**The generation-and-`shown` gate moved with it**, for the same reason and in
+the same story. It was the other rule both hosts held privately, and the
+browser host documented its own copy by citing the native host rather than this
+record (issue #775). It is now `LiveScene::advanced` and `LiveScene::mark_shown`.
+That also makes one rule structural that each host previously had to remember:
+a rebuild produces a new `LiveScene` over a new arena whose generations
+restart, and the gate starts clear with it.
 
 ## Why there is no accumulator
 

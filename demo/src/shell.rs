@@ -4,10 +4,10 @@
 //! One frame is four steps, and nothing else:
 //!
 //! ```text
-//! dt = min(elapsed, 100 ms)
-//! LiveScene::tick(dt, &mut arena)
+//! dt = elapsed                          // this host's clock
+//! LiveScene::tick(dt, &mut arena)       // clamps dt, returns the generation
 //! arena.committed()
-//! present
+//! present                               // only when LiveScene::advanced()
 //! ```
 //!
 //! P3 holds by construction. The host owns time and nothing producer-side runs
@@ -23,8 +23,10 @@
 //! for a log line. No crate at or below `LiveScene` may read a clock at all —
 //! that is what makes an animation test reproducible, and
 //! `demo/tests/clock_invariant.rs` asserts it rather than leaving it to
-//! review. The clamp, the absence of an accumulator, and the invariant are
-//! argued in
+//! review. The clamp itself is **not** applied here: story #810 moved it into
+//! `LiveScene::tick`, so one value serves every host rather than one per host.
+//! What stays here is the clock — what "elapsed" means, and when it is stopped.
+//! The clamp, the absence of an accumulator, and the invariant are argued in
 //! `docs/decisions/frame-delta-is-clamped-and-the-host-owns-the-clock.md`.
 //!
 //! # There is no accumulator
@@ -38,10 +40,11 @@
 //!
 //! # An idle frame neither paints nor presents
 //!
-//! `LiveScene::tick` returns the commit generation and holds it steady on an
-//! idle frame. The host records the generation the window currently shows and
-//! skips both `paint` and `present` when `tick` returns that same value. This
-//! needs no new API: no flag, no extra return value, and no change to
+//! `LiveScene::tick` holds the commit generation steady on an idle frame, and
+//! `LiveScene::advanced` reports whether it moved since the last
+//! `LiveScene::mark_shown`. The host skips both `paint` and `present` when it
+//! has not. That gate was this host's own until story #810 gave it one owner,
+//! so a second host could not disagree with it; it still needs no change to
 //! `dashpaint` or boundary B.
 //!
 //! It is a requirement rather than an optimisation because no painter has a
@@ -128,17 +131,6 @@ pub type SceneAction = fn(&mut LiveScene, &mut Arena);
 
 /// The window's requested size, in logical pixels.
 const WINDOW_SIZE: LogicalSize<u32> = LogicalSize::new(960, 600);
-
-/// The largest `dt` handed to `LiveScene::tick`, whatever the wall clock says.
-///
-/// **A convention, not a derived bound.** The lower bound is real — it has to
-/// sit above ordinary hitches or it fires in normal operation — but nothing
-/// distinguishes 100 ms from Unity's 333 ms, and deriving it needs a frame
-/// budget this project does not have. The binding rule is that every product
-/// painter's host clamps at the *same* value, and that it is configured rather
-/// than inherited from an engine default. Argued in
-/// `docs/decisions/frame-delta-is-clamped-and-the-host-owns-the-clock.md`.
-const MAX_FRAME_DELTA: Duration = Duration::from_millis(100);
 
 /// The pace the loop runs at while the generation advances: 60 Hz.
 ///
@@ -260,7 +252,6 @@ pub fn run(
         live: None,
         extent: (0, 0),
         previous_frame: None,
-        shown: None,
         forced: None,
         pulse_index: 0,
         ticks: 0,
@@ -474,9 +465,6 @@ struct Host {
     /// When the previous frame ran. `None` means the frame clock is stopped:
     /// on the first frame, and across the loop's own wait.
     previous_frame: Option<Instant>,
-    /// The generation the window currently shows. `None` before the first
-    /// present, and after a rebuild, whose generations count from a new arena.
-    shown: Option<u64>,
     /// Why the next frame must paint whatever the generation says. Consumed by
     /// the frame that acts on it.
     forced: Option<&'static str>,
@@ -516,13 +504,19 @@ impl Host {
         // panic is not.
         let now = Instant::now();
         let dt = match self.previous_frame {
-            Some(previous) => now.saturating_duration_since(previous).min(MAX_FRAME_DELTA),
+            // Raw, and unclamped here. `LiveScene::tick` applies the ceiling,
+            // so the rule has one statement rather than one per host (story
+            // #810). The clock stays the host's, which is the split the
+            // decision record's own title names.
+            Some(previous) => now.saturating_duration_since(previous),
             // The clock was stopped: this is the first frame, or the first one
             // after the loop parked. No animation time passed during the
             // loop's own wait, because nothing was animating through it, so
             // the frame that ends the wait starts from zero rather than from
             // however long the window sat untouched. This is what makes the
-            // clamp a guard against *external* stalls only.
+            // clamp a guard against *external* stalls only, and it is a fact
+            // about this host's timeline rather than a policy, so it stays
+            // here.
             None => Duration::ZERO,
         };
         self.previous_frame = Some(now);
@@ -535,7 +529,7 @@ impl Host {
         let tick_took = before_tick.elapsed();
         self.ticks += 1;
 
-        let advanced = self.shown != Some(generation);
+        let advanced = live.advanced();
         let forced = self.forced.take();
         if !advanced && let Some(reason) = forced {
             // The generation could not report this one, which is the whole
@@ -544,7 +538,7 @@ impl Host {
             eprintln!("demo: forced redraw — {reason}");
         }
         if advanced || forced.is_some() {
-            match self.paint(generation) {
+            match self.paint() {
                 Ok(present_took) => self.record_frame(tick_took, present_took),
                 Err(error) => return self.fail(event_loop, error),
             }
@@ -571,7 +565,7 @@ impl Host {
     /// describing how often the window was off-screen rather than what drawing
     /// costs. `dashscene_gpu::Drawn` carries the reason that distinction was
     /// made observable.
-    fn paint(&mut self, generation: u64) -> Result<Option<Duration>, PresentError> {
+    fn paint(&mut self) -> Result<Option<Duration>, PresentError> {
         let (Some(window), Some(presenter)) = (self.window.as_ref(), self.presenter.as_mut())
         else {
             return Ok(None);
@@ -583,7 +577,9 @@ impl Host {
         let before = Instant::now();
         let drawn = presenter.present(self.arena.committed())?;
         let took = before.elapsed();
-        self.shown = Some(generation);
+        if let Some(live) = self.live.as_mut() {
+            live.mark_shown();
+        }
         self.presents += 1;
         Ok(drawn.drew().then_some(took))
     }
@@ -744,10 +740,11 @@ impl Host {
         // Restore the phase, so a resize resumes the scene where it was rather
         // than snapping every signal back to its initial value.
         pulse(&mut live, self.pulse_index);
+        // Generations count from a new arena, so nothing this scene commits
+        // can be compared against what the window showed of the last one. The
+        // gate is `LiveScene`'s and a new one starts unshown, so replacing the
+        // scene clears it rather than the host remembering to (story #810).
         self.live = Some(live);
-        // Generations count from a new arena, so the number the window shows
-        // no longer names anything in this scene.
-        self.shown = None;
         self.announce_painter();
     }
 
@@ -891,7 +888,7 @@ impl ApplicationHandler<Wake> for Host {
         eprintln!(
             "demo: frame loop — dt clamped to {} ms, {} Hz while the generation advances, \
              waiting for an event while it is steady",
-            MAX_FRAME_DELTA.as_millis(),
+            (dashlang::MAX_FRAME_DELTA * 1000.0).round(),
             (1.0 / FRAME_INTERVAL.as_secs_f32()).round(),
         );
         eprintln!(
