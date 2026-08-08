@@ -332,9 +332,11 @@ the #445 pattern with a different set of files.
 `dashscene-desktop` was the unreserved name found two more — `dashpack` and
 `dashpack-astcenc-sys`. Both are real workspace crates that build and are
 depended on today, which is what separates them from a name held for work not
-yet done; neither is released, because nothing here is. Those two are also the
+yet done; neither is released, because nothing here is. Those two were also the
 pair missing from `.git-std.toml`'s `[[version_files]]`, so one pass missed both
-registries at once. The `[[version_files]]` half is issue #795's.
+registries at once. Story #795 closed that half and made it checkable:
+`demo/tests/registry_consistency.rs` now fails when any crate is absent from any
+of the machine-readable registries.
 
 When checking this against crates.io, send a `User-Agent` header: the API
 rejects requests without one, and a check that does not distinguish that

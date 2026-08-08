@@ -75,68 +75,104 @@ types = [
     "revert",
 ]
 
-# One [[version_files]] entry per crate, pointing at its version string
-# in Cargo.toml. Every version bump and changelog entry goes through
-# `git std bump` (see `just release`), never a manual edit.
+# **What `git std bump` rewrites.** Together-versioning was ruled on issue #795,
+# and it *is* this list: a crate the list omits does not move, which is exactly
+# what issue #445 predicted and what happened to `dashpack` and
+# `dashpack-astcenc-sys` — absent here until this story while present in every
+# other registry.
+#
+# Two kinds of entry, and the split is the point.
+#
+# **The crates need no entry here.** They inherit `version.workspace = true`
+# from the root `[workspace.package]`, and git-std's builtin Cargo handling
+# already moves that key — section-scoped, and correctly skipping the dotted
+# `version.workspace = true` in each crate.
+#
+# An unanchored `regex = 'version = "([^"]+)"'` entry was written here first and
+# removed on review. It was redundant, and worse than redundant: its only
+# property was "the first `version = ` in the whole file", with none of the
+# builtin's section or key guards. Seven lines below the workspace version sits
+# `rust-version = "1.88"`, so alphabetising `[workspace.package]` would have made
+# a bump write `rust-version = "0.3.0"` — valid semver that every toolchain
+# satisfies, so the MSRV floor would have gone with nothing red. Demonstrated by
+# running it, not argued.
+#
+# **One entry per internal dependency requirement**, each anchored on its own
+# crate name. That verbosity is not a style choice — git-std's `write_version`
+# calls `.captures()` and splices exactly **one** span per entry
+# (`crates/standard-version/src/regex_engine.rs`), so a single unanchored entry
+# against this file would move one requirement and leave the rest at `^0.0.0`.
+# That is worse than no entry at all: every crate with an internal dependency
+# would be broken on first publish, and the registry would look covered.
+# Verified by running `git std bump` and reading all 18 resulting values, not by
+# reading this config (issue #795).
 [[version_files]]
-path = "crates/dashscene/Cargo.toml"
-regex = 'version = "([^"]+)"'
+path = "Cargo.toml"
+regex = 'dashbuf = \{ path = "crates/dashbuf", version = "([^"]+)"'
 
 [[version_files]]
-path = "crates/dashscene-core/Cargo.toml"
-regex = 'version = "([^"]+)"'
+path = "Cargo.toml"
+regex = 'dashc = \{ path = "crates/dashc", version = "([^"]+)"'
 
 [[version_files]]
-path = "crates/dashscene-engine/Cargo.toml"
-regex = 'version = "([^"]+)"'
+path = "Cargo.toml"
+regex = 'dashcue = \{ path = "crates/dashcue", version = "([^"]+)"'
 
 [[version_files]]
-path = "crates/dashscene-typeset/Cargo.toml"
-regex = 'version = "([^"]+)"'
+path = "Cargo.toml"
+regex = 'dashlang = \{ path = "crates/dashlang", version = "([^"]+)"'
 
 [[version_files]]
-path = "crates/dashscene-validator/Cargo.toml"
-regex = 'version = "([^"]+)"'
+path = "Cargo.toml"
+regex = 'dashpack = \{ path = "crates/dashpack", version = "([^"]+)"'
 
 [[version_files]]
-path = "crates/dashpaint/Cargo.toml"
-regex = 'version = "([^"]+)"'
+path = "Cargo.toml"
+regex = 'dashpack-astcenc-sys = \{ path = "crates/dashpack-astcenc-sys", version = "([^"]+)"'
 
 [[version_files]]
-path = "crates/dashscene-skia/Cargo.toml"
-regex = 'version = "([^"]+)"'
+path = "Cargo.toml"
+regex = 'dashpaint = \{ path = "crates/dashpaint", version = "([^"]+)"'
 
 [[version_files]]
-path = "crates/dashcue/Cargo.toml"
-regex = 'version = "([^"]+)"'
+path = "Cargo.toml"
+regex = 'dashscene = \{ path = "crates/dashscene", version = "([^"]+)"'
 
 [[version_files]]
-path = "crates/dashlang/Cargo.toml"
-regex = 'version = "([^"]+)"'
+path = "Cargo.toml"
+regex = 'dashscene-core = \{ path = "crates/dashscene-core", version = "([^"]+)"'
 
 [[version_files]]
-path = "crates/dashbuf/Cargo.toml"
-regex = 'version = "([^"]+)"'
+path = "Cargo.toml"
+regex = 'dashscene-desktop = \{ path = "crates/dashscene-desktop", version = "([^"]+)"'
 
 [[version_files]]
-path = "crates/dashc/Cargo.toml"
-regex = 'version = "([^"]+)"'
+path = "Cargo.toml"
+regex = 'dashscene-engine = \{ path = "crates/dashscene-engine", version = "([^"]+)"'
 
 [[version_files]]
-path = "crates/dashscene-unity/Cargo.toml"
-regex = 'version = "([^"]+)"'
+path = "Cargo.toml"
+regex = 'dashscene-gpu = \{ path = "crates/dashscene-gpu", version = "([^"]+)"'
 
 [[version_files]]
-path = "crates/dashscene-web/Cargo.toml"
-regex = 'version = "([^"]+)"'
+path = "Cargo.toml"
+regex = 'dashscene-skia = \{ path = "crates/dashscene-skia", version = "([^"]+)"'
 
 [[version_files]]
-path = "crates/dashscene-desktop/Cargo.toml"
-regex = 'version = "([^"]+)"'
+path = "Cargo.toml"
+regex = 'dashscene-typeset = \{ path = "crates/dashscene-typeset", version = "([^"]+)"'
 
 [[version_files]]
-path = "crates/dashscene-gpu/Cargo.toml"
-regex = 'version = "([^"]+)"'
+path = "Cargo.toml"
+regex = 'dashscene-unity = \{ path = "crates/dashscene-unity", version = "([^"]+)"'
+
+[[version_files]]
+path = "Cargo.toml"
+regex = 'dashscene-validator = \{ path = "crates/dashscene-validator", version = "([^"]+)"'
+
+[[version_files]]
+path = "Cargo.toml"
+regex = 'dashscene-web = \{ path = "crates/dashscene-web", version = "([^"]+)"'
 
 [versioning]
 tag_prefix = "v"

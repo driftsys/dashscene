@@ -179,6 +179,33 @@ book:
 release:
     git std bump
 
+# What would have to be true before anything is published (story #795).
+#
+# Repeatable rather than a one-time audit, which is the point: both registry
+# defects this recipe checks for were found by hand once and had already
+# recurred by the time they were found again (issue #445, then story #795).
+#
+# It does not publish, and it does not bump. `cargo package` is the one step
+# that answers "what does a consumer actually get" — it builds the .crate a
+# consumer downloads and fails on the things only packaging can see: a missing
+# build-script input, a path dependency with no version, a file the manifest
+# excludes but the build needs.
+#
+# `--no-verify` is deliberately NOT passed: the compile of the packaged tree is
+# most of the value.
+package:
+    cargo test -p demo --test registry_consistency
+    # The publishable members, derived rather than listed: `--workspace` packages
+    # `publish = false` members too — that flag stops `cargo publish`, not
+    # `cargo package` — and `demo` then fails, because its own `showcase`
+    # dependency is declared by path with no version. (`showcase` has a version;
+    # the declaration is what lacks one, which is fine for a crate nobody
+    # publishes and fatal the moment something packages its consumer.)
+    # A hand-written `--exclude` list would be one more registry to drift.
+    cargo metadata --format-version 1 --no-deps \
+      | jq -r '.packages[] | select(.publish == null) | "-p \(.name)"' \
+      | xargs cargo package --allow-dirty
+
 # Publish every crate to crates.io in dependency order.
 publish:
     cargo publish -p dashbuf

@@ -1,6 +1,6 @@
 [package]
 name = "dashpack-astcenc-sys"
-version = "0.0.0"
+version.workspace = true
 edition.workspace = true
 # The binding code and the build script are MIT, like the rest of the
 # workspace; the sources under `vendor/astcenc` are Arm's, under Apache-2.0.

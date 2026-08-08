@@ -39,6 +39,17 @@ members = [
 ]
 
 [workspace.package]
+# **The one version, inherited by every crate.** Together-versioning was ruled
+# on issue #795, and this is what makes it structural rather than a habit: a
+# crate cannot hold a version of its own to drift, because it does not hold one
+# at all. It also collapses `.git-std.toml`'s `[[version_files]]` for the crates
+# from one entry each to this single line.
+#
+# `0.0.0` is a placeholder and not a release. The first real version is
+# **0.2.0** (issue #795), because every one of the 17 names is reserved on
+# crates.io at 0.1.0 and the whole workspace moves as one, so the first real
+# release has to clear the entire 0.1.x band.
+version = "0.0.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/driftsys/dashscene-staging"
@@ -63,9 +74,11 @@ rust-version = "1.88"
 # dashcue precedes dashscene-engine: the engine's FLIP (story #22) consumes it.
 # dashpack follows dashc: it will compile against dashbuf's asset and manifest
 # schemas, and nothing in the workspace depends on it (epic #345).
-# dashpack-astcenc-sys precedes dashpack, which links it (story #430). The
-# justfile's `publish` recipe does not list it yet, and neither do the other
-# registries that enumerate crates — issue #445.
+# dashpack-astcenc-sys precedes dashpack, which links it (story #430). Both are
+# in the `publish` recipe and in every other registry that enumerates crates;
+# the sentence here used to say otherwise, describing the state issue #445 was
+# filed in and never updated when that half was fixed. A comment asserting a gap
+# that has been closed is how the next audit is told not to look (issue #795).
 [workspace.dependencies]
 dashscene = { path = "crates/dashscene", version = "0.0.0" }
 dashscene-core = { path = "crates/dashscene-core", version = "0.0.0" }
