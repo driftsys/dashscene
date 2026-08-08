@@ -1127,11 +1127,88 @@ choice is designed against. The `Container::parse` question it also waited on is
 answered — story #587 settled it, and the answer leaves `parse` unchanged.
 Independent of v0.14.
 
-### v0.17 — embedding and integration — open
+### v0.17 — embedding and integration — closed
 
 **Epic #793.** Opened at the v0.15 phase-end revision (epic #569), which placed
 the deferred issues, and planned at the v0.16 revision (2026-08-07), which split
-it.
+it. **Closed 2026-08-08**, all six stories done. Design capture:
+`docs/archive/2026-08-07-v017-DRIVER-PROMPT.md`.
+
+Delivered: **the integration surface as a thing rather than an example.**
+`crates/dashscene-web` (story #741) and `crates/dashscene-desktop` (story #794)
+each hold the five pieces an embedder must have, `demo-web` and `demo` keep the
+demonstration and consume them, and `demo/tests/integration_surface.rs` fails if
+any piece is missing from a crate or found in its demonstration — which is the
+check the epic's definition of done demanded in place of a reviewer's judgement.
+The frame policy moved to `dashlang::LiveScene` first (story #810), so neither
+crate was published owning a private copy. R5 was demonstrated failing and then
+made to hold on the web target (story #792), conditionally — see below. The
+workspace learned what `publishable` means and the checks that say so
+(story #795), and the backend implementation guide landed with a worked example that
+compiles (story #727). As-built:
+[`design/host-integration.md`](design/host-integration.md); the decisions:
+[`decisions/the-integration-surface-is-two-published-crates.md`](decisions/the-integration-surface-is-two-published-crates.md)
+and
+[`decisions/publishable-and-the-first-version.md`](decisions/publishable-and-the-first-version.md).
+
+**Zero goldens moved**, and **nothing was published** — both required by the
+epic's definition of done, and both re-checked at the close rather than taken
+from the stories that claimed them. `git diff --stat 4367d5d..e5b6846 -- '*.png'`
+is empty across the whole slice, and every one of the 17 names on crates.io is
+still at its placeholder 0.1.0 while the workspace sits at 0.0.0.
+
+**Two things the definition of done did not get cleanly, recorded rather than
+smoothed over.** R5 holds on the web only **conditionally**: the browser load
+fetches the shown root's payloads when nothing else draws, and the union over
+every root when another root does, because the runtime paints every root and a
+row with no bytes would reach the painter (issue #822 — the largest thing this
+slice surfaced, and now v0.19's).
+
+**And "conditionally" understates it, so the line is best read as not met as
+written.** The definition of done asks for R5 on the web "measured the way
+epic #594 measured it on native", and #594's many-frame document is **sixty-five root
+frames each drawing a distinct tile** — `goldens/tooling/tests/startup_scaling.rs`,
+whose `frame()` sets `parent: None`. That document takes `Bound::EveryRoot` on
+the web and reads all 1 935 927 B of it. The web fixture that passes is
+`many_frames(64, false)`, where the unshown roots draw nothing. So **the shape
+native passes over is exactly the shape web widens on**: the criterion is met on
+the web over a different document, not over that one. Ruled rather than left as
+a caveat —
+[`decisions/the-shown-root-bounds-the-load-not-the-paint.md`](decisions/the-shown-root-bounds-the-load-not-the-paint.md)
+records painting every root as designed, adopts confining it as the target, and
+names the root-selection concept and the `dfs_order` renumbering that #822 does
+not mention.
+
+And the payload budget (#776) is a **measured, reproducible number rather than a
+gate**: 497 KiB brotli for the embeddable runtime, against the 1.37 MB that
+issue's own title opened with, which turned out to be `demo_web.wasm` — a host
+that links the whole compiler. The gate is deferred with its reasons and tracked
+by issue #825, which the close also found cannot compare raw bytes for equality,
+the artifact not being byte-reproducible.
+
+**The measurement the next slice needs: almost nothing is shared between the two
+halves.** The two crates take the same seven dashscene dependencies and differ
+only in `wasm-bindgen`/`js-sys`/`web-sys` against `winit` — but the shared
+_code_ is one constant and two methods, and they live in `dashlang` rather than
+in either crate. The load paths, the loops and the surface handoffs share
+nothing but a name. So an embedder's job is shared in **policy** and not in
+mechanism, which is the input v0.19's planning most needs: Android is a third
+integration crate rather than a case inside an existing one, and the C ABI is
+the shared artifact rather than a common host crate.
+
+**One process finding, because it predicts defects better than anything else
+this repository measures.** The `/code-review` fan-out produced **77 findings**
+across the twelve pull requests this slice landed — counted at the close from
+the `## Review findings` checklist each PR body carries, PRs #804 to #827, which
+is a lower bound rather than an estimate since a finding fixed before the body
+was written leaves no row. An author pass would have caught almost none of them.
+Three separate times a false claim came from copying an adjacent doc comment and
+dropping the qualifier that made it true — and the records story found a fourth
+of exactly that shape, in `dashscene-desktop`'s own error-type documentation.
+**CI was down for billing for the whole slice** — every job failed within
+seconds having executed no steps, re-checked on the annotations endpoint at the
+close — so every merge rested on local evidence with the exception recorded on
+the pull request.
 
 **The split, and why.** The entry below predicted that a slice naming five
 targets — two of them at zero — was larger than one slice, and named the C API
@@ -1203,17 +1280,20 @@ generations restart, and the byte-range `.dsb` load path over `dashbuf::prefix`.
 either**, which is the argument that they are integration rather than
 demonstration.
 
-Holds:
+Held, and both answered:
 
-- **#741 — does `dashscene-web` become the web integration crate?** The name is
-  held, registered in the workspace and empty since story #588 retired the
-  painter role. It is the slice's first question and the answer shapes the web
-  and desktop half.
+- **#741 — does `dashscene-web` become the web integration crate?** Ruled yes
+  by the owner on 2026-08-07, and built by the story of the same number. It was
+  the slice's first question, and the answer shaped the desktop half too: issue
+  #803 then asked the same question of the desktop and was ruled a day later,
+  giving `dashscene-desktop`.
 - **#727 — a backend implementation guide, with a worked example painter.**
-  Scope unchanged from filing: a document, covering the two seams a backend can
-  sit on — implement `Painter` at boundary B, or consume the instance buffer
-  behind the lean painter. It serves Unity and any new backend, and it is
-  documentation rather than platform work.
+  Landed, scope unchanged from filing: a document covering the two seams a
+  backend can sit on — implement `Painter` at boundary B, or consume the
+  instance buffer behind the lean painter —
+  [`technotes/implementing-a-backend.md`](technotes/implementing-a-backend.md).
+  It named one thing it deliberately does not settle, a **portable conformance
+  suite**, which is now filed and placed rather than left in that sentence.
 
 Figma import needs no work here. `importers/figma/` and `dashc.wasm` already do
 it; what an embedder lacks is a way to reach them, which is the packaging
@@ -1229,10 +1309,13 @@ It also records why an AIDL out-of-process host is deferred rather than
 rejected, and why v0.17 builds the `SurfaceView` path only, with `TextureView`
 deferred to v1 alongside the case that motivates it.
 
-**Planned 2026-08-07.** Epic #793 carries the story breakdown and the order.
-Two questions are open in it and are to be answered before the stories that
-depend on them, the way #741 was: whether desktop gets an integration crate of
-its own and what it is called, and what #776's payload budget covers.
+**Planned 2026-08-07.** Epic #793 carried the story breakdown and the order.
+The two questions open in it were both answered before the stories that
+depended on them, the way #741 was: **#803** gave desktop a crate of its own,
+`dashscene-desktop`, on 2026-08-08, and **#776** ruled that the payload budget
+covers the runtime alone and gates raw bytes with brotli reported beside them,
+leaving the number and the gate to story #795 — which delivered the number and
+deferred the gate to issue #825, with the reasons recorded rather than implied.
 
 Depends on: v0.15 for the painter an embedder embeds, and on v0.16 for the load
 path the `.dsb` half of it wraps.
@@ -1322,6 +1405,55 @@ the thing that enforces it.
 Issue #767 (`madvise`) is waiting on this slice rather than on v1's hardware:
 **Android is the first target where a genuinely cold page cache is ordinary
 rather than contrived**, which is the harness that measurement needs.
+
+**Confirmed against what v0.17 built (2026-08-08).** The structure above was
+ratified before either integration crate existed, and the question it left open
+was how much of an embedder's job is common. The answer is now measured rather
+than guessed: **the policy, and nothing else.** `dashscene-web` and
+`dashscene-desktop` take the same seven dashscene dependencies and differ only
+in their platform crates, but the shared code is one constant and two methods —
+`dashlang::MAX_FRAME_DELTA` and `LiveScene::advanced`/`mark_shown` — and the
+load paths, loops and surface handoffs share nothing but a name
+([`design/host-integration.md`](design/host-integration.md)). Two consequences,
+and neither changes the layering:
+
+- **Android is a third integration crate**, not a `cfg` arm inside an existing
+  one and not a case for a common host abstraction. The common part was looked
+  for and found, and it was small enough to sit on `LiveScene`.
+- **The C ABI is the shared artifact**, which is what D2 already proposes. This
+  slice's evidence supports it rather than undermining it: what generalises
+  across hosts is the data contract, not the host code.
+
+Holds:
+
+- **#822 — the runtime paints every root, so "the shown root" bounds only the
+  load.** The largest thing v0.17 surfaced, and **already ruled** rather than
+  carried here as an open question:
+  [`decisions/the-shown-root-bounds-the-load-not-the-paint.md`](decisions/the-shown-root-bounds-the-load-not-the-paint.md)
+  records painting every root as designed and adopts confining the solve, the
+  committed table and the paint to the shown root as the target. What this slice
+  owes is the build, and the record names two pieces the issue does not: a
+  **root-selection concept**, since both hosts hardcode `first_root` and no host
+  can say which root it shows, and `Arena::dfs_order` being **the shared index
+  space**, so root-scoping it makes a change of shown root a renumbering event
+  the dirty-set contract must treat like `document_replaced`. Closing it makes
+  debt #779 fixable and changes what an embedder links, which is why issue
+  #825's payload gate waits on it. It also names a cost nothing measures yet:
+  sixty-five artboards of solve and committed table **per frame** while one is
+  shown.
+- **Three paired debts across the two integration crates, each pair one
+  decision**: #813/#818 a recoverable loss ends the frame loop, #814/#820 a
+  started loop cannot be stopped, #815/#819 the adapter is exposed only as a
+  formatted string. The first two pairs are breaking changes and are free only
+  while nothing is published; settled separately, the two crates diverge on
+  what a recoverable failure means. Adding a third integration crate before
+  they are settled would make the divergence a three-way one.
+- **#828 — a portable conformance suite**, named by
+  [`technotes/implementing-a-backend.md`](technotes/implementing-a-backend.md)
+  as the thing it deliberately does not settle. Layer 2's suite is
+  `dashscene-gpu`'s today, and R-T5's promise is better served by one a second
+  painter can port. It is filed against this slice because a C ABI and a second
+  platform are when a second implementation first has to prove itself.
 
 Depends on: v0.17 for what an embedder consumes, and on the C ABI this slice
 builds. Independent of v0.18.

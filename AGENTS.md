@@ -27,8 +27,12 @@ directly — don't silently diverge from it.
 
 This is `driftsys/dashscene-staging`, a **private working repo**.
 `driftsys/dashscene` itself stays public and untouched — it's reserved
-as the project's future facade (docs, book, site) and holds the 12
-originally-squatted crate names. Nothing here is public yet. When
+as the project's future facade (docs, book, site), and it's the
+repository every reserved crates.io name points at. There are **19** of
+them: the 12 squatted in March 2026, before this repo's first commit,
+plus 7 reserved during development as the crates needing them arrived.
+Seventeen are this workspace's crates; `dashscore` and
+`dashscene-compose` stay parked. Nothing here is public yet. When
 there's a real version running, staging's content gets promoted into
 `dashscene` — the exact mechanism (fresh push vs. history merge) is
 intentionally undecided until that point
@@ -137,7 +141,9 @@ driftsys/git-std, driftsys/upskill, driftsys/markspec.
 
 ## Where to start
 
-v0 is built one slice at a time, v0.1 through v0.13. **`docs/roadmap.md`
+v0 is built one slice at a time, v0.1 onward — the count grows as
+phase-end revisions open new ones, so read the roadmap for the range
+rather than a number here. **`docs/roadmap.md`
 holds the slice map** — which slices are done and which remain, what
 each delivers, and how they depend on each other — and marks each slice
 closed or open. The current slice is the first one still open; the epics
@@ -168,8 +174,10 @@ while the switch itself is core's. `dashlang` builds directly on
 ## Plan tracking
 
 The v0 plan lives as GitHub issues on this repo: one `epic`-labeled
-issue and one milestone per `docs/roadmap.md` slice (v0.1 … v0.13),
-broken into `story`-labeled issues. Stories are split so that
+issue and one milestone per `docs/roadmap.md` slice, broken into
+`story`-labeled issues. A slice that is opened but not yet planned has
+its milestone and no epic, which is where issues surfaced by the
+previous slice are placed. Stories are split so that
 independent stories can run in parallel; each story is worked in its
 own git worktree, on the branch named in the story issue, and its body
 lists what it depends on and what it blocks.

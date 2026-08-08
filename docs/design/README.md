@@ -46,6 +46,11 @@ directly:
   instance buffer as the painter's output, the four-storage-buffer wall that shaped
   the paint heap, atlas residency, layers and the backdrop blur, and the
   four-layer verification net (v0.15, epic #569).
+- [host-integration.md](host-integration.md) — the two integration crates,
+  `dashscene-web` and `dashscene-desktop`: the five pieces an embedder must
+  have, the byte-range and mapped load paths, the two frame loops, the
+  published `Present` seam, and the checks that keep the surface out of the
+  demonstrations (v0.17, stories #741, #810, #794, #792).
 - [goldens.md](goldens.md) — the golden-image diff tooling and the v0.1
   walking-skeleton golden scene, the v0.1 slice's closing component
   (story #6); the v0.2 flex-vocabulary goldens, closing epic #7

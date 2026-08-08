@@ -39,6 +39,11 @@ private repo, `driftsys/dashscene-staging`.
 - When there is a real version running, `dashscene-staging`'s content
   gets promoted into `dashscene`. The exact mechanism — a fresh push or a
   history merge — is intentionally undecided until that point.
-- Nothing in `dashscene-staging` is public yet. `dashscene` carries the 12
-  originally reserved crate names and no working code until the
-  promotion happens.
+- Nothing in `dashscene-staging` is public yet. `dashscene` carries no
+  working code until the promotion happens.
+- **It is the `repository` every reserved name points at, and there are now
+  19 of them** — the 12 originally reserved, plus 7 reserved during
+  development, each verified against crates.io at the v0.17 close (story
+  #796). Seventeen are this workspace's crates; `dashscore` and
+  `dashscene-compose` stay parked. The names, their dates and the reason
+  each was added late are in [crate-name-map.md](crate-name-map.md).

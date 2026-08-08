@@ -2,7 +2,8 @@
 
     status   accepted
     date     2026-07-11
-    scope    the 13-crate Cargo workspace
+    scope    the Cargo workspace's crate names — 13 when this was decided,
+             17 today, each addition recorded in its own section below
 
 ## Context
 

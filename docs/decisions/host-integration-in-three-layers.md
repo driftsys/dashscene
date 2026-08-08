@@ -1,24 +1,33 @@
 # Host integration in three layers
 
     status   **accepted 2026-08-07**, at v0.17's opening (epic #793). Nothing
-             here is built. The slice it belongs to is **v0.19**, not v0.17:
-             the planning session took the split this record's own scope line
-             anticipated, and the C ABI is the seam it cut on.
-    date     2026-08-05; ratified and re-scoped 2026-08-07
+             in the three layers is built. The slice it belongs to is
+             **v0.19**, not v0.17: the planning session took the split this
+             record's own scope line anticipated, and the C ABI is the seam it
+             cut on.
+    date     2026-08-05; ratified and re-scoped 2026-08-07; slice numbers
+             corrected in place 2026-08-08 (story #796, the v0.17 close)
     source   the v0.15 phase-end revision (epic #569), which opened v0.17
     scope    embedding into a platform host: how a platform surface reaches
              `dashscene-gpu`, how app state drives a scene, and how a scene is
              authored from the host's language. **v0.19 applies it to Android
              only**; iOS and Unity are v1.
 
-    A note on slice numbers. This record was written expecting v0.17 to carry
-    both the packaging half and the mobile half. `docs/roadmap.md` predicted
-    that would be too large and named the C API as the seam; v0.17's opening
-    took that split. **So every "v0.17" below that means the mobile bring-up
-    now means v0.19**, and v0.17 is web and desktop packaging alone (epic
-    #793). The layering, the C ABI, `SurfaceView`-only and the deferrals are
-    ratified unchanged — only which slice builds them moved. Story #796 checks
-    this reading at the v0.17 close.
+    A note on slice numbers, now applied rather than asked for. This record
+    was written expecting v0.17 to carry both the packaging half and the
+    mobile half. `docs/roadmap.md` predicted that would be too large and named
+    the C API as the seam; v0.17's opening took that split, and the
+    ratification note added then asked a reader to read "v0.17" as "v0.19"
+    wherever the mobile bring-up was meant. **Story #796 made that check at
+    the v0.17 close and the references now say v0.19**, so nothing below has
+    to be translated. Five sentences in the body carried the wrong number, all
+    of them naming the mobile slice: D5's heading and its "builds the
+    SurfaceView path and only that", the iOS-and-Unity deferral, the iOS
+    paragraph's closing clause, and the narrowing argument under
+    "Consequences". Exactly one body sentence meant the packaging half — the
+    context paragraph's "that half is v0.17 (epic #793)" — and it was already
+    correct. The layering, the C ABI, `SurfaceView`-only and the deferrals are
+    ratified unchanged; only which slice builds them moved.
 
     What ratification commits to, and what it does not: the structure, so a
     story breaks against it rather than inventing one. **D3a is a risk to
@@ -35,7 +44,7 @@ does not bear on it. **Android is at zero** — no target triple, no toolchain, 
 no FFI beyond `dashscene-unity`'s Unity-facing bindings — so it is the slice's
 one new platform.
 
-**iOS and the Unity host are deliberately not in v0.17.** iOS is a second
+**iOS and the Unity host are deliberately not in v0.19.** iOS is a second
 platform bring-up with the same zero foundation, and Unity is blocked on
 decisions rather than code — `unity-separate-repo-deferred.md` puts the project
 in another repository and `unity-painter-uses-brg.md` is still `proposed`. Both
@@ -48,6 +57,14 @@ rebuilding on resize with `document_replaced`, and the byte-range `.dsb` load
 path. **Two of those five were wrong in that host's first cut and no test caught
 either**, which is the argument that they are integration rather than
 demonstration.
+
+**Those five are now built, for web and desktop, and the Android story inherits
+them rather than re-deriving them** — `crates/dashscene-web` (story #741) and
+`crates/dashscene-desktop` (story #794), closed at the v0.17 close.
+[the-integration-surface-is-two-published-crates.md](the-integration-surface-is-two-published-crates.md)
+records what they share and what they do not, and its finding bears directly on
+layer 0 below: of the five, only the frame policy turned out to be common code,
+and it lives in `dashlang` rather than in either host crate.
 
 This record proposes the shape of the mobile half, in three layers, so the
 planning session breaks stories against a structure rather than inventing one.
@@ -99,7 +116,7 @@ the adapter maximum issue #714 made adapter-derived.
 `layoutSubviews`, and the division of labour between the view and `wgpu-hal`'s
 Metal surface is the first thing that story should verify against the pinned
 crate rather than assume. Recorded here only so the layering is visibly
-platform-general; nothing in v0.17 depends on it.
+platform-general; nothing in v0.19 depends on it.
 
 **D3a — Android means Vulkan, and the GLES fallback carries the same exposure
 that made WebGL2 unbuildable. Verify it before the slice commits.**
@@ -139,7 +156,7 @@ split-screen.
 destruction says tear the renderer down. The former is a measurement and
 scheduling concern (story #586), the latter a lifetime one.
 
-**D5 — v0.17 is `SurfaceView` semantics only. `TextureView` is v1.**
+**D5 — v0.19 is `SurfaceView` semantics only. `TextureView` is v1.**
 
 A `SurfaceView` is its own layer, composited by SurfaceFlinger and able to land
 on a hardware overlay: no extra copy. A `TextureView` becomes a texture the
@@ -154,7 +171,7 @@ case where the scene must be transformed, clipped or z-ordered _inside_ the
 composition. So the axis is SurfaceView-versus-TextureView, and View-versus-
 Compose is a matter of which host the embedder already has.
 
-**So v0.17 builds the SurfaceView path and only that** — it is the efficient
+**So v0.19 builds the SurfaceView path and only that** — it is the efficient
 one, and it is what a full-screen or fixed-panel HMI wants. `TextureView`
 support, through `AndroidEmbeddedExternalSurface` or a plain `TextureView`, is
 deferred to v1 with the case that motivates it: a scene the composition has to
@@ -201,14 +218,14 @@ a layout.
 The Android work divides into: the C ABI (shared with the iOS and Unity hosts
 that follow in v1, and with any future out-of-process host), a handle type and
 lifecycle shim, a signal-binding layer, and a DSL projection. Only the first is
-shared with the web and desktop packaging half, which is why `docs/roadmap.md`
-names it as the likely seam to split the slice on.
+shared with the web and desktop packaging half, which is the seam
+`docs/roadmap.md` named and the one v0.17's opening cut on.
 
 **None of this reduces the toolchain cost, which is the real unknown.** The
 target triples, the NDK toolchain and CI for them are at zero, and no amount of
 API design moves them. A planning session should size that first.
 
-**Narrowing v0.17 to one new platform is what makes the slice sizeable at all.**
+**Narrowing v0.19 to one new platform is what makes the slice sizeable at all.**
 It was five targets when the slice was opened; iOS and Unity moving to v1, and
 `TextureView` with them, leaves exactly one bring-up. The layering above is
 unchanged by that, which is the test that it was the right decomposition.

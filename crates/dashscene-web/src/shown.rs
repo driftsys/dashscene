@@ -284,7 +284,7 @@ mod tests {
     ///   shown root is safe and R5 holds.
     /// - `true` — every frame draws its own, so every payload is needed the
     ///   moment the painter walks the committed table, and the load widens to
-    ///   the whole document ([`Bound::WholeDocument`]).
+    ///   every root that draws ([`Bound::EveryRoot`]).
     ///
     /// Roots rather than a nested tree because R5 is about the *shown* root. A
     /// one-root document cannot tell "the shown root's assets" from "every asset
@@ -393,7 +393,7 @@ mod tests {
     /// the same root.
     ///
     /// The many-frame document's other frames draw no asset, which is the shape
-    /// the bound is **safe** over — see [`Bound::WholeDocument`] for why the
+    /// the bound is **safe** over — see [`Bound::EveryRoot`] for why the
     /// other shape cannot be bounded while the painter walks every root.
     ///
     /// This is what fails against the path this story replaced, which fetched

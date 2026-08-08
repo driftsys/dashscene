@@ -11,10 +11,15 @@ into the records below. Per-story decisions land here directly:
 - [repo-staging-and-public-facade.md](repo-staging-and-public-facade.md) —
   `dashscene` stays the public facade; `dashscene-staging` is the private
   working repo (`docs/archive/2026-07-14-scope-decisions.md` §1).
-- [crate-name-map.md](crate-name-map.md) — the 13-crate workspace reuses
-  the 12 already-reserved crates.io names, mapped onto
+- [crate-name-map.md](crate-name-map.md) — the workspace reuses the 12
+  already-reserved crates.io names, mapped onto
   `docs/design/architecture.md`'s architecture
-  (`docs/archive/2026-07-14-scope-decisions.md` §2).
+  (`docs/archive/2026-07-14-scope-decisions.md` §2); it has grown to 17
+  crates, and each name added since is recorded there in its own section.
+- [the-integration-surface-is-two-published-crates.md](the-integration-surface-is-two-published-crates.md)
+  — what an embedder consumes on the web and on the desktop, why it is two
+  crates rather than one, and the finding that the shared half is policy
+  rather than mechanism (issues #741 and #803, slice v0.17).
 - [dsb-format-and-one-schema.md](dsb-format-and-one-schema.md) — `.dsb`
   is the file extension; one flatbuffer schema serves both the file and
   wire roles (`docs/archive/2026-07-14-scope-decisions.md` §3).
@@ -210,6 +215,15 @@ into the records below. Per-story decisions land here directly:
   a bare range, the residency takes the bytes rather than holding the region,
   and its second-touch fast path is not built because it returned bytes nothing
   had checked.
+- [the-shown-root-bounds-the-load-not-the-paint.md](the-shown-root-bounds-the-load-not-the-paint.md)
+  — the runtime paints every root, so "the shown root" is a bound on the load
+  and a value nothing below the loader reads. Painting every root is recorded
+  as designed rather than as a defect; confining the solve, the committed table
+  and the paint to the shown root is adopted as the target and held against
+  v0.19, with the selection concept and the index-space renumbering it also
+  needs. Until then a host widens its load and reports that it did, and R5's
+  status is stated per target **and** per document shape (issue #822, ruled at
+  the close of slice v0.17).
 - [dsb-frozen-fixture-r7-guard.md](dsb-frozen-fixture-r7-guard.md) — a
   frozen, checked-in `.dsb` byte fixture guards R7's append-only schema
   evolution (debt #64); binds every edit to `dashbuf.fbs`.

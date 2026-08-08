@@ -190,9 +190,12 @@ tooling).
 ## Status
 
 This is `driftsys/dashscene-staging`, a **private working repository**. Nothing
-here is published: the crate names on crates.io are placeholder reservations
-made before development started, and no code from this repository has been
-released under any of them.
+here is published: all 17 crate names on crates.io are placeholder
+reservations, and no code from this repository has been released under any of
+them. Ten of the seventeen were reserved in March 2026, before this repository
+existed; the other seven were reserved as the crates that need them arrived,
+the most recent three on 2026-08-08
+([`docs/decisions/crate-name-map.md`](docs/decisions/crate-name-map.md)).
 [`driftsys/dashscene`](https://github.com/driftsys/dashscene) is a
 separate public repository, reserved as the project's future facade; it holds
 those names and no working code. Staging's content is promoted into it once
@@ -200,9 +203,9 @@ there is a real version running, and the mechanism is deliberately still
 undecided
 ([`docs/decisions/repo-staging-and-public-facade.md`](docs/decisions/repo-staging-and-public-facade.md)).
 
-v0 is built one slice at a time. Slices v0.1 to v0.15 have closed. v0.16 —
-loading performance — is the current slice, and v0.17, platform reach, is opened
-but not yet planned.
+v0 is built one slice at a time. Slices v0.1 to v0.17 have closed. v0.18 —
+animation vocabulary — is next, and v0.19 — the Android bring-up, the C ABI and
+the three host-integration layers — is opened but not yet planned.
 [`docs/roadmap.md`](docs/roadmap.md) carries the slice map and what each one
 delivered; GitHub issues carry the live state.
 

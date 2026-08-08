@@ -668,10 +668,46 @@ _possible_ — a payload never read is never paged in — but it is not what mak
 it true.
 
 **And the mechanism differs by target.** There is no `mmap` in a browser.
-`demo-web` fetches each payload as its own HTTP range response and proves it
-with the same call the native host uses over its mapping. Section discipline is
-what both have in common; the mapping is one host's way of holding the bytes.
+`dashscene-web` fetches each payload as its own HTTP range response and proves
+it with the same call the native host uses over its mapping. Section discipline
+is what both have in common; the mapping is one host's way of holding the bytes.
 
 So the requirement's claim holds on both targets and its parenthetical
 describes one of them. Read it as naming the native mechanism, not as the
 definition of the requirement.
+
+**The document shape differs by target too, and that is the larger of the two
+qualifications.** Added at the v0.17 close (story #796), from
+[`../decisions/the-shown-root-bounds-the-load-not-the-paint.md`](../decisions/the-shown-root-bounds-the-load-not-the-paint.md)
+D5. The claim that holds is:
+
+> cold-start cost tracks the shown root **on native for any document**, and **on
+> the web for a document whose unshown roots draw no asset**.
+
+The reason is not in either loader. **The runtime paints every root** — the
+solve runs over `arena.roots()`, `Arena::dfs_order` walks all of them into one
+committed table, and a painter walks the whole table — so a payload the load
+skipped is one the painter can still reach. Native survives that because a
+mapping makes every byte addressable whether or not it was verified; that is
+debt #779, and it is the price of the native bound. A browser has no equivalent:
+a payload never fetched has no bytes, so bounding unconditionally would hand the
+painter an empty row. `dashscene_web::shown::Bound` therefore widens to every
+drawing root and **reports that it did**, which is why the two cases are
+distinguishable at all.
+
+**The benchmark's own many-frame document is in the widened class**, and that is
+worth stating plainly rather than leaving to be discovered:
+`goldens/tooling/tests/startup_scaling.rs` builds sixty-five root frames each
+drawing a distinct tile (`frame()` sets `parent: None`), so on the web that
+document reads all 1 935 927 B. The web equality is asserted over
+`many_frames(64, false)` — sixty-four entries in the file, one of them drawn —
+which falsifies cost-scaling-with-file-size honestly, and is not the document
+this section measured on native.
+
+**What removes the condition is D2 of that record**: confine the solve, the
+committed table and the paint to the root that is shown. It is a change to
+`dashscene-engine`, `dashscene-core` and every painter rather than to either
+integration crate, it needs a root-selection concept that no host has today, and
+it is held against v0.19 as issue #822. Until then this criterion is met on
+native and met on the web for one document shape, and nothing here should be
+read as more than that.

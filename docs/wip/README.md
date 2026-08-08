@@ -11,10 +11,10 @@ project's convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports nine files
+## Why the WIP gate currently reports eight files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-nine and exits non-zero. All nine are deliberate, accepted exceptions rather
+eight and exits non-zero. All eight are deliberate, accepted exceptions rather
 than ungardened debt, and they are recorded here so the gate's result is
 explained rather than merely tolerated.
 
@@ -35,11 +35,16 @@ is ungardened debt.
 until 2026-08-02, while eight files were tracked — the v0.14/v0.15 breakdown
 was added and never listed. It went from seven to eight again later the same
 day, when the v0.15 driver prompt was added — since archived, and described
-below as one of the fourteen. Issue #663 was then filed against the count rather
+below as one of the fifteen. Issue #663 was then filed against the count rather
 than against this ledger, and asserted eight ungardened files when seven were
 accounted for here. It went from eight to nine on 2026-08-05, when v0.16's
 driver prompt was added while v0.15's was still held. It went back to eight on
-2026-08-07, when epic #594 closed and v0.16's prompt was archived. Re-derive the
+2026-08-07, when epic #594 closed and v0.16's prompt was archived. Both of the
+next two transitions fell on 2026-08-08: to nine when v0.17's prompt landed
+(`0ab6547`, and note it is _named_ for the 2026-08-07 planning session that
+wrote it, not for the day it was committed), and back to eight when epic #793
+closed and that prompt was archived. **The two prompts never overlapped**, which
+the file names alone would suggest they did. Re-derive the
 number from `git ls-files docs/wip/` when touching this section rather than
 trusting the prose.
 
@@ -56,22 +61,27 @@ went stale because a commit that removes a file from this directory has to edit
 this file in the same commit, and that is not enforced by anything. **Archiving
 a capture and updating this ledger are one change, not two.**
 
-**Eight of the nine are design captures**, described below, and **one driver
-prompt is held** — `2026-08-07-v017-DRIVER-PROMPT.md`, added the day v0.17 was
-planned. Driver prompts — the brief a session is handed to carry out a named
+**All eight are design captures**, described below, and **no driver prompt is
+held**. Driver prompts — the brief a session is handed to carry out a named
 piece of work — are transient by construction, spent the moment their work
 lands, and the convention is to archive them verbatim rather than garden them
-into records. Fourteen are in `docs/archive/`: thirteen `*-DRIVER-PROMPT.md`
+into records. Fifteen are in `docs/archive/`: fourteen `*-DRIVER-PROMPT.md`
 plus the one `*-SPIKE.md`, which is counted there because it was archived
 verbatim beside the prompt that carried out its design rather than gardened.
 
-**`2026-08-07-v017-DRIVER-PROMPT.md` empties when epic #793 closes**, archived
-verbatim to `docs/archive/` on the same rule every prompt before it followed. It
-holds no decision and no design: it is current state, the story order, the
-per-story loop, and the failure modes this repo has actually hit — so there is
-nothing in it to garden into a record, and everything in it goes stale the
-moment the slice does. Its own `status` block says the same, and says that
-removing it and editing this file are one commit.
+**The v0.17 prompt left when epic #793 closed** (2026-08-08), archived verbatim
+as `docs/archive/2026-08-07-v017-DRIVER-PROMPT.md` on the same rule every prompt
+before it followed. It held no decision and no design: it was current state, the
+story order, the per-story loop, and the failure modes this repo has actually
+hit — so there was nothing in it to garden into a record, and everything in it
+went stale the moment the slice did. Its own `status` block said the same, and
+said that removing it and editing this file are one commit, which is how it was
+done. It was amended twice on 2026-08-08 rather than rewritten — first with the
+four rulings that unblocked the slice, then again after five pull requests had
+landed — and the archived copy carries that amendment above a body left unedited
+on purpose, so what was known when it was written is still legible. By the close
+its story states were stale and its traps section was not, which is why
+story #796 was told to archive it rather than to garden anything out of it.
 
 ## The three animation captures, added 2026-08-07
 
@@ -117,7 +127,7 @@ above already says why that happened — **re-derive from `git ls-tree` and
 `git ls-files` rather than trusting the prose**, and that applies to a claimed
 "first" exactly as it applies to a count.
 
-One of the fourteen is `2026-07-27-t2-checks-that-cannot-fail-DRIVER-PROMPT.md`, v0.13's
+One of the fifteen is `2026-07-27-t2-checks-that-cannot-fail-DRIVER-PROMPT.md`, v0.13's
 `t2-check-has-no-teeth` tier — 19 items whose common property was an assertion
 that could not distinguish right from wrong. It was archived on 2026-08-02, when
 epic #362 closed.
