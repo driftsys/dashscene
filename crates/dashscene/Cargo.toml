@@ -6,6 +6,8 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Umbrella crate — public API surface / facade over the dashscene stack."
+keywords = ["ui", "rendering", "graphics", "layout", "scene"]
+categories = ["graphics", "rendering"]
 
 [lib]
 name = "dashscene"

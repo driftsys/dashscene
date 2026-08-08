@@ -6,6 +6,8 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Skia reference painter — v0 native painter, reference forever (docs/design/architecture.md)."
+keywords = ["skia", "painter", "raster", "rendering", "graphics"]
+categories = ["graphics", "rendering"]
 
 [lib]
 name = "dashscene_skia"

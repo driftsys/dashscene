@@ -6,6 +6,8 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Paint table (fill/stroke/effect params, token refs, material class) + the painter trait — boundary B (docs/design/architecture.md)."
+keywords = ["painter", "rendering", "graphics", "ui"]
+categories = ["graphics", "rendering::graphics-api"]
 
 [lib]
 name = "dashpaint"

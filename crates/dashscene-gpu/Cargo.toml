@@ -6,6 +6,8 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "The lean painter: instanced quads and analytic SDF over wgpu, covering native and web from one codebase (docs/decisions/wgpu-is-the-lean-painter.md)."
+keywords = ["wgpu", "gpu", "sdf", "rendering", "graphics"]
+categories = ["graphics", "rendering::graphics-api"]
 
 [lib]
 name = "dashscene_gpu"

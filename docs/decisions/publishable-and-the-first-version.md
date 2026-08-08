@@ -99,11 +99,8 @@ was then undone — this decision publishes nothing.
 golden harness — none is something an embedder depends on, and each names
 content or fixtures that would be wrong to ship.
 
-## What this decision does not settle
+## One thing this decision settles by leaving it out
 
-- **Per-crate metadata.** `description`, `license` and `repository` are present
-  on every crate; `keywords`, `categories` and a crate-level `README` are not.
-  None blocks a publish, and all three affect what the registry page looks like.
 - **Per-crate `README`s.** Deliberately absent rather than pending. Every crate
   carries a module document that is the better front page, and docs.rs renders
   it; a `README` would duplicate it and then drift from it, which is the failure

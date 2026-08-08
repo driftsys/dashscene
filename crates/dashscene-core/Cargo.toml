@@ -6,6 +6,8 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Semantic model: arena, node tree, layout and paint tables, and the staged-mutation producer API (docs/design/architecture.md)."
+keywords = ["ui", "scene-graph", "arena", "layout", "graphics"]
+categories = ["graphics", "rendering"]
 
 [lib]
 name = "dashscene_core"
