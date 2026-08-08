@@ -1358,7 +1358,12 @@ landed — closing it took the only tracker with it.
 Holds: **#770** the rotation channel, **#771** variant transitions serialize
 (sibling of #255, which is the same absence on the binding side — one decision
 should cover both), **#772** loop tracks, **#773** reading Figma's prototype
-reactions, which the importer already fetches and discards.
+reactions. That last one was described here as reading something "the importer
+already fetches and discards", and **checking it on 2026-08-08 found no code
+and no fixture in this repository mentioning `reactions` at all** — the REST
+call would carry one and nothing strips it, but no captured file has ever held
+one, so the story's first task is authoring and capturing a Figma file with a
+prototype interaction. Issue #773's body is corrected.
 
 Filed alongside but deliberately outside the epic, placement for the same
 revision: **#774** static SVG import (no new vocabulary, no schema change, no

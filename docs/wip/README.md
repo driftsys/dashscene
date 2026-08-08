@@ -11,10 +11,10 @@ project's convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports eight files
+## Why the WIP gate currently reports nine files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-eight and exits non-zero. All eight are deliberate, accepted exceptions rather
+nine and exits non-zero. All nine are deliberate, accepted exceptions rather
 than ungardened debt, and they are recorded here so the gate's result is
 explained rather than merely tolerated.
 
@@ -44,7 +44,10 @@ next two transitions fell on 2026-08-08: to nine when v0.17's prompt landed
 (`0ab6547`, and note it is _named_ for the 2026-08-07 planning session that
 wrote it, not for the day it was committed), and back to eight when epic #793
 closed and that prompt was archived. **The two prompts never overlapped**, which
-the file names alone would suggest they did. Re-derive the
+the file names alone would suggest they did. It went back to nine on 2026-08-09,
+when v0.18's prompt landed — written on 2026-08-08 against a `main` that moved
+underneath it, so its first revision counted ten and had to be re-derived on
+the rebase. Re-derive the
 number from `git ls-files docs/wip/` when touching this section rather than
 trusting the prose.
 
@@ -61,8 +64,9 @@ went stale because a commit that removes a file from this directory has to edit
 this file in the same commit, and that is not enforced by anything. **Archiving
 a capture and updating this ledger are one change, not two.**
 
-**All eight are design captures**, described below, and **no driver prompt is
-held**. Driver prompts — the brief a session is handed to carry out a named
+**Eight of the nine are design captures**, described below, and **one driver
+prompt is held** — `2026-08-08-v018-DRIVER-PROMPT.md`, added the day v0.17
+closed. Driver prompts — the brief a session is handed to carry out a named
 piece of work — are transient by construction, spent the moment their work
 lands, and the convention is to archive them verbatim rather than garden them
 into records. Fifteen are in `docs/archive/`: fourteen `*-DRIVER-PROMPT.md`
@@ -82,6 +86,21 @@ landed — and the archived copy carries that amendment above a body left unedit
 on purpose, so what was known when it was written is still legible. By the close
 its story states were stale and its traps section was not, which is why
 story #796 was told to archive it rather than to garden anything out of it.
+
+**`2026-08-08-v018-DRIVER-PROMPT.md` empties when epic #769 closes**, on the
+same rule. It was written while v0.17 was one story from closing, because
+v0.18's only remaining condition was that close — the slice has no technical
+dependency on v0.17, and story #796 was the phase-end revision `AGENTS.md`
+requires before the next slice starts. That story landed hours later, so the
+prompt's gate section describes a condition already discharged and says so.
+
+Five of its findings came from checking epic #769's own issue bodies against
+the code, and **three of those bodies were wrong**: the `Prop` variant count is
+37 rather than 34, stated wrongly in both epic #769 and story #770, and
+story #773's premise that the importer discards Figma `reactions` names
+something no captured fixture has ever carried. Counting the two _errors_
+rather than the three _bodies_ is how an earlier revision of this paragraph
+said "two", which is the same class of mistake as the count above it.
 
 ## The three animation captures, added 2026-08-07
 
@@ -121,7 +140,10 @@ returns two `*-DRIVER-PROMPT.md` files at `dca9ec7`, `a99f3b3`, `33363f3` and
 ("track the **two** driver prompts for the next v0.11 sessions", "driver
 **prompts** for the vector-blur and t2 handoffs"). It happened again from
 2026-08-05, when v0.16 opened while epic #569 was still open, and ended the
-same day when v0.15 closed and its prompt was archived. An earlier revision of
+same day when v0.15 closed and its prompt was archived. It nearly happened
+again on 2026-08-08: v0.18's prompt was written while epic #793 was still
+open, and the epic closed before that prompt landed, so only one is held.
+An earlier revision of
 this paragraph claimed that overlap was a first. It was not, and the paragraph
 above already says why that happened — **re-derive from `git ls-tree` and
 `git ls-files` rather than trusting the prose**, and that applies to a claimed
@@ -280,7 +302,12 @@ issue #274 the z-interleave, and the as-built records now carry all of it
 decision record's two resolution sections). Both it and the driver prompt that
 carried out its design are archived verbatim in `docs/archive/`.
 
-No driver prompt is held here now. The most recent one archived is
+One driver prompt is held here now, v0.18's, as the section above says. This
+paragraph said "none" from 2026-08-07, when v0.17's prompt was added and this
+sentence was not touched, until that prompt was archived a day later and the
+sentence became accidentally true again. It is the same shape as the count
+above it, and for the same reason: adding a file here and editing this file are
+one change, and nothing enforces it. The most recent one archived is
 `2026-08-05-v016-DRIVER-PROMPT.md`, on 2026-08-07 when epic #594 closed; before
 it `2026-08-02-v015-DRIVER-PROMPT.md`, on 2026-08-05 when epic #569 closed;
 before it `2026-07-27-t2-checks-that-cannot-fail-DRIVER-PROMPT.md`, on 2026-08-02 when
