@@ -18,7 +18,7 @@ use dashlang::LiveScene;
 use dashscene_core::Arena;
 use dashscene_engine::TaffySolver;
 
-use crate::{HostError, fetch};
+use crate::{WebError, fetch};
 
 /// Where the loader reads bytes from.
 enum Ranges {
@@ -44,7 +44,7 @@ impl Ranges {
         }
     }
 
-    async fn get(&self, range: Range<u64>) -> Result<Vec<u8>, HostError> {
+    async fn get(&self, range: Range<u64>) -> Result<Vec<u8>, WebError> {
         if range.is_empty() {
             return Ok(Vec::new());
         }
@@ -58,7 +58,7 @@ impl Ranges {
             Self::Resident(bytes) => bytes
                 .get(range.start as usize..range.end as usize)
                 .map(<[u8]>::to_vec)
-                .ok_or(HostError::ShortFile),
+                .ok_or(WebError::ShortFile),
         }
     }
 }
@@ -69,7 +69,7 @@ impl Ranges {
 /// gate, load — with the opening half replaced by the prefix flow. The gate is
 /// not skipped because the file arrived over a network: it is the one place
 /// that reports a referentially broken document by name.
-pub(crate) async fn load(url: &str, arena: &mut Arena) -> Result<LiveScene, HostError> {
+pub async fn load_document(url: &str, arena: &mut Arena) -> Result<LiveScene, WebError> {
     let first = fetch::range(url, 0, MIN_PREFIX as u64 - 1).await?;
     if !first.ranged {
         crate::host::log(&format!(
@@ -102,17 +102,17 @@ pub(crate) async fn load(url: &str, arena: &mut Arena) -> Result<LiveScene, Host
             Err(PrefixError::NeedMore { need }) => {
                 prefix_bytes = ranges.get(0..need as u64).await?;
             }
-            Err(PrefixError::Malformed(error)) => return Err(HostError::Envelope(error)),
+            Err(PrefixError::Malformed(error)) => return Err(WebError::Envelope(error)),
         }
     }
     let Some(envelope) = envelope else {
-        return Err(HostError::EnvelopeUnreachable);
+        return Err(WebError::EnvelopeUnreachable);
     };
 
     // One contiguous range: the envelope plus every structured section, which
     // is the document and its derivation manifest and nothing else.
     let hot = ranges.get(0..envelope.hot_len()).await?;
-    let plan = prefix::plan(&envelope, &hot).map_err(HostError::Open)?;
+    let plan = prefix::plan(&envelope, &hot).map_err(WebError::Open)?;
 
     // Then the payloads, one range each. `plan.wanted()` is empty for a
     // document carrying no assets, and eight of the ten committed goldens are
@@ -140,9 +140,9 @@ pub(crate) async fn load(url: &str, arena: &mut Arena) -> Result<LiveScene, Host
     let residency = BlobResidency::new();
     let mut proven: Vec<&[u8]> = Vec::with_capacity(fetched.len());
     for (want, bytes) in plan.wanted().iter().zip(&fetched) {
-        proven.push(residency.touch(want, bytes).map_err(HostError::Payload)?);
+        proven.push(residency.touch(want, bytes).map_err(WebError::Payload)?);
     }
-    let payloads = plan.bind(&proven).map_err(HostError::Bind)?;
+    let payloads = plan.bind(&proven).map_err(WebError::Bind)?;
 
     crate::host::log(&format!(
         "{url}: {} bytes, {} sections, {} hot, {} payload(s)",
@@ -155,7 +155,7 @@ pub(crate) async fn load(url: &str, arena: &mut Arena) -> Result<LiveScene, Host
     let document = plan.document();
     let report = dashscene_validator::validate_document(&document);
     if report.has_errors() {
-        return Err(HostError::Gate(format!("{report:?}")));
+        return Err(WebError::Gate(format!("{report:?}")));
     }
     dashscene_core::load_document(&document, &payloads, arena);
     Ok(dashlang::attach_live(arena, Box::new(TaffySolver::new())))

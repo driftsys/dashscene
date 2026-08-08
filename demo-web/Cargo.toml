@@ -16,6 +16,11 @@ description = "The browser showcase host: a canvas, the lean painter, and a .dsb
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+# The web integration surface: the canvas handoff, the frame loop, resize, and
+# the byte-range `.dsb` load (story #741). This host is a demonstration of that
+# crate, and consuming it rather than restating it is the point — an embedder
+# writes what is left here, and no more.
+dashscene-web.workspace = true
 # The lean painter and its canvas surface. This host exists because
 # `SurfaceRenderer::new_async` does: the blocking constructor is absent on wasm,
 # for the reason `crates/dashscene-gpu/src/render.rs` gives.

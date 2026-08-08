@@ -96,6 +96,14 @@ test-all:
 # markdownlint, deno fmt check.
 lint: deno-fmt-check
     cargo clippy --workspace --all-targets -- -D warnings
+    # Again for wasm32, because the line above never sees the browser half.
+    # `crates/dashscene-web` gates host.rs and document.rs on
+    # `target_arch = "wasm32"`, so a host-target clippy compiles neither — and
+    # story #741 found two errors sitting in them, carried unchanged from the
+    # host they were extracted from. A published crate whose main logic is
+    # never linted is what this second line exists to prevent.
+    cargo clippy -p dashscene-web --target wasm32-unknown-unknown --all-targets -- -D warnings
+    cargo clippy -p demo-web --target wasm32-unknown-unknown --all-targets -- -D warnings
     cargo fmt --all -- --check
     # Intra-doc links, as a gate. A doc comment naming an item that does not
     # exist is this repository's most common defect, and until v0.16 nothing in
@@ -186,8 +194,8 @@ publish:
     cargo publish -p dashpack-astcenc-sys
     cargo publish -p dashpack
     cargo publish -p dashscene-unity
-    cargo publish -p dashscene-web
     cargo publish -p dashscene-gpu
+    cargo publish -p dashscene-web
     cargo publish -p dashscene
 
 # Install local toolchain bits (git hooks, git-std, dprint, markdownlint-cli).
