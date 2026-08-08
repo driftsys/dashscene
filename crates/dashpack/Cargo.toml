@@ -6,6 +6,8 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Asset packer: encodes canonical payloads into per-profile derivations, assembles cold banks, and records every choice in the derivation manifest (docs/design/architecture.md, epic #345)."
+keywords = ["assets", "texture", "astc", "ktx2", "compression"]
+categories = ["compression", "rendering::data-formats"]
 
 [lib]
 name = "dashpack"

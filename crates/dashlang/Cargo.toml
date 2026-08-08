@@ -6,6 +6,8 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Rust DSL skin over the dashscene-core producer surface, and the stress-corpus generator (docs/design/architecture.md, docs/decisions/staged-mutation-v01-scope.md)."
+keywords = ["dsl", "ui", "scene", "builder", "graphics"]
+categories = ["graphics", "gui"]
 
 [lib]
 name = "dashlang"

@@ -6,6 +6,8 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Compiler CLI: Figma importer orchestration target, Figma-to-dashscene lowering, diagnostics, .dsb emission. Also builds to wasm32-unknown-unknown for the Deno importer (docs/design/architecture.md, docs/design/dashc.md)."
+keywords = ["compiler", "cli", "figma", "ui", "wasm"]
+categories = ["command-line-utilities", "rendering::data-formats"]
 
 [lib]
 # Named distinctly from the `dashc` bin target below: both compile to a

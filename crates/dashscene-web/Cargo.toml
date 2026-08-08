@@ -6,6 +6,8 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Web integration for DashScene: the canvas-to-surface handoff, the requestAnimationFrame loop, rebuilding on resize, and a .dsb fetched by byte range (story #741)."
+keywords = ["wasm", "web", "canvas", "webgpu", "rendering"]
+categories = ["wasm", "rendering"]
 
 [lib]
 name = "dashscene_web"

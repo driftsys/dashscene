@@ -6,6 +6,8 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "One typesetter: bidi split, rustybuzz shaping, glyph atlas pipeline (docs/design/architecture.md)."
+keywords = ["text", "shaping", "bidi", "msdf", "fonts"]
+categories = ["text-processing", "rendering"]
 
 [lib]
 name = "dashscene_typeset"

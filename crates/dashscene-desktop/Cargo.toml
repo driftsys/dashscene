@@ -6,6 +6,8 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Desktop integration for DashScene: the window-to-surface handoff, the winit frame loop, rebuilding on resize, and a mapped .dsb load bounded by the shown root (story #794)."
+keywords = ["winit", "desktop", "window", "wgpu", "rendering"]
+categories = ["gui", "rendering"]
 
 [lib]
 name = "dashscene_desktop"

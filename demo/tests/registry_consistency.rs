@@ -177,6 +177,82 @@ fn every_crate_is_in_every_registry_that_enumerates_crates() {
     );
 }
 
+/// Every publishable crate carries the metadata a registry page is built from.
+///
+/// `description`, `license` and `repository` are inherited or present already
+/// and Cargo refuses a publish without them. `keywords` and `categories` are
+/// neither inherited nor required, so nothing but this notices when a new crate
+/// arrives without them — which is how all **seventeen** crates came to have
+/// neither until story #795.
+///
+/// **Category slugs are not checked, and cannot be here.** crates.io holds the
+/// list, it moves, and a slug that does not exist is rejected at publish rather
+/// than by anything local.
+///
+/// **Keyword rules are checked**, because unlike the slug list they are fixed
+/// and published: at most five, at most twenty characters, `[A-Za-z0-9_-]`, and
+/// an alphanumeric first character. crates.io rejects a violation at publish,
+/// which is the worst moment to find out.
+///
+/// A non-empty value is required rather than the key merely being present:
+/// `keywords = []` parses, reads as covered, and is no metadata at all.
+#[test]
+fn every_publishable_crate_carries_registry_metadata() {
+    let workspace = workspace_root();
+    let members = crates_from_members(&workspace);
+    let mut missing: Vec<String> = Vec::new();
+
+    assert!(
+        !members.is_empty(),
+        "a scan that reads nothing proves nothing"
+    );
+
+    for name in &members {
+        let manifest = read(workspace.join("crates").join(name).join("Cargo.toml"));
+        for field in ["keywords", "categories"] {
+            // `= ["` and not `= [`: an empty array satisfies the second, and an
+            // empty array is no metadata at all.
+            if !manifest
+                .lines()
+                .any(|line| line.starts_with(&format!("{field} = [\"")))
+            {
+                missing.push(format!("{name} has no {field}"));
+            }
+        }
+        for keyword in keywords_of(&manifest) {
+            if keyword.len() > 20 {
+                missing.push(format!("{name}: keyword {keyword:?} is over 20 characters"));
+            }
+            if !keyword.starts_with(|c: char| c.is_ascii_alphanumeric()) {
+                missing.push(format!(
+                    "{name}: keyword {keyword:?} must start alphanumeric"
+                ));
+            }
+            if !keyword
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            {
+                missing.push(format!(
+                    "{name}: keyword {keyword:?} has an illegal character"
+                ));
+            }
+        }
+        let count = keywords_of(&manifest).count();
+        if count > 5 {
+            missing.push(format!(
+                "{name} carries {count} keywords, and crates.io allows five"
+            ));
+        }
+    }
+
+    assert!(
+        missing.is_empty(),
+        "a crate is missing the metadata its registry page is built from. Neither field is \
+         inherited and neither blocks a publish, so nothing else reports it.\n{}",
+        missing.join("\n")
+    );
+}
+
 /// The publish recipe is in dependency order.
 ///
 /// Story #741 made `dashscene-web` depend on `dashscene-gpu`, and the recipe
@@ -279,6 +355,19 @@ fn the_matchers_find_real_entries_and_not_prose() {
     // every crate name also appears in that file's own commentary.
     assert!(git_std.contains("\n    \"dashbuf\","));
     assert!(!git_std.contains("\n    \"dashfake\","));
+}
+
+/// The keywords a manifest declares, as written.
+fn keywords_of(manifest: &str) -> impl Iterator<Item = &str> {
+    manifest
+        .lines()
+        .find(|line| line.starts_with("keywords = ["))
+        .unwrap_or("")
+        .split('"')
+        // A quoted TOML array alternates separator, value, separator, value —
+        // so the values are the odd indices.
+        .skip(1)
+        .step_by(2)
 }
 
 /// One manifest line takes `dependency` from the workspace.

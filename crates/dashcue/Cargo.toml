@@ -6,6 +6,8 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Descriptive animation vocabulary + its runtime scheduling (docs/design/architecture.md)."
+keywords = ["animation", "springs", "keyframes", "transitions", "ui"]
+categories = ["graphics", "gui"]
 
 [lib]
 name = "dashcue"
