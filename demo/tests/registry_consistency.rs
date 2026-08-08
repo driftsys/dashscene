@@ -66,8 +66,9 @@ use std::path::{Path, PathBuf};
 
 /// The publishable crates, from `[workspace] members`.
 ///
-/// Members under `crates/` only. `demo`, `demo-web`, `corpus/showcase` and
-/// `goldens/tooling` are `publish = false` by design, so none belongs in the
+/// Members under `crates/` only. `demo`, `demo-web`, `corpus/showcase`,
+/// `goldens/tooling` and `measure/web-minimal` are `publish = false` by design,
+/// so none belongs in the
 /// version, dependency or publish registries — though `demo`, `corpus` and
 /// `goldens` are `.git-std.toml` commit *scopes*, a different list serving a
 /// different purpose and not checked here.

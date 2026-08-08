@@ -92,12 +92,15 @@ loop, landed at v0.14), and `demo-web/` (the same showcase in a browser
 — a canvas, `requestAnimationFrame`, and a `.dsb` fetched by byte range,
 landed at v0.15).
 
-Four of those directories hold workspace members that are never
+Five of those directories hold workspace members that are never
 published: `demo/`, `demo-web/` (the browser host — a canvas, the lean
 painter, and a `.dsb` fetched by byte range, landed at v0.15),
-`corpus/showcase/` (the scenes both hosts draw) and `goldens/tooling/`
-(the golden-image harness). Twenty-one members in total, seventeen of
-them the crates above.
+`corpus/showcase/` (the scenes both hosts draw), `goldens/tooling/`
+(the golden-image harness) and `measure/web-minimal/` (the smallest
+browser embedder that draws a `.dsb` — an artifact built to be weighed,
+not run, and what the runtime payload budget is measured over; see
+`docs/decisions/publishable-and-the-first-version.md`). Twenty-two
+members in total, seventeen of them the crates above.
 
 ## Commands
 

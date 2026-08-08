@@ -104,6 +104,13 @@ lint: deno-fmt-check
     # never linted is what this second line exists to prevent.
     cargo clippy -p dashscene-web --target wasm32-unknown-unknown --all-targets -- -D warnings
     cargo clippy -p demo-web --target wasm32-unknown-unknown --all-targets -- -D warnings
+    # And `measure/web-minimal`, whose body is `wasm32`-only and which nothing
+    # else builds for that target: `assemble` is a host build where the crate is
+    # empty, and the two wasm gates name other packages. Without this line a
+    # `dashscene-web` change breaks the artifact the payload budget is measured
+    # over while `just build` stays green — the same failure the paragraph above
+    # describes, one crate along.
+    cargo clippy -p web-minimal --target wasm32-unknown-unknown --all-targets -- -D warnings
     cargo fmt --all -- --check
     # Intra-doc links, as a gate. A doc comment naming an item that does not
     # exist is this repository's most common defect, and until v0.16 nothing in
@@ -178,6 +185,42 @@ book:
 # Cut a release: git-std bumps versions, writes the changelog, tags.
 release:
     git std bump
+
+# What an embedder's runtime actually weighs (issue #776, story #795).
+#
+# Measures `measure/web-minimal` — the smallest browser embedder that draws a
+# `.dsb` — and `demo-web` beside it, built and post-processed identically so the
+# two are comparable. The gap between them is `showcase` and, through it,
+# `dashc`: the compiler, which an embedder loading a prebuilt document does not
+# link.
+#
+# This **reports**; it does not gate. A gate has to name a pipeline stage this
+# repository produces, and `wasm-opt` is in neither this file nor CI — so the
+# numbers below are post-`wasm-bindgen` and nothing more. Pinning a compressor
+# the way `dashpack` pins zstd is what a gate would need first
+# (`docs/decisions/publishable-and-the-first-version.md`).
+#
+# Needs `wasm-bindgen-cli` (matching the workspace's `wasm-bindgen`) and
+# `brotli`, neither of which `bootstrap` installs.
+measure-runtime:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p web-minimal -p demo-web --target wasm32-unknown-unknown --release
+    out=$(mktemp -d)
+    trap 'rm -rf "$out"' EXIT
+    printf '%-14s %12s %12s\n' artifact raw brotli
+    for pair in "web-minimal:web_minimal" "demo-web:demo_web"; do
+      name=${pair%%:*}; file=${pair##*:}
+      wasm-bindgen --target web --no-typescript --out-dir "$out/$name" \
+        target/wasm32-unknown-unknown/release/$file.wasm
+      wasm=$(ls "$out/$name"/*_bg.wasm)
+      brotli -q 11 -f -o "$wasm.br" "$wasm"
+      printf '%-14s %12s %12s\n' "$name" "$(wc -c < "$wasm")" "$(wc -c < "$wasm.br")"
+    done
+    echo
+    echo "rustc:        $(rustc --version)"
+    echo "wasm-bindgen: $(wasm-bindgen --version)"
+    echo "brotli:       $(brotli --version)"
 
 # What would have to be true before anything is published (story #795).
 #

@@ -155,10 +155,12 @@ that wasm build rather than reimplementing the lowering
 
 ## The workspace
 
-Seventeen crates in one Cargo workspace, plus four members that are never
+Seventeen crates in one Cargo workspace, plus five members that are never
 published — `demo/` (the windowed showcase), `demo-web/` (the same showcase in a
-browser, on a canvas), `corpus/showcase/` (the scenes they draw), and
-`goldens/tooling/` (the golden-image harness).
+browser, on a canvas), `corpus/showcase/` (the scenes they draw),
+`goldens/tooling/` (the golden-image harness), and `measure/web-minimal/` (the
+smallest browser embedder that draws a `.dsb`, built to be weighed rather than
+run).
 
 | Crate                  | What it is                                                                |
 | ---------------------- | ------------------------------------------------------------------------- |
