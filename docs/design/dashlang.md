@@ -352,7 +352,12 @@ smoothing.
                                        visible_when, Scene::build_live,
                                        LiveScene::set/tick; the v0.7
                                        additions (#167): signal_named,
-                                       core-table staging, attach_live
+                                       core-table staging, attach_live; the
+                                       v0.17 frame policy (#810):
+                                       MAX_FRAME_DELTA and the clamp tick
+                                       applies, plus LiveScene::advanced
+                                       and mark_shown, the generation gate
+                                       both hosts used to hold privately
     crates/dashlang/tests/builder.rs   acceptance (issues #5, #118, #46):
                                        DSL output == hand-built output;
                                        repeater children; multi-root;
@@ -384,6 +389,15 @@ smoothing.
                                        combinations (an unbound smooth,
                                        and fill_with beside a fill-channel
                                        binding)
+    crates/dashlang/tests/frame_policy.rs
+                                       the frame policy tick owns (story
+                                       #810): the delta clamp, including
+                                       that an under-clamp delta passes
+                                       through untouched and that a NaN
+                                       one becomes zero rather than
+                                       reaching dashcue's finite assert,
+                                       and the generation gate, including
+                                       that a rebuilt scene starts unshown
     crates/dashlang/tests/paint.rs     acceptance for the paint
                                        vocabulary: each mirror reaches the
                                        arena, DSL output == hand-built

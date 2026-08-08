@@ -42,8 +42,8 @@ mod reactive;
 // the loader-side entry point: it builds a `LiveScene` from the binding
 // tables a loaded document staged into the arena.
 pub use reactive::{
-    Channel, ClosureId, FormatSpec, LiveScene, Mapped, ScalarExpr, Signal, SignalValue, Spring,
-    TextExpr, Transform, attach_live,
+    Channel, ClosureId, FormatSpec, LiveScene, MAX_FRAME_DELTA, Mapped, ScalarExpr, Signal,
+    SignalValue, Spring, TextExpr, Transform, attach_live,
 };
 
 // A DSL consumer needs an `Arena` to build into, a `Color` to fill

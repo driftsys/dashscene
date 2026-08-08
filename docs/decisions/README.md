@@ -647,10 +647,12 @@ filed beside their parent rather than apart from it:
   is what gives `samples()` that guarantee today (debt #488).
 
 - [frame-delta-is-clamped-and-the-host-owns-the-clock.md](frame-delta-is-clamped-and-the-host-owns-the-clock.md)
-  — the host clamps the frame delta at `dt = min(elapsed, 100 ms)` with **no
+  — the frame delta is clamped at `dt = min(elapsed, 100 ms)` with **no
   accumulator**, because `dashcue` already substeps below its own stability
   bound and `tick` takes `dt` as a parameter, so R4's reproducibility clause
-  already holds. The clamp guards frame **cost**, not correctness: substep
+  already holds. **Story #810 moved the clamp itself into `LiveScene::tick`**,
+  so one value serves every host rather than one per host; the host still owns
+  the clock, which is what "elapsed" means and when it is stopped. The clamp guards frame **cost**, not correctness: substep
   count scales with `dt`. **100 ms is a convention, not a derived bound** —
   the lower bound is real (it must sit above ordinary hitches) but nothing
   distinguishes it from Unity's 333 ms, and deriving it needs a frame budget

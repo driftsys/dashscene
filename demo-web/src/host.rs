@@ -18,13 +18,6 @@ use web_sys::HtmlCanvasElement;
 use crate::source::{self, Source};
 use crate::{CANVAS_ID, HostError, document, pulse};
 
-/// The largest animation step one frame may take, in seconds.
-///
-/// A backgrounded tab is throttled to a frame a second, or stopped entirely,
-/// and the frame that ends that gap must not advance a whole second of
-/// animation in one step. The native host clamps for the same reason.
-const MAX_FRAME_DELTA: f64 = 0.1;
-
 /// The entry point the page calls.
 ///
 /// Returns immediately. Everything that matters happens in the future spawned
@@ -112,7 +105,6 @@ async fn run() -> Result<(), HostError> {
         live,
         renderer,
         painter: GpuPainter::new(),
-        shown: None,
         previous: None,
         scripted,
         started: None,
@@ -132,8 +124,6 @@ struct Host {
     live: LiveScene,
     renderer: SurfaceRenderer,
     painter: GpuPainter,
-    /// The generation last put on the canvas. [`None`] until one has been.
-    shown: Option<u64>,
     /// The previous frame's timestamp, for the animation delta.
     previous: Option<f64>,
     /// The scene's scripted signal change, applied on an interval.
@@ -185,20 +175,6 @@ impl Host {
         }
     }
 
-    /// One frame: advance time, and draw if anything moved.
-    ///
-    /// The rule the native host follows (`demo/src/shell.rs`): the generation
-    /// says whether a frame is worth drawing.
-    ///
-    /// `shown` is recorded when `present` returns, which is **not** the same as
-    /// the frame having been drawn — a zero extent, an occluded window or an
-    /// acquire that timed out all return `Ok(())` without drawing. A host
-    /// cannot tell, and does not try to: `Changes` in
-    /// `crates/dashscene-gpu/src/render.rs` records that the generation travels
-    /// with the dirty set precisely so the renderer catches a broken chain
-    /// itself, applying ranges only when this frame is the immediate successor
-    /// of the one on the device. Second-guessing it here would be a second
-    /// mechanism for one job, and the weaker of the two.
     /// Reconfigures for the canvas's current size, when it has changed.
     ///
     /// Rebuilds the scene at the new extent, as the native host does: a
@@ -230,17 +206,41 @@ impl Host {
         self.arena = Arena::new();
         self.live = build(&mut self.arena, width, height);
         (self.scripted)(&mut self.live, self.pulses);
-        // The generation the old arena reached names nothing in this one.
-        self.shown = None;
+        // The generation the old arena reached names nothing in this one. The
+        // gate belongs to `LiveScene` and the one built above starts unshown,
+        // so replacing the scene clears it rather than this host remembering
+        // to (story #810).
         Ok(())
     }
 
+    /// One frame: advance time, and draw if anything moved.
+    ///
+    /// The rule is `LiveScene`'s, not this host's: the generation says whether
+    /// a frame is worth drawing, and `advanced` answers it. Both hosts asked
+    /// the question with a `shown` of their own until story #810 gave it one
+    /// owner — this comment used to cite the *other host* for its rule
+    /// rather than the record, which is the shape a duplicated contract takes
+    /// (issue #775). The record that governs it is
+    /// `docs/decisions/frame-delta-is-clamped-and-the-host-owns-the-clock.md`.
+    ///
+    /// The generation is marked shown when `present` returns, which is **not**
+    /// the same as the frame having been drawn — a zero extent, an occluded
+    /// window or an acquire that timed out all return `Ok(())` without
+    /// drawing. A host cannot tell, and does not try to: `Changes` in
+    /// `crates/dashscene-gpu/src/render.rs` records that the generation travels
+    /// with the dirty set precisely so the renderer catches a broken chain
+    /// itself, applying ranges only when this frame is the immediate successor
+    /// of the one on the device. Second-guessing it here would be a second
+    /// mechanism for one job, and the weaker of the two.
     fn frame(&mut self, timestamp: f64) -> Result<(), HostError> {
         let dt = match self.previous {
-            // Milliseconds, from a clock that may be coarsened for privacy but
-            // does not run backwards. The `max(0.0)` costs nothing and makes
-            // that an assumption this host does not depend on.
-            Some(previous) => ((timestamp - previous).max(0.0) / 1000.0).min(MAX_FRAME_DELTA),
+            // Milliseconds to seconds, from a clock that may be coarsened
+            // for privacy but does not run backwards. Raw from there:
+            // `LiveScene::tick` applies both the ceiling and the floor — including the negative
+            // case this host used to guard with a `max(0.0)` of its own —
+            // so the rule has one statement rather than one per host
+            // (story #810).
+            Some(previous) => (timestamp - previous) / 1000.0,
             None => 0.0,
         };
         self.previous = Some(timestamp);
@@ -266,8 +266,8 @@ impl Host {
             (self.scripted)(&mut self.live, due);
         }
 
-        let generation = self.live.tick(dt as f32, &mut self.arena);
-        if self.shown == Some(generation) {
+        self.live.tick(dt as f32, &mut self.arena);
+        if !self.live.advanced() {
             return Ok(());
         }
 
@@ -300,7 +300,7 @@ impl Host {
                 Some(changes),
             )
             .map_err(|error| HostError::Frame(error.to_string()))?;
-        self.shown = Some(generation);
+        self.live.mark_shown();
         Ok(())
     }
 }

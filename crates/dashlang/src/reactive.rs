@@ -791,6 +791,39 @@ struct BuildCtx {
 /// ([`LiveScene::tick`]), so a second producer that mutates the same
 /// arena's nodes between ticks would be overwritten by the cached
 /// geometry. Give a live scene its own arena.
+/// The largest animation step one frame may take, in seconds.
+///
+/// A stalled host must not hand the scheduler the whole stall as one step: a
+/// backgrounded browser tab is throttled to a frame a second or stopped
+/// outright, and a native window can be dragged, resized or paused for as long
+/// as someone holds the mouse. The frame that ends such a gap advances by this
+/// much and no more.
+///
+/// **100 ms is a choice, not a derivation.** It has to sit above ordinary
+/// hitches or it fires in normal operation, and nothing distinguishes it from
+/// Unity's 333 ms without a frame budget this project does not have. What the
+/// binding rule fixes is that every host clamps at the *same* value and that
+/// the value is configured rather than inherited from an engine default —
+/// `docs/decisions/frame-delta-is-clamped-and-the-host-owns-the-clock.md`.
+///
+/// # Why it lives here and not in a host
+///
+/// It was written twice, in two different units:
+/// `Duration::from_millis(100)` in the native host and `f64 = 0.1` in the
+/// browser one, so holding the two in step already required a unit conversion
+/// that nothing performed. Between two `publish = false` demonstrations that is
+/// a minor flaw; stories #741 and #794 turn those hosts into two *published*
+/// integration crates, at which point it becomes a semver-bound agreement that
+/// nothing checks. Story #810 moved it here, and
+/// `demo/tests/host_policy_invariant.rs` is what keeps it here.
+///
+/// The clock stays with the host, which is the other half of that record's
+/// title. A host decides when its own clock is stopped — the first frame, and
+/// the frames that end a parked loop, both of which start from zero — because
+/// that is a fact about the host's timeline. What it no longer decides is how
+/// large a step is too large.
+pub const MAX_FRAME_DELTA: f32 = 0.1;
+
 pub struct LiveScene {
     solver: Box<dyn LayoutSolver>,
     scheduler: Scheduler,
@@ -818,6 +851,18 @@ pub struct LiveScene {
     /// other three keep their values across that write.
     fill_shadow: HashMap<NodeId, Color>,
     generation: u64,
+    /// The generation a host has reported as shown, through
+    /// [`LiveScene::mark_shown`]. `None` before the first one.
+    ///
+    /// This is host-facing state held here rather than in each host, for the
+    /// same reason [`MAX_FRAME_DELTA`] is: it was written twice, and stories
+    /// #741 and #794 would have published both copies. Holding it beside
+    /// `generation` also makes one rule structural that was previously a thing
+    /// each host had to remember — a rebuild produces a new `LiveScene` whose
+    /// generations count from a new arena, and this field starts `None` with
+    /// it, so no host can forget to clear a `shown` that no longer means
+    /// anything.
+    shown: Option<u64>,
 }
 
 impl LiveScene {
@@ -844,12 +889,70 @@ impl LiveScene {
         self.generation
     }
 
+    /// Whether the committed generation has moved since the last
+    /// [`mark_shown`](Self::mark_shown) — that is, whether this frame is worth
+    /// drawing.
+    ///
+    /// `true` before the first `mark_shown`, because a scene nobody has drawn
+    /// yet always has something to show.
+    ///
+    /// # Why the gate lives here
+    ///
+    /// Both hosts held an `Option<u64>` of their own and compared it against
+    /// the value [`tick`](Self::tick) had just returned. That is one rule
+    /// written twice, and stories #741 and #794 would have published a copy in
+    /// each integration crate (story #810,
+    /// `docs/decisions/crate-name-map.md`). Holding it beside `generation`
+    /// also removes the step a host used to have to remember: a rebuild makes
+    /// a new `LiveScene` over a new arena whose generations restart, and the
+    /// gate starts clear with it rather than needing to be cleared.
+    ///
+    /// # What it does not mean
+    ///
+    /// It answers "has anything changed", not "was the last frame drawn". A
+    /// host records a generation as shown when its present call returns, and a
+    /// present can return `Ok` without drawing — a zero extent, an occluded
+    /// window, or an acquire that timed out. Nothing here tries to detect
+    /// that, and a host should not either: the generation travels with the
+    /// dirty set to the renderer precisely so a broken chain is caught by
+    /// arithmetic rather than by anyone remembering to report it
+    /// (`crates/dashscene-gpu/src/render.rs`).
+    pub fn advanced(&self) -> bool {
+        self.shown != Some(self.generation)
+    }
+
+    /// Record the committed generation as shown, so [`advanced`](Self::advanced)
+    /// reports `false` until the next one that moves it.
+    pub fn mark_shown(&mut self) {
+        self.shown = Some(self.generation);
+    }
+
     /// Advance one frame: open one `Txn`, flush every dirty binding,
     /// advance the scheduler and write each live track, then commit (D4).
     /// A frame that changed only paint props or only contained scalars
     /// commits through the retained geometry and never calls the real
     /// solver; a frame that reflowed re-solves and refreshes the cache.
     pub fn tick(&mut self, dt: f32, arena: &mut Arena) -> u64 {
+        // The delta is clamped here, not by the caller (story #810). A host
+        // hands over the raw interval its own clock measured and this decides
+        // how much of it the scheduler may advance, so the rule has one
+        // statement and no host can hold a copy that drifts.
+        //
+        // `max` then `min` rather than `clamp`, deliberately: `f32::clamp`
+        // returns NaN for a NaN input, and `dashcue::Scheduler::advance`
+        // opens with `assert!(dt.is_finite() && dt >= 0.0)`. So a NaN delta
+        // reaching it takes the frame loop down rather than being absorbed —
+        // one bad timestamp from a host would panic the runtime. `f32::max`
+        // returns the non-NaN operand instead, so NaN becomes `0.0` and the
+        // frame is treated as taking no time.
+        // `crates/dashlang/tests/frame_policy.rs` pins that difference, and
+        // swapping this for `clamp` fails it by that panic.
+        //
+        // The lower bound also absorbs a negative interval, which the browser
+        // host guarded with a `max(0.0)` of its own before the rule moved.
+        #[allow(clippy::manual_clamp)]
+        let dt = dt.max(0.0).min(MAX_FRAME_DELTA);
+
         // Idle frame: no signal changed and no track is still live — a track
         // that finished but has not yet been swept produces no sample, so
         // `is_settled` (not `is_empty`) is the right test. A commit would only
@@ -1097,6 +1200,7 @@ pub fn attach_live(arena: &mut Arena, mut solver: Box<dyn LayoutSolver>) -> Live
         names,
         fill_shadow,
         generation,
+        shown: None,
     }
 }
 
@@ -1289,6 +1393,7 @@ impl Scene {
             names,
             fill_shadow: ctx.fill_shadow,
             generation,
+            shown: None,
         }
     }
 }
