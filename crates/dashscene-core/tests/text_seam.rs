@@ -40,9 +40,10 @@ fn ink() -> Color {
     }
 }
 
-/// A run with one glyph placed at `at`, carrying `size`. `rect` is deliberately
-/// wrong so every test proves commit overwrote it rather than trusting it.
-fn run_at(at: (f32, f32), size: f32) -> (GlyphRun, Vec<GlyphQuad>) {
+/// A run with one glyph placed at `at`, carrying `size` and naming `glyph`.
+/// `rect` is deliberately wrong so every test proves commit overwrote it rather
+/// than trusting it.
+fn run_at(at: (f32, f32), size: f32, glyph: u32) -> (GlyphRun, Vec<GlyphQuad>) {
     (
         GlyphRun {
             rect: u32::MAX,
@@ -55,20 +56,28 @@ fn run_at(at: (f32, f32), size: f32) -> (GlyphRun, Vec<GlyphQuad>) {
             opacity: 1.0,
         },
         vec![GlyphQuad {
-            glyph_id: 1,
+            glyph_id: glyph,
             x: at.0,
             y: at.1,
         }],
     )
 }
 
-/// Places every node at its authored offset, and stages one run per node that
-/// carries text — at the box `geometry` reports, so the run's position is
-/// evidence of which commit's geometry the stager was handed.
+/// Places every node at its authored offset, and stages one run per entry of
+/// `glyphs` for each node that carries text — at the box `geometry` reports, so
+/// the run's position is evidence of which commit's geometry the stager was
+/// handed.
 struct TextStager {
     /// Written into every staged run's `size`, so a test can vary what the
     /// stager returns between commits without moving any box.
     size: f32,
+    /// One staged run per entry, each carrying a one-glyph quad naming that
+    /// entry's id. A test varies the *glyphs* without varying any field of the
+    /// run that names them: `size` above changes the run struct, while these
+    /// change only the table's flat quad array (issue #798). More than one
+    /// entry stages more than one run against the same anchor, which is what a
+    /// bidi split produces and what the anchor comparison walks as a slice.
+    glyphs: &'static [u32],
 }
 
 impl LayoutSolver for TextStager {
@@ -104,21 +113,24 @@ impl LayoutSolver for TextStager {
             arena: &Arena,
             node: NodeId,
             size: f32,
+            glyphs: &'static [u32],
             geometry: &dyn Fn(NodeId) -> SolvedRect,
             out: &mut Vec<StagedRun>,
         ) {
             if arena.text(node).is_some() {
                 let r = geometry(node);
-                let (run, quads) = run_at((r.x, r.y), size);
-                out.push(StagedRun { node, run, quads });
+                for &glyph in glyphs {
+                    let (run, quads) = run_at((r.x, r.y), size, glyph);
+                    out.push(StagedRun { node, run, quads });
+                }
             }
             for &child in arena.children(node) {
-                walk(arena, child, size, geometry, out);
+                walk(arena, child, size, glyphs, geometry, out);
             }
         }
         let mut out = Vec::new();
         for &root in arena.roots() {
-            walk(arena, root, self.size, geometry, &mut out);
+            walk(arena, root, self.size, self.glyphs, geometry, &mut out);
         }
         // Deliberately handed back in reverse document order. The real stager
         // walks DFS and so returns ascending anchors already, which would make
@@ -148,7 +160,10 @@ fn scene(n: usize) -> (Arena, Vec<NodeId>) {
             txn.set_prop(t, Prop::Text(format!("label {i}")));
             texts.push(t);
         }
-        txn.commit_with(&mut TextStager { size: 12.0 });
+        txn.commit_with(&mut TextStager {
+            size: 12.0,
+            glyphs: &[1],
+        });
     }
     (arena, texts)
 }
@@ -238,7 +253,10 @@ fn the_stager_is_handed_this_commits_geometry_not_the_previous_ones() {
         let mut txn = arena.open();
         txn.set_prop(label, Prop::X(64.0));
         txn.set_prop(label, Prop::Y(32.0));
-        txn.commit_with(&mut TextStager { size: 12.0 });
+        txn.commit_with(&mut TextStager {
+            size: 12.0,
+            glyphs: &[1],
+        });
     }
 
     let committed = arena.committed();
@@ -260,7 +278,10 @@ fn a_text_change_that_moves_no_box_still_dirties_its_anchor() {
     let anchor = arena.committed().rect_index_of(label).expect("committed");
 
     // Same boxes, different staged runs — the stager returns a new size.
-    arena.open().commit_with(&mut TextStager { size: 30.0 });
+    arena.open().commit_with(&mut TextStager {
+        size: 30.0,
+        glyphs: &[1],
+    });
 
     let scene = arena.committed();
     let entry = scene.rects()[anchor as usize];
@@ -277,12 +298,95 @@ fn a_text_change_that_moves_no_box_still_dirties_its_anchor() {
 }
 
 #[test]
+fn a_string_change_at_equal_glyph_count_dirties_its_anchor() {
+    // The case issue #798 hit on the typography showcase: a readout whose
+    // digits change width inside a settled layout. The box does not move, the
+    // glyph count does not change, and every field of the `GlyphRun` — atlas,
+    // size, color, opacity, and the range commit assigns — is identical on
+    // both sides. Only the quads differ, and they live outside the run, in the
+    // table's flat array.
+    //
+    // The test above varies `size`, which is a field of the run itself, so it
+    // passes against a diff that never reads a quad. This one cannot.
+    let (mut arena, texts) = scene(2);
+    let label = texts[1];
+    let anchor = arena.committed().rect_index_of(label).expect("committed");
+    let before_runs = arena.committed().glyphs().runs().to_vec();
+    let before_quads = arena.committed().glyphs().all_quads().to_vec();
+
+    // Same boxes, same size — a different glyph.
+    arena.open().commit_with(&mut TextStager {
+        size: 12.0,
+        glyphs: &[2],
+    });
+
+    let scene = arena.committed();
+    assert_eq!(
+        scene.glyphs().runs(),
+        before_runs.as_slice(),
+        "the fixture must leave every run header identical, or it is testing \
+         the same thing as the test above"
+    );
+    assert_ne!(
+        scene.glyphs().all_quads(),
+        before_quads.as_slice(),
+        "the fixture must change the quads, or the test proves nothing"
+    );
+    assert!(
+        scene.dirty().contains(&anchor),
+        "the anchor is dirty because its glyphs changed: dirty = {:?}",
+        scene.dirty()
+    );
+}
+
+#[test]
+fn a_change_in_one_run_of_a_multi_run_anchor_dirties_it() {
+    // An anchor's runs are compared as a slice, because one text node can
+    // carry more than one run — a bidi split is the ordinary case, and the
+    // typography showcase mixes Latin and Arabic. A change confined to one of
+    // them must dirty the anchor, so the quad comparison has to hold for *any*
+    // run of the slice rather than for all of them.
+    let (mut arena, texts) = scene(2);
+    let label = texts[1];
+    let anchor = arena.committed().rect_index_of(label).expect("committed");
+
+    // Two runs per anchor, identical to one another.
+    arena.open().commit_with(&mut TextStager {
+        size: 12.0,
+        glyphs: &[1, 1],
+    });
+    let before_runs = arena.committed().glyphs().runs().to_vec();
+
+    // Only one of the two runs changes its glyph.
+    arena.open().commit_with(&mut TextStager {
+        size: 12.0,
+        glyphs: &[1, 2],
+    });
+
+    let scene = arena.committed();
+    assert_eq!(
+        scene.glyphs().runs(),
+        before_runs.as_slice(),
+        "every run header stays identical, so only the quad comparison can see \
+         this change"
+    );
+    assert!(
+        scene.dirty().contains(&anchor),
+        "one changed run dirties its anchor: dirty = {:?}",
+        scene.dirty()
+    );
+}
+
+#[test]
 fn an_unchanged_text_node_is_not_dirtied_by_the_run_diff() {
     // The other half of the rule: re-staging identical runs must not dirty
     // anything, or every commit would report the whole text of the scene dirty
     // and the dirty set would stop meaning anything.
     let (mut arena, _) = scene(2);
-    arena.open().commit_with(&mut TextStager { size: 12.0 });
+    arena.open().commit_with(&mut TextStager {
+        size: 12.0,
+        glyphs: &[1],
+    });
     assert!(
         arena.committed().dirty().is_empty(),
         "an identical re-stage dirties nothing: {:?}",
@@ -334,7 +438,7 @@ fn a_run_for_a_foreign_node_is_named_rather_than_stamped_wrong() {
                 txn.commit();
                 c
             };
-            let (run, quads) = run_at((0.0, 0.0), 1.0);
+            let (run, quads) = run_at((0.0, 0.0), 1.0, 1);
             vec![StagedRun {
                 node: foreign,
                 run,
@@ -358,7 +462,10 @@ fn the_atlas_set_is_shared_rather_than_copied_per_commit() {
     // per-frame cost R-T4 bounds away, so the table shares it.
     let (mut arena, _) = scene(1);
     let first = arena.committed().glyphs().atlases().as_ptr();
-    arena.open().commit_with(&mut TextStager { size: 12.0 });
+    arena.open().commit_with(&mut TextStager {
+        size: 12.0,
+        glyphs: &[1],
+    });
     // A fresh `Arc` per commit is fine; what must not happen is the atlas
     // *contents* being cloned. `TextStager` builds a new Arc each call, so
     // this asserts the weaker, still-meaningful property: the table did not

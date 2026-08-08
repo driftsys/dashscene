@@ -2037,11 +2037,15 @@ impl Txn<'_> {
         // or text style changed inside a box that did not move or resize
         // produces identical bits, so the compare above would report it
         // clean and a retained painter would redraw nothing and keep last
-        // frame's glyphs. Every anchor whose staged runs differ from the
-        // previous commit's is dirtied here, which covers a changed string,
-        // a changed style, a variant switch, and a fallback that picked a
-        // different font — none of which need their own rule, because the
-        // runs are what actually reached the painter.
+        // frame's glyphs. Every anchor whose staged runs or their quads
+        // differ from the previous commit's is dirtied here, which covers a
+        // changed string, a changed style, a variant switch, and a fallback
+        // that picked a different font — none of which need their own rule,
+        // because a run and the quads it names are together what reached the
+        // painter. Naming the runs alone here was true only while a run
+        // carried its quads inline; once story #578 flattened them to a
+        // range into a separate array, a same-length string change moved the
+        // quads and no run, and this rule stopped covering it (issue #798).
         for anchor in changed_anchors(&glyphs, &previous.glyphs) {
             if anchor < rects.len() as u32 {
                 dirty_set.insert(anchor);
@@ -2113,37 +2117,58 @@ fn rect_of_slot_checked(rect_of_slot: &[u32], id: NodeId, did: &str) -> u32 {
         .unwrap_or_else(|| panic!("the stager {did} {id:?}, which is not a node of this arena"))
 }
 
-/// The anchors whose runs differ between two commits' glyph tables —
-/// present in one and not the other, or present in both with different
-/// runs.
+/// The anchors whose glyphs differ between two commits' tables — present
+/// in one and not the other, or present in both with different runs or
+/// different quads.
+///
+/// Both halves are load-bearing. A `GlyphRun` carries a [`GlyphRange`]
+/// into its table's flat quad array rather than the quads themselves, so
+/// comparing runs alone answers only where an anchor's glyphs sit, never
+/// what they are (issue #798).
 ///
 /// Both tables are ordered by anchor, so each anchor's runs form one
 /// contiguous slice and the comparison is a merge walk over the two.
 fn changed_anchors(new: &GlyphRunTable, old: &GlyphRunTable) -> Vec<u32> {
     let mut changed = Vec::new();
-    let (new, old) = (new.runs(), old.runs());
+    let (new_runs, old_runs) = (new.runs(), old.runs());
     let (mut i, mut j) = (0usize, 0usize);
-    while i < new.len() || j < old.len() {
+    while i < new_runs.len() || j < old_runs.len() {
         // Settle the lower of the two leading anchors; when one side is
         // exhausted, the other's anchor is the one to settle.
-        let anchor = match (new.get(i).map(|r| r.rect), old.get(j).map(|r| r.rect)) {
+        let anchor = match (
+            new_runs.get(i).map(|r| r.rect),
+            old_runs.get(j).map(|r| r.rect),
+        ) {
             (Some(n), Some(o)) => n.min(o),
             (Some(n), None) => n,
             (None, Some(o)) => o,
             (None, None) => break,
         };
         let ni = i;
-        while new.get(i).is_some_and(|r| r.rect == anchor) {
+        while new_runs.get(i).is_some_and(|r| r.rect == anchor) {
             i += 1;
         }
         let oj = j;
-        while old.get(j).is_some_and(|r| r.rect == anchor) {
+        while old_runs.get(j).is_some_and(|r| r.rect == anchor) {
             j += 1;
         }
         // An anchor present on only one side has an empty slice on the
         // other, so "appeared" and "disappeared" fall out of the same
         // comparison as "changed".
-        if new[ni..i] != old[oj..j] {
+        //
+        // The quads are compared as well as the runs, because a `GlyphRun`
+        // carries a `GlyphRange` into its table's flat quad array rather than
+        // the quads themselves. A string that changes without changing its
+        // glyph count — a digit re-rendering inside a settled layout — leaves
+        // every field of every run identical and moves only the quads, so
+        // comparing runs alone reported it clean and a retained painter kept
+        // the previous frame's glyphs on the device (issue #798).
+        let runs_differ = new_runs[ni..i] != old_runs[oj..j];
+        let quads_differ = new_runs[ni..i]
+            .iter()
+            .zip(&old_runs[oj..j])
+            .any(|(n, o)| new.quads(n) != old.quads(o));
+        if runs_differ || quads_differ {
             changed.push(anchor);
         }
     }
