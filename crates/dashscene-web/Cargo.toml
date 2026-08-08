@@ -38,3 +38,11 @@ wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
 js-sys.workspace = true
 web-sys.workspace = true
+
+[dev-dependencies]
+# `shown.rs`'s tests build many-frame documents by hand, which no committed
+# fixture is: every `goldens/dsb` document has one root, and over a one-root
+# document "the shown root's assets" and "every asset in the file" are the same
+# set — so nothing built from one can tell a bounded load from an unbounded one
+# (story #792).
+flatbuffers.workspace = true

@@ -21,7 +21,11 @@
 //!    nothing in the frames themselves says so.
 //! 5. **The byte-range `.dsb` load** — `load_document`, over
 //!    `dashbuf::prefix`, so a document is read without pulling the whole file
-//!    into linear memory first.
+//!    into linear memory first, and **bounded by the root that is shown**: the
+//!    payloads that root's subtree draws are the only ones fetched, and the
+//!    rest of the file is never requested. That is R5 on this target, and
+//!    story #792 is where it started holding — see the `shown` module for how a browser
+//!    turns out to have a region after all.
 //!
 //! # What an embedder still writes
 //!
@@ -50,7 +54,6 @@
 //! draws nothing.
 
 use dashbuf::container::ContainerError;
-use dashbuf::prefix::BindError;
 use dashbuf::residency::PayloadMismatch;
 use dashscene_gpu::RendererError;
 
@@ -62,6 +65,14 @@ use dashscene_gpu::RendererError;
 // not the code, is what is absent.
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod fetch;
+
+// Compiled on every target, for the same reason `fetch` is, and it is the
+// larger half of what this crate can be wrong about without a browser
+// noticing: which payloads a load reads. R5 is a property of that set, and
+// keeping the decision outside the `wasm32` half is what lets `cargo test`
+// assert it at all (story #792).
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+mod shown;
 
 #[cfg(target_arch = "wasm32")]
 mod document;
@@ -108,8 +119,22 @@ pub enum WebError {
     Open(dashbuf::OpenError),
     /// A fetched payload is not the one the file names.
     Payload(PayloadMismatch),
-    /// A different number of payloads reached the plan than it asked for.
-    Bind(BindError),
+    /// The server returned a different number of payload bytes than the ranges
+    /// asked for, so the region does not hold what the payload table says it
+    /// does.
+    ///
+    /// Detectable only because the layout is computed before anything is
+    /// fetched: the host knows what it asked for (story #792).
+    ShortPayloads { asked: u64, got: u64 },
+    /// The file binds a **derived** payload through a derivation manifest, and
+    /// this crate has no quality profile to name the rung with. Binding it as
+    /// canonical would tag the bytes with whatever format the entry claims,
+    /// which is the mistake issue #640 exists to prevent.
+    Derived(String),
+    /// The document carries no root node, so there is nothing to show and no
+    /// subtree to bound the load by. Carries the url, as every other variant
+    /// that can name what failed does.
+    NoRoot(String),
     /// The document does not pass the referential load gate.
     Gate(String),
     /// The painter could not be built.
@@ -139,7 +164,18 @@ impl std::fmt::Display for WebError {
             }
             Self::Open(error) => write!(f, "{error}"),
             Self::Payload(error) => write!(f, "{error}"),
-            Self::Bind(error) => write!(f, "{error}"),
+            Self::ShortPayloads { asked, got } => write!(
+                f,
+                "the payload ranges asked for {asked} bytes and {got} arrived, so the region \
+                 does not hold what the payload table names"
+            ),
+            Self::Derived(url) => write!(
+                f,
+                "{url} binds a derived payload through its derivation manifest, and this crate \
+                 has no quality profile to name the rung with: it can load a RAW file only \
+                 (issue #640)"
+            ),
+            Self::NoRoot(url) => write!(f, "{url} carries no root node"),
             Self::Gate(report) => write!(f, "the document fails the load gate: {report}"),
             Self::Renderer(error) => write!(f, "{error}"),
             Self::Frame(message) => write!(f, "the frame was not presented: {message}"),

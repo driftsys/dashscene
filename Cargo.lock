@@ -702,6 +702,7 @@ dependencies = [
  "dashscene-engine",
  "dashscene-gpu",
  "dashscene-validator",
+ "flatbuffers",
  "js-sys",
  "wasm-bindgen",
  "wasm-bindgen-futures",

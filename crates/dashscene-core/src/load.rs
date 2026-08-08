@@ -231,9 +231,12 @@ impl MappedPayload {
 /// row is a range into it, so the bytes a painter resolves are the file's own
 /// pages (`docs/decisions/assets-borrow-from-the-mapping.md`).
 ///
-/// `region` is whatever the ranges are relative to — the whole mapped file, for
-/// the one caller there is — and is held by the table for as long as the arena
-/// holds the table.
+/// `region` is whatever the ranges are relative to, and is held by the table
+/// for as long as the arena holds the table. There are two callers and they
+/// differ on exactly that point: the native host's region is the whole mapped
+/// file, so its ranges are the file's own offsets, while the browser host's is
+/// a buffer it packed from the payloads it fetched, so its ranges are relative
+/// to that (story #792).
 ///
 /// **It takes no [`LoadCost`]**, unlike [`load_document_bound_with_cost`], and
 /// that is the point rather than an omission: this path reads no payload byte,

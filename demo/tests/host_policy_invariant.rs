@@ -226,6 +226,22 @@ fn the_scan_catches_a_reintroduced_rule_and_leaves_legitimate_lines_alone() {
             .is_empty(),
         "R5's shown root is a different rule with the same word, and is not host policy"
     );
+    // The same collision one step further on, found when story #792 named a
+    // module `shown` for R5's shown root. A path segment ends in `::`, and a
+    // field or binding declaration does not.
+    assert!(
+        host_policy_definitions_in("        let layout = shown::layout(&document, wanted, root);")
+            .is_empty(),
+        "a call into a module named `shown` is a path, not a host's own shown generation"
+    );
+    assert!(
+        !host_policy_definitions_in(
+            "pub(crate) fn layout(wanted: &[Wanted], shown: u32) -> Layout {"
+        )
+        .is_empty(),
+        "a binding named `shown` followed by a type still reads as a declaration, so this stays \
+         caught — rename the binding rather than widening the scan"
+    );
     assert!(
         host_policy_definitions_in(
             "        for index in dashbuf::prefetch::assets_of_root(&document, shown) {"
@@ -248,8 +264,37 @@ fn host_policy_definitions_in(line: &str) -> Vec<&'static str> {
     };
     HOST_POLICY_PATTERNS
         .into_iter()
-        .filter(|pattern| code.contains(pattern))
+        .filter(|pattern| matches_outside_a_path(code, pattern))
         .collect()
+}
+
+/// `code` contains `pattern`, at a position that is not part of a `::` path.
+///
+/// The `shown:` pattern is a **field or binding declaration**, and a path
+/// segment is neither: `shown::layout(..)` contains `shown:` and is a call into
+/// a module, not a host keeping its own shown generation. Story #792 named a
+/// module `shown` for R5's shown root — the same word in the unrelated sense
+/// this scan's own documentation already warns about — and three legitimate
+/// lines were reported as violations.
+///
+/// Checking the character after the match is enough, and deliberately no more
+/// than that: `shown:` followed by `:` is a path, and `shown:` followed by
+/// anything else is a declaration. A pattern that does not end in `:` is
+/// unaffected, so the clamp and `self.shown` match exactly as before.
+fn matches_outside_a_path(code: &str, pattern: &str) -> bool {
+    if !pattern.ends_with(':') {
+        return code.contains(pattern);
+    }
+    let mut from = 0;
+    while let Some(at) = code[from..].find(pattern) {
+        let end = from + at + pattern.len();
+        if code[end..].starts_with(':') {
+            from = end;
+            continue;
+        }
+        return true;
+    }
+    false
 }
 
 /// Every `.rs` file under `directory`, recursively.

@@ -236,8 +236,11 @@ Checked against `crates/dashscene-core/src/arena.rs`,
 - [x] **Startup cost tracks the screen shown, not the file size** — when a
       desktop host opens a design file by name. Showing one screen out of a
       sixty-five-screen file then costs the same as showing it out of a
-      one-screen file. Not yet true in a browser, and not the path the
-      demonstration takes by default. See section 6.
+      one-screen file. **Conditionally true in a browser** since story #792,
+      and the condition is the point: the runtime draws every screen in a
+      file, not only the one being shown, so a browser — which has no bytes
+      it did not download — can skip a screen's images only when no other
+      screen uses any. See section 6.
 - [ ] **Tuned against the target device** — planned (v1). Around twenty
       specific improvements are identified and deliberately held: none has
       a frame budget or a device measurement behind it, so fixing one now
@@ -264,22 +267,31 @@ Checked against `crates/dashbuf/src/container.rs`, `bank.rs`, `prefix.rs`,
       lay out and draw sits at the front; images sit behind a page boundary
       so a device can verify what it needs without touching the rest.
       Mapping the file rather than reading it into memory is built, and is
-      the path a desktop host takes when it opens a file by name. Both
-      demonstrations take an older copying path by default, and so does the
-      browser — which is what section 5's caveat and the item below are
-      about.
+      the path a desktop host takes when it opens a file by name. The
+      browser takes the equivalent path since story #792 — it binds ranges
+      into a buffer of the pieces it downloaded rather than copying each
+      one — and what is left of the caveat is the item below.
 - [x] **Assets identified by content** — an image is named by what it is,
       not where it sits, so payloads can be swapped for a different device
       build without touching the design. The name is a hash, and it is
       re-checked when the bytes are read, not just used to find them.
 - [ ] **Startup cost proportional to what is shown, in a browser** —
-      **part built.** On the desktop path this is done and measured:
-      showing one screen costs 197 387 bytes whether the file holds one
-      screen or sixty-five, asserted as an equality by a test that fails
-      the build if it changes. The browser host still loads the older way —
-      it fetches every image the file names, one request each, before it
-      draws — so a sixty-five-screen file costs sixty-five downloads to
-      show one. Being worked in the current slice.
+      **part built, and the remaining part is not in the browser.** On the
+      desktop path this is done and measured: showing one screen costs
+      197 387 bytes whether the file holds one screen or sixty-five,
+      asserted as an equality by a test that fails the build if it changes.
+      The browser downloads only the images the shown screen uses since
+      story #792, asserted the same way — **but only when no other screen
+      in the file uses an image**. When one does, it downloads every image
+      any screen uses, and says which it did.
+
+      The reason is not in the loader. Everything below it draws every
+      screen in the file rather than the one being shown, so a screen the
+      browser skipped downloading is still a screen something asks for
+      pixels of. A desktop host survives that because a mapped file makes
+      every byte addressable whether or not it was checked; a browser has
+      no such thing. Issue #822 is the change that would remove the
+      condition, and it is in the runtime rather than in either host.
 - [ ] **Placeholders for content still loading** — planned (v1). Blocked on
       deciding what a not-yet-loaded image should show, which the design
       source does not supply.
