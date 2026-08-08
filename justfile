@@ -195,6 +195,7 @@ publish:
     cargo publish -p dashpack
     cargo publish -p dashscene-unity
     cargo publish -p dashscene-gpu
+    cargo publish -p dashscene-desktop
     cargo publish -p dashscene-web
     cargo publish -p dashscene
 

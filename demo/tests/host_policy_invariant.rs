@@ -70,11 +70,21 @@ use std::path::{Path, PathBuf};
 
 /// The hosts, as paths relative to the workspace root.
 ///
-/// **Maintain this list by hand**, and add to it when a host appears. Stories
-/// #741 and #794 add `crates/dashscene-web` and `crates/dashscene-desktop`,
-/// which are these two hosts' integration halves and inherit this rule with
-/// the code.
-const HOSTS: [&str; 2] = ["demo", "demo-web"];
+/// **Maintain this list by hand**, and add to it when a host appears.
+///
+/// Four entries, and the two integration crates are the ones that matter most:
+/// stories #741 and #794 moved each demonstration's frame loop into a crate
+/// that will be **published**, which is the whole reason story #810 gave these
+/// rules one owner first. Story #741 landed without adding
+/// `crates/dashscene-web` here, so for one slice the scan policed the two
+/// demonstrations and not the crate that had taken their loops — which is the
+/// shape of a check outliving what it was pointed at. Both are listed now.
+const HOSTS: [&str; 4] = [
+    "demo",
+    "demo-web",
+    "crates/dashscene-desktop",
+    "crates/dashscene-web",
+];
 
 /// How a host would spell the rules if it reintroduced them.
 ///

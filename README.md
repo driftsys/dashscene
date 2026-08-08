@@ -138,8 +138,6 @@ Not built:
   that keeps boundary B representable from C#, and the build enforces it; the
   painter itself, and the Unity and C# project it will bind to, are a separate
   repository that does not exist yet.
-- **The web painter.** `crates/dashscene-web` is a stub, retired: `dashscene-gpu`
-  reaches the browser from the same codebase as native.
 - **The umbrella crate.** `crates/dashscene` is a stub; code in this repository
   depends on the individual crates, not on a facade.
 
@@ -157,29 +155,30 @@ that wasm build rather than reimplementing the lowering
 
 ## The workspace
 
-Sixteen crates in one Cargo workspace, plus four members that are never
-published — `demo/` (the window and the frame loop), `demo-web/` (the same
-showcase in a browser, on a canvas), `corpus/showcase/` (the scenes they draw),
-and `goldens/tooling/` (the golden-image harness).
+Seventeen crates in one Cargo workspace, plus four members that are never
+published — `demo/` (the windowed showcase), `demo-web/` (the same showcase in a
+browser, on a canvas), `corpus/showcase/` (the scenes they draw), and
+`goldens/tooling/` (the golden-image harness).
 
-| Crate                  | What it is                                                       |
-| ---------------------- | ---------------------------------------------------------------- |
-| `dashbuf`              | the FlatBuffers schema — the `.dsb` document format              |
-| `dashc`                | the compiler; also builds to wasm for the Deno Figma importer    |
-| `dashscene-validator`  | profiles, diagnostics, waivers                                   |
-| `dashscene-core`       | arena, node tree, layout and paint tables, staged mutation       |
-| `dashscene-engine`     | Taffy solve, variants, FLIP, the measure callback                |
-| `dashscene-typeset`    | bidi, shaping, the glyph atlas pipeline                          |
-| `dashcue`              | the descriptive animation vocabulary and its scheduling          |
-| `dashlang`             | the Rust DSL and the stress-corpus generator                     |
-| `dashpaint`            | the paint table and the painter trait — boundary B               |
-| `dashscene-skia`       | the Skia reference painter, and the whole of the v0 painter      |
-| `dashpack`             | the asset packer — quality profiles, cold banks, manifests       |
-| `dashpack-astcenc-sys` | bindings to the vendored astcenc encoder and reference decoder   |
-| `dashscene`            | the umbrella crate — a stub                                      |
-| `dashscene-unity`      | the `extern "C"` gate holding boundary B representable from C#   |
-| `dashscene-web`        | the wasm and tiny-skia painter — a stub, retired                 |
-| `dashscene-gpu`        | the lean painter over wgpu — native and web, the full vocabulary |
+| Crate                  | What it is                                                                |
+| ---------------------- | ------------------------------------------------------------------------- |
+| `dashbuf`              | the FlatBuffers schema — the `.dsb` document format                       |
+| `dashc`                | the compiler; also builds to wasm for the Deno Figma importer             |
+| `dashscene-validator`  | profiles, diagnostics, waivers                                            |
+| `dashscene-core`       | arena, node tree, layout and paint tables, staged mutation                |
+| `dashscene-engine`     | Taffy solve, variants, FLIP, the measure callback                         |
+| `dashscene-typeset`    | bidi, shaping, the glyph atlas pipeline                                   |
+| `dashcue`              | the descriptive animation vocabulary and its scheduling                   |
+| `dashlang`             | the Rust DSL and the stress-corpus generator                              |
+| `dashpaint`            | the paint table and the painter trait — boundary B                        |
+| `dashscene-skia`       | the Skia reference painter, and the whole of the v0 painter               |
+| `dashpack`             | the asset packer — quality profiles, cold banks, manifests                |
+| `dashpack-astcenc-sys` | bindings to the vendored astcenc encoder and reference decoder            |
+| `dashscene`            | the umbrella crate — a stub                                               |
+| `dashscene-unity`      | the `extern "C"` gate holding boundary B representable from C#            |
+| `dashscene-web`        | web integration — the canvas handoff, the frame loop, `.dsb` by range     |
+| `dashscene-desktop`    | desktop integration — the window handoff, the winit loop, a mapped `.dsb` |
+| `dashscene-gpu`        | the lean painter over wgpu — native and web, the full vocabulary          |
 
 Beside them: `importers/figma/` (the Deno and TypeScript Figma REST importer and
 its annotator plugin), `corpus/` (the stress corpus, fonts, glyph atlases and

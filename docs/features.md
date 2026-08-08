@@ -397,8 +397,8 @@ Checked against `crates/dashpaint/src/lib.rs`,
 ## 10. Platform support
 
 Checked against `demo/`, `demo-web/`, `crates/dashscene-web/`,
-`crates/dashscene-unity/src/lib.rs`, and the absence of any mobile target in
-the workspace.
+`crates/dashscene-desktop/`, `crates/dashscene-unity/src/lib.rs`, and the
+absence of any mobile target in the workspace.
 
 - [x] **Desktop** — a windowed host with an event loop, pointer and
       keyboard input, and the showcase running in it. Built and run on
@@ -409,14 +409,16 @@ the workspace.
       design file fetched in pieces rather than as one download. It still
       fetches every image the file names, one request each, before it draws
       — see section 6.
-- [ ] **Embedding in a real application** — **part built, and the current
-      slice**, which covers the browser and desktop only. **The browser half
-      is built**: story #741 made `crates/dashscene-web` the web integration
-      crate, so a browser embedder consumes the canvas handoff, the frame
-      loop, resize rebuilding and the byte-range load rather than copying them
-      out of `demo-web/`. The desktop half is not — `demo/` is still
-      `publish = false` and holds both halves, which is story #794. Nothing is
-      published either way: this slice makes the crates publishable and the
+- [x] **Embedding in a real application** — **for the browser and the desktop
+      only**, which is what the current slice covers. Story #741 made
+      `crates/dashscene-web` the web integration crate and story #794 added
+      `crates/dashscene-desktop`, so an embedder on either target consumes the
+      surface handoff, the frame loop, the generation gate, resize rebuilding
+      and the document load rather than copying them out of a demonstration.
+      `demo/tests/integration_surface.rs` asserts that for both halves, and
+      fails in either direction. What an embedder still writes for itself is
+      named in each crate's own module documentation. No mobile target exists,
+      and nothing is published: this slice makes the crates publishable and the
       publish is a separate decision (epic #793).
 - [ ] **A C interface for hosts written in other languages** — **part
       built.** The data a host would consume is already in a shape another

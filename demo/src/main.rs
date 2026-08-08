@@ -4,18 +4,22 @@
 //! story #572 the first thing that animates one, and since story #574 the
 //! first thing that draws the whole v0 paint vocabulary.
 //!
-//! What the host is: the [`present`] seam and the two painters behind it
-//! (stories #571 and #585), the [`shell`] frame loop that drives it (story
-//! #572), [`scenes`], which chooses what it draws, [`painter`], which chooses
-//! what draws it (story #585), and [`input`], which maps the pointer and three
-//! keys onto what the chosen scene declares (story #573). What it is **not** is
-//! the content: the scenes live in `corpus/showcase/` (story #574), and
-//! [`document`] points this host at a compiled `.dsb` as a further source
-//! (story #575).
+//! What this is: the demonstration half. [`shell`] holds the scene list, the
+//! scripted signal producer and the frame-cost instrument, [`scenes`] chooses
+//! what is drawn, [`painter`] chooses what draws it (story #585), [`input`]
+//! maps the pointer and three keys onto what the chosen scene declares (story
+//! #573), [`present`] carries the Skia presenter, and [`document`] points this
+//! at a compiled `.dsb` as a further source (story #575).
 //!
+//! What it is **not** is the integration. The window, the frame loop, the
+//! generation gate, rebuilding on resize, the presentation seam and the `.dsb`
+//! load are `dashscene-desktop`, extracted at story #794 — an embedder can draw
+//! a `.dsb` in a window without copying anything out of here.
+//!
+//! Nor is it the content: the scenes live in `corpus/showcase/` (story #574).
 //! Nothing in this crate names a node, a signal or a colour. A scene carries
-//! the name of the signal input drives and the function a key runs, and the
-//! host passes both through without reading them (issue #625).
+//! the name of the signal input drives and the function a key runs, and this
+//! passes both through without reading them (issue #625).
 
 mod document;
 mod input;
@@ -57,12 +61,11 @@ fn main() -> ExitCode {
     if source != document::Source::NotAsked {
         match source {
             document::Source::Mapped(path) => {
-                let named = path.display().to_string();
                 if let Err(error) = document::map_file(path) {
-                    eprintln!("demo: {named} cannot be mapped: {error}");
+                    eprintln!("demo: {error}");
                     return ExitCode::FAILURE;
                 }
-                eprintln!("demo: document — {named}, mapped");
+                eprintln!("demo: document — {}, mapped", document::name());
             }
             _ => eprintln!(
                 "demo: document — the embedded golden, a compiled .dsb replayed through the \
@@ -112,13 +115,13 @@ fn main() -> ExitCode {
 }
 
 /// Turns the loop's result into the process exit code, reporting the failure
-/// first. Shared by the two ways the host can be pointed at something to draw,
-/// so a `.dsb` run and a showcase run cannot report a failure differently.
-fn finish(result: Result<(), Box<dyn Error>>) -> ExitCode {
+/// first. Shared by the two ways this can be pointed at something to draw, so a
+/// `.dsb` run and a showcase run cannot report a failure differently.
+fn finish(result: Result<(), dashscene_desktop::DesktopError>) -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            report(error.as_ref());
+            report(&error);
             ExitCode::FAILURE
         }
     }

@@ -16,9 +16,10 @@
 
 use std::sync::Arc;
 
+use dashscene_desktop::{GpuPresenter, Present, PresentError};
 use winit::window::Window;
 
-use crate::present::{GpuPresenter, Present, PresentError, SkiaPresenter};
+use crate::present::SkiaPresenter;
 
 /// Which of the two painters the host draws with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

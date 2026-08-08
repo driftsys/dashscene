@@ -21,9 +21,10 @@
 //!
 //! # Why it lives in `demo/`
 //!
-//! Because the host is the counterpart of the rule: `demo/src/shell.rs` is the
-//! one place in this repository that reads a clock, and this is the assertion
-//! that it stays the only one. Putting the scan inside any of the crates it
+//! Because a host is the counterpart of the rule: the frame clock is read in
+//! `crates/dashscene-desktop/src/host.rs` — `demo/src/shell.rs` until story
+//! #794 moved the loop — and this is the assertion that nothing below
+//! `LiveScene` starts reading one too. Putting the scan inside any of the crates it
 //! scans would make a crate police itself, and putting it in a sixteenth crate
 //! would add a published crate for a test. `cargo test --workspace` runs it,
 //! which is what CI runs.

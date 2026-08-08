@@ -36,7 +36,7 @@ intentionally undecided until that point
 
 ## Crates
 
-16 crates in one Cargo workspace (`resolver = "3"`, `edition = "2024"`,
+17 crates in one Cargo workspace (`resolver = "3"`, `edition = "2024"`,
 `license = "MIT"`). Full role-by-role mapping: `docs/decisions/crate-name-map.md`.
 
     dashscene            umbrella / facade
@@ -63,6 +63,14 @@ intentionally undecided until that point
                           derivation manifest; lands across slice v0.12
     dashscene-unity        Rust-side FFI bindings only — the Unity/C# project
                           itself is a separate, not-yet-created repo
+    dashscene-desktop     the desktop integration surface — the window-to-surface
+                          handoff, the winit frame loop, rebuilding on resize,
+                          the published `Present` seam and the lean painter's
+                          implementation of it, and a mapped `.dsb` load bounded
+                          by the shown root. `demo` keeps the demonstration —
+                          the scene list, input, the painter choice and the
+                          Skia presenter — and consumes it. Added at slice
+                          v0.17 (story #794)
     dashscene-web          the web integration surface — the canvas-to-surface
                           handoff, the requestAnimationFrame loop, rebuilding
                           on resize, and the byte-range .dsb load. The
@@ -88,8 +96,8 @@ Four of those directories hold workspace members that are never
 published: `demo/`, `demo-web/` (the browser host — a canvas, the lean
 painter, and a `.dsb` fetched by byte range, landed at v0.15),
 `corpus/showcase/` (the scenes both hosts draw) and `goldens/tooling/`
-(the golden-image harness). Twenty members in total, sixteen of them the
-crates above.
+(the golden-image harness). Twenty-one members in total, seventeen of
+them the crates above.
 
 ## Commands
 

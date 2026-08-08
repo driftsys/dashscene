@@ -1,202 +1,37 @@
-//! The presentation seam — how a committed frame reaches a window — and the
-//! Skia implementation behind it (story #571).
+//! The Skia presenter: raster on the CPU, then post the pixels (story #571).
 //!
-//! # Why this trait lives here and never in `dashpaint`
+//! # Why this one is here and the seam is not
 //!
-//! Boundary B is the painter contract: a rect table, paint indices, clip
-//! regions, group composites and glyph runs. Presentation is not part of it.
-//! A surface concept in `dashpaint` would make every painter carry a windowing
-//! concern it does not have — the golden harness rasters offscreen, the Unity
-//! painter draws into a target Unity owns, and neither has a window. So the
-//! seam sits in the host, above boundary B, and `dashpaint` is untouched.
+//! The `Present` trait, its error type and the lean painter's implementation of
+//! it are `dashscene-desktop` — every windowed embedder needs them, and story
+//! #794 moved them there. This implementation stays because
+//! **`dashscene-skia` is the reference painter**: it is what the goldens are
+//! taken through, `skia-safe` is a vendored C++ build, and a `winit` embedder
+//! that only wants a window must not resolve it. Publishing it would put both
+//! in the public dependency surface of every consumer of the integration crate.
 //!
-//! # What the seam has to admit
+//! What makes that possible is that the seam itself is published, so an
+//! implementation can live outside the crate that defines it. That is also what
+//! keeps story #585's instrument working: the loop drives `Box<dyn Present>`
+//! and knows about neither painter, so the swap key changes which one draws
+//! without the loop learning that either exists.
 //!
-//! Two implementations exist by design: [`SkiaPresenter`] and
-//! [`GpuPresenter`], which story #585 put behind the same trait. They differ in
-//! one structural way, and the trait is shaped around it.
-//!
-//! Skia has no windowing at all. It rasters into CPU memory, and the memory is
-//! then posted to a window — here, through `softbuffer`. A wgpu painter is the
-//! opposite: it owns a `wgpu::Surface` created from the window handle, and its
-//! draw calls target a texture acquired from that surface. There is no point
-//! at which it can hand anybody a pixel buffer, and asking it to would mean a
-//! readback that exists only to satisfy the seam.
-//!
-//! So the seam is **not** "give the host your pixels". A `Present`
-//! implementation owns its painter and owns its surface, and the host hands it
-//! a committed frame and asks for it to appear. What differs between the two
-//! implementations — surface acquisition, reconfiguration on resize, and the
-//! presentation step itself — is exactly what the trait names. What they share
-//! — being driven from one document and one clock — stays in the host.
-//!
-//! Concretely, the two sit behind the trait as follows. The design was written
-//! at story #571 against a painter that did not exist yet; story #585 built it,
-//! and what follows is what was built.
-//!
-//! - **Construction.** [`SkiaPresenter::new`] takes an `Arc<Window>`;
-//!   [`GpuPresenter::new`] takes the same `Arc<Window>` and hands it to
-//!   `dashscene_gpu::SurfaceRenderer`, which passes it to
-//!   `wgpu::Instance::create_surface` — that call requires a window handle that
-//!   is `'static + Send + Sync` and owned rather than borrowed, which is why
-//!   the constructor takes `Arc<Window>` rather than `&Window` or `Rc<Window>`.
-//!   The Skia path does not need it; the seam paid for it at #571 so the lean
-//!   painter did not have to change the signature at #585, and it did not.
-//!   Construction is per-implementation and outside the trait, because the wgpu
-//!   one is fallible in ways (no adapter, no device, no sRGB-encoded format)
-//!   that have no Skia analogue; the host selects one and stores the result as
-//!   `Box<dyn Present>`.
-//! - **[`Present::resize`].** Here it re-allocates the raster surface and
-//!   resizes the `softbuffer` surface. There it reconfigures the swapchain.
-//!   Both take physical pixels and both must tolerate a zero dimension, which
-//!   is what a minimised window reports.
-//! - **[`Present::present`].** Here it paints into the raster surface, reads
-//!   the pixels back, and posts them. There it packs the frame, acquires the
-//!   swapchain texture, draws into it and presents. A surface that reports
-//!   itself out of date is reconfigured and retried inside that call, because
-//!   the presenter owns the surface and nothing above it can act on the
-//!   condition.
-//! - **[`Present::name`].** The slice records a frame budget by hand with the
-//!   painter named beside the number, and v0.15 runs both painters against one
-//!   document. The name is what the host prints so the two are told apart.
-//!
-//! Nothing in the trait mentions a pixel buffer, a colour format, or a raster
-//! surface, and that is the property that makes it a seam rather than a
-//! description of the Skia path.
-//!
-//! One case story #571 named is answered differently from the way it guessed. A
-//! surface that reports itself **out of date** is recovered inside `present`,
-//! as expected. A surface that reports itself **lost** is not: recovering that
-//! means building a new surface from the window handle, and the handle is
-//! consumed when the first one is made. It arrives here as an ordinary
-//! [`PresentError`] and stops the loop with a named failure. The host could
-//! rebuild the presenter instead — it holds the window and knows which painter
-//! is running — and that is deliberately not written, because nothing in reach
-//! can make a surface be lost, and an untested recovery path is a claim rather
-//! than a behaviour.
+//! No GL context, no Ganesh, and no `skia_use_gl` build — `skia-safe` is pinned
+//! here with none of the `gl`, `vulkan` or `metal` features, and this keeps it
+//! that way. Skia provides no windowing of any kind, so wrapping the raster it
+//! already produces is both the cheapest correct path and the one that does not
+//! tie the project to the Ganesh-to-Graphite transition.
 
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use dashpaint::Painter;
 use dashscene_core::CommittedScene;
-use dashscene_gpu::{Changes, Drawn, GpuPainter, RendererError, SurfaceRenderer};
+use dashscene_desktop::{Drawn, Present, PresentError};
 use dashscene_skia::SkiaPainter;
 use winit::window::Window;
 
-/// Puts a committed frame on a window.
-///
-/// An implementation owns both the painter and the surface it presents to;
-/// see the module documentation for why the seam is drawn there.
-pub trait Present {
-    /// The painter behind this presenter, for the frame-budget record and for
-    /// telling two selectable painters apart at run time.
-    ///
-    /// Borrowed rather than `&'static str`, which is what it was until story
-    /// #585: the Skia name is a literal, but the lean painter's is only known
-    /// once a device exists, since it carries the adapter, the backend and the
-    /// swapchain format it actually got. Those are exactly what a frame-budget
-    /// record has to state, and the alternative — leaking a formatted string to
-    /// make it `'static` — is a leak per painter swap in exchange for nothing.
-    fn name(&self) -> &str;
-
-    /// Reconfigures for a drawable of `width` x `height` **physical** pixels.
-    ///
-    /// A zero dimension is not an error: a minimised window reports one, and
-    /// the correct response is to configure nothing and wait. The host calls
-    /// this on a resize and on a scale-factor change; how the document is
-    /// re-solved for the new extent is the host's business, not the
-    /// presenter's.
-    fn resize(&mut self, width: u32, height: u32) -> Result<(), PresentError>;
-
-    /// The document this presenter has been drawing has been replaced, and
-    /// nothing it holds describes the frames that follow.
-    ///
-    /// The host rebuilds its arena on a resize and on a scene change, and a
-    /// fresh arena's commit generations count from the start. A presenter that
-    /// carries per-document state — `dashscene-gpu` holds a copy of what the
-    /// device's instance buffer contains, and patches it by generation — cannot
-    /// see that from the frames alone: the new arena's generation *G+1* follows
-    /// the old one's *G* by arithmetic, and one scene rebuilt at a new extent
-    /// has exactly the spans it had before.
-    ///
-    /// No default body, deliberately. A no-op default is what a new presenter
-    /// would inherit without noticing, and the failure it causes is a stale
-    /// picture rather than an error.
-    fn document_replaced(&mut self);
-
-    /// Draws `scene` and puts the result on the window, reporting whether
-    /// anything reached it.
-    ///
-    /// The frame is drawn in full. Neither v0 painter has a partial-redraw
-    /// path — `dashscene-skia`'s retained mode patches its instance buffer and
-    /// still redraws every quad — so skipping work is a decision about whether
-    /// a frame runs at all, which the host makes by not calling this.
-    ///
-    /// [`Drawn::No`] is not an error and not rare: a minimised window, a
-    /// zero-area drawable, an occluded surface and a timed-out acquire all
-    /// reach it. It is reported because a caller that **measures** frames has
-    /// to exclude the ones that did not happen — see [`Drawn`] for the
-    /// measurement this distinction was added for.
-    fn present(&mut self, scene: &CommittedScene) -> Result<Drawn, PresentError>;
-}
-
-/// Why a frame did not reach the window.
-#[derive(Debug)]
-pub enum PresentError {
-    /// The window's surface could not be created or reconfigured.
-    Surface(String),
-    /// The frame was drawn but could not be handed to the compositor.
-    Post(String),
-    /// The drawable is larger than the painter can address on either axis, and
-    /// `max` is the largest either may be.
-    ///
-    /// The two painters reach it from opposite directions and it is one
-    /// variant deliberately, so the host reports the same refusal whichever is
-    /// running. `skia-safe` takes surface dimensions as `i32`, so a request
-    /// past `i32::MAX` would wrap into a negative extent; `dashscene-gpu` is
-    /// bounded by the device's own `max_texture_dimension_2d`, and configuring
-    /// a swapchain past it aborts the process instead of returning (issue
-    /// #714). Neither is a number the painter chose, which is why the one it
-    /// did not meet is reported alongside the one it was asked for.
-    Extent { width: u32, height: u32, max: u32 },
-    /// The framebuffer the windowing system handed back does not hold the
-    /// number of pixels the painter drew. Reported rather than truncated: a
-    /// short copy would post a torn or shifted picture, and a picture that is
-    /// wrong in a way nobody named is worse than a frame that did not appear.
-    ExtentMismatch { painted: usize, framebuffer: usize },
-}
-
-impl std::fmt::Display for PresentError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Surface(message) => write!(f, "window surface: {message}"),
-            Self::Post(message) => write!(f, "posting the frame: {message}"),
-            Self::Extent { width, height, max } => write!(
-                f,
-                "a {width}x{height} drawable exceeds the {max} px maximum this painter can \
-                 address on either dimension"
-            ),
-            Self::ExtentMismatch {
-                painted,
-                framebuffer,
-            } => write!(
-                f,
-                "the painter drew {painted} pixels and the framebuffer holds {framebuffer}"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for PresentError {}
-
 /// The Skia implementation: raster on the CPU, then post the pixels.
-///
-/// No GL context, no Ganesh, and no `skia_use_gl` build — `skia-safe` is
-/// pinned here with none of the `gl`, `vulkan` or `metal` features, and this
-/// keeps it that way. Skia provides no windowing of any kind, so wrapping the
-/// raster it already produces is both the cheapest correct path and the one
-/// that does not tie the project to the Ganesh-to-Graphite transition.
 pub struct SkiaPresenter {
     painter: SkiaPainter,
     /// The `softbuffer::Context` it was built from is deliberately **not**
@@ -224,7 +59,8 @@ impl SkiaPresenter {
     /// Binds a raster painter and a `softbuffer` surface to `window`.
     ///
     /// The window's current inner size is adopted as the drawable extent, so a
-    /// caller that never resizes still gets a correctly sized first frame.
+    /// caller that never resizes still gets a correctly sized first frame —
+    /// the same contract `dashscene_desktop::GpuPresenter::new` holds.
     pub fn new(window: Arc<Window>) -> Result<Self, PresentError> {
         let context = softbuffer::Context::new(Arc::clone(&window))
             .map_err(|error| PresentError::Surface(error.to_string()))?;
@@ -371,128 +207,6 @@ impl Present for SkiaPresenter {
 fn pack_premul_over_black(premul: &[u8], framebuffer: &mut [u32]) {
     for (pixel, word) in premul.chunks_exact(4).zip(framebuffer.iter_mut()) {
         *word = (u32::from(pixel[0]) << 16) | (u32::from(pixel[1]) << 8) | u32::from(pixel[2]);
-    }
-}
-
-/// The lean painter: pack on the CPU, draw on the GPU, present to the window's
-/// own swapchain (story #585).
-///
-/// There is no readback and no blit. `dashscene-gpu` owns the surface and the
-/// device that has to agree with it, so this presenter is the seam and nothing
-/// else: it packs boundary B through the painter and hands the frame over.
-///
-/// # It draws the whole v0 paint vocabulary since story #733
-///
-/// Epic #569 built the vocabulary one story at a time, and the last construct
-/// landed with the backdrop blur. Solid, gradient and image fills draw, as do
-/// strokes, text, a fill masked by a baked vector field, render-target group
-/// opacity, both shadow kinds and the backdrop blur. What is left between the
-/// two painters is fidelity rather than coverage, and story #586 is where that
-/// is measured — which is still the point of running both against one document.
-pub struct GpuPresenter {
-    /// The boundary-B implementation. It produces the instance buffer and knows
-    /// nothing about the window.
-    painter: GpuPainter,
-    /// The device, the pipeline and the swapchain, from `dashscene-gpu`. It
-    /// holds the drawable extent as well: this presenter keeps no copy, so
-    /// there is no second record of the extent to disagree with the first.
-    renderer: SurfaceRenderer,
-    /// What [`Present::name`] reports. Built once at construction rather than
-    /// returned as a literal, because the interesting half of it — the adapter,
-    /// the backend and the format the swapchain agreed to — is only known once
-    /// a device exists.
-    name: String,
-}
-
-impl GpuPresenter {
-    /// Binds the lean painter and a swapchain to `window`.
-    ///
-    /// The window's current inner size is adopted as the drawable extent, so a
-    /// caller that never resizes still gets a correctly sized first frame —
-    /// the same contract [`SkiaPresenter::new`] holds.
-    pub fn new(window: Arc<Window>) -> Result<Self, PresentError> {
-        let size = window.inner_size();
-        let renderer = SurfaceRenderer::new(window, size.width, size.height).map_err(from_gpu)?;
-        let info = renderer.adapter_info();
-        let name = format!(
-            "dashscene-gpu ({}, {:?}, {:?})",
-            info.name,
-            info.backend,
-            renderer.format()
-        );
-        Ok(Self {
-            painter: GpuPainter::new(),
-            renderer,
-            name,
-        })
-    }
-}
-
-/// Carries a `dashscene-gpu` failure across the seam.
-///
-/// Only the extent keeps its own variant: it is the one refusal the two
-/// painters share, and the one a person reading the message can act on by
-/// making the window smaller. Everything else is a surface that could not be
-/// built and reads as one.
-fn from_gpu(error: RendererError) -> PresentError {
-    match error {
-        RendererError::Extent { width, height, max } => PresentError::Extent { width, height, max },
-        other => PresentError::Surface(other.to_string()),
-    }
-}
-
-impl Present for GpuPresenter {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn document_replaced(&mut self) {
-        self.renderer.document_replaced();
-    }
-
-    fn resize(&mut self, width: u32, height: u32) -> Result<(), PresentError> {
-        // The ceiling is the device's rather than the Skia path's `i32`, and
-        // the renderer is the only thing that knows it. It is checked there
-        // rather than here because configuring a swapchain past it is not an
-        // error wgpu returns — it is a non-unwinding panic (issue #714).
-        self.renderer.resize(width, height).map_err(from_gpu)
-    }
-
-    fn present(&mut self, scene: &CommittedScene) -> Result<Drawn, PresentError> {
-        // No early return on a zero extent, deliberately. The renderer is the
-        // one that decides a frame cannot be drawn, because it is also the one
-        // that has to know a frame was not drawn: a commit that never reaches
-        // the device must not be treated as the predecessor of the next one.
-        //
-        // `Some(..)`, where the Skia path passes `None`. This painter repacks
-        // every rect either way — the set is honoured one level down, where it
-        // decides which byte ranges of the instance buffer are uploaded (R-T4,
-        // `crates/dashscene-gpu/src/render.rs`). The generation travels with it
-        // so that a declined frame breaks the chain by arithmetic rather than
-        // by anyone remembering to say so.
-        let changes = Changes {
-            rects: scene.dirty(),
-            generation: scene.generation(),
-        };
-        self.painter.paint(
-            scene.rects(),
-            scene.paints(),
-            scene.images(),
-            scene.clips(),
-            scene.groups(),
-            scene.glyphs(),
-            Some(changes.rects),
-        );
-        self.renderer
-            .present(
-                self.painter.instances(),
-                scene.paints(),
-                scene.images(),
-                scene.clips(),
-                scene.glyphs(),
-                Some(changes),
-            )
-            .map_err(|error| PresentError::Post(error.to_string()))
     }
 }
 
