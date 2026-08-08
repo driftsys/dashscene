@@ -23,6 +23,11 @@ Follow those three repos' conventions:
 version` for every internal crate; `[profile.release]` — `lto = true`,
 `strip = true`, `codegen-units = 1`.
 
+`[workspace.package]` also carries **`version`**, added by story #795 when
+the workspace's together-versioning was made structural: every crate takes
+`version.workspace = true` and holds no version of its own to drift
+([publishable-and-the-first-version.md](publishable-and-the-first-version.md)).
+
 **`justfile`** (git-std's is the template): `assemble` (cargo build),
 `test`, `lint` (`cargo clippy -- -D warnings` + `cargo fmt -- --check` +
 `dprint check` + `markdownlint-cli`), `audit` (`cargo audit`), `check`
@@ -40,6 +45,16 @@ sanity tier and `check` the regression tier, and `test-regression`,
 `calibrate` and `test-all` are additions. The reason, the measurements and
 the tier definitions are in [test-tiers.md](test-tiers.md).
 
+The dashscene-specific set has grown past those two, and the `justfile`
+itself is the authority rather than this list. Two additions are worth
+naming here because they carry decisions: **`package`**, which runs the
+registry-consistency test and then `cargo package` for every publishable
+member — the step that answers "what does a consumer actually get" — and
+**`measure-runtime`**, which weighs `measure/web-minimal` beside `demo-web`
+because a library crate has no measurable size of its own. Both came from
+story #795, and both are explained in
+[publishable-and-the-first-version.md](publishable-and-the-first-version.md).
+
 **`dprint.json`**: markdown only (`includes: ["**/*.md"]`, the
 `dprint/markdown` plugin) — it does not replace `cargo fmt` or `deno
 fmt`, both of which run as their own separate lint/fmt steps for their
@@ -48,17 +63,38 @@ respective languages.
 **`.git-std.toml`**: `scheme = "semver"`, `strict = true`, `scopes` as
 an explicit list rather than `"auto"`, which only discovers `crates/*`
 and leaves no valid scope for commits that aren't crate-specific. The
-list is the 13 crate names, plus a scope for each non-crate component
+list is every crate name — 13 when this was written, **17 today** — plus a
+scope for each non-crate component
 that has its own artifacts and tooling — `goldens` (the golden images
 and their diff tooling), `corpus` (the fixture corpus itself: captured
 Figma JSON, fonts, generated stress scenes — data only, since the
 capture tool is code and lives under `importers/`), `importers` (the
 Deno/TypeScript Figma importer and its capture tool, which have their
-own toolchain and their own CI job) — plus the repo-wide scopes `repo`,
+own toolchain and their own CI job), `demo` (both showcase hosts) and
+`measure` (artifacts built to be weighed rather than run) — plus the
+repo-wide scopes `repo`,
 `docs`, `ci`, `hooks`, `deps`, `release`. `specs/` and `docs/` share the
 `docs` scope: `specs/` is documentation and earns no scope of its own.
-Also `[versioning] tag_prefix = "v"`, and one `[[version_files]]` entry
-per crate pointing at its version string in `Cargo.toml`.
+Also `[versioning] tag_prefix = "v"`.
+
+**That count is now load-bearing rather than descriptive.**
+`demo/tests/registry_consistency.rs` derives the crate list from
+`[workspace] members` and fails when `scopes` disagrees with it, so a crate
+added without its scope no longer merges (story #795).
+
+**`[[version_files]]` changed shape entirely at story #795, and the
+description above no longer holds.** There is no longer one entry per crate
+pointing at that crate's own version string: the crates inherit
+`version.workspace = true` and hold no version to point at. The entries are
+now one per **internal dependency requirement** in the root manifest, each
+anchored on its own crate name — seventeen of them — because git-std's
+`write_version` splices exactly one span per entry, so a single unanchored
+entry would move one requirement and leave the rest at the old version
+behind a registry that looked covered. The workspace version itself needs no
+entry, since git-std's builtin Cargo handling moves `[workspace.package]
+version` section-scoped. The full reasoning, including the eighteenth entry
+that was written and removed on review, is in
+[publishable-and-the-first-version.md](publishable-and-the-first-version.md).
 
 **CI** (`.github/workflows/ci.yml`, git-std's shape): separate jobs for
 `fmt` (`cargo fmt -- --check`), `dprint` (`dprint/check@v2.3` action),

@@ -91,10 +91,15 @@ pub fn load_bytes(bytes: &[u8], arena: &mut Arena) -> Result<LiveScene, DesktopE
 ///
 /// Every variant is something the *integration* can hit. An embedder's own
 /// failures — no scene by that name, a command line it cannot parse — are the
-/// embedder's to model, and `demo` wraps this in an enum that adds its own.
-/// That split is deliberate: this type is a semver commitment the moment the
-/// crate is published, and a variant naming a scene registry this crate does
-/// not have would be one it could never remove.
+/// embedder's to model. That split is deliberate: this type is a semver
+/// commitment the moment the crate is published, and a variant naming a scene
+/// registry this crate does not have would be one it could never remove.
+///
+/// **Modelling them does not have to mean wrapping this type.** `demo-web`
+/// wraps `WebError` in a `DemoError` of its own; `demo` returns this type
+/// unwrapped from `shell::run` and reports its own failures into an exit code
+/// before the loop starts, so they never reach an error type at all. Both
+/// honour the split.
 #[derive(Debug)]
 pub enum DesktopError {
     /// The file could not be mapped, and this is the path that was tried.

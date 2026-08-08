@@ -509,13 +509,20 @@ Checked against `crates/dashbuf/src/container.rs`, `prefix.rs`,
 
 ## Two things worth stating plainly
 
-**Nothing here is released.** This is a private working repository. The
-public package names were reserved before development started and hold no
-code.
+**Nothing here is released.** This is a private working repository. All 17
+public package names are reserved on crates.io and none holds code from this
+repository. **Seven of the seventeen were reserved after development started**,
+not before it: three of them seventy-two minutes after the first commit, and
+four more as the crates that need them arrived — the most recent three on
+2026-08-08. Only the other ten come from the family of names reserved in March
+2026, before this repository existed
+([`docs/decisions/crate-name-map.md`](decisions/crate-name-map.md)).
 
 **The automated checks exist and are not currently running.** Continuous
 integration is blocked at the account level: every job fails within seconds
-having executed no steps, measured 2026-08-07. It is a billing block rather
+having executed no steps. Re-checked 2026-08-08 on the run's own annotations,
+which is the only place the reason appears — a failed payment or a spending
+limit. It is a billing block rather
 than a code failure, but the consequence is real — recent work was verified
 by running the same checks locally, with the evidence recorded on each
 change. A ticked box means the tests exist and pass, not that a machine

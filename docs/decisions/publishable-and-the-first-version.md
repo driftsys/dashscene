@@ -145,6 +145,21 @@ nothing, so fat LTO drops the signal-writing paths in `dashlang` and
 answers "what is the least this can cost", which is the question #776 asked; it
 does not predict a product host.
 
+**The recipe reproduces the measurement, not the byte count — found at the
+v0.17 close (story #796), and it bears on the gate.** Three recorded runs, same
+machine class and the same three tool versions printed above, give three
+different `web-minimal` sizes: 1 878 181, 1 878 196 and 1 878 189 raw, with the
+brotli figure moving with them (509 465, 508 226, 508 917). Over the same three
+runs `demo-web`'s raw size is **identical** — 3 506 890 every time — while its
+brotli figure is not. So the figures in this record and in issue #825 are
+different runs rather than one of them being wrong, and no cause is asserted
+here beyond that.
+
+What follows for issue #825 is concrete: **a gate cannot compare raw bytes for
+equality.** It needs a tolerance, or it needs the artifact made deterministic
+first, and either is work the gate's own story has to do rather than assume.
+Recorded here because #825 was written expecting an exact comparison.
+
 **The gate is deliberately deferred, and this is the reason rather than an
 omission.** Three things argue against building one now:
 
