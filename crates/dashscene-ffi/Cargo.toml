@@ -1,0 +1,32 @@
+[package]
+name = "dashscene-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "The C ABI every platform host sits on: runtime lifecycle, document load, the tick, and the surface handoff (docs/decisions/host-integration-in-three-layers.md, D2)."
+keywords = ["ffi", "abi", "bindings", "embedding", "graphics"]
+categories = ["external-ffi-bindings", "graphics"]
+
+[lib]
+name = "dashscene_ffi"
+# `rlib` so the workspace's own tests can link it as a Rust crate; `cdylib` and
+# `staticlib` because a platform host loads it as a library and not as a crate.
+# JNI wants the first, and an iOS or Unity host in v1 wants the second.
+crate-type = ["rlib", "cdylib", "staticlib"]
+
+[dependencies]
+# The same set `dashscene-desktop` takes, minus `winit`: this crate is what a
+# host uses *instead of* a windowing library, so it takes none.
+dashscene-core.workspace = true
+dashlang.workspace = true
+dashscene-engine.workspace = true
+dashbuf.workspace = true
+dashscene-validator.workspace = true
+# The painter, for the surface handoff. This crate names no `wgpu` type at all:
+# the `ANativeWindow` wrapper lives in `SurfaceRenderer::for_android_ndk`,
+# beside `for_canvas`. `crates/dashscene-gpu/Cargo.toml` records that property
+# for the canvas case: the wrapping happens in the painter so a host names no
+# `wgpu` type.
+dashscene-gpu.workspace = true

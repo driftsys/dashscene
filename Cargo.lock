@@ -637,6 +637,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashscene-ffi"
+version = "0.0.0"
+dependencies = [
+ "dashbuf",
+ "dashlang",
+ "dashscene-core",
+ "dashscene-engine",
+ "dashscene-gpu",
+ "dashscene-validator",
+]
+
+[[package]]
 name = "dashscene-gpu"
 version = "0.0.0"
 dependencies = [

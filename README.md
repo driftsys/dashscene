@@ -180,6 +180,7 @@ run).
 | `dashscene-unity`      | the `extern "C"` gate holding boundary B representable from C#            |
 | `dashscene-web`        | web integration — the canvas handoff, the frame loop, `.dsb` by range     |
 | `dashscene-desktop`    | desktop integration — the window handoff, the winit loop, a mapped `.dsb` |
+| `dashscene-ffi`        | the C ABI every platform host sits on — lifecycle, load, tick, surface    |
 | `dashscene-gpu`        | the lean painter over wgpu — native and web, the full vocabulary          |
 
 Beside them: `importers/figma/` (the Deno and TypeScript Figma REST importer and

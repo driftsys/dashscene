@@ -17,6 +17,7 @@ members = [
   "crates/dashscene-unity",
   "crates/dashscene-web",
   "crates/dashscene-desktop",
+  "crates/dashscene-ffi",
   "crates/dashscene-gpu",
   "goldens/tooling",
   # The showcase scenes the demonstration draws (v0.14, story #574). Under
@@ -69,7 +70,8 @@ rust-version = "1.88"
 #   dashbuf -> dashpaint -> dashscene-core -> dashscene-typeset ->
 #   dashcue -> dashscene-engine -> dashscene-validator -> dashscene-skia -> dashlang ->
 #   dashc -> dashpack-astcenc-sys -> dashpack -> dashscene-unity ->
-#   dashscene-gpu -> dashscene-desktop -> dashscene-web -> dashscene
+#   dashscene-gpu -> dashscene-desktop -> dashscene-web -> dashscene-ffi ->
+#   dashscene
 # dashscene-gpu precedes both integration crates: story #741 made the web crate
 # the integration surface over that painter and story #794 did the same for the
 # desktop one, so both depend on it. The order was the other way round while
@@ -102,6 +104,7 @@ dashpack-astcenc-sys = { path = "crates/dashpack-astcenc-sys", version = "0.0.0"
 dashscene-unity = { path = "crates/dashscene-unity", version = "0.0.0" }
 dashscene-web = { path = "crates/dashscene-web", version = "0.0.0" }
 dashscene-desktop = { path = "crates/dashscene-desktop", version = "0.0.0" }
+dashscene-ffi = { path = "crates/dashscene-ffi", version = "0.0.0" }
 dashscene-gpu = { path = "crates/dashscene-gpu", version = "0.0.0" }
 
 # Stack per docs/design/architecture.md — reserved here for crates to opt into as

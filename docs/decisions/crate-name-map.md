@@ -343,6 +343,36 @@ When checking this against crates.io, send a `User-Agent` header: the API
 rejects requests without one, and a check that does not distinguish that
 rejection from a 404 reads every name as unreserved.
 
+## `dashscene-ffi` — the C ABI, added at story #840 (v0.19)
+
+The eighteenth name, and the second addition after `dashscene-desktop`. D2 of
+[`host-integration-in-three-layers.md`](host-integration-in-three-layers.md)
+puts one C ABI under every platform host, so it cannot live in any of them:
+Android reaches it through JNI, and the v1 iOS and Unity hosts inherit the same
+symbols.
+
+**Why not an existing crate.** `dashscene-unity` is the closest name and is the
+wrong one — it holds story #600's FFI-safety gate, the macro that makes a
+non-FFI-safe boundary-B type a compile error, and it depends only on
+`dashpaint`. The umbrella `dashscene` was considered and rejected: it is
+reserved as the Rust facade, and giving it `crate-type = ["cdylib",
+"staticlib"]` would make every consumer of that facade build a dynamic library
+for a C API it does not use.
+
+**`-ffi` rather than `-abi` or `dashffi`.** The `dashscene-*` family is what
+every host-facing surface already uses — `dashscene-web`, `dashscene-desktop`,
+`dashscene-unity` — while the short `dash*` names are the vocabularies
+(`dashpaint`, `dashcue`, `dashbuf`, `dashlang`). `-ffi` is also the Rust
+ecosystem's own word for this, and `categories = ["external-ffi-bindings"]`
+already names it.
+
+**Availability: not yet reserved on crates.io.** Every other name here was
+reserved before or as it landed, and this one was not — the crate carries
+`version = "0.0.0"` and `publish` is not blocked, so the reservation is owed
+before the first real publish rather than before the code. Recorded as a gap
+rather than left implicit, which is what the `dashpack` entry above exists to
+warn about.
+
 ## Why
 
 - `dashscene-typeset` was chosen over `dashscene-text` (too generic — the
