@@ -347,16 +347,30 @@ c-abi:
 # The Android API level this repository links against.
 #
 # A floor rather than a target: the NDK ships wrappers from 21 up, and this is
-# the oldest device the artifacts will load on. 26 is conservative for a
-# bring-up whose first device class is automotive, and it is deliberately not
-# higher, because nothing built so far needs more.
+# the oldest device the artifacts will load on.
 #
-# Story #841 may raise it. `AChoreographer_getInstance` is API 24, but
-# `AChoreographer_postVsyncCallback` — the one carrying a frame timeline — is
-# API 33, and D6 of `docs/decisions/host-integration-in-three-layers.md` puts
-# vsync on the native side. Raising this is a one-line change, and the reason it
-# is not raised pre-emptively is that no code needs it yet.
-ANDROID_API := "26"
+# **33 — Android 13 — ruled 2026-08-09**, on the target fleet rather than on
+# Play. Play's requirement is about `targetSdk`, which it gates on being
+# recent; it sets no minimum, so it is not what decides this number. The fleet
+# is what decides it, and the fleet is Android 13/14.
+#
+# This is the *link* level, so it is the minimum rather than the target: a
+# binary linked at 33 loads on 33 and above and refuses to load below.
+#
+# What that buys story #841 is worth naming, because it removes work. D6 puts
+# vsync on the native side, and the NDK's own `android/choreographer.h`
+# annotates each entry point with `__INTRODUCED_IN`:
+#
+#     AChoreographer_getInstance          24
+#     AChoreographer_postFrameCallback    24, __DEPRECATED_IN(29)
+#     AChoreographer_postFrameCallback64  29
+#     AChoreographer_postVsyncCallback    33
+#
+# At a floor of 33, `postVsyncCallback` — the one carrying a frame timeline —
+# is reachable **unconditionally**. No runtime API-level guard, and no
+# `postFrameCallback64` fallback branch for 29-to-32 devices, which a lower
+# floor would have required.
+ANDROID_API := "33"
 
 # Print the NDK's clang toolchain bin directory, or say what to install.
 #
