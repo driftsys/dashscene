@@ -1320,18 +1320,19 @@ deferred the gate to issue #825, with the reasons recorded rather than implied.
 Depends on: v0.15 for the painter an embedder embeds, and on v0.16 for the load
 path the `.dsb` half of it wraps.
 
-### v0.18 — animation vocabulary — open, provisional
+### v0.18 — animation vocabulary — open
 
-**Epic #769, milestone provisional.** The number and the placement are settled;
-the scope is not. This entry was written expecting v0.17's split to renumber it,
-and the v0.16 phase-end revision (2026-08-07) took that split **without**
-renumbering: the packaging half stayed v0.17 and the mobile half became v0.19,
-below. So this slice keeps its number and its position, which also puts the
-document-vocabulary work ahead of the second platform bring-up — a format that
-is still moving is a poor thing to stand a new platform on.
+**Epic #769.** Planned 2026-08-09, at the v0.17 close. The number and the
+placement were settled by the v0.16 phase-end revision (2026-08-07), which took
+v0.17's split **without** renumbering: the packaging half stayed v0.17 and the
+mobile half became v0.19, below. So this slice keeps its number and its
+position, which also puts the document-vocabulary work ahead of the second
+platform bring-up — a format that is still moving is a poor thing to stand a
+new platform on.
 
-What stays provisional is the story breakdown, as every epic's does before its
-own planning session.
+The story breakdown is no longer provisional. Three questions the epic left
+open were ruled at the planning session and are recorded under "What was ruled
+when this slice opened", below.
 
 Delivers: **motion as data in the document.** Today a dashscene animation
 cannot ship in a file. `dashbuf` does not depend on `dashcue` — three other
@@ -1372,12 +1373,43 @@ second renderer, and the first second producer on the _compile_ path —
 clamp, **#776** a payload size budget, against v0.17 where an integrator meets
 it.
 
+**What was ruled when this slice opened** (2026-08-09), against what Figma and
+SVG actually carry rather than against what is cheapest to build. The reasoning
+and the arithmetic are in
+[`decisions/rotation-is-paint-only-and-anchored-explicitly.md`](decisions/rotation-is-paint-only-and-anchored-explicitly.md);
+in short:
+
+- The rotation channel is an angle in radians plus an **explicit anchor** in
+  the node's own coordinate space, canonically `(0, 0)`. Neither Figma nor SVG
+  rotates about a centre, which an earlier draft of the ruling assumed.
+- All three scalars are bindable, because `<animateTransform type="rotate">`
+  animates `"a cx cy"`.
+- Rotation is **paint-only**, which both producers agree on.
+- Scale and skew wait for a later story, appended at the tail.
+- The vocabulary and both lowering paths land complete; a painter that cannot
+  yet draw a rotation **refuses it by name** rather than drawing the node
+  unrotated, which would be the silent drop P4 forbids.
+
+**Two things checking the code found**, both of which would have made
+story #770 silently wrong and neither of which is in its issue body:
+
+- **Figma's node `rotation` is radians**, and `crates/dashc/src/figma/rest.rs`
+  documents it as degrees on the field's own doc comment. It has never mattered
+  because the lowering only tests the value against zero; it becomes a
+  factor-of-57.3 error the moment the value is lowered rather than refused.
+- **The lowering derives a node's box from `absoluteBoundingBox`**, which for a
+  rotated node is the axis-aligned bounds of the _rotated_ shape — 122.47
+  against a true 100 for the fixture the record cites. The error is not bounded
+  by that: it grows with the aspect ratio, and a 10 × 1000 node at 89° reads a
+  hundred times its true width. A rotated node's box must come from `size`.
+
 Design capture: three files in `docs/wip/` dated 2026-08-07 —
 `motion-in-the-document.md`, `animated-content-import.md` and
 `asset-sourcing-and-residency.md`, split by concern rather than by slice. The
 second extends [`technotes/runtime-content.md`](technotes/runtime-content.md)
 §4-§6 rather than replacing it: that note already fixed the three-bucket triage
-and chose ThorVG.
+and chose ThorVG. The note itself never mentions Vello; the comparison against
+Vello is in the capture.
 
 Depends on: nothing in v0.16. It touches `dashbuf`, `dashscene-core`,
 `dashcue`, `dashscene-engine` and both painters, none of which is on the
