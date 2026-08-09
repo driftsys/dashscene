@@ -192,9 +192,42 @@ pub fn validate_document(doc: &Document<'_>) -> Report {
         .map(|binding| (binding.node(), binding.channel().0))
         .collect();
 
+    // Every `(node, channel)` a variant transition track drives, gathered
+    // alongside the walk below rather than after it: a loop track may not
+    // share a channel with one, and the loop table is walked next.
+    let mut animated: std::collections::HashSet<(u32, u8)> = std::collections::HashSet::new();
+    let mut overridden: std::collections::HashSet<(u32, u8)> = std::collections::HashSet::new();
     for (i, set) in doc.variant_sets().unwrap_or_default().iter().enumerate() {
         check_variant_set(&mut report, &set, i as u32, &sizes, &bound);
+        for member in set.members().unwrap_or_default().iter() {
+            let Some(transition) = member.transition() else {
+                continue;
+            };
+            for track in transition.tracks().unwrap_or_default().iter() {
+                animated.insert((track.node(), track.channel().0));
+            }
+        }
+        // The paint props a member overrides. `Arena::commit` resolves a
+        // node's fill and rotation from the variant overlay first, so an
+        // override masks anything a loop writes to the same channel for as
+        // long as that member is active — and nothing ends a loop, so it
+        // never comes back.
+        for member in set.members().unwrap_or_default().iter() {
+            for over in member.overrides().unwrap_or_default().iter() {
+                match over.value_type() {
+                    dashbuf::VariantPropValue::VariantFill => {
+                        overridden.insert((over.node(), FILL_GROUP));
+                    }
+                    dashbuf::VariantPropValue::VariantRotation => {
+                        overridden.insert((over.node(), ROTATION_GROUP));
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
+
+    check_loops(&mut report, doc, &sizes, &bound, &animated, &overridden);
 
     // The v0.7 binding tables (story #167). The loader resolves both
     // indices unchecked, so a dangling one is named here; the channel is
@@ -1200,7 +1233,8 @@ fn check_variant_transition(
                 rule::TRANSITION_TRACK_ALSO_BOUND,
                 at,
                 format!(
-                    "transition track drives node {} channel {}, which a binding row already                      drives; one channel takes one writer",
+                    "transition track drives node {} channel {}, which a binding row already \
+                     drives; one channel takes one writer",
                     track.node(),
                     track.channel().variant_name().unwrap_or("unknown"),
                 ),
@@ -1232,6 +1266,270 @@ fn check_variant_transition(
                 }
             }
             // The union tag itself is already named by `check_enum!` above.
+            _ => {}
+        }
+    }
+}
+
+/// The two paint props a variant member can override that a loop may also
+/// drive, as opaque group tags. Not channel codes: one override covers a
+/// whole group — `VariantFill` replaces the colour all four fill channels
+/// write into, and `VariantRotation` replaces the angle and both anchors
+/// together — so the collision is per group, not per channel.
+const FILL_GROUP: u8 = 0;
+const ROTATION_GROUP: u8 = 1;
+
+/// The document's ambient animations (story #772).
+///
+/// Every rule here exists for the reason the transition rules do: the
+/// runtime's contract is to **panic** on what it rejects, so a document
+/// reaching it with any of these would take the frame loop down rather
+/// than being named (P4).
+fn check_loops(
+    report: &mut Report,
+    doc: &Document<'_>,
+    sizes: &PoolSizes,
+    bound: &std::collections::HashSet<(u32, u8)>,
+    animated: &std::collections::HashSet<(u32, u8)>,
+    overridden: &std::collections::HashSet<(u32, u8)>,
+) {
+    let nodes = doc.nodes().unwrap_or_default();
+    let paints = doc.paints().unwrap_or_default();
+    // A loop is the sole writer of its channel, so a second loop on one
+    // `(node, channel)` is refused like any other second writer. Built as
+    // the walk goes, so the first of a pair is accepted and the second is
+    // the one named.
+    let mut looped: std::collections::HashSet<(u32, u8)> = std::collections::HashSet::new();
+
+    for (index, track) in doc.loops().unwrap_or_default().iter().enumerate() {
+        let at = Location::Loop(index as u32);
+        check_enum!(report, &at, "LoopTrack.spec", track.spec_type());
+        check_enum!(report, &at, "LoopTrack.channel", track.channel());
+
+        let node = track.node();
+        if node as usize >= sizes.nodes {
+            report.push(error(
+                rule::LOOP_NODE_OUT_OF_RANGE,
+                &at,
+                format!(
+                    "loop track references node {node}, but the document carries {} nodes",
+                    sizes.nodes
+                ),
+            ));
+        }
+
+        // A loop animates paint only, which is the mirror of the rule a
+        // variant transition carries: the two constructs partition the
+        // channel space by where their values come from. A transition's
+        // endpoints are two *resolved* rects the engine binds at the
+        // switch, so it animates rect channels; a loop's are authored, and
+        // the authored value of a laid-out channel is not what the solver
+        // resolves it to.
+        //
+        // The R4 cost is the other half. A loop never settles, so a loop on
+        // a layout channel would force a solve on every frame for as long
+        // as the document is loaded. On a paint channel the same loop
+        // commits through the retained-geometry replay and never solves at
+        // all.
+        //
+        // Every case in the ambient class is paint-only: a spinner is a
+        // rotation, pulse and breathing are opacity, shimmer and skeleton
+        // are fill. A size-animating loop wants a scale channel, which this
+        // slice does not carry.
+        if !matches!(
+            track.channel(),
+            dashbuf::BindingChannel::FillR
+                | dashbuf::BindingChannel::FillG
+                | dashbuf::BindingChannel::FillB
+                | dashbuf::BindingChannel::FillA
+                | dashbuf::BindingChannel::Opacity
+                | dashbuf::BindingChannel::Rotation
+                | dashbuf::BindingChannel::RotationAnchorX
+                | dashbuf::BindingChannel::RotationAnchorY
+        ) {
+            report.push(error(
+                rule::LOOP_CHANNEL_NOT_PAINT,
+                &at,
+                format!(
+                    "loop track animates channel {}, but a loop animates paint channels only \
+                     (the fill components, Opacity, Rotation and its two anchor components)",
+                    track.channel().variant_name().unwrap_or("unknown"),
+                ),
+            ));
+        }
+
+        // A variant override on the same paint prop masks the loop. Core
+        // resolves the overlay first (`Arena::commit` takes
+        // `overlay(id).fill` before the node's own, and the same for
+        // rotation), so while that member is active every sample the loop
+        // writes is discarded — the spinner stops turning with no
+        // diagnostic, which is the silent drop P4 forbids. Seven of the
+        // eight channels a loop may use are reachable this way.
+        let group = if is_fill_channel(track.channel()) {
+            Some(FILL_GROUP)
+        } else if matches!(
+            track.channel(),
+            dashbuf::BindingChannel::Rotation
+                | dashbuf::BindingChannel::RotationAnchorX
+                | dashbuf::BindingChannel::RotationAnchorY
+        ) {
+            Some(ROTATION_GROUP)
+        } else {
+            None
+        };
+        if let Some(group) = group
+            && overridden.contains(&(node, group))
+        {
+            report.push(error(
+                rule::LOOP_CHANNEL_OVERRIDDEN_BY_A_VARIANT,
+                &at,
+                format!(
+                    "loop track drives node {node} channel {}, which a variant member also \
+                     overrides; the overlay resolves first, so every sample the loop writes \
+                     would be discarded while that member is active, and nothing ends a loop",
+                    track.channel().variant_name().unwrap_or("unknown"),
+                ),
+            ));
+        }
+
+        // Issue #667, for a loop rather than a binding row. A fill channel
+        // writes one component of a solid color, so the runtime keeps a
+        // per-node color and stages the whole of it on every sample. A node
+        // filled with a gradient or an image has no such color, and the
+        // first sample replaces the authored fill outright.
+        if is_fill_channel(track.channel()) && (node as usize) < sizes.nodes {
+            let paint = nodes.get(node as usize).paint_entry();
+            if paint != NO_PAINT
+                && (paint as usize) < sizes.paints
+                && let Some(kind) = non_solid_fill_name(paints.get(paint as usize).fill_type())
+            {
+                report.push(error(
+                    rule::LOOP_FILL_CHANNEL_ON_NON_SOLID_FILL,
+                    &at,
+                    format!(
+                        "loop track writes {} on {}, whose fill is {kind}; a fill channel writes \
+                         one component of a solid color, so the first sample would replace the \
+                         {kind} with a solid one and the authored fill would be lost",
+                        track.channel().variant_name().unwrap_or("unknown"),
+                        node_path(&nodes, node),
+                    ),
+                ));
+            }
+        }
+
+        // A spring has no duration, so it has no cycle to repeat.
+        // `dashcue::Scheduler::start_loop` panics on one; the gate names it
+        // instead. Not a channel rule and not a range rule — the spec arm
+        // itself is what a loop cannot carry.
+        if track.spec_type() == dashbuf::TransitionSpec::SpringSpec {
+            report.push(error(
+                rule::LOOP_SPEC_IS_A_SPRING,
+                &at,
+                format!(
+                    "loop track on node {node} carries a spring, which has no duration and \
+                     therefore no cycle to repeat; a loop takes a tween or a keyframes spec"
+                ),
+            ));
+        }
+
+        // Two writers on one channel, the same rule a variant transition
+        // track carries and for the same reason — the runtime addresses
+        // every writer by one packed `PropKey`, so one silently shadows
+        // another. A loop is stricter than a transition: it is refused
+        // against binding rows, transition tracks and other loops alike,
+        // because nothing ends a loop, so a shadowed one never gives the
+        // channel back.
+        let key = (node, track.channel().0);
+        let clash = if bound.contains(&key) {
+            Some("a binding row")
+        } else if animated.contains(&key) {
+            Some("a variant transition track")
+        } else if !looped.insert(key) {
+            Some("another loop track")
+        } else {
+            None
+        };
+        if let Some(other) = clash {
+            report.push(error(
+                rule::LOOP_CHANNEL_HAS_ANOTHER_WRITER,
+                &at,
+                format!(
+                    "loop track drives node {node} channel {}, which {other} already drives; \
+                     one channel takes one writer, and a loop never gives it back",
+                    track.channel().variant_name().unwrap_or("unknown"),
+                ),
+            ));
+        }
+
+        // The endpoints and the offset. `dashcue::Scheduler::start_loop`
+        // asserts each of these.
+        for (what, value) in [("from", track.from()), ("to", track.to())] {
+            if !value.is_finite() {
+                report.push(error(
+                    rule::LOOP_VALUE_OUT_OF_RANGE,
+                    &at,
+                    format!("loop track {what} is {value}, but it must be finite"),
+                ));
+            }
+        }
+        if !(track.to() - track.from()).is_finite() {
+            report.push(error(
+                rule::LOOP_VALUE_OUT_OF_RANGE,
+                &at,
+                format!(
+                    "loop track spans {} to {}, which is wider than f32 holds",
+                    track.from(),
+                    track.to()
+                ),
+            ));
+        }
+        // `Arena::set_prop` clamps opacity to [0, 1], so an endpoint outside
+        // it is silently reinterpreted — most of the cycle pinned flat, and
+        // not the pulse that was authored. The same validator already gates
+        // the *authored* value of the same prop by name, so accepting it
+        // here only because it arrived through a different table is the
+        // asymmetry, not the rule.
+        if track.channel() == dashbuf::BindingChannel::Opacity {
+            for (what, value) in [("from", track.from()), ("to", track.to())] {
+                if value.is_finite() && !(0.0..=1.0).contains(&value) {
+                    report.push(error(
+                        rule::LOOP_VALUE_OUT_OF_RANGE,
+                        &at,
+                        format!(
+                            "loop track {what} is {value} on an Opacity channel, which the arena \
+                             clamps to the range 0.0 to 1.0"
+                        ),
+                    ));
+                }
+            }
+        }
+
+        let phase = track.phase_offset();
+        if !phase.is_finite() || phase < 0.0 {
+            report.push(error(
+                rule::LOOP_VALUE_OUT_OF_RANGE,
+                &at,
+                format!("loop track phase_offset is {phase}, but it must be finite and >= 0"),
+            ));
+        }
+
+        // Each arm's own bounds, exactly as a transition track's are. The
+        // spring arm is absent on purpose: it is already refused above, and
+        // repeating its range checks would name one document twice for one
+        // defect.
+        match track.spec_type() {
+            dashbuf::TransitionSpec::TweenSpec => {
+                if let Some(spec) = track.spec_as_tween_spec() {
+                    check_enum!(report, &at, "TweenSpec.easing", spec.easing());
+                    check_positive(report, &at, "tween duration", spec.duration());
+                }
+            }
+            dashbuf::TransitionSpec::KeyframesSpec => {
+                if let Some(spec) = track.spec_as_keyframes_spec() {
+                    check_positive(report, &at, "keyframes duration", spec.duration());
+                    check_keyframes(report, &spec, &at);
+                }
+            }
             _ => {}
         }
     }

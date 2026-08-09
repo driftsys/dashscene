@@ -648,6 +648,48 @@ pub struct VariantTransition {
     pub stagger: f32,
 }
 
+/// One ambient animation the document declares (story #772): one
+/// channel of one node repeating a curve indefinitely, with no state
+/// change driving it. The shimmer/spinner/pulse/breathing/skeleton class,
+/// which is the one class Figma cannot author — it has no timeline and
+/// its prototype model is variant-to-variant — so it reaches a document
+/// by no route unless the vocabulary carries it.
+///
+/// **Its endpoints are authored, unlike a [`PropTransition`]'s.** A
+/// variant transition's `from` and `to` are bound by the engine from two
+/// solved layouts and never stored; a loop has no two states to travel
+/// between, so it names its own. That does not put results in the
+/// document (P1): these are authored values, the same kind the node
+/// tree and [`VariantValue::Width`] have always carried.
+///
+/// **Nothing ends a loop.** Every case in the class is endless by
+/// definition, so there is no repeat count and no end signal. SMIL's
+/// `repeatCount` and CSS's `animation-iteration-count` both lower onto a
+/// tail-appended field later with no R7 break, so a count arrives when a
+/// producer needs one rather than ahead of it (story #772's ruling).
+#[derive(Clone, Debug, PartialEq)]
+pub struct LoopTrack {
+    pub node: NodeId,
+    pub channel: Channel,
+    /// The value at the start of each cycle.
+    pub from: f32,
+    /// The value the curve reaches at the end of each cycle, before it
+    /// wraps back to `from`.
+    pub to: f32,
+    /// The curve. A [`TransitionSpec::Spring`] is refused: it carries no
+    /// duration, so it has no cycle to repeat, and looping it on an
+    /// invented period would silently reinterpret the spec (P4).
+    pub spec: TransitionSpec,
+    /// Where in its own cycle the track starts, in seconds — what
+    /// staggers a row of skeleton bars out of step. An offset of a whole
+    /// cycle or more is the same phase as its remainder.
+    ///
+    /// Not a delay: a delayed one-shot holds at `from` and then runs its
+    /// curve once, while an offset loop is already partway through a
+    /// cycle that never ends.
+    pub phase_offset: f32,
+}
+
 /// Stable handle to a variant set in one [`Arena`], returned by
 /// [`Txn::add_variant_set`]. Only meaningful for the arena that
 /// produced it.
@@ -799,6 +841,11 @@ pub struct Arena {
     /// Binding rows, in declaration order (story #167). Intent metadata,
     /// like `signals`.
     bindings: Vec<Binding>,
+    /// Loop tracks, in declaration order (story #772). Intent metadata,
+    /// like `bindings`: commit never reads them — starting a loop on a
+    /// scheduler is a producer-side runtime's job (P3), the same division
+    /// a binding row already follows.
+    loop_tracks: Vec<LoopTrack>,
     buffers: [CommittedScene; 2],
     front: usize,
     /// Retained paint interner: a paint entry's canonical bits → the
@@ -1138,6 +1185,15 @@ impl Arena {
     /// The staged binding rows, in declaration order (story #167).
     pub fn bindings(&self) -> &[Binding] {
         &self.bindings
+    }
+
+    /// The staged loop tracks, in declaration order (story #772).
+    ///
+    /// A runtime reads this once, when it attaches to the arena, and
+    /// starts one scheduler track per row: a loop has no trigger, so
+    /// there is nothing to re-read per frame (P3).
+    pub fn loop_tracks(&self) -> &[LoopTrack] {
+        &self.loop_tracks
     }
 
     /// Total node count, roots and descendants alike. A [`LayoutSolver`]
@@ -1694,6 +1750,34 @@ impl Txn<'_> {
             channel,
             transform,
         });
+    }
+
+    /// Declare an ambient animation: one channel of one node repeating a
+    /// curve indefinitely (story #772). Rows are append-only and keep
+    /// declaration order.
+    ///
+    /// Intent metadata only, exactly as [`Txn::bind`] is: `commit` never
+    /// reads the table, and starting the track on a scheduler is a
+    /// producer-side runtime's job (P3).
+    ///
+    /// Unlike a binding, a loop is the **sole writer** of its channel —
+    /// two rows on one `(node, channel)`, or a loop sharing a channel
+    /// with a binding row, are refused at the load gate rather than
+    /// resolved by precedence (P4). This call stages what it is given;
+    /// the gate is `dashscene-validator`'s, so a hand-built arena is not
+    /// silently held to a document rule.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `node` is not a node of this arena — a broken producer
+    /// contract, named loudly (P4), matching [`Txn::bind`].
+    pub fn add_loop_track(&mut self, track: LoopTrack) {
+        assert!(
+            track.node.index() < self.arena.nodes.len(),
+            "{:?} is not a node of this arena",
+            track.node
+        );
+        self.arena.loop_tracks.push(track);
     }
 
     /// Lower every negative flex gap to child margins (the Figma≠CSS

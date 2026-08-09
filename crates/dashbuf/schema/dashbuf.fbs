@@ -902,6 +902,48 @@ table VariantTransition {
   stagger: float32;
 }
 
+// One ambient animation: one channel of one node repeating a curve
+// indefinitely, with no state change driving it (story #772). The
+// shimmer/spinner/pulse/breathing/skeleton class.
+//
+// `node` is an index into `Document.nodes` and `channel` is the same
+// vocabulary a binding targets, exactly as `PropTransition` above.
+//
+// **The endpoints are here, unlike a `PropTransition`'s.** A variant
+// transition travels between two *resolved* layouts, which the engine binds
+// at the switch and the document never stores (P1). A loop has no two states
+// to travel between, so it names its own `from` and `to` — authored values,
+// the kind the node tree and `VariantWidth` have always carried.
+//
+// `spec` is required, the same mechanism as `PropTransition.spec`. A
+// `SpringSpec` is refused at the load gate by name: a spring carries no
+// duration, so it has no cycle to repeat, and looping it on an invented
+// period would silently reinterpret the spec (P4).
+//
+// **Nothing ends a loop, and that is the ruling rather than an omission**
+// (story #772). Every case in the class is endless by definition. SMIL's
+// `repeatCount` and CSS's `animation-iteration-count` both lower onto a
+// `repeat` field appended at this table's tail later, with no R7 break, so a
+// count arrives when a producer needs one rather than ahead of it.
+table LoopTrack {
+  node: uint32;
+  channel: BindingChannel;
+  // The value at the start of each cycle.
+  from: float32;
+  // The value the curve reaches before wrapping back to `from`.
+  to: float32;
+  spec: TransitionSpec (required);
+  // Where in its own cycle this track starts, in seconds — what staggers a
+  // row of skeleton bars out of step. A whole cycle or more is the same
+  // phase as its remainder.
+  //
+  // Not a delay: a delayed one-shot holds at `from` and then runs its curve
+  // once, while an offset loop is already partway through a cycle that never
+  // ends. `VariantTransition.stagger` is the delay-shaped field; this is not
+  // that field under another name.
+  phase_offset: float32;
+}
+
 // Story B1 — baked vector shapes
 // (docs/wip/2026-07-19-B1-vector-msdf-design.md). A Figma VECTOR node lowers
 // into a baked multi-channel signed distance field carried as a coverage mask
@@ -975,6 +1017,11 @@ table Document {
   // `VectorAtlas.image`. Appended at the tail, so every pre-v0.11 document
   // decodes unchanged (R7).
   assets: [AssetEntry];
+  // Story #772: the ambient animations this document declares. Top-level
+  // rather than nested on a variant member, because a loop has no variant
+  // to hang from — the same shape as `bindings`, and for the same reason.
+  // Appended at the tail, so every pre-v0.18 document decodes unchanged (R7).
+  loops: [LoopTrack];
 }
 
 root_type Document;

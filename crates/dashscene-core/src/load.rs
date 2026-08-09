@@ -59,15 +59,66 @@ use dashbuf::{
 use dashpaint::Region;
 
 use crate::arena::{
-    Arena, AxisSizing, CrossAxisAlign, Easing, GridTrack, Keyframe, LayoutMode, MainAxisAlign,
-    NodeId, Prop, PropTransition, TextAlign, TextAlignV, TextStyle, TransitionSpec, VariantMember,
-    VariantTransition, VariantValue,
+    Arena, AxisSizing, CrossAxisAlign, Easing, GridTrack, Keyframe, LayoutMode, LoopTrack,
+    MainAxisAlign, NodeId, Prop, PropTransition, TextAlign, TextAlignV, TextStyle, TransitionSpec,
+    VariantMember, VariantTransition, VariantValue,
 };
 use crate::bindings::{Channel, ScalarTransform, SignalId};
 use crate::committed::{
     Blur, BlurKind, Color, FillSpec, Gradient, GradientKind, GradientStop, ImageAsset, ImageFormat,
     Mat23, ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, Vec2, VectorField,
 };
+
+/// One row's curve (story #771), the same shape as [`variant_value`]
+/// above: every arm the schema names has a case, and an unknown one is
+/// unreachable because the load gate refused the document first (P4).
+///
+/// A macro rather than a function, because two schema tables carry a
+/// `TransitionSpec` union — `PropTransition` and `LoopTrack` (story
+/// #772) — and `flatc` generates the `spec_type` / `spec_as_*` accessors
+/// as inherent methods on each table rather than through a trait, so
+/// there is no bound a function could take. One copy of the arm-for-arm
+/// conversion is the point: a fourth union arm must not be able to land
+/// in one reader and not the other.
+macro_rules! transition_spec {
+    ($row:expr) => {{
+        let row = $row;
+        match row.spec_type() {
+            dashbuf::TransitionSpec::TweenSpec => {
+                let t = row.spec_as_tween_spec().expect("TweenSpec present");
+                TransitionSpec::Tween {
+                    duration: t.duration(),
+                    easing: easing_of(t.easing()),
+                }
+            }
+            dashbuf::TransitionSpec::SpringSpec => {
+                let s = row.spec_as_spring_spec().expect("SpringSpec present");
+                TransitionSpec::Spring {
+                    stiffness: s.stiffness(),
+                    damping_ratio: s.damping_ratio(),
+                }
+            }
+            dashbuf::TransitionSpec::KeyframesSpec => {
+                let k = row.spec_as_keyframes_spec().expect("KeyframesSpec present");
+                TransitionSpec::Keyframes {
+                    duration: k.duration(),
+                    frames: k
+                        .frames()
+                        .unwrap_or_default()
+                        .iter()
+                        .map(|frame| Keyframe {
+                            t: frame.t(),
+                            value: frame.value(),
+                        })
+                        .collect(),
+                }
+            }
+            other => {
+                unreachable!("unknown TransitionSpec {other:?}: rejected by the load gate (P4)")
+            }
+        }
+    }};
+}
 
 /// Replays a validated `.dsb` document into `arena` and commits it,
 /// returning the commit's generation.
@@ -671,7 +722,7 @@ fn load_inner(
                         .map(|track| PropTransition {
                             node: ids[track.node() as usize],
                             channel: channel_of(track.channel()),
-                            spec: transition_spec(&track),
+                            spec: transition_spec!(&track),
                         })
                         .collect(),
                     stagger: transition.stagger(),
@@ -703,6 +754,21 @@ fn load_inner(
             signal_ids[row.signal() as usize],
             transform_of(&row),
         );
+    }
+
+    // Loop tracks (story #772), staged in declaration order like the
+    // binding rows above and through the same `ids` mapping. A runtime
+    // starts one scheduler track per row when it attaches; nothing here
+    // runs them, the same division `bindings` already follows (P3).
+    for row in doc.loops().unwrap_or_default().iter() {
+        txn.add_loop_track(LoopTrack {
+            node: ids[row.node() as usize],
+            channel: channel_of(row.channel()),
+            from: row.from(),
+            to: row.to(),
+            spec: transition_spec!(&row),
+            phase_offset: row.phase_offset(),
+        });
     }
 
     txn.commit()
@@ -792,46 +858,6 @@ fn variant_value(o: &dashbuf::VariantOverride<'_>) -> VariantValue {
             }
         }
         other => unreachable!("unknown VariantPropValue {other:?}: rejected by the load gate (P4)"),
-    }
-}
-
-/// One track's curve (story #771), the same shape as [`variant_value`]
-/// above: every arm the schema names has a case, and an unknown one is
-/// unreachable because the load gate refused the document first (P4).
-fn transition_spec(track: &dashbuf::PropTransition<'_>) -> TransitionSpec {
-    match track.spec_type() {
-        dashbuf::TransitionSpec::TweenSpec => {
-            let t = track.spec_as_tween_spec().expect("TweenSpec present");
-            TransitionSpec::Tween {
-                duration: t.duration(),
-                easing: easing_of(t.easing()),
-            }
-        }
-        dashbuf::TransitionSpec::SpringSpec => {
-            let s = track.spec_as_spring_spec().expect("SpringSpec present");
-            TransitionSpec::Spring {
-                stiffness: s.stiffness(),
-                damping_ratio: s.damping_ratio(),
-            }
-        }
-        dashbuf::TransitionSpec::KeyframesSpec => {
-            let k = track
-                .spec_as_keyframes_spec()
-                .expect("KeyframesSpec present");
-            TransitionSpec::Keyframes {
-                duration: k.duration(),
-                frames: k
-                    .frames()
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|frame| Keyframe {
-                        t: frame.t(),
-                        value: frame.value(),
-                    })
-                    .collect(),
-            }
-        }
-        other => unreachable!("unknown TransitionSpec {other:?}: rejected by the load gate (P4)"),
     }
 }
 
