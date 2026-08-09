@@ -229,9 +229,34 @@ for hardware rather than being approximated here.
 ### What is not measured
 
 **Whether the target device class exposes Vulkan.** That is the D3a question and
-it needs hardware, which was not available (expected roughly 2026-08-23). The
-emulator answers only that the probe detects the failure mode, and that a
-software Vulkan implementation satisfies the painter.
+it needs hardware, which was not available (expected roughly 2026-08-23).
+
+**It is carried as debt (#885) rather than as a slice gate** (2026-08-09). The
+epic made it a gate because a lot would be built on an unverified assumption;
+what discharged most of that is that nothing built is backend-specific — wgpu
+selects the backend itself — and that a device which cannot meet the limit fails
+at the device request rather than subtly. The painter has also now been run
+through Vulkan end to end, pipelines and text and blur, rather than only
+`request_device` (stories #841 and #842). Blocking a slice on a measurement
+nobody can take stalls work the answer does not invalidate.
+
+**What is not relaxed:** nothing describes Android as working until #885 is
+measured, and emulator results stay labelled as emulator results.
+
+### The emulator numbers depend on how the emulator was launched
+
+Recorded here so a re-run is not read as a contradiction. The two adapter
+sets above came from a **default-GPU** launch. A launch with
+`-gpu swiftshader_indirect`, on 2026-08-09, reported adapter 1 as ANGLE over
+SwiftShader at **GLES 3.1** with `max_storage_buffers_per_shader_stage` of
+**18**, passing the device request — where this record holds a Metal-backed
+translator at **GLES 3.0** reporting **0** and failing.
+
+Both are correct for their configuration: shader storage buffers arrived in GLES
+3.1, so a 3.0 translator reports zero and a 3.1 one does not. The consequence is
+that **"the GLES adapter reporting zero is D3a's mechanism, demonstrated" is a
+statement about a configuration**, not about the emulator — and any emulator
+number quoted here should name the `-gpu` mode that produced it.
 
 Until the hardware measurement exists, **nothing may describe Android as
 working** — not this record, not a design document, not an issue. D3a's status
