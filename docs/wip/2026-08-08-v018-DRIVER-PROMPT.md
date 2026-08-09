@@ -1,8 +1,12 @@
 # v0.18 driver prompt — drive the slice to completion, one story at a time
 
-    status   live; hand this to a session as its first message. The gate it
-             was written against is already discharged — see "The gate" below,
-             which is kept as written and marked rather than deleted.
+    status   SUPERSEDED on 2026-08-09 by
+             `2026-08-09-v018-DRIVER-PROMPT.md`, which covers the slice from
+             issue #617 onward. Hand a session that one, not this. This is kept
+             as written and marked rather than deleted, the same way its own
+             spent gate section is: its story #770 material is now as-built,
+             and its gate records why the slice could start at all.
+             Both archive together when epic #769 closes.
     written  2026-08-08, before the slice started. Nothing in it is as-built.
              Everything specific below was checked against `main` at e5b6846,
              the merge of story #727. Stale the moment a story lands, and one
