@@ -364,7 +364,7 @@ fn keyframes_with_no_declared_frames_degrade_to_linear() {
 }
 
 #[test]
-#[should_panic(expected = "strictly increasing")]
+#[should_panic(expected = "non-decreasing")]
 fn start_panics_on_unsorted_keyframes() {
     let mut s = Scheduler::new();
     s.start(
@@ -418,6 +418,109 @@ fn start_panics_on_a_zero_damping_ratio() {
         TransitionSpec::Spring {
             stiffness: 100.0,
             damping_ratio: 0.0,
+        },
+        0.0,
+    );
+}
+
+/// A pair of keyframes at the same `t` is a step, and the scheduler samples it
+/// as one (issue #852, `docs/decisions/a-step-is-a-pair-of-keyframes.md`).
+///
+/// The span is 0 -> 100 so the sampled value reads directly as a percentage of
+/// the step: 0 before the flip, 100 after it.
+#[test]
+fn two_keyframes_at_one_t_are_a_step() {
+    let mut s = Scheduler::new();
+    s.start(
+        K,
+        0.0,
+        100.0,
+        TransitionSpec::Keyframes {
+            duration: 1.0,
+            frames: vec![
+                Keyframe { t: 0.4, value: 0.0 },
+                Keyframe { t: 0.4, value: 1.0 },
+            ],
+        },
+        0.0,
+    );
+
+    s.advance(0.2);
+    assert_eq!(s.sample(K), Some(0.0), "held before the step");
+    s.advance(0.1);
+    assert_eq!(s.sample(K), Some(0.0), "still held just before it");
+    s.advance(0.1);
+    assert_eq!(s.sample(K), Some(100.0), "flipped at the step");
+    s.advance(0.2);
+    assert_eq!(s.sample(K), Some(100.0), "held after it");
+}
+
+/// A multi-step sequence, which is what `calcMode="discrete"` with several
+/// values is: two flips, held between them.
+#[test]
+fn four_keyframes_are_two_steps() {
+    let mut s = Scheduler::new();
+    s.start(
+        K,
+        0.0,
+        100.0,
+        TransitionSpec::Keyframes {
+            duration: 1.0,
+            frames: vec![
+                Keyframe { t: 0.3, value: 0.0 },
+                Keyframe { t: 0.3, value: 0.5 },
+                Keyframe { t: 0.7, value: 0.5 },
+                Keyframe { t: 0.7, value: 1.0 },
+            ],
+        },
+        0.0,
+    );
+
+    s.advance(0.1);
+    assert_eq!(s.sample(K), Some(0.0));
+    s.advance(0.4);
+    assert_eq!(s.sample(K), Some(50.0), "the middle step");
+    s.advance(0.4);
+    assert_eq!(s.sample(K), Some(100.0), "the last step");
+}
+
+/// Three frames at one `t` is a producer error, not a step.
+///
+/// Sampling walks to the last frame at a given `t`, so the middle one carries
+/// a value no sample can return. Named rather than ignored (P4).
+#[test]
+#[should_panic(expected = "at most two keyframes may share a t")]
+fn three_keyframes_at_one_t_are_refused() {
+    let mut s = Scheduler::new();
+    s.start(
+        K,
+        0.0,
+        1.0,
+        TransitionSpec::Keyframes {
+            duration: 1.0,
+            frames: vec![
+                Keyframe { t: 0.4, value: 0.0 },
+                Keyframe { t: 0.4, value: 0.5 },
+                Keyframe { t: 0.4, value: 1.0 },
+            ],
+        },
+        0.0,
+    );
+}
+
+/// The open interval is unchanged by #852: a frame at 0 or 1 restates an
+/// endpoint that is already implicit.
+#[test]
+#[should_panic(expected = "strictly inside (0, 1)")]
+fn a_keyframe_at_zero_is_still_refused() {
+    let mut s = Scheduler::new();
+    s.start(
+        K,
+        0.0,
+        1.0,
+        TransitionSpec::Keyframes {
+            duration: 1.0,
+            frames: vec![Keyframe { t: 0.0, value: 1.0 }],
         },
         0.0,
     );
