@@ -40,7 +40,19 @@ The consequence is that every animation must be written in Rust against
 
 ## The three gaps, in dependency order
 
-### 1. A node cannot rotate
+### 1. A node cannot rotate — CLOSED 2026-08-09
+
+Story #770 landed the channel: `Prop::Rotation`, `VariantRotation`,
+`BindingChannel::Rotation` and `RotationAnchorX`, and the `rotation` and
+`rotation_anchor_x`/`_y` fields in `dashbuf`'s node table. The ruling is
+`docs/decisions/rotation-is-paint-only-and-anchored-explicitly.md` — paint-only,
+with an explicit anchor rather than a centre, because neither producer rotates
+about a centre. The painter half is story #832 and the tree-composition
+limitation is debt #845.
+
+The rest of this section is kept as it was written, because it records why the
+gap existed and how it went untracked, and that reasoning is what the other two
+gaps are still being read for.
 
 Checked in four places, all on 2026-08-07:
 
