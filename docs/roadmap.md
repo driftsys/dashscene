@@ -1217,7 +1217,7 @@ took that split.
 
 - **v0.17 — this slice. Web and desktop packaging.** Both targets already work;
   what is missing is anything an embedder can consume.
-- **v0.19 — Android bring-up, the C ABI, and the three layers.** See its entry
+- **v0.19 — Android bring-up and the C ABI.** See its entry
   below.
 
 **No renumber.** v0.18's animation vocabulary keeps its number and its place,
@@ -1415,33 +1415,38 @@ Depends on: nothing in v0.16. It touches `dashbuf`, `dashscene-core`,
 `dashcue`, `dashscene-engine` and both painters, none of which is on the
 loading-performance path.
 
-### v0.19 — Android, the C ABI, and the three layers — open, not yet planned
+### v0.19 — Android, the C ABI, and layer 0 — open
 
-**No epic yet.** Split out of v0.17 at that slice's opening (2026-08-07), on the
-seam the v0.17 entry above named.
+**Epic #833.** Planned 2026-08-09, at the v0.17 close. Split out of v0.17 at
+that slice's opening (2026-08-07), on the seam the v0.17 entry above named.
 
 Delivers: **the second platform.** Android is at zero — no target triple, no
 toolchain, no CI job, and no FFI beyond `dashscene-unity`'s Unity-facing
 bindings.
 
 [`decisions/host-integration-in-three-layers.md`](decisions/host-integration-in-three-layers.md)
-is **accepted** and is this slice's structure: three layers — surface interop,
-app state bound to signals, a DSL projecting `dashlang` — each usable without
-the layer above it, over one shared C ABI, written platform-general so the v1
-iOS story inherits it. `SurfaceView` semantics only; `TextureView` is v1 with
-the case that motivates it.
+is **accepted** and is the structure this slice builds against: three layers —
+surface interop, app state bound to signals, a DSL projecting `dashlang` — each
+usable without the layer above it, over one shared C ABI, written
+platform-general so the v1 iOS story inherits it. `SurfaceView` semantics only;
+`TextureView` is v1 with the case that motivates it. **Because each layer is
+usable without the one above it, this slice builds layer 0 and the C ABI under
+it**, and layers 1 and 2 move to a follow-on slice; the planning session's
+reasoning is below.
 
-**The first story confirms Vulkan before anything is built on it.** That record's
-D3a is a risk rather than a measurement: the painter binds four storage buffers
-to the fragment stage and `wgpu::Limits::downlevel_defaults` allows exactly
-four, so a device without Vulkan meets the same wall that makes WebGL2
+**The first story confirms Vulkan before anything is built on it.** That
+record's D3a is a risk rather than a measurement: the painter binds four storage
+buffers to the fragment stage and `wgpu::Limits::downlevel_defaults` allows
+exactly four, so a device without Vulkan meets the same wall that makes WebGL2
 unbuildable for this painter. The figure lives in a driver and in the GLES
 specification, not in the pinned crate, and this project reads a limit out of
 the thing that enforces it.
 
-Issue #767 (`madvise`) is waiting on this slice rather than on v1's hardware:
+Issue #767 (`madvise`) is held against this slice rather than v1's hardware:
 **Android is the first target where a genuinely cold page cache is ordinary
-rather than contrived**, which is the harness that measurement needs.
+rather than contrived**, which is the harness that measurement needs. It is not
+in the opening wave — it needs on-device measurement infrastructure that the
+toolchain story does not by itself deliver.
 
 **Confirmed against what v0.17 built (2026-08-08).** The structure above was
 ratified before either integration crate existed, and the question it left open
@@ -1492,8 +1497,53 @@ Holds:
   painter can port. It is filed against this slice because a C ABI and a second
   platform are when a second implementation first has to prove itself.
 
+**What was ruled when this slice opened** (2026-08-09), against what the
+showcase and the two shipped hosts actually contain rather than against the
+layering alone:
+
+- **The slice builds layer 0, and layers 1 and 2 are deferred with the case
+  that motivates them.** The requirement set for the slice is that Android runs
+  the same demonstration the other two targets run, so frame rate can be
+  measured with animation and text — and that is entirely a layer-0
+  requirement, because the showcase is entirely Rust. `corpus/showcase`'s
+  `SCENES` is a `const` table of scenes whose `build`, `pulse` and `action`
+  members are Rust function pointers; the animation is `pulse`, a Rust function
+  writing a named signal per frame, which `demo-web` already consumes as a
+  `FrameHook`; and the text scene is `typography`, MSDF Latin and Arabic driven
+  by a signal. Nothing on that path crosses into the host
+  language. **Layer 1** matters when app state drives the scene and **layer 2**
+  when the scene is authored in the host's language; neither is true of the
+  showcase. Layer 0 is also the layer the record calls "the whole of _show a
+  designed screen in my app_", so stopping there still ships a whole capability.
+- **The slice adds two things the entry above does not name**: `demo-android`,
+  a third `publish = false` demonstration host beside `demo` and `demo-web`;
+  and the **frame-timing instrument**, which exists only inside
+  `demo/src/shell.rs` and has no equivalent in `demo-web`. Measuring frame rate
+  on a device requires it to be reachable from a third host, so "run the same
+  demonstration" is not satisfied by the showcase crate alone.
+- **The per-frame cost gets a criterion, and it is measured before #822 rather
+  than with it.** The shown-root record left this to this
+  planning session by name — "R5 and its benchmark bound the load only. Whether
+  this needs its own criterion is a v0.19 planning question". It is one:
+  without it the per-frame half of #822's justification would ship as an
+  assertion. The band lands first so the before-number is committed, because a
+  band added in the same change that improves what it measures cannot fail and
+  cannot show what the change was worth. It reuses
+  `goldens/tooling/tests/startup_scaling.rs`'s sixty-five-root document rather
+  than authoring a second one.
+
+**Sequencing against v0.18, which is open at the same time.** There is no
+dependency in either direction, but there is a file-level collision: v0.18's
+entry states it touches `dashbuf`, `dashscene-core`, `dashcue`,
+`dashscene-engine` and both painters, and the #822 work edits `Arena::dfs_order`
+in `dashscene-core` and the solve in `dashscene-engine`. So **the Android half
+of this slice runs in parallel with v0.18, and the #822 half waits** for v0.18's
+core and engine stories to land. Which story sits in which half is epic #833's
+to say, and moves as that epic does.
+
 Depends on: v0.17 for what an embedder consumes, and on the C ABI this slice
-builds. Independent of v0.18.
+builds. Independent of v0.18 in dependency terms; see the sequencing note above
+for the file-level overlap.
 
 ## v1 — Unity, full feature set, performance, production toolchain
 

@@ -204,8 +204,8 @@ undecided
 ([`docs/decisions/repo-staging-and-public-facade.md`](docs/decisions/repo-staging-and-public-facade.md)).
 
 v0 is built one slice at a time. Slices v0.1 to v0.17 have closed. v0.18 —
-animation vocabulary — is next, and v0.19 — the Android bring-up, the C ABI and
-the three host-integration layers — is opened but not yet planned.
+animation vocabulary — and v0.19 — the Android bring-up and the C ABI — are both
+open and planned, and run alongside each other.
 [`docs/roadmap.md`](docs/roadmap.md) carries the slice map and what each one
 delivered; GitHub issues carry the live state.
 
