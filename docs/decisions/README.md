@@ -170,12 +170,15 @@ into the records below. Per-story decisions land here directly:
   there (stories #399 and #401). Byte layout:
   `../design/dsb-container-format.md`.
 - [host-integration-in-three-layers.md](host-integration-in-three-layers.md) —
-  **accepted** (v0.17's opening, 2026-08-07), and built in **v0.19**: a
-  platform host is three layers — surface interop, app state bound to signals,
-  a DSL projecting `dashlang` — each usable without the layer above it, over
-  one shared C ABI, written platform-general so the v1 iOS story inherits it.
-  Android only; `SurfaceView` semantics only, with `TextureView` deferred to v1
-  alongside the case that motivates it. **D3a is a risk to check rather than a
+  **accepted** (v0.17's opening, 2026-08-07): a platform host is three layers —
+  surface interop, app state bound to signals, a DSL projecting `dashlang` —
+  each usable without the layer above it, over one shared C ABI, written
+  platform-general so the v1 iOS story inherits it. Android only;
+  `SurfaceView` semantics only, with `TextureView` deferred to v1 alongside the
+  case that motivates it. **v0.19 builds layer 0 and the C ABI under it**
+  (narrowed 2026-08-09, epic #833); layers 1 and 2 move to a follow-on slice,
+  which the layering permits because each layer is usable without the one
+  above it. **D3a is a risk to check rather than a
   measured fact**: a device without Vulkan may meet the same
   four-fragment-storage-buffer wall that makes WebGL2 unbuildable, and the
   first Android story confirms the target device class before anything is built

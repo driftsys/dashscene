@@ -6,12 +6,22 @@
              record's own scope line anticipated, and the C ABI is the seam it
              cut on.
     date     2026-08-05; ratified and re-scoped 2026-08-07; slice numbers
-             corrected in place 2026-08-08 (story #796, the v0.17 close)
+             corrected in place 2026-08-08 (story #796, the v0.17 close);
+             narrowed to layer 0 for v0.19 on 2026-08-09 (epic #833)
     source   the v0.15 phase-end revision (epic #569), which opened v0.17
     scope    embedding into a platform host: how a platform surface reaches
              `dashscene-gpu`, how app state drives a scene, and how a scene is
              authored from the host's language. **v0.19 applies it to Android
              only**; iOS and Unity are v1.
+
+    Narrowed at v0.19's planning session (2026-08-09, epic #833): **that slice
+    builds layer 0 and the C ABI under it.** Layers 1 and 2 are deferred to a
+    follow-on slice named at v0.19's close. The reason is recorded in
+    `docs/roadmap.md` under "What was ruled when this slice opened" — the
+    showcase both other targets run is entirely Rust, so demonstrating Android
+    at parity with them exercises layer 0 and nothing above it. D1's claim that
+    each layer is useful without the one above it is what makes the narrowing
+    possible, so this is the layering being used rather than amended.
 
     A note on slice numbers, now applied rather than asked for. This record
     was written expecting v0.17 to carry both the packaging half and the
