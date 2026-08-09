@@ -42,6 +42,7 @@ fn a_variant_set_round_trips_its_member_names_and_default_active_member() {
         &VariantMemberArgs {
             name: Some(default_name),
             overrides: None,
+            ..Default::default()
         },
     );
     let wide_name = b.create_string("Wide");
@@ -50,6 +51,7 @@ fn a_variant_set_round_trips_its_member_names_and_default_active_member() {
         &VariantMemberArgs {
             name: Some(wide_name),
             overrides: None,
+            ..Default::default()
         },
     );
     let members = b.create_vector(&[default_member, wide_member]);

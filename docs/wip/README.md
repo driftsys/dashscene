@@ -11,11 +11,11 @@ project's convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports ten files
+## Why the WIP gate currently reports eleven files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-ten and exits non-zero. All ten are deliberate, accepted exceptions rather
-than ungardened debt, and they are recorded here so the gate's result is
+eleven and exits non-zero. All eleven are deliberate, accepted exceptions
+rather than ungardened debt, and they are recorded here so the gate's result is
 explained rather than merely tolerated.
 
 **The gate is deliberately not wired into CI, and this section is why.** Its
@@ -50,7 +50,18 @@ underneath it, so its first revision counted ten and had to be re-derived on
 the rebase. It reached a real ten later that same day, when
 `2026-08-09-svg-as-a-second-producer.md` was added, and that addition read this
 paragraph and updated the count in the same commit — which is what the rule at
-the end of this section asks for. Re-derive the
+the end of this section asks for.
+
+**It then went stale on two additions in a row, and both were caught only at a
+merge.** The second v0.18 driver prompt took the tracked count to eleven later
+on 2026-08-09 and updated the paragraph below to read "nine of the eleven",
+leaving this heading saying ten. The `FINISH-771` prompt took it to twelve the
+same day and updated that paragraph again, to "nine of the twelve", leaving the
+heading saying ten a second time. Story #771's merge archived the `FINISH-771`
+prompt, re-derived the count, and set both to eleven. **The heading and the
+paragraph below it are two copies of one number**, and an addition that edits
+only the nearer copy leaves the gate's own explanation wrong — which is the
+same failure as the archiving one above, reached from the other direction. Re-derive the
 number from `git ls-files docs/wip/` when touching this section rather than
 trusting the prose.
 
@@ -73,10 +84,14 @@ the day v0.17 closed, and `2026-08-09-v018-DRIVER-PROMPT.md`, which supersedes
 it and carries the slice from issue #617 onward. The first is kept rather than
 replaced because its story #770 material is now as-built and its gate section
 records why the slice could start at all; the second is what a session should
-be handed. Both archive together when epic #769 closes. Driver prompts — the brief a session is handed to carry out a named
+be handed for the slice as a whole. Both archive together when epic #769
+closes. A third was held for one day —
+`2026-08-09-FINISH-771-DRIVER-PROMPT.md`, narrower than either, carrying only
+what remained of story #771 — and left with the pull request it carried.
+Driver prompts — the brief a session is handed to carry out a named
 piece of work — are transient by construction, spent the moment their work
 lands, and the convention is to archive them verbatim rather than garden them
-into records. Fifteen are in `docs/archive/`: fourteen `*-DRIVER-PROMPT.md`
+into records. Sixteen are in `docs/archive/`: fifteen `*-DRIVER-PROMPT.md`
 plus the one `*-SPIKE.md`, which is counted there because it was archived
 verbatim beside the prompt that carried out its design rather than gardened.
 

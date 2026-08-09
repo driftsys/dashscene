@@ -1001,6 +1001,7 @@ fn build_fixture() -> Vec<u8> {
         &VariantMemberArgs {
             name: Some(hover_name),
             overrides: Some(overrides),
+            ..Default::default()
         },
     );
     let default_name = b.create_string("Default");
@@ -1009,6 +1010,7 @@ fn build_fixture() -> Vec<u8> {
         &VariantMemberArgs {
             name: Some(default_name),
             overrides: None,
+            ..Default::default()
         },
     );
     let members = b.create_vector(&[default_member, hover_member]);

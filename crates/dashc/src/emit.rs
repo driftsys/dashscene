@@ -15,23 +15,33 @@ use dashbuf::{
     DocumentArgs as FbDocumentArgs, EdgeInsets as FbEdgeInsets, FillLayer as FbFillLayer,
     FillLayerArgs as FbFillLayerArgs, FixedSizeLayout, Gradient, GradientArgs, GradientStop,
     GridTrack as FbGridTrack, GridTrackArgs as FbGridTrackArgs, ImageFill, ImageFillArgs,
+    Keyframe as FbKeyframe, KeyframesSpec, KeyframesSpecArgs,
     LayoutConstraints as FbLayoutConstraints, LayoutConstraintsArgs,
     LayoutContainer as FbLayoutContainer, LayoutContainerArgs, Mat23, NO_FIELD, NO_PAINT,
     NO_PARENT, NO_TEXT, NO_TEXT_STYLE, Node as FbNode, NodeArgs as FbNodeArgs, Paint as BufPaint,
-    PaintArgs, PlaneBounds, Shadow as FbShadow, ShadowArgs, ShadowKind as FbShadowKind,
-    SignalDecl as FbSignalDecl, SignalDeclArgs as FbSignalDeclArgs, SolidFill, SolidFillArgs,
+    PaintArgs, PlaneBounds, PropTransition as FbPropTransition, PropTransitionArgs,
+    Shadow as FbShadow, ShadowArgs, ShadowKind as FbShadowKind, SignalDecl as FbSignalDecl,
+    SignalDeclArgs as FbSignalDeclArgs, SolidFill, SolidFillArgs, SpringSpec, SpringSpecArgs,
     Stroke, StrokeArgs, TextStyle as FbTextStyle, TextStyleArgs, TransformClamp,
     TransformClampArgs, TransformMapRange, TransformMapRangeArgs, TransformScale,
-    TransformScaleArgs, Vec2, VectorAtlas as FbVectorAtlas, VectorAtlasArgs,
-    VectorShape as FbVectorShape, VectorShapeArgs,
+    TransformScaleArgs, TweenSpec, TweenSpecArgs, VariantFill as FbVariantFill, VariantFillArgs,
+    VariantHeight as FbVariantHeight, VariantHeightArgs, VariantMember as FbVariantMember,
+    VariantMemberArgs, VariantOverride as FbVariantOverride, VariantOverrideArgs,
+    VariantRotation as FbVariantRotation, VariantRotationArgs, VariantSet as FbVariantSet,
+    VariantSetArgs, VariantTransition as FbVariantTransition, VariantTransitionArgs,
+    VariantVisible as FbVariantVisible, VariantVisibleArgs, VariantWidth as FbVariantWidth,
+    VariantWidthArgs, VariantX as FbVariantX, VariantXArgs, VariantY as FbVariantY, VariantYArgs,
+    Vec2, VectorAtlas as FbVectorAtlas, VectorAtlasArgs, VectorShape as FbVectorShape,
+    VectorShapeArgs,
 };
 use dashpaint::{BlurKind, FillSpec, ShadowKind};
 use flatbuffers::{FlatBufferBuilder, UnionWIPOffset, WIPOffset};
 
 use crate::document::{
     Asset, AssetKind, AxisSizing, Binding, BindingChannel, BindingTransform, CrossAxisAlign,
-    Document, EdgeInsets, GridTrack, LayoutMode, MainAxisAlign, Node, Paint, PaintEntry,
-    SignalDecl, TextAlign, TextAlignV, TextStyle, VectorAtlas, VectorShape,
+    Document, Easing, EdgeInsets, GridTrack, LayoutMode, MainAxisAlign, Node, Paint, PaintEntry,
+    PropTransition, SignalDecl, TextAlign, TextAlignV, TextStyle, TransitionSpec, VariantMember,
+    VariantOverride, VariantSet, VariantTransition, VariantValue, VectorAtlas, VectorShape,
 };
 
 /// Serializes a document to `.dsb` bytes.
@@ -99,6 +109,15 @@ pub fn emit(doc: &Document) -> Vec<u8> {
         .map(|((node, entry), (text, style))| build_node(&mut b, node, *entry, *text, *style))
         .collect();
 
+    // The variant table (v0.4, story #20). Empty for a document with no
+    // switchable states, so the create_vector below is skipped and every
+    // document authored before this emitter existed emits byte-identically
+    // (R7) — the same absence rule the baked-vector pools follow.
+    let variant_set_offsets: Vec<WIPOffset<FbVariantSet>> = doc
+        .variant_sets
+        .iter()
+        .map(|set| build_variant_set(&mut b, set))
+        .collect();
     let signal_offsets: Vec<WIPOffset<FbSignalDecl>> = doc
         .signals
         .iter()
@@ -128,6 +147,8 @@ pub fn emit(doc: &Document) -> Vec<u8> {
     let paints = (!paints.is_empty()).then(|| b.create_vector(&paints));
     let strings = (!string_offsets.is_empty()).then(|| b.create_vector(&string_offsets));
     let text_styles = (!style_offsets.is_empty()).then(|| b.create_vector(&style_offsets));
+    let variant_sets =
+        (!variant_set_offsets.is_empty()).then(|| b.create_vector(&variant_set_offsets));
     let signals = (!signal_offsets.is_empty()).then(|| b.create_vector(&signal_offsets));
     let bindings = (!binding_offsets.is_empty()).then(|| b.create_vector(&binding_offsets));
     let vector_atlases =
@@ -143,15 +164,242 @@ pub fn emit(doc: &Document) -> Vec<u8> {
             paints,
             strings,
             text_styles,
+            variant_sets,
             signals,
             bindings,
             vector_atlases,
             vector_shapes,
-            ..Default::default()
+            // No `..Default::default()`: `variant_sets` was the last unset
+            // field, so every one is named now and clippy's needless_update
+            // refuses the rest pattern. The next schema append restores it.
         },
     );
     b.finish(document, None);
     b.finished_data().to_vec()
+}
+
+/// Builds one variant set and everything under it (v0.4, story #20).
+///
+/// Member order is the authored order — the emitter does not sort or dedup
+/// — because selection is a flat index into that list
+/// (`docs/decisions/variant-set-flat-index.md`): reordering here would
+/// silently repoint `active_member` and every `set_variant` call a runtime
+/// makes. An empty member list emits as the schema's absent vector rather
+/// than an empty one, and `dashscene_validator`'s load gate names it
+/// (`variant set has no members`) rather than this emitter refusing it —
+/// one gate, not two that could disagree.
+fn build_variant_set<'a>(
+    b: &mut FlatBufferBuilder<'a>,
+    set: &VariantSet,
+) -> WIPOffset<FbVariantSet<'a>> {
+    let members: Vec<WIPOffset<FbVariantMember>> = set
+        .members
+        .iter()
+        .map(|member| build_variant_member(b, member))
+        .collect();
+    let members = (!members.is_empty()).then(|| b.create_vector(&members));
+    FbVariantSet::create(
+        b,
+        &VariantSetArgs {
+            members,
+            active_member: set.active_member,
+        },
+    )
+}
+
+/// Builds one variant member. An unnamed member writes no `name` slot: the
+/// schema's string is optional, and a producer that has no name for a state
+/// (a hand-authored set, an SVG one) carries none rather than an empty one.
+fn build_variant_member<'a>(
+    b: &mut FlatBufferBuilder<'a>,
+    member: &VariantMember,
+) -> WIPOffset<FbVariantMember<'a>> {
+    // Both children are created before the member table is started, which is
+    // what flatbuffers requires: a table under construction may not have
+    // another object built inside it.
+    let name = member.name.as_deref().map(|name| b.create_string(name));
+    let overrides: Vec<WIPOffset<FbVariantOverride>> = member
+        .overrides
+        .iter()
+        .map(|entry| build_variant_override(b, entry))
+        .collect();
+    let overrides = (!overrides.is_empty()).then(|| b.create_vector(&overrides));
+    let transition = member
+        .transition
+        .as_ref()
+        .map(|transition| build_variant_transition(b, transition));
+    FbVariantMember::create(
+        b,
+        &VariantMemberArgs {
+            name,
+            overrides,
+            transition,
+        },
+    )
+}
+
+/// Builds one variant transition and the per-prop tracks under it (story
+/// #771). Track order is the authored order: a track's stagger delay is
+/// `stagger * i` over its declared index, so reordering here would re-time
+/// every track after the first.
+fn build_variant_transition<'a>(
+    b: &mut FlatBufferBuilder<'a>,
+    transition: &VariantTransition,
+) -> WIPOffset<FbVariantTransition<'a>> {
+    let tracks: Vec<WIPOffset<FbPropTransition>> = transition
+        .tracks
+        .iter()
+        .map(|track| build_prop_transition(b, track))
+        .collect();
+    let tracks = (!tracks.is_empty()).then(|| b.create_vector(&tracks));
+    FbVariantTransition::create(
+        b,
+        &VariantTransitionArgs {
+            tracks,
+            stagger: transition.stagger,
+        },
+    )
+}
+
+/// Builds one track: the `(node, channel)` pair the loader packs into a
+/// `PropKey`, and the curve it travels.
+fn build_prop_transition<'a>(
+    b: &mut FlatBufferBuilder<'a>,
+    track: &PropTransition,
+) -> WIPOffset<FbPropTransition<'a>> {
+    let (spec_type, spec) = match &track.spec {
+        TransitionSpec::Tween { duration, easing } => (
+            dashbuf::TransitionSpec::TweenSpec,
+            TweenSpec::create(
+                b,
+                &TweenSpecArgs {
+                    duration: *duration,
+                    easing: easing_of(*easing),
+                },
+            )
+            .as_union_value(),
+        ),
+        TransitionSpec::Spring {
+            stiffness,
+            damping_ratio,
+        } => (
+            dashbuf::TransitionSpec::SpringSpec,
+            SpringSpec::create(
+                b,
+                &SpringSpecArgs {
+                    stiffness: *stiffness,
+                    damping_ratio: *damping_ratio,
+                },
+            )
+            .as_union_value(),
+        ),
+        TransitionSpec::Keyframes { duration, frames } => {
+            // `Keyframe` is an inline struct, so the frame list is a vector
+            // of values rather than of offsets — built before the table that
+            // owns it, like every other child here.
+            let frames: Vec<FbKeyframe> = frames
+                .iter()
+                .map(|frame| FbKeyframe::new(frame.t, frame.value))
+                .collect();
+            let frames = (!frames.is_empty()).then(|| b.create_vector(&frames));
+            (
+                dashbuf::TransitionSpec::KeyframesSpec,
+                KeyframesSpec::create(
+                    b,
+                    &KeyframesSpecArgs {
+                        duration: *duration,
+                        frames,
+                    },
+                )
+                .as_union_value(),
+            )
+        }
+    };
+    FbPropTransition::create(
+        b,
+        &PropTransitionArgs {
+            node: track.node,
+            channel: channel_of(track.channel),
+            spec_type,
+            spec: Some(spec),
+        },
+    )
+}
+
+fn easing_of(easing: Easing) -> dashbuf::Easing {
+    match easing {
+        Easing::Linear => dashbuf::Easing::Linear,
+        Easing::EaseIn => dashbuf::Easing::EaseIn,
+        Easing::EaseOut => dashbuf::Easing::EaseOut,
+        Easing::EaseInOut => dashbuf::Easing::EaseInOut,
+    }
+}
+
+/// Builds one variant override — the `(node, prop, value)` triple, with the
+/// value as the schema's `VariantPropValue` union arm.
+///
+/// `value` is required by the schema, so every arm produces one: an
+/// override naming no prop has no meaning, and the load gate rejects it the
+/// same way it rejects a `VariantFill` with no colour.
+fn build_variant_override<'a>(
+    b: &mut FlatBufferBuilder<'a>,
+    entry: &VariantOverride,
+) -> WIPOffset<FbVariantOverride<'a>> {
+    let (value_type, value) = match entry.value {
+        VariantValue::X(value) => (
+            dashbuf::VariantPropValue::VariantX,
+            FbVariantX::create(b, &VariantXArgs { value }).as_union_value(),
+        ),
+        VariantValue::Y(value) => (
+            dashbuf::VariantPropValue::VariantY,
+            FbVariantY::create(b, &VariantYArgs { value }).as_union_value(),
+        ),
+        VariantValue::Width(value) => (
+            dashbuf::VariantPropValue::VariantWidth,
+            FbVariantWidth::create(b, &VariantWidthArgs { value }).as_union_value(),
+        ),
+        VariantValue::Height(value) => (
+            dashbuf::VariantPropValue::VariantHeight,
+            FbVariantHeight::create(b, &VariantHeightArgs { value }).as_union_value(),
+        ),
+        VariantValue::Fill(color) => (
+            dashbuf::VariantPropValue::VariantFill,
+            FbVariantFill::create(
+                b,
+                &VariantFillArgs {
+                    color: Some(&color_of(color)),
+                },
+            )
+            .as_union_value(),
+        ),
+        VariantValue::Visible(value) => (
+            dashbuf::VariantPropValue::VariantVisible,
+            FbVariantVisible::create(b, &VariantVisibleArgs { value }).as_union_value(),
+        ),
+        VariantValue::Rotation {
+            angle,
+            anchor: (anchor_x, anchor_y),
+        } => (
+            dashbuf::VariantPropValue::VariantRotation,
+            FbVariantRotation::create(
+                b,
+                &VariantRotationArgs {
+                    angle,
+                    anchor_x,
+                    anchor_y,
+                },
+            )
+            .as_union_value(),
+        ),
+    };
+    FbVariantOverride::create(
+        b,
+        &VariantOverrideArgs {
+            node: entry.node,
+            value_type,
+            value: Some(value),
+        },
+    )
 }
 
 fn build_signal<'a>(

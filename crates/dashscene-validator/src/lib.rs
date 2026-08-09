@@ -130,6 +130,18 @@ pub mod rule {
     pub const VARIANT_SET_NO_MEMBERS: &str = "variant.set-no-members";
     pub const VARIANT_ACTIVE_MEMBER_OUT_OF_RANGE: &str = "variant.active-member-out-of-range";
 
+    // Load gate — the v0.18 motion rows (story #771). Each of these is a
+    // document the runtime's contract says to panic on, so the gate has to
+    // name it first (P4).
+    pub const TRANSITION_TRACK_NODE_OUT_OF_RANGE: &str = "transition.track-node-out-of-range";
+    pub const TRANSITION_CHANNEL_NOT_A_RECT: &str = "transition.channel-not-a-rect";
+    pub const KEYFRAME_T_DECREASES: &str = "transition.keyframe-t-decreases";
+    pub const KEYFRAME_T_REPEATS: &str = "transition.keyframe-t-repeats";
+    pub const KEYFRAME_T_OUT_OF_RANGE: &str = "transition.keyframe-t-out-of-range";
+    pub const KEYFRAME_VALUE_NOT_FINITE: &str = "transition.keyframe-value-not-finite";
+    pub const TRANSITION_SPEC_OUT_OF_RANGE: &str = "transition.spec-out-of-range";
+    pub const TRANSITION_TRACK_ALSO_BOUND: &str = "transition.track-also-bound";
+
     // Load gate — the v0.7 binding tables (story #167). The loader
     // resolves both indices unchecked (it assumes a validated document),
     // so a dangling one must be named here or it panics at load.
