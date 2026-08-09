@@ -914,6 +914,351 @@ fn validate(bytes: &[u8]) -> dashscene_validator::Report {
     validate_document(&document)
 }
 
+/// A one-node document whose single variant member declares one motion
+/// track on `channel`, with `frames` as its keyframe list (story #771).
+///
+/// A `Keyframes` spec in every case, because it is the only arm with a rule
+/// of its own; `channel` is what the rect-channel rule reads.
+fn document_with_one_transition_track(
+    node: u32,
+    channel: dashbuf::BindingChannel,
+    frames: &[(f32, f32)],
+) -> Vec<u8> {
+    let mut b = FlatBufferBuilder::new();
+    let one = Node::create(&mut b, &NodeArgs::default());
+    let nodes = b.create_vector(&[one]);
+
+    let frames: Vec<dashbuf::Keyframe> = frames
+        .iter()
+        .map(|(t, value)| dashbuf::Keyframe::new(*t, *value))
+        .collect();
+    let frames = b.create_vector(&frames);
+    let spec = dashbuf::KeyframesSpec::create(
+        &mut b,
+        &dashbuf::KeyframesSpecArgs {
+            duration: 1.0,
+            frames: Some(frames),
+        },
+    );
+    let track = dashbuf::PropTransition::create(
+        &mut b,
+        &dashbuf::PropTransitionArgs {
+            node,
+            channel,
+            spec_type: dashbuf::TransitionSpec::KeyframesSpec,
+            spec: Some(spec.as_union_value()),
+        },
+    );
+    let tracks = b.create_vector(&[track]);
+    let transition = dashbuf::VariantTransition::create(
+        &mut b,
+        &dashbuf::VariantTransitionArgs {
+            tracks: Some(tracks),
+            stagger: 0.0,
+        },
+    );
+    let member = VariantMember::create(
+        &mut b,
+        &VariantMemberArgs {
+            transition: Some(transition),
+            ..Default::default()
+        },
+    );
+    let members = b.create_vector(&[member]);
+    let set = VariantSet::create(
+        &mut b,
+        &VariantSetArgs {
+            members: Some(members),
+            ..Default::default()
+        },
+    );
+    let variant_sets = b.create_vector(&[set]);
+
+    let document = Document::create(
+        &mut b,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            variant_sets: Some(variant_sets),
+            ..Default::default()
+        },
+    );
+    b.finish(document, None);
+    b.finished_data().to_vec()
+}
+
+/// The same one-node document, with one track carrying a non-keyframe spec
+/// built from raw parts, so a test can put an out-of-range byte or a
+/// nonsense scalar where a well-formed producer never would.
+fn document_with_one_spec(
+    spec_type: dashbuf::TransitionSpec,
+    spec: flatbuffers::WIPOffset<flatbuffers::UnionWIPOffset>,
+    mut b: FlatBufferBuilder<'_>,
+) -> Vec<u8> {
+    let one = Node::create(&mut b, &NodeArgs::default());
+    let nodes = b.create_vector(&[one]);
+    let track = dashbuf::PropTransition::create(
+        &mut b,
+        &dashbuf::PropTransitionArgs {
+            node: 0,
+            channel: dashbuf::BindingChannel::X,
+            spec_type,
+            spec: Some(spec),
+        },
+    );
+    let tracks = b.create_vector(&[track]);
+    let transition = dashbuf::VariantTransition::create(
+        &mut b,
+        &dashbuf::VariantTransitionArgs {
+            tracks: Some(tracks),
+            stagger: 0.0,
+        },
+    );
+    let member = VariantMember::create(
+        &mut b,
+        &VariantMemberArgs {
+            transition: Some(transition),
+            ..Default::default()
+        },
+    );
+    let members = b.create_vector(&[member]);
+    let set = VariantSet::create(
+        &mut b,
+        &VariantSetArgs {
+            members: Some(members),
+            ..Default::default()
+        },
+    );
+    let variant_sets = b.create_vector(&[set]);
+    let document = Document::create(
+        &mut b,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            variant_sets: Some(variant_sets),
+            ..Default::default()
+        },
+    );
+    b.finish(document, None);
+    b.finished_data().to_vec()
+}
+
+fn document_with_tween(easing: dashbuf::Easing, duration: f32) -> Vec<u8> {
+    let mut b = FlatBufferBuilder::new();
+    let spec = dashbuf::TweenSpec::create(&mut b, &dashbuf::TweenSpecArgs { duration, easing });
+    document_with_one_spec(dashbuf::TransitionSpec::TweenSpec, spec.as_union_value(), b)
+}
+
+fn document_with_spring(stiffness: f32, damping_ratio: f32) -> Vec<u8> {
+    let mut b = FlatBufferBuilder::new();
+    let spec = dashbuf::SpringSpec::create(
+        &mut b,
+        &dashbuf::SpringSpecArgs {
+            stiffness,
+            damping_ratio,
+        },
+    );
+    document_with_one_spec(
+        dashbuf::TransitionSpec::SpringSpec,
+        spec.as_union_value(),
+        b,
+    )
+}
+
+#[test]
+fn an_easing_this_build_does_not_know_is_named() {
+    // The gap the review found: `check_enum!` covered the union tag and the
+    // channel but never descended into `TweenSpec`, so this document passed
+    // the gate with an empty report and then panicked `load_document`'s
+    // `unreachable!` — whose message claims the gate rejected it (P4).
+    let report = validate(&document_with_tween(dashbuf::Easing(99), 1.0));
+    assert!(report.has(rule::UNKNOWN_ENUM), "{report}");
+    assert!(report.has_errors());
+}
+
+#[test]
+fn a_tween_with_no_duration_is_named() {
+    // `dashcue::Scheduler::start` asserts a finite, positive duration.
+    let report = validate(&document_with_tween(dashbuf::Easing::Linear, 0.0));
+    assert!(report.has(rule::TRANSITION_SPEC_OUT_OF_RANGE), "{report}");
+}
+
+#[test]
+fn an_undamped_spring_is_named() {
+    // A spring with a zero damping ratio never comes to rest, which is why
+    // `dashcue` rejects it by assertion.
+    let report = validate(&document_with_spring(200.0, 0.0));
+    assert!(report.has(rule::TRANSITION_SPEC_OUT_OF_RANGE), "{report}");
+}
+
+#[test]
+fn a_keyframe_on_the_interval_boundary_is_named() {
+    // The endpoints (0, 0) and (1, 1) are implicit, so a frame sits strictly
+    // inside (0, 1) — unchanged by issue #852.
+    let report = validate(&document_with_one_transition_track(
+        0,
+        dashbuf::BindingChannel::X,
+        &[(1.0, 0.5)],
+    ));
+    assert!(report.has(rule::KEYFRAME_T_OUT_OF_RANGE), "{report}");
+}
+
+#[test]
+fn a_keyframe_carrying_a_non_finite_value_is_named() {
+    let report = validate(&document_with_one_transition_track(
+        0,
+        dashbuf::BindingChannel::X,
+        &[(0.5, f32::NAN)],
+    ));
+    assert!(report.has(rule::KEYFRAME_VALUE_NOT_FINITE), "{report}");
+}
+
+#[test]
+fn a_transition_track_on_an_already_bound_channel_is_named() {
+    // Two writers on one channel. The runtime addresses a binding and a
+    // motion track by the same packed `PropKey`, so one silently shadows the
+    // other and the FLIP sample — an absolute resolved value — would be
+    // written through the binding path and resolved against the parent a
+    // second time. Refused by name rather than by precedence (P4).
+    let mut b = FlatBufferBuilder::new();
+    let one = Node::create(&mut b, &NodeArgs::default());
+    let nodes = b.create_vector(&[one]);
+
+    let signal = dashbuf::SignalDecl::create(&mut b, &dashbuf::SignalDeclArgs::default());
+    let signals = b.create_vector(&[signal]);
+    let binding = dashbuf::Binding::create(
+        &mut b,
+        &dashbuf::BindingArgs {
+            signal: 0,
+            node: 0,
+            channel: dashbuf::BindingChannel::X,
+            ..Default::default()
+        },
+    );
+    let bindings = b.create_vector(&[binding]);
+
+    let spec = dashbuf::TweenSpec::create(
+        &mut b,
+        &dashbuf::TweenSpecArgs {
+            duration: 1.0,
+            easing: dashbuf::Easing::Linear,
+        },
+    );
+    let track = dashbuf::PropTransition::create(
+        &mut b,
+        &dashbuf::PropTransitionArgs {
+            node: 0,
+            channel: dashbuf::BindingChannel::X,
+            spec_type: dashbuf::TransitionSpec::TweenSpec,
+            spec: Some(spec.as_union_value()),
+        },
+    );
+    let tracks = b.create_vector(&[track]);
+    let transition = dashbuf::VariantTransition::create(
+        &mut b,
+        &dashbuf::VariantTransitionArgs {
+            tracks: Some(tracks),
+            stagger: 0.0,
+        },
+    );
+    let member = VariantMember::create(
+        &mut b,
+        &VariantMemberArgs {
+            transition: Some(transition),
+            ..Default::default()
+        },
+    );
+    let members = b.create_vector(&[member]);
+    let set = VariantSet::create(
+        &mut b,
+        &VariantSetArgs {
+            members: Some(members),
+            ..Default::default()
+        },
+    );
+    let variant_sets = b.create_vector(&[set]);
+    let document = Document::create(
+        &mut b,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            variant_sets: Some(variant_sets),
+            signals: Some(signals),
+            bindings: Some(bindings),
+            ..Default::default()
+        },
+    );
+    b.finish(document, None);
+    let bytes = b.finished_data().to_vec();
+
+    let report = validate(&bytes);
+    assert!(report.has(rule::TRANSITION_TRACK_ALSO_BOUND), "{report}");
+    assert!(report.has_errors());
+}
+
+#[test]
+fn a_well_formed_transition_track_produces_no_diagnostics() {
+    // Including a step — two frames sharing a `t` are legal and are what
+    // issue #852 ruled, so this also proves the repeat rule counts to three
+    // rather than firing on the pair.
+    let report = validate(&document_with_one_transition_track(
+        0,
+        dashbuf::BindingChannel::X,
+        &[(0.4, 0.0), (0.4, 1.0)],
+    ));
+    assert!(report.is_empty(), "unexpected diagnostics:\n{report}");
+}
+
+#[test]
+fn a_transition_track_on_a_non_rect_channel_is_named() {
+    // FLIP animates rects only, and both the engine and `dashlang` state
+    // that as a panic — so a document carrying one has to be refused here or
+    // it takes the frame loop down (P4).
+    let report = validate(&document_with_one_transition_track(
+        0,
+        dashbuf::BindingChannel::Opacity,
+        &[(0.5, 0.5)],
+    ));
+    assert!(report.has(rule::TRANSITION_CHANNEL_NOT_A_RECT), "{report}");
+    assert!(report.has_errors());
+}
+
+#[test]
+fn a_transition_track_node_past_the_node_array_is_named() {
+    let report = validate(&document_with_one_transition_track(
+        99,
+        dashbuf::BindingChannel::X,
+        &[(0.5, 0.5)],
+    ));
+    assert!(
+        report.has(rule::TRANSITION_TRACK_NODE_OUT_OF_RANGE),
+        "{report}"
+    );
+    assert!(report.has_errors());
+}
+
+#[test]
+fn a_keyframe_list_that_goes_backwards_is_named() {
+    let report = validate(&document_with_one_transition_track(
+        0,
+        dashbuf::BindingChannel::X,
+        &[(0.6, 0.0), (0.2, 1.0)],
+    ));
+    assert!(report.has(rule::KEYFRAME_T_DECREASES), "{report}");
+    assert!(report.has_errors());
+}
+
+#[test]
+fn a_third_keyframe_sharing_one_t_is_named() {
+    // Two are a step; sampling walks to the last frame at a given `t`, so a
+    // third carries a value no sample could ever return
+    // (`docs/decisions/a-step-is-a-pair-of-keyframes.md`).
+    let report = validate(&document_with_one_transition_track(
+        0,
+        dashbuf::BindingChannel::X,
+        &[(0.4, 0.0), (0.4, 0.5), (0.4, 1.0)],
+    ));
+    assert!(report.has(rule::KEYFRAME_T_REPEATS), "{report}");
+    assert!(report.has_errors());
+}
+
 #[test]
 fn a_well_formed_variant_set_produces_no_diagnostics() {
     let report = validate(&document_with_one_variant_override(0, 0));

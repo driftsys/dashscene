@@ -182,8 +182,18 @@ pub fn validate_document(doc: &Document<'_>) -> Report {
         }
     }
 
+    // The `(node, channel)` pairs a binding row already drives. A motion
+    // track naming one of them would put two writers on one channel, so the
+    // pairs are gathered before the variant sets are walked.
+    let bound: std::collections::HashSet<(u32, u8)> = doc
+        .bindings()
+        .unwrap_or_default()
+        .iter()
+        .map(|binding| (binding.node(), binding.channel().0))
+        .collect();
+
     for (i, set) in doc.variant_sets().unwrap_or_default().iter().enumerate() {
-        check_variant_set(&mut report, &set, i as u32, &sizes);
+        check_variant_set(&mut report, &set, i as u32, &sizes, &bound);
     }
 
     // The v0.7 binding tables (story #167). The loader resolves both
@@ -1072,7 +1082,13 @@ pub fn validate_asset_payloads(doc: &Document<'_>, payloads: &[&[u8]]) -> Report
 /// still runs on `value_type()` for the same reason it runs on every other
 /// union/enum here: presence is not the same guarantee as "a member this
 /// build recognizes."
-fn check_variant_set(report: &mut Report, set: &VariantSet<'_>, index: u32, sizes: &PoolSizes) {
+fn check_variant_set(
+    report: &mut Report,
+    set: &VariantSet<'_>,
+    index: u32,
+    sizes: &PoolSizes,
+    bound: &std::collections::HashSet<(u32, u8)>,
+) {
     let at = Location::VariantSet(index);
     let members = set.members().unwrap_or_default();
 
@@ -1113,6 +1129,198 @@ fn check_variant_set(report: &mut Report, set: &VariantSet<'_>, index: u32, size
                     ),
                 ));
             }
+        }
+
+        if let Some(transition) = member.transition() {
+            check_variant_transition(report, &transition, &at, sizes, bound);
+        }
+    }
+}
+
+/// One member's declared motion (story #771).
+///
+/// Every rule here exists because the runtime's contract is to **panic** on
+/// what it rejects — a cross-crate contract violation panics, and this gate
+/// is what has to catch it first (P4). A document that reached the runtime
+/// with any of these would take the frame loop down rather than being named.
+fn check_variant_transition(
+    report: &mut Report,
+    transition: &dashbuf::VariantTransition<'_>,
+    at: &Location,
+    sizes: &PoolSizes,
+    bound: &std::collections::HashSet<(u32, u8)>,
+) {
+    for track in transition.tracks().unwrap_or_default().iter() {
+        check_enum!(report, at, "PropTransition.spec", track.spec_type());
+        check_enum!(report, at, "PropTransition.channel", track.channel());
+
+        let node = track.node();
+        if node as usize >= sizes.nodes {
+            report.push(error(
+                rule::TRANSITION_TRACK_NODE_OUT_OF_RANGE,
+                at,
+                format!(
+                    "transition track references node {node}, but the document carries {} nodes",
+                    sizes.nodes
+                ),
+            ));
+        }
+
+        // FLIP animates rects only. A track naming any other channel has no
+        // before/after rect to travel between, and both the engine's
+        // `VariantFlip::start` and `dashlang`'s frame loop state that as a
+        // panic — so it is refused by name here instead.
+        if !matches!(
+            track.channel(),
+            dashbuf::BindingChannel::X
+                | dashbuf::BindingChannel::Y
+                | dashbuf::BindingChannel::Width
+                | dashbuf::BindingChannel::Height
+        ) {
+            report.push(error(
+                rule::TRANSITION_CHANNEL_NOT_A_RECT,
+                at,
+                format!(
+                    "transition track animates channel {}, but a variant transition animates rect \
+                     channels only (X, Y, Width, Height)",
+                    track.channel().variant_name().unwrap_or("unknown"),
+                ),
+            ));
+        }
+
+        // Two writers on one channel. A binding row and a motion track
+        // reaching the same `(node, channel)` are both document constructs,
+        // and the runtime addresses both by the same packed `PropKey` — so
+        // one silently shadows the other, and the FLIP sample (an absolute
+        // resolved value) would be written through the binding path, which
+        // resolves it against the parent origin a second time. Refused by
+        // name rather than resolved by precedence (P4).
+        if bound.contains(&(track.node(), track.channel().0)) {
+            report.push(error(
+                rule::TRANSITION_TRACK_ALSO_BOUND,
+                at,
+                format!(
+                    "transition track drives node {} channel {}, which a binding row already                      drives; one channel takes one writer",
+                    track.node(),
+                    track.channel().variant_name().unwrap_or("unknown"),
+                ),
+            ));
+        }
+
+        // Each arm's own bounds. `dashcue::Scheduler::start` asserts every
+        // one of these, so a document carrying a bad value would take the
+        // frame loop down; the gate names it instead (P4). The `easing`
+        // range-check is here rather than beside the two above because it is
+        // nested inside the arm, which is exactly why it was missed.
+        match track.spec_type() {
+            dashbuf::TransitionSpec::TweenSpec => {
+                if let Some(spec) = track.spec_as_tween_spec() {
+                    check_enum!(report, at, "TweenSpec.easing", spec.easing());
+                    check_positive(report, at, "tween duration", spec.duration());
+                }
+            }
+            dashbuf::TransitionSpec::SpringSpec => {
+                if let Some(spec) = track.spec_as_spring_spec() {
+                    check_positive(report, at, "spring stiffness", spec.stiffness());
+                    check_positive(report, at, "spring damping_ratio", spec.damping_ratio());
+                }
+            }
+            dashbuf::TransitionSpec::KeyframesSpec => {
+                if let Some(spec) = track.spec_as_keyframes_spec() {
+                    check_positive(report, at, "keyframes duration", spec.duration());
+                    check_keyframes(report, &spec, at);
+                }
+            }
+            // The union tag itself is already named by `check_enum!` above.
+            _ => {}
+        }
+    }
+}
+
+/// One spec scalar that must be finite and strictly positive.
+///
+/// A zero or negative duration divides by zero on the first sample, and an
+/// undamped spring never comes to rest — the reason
+/// `dashcue::Scheduler::start` rejects both by assertion.
+fn check_positive(report: &mut Report, at: &Location, what: &str, value: f32) {
+    if !value.is_finite() || value <= 0.0 {
+        report.push(error(
+            rule::TRANSITION_SPEC_OUT_OF_RANGE,
+            at,
+            format!("{what} is {value}, but it must be finite and greater than zero"),
+        ));
+    }
+}
+
+/// A keyframe list's `t` rule (issue #852,
+/// `docs/decisions/a-step-is-a-pair-of-keyframes.md`): non-decreasing, and
+/// at most two frames may share one `t`.
+///
+/// Two sharing a `t` are a **step** — the old progress held up to it and the
+/// new one from it on. A third is refused rather than dropped silently,
+/// because sampling walks to the last frame at a given `t`, so its value is
+/// one no sample could ever return (P4).
+fn check_keyframes(report: &mut Report, spec: &dashbuf::KeyframesSpec<'_>, at: &Location) {
+    let frames = spec.frames().unwrap_or_default();
+    let mut run_start = 0.0_f32;
+    let mut run_length = 0usize;
+
+    for (i, frame) in frames.iter().enumerate() {
+        // The open interval, unchanged by issue #852: a frame sits strictly
+        // inside (0, 1), because the endpoints (0, 0) and (1, 1) are
+        // implicit. `value` may leave [0, 1] — overshoot is data — but it
+        // must be a number.
+        if !frame.t().is_finite() || frame.t() <= 0.0 || frame.t() >= 1.0 {
+            report.push(error(
+                rule::KEYFRAME_T_OUT_OF_RANGE,
+                at,
+                format!(
+                    "keyframe {i} is at t = {}, but a frame sits strictly inside (0, 1) — the \
+                     endpoints are implicit",
+                    frame.t(),
+                ),
+            ));
+        }
+        if !frame.value().is_finite() {
+            report.push(error(
+                rule::KEYFRAME_VALUE_NOT_FINITE,
+                at,
+                format!(
+                    "keyframe {i} carries value {}, which is not finite",
+                    frame.value()
+                ),
+            ));
+        }
+
+        if i > 0 && frame.t() < frames.get(i - 1).t() {
+            report.push(error(
+                rule::KEYFRAME_T_DECREASES,
+                at,
+                format!(
+                    "keyframe {i} is at t = {}, before keyframe {} at t = {}; a frame list is \
+                     non-decreasing in t",
+                    frame.t(),
+                    i - 1,
+                    frames.get(i - 1).t(),
+                ),
+            ));
+        }
+
+        if i > 0 && frame.t() == run_start {
+            run_length += 1;
+        } else {
+            run_start = frame.t();
+            run_length = 1;
+        }
+        if run_length == 3 {
+            report.push(error(
+                rule::KEYFRAME_T_REPEATS,
+                at,
+                format!(
+                    "three keyframes share t = {run_start}; two are a step, and a third carries a \
+                     value no sample can return",
+                ),
+            ));
         }
     }
 }

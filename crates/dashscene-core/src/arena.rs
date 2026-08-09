@@ -569,6 +569,85 @@ pub struct VariantMember {
     pub overrides: Vec<(NodeId, VariantValue)>,
 }
 
+/// Fixed cubic easing curves (story #771).
+///
+/// A mirror of `dashcue::Easing`, not a re-export: `dashscene-core` does
+/// not depend on `dashcue` and must not — `dashcue` is dependency-free by
+/// design and the direction is that consumers depend on it, never the
+/// reverse (SCOPE §9). `dashscene-engine` depends on both and converts, the
+/// same shape as [`Channel`](crate::Channel) mirroring the schema's
+/// `BindingChannel`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Easing {
+    #[default]
+    Linear,
+    EaseIn,
+    EaseOut,
+    EaseInOut,
+}
+
+/// One declared point of a keyframes curve (story #771).
+///
+/// `t` is a fraction of the spec's duration, non-decreasing across a frame
+/// list; `value` is a progress fraction of the bound span and may leave
+/// `[0, 1]`, because overshoot is data. Two frames sharing a `t` are a step
+/// and at most two may share one
+/// (`docs/decisions/a-step-is-a-pair-of-keyframes.md`, issue #852) — a rule
+/// the load gate enforces, so nothing here re-checks it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Keyframe {
+    pub t: f32,
+    pub value: f32,
+}
+
+/// How one prop travels from its old resolved value to its new one (story
+/// #771). Durations are seconds; the spring parameters are Compose's
+/// `SpringSpec` shape.
+///
+/// Three arms, and a step is not a fourth: it is two [`Keyframe`] entries
+/// sharing a `t`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum TransitionSpec {
+    Tween {
+        duration: f32,
+        easing: Easing,
+    },
+    Spring {
+        stiffness: f32,
+        damping_ratio: f32,
+    },
+    Keyframes {
+        duration: f32,
+        frames: Vec<Keyframe>,
+    },
+}
+
+/// One prop's declared spec inside a [`VariantTransition`] (story #771).
+///
+/// A `(node, channel)` pair rather than a packed `PropKey`: the key is
+/// opaque and caller-encoded, and the engine packs it at the switch, which
+/// is exactly what a binding row already does.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PropTransition {
+    pub node: NodeId,
+    pub channel: Channel,
+    pub spec: TransitionSpec,
+}
+
+/// How a switch *to* one variant member animates (story #771): per-prop
+/// specs plus a stagger, where track `i` starts `stagger * i` seconds after
+/// the commit.
+///
+/// This is data the document carries, staged through
+/// [`Txn::set_variant_transition`]. The switch itself is the arena's; this
+/// only says how it travels
+/// (`docs/decisions/staged-mutation-v01-scope.md`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct VariantTransition {
+    pub tracks: Vec<PropTransition>,
+    pub stagger: f32,
+}
+
 /// Stable handle to a variant set in one [`Arena`], returned by
 /// [`Txn::add_variant_set`]. Only meaningful for the arena that
 /// produced it.
@@ -580,6 +659,16 @@ pub struct VariantSetId(u32);
 struct VariantSetData {
     members: Vec<VariantMember>,
     active: usize,
+    /// How a switch to each member animates, parallel to `members` (story
+    /// #771). `None` at an index lands that switch in one frame, which is
+    /// every document written before v0.18.
+    ///
+    /// Parallel rather than a field on [`VariantMember`]: that type is
+    /// public and constructed by name across the workspace and its tests,
+    /// and a transition is optional data a producer sets separately
+    /// through [`Txn::set_variant_transition`], the way it sets the active
+    /// member separately from the list.
+    transitions: Vec<Option<VariantTransition>>,
 }
 
 /// The variant overrides active for one node, gathered across every
@@ -876,6 +965,24 @@ impl Arena {
         (&data.grid_rows, &data.grid_columns)
     }
 
+    /// The variant sets this arena holds, in the order they were added —
+    /// for a loaded document, `Document.variant_sets` order.
+    ///
+    /// This is what makes a variant set in a `.dsb` reachable at all.
+    /// [`Txn::add_variant_set`] is the only other source of a
+    /// [`VariantSetId`], and `load_document` calls it internally and drops
+    /// what it returns, so before this accessor a loaded set could be
+    /// resolved into the committed tables but never switched: every caller
+    /// of [`Txn::set_variant`] and [`Arena::active_variant`] needs an id no
+    /// loaded document handed out (issue #617).
+    ///
+    /// Order rather than name because the schema names *members*, not sets
+    /// (`docs/decisions/variant-set-flat-index.md`): a set is identified by
+    /// its position, the same flat index its members are selected by.
+    pub fn variant_sets(&self) -> impl ExactSizeIterator<Item = VariantSetId> + use<> {
+        (0..self.variant_sets.len() as u32).map(VariantSetId)
+    }
+
     /// The currently active member index of `set` — staged intent, like
     /// [`Arena::text`]: a member switched by [`Txn::set_variant`] but
     /// not yet committed still reads back here.
@@ -888,6 +995,34 @@ impl Arena {
             .get(set.0 as usize)
             .unwrap_or_else(|| panic!("{set:?} is not a variant set of this arena"))
             .active
+    }
+
+    /// How a switch to `member` of `set` animates, or `None` if it lands in
+    /// one frame (story #771).
+    ///
+    /// The runtime reads this at the switch to bind its FLIP tracks. It is
+    /// declared data and never a running animation, so it reads back
+    /// unchanged however many times the member is switched to (P3).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `set` is out of range for this arena, or `member` is out
+    /// of range for `set`'s member list.
+    pub fn variant_transition(
+        &self,
+        set: VariantSetId,
+        member: usize,
+    ) -> Option<&VariantTransition> {
+        let data = self
+            .variant_sets
+            .get(set.0 as usize)
+            .unwrap_or_else(|| panic!("{set:?} is not a variant set of this arena"));
+        assert!(
+            member < data.members.len(),
+            "member {member} is out of range for {set:?} ({} members)",
+            data.members.len()
+        );
+        data.transitions[member].as_ref()
     }
 
     /// The variant overrides active for `node`, gathered across every
@@ -1258,10 +1393,49 @@ impl Txn<'_> {
         // below u32::MAX nodes, and a variant set needs at least one
         // node to be useful, so variant sets never outnumber nodes.
         let id = VariantSetId(self.arena.variant_sets.len() as u32);
-        self.arena
-            .variant_sets
-            .push(VariantSetData { members, active: 0 });
+        let transitions = vec![None; members.len()];
+        self.arena.variant_sets.push(VariantSetData {
+            members,
+            active: 0,
+            transitions,
+        });
         id
+    }
+
+    /// Declare how a switch **to** `member` of `set` animates (story #771).
+    ///
+    /// Keyed on the destination rather than on the set, because a set that
+    /// expands with a spring and collapses with a tween is ordinary
+    /// authoring and one spec per set cannot express it. A member with no
+    /// transition switches in a single frame, which is what every scene
+    /// authored before v0.18 does.
+    ///
+    /// This is declared data, never a running animation (P3): the runtime
+    /// reads it at the switch and owns the clock. Calling it twice for the
+    /// same member replaces the spec — the last write wins, the same
+    /// convention [`Txn::set_prop`] carries.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `set` is out of range for this arena, or `member` is out
+    /// of range for `set`'s member list.
+    pub fn set_variant_transition(
+        &mut self,
+        set: VariantSetId,
+        member: usize,
+        transition: VariantTransition,
+    ) {
+        let data = self
+            .arena
+            .variant_sets
+            .get_mut(set.0 as usize)
+            .unwrap_or_else(|| panic!("{set:?} is not a variant set of this arena"));
+        assert!(
+            member < data.members.len(),
+            "member {member} is out of range for {set:?} ({} members)",
+            data.members.len()
+        );
+        data.transitions[member] = Some(transition);
     }
 
     /// Switch `set`'s active member. Staged like any other mutation

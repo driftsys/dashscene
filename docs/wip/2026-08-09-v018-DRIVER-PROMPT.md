@@ -45,7 +45,16 @@ Slice numbering is settled at that revision, so they are "not v0.18" rather
 than "v0.21". Comments on both record it, and the answered configuration
 questions travel with them.
 
-**Story #771 is what to build next**, and it is no longer blocked — see below.
+**Story #771 is no longer what to build next — it is in review.** Pull
+request #865 builds all three of its parts and closes issue #617 by name; the epic's
+"a document loaded from a file animates" line is met and proved by a test. It
+is one open review finding away from mergeable, and
+`2026-08-09-FINISH-771-DRIVER-PROMPT.md` carries exactly that remainder. Hand
+a session **that** prompt, not this one, until #865 merges.
+
+This file stays the guide for the rest of the slice — the rulings above, the
+traps below, and stories #772 and #773. It is revised properly when #865
+lands, because that is when #771's own traps are final and #772 becomes next.
 
 ## What is already ruled — do not re-derive these
 
