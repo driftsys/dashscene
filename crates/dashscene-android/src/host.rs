@@ -51,10 +51,17 @@ fn last_error() -> String {
 /// A compiled `.dsb`, drawn through the C ABI.
 struct DocumentFrames {
     runtime: *mut DsRuntime,
-    /// The bytes, held only until the load. The ABI's load is the **owning**
-    /// path — `dashscene_core::load_document` copies every payload — so they are
-    /// dead weight afterwards and are dropped there.
-    document: Option<Vec<u8>>,
+    /// The bytes, **kept for the life of this object**.
+    ///
+    /// The ABI's load is the owning path — `dashscene_core::load_document`
+    /// copies every payload — so holding them costs a second copy of the file.
+    /// They are held anyway, because a rebuild after a recoverable surface loss
+    /// detaches (which frees the runtime and the document with it) and attaches
+    /// again, and an attach needs bytes. Taking them on the first attach left
+    /// the rebuild failing with "no document bytes" every time, which turned the
+    /// one remedy `Step::Rebuild` exists to provide into a guaranteed way to
+    /// kill the loop.
+    document: Vec<u8>,
 }
 
 impl Frames for DocumentFrames {
@@ -75,14 +82,14 @@ impl Frames for DocumentFrames {
         // attach path the wgpu device inside it, leaked once per surface cycle.
         self.runtime = runtime;
 
-        let Some(document) = self.document.take() else {
-            return Err("no document bytes".to_owned());
-        };
         // SAFETY: `runtime` is live and `document` is a readable slice.
         let loaded = unsafe {
-            dashscene_ffi::ds_runtime_load_document(runtime, document.as_ptr(), document.len())
+            dashscene_ffi::ds_runtime_load_document(
+                runtime,
+                self.document.as_ptr(),
+                self.document.len(),
+            )
         };
-        drop(document);
         if loaded != DsStatus::Ok {
             return Err(format!("load_document: {loaded:?} {}", last_error()));
         }
@@ -148,9 +155,13 @@ impl Frames for DocumentFrames {
     }
 
     fn detach(&mut self) {
-        // Tolerates being called after a failed `attach`, which the loop does,
-        // and after a previous detach on the rebuild path.
-        self.document = None;
+        // The document is **not** dropped here: `detach` is also the first half
+        // of a rebuild, and the `attach` that follows needs it. It goes when
+        // this object does, which the loop's leaked state makes the end of the
+        // process — the cost of a second copy of the file, recorded rather than
+        // hidden.
+        //
+        // Tolerates being called after a failed `attach`, which the loop does.
         if self.runtime.is_null() {
             return;
         }
@@ -209,7 +220,7 @@ pub extern "system" fn Java_dev_driftsys_dashscene_DashsceneNative_nativeSurface
             let frames = move || -> Box<dyn Frames> {
                 Box::new(DocumentFrames {
                     runtime: std::ptr::null_mut(),
-                    document: Some(bytes),
+                    document: bytes,
                 })
             };
             // SAFETY: `window` is the reference `fromSurface` returned, which

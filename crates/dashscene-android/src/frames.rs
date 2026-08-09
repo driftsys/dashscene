@@ -67,11 +67,18 @@ pub enum Step {
 
 /// What the Android frame loop drives.
 ///
-/// Every method runs on the **render thread**, and the loop guarantees the
-/// order: [`Frames::attach`] once, then [`Frames::resize`] and [`Frames::frame`]
-/// any number of times, then [`Frames::detach`] exactly once. Nothing is called
-/// after `detach`, which is what makes it the point where a surface may be
-/// dropped.
+/// Every method runs on the **render thread**, and never concurrently.
+///
+/// The order is `attach`, then `resize` and `frame` any number of times, then
+/// `detach`. **`attach` and `detach` may each run more than once**, because
+/// [`Step::Rebuild`] is `detach` followed by a fresh `attach` on the same
+/// value — so an implementation must be reusable rather than single-shot, and
+/// must not consume in `attach` anything the next `attach` will need. That
+/// mistake is not hypothetical: the document implementation took its `.dsb`
+/// bytes on the first attach, and every rebuild then failed for want of them.
+///
+/// `detach` is always the last call, and after the final one nothing runs —
+/// which is what makes it the point where a surface may be dropped.
 ///
 /// **Not `Send`, deliberately.** An implementation owns an `Arena` and a
 /// `LiveScene`, and those hold a boxed `LayoutSolver` and boxed closures that

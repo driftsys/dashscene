@@ -32,7 +32,18 @@
 
 use std::ffi::c_void;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Packs a physical-pixel extent into one word, so it is published and read
+/// atomically as a pair.
+fn pack(width: u32, height: u32) -> u64 {
+    (u64::from(width) << 32) | u64::from(height)
+}
+
+/// The inverse of [`pack`].
+fn unpack(value: u64) -> (u32, u32) {
+    ((value >> 32) as u32, value as u32)
+}
 
 use crate::frames::{Frames, Step};
 use crate::{Handshake, log};
@@ -46,8 +57,14 @@ pub struct AndroidHost {
     /// frame after it changes. An atomic pair rather than a lock: written from
     /// one thread, read from one thread, and never needing to be consistent
     /// with anything else.
-    width: Arc<AtomicU32>,
-    height: Arc<AtomicU32>,
+    /// The extent the UI thread last reported, packed into one word.
+    ///
+    /// **One atomic, not two.** Stored as two, `surfaceChanged` interleaving
+    /// between the loop's two loads yields a (new width, old height) pair that
+    /// never existed — which passes the changed-and-non-zero test, is accepted,
+    /// is recorded as configured, and costs a full scene rebuild and a
+    /// swapchain reconfigure at an aspect ratio nothing asked for.
+    extent: Arc<AtomicU64>,
     render: Option<std::thread::JoinHandle<()>>,
     /// The window this crate holds a reference to, released after the handshake
     /// completes.
@@ -60,8 +77,7 @@ struct Loop {
     /// The window, kept so a lost surface can be rebuilt from it. Live for the
     /// whole loop: the destroy handshake is what makes that true.
     window: usize,
-    width: Arc<AtomicU32>,
-    height: Arc<AtomicU32>,
+    extent: Arc<AtomicU64>,
     /// The extent the surface is currently configured for.
     configured: (u32, u32),
     /// The previous vsync's timestamp, for the frame delta.
@@ -129,20 +145,15 @@ where
     F: FnOnce() -> Box<dyn Frames> + Send + 'static,
 {
     let handshake = Arc::new(Handshake::new());
-    let width_cell = Arc::new(AtomicU32::new(width));
-    let height_cell = Arc::new(AtomicU32::new(height));
+    let extent_cell = Arc::new(AtomicU64::new(pack(width, height)));
 
     let spawn_window = window as usize;
-    let spawn = (
-        Arc::clone(&handshake),
-        Arc::clone(&width_cell),
-        Arc::clone(&height_cell),
-    );
+    let spawn = (Arc::clone(&handshake), Arc::clone(&extent_cell));
     let render = std::thread::Builder::new()
         .name("dashscene-frame".to_owned())
         .spawn(move || {
-            let (handshake, width, height) = spawn;
-            render_thread(spawn_window, frames, handshake, width, height);
+            let (handshake, extent) = spawn;
+            render_thread(spawn_window, frames, handshake, extent);
         });
     let render = match render {
         Ok(render) => render,
@@ -154,8 +165,7 @@ where
 
     Box::into_raw(Box::new(AndroidHost {
         handshake,
-        width: width_cell,
-        height: height_cell,
+        extent: extent_cell,
         render: Some(render),
         window: window as usize,
     }))
@@ -172,8 +182,7 @@ pub unsafe fn resize(host: *mut AndroidHost, width: u32, height: u32) {
     }
     // SAFETY: the caller promises `host` is live.
     let host = unsafe { &*host };
-    host.width.store(width, Ordering::Release);
-    host.height.store(height, Ordering::Release);
+    host.extent.store(pack(width, height), Ordering::Release);
 }
 
 /// Whether the frame loop is still live.
@@ -229,8 +238,7 @@ fn render_thread<F>(
     window: usize,
     frames: F,
     handshake: Arc<Handshake>,
-    width: Arc<AtomicU32>,
-    height: Arc<AtomicU32>,
+    extent_cell: Arc<AtomicU64>,
 ) where
     F: FnOnce() -> Box<dyn Frames>,
 {
@@ -247,10 +255,7 @@ fn render_thread<F>(
     // records.
     let mut frames = frames();
 
-    let extent = (
-        width.load(Ordering::Acquire),
-        height.load(Ordering::Acquire),
-    );
+    let extent = unpack(extent_cell.load(Ordering::Acquire));
     // SAFETY: `window` is live — this crate holds the reference
     // `ANativeWindow_fromSurface` returned, released only after the handshake
     // completes, which is exactly the lifetime `Frames::attach` is promised.
@@ -279,8 +284,7 @@ fn render_thread<F>(
     let state: &'static mut Loop = Box::leak(Box::new(Loop {
         frames,
         window,
-        width,
-        height,
+        extent: extent_cell,
         configured: extent,
         previous: None,
         // The first frame is one of the cases the generation cannot report.
@@ -385,10 +389,7 @@ unsafe extern "C" fn on_vsync(
     // The extent the UI thread last reported. Checked every frame rather than
     // through a message, because `surfaceChanged` and this loop are on different
     // threads and a message would need a channel for one `u32` pair.
-    let wanted = (
-        state.width.load(Ordering::Acquire),
-        state.height.load(Ordering::Acquire),
-    );
+    let wanted = unpack(state.extent.load(Ordering::Acquire));
     if wanted != state.configured && wanted.0 > 0 && wanted.1 > 0 {
         // Recorded only when it was taken up. A refused extent — one past the
         // adapter maximum (issue #714) — is offered again next frame rather
@@ -443,14 +444,23 @@ unsafe extern "C" fn on_vsync(
                     if state.rebuilds > MAX_CONSECUTIVE_REBUILDS {
                         log("the surface was lost again after every rebuild — giving up");
                         state.running = false;
+                        return;
                     }
+                    // **Falls through to the re-post below.** Returning here
+                    // instead is what a first cut did, and it left a recovered
+                    // surface with no pending callback and no way to acquire
+                    // one: the loop stayed `running`, the poll loop spun on its
+                    // 100 ms timeout, `is_running` kept answering true, and the
+                    // window was frozen until `surfaceDestroyed`. A recovery
+                    // that stops the thing it recovered is worse than no
+                    // recovery, because it reports success.
                 }
                 Err(error) => {
                     log(&format!("could not rebuild the surface: {error}"));
                     state.running = false;
+                    return;
                 }
             }
-            return;
         }
         Step::Stop => {
             log("the frame source asked the loop to stop");

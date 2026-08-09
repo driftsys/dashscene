@@ -148,8 +148,18 @@ DsStatus ds_runtime_tick(DsRuntime *runtime, float dt, bool *out_advanced);
  * out_drawn, if non-NULL, receives whether a frame actually reached the window.
  * It can be false for a reason that is not an error — a zero extent, or a
  * surface that had to be reconfigured — which is why it is separate from the
- * status. A frame that reached the window is marked shown, so the next tick's
- * out_advanced means "changed since the frame you saw".
+ * status.
+ *
+ * The commit is marked shown whenever this returns DS_OK, NOT only when a frame
+ * reached the window. That is deliberate and it is what LiveScene::advanced
+ * requires: a present can return without drawing, nothing can reliably detect
+ * that, and gating on out_drawn would leave out_advanced true on every tick
+ * while the window is occluded, so a host that idled on it would never idle.
+ *
+ * So out_drawn is for a host's own pacing and must NOT be used to decide what
+ * was shown. This header said the opposite until story #842 — that a frame
+ * reaching the window was what marked it shown — which is the copy a host
+ * implements against.
  *
  * Adding this symbol did not move DS_ABI_VERSION: by the rule at the top of
  * this header, a new symbol is additive and a host built against an older

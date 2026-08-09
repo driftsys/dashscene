@@ -449,7 +449,18 @@ pub unsafe extern "C" fn ds_last_error_message(buf: *mut c_char, cap: usize) -> 
             // Truncate to fit, always leaving room for the terminator. A truncated
             // diagnostic is better than a caller having to size a buffer correctly
             // before it can read why sizing failed.
-            let take = bytes.len().min(cap - 1);
+            //
+            // **On a character boundary**, not a byte one. These messages are
+            // `format!("{error:?}")` over validator reports and `dashbuf`
+            // errors, which carry document text, so a cut mid-character would
+            // leave a partial multi-byte sequence in a buffer this promises is
+            // UTF-8 — and a caller doing a strict decode (Swift's
+            // `String(cString:)`, JNI's `NewStringUTF`) gets a failure instead
+            // of the error it asked for.
+            let mut take = bytes.len().min(cap - 1);
+            while take > 0 && !message.is_char_boundary(take) {
+                take -= 1;
+            }
             unsafe {
                 std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf.cast::<u8>(), take);
                 *buf.add(take) = 0;
@@ -589,6 +600,15 @@ fn attach_android(
     // records for the canvas case. SAFETY: the caller of
     // `ds_runtime_attach_surface` promises the `ANativeWindow *` outlives every
     // later call on this runtime, which is exactly what `for_android_ndk` asks.
+    // Dropped **before** the replacement is attempted, and this ordering is the
+    // contract rather than tidiness. A host attaching window B over window A
+    // reads a returned call as the replacement point and releases A; leaving
+    // A's surface live on failure would then have the next draw present into a
+    // freed `ANativeWindow` and return `DsStatus::Ok`, and
+    // `ds_runtime_detach_surface` report a surface the host believes is gone.
+    // It is also what the `# Safety` note means by "until the surface is
+    // replaced": after this call there is no old surface, whatever the status.
+    runtime.surface = None;
     match unsafe { SurfaceRenderer::for_android_ndk(window, width, height) } {
         Ok(surface) => {
             runtime.surface = Some(surface);

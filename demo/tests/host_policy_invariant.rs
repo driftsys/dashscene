@@ -72,7 +72,7 @@ use std::path::{Path, PathBuf};
 ///
 /// **Maintain this list by hand**, and add to it when a host appears.
 ///
-/// Five entries, and the three integration crates are the ones that matter
+/// Six entries, and the three integration crates are the ones that matter
 /// most: stories #741, #794 and #841 moved or wrote each host's frame loop in a
 /// crate that will be **published**, which is the whole reason story #810 gave
 /// these rules one owner first. Story #741 landed without adding

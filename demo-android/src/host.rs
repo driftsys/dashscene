@@ -65,6 +65,11 @@ impl ShowcaseFrames {
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.document_replaced();
         }
+        // The sample in hand measured a different extent through a different
+        // swapchain. `Timing` discards a part-sample when the scene *name*
+        // changes, and a rebuild is the larger discontinuity — same name, whole
+        // new scene — so it has to be said here.
+        self.timing = Timing::new();
         // The new scene holds nothing the pulse wrote into the old one, so the
         // phase is re-applied rather than resumed.
         self.phase = u64::MAX;

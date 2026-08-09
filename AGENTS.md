@@ -136,16 +136,21 @@ members in total, nineteen of them the crates above.
     just test-all     every tier in one run.
     just lint         clippy -D warnings, cargo fmt --check, dprint check, markdownlint
     just fmt          reformat everything in place
-    just check        regression tier + lint + audit + the two wasm gates
+    just check        regression tier + lint + audit + the two wasm gates +
+                      c-abi, which compiles the committed header from C and
+                      checks the two halves agree (needs a C toolchain)
     just verify       commit-message lint over the branch range, then build — run before opening a PR
     just wasm         build dashc for wasm32-unknown-unknown
     just wasm-painter build dashscene-gpu for wasm32 — the gate that keeps a
                       blocking wait off the web path, where it would deadlock
     just wasm-host    build demo-web for wasm32 — its browser half compiles on
                       no other target
-    just android      build dashscene-gpu for aarch64-linux-android — the
-                      second platform's compile gate. Needs an NDK, which
-                      bootstrap does not install
+    just android      cross-compile the four Android members for
+                      aarch64-linux-android — dashscene-gpu, dashscene-ffi,
+                      dashscene-android and demo-android. The second platform's
+                      compile gate, and the only one the last two have: their
+                      JNI halves compile on no other target. Needs an NDK,
+                      which bootstrap does not install
     just android-probe  cross-compile the D3a probe, push it to an attached
                       device and run it: what the painter's own device request
                       reports on that adapter (docs/design/android-toolchain.md)
