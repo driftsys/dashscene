@@ -120,6 +120,21 @@ DsStatus ds_runtime_resize(DsRuntime *runtime, uint32_t width, uint32_t height);
 DsStatus ds_runtime_tick(DsRuntime *runtime, float dt, bool *out_advanced);
 
 /*
+ * Draws the committed frame and puts it on the surface.
+ *
+ * out_drawn, if non-NULL, receives whether a frame actually reached the window.
+ * It can be false for a reason that is not an error — a zero extent, or a
+ * surface that had to be reconfigured — which is why it is separate from the
+ * status. A frame that reached the window is marked shown, so the next tick's
+ * out_advanced means "changed since the frame you saw".
+ *
+ * Adding this symbol did not move DS_ABI_VERSION: by the rule at the top of
+ * this header, a new symbol is additive and a host built against an older
+ * header keeps working.
+ */
+DsStatus ds_runtime_draw(DsRuntime *runtime, bool *out_drawn);
+
+/*
  * Copies the last failure's message into buf as NUL-terminated UTF-8.
  *
  * Returns the bytes the message needs including the terminator, so passing NULL

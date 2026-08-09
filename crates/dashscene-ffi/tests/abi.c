@@ -54,6 +54,13 @@ int main(void) {
   check(ds_runtime_resize(runtime, 640, 480) == DS_NO_SURFACE,
         "resizing without a surface reports DS_NO_SURFACE");
 
+  /* The draw call exists and is reachable from C — the symbol layer 0 needs to
+   * put a pixel on screen. Without a document it must say so rather than draw
+   * nothing and report success. */
+  bool drawn = true;
+  check(ds_runtime_draw(runtime, &drawn) == DS_NO_DOCUMENT,
+        "drawing without a document reports DS_NO_DOCUMENT");
+
   /* Junk must fail as a status. An unwind across this boundary would be
    * undefined behaviour, so "it returned at all" is part of the assertion. */
   const uint8_t junk[32] = {0};

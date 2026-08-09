@@ -642,6 +642,7 @@ version = "0.0.0"
 dependencies = [
  "dashbuf",
  "dashlang",
+ "dashpaint",
  "dashscene-core",
  "dashscene-engine",
  "dashscene-gpu",
