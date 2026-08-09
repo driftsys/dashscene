@@ -6,8 +6,9 @@
 // and it is why nothing below re-derives a distance.
 
 // Mirrors `dashscene_gpu::Instance`. The two four-float vectors come first so
-// both sit at a 16-byte offset; the eighth scalar is what makes the Rust type
-// and this one agree on a 64-byte array stride — it was declared padding until
+// both sit at a 16-byte offset, and the trailing pad word is what makes the
+// Rust type and this one agree on an 80-byte array stride. The stride was 64
+// until story #832 added the rotation; `outset` occupied the pad word before
 // story #584 gave it a meaning.
 struct Instance {
     bounds: vec4f,
@@ -22,6 +23,21 @@ struct Instance {
     // How far past `bounds` this instance's ink reaches, resolved by the packer.
     // It was the trailing pad word until story #584 — see `instance_outset`.
     outset: f32,
+    // The point this instance turns about, in document space, and the angle it
+    // turns by, in radians (story #832). Zero is unrotated.
+    //
+    // `rotation_pivot` before `rotation`, and the order is load-bearing: WGSL
+    // aligns a `vec2f` to eight bytes, so the other order would place it at 72
+    // here while the Rust type packs it at 68, and every row after the first
+    // would be read from the wrong offset. The trap `GlyphRun` above documents
+    // against its own `half_uv`.
+    rotation_pivot: vec2f,
+    rotation: f32,
+    // Padding to an 80-byte stride, which `array<Instance>` rounds to anyway
+    // because `bounds` aligns this struct to 16. The Rust type declares the
+    // same word, so both sides agree on where element `n` begins. The next
+    // vertex-side scalar goes here, as `outset` did before story #584.
+    _pad: f32,
 }
 
 // `InstanceKind`, as one discriminant. There is no separate tag to read
@@ -272,6 +288,21 @@ struct VertexOut {
     @location(6) @interpolate(flat) params0: vec4f,
     @location(7) @interpolate(flat) params1: vec4f,
     @location(8) @interpolate(flat) params2: vec4f,
+    // The fragment's position in document space **after** this instance's
+    // rotation — where it actually lands on the canvas (story #832).
+    //
+    // Equal to `local` for an unrotated instance, which is every instance
+    // before that story, so nothing that read `local` changed meaning.
+    //
+    // It exists because a clip region does not turn with the node. `local` is
+    // the node's own frame, which is what every SDF, gradient and image fill
+    // wants; a clip box is stated in document space by an *ancestor*, and an
+    // ancestor is not rotating. Testing the clip against `local` would rotate
+    // the clip along with the node — the reference painter is explicit about
+    // this, applying the clip first and the rotation inside it.
+    //
+    // Ten of the fifteen inter-stage variables `downlevel_defaults` allows.
+    @location(9) placed: vec2f,
 }
 
 // How far past its own `bounds` an instance draws, as the packer resolved it.
@@ -355,13 +386,36 @@ fn vs_main(@builtin(vertex_index) vertex: u32, @builtin(instance_index) index: u
         select(lo.x, hi.x, (vertex & 1u) == 1u),
         select(lo.y, hi.y, (vertex & 2u) == 2u),
     );
+    // The node's rotation, applied to the quad's corners and to nothing else
+    // (story #832).
+    //
+    // This is the whole of the change: `placed` feeds the clip-space position
+    // below, and `out.local` keeps the *unrotated* `corner`. The fragment stage
+    // evaluates every SDF against the interpolated `out.local`, in the node's
+    // own axis-aligned frame, so it receives exactly the coordinates it
+    // received before this story — no new per-pixel arithmetic, no branch, and
+    // a rounded rect stays a true rounded rect rather than becoming an
+    // axis-aligned approximation of one, which is what rotating the SDF's input
+    // instead would produce.
+    //
+    // y-down and clockwise-positive, matching `dashscene-skia`'s
+    // `canvas.rotate` and `Prop::Rotation`'s own convention
+    // (`docs/decisions/rotation-is-paint-only-and-anchored-explicitly.md`).
+    var placed = corner;
+    if inst.rotation != 0.0 {
+        let s = sin(inst.rotation);
+        let c = cos(inst.rotation);
+        let d = corner - inst.rotation_pivot;
+        placed = inst.rotation_pivot + vec2f(d.x * c - d.y * s, d.x * s + d.y * c);
+    }
     // Document space (y down, origin top-left) to clip space.
     let ndc = vec2f(
-        corner.x / globals.size.x * 2.0 - 1.0,
-        1.0 - corner.y / globals.size.y * 2.0,
+        placed.x / globals.size.x * 2.0 - 1.0,
+        1.0 - placed.y / globals.size.y * 2.0,
     );
     out.position = vec4f(ndc, 0.0, 1.0);
     out.local = corner;
+    out.placed = placed;
     out.bounds = inst.bounds;
     out.corners = inst.corners;
     out.rows = vec4u(inst.kind, inst.row, inst.clip_offset, inst.clip_count);
@@ -691,7 +745,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
     } else {
         shape = coverage(d, globals.aa);
     }
-    var cover = shape * clip_coverage(in.rows.z, in.rows.w, in.local) * in.opacity;
+    // `placed`, not `local`: a clip box belongs to an ancestor and stays
+    // axis-aligned in document space while this node turns (story #832). The
+    // two are the same value for an unrotated instance.
+    var cover = shape * clip_coverage(in.rows.z, in.rows.w, in.placed) * in.opacity;
     if cover <= 0.0 {
         discard;
     }

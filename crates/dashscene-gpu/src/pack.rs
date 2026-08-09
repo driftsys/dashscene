@@ -54,7 +54,9 @@ use dashpaint::{
     PaintKind, PaintTable, PaintTag, RectEntry, Shadow, ShadowKind, Stroke, StrokeAlign,
 };
 
-use crate::instance::{Instance, InstanceBuffer, InstanceKind, Layer, bounds_of, shape_slot};
+use crate::instance::{
+    Instance, InstanceBuffer, InstanceKind, Layer, bounds_of, rotation_pivot, shape_slot,
+};
 
 /// Packs one frame of boundary-B tables into `out`, which is emptied first.
 ///
@@ -161,7 +163,15 @@ pub fn pack(
         );
         while next_run < runs.len() && runs[next_run].rect == i {
             let row = u32::try_from(next_run).expect("glyph run table exceeds u32::MAX runs");
-            pack_run(out, glyphs, row, clips.region(rect.clip), layer);
+            pack_run(
+                out,
+                glyphs,
+                row,
+                clips.region(rect.clip),
+                layer,
+                rect.rotation,
+                rotation_pivot(rect),
+            );
             next_run += 1;
         }
     }
@@ -210,6 +220,8 @@ fn pack_run(
     row: u32,
     clip: ClipRegion,
     layer: u32,
+    rotation: f32,
+    pivot: [f32; 2],
 ) {
     let run: &GlyphRun = &glyphs.runs()[row as usize];
     let atlas = glyphs.atlas(run.atlas);
@@ -245,6 +257,14 @@ fn pack_run(
             outset: 0.0,
             bounds: [x, y, (right - left) * size, (top - bottom) * size],
             corners: [al, height - at, ar - al, at - ab],
+            // The anchor rect's rotation, about the anchor rect's pivot — not
+            // the glyph's own. The reference painter draws an anchored run
+            // inside the rect's rotation, so a rotated text node's line turns
+            // as one; turning each glyph about itself would leave the line
+            // straight and the letters tilted.
+            rotation,
+            rotation_pivot: pivot,
+            _pad: 0.0,
         });
     }
 }
@@ -296,6 +316,14 @@ fn pack_rect(
             entry.corners.bottom_right,
             entry.corners.bottom_left,
         ],
+        // Every instance this rect emits turns with it — the fill, the stroke,
+        // both shadow passes and, through `pack_run`, every glyph anchored to
+        // it. That is the reference painter's own scope: it turns the canvas
+        // once, around all of this node's ink, and takes the rotation off again
+        // before releasing the clip (story #832).
+        rotation: rect.rotation,
+        rotation_pivot: rotation_pivot(rect),
+        _pad: 0.0,
     };
 
     // 1. The backdrop, blurred, beneath the node's own ink. A masked node's

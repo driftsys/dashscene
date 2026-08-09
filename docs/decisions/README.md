@@ -521,7 +521,7 @@ filed beside their parent rather than apart from it:
   Skia-GPU is **not planned**, and Skia stays permanently as the bit-exact CPU
   oracle (story #577, amends the record above).
 - [instance-buffer-contract.md](instance-buffer-contract.md) — the lean
-  painter's frame is one ordered instance buffer of 64-byte `#[repr(C)]` rows,
+  painter's frame is one ordered instance buffer of 80-byte `#[repr(C)]` rows,
   a rect's instances contiguous and named by a per-rect span, in
   `dashscene-skia`'s own per-node order; layer 1 of epic #569 is stated over it
   as committed text goldens (story #578).

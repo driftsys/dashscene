@@ -73,6 +73,26 @@ The angle is in **radians**, which is already this repository's convention for
 an angle — `crates/dashc/src/figma/rest.rs` pins radians for arc angles — and
 is Figma's wire unit.
 
+## The angle turns clockwise in a y-down space
+
+The document's coordinate space has y increasing downward, and a **positive
+angle turns clockwise** in it — a point at `(x, y)` relative to the anchor maps
+to `(x cos - y sin, x sin + y cos)`.
+
+Stated here because two painters and one importer each depend on it and none of
+them is the place to define it. It is not a free choice: it is what makes
+Figma's `rotation` lower with no conversion at all. Figma's `relativeTransform`
+for the fixture above is `[[cos, +sin, tx], [-sin, cos, ty]]` evaluated at the
+**negation** of its `rotation` field, which is the same matrix as the rule above
+evaluated at the field's own value. A repository convention of
+counter-clockwise-positive would have made every Figma import a sign flip, and
+every sign flip a place to forget one.
+
+It is also what the painters already do. `skia_safe`'s `Canvas::rotate` takes
+degrees and turns clockwise in its y-down space, so `dashscene-skia` converts
+the unit and nothing else; `dashscene-gpu` writes the matrix above directly in
+its vertex stage (story #832).
+
 ## All three scalars are bindable
 
 `BindingChannel` gains the angle and both anchor components rather than the
