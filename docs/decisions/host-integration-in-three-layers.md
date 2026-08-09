@@ -16,7 +16,12 @@
 
     Narrowed at v0.19's planning session (2026-08-09, epic #833): **that slice
     builds layer 0 and the C ABI under it.** Layers 1 and 2 are deferred to a
-    follow-on slice named at v0.19's close. The reason is recorded in
+    follow-on slice, which this record expected to be named at v0.19's close.
+    **It was named earlier, on 2026-08-09, as v0.20**, so that those layers and
+    the data-plane export (#859) had a home nearer than v1 while v0.19 was
+    still open. `docs/roadmap.md`'s v0.20 entry states the exception and says
+    its contents stay provisional until that close. The layering is unchanged;
+    only when the follow-on slice acquired a number moved. The reason is recorded in
     `docs/roadmap.md` under "What was ruled when this slice opened" — the
     showcase both other targets run is entirely Rust, so demonstrating Android
     at parity with them exercises layer 0 and nothing above it. D1's claim that

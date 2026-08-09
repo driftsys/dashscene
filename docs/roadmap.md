@@ -11,7 +11,7 @@ is nothing to keep in sync between the two.
 
 | This file (shape)               | GitHub (state)                                |
 | ------------------------------- | --------------------------------------------- |
-| Which slices exist (v0.1-v0.19) | Which stories exist under each epic           |
+| Which slices exist (v0.1-v0.20) | Which stories exist under each epic           |
 | What each slice delivers        | Which stories are open, closed, who owns them |
 | Inter-slice dependency edges    | Story-level dependency edges                  |
 | Which E-criteria a slice closes | Debt triage and milestone assignment          |
@@ -1431,8 +1431,9 @@ usable without the layer above it, over one shared C ABI, written
 platform-general so the v1 iOS story inherits it. `SurfaceView` semantics only;
 `TextureView` is v1 with the case that motivates it. **Because each layer is
 usable without the one above it, this slice builds layer 0 and the C ABI under
-it**, and layers 1 and 2 move to a follow-on slice; the planning session's
-reasoning is below.
+it**, and layers 1 and 2 move to a follow-on slice — **v0.20, below**, named
+on 2026-08-09 while this slice was still open rather than at its close, for the
+reason that entry states. The planning session's reasoning is below.
 
 **The first story confirms Vulkan before anything is built on it.** That
 record's D3a is a risk rather than a measurement: the painter binds four storage
@@ -1544,6 +1545,42 @@ to say, and moves as that epic does.
 Depends on: v0.17 for what an embedder consumes, and on the C ABI this slice
 builds. Independent of v0.18 in dependency terms; see the sequencing note above
 for the file-level overlap.
+
+### v0.20 — host layers 1 and 2, and the data plane — open, not yet planned
+
+**Milestone, no epic.** That is the documented state for a slice that is opened
+but not yet planned (`AGENTS.md`, "Plan tracking"), and it is where issues
+surfaced by v0.19 are placed until this slice is planned.
+
+**Opened early, deliberately, and the exception is worth stating.** Every other
+slice here was named at the preceding slice's close, which is where `AGENTS.md`
+puts plan revision. This one is named while v0.19 is still open, because two
+things already needed a home nearer than v1 and neither is v0.19's:
+
+- **Layers 1 and 2** of
+  [`decisions/host-integration-in-three-layers.md`](decisions/host-integration-in-three-layers.md)
+  — app state bound to signals, and a DSL projecting `dashlang`. The v0.19
+  entry above already defers them to "a follow-on slice"; this is that slice,
+  named rather than left as a forward reference.
+- **The data plane** (#859). `dashscene-ffi` is surface-handle shaped: the host
+  hands over a surface and dashscene draws. A host that draws the frame itself
+  needs the committed tables out, and that export does not exist. It is
+  additive and cheapest while the ABI is young and has one consumer — which is
+  the argument for a nearer home than v1, where
+  [`decisions/pre-v1-hardening-slice.md`](decisions/pre-v1-hardening-slice.md)
+  records what happens to work anchored there without one.
+
+Delivers, provisionally: the two layers above 0, and one C export. Provisional
+is the operative word — **this entry is revised at the v0.19 close** like every
+other, and what that slice learns may move, split or rename what is here.
+Naming it now buys the two items a home; it does not settle the contents.
+
+Not in scope: the Unity painter itself, its repository, and the C# projection.
+Those stay in v1 by
+[`decisions/unity-separate-repo-deferred.md`](decisions/unity-separate-repo-deferred.md)
+and the three-layer record, neither of which this entry amends.
+
+Depends on: v0.19, for the C ABI both items build on.
 
 ## v1 — Unity, full feature set, performance, production toolchain
 
