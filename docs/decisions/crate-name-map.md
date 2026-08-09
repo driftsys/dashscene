@@ -329,11 +329,11 @@ described `dashscene-web` as a retired stub — a claim story #741 had falsified
 day earlier. A registry nobody enumerated is a registry nobody updates, which is
 the #445 pattern with a different set of files.
 
-**18 of the 19 names are reserved.** `dashscene-android` is the exception, and
-it is named here rather than left to be discovered: story #841 created the
-directory without holding the name. The sentence below described the set as
-complete while it was, and the count moved underneath it — which is the failure
-this paragraph is otherwise about. Checking issue #803's premise that
+**All 19 names are reserved.** `dashscene-android` was the exception for the
+length of story #841 and was held on 2026-08-09, the same day the directory
+landed. It is worth stating how the gap read while it was open, because the
+sentence here described the set as complete while the count moved underneath it
+— which is the failure this paragraph is otherwise about, one crate along. Checking issue #803's premise that
 `dashscene-desktop` was the unreserved name found two more — `dashpack` and
 `dashpack-astcenc-sys`. Both are real workspace crates that build and are
 depended on today, which is what separates them from a name held for work not
@@ -403,11 +403,19 @@ would, because D2 says every platform host does. That is also what tested the
 ABI: driving it as C revealed the one thing missing for layer 0, and
 `ds_runtime_detach_surface` was added for it.
 
-**Availability.** **Not yet reserved on crates.io.** Story #841 created
-`crates/dashscene-android` at `0.0.0` and the name is unheld, which is the same
-gap story #840 left for `dashscene-ffi` and which this record carried until it
-was closed. It is recorded here rather than left implicit, because a name held
-after the directory is a name someone else can take in between.
+**Availability.** Unclaimed on crates.io, and reserved **2026-08-09** as a
+standalone placeholder 0.1.0 built to the same shape as the twelve, with
+`repository` pointing at the public `driftsys/dashscene` rather than at this
+private working repo. The workspace crate stays at `0.0.0`, so the reservation
+does not drag it out of the shared version flow — the same split every other
+name here sits in.
+
+The name was held **after** the directory, as `dashscene-ffi`'s was: story #841
+created `crates/dashscene-android` at `0.0.0` and the reservation followed later
+the same day. That window is the exposure this record keeps naming — a name can
+be squatted out from under the project while nothing is published — and it is
+recorded rather than smoothed over, because the fix is to reserve at the moment
+a crate name is chosen rather than when someone notices.
 
 ## Why
 
