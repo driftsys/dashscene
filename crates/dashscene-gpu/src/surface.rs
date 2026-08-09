@@ -109,6 +109,26 @@ pub enum FrameError {
     Validation,
 }
 
+impl FrameError {
+    /// Whether rebuilding the presenter is the remedy.
+    ///
+    /// One rule, read by every host, which is why it is here rather than
+    /// restated as a `match` in each of them. Three integration crates classify
+    /// this failure — `dashscene-web`, `dashscene-desktop` and
+    /// `dashscene-android` — and story #834 exists because the first two had
+    /// already flattened the distinction to a string and diverged on what a
+    /// recoverable failure means.
+    ///
+    /// [`FrameError::Lost`] is the only one. [`FrameError::Outdated`] is a
+    /// swapchain that was already reconfigured and retried once, which is a
+    /// state the frame loop cannot spin its way out of; [`FrameError::Validation`]
+    /// is a defect rather than a condition. Rebuilding the presenter for either
+    /// would be a loop rebuilding a device to meet the same failure.
+    pub fn is_recoverable(&self) -> bool {
+        matches!(self, FrameError::Lost)
+    }
+}
+
 impl std::fmt::Display for FrameError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
