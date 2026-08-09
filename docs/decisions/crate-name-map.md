@@ -3,7 +3,7 @@
     status   accepted
     date     2026-07-11
     scope    the Cargo workspace's crate names — 13 when this was decided,
-             18 today, each addition recorded in its own section below
+             19 today, each addition recorded in its own section below
 
 ## Context
 
@@ -329,7 +329,11 @@ described `dashscene-web` as a retired stub — a claim story #741 had falsified
 day earlier. A registry nobody enumerated is a registry nobody updates, which is
 the #445 pattern with a different set of files.
 
-**All 18 names are now reserved.** Checking issue #803's premise that
+**18 of the 19 names are reserved.** `dashscene-android` is the exception, and
+it is named here rather than left to be discovered: story #841 created the
+directory without holding the name. The sentence below described the set as
+complete while it was, and the count moved underneath it — which is the failure
+this paragraph is otherwise about. Checking issue #803's premise that
 `dashscene-desktop` was the unreserved name found two more — `dashpack` and
 `dashpack-astcenc-sys`. Both are real workspace crates that build and are
 depended on today, which is what separates them from a name held for work not
@@ -375,6 +379,35 @@ this record and `docs/features.md` both carried as a stated gap until it was
 closed. The workspace crate stays at `0.0.0`, so the reservation does not drag
 it out of the shared version flow — the same split every other name here sits
 in, where a reserved 0.1.0 sits above a workspace 0.0.0.
+
+## `dashscene-android` — the Android host, added at story #841 (v0.19)
+
+The nineteenth name, and the third integration surface after `dashscene-web`
+and `dashscene-desktop`.
+
+**Why a crate and not a `cfg` arm.** The v0.17 close looked for the common part
+between the two existing hosts, found it, and it was one constant and two
+methods on `LiveScene`. There is no host abstraction to extend, so a third
+platform is a third crate — which is what
+[`host-integration-in-three-layers.md`](host-integration-in-three-layers.md)
+assumes when it gives each platform its own small handle type.
+
+**`dashscene-android` rather than `dashandroid`.** The same split every other
+name here follows: `dashscene-*` is the host-facing family — `dashscene-web`,
+`dashscene-desktop`, `dashscene-unity`, `dashscene-ffi` — and the short `dash*`
+names are the vocabularies. A platform name is not a vocabulary.
+
+**What makes it unlike the other two.** It sits **on** `dashscene-ffi` rather
+than beside it, driving the C ABI through its own entry points as a C caller
+would, because D2 says every platform host does. That is also what tested the
+ABI: driving it as C revealed the one thing missing for layer 0, and
+`ds_runtime_detach_surface` was added for it.
+
+**Availability.** **Not yet reserved on crates.io.** Story #841 created
+`crates/dashscene-android` at `0.0.0` and the name is unheld, which is the same
+gap story #840 left for `dashscene-ffi` and which this record carried until it
+was closed. It is recorded here rather than left implicit, because a name held
+after the directory is a name someone else can take in between.
 
 ## Why
 

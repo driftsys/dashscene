@@ -45,7 +45,8 @@ is a separate repository that does not exist yet) and the lean painter
 The `dashscene-web` name once described a wasm/tiny-skia painter, which is
 retired and superseded by `dashscene-gpu`; the crate is the web
 integration surface since story #741, and `dashscene-desktop` is its
-desktop counterpart since story #794. `dashscene-ffi` is the C ABI a
+desktop counterpart since story #794, and `dashscene-android` the third since
+story #841. `dashscene-ffi` is the C ABI a
 platform host embeds through, added at story #840; Android reaches it
 through JNI and the v1 iOS and Unity hosts inherit the same symbols.
 `docs/roadmap.md` is the authority on what has landed.
