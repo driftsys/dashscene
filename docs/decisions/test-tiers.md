@@ -408,7 +408,7 @@ sharing would leave that leg permanently cold rather than warm.
 
 Since 2026-08-01 the `test` job also skips entirely when the diff is
 documentation only, together with `clippy`, `demo-build`, `wasm-build`,
-`atlas-repro` and `render-oracle`. The `changes` job decides this by asking
+`android-build`, `atlas-repro` and `render-oracle`. The `changes` job decides this by asking
 whether every changed file is Markdown under `docs/` or Markdown at the
 repository root. `fmt`, `dprint` and `convco` stay unconditional: a
 documentation-only diff still has to be formatted, and its commit messages
