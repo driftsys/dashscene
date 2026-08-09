@@ -48,26 +48,25 @@
 //!
 //! One case story #571 named is answered differently from the way it guessed. A
 //! surface that reports itself **out of date** is recovered inside `present`,
-//! as expected. A surface that reports itself **lost** is not: recovering that
-//! means building a new surface from the window handle, and the handle is
-//! consumed when the first one is made. It arrives here as an ordinary
-//! [`PresentError`] and stops the loop with a named failure.
+//! as expected. A surface that reports itself **lost** is not, and cannot be:
+//! recovering that means building a new surface from the window handle, and the
+//! handle is consumed when the first one is made. It arrives here as
+//! [`PresentError::Frame`].
 //!
-//! **Nothing recovers from that today**, and the recovery the crate does have
-//! is out of reach of it. [`crate::Reaction::Rebind`] rebuilds the presenter,
-//! which is what `dashscene_gpu::FrameError::Lost` says the remedy is — but it
-//! is returned by an embedder from an event or a wake, and a present failure
-//! ends the loop before either runs. `PresentError::Post` also flattens the
-//! failure to a string, so nothing downstream could tell a lost surface from
-//! any other one. Issue #818 carries both halves. What is written here is the
-//! behaviour carried unchanged from the host this was extracted from, because
-//! changing it is new behaviour and story #794's job was to preserve it.
+//! **The loop recovers from it, since story #834.** The presenter is dropped and
+//! [`crate::App::presenter`] is asked for another — [`crate::Reaction::Rebind`],
+//! which is exactly what `dashscene_gpu::FrameError::Lost` says the remedy is,
+//! and which the crate had all along. What was missing was the route to it: a
+//! present failure ended the loop before an embedder could return a reaction,
+//! and `PresentError::Post` flattened the failure to a string so nothing
+//! downstream could tell a lost surface from any other one. Issue #818 carried
+//! both halves and [`crate::recovery`] is where the decision now lives.
 
 use std::sync::Arc;
 
 use dashpaint::Painter;
 use dashscene_core::CommittedScene;
-use dashscene_gpu::{Changes, GpuPainter, RendererError, SurfaceRenderer};
+use dashscene_gpu::{Changes, FrameError, GpuPainter, RendererError, SurfaceRenderer};
 use winit::window::Window;
 
 /// Whether a frame reached the window.
@@ -141,7 +140,19 @@ pub enum PresentError {
     /// The window's surface could not be created or reconfigured.
     Surface(String),
     /// The frame was drawn but could not be handed to the compositor.
+    ///
+    /// The raster presenter's variant: `demo`'s implementation posts a pixel
+    /// buffer through `softbuffer`, which has no `FrameError` to carry. A
+    /// `dashscene-gpu` failure arrives as [`PresentError::Frame`] instead.
     Post(String),
+    /// A `dashscene-gpu` frame failure, carried rather than flattened.
+    ///
+    /// The loop branches on it: [`dashscene_gpu::FrameError::is_recoverable`]
+    /// says whether the remedy is [`crate::Reaction::Rebind`]. This was
+    /// `Post(error.to_string())` until story #834, which meant the one entry
+    /// point that could recover a lost surface was unreachable from the failure
+    /// it exists for (issue #818).
+    Frame(FrameError),
     /// The drawable is larger than the painter can address on either axis, and
     /// `max` is the largest either may be.
     ///
@@ -172,6 +183,12 @@ impl std::fmt::Display for PresentError {
         match self {
             Self::Surface(message) => write!(f, "window surface: {message}"),
             Self::Post(message) => write!(f, "posting the frame: {message}"),
+            // Deliberately not the same prefix as `Post`. The two are different
+            // failures — one is a raster presenter that could not hand its
+            // pixels to the compositor, the other a `dashscene-gpu` frame that
+            // may be recoverable — and a log line that reads identically for
+            // both would undo the split this variant exists for.
+            Self::Frame(error) => write!(f, "the frame did not reach the window: {error}"),
             Self::Extent { width, height, max } => write!(
                 f,
                 "a {width}x{height} drawable exceeds the {max} px maximum this painter can \
@@ -188,7 +205,21 @@ impl std::fmt::Display for PresentError {
     }
 }
 
-impl std::error::Error for PresentError {}
+impl std::error::Error for PresentError {
+    /// The `dashscene-gpu` failure, for a caller walking the chain.
+    ///
+    /// Without this the chain stops here, and an embedder following `source()`
+    /// to reach the structured failure — which is the reason
+    /// [`PresentError::Frame`] carries one rather than a string — would get this
+    /// type and then `None`. The string variants have no source, because a
+    /// string is where their chain already ended.
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Frame(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 /// The lean painter: pack on the CPU, draw on the GPU, present to the window's
 /// own swapchain (story #585).
@@ -306,6 +337,6 @@ impl Present for GpuPresenter {
                 scene.glyphs(),
                 Some(changes),
             )
-            .map_err(|error| PresentError::Post(error.to_string()))
+            .map_err(PresentError::Frame)
     }
 }

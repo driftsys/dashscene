@@ -99,10 +99,7 @@ impl Document {
 
         let report = dashscene_validator::validate_document(&document);
         if report.has_errors() {
-            return Err(DesktopError::Gate {
-                path: name,
-                report: format!("{report:?}"),
-            });
+            return Err(DesktopError::Gate { path: name, report });
         }
 
         // Bound as **canonical**, and refused when that would be a lie. A file

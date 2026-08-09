@@ -163,7 +163,7 @@ pub async fn load_document(url: &str, arena: &mut Arena) -> Result<LiveScene, We
     // document is now refused without a single payload request.
     let report = dashscene_validator::validate_document(&document);
     if report.has_errors() {
-        return Err(WebError::Gate(format!("{report:?}")));
+        return Err(WebError::Gate(report));
     }
 
     // Bound as **canonical**, and refused when that would be a lie — the same

@@ -50,7 +50,10 @@ an embedder attaches, reads `Surface::extent`, builds, and then hands both over.
 `requestAnimationFrame` closure held in its own `Rc<RefCell<..>>` so it outlives
 the call that scheduled it. Each frame: call the embedder's `FrameHook` with the
 seconds elapsed since the first frame and a `FrameKind`, `tick`, and draw only
-if `advanced()`.
+if `advanced()`. It returns a `LoopHandle`, whose `Drop` stops the loop and
+whose `detach` gives that up; the id of the frame already scheduled is held so
+that stopping cancels it before the closure is dropped, which is what keeps the
+browser from invoking a shim whose closure is gone (story #834).
 
 **`FrameKind`** is `Continuing` or `Rebuilt`, and it exists for a trap an
 embedder would otherwise have to discover: a hook that tracks what it has
@@ -154,19 +157,45 @@ named binding would pass it. That limit is recorded in the test itself and
 repeated here, because a check whose limits are not written down is read as
 stronger than it is.
 
+## The frame-loop contract, settled at story #834
+
+Two gaps closed together, each of which paired across the two crates — the
+pairing mattered, because settled separately the two crates would have diverged
+on what a recoverable failure means, and `dashscene-android` would have
+inherited a third answer.
+
+**A recoverable loss no longer ends the loop** (#813, #818).
+`dashscene_gpu::FrameError::is_recoverable` is the one rule; both loops read it
+rather than restating it, and the classification each applies is in that crate's
+own `recovery` module. The web loop rebuilds the surface against the same canvas
+— asynchronously, because acquiring an adapter is — and the desktop loop rebinds
+the presenter, which is `Reaction::Rebind`, the recovery it already had and
+could not reach. Both bound consecutive attempts at three and reset the count on
+a frame that reaches the window, so an unrecoverable loss stops instead of
+rebuilding a device forever. `FrameError` and the validator's `Report` are
+carried on the error variants rather than flattened to strings.
+
+**A started loop can be stopped** (#814, #820). `Host::spin` hands back a
+`LoopHandle` whose `Drop` stops the loop, which is the way round an unmounting
+canvas needs; `LoopHandle::detach` is how a full-page host asks for a loop that
+outlives its handle. On the desktop it is a message rather than a handle —
+`Waker::stop` — because `winit`'s `run` owns the calling thread until the loop
+ends and there is no point at which a handle could be returned. That asymmetry
+is `winit`'s model rather than a shortfall, and is recorded on `Waker`.
+
+**What is not covered by a test**, because neither loop can be driven without a
+browser or a display: the last link on each side, from the classification to the
+call that acts on it. The decisions themselves are asserted — `recovery` in both
+crates, and `Host::after_paint` on the desktop, which is the loop's own branch
+rather than a copy of the policy. The stop mechanism on both sides has no
+coverage at all; issue #867 carries it.
+
 ## Known gaps, named
 
 Each is filed, and each pairs across the two crates — the pairing matters,
 because settled separately the two crates diverge on what a recoverable failure
 means.
 
-- **A recoverable loss is fatal** — #813 (web), #818 (desktop). `FrameError` is
-  flattened to a string before the loop could branch on it, and the loop does
-  not branch. On the desktop the recovery exists and is unreachable:
-  `Reaction::Rebind` is exactly what `FrameError::Lost` asks for, and a present
-  failure exits the loop before the embedder is asked.
-- **A started loop cannot be stopped from outside it** — #814 (web), #820
-  (desktop).
 - **The adapter is exposed only as a formatted string** — #815 (web), #819
   (desktop).
 - **R5 is conditional on the web** — #822, and the fix is in the runtime rather
