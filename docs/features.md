@@ -432,15 +432,25 @@ absence of any mobile target in the workspace.
       named in each crate's own module documentation. No mobile target exists,
       and nothing is published: this slice makes the crates publishable and the
       publish is a separate decision (epic #793).
-- [ ] **A C interface for hosts written in other languages** — **part
-      built.** The data a host would consume is already in a shape another
-      language can read, and the build enforces that. Nothing is built on
-      top of it. Planned for the slice that brings up Android, since both
-      need it and neither the browser nor the desktop does.
-- [ ] **Android and iOS** — nothing yet: no build target, no toolchain, no
-      automation. Android is a later slice than the current one, over a
-      proposed three-layer structure; iOS and the Unity host follow after
-      it.
+- [ ] **A C interface for hosts written in other languages** — **built, and
+      not yet used by any host.** `crates/dashscene-ffi` (story #840) exports
+      a version to negotiate against, the runtime lifecycle, a document
+      load, the surface handoff, the tick, resize, a draw call and an error
+      channel, with a committed header a C
+      caller compiles against; `just c-abi` exercises it as one. No panic
+      crosses the boundary and no failure is reachable only as a formatted
+      string. **Nothing calls it yet** — the Android host that would is story
+      #841, and no iOS or Unity host exists. Root selection is absent, because
+      no host can name a root until story #837 lands.
+- [ ] **Android and iOS** — **Android part built; iOS nothing.** The
+      `aarch64-linux-android` target, an NDK toolchain and a CI job exist
+      (story #839), the painter cross-compiles for it, and the C ABI above
+      builds for it too. **Nothing has run on a device**: there is no Android
+      host, and the D3a measurement that says the painter's four fragment-stage
+      storage buffers fit a target device has not been taken — see
+      `docs/design/android-toolchain.md`, which records an emulator result and
+      says explicitly that it is not that measurement. iOS and the Unity host
+      have no target, no toolchain and no automation, and follow in v1.
 
 ## 11. Quality tooling and workflow
 

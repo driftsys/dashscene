@@ -438,12 +438,17 @@ jobs:
         with:
           targets: aarch64-linux-android
       - uses: Swatinem/rust-cache@v2
-      # No flatc step, unlike every other compile job. `dashscene-gpu` depends
-      # on `dashpaint`, whose `[dependencies]` is empty, so `dashbuf` — the one
-      # crate whose build.rs shells out to flatc — is not in this target's
-      # graph at all: `cargo tree -p dashscene-gpu --target
-      # aarch64-linux-android` finds no `dashbuf`. Copying the step from
-      # `wasm-build` would install a tool nothing here runs.
+      # flatc is needed, though it was not while this job built the painter
+      # alone: `dashscene-gpu` reaches no `dashbuf`, but `dashscene-ffi` depends
+      # on it directly and its build.rs shells out to flatc. The step was
+      # removed when the job built only the painter and comes back with the ABI
+      # — which is why the reason is recorded here rather than the step being
+      # copied from a sibling job again.
+      - name: install flatc
+        run: |
+          curl -fsSL -o flatc.zip https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip
+          unzip -o flatc.zip flatc -d /usr/local/bin
+          chmod +x /usr/local/bin/flatc
       - uses: extractions/setup-just@v4
       # This job runs the recipe rather than inlining `cargo build`, which is
       # what every other compile job does. The difference is deliberate: the
