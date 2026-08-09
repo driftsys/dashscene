@@ -423,6 +423,13 @@ into the records below. Per-story decisions land here directly:
   — `Visible` is a layout prop (Taffy `Display::None`), `Opacity` is a paint
   prop, and there is no third `visibility: hidden` state; `Visible` built at
   v0.4, `Opacity` scope for v0.8 (story #165; §23 D7).
+- [rotation-is-paint-only-and-anchored-explicitly.md](rotation-is-paint-only-and-anchored-explicitly.md)
+  — rotation joins `Opacity` on the paint side, carrying an angle in radians
+  and an **explicit** anchor in the node's own space, canonically `(0, 0)`:
+  neither Figma nor SVG rotates about a centre, and the fixture arithmetic that
+  shows it is in the record. All three scalars bind, scale and skew wait, and a
+  painter that cannot rotate refuses by name rather than drawing unrotated
+  (story #770, slice v0.18).
 - [flip-engine-binds-resolved-values.md](flip-engine-binds-resolved-values.md)
   — `dashcue` carries only the transition spec (P1); the engine captures the
   before/after solve and binds the resolved `(from, to)` and `(node, channel)`
