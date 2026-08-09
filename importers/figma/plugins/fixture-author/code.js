@@ -1898,6 +1898,648 @@ function nodeFx() {
     "maskType VECTOR) in a 540x160 frame";
 }
 
+// ------------------------------------------ prototype interactions (v0.18)
+// Story #773. These two are the first fixtures in this corpus to carry a
+// Figma prototype interaction at all: before them every committed capture
+// reported `prototypeStartNodeID: null` and an empty `interactions` array on
+// every node, so nothing pinned the shape a lowering has to read.
+//
+// The pair splits the way effects-2025 splits from the rendering fixtures.
+// Under R6 a fixture carrying an error emits no .dsb, so the vocabulary that
+// maps onto dashcue and the vocabulary that is refused by name cannot share
+// a file without the mapping case losing its emission test.
+//
+// `duration` is written here in SECONDS, and the capture proved REST reports
+// that same nested field in seconds too: 0.3 written comes back as
+// 0.30000001192092896. This comment previously said REST reports it in
+// milliseconds, on the authority of @figma/rest-api-spec's doc comment, and
+// that comment is wrong — see
+// docs/technotes/figma-rest-shapes-the-capture-pinned.md.
+//
+// What IS in milliseconds is the separate FLAT `transitionDuration` field
+// REST puts beside the interaction (300 for the same reaction). The two live
+// on the same node in different units, so a lowering must not mix them.
+
+/**
+ * Writes one node's reactions, recording `what` on `failed` instead of
+ * throwing — one refused arm must not cost the other twelve, the
+ * effects-2025 precedent.
+ *
+ * On an INSTANCE the catch also **clears** the node's reactions. An instance
+ * whose override is refused keeps inheriting its component's reaction, and
+ * that inherited value reaches the capture looking exactly like an authored
+ * one: this is how `easing-custom-spring` came to carry EASE_OUT at 0.3 s in
+ * the first capture, matching `state=rest` byte for byte while the checklist
+ * said the write had failed. Clearing turns a refusal into an absent
+ * `interactions` array, which is what a refused write on a fresh frame
+ * already looks like and which a consumer can actually see — a text node no
+ * parser reads is not a signal.
+ *
+ * @param {string} what
+ * @param {ComponentNode | InstanceNode | FrameNode} node
+ * @param {Reaction[]} reactions
+ * @param {string[]} failed
+ */
+async function wireReactions(what, node, reactions, failed) {
+  try {
+    await node.setReactionsAsync(reactions);
+  } catch (e) {
+    console.warn(what + " reaction write failed:", e);
+    failed.push(what);
+    if (node.type === "INSTANCE") {
+      try {
+        await node.setReactionsAsync([]);
+      } catch (clearFailed) {
+        console.warn(what + " could not be cleared either:", clearFailed);
+      }
+    }
+  }
+}
+
+/**
+ * One ON_CLICK reaction that switches the enclosing instance to another
+ * variant, animated by Smart Animate.
+ *
+ * `CHANGE_TO` is the only navigation that maps: it changes the closest
+ * ancestor instance of the source node to the named variant, which is the
+ * construct `dashscene_core`'s `set_variant` performs and `dashcue`'s
+ * `VariantTransition` describes.
+ *
+ * @param {string} destinationId id of the target variant COMPONENT
+ * @param {Easing} easing
+ * @param {number} duration seconds, and REST reports this nested field in
+ *   seconds too — only the flat `transitionDuration` beside it is in
+ *   milliseconds
+ * @returns {Reaction}
+ */
+function changeToReaction(destinationId, easing, duration) {
+  return {
+    trigger: { type: "ON_CLICK" },
+    actions: [{
+      type: "NODE",
+      destinationId,
+      navigation: "CHANGE_TO",
+      transition: { type: "SMART_ANIMATE", easing, duration },
+    }],
+  };
+}
+
+// ------------------------------------------- prototype-smart-animate (v0.18)
+// The half that MAPS onto dashcue: a two-variant component set switched by
+// ON_CLICK -> CHANGE_TO -> SMART_ANIMATE.
+//
+// Three properties are deliberate and must survive a re-author.
+//
+// The two variants differ in RECT PROPS ONLY — `bar` in width, `dot` in x,
+// `panel` in y and height — which between them cover exactly the four
+// channels `dashscene_validator`'s TRANSITION_CHANNEL_NOT_A_RECT rule
+// accepts (X, Y, Width, Height) and no others. Smart Animate interpolates a
+// fill difference just as happily and the load gate refuses it, so that case
+// lives in prototype-refused instead. A fill difference added here would
+// stop the whole fixture emitting.
+//
+// The diff is spread across THREE children rather than one because Figma's
+// transition is per-interaction while `dashcue`'s is per-prop: one
+// SMART_ANIMATE carries a single duration and easing, and Smart Animate then
+// interpolates whatever happens to differ between the two variants. A
+// lowering therefore has to diff the variants to discover its tracks and fan
+// that one spec across them. A single moving child would leave the fan-out —
+// the part of the mapping with no Figma counterpart — unexercised by any
+// capture. Figma has no stagger, so all three move together.
+//
+// Every easing arm that could map gets its OWN INSTANCE, each at a distinct
+// duration so no two can be confused in the capture. The four spring presets
+// are there for one open question: `Easing.easingFunctionSpring` is
+// optional, so if GENTLE comes back as a bare name then dashscene has to own
+// a table of the four presets' stiffness and damping to map them at all, and
+// if it comes back populated it does not. One capture settles it.
+async function prototypeSmartAnimate() {
+  await figma.loadFontAsync(INTER);
+  removePrevious("prototype-smart-animate");
+
+  /**
+   * One variant of the toggle. Both variants give their children the SAME
+   * three names, which is what Smart Animate matches layers on.
+   *
+   * @param {string} stateName
+   * @param {{ barW: number, dotX: number, panelY: number, panelH: number }} geom
+   * @returns {ComponentNode}
+   */
+  const mkVariant = (stateName, geom) => {
+    const comp = figma.createComponent();
+    comp.name = "state=" + stateName;
+    comp.resize(320, 180);
+    comp.fills = [solid(GRAY(0.96))];
+
+    const bar = cell("bar", { r: 0.25, g: 0.45, b: 0.85 });
+    comp.appendChild(bar);
+    bar.resize(geom.barW, 24);
+    bar.x = 16;
+    bar.y = 16;
+
+    const dot = cell("dot", { r: 0.9, g: 0.4, b: 0.35 });
+    comp.appendChild(dot);
+    dot.resize(24, 24);
+    dot.x = geom.dotX;
+    dot.y = 56;
+
+    const panel = cell("panel", { r: 0.7, g: 0.75, b: 0.9 });
+    comp.appendChild(panel);
+    panel.resize(288, geom.panelH);
+    panel.x = 16;
+    panel.y = geom.panelY;
+
+    return comp;
+  };
+
+  // bar: Width only. dot: X only. panel: Y and Height.
+  const rest = mkVariant("rest", {
+    barW: 64,
+    dotX: 16,
+    panelY: 96,
+    panelH: 32,
+  });
+  const active = mkVariant("active", {
+    barW: 288,
+    dotX: 280,
+    panelY: 88,
+    panelH: 76,
+  });
+  const set = figma.combineAsVariants([rest, active], figma.currentPage);
+  set.name = "prototype-smart-animate";
+
+  /** @type {string[]} */
+  const failed = [];
+  /** @param {string} what @param {ComponentNode | InstanceNode} node @param {Reaction[]} r */
+  const wire = (what, node, r) => wireReactions(what, node, r, failed);
+
+  // The round trip on the COMPONENTs themselves, which is how an interactive
+  // component is actually built and where a lowering will read it from.
+  await wire("state=rest", rest, [
+    changeToReaction(active.id, { type: "EASE_OUT" }, 0.3),
+  ]);
+  await wire("state=active", active, [
+    changeToReaction(rest.id, { type: "EASE_IN" }, 0.2),
+  ]);
+
+  /** @type {{ name: string, easing: Easing, duration: number }[]} */
+  const ARMS = [
+    { name: "easing-linear", easing: { type: "LINEAR" }, duration: 0.05 },
+    {
+      name: "easing-ease-in-and-out",
+      easing: { type: "EASE_IN_AND_OUT" },
+      duration: 0.15,
+    },
+    { name: "easing-gentle", easing: { type: "GENTLE" }, duration: 0.25 },
+    { name: "easing-quick", easing: { type: "QUICK" }, duration: 0.35 },
+    { name: "easing-bouncy", easing: { type: "BOUNCY" }, duration: 0.45 },
+    { name: "easing-slow", easing: { type: "SLOW" }, duration: 0.55 },
+    {
+      name: "easing-custom-spring",
+      // mass 1, stiffness 200, damping 20 gives a damping RATIO of
+      // damping / (2*sqrt(stiffness*mass)) = 20 / (2*sqrt(200)) = 1/sqrt(2),
+      // so the number a lowering must produce for `dashcue`'s
+      // Spring { stiffness, damping_ratio } is exactly 0.70710678 — a value
+      // a test can assert without a tolerance argument.
+      //
+      // initialVelocity is 0. The first capture wrote 3 — deliberately, to
+      // see whether REST echoed the field, since @figma/rest-api-spec's
+      // EasingFunctionSpring carries mass/stiffness/damping and no
+      // initialVelocity while the Plugin API's carries all four — and the
+      // write was REFUSED. The typings carry a second spring shape,
+      // `PhysicalSpring { mass, stiffness, damping }`, with no
+      // initialVelocity at all, which is also the shape REST documents; a
+      // reaction spring starts from rest, so a non-zero initial velocity is
+      // the most likely thing Figma rejected.
+      easing: {
+        type: "CUSTOM_SPRING",
+        easingFunctionSpring: {
+          mass: 1,
+          stiffness: 200,
+          damping: 20,
+          initialVelocity: 0,
+        },
+      },
+      duration: 0.65,
+    },
+  ];
+
+  // The instances live in one container frame so a re-run removes them with
+  // a single removePrevious, and so the page has a top-level frame that can
+  // carry the flow starting point below.
+  const row = baseFrame(
+    "prototype-smart-animate-instances",
+    4 * 320 + 5 * 16,
+    2 * 180 + 3 * 16,
+  );
+  row.layoutMode = "NONE";
+  // Below the component set, not on top of it. `baseFrame` does not position,
+  // so without this both land at the page origin and the 320x180 set sits
+  // entirely inside the 1360x408 frame — which is what the first capture
+  // shows. Same placement `loweringVariantTopology` uses for its instance.
+  row.x = set.x;
+  row.y = set.y + set.height + 40;
+
+  /**
+   * @param {string} name
+   * @param {Reaction[] | null} reactions null = inherit from the component
+   * @param {number} index
+   */
+  const place = async (name, reactions, index) => {
+    const inst = rest.createInstance();
+    inst.name = name;
+    row.appendChild(inst);
+    inst.x = 16 + (index % 4) * (320 + 16);
+    inst.y = 16 + Math.floor(index / 4) * (180 + 16);
+    if (reactions) await wire(name, inst, reactions);
+  };
+
+  // Index 0 inherits its reactions untouched. Whether REST echoes an
+  // inherited interaction on the INSTANCE or reports `interactions: []`
+  // there decides whether a lowering reads reactions off the instance or off
+  // the component set behind it, and nothing in the docs answers it.
+  await place("instance-inherited", null, 0);
+  for (let i = 0; i < ARMS.length; i++) {
+    const arm = ARMS[i];
+    await place(arm.name, [
+      changeToReaction(active.id, arm.easing, arm.duration),
+    ], i + 1);
+  }
+
+  // Every committed capture reports prototypeStartNodeID: null. One
+  // assignment makes the field non-null in a capture for the first time.
+  figma.currentPage.flowStartingPoints = [{
+    nodeId: row.id,
+    name: "flow-start",
+  }];
+
+  removePrevious("_manual-checklist");
+  if (failed.length > 0) {
+    const note = label(
+      "_manual-steps: wire these interactions by hand in the prototype " +
+        "panel (ON_CLICK -> Change to -> Smart animate):\n" +
+        failed.map((m) => "  - " + m).join("\n"),
+      INTER,
+      12,
+    );
+    note.name = "_manual-checklist";
+    figma.currentPage.appendChild(note);
+    note.x = row.x;
+    note.y = row.y + row.height + 24;
+  }
+
+  return "prototype-smart-animate built: a 2-variant set differing in rect " +
+    "props only (bar Width, dot X, panel Y+Height), ON_CLICK/CHANGE_TO/" +
+    "SMART_ANIMATE on both components, " + ARMS.length +
+    " instances one per easing arm, plus one inheriting instance and a flow " +
+    "starting point" +
+    (failed.length > 0 ? "; FAILED to wire: " + failed.join("; ") : "");
+}
+
+// ------------------------------------------------- prototype-refused (v0.18)
+// The diagnostic half: every prototype construct that CANNOT reach `dashcue`,
+// one per node so a diagnostic bisects to a name. Under R6 this fixture must
+// never emit a .dsb, which is why it is not part of prototype-smart-animate.
+//
+// The last cell is the odd one and the most important. Its reaction maps
+// perfectly — ON_CLICK, CHANGE_TO, SMART_ANIMATE — but its two variants
+// differ in FILL, so the tracks the diff fans out to are FillR/FillG/FillB,
+// which `dashscene_validator` refuses by name (a variant transition animates
+// rect channels only). Smart Animate interpolates colour happily, so this is
+// the case every real Figma file will hit, and a lowering has to decide
+// whether it is an error or a warning that drops the colour tracks. The
+// fixture only has to carry the case so the decision is made against data.
+//
+// Each reaction is written independently: several of these arms may be
+// rejected by the Plugin API, and one refusal must not cost the other
+// twelve. Whatever fails lands on a `_manual-checklist` node, the
+// effects-2025 precedent.
+async function prototypeRefused() {
+  await figma.loadFontAsync(INTER);
+  // No removePrevious for the three frames below: `baseFrame` opens with one
+  // for the name it is given, so a call here scans the page a second time
+  // and reads as a teardown step this fixture does not have. Only the nodes
+  // NOT built through `baseFrame` need their own — the variant set and the
+  // checklist, both removed at their own call sites.
+
+  // Recreate the collection from scratch so re-runs stay deterministic —
+  // the variables-bound precedent. SET_VARIABLE and CONDITIONAL both need a
+  // real variable id; nothing else here does.
+  const existing = await figma.variables.getLocalVariableCollectionsAsync();
+  for (const c of existing) {
+    if (c.name === "fixture-prototype") c.remove();
+  }
+  const col = figma.variables.createVariableCollection("fixture-prototype");
+  const vOpen = figma.variables.createVariable("state/open", col, "BOOLEAN");
+  vOpen.setValueForMode(col.modes[0].modeId, false);
+
+  // NAVIGATE and OVERLAY need top-level frames to travel to.
+  const dest = baseFrame("refused-destination", 240, 160);
+  const overlay = baseFrame("refused-overlay-target", 200, 120);
+
+  // Four columns of cells, then the scroll anchor on its own row beneath.
+  const root = baseFrame(
+    "prototype-refused",
+    4 * 160 + 5 * 16,
+    4 * 64 + 5 * 16 + 32 + 16,
+  );
+  root.layoutMode = "NONE";
+  dest.x = root.x + root.width + 40;
+  overlay.x = dest.x;
+  overlay.y = dest.y + dest.height + 40;
+
+  // SCROLL_TO scrolls to a node on the CURRENT screen, so its destination
+  // has to live inside the same top-level frame as the node the reaction
+  // sits on — not on a sibling frame like NAVIGATE's. The first capture
+  // pointed it at `dest` and the write was refused; this anchor is what it
+  // should have named.
+  const scrollAnchor = cell("scroll-anchor", { r: 0.75, g: 0.8, b: 0.75 });
+  root.appendChild(scrollAnchor);
+  scrollAnchor.resize(160, 32);
+  scrollAnchor.x = 16;
+  scrollAnchor.y = 4 * 64 + 5 * 16;
+
+  /**
+   * @param {Transition | null} transition
+   * @param {string} destinationId
+   * @param {Navigation} [navigation]
+   * @returns {Action}
+   */
+  const nodeAction = (transition, destinationId, navigation) => ({
+    type: "NODE",
+    destinationId,
+    navigation: navigation || "NAVIGATE",
+    transition,
+  });
+
+  /** @type {{ name: string, why: string, reaction: Reaction }[]} */
+  const CELLS = [
+    {
+      name: "refused-dissolve",
+      why:
+        "transition DISSOLVE — a cross-fade between screens, not an interpolation between two states",
+      reaction: {
+        trigger: { type: "ON_CLICK" },
+        actions: [nodeAction({
+          type: "DISSOLVE",
+          easing: { type: "EASE_IN_AND_OUT" },
+          duration: 0.3,
+        }, dest.id)],
+      },
+    },
+    {
+      name: "refused-push-left",
+      why:
+        "the DirectionalTransition arm — carries `direction` and `matchLayers`, which SimpleTransition does not",
+      reaction: {
+        trigger: { type: "ON_CLICK" },
+        actions: [nodeAction({
+          type: "PUSH",
+          direction: "LEFT",
+          matchLayers: false,
+          easing: { type: "EASE_OUT" },
+          duration: 0.3,
+        }, dest.id)],
+      },
+    },
+    {
+      name: "refused-scroll-animate",
+      why:
+        "transition SCROLL_ANIMATE with navigation SCROLL_TO — scrolling is not a prop animation",
+      reaction: {
+        trigger: { type: "ON_CLICK" },
+        actions: [nodeAction(
+          {
+            type: "SCROLL_ANIMATE",
+            easing: { type: "LINEAR" },
+            duration: 0.3,
+          },
+          scrollAnchor.id,
+          "SCROLL_TO",
+        )],
+      },
+    },
+    {
+      name: "refused-custom-cubic-bezier",
+      why:
+        "easing CUSTOM_CUBIC_BEZIER — dashcue's Easing is four FIXED cubics, so an arbitrary control-point pair has no arm",
+      reaction: {
+        trigger: { type: "ON_CLICK" },
+        actions: [nodeAction({
+          type: "SMART_ANIMATE",
+          easing: {
+            type: "CUSTOM_CUBIC_BEZIER",
+            easingFunctionCubicBezier: {
+              x1: 0.17,
+              y1: 0.67,
+              x2: 0.83,
+              y2: 0.67,
+            },
+          },
+          duration: 0.3,
+        }, dest.id)],
+      },
+    },
+    {
+      name: "refused-ease-out-back",
+      why:
+        "easing EASE_OUT_BACK — a fixed curve, but an overshooting one none of dashcue's four cubics expresses",
+      reaction: {
+        trigger: { type: "ON_CLICK" },
+        actions: [nodeAction({
+          type: "SMART_ANIMATE",
+          easing: { type: "EASE_OUT_BACK" },
+          duration: 0.3,
+        }, dest.id)],
+      },
+    },
+    {
+      name: "refused-after-timeout",
+      why:
+        "trigger AFTER_TIMEOUT — the closest thing Figma has to a timeline, and still a one-shot navigation rather than a loop",
+      reaction: {
+        trigger: { type: "AFTER_TIMEOUT", timeout: 1.5 },
+        actions: [nodeAction({
+          type: "SMART_ANIMATE",
+          easing: { type: "EASE_OUT" },
+          duration: 0.3,
+        }, dest.id)],
+      },
+    },
+    {
+      name: "refused-mouse-enter",
+      why:
+        "trigger MOUSE_ENTER — carries `delay` and `deprecatedVersion`, neither of which ON_CLICK has",
+      reaction: {
+        // `deprecatedVersion` is OMITTED. The first capture wrote `false`
+        // and the write was refused. REST documents the field as "whether
+        // this is a deprecated version of the trigger that was left
+        // unchanged for backwards compatibility. If not present, the trigger
+        // is the latest version" — a flag Figma derives, not one a caller
+        // asserts, so passing either literal is the likely rejection.
+        //
+        // Writing `true` would have been worse than useless even if it had
+        // been accepted: it asserts the legacy trigger, so the fixture would
+        // pin a shape no Figma file authored in the UI today produces, which
+        // is the opposite of this fixture's job.
+        //
+        // The Plugin API's typings mark the field required on this union
+        // arm, so omitting it needs the cast. `refused-mouse-down` below is
+        // the fallback that pins a delay-carrying trigger either way.
+        trigger: /** @type {Trigger} */ ({
+          type: "MOUSE_ENTER",
+          delay: 0.25,
+        }),
+        actions: [nodeAction(null, dest.id)],
+      },
+    },
+    {
+      name: "refused-mouse-down",
+      why:
+        "trigger MOUSE_DOWN — the same `delay` shape with no `deprecatedVersion` field in its union arm, so it pins the delay whether or not MOUSE_ENTER writes",
+      reaction: {
+        trigger: { type: "MOUSE_DOWN", delay: 0.25 },
+        actions: [nodeAction(null, dest.id)],
+      },
+    },
+    {
+      name: "refused-on-key-down",
+      why:
+        "trigger ON_KEY_DOWN — carries `device` and a `keyCodes` array; dashscene has no input vocabulary in the document",
+      reaction: {
+        trigger: { type: "ON_KEY_DOWN", device: "KEYBOARD", keyCodes: [32] },
+        actions: [nodeAction(null, dest.id)],
+      },
+    },
+    {
+      name: "refused-url",
+      why: "action URL — leaves the document entirely",
+      reaction: {
+        trigger: { type: "ON_CLICK" },
+        actions: [{
+          type: "URL",
+          url: "https://example.com/dashscene-fixture",
+          openInNewTab: true,
+        }],
+      },
+    },
+    {
+      name: "refused-set-variable",
+      why:
+        "action SET_VARIABLE — a state write, not a transition; the nearest dashscene construct is a signal, not a cue",
+      reaction: {
+        trigger: { type: "ON_CLICK" },
+        actions: [{
+          type: "SET_VARIABLE",
+          variableId: vOpen.id,
+          variableValue: {
+            type: "BOOLEAN",
+            resolvedType: "BOOLEAN",
+            value: true,
+          },
+        }],
+      },
+    },
+    {
+      name: "refused-overlay",
+      why:
+        "navigation OVERLAY — opens a second screen over the current one; there is no overlay in the document model",
+      reaction: {
+        trigger: { type: "ON_CLICK" },
+        actions: [nodeAction(
+          {
+            type: "DISSOLVE",
+            easing: { type: "EASE_OUT" },
+            duration: 0.2,
+          },
+          overlay.id,
+          "OVERLAY",
+        )],
+      },
+    },
+    {
+      name: "refused-conditional",
+      why:
+        "action CONDITIONAL — `conditionalBlocks` nests Action[] recursively, so a lowering that walks actions must terminate on it by name rather than descend",
+      reaction: {
+        trigger: { type: "ON_CLICK" },
+        actions: [{
+          type: "CONDITIONAL",
+          conditionalBlocks: [{
+            condition: {
+              type: "VARIABLE_ALIAS",
+              resolvedType: "BOOLEAN",
+              value: { type: "VARIABLE_ALIAS", id: vOpen.id },
+            },
+            actions: [nodeAction(null, dest.id)],
+          }],
+        }],
+      },
+    },
+  ];
+
+  /** @type {string[]} */
+  const failed = [];
+  for (let i = 0; i < CELLS.length; i++) {
+    const spec = CELLS[i];
+    const c = cell(spec.name, { r: 0.9, g: 0.78, b: 0.72 });
+    root.appendChild(c);
+    c.resize(160, 64);
+    c.x = 16 + (i % 4) * (160 + 16);
+    c.y = 16 + Math.floor(i / 4) * (64 + 16);
+    await wireReactions(
+      spec.name + " (" + spec.why + ")",
+      c,
+      [spec.reaction],
+      failed,
+    );
+  }
+
+  // The valid-reaction-over-invalid-diff case: two variants differing in
+  // FILL only, under a SMART_ANIMATE that maps cleanly.
+  removePrevious("refused-fill-diff");
+  /** @param {string} tone @param {RGB} fill @returns {ComponentNode} */
+  const mkTone = (tone, fill) => {
+    const comp = figma.createComponent();
+    comp.name = "tone=" + tone;
+    comp.resize(160, 64);
+    comp.fills = [solid(fill)];
+    return comp;
+  };
+  const cool = mkTone("cool", { r: 0.25, g: 0.45, b: 0.85 });
+  const warm = mkTone("warm", { r: 0.9, g: 0.5, b: 0.2 });
+  const toneSet = figma.combineAsVariants([cool, warm], figma.currentPage);
+  toneSet.name = "refused-fill-diff";
+  toneSet.x = root.x;
+  toneSet.y = root.y + root.height + 40;
+  await wireReactions(
+    "refused-fill-diff (fill-only variant diff under SMART_ANIMATE)",
+    cool,
+    [changeToReaction(warm.id, { type: "EASE_OUT" }, 0.3)],
+    failed,
+  );
+
+  removePrevious("_manual-checklist");
+  if (failed.length > 0) {
+    const note = label(
+      "_manual-steps: wire these interactions by hand in the prototype " +
+        "panel — the Plugin API refused the write:\n" +
+        failed.map((m) => "  - " + m).join("\n"),
+      INTER,
+      12,
+    );
+    note.name = "_manual-checklist";
+    figma.currentPage.appendChild(note);
+    note.x = root.x;
+    note.y = toneSet.y + toneSet.height + 24;
+  }
+
+  return "prototype-refused built: " + CELLS.length +
+    " refused-construct cells plus a fill-only variant diff under a valid " +
+    "SMART_ANIMATE" +
+    (failed.length > 0 ? "; FAILED to wire: " + failed.join("; ") : "");
+}
+
 // ------------------------------------------------------------------ dispatch
 /** @type {Record<string, () => string | Promise<string>>} */
 const COMMANDS = {
@@ -1927,6 +2569,8 @@ const COMMANDS = {
   "vector-shapes": vectorShapes,
   "stacked-fills": stackedFills,
   "node-fx": nodeFx,
+  "prototype-smart-animate": prototypeSmartAnimate,
+  "prototype-refused": prototypeRefused,
 };
 
 (async () => {

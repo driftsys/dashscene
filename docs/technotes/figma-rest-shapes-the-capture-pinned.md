@@ -165,3 +165,132 @@ PostScript names are a REST metadata gap rather than evidence of a
 substitution. A fixture probe should assert on `fontWeight` and
 `fontStyle`, and use ink or advance measurements when it needs to
 know which physical face rendered.
+
+## The prototype-interaction shapes (story #773)
+
+Pinned by `prototype-smart-animate.json` and `prototype-refused.json`, the
+first two captures in this corpus to carry a prototype interaction at all.
+Every capture before them reported `prototypeStartNodeID: null` and an empty
+`interactions` array on every node.
+
+These shapes are unusual in this note because there is a **published
+machine-readable spec** for them — `@figma/rest-api-spec`'s `api_types.ts` —
+so the temptation to skip the fixture was real. The first item below is why
+the fixture was authored anyway.
+
+### One node carries the duration twice, in two different units
+
+Every node with a `NODE` action carries both representations at once:
+
+- `interactions[].actions[].transition.duration` is in **seconds**.
+  `0.3` written by the plugin comes back as `0.30000001192092896`, the
+  float32 rounding of that value.
+- the flat `transitionDuration` beside it is in **milliseconds**: `300`.
+
+`@figma/rest-api-spec` documents `TransitionSourceTrait.transitionDuration`
+as milliseconds, which is correct, and `SimpleTransition.duration` as "the
+duration of the transition in milliseconds", **which is wrong**. A lowering
+that read the nested field and trusted the comment would have divided by
+1000 and animated every transition in under a millisecond, and nothing in
+the type system would have objected — both fields are `number`.
+
+`DirectionalTransition.duration` carries the same wrong comment, and
+`refused-push-left` in `prototype-refused.json` pins it: a `PUSH` transition
+written at `0.3` returns `0.30000001192092896`, seconds again.
+
+`AfterTimeoutTrigger.timeout` is seconds as well — `1.5` written, `1.5`
+returned — but note that in the pinned `@figma/rest-api-spec@0.41.0` that
+field carries **no** doc comment at all, so it is the value that is pinned
+here and not a correction to the spec.
+
+### The flat triple is lossy, and partly fabricated
+
+`transitionNodeID` / `transitionDuration` / `transitionEasing` are emitted
+exactly when a node's **first action is a `NODE` action**, whatever its
+navigation, and are absent entirely for `URL`, `SET_VARIABLE` and
+`CONDITIONAL` (`prototype-refused.json`: eight nodes carry the triple,
+eleven carry interactions).
+
+They cannot express the trigger, the navigation, the transition type, or a
+second action — and where the interaction says there is no transition, the
+triple invents one. `refused-on-key-down` carries `"transition": null`
+inside its action and `transitionDuration: 300` outside it, a default no
+author wrote.
+
+So the lowering reads `interactions` and never the flat fields. Reading the
+flat triple is not a shortcut to the same data; it is a different, worse
+answer that happens to be shaped like the right one.
+
+### The spring presets carry no parameters; the cubic bezier does
+
+`GENTLE`, `QUICK`, `BOUNCY` and `SLOW` all arrive as a bare
+`{"type": "GENTLE"}`, with no `easingFunctionSpring`. `CUSTOM_CUBIC_BEZIER`,
+by contrast, arrives with its four control points populated, so the omission
+is specific to springs rather than general to easing parameters.
+
+That costs dashscene a table: mapping a preset onto `dashcue`'s
+`Spring { stiffness, damping_ratio }` needs the four presets' physical
+parameters, and REST does not supply them for a preset. The flat
+`transitionEasing` carries the same bare name, so it is no help either.
+
+**Scope of that claim.** It covers the four presets, which were captured. It
+does **not** cover `CUSTOM_SPRING`, where a caller supplies mass, stiffness
+and damping explicitly: the `setReactionsAsync` write of that arm was refused
+by the Plugin API, so no `CUSTOM_SPRING` reaction has ever reached a captured
+file, and whether REST populates `easingFunctionSpring` for one is still
+unknown. `easingFunctionSpring` appearing zero times across both captures is
+therefore evidence about presets only — for `CUSTOM_SPRING` the count is
+circular, because the arm that would have produced the field is the arm that
+never landed.
+
+### An instance echoes an inherited interaction in full
+
+`instance-inherited` in `prototype-smart-animate.json` has its reactions
+untouched, and REST reports the component's interaction on it verbatim,
+identical to the one on `state=rest`. So a lowering reads reactions off the
+node it is walking and never has to resolve back through the component set.
+
+### The page-level prototype fields
+
+`prototypeStartNodeID` is non-null in a capture for the first time. Beside
+it the page carries `flowStartingPoints: [{nodeId, name}]` — the same node,
+named — and `prototypeDevice: {"type": "NONE", "rotation": "NONE"}`.
+
+`prototype-smart-animate` sets its flow starting point explicitly and
+`prototype-refused` does not, yet both captures carry one: Figma created
+`"Flow 1"` by itself on the frame holding the interactions. A non-null
+`prototypeStartNodeID` therefore says nothing about authorial intent.
+
+Which is also why **nothing should assert on `prototype-refused`'s page-level
+prototype fields**. Its flow is Figma's choice, made over a node set the
+plugin deletes and rebuilds on every run, so both the node id and the flow
+name can move between re-authors. `prototype-smart-animate`'s are stable,
+because that command names them.
+
+### `Reaction.action` never appears
+
+The Plugin API's `Reaction` has a deprecated singular `action` beside
+`actions`. The string `"action"` appears zero times in either capture: REST
+emits `actions` only, so the lowering needs no fallback for the singular
+form.
+
+### Figma's transition is per-interaction; `dashcue`'s is per-prop
+
+Not a field shape, but the structural fact the captures make concrete, and
+the one a lowering has to bridge.
+
+One `SMART_ANIMATE` carries a single duration and a single easing. Nothing
+in the interaction names a property. Smart Animate then interpolates
+whatever differs between the two variants — so the tracks come from
+**diffing the variants**, and one Figma spec fans out across all of them.
+`prototype-smart-animate` spreads its diff over three children on purpose so
+that fan-out is exercised: `bar` differs in Width, `dot` in X, `panel` in Y
+and Height.
+
+Two consequences. Figma has no stagger, so `VariantTransition.stagger`
+lowers to 0 from this producer always. And a fill difference between two
+variants — which Smart Animate animates as readily as a rect one — fans out
+onto `FillR`/`FillG`/`FillB`, which `dashscene_validator`'s
+`TRANSITION_CHANNEL_NOT_A_RECT` rule refuses. That case is
+`refused-fill-diff` in `prototype-refused.json`, and it is the one every
+real Figma file will hit.
