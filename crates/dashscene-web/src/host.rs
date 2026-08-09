@@ -4,17 +4,19 @@
 //! thing this crate can be wrong about *without* a browser — the
 //! `Content-Range` grammar — stays compiled and tested on the host platform.
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::cell::{Cell, RefCell};
+use std::rc::{Rc, Weak};
 
 use dashlang::LiveScene;
 use dashpaint::Painter;
 use dashscene_core::Arena;
 use dashscene_gpu::{Changes, GpuPainter, SurfaceRenderer};
 use wasm_bindgen::prelude::*;
+use wasm_bindgen_futures::spawn_local;
 use web_sys::HtmlCanvasElement;
 
 use crate::WebError;
+use crate::recovery::{Recovery, recovery};
 
 /// Builds the scene for a drawable of this size.
 ///
@@ -38,6 +40,38 @@ pub type FrameHook = Box<dyn FnMut(&mut LiveScene, f64, FrameKind)>;
 /// The self-rescheduling `requestAnimationFrame` closure, held inside its own
 /// `Rc` so that it outlives the call that scheduled it.
 type FrameClosure = Rc<RefCell<Option<Closure<dyn FnMut(f64)>>>>;
+
+/// How many consecutive surface rebuilds the loop will attempt before giving up.
+///
+/// A recovery that works is followed by a frame, and a frame resets the count —
+/// so this bounds a surface that is being lost *repeatedly*, which is what a
+/// removed GPU or an unrecoverable driver reset looks like. Without a bound the
+/// loop asks for a new adapter, device and pipeline set every time the old one
+/// fails, forever, at whatever rate the browser will schedule it.
+///
+/// Three rather than one, because a single loss during a driver reset is exactly
+/// the case worth recovering from and the second attempt often succeeds.
+const MAX_CONSECUTIVE_RECOVERIES: u32 = 3;
+
+/// What the frame closure and its [`LoopHandle`] both reach.
+struct LoopState {
+    /// False once the loop has been asked to stop. Read at the top of every
+    /// frame and again before rescheduling.
+    running: Cell<bool>,
+    /// The `requestAnimationFrame` id that has been scheduled and has not yet
+    /// fired, so that stopping can cancel it.
+    ///
+    /// This is what makes dropping the frame `Closure` safe. A callback the
+    /// browser has already registered points at that closure through a
+    /// `wasm-bindgen` shim, and invoking a shim whose closure has been dropped
+    /// throws "closure invoked recursively or after being dropped" — an uncaught
+    /// error on the ordinary unmount path. Cancelling first means the browser
+    /// has nothing left to invoke.
+    pending: Cell<Option<i32>>,
+    /// Consecutive recoveries with no successful frame between them. See
+    /// [`MAX_CONSECUTIVE_RECOVERIES`].
+    recoveries: Cell<u32>,
+}
 
 /// Why [`FrameHook`] is being called.
 ///
@@ -131,7 +165,10 @@ impl Surface {
 pub struct Host {
     arena: Arena,
     live: LiveScene,
-    renderer: SurfaceRenderer,
+    /// [`None`] only while a lost surface is being rebuilt, between
+    /// [`Host::release_surface`] and [`Host::adopt`]. The loop does not schedule
+    /// a frame through that window, so no frame runs without one.
+    renderer: Option<SurfaceRenderer>,
     painter: GpuPainter,
     /// The previous frame's timestamp, for the animation delta.
     previous: Option<f64>,
@@ -150,6 +187,16 @@ pub struct Host {
     window: web_sys::Window,
     /// The drawable the surface is currently configured for, in device pixels.
     extent: (u32, u32),
+    /// Why the next frame must paint whatever the generation says. Consumed by
+    /// the frame that acts on it.
+    ///
+    /// The native host has carried one since story #572; this loop had no need
+    /// of one until a surface could be rebuilt underneath it. A rebuilt surface
+    /// is the case the generation cannot report: the scene has not changed, so
+    /// `advanced()` is false, and the new device has drawn nothing — without
+    /// this the canvas would stay blank until something else happened to move
+    /// the scene.
+    forced: Option<&'static str>,
 }
 
 impl Host {
@@ -170,7 +217,7 @@ impl Host {
         Self {
             arena,
             live,
-            renderer: surface.renderer,
+            renderer: Some(surface.renderer),
             painter: GpuPainter::new(),
             previous: None,
             on_frame,
@@ -180,17 +227,26 @@ impl Host {
             canvas: surface.canvas,
             window: surface.window,
             extent: surface.extent,
+            forced: None,
         }
     }
 
-    /// Schedules the loop and returns; the browser drives it from here.
+    /// Schedules the loop and returns a handle that stops it; the browser drives
+    /// it from here.
     ///
     /// Errors are not returned, because after this point there is no caller to
     /// return to — the browser owns the stack. They go to the console as
     /// errors; an embedder that wants them elsewhere passes a reporter to
     /// [`Host::spin_reporting`].
-    pub fn spin(self) {
-        self.spin_reporting(report_to_console);
+    ///
+    /// **Dropping the returned [`LoopHandle`] stops the loop.** An embedder that
+    /// wants the loop to run until the page goes away says so with
+    /// [`LoopHandle::detach`]; see that type for why the default is this way
+    /// round.
+    #[must_use = "dropping the LoopHandle stops the loop; call detach() to run until the page goes \
+                  away"]
+    pub fn spin(self) -> LoopHandle {
+        self.spin_reporting(report_to_console)
     }
 
     /// [`spin`](Self::spin), with the embedder's own error reporting.
@@ -200,12 +256,24 @@ impl Host {
     /// callback, a telemetry client — needs something held from before the loop
     /// started. A function pointer would force the statics this crate avoids
     /// everywhere else.
-    pub fn spin_reporting(self, report: impl Fn(&WebError) + 'static) {
+    ///
+    /// It is called for a **recoverable** failure too, immediately before the
+    /// surface is rebuilt. A context loss that the loop rode out is still
+    /// something an embedder counting failures wants to see, and the alternative
+    /// — reporting only what killed the loop — would make the recovery
+    /// invisible exactly when it is worth knowing about.
+    #[must_use = "dropping the LoopHandle stops the loop; call detach() to run until the page goes \
+                  away"]
+    pub fn spin_reporting(self, report: impl Fn(&WebError) + 'static) -> LoopHandle {
         let window = self.window.clone();
-        self.run_loop(&window, report);
+        self.run_loop(&window, report)
     }
 
-    fn run_loop(self, window: &web_sys::Window, report: impl Fn(&WebError) + 'static) {
+    fn run_loop(
+        self,
+        window: &web_sys::Window,
+        report: impl Fn(&WebError) + 'static,
+    ) -> LoopHandle {
         // The idiom `requestAnimationFrame` needs and Rust does not have: a
         // closure that reschedules itself. The handle is held inside its own
         // closure through an `Rc`, which is what keeps it alive after this
@@ -214,24 +282,118 @@ impl Host {
         let holder: FrameClosure = Rc::new(RefCell::new(None));
         let next = holder.clone();
         let owner = window.clone();
+        let state = Rc::new(LoopState {
+            running: Cell::new(true),
+            pending: Cell::new(None),
+            recoveries: Cell::new(0),
+        });
+        let live = state.clone();
+        // `Rc` because both the frame closure and the future that rebuilds the
+        // surface report through it, and `impl Fn` is not `Clone`.
+        let report = Rc::new(report);
+        // The future that rebuilds the surface outlives the frame it was
+        // scheduled from, and must not be what keeps the host alive: a handle
+        // dropped while that rebuild is in flight has to free the arena, the
+        // painter and the renderer regardless. It upgrades this **after** its
+        // await, never before, which is what makes that true.
+        let weak = Rc::downgrade(&host);
 
         *holder.borrow_mut() = Some(Closure::new(move |timestamp: f64| {
+            // This id has fired and can no longer be cancelled.
+            live.pending.set(None);
+            // The handle was dropped, or `stop` was called, between this frame
+            // being scheduled and it running.
+            if !live.running.get() {
+                return;
+            }
             match host.borrow_mut().frame(timestamp) {
-                // Rescheduled only while frames are being produced. A failure
-                // stops the loop rather than repeating itself sixty times a
-                // second into the console.
                 Ok(()) => {
-                    if let Some(closure) = next.borrow().as_ref() {
-                        request_frame(&owner, closure);
+                    // A frame reached the canvas, so whatever was recovered
+                    // from is behind us: the next loss starts a fresh count
+                    // rather than inheriting an old one.
+                    live.recoveries.set(0);
+                    // Checked again because the embedder's `FrameHook` runs
+                    // inside `frame`, and `LoopHandle::stop` is documented as
+                    // safe to call from it. Rescheduling here would restart a
+                    // loop that was just stopped.
+                    if live.running.get()
+                        && let Some(closure) = next.borrow().as_ref()
+                    {
+                        request_frame(&owner, closure, &live);
                     }
                 }
-                Err(error) => report(&error),
+                Err(error) => {
+                    report(&error);
+                    match recovery(&error) {
+                        // The remedy `dashscene_gpu::FrameError::Lost` names.
+                        // Asynchronous, because acquiring an adapter is — which
+                        // is why it cannot happen inline here and why the loop
+                        // stops scheduling until it lands.
+                        Recovery::Rebuild => rebuild_surface(
+                            weak.clone(),
+                            next.clone(),
+                            owner.clone(),
+                            live.clone(),
+                            report.clone(),
+                        ),
+                        // Repeating the failure sixty times a second into the
+                        // console is not a recovery. The loop is finished, so
+                        // it releases the host rather than sitting on a device
+                        // and an arena for the life of the page — the leak
+                        // `LoopHandle` prevents on the embedder's path, and
+                        // which the loop's own path has to prevent too.
+                        Recovery::Stop => {
+                            live.running.set(false);
+                            release(next.clone());
+                        }
+                    }
+                }
             }
         }));
 
         if let Some(closure) = holder.borrow().as_ref() {
-            request_frame(window, closure);
+            request_frame(window, closure, &state);
         }
+        LoopHandle {
+            state,
+            holder,
+            window: window.clone(),
+            detached: false,
+        }
+    }
+
+    /// Gives up the current surface, before a replacement is built for the same
+    /// canvas.
+    ///
+    /// Ordered this way because the native crate's rebind states the rule and
+    /// follows it: "Both own a surface on this one window, and holding two at
+    /// once is the state neither windowing backend is asked to support."
+    /// `canvas.getContext("webgpu")` hands back the *same* `GPUCanvasContext`
+    /// object every time, so two `wgpu::Surface`s built from one canvas would be
+    /// two configurations of one context — and would hold two devices and two
+    /// full sets of atlas and instance buffers at the moment the GPU has just
+    /// failed, which is the worst moment to ask for them.
+    ///
+    /// The loop stops scheduling while this is the state, so no frame runs
+    /// without a renderer.
+    fn release_surface(&mut self) {
+        self.renderer = None;
+    }
+
+    /// Adopts a surface built against the same canvas, after a context loss.
+    ///
+    /// `document_replaced` is deliberately **not** called. It exists to clear
+    /// what a renderer holds about the previous document, and this renderer is
+    /// new: `uploaded_generation` starts `None`, so the first frame through it
+    /// takes the whole-write path rather than patching ranges into a buffer the
+    /// device never received. Calling it would be a second mechanism for a state
+    /// the constructor already establishes.
+    fn adopt(&mut self, renderer: SurfaceRenderer) {
+        self.renderer = Some(renderer);
+        // The scene did not change, so the generation cannot ask for this frame.
+        // Without it the new device would hold an empty swapchain until
+        // something else moved the scene — which, on a settled page, is never.
+        self.forced = Some("the surface was rebuilt after a context loss");
     }
 
     /// Reconfigures for the canvas's current size, when it has changed.
@@ -249,9 +411,12 @@ impl Host {
         self.extent = (width, height);
         self.canvas.set_width(width);
         self.canvas.set_height(height);
-        self.renderer
-            .resize(width, height)
-            .map_err(WebError::Renderer)?;
+        // The extent is recorded whether or not there is a surface to configure
+        // for it, so a rebuild that lands after a resize builds for the size the
+        // canvas is now rather than the size it was when the device was lost.
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.resize(width, height).map_err(WebError::Renderer)?;
+        }
 
         let Some(build) = self.builder else {
             // A loaded document keeps its own canvas size; only the surface
@@ -261,7 +426,9 @@ impl Host {
         // The renderer is about to be handed frames from an arena that has
         // never existed before, and the incoming arena's generations start
         // again — nothing in the frames themselves says so.
-        self.renderer.document_replaced();
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.document_replaced();
+        }
         self.arena = Arena::new();
         self.live = build(&mut self.arena, width, height);
         // The new scene holds nothing the hook wrote into the old one, and the
@@ -331,7 +498,10 @@ impl Host {
         (self.on_frame)(&mut self.live, self.elapsed, FrameKind::Continuing);
 
         self.live.tick(dt as f32, &mut self.arena);
-        if !self.live.advanced() {
+        // Taken whether or not it is acted on, so a forced frame forces exactly
+        // one — the same rule the native loop's `forced` follows.
+        let forced = self.forced.take();
+        if !self.live.advanced() && forced.is_none() {
             return Ok(());
         }
 
@@ -354,7 +524,13 @@ impl Host {
             scene.glyphs(),
             Some(changes.rects),
         );
-        self.renderer
+        // A frame between `release_surface` and `adopt`. The loop schedules
+        // none through that window, so reaching here means something else asked
+        // for a frame; there is nothing to draw into and nothing to report.
+        let Some(renderer) = self.renderer.as_mut() else {
+            return Ok(());
+        };
+        renderer
             .present(
                 self.painter.instances(),
                 scene.paints(),
@@ -363,14 +539,200 @@ impl Host {
                 scene.glyphs(),
                 Some(changes),
             )
-            .map_err(|error| WebError::Frame(error.to_string()))?;
+            .map_err(WebError::Frame)?;
         self.live.mark_shown();
         Ok(())
     }
 }
 
-fn request_frame(window: &web_sys::Window, closure: &Closure<dyn FnMut(f64)>) {
-    let _ = window.request_animation_frame(closure.as_ref().unchecked_ref());
+/// Rebuilds the surface against the same canvas, and resumes the loop.
+///
+/// The recovery `dashscene_gpu::FrameError::Lost` names: "rebuild the
+/// presenter, which is the recovery it already has". On the web that is
+/// `SurfaceRenderer::for_canvas`, which is asynchronous — acquiring an adapter
+/// and a device cannot be waited for on the browser's main thread
+/// (`crates/dashscene-gpu/src/render.rs` records why blocking on it deadlocks).
+/// So the loop stops scheduling, this future runs, and the loop resumes when it
+/// lands.
+///
+/// The scene, the arena and the embedder's own state are untouched. Only the
+/// device is new.
+fn rebuild_surface(
+    host: Weak<RefCell<Host>>,
+    holder: FrameClosure,
+    window: web_sys::Window,
+    state: Rc<LoopState>,
+    report: Rc<impl Fn(&WebError) + 'static>,
+) {
+    // A surface lost over and over is not being recovered from. Bounded here
+    // rather than inside the future, so the count is spent before an adapter is
+    // asked for rather than after.
+    let attempt = state.recoveries.get() + 1;
+    state.recoveries.set(attempt);
+    if attempt > MAX_CONSECUTIVE_RECOVERIES {
+        report(&WebError::Unrecoverable {
+            attempts: MAX_CONSECUTIVE_RECOVERIES,
+        });
+        state.running.set(false);
+        release(holder);
+        return;
+    }
+
+    // Read out what the rebuild needs, and give up the old surface, **before**
+    // anything is awaited: two surfaces on one canvas context is the state the
+    // native crate's rebind documents as unsupported, and a `RefCell` borrow
+    // must not be held across an await in any case — the frame closure borrows
+    // the same cell.
+    let (canvas, width, height) = {
+        let Some(host) = host.upgrade() else {
+            return;
+        };
+        let mut borrowed = host.borrow_mut();
+        let (width, height) = borrowed.extent;
+        let canvas = borrowed.canvas.clone();
+        borrowed.release_surface();
+        (canvas, width, height)
+    };
+
+    spawn_local(async move {
+        match SurfaceRenderer::for_canvas(canvas, width, height).await {
+            Ok(renderer) => {
+                // Upgraded **after** the await, never before. Holding a strong
+                // reference across it would make this future the thing keeping
+                // the host alive, so a handle dropped while the adapter request
+                // was in flight would not free the arena, the painter or the
+                // renderer — and if the request never settled, would not free
+                // them at all.
+                let Some(host) = host.upgrade() else {
+                    return;
+                };
+                // The loop was stopped while the adapter request was in flight.
+                // Installing a device on a canvas that is being torn down is
+                // worse than doing nothing.
+                if !state.running.get() {
+                    return;
+                }
+                host.borrow_mut().adopt(renderer);
+                if let Some(closure) = holder.borrow().as_ref() {
+                    request_frame(&window, closure, &state);
+                }
+            }
+            // The canvas could not give another device. Reported and not
+            // retried: a loop that rebuilds on every failed rebuild is a loop
+            // asking the same question forever. The loop is finished, so it
+            // releases the host rather than sitting on an arena for the life of
+            // the page.
+            Err(error) => {
+                report(&WebError::Renderer(error));
+                state.running.set(false);
+                release(holder);
+            }
+        }
+    });
+}
+
+/// Drops the frame closure, and the host it holds, on a microtask.
+///
+/// Deferred because this is reached from inside the frame closure, and a closure
+/// cannot drop itself while the browser is executing it. By the time a microtask
+/// runs, the callback has returned.
+///
+/// Safe without cancelling a `requestAnimationFrame` only because every caller
+/// reaches this from a path that did not reschedule one.
+/// [`LoopHandle::stop`] cancels, because it can be called at any time.
+fn release(holder: FrameClosure) {
+    spawn_local(async move {
+        *holder.borrow_mut() = None;
+    });
+}
+
+/// Stops the frame loop.
+///
+/// Returned by [`Host::spin`]. **Dropping it stops the loop**, which is the way
+/// round an embedder needs: mounting and unmounting a canvas is ordinary — a
+/// single-page application routing away, a component unmounting, a modal
+/// closing — and the failure that shape prevents is the loop going on ticking
+/// against a canvas that is no longer on the page, holding the arena, the
+/// painter and the renderer alive with it (issue #814).
+///
+/// The other way round — a loop that runs until something explicitly stops it —
+/// makes the leak the default and the correct behaviour the thing an embedder
+/// has to know to ask for. This way the embedder that wants a loop outliving
+/// its handle says so, in one call, and [`Host::spin`] is `#[must_use]` so
+/// ignoring the return value is a warning rather than a silent stop.
+pub struct LoopHandle {
+    state: Rc<LoopState>,
+    /// The self-rescheduling closure. Cleared when the loop stops, which is what
+    /// breaks the `Rc` cycle holding the host.
+    holder: FrameClosure,
+    /// The window the pending frame was requested from, so that stopping can
+    /// cancel it.
+    window: web_sys::Window,
+    detached: bool,
+}
+
+impl LoopHandle {
+    /// Stops the loop. Idempotent, and safe to call from inside a
+    /// [`FrameHook`].
+    ///
+    /// No further frame is requested. The host — and the arena, the painter and
+    /// the renderer it owns — is freed on a microtask rather than here, because
+    /// this may be called from inside the frame closure itself and a closure
+    /// cannot drop itself while the browser is executing it.
+    ///
+    /// **The already-scheduled frame is cancelled first**, and that ordering is
+    /// the whole of why this is safe. Every successful frame schedules the next
+    /// one before it returns, so at almost any moment there is a
+    /// `requestAnimationFrame` registered against the closure below. Dropping
+    /// the closure while the browser still holds that registration means the
+    /// browser invokes a `wasm-bindgen` shim whose closure is gone, which throws
+    /// "closure invoked recursively or after being dropped" — on the ordinary
+    /// unmount path this type exists for. Cancelling leaves nothing to invoke.
+    pub fn stop(&self) {
+        self.state.running.set(false);
+        if let Some(pending) = self.state.pending.take() {
+            // Failure here means the id was already spent, which is the state
+            // this is trying to reach.
+            let _ = self.window.cancel_animation_frame(pending);
+        }
+        let holder = self.holder.clone();
+        spawn_local(async move {
+            // Dropping the `Closure` drops the host with it. By the time a
+            // microtask runs, the frame callback this may have been called from
+            // has returned.
+            *holder.borrow_mut() = None;
+        });
+    }
+
+    /// Runs until the page goes away, and gives up the ability to stop.
+    ///
+    /// What a full-page demonstration wants, and what `demo-web` calls. Named
+    /// rather than implied, so the loop that outlives its handle is a decision
+    /// in the source rather than a dropped value.
+    pub fn detach(mut self) {
+        self.detached = true;
+    }
+}
+
+impl Drop for LoopHandle {
+    fn drop(&mut self) {
+        if !self.detached {
+            self.stop();
+        }
+    }
+}
+
+/// Schedules the next frame, recording the id so that stopping can cancel it.
+///
+/// The id is what makes the frame closure safe to drop; see [`LoopState::pending`].
+fn request_frame(window: &web_sys::Window, closure: &Closure<dyn FnMut(f64)>, state: &LoopState) {
+    match window.request_animation_frame(closure.as_ref().unchecked_ref()) {
+        Ok(pending) => state.pending.set(Some(pending)),
+        // The browser refused to schedule. Nothing is pending, which is what
+        // the `None` records; the loop has no frame coming and no way to ask
+        // for one, so it is over.
+        Err(_) => state.pending.set(None),
+    }
 }
 
 /// The canvas the embedder named.
@@ -408,9 +770,14 @@ pub fn log(message: &str) {
 /// Writes one line to the browser console, as an **error**.
 ///
 /// The default reporter, and the severity matters: a failure inside the frame
-/// loop stops the loop permanently, and a page that reports that as an
-/// ordinary log line disappears from a console filtered to errors and from
+/// loop either ends it or costs a device rebuild, and a page that reports either
+/// as an ordinary log line disappears from a console filtered to errors and from
 /// anything scraping `console.error`.
+///
+/// It is deliberately the same severity for both. A recovered context loss is
+/// still the page having lost its device, and a reporter that graded it down
+/// would be deciding for the embedder that the recovery made it uninteresting —
+/// which is the judgement `Host::spin_reporting` exists to hand over.
 fn report_to_console(error: &WebError) {
     web_sys::console::error_1(&JsValue::from_str(&format!("dashscene: {error}")));
 }

@@ -75,7 +75,13 @@ mod embedder {
         let surface = Surface::attach(CANVAS).await?;
         let mut arena = Arena::new();
         let live = load_document(DOCUMENT, &mut arena).await?;
-        Host::new(surface, arena, live, Box::new(no_frame_hook), None).spin();
+        // Detached: this page has one canvas for its whole life, so there is
+        // nothing to stop the loop for. `detach` is the call that says so —
+        // dropping the handle would stop the loop instead (story #834), and a
+        // minimal embedder is exactly where that mistake would be silent.
+        Host::new(surface, arena, live, Box::new(no_frame_hook), None)
+            .spin()
+            .detach();
         Ok(())
     }
 
