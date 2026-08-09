@@ -816,3 +816,387 @@ fn a_rotation_binding_keeps_the_anchor_it_did_not_drive() {
         "driving the angle did not reset the anchor its own binding seeded",
     );
 }
+
+/// A variant switch must leave every node it did not move in the retained
+/// cache (story #771, found by review on PR #865).
+///
+/// `LayoutSolver::solve` is allowed to report only the nodes whose rect
+/// changed, and `TaffySolver` does exactly that. Adopting its result as the
+/// cache therefore dropped every unmoved node — and a switch tick sets no
+/// `layout_dirty`, so nothing rebuilt it. The next contained write to a
+/// dropped node panicked on `cached_index`.
+///
+/// The shape matters and is why nothing caught it: the scene needs a variant
+/// set **and** an unrelated bound node that the switch does not move. Every
+/// test written with the feature had only one or the other.
+#[test]
+fn a_variant_switch_leaves_an_untouched_bound_node_writable() {
+    use dashscene_core::{ScalarTransform, VariantMember, VariantValue};
+
+    let mut arena = Arena::new();
+    let (set, bar) = {
+        let mut txn = arena.open();
+
+        // A flex row whose variant switch widens its first chip. Everything
+        // here moves when the switch lands.
+        let shelf = txn.add_node(None, Some("shelf"));
+        txn.set_prop(shelf, dashscene_core::Prop::Width(200.0));
+        txn.set_prop(shelf, dashscene_core::Prop::Height(40.0));
+        txn.set_prop(shelf, dashscene_core::Prop::Mode(LayoutMode::Horizontal));
+        let chip = txn.add_node(Some(shelf), Some("chip"));
+        txn.set_prop(chip, dashscene_core::Prop::Width(40.0));
+        txn.set_prop(chip, dashscene_core::Prop::Height(40.0));
+
+        // A separate, fixed passthrough frame the switch never touches, with
+        // one contained width binding inside it — the node the solve will
+        // not report, and the one that used to vanish from the cache.
+        let frame = txn.add_node(None, Some("gauge"));
+        txn.set_prop(frame, dashscene_core::Prop::Width(200.0));
+        txn.set_prop(frame, dashscene_core::Prop::Height(20.0));
+        txn.set_prop(frame, dashscene_core::Prop::Mode(LayoutMode::None));
+        let bar = txn.add_node(Some(frame), Some("bar"));
+        txn.set_prop(bar, dashscene_core::Prop::Width(0.0));
+        txn.set_prop(bar, dashscene_core::Prop::Height(12.0));
+        let signal = txn.declare_signal(Some("bar.width"), 0.0);
+        txn.bind(bar, Channel::Width, signal, ScalarTransform::Identity);
+
+        let set = txn.add_variant_set(vec![
+            VariantMember::default(),
+            VariantMember {
+                name: Some("wide".to_owned()),
+                overrides: vec![(chip, VariantValue::Width(120.0))],
+            },
+        ]);
+        txn.commit();
+        (set, bar)
+    };
+
+    let mut live = dashlang::attach_live(&mut arena, Box::new(TaffySolver::new()));
+
+    // The switch, staged the way an embedder stages it.
+    {
+        let mut txn = arena.open();
+        txn.set_variant(set, 1);
+    }
+    live.tick(0.1, &mut arena);
+
+    // The write that used to panic: an ordinary contained write to a node the
+    // switch never moved.
+    let width = live
+        .signal_named("bar.width")
+        .expect("the binding's signal is named");
+    live.set(width, 48.0);
+    live.tick(0.1, &mut arena);
+
+    let scene = arena.committed();
+    let index = (0..scene.rects().len())
+        .find(|i| scene.node_of(*i as u32) == bar)
+        .expect("the bar is still in the committed table");
+    assert_eq!(
+        scene.rects()[index].w,
+        48.0,
+        "a node the switch did not move still takes a contained write",
+    );
+}
+
+/// The node the builder gave `name`, through the committed table — the only
+/// way back to a `NodeId` for a tree the `node!` builder authored.
+fn node_named(arena: &Arena, name: &str) -> NodeId {
+    let committed = arena.committed();
+    (0..committed.rects().len() as u32)
+        .map(|i| committed.node_of(i))
+        .find(|&n| arena.name(n) == Some(name))
+        .unwrap_or_else(|| panic!("no node is named {name}"))
+}
+
+/// One node's committed rect as `(x, y, w)`.
+fn committed_rect(arena: &Arena, node: NodeId) -> (f32, f32, f32) {
+    let committed = arena.committed();
+    let i = (0..committed.rects().len() as u32)
+        .find(|&i| committed.node_of(i) == node)
+        .expect("the node is in the committed table");
+    let r = &committed.rects()[i as usize];
+    (r.x, r.y, r.w)
+}
+
+/// A variant switch and a layout-forcing write in the same tick must still
+/// ease (story #771, finding 3 on PR #865).
+///
+/// `layout_dirty` takes priority over the switch branch in `LiveScene::tick`,
+/// and that branch commits through the real solver — whose answer is the
+/// *destination* layout. This frame's FLIP samples were discarded, so the
+/// node snapped to its endpoint; the track stayed live, so the next frame
+/// patched the cache back to an early sample and the node rewound and
+/// re-animated from there.
+///
+/// The shape is why nothing caught it: the scene needs a variant transition
+/// **and** a write that forces a solve in the same tick. Every other test
+/// written with the feature has one or the other.
+#[test]
+fn a_switch_and_a_layout_dirty_write_in_one_tick_still_eases() {
+    use dashscene_core::{
+        Easing, PropTransition, TransitionSpec, VariantMember, VariantTransition, VariantValue,
+    };
+
+    let mut arena = Arena::new();
+
+    // Two independent roots. The shelf is what the switch animates; the
+    // column holds the `Visible` binding that forces the solve, in a subtree
+    // the switch never touches — so the travelling node's endpoints stay
+    // fixed and the only thing under test is whether this frame's sample
+    // survives the commit.
+    let mut scene = Scene::new();
+    let show_b = scene.signal(true);
+    scene.roots([
+        node("shelf")
+            .mode(LayoutMode::Horizontal)
+            .size(200.0, 40.0)
+            .children([
+                node("left").size(40.0, 40.0),
+                node("right").size(40.0, 40.0),
+            ]),
+        node("col")
+            .mode(LayoutMode::Vertical)
+            .gap(10.0)
+            .size(100.0, 300.0)
+            .children([
+                node("a").size(100.0, 50.0),
+                node("b").size(100.0, 50.0).visible_when(show_b),
+                node("c").size(100.0, 50.0),
+            ]),
+    ]);
+
+    let mut live = scene.build_live(&mut arena, Box::new(TaffySolver::new()));
+
+    let left = node_named(&arena, "left");
+    let right = node_named(&arena, "right");
+    let right_x = |arena: &Arena| -> f32 { committed_rect(arena, right).0 };
+
+    let (from, to) = (40.0_f32, 120.0_f32);
+    assert_eq!(right_x(&arena), from, "the travelling node starts at 40");
+
+    // Widening `left` pushes `right` from 40 to 120 over one second. The
+    // set is staged after the build because the builder has no variant
+    // vocabulary — this is the seam a producer stages one through.
+    let set = {
+        let mut txn = arena.open();
+        let set = txn.add_variant_set(vec![
+            VariantMember::default(),
+            VariantMember {
+                name: Some("wide".to_owned()),
+                overrides: vec![(left, VariantValue::Width(120.0))],
+            },
+        ]);
+        txn.set_variant_transition(
+            set,
+            1,
+            VariantTransition {
+                tracks: vec![PropTransition {
+                    node: right,
+                    channel: Channel::X,
+                    spec: TransitionSpec::Tween {
+                        duration: 1.0,
+                        easing: Easing::Linear,
+                    },
+                }],
+                stagger: 0.0,
+            },
+        );
+        set
+    };
+    // One tick to register the set at member 0, so the switch below reads as
+    // a switch rather than as a set adopted mid-flight.
+    live.tick(0.1, &mut arena);
+    assert_eq!(right_x(&arena), from, "registering the set moves nothing");
+
+    // The switch and the layout-forcing write, in one tick.
+    {
+        let mut txn = arena.open();
+        txn.set_variant(set, 1);
+    }
+    live.set(show_b, false);
+    // One frame's worth: `MAX_FRAME_DELTA` clamps a tick to 0.1 s, so a
+    // one-second tween takes ten of them however large the interval given.
+    live.tick(0.1, &mut arena);
+
+    let first = right_x(&arena);
+    assert!(
+        first > from && first < to,
+        "the switch frame publishes a sample strictly between the endpoints, not the \
+         destination: {first} is not in ({from}, {to})",
+    );
+
+    // The node the switch widened, which no track names, lands in the same
+    // commit. Step 0's solve is the only one that reports it — the retained
+    // solver reports a node once — so without the switch's rects written
+    // back, `commit_with` carries its pre-switch width forward and the cache
+    // is rebuilt from that, leaving it wrong for good.
+    assert_eq!(
+        committed_rect(&arena, left).2,
+        120.0,
+        "the switch's own reflow lands on the frame it happened",
+    );
+
+    // The write that forced the solve still landed: `c` reflowed up over the
+    // hidden `b`. Without this the test could pass on a commit that ignored
+    // the solve altogether.
+    let c = node_named(&arena, "c");
+    assert_eq!(
+        committed_rect(&arena, c).1,
+        60.0,
+        "the same tick's Visible flip still reflowed the column",
+    );
+
+    // And it never moves backward: the track continues from where the frame
+    // published it rather than rewinding to an early sample.
+    let mut previous = first;
+    for _ in 0..12 {
+        live.tick(0.1, &mut arena);
+        let x = right_x(&arena);
+        assert!(
+            x >= previous,
+            "the travelling node never moves backward: {x} follows {previous}",
+        );
+        previous = x;
+    }
+    assert_eq!(previous, to, "the transition arrives at its destination");
+}
+
+/// A declared loop drives its channel with no signal and no switch behind it,
+/// and keeps doing it (story #772) — the ambient class, which is the one class
+/// nothing else in the vocabulary can express.
+///
+/// Asserted on the committed rect rather than on the arena's staged intent: a
+/// sample that never reached the rect leaves the painter drawing the node
+/// upright, however live the scheduler track looks.
+#[test]
+fn a_declared_loop_drives_its_channel_and_repeats() {
+    use dashscene_core::{Easing, LoopTrack, Prop, TransitionSpec};
+
+    let mut arena = Arena::new();
+    {
+        let mut txn = arena.open();
+        // Two spinners on one document, offset half a cycle apart — the
+        // skeleton-loader shape, and what says the phase offset survives the
+        // whole path rather than being ignored.
+        for (name, phase) in [("early", 0.0), ("late", 0.25)] {
+            let n = txn.add_node(None, Some(name));
+            txn.set_prop(n, Prop::Width(40.0));
+            txn.set_prop(n, Prop::Height(40.0));
+            txn.add_loop_track(LoopTrack {
+                node: n,
+                channel: Channel::Rotation,
+                // A span of 8 over a half-second linear cycle, stepped
+                // below by an eighth of that. Every number here is a
+                // negative power of two, so the elapsed accumulation is
+                // exact and the samples can be asserted by equality —
+                // 0.1 is not representable, and stepping by it would drift
+                // the wrap off the frame it lands on.
+                from: 0.0,
+                to: 8.0,
+                spec: TransitionSpec::Tween {
+                    duration: 0.5,
+                    easing: Easing::Linear,
+                },
+                phase_offset: phase,
+            });
+        }
+        txn.commit();
+    }
+
+    let count = Rc::new(Cell::new(0));
+    let mut live = dashlang::attach_live(&mut arena, CountingSolver::boxed(count.clone()));
+    assert_eq!(count.get(), 1, "attach solves once");
+
+    let angle = |arena: &Arena, i: usize| arena.committed().rects()[i].rotation;
+
+    // One full cycle and a little past it. The second track runs half a
+    // cycle ahead of the first, so it wraps four frames earlier — which is
+    // the whole point of the offset.
+    let expected = [(1.0, 5.0), (2.0, 6.0), (3.0, 7.0), (4.0, 0.0), (5.0, 1.0)];
+    let mut previous_generation = live.generation();
+    for (frame, (early, late)) in expected.into_iter().enumerate() {
+        live.tick(0.0625, &mut arena);
+        assert_eq!(angle(&arena, 0), early, "frame {frame}: the early spinner");
+        assert_eq!(angle(&arena, 1), late, "frame {frame}: the late spinner");
+
+        // A loop never settles, so no frame takes the idle early return and
+        // the generation moves every time. That is the cost recorded in the
+        // ruling: a document carrying one loop draws continuously.
+        assert!(
+            live.generation() > previous_generation,
+            "frame {frame}: a live loop commits every frame",
+        );
+        previous_generation = live.generation();
+    }
+
+    // And it never solves. A loop is held to paint channels precisely so a
+    // track that never settles cannot put the solver in the frame loop.
+    assert_eq!(
+        count.get(),
+        1,
+        "a loop animates paint only, so no frame of it re-solves",
+    );
+}
+
+/// The builder path drives a declared loop too (story #772).
+///
+/// `attach_live` and `build_live` are two separate ways into a `LiveScene`,
+/// and wiring a channel into one of them only is a mistake this crate has
+/// already made — the loaded path worked and the DSL panicked. Mutation
+/// testing found this one: removing the `attach_loops` call from the builder
+/// path left every other test in the crate green.
+///
+/// The loop is staged on the arena before the scene is built, because the
+/// builder has no loop vocabulary of its own — `build_live` appends its nodes
+/// to whatever the arena already holds, so the two coexist.
+#[test]
+fn the_builder_path_drives_a_loop_staged_on_its_arena() {
+    use dashscene_core::{Easing, LoopTrack, Prop, TransitionSpec};
+
+    let mut arena = Arena::new();
+    {
+        let mut txn = arena.open();
+        let spinner = txn.add_node(None, Some("spinner"));
+        txn.set_prop(spinner, Prop::Width(40.0));
+        txn.set_prop(spinner, Prop::Height(40.0));
+        txn.add_loop_track(LoopTrack {
+            node: spinner,
+            channel: Channel::Rotation,
+            from: 0.0,
+            to: 8.0,
+            spec: TransitionSpec::Tween {
+                duration: 0.5,
+                easing: Easing::Linear,
+            },
+            phase_offset: 0.0,
+        });
+        txn.commit();
+    }
+
+    // An ordinary builder scene beside it, so the two paths are exercised at
+    // once rather than the loop being the only thing present.
+    let mut scene = Scene::new();
+    let width = scene.signal(10.0);
+    scene.roots([node("panel")
+        .size(100.0, 20.0)
+        .children([node("bar").size(10.0, 12.0).bind(Channel::Width, width)])]);
+    let mut live = scene.build_live(&mut arena, Box::new(TaffySolver::new()));
+
+    let angle = |arena: &Arena| arena.committed().rects()[0].rotation;
+    live.tick(0.0625, &mut arena);
+    assert_eq!(angle(&arena), 1.0, "the builder path started the loop");
+    live.tick(0.0625, &mut arena);
+    assert_eq!(angle(&arena), 2.0);
+
+    // And the builder's own binding still works beside it.
+    live.set(width, 42.0);
+    live.tick(0.0625, &mut arena);
+    assert_eq!(angle(&arena), 3.0, "the loop kept running");
+    let bar = arena.committed().rects().len() - 1;
+    assert_eq!(
+        arena.committed().rects()[bar].w,
+        42.0,
+        "the builder's own binding still drives its node",
+    );
+}

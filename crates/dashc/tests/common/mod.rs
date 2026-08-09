@@ -8,6 +8,36 @@
 use dashc_wasm::figma::rule;
 use dashscene_validator::{Diagnostic, Location, Severity};
 
+/// Byte-compares `bytes` against `goldens/dsb/<name>`, or writes it when
+/// `UPDATE_GOLDENS` is set.
+///
+/// Shared rather than per-file because four emit-goldens across two test
+/// binaries now follow the identical contract, and a copied block is where
+/// they would drift apart.
+pub fn assert_dsb_golden(bytes: &[u8], name: &str) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../goldens/dsb")
+        .join(name);
+
+    if std::env::var_os("UPDATE_GOLDENS").is_some() {
+        std::fs::create_dir_all(path.parent().expect("the golden has a parent"))
+            .expect("the goldens directory is writable");
+        std::fs::write(&path, bytes).expect("the golden is writable");
+        return;
+    }
+
+    let golden = std::fs::read(&path).unwrap_or_else(|e| {
+        panic!(
+            "cannot read {}: {e}\nrun `UPDATE_GOLDENS=1 cargo test -p dashc` to create it",
+            path.display(),
+        )
+    });
+    assert_eq!(
+        bytes, golden,
+        "{name} drifted. If this is intended, regenerate with UPDATE_GOLDENS=1, review the diff, and commit.",
+    );
+}
+
 /// Parses a captured (or derived) Figma REST fixture.
 pub fn parse(json: &str) -> dashc_wasm::figma::rest::FigmaFile {
     serde_json::from_str(json).expect("the captured fixture parses")

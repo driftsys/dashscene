@@ -686,6 +686,20 @@ table VariantOverride {
 table VariantMember {
   name: string;
   overrides: [VariantOverride];
+  // How a switch *to* this member animates (v0.18, story #771; the tables
+  // are at the end of this file, beside the other v0.18 rows). Absent means
+  // the switch lands in one frame, which is what every document written
+  // before v0.18 says and why this is an R7-cheap append.
+  //
+  // Keyed on the destination member rather than on the set: a set that
+  // expands with a spring and collapses with a tween is ordinary authoring,
+  // and one spec per set cannot express it. Figma's own model is per
+  // *interaction* — a `reactions` entry carries the Smart Animate settings
+  // and names a destination variant — so the destination is the key that
+  // preserves that information in a document with no interaction construct.
+  // When one arrives (story #773), a reaction overrides this default rather
+  // than replacing it.
+  transition: VariantTransition;
 }
 
 // One switchable group of node/prop overrides — Figma's "component SET"
@@ -778,6 +792,158 @@ table Binding {
   transform: BindingTransform;
 }
 
+// v0.18 motion rows (story #771, docs/design/dashcue.md).
+//
+// Until these existed a `.dsb` carried the two *ends* of an animation —
+// `variant_sets` are the states, `SignalDecl`/`Binding` the wiring — and
+// not the motion between them, so every dashscene animation had to be
+// written in Rust against `dashlang`. A Figma Smart Animate transition,
+// the construct `VariantTransition` mirrors, had no row to be stored in.
+//
+// `dashbuf` must not depend on `dashcue`. `dashcue` is dependency-free by
+// design and the direction is that consumers depend on it and never the
+// reverse, so the vocabulary is mirrored here as schema tables and the
+// loader constructs the runtime types from them.
+
+// Fixed cubic easing curves, mirroring `dashcue::Easing`. Exotic shapes are
+// data — use `KeyframesSpec`. Append at the tail, never renumber (R7); a
+// reader that meets an unknown value must range-check and refuse it by name
+// (P4), like the layout enums above.
+enum Easing : uint8 {
+  Linear = 0,
+  EaseIn = 1,
+  EaseOut = 2,
+  EaseInOut = 3,
+}
+
+// A duration in seconds and the curve travelled over it.
+table TweenSpec {
+  duration: float32;
+  easing: Easing;
+}
+
+// Compose's `SpringSpec` shape — stiffness plus damping ratio — taken
+// deliberately so a Compose spec maps onto this as data
+// (docs/design/dashcue.md). No duration: a spring carries velocity and
+// settles when it settles.
+table SpringSpec {
+  stiffness: float32;
+  damping_ratio: float32;
+}
+
+// One declared point of a keyframes curve.
+//
+// `t` is a fraction of the spec's duration and is **non-decreasing** across
+// a frame list. `value` is a progress fraction of the bound from -> to span
+// and may leave [0, 1], because overshoot is data. Values are fractions
+// rather than absolute prop values: a document never carries resolved
+// values (P1). The endpoints (0, 0) and (1, 1) are implicit.
+//
+// Two frames sharing a `t` are a **step** — the old progress held up to it
+// and the new one from it on, which is a discrete change at a stated time
+// (docs/decisions/a-step-is-a-pair-of-keyframes.md, issue #852). At most
+// two may share one: sampling walks to the last frame at a given `t`, so a
+// third carries a value no sample can ever return, and the load gate
+// refuses it by name rather than dropping it silently (P4).
+//
+// A struct rather than a table: two floats, both always present, so the
+// inline form costs eight bytes and no vtable — the same reason
+// `AtlasRect` and `PlaneBounds` are structs.
+struct Keyframe {
+  t: float32;
+  value: float32;
+}
+
+table KeyframesSpec {
+  duration: float32;
+  frames: [Keyframe];
+}
+
+// How one prop travels from its old resolved value to its new one. Three
+// arms, and a step is **not** a fourth: it is two `Keyframe` entries
+// sharing a `t`, which is why issue #852 relaxed a validator rule instead
+// of widening this union.
+union TransitionSpec {
+  TweenSpec,
+  SpringSpec,
+  KeyframesSpec,
+}
+
+// One prop's declared spec inside a variant transition.
+//
+// `PropKey` cannot be stored: it is opaque and caller-encoded, and the
+// packing math is `dashscene_core::prop_key`. The document stores
+// `(node, channel)` and the loader packs it, which is exactly what
+// `Binding` already does. `node` is an index into `Document.nodes`.
+//
+// `channel` is the same channel vocabulary a binding targets. FLIP animates
+// rects only, so a track naming any other channel is refused at the load
+// gate by name (P4) rather than reaching
+// `dashscene_engine::VariantFlip::start`, whose stated contract is to panic
+// on one — the house rule is that a cross-crate contract violation panics,
+// so the gate has to catch it first.
+//
+// `spec` is required: a track naming no curve has no meaning, the same
+// mechanism as `VariantOverride.value` and `VariantFill.color`.
+table PropTransition {
+  node: uint32;
+  channel: BindingChannel;
+  spec: TransitionSpec (required);
+}
+
+// How a variant switch animates: per-prop specs plus a stagger. Track `i`
+// starts `stagger * i` seconds after the commit, in declared order.
+//
+// The `set_variant` switch itself is `dashscene-core`'s; this is the data
+// describing how that switch animates
+// (docs/decisions/staged-mutation-v01-scope.md).
+table VariantTransition {
+  tracks: [PropTransition];
+  stagger: float32;
+}
+
+// One ambient animation: one channel of one node repeating a curve
+// indefinitely, with no state change driving it (story #772). The
+// shimmer/spinner/pulse/breathing/skeleton class.
+//
+// `node` is an index into `Document.nodes` and `channel` is the same
+// vocabulary a binding targets, exactly as `PropTransition` above.
+//
+// **The endpoints are here, unlike a `PropTransition`'s.** A variant
+// transition travels between two *resolved* layouts, which the engine binds
+// at the switch and the document never stores (P1). A loop has no two states
+// to travel between, so it names its own `from` and `to` — authored values,
+// the kind the node tree and `VariantWidth` have always carried.
+//
+// `spec` is required, the same mechanism as `PropTransition.spec`. A
+// `SpringSpec` is refused at the load gate by name: a spring carries no
+// duration, so it has no cycle to repeat, and looping it on an invented
+// period would silently reinterpret the spec (P4).
+//
+// **Nothing ends a loop, and that is the ruling rather than an omission**
+// (story #772). Every case in the class is endless by definition. SMIL's
+// `repeatCount` and CSS's `animation-iteration-count` both lower onto a
+// `repeat` field appended at this table's tail later, with no R7 break, so a
+// count arrives when a producer needs one rather than ahead of it.
+table LoopTrack {
+  node: uint32;
+  channel: BindingChannel;
+  // The value at the start of each cycle.
+  from: float32;
+  // The value the curve reaches before wrapping back to `from`.
+  to: float32;
+  spec: TransitionSpec (required);
+  // Where in its own cycle this track starts, in seconds — what staggers a
+  // row of skeleton bars out of step. A whole cycle or more is the same
+  // phase as its remainder.
+  //
+  // Not a delay: a delayed one-shot holds at `from` and then runs its curve
+  // once, while an offset loop is already partway through a cycle that never
+  // ends. `VariantTransition.stagger` is the delay-shaped field; this is not
+  // that field under another name.
+  phase_offset: float32;
+}
+
 // Story B1 — baked vector shapes
 // (docs/wip/2026-07-19-B1-vector-msdf-design.md). A Figma VECTOR node lowers
 // into a baked multi-channel signed distance field carried as a coverage mask
@@ -851,6 +1017,11 @@ table Document {
   // `VectorAtlas.image`. Appended at the tail, so every pre-v0.11 document
   // decodes unchanged (R7).
   assets: [AssetEntry];
+  // Story #772: the ambient animations this document declares. Top-level
+  // rather than nested on a variant member, because a loop has no variant
+  // to hang from — the same shape as `bindings`, and for the same reason.
+  // Appended at the tail, so every pre-v0.18 document decodes unchanged (R7).
+  loops: [LoopTrack];
 }
 
 root_type Document;

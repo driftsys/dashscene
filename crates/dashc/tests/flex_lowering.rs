@@ -1556,30 +1556,4 @@ fn the_wrap_fixture_emits_its_golden_dsb() {
     assert_dsb_golden(&bytes, "v08-lowering-wrap.dsb");
 }
 
-/// Byte-compares `bytes` against `goldens/dsb/<name>`, or writes it when
-/// `UPDATE_GOLDENS` is set. Factored out because three emit-goldens in this
-/// file now follow the identical contract and a copied block is where the
-/// three would drift apart.
-fn assert_dsb_golden(bytes: &[u8], name: &str) {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../goldens/dsb")
-        .join(name);
-
-    if std::env::var_os("UPDATE_GOLDENS").is_some() {
-        std::fs::create_dir_all(path.parent().expect("the golden has a parent"))
-            .expect("the goldens directory is writable");
-        std::fs::write(&path, bytes).expect("the golden is writable");
-        return;
-    }
-
-    let golden = std::fs::read(&path).unwrap_or_else(|e| {
-        panic!(
-            "cannot read {}: {e}\nrun `UPDATE_GOLDENS=1 cargo test -p dashc --test flex_lowering` to create it",
-            path.display(),
-        )
-    });
-    assert_eq!(
-        bytes, golden,
-        "{name} drifted. If this is intended, regenerate with UPDATE_GOLDENS=1, review the diff, and commit.",
-    );
-}
+use common::assert_dsb_golden;

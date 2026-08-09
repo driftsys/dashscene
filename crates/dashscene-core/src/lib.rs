@@ -39,9 +39,10 @@ mod committed;
 mod load;
 
 pub use arena::{
-    Arena, AxisSizing, CrossAxisAlign, EdgeInsets, GridTrack, Layout, LayoutMode, LayoutSolver,
-    MainAxisAlign, NodeId, Prop, SolvedRect, StagedRun, TextAlign, TextAlignV, TextStyle, Txn,
-    VariantMember, VariantSetId, VariantValue,
+    Arena, AxisSizing, CrossAxisAlign, Easing, EdgeInsets, GridTrack, Keyframe, Layout, LayoutMode,
+    LayoutSolver, LoopTrack, MainAxisAlign, NodeId, Prop, PropTransition, SolvedRect, StagedRun,
+    TextAlign, TextAlignV, TextStyle, TransitionSpec, Txn, VariantMember, VariantSetId,
+    VariantTransition, VariantValue,
 };
 pub use bindings::{
     Binding, Channel, ScalarTransform, SignalDecl, SignalId, decode_prop_key, prop_key,

@@ -382,6 +382,136 @@ pub struct VectorShape {
     pub plane_bounds: [f32; 4],
 }
 
+/// One overridden prop's value — the schema's `VariantPropValue` union as
+/// a plain type (v0.4, story #20). Arm for arm the same vocabulary as
+/// `dashscene_core::VariantValue`, so the producer, the document and the
+/// loaded arena name one thing one way; `emit` maps it to the schema union
+/// and the loader maps it back.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum VariantValue {
+    X(f32),
+    Y(f32),
+    Width(f32),
+    Height(f32),
+    Fill(Color),
+    /// Whether the member shows or hides the target node (story #283).
+    /// `false` lowers to Taffy `Display::None` — the child leaves the
+    /// laid-out set and its siblings reflow.
+    Visible(bool),
+    /// The angle in radians and the point in the node's own space it turns
+    /// about (story #770).
+    ///
+    /// All three scalars move together rather than being three overridable
+    /// props: an override that changed the angle and left a stale anchor
+    /// behind would turn the node about the wrong point, which is a wrong
+    /// picture rather than a partial one.
+    Rotation {
+        angle: f32,
+        anchor: (f32, f32),
+    },
+}
+
+/// One overridden prop on one node, active while the owning member is
+/// selected. `node` is an index into [`Document::nodes`] — the same
+/// cross-reference convention as [`Node::parent`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VariantOverride {
+    pub node: u32,
+    pub value: VariantValue,
+}
+
+/// Fixed cubic easing curves — the schema's `Easing` as a plain type
+/// (story #771). Exotic shapes are data: use [`TransitionSpec::Keyframes`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Easing {
+    #[default]
+    Linear,
+    EaseIn,
+    EaseOut,
+    EaseInOut,
+}
+
+/// One declared point of a keyframes curve (story #771).
+///
+/// `t` is a fraction of the spec's duration and is non-decreasing across a
+/// frame list; `value` is a progress fraction of the bound span and may
+/// leave `[0, 1]`, because overshoot is data. Two frames sharing a `t` are
+/// a step, and at most two may share one
+/// (`docs/decisions/a-step-is-a-pair-of-keyframes.md`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Keyframe {
+    pub t: f32,
+    pub value: f32,
+}
+
+/// How one prop travels from its old resolved value to its new one — the
+/// schema's `TransitionSpec` union as a plain type (story #771).
+///
+/// Three arms, and a step is not a fourth: it is two [`Keyframe`] entries
+/// sharing a `t` (issue #852).
+#[derive(Debug, Clone, PartialEq)]
+pub enum TransitionSpec {
+    Tween {
+        duration: f32,
+        easing: Easing,
+    },
+    Spring {
+        stiffness: f32,
+        damping_ratio: f32,
+    },
+    Keyframes {
+        duration: f32,
+        frames: Vec<Keyframe>,
+    },
+}
+
+/// One prop's declared spec inside a [`VariantTransition`] (story #771).
+///
+/// `node` is an index into [`Document::nodes`] and `channel` is the same
+/// vocabulary a binding targets: a `PropKey` is opaque and caller-encoded,
+/// so the document stores the pair and the loader packs it, exactly as
+/// [`Binding`] does.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PropTransition {
+    pub node: u32,
+    pub channel: BindingChannel,
+    pub spec: TransitionSpec,
+}
+
+/// How a variant switch animates: per-prop specs plus a stagger. Track `i`
+/// starts `stagger * i` seconds after the commit, in declared order.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct VariantTransition {
+    pub tracks: Vec<PropTransition>,
+    pub stagger: f32,
+}
+
+/// One selectable state of a [`VariantSet`] — Figma's "variant", a member
+/// of a component set. `overrides` is sparse: only the props that differ
+/// from the document's base [`Node`] values need an entry.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct VariantMember {
+    pub name: Option<String>,
+    pub overrides: Vec<VariantOverride>,
+    /// How a switch *to* this member animates (story #771). `None` lands
+    /// the switch in one frame, which is what every document written before
+    /// v0.18 says.
+    pub transition: Option<VariantTransition>,
+}
+
+/// One switchable group of node/prop overrides — Figma's component *set*.
+///
+/// Selection is a flat index into `members`; axis-keyed selection is
+/// deferred (`docs/decisions/variant-set-flat-index.md`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct VariantSet {
+    pub members: Vec<VariantMember>,
+    /// Index into `members` selected when a loaded document first commits,
+    /// before any `set_variant` call. `0` is the schema default, so the
+    /// common authored set writes no slot for it.
+    pub active_member: u32,
+}
+
 /// One scalar prop slot a binding targets — the schema's
 /// `BindingChannel` as a plain type (story #167).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -455,6 +585,28 @@ pub struct Binding {
     pub transform: BindingTransform,
 }
 
+/// One ambient animation: one channel of one node repeating a curve
+/// indefinitely, with no state change driving it (story #772).
+///
+/// `node` and `channel` address exactly as [`PropTransition`] does. Unlike
+/// a transition, a loop carries its own endpoints: it has no two states to
+/// travel between, so `from` and `to` are authored values rather than
+/// rects the engine binds at a switch.
+///
+/// A [`TransitionSpec::Spring`] here is refused by the load gate — a
+/// spring has no duration, so it has no cycle to repeat.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoopTrack {
+    pub node: u32,
+    pub channel: BindingChannel,
+    pub from: f32,
+    pub to: f32,
+    pub spec: TransitionSpec,
+    /// Where in its own cycle this track starts, in seconds. Not a delay:
+    /// an offset loop is already partway through a cycle that never ends.
+    pub phase_offset: f32,
+}
+
 /// One dashscene document, ready to emit.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Document {
@@ -465,6 +617,10 @@ pub struct Document {
     /// (story #107). Emitted as `Document.assets` plus one blob section per
     /// entry.
     pub assets: Vec<Asset>,
+    /// The variant sets a `set_variant` call selects among (v0.4, story
+    /// #20). Empty for a document with no switchable states, so every
+    /// document authored before this field emits byte-identically (R7).
+    pub variant_sets: Vec<VariantSet>,
     /// The signal declarations bindings reference by index (story #167).
     pub signals: Vec<SignalDecl>,
     /// The binding rows joining signals to node channels (story #167).
@@ -476,6 +632,10 @@ pub struct Document {
     /// The baked shapes a paint entry's `shape_field` references by index
     /// (story B1). Empty for a document with no baked vectors.
     pub vector_shapes: Vec<VectorShape>,
+    /// The ambient animations this document declares (story #772). Empty
+    /// for a document with no loop, so every document authored before this
+    /// field emits byte-identically (R7).
+    pub loops: Vec<LoopTrack>,
 }
 
 impl Document {

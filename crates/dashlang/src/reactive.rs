@@ -32,11 +32,12 @@
 
 use std::collections::HashMap;
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 use dashcue::{PropKey, Scheduler, TransitionSpec};
 use dashscene_core::{
-    Arena, AxisSizing, Color, FillSpec, Layout, LayoutMode, LayoutSolver, NodeId, Prop,
-    ScalarTransform, SignalId, SolvedRect,
+    Arena, Atlas, AxisSizing, Color, FillSpec, Layout, LayoutMode, LayoutSolver, NodeId, Prop,
+    ScalarTransform, SignalId, SolvedRect, StagedRun, VariantSetId,
 };
 
 use crate::{Node, Scene};
@@ -806,6 +807,92 @@ impl LayoutSolver for CachedSolver {
     }
 }
 
+/// A [`LayoutSolver`] that runs the real solve and then writes this tick's
+/// FLIP state back over its answer (story #771, finding 3 on PR #865).
+///
+/// A layout-dirty tick has to re-solve inside the commit, and the two
+/// reasons pull in the same direction: the solved layout is authoritative
+/// for everything the tick's other writes moved, and glyph runs are staged
+/// by the commit **only** when the real solver runs inside it
+/// (`corpus/showcase/tests/badge.rs` states that coupling and fails
+/// without it). But the solve answers with the switch's *destination*
+/// layout, and a switch that publishes its destination has landed in one
+/// frame — which is the behaviour a declared transition replaces.
+///
+/// So the solve does not move; this wraps it. Two things are written back
+/// over its answer, and both are needed because a solver may report only
+/// the nodes that moved (core issue #164) and the retained solver reports
+/// a node **once**: a second solve in the same tick, after the switch's
+/// own solve in step 0, returns nothing for the nodes the switch moved,
+/// and `commit_with` would then carry their pre-switch rects forward.
+struct FlipOverlay<'a> {
+    inner: &'a mut dyn LayoutSolver,
+    /// The rects the switch's own solve moved, from step 0 — including the
+    /// nodes carrying no track, which no sample would report.
+    reflowed: &'a [(NodeId, SolvedRect)],
+    /// This frame's FLIP samples, one per animating channel. Applied per
+    /// channel rather than as a whole rect, so a node whose size the solve
+    /// changed this tick keeps that and travels on the animating axis only.
+    samples: &'a [(NodeId, Patch)],
+    /// The retained cache, as the base for a sampled node that neither the
+    /// solve nor the switch reported — every frame of a transition after
+    /// the one that started it.
+    cached_solve: &'a [(NodeId, SolvedRect)],
+    cached_index: &'a HashMap<NodeId, usize>,
+}
+
+impl LayoutSolver for FlipOverlay<'_> {
+    fn solve(&mut self, arena: &Arena) -> Vec<(NodeId, SolvedRect)> {
+        let mut rects = self.inner.solve(arena);
+
+        // The switch's rects, and only where the solve is silent: a node
+        // this tick's other writes also moved was reported just now, and
+        // that answer accounts for both changes.
+        for (node, rect) in self.reflowed {
+            if !rects.iter().any(|(n, _)| n == node) {
+                rects.push((*node, *rect));
+            }
+        }
+
+        // Then the samples. A node absent from both is appended from the
+        // cache, which is what carries a transition through a tick that
+        // reflowed for an unrelated reason.
+        for (node, patch) in self.samples {
+            match rects.iter_mut().find(|(n, _)| n == node) {
+                Some((_, rect)) => apply_patch(rect, *patch),
+                None => {
+                    let mut rect = self.cached_solve[self.cached_index[node]].1;
+                    apply_patch(&mut rect, *patch);
+                    rects.push((*node, rect));
+                }
+            }
+        }
+
+        rects
+    }
+
+    // The other two halves of the seam are forwarded, never defaulted.
+    // Both carry a default that stages nothing, so a wrapper that omits
+    // them compiles and silently commits a scene with no text at all:
+    // omitting them here cost the badge scene every glyph run it had
+    // (`corpus/showcase/tests/badge.rs`), with nothing but that test to
+    // say so. `geometry` already resolves to the rects `solve` returned
+    // above, so a run on a travelling node is placed against the sample
+    // this frame published rather than its destination.
+
+    fn atlases(&mut self) -> Arc<Vec<Atlas>> {
+        self.inner.atlases()
+    }
+
+    fn stage_text(
+        &mut self,
+        arena: &Arena,
+        geometry: &dyn Fn(NodeId) -> SolvedRect,
+    ) -> Vec<StagedRun> {
+        self.inner.stage_text(arena, geometry)
+    }
+}
+
 /// Applies every patch to the retained cache in place, then returns just
 /// the entries this tick changed — the size of a tick's dirty writes, not
 /// the size of the scene (debt #191). A node touched by more than one
@@ -823,6 +910,74 @@ fn patched_rects(
     changed.sort_unstable();
     changed.dedup();
     changed.into_iter().map(|i| cached_solve[i]).collect()
+}
+
+/// One node's value on one rect channel, in a solved layout (story #771).
+/// `None` when the layout does not place that node.
+fn channel_value(rects: &[(NodeId, SolvedRect)], node: NodeId, channel: Channel) -> Option<f32> {
+    let rect = rects.iter().find(|(n, _)| *n == node).map(|(_, r)| r)?;
+    Some(match channel {
+        Channel::X => rect.x,
+        Channel::Y => rect.y,
+        Channel::Width => rect.w,
+        Channel::Height => rect.h,
+        // Only rect channels reach here: the load gate refuses a motion
+        // track naming any other channel, because FLIP animates rects only.
+        other => unreachable!("{other:?} is not a rect channel"),
+    })
+}
+
+/// A FLIP sample as a cache patch. The sample is an absolute resolved
+/// value — the track was bound from one solved rect to another — so it
+/// replaces the channel rather than being resolved against a parent, which
+/// is what separates it from a binding write.
+fn flip_patch(channel: Channel, value: f32) -> Patch {
+    match channel {
+        Channel::X => Patch::X(value),
+        Channel::Y => Patch::Y(value),
+        Channel::Width => Patch::W(value),
+        Channel::Height => Patch::H(value),
+        other => unreachable!("{other:?} is not a rect channel"),
+    }
+}
+
+/// A declared curve as `dashcue`'s (story #771).
+///
+/// `dashscene-core` mirrors the vocabulary rather than depending on
+/// `dashcue`, so a loaded transition arrives as core's type and is
+/// converted here — the crate that depends on both, and the one that owns
+/// the scheduler these specs are started on.
+fn flip_spec(spec: &dashscene_core::TransitionSpec) -> TransitionSpec {
+    match spec {
+        dashscene_core::TransitionSpec::Tween { duration, easing } => TransitionSpec::Tween {
+            duration: *duration,
+            easing: match easing {
+                dashscene_core::Easing::Linear => dashcue::Easing::Linear,
+                dashscene_core::Easing::EaseIn => dashcue::Easing::EaseIn,
+                dashscene_core::Easing::EaseOut => dashcue::Easing::EaseOut,
+                dashscene_core::Easing::EaseInOut => dashcue::Easing::EaseInOut,
+            },
+        },
+        dashscene_core::TransitionSpec::Spring {
+            stiffness,
+            damping_ratio,
+        } => TransitionSpec::Spring {
+            stiffness: *stiffness,
+            damping_ratio: *damping_ratio,
+        },
+        dashscene_core::TransitionSpec::Keyframes { duration, frames } => {
+            TransitionSpec::Keyframes {
+                duration: *duration,
+                frames: frames
+                    .iter()
+                    .map(|frame| dashcue::Keyframe {
+                        t: frame.t,
+                        value: frame.value,
+                    })
+                    .collect(),
+            }
+        }
+    }
 }
 
 /// Accumulates resolved bindings while the node tree is staged.
@@ -905,9 +1060,38 @@ pub struct LiveScene {
     /// Scheduler key (`PropKey.0`) → index into `scalar_bindings`, for
     /// the smoothed bindings only.
     key_index: HashMap<u64, usize>,
+    /// The rows a declared loop track writes through (story #772), and the
+    /// scheduler key of each, parallel to `scalar_bindings`/`key_index`.
+    ///
+    /// A loop is a `ScalarBinding` whose value comes from the scheduler
+    /// rather than from a signal, which is what lets it reuse
+    /// `apply_scalar_write` — and with it the fill and rotation shadows,
+    /// so a loop driving one fill component keeps the other three. Held
+    /// apart from `scalar_bindings` because the flush in step 1 walks that
+    /// table by signal dirtiness, and a loop has no signal to be dirty.
+    loop_bindings: Vec<ScalarBinding>,
+    loop_index: HashMap<u64, usize>,
     /// The last solved geometry, in DFS/committed order.
     cached_solve: Vec<(NodeId, SolvedRect)>,
     cached_index: HashMap<NodeId, usize>,
+    /// The active member of every variant set in the arena, as of the end
+    /// of the last tick (story #771).
+    ///
+    /// A `set_variant` is staged on the **arena**, which this scene does not
+    /// own — an embedder reaches it through the host's scene seam, and
+    /// nothing tells this type that it happened. Comparing against this
+    /// snapshot each tick is the detection, and it is why a loaded document
+    /// can animate at all: without it a switch would be absorbed by the idle
+    /// early return below, which is exactly what issue #617 observed.
+    variant_active: Vec<usize>,
+    /// The rect channels a variant switch is currently animating, as
+    /// `PropKey.0` → the node and channel a sample patches.
+    ///
+    /// These tracks live on the same `scheduler` the smoothed bindings use,
+    /// so one `advance` drains both and one idle test covers both. The map
+    /// is what tells the drain loop which kind of write a sampled key is:
+    /// a key in `key_index` is a binding, a key here is a FLIP track.
+    flip_tracks: HashMap<u64, (NodeId, Channel)>,
     /// Runtime lookup name → scalar signal id, for the named signals
     /// (story #167): `Scene::signal_named` declarations, or a loaded
     /// document's signal names ([`attach_live`]).
@@ -937,6 +1121,85 @@ pub struct LiveScene {
 }
 
 impl LiveScene {
+    /// Every variant set whose active member changed since the last tick,
+    /// as `(set, new member)`, updating the snapshot as it goes (story
+    /// #771).
+    ///
+    /// A set added to the arena since the last tick counts as switched only
+    /// if its active member is not 0, which is the same rule the loader
+    /// applies when replaying a document's own `active_member`: member 0 is
+    /// the state the base node values already express, so adopting it
+    /// animates nothing.
+    fn switched_variants(&mut self, arena: &Arena) -> Vec<(VariantSetId, usize)> {
+        let mut switched = Vec::new();
+        for (i, set) in arena.variant_sets().enumerate() {
+            let active = arena.active_variant(set);
+            match self.variant_active.get_mut(i) {
+                Some(previous) if *previous == active => {}
+                Some(previous) => {
+                    *previous = active;
+                    switched.push((set, active));
+                }
+                None => {
+                    self.variant_active.push(active);
+                    if active != 0 {
+                        switched.push((set, active));
+                    }
+                }
+            }
+        }
+        switched
+    }
+
+    /// Binds the transition declared for `member` from the `before` layout
+    /// to the `after` one, onto this scene's scheduler (story #771).
+    ///
+    /// A member with no declared transition starts no track, which lands the
+    /// switch in one frame — the behaviour every scene had before v0.18, and
+    /// what a document that carries no motion rows still gets.
+    ///
+    /// A track whose before and after values are equal starts no track
+    /// either (debt #487): it has nothing to animate, and declining it
+    /// leaves every other track's stagger delay where it was, because a
+    /// delay is computed from the track's declared index and not from how
+    /// many started.
+    fn start_variant_flip(
+        &mut self,
+        arena: &Arena,
+        set: VariantSetId,
+        member: usize,
+        before: &[(NodeId, SolvedRect)],
+        after: &[(NodeId, SolvedRect)],
+    ) {
+        let Some(declared) = arena.variant_transition(set, member) else {
+            return;
+        };
+        for (i, track) in declared.tracks.iter().enumerate() {
+            let (Some(from), Some(to)) = (
+                channel_value(before, track.node, track.channel),
+                channel_value(after, track.node, track.channel),
+            ) else {
+                // A track naming a node absent from either layout. The load
+                // gate rejects an out-of-range node, so this is a node the
+                // solver did not place — a hidden one — and it has no rect
+                // to travel between.
+                continue;
+            };
+            if from == to {
+                continue;
+            }
+            let key = PropKey(dashscene_core::prop_key(track.node, track.channel));
+            self.scheduler.start(
+                key,
+                from,
+                to,
+                flip_spec(&track.spec),
+                declared.stagger * i as f32,
+            );
+            self.flip_tracks.insert(key.0, (track.node, track.channel));
+        }
+    }
+
     /// Push a new value into a signal. Marks the signal's bindings for
     /// the next flush; nothing is recomputed until [`LiveScene::tick`]
     /// (push-on-flush, P3).
@@ -1024,13 +1287,21 @@ impl LiveScene {
         #[allow(clippy::manual_clamp)]
         let dt = dt.max(0.0).min(MAX_FRAME_DELTA);
 
+        // A variant switch staged on the arena since the last tick (story
+        // #771). Detected before the idle test, because a switch changes no
+        // signal and starts no track by itself: without this the frame would
+        // take the early return below and the switch would never be seen,
+        // which is what issue #617 measured against every committed fixture.
+        let switched = self.switched_variants(arena);
+
         // Idle frame: no signal changed and no track is still live — a track
         // that finished but has not yet been swept produces no sample, so
         // `is_settled` (not `is_empty`) is the right test. A commit would only
         // churn the generation while nothing moved (D4), so skip it and hold
         // the generation steady, keeping it a meaningful "something changed"
         // signal for a downstream consumer.
-        if self.scheduler.is_settled()
+        if switched.is_empty()
+            && self.scheduler.is_settled()
             && !self.scalar_dirty.iter().any(|&d| d)
             && !self.bool_dirty.iter().any(|&d| d)
         {
@@ -1039,6 +1310,60 @@ impl LiveScene {
 
         let mut layout_dirty = false;
         let mut patches: Vec<(usize, Patch)> = Vec::new();
+        // The same FLIP samples as `patches`, keyed by node rather than by
+        // cache index: a layout-dirty tick commits through the real solver
+        // and overlays them on its answer, where a cache index means
+        // nothing (`FlipOverlay`).
+        let mut flip_samples: Vec<(NodeId, Patch)> = Vec::new();
+
+        // 0. A variant switch: re-solve for the layout the new members
+        //    produce, bind the declared transition from the old layout to it,
+        //    and adopt it as the cache the samples below patch.
+        //
+        //    The solve is called directly rather than through a commit
+        //    because the two are needed at different moments: the *after*
+        //    rects are what a FLIP track's `to` is, and the commit at the end
+        //    of this tick must publish the first **sample**, not the after
+        //    layout — committing the after layout here would land the switch
+        //    in one frame, which is the behaviour this replaces. A staged
+        //    `set_variant` is visible to the solver already (P3), so one
+        //    solve answers it.
+        let mut switch_moved: Vec<(NodeId, SolvedRect)> = Vec::new();
+        if !switched.is_empty() {
+            // **One** solve for every set switched since the last tick, not
+            // one per set. `Txn::set_variant` is visible to the solver the
+            // moment it is staged, so the first solve already reflects all of
+            // them; a second would see `from == to` for the next set's tracks
+            // and decline every one, leaving every set but the first to snap.
+            switch_moved = self.solver.solve(arena);
+
+            let before = std::mem::take(&mut self.cached_solve);
+            let mut index = std::mem::take(&mut self.cached_index);
+            let mut after = before.clone();
+
+            // Merge, never replace. `LayoutSolver::solve` is allowed to
+            // return only the nodes whose rect changed, and `TaffySolver`
+            // does exactly that — so assigning its result would drop every
+            // unmoved node from the cache permanently, and the next contained
+            // write to one would panic on `cached_index`. `Txn::commit_with`
+            // carries the rest forward, and this cache exists to mirror what
+            // it carries.
+            for (node, rect) in &switch_moved {
+                match index.get(node) {
+                    Some(&i) => after[i].1 = *rect,
+                    None => {
+                        index.insert(*node, after.len());
+                        after.push((*node, *rect));
+                    }
+                }
+            }
+
+            for (set, member) in &switched {
+                self.start_variant_flip(arena, *set, *member, &before, &after);
+            }
+            self.cached_solve = after;
+            self.cached_index = index;
+        }
 
         let mut txn = arena.open();
 
@@ -1100,25 +1425,93 @@ impl LiveScene {
         self.scheduler.advance(dt);
         let samples: Vec<(PropKey, f32)> = self.scheduler.samples().collect();
         for (key, value) in samples {
-            let bi = self.key_index[&key.0];
-            apply_scalar_write(
-                &mut txn,
-                &mut self.scalar_bindings[bi],
-                value,
-                &mut self.fill_shadow,
-                &mut self.rotation_shadow,
-                &self.cached_solve,
-                &self.cached_index,
-                &mut patches,
-                &mut layout_dirty,
-            );
+            // Two kinds of track share this scheduler. A key in `key_index`
+            // is a smoothed binding and writes through the binding path; a
+            // key in `flip_tracks` is a variant FLIP and patches one rect
+            // channel directly, because its `from`/`to` were bound from
+            // resolved rects and the sample is already absolute.
+            if let Some(&bi) = self.key_index.get(&key.0) {
+                apply_scalar_write(
+                    &mut txn,
+                    &mut self.scalar_bindings[bi],
+                    value,
+                    &mut self.fill_shadow,
+                    &mut self.rotation_shadow,
+                    &self.cached_solve,
+                    &self.cached_index,
+                    &mut patches,
+                    &mut layout_dirty,
+                );
+            } else if let Some(&li) = self.loop_index.get(&key.0) {
+                // A declared loop (story #772), written through the same
+                // path a smoothed binding takes — its row carries the write
+                // class and the shadows, so one fill component loops
+                // without inventing the other three. The gate holds it to a
+                // paint channel, so this never patches a rect and never
+                // sets `layout_dirty`: a track that never settles still
+                // commits through the retained-geometry replay.
+                apply_scalar_write(
+                    &mut txn,
+                    &mut self.loop_bindings[li],
+                    value,
+                    &mut self.fill_shadow,
+                    &mut self.rotation_shadow,
+                    &self.cached_solve,
+                    &self.cached_index,
+                    &mut patches,
+                    &mut layout_dirty,
+                );
+            } else if let Some(&(node, channel)) = self.flip_tracks.get(&key.0) {
+                let idx = self.cached_index[&node];
+                let patch = flip_patch(channel, value);
+                patches.push((idx, patch));
+                flip_samples.push((node, patch));
+            } else {
+                unreachable!(
+                    "scheduler key {key:?} is not a smoothed binding, a declared loop or a \
+                     FLIP track; every track this scene starts is registered in one of the \
+                     three — `key_index`, `loop_index` or `flip_tracks`"
+                );
+            }
         }
 
         // 5. One commit. A reflow re-solves and refreshes the cache; a
         //    contained/paint-only frame patches the cache and replays it,
         //    so the real solver is never called.
         let generation = if layout_dirty {
-            txn.commit_with(&mut *self.solver)
+            // The real solver runs inside the commit, so the layout is
+            // authoritative and glyph runs stage; this frame's switch and
+            // samples are written back over its answer, so a transition
+            // sharing a tick with a reflow still travels (`FlipOverlay`).
+            let mut overlay = FlipOverlay {
+                inner: &mut *self.solver,
+                reflowed: &switch_moved,
+                samples: &flip_samples,
+                cached_solve: &self.cached_solve,
+                cached_index: &self.cached_index,
+            };
+            txn.commit_with(&mut overlay)
+        } else if !switch_moved.is_empty() {
+            // The switch tick publishes two sets at once: every node the
+            // reflow moved — including the ones carrying no track, which
+            // patches alone would not report — and every node this frame's
+            // FLIP sample patched. The union, not the whole scene: the
+            // commit carries the rest forward.
+            for (i, patch) in &patches {
+                apply_patch(&mut self.cached_solve[*i].1, *patch);
+            }
+            let mut changed: Vec<usize> = patches.iter().map(|(i, _)| *i).collect();
+            changed.extend(
+                switch_moved
+                    .iter()
+                    .filter_map(|(node, _)| self.cached_index.get(node).copied()),
+            );
+            changed.sort_unstable();
+            changed.dedup();
+            let mut cached = CachedSolver {
+                rects: changed.into_iter().map(|i| self.cached_solve[i]).collect(),
+            };
+            txn.commit_with(&mut cached)
         } else {
             let mut cached = CachedSolver {
                 rects: patched_rects(&mut self.cached_solve, &patches),
@@ -1129,6 +1522,14 @@ impl LiveScene {
         if layout_dirty {
             refresh_cache(arena, &mut self.cached_solve);
         }
+
+        // Sweep finished FLIP tracks. `dashcue` drops a track when it
+        // settles, so a key with no sample left is done; keeping the map in
+        // step with the scheduler is what stops it growing with the number
+        // of switches a session makes (R4).
+        let scheduler = &self.scheduler;
+        self.flip_tracks
+            .retain(|key, _| scheduler.sample(PropKey(*key)).is_some());
 
         for d in &mut self.scalar_dirty {
             *d = false;
@@ -1168,6 +1569,29 @@ fn seed_scalar(
         txn.set_prop(b.node, prop_for(b.channel, v));
     }
     b.last_applied = v;
+}
+
+/// Stages each loop's first sample, so the commit that publishes the
+/// attached scene already shows the phase the track starts at (story
+/// #772).
+///
+/// Without this a track with a `phase_offset` is live in the scheduler but
+/// absent from the committed output until the first tick, so a host that
+/// presents before it ticks draws the authored value for one frame and then
+/// jumps — visible as a row of skeleton bars snapping into step.
+fn seed_loops(
+    txn: &mut dashscene_core::Txn<'_>,
+    rows: &mut [ScalarBinding],
+    scheduler: &Scheduler,
+    fill_shadow: &mut HashMap<NodeId, Color>,
+    rotation_shadow: &mut HashMap<NodeId, [f32; 3]>,
+) {
+    for b in rows {
+        let v = scheduler
+            .sample(b.key)
+            .expect("a loop track is live from the moment it starts");
+        seed_scalar(txn, b, v, fill_shadow, rotation_shadow);
+    }
 }
 
 /// Builds a [`LiveScene`] from the binding tables an arena already
@@ -1253,6 +1677,19 @@ pub fn attach_live(arena: &mut Arena, mut solver: Box<dyn LayoutSolver>) -> Live
     // commit once through the solver — the loaded literals already agree
     // with the initials for a document the importer produced, and the
     // seed makes that an invariant for any producer.
+    // The loops the document declares (story #772), started before the seed
+    // commit so their phase is staged into it. A track with a `phase_offset`
+    // begins partway through its cycle, and a host that attaches, presents
+    // once and only then ticks would otherwise draw its authored value for
+    // one frame and jump.
+    let mut scheduler = Scheduler::new();
+    let (mut loop_bindings, loop_index) = attach_loops(
+        arena,
+        &mut scheduler,
+        &mut fill_shadow,
+        &mut rotation_shadow,
+    );
+
     let generation = {
         let mut txn = arena.open();
         for b in &mut bindings {
@@ -1262,6 +1699,13 @@ pub fn attach_live(arena: &mut Arena, mut solver: Box<dyn LayoutSolver>) -> Live
                 .apply(raw);
             seed_scalar(&mut txn, b, v, &mut fill_shadow, &mut rotation_shadow);
         }
+        seed_loops(
+            &mut txn,
+            &mut loop_bindings,
+            &scheduler,
+            &mut fill_shadow,
+            &mut rotation_shadow,
+        );
         txn.commit_with(&mut *solver)
     };
 
@@ -1277,7 +1721,15 @@ pub fn attach_live(arena: &mut Arena, mut solver: Box<dyn LayoutSolver>) -> Live
 
     LiveScene {
         solver,
-        scheduler: Scheduler::new(),
+        scheduler,
+        // The variant snapshot starts at each set's current active member, so
+        // the state a document arrived in is the baseline rather than a switch
+        // to animate on the first tick (story #771).
+        variant_active: arena
+            .variant_sets()
+            .map(|s| arena.active_variant(s))
+            .collect(),
+        flip_tracks: HashMap::new(),
         scalars,
         bools: Vec::new(),
         scalar_dirty,
@@ -1288,6 +1740,8 @@ pub fn attach_live(arena: &mut Arena, mut solver: Box<dyn LayoutSolver>) -> Live
         scalar_closures: Vec::new(),
         text_closures: Vec::new(),
         key_index: HashMap::new(),
+        loop_bindings,
+        loop_index,
         cached_solve,
         cached_index,
         names,
@@ -1296,6 +1750,103 @@ pub fn attach_live(arena: &mut Arena, mut solver: Box<dyn LayoutSolver>) -> Live
         generation,
         shown: None,
     }
+}
+
+/// Starts one scheduler track per loop the arena declares, and returns the
+/// rows the drain writes their samples through (story #772).
+///
+/// Shared by both construction paths on purpose. `attach_live` and
+/// `stage_live` are two separate ways into a `LiveScene`, and wiring a new
+/// channel into one of them only is a mistake this crate has already made
+/// once — the loaded path worked and the builder panicked. A loop declared
+/// on the arena is driven whichever way the scene was made.
+///
+/// The shadows are seeded exactly as a binding row's are, and for the same
+/// reason: a loop driving one fill component must keep the other three, and
+/// one driving the rotation angle must keep the authored anchor.
+fn attach_loops(
+    arena: &Arena,
+    scheduler: &mut Scheduler,
+    fill_shadow: &mut HashMap<NodeId, Color>,
+    rotation_shadow: &mut HashMap<NodeId, [f32; 3]>,
+) -> (Vec<ScalarBinding>, HashMap<u64, usize>) {
+    let mut rows: Vec<ScalarBinding> = Vec::new();
+    let mut index: HashMap<u64, usize> = HashMap::new();
+
+    for track in arena.loop_tracks() {
+        let node = track.node;
+        // A loop animates paint only. The document gate refuses anything
+        // else by name, but `Txn::add_loop_track` deliberately does not —
+        // a hand-built arena is not held to a document rule — so a producer
+        // staging a layout channel directly would reach `classify` and get
+        // `WriteClass::Solve`. A loop never settles, so that would put the
+        // real solver in the frame loop for as long as the document is
+        // loaded, with no diagnostic. Named here instead, at the same place
+        // every other cross-crate contract violation is.
+        let class = classify(track.channel, false, false, false);
+        assert!(
+            matches!(class, WriteClass::PaintOnly),
+            "loop track on {node:?} names channel {:?}, which is layout-affecting; \
+             a loop animates paint channels only, because a track that never \
+             settles would otherwise re-solve every frame",
+            track.channel,
+        );
+
+        let fill = match arena.fill(node) {
+            Some(FillSpec::Solid { color }) => Some(*color),
+            _ => None,
+        };
+        // Read once and shared by the shadow seed and the initial value
+        // below — `Arena::rotation` resolves the variant overlay, so it is
+        // not a field read.
+        let (angle, anchor) = arena.rotation(node);
+        let rotation = [angle, anchor.0, anchor.1];
+        if is_fill(track.channel) {
+            fill_shadow
+                .entry(node)
+                .or_insert(fill.unwrap_or(TRANSPARENT));
+        }
+        if is_rotation(track.channel) {
+            rotation_shadow.entry(node).or_insert(rotation);
+        }
+
+        let key = prop_key(node, track.channel);
+        // The load gate refuses a loop that shares a channel with any other
+        // writer, so this is the only track on `key` and `start_loop`'s own
+        // assertion is the backstop rather than the check.
+        scheduler.start_loop(
+            key,
+            track.from,
+            track.to,
+            flip_spec(&track.spec),
+            track.phase_offset,
+        );
+        index.insert(key.0, rows.len());
+        rows.push(ScalarBinding {
+            node,
+            parent: arena.parent(node),
+            channel: track.channel,
+            // No signal drives a loop. The field is never read for these
+            // rows: step 1 walks `scalar_bindings`, not this table, and the
+            // drain reaches them by scheduler key.
+            signal: u32::MAX,
+            transform: Transform::Identity,
+            // A loop animates paint only (the load gate refuses anything
+            // else), so this classifies as `PaintOnly` and the sample never
+            // patches a rect or forces a solve. That is what keeps a
+            // never-settling track off the solver.
+            class,
+            smoothing: None,
+            key,
+            // Only the paint arms are reachable — the assertion above holds
+            // the channel to them — so the layout `initial_channel_value`
+            // would read is never needed, and building one per track would
+            // resolve the variant overlay for a value always discarded.
+            last_applied: initial_channel_value(&Layout::default(), fill, rotation, track.channel),
+        });
+    }
+
+    (rows, index)
 }
 
 /// Whether every ancestor of `node` keeps a size change inside `node`'s
@@ -1409,6 +1960,20 @@ impl Scene {
     pub fn build_live(self, arena: &mut Arena, mut solver: Box<dyn LayoutSolver>) -> LiveScene {
         let mut ctx = BuildCtx::default();
 
+        // The same loop startup the loaded path runs, before the txn opens
+        // because it needs `&Arena`. The builder has no loop vocabulary of
+        // its own, so this finds rows only when a producer staged them on
+        // the arena directly — but it is wired here rather than left out,
+        // because a channel wired into one of the two paths and not the
+        // other is a mistake this crate has already made once.
+        let mut scheduler = Scheduler::new();
+        let (mut loop_bindings, loop_index) = attach_loops(
+            arena,
+            &mut scheduler,
+            &mut ctx.fill_shadow,
+            &mut ctx.rotation_shadow,
+        );
+
         let generation = {
             let mut txn = arena.open();
             // Every scalar signal is declared in the arena first, in
@@ -1445,6 +2010,13 @@ impl Scene {
             for b in &ctx.visible {
                 txn.set_prop(b.node, Prop::Visible(self.bool_inits[b.signal as usize]));
             }
+            seed_loops(
+                &mut txn,
+                &mut loop_bindings,
+                &scheduler,
+                &mut ctx.fill_shadow,
+                &mut ctx.rotation_shadow,
+            );
 
             txn.commit_with(&mut *solver)
         };
@@ -1477,7 +2049,15 @@ impl Scene {
 
         LiveScene {
             solver,
-            scheduler: Scheduler::new(),
+            scheduler,
+            // The variant snapshot starts at each set's current active member, so
+            // the state a document arrived in is the baseline rather than a switch
+            // to animate on the first tick (story #771).
+            variant_active: arena
+                .variant_sets()
+                .map(|s| arena.active_variant(s))
+                .collect(),
+            flip_tracks: HashMap::new(),
             scalars,
             bools,
             scalar_dirty,
@@ -1488,6 +2068,8 @@ impl Scene {
             scalar_closures: ctx.scalar_closures,
             text_closures: ctx.text_closures,
             key_index,
+            loop_bindings,
+            loop_index,
             cached_solve,
             cached_index,
             names,

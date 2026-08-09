@@ -525,3 +525,136 @@ fn a_keyframe_at_zero_is_still_refused() {
         0.0,
     );
 }
+
+// ---------------------------------------------------------------------
+// Loop tracks (story #772): the ambient class. A loop repeats its curve
+// indefinitely and never finishes, so it never settles.
+// ---------------------------------------------------------------------
+
+#[test]
+fn a_loop_repeats_its_curve_and_never_finishes() {
+    let mut s = Scheduler::new();
+    s.start_loop(K, 0.0, 100.0, linear_tween(1.0), 0.0);
+
+    assert_eq!(s.sample(K), Some(0.0), "live before any advance");
+    s.advance(0.25);
+    assert_eq!(s.sample(K), Some(25.0));
+    s.advance(0.5);
+    assert_eq!(s.sample(K), Some(75.0));
+
+    // Past the duration the cycle wraps rather than snapping to `to` and
+    // finishing: 0.75 + 0.5 = 1.25, which is 0.25 into the second cycle.
+    s.advance(0.5);
+    assert_eq!(s.sample(K), Some(25.0), "the second cycle, not the target");
+    assert!(!s.is_settled(), "a loop is never settled");
+
+    // And it is never swept, however many cycles run.
+    for _ in 0..100 {
+        s.advance(0.1);
+    }
+    assert!(!s.is_empty(), "a loop track is never swept");
+    assert!(!s.is_settled());
+}
+
+/// A whole number of cycles returns to the start of the curve, not to its
+/// end — the wrap is exact, so a loop cannot drift over a long session.
+#[test]
+fn a_whole_number_of_cycles_returns_to_the_start_of_the_curve() {
+    let mut s = Scheduler::new();
+    s.start_loop(K, 0.0, 100.0, linear_tween(1.0), 0.0);
+    for _ in 0..40 {
+        s.advance(0.25);
+    }
+    assert_eq!(s.sample(K), Some(0.0), "ten exact cycles land back at 0");
+}
+
+/// The phase offset is what staggers a row of skeleton bars: the track
+/// starts that far into its own cycle rather than holding at `from`,
+/// which is what `delay` does for a one-shot.
+#[test]
+fn a_phase_offset_starts_the_loop_partway_through_its_cycle() {
+    let mut s = Scheduler::new();
+    s.start_loop(K, 0.0, 100.0, linear_tween(1.0), 0.25);
+    assert_eq!(s.sample(K), Some(25.0), "seeded a quarter into the cycle");
+    s.advance(0.5);
+    assert_eq!(s.sample(K), Some(75.0));
+}
+
+/// An offset of a whole cycle or more is the same phase as its remainder,
+/// so a producer cannot push a track arbitrarily far into the future.
+#[test]
+fn a_phase_offset_beyond_one_cycle_wraps() {
+    let mut s = Scheduler::new();
+    s.start_loop(K, 0.0, 100.0, linear_tween(1.0), 3.25);
+    assert_eq!(s.sample(K), Some(25.0));
+}
+
+/// A spring carries velocity and has no duration, so it has no cycle to
+/// repeat. Refused by name rather than looped on some invented period
+/// (P4) — the shape #852 chose for a third keyframe sharing a `t`.
+#[test]
+#[should_panic(expected = "a spring has no duration")]
+fn a_looping_spring_is_refused_by_name() {
+    let mut s = Scheduler::new();
+    s.start_loop(
+        K,
+        0.0,
+        100.0,
+        TransitionSpec::Spring {
+            stiffness: 100.0,
+            damping_ratio: 1.0,
+        },
+        0.0,
+    );
+}
+
+/// A keyframes curve loops on the same path as a tween — the shared timed
+/// path (#75), so the wrap is written once.
+#[test]
+fn a_keyframes_loop_wraps_on_the_same_path_as_a_tween() {
+    let mut s = Scheduler::new();
+    s.start_loop(
+        K,
+        0.0,
+        100.0,
+        TransitionSpec::Keyframes {
+            duration: 1.0,
+            frames: vec![Keyframe {
+                t: 0.5,
+                value: 0.25,
+            }],
+        },
+        0.0,
+    );
+    s.advance(0.5);
+    assert_eq!(s.sample(K), Some(25.0), "the declared frame at t = 0.5");
+    s.advance(1.0);
+    assert_eq!(s.sample(K), Some(25.0), "the same point one cycle later");
+    assert!(!s.is_settled());
+}
+
+/// Starting a transition on a key a loop holds is refused by name, not
+/// resolved by the retarget path (story #772).
+///
+/// `start`'s retarget removes the live track, so a transition landing on a
+/// looping key would end the loop with no diagnostic — which contradicts the
+/// ruling that nothing ends a loop. The load gate refuses the document that
+/// could cause it; this is the backstop, and it had no test until review
+/// asked for one.
+#[test]
+#[should_panic(expected = "carries a loop track")]
+fn starting_a_transition_on_a_looping_key_is_refused() {
+    let mut s = Scheduler::new();
+    s.start_loop(K, 0.0, 100.0, linear_tween(1.0), 0.0);
+    s.start(K, 0.0, 50.0, linear_tween(1.0), 0.0);
+}
+
+/// And the reverse: a second loop on one key is refused too, so a loop is
+/// the sole writer of its channel in the scheduler as well as in the gate.
+#[test]
+#[should_panic(expected = "already carries a track")]
+fn a_second_loop_on_one_key_is_refused() {
+    let mut s = Scheduler::new();
+    s.start_loop(K, 0.0, 100.0, linear_tween(1.0), 0.0);
+    s.start_loop(K, 0.0, 50.0, linear_tween(1.0), 0.0);
+}

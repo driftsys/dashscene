@@ -208,11 +208,39 @@ label, and the one row. The matching end-to-end picture is
 `goldens/images/v07-variant-topology.png`. Native-only today, the same as the
 text `.dsb` goldens above.
 
+## v018-variant-shelf.dsb
+
+The first fixture here that is **authored rather than imported**, and the
+first that carries a variant table at all (issue #617). Every fixture above
+it is compiled from a captured Figma REST export, and `dashc`'s Figma path
+resolves an `INSTANCE` to its one active subtree at compile time — as
+`v07-variant-topology.dsb` above records, "the byte record is the instance's
+authored (collapsed) subtree alone". A static REST export names one concrete
+state, so there is no switchable set for the importer to preserve, and all
+ten fixtures that preceded this one report zero variant sets. Loading any of
+them seeds one commit and then has nothing left to drive.
+
+The document is a horizontal flex row — a 200x60 shelf, padding 4, gap 8 —
+holding three 40x40 chips named `left`, `middle` and `right`. Its one variant
+set has two members: `full` overrides nothing, and `collapsed` hides `middle`
+and widens `left` to 64.
+
+The shape is chosen so the switch produces rects **the document does not
+state**: `right` carries no override and still slides from x 100 to x 76,
+because hiding `middle` reflows the row. Those before/after rects are what a
+FLIP binds its tracks from, and a set of authored `X` overrides would not
+have given them (P1).
+
+Built by `crates/dashc/tests/round_trip.rs`, which pins its bytes and asserts
+the load path. `goldens/tooling/tests/loaded_variant_flip.rs` asserts the
+half that needs a solver: the reflow, and a `VariantFlip` sampling it.
+
 ## Regenerating
 
     UPDATE_GOLDENS=1 cargo test -p dashc --test figma_lowering
     UPDATE_GOLDENS=1 cargo test -p dashc --test flex_lowering
     UPDATE_GOLDENS=1 cargo test -p dashc --test text_lowering
+    UPDATE_GOLDENS=1 cargo test -p dashc --test round_trip
     UPDATE_GOLDENS=1 cargo test -p dashc --test component_lowering
     UPDATE_GOLDENS=1 cargo test -p goldens --test derived_bank
 

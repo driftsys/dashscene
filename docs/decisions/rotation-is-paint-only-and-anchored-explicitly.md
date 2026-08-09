@@ -6,7 +6,7 @@
              table, `dashpaint`'s per-rect row, both painters, and the Figma
              lowering path
     issue    #770, ruled at the opening of slice v0.18 (epic #769)
-    refs     #143, #255, #772, #774,
+    refs     #143, #255, #772, #774, #845, #875,
              `visible-is-layout-opacity-is-paint.md`,
              `optional-members-are-ranges-of-arity-one.md`,
              `docs/wip/2026-08-07-motion-in-the-document.md`
@@ -177,6 +177,71 @@ revisiting the per-node 2×3 matrix this record deferred.
 
 A rotated node with no `size` is refused for the neighbouring reason: its
 extent would have to come from `absoluteBoundingBox`.
+
+## The composing transform is deferred to v1
+
+Issue #845 asks whether the document should gain a composing transform. It is
+parked at the v1 milestone. What that would cost, and what deferring it leaves
+exposed, are recorded here because both were read wrong the first time: the
+paragraphs below replace an earlier draft whose central claims did not survive
+being checked against the code.
+
+**The P1 objection is withdrawn.** #845 describes one of its two mechanisms as
+a resolution pass composing ancestor rotations into each descendant's geometry,
+"which resolves a result into the document and runs into P1". That does not
+hold for a composition performed at commit: the composed angle would land in
+`RectEntry`, and `CommittedScene` is not the document. `Txn::commit_with`
+writes no resolved geometry back into node data, and the `.dsb` writers never
+read `committed()`. The cascade such a composition would ride is the one the
+walk already runs for the clip region and for effective visibility — not the
+one for position, which the walk does not perform at all. `LayoutSolver` states
+that seam: commit "asks exactly one solver for every node's rect and computes
+no geometry of its own".
+
+**Text is not the obstacle it resembles.** A glyph run carries no rotation of
+its own and does not need one: it is anchored to a rect through
+`GlyphRun::rect`, and both painters turn a run with its anchor rect —
+`dashscene-gpu` writes the anchor rect's rotation and pivot onto every text
+instance, and `dashscene-skia` draws anchored runs inside the `canvas.rotate`
+pair. A rotated frame's label stays straight today because the child rect
+carries no rotation, not because text cannot turn.
+
+What text does instead is constrain the row. A rect and an anchored run are two
+consumers of one origin, anchor and angle, and they do not always agree: where
+a parent's angle and a child's sum to zero — an upright label inside a tilted
+frame — the composed motion is a pure translation, which the rect absorbs by
+moving its origin and an anchored run cannot. Composition is therefore not a
+matter of summing an angle per node.
+
+**The clip is the wall, and it is already wrong.** `Arena`'s commit walk builds
+each node's child-facing `ClipBox` from its unrotated geometry and never reads
+the rotation, and both painters apply that box. A rotated clipping node hands
+its descendants an axis-aligned region at the position it occupied before
+turning. This is not a gap composition would open; it is a wrong picture drawn
+today, and `docs/specification/04-figma-vocabulary-profile.md` already
+classifies `clip-on-rotated` as LATER.
+
+**What deferring does not cost, and what it does.** No field must be reserved.
+`dashbuf`'s node table already carries the angle and both anchor components,
+and it evolves append-only, so a composing transform arrives without a
+structural migration. No committed artifact locks in the present reading
+either: no `.dsb` in this repository holds a rotated node at all.
+
+The exposure is semantic rather than structural. The refusal lives in the Figma
+walk alone, and by P5 that binds one producer and not the format —
+`dashc_wasm::emit`, the arena's `Txn::set_prop` and `dashlang` each accept a
+rotated node with children today, and `dashscene-validator` passes the result
+with no diagnostic. Such a document draws its children straight now and would
+draw them turned once composition lands. No frozen-fixture guard detects that:
+the R7 guard freezes field values, never field meaning.
+
+**What reopens the question** is a captured Figma file containing a rotated
+frame. `corpus/figma-fixtures/` holds exactly one rotated node —
+`node-fx.json`'s `rotated-15deg` rectangle — and it is a leaf, so the corpus
+cannot measure what the refusal costs.
+
+Issue #875 records a separate defect in how the refusal reports itself: a
+refused node's subtree is dropped and only the refused node is named.
 
 ## Alternatives considered
 

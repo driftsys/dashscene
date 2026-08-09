@@ -11,11 +11,11 @@ project's convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports ten files
+## Why the WIP gate currently reports twelve files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-ten and exits non-zero. All ten are deliberate, accepted exceptions rather
-than ungardened debt, and they are recorded here so the gate's result is
+twelve and exits non-zero. All twelve are deliberate, accepted exceptions
+rather than ungardened debt, and they are recorded here so the gate's result is
 explained rather than merely tolerated.
 
 **The gate is deliberately not wired into CI, and this section is why.** Its
@@ -50,16 +50,31 @@ underneath it, so its first revision counted ten and had to be re-derived on
 the rebase. It reached a real ten later that same day, when
 `2026-08-09-svg-as-a-second-producer.md` was added, and that addition read this
 paragraph and updated the count in the same commit — which is what the rule at
-the end of this section asks for. Eleven followed when v0.18's second driver
-prompt landed, and **twelve when `integration/v0.19-android` merged `main`** and
-brought v0.19's Android prompt in beside the two already held. That is the first
-time **three** prompts are held at once, and the first time **two slices'**
+the end of this section asks for.
+
+**It then went stale on two additions in a row, and both were caught only at a
+merge.** The second v0.18 driver prompt took the tracked count to eleven later
+on 2026-08-09 and updated the paragraph below to read "nine of the eleven",
+leaving this heading saying ten. The `FINISH-771` prompt took it to twelve the
+same day and updated that paragraph again, to "nine of the twelve", leaving the
+heading saying ten a second time. Story #771's merge archived the `FINISH-771`
+prompt, re-derived the count, and set both to eleven. **The heading and the
+paragraph below it are two copies of one number**, and an addition that edits
+only the nearer copy leaves the gate's own explanation wrong — which is the
+same failure as the archiving one above, reached from the other direction.
+
+**Twelve, since `integration/v0.19-android` merged into `main`**, which brought
+v0.19's Android driver prompt in beside the two v0.18 ones. That is the first
+time **three** prompts are held at once and the first time **two slices'**
 prompts overlap — which the paragraph below now says rather than repeating that
-they never do. It is also the first time the count moved through a _merge_
-rather than through a commit that added a file. Both sides had updated this
-paragraph, each correctly for its own branch, and neither number survived the
-join.
-Re-derive the
+they never do.
+
+It is also the second time the count moved through a **merge** rather than
+through a commit that added a file, and both times the two branches had each
+updated this paragraph correctly for themselves and neither number survived the
+join. A count that only an addition can invalidate is one this ledger can hold;
+a count two branches can each move is not, which is the argument for
+re-deriving rather than editing. Re-derive the
 number from `git ls-files docs/wip/` when touching this section rather than
 trusting the prose.
 
@@ -83,19 +98,26 @@ Two are v0.18's: `2026-08-08-v018-DRIVER-PROMPT.md`, added the day v0.17 closed,
 and `2026-08-09-v018-DRIVER-PROMPT.md`, which supersedes it and carries the
 slice from issue #617 onward. The first is kept rather than replaced because its
 story #770 material is now as-built and its gate section records why the slice
-could start at all; the second is what a session should be handed. Both archive
-together when epic #769 closes.
+could start at all; the second is what a session should be handed for the slice
+as a whole. Both archive together when epic #769 closes. A third was held for one
+day — `2026-08-09-FINISH-771-DRIVER-PROMPT.md`, narrower than either, carrying
+only what remained of story #771 — and left with the pull request it carried.
 
-The third is v0.19's: `2026-08-09-v019-ANDROID-DRIVER-PROMPT.md`, added at the
-close of that slice's C ABI work to carry stories #841 and #842, and archived
-when epic #833 closes. The two slices' prompts overlap because v0.18 and v0.19
-run at the same time, on `main` and on `integration/v0.19-android` respectively;
-every earlier pair did not.
+The fourth, and the one this merge brought, is v0.19's:
+`2026-08-09-v019-ANDROID-DRIVER-PROMPT.md`, added at the close of that slice's
+C ABI work to carry stories #841 and #842. **Both of those have landed**, and it
+is still held rather than archived: its own status line says it archives at
+v0.19's close, and that slice is open — D3a (#885), split-screen (#874) and
+story #842's frame-rate number all wait on hardware. It archives when epic #833
+does.
+The two slices' prompts overlap because v0.18 and v0.19 ran at the same time, on
+`main` and on `integration/v0.19-android` respectively; every earlier pair did
+not.
 
 Driver prompts — the brief a session is handed to carry out a named
 piece of work — are transient by construction, spent the moment their work
 lands, and the convention is to archive them verbatim rather than garden them
-into records. Fifteen are in `docs/archive/`: fourteen `*-DRIVER-PROMPT.md`
+into records. Sixteen are in `docs/archive/`: fifteen `*-DRIVER-PROMPT.md`
 plus the one `*-SPIKE.md`, which is counted there because it was archived
 verbatim beside the prompt that carried out its design rather than gardened.
 
@@ -365,17 +387,17 @@ archive records what was actually asked for rather than a corrected version of
 it. What was actually true is in
 `docs/decisions/blur-blends-in-srgb-encoded-space.md`.
 
-| capture                                                | gardened when                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `2026-07-19-asset-pipeline-profiles-and-baking.md`     | partly gardened at the v0.11 close (epic #344) and again across v0.12 (epic #345, stories #432, #433, #434, #435, #436); the rest when the vector bake's end-state fork and animated content are built — its `status` line says which half is which                                                                                                                                                                                                                                                                                                                                 |
-| `2026-07-19-backdrop-blur-v011.md`                     | partly gardened at the v0.11 close (story #393): the profile-policy reversal, the schema `Effect` representation, and the boundary-B contract now live in `docs/decisions/backdrop-blur-is-core-vocabulary.md`, and gardened further at the v0.15 close (story #733) — the lean painter's row is built, at `docs/decisions/a-backdrop-blur-snapshots-the-target-it-draws-into.md`, and tiny-skia web is retired (story #588). The rest when Unity's row is built, or when a constrained painter needs the two remaining quality levers — dual-Kawase downsample and re-blur cadence |
-| `2026-07-28-photorealistic-3d-content.md`              | the remaining two questions are ruled on. Partly gardened 2026-08-05: the profile bands (#455), the ladder's fine end and the painter's working colour space are answered; the memory budget (#462) and whether ASTC remains the right family are open, both in v1. It records an input rather than a plan — photorealistic renders are target product content, and every number in the asset pipeline was chosen against content that is not representative of it                                                                                                                  |
-| `2026-07-27-indic-script-support.md`                   | Indic support is designed: the closure becomes text-driven and the unformed-cluster fallback is built. Its decided half — coverage is declared at build time, dynamic generation is a deferred painter capability — is already gardened into `docs/decisions/glyph-coverage-is-declared-at-build-time.md`                                                                                                                                                                                                                                                                           |
-| `2026-07-27-glyph-coverage-sets-and-text-residency.md` | glyph-atlas residency is designed: the unit of residency is chosen and the runtime-supplied-string case is answered. Its decided half — that only raster is block-compressed — is already gardened into `docs/decisions/compress-raster-only.md`                                                                                                                                                                                                                                                                                                                                    |
-| `2026-08-07-motion-in-the-document.md`                 | the vocabulary is **built**, not when it is decided. It holds three gaps — a rotation channel, motion rows in `dashbuf`, and loop tracks — and the rejected wasm-expression alternative. The rotation gap closed at story #770 on 2026-08-09 and its section says so; the other two remain. Empties when a document can carry an animation                                                                                                                                                                                                                                          |
-| `2026-08-07-animated-content-import.md`                | an animated-content importer is built. Extends `docs/technotes/runtime-content.md` §4-§6 rather than replacing it. Its ThorVG half may garden separately and later, or never — the standing decision already covers it and this file only records two notes against it                                                                                                                                                                                                                                                                                                              |
-| `2026-08-07-asset-sourcing-and-residency.md`           | side-loading is built. Blocked on the schema's own deliberately-absent flavor/locator bit, so it cannot empty before that field has a producer and a consumer — the same condition the `AssetEntry` comment already states for itself                                                                                                                                                                                                                                                                                                                                               |
-| `2026-08-09-svg-as-a-second-producer.md`               | gardened in two pieces — the profile half when the SVG importer is built, the reference-set half when the animation vocabulary closes. Three of its rulings are decision-shaped and marked **promote** in the file rather than gardened away: SMIL is not the animation reference set, SVG support is a profile rather than a version, and SVGO is rejected as a preprocessor                                                                                                                                                                                                       |
+| capture                                                | gardened when                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `2026-07-19-asset-pipeline-profiles-and-baking.md`     | partly gardened at the v0.11 close (epic #344) and again across v0.12 (epic #345, stories #432, #433, #434, #435, #436); the rest when the vector bake's end-state fork and animated content are built — its `status` line says which half is which                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `2026-07-19-backdrop-blur-v011.md`                     | partly gardened at the v0.11 close (story #393): the profile-policy reversal, the schema `Effect` representation, and the boundary-B contract now live in `docs/decisions/backdrop-blur-is-core-vocabulary.md`, and gardened further at the v0.15 close (story #733) — the lean painter's row is built, at `docs/decisions/a-backdrop-blur-snapshots-the-target-it-draws-into.md`, and tiny-skia web is retired (story #588). The rest when Unity's row is built, or when a constrained painter needs the two remaining quality levers — dual-Kawase downsample and re-blur cadence                                                                                                                         |
+| `2026-07-28-photorealistic-3d-content.md`              | the remaining two questions are ruled on. Partly gardened 2026-08-05: the profile bands (#455), the ladder's fine end and the painter's working colour space are answered; the memory budget (#462) and whether ASTC remains the right family are open, both in v1. It records an input rather than a plan — photorealistic renders are target product content, and every number in the asset pipeline was chosen against content that is not representative of it                                                                                                                                                                                                                                          |
+| `2026-07-27-indic-script-support.md`                   | Indic support is designed: the closure becomes text-driven and the unformed-cluster fallback is built. Its decided half — coverage is declared at build time, dynamic generation is a deferred painter capability — is already gardened into `docs/decisions/glyph-coverage-is-declared-at-build-time.md`                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `2026-07-27-glyph-coverage-sets-and-text-residency.md` | glyph-atlas residency is designed: the unit of residency is chosen and the runtime-supplied-string case is answered. Its decided half — that only raster is block-compressed — is already gardened into `docs/decisions/compress-raster-only.md`                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `2026-08-07-motion-in-the-document.md`                 | the vocabulary is **built**, not when it is decided. It holds three gaps — a rotation channel, motion rows in `dashbuf`, and loop tracks — and the rejected wasm-expression alternative. **All three closed on 2026-08-09** (stories #770, #771, #772) and each section says so, with the decisions gardened into `docs/decisions/rotation-is-paint-only-and-anchored-explicitly.md`, `docs/decisions/motion-is-document-data-keyed-on-the-destination.md` and `docs/decisions/a-loop-is-ambient-paint-anchored-at-load.md`. What remains is the rejected wasm-expression alternative and its counter-proposal, a standing input to the transform union rather than a gap; it empties when that is ruled on |
+| `2026-08-07-animated-content-import.md`                | an animated-content importer is built. Extends `docs/technotes/runtime-content.md` §4-§6 rather than replacing it. Its ThorVG half may garden separately and later, or never — the standing decision already covers it and this file only records two notes against it                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `2026-08-07-asset-sourcing-and-residency.md`           | side-loading is built. Blocked on the schema's own deliberately-absent flavor/locator bit, so it cannot empty before that field has a producer and a consumer — the same condition the `AssetEntry` comment already states for itself                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `2026-08-09-svg-as-a-second-producer.md`               | gardened in two pieces — the profile half when the SVG importer is built, the reference-set half when the animation vocabulary closes. Three of its rulings are decision-shaped and marked **promote** in the file rather than gardened away: SMIL is not the animation reference set, SVG support is a profile rather than a version, and SVGO is rejected as a preprocessor                                                                                                                                                                                                                                                                                                                               |
 
 Each row's entry is removed when its capture is gardened.
 

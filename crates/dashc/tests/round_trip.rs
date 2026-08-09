@@ -13,16 +13,23 @@
 //! staged by hand through the producer API — same rects, same paint pool,
 //! same pixels.
 
+mod common;
+
 // The lib target is `dashc_wasm`, not `dashc`: on wasm32 both the lib and the
 // bin compile to a same-named output file, which cargo flags as a collision
 // (see the crate manifest).
-use dashc_wasm::{Box2D, Document, Node, Paint, PaintEntry, compile, emit};
+use dashc_wasm::{
+    BindingChannel, Box2D, Document, Easing, LoopTrack, Node, Paint, PaintEntry, PropTransition,
+    TransitionSpec, VariantMember, VariantOverride, VariantSet, VariantTransition, VariantValue,
+    compile, emit,
+};
 use dashpaint::{
     Blur, BlurKind, Color, FillSpec, GlyphRunTable, Gradient, GradientKind, GradientStop,
     ImageAsset, ImageFill, ImageFormat, Mat23, Painter, ScaleMode, Shadow, ShadowKind, StopRange,
     Stroke, StrokeAlign, Vec2,
 };
 use dashscene_core::{Arena, Prop, load_document};
+use dashscene_engine::TaffySolver;
 use dashscene_skia::SkiaPainter;
 
 const RED: Color = Color {
@@ -1096,6 +1103,450 @@ fn an_unrotated_node_writes_no_rotation_fields() {
     );
 }
 
+/// The shelf the committed `goldens/dsb/v018-variant-shelf.dsb` fixture is
+/// compiled from (issue #617): a horizontal flex row of three chips and one
+/// variant set that collapses it.
+///
+/// **Authored, never imported.** `dashc`'s Figma path resolves an `INSTANCE`
+/// to its one active subtree at compile time, so a static REST export names
+/// one concrete state and has no switchable set to preserve — which is why
+/// all ten fixtures that preceded this one report zero variant sets.
+///
+/// The collapse is shaped so the switch produces rects **the document does
+/// not state**: hiding `middle` takes it out of the laid-out set, and `right`
+/// then slides left by gap + width although it carries no override at all.
+/// That is what a FLIP needs on both sides — before and after rects a solver
+/// produced — and it is what a set of authored `X` overrides would not give.
+fn variant_shelf() -> Document {
+    use dashc_wasm::{EdgeInsets, LayoutConstraints, LayoutContainer};
+
+    const GREEN: Color = Color {
+        r: 0.0,
+        g: 1.0,
+        b: 0.0,
+        a: 1.0,
+    };
+
+    let mut doc = Document::new();
+    let shelf = doc.push(Node {
+        name: Some("shelf".to_owned()),
+        parent: None,
+        box2d: Box2D {
+            x: 0.0,
+            y: 0.0,
+            width: 200.0,
+            height: 60.0,
+        },
+        container: Some(LayoutContainer {
+            mode: dashc_wasm::LayoutMode::Horizontal,
+            gap: 8.0,
+            padding: EdgeInsets {
+                left: 4.0,
+                top: 4.0,
+                right: 4.0,
+                bottom: 4.0,
+            },
+            main_align: dashc_wasm::MainAxisAlign::Start,
+            cross_align: dashc_wasm::CrossAxisAlign::Center,
+            cross_gap: None,
+            grid_rows: Vec::new(),
+            grid_columns: Vec::new(),
+        }),
+        ..Node::default()
+    });
+
+    let mut chip = |name: &str, color: Color| {
+        doc.push(Node {
+            name: Some(name.to_owned()),
+            parent: Some(shelf),
+            box2d: Box2D {
+                x: 0.0,
+                y: 0.0,
+                width: 40.0,
+                height: 40.0,
+            },
+            paint: Some(Paint {
+                entry: solid_entry(color),
+                ..Paint::default()
+            }),
+            constraints: Some(LayoutConstraints::default()),
+            ..Node::default()
+        })
+    };
+    let left = chip("left", RED);
+    let middle = chip("middle", BLUE);
+    let right = chip("right", GREEN);
+
+    doc.variant_sets.push(VariantSet {
+        members: vec![
+            VariantMember {
+                name: Some("full".to_owned()),
+                overrides: Vec::new(),
+                ..VariantMember::default()
+            },
+            VariantMember {
+                name: Some("collapsed".to_owned()),
+                overrides: vec![
+                    VariantOverride {
+                        node: middle,
+                        value: VariantValue::Visible(false),
+                    },
+                    VariantOverride {
+                        node: left,
+                        value: VariantValue::Width(64.0),
+                    },
+                ],
+                // The motion the epic's definition of done turns on: a
+                // one-second linear tween on the chip that carries no
+                // override, so the file states how the reflow travels and
+                // not only where it ends. Linear over one second makes every
+                // sample exact — t = 0.25 is 100 - 6 = 94 — so the test that
+                // reads it back compares without a tolerance.
+                transition: Some(VariantTransition {
+                    tracks: vec![PropTransition {
+                        node: right,
+                        channel: BindingChannel::X,
+                        spec: TransitionSpec::Tween {
+                            duration: 1.0,
+                            easing: Easing::Linear,
+                        },
+                    }],
+                    stagger: 0.0,
+                }),
+            },
+        ],
+        active_member: 0,
+    });
+    doc
+}
+
+#[test]
+fn the_variant_shelf_emits_its_golden_dsb() {
+    // Issue #617's deliverable: a committed `.dsb` that carries a variant
+    // table, so a loaded document has something to switch. Every fixture
+    // before this one is Figma-compiled and reports zero variant sets, which
+    // is why loading one drives `attach_live`, seeds a single commit, and
+    // then has nothing left to drive.
+    let bytes = compile(&variant_shelf()).expect("the shelf validates");
+    common::assert_dsb_golden(&bytes, "v018-variant-shelf.dsb");
+}
+
+#[test]
+fn the_committed_shelf_fixture_carries_a_switchable_variant_table() {
+    // Read the committed bytes rather than recompiling them: what #617
+    // measured is a property of the *file* on disk, and a test that compiles
+    // its own copy would still pass if the file were never written.
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../goldens/dsb/v018-variant-shelf.dsb");
+    let bytes = std::fs::read(&path).expect("the committed fixture is readable");
+    let document =
+        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
+            .expect("valid buffer");
+
+    let sets = document
+        .variant_sets()
+        .expect("the committed fixture carries a variant table");
+    assert_eq!(sets.len(), 1);
+    assert_eq!(
+        sets.get(0).members().expect("members present").len(),
+        2,
+        "two members, so there is something for set_variant to select between",
+    );
+}
+
+#[test]
+fn the_shelfs_collapsed_member_states_the_intent_a_solver_reflows_from() {
+    // What this path can assert, and no more: `load_document` resolves the
+    // active member's overrides into the committed tables, and nothing here
+    // solves. Taffy is `dashscene-engine`'s and `dashc` does not depend on
+    // it, so every rect below is the *authored* box with the overrides
+    // applied — the intent a solver is later handed, not a layout.
+    //
+    // The reflow that intent produces — `right` sliding left although it
+    // carries no override — is asserted where a solver exists, over these
+    // very bytes: `goldens/tooling/tests/loaded_variant_flip.rs`.
+    let full = load(&variant_shelf());
+    let mut collapsed_doc = variant_shelf();
+    collapsed_doc.variant_sets[0].active_member = 1;
+    let collapsed = load(&collapsed_doc);
+
+    // DFS order is shelf, left, middle, right.
+    assert_eq!(
+        full.committed().rects()[1].w,
+        40.0,
+        "the full member leaves `left` at its authored width",
+    );
+    assert_eq!(
+        collapsed.committed().rects()[1].w,
+        64.0,
+        "the collapsed member widens it",
+    );
+
+    let full_root = full.roots()[0];
+    let collapsed_root = collapsed.roots()[0];
+    assert!(
+        full.layout(full.children(full_root)[1]).visible,
+        "the full member shows `middle`",
+    );
+    assert!(
+        !collapsed
+            .layout(collapsed.children(collapsed_root)[1])
+            .visible,
+        "the collapsed member takes it out of the laid-out set, which is what \
+         makes the siblings reflow once a solver runs",
+    );
+}
+
+/// The document a variant set compiles from (story #771 part 1 — the
+/// emitter; #617's fixture is part 2, above): a passthrough root and three
+/// children, plus one set whose second
+/// member overrides **every arm** of the schema's `VariantPropValue` union
+/// across them.
+///
+/// One document rather than seven, because what is under test is that the
+/// emitter reaches every arm: an arm no override names is emitted nowhere,
+/// and nothing fails. Three children rather than one, because the arms
+/// partition by what they touch — `geometry` takes the four rect arms,
+/// `painted` the two paint-side ones, and `toggled` the visibility arm that
+/// leaves the laid-out set.
+///
+/// The root is a passthrough container (`container: None`), so the children
+/// place at their authored offsets and an `X`/`Y` override is visible in the
+/// committed rect rather than absorbed by a solver.
+fn variant_document(active_member: u32) -> Document {
+    let mut doc = Document::new();
+    let root = doc.push(Node {
+        name: Some("root".to_owned()),
+        parent: None,
+        box2d: Box2D {
+            x: 0.0,
+            y: 0.0,
+            width: 40.0,
+            height: 40.0,
+        },
+        ..Node::default()
+    });
+    let geometry = doc.push(Node {
+        name: Some("geometry".to_owned()),
+        parent: Some(root),
+        box2d: Box2D {
+            x: 1.0,
+            y: 2.0,
+            width: 10.0,
+            height: 10.0,
+        },
+        paint: Some(Paint {
+            entry: solid_entry(RED),
+            ..Paint::default()
+        }),
+        ..Node::default()
+    });
+    let painted = doc.push(Node {
+        name: Some("painted".to_owned()),
+        parent: Some(root),
+        box2d: Box2D {
+            x: 12.0,
+            y: 2.0,
+            width: 10.0,
+            height: 10.0,
+        },
+        paint: Some(Paint {
+            entry: solid_entry(RED),
+            ..Paint::default()
+        }),
+        ..Node::default()
+    });
+    let toggled = doc.push(Node {
+        name: Some("toggled".to_owned()),
+        parent: Some(root),
+        box2d: Box2D {
+            x: 24.0,
+            y: 2.0,
+            width: 10.0,
+            height: 10.0,
+        },
+        paint: Some(Paint {
+            entry: solid_entry(BLUE),
+            ..Paint::default()
+        }),
+        ..Node::default()
+    });
+    doc.variant_sets.push(VariantSet {
+        members: vec![
+            VariantMember {
+                name: Some("base".to_owned()),
+                overrides: Vec::new(),
+                ..VariantMember::default()
+            },
+            VariantMember {
+                name: Some("switched".to_owned()),
+                overrides: vec![
+                    VariantOverride {
+                        node: geometry,
+                        value: VariantValue::X(5.0),
+                    },
+                    VariantOverride {
+                        node: geometry,
+                        value: VariantValue::Y(6.0),
+                    },
+                    VariantOverride {
+                        node: geometry,
+                        value: VariantValue::Width(21.0),
+                    },
+                    VariantOverride {
+                        node: geometry,
+                        value: VariantValue::Height(22.0),
+                    },
+                    VariantOverride {
+                        node: painted,
+                        value: VariantValue::Fill(BLUE),
+                    },
+                    VariantOverride {
+                        node: painted,
+                        value: VariantValue::Rotation {
+                            angle: 0.75,
+                            anchor: (12.0, 3.0),
+                        },
+                    },
+                    VariantOverride {
+                        node: toggled,
+                        value: VariantValue::Visible(false),
+                    },
+                ],
+                ..VariantMember::default()
+            },
+        ],
+        active_member,
+    });
+    doc
+}
+
+/// The solid colour the committed paint pool resolves for one rect.
+fn solid_at(arena: &Arena, rect: usize) -> Color {
+    let scene = arena.committed();
+    let entry = scene.paints().resolve(scene.rects()[rect].paint);
+    match scene.paints().fill(entry.fill) {
+        dashpaint::Fill::Solid(color) => color,
+        other => panic!("rect {rect} resolves {other:?}, not a solid fill"),
+    }
+}
+
+#[test]
+fn a_variant_set_survives_the_round_trip_into_the_scene_it_switches() {
+    // Story #771 part 1, and issue #617's whole subject: before this the
+    // emitter had no variant path at all, so a compiled `.dsb` could not
+    // carry a switchable state and every committed golden reported zero
+    // variant sets. Both members are asserted through one emitter, so the
+    // test fails if the overrides are written but never applied *and* if
+    // they are applied but never written.
+    let base = load(&variant_document(0));
+    let switched = load(&variant_document(1));
+
+    let base_geometry = base.committed().rects()[1];
+    assert_eq!(
+        (
+            base_geometry.x,
+            base_geometry.y,
+            base_geometry.w,
+            base_geometry.h
+        ),
+        (1.0, 2.0, 10.0, 10.0),
+        "member 0 overrides nothing, so the authored box stands",
+    );
+
+    let switched_geometry = switched.committed().rects()[1];
+    assert_eq!(
+        (
+            switched_geometry.x,
+            switched_geometry.y,
+            switched_geometry.w,
+            switched_geometry.h
+        ),
+        (5.0, 6.0, 21.0, 22.0),
+        "all four rect arms round-tripped and resolved",
+    );
+
+    assert_eq!(solid_at(&base, 2), RED, "the base fill");
+    assert_eq!(solid_at(&switched, 2), BLUE, "the VariantFill arm");
+
+    assert_eq!(
+        base.committed().rects()[2].rotation,
+        0.0,
+        "the base member leaves the node upright",
+    );
+    let painted = switched.committed().rects()[2];
+    assert_eq!(painted.rotation, 0.75, "the VariantRotation angle");
+    assert_eq!(
+        (painted.rotation_anchor.x, painted.rotation_anchor.y),
+        (12.0, 3.0),
+        "and its anchor, which travels with the angle rather than beside it",
+    );
+
+    let base_root = base.roots()[0];
+    let switched_root = switched.roots()[0];
+    assert!(
+        base.layout(base.children(base_root)[2]).visible,
+        "the base member shows the toggled child",
+    );
+    assert!(
+        !switched.layout(switched.children(switched_root)[2]).visible,
+        "the VariantVisible arm hid it — the topology change a FLIP needs",
+    );
+}
+
+#[test]
+fn a_variant_less_document_writes_no_variant_table() {
+    // The R7 append check for this emitter: a document that declares no
+    // variant set writes the schema's absent vector, not an empty one, so
+    // every `.dsb` compiled before this emitter existed encodes
+    // byte-identically.
+    let mut plain = variant_document(0);
+    plain.variant_sets.clear();
+    let bytes = compile(&plain).expect("validates");
+    let document =
+        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
+            .expect("valid buffer");
+
+    assert!(
+        document.variant_sets().is_none(),
+        "an empty variant list must write no field at all",
+    );
+
+    // And the same document *with* the set must differ, or the assertion
+    // above would also pass on an emitter that never writes the table.
+    let carried = compile(&variant_document(0)).expect("validates");
+    assert_ne!(
+        bytes, carried,
+        "a document carrying a variant set must encode differently from one without",
+    );
+}
+
+#[test]
+fn a_variant_sets_member_order_is_the_authored_order() {
+    // Selection is a flat index into `members`
+    // (`docs/decisions/variant-set-flat-index.md`), so the emitter reordering
+    // or deduplicating members would silently repoint `active_member` and
+    // every `set_variant` a runtime makes. Read the names back, in order.
+    let bytes = compile(&variant_document(1)).expect("validates");
+    let document =
+        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
+            .expect("valid buffer");
+    let set = document.variant_sets().expect("the set is present").get(0);
+    let names: Vec<&str> = set
+        .members()
+        .expect("members present")
+        .iter()
+        .map(|member| member.name().expect("each member is named"))
+        .collect();
+
+    assert_eq!(names, vec!["base", "switched"]);
+    assert_eq!(
+        set.active_member(),
+        1,
+        "the authored active member travels with the set",
+    );
+}
+
 #[test]
 fn an_anchor_is_written_even_when_the_angle_is_zero() {
     // The anchor is the node's stated turning point, not a function of the
@@ -1110,5 +1561,105 @@ fn an_anchor_is_written_even_when_the_angle_is_zero() {
         (rect.rotation_anchor.x, rect.rotation_anchor.y),
         (10.0, 4.0),
         "the anchor survives a zero angle",
+    );
+}
+
+/// A loop track survives the round trip and drives the loaded scene (story
+/// #772).
+///
+/// The whole path in one test: authored `Document` → emitter → `.dsb` bytes
+/// → loader → arena → `attach_live` → the committed rect. Before this the
+/// emitter had no loop path at all, so an ambient animation reached a
+/// document by no route.
+#[test]
+fn a_loop_track_survives_the_round_trip_and_drives_the_loaded_scene() {
+    let mut doc = Document::new();
+    let root = doc.push(Node {
+        name: Some("spinner".to_owned()),
+        parent: None,
+        box2d: Box2D {
+            x: 0.0,
+            y: 0.0,
+            width: 40.0,
+            height: 40.0,
+        },
+        ..Node::default()
+    });
+    doc.loops.push(LoopTrack {
+        node: root,
+        channel: BindingChannel::Rotation,
+        from: 0.0,
+        to: 8.0,
+        // Powers of two throughout, so the samples below are exact.
+        spec: TransitionSpec::Tween {
+            duration: 0.5,
+            easing: Easing::Linear,
+        },
+        phase_offset: 0.25,
+    });
+
+    let bytes = compile(&doc).expect("validates");
+    let document =
+        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
+            .expect("valid buffer");
+
+    // The row is in the file, with every field it was authored with.
+    let loops = document.loops().expect("the document carries a loop table");
+    assert_eq!(loops.len(), 1);
+    let row = loops.get(0);
+    assert_eq!(row.node(), root);
+    assert_eq!(row.channel(), dashbuf::BindingChannel::Rotation);
+    assert_eq!((row.from(), row.to()), (0.0, 8.0));
+    assert_eq!(row.phase_offset(), 0.25);
+
+    // And it drives the loaded scene through the ordinary frame loop. The
+    // offset puts it half a cycle in before the first tick.
+    let mut arena = Arena::new();
+    load_document(&document, &[], &mut arena);
+    let mut live = dashlang::attach_live(&mut arena, Box::new(TaffySolver::new()));
+
+    let angle = |arena: &Arena| arena.committed().rects()[0].rotation;
+    live.tick(0.0625, &mut arena);
+    assert_eq!(angle(&arena), 5.0, "a quarter cycle in, plus one eighth");
+    live.tick(0.0625, &mut arena);
+    assert_eq!(angle(&arena), 6.0);
+    live.tick(0.0625, &mut arena);
+    live.tick(0.0625, &mut arena);
+    assert_eq!(angle(&arena), 0.0, "the cycle wrapped rather than settling");
+}
+
+/// The R7 append check for the loop table: a document declaring no loop
+/// writes the schema's absent vector, not an empty one, so every `.dsb`
+/// compiled before this emitter existed encodes byte-identically.
+#[test]
+fn a_loopless_document_writes_no_loop_table() {
+    let plain = variant_document(0);
+    let bytes = compile(&plain).expect("validates");
+    let document =
+        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
+            .expect("valid buffer");
+    assert!(
+        document.loops().is_none(),
+        "an empty loop list must write no field at all",
+    );
+
+    // And the same document *with* a loop must differ, or the assertion
+    // above would also pass on an emitter that never writes the table.
+    let mut carried = variant_document(0);
+    carried.loops.push(LoopTrack {
+        node: 0,
+        channel: BindingChannel::Opacity,
+        from: 0.25,
+        to: 1.0,
+        spec: TransitionSpec::Tween {
+            duration: 1.0,
+            easing: Easing::Linear,
+        },
+        phase_offset: 0.0,
+    });
+    let carried = compile(&carried).expect("validates");
+    assert_ne!(
+        bytes, carried,
+        "a document carrying a loop must encode differently from one without",
     );
 }

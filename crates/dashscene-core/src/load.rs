@@ -59,14 +59,66 @@ use dashbuf::{
 use dashpaint::Region;
 
 use crate::arena::{
-    Arena, AxisSizing, CrossAxisAlign, GridTrack, LayoutMode, MainAxisAlign, NodeId, Prop,
-    TextAlign, TextAlignV, TextStyle, VariantMember, VariantValue,
+    Arena, AxisSizing, CrossAxisAlign, Easing, GridTrack, Keyframe, LayoutMode, LoopTrack,
+    MainAxisAlign, NodeId, Prop, PropTransition, TextAlign, TextAlignV, TextStyle, TransitionSpec,
+    VariantMember, VariantTransition, VariantValue,
 };
 use crate::bindings::{Channel, ScalarTransform, SignalId};
 use crate::committed::{
     Blur, BlurKind, Color, FillSpec, Gradient, GradientKind, GradientStop, ImageAsset, ImageFormat,
     Mat23, ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, Vec2, VectorField,
 };
+
+/// One row's curve (story #771), the same shape as [`variant_value`]
+/// above: every arm the schema names has a case, and an unknown one is
+/// unreachable because the load gate refused the document first (P4).
+///
+/// A macro rather than a function, because two schema tables carry a
+/// `TransitionSpec` union — `PropTransition` and `LoopTrack` (story
+/// #772) — and `flatc` generates the `spec_type` / `spec_as_*` accessors
+/// as inherent methods on each table rather than through a trait, so
+/// there is no bound a function could take. One copy of the arm-for-arm
+/// conversion is the point: a fourth union arm must not be able to land
+/// in one reader and not the other.
+macro_rules! transition_spec {
+    ($row:expr) => {{
+        let row = $row;
+        match row.spec_type() {
+            dashbuf::TransitionSpec::TweenSpec => {
+                let t = row.spec_as_tween_spec().expect("TweenSpec present");
+                TransitionSpec::Tween {
+                    duration: t.duration(),
+                    easing: easing_of(t.easing()),
+                }
+            }
+            dashbuf::TransitionSpec::SpringSpec => {
+                let s = row.spec_as_spring_spec().expect("SpringSpec present");
+                TransitionSpec::Spring {
+                    stiffness: s.stiffness(),
+                    damping_ratio: s.damping_ratio(),
+                }
+            }
+            dashbuf::TransitionSpec::KeyframesSpec => {
+                let k = row.spec_as_keyframes_spec().expect("KeyframesSpec present");
+                TransitionSpec::Keyframes {
+                    duration: k.duration(),
+                    frames: k
+                        .frames()
+                        .unwrap_or_default()
+                        .iter()
+                        .map(|frame| Keyframe {
+                            t: frame.t(),
+                            value: frame.value(),
+                        })
+                        .collect(),
+                }
+            }
+            other => {
+                unreachable!("unknown TransitionSpec {other:?}: rejected by the load gate (P4)")
+            }
+        }
+    }};
+}
 
 /// Replays a validated `.dsb` document into `arena` and commits it,
 /// returning the commit's generation.
@@ -649,6 +701,35 @@ fn load_inner(
             })
             .collect();
         let id = txn.add_variant_set(members);
+
+        // The v0.18 motion rows (story #771). A member carrying no
+        // transition stages none, so a pre-v0.18 document replays exactly as
+        // it did — the same absence-is-not-intent rule the node props above
+        // follow. Indices resolve through this load's own `ids` mapping,
+        // never raw: the arena may already hold nodes from an earlier load.
+        for (index, member) in set.members().unwrap_or_default().iter().enumerate() {
+            let Some(transition) = member.transition() else {
+                continue;
+            };
+            txn.set_variant_transition(
+                id,
+                index,
+                VariantTransition {
+                    tracks: transition
+                        .tracks()
+                        .unwrap_or_default()
+                        .iter()
+                        .map(|track| PropTransition {
+                            node: ids[track.node() as usize],
+                            channel: channel_of(track.channel()),
+                            spec: transition_spec!(&track),
+                        })
+                        .collect(),
+                    stagger: transition.stagger(),
+                },
+            );
+        }
+
         let active = set.active_member() as usize;
         if active != 0 {
             txn.set_variant(id, active);
@@ -673,6 +754,21 @@ fn load_inner(
             signal_ids[row.signal() as usize],
             transform_of(&row),
         );
+    }
+
+    // Loop tracks (story #772), staged in declaration order like the
+    // binding rows above and through the same `ids` mapping. A runtime
+    // starts one scheduler track per row when it attaches; nothing here
+    // runs them, the same division `bindings` already follows (P3).
+    for row in doc.loops().unwrap_or_default().iter() {
+        txn.add_loop_track(LoopTrack {
+            node: ids[row.node() as usize],
+            channel: channel_of(row.channel()),
+            from: row.from(),
+            to: row.to(),
+            spec: transition_spec!(&row),
+            phase_offset: row.phase_offset(),
+        });
     }
 
     txn.commit()
@@ -762,6 +858,17 @@ fn variant_value(o: &dashbuf::VariantOverride<'_>) -> VariantValue {
             }
         }
         other => unreachable!("unknown VariantPropValue {other:?}: rejected by the load gate (P4)"),
+    }
+}
+
+/// One easing curve, the schema enum to the arena's mirror of it.
+fn easing_of(easing: dashbuf::Easing) -> Easing {
+    match easing {
+        dashbuf::Easing::Linear => Easing::Linear,
+        dashbuf::Easing::EaseIn => Easing::EaseIn,
+        dashbuf::Easing::EaseOut => Easing::EaseOut,
+        dashbuf::Easing::EaseInOut => Easing::EaseInOut,
+        other => unreachable!("unknown Easing {other:?}: rejected by the load gate (P4)"),
     }
 }
 
