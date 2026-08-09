@@ -242,6 +242,26 @@ impl Painter for GpuPainter {
         self.samples.contains(format)
     }
 
+    /// The lean painter does not rotate yet — story #832.
+    ///
+    /// This repeats the trait's default rather than relying on it, because
+    /// the two say different things. Inheriting the default would mean "no
+    /// one has considered rotation here"; writing it means the gap is
+    /// declared, which is what
+    /// `docs/decisions/rotation-is-paint-only-and-anchored-explicitly.md`
+    /// requires of a painter that lags:
+    ///
+    /// > A painter that accepted a rotation and drew the node unrotated would
+    /// > be a silent drop, which P4 forbids.
+    ///
+    /// The shaders contain no trigonometry at all — no `cos`, `sin` or
+    /// `mat2x2` in `sdf.wgsl` or `paint.wgsl` — so rotation is a real change
+    /// to the instanced-quad pipeline rather than a wrapper, and it is its
+    /// own story. Story #832 flips this to `true`.
+    fn rotates(&self) -> bool {
+        false
+    }
+
     /// Packs the whole of boundary B into [`instances`](Self::instances) and
     /// submits none of it.
     ///

@@ -107,6 +107,8 @@ fn rect(
         paint,
         clip,
         opacity,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     }
 }
 

@@ -1153,6 +1153,14 @@ fn channel_effect(channel: dashbuf::BindingChannel) -> Option<ChannelEffect> {
         Channel::FillR | Channel::FillG | Channel::FillB | Channel::FillA | Channel::Opacity => {
             Some(ChannelEffect::PaintOnly)
         }
+        // Rotation is paint-only beside `Opacity`: the solver never sees it
+        // and the node's own box is unchanged, so a rotation write reflows
+        // nothing
+        // (`docs/decisions/rotation-is-paint-only-and-anchored-explicitly.md`).
+        // The anchor components are the same write on two more scalars.
+        Channel::Rotation | Channel::RotationAnchorX | Channel::RotationAnchorY => {
+            Some(ChannelEffect::PaintOnly)
+        }
         _ => None,
     }
 }
@@ -1270,6 +1278,13 @@ fn channel_text_scale(channel: dashbuf::BindingChannel) -> Option<f32> {
         Channel::FillR | Channel::FillG | Channel::FillB | Channel::FillA | Channel::Opacity => {
             Some(NO_TEXT_SCALING)
         }
+        // A rotation turns the box a paragraph is already shaped into. It
+        // reaches no size: the typesetter shaped at `TextStyle.size` before
+        // the painter turned anything, so the glyphs are the same glyphs at
+        // the same size, drawn along a rotated baseline.
+        Channel::Rotation | Channel::RotationAnchorX | Channel::RotationAnchorY => {
+            Some(NO_TEXT_SCALING)
+        }
         _ => None,
     }
 }
@@ -1296,7 +1311,11 @@ fn variant_arm_text_scale(arm: dashbuf::VariantPropValue) -> Option<f32> {
         | Arm::VariantWidth
         | Arm::VariantHeight
         | Arm::VariantFill
-        | Arm::VariantVisible => Some(NO_TEXT_SCALING),
+        | Arm::VariantVisible
+        // A rotation override turns the box a run is already shaped into,
+        // so it reaches no size either: the typesetter shaped before the
+        // painter turned anything.
+        | Arm::VariantRotation => Some(NO_TEXT_SCALING),
         _ => None,
     }
 }

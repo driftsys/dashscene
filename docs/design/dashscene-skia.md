@@ -34,8 +34,11 @@ All in `crates/dashscene-skia/src/lib.rs`:
     }
 
     impl Painter for SkiaPainter {
+        fn rotates(&self) -> bool;   // true — story #770
         fn paint(&mut self, rects: &[RectEntry], paints: &PaintTable,
-                 images: &ImageTable, clips: &ClipTable);
+                 images: &ImageTable, clips: &ClipTable,
+                 groups: &[GroupComposite], glyphs: &GlyphRunTable,
+                 dirty: Option<&[u32]>);
     }
 
 - `new(width, height)` allocates a CPU raster surface (N32

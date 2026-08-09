@@ -604,6 +604,25 @@ table Node {
   // rect-table index but takes no space and draws nothing. A hidden node
   // is routine in real Figma files (debt #143).
   visible: bool = true;
+  // The node's rotation, in radians, about `rotation_anchor`. Paint-only:
+  // the solver never sees it and the node's own box is unchanged
+  // (docs/decisions/rotation-is-paint-only-and-anchored-explicitly.md).
+  // Zero — the default, which omits the field — is unrotated.
+  //
+  // Radians because that is this schema's unit for an angle and Figma's
+  // wire unit. Figma's REST `rotation` is radians despite what
+  // crates/dashc/src/figma/rest.rs once claimed; SVG's `rotate()` is
+  // degrees and the SVG producer converts.
+  rotation: float32 = 0.0;
+  // The point the rotation turns about, in the node's own coordinate
+  // space — (0, 0) is the node's top-left, which is the canonical value
+  // and what Figma's `relativeTransform` does. SVG's `rotate(a cx cy)`
+  // resolves into this frame as (cx - ex, cy - ey), and its bare
+  // `rotate(a)` as (-ex, -ey), both being rotations about the user-space
+  // origin rather than about a centre. A designer's "about the centre" is
+  // (w/2, h/2), stated rather than defaulted.
+  rotation_anchor_x: float32 = 0.0;
+  rotation_anchor_y: float32 = 0.0;
 }
 
 // v0.4 variant table (docs/decisions/variant-set-flat-index.md,
@@ -628,6 +647,16 @@ table VariantFill { color: Color (required); }
 // set_prop (story #283).
 table VariantVisible { value: bool; }
 
+// A variant's rotation override (story #770). All three components move
+// together: an override that changed the angle while leaving a stale
+// anchor behind would rotate the node about the wrong point, so the
+// override carries the whole channel rather than one third of it.
+table VariantRotation {
+  angle: float32;
+  anchor_x: float32;
+  anchor_y: float32;
+}
+
 union VariantPropValue {
   VariantX,
   VariantY,
@@ -636,6 +665,7 @@ union VariantPropValue {
   VariantFill,
   // Appended at the tail (R7): existing arms keep their discriminants.
   VariantVisible,
+  VariantRotation,
 }
 
 // One overridden prop on one node, active when the owning member is
@@ -699,6 +729,19 @@ enum BindingChannel : uint8 {
   FillA = 8,
   // Node/group opacity (Prop::Opacity), paint-only (story #44, debt #253).
   Opacity = 9,
+  // The node's rotation angle in radians, and the two components of the
+  // point it turns about, in the node's own space (story #770,
+  // docs/decisions/rotation-is-paint-only-and-anchored-explicitly.md).
+  // Paint-only, beside Opacity above.
+  //
+  // All three bind rather than the angle alone: SVG's
+  // `<animateTransform type="rotate">` carries "a cx cy" in its `values`
+  // list and animates every one of them, so an angle-only channel set
+  // would be incomplete against one of the two routes this vocabulary
+  // exists for.
+  Rotation = 10,
+  RotationAnchorX = 11,
+  RotationAnchorY = 12,
 }
 
 // The declarative scalar transforms (§23 D8). A transform is data by

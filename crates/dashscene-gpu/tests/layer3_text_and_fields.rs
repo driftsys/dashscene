@@ -33,7 +33,7 @@
 use dashpaint::{
     Atlas, AtlasGlyph, AtlasIndex, ClipIndex, ClipTable, Color, EntryParts, FillSpec, GlyphQuad,
     GlyphRange, GlyphRun, GlyphRunTable, ImageAsset, ImageFill, ImageFormat, ImageTable, Mat23,
-    PaintEntry, PaintTable, Painter, RectEntry, ScaleMode, VectorField,
+    PaintEntry, PaintTable, Painter, RectEntry, ScaleMode, Vec2, VectorField,
 };
 use dashscene_gpu::{GpuPainter, Renderer};
 
@@ -153,6 +153,8 @@ fn draw_runs(runs: &[(GlyphRun, Vec<GlyphQuad>)]) -> (Vec<u8>, usize) {
         paint,
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     }];
 
     let mut glyphs = GlyphRunTable::new();
@@ -421,6 +423,8 @@ fn draw_masked_node() -> Vec<u8> {
         paint,
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     }];
     let clips = ClipTable::new();
     let glyphs = GlyphRunTable::new();
@@ -585,6 +589,8 @@ fn a_glyph_atlas_and_an_image_row_of_the_same_shape_do_not_collide() {
         paint,
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     }];
 
     let mut glyphs = GlyphRunTable::new();
@@ -693,6 +699,8 @@ fn draw_masked_gradient_node() -> Vec<u8> {
         paint,
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     }];
     let clips = ClipTable::new();
     let glyphs = GlyphRunTable::new();

@@ -22,7 +22,7 @@ pub mod stress;
 
 use dashpaint::{
     Atlas, AtlasGlyph, ClipIndex, ClipTable, Color, GlyphRange, GlyphRun, GlyphRunTable,
-    ImageAsset, ImageFormat, ImageTable, PaintTable, Painter, RectEntry,
+    ImageAsset, ImageFormat, ImageTable, PaintTable, Painter, RectEntry, Vec2,
 };
 use dashscene_core::{Arena, NodeId, TextAlign, TextAlignV, TextStyle};
 use dashscene_skia::SkiaPainter;
@@ -96,6 +96,8 @@ pub fn checker_asset(dark: Color) -> ImageAsset {
                 paint: if (x + y) % 2 == 0 { dark } else { light },
                 clip: ClipIndex::UNCLIPPED,
                 opacity: 1.0,
+                rotation: 0.0,
+                rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
             });
         }
     }

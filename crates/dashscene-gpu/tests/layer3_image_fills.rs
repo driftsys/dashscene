@@ -19,7 +19,7 @@
 
 use dashpaint::{
     ClipIndex, ClipTable, FillSpec, GlyphRunTable, ImageAsset, ImageFill, ImageFormat, ImageTable,
-    Mat23, PaintEntry, PaintTable, Painter, RectEntry, ScaleMode,
+    Mat23, PaintEntry, PaintTable, Painter, RectEntry, ScaleMode, Vec2,
 };
 use dashscene_gpu::{GpuPainter, Renderer};
 
@@ -90,6 +90,8 @@ fn draw_fill(asset: ImageAsset, fill: ImageFill, x: f32, y: f32, w: f32, h: f32)
         paint,
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     }];
     let mut painter = GpuPainter::new();
     painter.paint(
@@ -230,6 +232,8 @@ fn two_payloads_in_one_atlas_each_draw_their_own_texels() {
             paint: left,
             clip: ClipIndex::UNCLIPPED,
             opacity: 1.0,
+            rotation: 0.0,
+            rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
         },
         RectEntry {
             x: 32.0,
@@ -239,6 +243,8 @@ fn two_payloads_in_one_atlas_each_draw_their_own_texels() {
             paint: right,
             clip: ClipIndex::UNCLIPPED,
             opacity: 1.0,
+            rotation: 0.0,
+            rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
         },
     ];
     let mut painter = GpuPainter::new();
@@ -461,6 +467,8 @@ fn a_png_payload_is_decoded_and_drawn() {
         paint,
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     }];
     let mut painter = GpuPainter::new();
     painter.paint(
@@ -556,6 +564,8 @@ fn a_table_row_the_frame_does_not_draw_is_not_made_resident() {
         paint,
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     }];
     let mut painter = GpuPainter::new();
     painter.paint(
@@ -689,6 +699,8 @@ fn a_replaced_document_does_not_draw_the_previous_documents_image() {
             paint,
             clip: ClipIndex::UNCLIPPED,
             opacity: 1.0,
+            rotation: 0.0,
+            rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
         }];
         let mut painter = GpuPainter::new();
         painter.paint(
@@ -774,6 +786,8 @@ fn a_resident_png_is_decoded_once_and_not_once_a_frame() {
         paint,
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     }];
     let mut painter = GpuPainter::new();
     painter.paint(
@@ -834,6 +848,8 @@ fn the_allocation_count_includes_the_atlas_residency_created() {
             paint,
             clip: ClipIndex::UNCLIPPED,
             opacity: 1.0,
+            rotation: 0.0,
+            rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
         }]
     };
 
@@ -976,6 +992,8 @@ fn an_image_with_no_bytes_draws_nothing() {
             paint,
             clip: ClipIndex::UNCLIPPED,
             opacity: 1.0,
+            rotation: 0.0,
+            rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
         });
     }
     let clips = ClipTable::new();

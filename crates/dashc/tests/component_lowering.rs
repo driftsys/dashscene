@@ -219,7 +219,14 @@ fn a_component_set_nested_in_a_paint_root_is_skipped() {
 fn an_out_of_vocabulary_instance_override_is_a_named_diagnostic() {
     // An instance override the vocabulary cannot carry is baked into the
     // instance's subtree by Figma, so it goes through the ordinary walk and is
-    // named there (P4) — here a per-instance rotation override on a baked child.
+    // named there (P4) — here a per-instance rotation override on a baked child
+    // that has children of its own.
+    //
+    // Story #770 put rotation *in* the vocabulary, so the override this test
+    // needs is one still outside it. A rotated leaf now lowers; a rotated node
+    // with children does not, because a rotation in this document is per-node
+    // paint intent and does not compose onto a descendant, so `row-1` would
+    // draw turned with its contents left straight.
     let (doc, diagnostics) = lower_json(document_with(serde_json::json!([{
         "id": "1:12", "name": "chip-instance", "type": "INSTANCE", "componentId": "1:2",
         "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 85.0 },
@@ -227,13 +234,21 @@ fn an_out_of_vocabulary_instance_override_is_a_named_diagnostic() {
         "children": [{
             "id": "I1:12;1:4", "name": "row-1", "type": "FRAME",
             "rotation": 0.25,
+            "size": { "x": 80.0, "y": 28.0 },
             "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 80.0, "height": 28.0 },
+            "children": [{
+                "id": "I1:12;1:5", "name": "row-1-label", "type": "RECTANGLE",
+                "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 40.0, "height": 12.0 },
+            }],
         }],
     }])));
 
     let found = unsupported(&diagnostics);
     assert_eq!(found.len(), 1, "{found:?}");
-    assert_eq!(found[0].1, "node rotation");
+    assert_eq!(
+        found[0].1,
+        "a rotated node with children (a rotation does not compose down the tree)"
+    );
     assert!(found[0].0.contains("row-1"), "{}", found[0].0);
     assert!(
         !doc.nodes.iter().any(|n| n.name.as_deref() == Some("row-1")),

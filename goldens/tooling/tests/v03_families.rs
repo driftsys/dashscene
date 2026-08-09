@@ -46,6 +46,8 @@ fn full_box(paint: dashpaint::PaintIndex, w: f32, h: f32) -> RectEntry {
         paint,
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     }
 }
 
@@ -137,6 +139,8 @@ fn the_gradient_family_matches_its_golden() {
         paint: p,
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     };
     let rects = [
         cell(0.0, 0.0, linear),
@@ -225,6 +229,8 @@ fn the_stroke_family_matches_its_golden() {
         paint: p,
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     };
     let rects = [
         full_box(background, 64.0, 64.0),
@@ -322,6 +328,8 @@ fn the_image_family_matches_its_golden() {
         paint: p,
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     };
     let rects = [
         full_box(background, 64.0, 64.0),

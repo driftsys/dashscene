@@ -323,8 +323,18 @@ noted, because a real Figma file will hit them:
   carrying its own baked-in opacity. An ellipse, a baked vector, and a text
   glyph color keep the single-fill refusal — the measured need was a plain
   frame/rectangle.
-- **Node rotation** — `Document` has no rotation vocabulary, so a rotated
-  node is a named refusal (debt #143 remainder). Node opacity, mask nodes,
+- **Node rotation** — lowers since story #770 (epic #769), closing debt
+  #143's remainder. A rotated **leaf** lowers into `Node.rotation` and
+  `Node.rotation_anchor_x`/`_y`: the angle is Figma's own radians,
+  unconverted and unflipped, and the anchor is `(0, 0)` because Figma turns a
+  node about its local origin. Its box comes from `size` and its origin is
+  recovered from `absoluteBoundingBox` by subtracting the rotated box's own
+  offset to those bounds — the bounding box is the axis-aligned bounds of the
+  _rotated_ shape (a result, P1), 22.5 % too large at 15°. Two shapes still
+  refuse by name: a rotated node **with children**, since a rotation does not
+  compose onto a descendant (issue #845), and a rotated node with no `size`.
+  The `node-fx` import oracle measures the result against Figma's own render.
+  Node opacity, mask nodes,
   and hidden nodes were un-pinned at v0.8 (story #44): they lower into
   `Node.opacity` / `Node.mask` / `Node.visible`. A box outline mask lowers;
   a soft alpha or luminance mask, and a text-shaped mask, refuse by name

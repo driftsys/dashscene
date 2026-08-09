@@ -267,6 +267,19 @@ pub struct Node {
     /// `visible`). Default `true`; `false` lowers to Taffy Display::None
     /// (debt #143).
     pub visible: bool,
+    /// The node's rotation in radians, about [`Node::rotation_anchor`]
+    /// (story #770,
+    /// `docs/decisions/rotation-is-paint-only-and-anchored-explicitly.md`).
+    /// `0.0` is unrotated, the schema default the emitter omits.
+    ///
+    /// Radians, which is Figma's wire unit for a node `rotation` and this
+    /// schema's unit for an angle.
+    pub rotation: f32,
+    /// The point [`Node::rotation`] turns about, in the node's own
+    /// coordinate space — `(0.0, 0.0)` is the node's top-left, which is
+    /// both the canonical value and what a Figma `relativeTransform`
+    /// resolves to.
+    pub rotation_anchor: (f32, f32),
 }
 
 impl Default for Node {
@@ -286,6 +299,8 @@ impl Default for Node {
             opacity: 1.0,
             mask: false,
             visible: true,
+            rotation: 0.0,
+            rotation_anchor: (0.0, 0.0),
         }
     }
 }
@@ -382,6 +397,18 @@ pub enum BindingChannel {
     FillA,
     /// Node/group opacity (story #44, debt #253).
     Opacity,
+    /// The node's rotation angle in radians, and the two components of the
+    /// point it turns about (story #770). Paint-only, beside `Opacity`.
+    ///
+    /// All three are here rather than the angle alone because SVG's
+    /// `<animateTransform type="rotate">` animates `"a cx cy"` together. No
+    /// producer emits a rotation binding yet — the SVG importer that will is
+    /// story #774 — but the producer-side vocabulary mirrors the schema's,
+    /// and a channel the schema names with no arm here cannot be emitted at
+    /// all.
+    Rotation,
+    RotationAnchorX,
+    RotationAnchorY,
 }
 
 /// A binding's transform — the schema's `BindingTransform` union as a

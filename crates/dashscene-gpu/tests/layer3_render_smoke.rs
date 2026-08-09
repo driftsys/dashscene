@@ -18,7 +18,7 @@
 
 use dashpaint::{
     ClipBox, ClipIndex, ClipTable, Color, CornerRadii, EntryParts, GlyphRunTable, ImageTable,
-    PaintEntry, PaintTable, Painter, RectEntry, Stroke, StrokeAlign,
+    PaintEntry, PaintTable, Painter, RectEntry, Stroke, StrokeAlign, Vec2,
 };
 use dashscene_gpu::{GpuPainter, Renderer, RendererError};
 
@@ -48,6 +48,8 @@ fn rect(
         paint,
         clip,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     }
 }
 

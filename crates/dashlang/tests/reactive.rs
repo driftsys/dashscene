@@ -727,3 +727,92 @@ fn an_idle_tick_holds_the_generation_and_an_unchanged_set_is_a_no_op() {
     );
     assert_eq!(arena.committed().rects()[1].w, 12.0, "width tracks 6 * 2");
 }
+
+/// The rotation channels bind through the **builder** path, not only through
+/// a loaded document (story #770).
+///
+/// `attach_live` — the loaded-`.dsb` path — seeds a rotation shadow and routes
+/// the three channels through it. `stage_live`, the path a `dashlang`-authored
+/// scene takes, did not, so binding any rotation channel here panicked twice
+/// over: `initial_channel_value`'s wildcard treated it as a fill channel and
+/// hit `fill_component`'s `unreachable!`, and past that `seed_scalar` found no
+/// seeded shadow. A spinner authored in the DSL is the canonical case this
+/// vocabulary exists for, so it is the one that must not panic.
+#[test]
+fn a_rotation_binding_drives_the_nodes_angle_from_the_builder() {
+    use dashlang::rgba;
+    let mut arena = Arena::new();
+    let count = Rc::new(Cell::new(0));
+    let mut scene = Scene::new();
+    let angle = scene.signal(0.0);
+    scene.roots(
+        [node("dial").mode(LayoutMode::None).size(100.0, 20.0).child(
+            node("needle")
+                .size(100.0, 20.0)
+                .fill(rgba(0.9, 0.2, 0.1, 1.0))
+                .bind(Channel::Rotation, angle),
+        )],
+    );
+
+    let mut live = scene.build_live(&mut arena, CountingSolver::boxed(count.clone()));
+    assert_eq!(count.get(), 1, "build solves once");
+
+    live.set(angle, 0.5);
+    live.tick(0.016, &mut arena);
+
+    assert_eq!(
+        count.get(),
+        1,
+        "rotation is paint-only, so a rotation write never re-solves",
+    );
+
+    let needle = arena.committed().node_of(1);
+    assert_eq!(
+        arena.rotation(needle).0,
+        0.5,
+        "the bound angle tracks the signal",
+    );
+    // Asserted on the committed rect, not only on the arena's staged intent:
+    // a rotation that never reached the rect leaves the painter drawing the
+    // node upright.
+    assert_eq!(arena.committed().rects()[1].rotation, 0.5);
+    assert!(
+        arena.committed().dirty().contains(&1),
+        "the rotation change reaches the dirty set, so a painter re-uploads",
+    );
+}
+
+/// The anchor components bind on the same path, and a binding that drives only
+/// the angle must keep the anchor the scene authored rather than inventing
+/// one — the whole reason `stage_live` needs a rotation shadow at all.
+#[test]
+fn a_rotation_binding_keeps_the_anchor_it_did_not_drive() {
+    use dashlang::rgba;
+    let mut arena = Arena::new();
+    let count = Rc::new(Cell::new(0));
+    let mut scene = Scene::new();
+    let angle = scene.signal(0.0);
+    let anchor_x = scene.signal(7.0);
+    scene.roots(
+        [node("dial").mode(LayoutMode::None).size(100.0, 20.0).child(
+            node("needle")
+                .size(100.0, 20.0)
+                .fill(rgba(0.9, 0.2, 0.1, 1.0))
+                .bind(Channel::Rotation, angle)
+                .bind(Channel::RotationAnchorX, anchor_x),
+        )],
+    );
+
+    let mut live = scene.build_live(&mut arena, CountingSolver::boxed(count.clone()));
+
+    live.set(angle, 1.25);
+    live.tick(0.016, &mut arena);
+
+    let needle = arena.committed().node_of(1);
+    let (got_angle, got_anchor) = arena.rotation(needle);
+    assert_eq!(got_angle, 1.25, "the angle followed its own signal");
+    assert_eq!(
+        got_anchor.0, 7.0,
+        "driving the angle did not reset the anchor its own binding seeded",
+    );
+}

@@ -73,6 +73,8 @@ fn rect(w: f32, h: f32, paint: u32) -> RectEntry {
         paint: PaintIndex(paint),
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     }
 }
 

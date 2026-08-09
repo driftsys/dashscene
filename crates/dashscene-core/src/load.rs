@@ -606,6 +606,27 @@ fn load_inner(
         if !node.visible() {
             txn.set_prop(id, Prop::Visible(false));
         }
+
+        // v0.18 rotation (story #770,
+        // `docs/decisions/rotation-is-paint-only-and-anchored-explicitly.md`).
+        // Same absence-is-not-intent rule: an unrotated node stages nothing.
+        //
+        // The anchor is part of the test rather than the angle alone. An
+        // anchor is meaningless at a zero angle *for drawing*, but it is
+        // still the node's stated turning point, and a binding that later
+        // drives only the angle reads it back through `Arena::rotation`. A
+        // node authored at `(0.0, (w/2, h/2))` that staged nothing would
+        // start turning about its top-left the moment that binding fired.
+        let anchor = (node.rotation_anchor_x(), node.rotation_anchor_y());
+        if node.rotation() != 0.0 || anchor != (0.0, 0.0) {
+            txn.set_prop(
+                id,
+                Prop::Rotation {
+                    angle: node.rotation(),
+                    anchor,
+                },
+            );
+        }
     }
 
     // The variant table (v0.4, story #20) replays the same way: each
@@ -731,6 +752,15 @@ fn variant_value(o: &dashbuf::VariantOverride<'_>) -> VariantValue {
                 .expect("VariantVisible present")
                 .value(),
         ),
+        VariantPropValue::VariantRotation => {
+            let r = o
+                .value_as_variant_rotation()
+                .expect("VariantRotation present");
+            VariantValue::Rotation {
+                angle: r.angle(),
+                anchor: (r.anchor_x(), r.anchor_y()),
+            }
+        }
         other => unreachable!("unknown VariantPropValue {other:?}: rejected by the load gate (P4)"),
     }
 }

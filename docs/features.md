@@ -104,9 +104,14 @@ Checked against `crates/dashscene-engine/src/lib.rs`,
       lines up on the line the letters sit on. Two cases are not corrected
       and produce bottom-of-box alignment with no warning: a nested
       container inside such a row, and a row that wraps.
-- [ ] **Rotation** — refused. Nothing in the system draws an element at an
-      angle, so a rotated element is reported at import rather than drawn
-      upright and wrong.
+- [ ] **Rotation** — **part built.** An element without children draws at an
+      angle, about a stated turning point, through the reference painter, and
+      an imported rotated element is measured against the design tool's own
+      render pixel for pixel. Three gaps, each reported rather than drawn
+      wrong: the lean painter does not draw rotation yet and says so through
+      the painter capability; a rotated element **containing** other elements
+      is refused, because a rotation here does not apply to what is inside it;
+      and scale and skew remain absent.
 - [ ] **Absolutely-positioned children, layout-consuming strokes, and
       reversed paint order** — each refused by name. Defaulting any of them
       would silently move the elements around it.

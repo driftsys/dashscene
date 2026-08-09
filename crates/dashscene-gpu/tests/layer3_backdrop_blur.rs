@@ -21,7 +21,7 @@
 use dashpaint::{
     Blur, BlurKind, ClipBox, ClipIndex, ClipTable, Color, CornerRadii, EntryParts, GlyphRunTable,
     GroupComposite, ImageAsset, ImageFormat, ImageTable, PaintEntry, PaintTable, Painter,
-    RectEntry, VectorField,
+    RectEntry, Vec2, VectorField,
 };
 use dashscene_gpu::{GpuPainter, Renderer};
 
@@ -67,6 +67,8 @@ fn rect(x: f32, y: f32, w: f32, h: f32, paint: dashpaint::PaintIndex) -> RectEnt
         paint,
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     }
 }
 

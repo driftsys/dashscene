@@ -212,7 +212,10 @@ mod tests {
             ("GradientStop", dashscene_abi_gradient_stop_layout(), 20, 4),
             ("ClipBox", dashscene_abi_clip_box_layout(), 32, 4),
             ("ClipRegion", dashscene_abi_clip_region_layout(), 8, 4),
-            ("RectEntry", dashscene_abi_rect_entry_layout(), 28, 4),
+            // 28 before story #770 added the rotation angle and its
+            // two-component anchor. A C# struct mirroring this one must
+            // gain the same three floats in the same order.
+            ("RectEntry", dashscene_abi_rect_entry_layout(), 40, 4),
             ("GlyphQuad", dashscene_abi_glyph_quad_layout(), 12, 4),
             ("GlyphRange", dashscene_abi_glyph_range_layout(), 8, 4),
             ("GlyphRun", dashscene_abi_glyph_run_layout(), 40, 4),
@@ -318,6 +321,8 @@ mod tests {
             paint: dashpaint::PaintIndex(5),
             clip: dashpaint::ClipIndex(6),
             opacity: 0.5,
+            rotation: 0.0,
+            rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
         };
         assert_eq!(dashscene_abi_rect_entry_round_trip(rect), rect);
 

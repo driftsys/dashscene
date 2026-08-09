@@ -5,7 +5,7 @@
 
 use std::mem::{align_of, size_of};
 
-use dashpaint::VectorField;
+use dashpaint::{Vec2, VectorField};
 use dashscene_core::{
     Arena, ClipBox, ClipIndex, Color, CornerRadii, Fill, FillSpec, LayoutMode, PaintEntry,
     PaintIndex, PaintTable, Prop, RectEntry, Stroke, StrokeAlign, TextAlign, TextAlignV, TextStyle,
@@ -22,9 +22,10 @@ const RED: Color = Color {
 fn committed_entries_are_blittable_plain_data() {
     // Boundary B pins the rect entry as blittable plain data:
     // x, y, w, h (f32) + paint index (u32) + clip index (u32) + the
-    // free-path group alpha (f32), and the solid-fill color as 4xf32 RGBA
-    // (dashbuf's Color shape).
-    assert_eq!(size_of::<RectEntry>(), 28);
+    // free-path group alpha (f32) + the rotation angle (f32) and its
+    // two-component anchor (story #770), and the solid-fill color as
+    // 4xf32 RGBA (dashbuf's Color shape). 28 before the rotation.
+    assert_eq!(size_of::<RectEntry>(), 40);
     assert_eq!(align_of::<RectEntry>(), 4);
     assert_eq!(size_of::<Color>(), 16);
     assert_eq!(align_of::<Color>(), 4);
@@ -37,6 +38,8 @@ fn committed_entries_are_blittable_plain_data() {
         paint: PaintIndex(0),
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     };
     let copy = entry; // Copy, not a move
     assert_eq!(entry, copy);
@@ -81,6 +84,8 @@ fn a_single_filled_root_resolves_to_one_rect_and_one_paint() {
             paint: PaintIndex(0),
             clip: ClipIndex::UNCLIPPED,
             opacity: 1.0,
+            rotation: 0.0,
+            rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
         }]
     );
     assert_eq!(scene.paints().len(), 1);
