@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Android showcase host (story #842). configChanges is deliberately absent,
+  so the framework recreates the Activity on rotation and the destroy handshake
+  is exercised rather than bypassed.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="dev.driftsys.dashscene.demo">
+
+    <uses-sdk android:minSdkVersion="33" android:targetSdkVersion="34" />
+
+    <application android:label="dashscene showcase" android:hardwareAccelerated="true">
+        <activity
+            android:name="dev.driftsys.dashscene.demo.DemoActivity"
+            android:exported="true"
+            android:resizeableActivity="true"
+            android:label="dashscene showcase">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

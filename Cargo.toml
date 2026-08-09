@@ -38,6 +38,10 @@ members = [
   # would mean a `cfg` on every dependency line to reach a build with no Skia
   # painter in it at all. `publish = false`, like `demo`.
   "demo-web",
+  # The Android showcase host (v0.19, story #842). A third demonstration host
+  # beside `demo` and `demo-web`, `publish = false` like both, and therefore
+  # outside `docs/decisions/crate-name-map.md`.
+  "demo-android",
   # The smallest browser embedder that draws a `.dsb` (issue #776, story #795).
   # `publish = false`, and outside `crates/` deliberately: it is an artifact to
   # weigh rather than a crate anyone depends on, and putting it under `crates/`

@@ -24,24 +24,40 @@ macro_rules! corpus {
 
 /// The bytes of a corpus file, however this target can reach them.
 ///
-/// Natively that is a read from disk: the binary stays small, and an edited
-/// corpus file is picked up without rebuilding. **wasm has no filesystem**, so
-/// the same bytes are embedded at compile time instead — roughly 1.1 MB across
-/// the three fonts, three atlases and one photograph the scenes use.
+/// On a **development machine** that is a read from disk: the binary stays
+/// small, and an edited corpus file is picked up without rebuilding. On a target
+/// that cannot see this repository's files the same bytes are embedded at
+/// compile time instead — roughly 1.1 MB across the three fonts, three atlases
+/// and one photograph the scenes use.
 ///
 /// The two arms can be one list because [`corpus`] already resolves to a
 /// compile-time literal, which is exactly what `include_bytes!` requires.
 ///
-/// Without this the browser host compiled and then panicked on its first
-/// scene — `operation not supported on this platform`, from `std::fs::read`.
-/// A wasm build succeeding says nothing about a wasm build running.
+/// # What the condition actually is
+///
+/// **Not "is this wasm".** It is "can this target open a path under
+/// `CARGO_MANIFEST_DIR` at run time", and the answer is no for every target that
+/// runs somewhere other than the machine that compiled it.
+///
+/// The gate said `wasm32` for one slice, because the browser was the only such
+/// target when it was written — and the comment recorded the symptom: the
+/// browser host compiled and then panicked on its first scene,
+/// `operation not supported on this platform`, from `std::fs::read`. **Android
+/// is the second, and the gate did not cover it**: `target_arch` there is
+/// `aarch64`, so a device took the filesystem arm and tried to read an absolute
+/// path from a developer's laptop. The scene never built and the frame loop
+/// never ran (story #842).
+///
+/// A build succeeding still says nothing about a build running. The condition is
+/// named for what it is now, so the next such target is a question about this
+/// list rather than a silent third occurrence.
 macro_rules! corpus_bytes {
     ($tail:literal) => {{
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(any(target_arch = "wasm32", target_os = "android"))]
         {
             include_bytes!(corpus!($tail)).to_vec()
         }
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
         {
             std::fs::read(corpus!($tail))
                 .unwrap_or_else(|error| panic!("corpus file {}: {error}", corpus!($tail)))
