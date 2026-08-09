@@ -4,9 +4,10 @@
              `2026-08-08-v018-DRIVER-PROMPT.md`, which is kept and marked
              rather than deleted — its gate section records why the slice could
              start, and its story #770 sections are now as-built.
-    written  2026-08-09, after three stories closed. Everything specific below
-             was checked against `main` at cf52ca3, the merge of the SVG
-             capture. Stale the moment a story lands.
+    written  2026-08-09, after three stories closed; **revised the same day**
+             once the owner ruled on the two plan questions it opened (see
+             "Where the slice stands"). Everything specific below was checked
+             against `main` at 27fabf8. Stale the moment a story lands.
     empties  when epic #769 closes. Archive both prompts verbatim to
              docs/archive/ rather than gardening them — a driver prompt is
              spent the moment its work lands, and records nothing a design
@@ -22,7 +23,8 @@ method and the five principles, and it is authoritative over anything below.
 vocabulary"` and `main`'s commit from `git log`, never from this file.** The
 pair went wrong three times in v0.15 and twice in v0.16.
 
-At cf52ca3 the milestone holds **seven open and three closed**.
+At 27fabf8 the milestone holds **six open and three closed**, after the owner
+ruled on both plan questions this prompt opened.
 
 | issue | state                                                                  |
 | ----- | ---------------------------------------------------------------------- |
@@ -30,15 +32,20 @@ At cf52ca3 the milestone holds **seven open and three closed**.
 | #770  | **closed** — the rotation vocabulary, lowering and reference painter   |
 | #832  | **closed** — the lean painter draws rotation                           |
 | #852  | **closed** — a step is a pair of keyframes                             |
-| #771  | variant transitions serialize; **blocked, see below**                  |
-| #772  | loop tracks; unblocked, but carries two owner questions                |
+| #617  | **milestoned in**, and is story #771's first half                      |
+| #771  | variant transitions serialize — **build this next**                    |
+| #772  | loop tracks; unblocked, carries two design questions of its own        |
 | #773  | Figma prototype reactions; **needs a fixture only a human can author** |
-| #774  | static SVG import; **blocked on #848**                                 |
 | #845  | debt — a rotation does not compose down the tree                       |
-| #848  | stroke-to-fill before baking                                           |
 
-**Nothing here is straightforwardly next**, which is why this prompt exists.
-Every remaining item is blocked, needs owner input, or is a scope decision.
+**#774 and #848 left the milestone** on 2026-08-09 and are deliberately
+unmilestoned: they are the seed of the SVG track, and the capture's proposal to
+place it at v0.21 is an input to the phase-end revision rather than a decision.
+Slice numbering is settled at that revision, so they are "not v0.18" rather
+than "v0.21". Comments on both record it, and the answered configuration
+questions travel with them.
+
+**Story #771 is what to build next**, and it is no longer blocked — see below.
 
 ## What is already ruled — do not re-derive these
 
@@ -75,10 +82,13 @@ Every remaining item is blocked, needs owner input, or is a scope decision.
   v0.21 for the SVG track, and says plainly that slice numbering is settled at
   a phase-end revision. Treat it as an input to that revision, not a decision.
 
-## Issue #617, and why it is the first question
+## Issue #617 is story #771's first half — ruled 2026-08-09
 
-Story #771 is blocked on it, and it is **unmilestoned**, so pulling it into
-v0.18 is a plan-revision call rather than a scheduling one.
+**#617 is milestoned into v0.18 and folded into #771**, which now builds in
+three parts. It is **left open**, not closed as "covered": an issue closed
+while one of its items is unbuilt is how issue #143 lost the rotation channel,
+which is the whole reason story #770 existed. It closes on #771's own pull
+request, by name, when the emitter and the fixture land.
 
 What #617 says: all ten committed `goldens/dsb` fixtures report zero signals,
 zero bindings and zero variant sets, so a loaded document drives `attach_live`,
@@ -98,9 +108,15 @@ pattern). So #617 is not "author a fixture" — it is "teach the emitter to writ
 variant sets, then author a fixture", and that emitter is the same one that
 story #771 needs for its motion rows.
 
-**So the question to settle before writing code is whether #617 is a story of
-its own or the first half of #771.** Both readings are defensible and they
-produce different plans. Ask.
+So story #771 builds in this order:
+
+1. **`dashc` emits variant sets** — the table, its members, their overrides,
+   from an authored `Document`.
+2. **A committed `.dsb` under `goldens/dsb/` carries one**, so a loaded
+   document exercises commit and FLIP end to end. This is #617's deliverable
+   and the epic's "a document loaded from a file animates" turns on it.
+   Authored, never imported.
+3. **The motion rows** #771 was filed for.
 
 ## Story #771's other blockers, both checked on 2026-08-09
 
@@ -115,15 +131,16 @@ produce different plans. Ask.
 ## Stop and ask, rather than deciding alone
 
 All three questions raised this way in v0.15 needed the owner's answer, and so
-did all three in v0.16. Four were raised in this slice and all four were
-answered by the owner. These remain open:
+did all three in v0.16. Six were raised in this slice and all six were answered.
+**Two were answered on 2026-08-09** and are now recorded above rather than
+open: issue #617 folds into #771, and the SVG track leaves the milestone.
 
-- **Is #617 its own story, or #771's first half?** See above.
+These remain open, and both belong **inside** their story — research them and
+come back with evidence, the way stories #832 and #852 did, rather than opening
+with them:
+
 - **Where does a loop track's phase come from, and what ends one?** (#772.)
   Document load and node-visible are different features.
-- **Does #774 belong in this slice at all?** It sits in the milestone, the
-  capture proposes moving the whole SVG track to v0.21, and #848 now blocks it.
-  A state that should not survive the slice's close in either direction.
 - **What binds a `VariantTransition` to a switch** — per variant set, per
   variant, or per interaction? Figma's model is per interaction, which is the
   level its `reactions` payload is keyed at. (#771, #773.)
@@ -218,8 +235,8 @@ start** — #852 was filed and ruled inside a single day. Check
 
 - **Motion is data in the document**: a `.dsb` carries a transition, and a
   document loaded from a file animates without Rust written against `dashlang`.
-  **This is what #617 blocks**, and it is the criterion the slice cannot close
-  without.
+  **This is story #771's, in all three of its parts**, and it is the criterion
+  the slice cannot close without.
 - **A node can rotate**, in the document, through both painters, proved by a
   golden that a mutation to the rotation term fails. **Met** (#770, #832).
 - **Whether rotation perturbs layout is recorded** in `docs/decisions/`, and so
