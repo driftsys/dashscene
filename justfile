@@ -411,6 +411,11 @@ android:
     export CC_aarch64_linux_android="${clang}"
     export AR_aarch64_linux_android="${bin}/llvm-ar"
     cargo build -p dashscene-gpu --target aarch64-linux-android
+    # And the ABI, which is what a platform host actually links. Building the
+    # painter alone would leave the crate a host embeds verified on no target
+    # but this machine's — story #840's Android build existed only in a
+    # developer's shell until this line.
+    cargo build -p dashscene-ffi --target aarch64-linux-android
 
 # Build the D3a probe, push it to an attached device and run it.
 #
