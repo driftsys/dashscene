@@ -114,6 +114,34 @@ failed and the storage-buffer limit is zero; the request did not fail
 _because of_ the storage-buffer limit specifically, and this record does not
 claim it did.
 
+### The emulator cannot be made to use the host GPU for Vulkan
+
+Worth recording so it is not retried. The emulator ships `Vulkan = off` in its
+own `lib/advancedFeatures.ini`, which reads like the reason its Vulkan adapter
+is a CPU rasteriser. It is not. Setting `Vulkan = on` in
+`~/.android/advancedFeatures.ini` and restarting applies the flag —
+
+    Feature 'Vulkan' (21) is overridden to 'enabled'
+
+— and the emulator then selects SwiftShader anyway, because it sets the ICD to
+SwiftShader explicitly rather than looking for a host driver:
+
+    initIcdPaths: ICD set to 'swiftshader', using Swiftshader ICD
+    Selecting Vulkan device: SwiftShader Device (LLVM 10.0.0), Version: 1.3.0
+    useVulkanComposition: false
+    useVulkanNativeSwapchain: false
+
+The probe reports byte-identical output with the flag on and off. macOS exposes
+no native Vulkan ICD, and this emulator build does not route to MoltenVK, so
+there is nothing for the flag to select. The override was reverted.
+
+**The consequence is the one that matters for planning.** On this emulator the
+only adapter the painter can use is a CPU rasteriser, and the only adapter on
+the host GPU exposes zero storage buffers. So the emulator is usable for
+checking that something _works_ and is useless for checking how fast it is —
+which is a second, independent reason story #842's frame-rate measurement waits
+for hardware rather than being approximated here.
+
 ### What is not measured
 
 **Whether the target device class exposes Vulkan.** That is the D3a question and
