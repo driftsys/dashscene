@@ -11,10 +11,10 @@ project's convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports twelve files
+## Why the WIP gate currently reports thirteen files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-twelve and exits non-zero. All twelve are deliberate, accepted exceptions
+thirteen and exits non-zero. All thirteen are deliberate, accepted exceptions
 rather than ungardened debt, and they are recorded here so the gate's result is
 explained rather than merely tolerated.
 
@@ -91,8 +91,8 @@ went stale because a commit that removes a file from this directory has to edit
 this file in the same commit, and that is not enforced by anything. **Archiving
 a capture and updating this ledger are one change, not two.**
 
-**Nine of the twelve are design captures**, described below, and **three driver
-prompts are held**, across two slices.
+**Nine of the thirteen are design captures**, described below, and **four
+driver prompts are held**, across two slices.
 
 Two are v0.18's: `2026-08-08-v018-DRIVER-PROMPT.md`, added the day v0.17 closed,
 and `2026-08-09-v018-DRIVER-PROMPT.md`, which supersedes it and carries the
@@ -102,8 +102,12 @@ could start at all; the second is what a session should be handed for the slice
 as a whole. Both archive together when epic #769 closes. A third was held for one
 day — `2026-08-09-FINISH-771-DRIVER-PROMPT.md`, narrower than either, carrying
 only what remained of story #771 — and left with the pull request it carried.
+A third v0.18 prompt is held now: `2026-08-09-773-LOWERING-DRIVER-PROMPT.md`,
+narrower again — it carries only story #773's lowering half, after pull
+request #882 landed that story's capture half, and it archives when #773
+closes.
 
-The fourth, and the one this merge brought, is v0.19's:
+The other, brought by an earlier merge, is v0.19's:
 `2026-08-09-v019-ANDROID-DRIVER-PROMPT.md`, added at the close of that slice's
 C ABI work to carry stories #841 and #842. **Both of those have landed**, and it
 is still held rather than archived: its own status line says it archives at
