@@ -143,6 +143,8 @@ fn the_v03_paint_vocabulary_matches_its_golden() {
         paint,
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     };
     let rects = [
         entry(0.0, 0.0, 96.0, 96.0, background),

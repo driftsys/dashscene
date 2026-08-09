@@ -450,6 +450,30 @@ pub enum Prop {
     /// Like [`Prop::Clip`] this prop clears: `Mask(false)` turns masking
     /// back off.
     Mask(bool),
+    /// The node's rotation, in radians, about `anchor` — a point in the
+    /// node's own coordinate space where `(0.0, 0.0)` is its top-left
+    /// (story #770,
+    /// `docs/decisions/rotation-is-paint-only-and-anchored-explicitly.md`).
+    ///
+    /// Paint intent, beside [`Prop::Opacity`]: the solver never sees it and
+    /// the node's own box is unchanged, so a rotation write reflows nothing.
+    /// Commit copies it onto the rect entry, which is why it needs no
+    /// cross-node resolution the way a mask or a group opacity does.
+    ///
+    /// The anchor is stated rather than defaulted to the node's centre,
+    /// because **neither producer rotates about a centre**. Figma's
+    /// `relativeTransform` turns about the node's local origin, and SVG's
+    /// bare `rotate(a)` is `rotate(a 0 0)` about the user-space origin — the
+    /// centre default belongs to CSS `transform-origin`, a different
+    /// mechanism on a different element model. A designer's "about the
+    /// centre" is `(w / 2.0, h / 2.0)`, written by whoever means it.
+    ///
+    /// Like [`Prop::Opacity`] this prop clears: an angle of `0.0` turns the
+    /// rotation back off, a scalar having no absent state to lose.
+    Rotation {
+        angle: f32,
+        anchor: (f32, f32),
+    },
 }
 
 /// Horizontal text alignment within the node box — mirrors the `dashbuf`
@@ -520,6 +544,18 @@ pub enum VariantValue {
     /// `set_prop` — the variant-driven "different child counts" topology
     /// change (story #283).
     Visible(bool),
+    /// The rotation a variant member gives the target node — the angle in
+    /// radians and the point in the node's own space it turns about, the
+    /// same pair [`Prop::Rotation`] carries (story #770).
+    ///
+    /// All three scalars move together rather than being three overridable
+    /// props. An override that changed the angle and left a stale anchor
+    /// behind would turn the node about the wrong point, which is a wrong
+    /// picture rather than a partial one.
+    Rotation {
+        angle: f32,
+        anchor: (f32, f32),
+    },
 }
 
 /// One selectable state of a [`VariantSetId`]: an optional name and its
@@ -561,6 +597,11 @@ struct NodeOverlay {
     /// switch (story #283). `None` = the member does not override
     /// visibility, so the node's base `layout.visible` stands.
     visible: Option<bool>,
+    /// The angle and anchor a variant member gives the node (story #770).
+    /// `None` = no member overrides the rotation, so the node's own
+    /// `rotation`/`rotation_anchor` stand. The pair is one option rather
+    /// than two, for the reason [`VariantValue::Rotation`] gives.
+    rotation: Option<(f32, (f32, f32))>,
 }
 
 /// Intent for one node — layout intent plus paint and text intent and
@@ -615,6 +656,13 @@ struct NodeData {
     /// at commit into those siblings' clip regions
     /// (`docs/decisions/masks-and-group-opacity.md`).
     mask: bool,
+    /// The node's rotation in radians and the point in its own coordinate
+    /// space that the rotation turns about, default `(0.0, (0.0, 0.0))`
+    /// — intent, copied onto the rect entry at commit with no cross-node
+    /// resolution, since a rotation depends only on the node itself
+    /// (`docs/decisions/rotation-is-paint-only-and-anchored-explicitly.md`).
+    rotation: f32,
+    rotation_anchor: (f32, f32),
     text: Option<String>,
     text_style: Option<TextStyle>,
 }
@@ -869,6 +917,9 @@ impl Arena {
                         overlay.fill = Some(FillSpec::Solid { color });
                     }
                     VariantValue::Visible(v) => overlay.visible = Some(v),
+                    VariantValue::Rotation { angle, anchor } => {
+                        overlay.rotation = Some((angle, anchor));
+                    }
                 }
             }
         }
@@ -913,6 +964,24 @@ impl Arena {
     /// Panics if `node` is out of range for this arena.
     pub fn opacity(&self, node: NodeId) -> f32 {
         self.node_data(node).opacity
+    }
+
+    /// The node's rotation: the angle in radians and the point in the node's
+    /// own coordinate space it turns about, where `(0.0, 0.0)` is the node's
+    /// top-left. `(0.0, (0.0, 0.0))` is unrotated.
+    ///
+    /// Intent-side, like [`Arena::fill`]: a staged [`Prop::Rotation`] is
+    /// visible immediately, before the next commit resolves it. That is what
+    /// lets a producer driving one of the three rotation channels read the
+    /// other two back rather than inventing them
+    /// (`docs/decisions/rotation-is-paint-only-and-anchored-explicitly.md`).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `node` is out of range for this arena.
+    pub fn rotation(&self, node: NodeId) -> (f32, (f32, f32)) {
+        let data = self.node_data(node);
+        (data.rotation, data.rotation_anchor)
     }
 
     /// Whether the node is a mask (stencils its following siblings).
@@ -1077,6 +1146,8 @@ impl Txn<'_> {
             shape: None,
             clip: false,
             opacity: 1.0,
+            rotation: 0.0,
+            rotation_anchor: (0.0, 0.0),
             mask: false,
             text: None,
             text_style: None,
@@ -1340,6 +1411,27 @@ impl Txn<'_> {
                 data.opacity = v.clamp(0.0, 1.0);
             }
             Prop::Mask(v) => data.mask = v,
+            // Paint intent like `Opacity`: stored on the node and copied
+            // onto the rect entry at commit. The angle is asserted finite
+            // for the same reason `Opacity` is — a NaN would propagate into
+            // every corner of the rotated quad and reach the painter as
+            // geometry no golden could describe — but it is deliberately
+            // **not** clamped or wrapped. An angle outside [0, 2pi) is
+            // meaningful: `dashcue` tweens a spinner by driving this channel
+            // past a full turn, and wrapping it here would make the halfway
+            // point of that tween depend on where the wrap fell.
+            Prop::Rotation { angle, anchor } => {
+                assert!(
+                    angle.is_finite(),
+                    "{node:?}: Prop::Rotation angle {angle} is not finite"
+                );
+                assert!(
+                    anchor.0.is_finite() && anchor.1.is_finite(),
+                    "{node:?}: Prop::Rotation anchor {anchor:?} is not finite"
+                );
+                data.rotation = angle;
+                data.rotation_anchor = anchor;
+            }
         }
         // `data`'s borrow ends with the match above.
         match class {
@@ -1364,7 +1456,11 @@ impl Txn<'_> {
             // walk, so it needs no change log — the walk always picks up
             // the staged value, and the rect entry's alpha bits carry the
             // change into the dirty set.
-            PropClass::OpacityOnly => {}
+            // Recomputed on every commit walk, like `OpacityOnly`: the walk
+            // reads the node's rotation fresh and the rect entry carries the
+            // change into the dirty set, so there is nothing to record. The
+            // solver never sees it, so no layout dirt either.
+            PropClass::OpacityOnly | PropClass::RotationOnly => {}
         }
     }
 
@@ -1815,6 +1911,25 @@ impl Txn<'_> {
             // `opacity` is a placeholder here; the group-opacity pass below
             // fills every rect's free-path alpha once subtree overlap is
             // known.
+            // The rotation is copied straight from the node, with no
+            // cross-node resolution: it depends on nothing but the node
+            // itself, which is what makes it paint intent rather than a
+            // cascade like the mask or the group opacity above
+            // (`docs/decisions/rotation-is-paint-only-and-anchored-explicitly.md`).
+            //
+            // `geometry` is the node's box **before** the rotation, and it
+            // stays that. A painter turns that box when it draws; nothing
+            // here resolves the rotated silhouette, because a resolved
+            // silhouette is a result and the document carries intent (P1).
+            //
+            // An active variant member's override wins over the node's own
+            // rotation, the same precedence `fill` takes above. The two
+            // travel as one pair, so a member that overrides the angle
+            // replaces the anchor with it rather than leaving the node's.
+            let (rotation, rotation_anchor) = arena
+                .overlay(id)
+                .rotation
+                .unwrap_or((node.rotation, node.rotation_anchor));
             let entry = RectEntry {
                 x: geometry.x,
                 y: geometry.y,
@@ -1823,6 +1938,11 @@ impl Txn<'_> {
                 paint,
                 clip,
                 opacity: 1.0,
+                rotation,
+                rotation_anchor: Vec2 {
+                    x: rotation_anchor.0,
+                    y: rotation_anchor.1,
+                },
             };
 
             // The region this node hands its children: its own incoming
@@ -2261,6 +2381,13 @@ enum PropClass {
     /// nothing (the walk reads `node.opacity` fresh, and the rect entry's
     /// alpha carries the change to the dirty set).
     OpacityOnly,
+    /// The node's rotation: recomputed on every commit walk for the same
+    /// reason as [`PropClass::OpacityOnly`] — the walk reads the node's
+    /// rotation fresh and the rect entry carries the change to the dirty
+    /// set, so there is nothing to record here. Layout-inert, since the
+    /// solver never sees a rotation
+    /// (`docs/decisions/rotation-is-paint-only-and-anchored-explicitly.md`).
+    RotationOnly,
 }
 
 fn prop_class(prop: &Prop) -> PropClass {
@@ -2277,6 +2404,7 @@ fn prop_class(prop: &Prop) -> PropClass {
         Prop::Mask(_) => PropClass::MaskFlag,
         Prop::Visible(_) => PropClass::VisibleFlag,
         Prop::Opacity(_) => PropClass::OpacityOnly,
+        Prop::Rotation { .. } => PropClass::RotationOnly,
         // Everything else is layout or measured-size intent. Text and
         // TextStyle change the shaped run a measuring solver sizes to, so
         // they are layout-affecting even though they touch no rect field
@@ -2762,7 +2890,7 @@ fn corner_key(corners: CornerRadii) -> [u32; 4] {
 /// itself and would mark a rect permanently dirty). The free-path group
 /// alpha is part of the entry, so a group-opacity change on the free path
 /// reaches the dirty set (`docs/decisions/masks-and-group-opacity.md`).
-fn entry_bits(entry: &RectEntry) -> [u32; 7] {
+fn entry_bits(entry: &RectEntry) -> [u32; 10] {
     [
         entry.x.to_bits(),
         entry.y.to_bits(),
@@ -2771,6 +2899,14 @@ fn entry_bits(entry: &RectEntry) -> [u32; 7] {
         entry.paint.0,
         entry.clip.0,
         entry.opacity.to_bits(),
+        // The rotation is part of the comparison, not just of the entry.
+        // A tween that drives the rotation channel and nothing else changes
+        // no other member here, so leaving these out would report the rect
+        // clean on every frame of a spinner — the exact motion story #770
+        // exists to make expressible, reported as no work to do.
+        entry.rotation.to_bits(),
+        entry.rotation_anchor.x.to_bits(),
+        entry.rotation_anchor.y.to_bits(),
     ]
 }
 

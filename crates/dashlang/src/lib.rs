@@ -128,6 +128,9 @@ pub struct Node {
     pub(crate) clip: Option<bool>,
     pub(crate) mask: Option<bool>,
     pub(crate) opacity: Option<f32>,
+    /// The node's angle in radians and the point in its own space it turns
+    /// about (story #770). `None` is unrotated, which stages nothing.
+    pub(crate) rotation: Option<(f32, (f32, f32))>,
     pub(crate) text: Option<String>,
     pub(crate) text_style: Option<TextStyle>,
     children: Children,

@@ -127,6 +127,25 @@ pub struct RectEntry {
     /// [`GroupComposite`] layer composites, so rects inside such a group
     /// carry only their in-layer free alpha.
     pub opacity: f32,
+    /// This rect's rotation in radians, about [`RectEntry::rotation_anchor`].
+    /// `0.0` is unrotated, which is what every rect carried before story
+    /// #770.
+    ///
+    /// The rect's `x`/`y`/`w`/`h` describe the node's box **before** the
+    /// rotation, and a painter turns that box when it draws
+    /// (`docs/decisions/rotation-is-paint-only-and-anchored-explicitly.md`).
+    /// They are not the rotated silhouette's bounds: taking them for that is
+    /// the mistake the Figma lowering made in the other direction, reading a
+    /// rotated node's `absoluteBoundingBox` as its box.
+    ///
+    /// A painter that cannot rotate says so through [`Painter::rotates`]
+    /// rather than ignoring this field.
+    pub rotation: f32,
+    /// The point [`RectEntry::rotation`] turns about, in the rect's own
+    /// coordinate space — `(0.0, 0.0)` is the rect's top-left, not its
+    /// centre. Meaningless when `rotation` is `0.0`, and canonically
+    /// `(0.0, 0.0)` there.
+    pub rotation_anchor: Vec2,
 }
 
 /// A 2D point or vector, in the coordinate space its context names.
@@ -2825,6 +2844,31 @@ pub trait Painter {
     /// why the default is not "everything".
     fn samples(&self, format: ImageFormat) -> bool {
         format.is_encoded()
+    }
+
+    /// Whether this painter draws [`RectEntry::rotation`].
+    ///
+    /// # Why this is a declaration and not a result
+    ///
+    /// The same argument as [`Painter::samples`] above. [`Painter::paint`]
+    /// returns nothing, so "this painter cannot rotate" cannot be reported
+    /// from inside a frame, and P4 forbids discovering it there: an
+    /// unsupported construct is a named diagnostic, never a silent drop. So
+    /// the question is asked **before** a document is bound, by whoever
+    /// chooses a painter for it.
+    ///
+    /// # The default is the conservative half, and here that matters more
+    ///
+    /// A painter that says nothing does not rotate, which is what every
+    /// painter written before story #770 does. The direction is the safe
+    /// one for the reason
+    /// `docs/decisions/rotation-is-paint-only-and-anchored-explicitly.md`
+    /// gives: a painter that accepted a rotation and drew the node unrotated
+    /// would produce a plausible picture that is silently wrong, and no
+    /// golden could tell it from a correct one at an angle of zero. A painter
+    /// that declares the gap can be asserted against.
+    fn rotates(&self) -> bool {
+        false
     }
 
     // Boundary B is a fixed set of parallel tables (§7.3), so `paint`

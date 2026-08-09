@@ -213,6 +213,8 @@ fn single_entry_scene(
             paint,
             clip: ClipIndex::UNCLIPPED,
             opacity: 1.0,
+            rotation: 0.0,
+            rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
         }],
         paints,
     )
@@ -416,6 +418,8 @@ fn stacked_opaque_fills_composite_bottom_to_top_last_on_top() {
         paint,
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     }];
     let rgba = render(&rects, &paints, &ImageTable::new(), 4);
 
@@ -464,6 +468,8 @@ fn a_semi_transparent_stacked_fill_blends_over_the_bottom_fill() {
         paint,
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     }];
     let rgba = render(&rects, &paints, &ImageTable::new(), 4);
     let center = px(&rgba, 4, 2, 2);
@@ -504,6 +510,8 @@ fn stroked_square(align: StrokeAlign) -> Vec<u8> {
         paint,
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     }];
     let mut painter = SkiaPainter::new(16, 16);
     painter.paint(
@@ -586,6 +594,8 @@ fn quadrant_asset() -> ImageAsset {
         paint: paints.push_solid(color),
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     })
     .collect();
     painter.paint(
@@ -785,6 +795,8 @@ fn clipped_square(boxes: &[ClipBox]) -> Vec<u8> {
         paint,
         clip,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     }];
 
     let mut painter = SkiaPainter::new(16, 16);
@@ -899,6 +911,8 @@ fn a_clip_region_does_not_leak_into_the_next_rect() {
             paint: red,
             clip: corner,
             opacity: 1.0,
+            rotation: 0.0,
+            rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
         },
         RectEntry {
             x: 8.0,
@@ -908,6 +922,8 @@ fn a_clip_region_does_not_leak_into_the_next_rect() {
             paint: blue,
             clip: ClipIndex::UNCLIPPED,
             opacity: 1.0,
+            rotation: 0.0,
+            rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
         },
     ];
 
@@ -977,6 +993,8 @@ fn two_rects(left_w: f32) -> (Vec<RectEntry>, PaintTable) {
             paint: l,
             clip: ClipIndex::UNCLIPPED,
             opacity: 1.0,
+            rotation: 0.0,
+            rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
         },
         RectEntry {
             x: 8.0,
@@ -986,6 +1004,8 @@ fn two_rects(left_w: f32) -> (Vec<RectEntry>, PaintTable) {
             paint: r,
             clip: ClipIndex::UNCLIPPED,
             opacity: 1.0,
+            rotation: 0.0,
+            rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
         },
     ];
     (rects, paints)
@@ -1106,6 +1126,8 @@ fn three_rects(left_w: f32) -> (Vec<RectEntry>, PaintTable) {
         paint: b,
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     });
     (rects, paints)
 }
@@ -1251,6 +1273,8 @@ fn solid_atlas_png(n: i32) -> Vec<u8> {
         paint: white,
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     }];
     painter.paint(
         &rects,
@@ -1282,6 +1306,8 @@ fn anchor_rect() -> [RectEntry; 1] {
         paint: PaintIndex(0),
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     }]
 }
 
@@ -1456,6 +1482,8 @@ fn a_render_target_group_flattens_before_applying_alpha() {
             paint: red,
             clip: ClipIndex::UNCLIPPED,
             opacity: 1.0,
+            rotation: 0.0,
+            rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
         },
         RectEntry {
             x: 4.0,
@@ -1465,6 +1493,8 @@ fn a_render_target_group_flattens_before_applying_alpha() {
             paint: red,
             clip: ClipIndex::UNCLIPPED,
             opacity: 1.0,
+            rotation: 0.0,
+            rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
         },
     ];
     let groups = [dashpaint::GroupComposite {
@@ -2134,6 +2164,8 @@ fn fill_and_stroke_at_half_opacity() -> (Vec<RectEntry>, PaintTable) {
             paint,
             clip: ClipIndex::UNCLIPPED,
             opacity: 0.5,
+            rotation: 0.0,
+            rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
         }],
         paints,
     )
@@ -2200,6 +2232,8 @@ fn a_stroke_with_no_fill_is_correct_at_partial_opacity() {
         paint,
         clip: ClipIndex::UNCLIPPED,
         opacity: 0.5,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     }];
     let bytes = render(&rects, &paints, &ImageTable::new(), 64);
 
@@ -2251,6 +2285,8 @@ fn transparent_backdrop_blur_scene() -> (Vec<RectEntry>, PaintTable) {
                 paint: band,
                 clip: ClipIndex::UNCLIPPED,
                 opacity: 1.0,
+                rotation: 0.0,
+                rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
             },
             RectEntry {
                 x: 16.0,
@@ -2260,6 +2296,8 @@ fn transparent_backdrop_blur_scene() -> (Vec<RectEntry>, PaintTable) {
                 paint: panel,
                 clip: ClipIndex::UNCLIPPED,
                 opacity: 1.0,
+                rotation: 0.0,
+                rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
             },
         ],
         paints,
@@ -2368,6 +2406,8 @@ fn nested_group_scene(
         paint,
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     };
     let rects = vec![
         // 0: outside every group — the surface the composites blend onto.

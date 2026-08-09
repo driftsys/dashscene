@@ -30,7 +30,7 @@
 
 use dashpaint::{
     ClipIndex, ClipTable, FillSpec, GlyphRunTable, ImageAsset, ImageFill, ImageFormat, ImageTable,
-    Mat23, PaintEntry, PaintTable, Painter, RectEntry, ScaleMode,
+    Mat23, PaintEntry, PaintTable, Painter, RectEntry, ScaleMode, Vec2,
 };
 use dashscene_gpu::{GpuPainter, Renderer};
 
@@ -98,6 +98,8 @@ fn draw(images: ImageTable, index: u32) -> Vec<u8> {
         paint,
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     }];
     let mut renderer = Renderer::new().expect("this test needs a device");
     let mut painter = GpuPainter::on(&renderer);

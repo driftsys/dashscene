@@ -329,6 +329,15 @@ impl ImageCache {
 }
 
 impl Painter for SkiaPainter {
+    /// The reference painter draws [`RectEntry::rotation`] (story #770): it
+    /// turns the canvas about the rect's anchor around the node's own ink.
+    ///
+    /// The default is `false`, so declaring this is what separates a painter
+    /// that rotates from one that would quietly draw the node upright.
+    fn rotates(&self) -> bool {
+        true
+    }
+
     fn paint(
         &mut self,
         rects: &[RectEntry],
@@ -496,6 +505,32 @@ impl Painter for SkiaPainter {
                     canvas.clip_rrect(rrect, ClipOp::Intersect, true);
                 }
             }
+            // The node's rotation (story #770). It goes on *after* the clip
+            // above and comes off before that clip is released, so it turns
+            // this node's own ink — fill, stroke, both shadow passes, and the
+            // glyph runs anchored to it — and leaves the ancestor clip region
+            // where it is. That region was resolved by core in absolute space
+            // and belongs to ancestors, which are not turning.
+            //
+            // The pivot is the anchor in canvas space: the anchor is a point
+            // in the node's own frame, where `(0, 0)` is its top-left, so it
+            // is the rect's origin plus the anchor
+            // (`docs/decisions/rotation-is-paint-only-and-anchored-explicitly.md`).
+            //
+            // Radians in, degrees out: Skia's `rotate` takes degrees and turns
+            // clockwise, which is this repository's y-down convention already,
+            // so the angle needs a unit conversion and no sign flip.
+            let rotated = rect.rotation != 0.0;
+            if rotated {
+                canvas.save();
+                canvas.rotate(
+                    rect.rotation.to_degrees(),
+                    Some(Point::new(
+                        rect.x + rect.rotation_anchor.x,
+                        rect.y + rect.rotation_anchor.y,
+                    )),
+                );
+            }
             let rrect = rounded_box(rect, &entry.corners);
             // How far the node's stroke pushes its rendered silhouette past
             // the fill box: an outside stroke by its full width, a center
@@ -652,6 +687,10 @@ impl Painter for SkiaPainter {
             // placement is the whole of issues #274 and #275.
             if let Some(msdf) = msdf.as_ref() {
                 msdf.draw_anchored(canvas, glyphs, i as u32);
+            }
+            // The rotation comes off before the clip it was applied inside.
+            if rotated {
+                canvas.restore();
             }
             if clipped {
                 canvas.restore();
@@ -1867,7 +1906,7 @@ mod tests {
     use super::*;
     // Test-only: the painter itself no longer names the owning type, since a
     // table hands out `ImageRef`. The tests still build assets to put in one.
-    use dashpaint::ImageAsset;
+    use dashpaint::{ImageAsset, Vec2};
 
     /// A real 2x2 JPEG (`convert`-encoded; lossy, so no pixel-color
     /// assertion — only size proves the decode).
@@ -1912,6 +1951,8 @@ mod tests {
             paint: solid,
             clip: dashpaint::ClipIndex::UNCLIPPED,
             opacity: 1.0,
+            rotation: 0.0,
+            rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
         }];
         painter.paint(
             &rects,
@@ -1964,6 +2005,8 @@ mod tests {
             paint,
             clip: dashpaint::ClipIndex::UNCLIPPED,
             opacity: 1.0,
+            rotation: 0.0,
+            rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
         };
         let rects = [rect(0.0, paint_a), rect(2.0, paint_b)];
 
@@ -2039,6 +2082,8 @@ mod tests {
             paint,
             clip: dashpaint::ClipIndex::UNCLIPPED,
             opacity: 1.0,
+            rotation: 0.0,
+            rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
         }];
         (paints, rects)
     }
@@ -2209,6 +2254,8 @@ mod tests {
             paint,
             clip: dashpaint::ClipIndex::UNCLIPPED,
             opacity: 1.0,
+            rotation: 0.0,
+            rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
         }];
         (paints, rects)
     }

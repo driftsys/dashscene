@@ -52,11 +52,26 @@ pub enum Channel {
     /// The natural landing for a bound Figma opacity variable (debt #253,
     /// `docs/decisions/masks-and-group-opacity.md`).
     Opacity = 9,
+    /// The node's rotation angle, in radians
+    /// (`Prop::Rotation`, story #770). Paint-only, beside [`Channel::Opacity`]
+    /// — a rotation write never reflows anything
+    /// (`docs/decisions/rotation-is-paint-only-and-anchored-explicitly.md`).
+    Rotation = 10,
+    /// The x component of the point the rotation turns about, in the node's
+    /// own coordinate space.
+    ///
+    /// It binds rather than being fixed at authoring time because SVG's
+    /// `<animateTransform type="rotate">` carries `"a cx cy"` in its `values`
+    /// list and animates all three. A channel set covering only the angle
+    /// would be incomplete against that route.
+    RotationAnchorX = 11,
+    /// The y component of the rotation anchor. See [`Channel::RotationAnchorX`].
+    RotationAnchorY = 12,
 }
 
 impl Channel {
     /// Every channel, in code order.
-    pub const ALL: [Channel; 10] = [
+    pub const ALL: [Channel; 13] = [
         Channel::X,
         Channel::Y,
         Channel::Width,
@@ -67,6 +82,9 @@ impl Channel {
         Channel::FillB,
         Channel::FillA,
         Channel::Opacity,
+        Channel::Rotation,
+        Channel::RotationAnchorX,
+        Channel::RotationAnchorY,
     ];
 
     /// The channel's stable wire code (the enum discriminant).
@@ -217,7 +235,11 @@ mod tests {
         for channel in Channel::ALL {
             assert_eq!(Channel::from_code(channel.code()), Some(channel));
         }
-        assert_eq!(Channel::from_code(10), None);
+        // The first code past the vocabulary must still be refused rather
+        // than decoded, which is the P4 guarantee this assertion holds. It
+        // moves whenever a channel is appended — 10 until story #770 added
+        // the rotation angle and its two anchor components.
+        assert_eq!(Channel::from_code(13), None);
         assert_eq!(Channel::from_code(u8::MAX), None);
     }
 

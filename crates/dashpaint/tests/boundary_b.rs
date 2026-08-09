@@ -402,6 +402,8 @@ fn two_rect_fixture() -> (Vec<RectEntry>, PaintTable, ClipTable) {
             paint: red,
             clip: ClipIndex::UNCLIPPED,
             opacity: 1.0,
+            rotation: 0.0,
+            rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
         },
         RectEntry {
             x: 10.0,
@@ -411,6 +413,8 @@ fn two_rect_fixture() -> (Vec<RectEntry>, PaintTable, ClipTable) {
             paint: blue,
             clip: inside_first,
             opacity: 1.0,
+            rotation: 0.0,
+            rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
         },
     ];
     (rects, paints, clips)
@@ -494,7 +498,12 @@ fn painter_trait_is_object_safe() {
 fn paint_index_is_transparent_over_u32() {
     assert_eq!(std::mem::size_of::<PaintIndex>(), 4);
     assert_eq!(std::mem::size_of::<ClipIndex>(), 4);
-    assert_eq!(std::mem::size_of::<RectEntry>(), 28);
+    // 28 until story #770, which added the rotation angle and its two
+    // anchor components — twelve bytes, and the row is still four-byte
+    // aligned with no padding. The number is pinned so that widening the
+    // row every rect carries is a deliberate act with a reason recorded
+    // beside it, which is what this assertion is for.
+    assert_eq!(std::mem::size_of::<RectEntry>(), 40);
     assert_eq!(std::mem::align_of::<RectEntry>(), 4);
     assert_eq!(std::mem::size_of::<Color>(), 16);
     assert_eq!(std::mem::align_of::<Color>(), 4);
@@ -886,6 +895,8 @@ fn the_dirty_set_crosses_boundary_b() {
         paint,
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     }];
 
     let mut painter = DirtyRecordingPainter::default();
@@ -933,6 +944,8 @@ fn group_opacity_crosses_as_per_rect_alpha_and_a_group_slice() {
             clip: ClipIndex::UNCLIPPED,
             // A free-path opacity node: its alpha is folded per-rect.
             opacity: 0.5,
+            rotation: 0.0,
+            rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
         },
         RectEntry {
             x: 20.0,
@@ -942,6 +955,8 @@ fn group_opacity_crosses_as_per_rect_alpha_and_a_group_slice() {
             paint: red,
             clip: ClipIndex::UNCLIPPED,
             opacity: 1.0,
+            rotation: 0.0,
+            rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
         },
     ];
     // A render-target group over the first rect only, at alpha 0.25.
@@ -1068,6 +1083,8 @@ fn a_backdrop_sampling_rect_crosses_boundary_b_as_an_ordering_barrier() {
             paint,
             clip: ClipIndex::UNCLIPPED,
             opacity: 1.0,
+            rotation: 0.0,
+            rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
         })
         .collect();
 
@@ -1121,6 +1138,8 @@ fn derived_partial_eq_is_not_reflexive_over_a_nan_field() {
         paint: PaintIndex(0),
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     };
     assert!(
         rect_with_nan != rect_with_nan,
@@ -1163,6 +1182,8 @@ fn derived_partial_eq_treats_zero_and_negative_zero_as_equal() {
         paint: PaintIndex(0),
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     };
     let rect_negative_zero = RectEntry {
         x: -0.0,
