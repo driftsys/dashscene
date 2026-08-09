@@ -725,3 +725,13 @@ filed beside their parent rather than apart from it:
   deferred because it gives every paint-only frame back a per-text-node cost.
 
 See the `sdd-working-memory-lifecycle` rule.
+
+- [a-step-is-a-pair-of-keyframes.md](a-step-is-a-pair-of-keyframes.md)
+  — a timed discrete change is two keyframes sharing a `t`, rather than a
+  fourth `TransitionSpec` variant. The sampler already produced an exact step
+  for a duplicate, so the sampler is unchanged and the whole cost falls in the
+  validator, with no schema cost at story #771; a third frame at one `t` is refused, because
+  sampling walks to the last and the middle value could never be returned. It
+  also records what the decision does **not** close: every animatable channel
+  is scalar, so a discrete change of `Prop::Visible` — SVG's `display` — needs
+  a channel rather than a curve shape.

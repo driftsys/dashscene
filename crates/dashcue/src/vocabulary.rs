@@ -44,11 +44,27 @@ impl Easing {
 /// One declared point of a keyframes curve.
 ///
 /// `t` is a fraction of the spec's duration, strictly inside (0, 1) and
-/// strictly increasing across a frame list. `value` is a progress
+/// **non-decreasing** across a frame list. `value` is a progress
 /// fraction of the bound `from → to` span — it may leave [0, 1]
 /// (overshoot is data). The endpoints (0, 0) and (1, 1) are implicit.
 /// Values are fractions, not absolute prop values, because a document
 /// never carries resolved values (P1).
+///
+/// # A pair at the same `t` is a step
+///
+/// Two frames sharing a `t` hold the old progress up to it and the new one
+/// from it on, which is a discrete change at a stated time — SVG's
+/// `calcMode="discrete"`, and the timed form `<set>` needs (issue #852,
+/// `docs/decisions/a-step-is-a-pair-of-keyframes.md`). A step at 0.4 is
+/// `[(0.4, 0.0), (0.4, 1.0)]`; a two-step sequence is four frames.
+///
+/// **At most two may share a `t`.** Sampling walks to the last frame at a
+/// given `t`, so a third carries a value no sample can ever return, and it
+/// is refused by name rather than silently ignored (P4).
+///
+/// `t` was strictly increasing until #852. Nothing in the sampler changed:
+/// it already produced an exact step for a duplicate, which is why this is a
+/// relaxed validator rule rather than a new [`TransitionSpec`] variant.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Keyframe {
     pub t: f32,
