@@ -11,10 +11,10 @@ project's convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports eleven files
+## Why the WIP gate currently reports twelve files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-eleven and exits non-zero. All eleven are deliberate, accepted exceptions
+twelve and exits non-zero. All twelve are deliberate, accepted exceptions
 rather than ungardened debt, and they are recorded here so the gate's result is
 explained rather than merely tolerated.
 
@@ -78,7 +78,17 @@ went stale because a commit that removes a file from this directory has to edit
 this file in the same commit, and that is not enforced by anything. **Archiving
 a capture and updating this ledger are one change, not two.**
 
-**Nine of the eleven are design captures**, described below, and **two driver
+**It went to twelve on 2026-08-09**, when the Unity host-integration capture
+landed — a design discussion whose whole scope is anchored to v1 rather than to
+a slice, so nothing on the roadmap will empty it. A Phase 1 plan was drafted
+beside it and **removed before the branch merged**: review found it
+half-retargeted against a C ABI that shipped while it was being written, and
+repairing it would have produced a consistent document that was still the wrong
+plan. Its design rationale survives as issue #859. **The heading and the
+paragraph below were both updated in that change** — the two lapses recorded
+above are each a case of one moving without the other.
+
+**Ten of the twelve are design captures**, described below, and **two driver
 prompts are held**, both for v0.18: `2026-08-08-v018-DRIVER-PROMPT.md`, added
 the day v0.17 closed, and `2026-08-09-v018-DRIVER-PROMPT.md`, which supersedes
 it and carries the slice from issue #617 onward. The first is kept rather than
@@ -361,6 +371,41 @@ archive records what was actually asked for rather than a corrected version of
 it. What was actually true is in
 `docs/decisions/blur-blends-in-srgb-encoded-space.md`.
 
+## The Unity host-integration capture, added 2026-08-09
+
+`2026-08-09-unity-host-integration.md` is the first entry here whose **whole**
+scope is anchored to v1 rather than to a slice. It is not the first to sit
+outside the roadmap at all, and an earlier revision claimed that it was —
+review caught it against this table's own rows. Four entries already have a
+v1-anchored half: `2026-07-27-indic-script-support.md` (track D of epic #463),
+`2026-07-27-glyph-coverage-sets-and-text-residency.md` (issue #460, moved to v1
+with #463), `2026-07-28-photorealistic-3d-content.md` (#462, which the row
+below already calls "both in v1"), and `2026-07-19-backdrop-blur-v011.md`,
+whose row waits on "when Unity's row is built" — the same unscheduled Unity
+work this capture is about.
+
+**Its §1 is a different kind of content from the rest of it, and the
+distinction is the reason the file is worth keeping.** All eight of its
+subsections — §1.1 to §1.8 — are readings of records and code that already
+exist: R-T1 ruling out interleaved compositing, `Profile::Full` already being
+defined as "Unity-class", backdrop blur being unable to see a host-drawn scene,
+`Painter::samples` defaulting to the encoded half, `Arena::layout` being intent
+rather than resolved geometry, FLIP costing `O(animated nodes)` with no
+re-solve, glyph coverage being settled at build time, and `commit` being on
+`Txn` with a bare form that ignores flex intent. Each names where it was
+checked. Everything after §1 is a proposal against unwritten code, and §4 is
+contingent on a measurement nobody has taken.
+
+Count those from the file rather than from this paragraph. An earlier revision
+said "six" and enumerated six, having dropped §1.7, and that list reached
+issue #851 before review caught it; §1.8 arrived later still, when the removed
+plan's one durable finding was moved into the capture.
+
+**That measurement is Q-6**, already open in `docs/technotes/open-questions.md`
+and already the reason `paint.render-target-budget` is a warning rather than an
+error. The capture does not add an open question so much as find a second
+consumer for one that exists.
+
 | capture                                                | gardened when                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `2026-07-19-asset-pipeline-profiles-and-baking.md`     | partly gardened at the v0.11 close (epic #344) and again across v0.12 (epic #345, stories #432, #433, #434, #435, #436); the rest when the vector bake's end-state fork and animated content are built — its `status` line says which half is which                                                                                                                                                                                                                                                                                                                                 |
@@ -371,6 +416,7 @@ it. What was actually true is in
 | `2026-08-07-motion-in-the-document.md`                 | the vocabulary is **built**, not when it is decided. It holds three gaps — a rotation channel, motion rows in `dashbuf`, and loop tracks — and the rejected wasm-expression alternative. The rotation gap closed at story #770 on 2026-08-09 and its section says so; the other two remain. Empties when a document can carry an animation                                                                                                                                                                                                                                          |
 | `2026-08-07-animated-content-import.md`                | an animated-content importer is built. Extends `docs/technotes/runtime-content.md` §4-§6 rather than replacing it. Its ThorVG half may garden separately and later, or never — the standing decision already covers it and this file only records two notes against it                                                                                                                                                                                                                                                                                                              |
 | `2026-08-07-asset-sourcing-and-residency.md`           | side-loading is built. Blocked on the schema's own deliberately-absent flavor/locator bit, so it cannot empty before that field has a producer and a consumer — the same condition the `AssetEntry` comment already states for itself                                                                                                                                                                                                                                                                                                                                               |
+| `2026-08-09-unity-host-integration.md`                 | the Unity integration is **built**, not when it is designed. Belongs to no slice, so nothing on the roadmap empties it; held against v1. Its §5 **placeholder diagnostic** may garden separately and earlier — the placeholder surface itself is already carried by `docs/design/architecture.md` and `docs/technotes/runtime-content.md` §7, and what is absent is the check that no host filled a placeholder and that no host covered a node that is not one. Its §1 findings garden nowhere: they are readings of records that already hold                                     |
 | `2026-08-09-svg-as-a-second-producer.md`               | gardened in two pieces — the profile half when the SVG importer is built, the reference-set half when the animation vocabulary closes. Three of its rulings are decision-shaped and marked **promote** in the file rather than gardened away: SMIL is not the animation reference set, SVG support is a profile rather than a version, and SVGO is rejected as a preprocessor                                                                                                                                                                                                       |
 
 Each row's entry is removed when its capture is gardened.
