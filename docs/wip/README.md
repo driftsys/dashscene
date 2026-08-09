@@ -11,10 +11,10 @@ project's convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports nine files
+## Why the WIP gate currently reports ten files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-nine and exits non-zero. All nine are deliberate, accepted exceptions rather
+ten and exits non-zero. All ten are deliberate, accepted exceptions rather
 than ungardened debt, and they are recorded here so the gate's result is
 explained rather than merely tolerated.
 
@@ -47,7 +47,10 @@ closed and that prompt was archived. **The two prompts never overlapped**, which
 the file names alone would suggest they did. It went back to nine on 2026-08-09,
 when v0.18's prompt landed — written on 2026-08-08 against a `main` that moved
 underneath it, so its first revision counted ten and had to be re-derived on
-the rebase. Re-derive the
+the rebase. It reached a real ten later that same day, when
+`2026-08-09-svg-as-a-second-producer.md` was added, and that addition read this
+paragraph and updated the count in the same commit — which is what the rule at
+the end of this section asks for. Re-derive the
 number from `git ls-files docs/wip/` when touching this section rather than
 trusting the prose.
 
@@ -64,7 +67,7 @@ went stale because a commit that removes a file from this directory has to edit
 this file in the same commit, and that is not enforced by anything. **Archiving
 a capture and updating this ledger are one change, not two.**
 
-**Eight of the nine are design captures**, described below, and **one driver
+**Nine of the ten are design captures**, described below, and **one driver
 prompt is held** — `2026-08-08-v018-DRIVER-PROMPT.md`, added the day v0.17
 closed. Driver prompts — the brief a session is handed to carry out a named
 piece of work — are transient by construction, spent the moment their work
@@ -339,9 +342,10 @@ it. What was actually true is in
 | `2026-07-28-photorealistic-3d-content.md`              | the remaining two questions are ruled on. Partly gardened 2026-08-05: the profile bands (#455), the ladder's fine end and the painter's working colour space are answered; the memory budget (#462) and whether ASTC remains the right family are open, both in v1. It records an input rather than a plan — photorealistic renders are target product content, and every number in the asset pipeline was chosen against content that is not representative of it                                                                                                                  |
 | `2026-07-27-indic-script-support.md`                   | Indic support is designed: the closure becomes text-driven and the unformed-cluster fallback is built. Its decided half — coverage is declared at build time, dynamic generation is a deferred painter capability — is already gardened into `docs/decisions/glyph-coverage-is-declared-at-build-time.md`                                                                                                                                                                                                                                                                           |
 | `2026-07-27-glyph-coverage-sets-and-text-residency.md` | glyph-atlas residency is designed: the unit of residency is chosen and the runtime-supplied-string case is answered. Its decided half — that only raster is block-compressed — is already gardened into `docs/decisions/compress-raster-only.md`                                                                                                                                                                                                                                                                                                                                    |
-| `2026-08-07-motion-in-the-document.md`                 | the vocabulary is **built**, not when it is decided. It holds three gaps — a rotation channel, motion rows in `dashbuf`, and loop tracks — and the rejected wasm-expression alternative. Empties when a document can carry an animation                                                                                                                                                                                                                                                                                                                                             |
+| `2026-08-07-motion-in-the-document.md`                 | the vocabulary is **built**, not when it is decided. It holds three gaps — a rotation channel, motion rows in `dashbuf`, and loop tracks — and the rejected wasm-expression alternative. The rotation gap closed at story #770 on 2026-08-09 and its section says so; the other two remain. Empties when a document can carry an animation                                                                                                                                                                                                                                          |
 | `2026-08-07-animated-content-import.md`                | an animated-content importer is built. Extends `docs/technotes/runtime-content.md` §4-§6 rather than replacing it. Its ThorVG half may garden separately and later, or never — the standing decision already covers it and this file only records two notes against it                                                                                                                                                                                                                                                                                                              |
 | `2026-08-07-asset-sourcing-and-residency.md`           | side-loading is built. Blocked on the schema's own deliberately-absent flavor/locator bit, so it cannot empty before that field has a producer and a consumer — the same condition the `AssetEntry` comment already states for itself                                                                                                                                                                                                                                                                                                                                               |
+| `2026-08-09-svg-as-a-second-producer.md`               | gardened in two pieces — the profile half when the SVG importer is built, the reference-set half when the animation vocabulary closes. Three of its rulings are decision-shaped and marked **promote** in the file rather than gardened away: SMIL is not the animation reference set, SVG support is a profile rather than a version, and SVGO is rejected as a preprocessor                                                                                                                                                                                                       |
 
 Each row's entry is removed when its capture is gardened.
 
