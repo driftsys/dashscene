@@ -11,7 +11,7 @@ is nothing to keep in sync between the two.
 
 | This file (shape)               | GitHub (state)                                |
 | ------------------------------- | --------------------------------------------- |
-| Which slices exist (v0.1-v0.19) | Which stories exist under each epic           |
+| Which slices exist (v0.1-v0.20) | Which stories exist under each epic           |
 | What each slice delivers        | Which stories are open, closed, who owns them |
 | Inter-slice dependency edges    | Story-level dependency edges                  |
 | Which E-criteria a slice closes | Debt triage and milestone assignment          |
@@ -1544,6 +1544,19 @@ to say, and moves as that epic does.
 Depends on: v0.17 for what an embedder consumes, and on the C ABI this slice
 builds. Independent of v0.18 in dependency terms; see the sequencing note above
 for the file-level overlap.
+
+### v0.20 — open, not yet planned
+
+**No epic yet.** Milestone #21, opened 2026-08-09. What it delivers is decided
+at the v0.19 close, like every slice before it; until then this is where issues
+surfaced by v0.19 are placed, which is what `AGENTS.md` defines a milestone
+without an epic to be.
+
+First placed here: #859, the data-plane export — `dashscene-ffi` hands a host a
+surface and draws; a host that draws the frame itself cannot obtain the
+committed tables.
+
+Depends on: v0.19, for the C ABI that export extends.
 
 ## v1 — Unity, full feature set, performance, production toolchain
 

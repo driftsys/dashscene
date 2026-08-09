@@ -205,7 +205,8 @@ undecided
 
 v0 is built one slice at a time. Slices v0.1 to v0.17 have closed. v0.18 —
 animation vocabulary — and v0.19 — the Android bring-up and the C ABI — are both
-open and planned, and run alongside each other.
+open and planned, and run alongside each other. v0.20 is open and not yet
+planned.
 [`docs/roadmap.md`](docs/roadmap.md) carries the slice map and what each one
 delivered; GitHub issues carry the live state.
 
