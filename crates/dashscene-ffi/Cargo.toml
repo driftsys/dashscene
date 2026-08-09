@@ -20,6 +20,9 @@ crate-type = ["rlib", "cdylib", "staticlib"]
 # The same set `dashscene-desktop` takes, minus `winit`: this crate is what a
 # host uses *instead of* a windowing library, so it takes none.
 dashscene-core.workspace = true
+# Boundary B's `Painter` trait, whose `paint` the draw call invokes.
+# `dashscene-desktop` takes it for the same reason.
+dashpaint.workspace = true
 dashlang.workspace = true
 dashscene-engine.workspace = true
 dashbuf.workspace = true

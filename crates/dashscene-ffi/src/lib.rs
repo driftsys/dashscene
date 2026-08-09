@@ -22,14 +22,6 @@
 //! that story is about to settle. It joins when #837 lands, and the versioning
 //! rule below says what that costs.
 //!
-//! **There is no draw call yet, and layer 0 is not complete without one.** A
-//! host can create a runtime, load a document, attach a surface, tick and
-//! resize — and will not see a pixel, because `SurfaceRenderer::present` takes
-//! the committed instance, paint, image, clip and glyph-run tables and nothing
-//! here assembles them. D1 says layer 0 "displays a compiled `.dsb`", so this
-//! crate does not yet meet it. Recorded here rather than left to be discovered
-//! by the first host that links it; story #840 stays open carrying it.
-//!
 //! # The three rules this ABI keeps
 //!
 //! 1. **No panic crosses the boundary.** Every entry point runs inside
@@ -63,9 +55,10 @@ use std::ffi::c_char;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use dashlang::LiveScene;
+use dashpaint::Painter;
 use dashscene_core::Arena;
 use dashscene_engine::TaffySolver;
-use dashscene_gpu::SurfaceRenderer;
+use dashscene_gpu::{Changes, Drawn, GpuPainter, SurfaceRenderer};
 
 /// The ABI generation. See the module's "Versioning" section for what moves it.
 pub const DS_ABI_VERSION: u32 = 1;
@@ -159,6 +152,11 @@ pub struct DsRuntime {
     arena: Arena,
     scene: Option<LiveScene>,
     surface: Option<SurfaceRenderer>,
+    /// Boundary B's implementation: it turns the committed tables into an
+    /// instance buffer and knows nothing about the window. Held rather than
+    /// built per frame, because it owns the packing buffers whose byte ranges
+    /// the dirty set decides to upload.
+    painter: GpuPainter,
 }
 
 /// Creates an empty runtime and writes it to `out`.
@@ -182,6 +180,7 @@ pub unsafe extern "C" fn ds_runtime_new(out: *mut *mut DsRuntime) -> DsStatus {
             arena: Arena::new(),
             scene: None,
             surface: None,
+            painter: GpuPainter::new(),
         });
         unsafe { *out = Box::into_raw(runtime) };
         DsStatus::Ok
@@ -323,6 +322,97 @@ pub unsafe extern "C" fn ds_runtime_resize(
         };
         match surface.resize(width, height) {
             Ok(()) => DsStatus::Ok,
+            Err(error) => {
+                set_last_error(format!("{error:?}"));
+                DsStatus::Surface
+            }
+        }
+    })
+}
+
+/// Draws the committed frame and puts it on the surface.
+///
+/// `out_drawn` receives whether a frame actually reached the window. It can be
+/// false for a reason that is not an error — a zero extent, or a surface that
+/// had to be reconfigured — which is why it is separate from the status.
+///
+/// The sequence mirrors `dashscene-desktop`'s `GpuPresenter::present`, the
+/// reference implementation of this seam: the painter packs the committed
+/// tables into an instance buffer, then the renderer uploads and presents. The
+/// dirty rects go to both, and the generation travels with them to the renderer
+/// so a declined frame breaks the chain by arithmetic rather than by anyone
+/// remembering to say so.
+///
+/// The commit is marked shown whenever presenting returns, **not** only when a
+/// frame reached the window. That is what `LiveScene::advanced`'s own
+/// documentation requires — a present can return without drawing, and "nothing
+/// here tries to detect that, and a host should not either". `out_drawn` is
+/// still reported, because a host may want it for its own pacing; it must not
+/// be used to decide what was shown.
+///
+/// # Safety
+///
+/// `runtime` must be live, and `out_drawn` must be writable or null. No other
+/// call may be in flight on `runtime`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ds_runtime_draw(
+    runtime: *mut DsRuntime,
+    out_drawn: *mut bool,
+) -> DsStatus {
+    guard(|| {
+        if runtime.is_null() {
+            set_last_error("ds_runtime_draw: runtime is null");
+            return DsStatus::NullArgument;
+        }
+        let runtime = unsafe { &mut *runtime };
+        if runtime.scene.is_none() {
+            set_last_error("ds_runtime_draw: no document loaded");
+            return DsStatus::NoDocument;
+        }
+        let Some(surface) = runtime.surface.as_mut() else {
+            set_last_error("ds_runtime_draw: no surface attached");
+            return DsStatus::NoSurface;
+        };
+        let scene = runtime.arena.committed();
+        let changes = Changes {
+            rects: scene.dirty(),
+            generation: scene.generation(),
+        };
+        runtime.painter.paint(
+            scene.rects(),
+            scene.paints(),
+            scene.images(),
+            scene.clips(),
+            scene.groups(),
+            scene.glyphs(),
+            Some(changes.rects),
+        );
+        let presented = surface.present(
+            runtime.painter.instances(),
+            scene.paints(),
+            scene.images(),
+            scene.clips(),
+            scene.glyphs(),
+            Some(changes),
+        );
+        match presented {
+            Ok(drawn) => {
+                if !out_drawn.is_null() {
+                    unsafe { *out_drawn = drawn == Drawn::Yes };
+                }
+                // Unconditionally on `Ok`, not only on `Drawn::Yes`, which is
+                // what both reference hosts do and what `LiveScene::advanced`'s
+                // own documentation requires: "a present can return `Ok`
+                // without drawing — a zero extent, an occluded window, or an
+                // acquire that timed out. Nothing here tries to detect that,
+                // and a host should not either." Gating on `Drawn::Yes` would
+                // leave `advanced()` true on every tick while the window is
+                // occluded, so a host that idles on it would never idle.
+                if let Some(scene) = runtime.scene.as_mut() {
+                    scene.mark_shown();
+                }
+                DsStatus::Ok
+            }
             Err(error) => {
                 set_last_error(format!("{error:?}"));
                 DsStatus::Surface
