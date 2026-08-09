@@ -98,6 +98,16 @@ then run Plugins → Development → dashscene fixture author → _(name)_.
     node-fx                      v0.10 A0: one frame with a rotated rect, a
                                  half-opacity rect, a hidden layer, and a
                                  mask pair (isMask)
+    prototype-smart-animate      v0.18 (#773): the Figma prototype vocabulary
+                                 that MAPS onto dashcue — a 2-variant set
+                                 differing in rect props only, ON_CLICK ->
+                                 CHANGE_TO -> SMART_ANIMATE on both
+                                 components, and one instance per mappable
+                                 easing arm
+    prototype-refused            v0.18 (#773): the diagnostic half — one node
+                                 per prototype construct dashcue cannot
+                                 express, plus a fill-only variant diff under
+                                 a valid SMART_ANIMATE
 
 Re-running a command deletes and rebuilds its frame — safe to iterate.
 
@@ -219,6 +229,54 @@ capture as below.
   by hand: **Type settings > Details panel > Ligatures**. The `liga-on`
   node stays at default (ligatures on) for contrast; the plugin's summary
   and the `_manual-checklist` node it leaves both repeat this step.
+- **prototype-smart-animate** / **prototype-refused**: **three steps are
+  outstanding**, and both committed captures carry a `_manual-checklist` node
+  naming them. Everything else is written through `setReactionsAsync`, which
+  the Plugin API exposes on 17 node types and makes read-only only under
+  `"documentAccess": "dynamic-page"` — a key this plugin's `manifest.json`
+  does not set.
+
+  Each reaction is written independently, so a refused arm costs only itself.
+  Three were refused on the first authoring run and are the outstanding work:
+  `CUSTOM_SPRING` in `prototype-smart-animate`, and `SCROLL_ANIMATE` and
+  `MOUSE_ENTER` in `prototype-refused`. Their payloads have since been
+  revised, each with a reason stated at the call site, but **the revised
+  payloads have never been run**: both committed captures predate them. So
+  re-running either command now produces a file that differs from its
+  committed capture, and the fixture must be re-captured — the same situation
+  `node-fx` documents above.
+
+  The checklist node is not free. It is a TEXT node at 12 px, so it lowers
+  into the emitted document and raises `text.style-below-msdf-floor`; both
+  committed captures carry that warning today. When nothing fails the plugin
+  creates no such node, which is the state to get back to (the
+  `backdrop-blur` reasoning, debt #382).
+
+  Three things about `prototype-smart-animate` are deliberate and should
+  survive a re-author. The two variants differ in **rect props only** — a
+  fill difference is interpolated by Smart Animate just as happily, and
+  `dashscene_validator` refuses a transition track on any channel but X, Y,
+  Width and Height, so a fill difference added here would stop the whole
+  fixture emitting; that case belongs in `prototype-refused`. The diff is
+  spread across **three children** because Figma's transition is
+  per-interaction while `dashcue`'s is per-prop: one `SMART_ANIMATE` carries
+  a single duration and easing, and a lowering has to diff the variants to
+  discover its tracks and fan that one spec across them, which a single
+  moving child would leave unexercised. And every mappable easing arm gets
+  **its own instance at a distinct duration**, because
+  `Easing.easingFunctionSpring` is optional: whether `GENTLE` comes back as a
+  bare name or with concrete parameters decides whether dashscene must own a
+  table of the four spring presets. The capture answered it — all four
+  presets come back bare, so the table is needed.
+
+  `duration` is written in **seconds**, and REST reports that same nested
+  field in seconds: `0.3` comes back as `0.30000001192092896`. Only the
+  separate flat `transitionDuration` REST puts beside the interaction is in
+  milliseconds (`300` for the same reaction). An earlier version of this
+  paragraph said the nested field was milliseconds, following
+  `@figma/rest-api-spec`'s doc comment, which is wrong — see
+  `docs/technotes/figma-rest-shapes-the-capture-pinned.md`.
+
 - **jpeg-fill** / **gif-fill**: none. Like `v03-paint`'s checkerboard, the
   image bytes are inlined in `code.js` as hex (a real baseline JPEG /
   static GIF, generated once with ImageMagick) and handed to

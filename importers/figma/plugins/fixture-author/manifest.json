@@ -35,6 +35,9 @@
     { "name": "gif-fill", "command": "gif-fill" },
     { "name": "vector-shapes", "command": "vector-shapes" },
     { "name": "stacked-fills", "command": "stacked-fills" },
-    { "name": "node-fx", "command": "node-fx" }
+    { "name": "node-fx", "command": "node-fx" },
+    { "separator": true },
+    { "name": "prototype-smart-animate", "command": "prototype-smart-animate" },
+    { "name": "prototype-refused", "command": "prototype-refused" }
   ]
 }

@@ -60,9 +60,14 @@ image fill does not leave its old asset committed (issue #156). A
 skipped, unchanged, or failed fixture never has its images pruned — the
 directory is only authoritative when the fixture was actually captured.
 
-Nine tier-1 fixtures are authored and captured, committed under
-this directory. Four more are registered in the manifest and await a
-manual authoring step:
+Every fixture the manifest registers is authored and captured: 32 entries,
+32 committed captures, none holding a placeholder file key. (This paragraph
+said "nine ... four more await a manual authoring step" until story #773; it
+had been stale for several slices, and two of the four it named as pending —
+`real-file` and `trim-demo` — had committed captures at the time.)
+
+Four of them still needed a manual step at authoring time, and the notes
+matter if any is ever re-authored:
 
 - `real-file` — the v0.7 real-file import spike (story #37):
   production-shaped (two pages, undeclared frames beside the export
@@ -91,6 +96,25 @@ manual authoring step:
   this pair replays remote-instance resolution against real
   `?plugin_data=shared` responses.
 
+Story #773 added the last two, `prototype-smart-animate` and
+`prototype-refused` — the mapping and diagnostic halves of Figma's prototype
+vocabulary. They are the first fixtures here to carry a prototype interaction
+at all: every capture committed before them reports
+`prototypeStartNodeID: null` and an empty `interactions` array on every node,
+which is why nothing in this repository pinned the shape. What the captures
+then showed is recorded in
+`docs/technotes/figma-rest-shapes-the-capture-pinned.md`, including a units
+error in Figma's own published REST spec.
+
+Both are written through the Plugin API's `setReactionsAsync`, so each is one
+menu command rather than a hand-authoring job. **Three reaction writes were
+refused and are still outstanding**, so neither capture is complete:
+`CUSTOM_SPRING` in the first, and `SCROLL_ANIMATE` and `MOUSE_ENTER` in the
+second. Each capture carries a `_manual-checklist` node naming its own. The
+payloads have since been revised, but the revisions have never been run — so
+re-running either command produces a file that no longer matches its
+committed capture and must be re-captured.
+
 | fixture                     | covers                                                                                                                                                                                                                                                                                |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `v03-paint`                 | v0.3 paint vocabulary under fixed layout: solid fill, all four gradient kinds, an image fill with a scale mode, the three stroke aligns, uniform and per-corner corner radii, and a clipsContent frame with an overflowing child. Its image fill's bytes live in `v03-paint.images/`. |
@@ -102,6 +126,8 @@ manual authoring step:
 | `lowering-negative-gap`     | negative `itemSpacing` overlap row of full ellipses, lowered to margins. Also the designated input for the `ELLIPSE`→circle shape lowering (`docs/decisions/figma-ellipse-as-circle.md`, #239).                                                                                       |
 | `lowering-baseline`         | mixed-size BASELINE alignment row, plus an Arabic RTL run with Arabic-Indic numerals.                                                                                                                                                                                                 |
 | `lowering-variant-topology` | a component set whose variants have different child counts (topology change), plus one instance. Also the designated input for local component/instance lowering (`docs/decisions/figma-component-lowering.md`, #242).                                                                |
+| `prototype-smart-animate`   | the prototype vocabulary that maps onto `dashcue` (#773): `ON_CLICK` → `NODE`/`CHANGE_TO` → `SMART_ANIMATE` over a two-variant set differing in rect props only, one instance per mappable easing arm, and a non-null `prototypeStartNodeID`.                                         |
+| `prototype-refused`         | the prototype vocabulary that cannot reach `dashcue` (#773), one construct per node — see "Second diagnostic fixture" below.                                                                                                                                                          |
 
 ### Diagnostic fixture: `effects-2025`
 
@@ -113,6 +139,38 @@ acceptance test stripped the `layoutMode` key to reach the three
 effects underneath. Since story #140 lowers auto-layout, the raw
 capture reaches its effects with no derivation, and the tests use it
 as captured.
+
+### Second diagnostic fixture: `prototype-refused`
+
+`prototype-refused` is the second **diagnostic** fixture, and it exists for
+the same R6 reason `effects-2025` does: a fixture carrying an error emits no
+`.dsb`, so the prototype vocabulary that maps onto `dashcue` and the
+vocabulary refused by name cannot share a file without the mapping case
+losing its emission test.
+
+It carries one node per refused construct, named for what it holds, so a
+diagnostic bisects to a name. What the committed capture actually carries is
+transitions `DISSOLVE` and `PUSH` (the `DirectionalTransition` arm, which adds
+`direction` and `matchLayers`); easings `CUSTOM_CUBIC_BEZIER` and
+`EASE_OUT_BACK`, neither of which any of `dashcue`'s four fixed cubics
+expresses; triggers `AFTER_TIMEOUT` and `ON_KEY_DOWN`; and actions `URL`,
+`SET_VARIABLE`, `OVERLAY` and `CONDITIONAL`, whose `conditionalBlocks` nest
+`Action[]` recursively.
+
+Two nodes the command builds carry **no** interaction in this capture:
+`refused-scroll-animate` and `refused-mouse-enter`, both refused by
+`setReactionsAsync`. A test asserting a diagnostic on either name will find
+nothing there. The capture's `_manual-checklist` node names both.
+
+The last cell is the one worth reading twice. Its reaction maps perfectly —
+`ON_CLICK`, `CHANGE_TO`, `SMART_ANIMATE` — but its two variants differ in
+**fill**, so the tracks that diff fans out to are `FillR`/`FillG`/`FillB`,
+which `dashscene_validator`'s `TRANSITION_CHANNEL_NOT_A_RECT` rule refuses: a
+variant transition animates rect channels only. Smart Animate interpolates
+colour happily, so this is the case every real Figma file hits. Whether it is
+an error or a warning that drops the colour tracks is the lowering story's
+call; the fixture only has to carry the case so the call is made against
+captured data.
 
 ### Manual authoring step still open
 
