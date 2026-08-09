@@ -70,6 +70,22 @@ impl Node {
         self
     }
 
+    /// The node's rotation in radians, about `anchor` — a point in the
+    /// node's own coordinate space where `(0.0, 0.0)` is its top-left, not
+    /// its centre. A designer's "about the centre" is `(w / 2.0, h / 2.0)`,
+    /// written by whoever means it
+    /// (`docs/decisions/rotation-is-paint-only-and-anchored-explicitly.md`).
+    ///
+    /// Paint-only, beside [`Node::opacity`] — it never reaches the solver,
+    /// so a rotated node reflows nothing and keeps its own box.
+    ///
+    /// A rotation here does not compose onto the node's children: each node
+    /// turns about its own anchor (issue #845).
+    pub fn rotation(mut self, radians: f32, anchor: (f32, f32)) -> Self {
+        self.rotation = Some((radians, anchor));
+        self
+    }
+
     /// Whether the node clips its children to its own rounded box. It
     /// does not clip itself.
     pub fn clip(mut self, clip: bool) -> Self {
@@ -193,6 +209,9 @@ pub(crate) fn stage_paint_props(txn: &mut Txn<'_>, id: NodeId, node: &Node) {
     }
     if let Some(v) = node.opacity {
         txn.set_prop(id, Prop::Opacity(v));
+    }
+    if let Some((angle, anchor)) = node.rotation {
+        txn.set_prop(id, Prop::Rotation { angle, anchor });
     }
     if let Some(v) = node.clip {
         txn.set_prop(id, Prop::Clip(v));

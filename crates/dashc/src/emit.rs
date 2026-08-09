@@ -237,6 +237,9 @@ fn channel_of(channel: BindingChannel) -> dashbuf::BindingChannel {
         BindingChannel::FillB => dashbuf::BindingChannel::FillB,
         BindingChannel::FillA => dashbuf::BindingChannel::FillA,
         BindingChannel::Opacity => dashbuf::BindingChannel::Opacity,
+        BindingChannel::Rotation => dashbuf::BindingChannel::Rotation,
+        BindingChannel::RotationAnchorX => dashbuf::BindingChannel::RotationAnchorX,
+        BindingChannel::RotationAnchorY => dashbuf::BindingChannel::RotationAnchorY,
     }
 }
 
@@ -345,6 +348,16 @@ fn build_node<'a>(
             opacity: node.opacity,
             mask: node.mask,
             visible: node.visible,
+            // v0.18 (story #770). All three equal their schema default for
+            // an unrotated node, so flatc omits them and a document with no
+            // rotation emits the bytes it did before this vocabulary (R7).
+            // The anchor is written whenever it is non-zero even at a zero
+            // angle: it is the node's stated turning point, and dropping it
+            // would silently re-anchor a later binding that drives only the
+            // angle.
+            rotation: node.rotation,
+            rotation_anchor_x: node.rotation_anchor.0,
+            rotation_anchor_y: node.rotation_anchor.1,
             ..Default::default()
         },
     )

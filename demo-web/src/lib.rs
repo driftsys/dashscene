@@ -170,7 +170,13 @@ mod page {
                 }
             };
 
-        Host::new(surface, arena, live, scripted_pulse(scripted), builder).spin();
+        // Detached: this is a full-page demonstration, and the page going away
+        // is the only end it has. An embedder that mounts and unmounts a canvas
+        // keeps the handle instead and drops it — which is the case story #834
+        // added it for, and the reason `spin` is `#[must_use]` (issue #814).
+        Host::new(surface, arena, live, scripted_pulse(scripted), builder)
+            .spin()
+            .detach();
         Ok(())
     }
 

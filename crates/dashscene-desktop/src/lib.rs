@@ -9,7 +9,12 @@
 //!    asynchronous.
 //! 2. **The frame loop** — [`run`], on `winit`'s event loop, pacing itself at
 //!    60 Hz while the generation advances and parking on an event wait while it
-//!    is steady.
+//!    is steady. It **survives a lost surface**, rebinding the presenter and
+//!    carrying on ([`recovery`]), and it **can be stopped from another thread**
+//!    ([`Waker::stop`]). Both were gaps until story #834: a recoverable loss
+//!    called `event_loop.exit()` and ended the process, and an embedder that did
+//!    not own the window's lifetime had no way to end the loop at all (issues
+//!    #818 and #820).
 //! 3. **The generation gate** — which frames are worth drawing. *Delegated*
 //!    rather than held: story #810 moved it to `dashlang::LiveScene::advanced`
 //!    and `mark_shown`, so this crate and the browser one read one rule. The
@@ -37,7 +42,10 @@
 //!   name, no node name and no variant set.
 //! - **Anything driven from off the loop's thread.** [`App::started`] hands
 //!   over a [`Waker`], because a parked loop cannot otherwise be reached. What
-//!   sends it — a timer, a scripted sequence, a data feed — is the embedder's.
+//!   sends it — a timer, a scripted sequence, a data feed — is the embedder's,
+//!   and so is deciding when to end the loop with [`Waker::stop`]. What stays
+//!   `winit`'s and cannot be handed over: [`run`] owns the calling thread until
+//!   the loop ends, so the stop is a message rather than a returned handle.
 //! - **Where the diagnostics go.** [`App::note`] receives the loop's own lines;
 //!   a library that wrote them to stderr itself would be deciding an embedder's
 //!   output format. Default: discarded.
@@ -45,7 +53,9 @@
 //!   overriding it is how a second one is selected at run time — see
 //!   [`present`] for why only one implementation ships here.
 //! - **Error reporting.** [`DesktopError`] implements `Display`; where that
-//!   text goes is the embedder's decision.
+//!   text goes is the embedder's decision. What it does **not** have to decide
+//!   is whether a failure was survivable — the loop has already acted, and
+//!   [`recovery::recovery`] is the same classification it used.
 
 use std::io;
 
@@ -53,14 +63,17 @@ use dashbuf::residency::PayloadMismatch;
 use dashlang::LiveScene;
 use dashscene_core::Arena;
 use dashscene_engine::TaffySolver;
+use dashscene_validator::Report;
 
 mod document;
 mod host;
 pub mod present;
+pub mod recovery;
 
 pub use document::Document;
 pub use host::{App, FRAME_INTERVAL, Reaction, Scene, Waker, run};
 pub use present::{Drawn, GpuPresenter, Present, PresentError};
+pub use recovery::Recovery;
 
 /// Replays a document already in memory, through the **owning** load path.
 ///
@@ -80,7 +93,7 @@ pub fn load_bytes(bytes: &[u8], arena: &mut Arena) -> Result<LiveScene, DesktopE
     if report.has_errors() {
         return Err(DesktopError::Gate {
             path: "<in memory>".to_owned(),
-            report: format!("{report:?}"),
+            report,
         });
     }
     dashscene_core::load_document(&document, &payloads, arena);
@@ -107,7 +120,13 @@ pub enum DesktopError {
     /// The envelope, the document, or an asset's binding.
     Open(dashbuf::OpenError),
     /// The document does not pass the referential load gate.
-    Gate { path: String, report: String },
+    ///
+    /// Carries the validator's own [`Report`] rather than a formatted string, so
+    /// an embedder can count diagnostics, filter by severity, or render its own
+    /// message. It was `format!("{report:?}")` until story #834; every sibling
+    /// variant wraps its underlying error type, and this one stringified a type
+    /// that is public and structured (issue #818).
+    Gate { path: String, report: Report },
     /// A payload is not the one the file names.
     Payload(PayloadMismatch),
     /// The file binds a **derived** payload through a derivation manifest, and
@@ -131,8 +150,14 @@ impl std::fmt::Display for DesktopError {
         match self {
             Self::Map { path, error } => write!(f, "{path} cannot be mapped: {error}"),
             Self::Open(error) => write!(f, "{error}"),
+            // Not `{report}`. `Report`'s own `Display` is one `writeln!` per
+            // diagnostic, so interpolating it puts embedded newlines and a
+            // trailing one inside an error message — which every sibling
+            // variant here is a single line of. The structure is on the variant
+            // for an embedder that wants it; this is the one-line rendering,
+            // and it matches what `dashscene-web` prints for the same failure.
             Self::Gate { path, report } => {
-                write!(f, "{path} fails the load gate: {report}")
+                write!(f, "{path} fails the load gate: {}", one_line(report))
             }
             Self::Payload(error) => write!(f, "{error}"),
             Self::Derived { path } => write!(
@@ -147,6 +172,21 @@ impl std::fmt::Display for DesktopError {
             Self::EventLoop(message) => write!(f, "the event loop: {message}"),
         }
     }
+}
+
+/// A validator [`Report`] as one line.
+///
+/// `Report`'s `Display` writes a line per diagnostic and ends with a newline,
+/// which is right for a terminal report and wrong inside an error message. Both
+/// integration crates render it this way so a gate failure reads the same in a
+/// shell and in a browser console (story #834).
+fn one_line(report: &Report) -> String {
+    report
+        .diagnostics()
+        .iter()
+        .map(|diagnostic| diagnostic.to_string())
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 impl std::error::Error for DesktopError {

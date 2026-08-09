@@ -60,10 +60,14 @@ from `crates/dashcue/src/lib.rs`:
   polynomials via `apply(self, t: f32) -> f32`. Exotic curve shapes are
   data (`TransitionSpec::Keyframes`), not more `Easing` variants.
 - `Keyframe { t, value }` — `t` is a fraction of the spec's duration,
-  strictly inside `(0, 1)` and strictly increasing across a frame list;
+  strictly inside `(0, 1)` and **non-decreasing** across a frame list;
   `value` is a progress fraction of the bound `from → to` span (may
   leave `[0, 1]` — overshoot is data). Implicit endpoints `(0, 0)` and
-  `(1, 1)`.
+  `(1, 1)`. **Two frames at the same `t` are a step** — a discrete change
+  at a stated time, which is `calcMode="discrete"` and the timed form of
+  SVG's `<set>` (`docs/decisions/a-step-is-a-pair-of-keyframes.md`). At
+  most two may share a `t`: sampling walks to the last, so a third would
+  be a value no sample can return.
 - `TransitionSpec` — `Tween { duration, easing }`, `Spring { stiffness,
   damping_ratio }` (Compose's `SpringSpec` shape, so Compose specs map
   onto this as data), or `Keyframes { duration, frames }`.
@@ -172,8 +176,9 @@ its insertion-order guarantee (see above) without extra bookkeeping.
 validated upstream eventually (P4); `start` centralizes the panic for a
 spec no valid document can contain: non-finite or non-positive
 `duration`/`stiffness`, negative `damping_ratio`/`delay`/`stagger`,
-non-finite `to`, keyframe `t` outside `(0, 1)` or not strictly
-increasing, non-finite keyframe values. Two further checks belong to the
+non-finite `to`, keyframe `t` outside `(0, 1)`, decreasing keyframe `t`,
+a third keyframe sharing one `t` (two are a step; a third is a value no
+sample can return), non-finite keyframe values. Two further checks belong to the
 endpoints themselves:
 
 - `from` must be finite on a fresh start. On the retarget path the
@@ -228,7 +233,11 @@ precedent), fixed time steps throughout, across three files:
   bit-deterministic across repeated runs, and moves monotonically
   toward the target when critically damped; keyframes interpolate
   through declared frames including overshoot and degrade to linear
-  with no declared frames; the finished-track lifecycle (exact `to` on
+  with no declared frames; a pair of frames at one `t` samples as an
+  exact step and four frames as two steps, while a third frame at one
+  `t` and a frame at `0` are both refused
+  (`docs/decisions/a-step-is-a-pair-of-keyframes.md`); the
+  finished-track lifecycle (exact `to` on
   the finishing frame, removed by the next `advance`); `samples()` in
   start order, with a retargeted track re-entering at the back; the
   spring's position gate — not its velocity gate — binding a

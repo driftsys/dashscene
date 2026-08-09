@@ -78,6 +78,41 @@ fn prop_for(channel: Channel, v: f32) -> Prop {
         Channel::FillR | Channel::FillG | Channel::FillB | Channel::FillA => {
             unreachable!("fill channels write through the fill shadow, never prop_for")
         }
+        // Three channels address one three-component prop, so they cannot
+        // stage directly: writing the angle alone would have to invent an
+        // anchor, and writing an anchor component alone would have to invent
+        // an angle. They write through the node's rotation shadow, exactly
+        // as the four fill channels write through its fill shadow.
+        Channel::Rotation | Channel::RotationAnchorX | Channel::RotationAnchorY => {
+            unreachable!("rotation channels write through the rotation shadow, never prop_for")
+        }
+    }
+}
+
+/// Whether `channel` addresses one component of the node's rotation.
+fn is_rotation(channel: Channel) -> bool {
+    matches!(
+        channel,
+        Channel::Rotation | Channel::RotationAnchorX | Channel::RotationAnchorY
+    )
+}
+
+/// One component of a node's rotation shadow, selected by a rotation
+/// channel: `[angle, anchor_x, anchor_y]`.
+fn rotation_component(rotation: &mut [f32; 3], channel: Channel) -> &mut f32 {
+    match channel {
+        Channel::Rotation => &mut rotation[0],
+        Channel::RotationAnchorX => &mut rotation[1],
+        Channel::RotationAnchorY => &mut rotation[2],
+        _ => unreachable!("rotation_component takes only a rotation channel"),
+    }
+}
+
+/// The `Prop` a rotation shadow stages.
+fn rotation_prop(rotation: [f32; 3]) -> Prop {
+    Prop::Rotation {
+        angle: rotation[0],
+        anchor: (rotation[1], rotation[2]),
     }
 }
 
@@ -104,7 +139,12 @@ fn fill_component(color: &mut Color, channel: Channel) -> &mut f32 {
 /// *from* before any signal changes. Geometry and gap come from the
 /// layout; a fill channel reads its component of the authored solid
 /// fill, or `0.0` for an unfilled node.
-fn initial_channel_value(layout: &Layout, fill: Option<Color>, channel: Channel) -> f32 {
+fn initial_channel_value(
+    layout: &Layout,
+    fill: Option<Color>,
+    rotation: [f32; 3],
+    channel: Channel,
+) -> f32 {
     match channel {
         Channel::X => layout.x,
         Channel::Y => layout.y,
@@ -120,6 +160,17 @@ fn initial_channel_value(layout: &Layout, fill: Option<Color>, channel: Channel)
         // whether or not the node also authors `Node::opacity`; `1.0`
         // just matches the arena's own default (`Arena::opacity`).
         Channel::Opacity => 1.0,
+        // The node's authored rotation, read back per component. Without
+        // these arms the wildcard below treats a rotation channel as a fill
+        // channel and `fill_component` panics — this match has no
+        // exhaustiveness check to catch that, which is why the arms are
+        // spelled out rather than left to the fallback (story #770).
+        //
+        // `rotation` carries the same `[angle, anchor_x, anchor_y]` order the
+        // rotation shadow uses.
+        Channel::Rotation => rotation[0],
+        Channel::RotationAnchorX => rotation[1],
+        Channel::RotationAnchorY => rotation[2],
         _ => {
             let mut color = fill.unwrap_or(TRANSPARENT);
             *fill_component(&mut color, channel)
@@ -162,7 +213,7 @@ fn classify(
 ) -> WriteClass {
     // Fill and opacity are both paint-only (they never reflow anything —
     // `docs/decisions/visible-is-layout-opacity-is-paint.md`, debt #253).
-    if is_fill(channel) || channel == Channel::Opacity {
+    if is_fill(channel) || channel == Channel::Opacity || is_rotation(channel) {
         return WriteClass::PaintOnly;
     }
     if channel == Channel::Gap {
@@ -687,6 +738,7 @@ fn apply_scalar_write(
     b: &mut ScalarBinding,
     v: f32,
     fill_shadow: &mut HashMap<NodeId, Color>,
+    rotation_shadow: &mut HashMap<NodeId, [f32; 3]>,
     cached_solve: &[(NodeId, SolvedRect)],
     cached_index: &HashMap<NodeId, usize>,
     patches: &mut Vec<(usize, Patch)>,
@@ -702,6 +754,16 @@ fn apply_scalar_write(
                 .expect("every fill-bound node has a seeded shadow");
             *fill_component(color, b.channel) = v;
             txn.set_prop(b.node, Prop::Fill(*color));
+        }
+        // A rotation channel writes one of three components through the
+        // node's rotation shadow, for the reason `prop_for` gives: the
+        // other two must survive the write rather than be invented.
+        WriteClass::PaintOnly if is_rotation(b.channel) => {
+            let rotation = rotation_shadow
+                .get_mut(&b.node)
+                .expect("every rotation-bound node has a seeded shadow");
+            *rotation_component(rotation, b.channel) = v;
+            txn.set_prop(b.node, rotation_prop(*rotation));
         }
         WriteClass::PaintOnly => {
             txn.set_prop(b.node, prop_for(b.channel, v));
@@ -776,6 +838,10 @@ struct BuildCtx {
     /// against (story #167: the binding table is a document construct,
     /// so `build_live` records every declarative binding in the arena).
     core_signals: Vec<SignalId>,
+    /// Per-node authored rotation for the rotation-channel shadow, seeded
+    /// for every rotation-bound node so a binding driving one of the three
+    /// components keeps the other two: `[angle, anchor_x, anchor_y]`.
+    rotation_shadow: HashMap<NodeId, [f32; 3]>,
     /// Per-node authored fill for the fill-channel shadow, seeded for
     /// every node that binds a fill channel.
     fill_shadow: HashMap<NodeId, Color>,
@@ -846,6 +912,11 @@ pub struct LiveScene {
     /// (story #167): `Scene::signal_named` declarations, or a loaded
     /// document's signal names ([`attach_live`]).
     names: HashMap<String, u32>,
+    /// The current rotation of every node with a rotation-channel binding,
+    /// as `[angle, anchor_x, anchor_y]`. The counterpart of `fill_shadow`
+    /// below, for the same reason: three channels address one
+    /// three-component prop.
+    rotation_shadow: HashMap<NodeId, [f32; 3]>,
     /// The current fill color of every node with a fill-channel binding.
     /// One channel writes one component; the shadow is what makes the
     /// other three keep their values across that write.
@@ -991,6 +1062,7 @@ impl LiveScene {
                     b,
                     v,
                     &mut self.fill_shadow,
+                    &mut self.rotation_shadow,
                     &self.cached_solve,
                     &self.cached_index,
                     &mut patches,
@@ -1034,6 +1106,7 @@ impl LiveScene {
                 &mut self.scalar_bindings[bi],
                 value,
                 &mut self.fill_shadow,
+                &mut self.rotation_shadow,
                 &self.cached_solve,
                 &self.cached_index,
                 &mut patches,
@@ -1077,6 +1150,7 @@ fn seed_scalar(
     b: &mut ScalarBinding,
     v: f32,
     fill_shadow: &mut HashMap<NodeId, Color>,
+    rotation_shadow: &mut HashMap<NodeId, [f32; 3]>,
 ) {
     if is_fill(b.channel) {
         let color = fill_shadow
@@ -1084,6 +1158,12 @@ fn seed_scalar(
             .expect("every fill-bound node has a seeded shadow");
         *fill_component(color, b.channel) = v;
         txn.set_prop(b.node, Prop::Fill(*color));
+    } else if is_rotation(b.channel) {
+        let rotation = rotation_shadow
+            .get_mut(&b.node)
+            .expect("every rotation-bound node has a seeded shadow");
+        *rotation_component(rotation, b.channel) = v;
+        txn.set_prop(b.node, rotation_prop(*rotation));
     } else {
         txn.set_prop(b.node, prop_for(b.channel, v));
     }
@@ -1121,6 +1201,7 @@ pub fn attach_live(arena: &mut Arena, mut solver: Box<dyn LayoutSolver>) -> Live
     }
 
     let mut fill_shadow: HashMap<NodeId, Color> = HashMap::new();
+    let mut rotation_shadow: HashMap<NodeId, [f32; 3]> = HashMap::new();
     let mut bindings: Vec<ScalarBinding> = Vec::with_capacity(rows.len());
     for row in &rows {
         let node = row.node;
@@ -1136,6 +1217,15 @@ pub fn attach_live(arena: &mut Arena, mut solver: Box<dyn LayoutSolver>) -> Live
                 .entry(node)
                 .or_insert(fill.unwrap_or(TRANSPARENT));
         }
+        // Seeded from the node's authored rotation, so a binding that drives
+        // only the angle keeps the anchor the document stated, and one that
+        // drives only an anchor component keeps the authored angle.
+        if is_rotation(row.channel) {
+            let (angle, anchor) = arena.rotation(node);
+            rotation_shadow
+                .entry(node)
+                .or_insert([angle, anchor.0, anchor.1]);
+        }
         bindings.push(ScalarBinding {
             node,
             parent: arena.parent(node),
@@ -1150,7 +1240,10 @@ pub fn attach_live(arena: &mut Arena, mut solver: Box<dyn LayoutSolver>) -> Live
             ),
             smoothing: None,
             key: prop_key(node, row.channel),
-            last_applied: initial_channel_value(&layout, fill, row.channel),
+            last_applied: {
+                let (angle, anchor) = arena.rotation(node);
+                initial_channel_value(&layout, fill, [angle, anchor.0, anchor.1], row.channel)
+            },
         });
     }
 
@@ -1167,7 +1260,7 @@ pub fn attach_live(arena: &mut Arena, mut solver: Box<dyn LayoutSolver>) -> Live
             let v = to_core(&b.transform)
                 .expect("attached bindings carry declarative transforms only")
                 .apply(raw);
-            seed_scalar(&mut txn, b, v, &mut fill_shadow);
+            seed_scalar(&mut txn, b, v, &mut fill_shadow, &mut rotation_shadow);
         }
         txn.commit_with(&mut *solver)
     };
@@ -1199,6 +1292,7 @@ pub fn attach_live(arena: &mut Arena, mut solver: Box<dyn LayoutSolver>) -> Live
         cached_index,
         names,
         fill_shadow,
+        rotation_shadow,
         generation,
         shown: None,
     }
@@ -1335,7 +1429,13 @@ impl Scene {
             for b in &mut ctx.scalar {
                 let raw = self.scalar_inits[b.signal as usize];
                 let v = eval_scalar(&b.transform, &ctx.scalar_closures, raw);
-                seed_scalar(&mut txn, b, v, &mut ctx.fill_shadow);
+                seed_scalar(
+                    &mut txn,
+                    b,
+                    v,
+                    &mut ctx.fill_shadow,
+                    &mut ctx.rotation_shadow,
+                );
             }
             for b in &ctx.text {
                 let raw = self.scalar_inits[b.signal as usize];
@@ -1392,6 +1492,7 @@ impl Scene {
             cached_index,
             names,
             fill_shadow: ctx.fill_shadow,
+            rotation_shadow: ctx.rotation_shadow,
             generation,
             shown: None,
         }
@@ -1422,6 +1523,7 @@ fn stage_live(
         layout,
         fill,
         fill_with,
+        rotation,
         scalar_bindings,
         smoothing,
         text_binding,
@@ -1429,6 +1531,12 @@ fn stage_live(
         children,
         ..
     } = node;
+
+    // The node's authored rotation as the shadow's three components. The
+    // builder's `None` is the arena default, unrotated.
+    let rotation = rotation.map_or([0.0, 0.0, 0.0], |(angle, anchor)| {
+        [angle, anchor.0, anchor.1]
+    });
 
     let has_children = !children.is_empty();
     let passthrough = layout.mode == LayoutMode::None;
@@ -1501,6 +1609,17 @@ fn stage_live(
                 .entry(id)
                 .or_insert(fill.unwrap_or(TRANSPARENT));
         }
+        // The rotation counterpart, and for the same reason: three channels
+        // address one three-component prop, so a binding driving one of them
+        // needs the other two to survive the write rather than be invented.
+        // `attach_live` seeds this from the loaded node; here the scene is
+        // being staged, so it seeds from what the builder authored.
+        //
+        // Without this seed `seed_scalar`'s `expect` fires on the first
+        // rotation-bound node (story #770).
+        if is_rotation(channel) {
+            ctx.rotation_shadow.entry(id).or_insert(rotation);
+        }
         let smoothing_spec = smoothing
             .iter()
             .find(|(c, _)| *c == channel)
@@ -1515,7 +1634,7 @@ fn stage_live(
             class: classify(channel, contained, has_children, passthrough),
             smoothing: smoothing_spec,
             key,
-            last_applied: initial_channel_value(&layout, fill, channel),
+            last_applied: initial_channel_value(&layout, fill, rotation, channel),
         });
     }
 

@@ -47,10 +47,19 @@ closed and that prompt was archived. **The two prompts never overlapped**, which
 the file names alone would suggest they did. It went back to nine on 2026-08-09,
 when v0.18's prompt landed — written on 2026-08-08 against a `main` that moved
 underneath it, so its first revision counted ten and had to be re-derived on
-the rebase. It went to ten on
-2026-08-09, when v0.19's Android driver prompt landed while v0.18's was still
-held — **the first time two prompts overlap**, which the paragraph below now
-says rather than repeating that they never do. Re-derive the
+the rebase. It reached a real ten later that same day, when
+`2026-08-09-svg-as-a-second-producer.md` was added, and that addition read this
+paragraph and updated the count in the same commit — which is what the rule at
+the end of this section asks for. Eleven followed when v0.18's second driver
+prompt landed, and **twelve when `integration/v0.19-android` merged `main`** and
+brought v0.19's Android prompt in beside the two already held. That is the first
+time **three** prompts are held at once, and the first time **two slices'**
+prompts overlap — which the paragraph below now says rather than repeating that
+they never do. It is also the first time the count moved through a _merge_
+rather than through a commit that added a file. Both sides had updated this
+paragraph, each correctly for its own branch, and neither number survived the
+join.
+Re-derive the
 number from `git ls-files docs/wip/` when touching this section rather than
 trusting the prose.
 
@@ -67,12 +76,23 @@ went stale because a commit that removes a file from this directory has to edit
 this file in the same commit, and that is not enforced by anything. **Archiving
 a capture and updating this ledger are one change, not two.**
 
-**Eight of the ten are design captures**, described below, and **two driver
-prompts are held** — `2026-08-08-v018-DRIVER-PROMPT.md`, added the day v0.17
-closed, and `2026-08-09-v019-ANDROID-DRIVER-PROMPT.md`, added at the close of
-v0.19's C ABI work to carry stories #841 and #842. They overlap because v0.18
-and v0.19 run at the same time, on `main` and on
-`integration/v0.19-android` respectively; every earlier pair did not. Driver prompts — the brief a session is handed to carry out a named
+**Nine of the twelve are design captures**, described below, and **three driver
+prompts are held**, across two slices.
+
+Two are v0.18's: `2026-08-08-v018-DRIVER-PROMPT.md`, added the day v0.17 closed,
+and `2026-08-09-v018-DRIVER-PROMPT.md`, which supersedes it and carries the
+slice from issue #617 onward. The first is kept rather than replaced because its
+story #770 material is now as-built and its gate section records why the slice
+could start at all; the second is what a session should be handed. Both archive
+together when epic #769 closes.
+
+The third is v0.19's: `2026-08-09-v019-ANDROID-DRIVER-PROMPT.md`, added at the
+close of that slice's C ABI work to carry stories #841 and #842, and archived
+when epic #833 closes. The two slices' prompts overlap because v0.18 and v0.19
+run at the same time, on `main` and on `integration/v0.19-android` respectively;
+every earlier pair did not.
+
+Driver prompts — the brief a session is handed to carry out a named
 piece of work — are transient by construction, spent the moment their work
 lands, and the convention is to archive them verbatim rather than garden them
 into records. Fifteen are in `docs/archive/`: fourteen `*-DRIVER-PROMPT.md`
@@ -93,8 +113,15 @@ on purpose, so what was known when it was written is still legible. By the close
 its story states were stale and its traps section was not, which is why
 story #796 was told to archive it rather than to garden anything out of it.
 
-**`2026-08-08-v018-DRIVER-PROMPT.md` empties when epic #769 closes**, on the
-same rule. It was written while v0.17 was one story from closing, because
+**Both v0.18 prompts empty when epic #769 closes**, on the same rule, and are
+archived verbatim together. The 2026-08-09 one was written after three stories
+closed rather than amended onto the first, because the first's story order and
+its "where the slice stands" table had both been overtaken — amending would have
+left a body whose two halves disagreed, where two files leave what was known at
+each point legible. The earlier one carries a `status` line saying it is
+superseded and by what.
+
+The 2026-08-08 prompt empties on the same rule. It was written while v0.17 was one story from closing, because
 v0.18's only remaining condition was that close — the slice has no technical
 dependency on v0.17, and story #796 was the phase-end revision `AGENTS.md`
 requires before the next slice starts. That story landed hours later, so the
@@ -345,9 +372,10 @@ it. What was actually true is in
 | `2026-07-28-photorealistic-3d-content.md`              | the remaining two questions are ruled on. Partly gardened 2026-08-05: the profile bands (#455), the ladder's fine end and the painter's working colour space are answered; the memory budget (#462) and whether ASTC remains the right family are open, both in v1. It records an input rather than a plan — photorealistic renders are target product content, and every number in the asset pipeline was chosen against content that is not representative of it                                                                                                                  |
 | `2026-07-27-indic-script-support.md`                   | Indic support is designed: the closure becomes text-driven and the unformed-cluster fallback is built. Its decided half — coverage is declared at build time, dynamic generation is a deferred painter capability — is already gardened into `docs/decisions/glyph-coverage-is-declared-at-build-time.md`                                                                                                                                                                                                                                                                           |
 | `2026-07-27-glyph-coverage-sets-and-text-residency.md` | glyph-atlas residency is designed: the unit of residency is chosen and the runtime-supplied-string case is answered. Its decided half — that only raster is block-compressed — is already gardened into `docs/decisions/compress-raster-only.md`                                                                                                                                                                                                                                                                                                                                    |
-| `2026-08-07-motion-in-the-document.md`                 | the vocabulary is **built**, not when it is decided. It holds three gaps — a rotation channel, motion rows in `dashbuf`, and loop tracks — and the rejected wasm-expression alternative. Empties when a document can carry an animation                                                                                                                                                                                                                                                                                                                                             |
+| `2026-08-07-motion-in-the-document.md`                 | the vocabulary is **built**, not when it is decided. It holds three gaps — a rotation channel, motion rows in `dashbuf`, and loop tracks — and the rejected wasm-expression alternative. The rotation gap closed at story #770 on 2026-08-09 and its section says so; the other two remain. Empties when a document can carry an animation                                                                                                                                                                                                                                          |
 | `2026-08-07-animated-content-import.md`                | an animated-content importer is built. Extends `docs/technotes/runtime-content.md` §4-§6 rather than replacing it. Its ThorVG half may garden separately and later, or never — the standing decision already covers it and this file only records two notes against it                                                                                                                                                                                                                                                                                                              |
 | `2026-08-07-asset-sourcing-and-residency.md`           | side-loading is built. Blocked on the schema's own deliberately-absent flavor/locator bit, so it cannot empty before that field has a producer and a consumer — the same condition the `AssetEntry` comment already states for itself                                                                                                                                                                                                                                                                                                                                               |
+| `2026-08-09-svg-as-a-second-producer.md`               | gardened in two pieces — the profile half when the SVG importer is built, the reference-set half when the animation vocabulary closes. Three of its rulings are decision-shaped and marked **promote** in the file rather than gardened away: SMIL is not the animation reference set, SVG support is a profile rather than a version, and SVGO is rejected as a preprocessor                                                                                                                                                                                                       |
 
 Each row's entry is removed when its capture is gardened.
 

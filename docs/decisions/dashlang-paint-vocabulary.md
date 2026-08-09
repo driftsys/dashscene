@@ -13,8 +13,9 @@
 
 `dashlang::Node` carried geometry, the whole flex and grid vocabulary, one
 solid fill, and the reactive bindings. It carried nothing else. Counted
-against `dashscene_core::Prop`'s 37 variants: geometry 4 of 4, layout 19 of
-20 (`Visible` was the gap), paint 1 of 13.
+against `dashscene_core::Prop`'s 37 variants at the time: geometry 4 of 4,
+layout 19 of 20 (`Visible` was the gap), paint 1 of 13. `Prop` has 38
+variants since story #770 added `Rotation`.
 
 Every design-heavy scene therefore dropped to `dashscene_core::Txn::set_prop`.
 `corpus/showcase` paid for that with a **two-pass authoring model**: structure,
@@ -39,7 +40,14 @@ solid shorthand, the same split core makes between `Prop::Fill` and
 `layout.visible` in `lib.rs` like every other layout setter. It was the last
 layout prop with no static setter — reachable only through the reactive
 `visible_when` — and it closes the layout table at 20 of 20. Every one of
-core's 37 `Prop` variants now has a builder setter.
+core's `Prop` variants now has a builder setter, and that is a standing
+property rather than a one-time count: `Prop::Rotation` arrived at story #770
+with `Node::rotation` beside it, keeping it true at 38 of 38.
+
+Nothing enforces this mechanically. `stage_paint_props` is a sequence of
+`if let`s rather than an exhaustive `match`, so a variant added without a
+mirror compiles clean — which is how the count above went stale once already.
+A new `Prop` variant is the moment to add the setter, not a later sweep.
 
 Each new field on `Node` is an `Option` or an empty `Vec` until a setter
 writes it, and `stage_paint_props` emits a `Prop` only for the ones that were

@@ -10,7 +10,13 @@
 //! 1. **The canvas-to-surface handoff** — `Surface::attach`. Finding the
 //!    canvas, measuring the drawable in device pixels, and acquiring an adapter
 //!    asynchronously.
-//! 2. **The `requestAnimationFrame` loop** — `Host::spin`.
+//! 2. **The `requestAnimationFrame` loop** — `Host::spin`. It **survives a lost
+//!    device**, rebuilding the surface against the same canvas and carrying on
+//!    (`recovery`), and it **can be stopped** — `spin` hands back a
+//!    `LoopHandle` whose `Drop` ends it. Both were gaps until story #834: a
+//!    recoverable context loss froze the page until reload, and a loop, once
+//!    started, held the arena, the painter and the renderer until the page went
+//!    away (issues #813 and #814).
 //! 3. **The generation gate** — which frames are worth drawing. This one is
 //!    *delegated* rather than held: story #810 moved it to
 //!    `dashlang::LiveScene::advanced` and `mark_shown`, so both this crate and
@@ -41,8 +47,14 @@
 //!   signals. `demo-web` uses it to run the showcase's scripted pulse; a
 //!   product host would drive its own state there.
 //! - **The page.** The canvas element, its CSS, and how the module is loaded.
+//! - **When the loop ends.** `spin` hands back a `LoopHandle`; holding it for
+//!   as long as the canvas is mounted, and dropping it when that view goes
+//!   away, is the embedder's. A full-page host calls `LoopHandle::detach` and
+//!   never thinks about it again.
 //! - **Error reporting.** `WebError` implements `Display`; where that text
-//!   goes is the embedder's decision.
+//!   goes is the embedder's decision. What it does **not** have to decide is
+//!   whether a failure was survivable — the loop has already acted, and
+//!   `recovery::recovery` is the same classification it used.
 //!
 //! # WebGPU only
 //!
@@ -55,7 +67,8 @@
 
 use dashbuf::container::ContainerError;
 use dashbuf::residency::PayloadMismatch;
-use dashscene_gpu::RendererError;
+use dashscene_gpu::{FrameError, RendererError};
+use dashscene_validator::Report;
 
 // Compiled on every target, and off wasm reached only by their own tests —
 // which is the point rather than an accident. This module is what the crate
@@ -74,15 +87,26 @@ mod fetch;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod shown;
 
+// Outside the `wasm32` half for the reason `fetch` and `shown` are: it is the
+// loop's own decision — whether a failed frame ends the loop — and a decision
+// compiled only for the browser is one no `cargo test` can assert. Story #834
+// exists because that decision was wrong in both integration crates and nothing
+// could have caught it.
+pub mod recovery;
+
 #[cfg(target_arch = "wasm32")]
 mod document;
 #[cfg(target_arch = "wasm32")]
 mod host;
 
+pub use recovery::Recovery;
+
 #[cfg(target_arch = "wasm32")]
 pub use document::load_document;
 #[cfg(target_arch = "wasm32")]
-pub use host::{FrameHook, FrameKind, Host, SceneBuilder, Surface, install_panic_hook, log};
+pub use host::{
+    FrameHook, FrameKind, Host, LoopHandle, SceneBuilder, Surface, install_panic_hook, log,
+};
 
 /// Why the integration could not run.
 ///
@@ -136,11 +160,29 @@ pub enum WebError {
     /// that can name what failed does.
     NoRoot(String),
     /// The document does not pass the referential load gate.
-    Gate(String),
+    ///
+    /// Carries the validator's own [`Report`] rather than a formatted string,
+    /// so an embedder can count diagnostics, filter by severity, or render its
+    /// own message. It was `format!("{report:?}")` until story #834; every
+    /// sibling variant wraps its underlying error type, and this one stringified
+    /// a type that is public and structured (issue #813).
+    Gate(Report),
     /// The painter could not be built.
     Renderer(RendererError),
     /// A frame was not put on the canvas.
-    Frame(String),
+    ///
+    /// Carries [`FrameError`] rather than a formatted string, because the loop
+    /// has to branch on it: [`FrameError::is_recoverable`] says whether the
+    /// remedy is to rebuild the surface and carry on. Flattening it here is what
+    /// made a recoverable context loss permanent (issue #813).
+    Frame(FrameError),
+    /// The surface was lost again immediately after each of `attempts`
+    /// rebuilds, so the loop stopped rather than rebuilding a device forever.
+    ///
+    /// A recovery that works is followed by a frame, and a frame resets the
+    /// count — so reaching this means the device is not coming back: a removed
+    /// GPU, or a driver reset that did not recover.
+    Unrecoverable { attempts: u32 },
 }
 
 impl std::fmt::Display for WebError {
@@ -176,11 +218,38 @@ impl std::fmt::Display for WebError {
                  (issue #640)"
             ),
             Self::NoRoot(url) => write!(f, "{url} carries no root node"),
-            Self::Gate(report) => write!(f, "the document fails the load gate: {report}"),
+            // Not `{report}`. `Report`'s own `Display` is one `writeln!` per
+            // diagnostic, so interpolating it puts embedded newlines and a
+            // trailing one inside an error message — which every sibling
+            // variant here is a single line of, and which a console line or a
+            // log record is expected to be. The structure is on the variant for
+            // an embedder that wants it; this is the one-line rendering.
+            Self::Gate(report) => {
+                write!(f, "the document fails the load gate: {}", one_line(report))
+            }
             Self::Renderer(error) => write!(f, "{error}"),
-            Self::Frame(message) => write!(f, "the frame was not presented: {message}"),
+            Self::Frame(error) => write!(f, "the frame was not presented: {error}"),
+            Self::Unrecoverable { attempts } => write!(
+                f,
+                "the surface was lost again after each of {attempts} rebuilds, so the loop stopped"
+            ),
         }
     }
 }
 
 impl std::error::Error for WebError {}
+
+/// A validator [`Report`] as one line.
+///
+/// `Report`'s `Display` writes a line per diagnostic and ends with a newline,
+/// which is right for a terminal report and wrong inside an error message. Both
+/// integration crates render it this way so a gate failure reads the same in a
+/// browser console and in a shell (story #834).
+pub(crate) fn one_line(report: &Report) -> String {
+    report
+        .diagnostics()
+        .iter()
+        .map(|diagnostic| diagnostic.to_string())
+        .collect::<Vec<_>>()
+        .join("; ")
+}

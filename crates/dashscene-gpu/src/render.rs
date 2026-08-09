@@ -1951,8 +1951,19 @@ impl Renderer {
         // texel the resolve pass then reads, which is the same rectangle plus
         // the support **in y**, since y is the axis the resolve pass steps
         // along.
-        let resolve_quad = clamped_quad(silhouette, [AA_WIDTH; 2], size);
-        let axis_quad = clamped_quad(silhouette, [AA_WIDTH, AA_WIDTH + support], size);
+        //
+        // Both quads are stated over the silhouette's **axis-aligned bounds**
+        // once the node turns (story #832). The quads are not themselves
+        // rotated: the horizontal pass's dilation is stated in y alone, which is
+        // reasoning about an axis-aligned rectangle, and rotating the geometry
+        // would leave that dilation covering the wrong texels. Growing the
+        // rectangle instead costs fill rate and nothing else — outside the
+        // node's shape the resolve pass writes back the texel it just read, so
+        // a quad larger than the shape draws exactly the same picture. The
+        // shaping is done by the mask, which the fragment stage turns.
+        let covered = rotated_bounds(silhouette, instance.rotation, instance.rotation_pivot);
+        let resolve_quad = clamped_quad(covered, [AA_WIDTH; 2], size);
+        let axis_quad = clamped_quad(covered, [AA_WIDTH, AA_WIDTH + support], size);
         let base = GpuBlur {
             bounds: instance.bounds,
             corners: instance.corners,
@@ -1970,7 +1981,9 @@ impl Renderer {
             masked: u32::from(mask.is_some()),
             clip_offset: instance.clip_offset,
             clip_count: instance.clip_count,
-            _pad: [0; 2],
+            rotation_pivot: instance.rotation_pivot,
+            rotation: instance.rotation,
+            _pad: [0; 3],
         };
 
         // 1. The target as it stands, so the passes below can read it while it
@@ -2803,6 +2816,49 @@ fn clear(encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
 /// An empty result is possible — a node entirely off-target — and is left
 /// empty rather than clamped to a minimum: a zero-area quad draws nothing,
 /// which is the right answer for a backdrop nobody can see.
+/// The axis-aligned bounds of `bounds` turned by `rotation` radians about
+/// `pivot`, both in document space (story #832).
+///
+/// Returned unchanged at a zero rotation, which is what makes an unrotated
+/// backdrop build exactly the quads it built before that story.
+///
+/// The blur pipeline draws axis-aligned quads and shapes the result with a mask
+/// the fragment stage turns, so what the geometry has to guarantee is *cover* —
+/// every texel the rotated silhouette reaches. A quad larger than the shape
+/// costs fill rate; one smaller clips the frosted region, which reads as a
+/// panel with a corner cut off rather than as a bug.
+fn rotated_bounds(bounds: [f32; 4], rotation: f32, pivot: [f32; 2]) -> [f32; 4] {
+    if rotation == 0.0 {
+        return bounds;
+    }
+    let (sin, cos) = rotation.sin_cos();
+    let [x, y, w, h] = bounds;
+    let turn = |px: f32, py: f32| {
+        let (dx, dy) = (px - pivot[0], py - pivot[1]);
+        (
+            pivot[0] + dx * cos - dy * sin,
+            pivot[1] + dx * sin + dy * cos,
+        )
+    };
+    let corners = [
+        turn(x, y),
+        turn(x + w, y),
+        turn(x, y + h),
+        turn(x + w, y + h),
+    ];
+    let min_x = corners.iter().map(|c| c.0).fold(f32::INFINITY, f32::min);
+    let max_x = corners
+        .iter()
+        .map(|c| c.0)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let min_y = corners.iter().map(|c| c.1).fold(f32::INFINITY, f32::min);
+    let max_y = corners
+        .iter()
+        .map(|c| c.1)
+        .fold(f32::NEG_INFINITY, f32::max);
+    [min_x, min_y, max_x - min_x, max_y - min_y]
+}
+
 fn clamped_quad(bounds: [f32; 4], pad: [f32; 2], size: [f32; 2]) -> [f32; 4] {
     let left = (bounds[0] - pad[0]).max(0.0);
     let top = (bounds[1] - pad[1]).max(0.0);
@@ -2885,10 +2941,24 @@ struct GpuBlur {
     masked: u32,
     clip_offset: u32,
     clip_count: u32,
+    /// The point the node turns about, in document space, and the angle it
+    /// turns by (story #832) — [`Instance::rotation_pivot`] and
+    /// [`Instance::rotation`], carried through unchanged.
+    ///
+    /// The backdrop blur is its own pipeline, so the rotation the packer stamps
+    /// on the backdrop instance reaches the frosted region only through here. A
+    /// pipeline that ignored it drew the frosted region upright under a rotated
+    /// node, which is a silent wrong picture rather than an absent one.
+    ///
+    /// The pivot is first, at an eight-aligned offset, for the reason
+    /// `Instance` states: WGSL aligns a `vec2f` to eight bytes and would place
+    /// it differently from Rust behind an odd number of words.
+    rotation_pivot: [f32; 2],
+    rotation: f32,
     /// Declared, and always zero. Scalars rather than a `vec2u`, for the reason
     /// `GpuComposite` states: a vector member aligns to its own size and can
     /// move everything after it.
-    _pad: [u32; 2],
+    _pad: [u32; 3],
 }
 
 // **Every offset, not only the size.** `shaders/blur.wgsl`'s `Blur` is this
@@ -2898,7 +2968,7 @@ struct GpuBlur {
 // and moved eight of the eighteen offsets, so every backdrop read its sigma out
 // of a texture coordinate while this assertion stayed green. The offsets below
 // are what a reorder now fails on.
-const _: () = assert!(size_of::<GpuBlur>() == 144);
+const _: () = assert!(size_of::<GpuBlur>() == 160);
 const _: () = assert!(align_of::<GpuBlur>() == 4);
 const _: () = assert!(std::mem::offset_of!(GpuBlur, bounds) == 0);
 const _: () = assert!(std::mem::offset_of!(GpuBlur, corners) == 16);
@@ -2916,6 +2986,11 @@ const _: () = assert!(std::mem::offset_of!(GpuBlur, px_range) == 120);
 const _: () = assert!(std::mem::offset_of!(GpuBlur, masked) == 124);
 const _: () = assert!(std::mem::offset_of!(GpuBlur, clip_offset) == 128);
 const _: () = assert!(std::mem::offset_of!(GpuBlur, clip_count) == 132);
+const _: () = assert!(std::mem::offset_of!(GpuBlur, rotation_pivot) == 136);
+const _: () = assert!(std::mem::offset_of!(GpuBlur, rotation) == 144);
+// WGSL aligns a `vec2f` to eight bytes, so the pivot's offset must be a
+// multiple of eight or the shader places it somewhere Rust does not.
+const _: () = assert!(std::mem::offset_of!(GpuBlur, rotation_pivot) % 8 == 0);
 
 /// What a frame's backdrop blurs draw through (story #733).
 ///
@@ -3743,7 +3818,7 @@ const _: () = assert!(size_of::<GpuStroke>() == 32);
 /// The instance rows, as bytes. `Instance` is `#[repr(C)]` with no padding
 /// (`docs/decisions/instance-buffer-contract.md` D2), which is what lets the
 /// buffer be cast rather than rebuilt.
-const _: () = assert!(size_of::<Instance>() == 64);
+const _: () = assert!(size_of::<Instance>() == 80);
 
 /// The image rows, for the reason [`GpuStroke`]'s assertion gives — a `vec4f`
 /// puts the WGSL struct's alignment at 16 and rounds its stride to 64, so a

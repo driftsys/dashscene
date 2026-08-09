@@ -55,6 +55,15 @@ packer, which publishes after everything here
   painter to walk (P2, story #97). **Masks reuse this table** (story #44):
   a mask node's box is added at commit to the clip regions of the siblings
   it stencils, so a painter needs no mask concept.
+- `RectEntry.rotation` is the node's angle in radians and
+  `RectEntry.rotation_anchor` the point in the rect's own space it turns
+  about, `(0, 0)` being the rect's top-left (v0.18, story #770,
+  `docs/decisions/rotation-is-paint-only-and-anchored-explicitly.md`).
+  The rect's `x`/`y`/`w`/`h` stay the node's box **before** the rotation:
+  a painter turns that box when it draws, and the rotated silhouette is a
+  result the document never carries (P1). A painter that cannot rotate
+  declares that through `Painter::rotates` rather than drawing the node
+  upright.
 - `RectEntry.opacity` is the rect's resolved _free_-path group alpha
   (story #44): the product of the enclosing group opacities that took the
   free path, `1.0` when none applies. A painter multiplies the rect's
@@ -106,8 +115,9 @@ All types and the trait live in `crates/dashpaint/src/lib.rs`:
 
 - `Color` — `#[repr(C)]` RGBA, 4×f32 fields `r`, `g`, `b`, `a`.
 - `RectEntry` — `#[repr(C)]`, fields `x`, `y`, `w`, `h: f32`,
-  `paint: PaintIndex`, `clip: ClipIndex`, `opacity: f32` (28 bytes total,
-  pinned by test).
+  `paint: PaintIndex`, `clip: ClipIndex`, `opacity: f32`,
+  `rotation: f32`, `rotation_anchor: Vec2` (40 bytes total, pinned by
+  test).
 - `GroupComposite` — a render-target group opacity: a rect subtree range
   `start`/`end: u32` and the `alpha: f32` its offscreen layer composites at
   (story #44).
@@ -278,9 +288,9 @@ All types and the trait live in `crates/dashpaint/src/lib.rs`:
 `Color`, `RectEntry` and `ClipBox` are `#[repr(C)]` because
 `docs/design/architecture.md` calls rect entries blittable and R-T4 plans
 dirty-range instance-buffer uploads of per-frame painter input; fixing
-the layout now costs nothing. A `RectEntry` is 28 bytes — four
-coordinates, the paint and clip indices, and the free-path group alpha —
-pinned by test.
+the layout now costs nothing. A `RectEntry` is 40 bytes — four
+coordinates, the paint and clip indices, the free-path group alpha, and
+the rotation angle with its anchor (v0.18, story #770) — pinned by test.
 
 `CornerRadii` is `#[repr(C)]` too, and was not until story #600.
 `ClipBox` embeds one, so a `repr(C)` struct held a `repr(Rust)` field,

@@ -301,8 +301,10 @@ All types below are generated from the schema:
   binding of it seeds from — authored intent, never a runtime value,
   P1). `BindingChannel` (`uint8` enum) — the §23 channel set `X`, `Y`,
   `Width`, `Height`, `Gap`, `FillR`, `FillG`, `FillB`, `FillA`,
-  `Opacity` (v0.8, story #44, debt #253), mirroring `dashscene-core`'s
-  `Channel` wire codes. `TransformScale` /
+  `Opacity` (v0.8, story #44, debt #253), `Rotation`, `RotationAnchorX`,
+  `RotationAnchorY` (v0.18, story #770 — all three bindable because SVG's
+  `animateTransform` animates `"a cx cy"` together), mirroring
+  `dashscene-core`'s `Channel` wire codes. `TransformScale` /
   `TransformMapRange` / `TransformClamp` (tables) — the three
   `BindingTransform` union members; union `NONE` means the identity
   transform, so the common Figma-authored row costs no transform table.

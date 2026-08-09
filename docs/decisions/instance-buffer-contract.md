@@ -31,24 +31,47 @@ nothing below depends on which way that lands.
 one `Instance` in one buffer, in draw order. Not one buffer per primitive
 kind, which is what GPUI does.
 
-**D2 — the instance is 64 bytes of fixed-width members.** Two four-float
-vectors (`bounds`, `corners`) followed by eight 4-byte scalars (`kind`, `row`,
-`shape`, `clip_offset`, `clip_count`, `layer`, `opacity`, `outset`).
-`#[repr(C)]`, no implicit padding, no `bool`, no payload enum, no nested
-collection — story #578's rules for anything crossing a language seam.
+**D2 — the instance is 80 bytes of fixed-width members.** Two four-float
+vectors (`bounds`, `corners`), then eight 4-byte scalars (`kind`, `row`,
+`shape`, `clip_offset`, `clip_count`, `layer`, `opacity`, `outset`), then the
+rotation added by story #832: `rotation_pivot` (two floats), `rotation`, and one
+declared pad word. `#[repr(C)]`, no implicit padding, no `bool`, no payload
+enum, no nested collection — story #578's rules for anything crossing a language
+seam.
 
-The vectors lead so both sit at a 16-byte offset. The eighth scalar exists
-because a struct containing a four-float member has an alignment of 16, so the
-array stride a shader sees rounds up to 64 whatever the members add to: without
-it the Rust type would be 60 bytes and every element after the first would be
-read from the wrong offset.
+The vectors lead so both sit at a 16-byte offset. A struct containing a
+four-float member has an alignment of 16, so the array stride a shader sees
+rounds up to a multiple of 16 whatever the members add to. That is why the
+struct's size is always exactly on a 16-byte boundary: without the trailing word
+the Rust type would be 76 bytes and every element after the first would be read
+from the wrong offset.
 
-**That word was declared padding until story #584, and is now `outset`.** It
-holds how far past `bounds` the instance's ink reaches — see D9 — which removed
-the hazard the padding carried rather than working around it: a public `_pad` is
-a field two otherwise-equal instances could differ in, the reason
-`sub-word-members-widen-rather-than-pad.md` rejected one, and the answer here
-was to give the word a meaning rather than to canonicalise it to zero.
+**`rotation_pivot` sits before `rotation`, and the order is load-bearing.** WGSL
+aligns a `vec2f` to eight bytes. At offset 64 the two languages agree; behind
+`rotation` it would sit at 72 in the shader and 68 in Rust, which is the trap
+`GpuGlyphRun` already documents against its own `half_uv`.
+
+**The stride was 64 until story #832, and the trailing word has been padding
+twice.** It was padding until story #584 gave it to `outset`, and story #832's
+rotation needs twelve of the next sixteen bytes, so a declared word returns. The
+hazard that carried the first time is real —
+`sub-word-members-widen-rather-than-pad.md` rejects a public `_pad` because it
+participates in `PartialEq`, so two otherwise-equal instances could differ in a
+member that means nothing — and it is closed here by construction rather than by
+argument: the packer writes `0.0` at every site that builds an `Instance`, and
+`a_packed_instance_never_carries_a_non_zero_pad` asserts it over a scene of every
+kind. That record's own scope is boundary-B rows, which this is not.
+
+Three alternatives to the pad were considered. Storing the angle's **sine and
+cosine** fills all four words and removes the per-vertex trigonometry, but a
+zeroed row would then carry `cos = 0`, a degenerate basis that collapses the
+quad, where every other member's zero is inert. Storing **`cos - 1` and `sin`**
+restores zero-as-identity at the cost of a form no reader recognises. Deriving
+the pivot from `bounds` costs nothing to store but is wrong for the two kinds
+whose bounds are not the node's box — a drop shadow's is grown by the stroke
+outset, a glyph's is its own quad. The angle stays readable beside the
+document's own `RectEntry::rotation`, which is what `bounds` and `corners` are
+also kept legible for.
 
 **D3 — a parameter set is named by a row, and `kind` alone says which table.**
 `InstanceKind` carries the sub-kind: `FillSolid`, `FillGradient`, `FillImage`,
@@ -130,8 +153,8 @@ so there is no depth field, because a second record of the same fact could
 disagree with the first — and it makes a layer-1 golden a single readable
 table.
 
-**D2, on 64 bytes.** Both float vectors land at a 16-byte offset, so a consumer
-binding this as a storage-buffer element repacks nothing. `kind` is `u32`
+**D2, on the byte count.** Both float vectors land at a 16-byte offset, so a
+consumer binding this as a storage-buffer element repacks nothing. `kind` is `u32`
 rather than `u8` because a shader's smallest addressable scalar is 32 bits and
 the struct has no byte to save by narrowing it.
 
@@ -171,7 +194,7 @@ beyond that — `row` is unbiased, so a zeroed instance does name row 0 of a rea
 table, and what makes such an instance inert is its `opacity` of `0.0`.
 
 **D7, against binary goldens.** A golden is reviewed truth (`goldens/README.md`)
-and nobody reviews 64-byte rows in a diff. Text costs nothing in exactness:
+and nobody reviews fixed-width binary rows in a diff. Text costs nothing in exactness:
 `{:?}` on an `f32` is the shortest representation that round-trips, so a
 one-bit change in a coordinate changes the line.
 

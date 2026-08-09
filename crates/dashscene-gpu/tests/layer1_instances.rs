@@ -107,6 +107,8 @@ fn rect(
         paint,
         clip,
         opacity,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     }
 }
 
@@ -1215,27 +1217,29 @@ fn the_vocabulary_fixture_is_distinguishable_in_every_instance() {
     }
 }
 
-/// The struct is 64 bytes laid out in declaration order with no implicit
+/// The struct is 80 bytes laid out in declaration order with no implicit
 /// padding — the shape the story's rules for anything crossing a language seam
 /// call for, and the one a consumer declaring its own copy has to match.
 ///
 /// Every member's offset is pinned, not just the total size. Size and alignment
-/// alone do not hold `#[repr(C)]`: `repr(Rust)` produces the same 64 bytes at
+/// alone do not hold `#[repr(C)]`: `repr(Rust)` produces the same 80 bytes at
 /// alignment 4 for these members while reordering them, so a build that lost
 /// the attribute would pass a size check and hand a shader the wrong bytes.
 /// This is the check `dashscene-unity`'s `improper_ctypes_definitions` gate
 /// gives the boundary-B types, which `instance-buffer-contract.md` deliberately
 /// does not put this type behind.
 #[test]
-fn the_instance_is_sixty_four_bytes_in_declaration_order() {
+fn the_instance_is_eighty_bytes_in_declaration_order() {
     use dashscene_gpu::Instance;
     use std::mem::offset_of;
 
-    assert_eq!(size_of::<Instance>(), 64);
+    assert_eq!(size_of::<Instance>(), 80);
     assert_eq!(align_of::<Instance>(), 4);
-    // Eight 4-byte scalars and two four-float vectors: the members account for
-    // every byte, so nothing is padding rustc chose.
-    assert_eq!(2 * 16 + 8 * 4, size_of::<Instance>());
+    // Twelve 4-byte scalars and two four-float vectors: the members account for
+    // every byte, so nothing is padding rustc chose. Story #832 added three of
+    // those scalars — the angle and its two pivot components — plus the
+    // declared pad word that takes the type to the shader's array stride.
+    assert_eq!(2 * 16 + 12 * 4, size_of::<Instance>());
 
     let measured = [
         ("bounds", offset_of!(Instance, bounds), 0),
@@ -1248,6 +1252,9 @@ fn the_instance_is_sixty_four_bytes_in_declaration_order() {
         ("layer", offset_of!(Instance, layer), 52),
         ("opacity", offset_of!(Instance, opacity), 56),
         ("outset", offset_of!(Instance, outset), 60),
+        ("rotation_pivot", offset_of!(Instance, rotation_pivot), 64),
+        ("rotation", offset_of!(Instance, rotation), 72),
+        ("_pad", offset_of!(Instance, _pad), 76),
     ];
     for (name, at, expected) in measured {
         assert_eq!(
@@ -1259,10 +1266,16 @@ fn the_instance_is_sixty_four_bytes_in_declaration_order() {
     // consumer bind the row as a storage-buffer element without repacking it.
     assert_eq!(offset_of!(Instance, bounds) % 16, 0);
     assert_eq!(offset_of!(Instance, corners) % 16, 0);
+    // `rotation_pivot` is a `vec2f` in the shader, which WGSL aligns to eight
+    // bytes. At offset 64 the two sides agree; one byte earlier and WGSL would
+    // pad it to 72 while Rust kept it at 68, and every row after the first
+    // would be read from the wrong offset. This is the trap `GpuGlyphRun`
+    // documents against its own `half_uv`, asserted here rather than trusted.
+    assert_eq!(offset_of!(Instance, rotation_pivot) % 8, 0);
     // A shader's array stride is the struct's size rounded up to its alignment,
-    // and a four-float member makes that 16. Sixty-four exactly, so both sides
+    // and a four-float member makes that 16. Eighty exactly, so both sides
     // agree on where element `n` begins — without the declared pad the Rust
-    // type would be 60 and every element after the first would be misread.
+    // type would be 76 and every element after the first would be misread.
     assert_eq!(size_of::<Instance>() % 16, 0);
 
     let zero = Instance::default();
@@ -1746,4 +1759,142 @@ fn a_group_starting_past_the_rect_table_is_named() {
         alpha: 0.5,
     });
     scene.pack();
+}
+
+/// Every instance a rotated rect emits carries the rect's angle, and a pivot
+/// resolved from the node-relative anchor into document space (story #832).
+///
+/// The reference painter turns the canvas once, around all of a node's ink, and
+/// takes the rotation off before releasing the clip. A packer that put the
+/// rotation on the fill but not on the stroke or the shadows would draw a node
+/// whose parts came apart at an angle — which is a picture, so no test that
+/// only asks "did something draw" would see it.
+#[test]
+fn every_instance_of_a_rotated_rect_carries_the_rotation() {
+    let mut paints = PaintTable::new();
+    let solid = paints.intern_fill(&FillSpec::Solid {
+        color: color(0.9, 0.2, 0.1, 1.0),
+    });
+    let entry = paints.push_with(
+        PaintEntry {
+            fill: solid,
+            corners: corners(2.0, 2.0, 2.0, 2.0),
+            ..PaintEntry::default()
+        },
+        EntryParts {
+            stroke: Some(Stroke {
+                width: 2.0,
+                align: StrokeAlign::Outside,
+                color: color(0.0, 0.0, 0.0, 1.0),
+            }),
+            shadows: &[
+                shadow(ShadowKind::Drop, 2.0),
+                shadow(ShadowKind::Inner, 1.0),
+            ],
+            ..EntryParts::default()
+        },
+    );
+
+    // The node sits away from the origin and turns about a point away from its
+    // own top-left, so a pivot that forgot either term lands somewhere else.
+    let turned = RectEntry {
+        x: 30.0,
+        y: 20.0,
+        w: 40.0,
+        h: 12.0,
+        paint: entry,
+        clip: ClipIndex::UNCLIPPED,
+        opacity: 1.0,
+        rotation: 0.5,
+        rotation_anchor: Vec2 { x: 20.0, y: 6.0 },
+    };
+
+    let scene = Scene {
+        rects: vec![turned],
+        paints,
+        images: ImageTable::new(),
+        clips: ClipTable::new(),
+        groups: Vec::new(),
+        glyphs: GlyphRunTable::new(),
+    };
+    let painter = scene.pack();
+    let instances = painter.instances().rect_instances(0);
+
+    assert!(
+        instances.len() >= 4,
+        "the fixture is meant to emit a drop shadow, a fill, a stroke and an \
+         inner shadow: {instances:?}",
+    );
+    for instance in instances {
+        assert_eq!(
+            instance.rotation, 0.5,
+            "instance kind {} lost the rect's rotation",
+            instance.kind,
+        );
+        // 30 + 20 and 20 + 6: the node's origin plus its node-relative anchor.
+        assert_eq!(
+            instance.rotation_pivot,
+            [50.0, 26.0],
+            "instance kind {} turns about the wrong point; the pivot is the \
+             rect's origin plus its anchor, in document space",
+            instance.kind,
+        );
+    }
+}
+
+/// An unrotated rect packs a zero angle and a pivot of its own origin, so the
+/// vertex stage's `rotation != 0.0` branch is not taken and every instance
+/// written before story #832 packs the bytes it packed before.
+#[test]
+fn an_unrotated_rect_packs_no_rotation() {
+    let mut paints = PaintTable::new();
+    let entry = paints.push_solid(color(0.2, 0.4, 0.9, 1.0));
+    let scene = Scene {
+        rects: vec![rect(8.0, 4.0, 10.0, 10.0, entry, ClipIndex::UNCLIPPED, 1.0)],
+        paints,
+        images: ImageTable::new(),
+        clips: ClipTable::new(),
+        groups: Vec::new(),
+        glyphs: GlyphRunTable::new(),
+    };
+    let painter = scene.pack();
+    let instances = painter.instances().rect_instances(0);
+    assert_eq!(instances.len(), 1);
+    assert_eq!(instances[0].rotation, 0.0);
+    assert_eq!(
+        instances[0].rotation_pivot,
+        [8.0, 4.0],
+        "the pivot is still resolved, so a later rotation needs no second path",
+    );
+    assert_eq!(instances[0]._pad, 0.0, "the pad word is written, not left");
+}
+
+/// No instance the packer produces carries a non-zero pad word.
+///
+/// The pad exists because story #832's rotation needs twelve of the sixteen
+/// bytes the shader's array stride rounds up to. `sub-word-members-widen-rather-
+/// than-pad.md` rejects a public `_pad` on a boundary-B row because it
+/// participates in `PartialEq`, so two otherwise-equal instances could compare
+/// unequal for differing in a member that means nothing. `Instance` is not a
+/// boundary-B row, but the hazard is the same one, and this closes it by
+/// construction: if every instance the packer writes carries `0.0`, no two can
+/// differ there.
+///
+/// Over the whole vocabulary fixture, so a construction site added later
+/// without the field is caught here rather than by a picture.
+#[test]
+fn a_packed_instance_never_carries_a_non_zero_pad() {
+    let painter = vocabulary().pack();
+    let instances = painter.instances().instances();
+    assert!(
+        !instances.is_empty(),
+        "the vocabulary fixture packs nothing, so this asserts nothing",
+    );
+    for (i, instance) in instances.iter().enumerate() {
+        assert_eq!(
+            instance._pad, 0.0,
+            "instance {i} (kind {}) carries a non-zero pad word",
+            instance.kind,
+        );
+    }
 }

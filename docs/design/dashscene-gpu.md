@@ -53,6 +53,7 @@ Five types carry the crate, in `crates/dashscene-gpu/src/`:
 
     impl Painter for GpuPainter {
         fn samples(&self, format: ImageFormat) -> bool;
+        fn rotates(&self) -> bool;   // true — story #832
         fn paint(&mut self, rects, paints, images, clips, groups, glyphs, dirty);
     }
 

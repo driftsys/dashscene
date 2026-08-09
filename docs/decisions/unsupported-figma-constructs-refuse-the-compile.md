@@ -144,14 +144,14 @@ which names the node path and the construct and stops the compile.
 
 As-built, `Unsupported` covers:
 
-| construct                                        | why `Document` cannot carry it                                      | debt                                                     |
-| ------------------------------------------------ | ------------------------------------------------------------------- | -------------------------------------------------------- |
-| a stacked fill or stroke (more than one visible) | `PaintEntry.fill`/`.stroke` are each one `Option`                   | #146                                                     |
-| node rotation                                    | no rotation vocabulary (opacity/mask/hidden un-pinned at v0.8, #44) | #143 (remainder)                                         |
-| a soft (alpha/luminance) or text-shaped mask     | the clip-region model is a hard box clip only (v0.8, #44)           | `masks-and-group-opacity.md`                             |
-| an auto-layout frame                             | no flex vocabulary — and the boxes are results, not intent          | #140 (see `figma-auto-layout-refused-on-two-grounds.md`) |
-| a dashed or non-`BASIC` stroke                   | `dashpaint::Stroke` is one color, one width, one align              | #145                                                     |
-| a non-`FRAME` node                               | v0.3 lowers frames only                                             | —                                                        |
+| construct                                        | why `Document` cannot carry it                                                                                                    | debt                                                     |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| a stacked fill or stroke (more than one visible) | `PaintEntry.fill`/`.stroke` are each one `Option`                                                                                 | #146                                                     |
+| a rotated node with children, or with no `size`  | rotation lowers at v0.18 (#770); it does not compose onto a descendant, and without `size` the extent would be the rotated bounds | #845                                                     |
+| a soft (alpha/luminance) or text-shaped mask     | the clip-region model is a hard box clip only (v0.8, #44)                                                                         | `masks-and-group-opacity.md`                             |
+| an auto-layout frame                             | no flex vocabulary — and the boxes are results, not intent                                                                        | #140 (see `figma-auto-layout-refused-on-two-grounds.md`) |
+| a dashed or non-`BASIC` stroke                   | `dashpaint::Stroke` is one color, one width, one align                                                                            | #145                                                     |
+| a non-`FRAME` node                               | v0.3 lowers frames only                                                                                                           | —                                                        |
 
 ## Why
 

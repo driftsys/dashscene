@@ -53,17 +53,18 @@
 //! cost.
 //!
 //! The generation reports document and animation change only, so five cases
-//! force a redraw independently of it. Four are handled here — the first frame,
-//! a resize or surface reconfigure, a scale-factor change, and re-exposure
-//! after occlusion.
+//! force a redraw independently of it: the first frame, a resize or surface
+//! reconfigure, a scale-factor change, re-exposure after occlusion, and a lost
+//! surface.
 //!
-//! **The fifth, a lost surface, is not handled at all**, and that is stated
-//! rather than implied. `dashscene_gpu::FrameError::Lost` says the recovery is
-//! to rebuild the presenter, which is exactly what [`Reaction::Rebind`] does —
-//! but a present failure is fatal here, so the embedder is never asked and that
-//! entry point cannot be reached from the failure it would answer. Issue #818
-//! carries it, together with the error shape that would let a caller tell a
-//! lost surface from any other failure.
+//! **The fifth was not handled at all until story #834.**
+//! `dashscene_gpu::FrameError::Lost` says the recovery is to rebuild the
+//! presenter, which is exactly what [`Reaction::Rebind`] does — and a present
+//! failure was fatal here, so the embedder was never asked and that entry point
+//! could not be reached from the failure it answers. The loop now classifies the
+//! failure itself through [`crate::recovery`] and rebinds without asking, which
+//! is the one case where it does not need to: the remedy is the crate's own and
+//! an embedder that overrode [`App::presenter`] gets its override called again.
 //!
 //! # The wait mode follows from that, and so does the wake mechanism
 //!
@@ -92,6 +93,7 @@ use winit::window::{Window, WindowAttributes, WindowId};
 
 use crate::DesktopError;
 use crate::present::{GpuPresenter, Present, PresentError};
+use crate::recovery::{Recovery, recovery};
 
 /// The pace the loop runs at while the generation advances: 60 Hz.
 ///
@@ -105,22 +107,51 @@ pub const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 /// The window size an embedder gets without asking, in logical pixels.
 const DEFAULT_WINDOW_SIZE: LogicalSize<u32> = LogicalSize::new(960, 600);
 
+/// How many consecutive presenter rebinds the loop will attempt before giving
+/// up.
+///
+/// A rebind that works is followed by a frame, and a frame resets the count — so
+/// this bounds a surface that is being lost *repeatedly*, which is what a removed
+/// GPU or an unrecoverable driver reset looks like. Three rather than one,
+/// because a single loss during a driver reset is exactly the case worth
+/// recovering from.
+const MAX_CONSECUTIVE_REBINDS: u32 = 3;
+
 /// The message the loop's own user event carries.
 ///
-/// One variant, because the message carries the *intent* to run a frame and not
-/// the work: `LiveScene` is owned by the loop and lives on its thread, so the
-/// sender asks and the loop applies. Widening this to carry a payload would be
-/// widening it to carry producer work across a thread boundary, which is what
-/// P3 forbids.
+/// Every variant carries an *intent* and no payload: `LiveScene` is owned by the
+/// loop and lives on its thread, so the sender asks and the loop applies.
+/// Widening this to carry data would be widening it to carry producer work
+/// across a thread boundary, which is what P3 forbids. That is the rule, not the
+/// variant count — story #834 added the second variant without touching it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Wake;
+enum Wake {
+    /// Run a frame, and let the generation decide whether it paints.
+    Frame,
+    /// Stop the loop. [`run`] returns.
+    Stop,
+}
 
-/// Asks the loop to run a frame, from any thread.
+/// Asks the loop to run a frame, or to stop, from any thread.
 ///
 /// This is what the loop's wait mode requires: while the generation is steady
 /// the loop is parked in `ControlFlow::Wait`, so a producer that is not driven
 /// by a window event — a scripted sequence, a timer, a data feed — cannot reach
 /// the scene without one. Handed to the embedder by [`App::started`].
+///
+/// # Stopping, and what stays inherent to `winit`
+///
+/// [`Waker::stop`] is how an embedder ends a loop it did not start a window
+/// for. `WindowEvent::CloseRequested` already ends one that owns its window; an
+/// embedder driving an externally-owned lifetime has no such event, which is
+/// the half of issue #820 that could be closed.
+///
+/// What is **not** removed, because `winit`'s model does not admit it: [`run`]
+/// owns the calling thread until the loop ends. There is no handle returned
+/// before it, because there is no "before it" on this platform — the event loop
+/// is entered and the thread is inside it. So the stop is a message rather than
+/// a handle, and [`App::started`] is where it is handed over, which is the last
+/// point that runs on the caller's own thread.
 #[derive(Clone)]
 pub struct Waker(EventLoopProxy<Wake>);
 
@@ -131,7 +162,20 @@ impl Waker {
     /// which is the signal a driver thread ends on rather than an error to
     /// report.
     pub fn wake(&self) -> bool {
-        self.0.send_event(Wake).is_ok()
+        self.0.send_event(Wake::Frame).is_ok()
+    }
+
+    /// Asks the loop to stop, reporting whether the message reached it.
+    ///
+    /// [`run`] returns `Ok(())` afterwards unless a failure had already been
+    /// recorded: stopping on request is not itself a failure. `false` means the
+    /// loop had already ended.
+    ///
+    /// Requesting a stop is not the same as the window closing, and both are
+    /// ordinary. This one is for the embedder that does not own the window's
+    /// lifetime and therefore never sees `CloseRequested` (issue #820).
+    pub fn stop(&self) -> bool {
+        self.0.send_event(Wake::Stop).is_ok()
     }
 }
 
@@ -304,6 +348,20 @@ pub trait App {
     fn note(&mut self, _message: &str) {}
 }
 
+/// What the loop does after a paint attempt.
+///
+/// Named rather than inlined into `frame` so the decision can be tested; see
+/// [`Host::after_paint`].
+#[derive(Debug)]
+enum AfterPaint {
+    /// Carry on to the pacing decision.
+    Continue,
+    /// Drop the presenter and ask the embedder for another, then carry on.
+    Rebind,
+    /// Stop the loop, and report this as the failure that ended it.
+    Fail(DesktopError),
+}
+
 /// What the loop was doing when it last parked, so waking can report what did
 /// **not** happen while it was parked.
 struct Parked {
@@ -333,6 +391,7 @@ pub fn run<A: App>(app: A) -> Result<(), DesktopError> {
         forced: None,
         ticks: 0,
         presents: 0,
+        rebinds: 0,
         parked: None,
         failure: None,
     };
@@ -373,6 +432,9 @@ struct Host<A: App> {
     /// measuring frame cost has to exclude the ones that did not happen.
     ticks: u64,
     presents: u64,
+    /// Consecutive presenter rebinds with no successful frame between them. See
+    /// [`MAX_CONSECUTIVE_REBINDS`].
+    rebinds: u32,
     parked: Option<Parked>,
     /// The first failure that stopped the loop. `ApplicationHandler`'s methods
     /// return nothing, so a failure is parked here and reported by [`run`]
@@ -504,9 +566,16 @@ impl<A: App> Host<A> {
             self.app.note(&format!("forced redraw — {reason}"));
         }
         if advanced || forced.is_some() {
-            match self.paint() {
-                Ok(present_took) => self.record_frame(tick_took, present_took),
-                Err(error) => return self.fail(event_loop, DesktopError::Present(error)),
+            let painted = self.paint();
+            match self.after_paint(painted, tick_took) {
+                AfterPaint::Continue => {}
+                // The recovery this crate has always had, finally reachable from
+                // the failure it exists for (issue #818). `rebind` forces a
+                // redraw of its own, so the next frame paints through the new
+                // presenter — which is why this returns rather than falling
+                // through to the pacing below.
+                AfterPaint::Rebind => return self.rebind(event_loop),
+                AfterPaint::Fail(error) => return self.fail(event_loop, error),
             }
         }
 
@@ -518,6 +587,56 @@ impl<A: App> Host<A> {
             // only because something forced it still lands here, because a
             // forced repaint is not motion.
             self.park(event_loop, generation);
+        }
+    }
+
+    /// What the loop does with the outcome of a paint.
+    ///
+    /// Separated from the `winit` call that applies it so that it can be
+    /// asserted without a display: [`ActiveEventLoop`] cannot be constructed
+    /// outside a running application, so a test that reached for `frame` could
+    /// not run at all. This is the branch story #834 added — the loop had none,
+    /// and treated every present failure as fatal.
+    fn after_paint(
+        &mut self,
+        painted: Result<Option<Duration>, PresentError>,
+        tick_took: Duration,
+    ) -> AfterPaint {
+        let error = match painted {
+            Ok(present_took) => {
+                self.record_frame(tick_took, present_took);
+                // A frame reached the window, so whatever was recovered from is
+                // behind us: the next loss starts a fresh count.
+                self.rebinds = 0;
+                return AfterPaint::Continue;
+            }
+            Err(error) => error,
+        };
+        match recovery(&error) {
+            Recovery::Rebind => {
+                self.rebinds += 1;
+                // A surface lost again immediately after each rebind is not
+                // being recovered from. Every rebind builds a fresh
+                // `wgpu::Instance`, adapter, device and pipeline set on this
+                // thread, and the rebind path returns before the pacing below —
+                // so without a bound an unrecoverable loss spins as fast as
+                // winit will dispatch, blocking on an adapter request each time,
+                // and `run` never returns.
+                if self.rebinds > MAX_CONSECUTIVE_REBINDS {
+                    self.app.note(&format!(
+                        "the surface was lost again after each of {MAX_CONSECUTIVE_REBINDS} \
+                         rebinds — giving up"
+                    ));
+                    return AfterPaint::Fail(DesktopError::Present(error));
+                }
+                // `paint` did not reach `mark_shown`, so the generation is still
+                // unshown and the frame is not lost by being retried through the
+                // new presenter.
+                self.app
+                    .note(&format!("the surface was lost — rebinding: {error}"));
+                AfterPaint::Rebind
+            }
+            Recovery::Stop => AfterPaint::Fail(DesktopError::Present(error)),
         }
     }
 
@@ -703,11 +822,26 @@ impl<A: App> ApplicationHandler<Wake> for Host<A> {
         self.force("the first frame");
     }
 
-    fn user_event(&mut self, event_loop: &ActiveEventLoop, _event: Wake) {
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: Wake) {
         // Taken before the embedder runs, so that a wake which also ends the
         // scene's turn still reports the idle interval it woke from rather than
         // swallowing it.
         self.report_park();
+        // Matched exhaustively rather than tested against one variant, so that
+        // the next variant added to `Wake` is a compile error here rather than
+        // silently treated as "run a frame".
+        match event {
+            Wake::Stop => {
+                // Not a failure: `run` returns `Ok(())` unless something had
+                // already gone wrong, so an embedder that stops its own loop
+                // does not have to distinguish "I asked for this" from a real
+                // error.
+                self.app.note("the embedder asked the loop to stop");
+                event_loop.exit();
+                return;
+            }
+            Wake::Frame => {}
+        }
         let extent = self.extent;
         let scene = self.live.as_mut().map(|live| Scene {
             live,
@@ -758,6 +892,159 @@ impl<A: App> ApplicationHandler<Wake> for Host<A> {
                 );
                 self.react(event_loop, reaction);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use dashscene_gpu::FrameError;
+
+    use super::*;
+
+    /// The smallest thing that satisfies [`App`]. It builds no scene, and none
+    /// of these tests runs a frame — what is under test is the branch the loop
+    /// takes on a present failure, which happens before any of the rest.
+    struct Stub {
+        notes: Vec<String>,
+    }
+
+    impl App for Stub {
+        fn build(&mut self, arena: &mut Arena, _width: u32, _height: u32) -> LiveScene {
+            dashlang::attach_live(arena, Box::new(dashscene_engine::TaffySolver::new()))
+        }
+
+        fn note(&mut self, message: &str) {
+            self.notes.push(message.to_owned());
+        }
+    }
+
+    /// A host with no window and no presenter.
+    ///
+    /// Both are `None` because neither can be built without a display, and
+    /// neither is reached: [`Host::after_paint`] is handed the outcome of a
+    /// paint rather than performing one, which is the whole reason it was split
+    /// out of `frame`.
+    fn host() -> Host<Stub> {
+        Host {
+            app: Stub { notes: Vec::new() },
+            window: None,
+            presenter: None,
+            arena: Arena::new(),
+            live: None,
+            extent: (0, 0),
+            previous_frame: None,
+            forced: None,
+            ticks: 0,
+            presents: 0,
+            rebinds: 0,
+            parked: None,
+            failure: None,
+        }
+    }
+
+    /// The defect issue #818 filed: a recoverable loss ended the loop, and the
+    /// rebind that answers it was unreachable.
+    ///
+    /// This asserts the loop's own branch rather than `recovery`'s
+    /// classification — a test of the classification alone would pass even if
+    /// the loop ignored it, which is exactly the state this story found.
+    #[test]
+    fn a_lost_surface_rebinds_rather_than_ending_the_loop() {
+        let mut host = host();
+        let after = host.after_paint(Err(PresentError::Frame(FrameError::Lost)), Duration::ZERO);
+        assert!(
+            matches!(after, AfterPaint::Rebind),
+            "a lost surface must rebind the presenter, not end the loop: {after:?}"
+        );
+    }
+
+    /// The recovery is reported, so a rebind is visible when it happens rather
+    /// than only when it fails.
+    #[test]
+    fn the_rebind_is_reported_to_the_embedder() {
+        let mut host = host();
+        let _ = host.after_paint(Err(PresentError::Frame(FrameError::Lost)), Duration::ZERO);
+        assert!(
+            host.app.notes.iter().any(|note| note.contains("rebinding")),
+            "the rebind went unreported: {:?}",
+            host.app.notes
+        );
+    }
+
+    /// The other half of the contract, and the one a permissive fix would
+    /// break: a failure that rebinding cannot answer must still stop the loop.
+    #[test]
+    fn a_fatal_present_failure_still_ends_the_loop() {
+        for error in [
+            PresentError::Frame(FrameError::Outdated),
+            PresentError::Frame(FrameError::Validation),
+            PresentError::Surface("no adapter".to_owned()),
+            PresentError::Extent {
+                width: 40_000,
+                height: 40_000,
+                max: 16_384,
+            },
+        ] {
+            let mut host = host();
+            let after = host.after_paint(Err(error), Duration::ZERO);
+            assert!(
+                matches!(after, AfterPaint::Fail(_)),
+                "this must end the loop, not rebind: {after:?}"
+            );
+        }
+    }
+
+    /// A frame that succeeded is not a decision at all.
+    #[test]
+    fn a_successful_paint_carries_on() {
+        let mut host = host();
+        let after = host.after_paint(Ok(Some(Duration::from_millis(2))), Duration::ZERO);
+        assert!(matches!(after, AfterPaint::Continue), "{after:?}");
+    }
+
+    /// A surface lost again after every rebind is not being recovered from.
+    ///
+    /// Without the bound this is an unbounded loop that builds a fresh
+    /// `wgpu::Instance`, adapter, device and pipeline set on the event-loop
+    /// thread every iteration, and `run` never returns.
+    #[test]
+    fn a_surface_lost_after_every_rebind_eventually_gives_up() {
+        let mut host = host();
+        for attempt in 1..=MAX_CONSECUTIVE_REBINDS {
+            let after =
+                host.after_paint(Err(PresentError::Frame(FrameError::Lost)), Duration::ZERO);
+            assert!(
+                matches!(after, AfterPaint::Rebind),
+                "attempt {attempt} should still rebind: {after:?}"
+            );
+        }
+        let after = host.after_paint(Err(PresentError::Frame(FrameError::Lost)), Duration::ZERO);
+        assert!(
+            matches!(after, AfterPaint::Fail(_)),
+            "the loop must give up after {MAX_CONSECUTIVE_REBINDS} rebinds: {after:?}"
+        );
+    }
+
+    /// The bound is on *consecutive* rebinds, so a device that recovers and
+    /// later fails again gets the full allowance a second time. A counter that
+    /// never reset would turn a long-lived host into one that dies on its fourth
+    /// unrelated driver reset.
+    #[test]
+    fn a_frame_between_losses_resets_the_allowance() {
+        let mut host = host();
+        for _ in 0..MAX_CONSECUTIVE_REBINDS {
+            let _ = host.after_paint(Err(PresentError::Frame(FrameError::Lost)), Duration::ZERO);
+        }
+        let _ = host.after_paint(Ok(Some(Duration::from_millis(2))), Duration::ZERO);
+
+        for attempt in 1..=MAX_CONSECUTIVE_REBINDS {
+            let after =
+                host.after_paint(Err(PresentError::Frame(FrameError::Lost)), Duration::ZERO);
+            assert!(
+                matches!(after, AfterPaint::Rebind),
+                "attempt {attempt} after a good frame should rebind: {after:?}"
+            );
         }
     }
 }

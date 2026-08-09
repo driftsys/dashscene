@@ -243,11 +243,35 @@ pub struct Node {
     /// which is a *result* (P1).
     #[serde(default)]
     pub absolute_bounding_box: Option<Rect>,
-    /// Degrees. Figma omits the field entirely when it is zero. `Document` has no
-    /// rotation vocabulary, so the walk rejects a non-zero value loudly
-    /// rather than lowering it as though the node were axis-aligned (P4).
+    /// **Radians**, and Figma omits the field entirely when it is zero, so
+    /// `None` and `Some(0.0)` both mean unrotated.
+    ///
+    /// This doc comment said *Degrees* until story #770, and it never
+    /// mattered because the lowering only compared the value with zero. It
+    /// became a factor-of-57.3 error the moment the value was lowered
+    /// rather than refused.
+    ///
+    /// Verified against `corpus/figma-fixtures/node-fx.json`, whose
+    /// `rotated-15deg` RECTANGLE carries `-0.26179940325453416` — −15° in
+    /// radians — beside a `relativeTransform` whose cosine is 0.9659258 and
+    /// sine 0.2588191, the cosine and sine of 15°.
+    ///
+    /// The sign needs no flip on the way in. Figma's matrix is
+    /// `[[cos, +sin, tx], [−sin, cos, ty]]` for this field's negation, which
+    /// is the same matrix as this repository's y-down, clockwise-positive
+    /// convention evaluated at the field's own value.
     #[serde(default)]
     pub rotation: Option<f32>,
+    /// The node's own width and height, **before** any rotation — what
+    /// `absolute_bounding_box` stops reporting the moment a node turns
+    /// (story #770).
+    ///
+    /// For the `rotated-15deg` fixture above this is 100 × 100 while the
+    /// bounding box reads 122.474 × 122.474, because a bounding box is the
+    /// axis-aligned bounds of the *rotated* shape — a result, and 22.5 %
+    /// high at 15°. A rotated node's extent comes from here.
+    #[serde(default)]
+    pub size: Option<Vector>,
     /// Whether this node masks its following siblings (story #44). A
     /// box-shaped outline mask lowers into `Node.mask`; a soft (alpha or
     /// luminance) mask, or a mask whose shape the box vocabulary cannot

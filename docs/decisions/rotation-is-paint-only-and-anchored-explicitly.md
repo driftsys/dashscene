@@ -4,7 +4,7 @@
     date     2026-08-09
     scope    `Prop`, `BindingChannel`, the variant prop union, `dashbuf`'s node
              table, `dashpaint`'s per-rect row, both painters, and the Figma
-             and SVG lowering paths
+             lowering path
     issue    #770, ruled at the opening of slice v0.18 (epic #769)
     refs     #143, #255, #772, #774,
              `visible-is-layout-opacity-is-paint.md`,
@@ -73,6 +73,26 @@ The angle is in **radians**, which is already this repository's convention for
 an angle — `crates/dashc/src/figma/rest.rs` pins radians for arc angles — and
 is Figma's wire unit.
 
+## The angle turns clockwise in a y-down space
+
+The document's coordinate space has y increasing downward, and a **positive
+angle turns clockwise** in it — a point at `(x, y)` relative to the anchor maps
+to `(x cos - y sin, x sin + y cos)`.
+
+Stated here because two painters and one importer each depend on it and none of
+them is the place to define it. It is not a free choice: it is what makes
+Figma's `rotation` lower with no conversion at all. Figma's `relativeTransform`
+for the fixture above is `[[cos, +sin, tx], [-sin, cos, ty]]` evaluated at the
+**negation** of its `rotation` field, which is the same matrix as the rule above
+evaluated at the field's own value. A repository convention of
+counter-clockwise-positive would have made every Figma import a sign flip, and
+every sign flip a place to forget one.
+
+It is also what the painters already do. `skia_safe`'s `Canvas::rotate` takes
+degrees and turns clockwise in its y-down space, so `dashscene-skia` converts
+the unit and nothing else; `dashscene-gpu` writes the matrix above directly in
+its vertex stage (story #832).
+
 ## All three scalars are bindable
 
 `BindingChannel` gains the angle and both anchor components rather than the
@@ -114,10 +134,18 @@ vocabulary with no producer able to exercise it.
 
 ## The vocabulary and the lowering land complete; a painter may refuse
 
-The vocabulary and both lowering paths land whole, rather than being cut to
-what one painter can draw today. The anchor question above is the argument: a
-partial API decided against a single producer is what produces a wrong default,
-and widening it afterwards costs a second append and a second lowering pass.
+The vocabulary and the lowering land whole, rather than being cut to what one
+painter can draw today. The anchor question above is the argument: a partial API
+decided against a single producer is what produces a wrong default, and widening
+it afterwards costs a second append and a second lowering pass.
+
+**There is one lowering path, not two.** This record was written naming "the
+Figma and SVG lowering paths"; building it found that no SVG lowering exists.
+The only SVG in `dashc` is path-data parsing for a Figma VECTOR node's
+`fillGeometry` (`crates/dashc/src/figma/vector_field.rs`) — an SVG _document_
+importer is story #774, unbuilt. The SVG rows in the anchor table above are
+still the right rows; they are the contract that importer will be built
+against, not a path that exists today.
 
 What may lag is a painter. **A painter that accepted a rotation and drew the
 node unrotated would be a silent drop, which P4 forbids**, and this repository
@@ -126,6 +154,29 @@ rendered nothing. So a painter that cannot rotate declares the gap through the
 capability mechanism `dashpaint` already carries for `samples`, and the debt is
 filed against that painter rather than hidden inside it. A capability that is
 declared can be asserted against; a silent no-op cannot.
+
+## A rotation does not compose down the tree
+
+Found while building the story, and a consequence of "paint-only" this record
+did not state. `Prop::Rotation` is per-node: the commit walk resolves every
+node's box absolutely and hands the painter one rect per node, and a clip
+region is an axis-aligned box, so **nothing carries a parent's turn onto a
+descendant**. Figma's rotation is hierarchical — rotating a frame rotates its
+contents.
+
+So the Figma lowering accepts a rotated **leaf** and refuses a rotated node
+that has children, by name:
+
+    a rotated node with children (a rotation does not compose down the tree)
+
+Lowering it would draw the frame turned with its contents left straight, which
+is the silent-wrong-picture P4 forbids and the same failure the painter
+capability above exists to prevent. Whether the document should gain a
+composing transform is issue #845, and it is the third thing that would justify
+revisiting the per-node 2×3 matrix this record deferred.
+
+A rotated node with no `size` is refused for the neighbouring reason: its
+extent would have to come from `absoluteBoundingBox`.
 
 ## Alternatives considered
 

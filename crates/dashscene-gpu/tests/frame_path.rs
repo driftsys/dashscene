@@ -32,7 +32,7 @@
 
 use dashpaint::{
     ClipIndex, ClipTable, Color, EntryParts, GlyphRunTable, ImageTable, PaintEntry, PaintIndex,
-    PaintTable, Painter, RectEntry, Stroke, StrokeAlign,
+    PaintTable, Painter, RectEntry, Stroke, StrokeAlign, Vec2,
 };
 use dashscene_gpu::{Changes, GpuPainter, InstanceUpload, Renderer};
 
@@ -62,6 +62,8 @@ fn rect(x: f32, y: f32, w: f32, h: f32, paint: PaintIndex, opacity: f32) -> Rect
         paint,
         clip: ClipIndex::UNCLIPPED,
         opacity,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     }
 }
 

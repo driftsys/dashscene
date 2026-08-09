@@ -715,13 +715,40 @@ impl Walk<'_> {
             false
         };
 
-        // Rotation stays refused: no schema or paint support for it lands
-        // here, so a rotated node is a named diagnostic rather than lowered
-        // as though it were axis-aligned (P4). Figma omits `rotation`
-        // entirely when it is zero, so `None` and `Some(0.0)` both mean
-        // unrotated.
+        // Rotation lowers as of story #770, but only where the document can
+        // carry it faithfully. Figma omits `rotation` entirely when it is
+        // zero, so `None` and `Some(0.0)` both mean unrotated and reach
+        // none of this.
+        //
+        // Two shapes are still refused by name rather than lowered wrong
+        // (P4):
+        //
+        // A rotated node **with children** — because a rotation in this
+        // document does not compose down the tree. `Prop::Rotation` is
+        // per-node paint intent: the commit walk resolves every node's box
+        // absolutely and hands the painter one rect per node, and a clip
+        // region is an axis-aligned box, so nothing carries a parent's turn
+        // onto a descendant. Figma's rotation *is* hierarchical, so
+        // accepting a rotated frame would draw its frame turned and its
+        // contents straight — a plausible picture that is silently wrong,
+        // which is the failure the capability mechanism exists to prevent.
+        // Whether the document should gain a composing transform is issue
+        // #845, deliberately not decided here.
+        //
+        // A rotated node **without `size`** — because the extent would have
+        // to come from `absolute_bounding_box`, which for a rotated node is
+        // the bounds of the rotated shape rather than the node's own box
+        // (`docs/decisions/rotation-is-paint-only-and-anchored-explicitly.md`).
         if node.rotation.is_some_and(|r| r != 0.0) {
-            blockers.push("node rotation".to_string());
+            if !node.children.is_empty() {
+                blockers.push(
+                    "a rotated node with children (a rotation does not compose down the tree)"
+                        .to_string(),
+                );
+            }
+            if node.size.is_none() {
+                blockers.push("a rotated node with no size".to_string());
+            }
         }
         // `sectionContentsHidden` hides a SECTION's children in Figma. The
         // document has no vocabulary for a hidden-contents section, so
@@ -919,10 +946,32 @@ impl Walk<'_> {
         let bbox = node
             .absolute_bounding_box
             .expect("an absent box is a blocker, checked above");
+
+        // Story #770. For an unrotated node the bounding box *is* the node's
+        // box, and everything below reduces to what it computed before this
+        // vocabulary. For a rotated one the bounding box is the axis-aligned
+        // bounds of the rotated shape — a result (P1) — and is wrong in both
+        // halves: its extent is too large (22.5 % at 15°, unbounded as the
+        // aspect ratio grows), and its top-left is not the node's origin.
+        //
+        // `size` carries the node's own extent, and the origin is recovered
+        // by subtracting the rotated box's own offset to those bounds. A
+        // rotated node with no `size` is a blocker above, so the fallback
+        // here is only ever taken by an unrotated one.
+        let rotation = node.rotation.unwrap_or(0.0);
+        let (own_w, own_h) = match node.size {
+            Some(size) if rotation != 0.0 => (size.x, size.y),
+            _ => (bbox.width, bbox.height),
+        };
+        let (bounds_dx, bounds_dy) = rotated_bounds_offset(rotation, own_w, own_h);
+        // The node's own top-left, page-absolute: where its local (0, 0)
+        // sits, which is also the point Figma turns it about.
+        let node_origin = (bbox.x - bounds_dx, bbox.y - bounds_dy);
+
         // Where a frame sits on the Figma page is a page-layout artifact, not
         // intent (P1). The root has no parent to be relative to, so it is
         // relative to itself and lowers to (0, 0, w, h).
-        let origin = visit.parent_origin.unwrap_or((bbox.x, bbox.y));
+        let origin = visit.parent_origin.unwrap_or(node_origin);
         // Inside a flex parent the solver owns placement, so the box Figma
         // reports is its solver's output, not authored intent — the P1 ground
         // of `docs/decisions/figma-auto-layout-refused-on-two-grounds.md`.
@@ -932,16 +981,16 @@ impl Walk<'_> {
         let (x, y) = if visit.flow.is_some() {
             (0.0, 0.0)
         } else {
-            (bbox.x - origin.0, bbox.y - origin.1)
+            (node_origin.0 - origin.0, node_origin.1 - origin.1)
         };
         let sizing = constraints.unwrap_or_default();
         let width = if sizing.sizing_h == AxisSizing::Fixed {
-            bbox.width
+            own_w
         } else {
             0.0
         };
         let height = if sizing.sizing_v == AxisSizing::Fixed {
-            bbox.height
+            own_h
         } else {
             0.0
         };
@@ -996,6 +1045,14 @@ impl Walk<'_> {
             opacity: node_opacity,
             mask: node_mask,
             visible: node_visible,
+            // Story #770. Figma turns a node about its own local origin, so
+            // the anchor is `(0, 0)` — the row this repository's ruling gives
+            // for this producer
+            // (`docs/decisions/rotation-is-paint-only-and-anchored-explicitly.md`).
+            // The angle needs no conversion: it is already radians, and
+            // already this repository's sign convention (`rest.rs`).
+            rotation,
+            rotation_anchor: (0.0, 0.0),
         });
         // Where this Figma node landed — the join key for the binding
         // rows (story #167). A synthetic node without an id (a test
@@ -2470,6 +2527,40 @@ fn blurs_of(node: &Node) -> Vec<Blur> {
             _ => None,
         })
         .collect()
+}
+
+/// How far a rotated box's axis-aligned bounds sit from the box's own
+/// origin: the minimum x and y over the four corners of `w` × `h` turned by
+/// `rotation` radians about that origin (story #770).
+///
+/// Subtracting this from `absoluteBoundingBox`'s top-left recovers the
+/// node's own top-left, which is the datum Figma rotates about and the one
+/// the document wants. Both components are `0.0` at a zero rotation, which
+/// is what makes an unrotated node lower exactly as it did before this
+/// vocabulary.
+///
+/// The convention is this repository's: y-down and clockwise-positive, so a
+/// point turns as `(x cos − y sin, x sin + y cos)`. Figma's `rotation` feeds
+/// in unconverted (`rest::Node::rotation`).
+///
+/// Worked against `corpus/figma-fixtures/node-fx.json`'s `rotated-15deg`, a
+/// 100 × 100 RECTANGLE at `rotation: -0.26179940325453416` whose
+/// `absoluteBoundingBox` is `(30, 4.118092656135559)`: the offset is
+/// `(0, -25.881905)`, so the node's own origin is `(30, 30)` — the `tx`/`ty`
+/// of its own `relativeTransform`, to every digit Figma reports.
+fn rotated_bounds_offset(rotation: f32, w: f32, h: f32) -> (f32, f32) {
+    if rotation == 0.0 {
+        return (0.0, 0.0);
+    }
+    let (sin, cos) = rotation.sin_cos();
+    // The origin corner maps to itself, so `0.0` seeds both minima and only
+    // the other three corners are candidates.
+    let xs = [0.0, w * cos, -h * sin, w * cos - h * sin];
+    let ys = [0.0, w * sin, h * cos, w * sin + h * cos];
+    (
+        xs.iter().copied().fold(f32::INFINITY, f32::min),
+        ys.iter().copied().fold(f32::INFINITY, f32::min),
+    )
 }
 
 /// Figma's paint `opacity` multiplies the color's alpha. Ignoring it would be

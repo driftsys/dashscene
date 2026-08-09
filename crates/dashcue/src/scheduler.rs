@@ -372,12 +372,41 @@ fn validate_spec(spec: &TransitionSpec) {
                 duration.is_finite() && *duration > 0.0,
                 "keyframes duration must be finite and > 0"
             );
+            // `t` is non-decreasing rather than strictly increasing, so that a
+            // **pair of frames at the same `t` is a step** (issue #852,
+            // `docs/decisions/a-step-is-a-pair-of-keyframes.md`). Two at 0.4
+            // hold the old progress until 0.4 and the new one from 0.4 on,
+            // which is what `calcMode="discrete"` means and what SVG's `<set>`
+            // needs a timed form of.
+            //
+            // At most two, though. `keyframes_progress` walks to the last frame
+            // at a given `t`, so a third would be authored data that no sample
+            // can ever return — a silent drop, which P4 forbids. It is a
+            // producer error, named here.
+            //
+            // The open interval is unchanged: a frame still sits strictly
+            // inside (0, 1), because the endpoints (0, 0) and (1, 1) are
+            // implicit and a frame at either would be restating one of them.
             let mut previous = 0.0;
+            let mut repeated = false;
             for frame in frames {
                 assert!(
-                    frame.t.is_finite() && frame.t > previous && frame.t < 1.0,
-                    "keyframe t values must be strictly increasing inside (0, 1)"
+                    frame.t.is_finite() && frame.t > 0.0 && frame.t < 1.0,
+                    "keyframe t values must be finite and strictly inside (0, 1)"
                 );
+                assert!(
+                    frame.t >= previous,
+                    "keyframe t values must be non-decreasing"
+                );
+                if frame.t == previous {
+                    assert!(
+                        !repeated,
+                        "at most two keyframes may share a t: a third is a value no sample can return"
+                    );
+                    repeated = true;
+                } else {
+                    repeated = false;
+                }
                 assert!(frame.value.is_finite(), "keyframe values must be finite");
                 previous = frame.t;
             }

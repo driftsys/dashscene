@@ -1022,3 +1022,93 @@ fn a_default_padding_container_omits_the_field_a_non_default_one_writes_it() {
         (8.0, 0.0, 0.0, 0.0)
     );
 }
+
+/// The document a rotated node compiles from: one 20 x 8 node, turned about a
+/// stated anchor, so the whole pipeline has something whose angle and anchor
+/// are both distinguishable from the defaults.
+fn rotated_document(rotation: f32, rotation_anchor: (f32, f32)) -> Document {
+    let mut doc = Document::new();
+    doc.push(Node {
+        name: Some("turned".to_owned()),
+        parent: None,
+        box2d: Box2D {
+            x: 4.0,
+            y: 6.0,
+            width: 20.0,
+            height: 8.0,
+        },
+        paint: Some(Paint {
+            entry: solid_entry(RED),
+            ..Paint::default()
+        }),
+        rotation,
+        rotation_anchor,
+        ..Node::default()
+    });
+    doc
+}
+
+#[test]
+fn a_rotation_survives_the_round_trip_into_the_rect_it_paints() {
+    // Story #770's half of "motion is data in the document": the angle and its
+    // anchor are written into the `.dsb`, read back by the loader, and land on
+    // the rect entry a painter reads — not merely on the arena's staged
+    // intent, which is a different table and would leave the picture upright.
+    let arena = load(&rotated_document(0.75, (12.0, 3.0)));
+    let scene = arena.committed();
+    let rect = scene.rects()[0];
+
+    assert_eq!(rect.rotation, 0.75, "the angle round-tripped");
+    assert_eq!(
+        (rect.rotation_anchor.x, rect.rotation_anchor.y),
+        (12.0, 3.0),
+        "the anchor round-tripped beside it",
+    );
+    assert_eq!(
+        (rect.x, rect.y, rect.w, rect.h),
+        (4.0, 6.0, 20.0, 8.0),
+        "the box is the node's own, unrotated — the document carries intent, \
+         never the rotated silhouette (P1), so a rotation moves no box here",
+    );
+}
+
+#[test]
+fn an_unrotated_node_writes_no_rotation_fields() {
+    // The R7 append check for this vocabulary: all three fields equal their
+    // schema default on an unrotated node, so flatc omits them and a document
+    // written before story #770 encodes byte-identically.
+    let bytes = compile(&rotated_document(0.0, (0.0, 0.0))).expect("validates");
+    let document =
+        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
+            .expect("valid buffer");
+    let node = document.nodes().expect("nodes present").get(0);
+
+    assert_eq!(node.rotation(), 0.0);
+    assert_eq!(node.rotation_anchor_x(), 0.0);
+    assert_eq!(node.rotation_anchor_y(), 0.0);
+
+    // The same document with a rotation must differ, or the assertion above
+    // would pass on a producer that never writes the field at all.
+    let rotated = compile(&rotated_document(0.75, (12.0, 3.0))).expect("validates");
+    assert_ne!(
+        bytes, rotated,
+        "a rotated document must encode differently from an unrotated one",
+    );
+}
+
+#[test]
+fn an_anchor_is_written_even_when_the_angle_is_zero() {
+    // The anchor is the node's stated turning point, not a function of the
+    // angle. A binding that later drives only `BindingChannel::Rotation` reads
+    // this back, so dropping it at a zero angle would silently re-anchor the
+    // node to its top-left the moment that binding fired.
+    let arena = load(&rotated_document(0.0, (10.0, 4.0)));
+    let rect = arena.committed().rects()[0];
+
+    assert_eq!(rect.rotation, 0.0);
+    assert_eq!(
+        (rect.rotation_anchor.x, rect.rotation_anchor.y),
+        (10.0, 4.0),
+        "the anchor survives a zero angle",
+    );
+}

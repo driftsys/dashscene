@@ -21,7 +21,7 @@
 use dashpaint::{
     Blur, BlurKind, ClipBox, ClipIndex, ClipTable, Color, CornerRadii, EntryParts, GlyphRunTable,
     GroupComposite, ImageAsset, ImageFormat, ImageTable, PaintEntry, PaintTable, Painter,
-    RectEntry, VectorField,
+    RectEntry, Vec2, VectorField,
 };
 use dashscene_gpu::{GpuPainter, Renderer};
 
@@ -67,6 +67,8 @@ fn rect(x: f32, y: f32, w: f32, h: f32, paint: dashpaint::PaintIndex) -> RectEnt
         paint,
         clip: ClipIndex::UNCLIPPED,
         opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     }
 }
 
@@ -814,5 +816,62 @@ fn a_backdrop_is_confined_to_the_clip_region_its_node_names() {
         [0, 0, 255, 255],
         "right of the seam is outside the clip and keeps its untouched blue — got \
          {outside_clip:?}",
+    );
+}
+
+/// A rotated frosted panel frosts a rotated region (story #832).
+///
+/// The backdrop blur is a **separate pipeline** from `paint.wgsl` — its own
+/// vertex stage, its own quad, its own resolve — so the rotation the packer
+/// stamps onto the backdrop instance reaches it only if that pipeline reads it.
+/// Until story #832 it did not, and a rotated frosted panel rendered
+/// byte-identically to an upright one while the reference painter turned it:
+/// `dashscene-skia` calls `draw_backdrop_blur_box` inside the canvas rotation
+/// it opens for the node.
+///
+/// That is the silent wrong picture `Painter::rotates` exists to prevent, so it
+/// has to be false or fixed — this asserts it is fixed.
+///
+/// The panel is deliberately not square. A square frosted region turned about
+/// its own centre covers a different area, but a *rotationally symmetric* one
+/// would not, and this test would then pass against a pipeline that ignored the
+/// term.
+#[test]
+fn a_rotated_backdrop_frosts_a_rotated_region() {
+    let mut paints = PaintTable::new();
+    let mut rects = halves(&mut paints);
+    let panel = frosted(&mut paints, &[backdrop(6.0)], CornerRadii::default());
+
+    // Straddling the seam, so the frosted region contains the hard red/blue
+    // edge and turning it moves that edge's blurred image.
+    let bar = |rotation: f32| RectEntry {
+        x: 16.0,
+        y: 16.0,
+        w: 32.0,
+        h: 10.0,
+        paint: panel,
+        clip: ClipIndex::UNCLIPPED,
+        opacity: 1.0,
+        rotation,
+        rotation_anchor: Vec2 { x: 16.0, y: 5.0 },
+    };
+
+    rects.push(bar(0.0));
+    let upright = draw(&rects, &paints);
+
+    rects.pop();
+    rects.push(bar(std::f32::consts::FRAC_PI_4));
+    let turned = draw(&rects, &paints);
+
+    let differing = upright
+        .chunks_exact(4)
+        .zip(turned.chunks_exact(4))
+        .filter(|(a, b)| a != b)
+        .count();
+    assert!(
+        differing > 100,
+        "turning a frosted panel a quarter turn changed only {differing} \
+         pixels: the backdrop-blur pipeline is drawing the frosted region \
+         unrotated while the node is rotated",
     );
 }

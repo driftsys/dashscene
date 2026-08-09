@@ -133,8 +133,17 @@ struct Blur {
     // the node's own ink, drawn beneath it.
     clip_offset: u32,
     clip_count: u32,
+    // The point the node turns about, in document space, and the angle it turns
+    // by, in radians (story #832). Zero is unrotated.
+    //
+    // The pivot is first and lands at an eight-aligned offset, which is what
+    // makes WGSL's `vec2f` alignment agree with the Rust type — the trap
+    // `Instance` documents against its own `rotation_pivot`.
+    rotation_pivot: vec2f,
+    rotation: f32,
     _pad0: u32,
     _pad1: u32,
+    _pad2: u32,
 }
 
 // The member order above is `render::GpuBlur`'s, exactly, and it has to be:
@@ -235,8 +244,26 @@ fn fs_blur_resolve(@builtin(position) position: vec4f) -> @location(0) vec4f {
     let texel = vec2i(position.xy);
     let blurred = gaussian(texel);
     // Document space is pixel space, so the fragment's own position is the
-    // point the node's shape is stated over.
-    let p = position.xy;
+    // point the node's shape is stated over — once it is turned back into the
+    // node's own frame.
+    //
+    // The node's shape is stated unrotated, in `bounds`/`plane`, exactly as it
+    // is for the node's fill; turning the fragment back by the node's own angle
+    // is what makes a rotated frosted region follow the node (story #832). It
+    // is the inverse of what `paint.wgsl`'s vertex stage does to the quad, and
+    // for the same reason: the mask turns, the sampling does not.
+    //
+    // `p` alone, and never `texel`: the Gaussian below reads the neighbourhood
+    // in *screen* space, which does not turn. So does the clip, which belongs
+    // to an ancestor.
+    let screen = position.xy;
+    var p = screen;
+    if blur.rotation != 0.0 {
+        let s = sin(-blur.rotation);
+        let c = cos(-blur.rotation);
+        let d = screen - blur.rotation_pivot;
+        p = blur.rotation_pivot + vec2f(d.x * c - d.y * s, d.x * s + d.y * c);
+    }
     let sharp_texel = textureLoad(sharp, texel, 0);
 
     // A baked-vector node carries its outline in the baked geometry, so the
@@ -259,7 +286,9 @@ fn fs_blur_resolve(@builtin(position) position: vec4f) -> @location(0) vec4f {
         let d = rounded_box_sdf(p - centre, half_size, blur.corners);
         shape = coverage(d, blur.aa);
     }
-    let cover = shape * clip_coverage(p);
+    // The clip is stated by an ancestor and does not turn, so it is tested
+    // against the unturned screen position rather than against `p`.
+    let cover = shape * clip_coverage(screen);
 
     // `backdrop_layer_paint`'s two modes, and the discontinuity between them is
     // the reference painter's own: at full opacity the blurred copy replaces

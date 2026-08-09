@@ -1328,11 +1328,110 @@ fn a_rolled_back_image_registration_does_not_leave_a_stale_cache_entry() {
 }
 
 #[test]
-fn a_rotated_node_fails_loudly_rather_than_silently_dropping_the_rotation() {
-    // Document has no rotation vocabulary and no Construct variant for it, so a
-    // rotated node cannot become a diagnostic — P4 forbids lowering it as
-    // though it were axis-aligned. Neither fixture carries a rotated node
-    // (Figma omits `rotation` when it is zero), so this is synthetic.
+fn a_rotated_leaf_lowers_its_own_box_not_its_rotated_bounds() {
+    // Story #770. The numbers are `corpus/figma-fixtures/node-fx.json`'s
+    // `rotated-15deg` RECTANGLE, transcribed rather than invented: a 100 x 100
+    // node at -0.26179940325453416 rad (-15 degrees), whose
+    // `absoluteBoundingBox` Figma reports as 122.474 x 122.474 at
+    // (30, 4.118092656135559).
+    //
+    // The child sits under an unrotated parent precisely so both halves of the
+    // derivation can fail visibly. Taking the box from `absoluteBoundingBox`
+    // would lower (30, 4.118) at 122.474 x 122.474; the node's own box is
+    // (30, 30) at 100 x 100.
+    let file = document(serde_json::json!({
+        "name": "page-frame",
+        "type": "FRAME",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 200.0, "height": 200.0 },
+        "children": [{
+            "name": "rotated-15deg",
+            "type": "RECTANGLE",
+            "rotation": -0.26179940325453416,
+            "size": { "x": 100.0, "y": 100.0 },
+            "absoluteBoundingBox": {
+                "x": 30.0, "y": 4.118092656135559,
+                "width": 122.47449457645416, "height": 122.47449457645416,
+            },
+        }],
+    }));
+
+    let (doc, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
+        .expect("a rotated leaf lowers as of story #770");
+    assert!(
+        diagnostics.iter().all(|d| d.rule != "figma.unsupported"),
+        "a rotated leaf is no longer refused: {diagnostics:?}",
+    );
+
+    let (_, n) = node(&doc, "rotated-15deg");
+    // Written as degrees so the assertion says what the fixture is named,
+    // rather than repeating a 17-digit literal that no longer fits an f32.
+    assert!(
+        (n.rotation - (-15.0f32).to_radians()).abs() < 1e-6,
+        "Figma's radians lower unconverted, in this repository's own sign \
+         convention: got {}, expected -15 degrees in radians",
+        n.rotation,
+    );
+    assert_eq!(
+        n.rotation_anchor,
+        (0.0, 0.0),
+        "Figma turns a node about its own local origin",
+    );
+    assert_eq!(
+        (n.box2d.width, n.box2d.height),
+        (100.0, 100.0),
+        "the extent comes from `size`; `absoluteBoundingBox` would be 122.474, \
+         22.5 % high",
+    );
+    // The recovered origin is the `tx`/`ty` of the fixture's own
+    // `relativeTransform`. Only x survives an offset error unscathed here —
+    // the rotation is negative, so the bounds reach above the node's top edge
+    // and y is the component that moves.
+    assert!(
+        (n.box2d.x - 30.0).abs() < 1e-3 && (n.box2d.y - 30.0).abs() < 1e-3,
+        "the node's own top-left is (30, 30), not the bounding box's \
+         (30, 4.118): got ({}, {})",
+        n.box2d.x,
+        n.box2d.y,
+    );
+}
+
+#[test]
+fn a_rotated_node_with_children_is_refused_because_rotation_does_not_compose() {
+    // A rotation is per-node paint intent: the commit walk resolves every box
+    // absolutely and a clip region is an axis-aligned box, so nothing carries
+    // a parent's turn onto a descendant. Figma's rotation is hierarchical, so
+    // lowering this would draw the frame turned and its contents straight —
+    // the silent-wrong-picture P4 forbids. Issue #845 holds the question of a
+    // composing transform.
+    let file = document(serde_json::json!({
+        "name": "rotated-frame",
+        "type": "FRAME",
+        "rotation": 0.25,
+        "size": { "x": 10.0, "y": 10.0 },
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+        "children": [{
+            "name": "inner",
+            "type": "RECTANGLE",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 4.0, "height": 4.0 },
+        }],
+    }));
+
+    let (doc, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
+        .expect("an unsupported construct is diagnosed, not fatal");
+    assert_sole_unsupported(
+        &doc,
+        &diagnostics,
+        "rotated-frame",
+        "a rotated node with children (a rotation does not compose down the tree)",
+    );
+}
+
+#[test]
+fn a_rotated_node_without_size_is_refused_rather_than_measured_from_its_bounds() {
+    // Without `size` the only extent available is `absoluteBoundingBox`, which
+    // for a rotated node is the bounds of the rotated shape. Lowering it would
+    // inflate the node — 41 % at 45 degrees, and unbounded as the aspect ratio
+    // grows — so it is refused by name instead (P4).
     let file = document(serde_json::json!({
         "name": "rotated",
         "type": "FRAME",
@@ -1342,7 +1441,7 @@ fn a_rotated_node_fails_loudly_rather_than_silently_dropping_the_rotation() {
 
     let (doc, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
         .expect("an unsupported construct is diagnosed, not fatal");
-    assert_sole_unsupported(&doc, &diagnostics, "rotated", "node rotation");
+    assert_sole_unsupported(&doc, &diagnostics, "rotated", "a rotated node with no size");
 }
 
 #[test]

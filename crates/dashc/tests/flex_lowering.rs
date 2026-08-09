@@ -1349,7 +1349,14 @@ fn a_node_carrying_two_gaps_reports_both() {
     assert_eq!(
         found,
         vec![
-            ("/tilted-dashed".to_string(), "node rotation".to_string()),
+            // Story #770 put rotation in the vocabulary, so this node's first
+            // finding is now the missing `size` a rotated node needs rather
+            // than the rotation itself. Still two findings on one node, which
+            // is what this test is about.
+            (
+                "/tilted-dashed".to_string(),
+                "a rotated node with no size".to_string(),
+            ),
             ("/tilted-dashed".to_string(), "a dashed stroke".to_string()),
         ],
     );

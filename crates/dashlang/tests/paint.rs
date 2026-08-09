@@ -340,3 +340,54 @@ fn the_backdrop_blur_sugar_is_the_blurs_mirror() {
 
     assert_same_output(&sugar, &mirror);
 }
+
+/// The `rotation` setter reaches the arena, and lands on the committed rect
+/// rather than only on staged intent (story #770).
+///
+/// `docs/decisions/dashlang-paint-vocabulary.md` claims every one of core's
+/// `Prop` variants has a builder setter. `Prop::Rotation` is the variant that
+/// claim gained, so this is the test that keeps it true.
+#[test]
+fn rotation_reaches_the_arena() {
+    let mut dsl = Arena::new();
+    scene([node("dial").size(40.0, 12.0).rotation(0.75, (20.0, 6.0))]).build(&mut dsl);
+
+    let mut hand = Arena::new();
+    let mut txn = hand.open();
+    let dial = txn.add_node(None, Some("dial"));
+    txn.set_prop(dial, Prop::Width(40.0));
+    txn.set_prop(dial, Prop::Height(12.0));
+    txn.set_prop(
+        dial,
+        Prop::Rotation {
+            angle: 0.75,
+            anchor: (20.0, 6.0),
+        },
+    );
+    txn.commit();
+
+    assert_same_output(&dsl, &hand);
+
+    let rect = dsl.committed().rects()[0];
+    assert_eq!(
+        rect.rotation, 0.75,
+        "the authored angle reaches the painter"
+    );
+    assert_eq!(
+        (rect.rotation_anchor.x, rect.rotation_anchor.y),
+        (20.0, 6.0),
+        "and so does the anchor it turns about",
+    );
+}
+
+/// An unrotated node stages no rotation, so a scene written before this
+/// vocabulary commits exactly what it committed before.
+#[test]
+fn an_unrotated_node_stages_no_rotation() {
+    let mut dsl = Arena::new();
+    scene([node("plain").size(40.0, 12.0)]).build(&mut dsl);
+
+    let rect = dsl.committed().rects()[0];
+    assert_eq!(rect.rotation, 0.0);
+    assert_eq!((rect.rotation_anchor.x, rect.rotation_anchor.y), (0.0, 0.0));
+}

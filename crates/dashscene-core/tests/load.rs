@@ -7,8 +7,9 @@
 use dashbuf::{
     Color, Document, DocumentArgs, Fill, FixedSizeLayout, Node, NodeArgs, Paint, PaintArgs, Shadow,
     ShadowArgs, ShadowKind, SolidFill, SolidFillArgs, VariantMember, VariantMemberArgs,
-    VariantOverride, VariantOverrideArgs, VariantPropValue, VariantSet, VariantSetArgs,
-    VariantVisible, VariantVisibleArgs, VariantWidth, VariantWidthArgs, Vec2, root_as_document,
+    VariantOverride, VariantOverrideArgs, VariantPropValue, VariantRotation, VariantRotationArgs,
+    VariantSet, VariantSetArgs, VariantVisible, VariantVisibleArgs, VariantWidth, VariantWidthArgs,
+    Vec2, root_as_document,
 };
 use dashscene_core::{Arena, load_document};
 use flatbuffers::FlatBufferBuilder;
@@ -836,4 +837,107 @@ fn ligatures_off_reaches_the_arena() {
     let root = arena.roots()[0];
     let s = arena.text_style(root).expect("the style reached the arena");
     assert!(s.ligatures_off);
+}
+
+/// The v0.18 `VariantRotation` override (story #770) replays through
+/// `load_document` like every other variant value.
+///
+/// The same two-gate gap `a_loaded_document_replays_a_variant_visible_override`
+/// documents: an arm can pass the load gate and still panic on
+/// `variant_value`'s `unreachable!` wildcard, because the gate checks that the
+/// union arm is known to the schema and this function checks that it is known
+/// to the loader.
+///
+/// The assertion is on the **committed rect**, not on the arena's staged
+/// intent. A variant override that reached `Prop::Rotation` but never reached
+/// the rect entry would leave the painter drawing the node upright, which is
+/// the failure two tests in this repository have passed through before.
+#[test]
+fn a_loaded_document_replays_a_variant_rotation_override() {
+    let mut b = FlatBufferBuilder::new();
+    let layout = FixedSizeLayout::new(0.0, 0.0, 10.0, 10.0);
+    let container = Node::create(
+        &mut b,
+        &NodeArgs {
+            layout: Some(&layout),
+            ..Default::default()
+        },
+    );
+    // The child is authored turned about its top-left, so the override below
+    // has to replace both halves rather than only the angle.
+    let child = Node::create(
+        &mut b,
+        &NodeArgs {
+            parent: 0,
+            layout: Some(&layout),
+            rotation: 0.25,
+            ..Default::default()
+        },
+    );
+    let nodes = b.create_vector(&[container, child]);
+
+    let default_member = VariantMember::create(&mut b, &VariantMemberArgs::default());
+    let turned = VariantRotation::create(
+        &mut b,
+        &VariantRotationArgs {
+            angle: 1.5,
+            anchor_x: 5.0,
+            anchor_y: 2.0,
+        },
+    );
+    let rotation_override = VariantOverride::create(
+        &mut b,
+        &VariantOverrideArgs {
+            node: 1,
+            value_type: VariantPropValue::VariantRotation,
+            value: Some(turned.as_union_value()),
+        },
+    );
+    let overrides = b.create_vector(&[rotation_override]);
+    let turned_member = VariantMember::create(
+        &mut b,
+        &VariantMemberArgs {
+            overrides: Some(overrides),
+            ..Default::default()
+        },
+    );
+    let members = b.create_vector(&[default_member, turned_member]);
+    let set = VariantSet::create(
+        &mut b,
+        &VariantSetArgs {
+            members: Some(members),
+            active_member: 1,
+        },
+    );
+    let variant_sets = b.create_vector(&[set]);
+
+    let document = Document::create(
+        &mut b,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            variant_sets: Some(variant_sets),
+            ..Default::default()
+        },
+    );
+    b.finish(document, None);
+    let bytes = b.finished_data().to_vec();
+
+    let doc = root_as_document(&bytes).expect("valid dashbuf document");
+    let mut arena = Arena::new();
+    load_document(&doc, &[], &mut arena);
+
+    // The rect table is in the commit walk's DFS order, which for this
+    // two-node document puts the container at 0 and its child at 1.
+    let rect = arena.committed().rects()[1];
+    assert_eq!(
+        rect.rotation, 1.5,
+        "the active member's VariantRotation override replaced the node's own \
+         angle of 0.25 on the rect the painter reads",
+    );
+    assert_eq!(
+        (rect.rotation_anchor.x, rect.rotation_anchor.y),
+        (5.0, 2.0),
+        "the anchor travelled with the angle: an override that moved one and \
+         left the other would turn the node about the wrong point",
+    );
 }
