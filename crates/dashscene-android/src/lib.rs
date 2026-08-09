@@ -77,12 +77,24 @@
 //!
 //! [`ds_runtime_load_document`]: dashscene_ffi::ds_runtime_load_document
 
+mod frames;
 mod handshake;
 
+pub use frames::{AttachError, Frames, Step};
 pub use handshake::Handshake;
 
-// The whole of the platform half. Behind the `cfg` because every symbol in it
-// binds an NDK or JNI function that exists on no other target — which is also
-// why the handshake above is *not* in here.
+// The platform half. Behind the `cfg` because every symbol in it binds an NDK or
+// JNI function that exists on no other target — which is also why the handshake
+// and the `Frames` seam are *not* in here.
 #[cfg(target_os = "android")]
 mod host;
+#[cfg(target_os = "android")]
+mod logging;
+#[cfg(target_os = "android")]
+#[path = "loop_.rs"]
+pub mod loop_;
+
+#[cfg(target_os = "android")]
+pub(crate) use logging::log;
+#[cfg(target_os = "android")]
+pub use loop_::AndroidHost;

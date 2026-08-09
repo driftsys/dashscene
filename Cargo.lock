@@ -746,6 +746,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "demo-android"
+version = "0.0.0"
+dependencies = [
+ "dashlang",
+ "dashpaint",
+ "dashscene-android",
+ "dashscene-core",
+ "dashscene-gpu",
+ "jni",
+ "ndk-sys",
+ "showcase",
+]
+
+[[package]]
 name = "demo-web"
 version = "0.0.0"
 dependencies = [
