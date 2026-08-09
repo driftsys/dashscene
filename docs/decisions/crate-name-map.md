@@ -3,7 +3,7 @@
     status   accepted
     date     2026-07-11
     scope    the Cargo workspace's crate names — 13 when this was decided,
-             17 today, each addition recorded in its own section below
+             18 today, each addition recorded in its own section below
 
 ## Context
 
@@ -329,7 +329,7 @@ described `dashscene-web` as a retired stub — a claim story #741 had falsified
 day earlier. A registry nobody enumerated is a registry nobody updates, which is
 the #445 pattern with a different set of files.
 
-**All 17 names are now reserved.** Checking issue #803's premise that
+**All 18 names are now reserved.** Checking issue #803's premise that
 `dashscene-desktop` was the unreserved name found two more — `dashpack` and
 `dashpack-astcenc-sys`. Both are real workspace crates that build and are
 depended on today, which is what separates them from a name held for work not
@@ -366,12 +366,15 @@ every host-facing surface already uses — `dashscene-web`, `dashscene-desktop`,
 ecosystem's own word for this, and `categories = ["external-ffi-bindings"]`
 already names it.
 
-**Availability: not yet reserved on crates.io.** Every other name here was
-reserved before or as it landed, and this one was not — the crate carries
-`version = "0.0.0"` and `publish` is not blocked, so the reservation is owed
-before the first real publish rather than before the code. Recorded as a gap
-rather than left implicit, which is what the `dashpack` entry above exists to
-warn about.
+**Availability.** Unclaimed on crates.io, and reserved **2026-08-09** as a
+standalone placeholder 0.1.0 built to the same shape as the twelve, with
+`repository` pointing at the public `driftsys/dashscene`. The name was held
+after the directory rather than before it: story #840 created
+`crates/dashscene-ffi` at `0.0.0` and shipped without the reservation, which
+this record and `docs/features.md` both carried as a stated gap until it was
+closed. The workspace crate stays at `0.0.0`, so the reservation does not drag
+it out of the shared version flow — the same split every other name here sits
+in, where a reserved 0.1.0 sits above a workspace 0.0.0.
 
 ## Why
 
