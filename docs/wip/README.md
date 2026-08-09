@@ -67,9 +67,13 @@ went stale because a commit that removes a file from this directory has to edit
 this file in the same commit, and that is not enforced by anything. **Archiving
 a capture and updating this ledger are one change, not two.**
 
-**Nine of the ten are design captures**, described below, and **one driver
-prompt is held** — `2026-08-08-v018-DRIVER-PROMPT.md`, added the day v0.17
-closed. Driver prompts — the brief a session is handed to carry out a named
+**Nine of the eleven are design captures**, described below, and **two driver
+prompts are held**, both for v0.18: `2026-08-08-v018-DRIVER-PROMPT.md`, added
+the day v0.17 closed, and `2026-08-09-v018-DRIVER-PROMPT.md`, which supersedes
+it and carries the slice from issue #617 onward. The first is kept rather than
+replaced because its story #770 material is now as-built and its gate section
+records why the slice could start at all; the second is what a session should
+be handed. Both archive together when epic #769 closes. Driver prompts — the brief a session is handed to carry out a named
 piece of work — are transient by construction, spent the moment their work
 lands, and the convention is to archive them verbatim rather than garden them
 into records. Fifteen are in `docs/archive/`: fourteen `*-DRIVER-PROMPT.md`
@@ -90,8 +94,15 @@ on purpose, so what was known when it was written is still legible. By the close
 its story states were stale and its traps section was not, which is why
 story #796 was told to archive it rather than to garden anything out of it.
 
-**`2026-08-08-v018-DRIVER-PROMPT.md` empties when epic #769 closes**, on the
-same rule. It was written while v0.17 was one story from closing, because
+**Both v0.18 prompts empty when epic #769 closes**, on the same rule, and are
+archived verbatim together. The 2026-08-09 one was written after three stories
+closed rather than amended onto the first, because the first's story order and
+its "where the slice stands" table had both been overtaken — amending would have
+left a body whose two halves disagreed, where two files leave what was known at
+each point legible. The earlier one carries a `status` line saying it is
+superseded and by what.
+
+The 2026-08-08 prompt empties on the same rule. It was written while v0.17 was one story from closing, because
 v0.18's only remaining condition was that close — the slice has no technical
 dependency on v0.17, and story #796 was the phase-end revision `AGENTS.md`
 requires before the next slice starts. That story landed hours later, so the

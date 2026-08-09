@@ -7,7 +7,7 @@
     issue    #852, raised by the SVG producer capture before #771 pins the
              schema
     refs     #771, #255, #143, #853 (the SVG capture this was raised from,
-             unmerged when this was written), `docs/design/dashcue.md`
+             merged 2026-08-09), `docs/design/dashcue.md`
 
 `TransitionSpec` is `Tween`, `Spring` and `Keyframes`, and all three are
 continuous. A **timed discrete change** — "flip at 0.4 of the duration" — had no
@@ -19,11 +19,12 @@ It is not hypothetical, on figures **this repository cannot yet check**.
 Issue #852 reports a census of the 525-test W3C SVG 1.1 suite in which
 `<set>` appears in 35 files and `visibility` (46 uses) and `display` (28) are
 among the most animated non-geometry attributes. That census lives in
-`docs/wip/2026-08-09-svg-as-a-second-producer.md`, which arrives on a different
-branch (pull request #853) and is not in the tree at the time this record is
-written; the W3C corpus itself may never be committed, so the count may stay a
-reported figure rather than a reproducible one. Cited as the issue's evidence
-rather than restated as this record's own measurement.
+`docs/wip/2026-08-09-svg-as-a-second-producer.md`, which was on a different
+branch when this record was written and landed with pull request #853 the same
+day. **It is re-derivable**: the capture ends with the commands that produce
+every figure in it, from the suite's own stable archive URL, so the numbers can
+be checked rather than taken. Cited as the capture's measurement rather than
+restated as this record's own.
 
 The direction does not rest on the exact counts: the construct is standard SVG,
 and it has not surfaced from Figma only because Figma reaches the same behaviour
