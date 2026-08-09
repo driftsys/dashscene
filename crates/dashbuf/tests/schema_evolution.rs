@@ -1098,6 +1098,10 @@ fn build_fixture() -> Vec<u8> {
             // `images` above is gone from `DocumentArgs` entirely (see this
             // function's doc comment).
             assets: None,
+            // Story #772: the frozen fixture predates loop tracks. An absent
+            // vector writes nothing, so the committed bytes are unchanged —
+            // which is the whole subject of R7.
+            loops: None,
         },
     );
     b.finish(document, None);

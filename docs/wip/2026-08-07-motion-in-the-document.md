@@ -109,7 +109,15 @@ Two constraints, both already settled by precedent:
   `(node, channel)` and the loader packs it, which is exactly what `Binding`
   already does.
 
-### 3. There are no loop tracks
+### 3. There are no loop tracks — **built at story #772, 2026-08-09**
+
+**This gap is closed.** `Scheduler::start_loop`, a `LoopTrack` row in the
+schema and a driver in `dashlang` ship the ambient class, and the four
+decisions behind them are gardened into
+`docs/decisions/a-loop-is-ambient-paint-anchored-at-load.md`. The open
+question below — where a loop track's phase lives — is answered there:
+document load, plus a per-track offset. The section is kept as written
+because it is what the gap looked like before it was built.
 
 `docs/design/dashcue.md` puts "per-prop smoothing, loop tracks, standalone
 keyframe tracks, enter/exit specs" out of scope for the v0.4 slice, and
@@ -179,10 +187,11 @@ closure.
   same reason and would be reached for by the same importers. Adding one
   channel three times is worse than adding three once, but a full 2×3
   transform on every node is a larger change than any single importer needs.
-- **Where does a loop track's phase live?** A looping animation that starts
-  when the document loads is one behaviour; one that starts when a node
-  becomes visible is another. Neither is expressible today and they are not
-  the same feature.
+- ~~**Where does a loop track's phase live?**~~ **Answered at story #772**:
+  document load, plus a per-track offset in seconds. A visibility-anchored
+  phase is a second feature — it needs a per-node clock and a re-entry
+  policy — and is deliberately not shipped
+  (`docs/decisions/a-loop-is-ambient-paint-anchored-at-load.md`).
 - **What binds a `VariantTransition` to a switch?** Per variant set, per
   variant, or per interaction. Figma's model is per interaction, which is
   the level its `reactions` payload is keyed at.

@@ -17,16 +17,17 @@ use dashbuf::{
     GridTrack as FbGridTrack, GridTrackArgs as FbGridTrackArgs, ImageFill, ImageFillArgs,
     Keyframe as FbKeyframe, KeyframesSpec, KeyframesSpecArgs,
     LayoutConstraints as FbLayoutConstraints, LayoutConstraintsArgs,
-    LayoutContainer as FbLayoutContainer, LayoutContainerArgs, Mat23, NO_FIELD, NO_PAINT,
-    NO_PARENT, NO_TEXT, NO_TEXT_STYLE, Node as FbNode, NodeArgs as FbNodeArgs, Paint as BufPaint,
-    PaintArgs, PlaneBounds, PropTransition as FbPropTransition, PropTransitionArgs,
-    Shadow as FbShadow, ShadowArgs, ShadowKind as FbShadowKind, SignalDecl as FbSignalDecl,
-    SignalDeclArgs as FbSignalDeclArgs, SolidFill, SolidFillArgs, SpringSpec, SpringSpecArgs,
-    Stroke, StrokeArgs, TextStyle as FbTextStyle, TextStyleArgs, TransformClamp,
-    TransformClampArgs, TransformMapRange, TransformMapRangeArgs, TransformScale,
-    TransformScaleArgs, TweenSpec, TweenSpecArgs, VariantFill as FbVariantFill, VariantFillArgs,
-    VariantHeight as FbVariantHeight, VariantHeightArgs, VariantMember as FbVariantMember,
-    VariantMemberArgs, VariantOverride as FbVariantOverride, VariantOverrideArgs,
+    LayoutContainer as FbLayoutContainer, LayoutContainerArgs, LoopTrack as FbLoopTrack,
+    LoopTrackArgs, Mat23, NO_FIELD, NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE, Node as FbNode,
+    NodeArgs as FbNodeArgs, Paint as BufPaint, PaintArgs, PlaneBounds,
+    PropTransition as FbPropTransition, PropTransitionArgs, Shadow as FbShadow, ShadowArgs,
+    ShadowKind as FbShadowKind, SignalDecl as FbSignalDecl, SignalDeclArgs as FbSignalDeclArgs,
+    SolidFill, SolidFillArgs, SpringSpec, SpringSpecArgs, Stroke, StrokeArgs,
+    TextStyle as FbTextStyle, TextStyleArgs, TransformClamp, TransformClampArgs, TransformMapRange,
+    TransformMapRangeArgs, TransformScale, TransformScaleArgs, TweenSpec, TweenSpecArgs,
+    VariantFill as FbVariantFill, VariantFillArgs, VariantHeight as FbVariantHeight,
+    VariantHeightArgs, VariantMember as FbVariantMember, VariantMemberArgs,
+    VariantOverride as FbVariantOverride, VariantOverrideArgs,
     VariantRotation as FbVariantRotation, VariantRotationArgs, VariantSet as FbVariantSet,
     VariantSetArgs, VariantTransition as FbVariantTransition, VariantTransitionArgs,
     VariantVisible as FbVariantVisible, VariantVisibleArgs, VariantWidth as FbVariantWidth,
@@ -39,9 +40,10 @@ use flatbuffers::{FlatBufferBuilder, UnionWIPOffset, WIPOffset};
 
 use crate::document::{
     Asset, AssetKind, AxisSizing, Binding, BindingChannel, BindingTransform, CrossAxisAlign,
-    Document, Easing, EdgeInsets, GridTrack, LayoutMode, MainAxisAlign, Node, Paint, PaintEntry,
-    PropTransition, SignalDecl, TextAlign, TextAlignV, TextStyle, TransitionSpec, VariantMember,
-    VariantOverride, VariantSet, VariantTransition, VariantValue, VectorAtlas, VectorShape,
+    Document, Easing, EdgeInsets, GridTrack, LayoutMode, LoopTrack, MainAxisAlign, Node, Paint,
+    PaintEntry, PropTransition, SignalDecl, TextAlign, TextAlignV, TextStyle, TransitionSpec,
+    VariantMember, VariantOverride, VariantSet, VariantTransition, VariantValue, VectorAtlas,
+    VectorShape,
 };
 
 /// Serializes a document to `.dsb` bytes.
@@ -141,6 +143,14 @@ pub fn emit(doc: &Document) -> Vec<u8> {
         .iter()
         .map(|s| build_vector_shape(&mut b, s))
         .collect();
+    // The ambient animations (story #772). Empty for a document with no
+    // loop, so the create_vector below is skipped and every document
+    // authored before this field emits byte-identically (R7).
+    let loop_offsets: Vec<WIPOffset<FbLoopTrack>> = doc
+        .loops
+        .iter()
+        .map(|track| build_loop_track(&mut b, track))
+        .collect();
 
     let nodes = b.create_vector(&nodes);
     let assets = (!assets.is_empty()).then(|| b.create_vector(&assets));
@@ -155,6 +165,7 @@ pub fn emit(doc: &Document) -> Vec<u8> {
         (!vector_atlas_offsets.is_empty()).then(|| b.create_vector(&vector_atlas_offsets));
     let vector_shapes =
         (!vector_shape_offsets.is_empty()).then(|| b.create_vector(&vector_shape_offsets));
+    let loops = (!loop_offsets.is_empty()).then(|| b.create_vector(&loop_offsets));
 
     let document = FbDocument::create(
         &mut b,
@@ -169,9 +180,10 @@ pub fn emit(doc: &Document) -> Vec<u8> {
             bindings,
             vector_atlases,
             vector_shapes,
-            // No `..Default::default()`: `variant_sets` was the last unset
-            // field, so every one is named now and clippy's needless_update
-            // refuses the rest pattern. The next schema append restores it.
+            loops,
+            // No `..Default::default()`: every field is named, so clippy's
+            // needless_update refuses the rest pattern. The next schema
+            // append restores it.
         },
     );
     b.finish(document, None);
@@ -267,7 +279,52 @@ fn build_prop_transition<'a>(
     b: &mut FlatBufferBuilder<'a>,
     track: &PropTransition,
 ) -> WIPOffset<FbPropTransition<'a>> {
-    let (spec_type, spec) = match &track.spec {
+    let (spec_type, spec) = build_spec(b, &track.spec);
+    FbPropTransition::create(
+        b,
+        &PropTransitionArgs {
+            node: track.node,
+            channel: channel_of(track.channel),
+            spec_type,
+            spec: Some(spec),
+        },
+    )
+}
+
+/// Builds one ambient animation (story #772): the same `(node, channel)`
+/// pair a transition track carries, its own authored endpoints, and where
+/// in its cycle it starts.
+fn build_loop_track<'a>(
+    b: &mut FlatBufferBuilder<'a>,
+    track: &LoopTrack,
+) -> WIPOffset<FbLoopTrack<'a>> {
+    let (spec_type, spec) = build_spec(b, &track.spec);
+    FbLoopTrack::create(
+        b,
+        &LoopTrackArgs {
+            node: track.node,
+            channel: channel_of(track.channel),
+            from: track.from,
+            to: track.to,
+            spec_type,
+            spec: Some(spec),
+            phase_offset: track.phase_offset,
+        },
+    )
+}
+
+/// Builds the `TransitionSpec` union, returning the discriminant and the
+/// union value to store beside it.
+///
+/// Shared by the two tables that carry the union — a variant transition's
+/// track and a loop track — so a fourth arm cannot land in one emitter and
+/// not the other. The union's children are built before the table that
+/// owns them, which is what a flatbuffer builder requires.
+fn build_spec<'a>(
+    b: &mut FlatBufferBuilder<'a>,
+    spec: &TransitionSpec,
+) -> (dashbuf::TransitionSpec, WIPOffset<UnionWIPOffset>) {
+    match spec {
         TransitionSpec::Tween { duration, easing } => (
             dashbuf::TransitionSpec::TweenSpec,
             TweenSpec::create(
@@ -314,16 +371,7 @@ fn build_prop_transition<'a>(
                 .as_union_value(),
             )
         }
-    };
-    FbPropTransition::create(
-        b,
-        &PropTransitionArgs {
-            node: track.node,
-            channel: channel_of(track.channel),
-            spec_type,
-            spec: Some(spec),
-        },
-    )
+    }
 }
 
 fn easing_of(easing: Easing) -> dashbuf::Easing {

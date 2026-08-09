@@ -1061,3 +1061,142 @@ fn a_switch_and_a_layout_dirty_write_in_one_tick_still_eases() {
     }
     assert_eq!(previous, to, "the transition arrives at its destination");
 }
+
+/// A declared loop drives its channel with no signal and no switch behind it,
+/// and keeps doing it (story #772) — the ambient class, which is the one class
+/// nothing else in the vocabulary can express.
+///
+/// Asserted on the committed rect rather than on the arena's staged intent: a
+/// sample that never reached the rect leaves the painter drawing the node
+/// upright, however live the scheduler track looks.
+#[test]
+fn a_declared_loop_drives_its_channel_and_repeats() {
+    use dashscene_core::{Easing, LoopTrack, Prop, TransitionSpec};
+
+    let mut arena = Arena::new();
+    {
+        let mut txn = arena.open();
+        // Two spinners on one document, offset half a cycle apart — the
+        // skeleton-loader shape, and what says the phase offset survives the
+        // whole path rather than being ignored.
+        for (name, phase) in [("early", 0.0), ("late", 0.25)] {
+            let n = txn.add_node(None, Some(name));
+            txn.set_prop(n, Prop::Width(40.0));
+            txn.set_prop(n, Prop::Height(40.0));
+            txn.add_loop_track(LoopTrack {
+                node: n,
+                channel: Channel::Rotation,
+                // A span of 8 over a half-second linear cycle, stepped
+                // below by an eighth of that. Every number here is a
+                // negative power of two, so the elapsed accumulation is
+                // exact and the samples can be asserted by equality —
+                // 0.1 is not representable, and stepping by it would drift
+                // the wrap off the frame it lands on.
+                from: 0.0,
+                to: 8.0,
+                spec: TransitionSpec::Tween {
+                    duration: 0.5,
+                    easing: Easing::Linear,
+                },
+                phase_offset: phase,
+            });
+        }
+        txn.commit();
+    }
+
+    let count = Rc::new(Cell::new(0));
+    let mut live = dashlang::attach_live(&mut arena, CountingSolver::boxed(count.clone()));
+    assert_eq!(count.get(), 1, "attach solves once");
+
+    let angle = |arena: &Arena, i: usize| arena.committed().rects()[i].rotation;
+
+    // One full cycle and a little past it. The second track runs half a
+    // cycle ahead of the first, so it wraps four frames earlier — which is
+    // the whole point of the offset.
+    let expected = [(1.0, 5.0), (2.0, 6.0), (3.0, 7.0), (4.0, 0.0), (5.0, 1.0)];
+    let mut previous_generation = live.generation();
+    for (frame, (early, late)) in expected.into_iter().enumerate() {
+        live.tick(0.0625, &mut arena);
+        assert_eq!(angle(&arena, 0), early, "frame {frame}: the early spinner");
+        assert_eq!(angle(&arena, 1), late, "frame {frame}: the late spinner");
+
+        // A loop never settles, so no frame takes the idle early return and
+        // the generation moves every time. That is the cost recorded in the
+        // ruling: a document carrying one loop draws continuously.
+        assert!(
+            live.generation() > previous_generation,
+            "frame {frame}: a live loop commits every frame",
+        );
+        previous_generation = live.generation();
+    }
+
+    // And it never solves. A loop is held to paint channels precisely so a
+    // track that never settles cannot put the solver in the frame loop.
+    assert_eq!(
+        count.get(),
+        1,
+        "a loop animates paint only, so no frame of it re-solves",
+    );
+}
+
+/// The builder path drives a declared loop too (story #772).
+///
+/// `attach_live` and `build_live` are two separate ways into a `LiveScene`,
+/// and wiring a channel into one of them only is a mistake this crate has
+/// already made — the loaded path worked and the DSL panicked. Mutation
+/// testing found this one: removing the `attach_loops` call from the builder
+/// path left every other test in the crate green.
+///
+/// The loop is staged on the arena before the scene is built, because the
+/// builder has no loop vocabulary of its own — `build_live` appends its nodes
+/// to whatever the arena already holds, so the two coexist.
+#[test]
+fn the_builder_path_drives_a_loop_staged_on_its_arena() {
+    use dashscene_core::{Easing, LoopTrack, Prop, TransitionSpec};
+
+    let mut arena = Arena::new();
+    {
+        let mut txn = arena.open();
+        let spinner = txn.add_node(None, Some("spinner"));
+        txn.set_prop(spinner, Prop::Width(40.0));
+        txn.set_prop(spinner, Prop::Height(40.0));
+        txn.add_loop_track(LoopTrack {
+            node: spinner,
+            channel: Channel::Rotation,
+            from: 0.0,
+            to: 8.0,
+            spec: TransitionSpec::Tween {
+                duration: 0.5,
+                easing: Easing::Linear,
+            },
+            phase_offset: 0.0,
+        });
+        txn.commit();
+    }
+
+    // An ordinary builder scene beside it, so the two paths are exercised at
+    // once rather than the loop being the only thing present.
+    let mut scene = Scene::new();
+    let width = scene.signal(10.0);
+    scene.roots([node("panel")
+        .size(100.0, 20.0)
+        .children([node("bar").size(10.0, 12.0).bind(Channel::Width, width)])]);
+    let mut live = scene.build_live(&mut arena, Box::new(TaffySolver::new()));
+
+    let angle = |arena: &Arena| arena.committed().rects()[0].rotation;
+    live.tick(0.0625, &mut arena);
+    assert_eq!(angle(&arena), 1.0, "the builder path started the loop");
+    live.tick(0.0625, &mut arena);
+    assert_eq!(angle(&arena), 2.0);
+
+    // And the builder's own binding still works beside it.
+    live.set(width, 42.0);
+    live.tick(0.0625, &mut arena);
+    assert_eq!(angle(&arena), 3.0, "the loop kept running");
+    let bar = arena.committed().rects().len() - 1;
+    assert_eq!(
+        arena.committed().rects()[bar].w,
+        42.0,
+        "the builder's own binding still drives its node",
+    );
+}

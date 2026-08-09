@@ -20,8 +20,15 @@ current sampled values.
 
 Out of scope for this slice (later vocabulary rows of
 `docs/archive/2026-07-14-design-1-seed.md` §6.3): per-prop
-smoothing, loop tracks, standalone keyframe tracks, enter/exit specs.
+smoothing, standalone keyframe tracks, enter/exit specs.
 FLIP capture and wiring is story #22 (`dashscene-engine`).
+
+**Loop tracks left that list at v0.18** (story #772).
+[`Scheduler::start_loop`] starts a track that repeats its curve instead of
+finishing, and the document carries the rows —
+`docs/decisions/a-loop-is-ambient-paint-anchored-at-load.md` holds the four
+decisions that shape them. A spring cannot loop: it has no duration, so it
+has no cycle, and `start_loop` refuses one by name.
 
 ## The seam (`docs/decisions/staged-mutation-v01-scope.md`)
 

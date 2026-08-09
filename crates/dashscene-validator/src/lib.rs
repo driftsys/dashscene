@@ -141,6 +141,28 @@ pub mod rule {
     pub const KEYFRAME_VALUE_NOT_FINITE: &str = "transition.keyframe-value-not-finite";
     pub const TRANSITION_SPEC_OUT_OF_RANGE: &str = "transition.spec-out-of-range";
     pub const TRANSITION_TRACK_ALSO_BOUND: &str = "transition.track-also-bound";
+    /// A loop track naming a node the document does not carry (story #772).
+    pub const LOOP_NODE_OUT_OF_RANGE: &str = "loop.node-out-of-range";
+    /// A loop track carrying a spring, which has no duration and therefore
+    /// no cycle to repeat (story #772).
+    pub const LOOP_SPEC_IS_A_SPRING: &str = "loop.spec-is-a-spring";
+    /// A loop track sharing a `(node, channel)` with any other writer — a
+    /// binding row, a variant transition track, or a second loop (story
+    /// #772). A loop is the sole writer of its channel.
+    pub const LOOP_CHANNEL_HAS_ANOTHER_WRITER: &str = "loop.channel-has-another-writer";
+    /// A loop track whose endpoints or phase offset are not finite, or whose
+    /// offset is negative (story #772).
+    pub const LOOP_VALUE_OUT_OF_RANGE: &str = "loop.value-out-of-range";
+    /// A loop track naming a layout channel (story #772). A loop animates
+    /// paint only.
+    pub const LOOP_CHANNEL_NOT_PAINT: &str = "loop.channel-not-paint";
+    /// A loop track on a channel a variant member overrides, so the overlay
+    /// would mask every sample the loop writes (story #772).
+    pub const LOOP_CHANNEL_OVERRIDDEN_BY_A_VARIANT: &str = "loop.channel-overridden-by-a-variant";
+    /// A loop track on a fill channel of a node whose fill is not solid —
+    /// the loop analogue of [`BINDING_FILL_CHANNEL_ON_NON_SOLID_FILL`]
+    /// (issue #667, story #772).
+    pub const LOOP_FILL_CHANNEL_ON_NON_SOLID_FILL: &str = "loop.fill-channel-on-non-solid-fill";
 
     // Load gate — the v0.7 binding tables (story #167). The loader
     // resolves both indices unchecked (it assumes a validated document),
@@ -404,6 +426,20 @@ pub mod rule {
         BINDING_NODE_OUT_OF_RANGE,
         BINDING_REFLOW_NOT_CONTAINED,
         BINDING_FILL_CHANNEL_ON_NON_SOLID_FILL,
+        // Story #771's motion rules, dropped from this list when they were
+        // added; story #772's found the gap and closes it for both, since a
+        // rule missing here is treated as unknown by the waiver check.
+        TRANSITION_TRACK_NODE_OUT_OF_RANGE,
+        TRANSITION_CHANNEL_NOT_A_RECT,
+        TRANSITION_SPEC_OUT_OF_RANGE,
+        TRANSITION_TRACK_ALSO_BOUND,
+        LOOP_NODE_OUT_OF_RANGE,
+        LOOP_SPEC_IS_A_SPRING,
+        LOOP_CHANNEL_HAS_ANOTHER_WRITER,
+        LOOP_VALUE_OUT_OF_RANGE,
+        LOOP_CHANNEL_NOT_PAINT,
+        LOOP_CHANNEL_OVERRIDDEN_BY_A_VARIANT,
+        LOOP_FILL_CHANNEL_ON_NON_SOLID_FILL,
         SIGNAL_NAME_DUPLICATE,
         UNKNOWN_ENUM,
         GRADIENT_NO_STOPS,
@@ -601,6 +637,10 @@ pub enum Location {
     Signal(u32),
     /// A binding row, by its index in `Document.bindings` (story #167).
     Binding(u32),
+    /// A loop track, by its index in `Document.loops` (story #772) — a
+    /// pooled surface like the others, because a loop is a document-level
+    /// row rather than a property of the node it drives.
+    Loop(u32),
     /// A packed vector atlas, by its index in `Document.vector_atlases`
     /// (story B1) — a pooled surface like the others.
     VectorAtlas(u32),
@@ -619,6 +659,7 @@ impl fmt::Display for Location {
             Self::TextStyle(index) => write!(f, "<text style #{index}>"),
             Self::Signal(index) => write!(f, "<signal #{index}>"),
             Self::Binding(index) => write!(f, "<binding #{index}>"),
+            Self::Loop(index) => write!(f, "<loop #{index}>"),
             Self::VectorAtlas(index) => write!(f, "<vector atlas #{index}>"),
             Self::VectorShape(index) => write!(f, "<vector shape #{index}>"),
         }

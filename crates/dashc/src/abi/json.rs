@@ -24,6 +24,7 @@ enum WireLocation<'a> {
     Binding { index: u32 },
     VectorAtlas { index: u32 },
     VectorShape { index: u32 },
+    Loop { index: u32 },
 }
 
 impl<'a> From<&'a Location> for WireLocation<'a> {
@@ -41,6 +42,7 @@ impl<'a> From<&'a Location> for WireLocation<'a> {
             Location::Binding(index) => Self::Binding { index: *index },
             Location::VectorAtlas(index) => Self::VectorAtlas { index: *index },
             Location::VectorShape(index) => Self::VectorShape { index: *index },
+            Location::Loop(index) => Self::Loop { index: *index },
         }
     }
 }

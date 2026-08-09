@@ -585,6 +585,28 @@ pub struct Binding {
     pub transform: BindingTransform,
 }
 
+/// One ambient animation: one channel of one node repeating a curve
+/// indefinitely, with no state change driving it (story #772).
+///
+/// `node` and `channel` address exactly as [`PropTransition`] does. Unlike
+/// a transition, a loop carries its own endpoints: it has no two states to
+/// travel between, so `from` and `to` are authored values rather than
+/// rects the engine binds at a switch.
+///
+/// A [`TransitionSpec::Spring`] here is refused by the load gate — a
+/// spring has no duration, so it has no cycle to repeat.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoopTrack {
+    pub node: u32,
+    pub channel: BindingChannel,
+    pub from: f32,
+    pub to: f32,
+    pub spec: TransitionSpec,
+    /// Where in its own cycle this track starts, in seconds. Not a delay:
+    /// an offset loop is already partway through a cycle that never ends.
+    pub phase_offset: f32,
+}
+
 /// One dashscene document, ready to emit.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Document {
@@ -610,6 +632,10 @@ pub struct Document {
     /// The baked shapes a paint entry's `shape_field` references by index
     /// (story B1). Empty for a document with no baked vectors.
     pub vector_shapes: Vec<VectorShape>,
+    /// The ambient animations this document declares (story #772). Empty
+    /// for a document with no loop, so every document authored before this
+    /// field emits byte-identically (R7).
+    pub loops: Vec<LoopTrack>,
 }
 
 impl Document {

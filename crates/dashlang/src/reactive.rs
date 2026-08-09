@@ -1060,6 +1060,17 @@ pub struct LiveScene {
     /// Scheduler key (`PropKey.0`) → index into `scalar_bindings`, for
     /// the smoothed bindings only.
     key_index: HashMap<u64, usize>,
+    /// The rows a declared loop track writes through (story #772), and the
+    /// scheduler key of each, parallel to `scalar_bindings`/`key_index`.
+    ///
+    /// A loop is a `ScalarBinding` whose value comes from the scheduler
+    /// rather than from a signal, which is what lets it reuse
+    /// `apply_scalar_write` — and with it the fill and rotation shadows,
+    /// so a loop driving one fill component keeps the other three. Held
+    /// apart from `scalar_bindings` because the flush in step 1 walks that
+    /// table by signal dirtiness, and a loop has no signal to be dirty.
+    loop_bindings: Vec<ScalarBinding>,
+    loop_index: HashMap<u64, usize>,
     /// The last solved geometry, in DFS/committed order.
     cached_solve: Vec<(NodeId, SolvedRect)>,
     cached_index: HashMap<NodeId, usize>,
@@ -1431,6 +1442,25 @@ impl LiveScene {
                     &mut patches,
                     &mut layout_dirty,
                 );
+            } else if let Some(&li) = self.loop_index.get(&key.0) {
+                // A declared loop (story #772), written through the same
+                // path a smoothed binding takes — its row carries the write
+                // class and the shadows, so one fill component loops
+                // without inventing the other three. The gate holds it to a
+                // paint channel, so this never patches a rect and never
+                // sets `layout_dirty`: a track that never settles still
+                // commits through the retained-geometry replay.
+                apply_scalar_write(
+                    &mut txn,
+                    &mut self.loop_bindings[li],
+                    value,
+                    &mut self.fill_shadow,
+                    &mut self.rotation_shadow,
+                    &self.cached_solve,
+                    &self.cached_index,
+                    &mut patches,
+                    &mut layout_dirty,
+                );
             } else if let Some(&(node, channel)) = self.flip_tracks.get(&key.0) {
                 let idx = self.cached_index[&node];
                 let patch = flip_patch(channel, value);
@@ -1438,8 +1468,9 @@ impl LiveScene {
                 flip_samples.push((node, patch));
             } else {
                 unreachable!(
-                    "scheduler key {key:?} is neither a smoothed binding nor a FLIP track; \
-                     every track this scene starts is registered in one of the two"
+                    "scheduler key {key:?} is not a smoothed binding, a declared loop or a \
+                     FLIP track; every track this scene starts is registered in one of the \
+                     three — `key_index`, `loop_index` or `flip_tracks`"
                 );
             }
         }
@@ -1540,6 +1571,29 @@ fn seed_scalar(
     b.last_applied = v;
 }
 
+/// Stages each loop's first sample, so the commit that publishes the
+/// attached scene already shows the phase the track starts at (story
+/// #772).
+///
+/// Without this a track with a `phase_offset` is live in the scheduler but
+/// absent from the committed output until the first tick, so a host that
+/// presents before it ticks draws the authored value for one frame and then
+/// jumps — visible as a row of skeleton bars snapping into step.
+fn seed_loops(
+    txn: &mut dashscene_core::Txn<'_>,
+    rows: &mut [ScalarBinding],
+    scheduler: &Scheduler,
+    fill_shadow: &mut HashMap<NodeId, Color>,
+    rotation_shadow: &mut HashMap<NodeId, [f32; 3]>,
+) {
+    for b in rows {
+        let v = scheduler
+            .sample(b.key)
+            .expect("a loop track is live from the moment it starts");
+        seed_scalar(txn, b, v, fill_shadow, rotation_shadow);
+    }
+}
+
 /// Builds a [`LiveScene`] from the binding tables an arena already
 /// carries — the loader-side entry point (story #167): load a `.dsb`
 /// with `dashscene_core::load_document`, then attach. The document's
@@ -1623,6 +1677,19 @@ pub fn attach_live(arena: &mut Arena, mut solver: Box<dyn LayoutSolver>) -> Live
     // commit once through the solver — the loaded literals already agree
     // with the initials for a document the importer produced, and the
     // seed makes that an invariant for any producer.
+    // The loops the document declares (story #772), started before the seed
+    // commit so their phase is staged into it. A track with a `phase_offset`
+    // begins partway through its cycle, and a host that attaches, presents
+    // once and only then ticks would otherwise draw its authored value for
+    // one frame and jump.
+    let mut scheduler = Scheduler::new();
+    let (mut loop_bindings, loop_index) = attach_loops(
+        arena,
+        &mut scheduler,
+        &mut fill_shadow,
+        &mut rotation_shadow,
+    );
+
     let generation = {
         let mut txn = arena.open();
         for b in &mut bindings {
@@ -1632,6 +1699,13 @@ pub fn attach_live(arena: &mut Arena, mut solver: Box<dyn LayoutSolver>) -> Live
                 .apply(raw);
             seed_scalar(&mut txn, b, v, &mut fill_shadow, &mut rotation_shadow);
         }
+        seed_loops(
+            &mut txn,
+            &mut loop_bindings,
+            &scheduler,
+            &mut fill_shadow,
+            &mut rotation_shadow,
+        );
         txn.commit_with(&mut *solver)
     };
 
@@ -1647,7 +1721,7 @@ pub fn attach_live(arena: &mut Arena, mut solver: Box<dyn LayoutSolver>) -> Live
 
     LiveScene {
         solver,
-        scheduler: Scheduler::new(),
+        scheduler,
         // The variant snapshot starts at each set's current active member, so
         // the state a document arrived in is the baseline rather than a switch
         // to animate on the first tick (story #771).
@@ -1666,6 +1740,8 @@ pub fn attach_live(arena: &mut Arena, mut solver: Box<dyn LayoutSolver>) -> Live
         scalar_closures: Vec::new(),
         text_closures: Vec::new(),
         key_index: HashMap::new(),
+        loop_bindings,
+        loop_index,
         cached_solve,
         cached_index,
         names,
@@ -1674,6 +1750,103 @@ pub fn attach_live(arena: &mut Arena, mut solver: Box<dyn LayoutSolver>) -> Live
         generation,
         shown: None,
     }
+}
+
+/// Starts one scheduler track per loop the arena declares, and returns the
+/// rows the drain writes their samples through (story #772).
+///
+/// Shared by both construction paths on purpose. `attach_live` and
+/// `stage_live` are two separate ways into a `LiveScene`, and wiring a new
+/// channel into one of them only is a mistake this crate has already made
+/// once — the loaded path worked and the builder panicked. A loop declared
+/// on the arena is driven whichever way the scene was made.
+///
+/// The shadows are seeded exactly as a binding row's are, and for the same
+/// reason: a loop driving one fill component must keep the other three, and
+/// one driving the rotation angle must keep the authored anchor.
+fn attach_loops(
+    arena: &Arena,
+    scheduler: &mut Scheduler,
+    fill_shadow: &mut HashMap<NodeId, Color>,
+    rotation_shadow: &mut HashMap<NodeId, [f32; 3]>,
+) -> (Vec<ScalarBinding>, HashMap<u64, usize>) {
+    let mut rows: Vec<ScalarBinding> = Vec::new();
+    let mut index: HashMap<u64, usize> = HashMap::new();
+
+    for track in arena.loop_tracks() {
+        let node = track.node;
+        // A loop animates paint only. The document gate refuses anything
+        // else by name, but `Txn::add_loop_track` deliberately does not —
+        // a hand-built arena is not held to a document rule — so a producer
+        // staging a layout channel directly would reach `classify` and get
+        // `WriteClass::Solve`. A loop never settles, so that would put the
+        // real solver in the frame loop for as long as the document is
+        // loaded, with no diagnostic. Named here instead, at the same place
+        // every other cross-crate contract violation is.
+        let class = classify(track.channel, false, false, false);
+        assert!(
+            matches!(class, WriteClass::PaintOnly),
+            "loop track on {node:?} names channel {:?}, which is layout-affecting; \
+             a loop animates paint channels only, because a track that never \
+             settles would otherwise re-solve every frame",
+            track.channel,
+        );
+
+        let fill = match arena.fill(node) {
+            Some(FillSpec::Solid { color }) => Some(*color),
+            _ => None,
+        };
+        // Read once and shared by the shadow seed and the initial value
+        // below — `Arena::rotation` resolves the variant overlay, so it is
+        // not a field read.
+        let (angle, anchor) = arena.rotation(node);
+        let rotation = [angle, anchor.0, anchor.1];
+        if is_fill(track.channel) {
+            fill_shadow
+                .entry(node)
+                .or_insert(fill.unwrap_or(TRANSPARENT));
+        }
+        if is_rotation(track.channel) {
+            rotation_shadow.entry(node).or_insert(rotation);
+        }
+
+        let key = prop_key(node, track.channel);
+        // The load gate refuses a loop that shares a channel with any other
+        // writer, so this is the only track on `key` and `start_loop`'s own
+        // assertion is the backstop rather than the check.
+        scheduler.start_loop(
+            key,
+            track.from,
+            track.to,
+            flip_spec(&track.spec),
+            track.phase_offset,
+        );
+        index.insert(key.0, rows.len());
+        rows.push(ScalarBinding {
+            node,
+            parent: arena.parent(node),
+            channel: track.channel,
+            // No signal drives a loop. The field is never read for these
+            // rows: step 1 walks `scalar_bindings`, not this table, and the
+            // drain reaches them by scheduler key.
+            signal: u32::MAX,
+            transform: Transform::Identity,
+            // A loop animates paint only (the load gate refuses anything
+            // else), so this classifies as `PaintOnly` and the sample never
+            // patches a rect or forces a solve. That is what keeps a
+            // never-settling track off the solver.
+            class,
+            smoothing: None,
+            key,
+            // Only the paint arms are reachable — the assertion above holds
+            // the channel to them — so the layout `initial_channel_value`
+            // would read is never needed, and building one per track would
+            // resolve the variant overlay for a value always discarded.
+            last_applied: initial_channel_value(&Layout::default(), fill, rotation, track.channel),
+        });
+    }
+
+    (rows, index)
 }
 
 /// Whether every ancestor of `node` keeps a size change inside `node`'s
@@ -1787,6 +1960,20 @@ impl Scene {
     pub fn build_live(self, arena: &mut Arena, mut solver: Box<dyn LayoutSolver>) -> LiveScene {
         let mut ctx = BuildCtx::default();
 
+        // The same loop startup the loaded path runs, before the txn opens
+        // because it needs `&Arena`. The builder has no loop vocabulary of
+        // its own, so this finds rows only when a producer staged them on
+        // the arena directly — but it is wired here rather than left out,
+        // because a channel wired into one of the two paths and not the
+        // other is a mistake this crate has already made once.
+        let mut scheduler = Scheduler::new();
+        let (mut loop_bindings, loop_index) = attach_loops(
+            arena,
+            &mut scheduler,
+            &mut ctx.fill_shadow,
+            &mut ctx.rotation_shadow,
+        );
+
         let generation = {
             let mut txn = arena.open();
             // Every scalar signal is declared in the arena first, in
@@ -1823,6 +2010,13 @@ impl Scene {
             for b in &ctx.visible {
                 txn.set_prop(b.node, Prop::Visible(self.bool_inits[b.signal as usize]));
             }
+            seed_loops(
+                &mut txn,
+                &mut loop_bindings,
+                &scheduler,
+                &mut ctx.fill_shadow,
+                &mut ctx.rotation_shadow,
+            );
 
             txn.commit_with(&mut *solver)
         };
@@ -1855,7 +2049,7 @@ impl Scene {
 
         LiveScene {
             solver,
-            scheduler: Scheduler::new(),
+            scheduler,
             // The variant snapshot starts at each set's current active member, so
             // the state a document arrived in is the baseline rather than a switch
             // to animate on the first tick (story #771).
@@ -1874,6 +2068,8 @@ impl Scene {
             scalar_closures: ctx.scalar_closures,
             text_closures: ctx.text_closures,
             key_index,
+            loop_bindings,
+            loop_index,
             cached_solve,
             cached_index,
             names,

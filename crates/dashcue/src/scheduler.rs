@@ -37,6 +37,17 @@ struct Track {
     position: f32,
     /// Spring state; zero for tween/keyframes tracks.
     velocity: f32,
+    /// Repeats its curve indefinitely instead of finishing (story #772) —
+    /// the ambient class. Only a time-parameterised spec can carry this;
+    /// [`Scheduler::start_loop`] refuses a spring, which has no duration
+    /// and therefore no cycle.
+    ///
+    /// A repeating track never sets `finished`, so it is never swept and
+    /// [`Scheduler::is_settled`] never reports idle while one is live.
+    /// That is the intended cost and it reaches the hosts: `LiveScene`'s
+    /// idle frame test reads `is_settled`, so a document carrying one loop
+    /// commits — and draws — every frame for as long as it is loaded.
+    repeats: bool,
     finished: bool,
 }
 
@@ -89,6 +100,17 @@ impl Scheduler {
         let (from, velocity) = match live {
             Some(i) => {
                 let old = &self.tracks[i];
+                // A loop is not retargetable: this path removes the live
+                // track, which for a loop would end it with no diagnostic —
+                // and nothing ends a loop (story #772). The load gate
+                // refuses a loop sharing a `(node, channel)` with any other
+                // writer, so reaching here is a broken contract between
+                // crates, named at the same place every other one is (P4).
+                assert!(
+                    !old.repeats,
+                    "prop key {key:?} carries a loop track; starting a transition on it \
+                     would drop the loop with no diagnostic"
+                );
                 let velocity = match (&old.spec, &spec) {
                     (TransitionSpec::Spring { .. }, TransitionSpec::Spring { .. }) => old.velocity,
                     _ => 0.0,
@@ -116,6 +138,77 @@ impl Scheduler {
             elapsed: 0.0,
             position: from,
             velocity,
+            repeats: false,
+            finished: false,
+        });
+    }
+
+    /// Starts a loop track for `key`: a curve that repeats indefinitely
+    /// rather than finishing (story #772). The ambient class — shimmer,
+    /// spinner, pulse, breathing, skeleton — which has no state change
+    /// driving it and so cannot be expressed as a transition.
+    ///
+    /// `phase_offset` seconds is where in its own cycle the track starts,
+    /// which is what staggers a row of skeleton bars. It is **not**
+    /// [`start`](Self::start)'s `delay`: a delayed track holds at `from`
+    /// and then runs its curve once, while an offset loop is already
+    /// partway through a cycle that never ends. An offset of a whole cycle
+    /// or more is the same phase as its remainder.
+    ///
+    /// The endpoints are authored values the document carries, unlike a
+    /// variant transition's, which the engine binds from two solved
+    /// layouts (P1 keeps resolved geometry out of the document; authored
+    /// geometry has always been in it).
+    ///
+    /// # Panics
+    ///
+    /// Panics on a spring: it carries no duration, so it has no cycle to
+    /// repeat, and looping it on an invented period would be a silent
+    /// reinterpretation of the spec (P4). Panics if `key` already carries
+    /// a track — a loop sharing a channel with another writer is refused
+    /// at the load gate, so reaching here is a broken contract.
+    pub fn start_loop(
+        &mut self,
+        key: PropKey,
+        from: f32,
+        to: f32,
+        spec: TransitionSpec,
+        phase_offset: f32,
+    ) {
+        validate_spec(&spec);
+        assert!(
+            !self.tracks.iter().any(|t| t.key == key),
+            "prop key {key:?} already carries a track; a loop is the only writer of its channel"
+        );
+        assert!(from.is_finite(), "from must be finite");
+        assert!(to.is_finite(), "to must be finite");
+        assert!((to - from).is_finite(), "the from/to span must be finite");
+        assert!(
+            phase_offset.is_finite() && phase_offset >= 0.0,
+            "phase offset must be finite and >= 0"
+        );
+
+        let Some((duration, progress)) = timed(&spec) else {
+            panic!(
+                "a spring has no duration, so it has no cycle to repeat: \
+                 a loop track takes a tween or a keyframes spec"
+            );
+        };
+        // Seeded, not held: the offset places the track inside its cycle,
+        // so its first sample is already partway along the curve.
+        let elapsed = phase_offset % duration;
+        let position = from + progress.at(elapsed / duration) * (to - from);
+
+        self.tracks.push(Track {
+            key,
+            from,
+            to,
+            spec,
+            delay: 0.0,
+            elapsed,
+            position,
+            velocity: 0.0,
+            repeats: true,
             finished: false,
         });
     }
@@ -229,13 +322,22 @@ impl Track {
         // function differs.
         if let Some((duration, progress)) = timed(&self.spec) {
             self.elapsed += dt;
-            if self.elapsed >= duration {
+            if self.repeats {
+                // Wrap rather than finish. The remainder is exact for
+                // finite operands (IEEE 754 requires it), so a session
+                // running for hours holds the same phase as one that just
+                // started — repeated subtraction would round, and the
+                // drift would show as a spinner slowly losing time.
+                if self.elapsed >= duration {
+                    self.elapsed %= duration;
+                }
+            } else if self.elapsed >= duration {
                 self.position = self.to;
                 self.finished = true;
-            } else {
-                let p = progress.at(self.elapsed / duration);
-                self.position = self.from + p * (self.to - self.from);
+                return;
             }
+            let p = progress.at(self.elapsed / duration);
+            self.position = self.from + p * (self.to - self.from);
             return;
         }
         match &self.spec {

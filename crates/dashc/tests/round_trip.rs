@@ -19,7 +19,7 @@ mod common;
 // bin compile to a same-named output file, which cargo flags as a collision
 // (see the crate manifest).
 use dashc_wasm::{
-    BindingChannel, Box2D, Document, Easing, Node, Paint, PaintEntry, PropTransition,
+    BindingChannel, Box2D, Document, Easing, LoopTrack, Node, Paint, PaintEntry, PropTransition,
     TransitionSpec, VariantMember, VariantOverride, VariantSet, VariantTransition, VariantValue,
     compile, emit,
 };
@@ -29,6 +29,7 @@ use dashpaint::{
     Stroke, StrokeAlign, Vec2,
 };
 use dashscene_core::{Arena, Prop, load_document};
+use dashscene_engine::TaffySolver;
 use dashscene_skia::SkiaPainter;
 
 const RED: Color = Color {
@@ -1560,5 +1561,105 @@ fn an_anchor_is_written_even_when_the_angle_is_zero() {
         (rect.rotation_anchor.x, rect.rotation_anchor.y),
         (10.0, 4.0),
         "the anchor survives a zero angle",
+    );
+}
+
+/// A loop track survives the round trip and drives the loaded scene (story
+/// #772).
+///
+/// The whole path in one test: authored `Document` → emitter → `.dsb` bytes
+/// → loader → arena → `attach_live` → the committed rect. Before this the
+/// emitter had no loop path at all, so an ambient animation reached a
+/// document by no route.
+#[test]
+fn a_loop_track_survives_the_round_trip_and_drives_the_loaded_scene() {
+    let mut doc = Document::new();
+    let root = doc.push(Node {
+        name: Some("spinner".to_owned()),
+        parent: None,
+        box2d: Box2D {
+            x: 0.0,
+            y: 0.0,
+            width: 40.0,
+            height: 40.0,
+        },
+        ..Node::default()
+    });
+    doc.loops.push(LoopTrack {
+        node: root,
+        channel: BindingChannel::Rotation,
+        from: 0.0,
+        to: 8.0,
+        // Powers of two throughout, so the samples below are exact.
+        spec: TransitionSpec::Tween {
+            duration: 0.5,
+            easing: Easing::Linear,
+        },
+        phase_offset: 0.25,
+    });
+
+    let bytes = compile(&doc).expect("validates");
+    let document =
+        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
+            .expect("valid buffer");
+
+    // The row is in the file, with every field it was authored with.
+    let loops = document.loops().expect("the document carries a loop table");
+    assert_eq!(loops.len(), 1);
+    let row = loops.get(0);
+    assert_eq!(row.node(), root);
+    assert_eq!(row.channel(), dashbuf::BindingChannel::Rotation);
+    assert_eq!((row.from(), row.to()), (0.0, 8.0));
+    assert_eq!(row.phase_offset(), 0.25);
+
+    // And it drives the loaded scene through the ordinary frame loop. The
+    // offset puts it half a cycle in before the first tick.
+    let mut arena = Arena::new();
+    load_document(&document, &[], &mut arena);
+    let mut live = dashlang::attach_live(&mut arena, Box::new(TaffySolver::new()));
+
+    let angle = |arena: &Arena| arena.committed().rects()[0].rotation;
+    live.tick(0.0625, &mut arena);
+    assert_eq!(angle(&arena), 5.0, "a quarter cycle in, plus one eighth");
+    live.tick(0.0625, &mut arena);
+    assert_eq!(angle(&arena), 6.0);
+    live.tick(0.0625, &mut arena);
+    live.tick(0.0625, &mut arena);
+    assert_eq!(angle(&arena), 0.0, "the cycle wrapped rather than settling");
+}
+
+/// The R7 append check for the loop table: a document declaring no loop
+/// writes the schema's absent vector, not an empty one, so every `.dsb`
+/// compiled before this emitter existed encodes byte-identically.
+#[test]
+fn a_loopless_document_writes_no_loop_table() {
+    let plain = variant_document(0);
+    let bytes = compile(&plain).expect("validates");
+    let document =
+        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
+            .expect("valid buffer");
+    assert!(
+        document.loops().is_none(),
+        "an empty loop list must write no field at all",
+    );
+
+    // And the same document *with* a loop must differ, or the assertion
+    // above would also pass on an emitter that never writes the table.
+    let mut carried = variant_document(0);
+    carried.loops.push(LoopTrack {
+        node: 0,
+        channel: BindingChannel::Opacity,
+        from: 0.25,
+        to: 1.0,
+        spec: TransitionSpec::Tween {
+            duration: 1.0,
+            easing: Easing::Linear,
+        },
+        phase_offset: 0.0,
+    });
+    let carried = compile(&carried).expect("validates");
+    assert_ne!(
+        bytes, carried,
+        "a document carrying a loop must encode differently from one without",
     );
 }
