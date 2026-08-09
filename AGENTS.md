@@ -28,11 +28,14 @@ directly — don't silently diverge from it.
 This is `driftsys/dashscene-staging`, a **private working repo**.
 `driftsys/dashscene` itself stays public and untouched — it's reserved
 as the project's future facade (docs, book, site), and it's the
-repository every reserved crates.io name points at. There are **19** of
+repository every reserved crates.io name points at. There are **21** of
 them: the 12 squatted in March 2026, before this repo's first commit,
-plus 7 reserved during development as the crates needing them arrived.
-Seventeen are this workspace's crates; `dashscore` and
-`dashscene-compose` stay parked. Nothing here is public yet. When
+plus 9 reserved during development as the crates needing them arrived.
+Nineteen are this workspace's crates — every one of them — and
+`dashscore` and `dashscene-compose` stay parked. These counts were off
+by one for a while, having not moved when `dashscene-ffi` was reserved,
+so re-derive them from `docs/decisions/crate-name-map.md` rather than
+trusting the number here. Nothing here is public yet. When
 there's a real version running, staging's content gets promoted into
 `dashscene` — the exact mechanism (fresh push vs. history merge) is
 intentionally undecided until that point
@@ -40,7 +43,7 @@ intentionally undecided until that point
 
 ## Crates
 
-17 crates in one Cargo workspace (`resolver = "3"`, `edition = "2024"`,
+19 crates in one Cargo workspace (`resolver = "3"`, `edition = "2024"`,
 `license = "MIT"`). Full role-by-role mapping: `docs/decisions/crate-name-map.md`.
 
     dashscene            umbrella / facade
@@ -82,6 +85,18 @@ intentionally undecided until that point
                           retired; dashscene-gpu covers the browser. Became
                           this at slice v0.17 (story #741); demo-web keeps the
                           demonstration and consumes it
+    dashscene-ffi          the C ABI every platform host sits on — runtime
+                          lifecycle, document load, the tick and the surface
+                          handoff. Kotlin reaches it through JNI and the v1 iOS
+                          and Unity hosts inherit it. Added at slice v0.19
+                          (story #840)
+    dashscene-android     the Android integration surface — the
+                          android.view.Surface to ANativeWindow handoff, the
+                          AChoreographer frame loop on its own thread, and the
+                          surfaceDestroyed handshake that blocks until the
+                          surface is dropped. The first host to sit on
+                          dashscene-ffi rather than beside it. Added at slice
+                          v0.19 (story #841)
     dashscene-gpu          the lean painter — instanced quads and analytic
                           SDF over wgpu, native and web from one codebase;
                           lands across slice v0.15
@@ -96,15 +111,17 @@ loop, landed at v0.14), and `demo-web/` (the same showcase in a browser
 — a canvas, `requestAnimationFrame`, and a `.dsb` fetched by byte range,
 landed at v0.15).
 
-Five of those directories hold workspace members that are never
+Six of those directories hold workspace members that are never
 published: `demo/`, `demo-web/` (the browser host — a canvas, the lean
 painter, and a `.dsb` fetched by byte range, landed at v0.15),
-`corpus/showcase/` (the scenes both hosts draw), `goldens/tooling/`
+`demo-android/` (the third host — a SurfaceView, the native vsync loop
+and the showcase scenes, landed at v0.19), `corpus/showcase/` (the
+scenes all three hosts draw), `goldens/tooling/`
 (the golden-image harness) and `measure/web-minimal/` (the smallest
 browser embedder that draws a `.dsb` — an artifact built to be weighed,
 not run, and what the runtime payload budget is measured over; see
-`docs/decisions/publishable-and-the-first-version.md`). Twenty-two
-members in total, seventeen of them the crates above.
+`docs/decisions/publishable-and-the-first-version.md`). Twenty-five
+members in total, nineteen of them the crates above.
 
 ## Commands
 
@@ -119,13 +136,24 @@ members in total, seventeen of them the crates above.
     just test-all     every tier in one run.
     just lint         clippy -D warnings, cargo fmt --check, dprint check, markdownlint
     just fmt          reformat everything in place
-    just check        regression tier + lint + audit + the two wasm gates
+    just check        regression tier + lint + audit + the two wasm gates +
+                      c-abi, which compiles the committed header from C and
+                      checks the two halves agree (needs a C toolchain)
     just verify       commit-message lint over the branch range, then build — run before opening a PR
     just wasm         build dashc for wasm32-unknown-unknown
     just wasm-painter build dashscene-gpu for wasm32 — the gate that keeps a
                       blocking wait off the web path, where it would deadlock
     just wasm-host    build demo-web for wasm32 — its browser half compiles on
                       no other target
+    just android      cross-compile the four Android members for
+                      aarch64-linux-android — dashscene-gpu, dashscene-ffi,
+                      dashscene-android and demo-android. The second platform's
+                      compile gate, and the only one the last two have: their
+                      JNI halves compile on no other target. Needs an NDK,
+                      which bootstrap does not install
+    just android-probe  cross-compile the D3a probe, push it to an attached
+                      device and run it: what the painter's own device request
+                      reports on that adapter (docs/design/android-toolchain.md)
     just web-build    assemble the browser host into target/web (needs
                       wasm-bindgen-cli, which bootstrap does not install)
     just web          serve target/web on 127.0.0.1, byte ranges honoured
@@ -208,8 +236,8 @@ runs as three tiers, so "tests pass" is no longer a claim about all of it:
 - **A green `ci` job does not mean the suite ran.** It means nothing red
   ran. When the diff is documentation only — every changed file is Markdown
   under `docs/` or Markdown at the repository root — `test`, `clippy`,
-  `demo-build`, `wasm-build`, `atlas-repro` and `render-oracle` all skip,
-  and `deno` skips with them. Read the individual jobs to see which tiers
+  `demo-build`, `wasm-build`, `android-build`, `atlas-repro` and
+  `render-oracle` all skip, and `deno` skips with them. Read the individual jobs to see which tiers
   executed (`docs/decisions/test-tiers.md`).
 
 Story workflow — the definition of done for every story:

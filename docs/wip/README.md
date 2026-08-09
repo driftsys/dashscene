@@ -11,10 +11,10 @@ project's convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports eleven files
+## Why the WIP gate currently reports twelve files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-eleven and exits non-zero. All eleven are deliberate, accepted exceptions
+twelve and exits non-zero. All twelve are deliberate, accepted exceptions
 rather than ungardened debt, and they are recorded here so the gate's result is
 explained rather than merely tolerated.
 
@@ -61,7 +61,20 @@ heading saying ten a second time. Story #771's merge archived the `FINISH-771`
 prompt, re-derived the count, and set both to eleven. **The heading and the
 paragraph below it are two copies of one number**, and an addition that edits
 only the nearer copy leaves the gate's own explanation wrong — which is the
-same failure as the archiving one above, reached from the other direction. Re-derive the
+same failure as the archiving one above, reached from the other direction.
+
+**Twelve, since `integration/v0.19-android` merged into `main`**, which brought
+v0.19's Android driver prompt in beside the two v0.18 ones. That is the first
+time **three** prompts are held at once and the first time **two slices'**
+prompts overlap — which the paragraph below now says rather than repeating that
+they never do.
+
+It is also the second time the count moved through a **merge** rather than
+through a commit that added a file, and both times the two branches had each
+updated this paragraph correctly for themselves and neither number survived the
+join. A count that only an addition can invalidate is one this ledger can hold;
+a count two branches can each move is not, which is the argument for
+re-deriving rather than editing. Re-derive the
 number from `git ls-files docs/wip/` when touching this section rather than
 trusting the prose.
 
@@ -78,16 +91,29 @@ went stale because a commit that removes a file from this directory has to edit
 this file in the same commit, and that is not enforced by anything. **Archiving
 a capture and updating this ledger are one change, not two.**
 
-**Nine of the eleven are design captures**, described below, and **two driver
-prompts are held**, both for v0.18: `2026-08-08-v018-DRIVER-PROMPT.md`, added
-the day v0.17 closed, and `2026-08-09-v018-DRIVER-PROMPT.md`, which supersedes
-it and carries the slice from issue #617 onward. The first is kept rather than
-replaced because its story #770 material is now as-built and its gate section
-records why the slice could start at all; the second is what a session should
-be handed for the slice as a whole. Both archive together when epic #769
-closes. A third was held for one day —
-`2026-08-09-FINISH-771-DRIVER-PROMPT.md`, narrower than either, carrying only
-what remained of story #771 — and left with the pull request it carried.
+**Nine of the twelve are design captures**, described below, and **three driver
+prompts are held**, across two slices.
+
+Two are v0.18's: `2026-08-08-v018-DRIVER-PROMPT.md`, added the day v0.17 closed,
+and `2026-08-09-v018-DRIVER-PROMPT.md`, which supersedes it and carries the
+slice from issue #617 onward. The first is kept rather than replaced because its
+story #770 material is now as-built and its gate section records why the slice
+could start at all; the second is what a session should be handed for the slice
+as a whole. Both archive together when epic #769 closes. A third was held for one
+day — `2026-08-09-FINISH-771-DRIVER-PROMPT.md`, narrower than either, carrying
+only what remained of story #771 — and left with the pull request it carried.
+
+The fourth, and the one this merge brought, is v0.19's:
+`2026-08-09-v019-ANDROID-DRIVER-PROMPT.md`, added at the close of that slice's
+C ABI work to carry stories #841 and #842. **Both of those have landed**, and it
+is still held rather than archived: its own status line says it archives at
+v0.19's close, and that slice is open — D3a (#885), split-screen (#874) and
+story #842's frame-rate number all wait on hardware. It archives when epic #833
+does.
+The two slices' prompts overlap because v0.18 and v0.19 ran at the same time, on
+`main` and on `integration/v0.19-android` respectively; every earlier pair did
+not.
+
 Driver prompts — the brief a session is handed to carry out a named
 piece of work — are transient by construction, spent the moment their work
 lands, and the convention is to archive them verbatim rather than garden them

@@ -599,6 +599,15 @@ name = "dashscene"
 version = "0.0.0"
 
 [[package]]
+name = "dashscene-android"
+version = "0.0.0"
+dependencies = [
+ "dashscene-ffi",
+ "jni",
+ "ndk-sys",
+]
+
+[[package]]
 name = "dashscene-core"
 version = "0.0.0"
 dependencies = [
@@ -634,6 +643,19 @@ dependencies = [
  "dashscene-typeset",
  "rustc-hash 2.1.3",
  "taffy",
+]
+
+[[package]]
+name = "dashscene-ffi"
+version = "0.0.0"
+dependencies = [
+ "dashbuf",
+ "dashlang",
+ "dashpaint",
+ "dashscene-core",
+ "dashscene-engine",
+ "dashscene-gpu",
+ "dashscene-validator",
 ]
 
 [[package]]
@@ -721,6 +743,20 @@ dependencies = [
  "showcase",
  "softbuffer",
  "winit",
+]
+
+[[package]]
+name = "demo-android"
+version = "0.0.0"
+dependencies = [
+ "dashlang",
+ "dashpaint",
+ "dashscene-android",
+ "dashscene-core",
+ "dashscene-gpu",
+ "jni",
+ "ndk-sys",
+ "showcase",
 ]
 
 [[package]]

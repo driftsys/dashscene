@@ -436,15 +436,65 @@ absence of any mobile target in the workspace.
       named in each crate's own module documentation. No mobile target exists,
       and nothing is published: this slice makes the crates publishable and the
       publish is a separate decision (epic #793).
-- [ ] **A C interface for hosts written in other languages** — **part
-      built.** The data a host would consume is already in a shape another
-      language can read, and the build enforces that. Nothing is built on
-      top of it. Planned for the slice that brings up Android, since both
-      need it and neither the browser nor the desktop does.
-- [ ] **Android and iOS** — nothing yet: no build target, no toolchain, no
-      automation. Android is a later slice than the current one, over a
-      proposed three-layer structure; iOS and the Unity host follow after
-      it.
+- [x] **A C interface for hosts written in other languages** — **built, and
+      used by one host.** `crates/dashscene-ffi` (story #840) exports
+      a version to negotiate against, the runtime lifecycle, a document
+      load, the surface handoff, the tick, resize, a draw call, a surface
+      detach and an error channel, with a committed header a C
+      caller compiles against; `just c-abi` exercises it as one. No panic
+      crosses the boundary and no failure is reachable only as a formatted
+      string. `dashscene-android` (story #841) drives it through those entry
+      points as a C caller would, which is what established that it was
+      sufficient for layer 0 — and what established that it was not quite:
+      `ds_runtime_detach_surface` was added there, because the destroy
+      handshake needs a call that drops the surface and keeps the document.
+      No iOS or Unity host exists. Root selection is absent, because
+      no host can name a root until story #837 lands. **A scene built in code
+      cannot be expressed through it at all** — there is no builder entry
+      point, that being layer 2 (D8), so a host wanting one links the crates
+      directly as `demo` and `demo-web` do.
+- [ ] **Android and iOS** — **Android part built; iOS nothing.** The
+      `aarch64-linux-android` target, an NDK toolchain and a CI job exist
+      (story #839), the painter cross-compiles for it, and the C ABI above
+      builds for it too. `crates/dashscene-android` (story #841) is the host:
+      an `android.view.Surface` reaches the painter, an `AChoreographer` loop
+      on its own thread ticks and draws, and `surfaceDestroyed` blocks until
+      that loop has stopped and the surface has been dropped.
+
+      **It has run on an emulator and not on a device**, and the distinction is
+      the whole of what is unresolved. A compiled `.dsb` draws, rotation and
+      backgrounding each run the destroy handshake without a crash, and both
+      were observed on the automotive emulator — which is interim evidence and
+      is labelled as such, not the D3a measurement. **Split-screen was not
+      exercised**: that image declares no multi-window, freeform or
+      split-screen feature at all, so the third of D4's three cases needs
+      different hardware. The D3a measurement that says the painter's four
+      fragment-stage storage buffers fit a target device **has not been
+      taken** — see `docs/design/android-toolchain.md`, which records why an
+      emulator cannot take it. Nothing here says Android works.
+
+      **The showcase runs on Android** (story #842). `demo-android` is a third
+      demonstration host beside `demo` and `demo-web`: `typography` draws MSDF
+      Latin and shaped Arabic, `surfaces` draws the full paint vocabulary
+      including the backdrop blur, and the scripted pulse animates them. It
+      does **not** go through the C ABI — a scene built in code needs an
+      `Arena`, and the ABI's lives inside an opaque `DsRuntime` with no builder
+      entry point (layer 2, D8) — so it implements `dashscene_android::Frames`
+      and shares the render thread, the vsync loop and the destroy handshake
+      rather than a second copy of them. Text draws because each scene brings
+      its own solver; a *loaded document* still gets a bare `TaffySolver` and
+      draws no glyphs (issue #863).
+
+      **On an emulator, and the frame rate is not a device measurement.** The
+      instrument reports in the desktop host's units — one sample read
+      `typography over 240 frames — tick 0.19 ms, draw mean 32.89 p50 32.01
+      p95 62.46 max 81.85 ms (30.2 fps if unpaced)` — but the only
+      painter-capable adapter there is SwiftShader on the CPU, so that
+      describes a development machine. Story #842's own deliverable, a
+      frame-rate number for a named device, is still owed.
+
+      iOS and the Unity host
+      have no target, no toolchain and no automation, and follow in v1.
 
 ## 11. Quality tooling and workflow
 

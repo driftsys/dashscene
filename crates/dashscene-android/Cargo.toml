@@ -1,0 +1,38 @@
+[package]
+name = "dashscene-android"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Android integration for DashScene: the Surface-to-ANativeWindow handoff, the AChoreographer frame loop, and the surfaceDestroyed handshake (story #841)."
+keywords = ["android", "jni", "ndk", "surfaceview", "rendering"]
+categories = ["api-bindings", "rendering"]
+
+[lib]
+name = "dashscene_android"
+# `cdylib` because a Kotlin host reaches this through `System.loadLibrary`, and
+# that is the only way in — the same reason `dashscene-ffi` carries one. `rlib`
+# so the destroy handshake can be linked as a Rust crate and tested on the host
+# platform, which is where the one part of this crate that can be wrong without
+# a device lives.
+crate-type = ["rlib", "cdylib"]
+
+[dependencies]
+# The C ABI, driven through its own entry points rather than around them. D2
+# says every platform host sits on it; this crate is the first one that does, so
+# using it as C would is also what proves it sufficient for layer 0. Nothing
+# here reaches past it to `dashscene-gpu` or `dashlang`.
+dashscene-ffi.workspace = true
+
+# The platform, and only on the platform. Everything these serve is behind
+# `#[cfg(target_os = "android")]`, and keeping them off the host build is what
+# lets `cargo test` reach the handshake at all.
+[target.'cfg(target_os = "android")'.dependencies]
+# `ANativeWindow_fromSurface`, `AChoreographer_postVsyncCallback` and the
+# looper. The raw bindings rather than the `ndk` wrapper: three functions are
+# needed and the wrapper's own surface would be the larger dependency.
+ndk-sys.workspace = true
+# The JNI entry points a Kotlin host binds to. Already in the tree through
+# `wgpu`'s Android backend, so this adds a name rather than a build.
+jni.workspace = true

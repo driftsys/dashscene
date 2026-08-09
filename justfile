@@ -132,7 +132,7 @@ audit:
 # Full non-build verification: the regression tier + lint + audit. Not the
 # sanity tier — `check` is what `build` and the pre-push hook run, so it takes
 # the tier that is the gate (docs/decisions/test-tiers.md).
-check: test-regression lint audit wasm-painter wasm-host
+check: test-regression lint audit wasm-painter wasm-host c-abi
 
 # Everything short of a PR: assemble + check.
 build: assemble check
@@ -267,6 +267,8 @@ publish:
     cargo publish -p dashscene-gpu
     cargo publish -p dashscene-desktop
     cargo publish -p dashscene-web
+    cargo publish -p dashscene-ffi
+    cargo publish -p dashscene-android
     cargo publish -p dashscene
 
 # Install local toolchain bits (git hooks, git-std, dprint, markdownlint-cli).
@@ -308,6 +310,188 @@ wasm-painter:
 # nothing until someone opened a page.
 wasm-host:
     cargo build -p demo-web --target wasm32-unknown-unknown
+
+# Exercise the C ABI as a C caller, against its own header.
+#
+# The Rust tests in `dashscene-ffi` call the same functions, but they call them
+# as Rust: they see the real enum and a header that was never involved. This is
+# the only thing in the workspace that checks the two halves agree — that the
+# header declares what the library exports, which a link error catches, and that
+# `DS_ABI_VERSION` equals what `ds_abi_version()` returns, which nothing else
+# compares.
+#
+# Links the `cdylib` rather than the `staticlib`: the dynamic library carries
+# its own transitive links, where the static one would make this recipe name
+# every system framework `wgpu` pulls in and re-name them per platform.
+c-abi:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p dashscene-ffi
+    crate=crates/dashscene-ffi
+    out=target/debug/c-abi-test
+    case "$(uname -s)" in
+      Darwin) lib=target/debug/libdashscene_ffi.dylib ;;
+      *)      lib=target/debug/libdashscene_ffi.so ;;
+    esac
+    if [ ! -f "${lib}" ]; then
+      echo "c-abi: ${lib} was not built — is crate-type cdylib still set?" >&2
+      exit 1
+    fi
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror \
+      -I "${crate}/include" \
+      "${crate}/tests/abi.c" \
+      -o "${out}" \
+      -L target/debug -ldashscene_ffi \
+      -Wl,-rpath,"$(cd target/debug && pwd)"
+    "${out}"
+
+# The Android API level this repository links against.
+#
+# A floor rather than a target: the NDK ships wrappers from 21 up, and this is
+# the oldest device the artifacts will load on.
+#
+# **33 — Android 13 — ruled 2026-08-09**, on the target fleet rather than on
+# Play. Play's requirement is about `targetSdk`, which it gates on being
+# recent; it sets no minimum, so it is not what decides this number. The fleet
+# is what decides it, and the fleet is Android 13/14.
+#
+# This is the *link* level, so it is the minimum rather than the target: a
+# binary linked at 33 loads on 33 and above and refuses to load below.
+#
+# What that buys story #841 is worth naming, because it removes work. D6 puts
+# vsync on the native side, and the NDK's own `android/choreographer.h`
+# annotates each entry point with `__INTRODUCED_IN`:
+#
+#     AChoreographer_getInstance          24
+#     AChoreographer_postFrameCallback    24, __DEPRECATED_IN(29)
+#     AChoreographer_postFrameCallback64  29
+#     AChoreographer_postVsyncCallback    33
+#
+# At a floor of 33, `postVsyncCallback` — the one carrying a frame timeline —
+# is reachable **unconditionally**. No runtime API-level guard, and no
+# `postFrameCallback64` fallback branch for 29-to-32 devices, which a lower
+# floor would have required.
+ANDROID_API := "33"
+
+# Print the NDK's clang toolchain bin directory, or say what to install.
+#
+# The NDK is a documented prerequisite rather than something `bootstrap`
+# installs, for the reason `web-build` gives about `wasm-bindgen-cli`: it is
+# large, it is needed by one target, and every clone paying for it would be the
+# wrong trade. Discovered rather than hardcoded, because the path carries a
+# version that differs per machine.
+[private]
+_android-ndk-bin:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # `ANDROID_NDK_ROOT` is what GitHub's runner images set; `ANDROID_NDK_HOME`
+    # is the older name and what a local install usually carries. Both are
+    # honoured so the same recipe serves CI and a workstation.
+    ndk="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}"
+    if [ -z "${ndk}" ]; then
+      sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-${HOME}/Library/Android/sdk}}"
+      # Highest installed version rather than first, so a machine holding
+      # several does not silently pin the oldest by sort order.
+      ndk=$(ls -d "${sdk}"/ndk/* 2>/dev/null | sort -V | tail -1 || true)
+    fi
+    if [ -z "${ndk}" ] || [ ! -d "${ndk}" ]; then
+      echo "android: no NDK found. Set ANDROID_NDK_HOME, or install one:" >&2
+      echo "android:   sdkmanager --install 'ndk;28.0.12674087'" >&2
+      exit 1
+    fi
+    # One host tag per NDK, and it is the x86_64 build even on Apple silicon.
+    bin=$(ls -d "${ndk}"/toolchains/llvm/prebuilt/*/bin 2>/dev/null | head -1 || true)
+    if [ -z "${bin}" ]; then
+      echo "android: ${ndk} has no llvm prebuilt toolchain" >&2
+      exit 1
+    fi
+    echo "${bin}"
+
+# Build the lean painter for Android — a gate, like `wasm-painter`.
+#
+# The second platform's compile check, and the cheapest thing that says the
+# painter still cross-compiles for it. wgpu selects Vulkan or GLES on the device
+# itself, so this gate says nothing about which backend a device offers; that is
+# `android-probe`'s question and D3a's.
+#
+# Plain cargo with the NDK linker wired from the environment, rather than
+# `cargo-ndk`. It matches how every other target in this repository is built and
+# adds no tool to install.
+android:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bin=$(just _android-ndk-bin)
+    clang="${bin}/aarch64-linux-android{{ ANDROID_API }}-clang"
+    export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="${clang}"
+    export CC_aarch64_linux_android="${clang}"
+    export AR_aarch64_linux_android="${bin}/llvm-ar"
+    cargo build -p dashscene-gpu --target aarch64-linux-android
+    # And the ABI, which is what a platform host actually links. Building the
+    # painter alone would leave the crate a host embeds verified on no target
+    # but this machine's — story #840's Android build existed only in a
+    # developer's shell until this line.
+    cargo build -p dashscene-ffi --target aarch64-linux-android
+    # And the integration crate over it, which is what a Kotlin host loads.
+    # It is the only member whose JNI half compiles on no other target, so
+    # nothing else in the workspace would catch a break in it (story #841).
+    cargo build -p dashscene-android --target aarch64-linux-android
+    # And the showcase host, which is a second such member: its `Frames`
+    # implementation and its four JNI entry points are behind
+    # `cfg(target_os = "android")` and compile in no other gate. It was absent
+    # from this list when it landed, so several hundred lines cross-compiled
+    # nowhere — the same shape as the crate above, one story along (story #842).
+    cargo build -p demo-android --target aarch64-linux-android
+
+# Build the D3a probe, push it to an attached device and run it.
+#
+# D3a of `docs/decisions/host-integration-in-three-layers.md` is recorded as **a
+# risk to check rather than a measured fact**, and this is what checks it: the
+# example replicates the painter's own `request_device`, so the verdict is the
+# painter's rather than a comparison of two numbers that might not be the ones
+# that bind.
+#
+# A plain executable pushed to `/data/local/tmp` rather than an APK, because
+# adapter enumeration needs no window and no Java. That keeps the probe
+# available before any of the Android host exists.
+#
+# **An emulator result describes the host machine's GPU and is not the D3a
+# measurement.** Record it as an emulator result or not at all.
+android-probe:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bin=$(just _android-ndk-bin)
+    clang="${bin}/aarch64-linux-android{{ ANDROID_API }}-clang"
+    export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="${clang}"
+    export CC_aarch64_linux_android="${clang}"
+    export AR_aarch64_linux_android="${bin}/llvm-ar"
+    cargo build -p dashscene-gpu --example adapter_report --release \
+      --target aarch64-linux-android
+    # An `x && y` one-liner would rely on the `set -e` exemption for non-final
+    # commands in an `&&` list, which is exactly the kind of thing that is true
+    # today and breaks when someone reorders the line.
+    if command -v adb >/dev/null 2>&1; then
+      adb=adb
+    else
+      adb="${ANDROID_HOME:-${HOME}/Library/Android/sdk}/platform-tools/adb"
+      # Checked, so a missing platform-tools says so. Without this the next
+      # step's failure is reported as "no device attached", which sends whoever
+      # reads it looking for a cable rather than for an install. The NDK alone
+      # satisfies `just android`, so having one without the other is the
+      # ordinary case rather than a corner.
+      if [ ! -x "${adb}" ]; then
+        echo "android-probe: no adb on PATH and none at ${adb}" >&2
+        echo "android-probe:   sdkmanager --install platform-tools" >&2
+        exit 1
+      fi
+    fi
+    if [ -z "$("${adb}" devices | sed '1d' | grep -w device || true)" ]; then
+      echo "android-probe: no device attached — start an emulator or plug one in" >&2
+      exit 1
+    fi
+    "${adb}" push target/aarch64-linux-android/release/examples/adapter_report \
+      /data/local/tmp/adapter_report
+    "${adb}" shell chmod 755 /data/local/tmp/adapter_report
+    "${adb}" shell /data/local/tmp/adapter_report
 
 # Assemble the browser host into `target/web`, ready to serve.
 #

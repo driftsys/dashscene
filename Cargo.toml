@@ -17,6 +17,8 @@ members = [
   "crates/dashscene-unity",
   "crates/dashscene-web",
   "crates/dashscene-desktop",
+  "crates/dashscene-ffi",
+  "crates/dashscene-android",
   "crates/dashscene-gpu",
   "goldens/tooling",
   # The showcase scenes the demonstration draws (v0.14, story #574). Under
@@ -36,6 +38,10 @@ members = [
   # would mean a `cfg` on every dependency line to reach a build with no Skia
   # painter in it at all. `publish = false`, like `demo`.
   "demo-web",
+  # The Android showcase host (v0.19, story #842). A third demonstration host
+  # beside `demo` and `demo-web`, `publish = false` like both, and therefore
+  # outside `docs/decisions/crate-name-map.md`.
+  "demo-android",
   # The smallest browser embedder that draws a `.dsb` (issue #776, story #795).
   # `publish = false`, and outside `crates/` deliberately: it is an artifact to
   # weigh rather than a crate anyone depends on, and putting it under `crates/`
@@ -69,7 +75,10 @@ rust-version = "1.88"
 #   dashbuf -> dashpaint -> dashscene-core -> dashscene-typeset ->
 #   dashcue -> dashscene-engine -> dashscene-validator -> dashscene-skia -> dashlang ->
 #   dashc -> dashpack-astcenc-sys -> dashpack -> dashscene-unity ->
-#   dashscene-gpu -> dashscene-desktop -> dashscene-web -> dashscene
+#   dashscene-gpu -> dashscene-desktop -> dashscene-web -> dashscene-ffi ->
+#   dashscene-android -> dashscene
+# dashscene-android follows dashscene-ffi, which it depends on: it is the
+# first host to sit on the C ABI rather than beside it (story #841, D2).
 # dashscene-gpu precedes both integration crates: story #741 made the web crate
 # the integration surface over that painter and story #794 did the same for the
 # desktop one, so both depend on it. The order was the other way round while
@@ -102,6 +111,8 @@ dashpack-astcenc-sys = { path = "crates/dashpack-astcenc-sys", version = "0.0.0"
 dashscene-unity = { path = "crates/dashscene-unity", version = "0.0.0" }
 dashscene-web = { path = "crates/dashscene-web", version = "0.0.0" }
 dashscene-desktop = { path = "crates/dashscene-desktop", version = "0.0.0" }
+dashscene-ffi = { path = "crates/dashscene-ffi", version = "0.0.0" }
+dashscene-android = { path = "crates/dashscene-android", version = "0.0.0" }
 dashscene-gpu = { path = "crates/dashscene-gpu", version = "0.0.0" }
 
 # Stack per docs/design/architecture.md — reserved here for crates to opt into as
@@ -274,6 +285,13 @@ softbuffer = "0.4"
 # install it — it builds from source in minutes and only this demonstration
 # needs it — so `just web-build` checks the pair and prints the exact install
 # command instead.
+# Android, and only reachable from `dashscene-android`, whose manifest gates
+# both behind `cfg(target_os = "android")`. Already resolved in the tree
+# through wgpu's Android backend, so these name a version rather than add a
+# build.
+ndk-sys = "0.6.0"
+jni = "0.22.4"
+
 wasm-bindgen = "0.2.126"
 wasm-bindgen-futures = "0.4.76"
 js-sys = "0.3.103"

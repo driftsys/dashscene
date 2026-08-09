@@ -61,8 +61,11 @@ assembly), `dashscene-unity` (Unity FFI bindings), `dashscene-gpu` (the lean pai
 instanced quads and analytic SDF over wgpu, native and web), `dashscene-web`
 (the web integration surface since story #741; the wasm/tiny-skia painter the
 name once described was retired at v0.15), `dashscene-desktop` (the desktop
-integration surface, added at story #794), `dashscore` / `dashscene-compose`
-(parked).
+integration surface, added at story #794), `dashscene-ffi` (the C ABI every
+platform host sits on, added at story #840), `dashscene-android` (the Android
+integration surface and the first host to sit on that ABI, added at
+story #841), `dashscore` /
+`dashscene-compose` (parked).
 
 **dirty set** — the set of changed rect/glyph entries, enabling per-frame upload
 of only what moved (R-T4).

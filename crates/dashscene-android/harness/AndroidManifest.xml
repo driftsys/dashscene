@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The lifecycle harness for story #841. Not the demonstration: story #842's
+  demo-android is that, and it waits for target hardware.
+
+  android:configChanges is deliberately ABSENT. Handling rotation in the app
+  would keep the Activity and, on most devices, the Surface with it — which is
+  exactly the case the destroy handshake exists for. Letting the framework
+  recreate the Activity is what makes a rotation exercise surfaceDestroyed.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="dev.driftsys.dashscene.harness">
+
+    <uses-sdk android:minSdkVersion="33" android:targetSdkVersion="34" />
+
+    <!-- Split-screen is one of the three lifecycle events D4 names, and an
+         activity that is not resizeable cannot be put into it. -->
+    <application
+        android:label="dashscene harness"
+        android:hardwareAccelerated="true">
+        <activity
+            android:name="dev.driftsys.dashscene.HarnessActivity"
+            android:exported="true"
+            android:resizeableActivity="true"
+            android:label="dashscene harness">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
