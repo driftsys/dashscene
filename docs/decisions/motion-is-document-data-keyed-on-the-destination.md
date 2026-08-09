@@ -172,3 +172,39 @@ and the runtime packs it — exactly what `Binding` already does.
   `VariantOverride` already nests inside `VariantMember` by the same logic,
   and a side table admits orphan and duplicate rows a validator would then
   have to police.
+
+## Amendment, 2026-08-09 — why the rect-only rule is narrower than P1
+
+`transition.channel-not-a-rect` reads as a P1 consequence: a FLIP track's
+`from` and `to` are two **resolved** layouts, which the document must not
+carry, so the engine binds them at the switch. That is true, and it is not
+the whole constraint.
+
+Story #773 tried to widen the rule to the paint channels, on the reasoning
+that a paint track's endpoints are the two members' **authored** values —
+the same distinction story #772 drew when a loop track was allowed to name
+its own endpoints (`a-loop-is-ambient-paint-anchored-at-load.md`). That
+reasoning still holds. The widening was reverted anyway, because a second
+constraint sits underneath it:
+
+**A rect track and a paint track reach the committed output by different
+paths, and only one of them has a seam.** Commit takes geometry from an
+injected `LayoutSolver`, so a runtime can write a sample over the solve —
+which is exactly what `FlipOverlay` does. A node's paint is resolved
+_inside_ commit, from the variant overlay, ahead of the node's own staged
+value:
+
+    let fill = arena.overlay(id).fill.clone().or_else(|| node.fill.clone());
+
+A paint transition animates between two members while the destination member
+is active, so every staged sample is masked by the override it is travelling
+towards, and the committed value is the destination from the first frame.
+Measured at 2026-08-09: a `FillR` track over a half-second linear tween
+commits `0.0` on the tick where an eased sample would be `0.75`.
+
+So the rule stays rect-only until commit grows a paint seam or a precedence
+layer above the overlay. **That is issue #891**, which holds the three
+mechanisms considered and why none is a bolt-on. The cost of leaving it is
+recorded there too: Smart Animate interpolates a colour as readily as a box,
+so a fill diff — "the one every real Figma file will hit" — is refused by
+name until it lands.
