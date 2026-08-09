@@ -102,9 +102,11 @@ painter-capable adapter there is a CPU rasteriser.
   rotation. The vsync loop reported its first callback and its first frame.
 - **Backgrounding** and **rotation** each ran the destroy handshake, and the
   thread ids in logcat show the ordering: the UI thread entered, the render
-  thread detached and freed, and only then did the UI thread return. One
-  measured wait was 1.15 s. Neither crashed, and re-attach built a fresh
-  render thread each time.
+  thread detached and freed, and only then did the UI thread return. The UI
+  thread was blocked for **88-115 ms** on a release build; the first teardown
+  of a debug build took 1.15 s. Neither crashed, and re-attach built a fresh
+  render thread each time. That block is a whole runtime teardown rather than
+  just a surface drop, which is issue #872.
 - **Split-screen was not exercised.** That image declares no multi-window,
   freeform or split-screen feature at all — `pm list features` returns none and
   `ro.build.characteristics` is `automotive` — so the third of D4's three cases

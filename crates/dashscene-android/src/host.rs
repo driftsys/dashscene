@@ -21,10 +21,10 @@
 //! for, which is P3.
 //!
 //! The `ANativeWindow *` crosses between them exactly once per surface, as a
-//! `usize` inside [`Spawn`]. It is reference-counted, and this crate holds a
-//! reference of its own from `ANativeWindow_acquire` until the handshake
-//! completes — so the pointer the render thread holds stays valid even if the
-//! framework's own reference goes early.
+//! `usize` inside [`Spawn`]. It is reference-counted, and the reference
+//! `ANativeWindow_fromSurface` returns belongs to this crate: it is released
+//! only after the handshake completes, so the pointer the render thread holds
+//! stays valid for as long as the surface built from it.
 //!
 //! # Why the runtime is created on the render thread
 //!
@@ -141,6 +141,23 @@ fn last_error() -> String {
     String::from_utf8_lossy(&buffer).into_owned()
 }
 
+/// Releases the handshake however this thread leaves.
+///
+/// A `Drop` guard rather than a call on each path, because the paths are not
+/// the whole set: a panic anywhere in the render thread unwinds past every
+/// explicit `released()`, and the UI thread is parked in `request_teardown`
+/// waiting for one. That wait has no timeout — deliberately, since a timeout
+/// would mean returning from `surfaceDestroyed` with a live surface — so a
+/// missed release is an application-not-responding kill rather than a bad
+/// frame.
+struct ReleaseOnExit(Arc<Handshake>);
+
+impl Drop for ReleaseOnExit {
+    fn drop(&mut self) {
+        self.0.released();
+    }
+}
+
 /// The frame loop, on its own thread.
 ///
 /// Builds the runtime, loads the document, attaches the surface, and then hands
@@ -154,6 +171,10 @@ fn render_thread(spawn: Spawn) {
         document,
     } = spawn;
 
+    // Armed before anything that can fail, so every exit from here on releases
+    // the UI thread.
+    let _release = ReleaseOnExit(Arc::clone(&handshake));
+
     // A looper is what `AChoreographer` posts its callbacks to, and a thread
     // that has not prepared one has no choreographer to get.
     // SAFETY: called once, on this thread, before any other looper call.
@@ -163,7 +184,6 @@ fn render_thread(spawn: Spawn) {
     // SAFETY: `runtime` is a valid writable out-pointer.
     if unsafe { dashscene_ffi::ds_runtime_new(&mut runtime) } != DsStatus::Ok {
         log(&format!("ds_runtime_new failed: {}", last_error()));
-        handshake.released();
         return;
     }
 
@@ -171,6 +191,12 @@ fn render_thread(spawn: Spawn) {
     let loaded = unsafe {
         dashscene_ffi::ds_runtime_load_document(runtime, document.as_ptr(), document.len())
     };
+    // The load is the owning path — `ds_runtime_load_document` documents that
+    // `dashscene_core::load_document` copies every payload — so these bytes are
+    // dead from here. Dropped rather than carried for the life of the thread,
+    // because the Java side is holding a copy too.
+    drop(document);
+
     if loaded != DsStatus::Ok {
         log(&format!(
             "load_document failed: {:?} {}",
@@ -179,7 +205,6 @@ fn render_thread(spawn: Spawn) {
         ));
         // SAFETY: `runtime` came from `ds_runtime_new` and nothing else holds it.
         unsafe { dashscene_ffi::ds_runtime_free(runtime) };
-        handshake.released();
         return;
     }
 
@@ -187,8 +212,8 @@ fn render_thread(spawn: Spawn) {
         width.load(Ordering::Acquire),
         height.load(Ordering::Acquire),
     );
-    // SAFETY: `window` is a live `ANativeWindow *` — this crate holds a
-    // reference to it from `ANativeWindow_acquire`, released only after the
+    // SAFETY: `window` is a live `ANativeWindow *` — this crate holds the
+    // reference `ANativeWindow_fromSurface` returned, released only after the
     // handshake completes, which is exactly the lifetime
     // `ds_runtime_attach_surface` asks for.
     let attached = unsafe {
@@ -209,7 +234,6 @@ fn render_thread(spawn: Spawn) {
         ));
         // SAFETY: as above.
         unsafe { dashscene_ffi::ds_runtime_free(runtime) };
-        handshake.released();
         return;
     }
     log(&format!(
@@ -219,7 +243,15 @@ fn render_thread(spawn: Spawn) {
         dashscene_ffi::ds_abi_version()
     ));
 
-    let mut frame = Frame {
+    // **Leaked, deliberately, and this is the fix for a use-after-free.**
+    // `on_vsync` re-posts itself before the loop notices a teardown request, so
+    // when the loop exits there is almost always a callback still registered
+    // with the choreographer — and nothing can cancel one. A `Frame` on this
+    // thread's stack would die while that callback still pointed at it, and the
+    // `DsRuntime` it names would already be freed. Leaking it costs a few dozen
+    // bytes per surface cycle and makes the pending callback's read valid; the
+    // fields below are what tell it there is nothing left to do.
+    let frame: &'static mut Frame = Box::leak(Box::new(Frame {
         runtime,
         width,
         height,
@@ -230,15 +262,20 @@ fn render_thread(spawn: Spawn) {
         running: true,
         vsyncs: 0,
         draws: 0,
-    };
+    }));
 
     // SAFETY: this thread has prepared a looper, which is what `getInstance`
     // requires.
     let choreographer = unsafe { ndk_sys::AChoreographer_getInstance() };
     if choreographer.is_null() {
-        log("AChoreographer_getInstance returned null");
+        // No looper instance means no frame will ever run. Reported and torn
+        // down rather than left as a live handle over a loop that does not
+        // exist: `Handshake::is_running` answers `false` once this returns,
+        // which is what a host asking about it reads.
+        log("AChoreographer_getInstance returned null — no frame loop");
     } else {
-        post_vsync(choreographer, &mut frame);
+        handshake.started();
+        post_vsync(choreographer, frame);
         // The loop is the looper's: `pollOnce` dispatches the vsync callback,
         // which draws and re-posts. The teardown check sits between polls
         // rather than inside the callback, so a request is never waiting on a
@@ -259,6 +296,13 @@ fn render_thread(spawn: Spawn) {
         }
     }
 
+    // Told first, and before the runtime is freed: a callback the choreographer
+    // still holds reads these and returns without touching anything. `running`
+    // stops it rescheduling, and the null runtime is what makes a callback that
+    // slips through harmless rather than a use-after-free.
+    frame.running = false;
+    frame.runtime = std::ptr::null_mut();
+
     // D4's ordering, and the only ordering that is correct: stop drawing, drop
     // the surface, and only then tell the UI thread it may release the window.
     //
@@ -269,15 +313,17 @@ fn render_thread(spawn: Spawn) {
     // SAFETY: as above; nothing else holds this pointer.
     unsafe { dashscene_ffi::ds_runtime_free(runtime) };
     log("surface detached and runtime freed");
-    // Last, and only here. Everything the UI thread is waiting on is done.
-    handshake.released();
+    // The release happens as `_release` drops, immediately after this returns —
+    // last, and after everything the UI thread is waiting on is done.
 }
 
 /// Posts the next vsync callback.
 fn post_vsync(choreographer: *mut ndk_sys::AChoreographer, frame: *mut Frame) {
-    // SAFETY: `choreographer` is this thread's instance, and `frame` outlives
-    // every callback — it is a local of `render_thread`, which does not return
-    // until the loop has stopped.
+    // SAFETY: `choreographer` is this thread's instance, and `frame` points at a
+    // leaked allocation, so it outlives every callback including one still
+    // posted after the loop has ended. A posted vsync callback cannot be
+    // cancelled, so outliving the loop is the property this needs — not the
+    // other way round.
     unsafe {
         ndk_sys::AChoreographer_postVsyncCallback(choreographer, Some(on_vsync), frame.cast());
     }
@@ -297,9 +343,17 @@ unsafe extern "C" fn on_vsync(
     if frame.is_null() {
         return;
     }
-    // SAFETY: `user` is the `*mut Frame` handed to `post_vsync`, which points at
-    // a local of `render_thread` that outlives every callback.
+    // SAFETY: `user` is the `*mut Frame` handed to `post_vsync`. That allocation
+    // is leaked by `render_thread`, so it stays readable even after the loop has
+    // ended and the thread has gone — which is the state this callback can
+    // legitimately arrive in, because a posted vsync cannot be cancelled.
     let frame = unsafe { &mut *frame };
+
+    // The loop has ended and the runtime has been freed. Nothing to draw into,
+    // and nothing to reschedule.
+    if !frame.running || frame.runtime.is_null() {
+        return;
+    }
 
     frame.vsyncs += 1;
     if frame.vsyncs == 1 {
@@ -381,7 +435,16 @@ unsafe extern "C" fn on_vsync(
 /// Creates a host and starts its render thread.
 ///
 /// `surface` is the `android.view.Surface` the view handed over; `document` is
-/// the `.dsb` bytes. Returns an opaque handle, or 0 on failure.
+/// the `.dsb` bytes.
+///
+/// Returns an opaque handle, or 0 if the window or the thread could not be
+/// obtained. **A non-zero handle does not mean the runtime started**: acquiring
+/// an adapter and a device takes on the order of a second, and blocking the UI
+/// thread inside `surfaceCreated` for that long is an
+/// application-not-responding risk. So the handle is returned as soon as the
+/// thread is spawned, and whether the loop came up is asked separately through
+/// `nativeIsRunning`. A handle whose runtime failed is still a valid handle and
+/// must still be passed to `nativeSurfaceDestroyed`.
 ///
 /// # Safety
 ///
@@ -422,13 +485,12 @@ pub extern "system" fn Java_dev_driftsys_dashscene_DashsceneNative_nativeSurface
 /// is the only part that belongs to the UI thread's environment — is ordinary
 /// Rust.
 fn start(window: *mut ndk_sys::ANativeWindow, bytes: Vec<u8>, width: jint, height: jint) -> jlong {
-    // `fromSurface` already acquires a reference. This second one is this
-    // crate's own, and it is what makes the pointer's life *ours* rather than
-    // the framework's: it is released after the handshake completes, so the
-    // render thread's surface can never outlive the window it was built from.
-    //
-    // SAFETY: `window` is non-null and was just obtained.
-    unsafe { ndk_sys::ANativeWindow_acquire(window) };
+    // No second `ANativeWindow_acquire`. `ANativeWindow_fromSurface` already
+    // returns a reference this crate owns and must release, and that one
+    // reference is what keeps the pointer alive until the handshake completes.
+    // A second acquire would only add a count to keep balanced across four
+    // sites for no behavioural gain — and a later reader trimming one release
+    // as a duplicate would leak the window, or trimming both would underflow.
 
     let handshake = Arc::new(Handshake::new());
     let width_cell = Arc::new(AtomicU32::new(width.max(0) as u32));
@@ -448,11 +510,8 @@ fn start(window: *mut ndk_sys::ANativeWindow, bytes: Vec<u8>, width: jint, heigh
         Ok(render) => render,
         Err(error) => {
             log(&format!("could not start the frame thread: {error}"));
-            // SAFETY: both references this crate holds are given back.
-            unsafe {
-                ndk_sys::ANativeWindow_release(window);
-                ndk_sys::ANativeWindow_release(window);
-            }
+            // SAFETY: the one reference `fromSurface` gave this crate.
+            unsafe { ndk_sys::ANativeWindow_release(window) };
             return 0;
         }
     };
@@ -526,16 +585,14 @@ pub unsafe extern "system" fn Java_dev_driftsys_dashscene_DashsceneNative_native
         log("the frame thread panicked before it stopped");
     }
 
-    // Only now. Both references — the one `fromSurface` took and the one this
-    // crate acquired — are given back, and the window may go.
+    // Only now, and the ordering is D4's: the render thread has stopped and its
+    // surface is dropped, so releasing the window cannot pull it from under a
+    // live surface.
     //
-    // SAFETY: this crate holds exactly two references to `window`, and nothing
-    // uses the pointer after this.
-    unsafe {
-        let window = host.window as *mut ndk_sys::ANativeWindow;
-        ndk_sys::ANativeWindow_release(window);
-        ndk_sys::ANativeWindow_release(window);
-    }
+    // SAFETY: this crate holds exactly one reference to `window` — the one
+    // `ANativeWindow_fromSurface` returned — and nothing uses the pointer after
+    // this.
+    unsafe { ndk_sys::ANativeWindow_release(host.window as *mut ndk_sys::ANativeWindow) };
     log("surfaceDestroyed returning — the surface is gone");
 }
 
@@ -548,8 +605,14 @@ pub extern "system" fn Java_dev_driftsys_dashscene_DashsceneNative_nativeAbiVers
     dashscene_ffi::ds_abi_version() as jint
 }
 
-/// Whether the frame thread is still running, for a host that wants to report
-/// it. Not part of the lifecycle.
+/// Whether the frame loop is still live, for a host that wants to report it.
+/// Not part of the lifecycle.
+///
+/// Answers [`Handshake::is_running`] rather than the negation of
+/// "was teardown requested". A loop that stopped on its own — a failed tick or
+/// draw, or a choreographer this thread could not get — reaches its end without
+/// anyone having asked, and the negated question would call that still running,
+/// which is exactly the case a caller asks this in.
 ///
 /// # Safety
 ///
@@ -565,5 +628,5 @@ pub unsafe extern "system" fn Java_dev_driftsys_dashscene_DashsceneNative_native
     }
     // SAFETY: `handle` is a pointer from `nativeSurfaceCreated`.
     let host = unsafe { &*(handle as *const Host) };
-    !host.handshake.teardown_requested()
+    host.handshake.is_running()
 }

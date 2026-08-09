@@ -41,9 +41,24 @@ fi
 jar="${sdk}/platforms/${platform}/android.jar"
 
 out="${root}/target/android-harness"
-lib="${root}/target/aarch64-linux-android/release/libdashscene_android.so"
-if [ ! -f "${lib}" ]; then
-  echo "harness: ${lib} is missing — run 'just android' first." >&2
+
+# Release if it is there, otherwise debug. `just android` builds **debug** — it
+# has no `--release` — so a script that looked only for the release artifact
+# would fail every time it told the reader to run `just android` first, which is
+# what it did until this was found in review.
+lib=""
+for profile in release debug; do
+  candidate="${root}/target/aarch64-linux-android/${profile}/libdashscene_android.so"
+  if [ -f "${candidate}" ]; then
+    lib="${candidate}"
+    echo "harness: using the ${profile} library"
+    break
+  fi
+done
+if [ -z "${lib}" ]; then
+  echo "harness: no libdashscene_android.so for aarch64-linux-android." >&2
+  echo "harness:   just android            # debug" >&2
+  echo "harness:   ...or build it --release for a build worth timing" >&2
   exit 1
 fi
 
@@ -81,11 +96,17 @@ echo "harness: build-tools ${tools}, ${platform}"
 # 2. Java to classes, and classes to dex. `--release 17` because the SDK's
 #    android.jar is built for a language level the local JDK is newer than, and
 #    d8 rejects class files it does not know.
-javac --release 17 -classpath "${jar}" -d "${out}/classes" \
-  "${here}"/java/dev/driftsys/dashscene/*.java 2>&1 | grep -v '^Note:' || true
+# No `|| true`, and no pipe. With `set -o pipefail` a pipeline takes javac's
+# status, and `|| true` would swallow it — leaving a partial dex, an APK that
+# signs and installs, and a `ClassNotFoundException` at launch. That is the same
+# silent-wrong-build failure the keystore note above exists to prevent.
+javac --release 17 -nowarn -classpath "${jar}" -d "${out}/classes" \
+  "${here}"/java/dev/driftsys/dashscene/*.java
 
-"${bt}/d8" --min-api 33 --output "${out}" \
-  $(find "${out}/classes" -name '*.class')
+# `-exec` rather than an unquoted `$(find ...)`: word splitting breaks the
+# moment any path component contains a space, and this script already assumes a
+# macOS SDK layout where that is ordinary.
+find "${out}/classes" -name '*.class' -exec "${bt}/d8" --min-api 33 --output "${out}" {} +
 
 # 3. Everything else goes in beside the manifest: the dex, the shared library
 #    under the ABI directory the loader looks in, and the document as an asset.
