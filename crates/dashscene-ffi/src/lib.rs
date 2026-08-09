@@ -512,6 +512,66 @@ pub unsafe extern "C" fn ds_runtime_attach_surface(
     })
 }
 
+/// Drops the surface, and reports whether there was one.
+///
+/// **The other half of D4's destroy handshake, and the reason it exists.** On
+/// Android `surfaceDestroyed` must not return until rendering has stopped and
+/// the `wgpu::Surface` built from that window has been dropped — otherwise the
+/// window is freed underneath a live surface, which is use-after-free on
+/// rotation, backgrounding and split-screen. A host cannot honour that with
+/// [`ds_runtime_free`] alone: freeing the whole runtime would drop the document
+/// and the arena with it, and the surface comes and goes many times over one
+/// document's life.
+///
+/// After this returns the runtime keeps its document and its scene, so a later
+/// [`ds_runtime_attach_surface`] resumes the same picture on a new window. The
+/// painter is kept too — it holds packing buffers and knows nothing about the
+/// window.
+///
+/// **The first frame after re-attaching must be drawn whatever the tick says.**
+/// The scene did not change while the surface was gone, so
+/// `out_advanced` from [`ds_runtime_tick`] will be false, and the new device has
+/// drawn nothing — a host that only draws when the tick advanced would show an
+/// empty window until something else moved the scene. That obligation is the
+/// host's rather than this ABI's, for the reason the gate is the host's
+/// everywhere else: `dashscene-desktop` calls it a forced redraw and
+/// `dashscene-web` carries the same flag.
+///
+/// `out_had_surface` receives whether a surface was attached. Detaching twice
+/// is not an error: a host tearing down on a path it cannot fully predict
+/// should be able to ask for this unconditionally.
+///
+/// Adding this symbol did not move [`DS_ABI_VERSION`]: by the rule in the
+/// module documentation, a new symbol does not change it.
+///
+/// # Safety
+///
+/// `runtime` must be live, and `out_had_surface` must be writable or null. **No
+/// other call may be in flight on `runtime`** — that is what the caller's own
+/// handshake is for, and this function cannot check it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ds_runtime_detach_surface(
+    runtime: *mut DsRuntime,
+    out_had_surface: *mut bool,
+) -> DsStatus {
+    guard(|| {
+        if runtime.is_null() {
+            set_last_error("ds_runtime_detach_surface: runtime is null");
+            return DsStatus::NullArgument;
+        }
+        let runtime = unsafe { &mut *runtime };
+        // `take` and drop. The drop is the point of the call: it is what
+        // releases the `wgpu::Surface` holding the `ANativeWindow`, and it
+        // happens here rather than at some later cleanup precisely so the
+        // caller can order it before releasing the window.
+        let had_surface = runtime.surface.take().is_some();
+        if !out_had_surface.is_null() {
+            unsafe { *out_had_surface = had_surface };
+        }
+        DsStatus::Ok
+    })
+}
+
 /// The Android arm of [`ds_runtime_attach_surface`].
 #[cfg(target_os = "android")]
 fn attach_android(
@@ -610,6 +670,68 @@ mod tests {
             unsafe { ds_runtime_resize(runtime, 100, 100) },
             DsStatus::NoSurface
         );
+        unsafe { ds_runtime_free(runtime) };
+    }
+
+    /// Detaching reports whether there was anything to detach, and detaching
+    /// twice is not an error.
+    ///
+    /// A host tearing down on a path it cannot fully predict — `surfaceDestroyed`
+    /// after a failed `surfaceCreated`, say — has to be able to ask
+    /// unconditionally. `out_had_surface` is how it finds out, rather than a
+    /// status it would have to treat as benign.
+    #[test]
+    fn detaching_without_a_surface_is_allowed_and_says_there_was_none() {
+        let mut runtime = std::ptr::null_mut();
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+
+        let mut had = true;
+        assert_eq!(
+            unsafe { ds_runtime_detach_surface(runtime, &mut had) },
+            DsStatus::Ok
+        );
+        assert!(
+            !had,
+            "there was no surface, and the call said there was one"
+        );
+
+        // Twice, because the handshake is allowed to be conservative.
+        assert_eq!(
+            unsafe { ds_runtime_detach_surface(runtime, std::ptr::null_mut()) },
+            DsStatus::Ok
+        );
+        unsafe { ds_runtime_free(runtime) };
+    }
+
+    /// A null runtime is a status rather than a dereference, like every other
+    /// entry point.
+    #[test]
+    fn detaching_a_null_runtime_is_a_status() {
+        assert_eq!(
+            unsafe { ds_runtime_detach_surface(std::ptr::null_mut(), std::ptr::null_mut()) },
+            DsStatus::NullArgument
+        );
+    }
+
+    /// Detaching leaves the runtime usable: the document and the scene survive,
+    /// so re-attaching resumes the same picture rather than needing a reload.
+    ///
+    /// Asserted through the tick, which is the call that needs a scene: a
+    /// detach that dropped it would answer `NoDocument` here.
+    #[test]
+    fn detaching_keeps_the_document() {
+        let mut runtime = std::ptr::null_mut();
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+        // No document loaded, so the tick's answer is `NoDocument` before and
+        // after. The point is that detaching does not change it to something
+        // else — a detach that reset the runtime would be caught by the pair.
+        let before = unsafe { ds_runtime_tick(runtime, 0.016, std::ptr::null_mut()) };
+        assert_eq!(
+            unsafe { ds_runtime_detach_surface(runtime, std::ptr::null_mut()) },
+            DsStatus::Ok
+        );
+        let after = unsafe { ds_runtime_tick(runtime, 0.016, std::ptr::null_mut()) };
+        assert_eq!(before, after);
         unsafe { ds_runtime_free(runtime) };
     }
 

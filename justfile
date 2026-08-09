@@ -268,6 +268,7 @@ publish:
     cargo publish -p dashscene-desktop
     cargo publish -p dashscene-web
     cargo publish -p dashscene-ffi
+    cargo publish -p dashscene-android
     cargo publish -p dashscene
 
 # Install local toolchain bits (git hooks, git-std, dprint, markdownlint-cli).
@@ -430,6 +431,10 @@ android:
     # but this machine's — story #840's Android build existed only in a
     # developer's shell until this line.
     cargo build -p dashscene-ffi --target aarch64-linux-android
+    # And the integration crate over it, which is what a Kotlin host loads.
+    # It is the only member whose JNI half compiles on no other target, so
+    # nothing else in the workspace would catch a break in it (story #841).
+    cargo build -p dashscene-android --target aarch64-linux-android
 
 # Build the D3a probe, push it to an attached device and run it.
 #

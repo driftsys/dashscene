@@ -92,6 +92,18 @@ int main(void) {
                                   NULL, 64, 64) == DS_UNSUPPORTED_HANDLE,
         "an out-of-range surface kind is rejected, not undefined");
 
+  /* Detaching is what surfaceDestroyed's handshake calls, and a host tearing
+   * down on a path it cannot fully predict has to be able to call it
+   * unconditionally. So it succeeds with no surface attached and reports that
+   * there was none, rather than answering with a status the caller would have
+   * to treat as benign. */
+  bool had_surface = true;
+  check(ds_runtime_detach_surface(runtime, &had_surface) == DS_OK,
+        "detaching with no surface attached succeeds");
+  check(!had_surface, "detaching with no surface reports there was none");
+  check(ds_runtime_detach_surface(runtime, NULL) == DS_OK,
+        "detaching twice, and with a NULL out pointer, is allowed");
+
   ds_runtime_free(runtime);
   ds_runtime_free(NULL); /* free(NULL) semantics */
   check(1, "freeing the runtime and NULL both return");
