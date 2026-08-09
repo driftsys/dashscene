@@ -69,6 +69,10 @@ impl Frames for DocumentFrames {
         if unsafe { dashscene_ffi::ds_runtime_new(&mut runtime) } != DsStatus::Ok {
             return Err(format!("ds_runtime_new: {}", last_error()));
         }
+        // Stored **before** anything else can fail, so `detach` — which the loop
+        // calls even when this returns `Err` — has the pointer to free. Holding
+        // it in a local and returning early is how the runtime, and on the
+        // attach path the wgpu device inside it, leaked once per surface cycle.
         self.runtime = runtime;
 
         let Some(document) = self.document.take() else {
@@ -101,12 +105,14 @@ impl Frames for DocumentFrames {
         Ok(())
     }
 
-    fn resize(&mut self, width: u32, height: u32) {
+    fn resize(&mut self, width: u32, height: u32) -> bool {
         // SAFETY: `runtime` is live and this is the only thread calling it.
         let resized = unsafe { dashscene_ffi::ds_runtime_resize(self.runtime, width, height) };
         if resized != DsStatus::Ok {
             log(&format!("resize: {resized:?} {}", last_error()));
+            return false;
         }
+        true
     }
 
     fn frame(&mut self, dt: f32, forced: bool) -> Step {
@@ -126,12 +132,25 @@ impl Frames for DocumentFrames {
         let drawn = unsafe { dashscene_ffi::ds_runtime_draw(self.runtime, std::ptr::null_mut()) };
         if drawn != DsStatus::Ok {
             log(&format!("draw: {drawn:?} {}", last_error()));
-            return Step::Stop;
+            // `DsStatus::Surface` is every surface failure flattened into one
+            // status — the ABI cannot say which, because `FrameError` does not
+            // cross it. Rebuilding is the remedy for the recoverable half and
+            // is harmless for the rest, which the loop's own bound on
+            // consecutive rebuilds is what makes true. Issue #884 carries
+            // giving the ABI the distinction.
+            return if drawn == DsStatus::Surface {
+                Step::Rebuild
+            } else {
+                Step::Stop
+            };
         }
         Step::Continue
     }
 
     fn detach(&mut self) {
+        // Tolerates being called after a failed `attach`, which the loop does,
+        // and after a previous detach on the rebuild path.
+        self.document = None;
         if self.runtime.is_null() {
             return;
         }

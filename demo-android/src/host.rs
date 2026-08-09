@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use dashlang::LiveScene;
 use dashpaint::Painter;
-use dashscene_android::{AttachError, Frames, Step};
+use dashscene_android::{AttachError, Frames, Step, log};
 use dashscene_core::Arena;
 use dashscene_gpu::{Changes, GpuPainter, SurfaceRenderer};
 use jni::EnvUnowned;
@@ -26,26 +26,11 @@ use crate::timing::Timing;
 /// How long each scripted phase lasts, in seconds.
 ///
 /// The showcase's pulse advances by phase index rather than by time, so the host
-/// decides the rate. Matches `demo`'s dwell closely enough that the two look
-/// like the same demonstration.
-const PHASE_SECONDS: f32 = 1.0;
-
-fn log(message: &str) {
-    let Ok(text) = std::ffi::CString::new(message) else {
-        return;
-    };
-    let Ok(tag) = std::ffi::CString::new("dashscene") else {
-        return;
-    };
-    // SAFETY: both pointers are NUL-terminated and live for the call.
-    unsafe {
-        ndk_sys::__android_log_write(
-            ndk_sys::android_LogPriority::ANDROID_LOG_INFO.0 as std::os::raw::c_int,
-            tag.as_ptr(),
-            text.as_ptr(),
-        );
-    }
-}
+/// decides the rate. **2.5 s, which is `demo/src/shell.rs`'s `PULSE_INTERVAL`**
+/// — the two are the same demonstration and should step at the same rate. This
+/// said 1.0 with a comment claiming it matched, which review caught: the
+/// Android host was running the script two and a half times faster.
+const PHASE_SECONDS: f32 = 2.5;
 
 /// One showcase scene, drawn through the lean painter.
 struct ShowcaseFrames {
@@ -109,18 +94,32 @@ impl Frames for ShowcaseFrames {
             self.scene.name,
         ));
         self.renderer = Some(renderer);
-        self.build(width, height);
+        // Not `build`: that reports `document_replaced`, and this renderer was
+        // constructed three lines ago with nothing uploaded. `dashscene-web`
+        // names that as the second mechanism not to add — the constructor
+        // already establishes the state it would clear.
+        self.arena = Arena::new();
+        self.live = Some((self.scene.build)(&mut self.arena, width, height));
+        self.phase = u64::MAX;
         Ok(())
     }
 
-    fn resize(&mut self, width: u32, height: u32) {
-        if let Some(renderer) = self.renderer.as_mut()
-            && let Err(error) = renderer.resize(width, height)
-        {
-            log(&format!("resize: {error:?}"));
-            return;
+    fn resize(&mut self, width: u32, height: u32) -> bool {
+        // Matched rather than chained: `if let Some(..) && let Err(..)` takes
+        // its branch only when a renderer exists *and* the resize failed, so
+        // the no-renderer case fell through to `build` and reported success —
+        // conflating "there is nothing to resize" with "the resize worked".
+        match self.renderer.as_mut() {
+            Some(renderer) => {
+                if let Err(error) = renderer.resize(width, height) {
+                    log(&format!("resize: {error:?}"));
+                    return false;
+                }
+            }
+            None => return false,
         }
         self.build(width, height);
+        true
     }
 
     fn frame(&mut self, dt: f32, forced: bool) -> Step {
@@ -185,7 +184,17 @@ impl Frames for ShowcaseFrames {
             }
             Err(error) => {
                 log(&format!("present: {error}"));
-                return Step::Stop;
+                // The one rule, read rather than restated:
+                // `FrameError::is_recoverable` is what `dashscene-web` and
+                // `dashscene-desktop` both branch on, and a third host
+                // answering differently is the divergence story #834 exists to
+                // prevent. This collapsed every failure to `Stop` until review
+                // caught it.
+                return if error.is_recoverable() {
+                    Step::Rebuild
+                } else {
+                    Step::Stop
+                };
             }
         }
 
@@ -199,7 +208,14 @@ impl Frames for ShowcaseFrames {
         // Dropping the renderer is what drops the `wgpu::Surface`, and this is
         // the call the destroy handshake waits on.
         self.renderer = None;
+        // **And everything else.** The loop's state is leaked — a posted vsync
+        // callback cannot be cancelled, so it must stay readable — and this
+        // object is inside it. Anything left here is retained for the life of
+        // the process, once per surface cycle, and on Android that is every
+        // rotation. The arena and the painter are the large ones.
         self.live = None;
+        self.arena = Arena::new();
+        self.painter = GpuPainter::new();
     }
 }
 
@@ -225,7 +241,7 @@ pub extern "system" fn Java_dev_driftsys_dashscene_demo_DemoNative_nativeStart<'
             let name: Option<String> = if scene.is_null() {
                 None
             } else {
-                Some(env.get_string(&scene)?.into())
+                Some(scene.try_to_string(env)?)
             };
             let chosen = select(name.as_deref());
             log(&format!("scene {} — {}", chosen.name, chosen.summary));

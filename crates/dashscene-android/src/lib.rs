@@ -91,10 +91,11 @@ mod host;
 #[cfg(target_os = "android")]
 mod logging;
 #[cfg(target_os = "android")]
-#[path = "loop_.rs"]
 pub mod loop_;
 
+// Public, so a host implementing `Frames` writes one line rather than a fourth
+// copy of the same `__android_log_write` call with the same tag.
 #[cfg(target_os = "android")]
-pub(crate) use logging::log;
+pub use logging::log;
 #[cfg(target_os = "android")]
 pub use loop_::AndroidHost;

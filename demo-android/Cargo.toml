@@ -15,14 +15,24 @@ description = "The Android showcase host: a SurfaceView, the native vsync loop, 
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+# The scenes. `publish = false` in both directions: a demonstration host may
+# depend on a demonstration corpus, and neither is a published crate. Not gated,
+# because `select()` is the one thing here that can be wrong without a device
+# and is tested on the host.
+showcase = { path = "../corpus/showcase" }
+
+[target.'cfg(target_os = "android")'.dependencies]
+# Everything below is reached only from `src/host.rs`, which is gated on this
+# target. Off Android this crate is `select()` and the timing arithmetic, and a
+# host build that resolved wgpu to run three tests over them would be paying for
+# nothing — the same reason `dashscene-android` keeps `ndk-sys` and `jni` out of
+# its own host build.
+#
 # The Android integration surface: the render thread, the vsync loop and the
 # destroy handshake. This host implements `Frames` and consumes the rest, which
 # is the point — a second frame loop written beside the first is the divergence
 # story #834 exists to prevent.
 dashscene-android.workspace = true
-# The scenes. `publish = false` in both directions: a demonstration host may
-# depend on a demonstration corpus, and neither is a published crate.
-showcase = { path = "../corpus/showcase" }
 # The lean painter and its `ANativeWindow` surface. Taken directly rather than
 # through the C ABI, because a scene built in code needs an `Arena` and the
 # ABI's arena lives inside an opaque `DsRuntime`; a builder entry point is
@@ -35,8 +45,6 @@ dashscene-core.workspace = true
 # `LiveScene`, the type the frame loop ticks, and the owner of the frame-delta
 # clamp and the generation gate this host reads rather than restates.
 dashlang.workspace = true
-
-[target.'cfg(target_os = "android")'.dependencies]
 # The JNI entry points the Kotlin side binds to.
 jni.workspace = true
 # `ANativeWindow_fromSurface` and the log, on the one target that has them.

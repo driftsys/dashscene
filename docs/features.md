@@ -473,12 +473,25 @@ absence of any mobile target in the workspace.
       taken** — see `docs/design/android-toolchain.md`, which records why an
       emulator cannot take it. Nothing here says Android works.
 
-      The showcase does **not** run on Android. It animates by writing a named
-      signal and, in one scene, by switching a variant — and no committed
-      `.dsb` carries a signal, a binding row or a variant table (issue #617),
-      while the C ABI has no builder entry point. A `demo-android` that runs
-      what `demo` and `demo-web` run is story #842 and needs a host API that
-      takes a scene built in code.
+      **The showcase runs on Android** (story #842). `demo-android` is a third
+      demonstration host beside `demo` and `demo-web`: `typography` draws MSDF
+      Latin and shaped Arabic, `surfaces` draws the full paint vocabulary
+      including the backdrop blur, and the scripted pulse animates them. It
+      does **not** go through the C ABI — a scene built in code needs an
+      `Arena`, and the ABI's lives inside an opaque `DsRuntime` with no builder
+      entry point (layer 2, D8) — so it implements `dashscene_android::Frames`
+      and shares the render thread, the vsync loop and the destroy handshake
+      rather than a second copy of them. Text draws because each scene brings
+      its own solver; a *loaded document* still gets a bare `TaffySolver` and
+      draws no glyphs (issue #863).
+
+      **On an emulator, and the frame rate is not a device measurement.** The
+      instrument reports in the desktop host's units — one sample read
+      `typography over 240 frames — tick 0.19 ms, draw mean 32.89 p50 32.01
+      p95 62.46 max 81.85 ms (30.2 fps if unpaced)` — but the only
+      painter-capable adapter there is SwiftShader on the CPU, so that
+      describes a development machine. Story #842's own deliverable, a
+      frame-rate number for a named device, is still owed.
 
       iOS and the Unity host
       have no target, no toolchain and no automation, and follow in v1.

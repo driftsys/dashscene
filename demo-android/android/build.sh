@@ -62,7 +62,7 @@ for profile in release debug; do
 done
 if [ -z "${lib}" ]; then
   echo "demo-android: no libdemo_android.so for aarch64-linux-android." >&2
-  echo "demo-android:   just android            # debug" >&2
+  echo "demo-android:   just android            # builds this too, debug" >&2
   echo "demo-android:   ...or build it --release for a build worth timing" >&2
   exit 1
 fi
@@ -81,7 +81,7 @@ mkdir -p "${out}/classes" "${out}/staging/lib/arm64-v8a"
 
 echo "demo-android: build-tools ${tools}, ${platform}"
 
-# 1. The manifest becomes a base APK. No resources: the harness builds its view
+# 1. The manifest becomes a base APK. No resources: this host builds its view
 #    in code, so there is no res/ directory to compile.
 "${bt}/aapt2" link \
   --manifest "${here}/AndroidManifest.xml" \
@@ -105,7 +105,8 @@ javac --release 17 -nowarn -classpath "${jar}" -d "${out}/classes" \
 find "${out}/classes" -name '*.class' -exec "${bt}/d8" --min-api 33 --output "${out}" {} +
 
 # 3. Everything else goes in beside the manifest: the dex, the shared library
-#    under the ABI directory the loader looks in, and the document as an asset.
+#    under the ABI directory the loader looks in. No asset: the showcase scenes
+#    are compiled into the library.
 cp "${out}/classes.dex" "${out}/staging/"
 cp "${lib}" "${out}/staging/lib/arm64-v8a/"
 

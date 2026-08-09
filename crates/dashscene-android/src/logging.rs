@@ -12,7 +12,7 @@ const TAG: &str = "dashscene";
 /// Silently does nothing if the message cannot be made into a C string — a
 /// diagnostic that panicked while reporting a failure would replace the failure
 /// with its own.
-pub(crate) fn log(message: &str) {
+pub fn log(message: &str) {
     let Ok(text) = std::ffi::CString::new(message) else {
         return;
     };

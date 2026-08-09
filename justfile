@@ -435,6 +435,12 @@ android:
     # It is the only member whose JNI half compiles on no other target, so
     # nothing else in the workspace would catch a break in it (story #841).
     cargo build -p dashscene-android --target aarch64-linux-android
+    # And the showcase host, which is a second such member: its `Frames`
+    # implementation and its four JNI entry points are behind
+    # `cfg(target_os = "android")` and compile in no other gate. It was absent
+    # from this list when it landed, so several hundred lines cross-compiled
+    # nowhere — the same shape as the crate above, one story along (story #842).
+    cargo build -p demo-android --target aarch64-linux-android
 
 # Build the D3a probe, push it to an attached device and run it.
 #

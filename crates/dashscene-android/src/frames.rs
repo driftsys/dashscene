@@ -49,6 +49,18 @@ pub type AttachError = String;
 pub enum Step {
     /// Keep scheduling.
     Continue,
+    /// The surface was lost, and rebuilding it is the remedy.
+    ///
+    /// The loop calls [`Frames::detach`] and then [`Frames::attach`] again with
+    /// the same window, and carries on. The scene is not rebuilt and the clock
+    /// is not reset — only the device is new.
+    ///
+    /// **This variant exists because the seam is what stops a host inventing a
+    /// third answer.** `dashscene_gpu::FrameError::is_recoverable` is one rule
+    /// read by every host, and `dashscene-web` and `dashscene-desktop` both act
+    /// on it; a host that could only say `Stop` would have no way to honour it,
+    /// which is the divergence story #834 was filed to prevent.
+    Rebuild,
     /// Stop. The loop tears down and releases the handshake.
     Stop,
 }
@@ -90,12 +102,18 @@ pub trait Frames: 'static {
 
     /// The drawable changed size, in physical pixels.
     ///
-    /// Called before the frame that follows it, and never with the extent it was
-    /// last called with. Whether the scene is rebuilt for the new extent or the
-    /// picture is merely reconfigured is the implementation's call: a document
-    /// carries its own resolved size, a scene built in code derives every offset
-    /// from the extent it was given.
-    fn resize(&mut self, width: u32, height: u32);
+    /// Whether the scene is rebuilt for the new extent or the picture is merely
+    /// reconfigured is the implementation's call: a document carries its own
+    /// resolved size, a scene built in code derives every offset from the extent
+    /// it was given.
+    ///
+    /// **Returns whether the new extent was taken up.** `false` means the loop
+    /// keeps the old one as configured and offers the same extent again on the
+    /// next frame, rather than believing a resize that did not happen — an
+    /// over-large drawable is refused by `check_extent` against the adapter
+    /// maximum (issue #714), and a loop that recorded it anyway would leave the
+    /// scene laid out for the old size for the rest of the surface's life.
+    fn resize(&mut self, width: u32, height: u32) -> bool;
 
     /// Advances by `dt` seconds and draws if anything is worth drawing.
     ///
@@ -110,12 +128,22 @@ pub trait Frames: 'static {
     /// empty window until something else moved.
     fn frame(&mut self, dt: f32, forced: bool) -> Step;
 
-    /// Drops the surface.
+    /// Drops the surface, **and everything else this holds**.
     ///
     /// **This is the call the destroy handshake waits on.** When it returns, the
     /// `wgpu::Surface` built from the window must be gone; the loop then
     /// releases the UI thread, which then releases the window. Returning while
     /// anything still holds that window is the use-after-free D4 exists to
     /// prevent.
+    ///
+    /// **It must also release whatever else the implementation owns** — the
+    /// arena, the scene, any packing buffers. The loop's state is deliberately
+    /// leaked, because a vsync callback that cannot be cancelled may still hold
+    /// a pointer to it, and the implementation is inside that state. So
+    /// anything not released here is retained for the life of the process, once
+    /// per surface cycle — and on Android a surface cycle is every rotation.
+    ///
+    /// It may be called after [`Frames::attach`] failed, so it must tolerate
+    /// having nothing to release.
     fn detach(&mut self);
 }
