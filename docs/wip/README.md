@@ -11,10 +11,10 @@ project's convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports nine files
+## Why the WIP gate currently reports ten files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-nine and exits non-zero. All nine are deliberate, accepted exceptions rather
+ten and exits non-zero. All ten are deliberate, accepted exceptions rather
 than ungardened debt, and they are recorded here so the gate's result is
 explained rather than merely tolerated.
 
@@ -47,7 +47,10 @@ closed and that prompt was archived. **The two prompts never overlapped**, which
 the file names alone would suggest they did. It went back to nine on 2026-08-09,
 when v0.18's prompt landed — written on 2026-08-08 against a `main` that moved
 underneath it, so its first revision counted ten and had to be re-derived on
-the rebase. Re-derive the
+the rebase. It went to ten on
+2026-08-09, when v0.19's Android driver prompt landed while v0.18's was still
+held — **the first time two prompts overlap**, which the paragraph below now
+says rather than repeating that they never do. Re-derive the
 number from `git ls-files docs/wip/` when touching this section rather than
 trusting the prose.
 
@@ -64,9 +67,12 @@ went stale because a commit that removes a file from this directory has to edit
 this file in the same commit, and that is not enforced by anything. **Archiving
 a capture and updating this ledger are one change, not two.**
 
-**Eight of the nine are design captures**, described below, and **one driver
-prompt is held** — `2026-08-08-v018-DRIVER-PROMPT.md`, added the day v0.17
-closed. Driver prompts — the brief a session is handed to carry out a named
+**Eight of the ten are design captures**, described below, and **two driver
+prompts are held** — `2026-08-08-v018-DRIVER-PROMPT.md`, added the day v0.17
+closed, and `2026-08-09-v019-ANDROID-DRIVER-PROMPT.md`, added at the close of
+v0.19's C ABI work to carry stories #841 and #842. They overlap because v0.18
+and v0.19 run at the same time, on `main` and on
+`integration/v0.19-android` respectively; every earlier pair did not. Driver prompts — the brief a session is handed to carry out a named
 piece of work — are transient by construction, spent the moment their work
 lands, and the convention is to archive them verbatim rather than garden them
 into records. Fifteen are in `docs/archive/`: fourteen `*-DRIVER-PROMPT.md`
