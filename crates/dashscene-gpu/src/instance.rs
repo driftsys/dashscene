@@ -306,6 +306,55 @@ pub struct Instance {
     /// It also takes the stroke table out of the vertex stage, which then reads
     /// three storage buffers rather than four.
     pub outset: f32,
+    /// The point this instance's quad turns about, in **document space**
+    /// (story #832).
+    ///
+    /// Document space, not box-relative, because an instance's
+    /// [`bounds`](Self::bounds) is not always the node's box: a drop shadow's
+    /// is grown by the stroke outset, and a glyph's is its own quad. One
+    /// resolved point is right for every kind; a box-relative offset would
+    /// have to be re-derived per kind and would turn each glyph about itself.
+    ///
+    /// The packer resolves it from `RectEntry::rotation_anchor`, which *is*
+    /// node-relative — `(0, 0)` being the node's top-left — by adding the
+    /// rect's origin.
+    ///
+    /// **Before [`rotation`](Self::rotation), and this order is load-bearing.**
+    /// WGSL aligns a `vec2f` to eight bytes, so the other order would put this
+    /// at offset 72 in the shader while Rust packed it at 68, and every row
+    /// after the first would be read from the wrong offset. The same trap
+    /// `GpuGlyphRun` documents against its own `half_uv`.
+    pub rotation_pivot: [f32; 2],
+    /// This instance's rotation in radians, about
+    /// [`rotation_pivot`](Self::rotation_pivot). `0.0` is unrotated, which is
+    /// what every instance carried before story #832.
+    ///
+    /// Every instance a rotated rect emits carries the rect's rotation — its
+    /// fill, its stroke, both shadow passes and every glyph anchored to it —
+    /// because the reference painter turns the canvas around all of that ink
+    /// together.
+    ///
+    /// The angle rather than its sine and cosine, which would also have fit in
+    /// sixteen bytes and saved the pad word below. Two reasons: the value stays
+    /// comparable with the document's own `RectEntry::rotation` when reading a
+    /// row or a golden, which `bounds` and `corners` are also kept legible for;
+    /// and the four sin/cos evaluations per instance are nothing against a
+    /// fragment-bound pipeline.
+    pub rotation: f32,
+    /// Padding, so the Rust type is 80 bytes and matches the shader's array
+    /// stride.
+    ///
+    /// Not cosmetic. `Instance`'s first member is a four-float vector, so the
+    /// WGSL struct aligns to 16 and `array<Instance>`'s stride is the size
+    /// rounded up to that — 80 for the 76 bytes the members above use. Without
+    /// this word the Rust type would be 76 and every element after the first
+    /// would be uploaded to the wrong offset.
+    ///
+    /// It is also the next vertex-side scalar's slot: this is exactly the state
+    /// [`outset`](Self::outset) was in until story #584 gave it a meaning, and
+    /// filling it costs nothing where widening the stride again costs 16 bytes
+    /// on every instance.
+    pub _pad: f32,
 }
 
 impl Instance {
@@ -506,7 +555,7 @@ impl InstanceBuffer {
     /// per rect span, then one line per instance, in draw order.
     ///
     /// Text rather than the raw bytes, for one reason: a golden is reviewed
-    /// truth, and a reviewer cannot read 64-byte rows in a diff. Floats print
+    /// truth, and a reviewer cannot read fixed-width binary rows in a diff. Floats print
     /// through `{:?}`, which is Rust's shortest representation that round-trips
     /// — so the text is exact, not rounded, and a one-bit change in a
     /// coordinate changes the line.
@@ -574,4 +623,19 @@ pub(crate) const fn shape_slot(row: Option<u32>) -> u32 {
 /// stroke outset grows it.
 pub(crate) const fn bounds_of(rect: &RectEntry) -> [f32; 4] {
     [rect.x, rect.y, rect.w, rect.h]
+}
+
+/// The point every instance of one rect turns about, in document space
+/// (story #832).
+///
+/// `RectEntry::rotation_anchor` is node-relative — `(0, 0)` is the node's
+/// top-left — and [`Instance::rotation_pivot`] is absolute, so this is the one
+/// place that conversion happens. Resolved once per rect rather than per
+/// instance kind, because a drop shadow's bounds are grown and a glyph's are
+/// its own: only an absolute point means the same thing to all of them.
+pub(crate) const fn rotation_pivot(rect: &RectEntry) -> [f32; 2] {
+    [
+        rect.x + rect.rotation_anchor.x,
+        rect.y + rect.rotation_anchor.y,
+    ]
 }

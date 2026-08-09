@@ -2126,3 +2126,139 @@ fn a_shadows_spread_grows_the_shape_it_casts() {
         "a spread of -6 pulls the shadow's edge inside the node, which covers it",
     );
 }
+
+/// A rotated node draws turned, and a rotation of zero is not what makes that
+/// pass (story #832).
+///
+/// Read as layer 3 always is: "did the pipeline turn the quad at all", never
+/// "is the picture right". What it can establish, and what no earlier layer
+/// can, is that the vertex stage's rotation term reaches the rasteriser — the
+/// packer's rows are asserted bit-exact in layer 1, and a shader that ignored
+/// them would still pass every one of those.
+///
+/// The fixture is a 40 x 10 bar, deliberately not square: a rotation of a
+/// rotationally symmetric shape changes no pixel, so a square here would pass
+/// against a shader that dropped the term.
+#[test]
+fn a_rotated_quad_covers_different_pixels_than_an_upright_one() {
+    let mut paints = PaintTable::new();
+    let solid = paints.push_solid(Color {
+        r: 0.9,
+        g: 0.2,
+        b: 0.1,
+        a: 1.0,
+    });
+
+    // Centred in the frame and turned about its own centre, so the turned bar
+    // stays inside the canvas and the two silhouettes overlap in the middle —
+    // the difference is at the ends, which is where a dropped term shows.
+    let bar = |rotation: f32| RectEntry {
+        x: 12.0,
+        y: 19.0,
+        w: 40.0,
+        h: 10.0,
+        paint: solid,
+        clip: ClipIndex::UNCLIPPED,
+        opacity: 1.0,
+        rotation,
+        rotation_anchor: Vec2 { x: 20.0, y: 5.0 },
+    };
+
+    let upright = draw(&[bar(0.0)], &paints, &ClipTable::new());
+    let turned = draw(
+        &[bar(std::f32::consts::FRAC_PI_4)],
+        &paints,
+        &ClipTable::new(),
+    );
+
+    let differing = upright
+        .chunks_exact(4)
+        .zip(turned.chunks_exact(4))
+        .filter(|(a, b)| a != b)
+        .count();
+    assert!(
+        differing > 200,
+        "a quarter turn of a 40 x 10 bar changed only {differing} pixels: the \
+         vertex stage is not applying the rotation term",
+    );
+
+    // The bar is 40 wide and 10 tall about its centre at (32, 24), so upright
+    // it covers the far left of that row and turned it cannot: at 45 degrees
+    // its half-length reaches about 14 pixels along each axis, not 20.
+    let far_left = texel(&upright, 13, 24);
+    assert!(far_left[3] > 200, "the upright bar covers its own left end");
+    let same_point_turned = texel(&turned, 13, 24);
+    assert!(
+        same_point_turned[3] < 64,
+        "the turned bar still covers (13, 24), which is past the reach of its \
+         own half-length at 45 degrees: got alpha {}",
+        same_point_turned[3],
+    );
+}
+
+/// A clip does not turn with the node it clips (story #832).
+///
+/// The reference painter applies an ancestor's clip first and the node's
+/// rotation inside it, so the clip stays axis-aligned in document space while
+/// the node turns. The shader reaches the same place by testing the clip
+/// against the rotated position rather than against the node's own frame —
+/// testing it against `local` would rotate the clip along with the node, which
+/// is a plausible picture and a wrong one.
+#[test]
+fn a_clip_does_not_turn_with_the_node_it_clips() {
+    let mut paints = PaintTable::new();
+    let solid = paints.push_solid(Color {
+        r: 0.1,
+        g: 0.7,
+        b: 0.3,
+        a: 1.0,
+    });
+
+    // A clip covering the frame's top half only. A node turning inside it must
+    // still be cut along y = 24 — a horizontal edge — however far it turns.
+    let mut clips = ClipTable::new();
+    let clip = clips.push(&[ClipBox {
+        x: 0.0,
+        y: 0.0,
+        w: W as f32,
+        h: 24.0,
+        corners: CornerRadii::default(),
+    }]);
+
+    let turned = RectEntry {
+        x: 12.0,
+        y: 19.0,
+        w: 40.0,
+        h: 10.0,
+        paint: solid,
+        clip,
+        opacity: 1.0,
+        rotation: std::f32::consts::FRAC_PI_4,
+        rotation_anchor: Vec2 { x: 20.0, y: 5.0 },
+    };
+
+    let pixels = draw(&[turned], &paints, &clips);
+
+    // Nothing survives below the clip's own horizontal edge, at any column.
+    for x in 0..W {
+        for y in 25..H {
+            assert_eq!(
+                texel(&pixels, x, y)[3],
+                0,
+                "ink at ({x}, {y}) is below the clip's edge at y = 24: the clip \
+                 turned with the node instead of staying axis-aligned",
+            );
+        }
+    }
+    // And the node does still draw inside the clip, so the assertion above is
+    // not passing on an empty frame.
+    let inside = (0..24)
+        .flat_map(|y| (0..W).map(move |x| (x, y)))
+        .filter(|&(x, y)| texel(&pixels, x, y)[3] > 200)
+        .count();
+    assert!(
+        inside > 50,
+        "the clipped rotated node drew almost nothing ({inside} covered \
+         pixels), so the clip assertion above proves nothing",
+    );
+}

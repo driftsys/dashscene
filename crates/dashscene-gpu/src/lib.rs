@@ -242,24 +242,20 @@ impl Painter for GpuPainter {
         self.samples.contains(format)
     }
 
-    /// The lean painter does not rotate yet — story #832.
+    /// The lean painter draws `RectEntry::rotation` (story #832).
     ///
-    /// This repeats the trait's default rather than relying on it, because
-    /// the two say different things. Inheriting the default would mean "no
-    /// one has considered rotation here"; writing it means the gap is
-    /// declared, which is what
-    /// `docs/decisions/rotation-is-paint-only-and-anchored-explicitly.md`
-    /// requires of a painter that lags:
+    /// The whole of it is in the vertex stage: the quad's four corners turn
+    /// about `Instance::rotation_pivot`, and `out.local` keeps the *unrotated*
+    /// coordinate, so every SDF, gradient and image fill in the fragment stage
+    /// evaluates in the node's own axis-aligned frame exactly as before. A
+    /// rounded rect therefore stays a true rounded rect at an angle rather than
+    /// an axis-aligned approximation of one, and no fragment pays for a
+    /// rotation it does not have.
     ///
-    /// > A painter that accepted a rotation and drew the node unrotated would
-    /// > be a silent drop, which P4 forbids.
-    ///
-    /// The shaders contain no trigonometry at all — no `cos`, `sin` or
-    /// `mat2x2` in `sdf.wgsl` or `paint.wgsl` — so rotation is a real change
-    /// to the instanced-quad pipeline rather than a wrapper, and it is its
-    /// own story. Story #832 flips this to `true`.
+    /// This was `false` between stories #770 and #832, declaring the gap rather
+    /// than drawing the node upright — the silent drop P4 forbids.
     fn rotates(&self) -> bool {
-        false
+        true
     }
 
     /// Packs the whole of boundary B into [`instances`](Self::instances) and
