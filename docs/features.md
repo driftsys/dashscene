@@ -436,24 +436,51 @@ absence of any mobile target in the workspace.
       named in each crate's own module documentation. No mobile target exists,
       and nothing is published: this slice makes the crates publishable and the
       publish is a separate decision (epic #793).
-- [ ] **A C interface for hosts written in other languages** — **built, and
-      not yet used by any host.** `crates/dashscene-ffi` (story #840) exports
+- [x] **A C interface for hosts written in other languages** — **built, and
+      used by one host.** `crates/dashscene-ffi` (story #840) exports
       a version to negotiate against, the runtime lifecycle, a document
-      load, the surface handoff, the tick, resize, a draw call and an error
-      channel, with a committed header a C
+      load, the surface handoff, the tick, resize, a draw call, a surface
+      detach and an error channel, with a committed header a C
       caller compiles against; `just c-abi` exercises it as one. No panic
       crosses the boundary and no failure is reachable only as a formatted
-      string. **Nothing calls it yet** — the Android host that would is story
-      #841, and no iOS or Unity host exists. Root selection is absent, because
-      no host can name a root until story #837 lands.
+      string. `dashscene-android` (story #841) drives it through those entry
+      points as a C caller would, which is what established that it was
+      sufficient for layer 0 — and what established that it was not quite:
+      `ds_runtime_detach_surface` was added there, because the destroy
+      handshake needs a call that drops the surface and keeps the document.
+      No iOS or Unity host exists. Root selection is absent, because
+      no host can name a root until story #837 lands. **A scene built in code
+      cannot be expressed through it at all** — there is no builder entry
+      point, that being layer 2 (D8), so a host wanting one links the crates
+      directly as `demo` and `demo-web` do.
 - [ ] **Android and iOS** — **Android part built; iOS nothing.** The
       `aarch64-linux-android` target, an NDK toolchain and a CI job exist
       (story #839), the painter cross-compiles for it, and the C ABI above
-      builds for it too. **Nothing has run on a device**: there is no Android
-      host, and the D3a measurement that says the painter's four fragment-stage
-      storage buffers fit a target device has not been taken — see
-      `docs/design/android-toolchain.md`, which records an emulator result and
-      says explicitly that it is not that measurement. iOS and the Unity host
+      builds for it too. `crates/dashscene-android` (story #841) is the host:
+      an `android.view.Surface` reaches the painter, an `AChoreographer` loop
+      on its own thread ticks and draws, and `surfaceDestroyed` blocks until
+      that loop has stopped and the surface has been dropped.
+
+      **It has run on an emulator and not on a device**, and the distinction is
+      the whole of what is unresolved. A compiled `.dsb` draws, rotation and
+      backgrounding each run the destroy handshake without a crash, and both
+      were observed on the automotive emulator — which is interim evidence and
+      is labelled as such, not the D3a measurement. **Split-screen was not
+      exercised**: that image declares no multi-window, freeform or
+      split-screen feature at all, so the third of D4's three cases needs
+      different hardware. The D3a measurement that says the painter's four
+      fragment-stage storage buffers fit a target device **has not been
+      taken** — see `docs/design/android-toolchain.md`, which records why an
+      emulator cannot take it. Nothing here says Android works.
+
+      The showcase does **not** run on Android. It animates by writing a named
+      signal and, in one scene, by switching a variant — and no committed
+      `.dsb` carries a signal, a binding row or a variant table (issue #617),
+      while the C ABI has no builder entry point. A `demo-android` that runs
+      what `demo` and `demo-web` run is story #842 and needs a host API that
+      takes a scene built in code.
+
+      iOS and the Unity host
       have no target, no toolchain and no automation, and follow in v1.
 
 ## 11. Quality tooling and workflow

@@ -37,14 +37,24 @@ which is `darwin-x86_64` on Apple silicon and `linux-x86_64` on a runner.
 
 ### The API floor
 
-`ANDROID_API` in the `justfile`, currently **26**. A floor rather than a
-target — the oldest device the artifacts will load on — and deliberately not
-higher, because nothing built so far needs more.
+`ANDROID_API` in the `justfile`, currently **33**. A floor rather than a
+target — the oldest device the artifacts will load on.
 
-**Story #841 may raise it.** `AChoreographer_getInstance` is API 24, but
-`AChoreographer_postVsyncCallback` — the one carrying a frame timeline — is API
-33, and D6 puts vsync on the native side. Raising the floor is a one-line
-change, so it is left where the evidence is rather than guessed upward now.
+It was **26** when this record was written, and this paragraph said so for two
+stories after it stopped being true: story #862 raised it to 33 and changed only
+the `justfile`, so the number here was stale from the moment it landed. Nothing
+failed, because no test reads a sentence.
+
+**The floor is 33 because of one function.**
+`AChoreographer_getInstance` is API 24, but
+`AChoreographer_postVsyncCallback` — the one carrying a frame timeline — is
+`__INTRODUCED_IN(33)`, and D6 puts vsync on the native side. At this floor it is
+reachable **unconditionally**: no runtime API guard, and no
+`postFrameCallback64` fallback branch. That is the whole consequence of the
+choice, and `crates/dashscene-android/src/host.rs` depends on it.
+
+The floor was set against the **target fleet** rather than against Play, which
+gates `targetSdk` and sets no minimum.
 
 ## What builds
 
@@ -56,6 +66,80 @@ Android backend support needed nothing from this repository.
 The CI job `android-build` runs exactly that and no more. A runner has no device
 and no GPU, so nothing there can measure D3a; a job that appeared to would be
 the `t2-check-has-no-teeth` failure the v0.13 tiering exists to remove.
+
+## The host, added at story #841
+
+`crates/dashscene-android` is the Android integration surface, and the first
+host to sit **on** `dashscene-ffi` rather than beside it: it drives the C ABI
+through its own entry points as a C caller would, which is what D2 says every
+platform host does. Driving it that way is also what established the ABI was
+sufficient for layer 0 — and that it was not quite.
+`ds_runtime_detach_surface` was added there, because D4 needs a call that drops
+the surface and keeps the document, and freeing the whole runtime would drop the
+document with it.
+
+Two threads, and the split is D4's and D6's between them. The **UI thread**
+receives the lifecycle callbacks and is the only one that may call
+`ANativeWindow_fromSurface`, which needs a `JNIEnv` and a live `jobject`. The
+**render thread** prepares a looper, takes vsync from
+`AChoreographer_postVsyncCallback`, and owns the runtime — so the thread that
+draws is the thread that built the device.
+
+**The destroy handshake is a type on no Android API**, deliberately.
+`Handshake` uses two threads and a flag, and is compiled on every target, so
+`cargo test` can assert the ordering `surfaceDestroyed` depends on. Everything
+else in the crate is behind `cfg(target_os = "android")` and no test can reach
+it — the same reason `dashscene-web` keeps its `fetch` and `shown` modules
+outside the `wasm32` half.
+
+### What ran, and on what
+
+**On the automotive emulator, 2026-08-09. This is interim evidence and is not
+the D3a measurement**, for the reason the section below gives: the only
+painter-capable adapter there is a CPU rasteriser.
+
+- A compiled `.dsb` drew, at `1408x483` and again at `792x1099` after a
+  rotation. The vsync loop reported its first callback and its first frame.
+- **Backgrounding** and **rotation** each ran the destroy handshake, and the
+  thread ids in logcat show the ordering: the UI thread entered, the render
+  thread detached and freed, and only then did the UI thread return. The UI
+  thread was blocked for **88-115 ms** on a release build; the first teardown
+  of a debug build took 1.15 s. Neither crashed, and re-attach built a fresh
+  render thread each time. That block is a whole runtime teardown rather than
+  just a surface drop, which is issue #872.
+- **Split-screen was not exercised.** That image declares no multi-window,
+  freeform or split-screen feature at all — `pm list features` returns none and
+  `ro.build.characteristics` is `automotive` — so the third of D4's three cases
+  needs different hardware. The v0.19 driver prompt asserted the emulator could
+  exercise all three; for this AVD that is false.
+
+A static document draws once and then stops, which is the idle skip working:
+the generation does not advance, so no frame is worth drawing. Nothing about
+frame _rate_ can be read from this, and nothing here says Android works.
+
+### The harness that ran it
+
+`crates/dashscene-android/harness/` — a manifest, two Java files and a
+`build.sh`. **Not Gradle**, and the same trade this record already makes for
+plain `cargo build --target` over `cargo-ndk`: Gradle would be a second build
+system plus a Kotlin toolchain, to produce an APK whose whole content is one
+manifest, two Java files and a shared library. `aapt2`, `javac`, `d8` and
+`apksigner` do it directly.
+
+It is a **lifecycle harness and not the demonstration**. Story #842's
+`demo-android` is that, and it cannot be reached by shipping the showcase as a
+`.dsb`: the showcase animates by writing a named signal and, in one scene, by
+switching a variant, and no committed `.dsb` carries a signal, a binding row or
+a variant table (issue #617). The C ABI has no builder entry point either —
+that is layer 2, D8 — so a host that wants a scene built in code links the
+crates directly, as `demo` and `demo-web` do.
+
+One trap the harness hit, recorded because the failure is silent: a debug
+keystore regenerated on each build signs each build differently, and Android
+then refuses the update with `INSTALL_FAILED_UPDATE_INCOMPATIBLE` while the
+device goes on running the **previous** build. A test then reads as a working
+build that ignores its own changes. The keystore lives outside the directory
+the script wipes.
 
 ## The probe
 

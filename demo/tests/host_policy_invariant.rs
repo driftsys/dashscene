@@ -72,18 +72,21 @@ use std::path::{Path, PathBuf};
 ///
 /// **Maintain this list by hand**, and add to it when a host appears.
 ///
-/// Four entries, and the two integration crates are the ones that matter most:
-/// stories #741 and #794 moved each demonstration's frame loop into a crate
-/// that will be **published**, which is the whole reason story #810 gave these
-/// rules one owner first. Story #741 landed without adding
+/// Five entries, and the three integration crates are the ones that matter
+/// most: stories #741, #794 and #841 moved or wrote each host's frame loop in a
+/// crate that will be **published**, which is the whole reason story #810 gave
+/// these rules one owner first. Story #741 landed without adding
 /// `crates/dashscene-web` here, so for one slice the scan policed the two
 /// demonstrations and not the crate that had taken their loops — which is the
-/// shape of a check outliving what it was pointed at. Both are listed now.
-const HOSTS: [&str; 4] = [
+/// shape of a check outliving what it was pointed at. Story #841 was caught in
+/// review doing the same thing with `crates/dashscene-android`, which computes
+/// its own frame delta in its vsync callback. All are listed now.
+const HOSTS: [&str; 5] = [
     "demo",
     "demo-web",
     "crates/dashscene-desktop",
     "crates/dashscene-web",
+    "crates/dashscene-android",
 ];
 
 /// How a host would spell the rules if it reintroduced them.

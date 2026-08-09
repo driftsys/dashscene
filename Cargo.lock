@@ -599,6 +599,15 @@ name = "dashscene"
 version = "0.0.0"
 
 [[package]]
+name = "dashscene-android"
+version = "0.0.0"
+dependencies = [
+ "dashscene-ffi",
+ "jni",
+ "ndk-sys",
+]
+
+[[package]]
 name = "dashscene-core"
 version = "0.0.0"
 dependencies = [

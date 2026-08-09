@@ -28,11 +28,16 @@ directly — don't silently diverge from it.
 This is `driftsys/dashscene-staging`, a **private working repo**.
 `driftsys/dashscene` itself stays public and untouched — it's reserved
 as the project's future facade (docs, book, site), and it's the
-repository every reserved crates.io name points at. There are **19** of
+repository every reserved crates.io name points at. There are **20** of
 them: the 12 squatted in March 2026, before this repo's first commit,
-plus 7 reserved during development as the crates needing them arrived.
-Seventeen are this workspace's crates; `dashscore` and
-`dashscene-compose` stay parked. Nothing here is public yet. When
+plus 8 reserved during development as the crates needing them arrived.
+Eighteen are this workspace's crates; `dashscore` and
+`dashscene-compose` stay parked. The workspace has **19** crates, so one
+has no reservation: **`dashscene-android`**, whose directory story #841
+created without holding the name — the same gap story #840 left, and
+`docs/decisions/crate-name-map.md` records both. These counts were
+already off by one before that story, having not moved when
+`dashscene-ffi` was reserved on 2026-08-09. Nothing here is public yet. When
 there's a real version running, staging's content gets promoted into
 `dashscene` — the exact mechanism (fresh push vs. history merge) is
 intentionally undecided until that point
@@ -40,7 +45,7 @@ intentionally undecided until that point
 
 ## Crates
 
-18 crates in one Cargo workspace (`resolver = "3"`, `edition = "2024"`,
+19 crates in one Cargo workspace (`resolver = "3"`, `edition = "2024"`,
 `license = "MIT"`). Full role-by-role mapping: `docs/decisions/crate-name-map.md`.
 
     dashscene            umbrella / facade
@@ -87,6 +92,13 @@ intentionally undecided until that point
                           handoff. Kotlin reaches it through JNI and the v1 iOS
                           and Unity hosts inherit it. Added at slice v0.19
                           (story #840)
+    dashscene-android     the Android integration surface — the
+                          android.view.Surface to ANativeWindow handoff, the
+                          AChoreographer frame loop on its own thread, and the
+                          surfaceDestroyed handshake that blocks until the
+                          surface is dropped. The first host to sit on
+                          dashscene-ffi rather than beside it. Added at slice
+                          v0.19 (story #841)
     dashscene-gpu          the lean painter — instanced quads and analytic
                           SDF over wgpu, native and web from one codebase;
                           lands across slice v0.15
@@ -108,8 +120,8 @@ painter, and a `.dsb` fetched by byte range, landed at v0.15),
 (the golden-image harness) and `measure/web-minimal/` (the smallest
 browser embedder that draws a `.dsb` — an artifact built to be weighed,
 not run, and what the runtime payload budget is measured over; see
-`docs/decisions/publishable-and-the-first-version.md`). Twenty-three
-members in total, eighteen of them the crates above.
+`docs/decisions/publishable-and-the-first-version.md`). Twenty-four
+members in total, nineteen of them the crates above.
 
 ## Commands
 

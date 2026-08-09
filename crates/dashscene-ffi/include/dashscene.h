@@ -110,6 +110,29 @@ DsStatus ds_runtime_attach_surface(DsRuntime *runtime, DsSurfaceKind kind,
                                    void *window, void *display, uint32_t width,
                                    uint32_t height);
 
+/*
+ * Drops the surface, keeping the document and the scene.
+ *
+ * The other half of Android's destroy handshake. surfaceDestroyed must not
+ * return until rendering has stopped and the surface built from that window has
+ * been dropped; this is the call that drops it, and it is separate from
+ * ds_runtime_free because the surface comes and goes many times over one
+ * document's life.
+ *
+ * out_had_surface, if non-NULL, receives whether one was attached. Detaching
+ * twice is not an error.
+ *
+ * The first draw after re-attaching must happen whatever ds_runtime_tick's
+ * out_advanced says: the scene did not change while the surface was gone, and
+ * the new device has drawn nothing.
+ *
+ * No other call may be in flight on runtime. That is what the caller's
+ * handshake is for, and this function cannot check it.
+ *
+ * Adding this symbol did not move DS_ABI_VERSION.
+ */
+DsStatus ds_runtime_detach_surface(DsRuntime *runtime, bool *out_had_surface);
+
 /* Resizes the surface. width and height are device pixels. */
 DsStatus ds_runtime_resize(DsRuntime *runtime, uint32_t width, uint32_t height);
 

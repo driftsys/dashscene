@@ -181,6 +181,7 @@ run).
 | `dashscene-web`        | web integration — the canvas handoff, the frame loop, `.dsb` by range     |
 | `dashscene-desktop`    | desktop integration — the window handoff, the winit loop, a mapped `.dsb` |
 | `dashscene-ffi`        | the C ABI every platform host sits on — lifecycle, load, tick, surface    |
+| `dashscene-android`    | Android integration — the Surface handoff, vsync, the destroy handshake   |
 | `dashscene-gpu`        | the lean painter over wgpu — native and web, the full vocabulary          |
 
 Beside them: `importers/figma/` (the Deno and TypeScript Figma REST importer and
