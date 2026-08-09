@@ -180,6 +180,79 @@ impl SurfaceRenderer {
         Self::new_async(wgpu::SurfaceTarget::Canvas(canvas), width, height).await
     }
 
+    /// Binds the painter and a swapchain to an `ANativeWindow`.
+    ///
+    /// The Android counterpart of `SurfaceRenderer::for_canvas`, and here for
+    /// the same reason: `wgpu` has a blanket `From<T> for SurfaceTarget` for
+    /// anything implementing `HasWindowHandle + HasDisplayHandle`, and an
+    /// `ANativeWindow *` is a raw pointer rather than such a type. Wrapping it
+    /// here is what keeps `wgpu` out of the host — this crate's own `Cargo.toml`
+    /// records that property for the canvas case, and `dashscene-ffi` would
+    /// otherwise take a `wgpu` dependency to name one handle type.
+    ///
+    /// `width` and `height` are **physical** pixels, which is what Android's
+    /// `surfaceChanged` reports and what [`SurfaceRenderer::resize`] already
+    /// guards against the adapter maximum (issue #714).
+    ///
+    /// # Safety
+    ///
+    /// `window` must be a live `ANativeWindow *` — one whose reference from
+    /// `ANativeWindow_fromSurface` is still held — and it must stay live until
+    /// this renderer is dropped. On Android that is the `surfaceDestroyed`
+    /// handshake: the callback must not return until rendering has stopped and
+    /// this value has been dropped. Getting it wrong is use-after-free on
+    /// rotation, backgrounding and split-screen.
+    #[cfg(target_os = "android")]
+    pub unsafe fn for_android_ndk(
+        window: std::ptr::NonNull<std::ffi::c_void>,
+        width: u32,
+        height: u32,
+    ) -> Result<Self, RendererError> {
+        use wgpu::rwh;
+
+        /// The small handle type D3 of
+        /// `docs/decisions/host-integration-in-three-layers.md` says each
+        /// platform contributes. Nothing in the painter moves for it.
+        struct AndroidNdkSurface {
+            window: std::ptr::NonNull<std::ffi::c_void>,
+        }
+
+        // `SurfaceTarget<'static>` requires the boxed handle to be `Send + Sync`,
+        // and `NonNull` is neither by default. Opting in explicitly rather than
+        // storing the pointer as a `usize`, which would satisfy the compiler
+        // while hiding the same question.
+        //
+        // SAFETY: this type never dereferences the pointer — it hands it to
+        // `wgpu` as a raw handle and nothing else. An `ANativeWindow` is
+        // reference-counted and may be referenced from a thread other than the
+        // one that obtained it, and `for_android_ndk`'s own contract is that the
+        // caller keeps it live for at least as long as the renderer. So moving
+        // this across threads adds no hazard the contract does not already
+        // cover.
+        unsafe impl Send for AndroidNdkSurface {}
+        unsafe impl Sync for AndroidNdkSurface {}
+
+        impl rwh::HasWindowHandle for AndroidNdkSurface {
+            fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
+                let handle = rwh::AndroidNdkWindowHandle::new(self.window);
+                // SAFETY: this type is only constructed below, from a pointer
+                // the caller of `for_android_ndk` promises stays live for at
+                // least as long as the renderer.
+                Ok(unsafe {
+                    rwh::WindowHandle::borrow_raw(rwh::RawWindowHandle::AndroidNdk(handle))
+                })
+            }
+        }
+
+        impl rwh::HasDisplayHandle for AndroidNdkSurface {
+            fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
+                Ok(rwh::DisplayHandle::android())
+            }
+        }
+
+        Self::new(AndroidNdkSurface { window }, width, height)
+    }
+
     /// [`SurfaceRenderer::new`] without the blocking wait — the constructor a
     /// web host reaches through `SurfaceRenderer::for_canvas`, and the one
     /// every target has.

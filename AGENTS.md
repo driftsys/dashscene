@@ -40,7 +40,7 @@ intentionally undecided until that point
 
 ## Crates
 
-17 crates in one Cargo workspace (`resolver = "3"`, `edition = "2024"`,
+18 crates in one Cargo workspace (`resolver = "3"`, `edition = "2024"`,
 `license = "MIT"`). Full role-by-role mapping: `docs/decisions/crate-name-map.md`.
 
     dashscene            umbrella / facade
@@ -82,6 +82,11 @@ intentionally undecided until that point
                           retired; dashscene-gpu covers the browser. Became
                           this at slice v0.17 (story #741); demo-web keeps the
                           demonstration and consumes it
+    dashscene-ffi          the C ABI every platform host sits on — runtime
+                          lifecycle, document load, the tick and the surface
+                          handoff. Kotlin reaches it through JNI and the v1 iOS
+                          and Unity hosts inherit it. Added at slice v0.19
+                          (story #840)
     dashscene-gpu          the lean painter — instanced quads and analytic
                           SDF over wgpu, native and web from one codebase;
                           lands across slice v0.15
@@ -103,8 +108,8 @@ painter, and a `.dsb` fetched by byte range, landed at v0.15),
 (the golden-image harness) and `measure/web-minimal/` (the smallest
 browser embedder that draws a `.dsb` — an artifact built to be weighed,
 not run, and what the runtime payload budget is measured over; see
-`docs/decisions/publishable-and-the-first-version.md`). Twenty-two
-members in total, seventeen of them the crates above.
+`docs/decisions/publishable-and-the-first-version.md`). Twenty-three
+members in total, eighteen of them the crates above.
 
 ## Commands
 

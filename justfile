@@ -132,7 +132,7 @@ audit:
 # Full non-build verification: the regression tier + lint + audit. Not the
 # sanity tier — `check` is what `build` and the pre-push hook run, so it takes
 # the tier that is the gate (docs/decisions/test-tiers.md).
-check: test-regression lint audit wasm-painter wasm-host
+check: test-regression lint audit wasm-painter wasm-host c-abi
 
 # Everything short of a PR: assemble + check.
 build: assemble check
@@ -267,6 +267,7 @@ publish:
     cargo publish -p dashscene-gpu
     cargo publish -p dashscene-desktop
     cargo publish -p dashscene-web
+    cargo publish -p dashscene-ffi
     cargo publish -p dashscene
 
 # Install local toolchain bits (git hooks, git-std, dprint, markdownlint-cli).
@@ -308,6 +309,40 @@ wasm-painter:
 # nothing until someone opened a page.
 wasm-host:
     cargo build -p demo-web --target wasm32-unknown-unknown
+
+# Exercise the C ABI as a C caller, against its own header.
+#
+# The Rust tests in `dashscene-ffi` call the same functions, but they call them
+# as Rust: they see the real enum and a header that was never involved. This is
+# the only thing in the workspace that checks the two halves agree — that the
+# header declares what the library exports, which a link error catches, and that
+# `DS_ABI_VERSION` equals what `ds_abi_version()` returns, which nothing else
+# compares.
+#
+# Links the `cdylib` rather than the `staticlib`: the dynamic library carries
+# its own transitive links, where the static one would make this recipe name
+# every system framework `wgpu` pulls in and re-name them per platform.
+c-abi:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p dashscene-ffi
+    crate=crates/dashscene-ffi
+    out=target/debug/c-abi-test
+    case "$(uname -s)" in
+      Darwin) lib=target/debug/libdashscene_ffi.dylib ;;
+      *)      lib=target/debug/libdashscene_ffi.so ;;
+    esac
+    if [ ! -f "${lib}" ]; then
+      echo "c-abi: ${lib} was not built — is crate-type cdylib still set?" >&2
+      exit 1
+    fi
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror \
+      -I "${crate}/include" \
+      "${crate}/tests/abi.c" \
+      -o "${out}" \
+      -L target/debug -ldashscene_ffi \
+      -Wl,-rpath,"$(cd target/debug && pwd)"
+    "${out}"
 
 # The Android API level this repository links against.
 #

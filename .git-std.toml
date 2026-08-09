@@ -52,6 +52,7 @@ scopes = [
     "dashscene-web",
     "dashscene-desktop",
     "dashscene-gpu",
+    "dashscene-ffi",
     "goldens",
     "corpus",
     "importers",
@@ -153,6 +154,10 @@ regex = 'dashscene-desktop = \{ path = "crates/dashscene-desktop", version = "([
 [[version_files]]
 path = "Cargo.toml"
 regex = 'dashscene-engine = \{ path = "crates/dashscene-engine", version = "([^"]+)"'
+
+[[version_files]]
+path = "Cargo.toml"
+regex = 'dashscene-ffi = \{ path = "crates/dashscene-ffi", version = "([^"]+)"'
 
 [[version_files]]
 path = "Cargo.toml"
