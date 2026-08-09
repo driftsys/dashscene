@@ -126,6 +126,12 @@ members in total, seventeen of them the crates above.
                       blocking wait off the web path, where it would deadlock
     just wasm-host    build demo-web for wasm32 — its browser half compiles on
                       no other target
+    just android      build dashscene-gpu for aarch64-linux-android — the
+                      second platform's compile gate. Needs an NDK, which
+                      bootstrap does not install
+    just android-probe  cross-compile the D3a probe, push it to an attached
+                      device and run it: what the painter's own device request
+                      reports on that adapter (docs/design/android-toolchain.md)
     just web-build    assemble the browser host into target/web (needs
                       wasm-bindgen-cli, which bootstrap does not install)
     just web          serve target/web on 127.0.0.1, byte ranges honoured
@@ -208,8 +214,8 @@ runs as three tiers, so "tests pass" is no longer a claim about all of it:
 - **A green `ci` job does not mean the suite ran.** It means nothing red
   ran. When the diff is documentation only — every changed file is Markdown
   under `docs/` or Markdown at the repository root — `test`, `clippy`,
-  `demo-build`, `wasm-build`, `atlas-repro` and `render-oracle` all skip,
-  and `deno` skips with them. Read the individual jobs to see which tiers
+  `demo-build`, `wasm-build`, `android-build`, `atlas-repro` and
+  `render-oracle` all skip, and `deno` skips with them. Read the individual jobs to see which tiers
   executed (`docs/decisions/test-tiers.md`).
 
 Story workflow — the definition of done for every story:

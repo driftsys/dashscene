@@ -309,6 +309,125 @@ wasm-painter:
 wasm-host:
     cargo build -p demo-web --target wasm32-unknown-unknown
 
+# The Android API level this repository links against.
+#
+# A floor rather than a target: the NDK ships wrappers from 21 up, and this is
+# the oldest device the artifacts will load on. 26 is conservative for a
+# bring-up whose first device class is automotive, and it is deliberately not
+# higher, because nothing built so far needs more.
+#
+# Story #841 may raise it. `AChoreographer_getInstance` is API 24, but
+# `AChoreographer_postVsyncCallback` — the one carrying a frame timeline — is
+# API 33, and D6 of `docs/decisions/host-integration-in-three-layers.md` puts
+# vsync on the native side. Raising this is a one-line change, and the reason it
+# is not raised pre-emptively is that no code needs it yet.
+ANDROID_API := "26"
+
+# Print the NDK's clang toolchain bin directory, or say what to install.
+#
+# The NDK is a documented prerequisite rather than something `bootstrap`
+# installs, for the reason `web-build` gives about `wasm-bindgen-cli`: it is
+# large, it is needed by one target, and every clone paying for it would be the
+# wrong trade. Discovered rather than hardcoded, because the path carries a
+# version that differs per machine.
+[private]
+_android-ndk-bin:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # `ANDROID_NDK_ROOT` is what GitHub's runner images set; `ANDROID_NDK_HOME`
+    # is the older name and what a local install usually carries. Both are
+    # honoured so the same recipe serves CI and a workstation.
+    ndk="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}"
+    if [ -z "${ndk}" ]; then
+      sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-${HOME}/Library/Android/sdk}}"
+      # Highest installed version rather than first, so a machine holding
+      # several does not silently pin the oldest by sort order.
+      ndk=$(ls -d "${sdk}"/ndk/* 2>/dev/null | sort -V | tail -1 || true)
+    fi
+    if [ -z "${ndk}" ] || [ ! -d "${ndk}" ]; then
+      echo "android: no NDK found. Set ANDROID_NDK_HOME, or install one:" >&2
+      echo "android:   sdkmanager --install 'ndk;28.0.12674087'" >&2
+      exit 1
+    fi
+    # One host tag per NDK, and it is the x86_64 build even on Apple silicon.
+    bin=$(ls -d "${ndk}"/toolchains/llvm/prebuilt/*/bin 2>/dev/null | head -1 || true)
+    if [ -z "${bin}" ]; then
+      echo "android: ${ndk} has no llvm prebuilt toolchain" >&2
+      exit 1
+    fi
+    echo "${bin}"
+
+# Build the lean painter for Android — a gate, like `wasm-painter`.
+#
+# The second platform's compile check, and the cheapest thing that says the
+# painter still cross-compiles for it. wgpu selects Vulkan or GLES on the device
+# itself, so this gate says nothing about which backend a device offers; that is
+# `android-probe`'s question and D3a's.
+#
+# Plain cargo with the NDK linker wired from the environment, rather than
+# `cargo-ndk`. It matches how every other target in this repository is built and
+# adds no tool to install.
+android:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bin=$(just _android-ndk-bin)
+    clang="${bin}/aarch64-linux-android{{ ANDROID_API }}-clang"
+    export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="${clang}"
+    export CC_aarch64_linux_android="${clang}"
+    export AR_aarch64_linux_android="${bin}/llvm-ar"
+    cargo build -p dashscene-gpu --target aarch64-linux-android
+
+# Build the D3a probe, push it to an attached device and run it.
+#
+# D3a of `docs/decisions/host-integration-in-three-layers.md` is recorded as **a
+# risk to check rather than a measured fact**, and this is what checks it: the
+# example replicates the painter's own `request_device`, so the verdict is the
+# painter's rather than a comparison of two numbers that might not be the ones
+# that bind.
+#
+# A plain executable pushed to `/data/local/tmp` rather than an APK, because
+# adapter enumeration needs no window and no Java. That keeps the probe
+# available before any of the Android host exists.
+#
+# **An emulator result describes the host machine's GPU and is not the D3a
+# measurement.** Record it as an emulator result or not at all.
+android-probe:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bin=$(just _android-ndk-bin)
+    clang="${bin}/aarch64-linux-android{{ ANDROID_API }}-clang"
+    export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="${clang}"
+    export CC_aarch64_linux_android="${clang}"
+    export AR_aarch64_linux_android="${bin}/llvm-ar"
+    cargo build -p dashscene-gpu --example adapter_report --release \
+      --target aarch64-linux-android
+    # An `x && y` one-liner would rely on the `set -e` exemption for non-final
+    # commands in an `&&` list, which is exactly the kind of thing that is true
+    # today and breaks when someone reorders the line.
+    if command -v adb >/dev/null 2>&1; then
+      adb=adb
+    else
+      adb="${ANDROID_HOME:-${HOME}/Library/Android/sdk}/platform-tools/adb"
+      # Checked, so a missing platform-tools says so. Without this the next
+      # step's failure is reported as "no device attached", which sends whoever
+      # reads it looking for a cable rather than for an install. The NDK alone
+      # satisfies `just android`, so having one without the other is the
+      # ordinary case rather than a corner.
+      if [ ! -x "${adb}" ]; then
+        echo "android-probe: no adb on PATH and none at ${adb}" >&2
+        echo "android-probe:   sdkmanager --install platform-tools" >&2
+        exit 1
+      fi
+    fi
+    if [ -z "$("${adb}" devices | sed '1d' | grep -w device || true)" ]; then
+      echo "android-probe: no device attached — start an emulator or plug one in" >&2
+      exit 1
+    fi
+    "${adb}" push target/aarch64-linux-android/release/examples/adapter_report \
+      /data/local/tmp/adapter_report
+    "${adb}" shell chmod 755 /data/local/tmp/adapter_report
+    "${adb}" shell /data/local/tmp/adapter_report
+
 # Assemble the browser host into `target/web`, ready to serve.
 #
 # `wasm-bindgen` post-processes the module cargo produced into the JS glue a

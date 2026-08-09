@@ -416,6 +416,45 @@ jobs:
           path: target/wasm32-unknown-unknown/release/dashc_wasm.wasm
           if-no-files-found: error
 
+  android-build:
+    # Compile-heavy: skipped when the diff is documentation only
+    # (see the changes job's detect step).
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
+    name: android-build
+    runs-on: ubuntu-latest
+    # The painter cross-compiles for the second platform. That is the whole
+    # claim, and it is deliberately not more: which backend a device offers is
+    # a property of that device, not of this build, and it is answered by
+    # `just android-probe` against real hardware — D3a of
+    # docs/decisions/host-integration-in-three-layers.md.
+    #
+    # A runner has no device and no GPU, so nothing here can measure D3a. A job
+    # that appeared to would be worse than no job, which is the
+    # `t2-check-has-no-teeth` failure the v0.13 tiering exists to remove.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+      # No flatc step, unlike every other compile job. `dashscene-gpu` depends
+      # on `dashpaint`, whose `[dependencies]` is empty, so `dashbuf` — the one
+      # crate whose build.rs shells out to flatc — is not in this target's
+      # graph at all: `cargo tree -p dashscene-gpu --target
+      # aarch64-linux-android` finds no `dashbuf`. Copying the step from
+      # `wasm-build` would install a tool nothing here runs.
+      - uses: extractions/setup-just@v4
+      # This job runs the recipe rather than inlining `cargo build`, which is
+      # what every other compile job does. The difference is deliberate: the
+      # recipe holds the NDK discovery, and inlining would put a second copy of
+      # it in YAML to drift against the first — the failure this repository
+      # keeps hitting with duplicated lists.
+      #
+      # The runner image sets ANDROID_NDK_ROOT, which the recipe reads, so
+      # nothing is installed here for it.
+      - run: just android
+
   atlas-repro:
     # Compile-heavy: skipped when the diff is documentation only
     # (see the changes job's detect step).
@@ -821,10 +860,11 @@ jobs:
     # (docs/decisions/house-style.md). "skipped" is accepted: convco only runs on
     # pull requests, deno only when importers/figma/ changed, and calibration
     # only when the packer paths changed (docs/decisions/test-tiers.md).
-    # clippy, test, demo-build, wasm-build, atlas-repro and render-oracle skip
-    # when the diff is documentation only, which also skips deno through its
-    # dependency on wasm-build. This is the reason a green aggregate cannot be
-    # read as "the suite ran": read the jobs, not the aggregate.
+    # clippy, test, demo-build, wasm-build, android-build, atlas-repro and
+    # render-oracle skip when the diff is documentation only, which also skips
+    # deno through its dependency on wasm-build. This is the reason a green
+    # aggregate cannot be read as "the suite ran": read the jobs, not the
+    # aggregate.
     needs:
       [
         changes,
@@ -834,6 +874,7 @@ jobs:
         test,
         demo-build,
         wasm-build,
+        android-build,
         convco,
         deno,
         atlas-repro,
