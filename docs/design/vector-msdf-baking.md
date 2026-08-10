@@ -12,7 +12,7 @@
              docs/decisions/dsb-frozen-fixture-r7-guard.md (R7 append),
              docs/decisions/unsupported-figma-constructs-refuse-the-compile.md,
              docs/design/atlas-pipeline.md (the glyph-MSDF precedent reused),
-             docs/technotes/msdf-arabic-atlas-spike.md,
+             docs/technotes/arabic-atlas-coverage.md,
              P1 (intent, not results), P2 (painters only color),
              P4 (validated vocabulary, named diagnostics)
 
@@ -256,5 +256,5 @@ oracle is what caught the packer bug noted above.
 - Related: `docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`
   (the backdrop-blur Partial-omit follow-up),
   `docs/decisions/runtime-vector-via-thorvg-to-texture.md` (the v1 escape
-  hatch), `docs/technotes/2026-07-19-v010-real-file-fidelity.md`.
+  hatch), `docs/technotes/import-fidelity.md`.
 - Raw working memory: `docs/archive/2026-07-19-B1-vector-msdf-design.md`.

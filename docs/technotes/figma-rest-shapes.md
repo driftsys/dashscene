@@ -1,4 +1,4 @@
-# The Figma REST shapes the capture pinned
+# Technote — the Figma REST shapes the capture pinned
 
     status   informative — the normative rules live in docs/design/dashc.md
     story    #139 (epic #12, v0.3 — basic paint + importer)

@@ -1,8 +1,8 @@
-# Tolerance-band coverage — what the v0.11 blur frames measured about the bands themselves
+# Technote — tolerance-band coverage: what the blur frames measured about the bands themselves
 
-Informative. This note records a measurement about the render oracle's three
-pinned tolerance bands, made while wiring the two backdrop-blur frames at the
-v0.11 close. It does not change a band: bands are reused read-only and are
+Informative. This note records a measurement **made 2026-07-26** about the
+render oracle's three pinned tolerance bands, taken while wiring the two
+backdrop-blur frames at the v0.11 close. It does not change a band: bands are reused read-only and are
 never retuned, and whether one should change is a decision this note does not
 take (issue #422).
 
@@ -204,7 +204,7 @@ should be designed against this finding rather than by analogy.
 - Frames: `goldens/oracle/import-manifest.json` (`backdrop-blur`,
   `vector-backdrop-blur`); the bands: `goldens/tooling/src/oracle.rs`.
 - Related: [`decisions/backdrop-blur-is-core-vocabulary.md`](../decisions/backdrop-blur-is-core-vocabulary.md),
-  [`technotes/2026-07-26-v011-sections-and-assets.md`](2026-07-26-v011-sections-and-assets.md).
+  [`technotes/document-sections-and-assets.md`](document-sections-and-assets.md).
 - Closed: #422 (the band decision — the residual/gate split, built).
 - Open: #412 (the sigma mapping, which these frames are blind to; see the
   cross-effect measurement recorded above).

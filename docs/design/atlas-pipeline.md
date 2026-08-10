@@ -9,7 +9,7 @@
              ttf-parser), R1 (text quality), R7 (byte-reproducible
              builds), P4 (validated vocabulary, named diagnostics),
              docs/decisions/q1-msdf-below-14px.md (32 px/em, pxrange 4),
-             docs/technotes/msdf-arabic-atlas-spike.md (#25 evidence)
+             docs/technotes/arabic-atlas-coverage.md (#25 evidence)
 
 ## Purpose
 
@@ -392,4 +392,4 @@ of atlas assets (later slice), per-size bitmap fallback (parked by
   `docs/decisions/atlas-closure-cmap-plus-extras.md`,
   `docs/decisions/q1-msdf-below-14px.md`,
   `docs/decisions/atlas-directory-per-script-weight.md`.
-- Related technote: `docs/technotes/msdf-arabic-atlas-spike.md`.
+- Related technote: `docs/technotes/arabic-atlas-coverage.md`.

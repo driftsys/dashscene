@@ -472,7 +472,7 @@ fn spawn_pulses(
 const TIMING_VAR: &str = "DASHSCENE_FRAME_TIMING";
 
 /// How many presents one report covers — the sample size
-/// `docs/technotes/2026-07-31-v014-frame-budget.md` states for its own blit
+/// `docs/technotes/frame-budget.md` states for its own blit
 /// measurement, so the two are read in the same units.
 const TIMING_SAMPLE: usize = 240;
 

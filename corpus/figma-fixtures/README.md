@@ -103,7 +103,7 @@ at all: every capture committed before them reports
 `prototypeStartNodeID: null` and an empty `interactions` array on every node,
 which is why nothing in this repository pinned the shape. What the captures
 then showed is recorded in
-`docs/technotes/figma-rest-shapes-the-capture-pinned.md`, including a units
+`docs/technotes/figma-rest-shapes.md`, including a units
 error in Figma's own published REST spec.
 
 Both are written through the Plugin API's `setReactionsAsync`, so each is one
@@ -233,3 +233,19 @@ committed: trademark, rights held by third parties depicted _in_ the
 work (a recognisable person needs a release; artworks and some
 buildings carry separate rights), and whether the uploader had the right
 to apply CC0 at all.
+
+## Publishing the file keys
+
+`manifest.json` carries a Figma **file key** for every fixture, and those keys
+publish with this repository. A key is the identifier in a Figma URL and it
+cannot be rotated: once published it is public permanently.
+
+**The ruling is
+[`docs/decisions/figma-file-keys-are-published.md`](../../docs/decisions/figma-file-keys-are-published.md).**
+It names the ten fixtures it covers, the rules that follow, and the 22 it does
+not cover. Nothing is restated here, so there is no second copy to go stale
+when it is revised.
+
+One caveat that belongs beside the fixtures rather than in the ruling: the
+`linkAccess` value inside a captured `.json` is a snapshot from capture time,
+not the live setting. Check Figma, not the fixture, when the answer matters.

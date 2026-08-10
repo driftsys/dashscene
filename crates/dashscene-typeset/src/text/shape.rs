@@ -1,7 +1,7 @@
 //! rustybuzz shaping into font-unit glyph runs (docs/design/architecture.md),
 //! one run per UAX #9 level run — shaping a mixed-direction string as
 //! a single run mis-orders embedded digits (spike #25,
-//! `docs/technotes/msdf-arabic-atlas-spike.md`), so the bidi split
+//! `docs/technotes/arabic-atlas-coverage.md`), so the bidi split
 //! comes first.
 //!
 //! Each level run is then split by font coverage before shaping (the

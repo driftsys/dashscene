@@ -29,7 +29,7 @@ field shape the lowering reads was pinned by the capture, and several of them
 empty `strokes` array, a dashed stroke that still reports
 `strokeType: "BASIC"`) contradict what a careful reading of the documentation
 would have produced. See
-`docs/technotes/figma-rest-shapes-the-capture-pinned.md`.
+`docs/technotes/figma-rest-shapes.md`.
 
 The lowering is **not** built in this slice. Guessing the REST JSON shape —
 `absoluteBoundingBox` vs `absoluteRenderBounds`, when `cornerRadius` collapses

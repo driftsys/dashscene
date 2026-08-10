@@ -32,7 +32,7 @@ _fidelity_ measurement — the painter against Figma's own render of the same
 scene. The showcase scenes carry none, so the only thing measurable there is
 _parity_ between the two painters. Layer 4's band half therefore runs on the
 seven oracle frames, and the frame-cost half runs on the showcase scenes, which
-is also where `docs/technotes/2026-07-31-v014-frame-budget.md` took its own
+is also where `docs/technotes/frame-budget.md` took its own
 numbers and what story #586's first comment asks it to extend rather than
 restart.
 

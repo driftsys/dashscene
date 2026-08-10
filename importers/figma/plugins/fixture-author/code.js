@@ -1914,7 +1914,7 @@ function nodeFx() {
 // 0.30000001192092896. This comment previously said REST reports it in
 // milliseconds, on the authority of @figma/rest-api-spec's doc comment, and
 // that comment is wrong — see
-// docs/technotes/figma-rest-shapes-the-capture-pinned.md.
+// docs/technotes/figma-rest-shapes.md.
 //
 // What IS in milliseconds is the separate FLAT `transitionDuration` field
 // REST puts beside the interaction (300 for the same reaction). The two live

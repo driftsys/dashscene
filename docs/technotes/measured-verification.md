@@ -1,4 +1,4 @@
-# Measured verification — the pattern behind the goldens, the oracles and the guards
+# Technote — measured verification — the pattern behind the goldens, the oracles and the guards
 
 Informative. This note names a pattern the repository already follows and
 records why each part of it exists. It **binds nothing**: every rule described
@@ -51,7 +51,7 @@ exist without one.
 | sensitivity guard            | in use — [`goldens.md`](../design/goldens.md) uses the term directly, and calls the practice the "demonstrated-sensitivity discipline" |
 | the oracle triad             | new label here; the three classes are standard terms from the software-testing literature                                              |
 | two-bound calibration        | new label here; the practice is story #671's, recorded in [`golden-comparison-space.md`](../decisions/golden-comparison-space.md)      |
-| kind-assigned band           | new label here; the rule is stated in [`2026-07-26-tolerance-band-coverage.md`](2026-07-26-tolerance-band-coverage.md)                 |
+| kind-assigned band           | new label here; the rule is stated in [`tolerance-band-coverage.md`](tolerance-band-coverage.md)                                       |
 | the two-axis gate            | new label here; the construct is issue #422's ruling                                                                                   |
 
 ### 1. The corpus and the expectations are separate artifacts
@@ -200,7 +200,7 @@ edge, a blurred shadow's falloff and an MSDF glyph edge disagree with a
 design-source export for different reasons, so one global budget would either
 reject a correct blur or accept a broken edge. Three bands are pinned and
 asserted distinct by `the_three_rule_bands_are_pinned_and_distinct`, and
-[`2026-07-26-tolerance-band-coverage.md`](2026-07-26-tolerance-band-coverage.md)
+[`tolerance-band-coverage.md`](tolerance-band-coverage.md)
 states the assignment rule: "a frame is assigned the band whose _kind_ of
 residual it carries, not the one its magnitude happens to fit", because
 `v08-baseline` was predicted into one band and measured into another.

@@ -39,7 +39,7 @@ Two committed fixtures are the whole input:
 - `corpus/figma-fixtures/prototype-refused.json` — fifteen `refused-*` nodes,
   one per construct that must be named rather than dropped (P4).
 
-`docs/technotes/figma-rest-shapes-the-capture-pinned.md` §"The
+`docs/technotes/figma-rest-shapes.md` §"The
 prototype-interaction shapes" is the specification. Read it before the code;
 it is more precise than this file and it was written from the payload.
 

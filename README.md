@@ -244,6 +244,9 @@ wrong way:
   design record.
 - [`docs/decisions/`](docs/decisions/) — every decision taken since, each traced
   to what it affects.
+- [`docs/technotes/prior-art.md`](docs/technotes/prior-art.md) — how dashscene
+  relates to nearby projects, and what it is built on. Start here if you are
+  wondering how this compares to something you already use.
 - [`docs/features.md`](docs/features.md) — what the system does today and what
   is planned, feature by feature, written for a non-engineering reader.
 - [`docs/figma-support.md`](docs/figma-support.md) — which Figma features

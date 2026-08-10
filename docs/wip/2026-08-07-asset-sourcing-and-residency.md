@@ -15,7 +15,7 @@
     builds on docs/technotes/runtime-content.md §2 (downloaded raster),
              §7 (the placeholder contract),
              docs/decisions/downloaded-raster-needs-no-vector-engine.md,
-             docs/technotes/2026-07-26-hifi-bank-size-analysis.md,
+             docs/technotes/hifi-bank-size.md,
              docs/decisions/compress-raster-only.md,
              docs/decisions/native-astc-codec-table.md
 
@@ -159,7 +159,7 @@ done late and worse.
 
 ## The size question, answered by measurement rather than argument
 
-`docs/technotes/2026-07-26-hifi-bank-size-analysis.md` already has the
+`docs/technotes/hifi-bank-size.md` already has the
 numbers, and they do not point one way:
 
 - A 380×380 image goes to **12.3 %** of canonical under HiFi and **4.6 %**

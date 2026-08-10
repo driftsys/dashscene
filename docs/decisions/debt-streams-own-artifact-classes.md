@@ -9,7 +9,7 @@
     related  docs/decisions/pre-v1-hardening-slice.md (the slice this governs),
              docs/decisions/v02-flex-goldens-per-construct.md (the per-construct
              byte-golden rule), docs/decisions/dsb-frozen-fixture-r7-guard.md,
-             docs/technotes/2026-07-26-tolerance-band-coverage.md, epics #362,
+             docs/technotes/tolerance-band-coverage.md, epics #362,
              #475, #438, #439
 
 ## Context

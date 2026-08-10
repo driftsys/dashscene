@@ -27,7 +27,7 @@ use std::time::Duration;
 
 /// How many frames one report covers.
 ///
-/// The sample size `docs/technotes/2026-07-31-v014-frame-budget.md` states for
+/// The sample size `docs/technotes/frame-budget.md` states for
 /// its own measurement, and the one `demo/src/shell.rs` uses, so the three are
 /// read in the same units.
 pub const TIMING_SAMPLE: usize = 240;

@@ -3,7 +3,7 @@
     status   accepted (story #27, 2026-07-12)
     scope    crates/dashscene-typeset atlas module — tool invocation
              (atlas/tool.rs)
-    evidence docs/technotes/msdf-arabic-atlas-spike.md (spike #25)
+    evidence docs/technotes/arabic-atlas-coverage.md (spike #25)
     related  docs/decisions/q1-msdf-below-14px.md
 
 ## Context

@@ -232,7 +232,7 @@ impl SkiaPainter {
 /// path where `paint()` runs once. A frame loop calls `paint()` sixty times a
 /// second, and a local cache inflates every PNG again on each of them —
 /// measured at 20.4 % of the `surfaces` frame
-/// (`docs/technotes/2026-07-31-v014-frame-budget.md`). Keeping the decodes on
+/// (`docs/technotes/frame-budget.md`). Keeping the decodes on
 /// the painter is the other fix issue #101 named.
 ///
 /// # Why the whole table is the key
@@ -802,7 +802,7 @@ const MSDF_SKSL: &str = r"
 /// sixty times a second. Every scene loads the same three atlases regardless
 /// of what it draws, so a document carrying one glyph run re-inflated 226 508
 /// encoded bytes per frame — about 2 ms
-/// (`docs/technotes/2026-07-31-v014-frame-budget.md`).
+/// (`docs/technotes/frame-budget.md`).
 ///
 /// This is the same defect issue #639 fixed for the [`ImageTable`], in a
 /// different table: the atlases hang off the [`GlyphRunTable`] and are not

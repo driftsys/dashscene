@@ -391,7 +391,7 @@ pub const AA_EDGE: ToleranceBand = ToleranceBand {
 /// 0.000 %, so the gate has the whole budget as headroom rather than a share of
 /// it. The budget is set by the smallest defect it must catch: the layer-clip
 /// removal recorded at 1.585 % in
-/// `docs/technotes/2026-07-26-tolerance-band-coverage.md`. The gate must sit
+/// `docs/technotes/tolerance-band-coverage.md`. The gate must sit
 /// below that, so 1 % — the round number under it — and the two shadow
 /// removals then fail at 2.9x and 2.0x. The number binds: at 2 % the
 /// layer-clip figure passes, and at 3 % the inner-shadow removal passes too.

@@ -236,7 +236,7 @@ Delivers: `dashscene-typeset`'s Latin pipeline (metrics, glyph atlas), and
 the engine measure callback so text drives hug sizing. Spike: Arabic-atlas
 coverage in `msdf-atlas-gen`, run at the slice's start per the original plan
 — already resolved, informing v0.6
-([`technotes/msdf-arabic-atlas-spike.md`](technotes/msdf-arabic-atlas-spike.md)).
+([`technotes/arabic-atlas-coverage.md`](technotes/arabic-atlas-coverage.md)).
 
 Depends on: v0.1. The measure callback additionally needs v0.2 (Taffy
 solve).
@@ -603,7 +603,7 @@ notice. That assertion is the `exit-gate` job, built at the v0.14 close, once
 issue #263 was closed and Actions billing restored.
 
 After `E7` was met, the full real-file-import epic ran outside the slice map
-(2026-07-18/19, [`technotes/2026-07-19-real-file-import.md`](technotes/2026-07-19-real-file-import.md)):
+(2026-07-18/19, [`technotes/real-file-import.md`](technotes/real-file-import.md)):
 two real public Figma files now emit and render end to end under partial-emit,
 and a committed import-fidelity oracle (issue #332) measures the two vocabulary
 paths no `E7` frame covers. What that epic measured is the v0.10 slice below.
@@ -642,7 +642,7 @@ import-fidelity oracle (#332) grew to seven self-authored frames, all captured
 and in band, none touching the frozen `E7` gate. Rotation stays a named refusal
 (no non-axis-aligned transform in either target) and #310 mixed text segments
 demoted to v1 (no `styleOverrideTable` use in either target). Full outcome:
-[`technotes/2026-07-19-v010-real-file-fidelity.md`](technotes/2026-07-19-v010-real-file-fidelity.md);
+[`technotes/import-fidelity.md`](technotes/import-fidelity.md);
 the baked-vector carrier:
 [`decisions/baked-vector-msdf-field.md`](decisions/baked-vector-msdf-field.md).
 The v0.11 breakdown is revised at this close — see v0.11 below.
@@ -665,7 +665,7 @@ what the slice built from it is now in
 [`decisions/dsb-sectioned-container.md`](decisions/dsb-sectioned-container.md),
 [`decisions/dashc-identifies-images-never-decodes.md`](decisions/dashc-identifies-images-never-decodes.md),
 [`design/dsb-container-format.md`](design/dsb-container-format.md) and
-[`technotes/2026-07-26-v011-sections-and-assets.md`](technotes/2026-07-26-v011-sections-and-assets.md),
+[`technotes/document-sections-and-assets.md`](technotes/document-sections-and-assets.md),
 which are what to read.
 
 Revised at the v0.10 close (2026-07-19): v0.10's live hero diff surfaced three
@@ -689,9 +689,9 @@ design and by measurement. The slice leaves 13 open `debt`-labelled issues for t
 ([`decisions/backdrop-blur-is-core-vocabulary.md`](decisions/backdrop-blur-is-core-vocabulary.md)),
 which settled a render-target `GroupComposite` as a backdrop root. The whole
 series, its corrected attribution, and the container's measured size cost are in
-[`technotes/2026-07-26-v011-sections-and-assets.md`](technotes/2026-07-26-v011-sections-and-assets.md);
+[`technotes/document-sections-and-assets.md`](technotes/document-sections-and-assets.md);
 what the slice learned about the tolerance bands themselves is in
-[`technotes/2026-07-26-tolerance-band-coverage.md`](technotes/2026-07-26-tolerance-band-coverage.md).
+[`technotes/tolerance-band-coverage.md`](technotes/tolerance-band-coverage.md).
 The v0.12 breakdown is revised at this close — see v0.12 below.
 
 ### v0.12 — packer + quality profiles — closed
@@ -740,7 +740,7 @@ is, it designs a second family of tolerance bands. v0.11 measured a gap in the c
 first family: across six mutations of the two backdrop-blur frames, the
 `blur-falloff` band caught none, because a 12 % area budget cannot fail on a
 bounded-area defect that moves 2–9 % of a frame
-([`technotes/2026-07-26-tolerance-band-coverage.md`](technotes/2026-07-26-tolerance-band-coverage.md),
+([`technotes/tolerance-band-coverage.md`](technotes/tolerance-band-coverage.md),
 issue #422). The finding is informative and #422 carries the decision, so it
 does not constrain v0.12 by itself. What it does recommend is testable: each
 profile's band should ship with the measured mutation that fails it, which is

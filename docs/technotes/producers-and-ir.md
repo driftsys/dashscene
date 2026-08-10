@@ -119,10 +119,23 @@ Why it is genuinely interesting beyond "OSS":
   reason the token phase-1/phase-2 split exists,
   `docs/decisions/token-resolution-phase-split.md`). Penpot's tokens/variables
   are open.
-- **License-clean fixtures.** Penpot is AGPL/self-hostable, so self-authored
-  Penpot files have none of the Figma Community licensing ambiguity that shapes
+- **License-clean fixtures.** **Self-authored** Penpot files have none of the
+  Figma Community licensing ambiguity that shapes
   `docs/decisions/figma-corpus-self-authored-only.md` — potentially a cleaner
-  fixture source for pure layout-mechanics cases.
+  fixture source for pure layout-mechanics cases. The condition is who authored
+  the design, exactly as that ruling states; self-hosting is convenient but it
+  is not the thing that makes a fixture admissible, and a third-party design
+  uploaded to a self-hosted instance is no cleaner than one downloaded from
+  anywhere else.
+
+  Two corrections to earlier revisions of this bullet. Penpot is **MPL-2.0**,
+  not AGPL
+  (<https://github.com/penpot/penpot/blob/5e91f05a7b87caf46cbf19521dcc6d053839ede4/LICENSE>,
+  retrieved 2026-08-10, pinned to the commit current on that date). And neither
+  licence was ever the reason: a software copyleft governs Penpot's own source,
+  not the licence of a design document somebody authors with it, so no version
+  of that clause bears on fixture cleanliness. Self-hostability matters here
+  only because it removes a platform's terms of service from the question.
 
 Not now: v0/v1 requirements (Arabic text, full Figma auto-layout, 2025 Draw-effect
 triage) are Figma-shaped, and adding Penpot before the Figma path and the DSL both
@@ -139,8 +152,8 @@ corner (Taffy baseline + grid spans) already flagged as least-exercised (Q-4).
 DECISION → [`no-gui-toolkit-dependency.md`](../decisions/no-gui-toolkit-dependency.md)
 
 The reasonable alternative to writing this was building on an existing Rust GUI
-toolkit. Slint is the nearest candidate — DESIGN already credits the
-Taffy/Servo/Bevy/Slint/Zed lineage — so it is the one evaluated here.
+toolkit. Slint is the nearest candidate in that ecosystem, so it is the one
+evaluated here.
 
 **The requirements are about rendering somewhere else.** Slint describes itself as
 "an open-source declarative GUI toolkit to build native user interfaces for Rust,
@@ -162,9 +175,11 @@ a statement about dashscene rather than about any toolkit:
 
 **The licence decides it independently of any of that.** Slint's framework is
 triple-licensed, and a user may choose any one of the three
-(<https://github.com/slint-ui/slint/blob/master/LICENSE.md>, retrieved 2026-08-10):
+([LICENSE.md](https://github.com/slint-ui/slint/blob/54774e5234e26be2c046024aad22521bc00121a2/LICENSE.md),
+retrieved 2026-08-10, pinned to the commit current on that date):
 a royalty-free licence for proprietary desktop, mobile and web applications at no
-cost, which excludes embedded systems; GPL-3.0-only at no cost for open-source
+cost, conditional on disclosing that you use Slint and excluding embedded
+systems; GPL-3.0-only at no cost for open-source
 software on any platform including embedded; and a commercial licence for
 proprietary use including embedded. dashscene targets embedded hardware for
 proprietary products, so of those three only the commercial licence applies.

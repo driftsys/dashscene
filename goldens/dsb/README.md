@@ -92,7 +92,7 @@ so the file is 4345 bytes against the RAW golden's 4189. HiFi makes this
 particular asset *larger*: 256 texels are 4 blocks at 8x8, 64 bytes that Zstd
 stores in 33, and the 216 bytes of KTX2 framing around them have a floor a
 93-byte PNG does not. The corpus-wide numbers, where the saving is real, are in
-`docs/technotes/2026-07-26-hifi-bank-size-analysis.md`.
+`docs/technotes/hifi-bank-size.md`.
 
 **What this golden cannot catch.** It has one asset, so every asset index in it
 is 0 and every manifest row count is 1. An ordering, deduplication, or

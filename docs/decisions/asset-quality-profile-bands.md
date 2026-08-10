@@ -11,7 +11,7 @@
              docs/decisions/native-astc-codec-table.md (the per-target codecs),
              docs/decisions/asset-model-content-addressed-blobs.md (what a
              binding is), docs/decisions/baked-vector-msdf-field.md,
-             docs/technotes/2026-07-26-tolerance-band-coverage.md and issue
+             docs/technotes/tolerance-band-coverage.md and issue
              #422 (what a band has to be able to fail), issue #544 and
              goldens/tooling/tests/perceptual_calibration.rs (section 5 —
              where these bands land on SSIMULACRA2 and FLIP), issue #549
