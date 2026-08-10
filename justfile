@@ -162,10 +162,26 @@ secrets:
     git archive HEAD | tar -x -C "$export_dir"
     cp .gitleaksignore .gitleaks.toml "$export_dir/"
     ( cd "$export_dir" && gitleaks dir . --config .gitleaks.toml )
-    echo "── gitleaks: full history ──"
-    gitleaks git --log-opts="--all" --config .gitleaks.toml
+    # History is gated against a recorded baseline rather than by
+    # .gitleaksignore. A fingerprint is <file>:<rule>:<line>, and the same
+    # content sits at many different line numbers across history, so
+    # fingerprints never converge there. Comparing the distinct <rule>:<secret>
+    # set against .secrets-history-baseline fails on anything new while staying
+    # quiet about what has already been read.
+    echo "── gitleaks: full history (against the triaged baseline) ──"
+    hist=$(mktemp) && trap 'rm -f "$hist" "$tmp"' EXIT
+    gitleaks git --log-opts="--all" --config .gitleaks.toml \
+        --report-format json --report-path "$hist" >/dev/null 2>&1 || true
+    new=$(jq -r '.[] | "\(.RuleID):\(.Secret)"' "$hist" | sort -u \
+          | grep -vxFf <(grep -vE '^#|^[[:space:]]*$' .secrets-history-baseline) || true)
+    if [ -n "$new" ]; then
+        echo "history: NEW findings not in .secrets-history-baseline — triage before publishing:"
+        printf '  %s\n' $new
+        exit 1
+    fi
+    echo "history: clean — $(jq 'length' "$hist") findings, all in the $(grep -vc '^#\|^[[:space:]]*$' .secrets-history-baseline) triaged pairs"
     echo "── pattern grep: every object in history ──"
-    tmp=$(mktemp) && trap 'rm -f "$tmp"' EXIT
+    tmp=$(mktemp)
     n=$(git rev-list --objects --all | tee >(wc -l > "$tmp.count") | awk '{print $1}' \
           | git cat-file --batch > "$tmp"; cat "$tmp.count"); rm -f "$tmp.count"
     # Fail closed: an incomplete object store is not a clean scan.
