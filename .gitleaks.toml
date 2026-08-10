@@ -37,3 +37,23 @@ id = "figma-pat"
 description = "Figma personal access token"
 regex = '''figd_[A-Za-z0-9_-]{20,}'''
 keywords = ["figd_"]
+
+# --- the triage records themselves -----------------------------------------
+#
+# `.secrets-triaged` and `.secrets-history-baseline` enumerate the values they
+# triage, so gitleaks finds every one of them there. These are the only paths
+# excluded anywhere in this configuration, and the exclusion is safe for a
+# reason that holds for no other file: their entire content is, by definition,
+# values already read and ruled on. Writing a value into one of them IS the act
+# of triaging it.
+#
+# They were previously pinned in .gitleaksignore by fingerprint, and a
+# fingerprint pins a line number. Both files are sorted, so triaging one new
+# pair shifted up to 26 fingerprints and broke the tree gate — making the
+# documented recovery from one gate the thing that breaks the other.
+[[allowlists]]
+description = "the triage records, whose content is triaged values by construction"
+paths = [
+  '''\.secrets-triaged$''',
+  '''\.secrets-history-baseline$''',
+]

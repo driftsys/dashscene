@@ -212,8 +212,11 @@ secrets:
     # `<path>:<rule>:<line>`, and an absolute path makes every one miss.
     echo "── gitleaks: tracked content at HEAD ──"
     mkdir -p "$work/head"
+    # No `cp` of the config or the ignore file: `git archive` already carries
+    # both, because both are tracked. Copying the working-tree versions in
+    # would let an uncommitted .gitleaksignore line silence a finding on a scan
+    # whose whole point is what is in the commit rather than what is on disk.
     git archive HEAD | tar -x -C "$work/head"
-    cp .gitleaksignore .gitleaks.toml "$work/head/"
     ( cd "$work/head" && gitleaks dir . --config .gitleaks.toml )
 
     # --- gate 2: history, against the triaged baseline ----------------------
@@ -251,27 +254,45 @@ secrets:
     #
     # Plain commands, never a command substitution wrapping a pipeline, so
     # `set -euo pipefail` actually sees a failure of git, awk or cat-file.
-    echo "── pattern grep: every object in history ──"
-    git rev-list --objects --all > "$work/objects"
-    n=$(wc -l < "$work/objects" | tr -d ' ')
-    awk '{print $1}' "$work/objects" | git cat-file --batch > "$work/blobs"
-    # An incomplete object store is not a clean scan.
-    if grep -qE '^[0-9a-f]{40} missing$' "$work/blobs"; then
-        echo "pattern grep: ABORT — the object store is incomplete."
-        echo "  $(grep -cE '^[0-9a-f]{40} missing$' "$work/blobs") objects could not be read."
-        echo "  A shallow, blobless or partial clone cannot be scanned. Fix with:"
-        echo "      git fetch --unshallow      # shallow"
-        echo "      git clone (no --filter)    # blobless or partial"
+    echo "── pattern grep: every object that would be published ──"
+    # SCOPE: objects reachable from a ref — which is exactly the set `git push`
+    # sends. That is the question a publication gate asks.
+    #
+    # `git cat-file --batch-all-objects` was tried and rejected. It reaches
+    # 20,003 objects here against 9,869 reachable, and the extra half is
+    # unreachable: amended-away commits, and residue from a vendored Skia fetch
+    # that pulled Chromium's zlib tests into this object store. Scanned, it
+    # reports 12 hits, of which eight are a generated alphabet sequence in
+    # compression test data and two are this recipe's own test fixtures. None
+    # can ever be published, because git does not push unreachable objects — so
+    # the wider scan buys permanent false positives and no coverage.
+    #
+    # THE RESIDUAL RISK IT LEAVES, stated plainly: a credential that was pushed
+    # and then removed by a force-push still lives on the remote, which serves
+    # it by SHA indefinitely. No local scan can see that, including this one.
+    # The mitigation is to rotate the credential, not to scan harder.
+    #
+    # A partial clone has fewer objects present rather than objects missing, so
+    # like a shallow clone it defeats the scan silently. Refuse it.
+    if [ -n "$(git config --get extensions.partialclone || true)" ] \
+       || [ -n "$(git config --get remote.origin.partialclonefilter || true)" ]; then
+        echo "ABORT — this is a partial clone; its object store is incomplete."
+        echo "  Re-clone without --filter to scan."
         exit 1
     fi
-    hits=$(grep -aoE "figd_[A-Za-z0-9_-]{20,}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{30,}|sk-ant-[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{35}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}" "$work/blobs" \
+    # Streamed, not materialized: the previous revision wrote 86 MB to a temp
+    # file on every push and grew with history.
+    git rev-list --objects --all > "$work/oids"
+    n=$(wc -l < "$work/oids" | tr -d ' ')
+    hits=$(awk '{print $1}' "$work/oids" | git cat-file --batch \
+          | grep -aoE "figd_[A-Za-z0-9_-]{20,}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{30,}|sk-ant-[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{35}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}" \
           | sort -u | grep -vxF "$(grep -vE '^#|^[[:space:]]*$' .secrets-triaged)" || true)
     if [ -n "$hits" ]; then
         echo "pattern grep: FOUND — triage before publishing, then add to .secrets-triaged:"
         printf '%s\n' "$hits" | sed 's/^/  /'
         exit 1
     fi
-    echo "pattern grep: clean — $n objects read, none missing"
+    echo "pattern grep: clean — $n publishable objects read"
 
 # Full non-build verification: the regression tier + lint + audit. Not the
 # sanity tier — `check` is what `build` and the pre-push hook run, so it takes
