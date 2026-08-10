@@ -32,9 +32,10 @@ Notes:
   runtime-provided content: downloaded images, streamed Glance-like producers,
   Lottie triage, and the ThorVG-to-texture escape hatch.
 - [prior-art.md](prior-art.md) — projects solving nearby problems, and what
-  dashscene is built on. **The only page here that describes another project**;
-  every claim in it is checked against that project's own repository, with a
-  retrieval date.
+  dashscene is built on. The entry point for how dashscene relates to its
+  neighbours, and the only place a claim about one carries a pinned citation and
+  a retrieval date. Where it and another note disagree, prior-art is the one
+  with the dates on it and the other is the one to check.
 - [glossary.md](glossary.md) — project, graphics, and tooling terms used across
   the notes, plus a principle / requirement / target-hardware-rule /
   open-question shorthand.

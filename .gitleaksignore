@@ -13,7 +13,9 @@
 #
 # Publishing these keys is a separate question from whether they are secrets:
 # ten fixtures carry "linkAccess": "view", so the key alone opens the file.
-# That is a publication decision and this file does not settle it.
+# That question is settled in docs/decisions/figma-file-keys-are-published.md —
+# the keys publish, and the ten stay viewable so a reader can check the importer
+# against the source design. This file only records that they are not secrets.
 
 corpus/figma-fixtures/lowering-variant-topology.json:generic-api-key:955
 corpus/figma-fixtures/lowering-variant-topology.json:generic-api-key:963

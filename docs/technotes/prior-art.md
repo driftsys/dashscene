@@ -3,11 +3,17 @@
 Other projects that solve nearby problems, and the parts of the ecosystem
 dashscene is built on.
 
-**This is the only page in the repository that describes another project.**
-Everywhere else — the README, the design records, the crate docs — describes
-what dashscene does and the constraints it works under. A comparison written
-into a design record goes stale where nobody is looking; here it has one home,
-one retrieval date, and one person's responsibility to re-check it.
+**This page is the entry point for how dashscene relates to nearby projects,
+and the only place a claim about one carries a pinned citation and a retrieval
+date.** It is not the only page that mentions another project, and saying so
+would be false: [`glossary.md`](glossary.md) defines eleven of them in one line
+each, [`producers-and-ir.md`](producers-and-ir.md) §4–§5 carries the Penpot and
+build-vs-adopt analyses, and
+[`rendering-and-painters.md`](rendering-and-painters.md) §8 carries a
+performance comparison written before this page existed and not yet reconciled
+with it. Those are linked from here rather than duplicated, and where one of
+them disagrees with this page, **this page is wrong until proven otherwise** —
+it is the one with the dates on it.
 
 **Every factual claim below is either checked against the project's own
 repository on the date given, or it is not made.** Where a question would need
@@ -44,7 +50,13 @@ a royalty-free licence covering proprietary desktop, mobile and web use, which
 excludes embedded systems; GPL-3.0-only, covering open-source software on any
 platform including embedded; or a commercial licence covering proprietary use
 including embedded
-([LICENSE.md](https://github.com/slint-ui/slint/blob/master/LICENSE.md)).
+([LICENSE.md](https://github.com/slint-ui/slint/blob/54774e5234e26be2c046024aad22521bc00121a2/LICENSE.md),
+pinned to the commit that was current on the retrieval date).
+The royalty-free tier carries a condition worth stating precisely: it is free
+"as long as you disclose that you use Slint (for example with the `AboutSlint`
+widget or the Slint badge); without that disclosure, use the Commercial
+license."
+
 Slint draws its own output; dashscene hands a document to renderers it does not
 own. The full reasoning, including why Slint is not a code source for this
 repository, is in
@@ -108,8 +120,31 @@ on and would not exist without.
 - **[msdf-atlas-gen](https://github.com/Chlumsky/msdf-atlas-gen)** and
   **[msdfgen](https://github.com/Chlumsky/msdfgen)** — the multi-channel signed
   distance field generator behind the glyph atlas.
-- **[Taffy, Servo, Bevy, Slint and Zed](../design/architecture.md)** — the
-  lineage the architecture record credits for the ideas this design grew from.
 - **[astcenc](https://github.com/ARM-software/astc-encoder)** — Arm's ASTC
-  encoder, vendored and Apache-2.0. See
-  `crates/dashpack-astcenc-sys/vendor/VENDOR.md`.
+  encoder, vendored and Apache-2.0. Attribution is in
+  [`NOTICE`](../../NOTICE), with provenance and the steps to re-derive the copy
+  in [`vendor/VENDOR.md`](../../crates/dashpack-astcenc-sys/vendor/VENDOR.md).
+
+Content, not code, and equally depended on:
+
+- **[Inter](https://github.com/rsms/inter)** and
+  **[Noto Sans](https://github.com/notofonts/latin-greek-cyrillic)**, Latin and
+  Arabic, under the SIL Open Font License 1.1. Noto Sans Arabic is what R1's
+  shaped-Arabic verification renders; without it the requirement could not be
+  tested at all.
+- **Four CC0 photographic payloads from
+  [Wikimedia Commons](https://commons.wikimedia.org)** — sources, retrieval
+  dates and the verification method are in
+  [`corpus/photo/README.md`](../../corpus/photo/README.md).
+
+[`NOTICE`](../../NOTICE) is the canonical attribution record; this section is a
+reader's summary of it and defers to it wherever the two differ.
+
+**On lineage.** Earlier revisions of this repository credited a
+"Taffy/Servo/Bevy/Slint/Zed lineage" for the ideas the architecture grew from,
+and this page repeated it as though `docs/design/architecture.md` recorded it.
+It does not — the phrase survives only in `docs/archive/`. Taffy is a real
+dependency and is credited above; the others are projects whose designs were
+read, which is not the same relationship and does not belong in a list headed
+"what dashscene is built on". Slint in particular is **not** a dependency; see
+[`no-gui-toolkit-dependency.md`](../decisions/no-gui-toolkit-dependency.md).

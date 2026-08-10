@@ -237,23 +237,17 @@ to apply CC0 at all.
 ## Publishing the file keys
 
 `manifest.json` carries a Figma **file key** for every fixture, and those keys
-publish with this repository. A key is the identifier in a Figma URL, and it
+publish with this repository. A key is the identifier in a Figma URL and it
 cannot be rotated: once published it is public permanently.
 
-Ten of these files were captured while their sharing was set so that anyone
-with the link could view them. **That is deliberate and is kept.** A reviewer
-who can open the source design beside the captured JSON can check that the
-importer produces what the design actually says, which is how P5/R7 — the
-design file stays the source of truth — is demonstrated rather than asserted.
-Each of the ten was read page by page, comments included, before publication.
+**The ruling is `docs/decisions/figma-file-keys-are-published.md`** — read it
+there rather than here. Two consequences bind anyone touching this directory:
 
-Two rules follow, and they are the price of that decision:
-
-- **Nothing else goes in these files.** No scratch pages, no notes, no
-  unrelated work. The file is a fixture and its whole contents are public.
-- **A new fixture's sharing is set explicitly**, not left to inherit from team
-  or project settings. Inherited access can change later without anyone
-  touching this repository.
+- **Nothing else goes in a link-viewable fixture file.** No scratch pages, no
+  notes, no unrelated work. Its whole contents are public. The ten files this
+  applies to are named in the decision record.
+- **A new fixture's sharing is set explicitly**, never left to inherit from team
+  or project settings, which can change without any commit here.
 
 Note that the `linkAccess` value inside a captured `.json` is a snapshot from
 capture time, not the live setting. Check Figma, not the fixture, when the
