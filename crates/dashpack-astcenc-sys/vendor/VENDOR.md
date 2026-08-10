@@ -51,11 +51,16 @@ Comparing that file set against `astcenc/` must report no differences.
 
 astcenc is Apache-2.0. Its license text is kept verbatim at
 `astcenc/LICENSE.txt`, and every vendored file keeps its
-`SPDX-License-Identifier: Apache-2.0` header and Arm copyright notice. The rest
-of this workspace is MIT, so `dashpack-astcenc-sys` declares
-`license = "MIT AND Apache-2.0"`: the binding code and the build script are
-MIT, the vendored sources stay Apache-2.0. Upstream ships no `NOTICE` file, so
-Apache-2.0 section 4(d) adds nothing to carry.
+`SPDX-License-Identifier: Apache-2.0` header and Arm copyright notice.
+
+The rest of this workspace is Apache-2.0 as well
+(`docs/decisions/apache-2-0-for-the-patent-grant.md`), so
+`dashpack-astcenc-sys` inherits `license.workspace = true` and needs no
+compound expression. Until 2026-08-10 the workspace was MIT and this crate
+declared `license = "MIT AND Apache-2.0"`; both halves are now the same
+licence. Upstream ships no `NOTICE` file, so Apache-2.0 section 4(d) adds
+nothing to carry beyond the attribution this repository's own `NOTICE`
+records.
 
 ## Build configuration
 

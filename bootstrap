@@ -223,7 +223,26 @@ install_jq() {
   esac
 }
 
+# gitleaks backs `just secrets`, which `just check` runs. It is not installed
+# here: it publishes no single-file binary this script can verify by checksum
+# the way git-std, nextest and jq are, and a secret scanner fetched over an
+# unverified path is the wrong thing to add to a bootstrap. Report its absence
+# instead, with the one-line install, so a fresh clone learns about it here
+# rather than from a failing `just check`.
+check_gitleaks() {
+  if command -v gitleaks >/dev/null 2>&1; then
+    log "gitleaks present: $(command -v gitleaks)"
+    return
+  fi
+  log "note: gitleaks is not installed — 'just secrets' and 'just check' need it"
+  case "$(uname -s)" in
+    Darwin) log "      install with: brew install gitleaks" ;;
+    *)      log "      install from: https://github.com/gitleaks/gitleaks/releases" ;;
+  esac
+}
+
 install_git_std
 install_nextest
 install_jq
+check_gitleaks
 exec git std bootstrap

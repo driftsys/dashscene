@@ -16,10 +16,19 @@ action alleging the work infringes. Publishing the repository makes the
 difference material: MIT would leave contributors free to contribute code
 and later assert a patent over it.
 
-Every commit in this repository is by one author, and the repository has
-never been public, so relicensing needs no third party's agreement and no
-history rewrite — a licence is granted at distribution, not stamped on each
-commit.
+Relicensing needs no third party's agreement and no history rewrite — a
+licence is granted at distribution, not stamped on each commit.
+
+**On authorship.** `git shortlog -sne` shows two author identities —
+`Sebastien Tasson <sebastien.tasson@gmail.com>` and
+`stasson <stasson@users.noreply.github.com>` — which are two git
+configurations belonging to the repository owner, not two copyright holders.
+`stasson@users.noreply.github.com` is a GitHub-issued no-reply address for
+that same account. The `Co-Authored-By:` trailers name assistant models used
+during development; those hold no copyright in the output.
+
+This is recorded because an auditor reading the public history sees two names
+on the commits and should not have to infer that they are one person.
 
 ## Options
 
@@ -68,5 +77,11 @@ Option 3, Apache-2.0 alone.
   record supersedes it for this repository; the house style itself is
   driftsys-wide and is not changed here.
 - Contributions arrive under Apache-2.0. A contributor licence agreement is
-  not required for that — §5 already places inbound contributions under the
-  same terms — so the project takes a DCO sign-off rather than a CLA.
+  not required for that: §5 already places inbound contributions under the
+  same terms.
+- **A DCO sign-off is intended and is not yet implemented.** Nothing in
+  `CONTRIBUTING.md` asks for `Signed-off-by`, and `git std lint` checks
+  conventional-commit shape rather than trailers, so today an outside
+  contribution would arrive without one and nothing would notice. This is a
+  gap to close before the repository accepts outside contributions, not a
+  property it currently has.

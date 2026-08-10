@@ -142,22 +142,54 @@ audit:
 # separate a history finding from a working-tree one, scan a `git archive
 # HEAD` export with `gitleaks dir` and difference the two reports.
 secrets:
-    @echo "── gitleaks: working tree ──"
-    gitleaks dir . --config .gitleaks.toml
-    @echo "── gitleaks: full history ──"
+    #!/usr/bin/env bash
+    # A shebang recipe, so the whole gate runs under one shell with
+    # `set -euo pipefail`. Written as separate `@` lines it took only the last
+    # pipeline stage's status, which made the grep fail *open*: on a blobless
+    # clone `git cat-file` emits `<oid> missing` instead of content, nothing
+    # matched, and the recipe reported clean over a history it never read.
+    set -euo pipefail
+    # Scan committed content, not the directory. `gitleaks dir` does not honour
+    # .gitignore, so pointing it at `.` walks `target/` — 923 MB after a
+    # `cargo doc`, and it reports findings in build artifacts nobody publishes.
+    # Exporting HEAD also makes the tree scan answer the question that matters:
+    # what is in the commit, not what is on this disk.
+    echo "── gitleaks: tracked content at HEAD ──"
+    # Run from inside the export and scan `.`, so gitleaks emits repo-relative
+    # paths. A fingerprint in .gitleaksignore is `<path>:<rule>:<line>`, so
+    # scanning by absolute path makes every fingerprint miss.
+    export_dir=$(mktemp -d) && trap 'rm -rf "$export_dir"' EXIT
+    git archive HEAD | tar -x -C "$export_dir"
+    cp .gitleaksignore .gitleaks.toml "$export_dir/"
+    ( cd "$export_dir" && gitleaks dir . --config .gitleaks.toml )
+    echo "── gitleaks: full history ──"
     gitleaks git --log-opts="--all" --config .gitleaks.toml
-    @echo "── pattern grep: every object in history ──"
-    @! git rev-list --objects --all | awk '{print $1}' | git cat-file --batch 2>/dev/null \
-        | grep -aoE "figd_[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}" \
-        | sort -u \
-        | grep -vE "^(AKIAQ4GOSFWC4KC5SY6U|AKIAQ4GOSFWCZHCZBGZX)$" \
-        | grep . || (echo "pattern grep: FOUND — triage before publishing" && exit 1)
-    @echo "pattern grep: clean"
+    echo "── pattern grep: every object in history ──"
+    tmp=$(mktemp) && trap 'rm -f "$tmp"' EXIT
+    n=$(git rev-list --objects --all | tee >(wc -l > "$tmp.count") | awk '{print $1}' \
+          | git cat-file --batch > "$tmp"; cat "$tmp.count"); rm -f "$tmp.count"
+    # Fail closed: an incomplete object store is not a clean scan.
+    if grep -qE '^[0-9a-f]{40} missing$' "$tmp"; then
+        echo "pattern grep: ABORT — the object store is incomplete."
+        echo "  $(grep -cE '^[0-9a-f]{40} missing$' "$tmp") objects could not be read."
+        echo "  A shallow, blobless or partial clone cannot be scanned. Fix with:"
+        echo "      git fetch --unshallow      # shallow"
+        echo "      git clone (no --filter)    # blobless/partial"
+        exit 1
+    fi
+    hits=$(grep -aoE "figd_[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}" "$tmp" \
+          | sort -u | grep -vxFf <(grep -vE '^#|^[[:space:]]*$' .secrets-triaged) || true)
+    if [ -n "$hits" ]; then
+        echo "pattern grep: FOUND — triage before publishing, then add to .secrets-triaged:"
+        printf '  %s\n' $hits
+        exit 1
+    fi
+    echo "pattern grep: clean — $n objects read, none missing"
 
 # Full non-build verification: the regression tier + lint + audit. Not the
 # sanity tier — `check` is what `build` and the pre-push hook run, so it takes
 # the tier that is the gate (docs/decisions/test-tiers.md).
-check: test-regression lint audit wasm-painter wasm-host c-abi
+check: test-regression lint audit secrets wasm-painter wasm-host c-abi
 
 # Everything short of a PR: assemble + check.
 build: assemble check

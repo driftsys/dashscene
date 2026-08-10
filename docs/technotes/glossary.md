@@ -222,8 +222,11 @@ uses recomposition. Referenced for the code-DSL ergonomics and the perf comparis
 (`@figma/rest-api-spec`). Its auto-layout needs Figma≠CSS lowering in `dashc`.
 
 **Flutter** — Google's Dart UI framework with its own renderer (Skia, now
-Impeller), used in shipping embedded and in-vehicle products. A reference point
-when comparing frame-time behaviour.
+Impeller). Used in embedded and in-vehicle products: Toyota Connected publishes
+`ivi-homescreen`, "a Flutter Linux C++ embedder for desktop and
+embedded/automotive displays"
+(<https://github.com/toyota-connected/ivi-homescreen>, retrieved 2026-08-10). A
+reference point when comparing frame-time behaviour.
 
 **Glance** — a Jetpack library that builds Android widgets / Wear tiles with the
 Compose runtime but renders _remotely_ (its composition emits a tree translated to
