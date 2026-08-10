@@ -95,3 +95,28 @@ direction` item now links to the `docs/decisions/` record that holds it;
 `CANDIDATE` and `OPEN` items stay here until they harden into one.
 
 See the `sdd-working-memory-lifecycle` rule.
+
+## Conventions in this directory
+
+**Every title reads `Technote — <subject>`.** No other `docs/` directory uses a
+type prefix: a decision record states its claim as its title, a design record
+names its component. Technotes carry the label because a technote is
+**informative and binds nothing**, and a decision record is normative and binds
+downstream work — a reader arriving from a search result or a link preview
+cannot otherwise tell which they are holding. The prefix says so before the
+first sentence.
+
+**A dated filename means a measurement, not a draft.** Six notes here are named
+`YYYY-MM-DD-…` because what they record was true when it was measured: a bank
+size, a tolerance band, a frame budget, what a slice shipped. Their own status
+lines say when. An undated name is a standing explanation with no expiry — the
+glossary, the guardrails, how to implement a backend.
+
+A dated technote is not working memory. `docs/wip/` holds working memory and
+`docs/archive/` holds spent originals; a measurement note lives here because it
+still explains something, and it keeps its date because the measurement would
+be a lie without one.
+
+**A title names its subject, not the work that produced it.** Not the slice
+that closed, not the spike that ran, not the issue number. Those belong in the
+status block and in the body.

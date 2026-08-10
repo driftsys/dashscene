@@ -18,23 +18,38 @@ link here, not prose.
 
 ## Stack
 
-| Concern           | Choice                              | Why                                                                                  |
-| ----------------- | ----------------------------------- | ------------------------------------------------------------------------------------ |
-| Layout solver     | Taffy (Rust)                        | only engine covering all four Figma modes; CSS Grid native; pure Rust                |
-| Text shaping      | rustybuzz                           | HarfBuzz port, pure Rust; Arabic GSUB/GPOS                                           |
-| Bidi              | unicode-bidi                        | run splitting, RTL                                                                   |
-| Font metrics      | ttf-parser                          | same font tables as FreeType, same numbers                                           |
-| Glyph atlas       | msdf-atlas-gen                      | MSDF quality, keyed by glyph id (contextual forms included)                          |
-| Document format   | FlatBuffers                         | zero-copy mmap load, schema evolution, same schema as wire format                    |
-| Vector baking     | lyon (mesh) / SDF atlas             | arbitrary paths baked at compile time                                                |
-| Reference painter | skia-safe (Skia)                    | full 2D vocabulary; CPU raster = bit-exact deterministic goldens; GPU/GLES on target |
-| Wasm painter      | ~~tiny-skia~~ — retired at v0.15    | the lean painter reaches the browser from the same codebase as native                |
-| Engine painter    | Unity + SDF shader library          | lit world-space rendering; thin C# projection                                        |
-| Lean painter      | custom instanced SDF-quad renderer  | bandwidth-optimal for a quad vocabulary; ~5-10 KLOC                                  |
-| Textures          | KTX2/Basis (UASTC/ETC1S) → ASTC/EAC | small at rest, GPU-native in VRAM                                                    |
-| Figma source      | @figma/rest-api-spec                | official OpenAPI 3.1 types; stable-additive                                          |
+| Concern           | Choice                              | Why                                                                                                |
+| ----------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Layout solver     | Taffy (Rust)                        | only engine covering all four Figma modes; CSS Grid native; pure Rust; proven at scale — see below |
+| Text shaping      | rustybuzz                           | HarfBuzz port, pure Rust; Arabic GSUB/GPOS                                                         |
+| Bidi              | unicode-bidi                        | run splitting, RTL                                                                                 |
+| Font metrics      | ttf-parser                          | same font tables as FreeType, same numbers                                                         |
+| Glyph atlas       | msdf-atlas-gen                      | MSDF quality, keyed by glyph id (contextual forms included)                                        |
+| Document format   | FlatBuffers                         | zero-copy mmap load, schema evolution, same schema as wire format                                  |
+| Vector baking     | lyon (mesh) / SDF atlas             | arbitrary paths baked at compile time                                                              |
+| Reference painter | skia-safe (Skia)                    | full 2D vocabulary; CPU raster = bit-exact deterministic goldens; GPU/GLES on target               |
+| Wasm painter      | ~~tiny-skia~~ — retired at v0.15    | the lean painter reaches the browser from the same codebase as native                              |
+| Engine painter    | Unity + SDF shader library          | lit world-space rendering; thin C# projection                                                      |
+| Lean painter      | custom instanced SDF-quad renderer  | bandwidth-optimal for a quad vocabulary; ~5-10 KLOC                                                |
+| Textures          | KTX2/Basis (UASTC/ETC1S) → ASTC/EAC | small at rest, GPU-native in VRAM                                                                  |
+| Figma source      | @figma/rest-api-spec                | official OpenAPI 3.1 types; stable-additive                                                        |
 
 Term-by-term detail: [glossary.md](../technotes/glossary.md).
+
+**On Taffy being proven at scale.** Taffy's own README lists its users as
+[Servo](https://github.com/servo/servo),
+[Blitz](https://github.com/DioxusLabs/blitz), [Bevy](https://bevyengine.org/)
+and the [Zed](https://zed.dev/) editor via
+[GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui)
+(<https://github.com/DioxusLabs/taffy>, retrieved 2026-08-10). A browser engine,
+a game engine and an editor exercise flexbox and grid harder than this project
+will, which is the argument for adopting the solver rather than writing one.
+
+This is the claim that has circulated here as a "Taffy/Servo/Bevy/Slint/Zed
+lineage" — a phrase that also named Slint, which does not use Taffy, and which
+was sometimes read as dashscene's own ancestry rather than as Taffy's adopters.
+It is recorded here, once and sourced, so it does not have to be restated
+elsewhere.
 
 ## Pipeline
 

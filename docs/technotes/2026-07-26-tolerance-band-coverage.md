@@ -1,4 +1,4 @@
-# Tolerance-band coverage — what the v0.11 blur frames measured about the bands themselves
+# Technote — tolerance-band coverage — what the v0.11 blur frames measured about the bands themselves
 
 Informative. This note records a measurement about the render oracle's three
 pinned tolerance bands, made while wiring the two backdrop-blur frames at the

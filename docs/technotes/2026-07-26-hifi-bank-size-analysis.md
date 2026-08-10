@@ -1,4 +1,4 @@
-# What a HiFi bank costs, measured on the committed corpus
+# Technote — what a HiFi bank costs, measured on the committed corpus
 
 Informative. Recorded at v0.12 story #434, the first derived bank. Nothing
 depends on this note; it exists so the numbers behind two decisions are on

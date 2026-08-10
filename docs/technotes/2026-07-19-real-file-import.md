@@ -1,4 +1,4 @@
-# Importing a real public Figma file, end to end
+# Technote — importing a real public Figma file, end to end
 
     status   informative (technote) — as-built 2026-07-19
     scope    the "full real-file import" epic: dashc figma front end,

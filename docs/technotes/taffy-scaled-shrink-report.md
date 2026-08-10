@@ -1,4 +1,4 @@
-# The taffy scaled-shrink report (debt #269)
+# Technote — taffy scaled-shrink, and what it does not affect
 
     status   informative — the text to file upstream, plus the verified
              minimal reproduction it carries

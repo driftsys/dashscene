@@ -1,4 +1,4 @@
-# v0.10 real-file fidelity — what the hero renders, and what remains
+# Technote — v0.10 real-file fidelity — what the hero renders, and what remains
 
     status   informative (technote) — as-built 2026-07-19
     scope    the v0.10 slice (epic #343): the vocabulary it added, the

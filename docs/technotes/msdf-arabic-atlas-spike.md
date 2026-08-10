@@ -1,4 +1,4 @@
-# Spike: Arabic coverage in msdf-atlas-gen
+# Technote — Arabic coverage in msdf-atlas-gen
 
     status   done — findings recorded on issue #25
     story    #25 (epic #24, v0.5 — text I: Latin)

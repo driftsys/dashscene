@@ -1,4 +1,4 @@
-# Measured verification — the pattern behind the goldens, the oracles and the guards
+# Technote — measured verification — the pattern behind the goldens, the oracles and the guards
 
 Informative. This note names a pattern the repository already follows and
 records why each part of it exists. It **binds nothing**: every rule described

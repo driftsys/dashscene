@@ -1,4 +1,4 @@
-# Figma plugin-API findings from authoring the tier-1 fixtures
+# Technote — Figma plugin-API findings from authoring the tier-1 fixtures
 
     status   informative
     date     2026-07-12
