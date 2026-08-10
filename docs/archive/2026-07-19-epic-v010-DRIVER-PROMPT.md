@@ -11,7 +11,7 @@ building.
    PR + `/code-review`, squash-merge). Follow it exactly.
 2. `docs/wip/2026-07-19-epic-v010-real-file-fidelity.md` — the epic plan:
    waves, per-story touchpoints, models, DoD, the user fixture schedule.
-3. `docs/technotes/2026-07-19-real-file-import.md` — what the prior epic
+3. `docs/technotes/real-file-import.md` — what the prior epic
    proved and how (the reprobe loop, partial-emit, the import oracle).
 4. `gh pr view 337` — the reference precedent: the import-oracle story,
    including the TDD bug fixes it folded and its review flow.

@@ -224,7 +224,7 @@ pub struct Node {
     /// reflow everything after it — so it is refused (P4). Absent means
     /// `AUTO` (in flow). No capture carries it; the shape is Figma's
     /// documented enum, flagged as capture-unpinned in
-    /// `docs/technotes/figma-rest-shapes-the-capture-pinned.md`.
+    /// `docs/technotes/figma-rest-shapes.md`.
     #[serde(default)]
     pub layout_positioning: Option<String>,
     /// `true` makes strokes consume layout space (CSS border-like) — the

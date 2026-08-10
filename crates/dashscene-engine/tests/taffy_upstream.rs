@@ -5,7 +5,7 @@
 //! Two roles, and both matter:
 //!
 //! 1. It is the minimal reproduction the upstream report carries
-//!    (`docs/technotes/taffy-scaled-shrink-report.md`), kept in the repo so
+//!    (`docs/technotes/taffy-scaled-shrink.md`), kept in the repo so
 //!    it cannot drift from the report.
 //! 2. It is a **canary**. Every assertion here pins taffy's *current, wrong*
 //!    answer, with the correct answer named beside it. When a taffy upgrade

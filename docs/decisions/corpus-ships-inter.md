@@ -66,7 +66,7 @@ and the painter that blurs it (#393) a further 0.0640, taking the hero to
 **1.8829 %** at 5 % fuzz on the same day. An earlier version of this sentence
 credited the whole step to #393; the decomposition was measured at the v0.11
 close and is in the technote below.
-`docs/technotes/2026-07-26-v011-sections-and-assets.md` carries the whole series
+`docs/technotes/document-sections-and-assets.md` carries the whole series
 and is the current figure's home; this record's own numbers are the ones Inter
 earned, and stop there.
 

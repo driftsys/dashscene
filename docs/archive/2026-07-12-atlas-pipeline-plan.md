@@ -678,7 +678,7 @@ use serde::Deserialize;
 
 use super::AtlasError;
 
-/// The spike-validated version (docs/technotes/msdf-arabic-atlas-spike.md).
+/// The spike-validated version (docs/technotes/arabic-atlas-coverage.md).
 /// Anything else is a named error — R7 forbids silent generator drift.
 pub const REQUIRED_TOOL_VERSION: &str = "1.4.0";
 

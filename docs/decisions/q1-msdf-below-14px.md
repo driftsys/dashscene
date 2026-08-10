@@ -5,7 +5,7 @@
     scope    resolves docs/technotes/open-questions.md's Q-1 for v0;
              binds #27 (atlas pipeline), #28/#30 (typeset + Skia glyph
              quads), and the validator's text checks (#373)
-    evidence docs/technotes/msdf-arabic-atlas-spike.md (spike #25)
+    evidence docs/technotes/arabic-atlas-coverage.md (spike #25)
 
 ## Context
 

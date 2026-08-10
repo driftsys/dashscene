@@ -30,7 +30,7 @@ it reproduces the taffy 0.12 defect the negative-margin workarounds exist for
 (debt #269), in plain taffy with no dashscene types, and asserts taffy's
 current wrong answers. A taffy upgrade that fixes the defect turns those
 assertions red, which is the signal to retire both workarounds. The report
-text is `docs/technotes/taffy-scaled-shrink-report.md`.
+text is `docs/technotes/taffy-scaled-shrink.md`.
 
 ## The solve
 

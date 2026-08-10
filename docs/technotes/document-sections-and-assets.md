@@ -1,4 +1,4 @@
-# Technote — v0.11 document sections and the asset model — what shipped, and what the hero measures
+# Technote — document sections and the asset model: what shipped, and what the hero measures
 
     status   informative (technote) — as-built 2026-07-26
     scope    epic #344's own scope: the sectioned `.dsb` envelope, the

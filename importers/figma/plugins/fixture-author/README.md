@@ -275,7 +275,7 @@ capture as below.
   milliseconds (`300` for the same reaction). An earlier version of this
   paragraph said the nested field was milliseconds, following
   `@figma/rest-api-spec`'s doc comment, which is wrong — see
-  `docs/technotes/figma-rest-shapes-the-capture-pinned.md`.
+  `docs/technotes/figma-rest-shapes.md`.
 
 - **jpeg-fill** / **gif-fill**: none. Like `v03-paint`'s checkerboard, the
   image bytes are inlined in `code.js` as hex (a real baseline JPEG /

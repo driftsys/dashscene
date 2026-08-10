@@ -1,4 +1,4 @@
-# Technote — the first frame budget, measured on the v0.14 showcase host
+# Technote — the first frame budget, measured on the showcase host
 
 Informative. Recorded at the v0.14 close (epic #568), which built the first
 thing in this repository ever to draw into a window. Nothing depends on this

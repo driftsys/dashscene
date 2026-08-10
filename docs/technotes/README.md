@@ -10,10 +10,10 @@ now holds it instead of restating the ruling.
 
 Notes:
 
-- [msdf-arabic-atlas-spike.md](msdf-arabic-atlas-spike.md) — methodology and
+- [arabic-atlas-coverage.md](arabic-atlas-coverage.md) — methodology and
   findings of the #25 spike: Arabic contextual-form coverage in
   msdf-atlas-gen and the Q-1 small-size legibility check.
-- [figma-rest-shapes-the-capture-pinned.md](figma-rest-shapes-the-capture-pinned.md)
+- [figma-rest-shapes.md](figma-rest-shapes.md)
   — the Figma REST field shapes the tier-1 capture settled, several of which
   contradict what the documentation suggests (story #139).
 - [implementing-a-backend.md](implementing-a-backend.md) — how to implement a
@@ -48,28 +48,28 @@ Notes:
 - [engineering-guardrails.md](engineering-guardrails.md) — the design-review
   and slice-sign-off checklist `G-1`..`G-23`, each anchored to the principle,
   requirement, target-hardware rule, or open question it makes falsifiable.
-- [2026-07-19-real-file-import.md](2026-07-19-real-file-import.md) — how the
+- [real-file-import.md](real-file-import.md) — how the
   project took two real public Figma files end to end through `dashc` to a
   rendered `.dsb` under partial-emit, and what remained (the full real-file
   import epic, 2026-07-18/19).
-- [2026-07-19-v010-real-file-fidelity.md](2026-07-19-v010-real-file-fidelity.md)
+- [import-fidelity.md](import-fidelity.md)
   — what the v0.10 slice delivered (standard-ligatures-off, JPEG/GIF fills,
   baked-vector MSDF shapes, stacked fills, node opacity/mask/hidden lowering, the
   component-instance trim fix), the seven in-band import-oracle frames, and the
   Landify hero's fidelity state at the close (solves to Figma's 1440×4263 canvas,
   ~5–6 % edge-dominated live diff; #368 font weight, backdrop-blur, #336).
-- [2026-07-26-v011-sections-and-assets.md](2026-07-26-v011-sections-and-assets.md)
+- [document-sections-and-assets.md](document-sections-and-assets.md)
   — what epic #344's own scope delivered (the sectioned `.dsb` envelope, the
   content-addressed asset table, the shared image gate), the one-time R7 golden
   re-baseline and how it was attributed, the container's size cost measured on
   the hero, and the live hero at the close (1.8829 % at 5 % fuzz, decomposed:
   #394 1.6222 points, #393 0.0640; sections and assets moved zero pixels).
-- [2026-07-26-tolerance-band-coverage.md](2026-07-26-tolerance-band-coverage.md)
+- [tolerance-band-coverage.md](tolerance-band-coverage.md)
   — what the two v0.11 backdrop-blur frames measured about the render oracle's
   three tolerance bands: `blur-falloff` cannot fail on a bounded-area blur
   defect, `aa-edge` is blind to an amplitude one, and neither dominates the
   other. Informative; the decision is #422.
-- [2026-07-31-v014-frame-budget.md](2026-07-31-v014-frame-budget.md) — the
+- [frame-budget.md](frame-budget.md) — the
   project's first frame budget, taken on the v0.14 showcase host: the animated
   cost per scene, the static case measured separately (it is zero frames, not a
   cheap frame), and a controlled before-and-after for issue #101 on a real
@@ -82,7 +82,7 @@ Notes:
   gate. Also what a surviving mutant indicts, and where the same discipline
   already governs measurements that produce no image. Informative and binds
   nothing; it links to the records that do.
-- [taffy-scaled-shrink-report.md](taffy-scaled-shrink-report.md) — the upstream
+- [taffy-scaled-shrink.md](taffy-scaled-shrink.md) — the upstream
   report for the taffy 0.12 defect the negative-margin workarounds exist for
   (debt #269): where the two scaled-shrink expressions disagree, the minimal
   plain-taffy reproduction, the margin sweep, and the suggested fix. The
@@ -106,17 +106,21 @@ downstream work — a reader arriving from a search result or a link preview
 cannot otherwise tell which they are holding. The prefix says so before the
 first sentence.
 
-**A dated filename means a measurement, not a draft.** Six notes here are named
-`YYYY-MM-DD-…` because what they record was true when it was measured: a bank
-size, a tolerance band, a frame budget, what a slice shipped. Their own status
-lines say when. An undated name is a standing explanation with no expiry — the
-glossary, the guardrails, how to implement a backend.
+**A title and a filename name the subject, not the work that produced them.**
+Not the slice that closed, not the spike that ran, not the issue number, and
+not the date. Those belong in the status block, which every note here carries,
+and in the body.
 
-A dated technote is not working memory. `docs/wip/` holds working memory and
-`docs/archive/` holds spent originals; a measurement note lives here because it
-still explains something, and it keeps its date because the measurement would
-be a lie without one.
+Six notes were once named `YYYY-MM-DD-…`, and four titles carried a slice
+number. Both were duplication: every one of those notes already stated its date
+and its slice in its own status block, so the name added nothing a reader could
+not get by opening the file — while making a standing reference look like a
+session capture, and putting a slice number into a permanent name.
 
-**A title names its subject, not the work that produced it.** Not the slice
-that closed, not the spike that ran, not the issue number. Those belong in the
-status block and in the body.
+**A note that records a measurement keeps its date in the body, and that date
+is load-bearing.** A bank size, a tolerance band, a frame budget, what a slice
+shipped: each was true when measured, and a measurement without its date is a
+claim without a scope. Those notes stay here rather than moving to
+`docs/archive/`, because they still explain something. `docs/wip/` holds
+working memory and `docs/archive/` holds spent originals; neither is where a
+live measurement belongs.

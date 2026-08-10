@@ -103,7 +103,7 @@ at all: every capture committed before them reports
 `prototypeStartNodeID: null` and an empty `interactions` array on every node,
 which is why nothing in this repository pinned the shape. What the captures
 then showed is recorded in
-`docs/technotes/figma-rest-shapes-the-capture-pinned.md`, including a units
+`docs/technotes/figma-rest-shapes.md`, including a units
 error in Figma's own published REST spec.
 
 Both are written through the Plugin API's `setReactionsAsync`, so each is one

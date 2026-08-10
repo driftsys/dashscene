@@ -245,7 +245,7 @@ deliberate, reviewed change rather than a silent drift:
   few pixels but grossly wrong ones, where a falloff approximation leaves
   many pixels slightly wrong. Both terms bind and neither is redundant:
   the amplitude mutation recorded in
-  `docs/technotes/2026-07-26-tolerance-band-coverage.md` fails the
+  `docs/technotes/tolerance-band-coverage.md` fails the
   residual at 23.559 % while measuring 0.422 % at the gate's threshold.
   A frame passes only when it is inside both.
 - **`MSDF_TEXT`** — `channel_delta = 50`, `differing_fraction = 0.03`. MSDF

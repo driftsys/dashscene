@@ -4,7 +4,7 @@
     scope    dashscene-typeset — one font per declared charset through
              v0.6; per-style font lists and per-font charset unions
              deferred
-    evidence docs/technotes/msdf-arabic-atlas-spike.md §4; tracking
+    evidence docs/technotes/arabic-atlas-coverage.md §4; tracking
              issue #219 (v0.7)
 
 ## Context

@@ -18,7 +18,7 @@
              per-run feature posture),
              docs/decisions/weight-selection-in-the-cascade.md (coverage
              ranks above weight; the additive seam),
-             docs/technotes/msdf-arabic-atlas-spike.md (offsets and
+             docs/technotes/arabic-atlas-coverage.md (offsets and
              mis-ordered-digits findings, spike #25)
 
 ## Purpose
@@ -407,7 +407,7 @@ is its pen position on that baseline with the shaping offsets applied:
 HarfBuzz/rustybuzz offsets are y-up, so `y = baseline_y - y_offset *
 scale`. Per-glyph offsets are carried through, not dropped — GPOS
 positions marks through offsets (spike #25 finding,
-`docs/technotes/msdf-arabic-atlas-spike.md`). For offset-less Latin
+`docs/technotes/arabic-atlas-coverage.md`). For offset-less Latin
 glyphs the negation is a no-op (`g.y == baseline_y`); Arabic marks
 exercise both directions (harakat above the baseline, Noto Sans
 Arabic's composed dot glyphs below).
@@ -772,4 +772,4 @@ from #33).
   `docs/decisions/css-fonts-4-weight-matching-non-fatal.md`,
   `docs/decisions/weight-substitution-is-a-render-time-diagnostic.md`,
   `docs/decisions/atlas-directory-per-script-weight.md`.
-- Related technote: `docs/technotes/msdf-arabic-atlas-spike.md`.
+- Related technote: `docs/technotes/arabic-atlas-coverage.md`.

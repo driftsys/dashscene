@@ -284,7 +284,7 @@ and vertical alignment. Verified in `crates/dashc/tests/text_lowering.rs`.
 3. **A layer blur shall be discriminated by its `blurType`.** A plain
    `LAYER_BLUR` warns; a `LAYER_BLUR` carrying `blurType: "PROGRESSIVE"` is an
    error. The effect type alone cannot decide the band. See
-   `docs/technotes/figma-rest-shapes-the-capture-pinned.md`.
+   `docs/technotes/figma-rest-shapes.md`.
 
 4. **Every diagnostic shall name its own node.** A diagnostic shall carry the
    node's DFS index and its slash-joined ancestor-name chain.
@@ -352,4 +352,4 @@ debt #273). The exceptions to fixture pinning — the two v0.8 wrap refusals
 `strokesIncludedInLayout`, `itemReverseZIndex`, the `MIN`/`CENTER`/`MAX`
 alignment values — are synthetic from Figma's documented enums and say so
 at their tests
-(`docs/technotes/figma-rest-shapes-the-capture-pinned.md`).
+(`docs/technotes/figma-rest-shapes.md`).

@@ -1,9 +1,9 @@
-# Technote — v0.10 real-file fidelity — what the hero renders, and what remains
+# Technote — import fidelity: what the hero renders, and what remains
 
     status   informative (technote) — as-built 2026-07-19
     scope    the v0.10 slice (epic #343): the vocabulary it added, the
              import-fidelity oracle it grew, and the Landify hero outcome
-    see      docs/technotes/2026-07-19-real-file-import.md (the prior epic
+    see      docs/technotes/real-file-import.md (the prior epic
              that made the hero emit and render),
              docs/decisions/baked-vector-msdf-field.md,
              docs/decisions/masks-and-group-opacity.md,
@@ -12,7 +12,7 @@
              docs/decisions/image-assets-cross-boundary-b.md,
              docs/decisions/unsupported-figma-constructs-refuse-the-compile.md
 
-The prior epic (`docs/technotes/2026-07-19-real-file-import.md`) took two real
+The prior epic (`docs/technotes/real-file-import.md`) took two real
 public Figma files end to end under partial-emit — they _emitted_ and
 _rendered_, with a long tail of named skip-with-warning holes. v0.10 closed the
 measured gaps in that tail, in measured-value order, until the Landify hero

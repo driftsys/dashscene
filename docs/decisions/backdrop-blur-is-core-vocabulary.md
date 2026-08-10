@@ -46,7 +46,7 @@ So the construct did carry the largest remaining step, but almost all of it
 came from the node becoming present, not from the effect being rendered — and
 the effect's own contribution is small in this metric because a blur moves many
 pixels a little, which `AE -fuzz 5%` mostly does not count
-(`docs/technotes/2026-07-26-v011-sections-and-assets.md`). Nothing in this
+(`docs/technotes/document-sections-and-assets.md`). Nothing in this
 record's reasoning depends on the size of that number; it is corrected here so
 the prediction is not read as confirmed.
 

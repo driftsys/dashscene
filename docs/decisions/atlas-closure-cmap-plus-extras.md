@@ -4,7 +4,7 @@
              deferred to #34, delivered there 2026-07-16 (see Resolution)
     scope    crates/dashscene-typeset atlas module — closure
              (atlas/closure.rs), `AtlasSpec::extra_glyph_ids`
-    evidence docs/technotes/msdf-arabic-atlas-spike.md (spike #25)
+    evidence docs/technotes/arabic-atlas-coverage.md (spike #25)
 
 ## Context
 

@@ -30,7 +30,7 @@ grid/wrap/baseline layout lowering). The requirements are in
 
 The Figma REST field shapes the capture pinned — several of which contradict
 what the documentation suggests — are in
-`docs/technotes/figma-rest-shapes-the-capture-pinned.md`.
+`docs/technotes/figma-rest-shapes.md`.
 
 ## The pipeline
 

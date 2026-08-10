@@ -762,7 +762,7 @@ is a diagnostic. For fixtures, the table is committed as
 The v0.5 spike (issue #25, worked ahead of epic #1 per
 `docs/decisions/text-track-early-start.md`) validated the pinned
 text-stack tooling against Arabic. Full methodology and evidence:
-`docs/technotes/msdf-arabic-atlas-spike.md`.
+`docs/technotes/arabic-atlas-coverage.md`.
 
 - **msdf-atlas-gen holds for Arabic.** Version 1.4.0 accepts glyph-id
   input (`-glyphset`), loads GSUB-only glyphs (no cmap entry) without

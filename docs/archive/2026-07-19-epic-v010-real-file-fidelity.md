@@ -5,7 +5,7 @@
             Figma's canvas (1440x4263) and pixel-diffs inside a declared
             band. Every new vocabulary lands with a self-authored committed
             frame in the import oracle (goldens/oracle/import-manifest.json).
-    refs    epic #343; docs/technotes/2026-07-19-real-file-import.md;
+    refs    epic #343; docs/technotes/real-file-import.md;
             the 2026-07-19 census: 72x VECTOR, 31x LIGA text, 1x stacked
             fills; solve gap 613px.
 

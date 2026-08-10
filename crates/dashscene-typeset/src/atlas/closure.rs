@@ -9,7 +9,7 @@
 //!   glyph-closure operation, so the closure shapes the charset in the
 //!   contexts that trigger those substitutions and unions the output
 //!   glyph ids — spike #25's proven method
-//!   (docs/technotes/msdf-arabic-atlas-spike.md). Each character is
+//!   (docs/technotes/arabic-atlas-coverage.md). Each character is
 //!   shaped in the four Arabic joining contexts
 //!   (isolated/initial/medial/final), each haraka on a base letter,
 //!   and every ordered character pair (for ligatures such as lam-alef

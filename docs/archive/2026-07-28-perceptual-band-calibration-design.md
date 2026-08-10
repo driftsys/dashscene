@@ -19,7 +19,7 @@
              #435 (the profile-preview oracle and `just triptych`),
              #422 (a band has to be able to fail),
              docs/decisions/asset-quality-profile-bands.md (the bands),
-             docs/technotes/2026-07-26-tolerance-band-coverage.md (classify
+             docs/technotes/tolerance-band-coverage.md (classify
              from the measured residual, never from expectation),
              docs/wip/2026-07-28-photorealistic-3d-content.md (target content)
 
@@ -184,7 +184,7 @@ to fit the band. If a band picks a rung that scores badly on both metrics, that
 is evidence the band is wrong, and the direction of the fix is to retune the
 band against the asset.
 
-This is `docs/technotes/2026-07-26-tolerance-band-coverage.md`'s rule: classify
+This is `docs/technotes/tolerance-band-coverage.md`'s rule: classify
 from the measured residual, never from expectation.
 
 ### 8. FLIP viewing conditions

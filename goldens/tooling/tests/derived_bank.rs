@@ -304,7 +304,7 @@ fn the_manifest_is_what_makes_the_hifi_file_resolvable() {
 fn the_packer_report_measures_what_the_profile_cost() {
     // The size analysis story #434 asks for, as an assertion rather than only
     // as printed output. The numbers themselves are recorded in
-    // `docs/technotes/2026-07-26-hifi-bank-size-analysis.md`.
+    // `docs/technotes/hifi-bank-size.md`.
     let corpus = corpus();
     let bank = pack_bank(Profile::HiFi, &corpus.assets()).expect("packs");
     let report = bank.report();

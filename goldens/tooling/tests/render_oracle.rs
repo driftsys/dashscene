@@ -965,7 +965,7 @@ fn the_blur_falloff_gate_binds_independently_of_the_residual() {
 ///
 /// This is the whole argument for there being two, and it is measurable rather
 /// than rhetorical. The two synthetic defects below mirror the two real ones
-/// recorded in `docs/technotes/2026-07-26-tolerance-band-coverage.md`:
+/// recorded in `docs/technotes/tolerance-band-coverage.md`:
 ///
 /// - a **wide, low-amplitude** error is what moving the panel fill alpha from
 ///   0.20 to 0.35 produced — 23.559 % on this band's residual, 0.422 % at

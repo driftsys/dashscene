@@ -12,7 +12,7 @@
              docs/decisions/dsb-sectioned-container.md,
              docs/decisions/dashc-identifies-images-never-decodes.md,
              docs/design/dsb-container-format.md and
-             docs/technotes/2026-07-26-v011-sections-and-assets.md.
+             docs/technotes/document-sections-and-assets.md.
              GARDENED FURTHER 2026-07-26 (v0.12, story #436): "Targets and
              codec plan" in full — the per-target codec table, the Wave 3
              NVIDIA-BC7 hedge, and the RAW/HiFi/LoFi naming convention live
@@ -405,5 +405,5 @@ Still open:
 - **fadvise policy** for multi-bank files (fault only the bound bank).
 - **Bank size analysis, beyond the container's own cost.** The container's
   alignment cost is now measured on the hero: about 1 % of the imported file
-  (`docs/technotes/2026-07-26-v011-sections-and-assets.md`). The HiFi/LoFi/multi
+  (`docs/technotes/document-sections-and-assets.md`). The HiFi/LoFi/multi
   -bank growth question is untouched and belongs to the packer.

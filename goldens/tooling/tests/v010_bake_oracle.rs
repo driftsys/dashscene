@@ -87,7 +87,7 @@ const BAKE_TOLERANCE: f64 = 0.03;
 /// shape over tolerance at one rung is re-baked at the next; the last entry is
 /// the ceiling (the arabic-atlas spike found diminishing returns past ~48 px/em
 /// for small content, so the ceiling is finite — `docs/technotes/
-/// msdf-arabic-atlas-spike.md`). A shape still over tolerance at the ceiling is
+/// arabic-atlas-coverage.md`). A shape still over tolerance at the ceiling is
 /// unfieldable.
 const PX_PER_EM_LADDER: [f64; 5] = [DEFAULT_PX_PER_EM, 64.0, 96.0, 128.0, 192.0];
 

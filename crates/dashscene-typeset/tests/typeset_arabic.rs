@@ -5,7 +5,7 @@
 //! coverage — the direction/feature coupling with the `atlas` module.
 //! Glyph-id pins are the committed Noto Sans Arabic fixture's values,
 //! cross-checked against spike #25
-//! (`docs/technotes/msdf-arabic-atlas-spike.md`).
+//! (`docs/technotes/arabic-atlas-coverage.md`).
 
 use std::collections::BTreeSet;
 

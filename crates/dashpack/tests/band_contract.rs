@@ -13,7 +13,7 @@
 //! fails it, measured (`MUTATIONS`), and the whole contract table is recorded
 //! rather than described (`TABLE`). Nothing below is predicted: the numbers
 //! were produced by running this code and reading them off, which is also why
-//! `docs/technotes/2026-07-26-tolerance-band-coverage.md`'s rule applies —
+//! `docs/technotes/tolerance-band-coverage.md`'s rule applies —
 //! classify from the measured residual, never from expectation.
 //!
 //! # Why more than one asset per class

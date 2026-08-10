@@ -811,7 +811,7 @@ record, check it makes the section's claims.
 
 | Section                 | Already covered by                                                                                                         |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| §14 Arabic atlas spike  | `technotes/msdf-arabic-atlas-spike.md` + `decisions/q1-msdf-below-14px.md`                                                 |
+| §14 Arabic atlas spike  | `technotes/arabic-atlas-coverage.md` + `decisions/q1-msdf-below-14px.md`                                                   |
 | §15 boundary B unified  | `decisions/boundary-b-unification.md`                                                                                      |
 | §16 sectioned container | `decisions/dsb-sectioned-container.md`                                                                                     |
 | §17 design session      | `decisions/asset-model-content-addressed-blobs.md`, `id-model-strings-compile-to-indices.md`, `remoting-two-transports.md` |
