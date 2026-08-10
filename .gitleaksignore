@@ -77,3 +77,35 @@ importers/figma/src/closure_test.ts:generic-api-key:871
 # findings return for re-triage, which is the intended behaviour.
 .secrets-triaged:aws-access-token:24
 .secrets-triaged:aws-access-token:25
+
+# The triage records themselves contain the values they triage, so gitleaks
+# finds them there. Ignored by fingerprint. Editing either file shifts these
+# lines and the findings return for re-triage, which is intended.
+.secrets-history-baseline:aws-access-token:21
+.secrets-history-baseline:aws-access-token:22
+.secrets-history-baseline:generic-api-key:23
+.secrets-history-baseline:generic-api-key:24
+.secrets-history-baseline:generic-api-key:25
+.secrets-history-baseline:generic-api-key:26
+.secrets-history-baseline:generic-api-key:27
+.secrets-history-baseline:generic-api-key:28
+.secrets-history-baseline:generic-api-key:29
+.secrets-history-baseline:generic-api-key:30
+.secrets-history-baseline:generic-api-key:31
+.secrets-history-baseline:generic-api-key:32
+.secrets-history-baseline:generic-api-key:33
+.secrets-history-baseline:generic-api-key:34
+.secrets-history-baseline:generic-api-key:35
+.secrets-history-baseline:generic-api-key:36
+.secrets-history-baseline:generic-api-key:37
+.secrets-history-baseline:generic-api-key:38
+.secrets-history-baseline:generic-api-key:39
+.secrets-history-baseline:generic-api-key:40
+.secrets-history-baseline:generic-api-key:41
+.secrets-history-baseline:generic-api-key:42
+.secrets-history-baseline:generic-api-key:43
+.secrets-history-baseline:generic-api-key:44
+.secrets-history-baseline:generic-api-key:45
+.secrets-history-baseline:generic-api-key:46
+.secrets-history-baseline:generic-api-key:47
+.secrets-history-baseline:generic-api-key:48
