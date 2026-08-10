@@ -1,0 +1,27 @@
+dashscene
+Copyright 2026 driftsys
+
+This product includes software developed at driftsys.
+
+Licensed under the Apache License, Version 2.0 — see LICENSE.
+
+This repository vendors one third-party source tree:
+
+- `crates/dashpack-astcenc-sys/vendor/astcenc/` — Arm's ASTC encoder,
+  Copyright (c) 2011-2024 Arm Limited, licensed under the Apache License,
+  Version 2.0. Every vendored file keeps its own SPDX header and Arm
+  copyright notice; none is modified. The full provenance, the license
+  text, and the steps to re-derive the copy are recorded at
+  `crates/dashpack-astcenc-sys/vendor/VENDOR.md`.
+
+  Upstream ships no NOTICE file of its own, so nothing from it is
+  reproduced here beyond the attribution above.
+
+The corpus carries third-party content under its own terms, none of it
+linked into any crate:
+
+- `corpus/fonts/` — Inter and Noto Sans (Latin and Arabic), under the SIL
+  Open Font License 1.1. Each family keeps its `OFL.txt` beside it.
+- `corpus/photo/` — four photographic and photorealistic-render payloads
+  from Wikimedia Commons, all CC0. Sources, retrieval dates and the
+  verification method are recorded in `corpus/photo/README.md`.

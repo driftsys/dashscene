@@ -145,9 +145,14 @@ members in total, nineteen of them the crates above.
     just test-all     every tier in one run.
     just lint         clippy -D warnings, cargo fmt --check, dprint check, markdownlint
     just fmt          reformat everything in place
-    just check        regression tier + lint + audit + the two wasm gates +
-                      c-abi, which compiles the committed header from C and
-                      checks the two halves agree (needs a C toolchain)
+    just check        regression tier + lint + audit + secrets + the two wasm
+                      gates + c-abi, which compiles the committed header from C
+                      and checks the two halves agree (needs a C toolchain)
+    just secrets      gitleaks over HEAD and history, plus a pattern-grep
+                      backstop over every object. Needs gitleaks, which
+                      bootstrap does not install — it reports its absence
+    just licenses     copy LICENSE and NOTICE into every publishable crate;
+                      Apache-2.0 §4 requires both to travel inside the package
     just verify       commit-message lint over the branch range, then build — run before opening a PR
     just wasm         build dashc for wasm32-unknown-unknown
     just wasm-painter build dashscene-gpu for wasm32 — the gate that keeps a
@@ -169,7 +174,12 @@ members in total, nineteen of them the crates above.
     just deno-check   just deno-test   just deno-fmt   just deno-capture
                       — scoped to importers/figma/
     just book         serve the mdBook docs locally
-    just install      ./bootstrap — installs git hooks, git-std, dprint, markdownlint-cli, cargo-nextest
+    just install      ./bootstrap — installs git hooks, git-std, dprint,
+                      markdownlint-cli, cargo-nextest. It does **not** install
+                      gitleaks, which `just check` needs: gitleaks publishes no
+                      single-file binary bootstrap can verify by checksum, and a
+                      secret scanner fetched over an unverified path is the
+                      wrong thing to add. Bootstrap reports its absence instead
 
 Full recipe set: `justfile`. Conventions behind all of it — publish
 order, `.git-std.toml` versioning, CI job breakdown, why dprint is

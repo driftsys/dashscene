@@ -425,3 +425,43 @@ fn workspace_root() -> PathBuf {
         .expect("demo/ has a parent, which is the workspace root")
         .to_path_buf()
 }
+
+/// Every publishable crate ships `LICENSE` and `NOTICE` inside its package.
+///
+/// Cargo packages only files under a crate's own directory, so a root-level
+/// `LICENSE` and `NOTICE` reach no `.crate` at all. Under MIT that was
+/// cosmetic. Under Apache-2.0 it is not: §4(a) requires giving recipients a
+/// copy of the licence, and §4(d) requires carrying the attribution notices —
+/// which for this workspace means Arm's, for the vendored astcenc sources.
+///
+/// The copies are byte-identical to the root files by construction;
+/// `just licenses` regenerates them, and this test is what makes a drifted or
+/// missing copy fail a build rather than ship.
+#[test]
+fn every_publishable_crate_packages_the_licence_and_notice() {
+    let workspace = workspace_root();
+    let licence = read(workspace.join("LICENSE"));
+    let notice = read(workspace.join("NOTICE"));
+
+    let mut missing = Vec::new();
+    let mut drifted = Vec::new();
+    for name in crates_from_members(&workspace) {
+        let dir = workspace.join("crates").join(&name);
+        if read(dir.join("Cargo.toml")).contains("publish = false") {
+            continue;
+        }
+        for (file, want) in [("LICENSE", &licence), ("NOTICE", &notice)] {
+            let path = dir.join(file);
+            match fs::read_to_string(&path) {
+                Err(_) => missing.push(format!("crates/{name}/{file}")),
+                Ok(got) if got != **want => drifted.push(format!("crates/{name}/{file}")),
+                Ok(_) => {}
+            }
+        }
+    }
+
+    assert!(
+        missing.is_empty() && drifted.is_empty(),
+        "run `just licenses`.\n  missing: {missing:?}\n  drifted from the root copy: {drifted:?}"
+    );
+}

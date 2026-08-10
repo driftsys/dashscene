@@ -172,6 +172,31 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dprint/check@v2.3
 
+  # The publication gate. `just check` runs this locally; without a CI job it
+  # is enforced only where a developer installed gitleaks by hand, which
+  # `bootstrap` deliberately does not do.
+  #
+  # `fetch-depth: 0` is load-bearing. The default depth-1 checkout is a shallow
+  # clone, and `just secrets` aborts on one rather than scanning a truncated
+  # history — measured: a `--depth 1` clone reported "1094 objects read, none
+  # missing" and passed, over a single commit.
+  secrets:
+    name: secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: install gitleaks
+        run: |
+          v=8.30.1
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${v}/gitleaks_${v}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+      - uses: extractions/setup-just@v2
+      - run: just secrets
+
+
   clippy:
     # Compile-heavy: skipped when the diff is documentation only
     # (see the changes job's detect step).
@@ -894,6 +919,7 @@ jobs:
         wasm-build,
         android-build,
         convco,
+        secrets,
         deno,
         atlas-repro,
         render-oracle,
