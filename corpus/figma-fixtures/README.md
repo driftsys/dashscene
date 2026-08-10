@@ -233,3 +233,28 @@ committed: trademark, rights held by third parties depicted _in_ the
 work (a recognisable person needs a release; artworks and some
 buildings carry separate rights), and whether the uploader had the right
 to apply CC0 at all.
+
+## Publishing the file keys
+
+`manifest.json` carries a Figma **file key** for every fixture, and those keys
+publish with this repository. A key is the identifier in a Figma URL, and it
+cannot be rotated: once published it is public permanently.
+
+Ten of these files were captured while their sharing was set so that anyone
+with the link could view them. **That is deliberate and is kept.** A reviewer
+who can open the source design beside the captured JSON can check that the
+importer produces what the design actually says, which is how P5/R7 — the
+design file stays the source of truth — is demonstrated rather than asserted.
+Each of the ten was read page by page, comments included, before publication.
+
+Two rules follow, and they are the price of that decision:
+
+- **Nothing else goes in these files.** No scratch pages, no notes, no
+  unrelated work. The file is a fixture and its whole contents are public.
+- **A new fixture's sharing is set explicitly**, not left to inherit from team
+  or project settings. Inherited access can change later without anyone
+  touching this repository.
+
+Note that the `linkAccess` value inside a captured `.json` is a snapshot from
+capture time, not the live setting. Check Figma, not the fixture, when the
+answer matters.

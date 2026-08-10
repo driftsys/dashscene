@@ -119,10 +119,15 @@ Why it is genuinely interesting beyond "OSS":
   reason the token phase-1/phase-2 split exists,
   `docs/decisions/token-resolution-phase-split.md`). Penpot's tokens/variables
   are open.
-- **License-clean fixtures.** Penpot is AGPL/self-hostable, so self-authored
-  Penpot files have none of the Figma Community licensing ambiguity that shapes
+- **License-clean fixtures.** Penpot is MPL-2.0 and self-hostable
+  (<https://github.com/penpot/penpot/blob/develop/LICENSE>, retrieved
+  2026-08-10), so a self-hosted instance's own files have none of the Figma
+  Community licensing ambiguity that shapes
   `docs/decisions/figma-corpus-self-authored-only.md` — potentially a cleaner
-  fixture source for pure layout-mechanics cases.
+  fixture source for pure layout-mechanics cases. An earlier revision of this
+  note said AGPL; that was wrong, and MPL-2.0 is file-level copyleft rather
+  than network copyleft, so the condition is materially weaker than the one
+  this paragraph was reasoning about.
 
 Not now: v0/v1 requirements (Arabic text, full Figma auto-layout, 2025 Draw-effect
 triage) are Figma-shaped, and adding Penpot before the Figma path and the DSL both

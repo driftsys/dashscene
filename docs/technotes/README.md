@@ -31,6 +31,10 @@ Notes:
 - [runtime-content.md](runtime-content.md) — the decision rule for
   runtime-provided content: downloaded images, streamed Glance-like producers,
   Lottie triage, and the ThorVG-to-texture escape hatch.
+- [prior-art.md](prior-art.md) — projects solving nearby problems, and what
+  dashscene is built on. **The only page here that describes another project**;
+  every claim in it is checked against that project's own repository, with a
+  retrieval date.
 - [glossary.md](glossary.md) — project, graphics, and tooling terms used across
   the notes, plus a principle / requirement / target-hardware-rule /
   open-question shorthand.
