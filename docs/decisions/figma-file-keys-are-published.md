@@ -41,7 +41,16 @@ repository cannot see and that can change without any commit.
 
 ## Choice
 
-Publish all 32 keys. Keep the ten link-viewable files link-viewable.
+Publish the 32 keys — they are in `manifest.json` and cannot be withheld
+without withholding the corpus. Keep the ten link-viewable files
+link-viewable.
+
+**This record rules on those ten only.** The other 22 are `inherit`, which is
+not a state this repository can see, and each still needs the read-through the
+ten had. That is a precondition of publication, tracked as issue #895 — and
+because #895 carries the `debt` label, which this repository defines as
+non-blocking, the blocking status is asserted here instead: **the repository
+does not go public until #895 is closed.**
 
 ## Why
 
@@ -58,16 +67,20 @@ Publish all 32 keys. Keep the ten link-viewable files link-viewable.
 
 ## Consequences
 
-- **Nothing else goes in these files.** No scratch pages, no notes, no unrelated
-  work, no client material. A fixture file's entire contents are public. Note
-  that `trim-demo` deliberately carries a `_`-prefixed scratch layer and a spec
-  note, as `corpus/figma-fixtures/README.md` records — that is fixture content
-  by design, and it is the kind of thing to check rather than assume.
+- **Nothing else goes in the ten.** No scratch pages, no notes, no unrelated
+  work, no client material. A link-viewable fixture's entire contents are
+  public.
+
+  What to look for is not hypothetical: `trim-demo` — which is one of the 22,
+  not one of the ten — deliberately carries a `_`-prefixed scratch layer and a
+  spec note, as `corpus/figma-fixtures/README.md` records. That is fixture
+  content by design there, and it is exactly the kind of thing #895's
+  read-through has to rule on before any of the 22 becomes viewable.
 - **A new fixture's sharing is set explicitly**, never left to inherit.
 - **The 22 `inherit` fixtures are not covered by this ruling.** Their exposure
   depends on Figma team and project settings, which are outside this repository.
   Before publication each needs the same read-through the ten had, and an
-  explicit setting. Tracked as issue #895 rather than assumed to be safe.
+  explicit setting. Tracked as issue #895, which blocks publication.
 - **`linkAccess` in a capture is a snapshot**, recorded when the fixture was
   pulled. It is evidence of what was true then, not of what is true now. Check
   Figma when the answer matters.

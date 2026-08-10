@@ -46,7 +46,7 @@ Scope is settled and revised; do not re-derive it. Read, in order:
 - `docs/wip/2026-07-19-asset-pipeline-profiles-and-baking.md` — **the ungardened
   half is this slice's input.** Its `status` line says which half is as-built and
   which is still live; do not re-garden the as-built half.
-- `docs/technotes/tolerance-band-coverage.md` and issue #422.
+- `docs/technotes/2026-07-26-tolerance-band-coverage.md` and issue #422.
 
 Break #345 into `story`-labeled issues, one per independently workable piece,
 each naming its branch and what it depends on. Four things v0.11 learned that

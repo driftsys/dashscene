@@ -3,17 +3,18 @@
 Other projects that solve nearby problems, and the parts of the ecosystem
 dashscene is built on.
 
-**This page is the entry point for how dashscene relates to nearby projects,
-and the only place a claim about one carries a pinned citation and a retrieval
-date.** It is not the only page that mentions another project, and saying so
-would be false: [`glossary.md`](glossary.md) defines eleven of them in one line
+**This page is the entry point for how dashscene relates to nearby projects.**
+It is not the only page that mentions one, and it is not the only page carrying
+a dated citation — `glossary.md`, `producers-and-ir.md` and
+`docs/design/architecture.md` each carry at least one. What this page is for is
+having them in one place, kept current together: [`glossary.md`](glossary.md) defines eleven of them in one line
 each, [`producers-and-ir.md`](producers-and-ir.md) §4–§5 carries the Penpot and
 build-vs-adopt analyses, and
 [`rendering-and-painters.md`](rendering-and-painters.md) §8 carries a
 performance comparison written before this page existed and not yet reconciled
-with it. Those are linked from here rather than duplicated, and where one of
-them disagrees with this page, **this page is wrong until proven otherwise** —
-it is the one with the dates on it.
+with it. Those are linked from here rather than duplicated. Where one of them
+disagrees with this page, **check this page first** — it makes the strongest
+claim, so it carries the burden of being right.
 
 **Every factual claim below is either checked against the project's own
 repository on the date given, or it is not made.** Where a question would need
@@ -93,10 +94,13 @@ wholesale, and that triage is in [`runtime-content.md`](runtime-content.md)
 §4–§6.
 
 **[ThorVG](https://github.com/thorvg/thorvg)** — MIT, "a production-ready C++
-vector graphics engine supporting SVG and Lottie formats". dashscene's use of
-it is narrow by choice — a render-to-texture escape hatch for runtime vector,
-and an offline frame renderer — because painting the document itself stays with
-dashscene's own painters. That is a scope decision about dashscene.
+vector graphics engine supporting SVG and Lottie formats". **Not used today** —
+nothing in this repository links or invokes it. It is the chosen candidate for
+a future render-to-texture escape hatch for runtime vector and an offline frame
+renderer, recorded in
+[`runtime-vector-via-thorvg-to-texture.md`](../decisions/runtime-vector-via-thorvg-to-texture.md).
+Named here because a reader comparing vector stacks will ask, and the honest
+answer is "decided, not built".
 
 ## What dashscene is built on
 
@@ -110,8 +114,6 @@ on and would not exist without.
 - **[ttf-parser](https://github.com/harfbuzz/ttf-parser)** and
   **[unicode-bidi](https://github.com/servo/unicode-bidi)** — font tables and
   the bidirectional algorithm.
-- **[resvg / usvg / tiny-skia](https://github.com/linebender/resvg)** — the
-  pure-Rust SVG and rasterization stack.
 - **[Skia](https://skia.org)**, via
   [skia-safe](https://github.com/rust-skia/rust-skia) — the reference painter,
   and the oracle every other painter is checked against.
@@ -127,11 +129,13 @@ on and would not exist without.
 
 Content, not code, and equally depended on:
 
-- **[Inter](https://github.com/rsms/inter)** and
-  **[Noto Sans](https://github.com/notofonts/latin-greek-cyrillic)**, Latin and
-  Arabic, under the SIL Open Font License 1.1. Noto Sans Arabic is what R1's
-  shaped-Arabic verification renders; without it the requirement could not be
-  tested at all.
+- **[Inter](https://github.com/rsms/inter)**,
+  **[Noto Sans](https://github.com/notofonts/latin-greek-cyrillic)** and
+  **[Noto Sans Arabic](https://github.com/notofonts/arabic)**, under the SIL
+  Open Font License 1.1. The Arabic face comes from a different upstream than
+  the Latin one, and it is what R1's shaped-Arabic verification renders —
+  without it the requirement could not be tested at all. Pinned releases are in
+  each family's `corpus/fonts/*/README.md`.
 - **Four CC0 photographic payloads from
   [Wikimedia Commons](https://commons.wikimedia.org)** — sources, retrieval
   dates and the verification method are in

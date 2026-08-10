@@ -40,8 +40,10 @@ Term-by-term detail: [glossary.md](../technotes/glossary.md).
 [Servo](https://github.com/servo/servo),
 [Blitz](https://github.com/DioxusLabs/blitz), [Bevy](https://bevyengine.org/)
 and the [Zed](https://zed.dev/) editor via
-[GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui)
-(<https://github.com/DioxusLabs/taffy>, retrieved 2026-08-10). A browser engine,
+[GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui) (a moving
+ref; the pinned claim above is Taffy's README, not Zed's tree)
+([README.md](https://github.com/DioxusLabs/taffy/blob/0875874872e622131324e276dc77392517fd4bb1/README.md),
+retrieved 2026-08-10, pinned to the commit current on that date). A browser engine,
 a game engine and an editor exercise flexbox and grid harder than this project
 will, which is the argument for adopting the solver rather than writing one.
 

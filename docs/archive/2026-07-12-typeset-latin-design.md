@@ -8,7 +8,7 @@
              (rustybuzz, ttf-parser), P1/P2 (one typesetter; painters
              only color), R1 (text quality),
              docs/design/atlas-pipeline.md (seam notes),
-             docs/technotes/arabic-atlas-coverage.md (offsets finding)
+             docs/technotes/msdf-arabic-atlas-spike.md (offsets finding)
     blocks   #29 (measure callback), #30 (glyph painting); v0.6 #32/#33
              build on this pipeline
 

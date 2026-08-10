@@ -14,7 +14,7 @@ work and **Sonnet** for mechanical work.
 2. `.superpowers/sdd/epic-progress.md` — the v0.10 ledger (epic #343 just CLOSED;
    the fidelity findings + these two stories are recorded near the top). Append a
    v0.11 section.
-3. `docs/technotes/import-fidelity.md` — what v0.10 delivered +
+3. `docs/technotes/2026-07-19-v010-real-file-fidelity.md` — what v0.10 delivered +
    the hero exit state (solves to 1440×4263, ~5–6% edge-dominated live diff).
 4. `docs/archive/2026-07-19-hero-fidelity-findings.md` — the **diagnosis** of both
    #336 and #368 (root cause + proposed fix + file:line). Trust it, re-verify it.

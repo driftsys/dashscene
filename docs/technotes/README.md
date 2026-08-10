@@ -34,8 +34,8 @@ Notes:
 - [prior-art.md](prior-art.md) — projects solving nearby problems, and what
   dashscene is built on. The entry point for how dashscene relates to its
   neighbours, and the only place a claim about one carries a pinned citation and
-  a retrieval date. Where it and another note disagree, prior-art is the one
-  with the dates on it and the other is the one to check.
+  a retrieval date. Where it and another note disagree, prior-art is the one to
+  correct first: it makes the strongest claim, so it carries the burden.
 - [glossary.md](glossary.md) — project, graphics, and tooling terms used across
   the notes, plus a principle / requirement / target-hardware-rule /
   open-question shorthand.
@@ -108,14 +108,17 @@ first sentence.
 
 **A title and a filename name the subject, not the work that produced them.**
 Not the slice that closed, not the spike that ran, not the issue number, and
-not the date. Those belong in the status block, which every note here carries,
-and in the body.
+not the date. Those belong in the note itself — in its status block where it
+has one, and in its opening paragraph where it does not. Five notes here carry
+no status block, so "it is in the status block" is not a safe assumption to
+rename against; check the body.
 
 Six notes were once named `YYYY-MM-DD-…`, and four titles carried a slice
-number. Both were duplication: every one of those notes already stated its date
-and its slice in its own status block, so the name added nothing a reader could
-not get by opening the file — while making a standing reference look like a
-session capture, and putting a slice number into a permanent name.
+number. The names were duplicating what the notes said — except where they were
+not: three of the six stated their slice but not their date, so stripping the
+filename removed the measurement date from the repository entirely. Those three
+now carry it in their opening line. Check before renaming that the note says
+what the name says.
 
 **A note that records a measurement keeps its date in the body, and that date
 is load-bearing.** A bank size, a tolerance band, a frame budget, what a slice

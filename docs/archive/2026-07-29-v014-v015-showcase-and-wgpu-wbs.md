@@ -9,7 +9,7 @@
              description of what shipped.
 
              The durable records are docs/design/dashscene-gpu.md (the
-             painter as built), docs/technotes/frame-budget.md
+             painter as built), docs/technotes/2026-07-31-v014-frame-budget.md
              (the frame budget this breakdown asked to be measured by hand),
              docs/decisions/frame-delta-is-clamped-and-the-host-owns-the-clock.md
              (the `dt` ruling below), and

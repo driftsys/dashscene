@@ -1,4 +1,4 @@
-# Technote — taffy scaled-shrink, and what it does not affect
+# Technote — taffy scaled-shrink: the upstream defect, and the reproduction that pins it
 
     status   informative — the text to file upstream, plus the verified
              minimal reproduction it carries

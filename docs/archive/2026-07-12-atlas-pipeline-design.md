@@ -7,7 +7,7 @@
              ttf-parser), R1 (text quality), R7 (byte-reproducible builds),
              P4 (validated vocabulary, named diagnostics),
              docs/decisions/q1-msdf-below-14px.md (32 px/em, pxrange 4),
-             docs/technotes/arabic-atlas-coverage.md (#25 evidence)
+             docs/technotes/msdf-arabic-atlas-spike.md (#25 evidence)
     blocks   #30 (Skia glyph quads), #34 (per-locale charsets)
 
 ## Purpose

@@ -176,7 +176,7 @@ current content, and it feeds `architecture.md` rather than being dropped.
 | §11 Figma access           | `docs/decisions/figma-access-plan-and-pat-policy.md`                                                                |
 | §12 annotator plugin       | `docs/decisions/annotator-plugin-contract-frozen.md`                                                                |
 | §13 token resolution       | `docs/decisions/token-resolution-phase-split.md`                                                                    |
-| §14 Arabic atlas spike     | deleted — already gardened (`technotes/arabic-atlas-coverage.md`, `decisions/q1-msdf-below-14px.md`)                |
+| §14 Arabic atlas spike     | deleted — already gardened (`technotes/msdf-arabic-atlas-spike.md`, `decisions/q1-msdf-below-14px.md`)              |
 | §15 boundary B unified     | deleted — already gardened (`decisions/boundary-b-unification.md`)                                                  |
 | §16 sectioned container    | deleted — already gardened (`decisions/dsb-sectioned-container.md`)                                                 |
 | §17 design session         | deleted — already gardened (asset-model, id-model, remoting records)                                                |

@@ -175,9 +175,11 @@ a statement about dashscene rather than about any toolkit:
 
 **The licence decides it independently of any of that.** Slint's framework is
 triple-licensed, and a user may choose any one of the three
-(<https://github.com/slint-ui/slint/blob/master/LICENSE.md>, retrieved 2026-08-10):
+([LICENSE.md](https://github.com/slint-ui/slint/blob/54774e5234e26be2c046024aad22521bc00121a2/LICENSE.md),
+retrieved 2026-08-10, pinned to the commit current on that date):
 a royalty-free licence for proprietary desktop, mobile and web applications at no
-cost, which excludes embedded systems; GPL-3.0-only at no cost for open-source
+cost, conditional on disclosing that you use Slint and excluding embedded
+systems; GPL-3.0-only at no cost for open-source
 software on any platform including embedded; and a commercial licence for
 proprietary use including embedded. dashscene targets embedded hardware for
 proprietary products, so of those three only the commercial licence applies.

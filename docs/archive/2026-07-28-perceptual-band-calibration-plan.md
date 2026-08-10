@@ -14,7 +14,7 @@
 
 ## Global Constraints
 
-- Every number in this work is **measured, then recorded** — never predicted. Write the assertion with a placeholder, run it, read the value off the failure, paste it in. `docs/technotes/tolerance-band-coverage.md`: classify from the measured residual, never from expectation.
+- Every number in this work is **measured, then recorded** — never predicted. Write the assertion with a placeholder, run it, read the value off the failure, paste it in. `docs/technotes/2026-07-26-tolerance-band-coverage.md`: classify from the measured residual, never from expectation.
 - **Floors are chosen after measurement.** If a band's accepted rung scores below the published rung it implies, that is the finding: it goes in the decision record and a new issue. Do not lower the floor to whatever passed, and do not change a fixture to fit a band.
 - Recorded precision: SSIMULACRA2 and PSNR to **2 decimals**, FLIP mean to **4 decimals**, compared as strings. The rounding is the tolerance. This matches `percent()` in `profile_preview_oracle.rs` and the four-decimal fractions in `band_contract.rs`.
 - Canonical payloads are decoded with the **`png` crate**, never Skia, so the texels match what `crates/dashpack/tests/band_contract.rs` feeds the encoder. The scene half uses Skia's decode, because both its arms are Skia renders.

@@ -240,15 +240,12 @@ to apply CC0 at all.
 publish with this repository. A key is the identifier in a Figma URL and it
 cannot be rotated: once published it is public permanently.
 
-**The ruling is `docs/decisions/figma-file-keys-are-published.md`** — read it
-there rather than here. Two consequences bind anyone touching this directory:
+**The ruling is
+[`docs/decisions/figma-file-keys-are-published.md`](../../docs/decisions/figma-file-keys-are-published.md).**
+It names the ten fixtures it covers, the rules that follow, and the 22 it does
+not cover. Nothing is restated here, so there is no second copy to go stale
+when it is revised.
 
-- **Nothing else goes in a link-viewable fixture file.** No scratch pages, no
-  notes, no unrelated work. Its whole contents are public. The ten files this
-  applies to are named in the decision record.
-- **A new fixture's sharing is set explicitly**, never left to inherit from team
-  or project settings, which can change without any commit here.
-
-Note that the `linkAccess` value inside a captured `.json` is a snapshot from
-capture time, not the live setting. Check Figma, not the fixture, when the
-answer matters.
+One caveat that belongs beside the fixtures rather than in the ruling: the
+`linkAccess` value inside a captured `.json` is a snapshot from capture time,
+not the live setting. Check Figma, not the fixture, when the answer matters.

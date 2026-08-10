@@ -17,7 +17,7 @@ refs     issue #340 (approved design gate, 2026-07-19); epic #343;
          docs/wip/2026-07-19-epic-v010-real-file-fidelity.md (story B1);
          docs/decisions/paint-entry-composition.md;
          docs/decisions/runtime-vector-via-thorvg-to-texture.md;
-         docs/technotes/arabic-atlas-coverage.md;
+         docs/technotes/msdf-arabic-atlas-spike.md;
          crates/dashscene-typeset/src/atlas/ (the glyph MSDF precedent).
 ```
 
@@ -314,7 +314,7 @@ split, the same as the glyph atlas (baked offline, sampled at runtime).
   bake band at 48 is re-baked at a higher `px_per_em` (e.g. 64 → 96) until it
   passes or hits a ceiling. The thin first-light arrows (3px stroke) and the
   smallest hero shapes are the escalation candidates. The arabic-atlas spike
-  (`docs/technotes/arabic-atlas-coverage.md`) found diminishing returns above
+  (`docs/technotes/msdf-arabic-atlas-spike.md`) found diminishing returns above
   ~48 px/em for sub-14px content, so the ceiling is finite; a shape still failing
   at the ceiling becomes a named refusal (emitted through `figma.unsupported`).
 - Escalation is **per-atlas resolution**: a shape needing a higher resolution
