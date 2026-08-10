@@ -27,10 +27,17 @@ off to `git std bootstrap`, which wires up repo-local git hooks.
    this format and drives changelog generation from them.
 4. Run `just verify` before opening a PR. This runs `git std lint
    --range main..HEAD` followed by the full `just build` (assemble, test,
-   lint, audit).
+   lint, audit, secrets).
+
+   The `secrets` step needs [gitleaks](https://github.com/gitleaks/gitleaks),
+   which `./bootstrap` reports on but does not install — `brew install
+   gitleaks`, or a release binary. `just check` has two other external
+   prerequisites `./bootstrap` does not install either — `cargo-audit` for
+   `just audit`, and a C toolchain for `just c-abi`. Each stops the gate
+   rather than being skipped.
 5. Open a PR. CI runs the same gates (`fmt`, `dprint`, `clippy`, `test`,
-   `convco`) plus the path-filtered `deno` job, the `wasm-build` job,
-   and the `atlas-repro` job (byte-reproducibility of the glyph-atlas
+   `convco`, `secrets`) plus the path-filtered `deno` job, the `wasm-build`
+   job, and the `atlas-repro` job (byte-reproducibility of the glyph-atlas
    pipeline, with a cached `msdf-atlas-gen` build), aggregated into a
    single required `ci` check.
 
@@ -38,13 +45,13 @@ off to `git std bootstrap`, which wires up repo-local git hooks.
 
 Run `just --list` for the full recipe set. The common ones:
 
-| recipe        | what it does                                                                                                                                           |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `just build`  | assemble + check (test, lint, audit) — the local gate; two tests that re-derive committed asset tables sit outside it (`docs/decisions/test-tiers.md`) |
-| `just verify` | commit-message lint + `just build` — run before a PR                                                                                                   |
-| `just fmt`    | reformat Rust and markdown in place                                                                                                                    |
-| `just wasm`   | build `dashc` for `wasm32-unknown-unknown`                                                                                                             |
-| `just book`   | serve the mdBook docs locally                                                                                                                          |
+| recipe        | what it does                                                                                                                                                    |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `just build`  | assemble + check (test, lint, audit, secrets) — the local gate; two tests that re-derive committed asset tables sit outside it (`docs/decisions/test-tiers.md`) |
+| `just verify` | commit-message lint + `just build` — run before a PR                                                                                                            |
+| `just fmt`    | reformat Rust and markdown in place                                                                                                                             |
+| `just wasm`   | build `dashc` for `wasm32-unknown-unknown`                                                                                                                      |
+| `just book`   | serve the mdBook docs locally                                                                                                                                   |
 
 ## Crate ownership and scope
 

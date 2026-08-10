@@ -425,3 +425,50 @@ fn workspace_root() -> PathBuf {
         .expect("demo/ has a parent, which is the workspace root")
         .to_path_buf()
 }
+
+/// Every publishable crate ships `LICENSE` and `NOTICE` inside its package.
+///
+/// Cargo packages only files under a crate's own directory, so a root-level
+/// `LICENSE` and `NOTICE` reach no `.crate` at all. Under MIT that was
+/// cosmetic. Under Apache-2.0 it is not: §4(a) requires giving recipients a
+/// copy of the licence, and §4(d) requires carrying the attribution notices —
+/// which for this workspace means Arm's, for the vendored astcenc sources.
+///
+/// **This asserts against `cargo package --list`, not against the directory.**
+/// Checking the files exist on disk would pass while an `include` key in a
+/// manifest quietly excluded them from the package, which is the obligation
+/// the test exists to enforce. `just licenses` regenerates the copies.
+#[test]
+fn every_publishable_crate_packages_the_licence_and_notice() {
+    let workspace = workspace_root();
+    let members = crates_from_members(&workspace);
+    assert!(
+        !members.is_empty(),
+        "a scan that reads nothing proves nothing: `members` parsed empty"
+    );
+
+    let mut missing = Vec::new();
+    for name in members {
+        let dir = workspace.join("crates").join(&name);
+        if read(dir.join("Cargo.toml")).contains("publish = false") {
+            continue;
+        }
+        let listed = std::process::Command::new(env!("CARGO"))
+            .args(["package", "--list", "--allow-dirty", "-p", &name])
+            .current_dir(&workspace)
+            .output()
+            .expect("cargo package --list");
+        let listed = String::from_utf8_lossy(&listed.stdout);
+        for file in ["LICENSE", "NOTICE"] {
+            if !listed.lines().any(|l| l.trim() == file) {
+                missing.push(format!("{name}: {file} not in `cargo package --list`"));
+            }
+        }
+    }
+
+    assert!(
+        missing.is_empty(),
+        "run `just licenses`.\n  {}",
+        missing.join("\n  ")
+    );
+}

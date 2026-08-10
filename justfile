@@ -125,82 +125,209 @@ lint: deno-fmt-check
     dprint check
     markdownlint '**/*.md' --ignore target --ignore node_modules
 
+# Copy the root LICENSE and NOTICE into every publishable crate.
+#
+# Cargo packages only files under a crate's own directory, so the root copies
+# reach no `.crate`. Apache-2.0 §4(a) and §4(d) require both to travel with the
+# code — §4(d) in particular carries Arm's attribution for the vendored astcenc
+# sources. `every_publishable_crate_packages_the_licence_and_notice` fails the
+# build if a copy goes missing or drifts.
+licenses:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    n=0
+    for c in crates/*/; do
+        grep -q '^publish = false' "$c/Cargo.toml" && continue
+        cp LICENSE "$c/LICENSE"
+        cp NOTICE "$c/NOTICE"
+        n=$((n+1))
+    done
+    echo "licenses: refreshed LICENSE and NOTICE in $n crates"
+
 # Dependency vulnerability audit.
 audit:
     cargo audit
 
-# Secret scan, run as two independent gates because neither is sufficient.
-#
-# `gitleaks` carries the rule set and the triaged allowlist (.gitleaks.toml).
-# The grep is a deterministic backstop over every object in the history,
-# because gitleaks 8.30.1's defaults were measured on 2026-08-10 to miss a
-# correctly-shaped AWS access key ID and to carry no Figma PAT rule at all —
-# both of which this repository can plausibly contain.
-#
-# Two known reporting bugs in 8.30.1: the history scan prints `0 commits
-# scanned` and leaves `.Commit` empty. Neither means the scan did not run. To
-# separate a history finding from a working-tree one, scan a `git archive
-# HEAD` export with `gitleaks dir` and difference the two reports.
+# Secret scan — gitleaks over HEAD and history, plus a pattern-grep backstop.
 secrets:
     #!/usr/bin/env bash
-    # A shebang recipe, so the whole gate runs under one shell with
-    # `set -euo pipefail`. Written as separate `@` lines it took only the last
-    # pipeline stage's status, which made the grep fail *open*: on a blobless
-    # clone `git cat-file` emits `<oid> missing` instead of content, nothing
-    # matched, and the recipe reported clean over a history it never read.
     set -euo pipefail
-    # Scan committed content, not the directory. `gitleaks dir` does not honour
-    # .gitignore, so pointing it at `.` walks `target/` — 923 MB after a
-    # `cargo doc`, and it reports findings in build artifacts nobody publishes.
-    # Exporting HEAD also makes the tree scan answer the question that matters:
-    # what is in the commit, not what is on this disk.
+
+    # WHY TWO GATES. gitleaks carries the rule set and the triaged ignore
+    # files. The grep is a deterministic backstop over every object in
+    # history, because gitleaks 8.30.1's defaults were measured on 2026-08-10
+    # to miss a correctly-shaped AWS access key ID and to carry no Figma PAT
+    # rule at all — both of which this repository can plausibly contain.
+    #
+    # TWO REPORTING BUGS in 8.30.1: the history scan prints `0 commits
+    # scanned` and leaves `.Commit` empty. Neither means the scan did not run.
+    #
+    # EVERY GATE HERE FAILS CLOSED. That is the whole point of the recipe, and
+    # it is the part that was wrong twice. A command substitution takes the
+    # status of its *last* command, so `n=$(pipeline; cat f)` hides a failing
+    # pipeline from `set -e` entirely; and `|| true` after a scanner turns a
+    # crashed scanner into a clean result. Both shapes are banned below. When
+    # changing this recipe, test the failure paths — a broken git, a crashed
+    # gitleaks, a shallow clone — not only the happy path.
+
+    # ONE trap, one directory, every temporary inside it. Bash *replaces* an
+    # EXIT handler rather than appending, so a second `trap` silently discards
+    # the first; the previous revision leaked a 19 MB export per run that way,
+    # and referenced a variable the early-exit path had not yet assigned.
+    work=$(mktemp -d)
+    trap 'rm -rf "$work"' EXIT
+
+    # --- gate 0: is this history complete at all? ---------------------------
+    #
+    # Runs first, because a truncated history invalidates both history gates
+    # below rather than only the last one.
+    # A SHALLOW CLONE IS NOT AN INCOMPLETE OBJECT STORE — it is a complete
+    # store of a truncated history, so the `missing` check below never fires
+    # for it. Measured: a `--depth 1` clone reported "1094 objects read, none
+    # missing" and exited 0 over a single commit. Check shallowness directly.
+    #
+    # A graft is only disqualifying if it truncates *this* history. This
+    # repository carries one from a vendored Skia checkout that no ref
+    # contains, so test ancestry rather than the flag.
+    shallow_file=$(git rev-parse --git-path shallow)
+    if [ -f "$shallow_file" ]; then
+        while read -r graft; do
+            [ -n "$graft" ] || continue
+            if git merge-base --is-ancestor "$graft" HEAD 2>/dev/null; then
+                echo "ABORT — history is shallow at ${graft:0:12}."
+                echo "  A truncated history cannot be scanned. Fix with:"
+                echo "      git fetch --unshallow"
+                exit 1
+            fi
+        done < "$shallow_file"
+    fi
+
+    # --- gate 1: tracked content at HEAD -----------------------------------
+    #
+    # Scan committed content, not the working directory. `gitleaks dir` does
+    # not honour .gitignore, so pointing it at `.` walks `target/` — 923 MB
+    # after a `cargo doc` — and reports findings in build artifacts nobody
+    # publishes. Run from *inside* the export and scan `.`, so gitleaks emits
+    # repo-relative paths: a .gitleaksignore fingerprint is
+    # `<path>:<rule>:<line>`, and an absolute path makes every one miss.
     echo "── gitleaks: tracked content at HEAD ──"
-    # Run from inside the export and scan `.`, so gitleaks emits repo-relative
-    # paths. A fingerprint in .gitleaksignore is `<path>:<rule>:<line>`, so
-    # scanning by absolute path makes every fingerprint miss.
-    export_dir=$(mktemp -d) && trap 'rm -rf "$export_dir"' EXIT
-    git archive HEAD | tar -x -C "$export_dir"
-    cp .gitleaksignore .gitleaks.toml "$export_dir/"
-    ( cd "$export_dir" && gitleaks dir . --config .gitleaks.toml )
-    # History is gated against a recorded baseline rather than by
-    # .gitleaksignore. A fingerprint is <file>:<rule>:<line>, and the same
-    # content sits at many different line numbers across history, so
-    # fingerprints never converge there. Comparing the distinct <rule>:<secret>
-    # set against .secrets-history-baseline fails on anything new while staying
-    # quiet about what has already been read.
+    mkdir -p "$work/head"
+    # No `cp` of the config or the ignore file: `git archive` already carries
+    # both, because both are tracked. Copying the working-tree versions in
+    # would let an uncommitted .gitleaksignore line silence a finding on a scan
+    # whose whole point is what is in the commit rather than what is on disk.
+    git archive HEAD | tar -x -C "$work/head"
+    ( cd "$work/head" && gitleaks dir . --config .gitleaks.toml )
+
+    # --- gate 2: history, against the triaged baseline ----------------------
+    #
+    # History cannot use .gitleaksignore: a fingerprint pins a line number,
+    # and the same content sits at many line numbers across history, so
+    # fingerprints never converge. Compare the distinct <rule>:<secret> set
+    # against .secrets-history-baseline instead — anything new fails.
     echo "── gitleaks: full history (against the triaged baseline) ──"
-    hist=$(mktemp) && trap 'rm -f "$hist" "$tmp"' EXIT
+    hist="$work/history.json"
+    rc=0
     gitleaks git --log-opts="--all" --config .gitleaks.toml \
-        --report-format json --report-path "$hist" >/dev/null 2>&1 || true
-    new=$(jq -r '.[] | "\(.RuleID):\(.Secret)"' "$hist" | sort -u \
-          | grep -vxFf <(grep -vE '^#|^[[:space:]]*$' .secrets-history-baseline) || true)
+        --report-format json --report-path "$hist" >/dev/null 2>&1 || rc=$?
+    # 0 = clean, 1 = findings, anything else = the scan itself failed.
+    if [ "$rc" -gt 1 ]; then
+        echo "history: ABORT — gitleaks exited $rc; the scan did not complete."
+        exit 1
+    fi
+    if ! jq -e 'type == "array"' "$hist" >/dev/null 2>&1; then
+        echo "history: ABORT — gitleaks produced no usable report."
+        echo "  An empty or malformed report is not a clean history."
+        exit 1
+    fi
+    # Read the triage records from the EXPORT, not the working tree. An
+    # uncommitted line in one of them must not silence a finding — the rule
+    # gate 1 states, applied to all three gates rather than only the first.
+    baseline_file="$work/head/.secrets-history-baseline"
+    grep -vE '^#|^[[:space:]]*$' "$baseline_file" > "$work/baseline" || true
+    if [ ! -s "$work/baseline" ]; then
+        echo "history: ABORT — the committed baseline is empty or unreadable."
+        exit 1
+    fi
+    found=$(jq -r '.[] | "\(.RuleID):\(.Secret)"' "$hist" | sort -u)
+    # `-f FILE`, never a pattern argument: a triaged value beginning with `-`
+    # is otherwise read as a grep option and grep exits 2, which the old
+    # `|| true` reported as clean. grep 1 is "nothing selected" and fine; 2+
+    # is an error and must abort.
+    set +e
+    new=$(printf '%s\n' "$found" | grep -vxF -f "$work/baseline")
+    grc=$?
+    set -e
+    if [ "$grc" -gt 1 ]; then
+        echo "history: ABORT — the baseline comparison failed (grep exit $grc)."
+        exit 1
+    fi
     if [ -n "$new" ]; then
         echo "history: NEW findings not in .secrets-history-baseline — triage before publishing:"
-        printf '  %s\n' $new
+        printf '%s\n' "$new" | sed 's/^/  /'
         exit 1
     fi
-    echo "history: clean — $(jq 'length' "$hist") findings, all in the $(grep -vc '^#\|^[[:space:]]*$' .secrets-history-baseline) triaged pairs"
-    echo "── pattern grep: every object in history ──"
-    tmp=$(mktemp)
-    n=$(git rev-list --objects --all | tee >(wc -l > "$tmp.count") | awk '{print $1}' \
-          | git cat-file --batch > "$tmp"; cat "$tmp.count"); rm -f "$tmp.count"
-    # Fail closed: an incomplete object store is not a clean scan.
-    if grep -qE '^[0-9a-f]{40} missing$' "$tmp"; then
-        echo "pattern grep: ABORT — the object store is incomplete."
-        echo "  $(grep -cE '^[0-9a-f]{40} missing$' "$tmp") objects could not be read."
-        echo "  A shallow, blobless or partial clone cannot be scanned. Fix with:"
-        echo "      git fetch --unshallow      # shallow"
-        echo "      git clone (no --filter)    # blobless/partial"
+    echo "history: clean — $(jq 'length' "$hist") findings, all in the $(wc -l < "$work/baseline" | tr -d ' ') triaged pairs"
+
+    # --- gate 3: pattern grep over every object -----------------------------
+    #
+    # Plain commands, never a command substitution wrapping a pipeline, so
+    # `set -euo pipefail` actually sees a failure of git, awk or cat-file.
+    echo "── pattern grep: every object that would be published ──"
+    # SCOPE: objects reachable from a ref — which is exactly the set `git push`
+    # sends. That is the question a publication gate asks.
+    #
+    # `git cat-file --batch-all-objects` was tried and rejected. It reaches
+    # 20,003 objects here against 9,869 reachable, and the extra half is
+    # unreachable: amended-away commits, and residue from a vendored Skia fetch
+    # that pulled Chromium's zlib tests into this object store. Scanned, it
+    # reports 12 hits, of which eight are a generated alphabet sequence in
+    # compression test data and two are this recipe's own test fixtures. None
+    # can ever be published, because git does not push unreachable objects — so
+    # the wider scan buys permanent false positives and no coverage.
+    #
+    # THE RESIDUAL RISK IT LEAVES, stated plainly: a credential that was pushed
+    # and then removed by a force-push still lives on the remote, which serves
+    # it by SHA indefinitely. No local scan can see that, including this one.
+    # The mitigation is to rotate the credential, not to scan harder.
+    #
+    # A partial clone has fewer objects present rather than objects missing, so
+    # like a shallow clone it defeats the scan silently. Refuse it.
+    if [ -n "$(git config --get extensions.partialclone || true)" ] \
+       || [ -n "$(git config --get remote.origin.partialclonefilter || true)" ]; then
+        echo "ABORT — this is a partial clone; its object store is incomplete."
+        echo "  Re-clone without --filter to scan."
         exit 1
     fi
-    hits=$(grep -aoE "figd_[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}" "$tmp" \
-          | sort -u | grep -vxFf <(grep -vE '^#|^[[:space:]]*$' .secrets-triaged) || true)
+    # Streamed, not materialized: the previous revision wrote 86 MB to a temp
+    # file on every push and grew with history.
+    git rev-list --objects --all > "$work/oids"
+    n=$(wc -l < "$work/oids" | tr -d ' ')
+    awk '{print $1}' "$work/oids" | git cat-file --batch > "$work/blobs"
+    grep -vE '^#|^[[:space:]]*$' "$work/head/.secrets-triaged" > "$work/triaged" || true
+    set +e
+    grep -aoE "figd_[A-Za-z0-9_-]{20,}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{30,}|sk-ant-[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{35}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}" "$work/blobs" \
+        | sort -u > "$work/raw"
+    hrc=$?
+    set -e
+    if [ "$hrc" -gt 1 ]; then
+        echo "pattern grep: ABORT — scanning the object stream failed (grep exit $hrc)."
+        exit 1
+    fi
+    set +e
+    hits=$(grep -vxF -f "$work/triaged" "$work/raw")
+    trc=$?
+    set -e
+    if [ "$trc" -gt 1 ]; then
+        echo "pattern grep: ABORT — the triage comparison failed (grep exit $trc)."
+        exit 1
+    fi
     if [ -n "$hits" ]; then
         echo "pattern grep: FOUND — triage before publishing, then add to .secrets-triaged:"
-        printf '  %s\n' $hits
+        printf '%s\n' "$hits" | sed 's/^/  /'
         exit 1
     fi
-    echo "pattern grep: clean — $n objects read, none missing"
+    echo "pattern grep: clean — $n publishable objects read"
 
 # Full non-build verification: the regression tier + lint + audit. Not the
 # sanity tier — `check` is what `build` and the pre-push hook run, so it takes
