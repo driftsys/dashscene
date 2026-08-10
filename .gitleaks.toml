@@ -1,0 +1,96 @@
+# gitleaks configuration.
+#
+# The default rule set is kept in full; this file only records the findings
+# that have been triaged as benign, so that a real secret is not lost in
+# known noise. Scanned clean at 9d5b111 on 2026-08-09 with gitleaks 8.30.1.
+#
+# Three cautions for whoever runs this next:
+#
+# - `gitleaks git --log-opts="--all"` reports `0 commits scanned` and emits
+#   empty `.Commit` fields in 8.30.1. Both are reporting bugs, not a failed
+#   scan. To tell a history finding from a working-tree one, scan a
+#   `git archive HEAD` export separately with `gitleaks dir` and difference
+#   the two reports.
+# - An allowlist `regexes` entry matches the **secret**, not the line, unless
+#   `regexTarget` says otherwise. A pattern written against the surrounding
+#   field name silently matches nothing.
+# - An allowlist entry is a claim that something was checked. Do not add one
+#   to silence a finding that has not been read.
+
+title = "dashscene"
+
+[extend]
+useDefault = true
+
+# --- Rules the default set does not carry ----------------------------------
+#
+# Measured on 2026-08-10 against gitleaks 8.30.1's defaults, with no custom
+# config, on four planted credentials:
+#
+#     ghp_<36>                                    detected
+#     figd_<40>                                   NOT detected
+#     aws_access_key_id = "AKIA<16>"              NOT detected
+#     X-Amz-Credential=AKIA<16>%2F...             NOT detected
+#
+# The AWS misses are why `just secrets` also runs a deterministic pattern
+# grep over every object in the history. Do not treat a clean gitleaks run as
+# sufficient on its own.
+
+[[rules]]
+id = "figma-pat"
+description = "Figma personal access token"
+regex = '''figd_[A-Za-z0-9_-]{20,}'''
+keywords = ["figd_"]
+
+# **AWS coverage lives in `just secrets`' pattern grep, not here.** A custom
+# AWS shape rule was tried and removed: neither a top-level `[[allowlists]]`
+# block nor a rule-scoped `[rules.allowlist]` suppressed its 18 hits on the
+# known-benign historical Figma values in 8.30.1, so it could only be carried
+# as 18 permanent false positives — which is precisely the state this file
+# exists to prevent. The default `aws-access-token` rule stays active and is
+# allowlisted normally; the grep covers the shapes it misses, with the two
+# Figma values excluded by value.
+
+# --- Figma's own expired presigned-URL credentials -------------------------
+#
+# Captured inside S3 thumbnail URLs when the tier-1 fixtures were pulled from
+# the Figma REST API on 2026-07-12 (commits dc201bf, a6e6a6e). These are
+# Figma's credentials, not this project's; presigned URLs are time-limited and
+# these expired in July 2026. They appear only in history — a `gitleaks dir`
+# scan of a `git archive HEAD` export finds zero.
+[[allowlists]]
+description = "Figma's AWS access key IDs in expired presigned thumbnail URLs"
+regexes = [
+  '''AKIAQ4GOSFWC4KC5SY6U''',
+  '''AKIAQ4GOSFWCZHCZBGZX''',
+]
+
+# --- Figma document identifiers --------------------------------------------
+#
+# Figma file keys and 40-hex component/style keys are document identifiers,
+# not credentials: neither grants access on its own. Scoped to the fixture
+# corpus and the importer's tests rather than applied tree-wide.
+#
+# Publishing these keys is a separate question from whether they are secrets.
+# Ten fixtures carry `"linkAccess": "view"`, which means the key alone opens
+# the file. That is a publication decision recorded elsewhere; this allowlist
+# does not settle it.
+# **No `paths` entry here, deliberately.** A `paths` allowlist excludes the
+# whole file, and `matchCondition = "AND"` does not restrain it in gitleaks
+# 8.30.1 — verified by planting a live-shaped AWS key and GitHub token in
+# `corpus/figma-fixtures/` and watching the scan report zero. Since these
+# files are machine-generated Figma REST captures, and that is precisely how
+# the AKIA credentials above arrived, excluding them by path would hide the
+# next real one. Allowlisting is by line shape only, so a token in any file
+# still fires.
+[[allowlists]]
+description = "Figma file, component and style keys, wherever they appear"
+regexTarget = "line"
+regexes = [
+  # "key": "<40 hex>" — Figma component and style keys
+  '''(?i)"?key"?\s*:\s*"[0-9a-f]{40}"''',
+  # "fileKey" / "figmaFileKey" / XFILE_LIBRARY_KEY — 20-25 char base62 keys
+  '''(?i)"?(figma)?_?file_?key"?\s*[:=]\s*"[A-Za-z0-9]{20,25}"''',
+  '''[A-Z_]*FILE_[A-Z_]*KEY\s*=\s*"[A-Za-z0-9]{20,25}"''',
+]
+

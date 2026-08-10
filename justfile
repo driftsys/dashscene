@@ -129,6 +129,31 @@ lint: deno-fmt-check
 audit:
     cargo audit
 
+# Secret scan, run as two independent gates because neither is sufficient.
+#
+# `gitleaks` carries the rule set and the triaged allowlist (.gitleaks.toml).
+# The grep is a deterministic backstop over every object in the history,
+# because gitleaks 8.30.1's defaults were measured on 2026-08-10 to miss a
+# correctly-shaped AWS access key ID and to carry no Figma PAT rule at all —
+# both of which this repository can plausibly contain.
+#
+# Two known reporting bugs in 8.30.1: the history scan prints `0 commits
+# scanned` and leaves `.Commit` empty. Neither means the scan did not run. To
+# separate a history finding from a working-tree one, scan a `git archive
+# HEAD` export with `gitleaks dir` and difference the two reports.
+secrets:
+    @echo "── gitleaks: working tree ──"
+    gitleaks dir . --config .gitleaks.toml
+    @echo "── gitleaks: full history ──"
+    gitleaks git --log-opts="--all" --config .gitleaks.toml
+    @echo "── pattern grep: every object in history ──"
+    @! git rev-list --objects --all | awk '{print $1}' | git cat-file --batch 2>/dev/null \
+        | grep -aoE "figd_[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}" \
+        | sort -u \
+        | grep -vE "^(AKIAQ4GOSFWC4KC5SY6U|AKIAQ4GOSFWCZHCZBGZX)$" \
+        | grep . || (echo "pattern grep: FOUND — triage before publishing" && exit 1)
+    @echo "pattern grep: clean"
+
 # Full non-build verification: the regression tier + lint + audit. Not the
 # sanity tier — `check` is what `build` and the pre-push hook run, so it takes
 # the tier that is the gate (docs/decisions/test-tiers.md).
