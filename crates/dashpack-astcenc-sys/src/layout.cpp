@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: Apache-2.0
 //
 // Not part of astcenc. This file reports the memory layout that the vendored
 // astcenc.h actually produces, so the hand-written `astcenc_config` in lib.rs

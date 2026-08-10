@@ -44,7 +44,8 @@ intentionally undecided until that point
 ## Crates
 
 19 crates in one Cargo workspace (`resolver = "3"`, `edition = "2024"`,
-`license = "MIT"`). Full role-by-role mapping: `docs/decisions/crate-name-map.md`.
+`license = "Apache-2.0"`). Full role-by-role mapping:
+`docs/decisions/crate-name-map.md`.
 
     dashscene            umbrella / facade
     dashscene-core        semantic model — arena, node tree, layout+paint

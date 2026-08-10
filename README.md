@@ -248,5 +248,5 @@ wrong way:
 
 ## Licence
 
-MIT — see [`LICENSE`](LICENSE). One vendored source tree carries a different
-licence; [`NOTICE`](NOTICE) records which and why.
+Apache-2.0 — see [`LICENSE`](LICENSE). [`NOTICE`](NOTICE) records the one
+vendored source tree and the corpus content that carry their own terms.

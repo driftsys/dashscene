@@ -33,6 +33,10 @@ into the records below. Per-story decisions land here directly:
 - [house-style.md](house-style.md) — repo tooling follows
   driftsys/git-std, driftsys/upskill, driftsys/markspec conventions
   (`docs/archive/2026-07-14-scope-decisions.md` §7).
+- [apache-2-0-for-the-patent-grant.md](apache-2-0-for-the-patent-grant.md) —
+  the workspace is Apache-2.0, not MIT and not a dual licence, because a dual
+  licence lets a licensee opt out of the patent terms; supersedes the MIT
+  default `house-style.md` recorded.
 - [publishable-and-the-first-version.md](publishable-and-the-first-version.md)
   — the workspace versions together, the first real version is 0.2.0, and the
   registry checks that say so (story #795).

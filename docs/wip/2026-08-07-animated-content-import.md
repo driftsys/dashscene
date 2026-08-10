@@ -88,7 +88,8 @@ Two configuration points to decide before writing code:
   keeps `fontdb` out of `dashc`'s wasm32 build, which the Deno importer
   calls.
 - **Confirm the licence.** `resvg`/`usvg` are believed to be MPL-2.0, which
-  is file-level copyleft and usable as a dependency in an MIT project — but
+  is file-level copyleft and usable as a dependency in a permissively
+  licensed project — but
   this repository rejected Slint on licence grounds, so it is checked rather
   than assumed.
 

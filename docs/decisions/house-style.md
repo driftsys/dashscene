@@ -19,7 +19,7 @@ Follow those three repos' conventions:
 
 **Cargo workspace shape** (git-std): `resolver = "3"`;
 `[workspace.package]` with `edition = "2024"` (not 2021), `license =
-"MIT"`, shared `repository`; `[workspace.dependencies]` with `path +
+"Apache-2.0"`, shared `repository`; `[workspace.dependencies]` with `path +
 version` for every internal crate; `[profile.release]` — `lto = true`,
 `strip = true`, `codegen-units = 1`.
 
@@ -133,7 +133,7 @@ is npm-only); `tasks` for `check` (`deno check` on entry points), `test`
 `editors/`, `.worktrees/`, `.claude/worktrees/`.
 
 **Governance/docs files**, present in all three reference repos and
-expected here too: `LICENSE` (MIT), `CODE_OF_CONDUCT.md`,
+expected here too: `LICENSE` (Apache-2.0), `CODE_OF_CONDUCT.md`,
 `CONTRIBUTING.md`, `SECURITY.md`, `.editorconfig`, `.markdownlint.json`,
 `book.toml` + `docs/book/` (mdBook source — an overview and a usage
 guide, the online guide's actual content).
