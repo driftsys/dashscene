@@ -5,9 +5,16 @@ This product includes software developed at driftsys.
 
 Licensed under the Apache License, Version 2.0 — see LICENSE.
 
-This repository vendors one third-party source tree:
+Paths below are given relative to the project's source repository,
+<https://github.com/driftsys/dashscene>. A published crate contains only its
+own subtree, so a path naming another crate is a pointer into the repository
+rather than into the package you are reading.
 
-- `crates/dashpack-astcenc-sys/vendor/astcenc/` — Arm's ASTC encoder,
+This project vendors one third-party source tree:
+
+- `crates/dashpack-astcenc-sys/vendor/astcenc/` in the repository, and
+  `vendor/astcenc/` within the `dashpack-astcenc-sys` package — Arm's ASTC
+  encoder,
   Copyright (c) 2011-2024 Arm Limited, licensed under the Apache License,
   Version 2.0. Every vendored file keeps its own SPDX header and Arm
   copyright notice; none is modified. The full provenance, the license
@@ -17,8 +24,9 @@ This repository vendors one third-party source tree:
   Upstream ships no NOTICE file of its own, so nothing from it is
   reproduced here beyond the attribution above.
 
-The corpus carries third-party content under its own terms, none of it
-linked into any crate:
+The corpus carries third-party content under its own terms. None of it is
+linked into any crate and none of it ships inside a published package; it is
+recorded here because the repository distributes it:
 
 - `corpus/fonts/` — Inter and Noto Sans (Latin and Arabic), under the SIL
   Open Font License 1.1. Each family keeps its `OFL.txt` beside it.

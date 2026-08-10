@@ -148,9 +148,11 @@ members in total, nineteen of them the crates above.
     just check        regression tier + lint + audit + secrets + the two wasm
                       gates + c-abi, which compiles the committed header from C
                       and checks the two halves agree (needs a C toolchain)
-    just secrets      gitleaks over HEAD and history, plus a pattern-grep
-                      backstop over every object. Needs gitleaks, which
-                      bootstrap does not install — it reports its absence
+    just secrets      gitleaks over HEAD and over history, plus a pattern-grep
+                      backstop over every object git would push. Unreachable
+                      objects are deliberately out of scope — see the recipe.
+                      Needs gitleaks, which bootstrap does not install; it
+                      reports its absence
     just licenses     copy LICENSE and NOTICE into every publishable crate;
                       Apache-2.0 §4 requires both to travel inside the package
     just verify       commit-message lint over the branch range, then build — run before opening a PR

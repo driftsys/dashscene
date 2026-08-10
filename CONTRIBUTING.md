@@ -31,8 +31,10 @@ off to `git std bootstrap`, which wires up repo-local git hooks.
 
    The `secrets` step needs [gitleaks](https://github.com/gitleaks/gitleaks),
    which `./bootstrap` reports on but does not install — `brew install
-   gitleaks`, or a release binary. It is the one gate with an external
-   prerequisite, and `just build` stops at it rather than skipping it.
+   gitleaks`, or a release binary. `just check` has two other external
+   prerequisites `./bootstrap` does not install either — `cargo-audit` for
+   `just audit`, and a C toolchain for `just c-abi`. Each stops the gate
+   rather than being skipped.
 5. Open a PR. CI runs the same gates (`fmt`, `dprint`, `clippy`, `test`,
    `convco`, `secrets`) plus the path-filtered `deno` job, the `wasm-build`
    job, and the `atlas-repro` job (byte-reproducibility of the glyph-atlas

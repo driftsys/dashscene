@@ -3,14 +3,16 @@
 # The default rule set is kept in full and extended with the one credential
 # class this repository handles that gitleaks does not carry.
 #
-# **There are no allowlists here, deliberately.** Triage lives in
-# `.gitleaksignore` as per-finding fingerprints. An earlier revision used
-# regex allowlists and two of them over-matched: `[A-Z_]*FILE_[A-Z_]*KEY`
-# also matches `PROFILE_`, so any `PROFILE_*_KEY` secret was exempted
-# tree-wide, and an unscoped 40-hex `key:` pattern exempted every 40-hex
-# secret written under a field named `key`. A fingerprint cannot do that:
-# it names one finding in one file at one line, and a finding that moves
-# reappears for re-triage.
+# **There is exactly one allowlist here, and it excludes two paths.** See the
+# block at the end of this file. Everything else is triaged in
+# `.gitleaksignore` by per-finding fingerprint.
+#
+# No regex allowlist. An earlier revision used two and both over-matched:
+# `[A-Z_]*FILE_[A-Z_]*KEY` also matches `PROFILE_`, exempting any
+# `PROFILE_*_KEY` secret tree-wide, and an unscoped 40-hex `key:` pattern
+# exempted every 40-hex secret written under a field of that name. A
+# fingerprint cannot do that: it names one finding in one file at one line,
+# and a finding that moves reappears for re-triage.
 #
 # Two cautions for whoever runs this next:
 #
@@ -51,6 +53,14 @@ keywords = ["figd_"]
 # fingerprint pins a line number. Both files are sorted, so triaging one new
 # pair shifted up to 26 fingerprints and broke the tree gate — making the
 # documented recovery from one gate the thing that breaks the other.
+# THE TRADEOFF THIS ACCEPTS, stated rather than hidden: because gitleaks now
+# never reads these two files, a real credential pasted into one of them is
+# invisible to the gitleaks gates. What still catches it is the pattern grep,
+# which reads the committed copy and does not exempt by path — and the fact
+# that writing a value into a triage record is a reviewable diff whose whole
+# purpose is to be read. The fingerprints this replaced forced a re-triage on
+# any edit, which is stricter; they also broke the tree gate every time the
+# sorted file gained a line, which is why they are gone.
 [[allowlists]]
 description = "the triage records, whose content is triaged values by construction"
 paths = [

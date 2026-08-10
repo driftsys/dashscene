@@ -434,34 +434,41 @@ fn workspace_root() -> PathBuf {
 /// copy of the licence, and §4(d) requires carrying the attribution notices —
 /// which for this workspace means Arm's, for the vendored astcenc sources.
 ///
-/// The copies are byte-identical to the root files by construction;
-/// `just licenses` regenerates them, and this test is what makes a drifted or
-/// missing copy fail a build rather than ship.
+/// **This asserts against `cargo package --list`, not against the directory.**
+/// Checking the files exist on disk would pass while an `include` key in a
+/// manifest quietly excluded them from the package, which is the obligation
+/// the test exists to enforce. `just licenses` regenerates the copies.
 #[test]
 fn every_publishable_crate_packages_the_licence_and_notice() {
     let workspace = workspace_root();
-    let licence = read(workspace.join("LICENSE"));
-    let notice = read(workspace.join("NOTICE"));
+    let members = crates_from_members(&workspace);
+    assert!(
+        !members.is_empty(),
+        "a scan that reads nothing proves nothing: `members` parsed empty"
+    );
 
     let mut missing = Vec::new();
-    let mut drifted = Vec::new();
-    for name in crates_from_members(&workspace) {
+    for name in members {
         let dir = workspace.join("crates").join(&name);
         if read(dir.join("Cargo.toml")).contains("publish = false") {
             continue;
         }
-        for (file, want) in [("LICENSE", &licence), ("NOTICE", &notice)] {
-            let path = dir.join(file);
-            match fs::read_to_string(&path) {
-                Err(_) => missing.push(format!("crates/{name}/{file}")),
-                Ok(got) if got != **want => drifted.push(format!("crates/{name}/{file}")),
-                Ok(_) => {}
+        let listed = std::process::Command::new(env!("CARGO"))
+            .args(["package", "--list", "--allow-dirty", "-p", &name])
+            .current_dir(&workspace)
+            .output()
+            .expect("cargo package --list");
+        let listed = String::from_utf8_lossy(&listed.stdout);
+        for file in ["LICENSE", "NOTICE"] {
+            if !listed.lines().any(|l| l.trim() == file) {
+                missing.push(format!("{name}: {file} not in `cargo package --list`"));
             }
         }
     }
 
     assert!(
-        missing.is_empty() && drifted.is_empty(),
-        "run `just licenses`.\n  missing: {missing:?}\n  drifted from the root copy: {drifted:?}"
+        missing.is_empty(),
+        "run `just licenses`.\n  {}",
+        missing.join("\n  ")
     );
 }
