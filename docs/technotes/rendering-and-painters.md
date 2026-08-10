@@ -179,14 +179,16 @@ footprint + mmap cold-start (R5). Tellingly, Flutter built a whole new renderer
 general engine fights frame-time consistency, which we sidestep with precompiled
 single-sourced SDF shaders (R-T5).
 
-Three honest caveats: (1) it is faster _because_ specialised — not "a faster
-Flutter," a narrower tool; compare on "render a pre-validated design scene" and it
-wins, on "render anything at runtime" it does not play. (2) The biggest wins depend
-on the lean painter, which does not exist yet; today's Skia interim is _the
-rasteriser Flutter is migrating away from_, and the Unity path is heavier not
-lighter. (3) It is unmeasured — v0.2 vs years-tuned engines; benchmark on target.
-The defensible claim today is **predictability + footprint**, which for automotive
-(must never jank, boots fast on a shared SoC) matters more than peak fps.
+Three honest caveats: (1) it is faster _because_ specialised — a narrower tool
+rather than a faster general one; compare on "render a pre-validated design scene"
+and it wins, on "render anything at runtime" it does not play. (2) The biggest wins
+depend on the lean painter, which does not exist yet; today's interim is Skia,
+which was never chosen for speed, and the Unity path is heavier not lighter.
+(3) It is unmeasured — v0.2 against years-tuned engines; benchmark on target.
+The defensible claim today is **predictability + footprint**, which on a device
+that must never drop a frame and must boot fast on a shared SoC matters more than
+peak fps. That is the automotive requirement, and it is equally the requirement for
+any embedded panel held to a fixed frame budget.
 
 ## 9. Unity painter — quality and calibration
 

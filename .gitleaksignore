@@ -1,0 +1,111 @@
+# Triaged gitleaks findings. Each line is a finding fingerprint:
+#   <file>:<rule>:<line>
+#
+# A fingerprint is exact. If a finding moves, its fingerprint changes and the
+# finding reappears — which is correct: it forces re-triage rather than
+# silently carrying an exemption to different content. This is why the
+# triage lives here rather than as regex allowlists in .gitleaks.toml, where
+# a pattern written for one shape suppressed unrelated secrets tree-wide.
+#
+# Everything below is a Figma document identifier — a file key, or a 40-hex
+# component or style key. Neither grants access on its own. Triaged
+# 2026-08-10 against 9d5b111.
+#
+# Publishing these keys is a separate question from whether they are secrets:
+# ten fixtures carry "linkAccess": "view", so the key alone opens the file.
+# That is a publication decision and this file does not settle it.
+
+corpus/figma-fixtures/lowering-variant-topology.json:generic-api-key:955
+corpus/figma-fixtures/lowering-variant-topology.json:generic-api-key:963
+corpus/figma-fixtures/lowering-variant-topology.json:generic-api-key:973
+corpus/figma-fixtures/manifest.json:generic-api-key:102
+corpus/figma-fixtures/manifest.json:generic-api-key:109
+corpus/figma-fixtures/manifest.json:generic-api-key:11
+corpus/figma-fixtures/manifest.json:generic-api-key:116
+corpus/figma-fixtures/manifest.json:generic-api-key:123
+corpus/figma-fixtures/manifest.json:generic-api-key:130
+corpus/figma-fixtures/manifest.json:generic-api-key:137
+corpus/figma-fixtures/manifest.json:generic-api-key:144
+corpus/figma-fixtures/manifest.json:generic-api-key:151
+corpus/figma-fixtures/manifest.json:generic-api-key:158
+corpus/figma-fixtures/manifest.json:generic-api-key:165
+corpus/figma-fixtures/manifest.json:generic-api-key:172
+corpus/figma-fixtures/manifest.json:generic-api-key:179
+corpus/figma-fixtures/manifest.json:generic-api-key:18
+corpus/figma-fixtures/manifest.json:generic-api-key:186
+corpus/figma-fixtures/manifest.json:generic-api-key:193
+corpus/figma-fixtures/manifest.json:generic-api-key:200
+corpus/figma-fixtures/manifest.json:generic-api-key:207
+corpus/figma-fixtures/manifest.json:generic-api-key:214
+corpus/figma-fixtures/manifest.json:generic-api-key:221
+corpus/figma-fixtures/manifest.json:generic-api-key:228
+corpus/figma-fixtures/manifest.json:generic-api-key:235
+corpus/figma-fixtures/manifest.json:generic-api-key:25
+corpus/figma-fixtures/manifest.json:generic-api-key:32
+corpus/figma-fixtures/manifest.json:generic-api-key:40
+corpus/figma-fixtures/manifest.json:generic-api-key:57
+corpus/figma-fixtures/manifest.json:generic-api-key:65
+corpus/figma-fixtures/manifest.json:generic-api-key:73
+corpus/figma-fixtures/manifest.json:generic-api-key:81
+corpus/figma-fixtures/manifest.json:generic-api-key:88
+corpus/figma-fixtures/manifest.json:generic-api-key:95
+corpus/figma-fixtures/prototype-refused.json:generic-api-key:1946
+corpus/figma-fixtures/prototype-refused.json:generic-api-key:1954
+corpus/figma-fixtures/prototype-refused.json:generic-api-key:1964
+corpus/figma-fixtures/prototype-smart-animate.json:generic-api-key:4178
+corpus/figma-fixtures/prototype-smart-animate.json:generic-api-key:4186
+corpus/figma-fixtures/prototype-smart-animate.json:generic-api-key:4196
+corpus/figma-fixtures/real-file.json:generic-api-key:1245
+corpus/figma-fixtures/real-file.json:generic-api-key:1253
+corpus/figma-fixtures/real-file.json:generic-api-key:1263
+corpus/figma-fixtures/variables-bound.vartable.json:generic-api-key:4
+corpus/figma-fixtures/xfile-consumer.json:generic-api-key:127
+corpus/figma-fixtures/xfile-consumer.json:generic-api-key:137
+corpus/figma-fixtures/xfile-library.json:generic-api-key:321
+corpus/figma-fixtures/xfile-library.json:generic-api-key:329
+corpus/figma-fixtures/xfile-library.json:generic-api-key:339
+docs/archive/2026-07-19-B1-vector-msdf-design.md:generic-api-key:365
+importers/figma/src/closure_test.ts:generic-api-key:1044
+importers/figma/src/closure_test.ts:generic-api-key:1051
+importers/figma/src/closure_test.ts:generic-api-key:1693
+importers/figma/src/closure_test.ts:generic-api-key:1732
+importers/figma/src/closure_test.ts:generic-api-key:871
+
+# The two Figma AWS values above are written out in `.secrets-triaged` so the
+# pattern grep can exclude them; gitleaks then finds them in that file. Ignored
+# here by fingerprint. Editing `.secrets-triaged` shifts these lines and the
+# findings return for re-triage, which is the intended behaviour.
+.secrets-triaged:aws-access-token:24
+.secrets-triaged:aws-access-token:25
+
+# The triage records themselves contain the values they triage, so gitleaks
+# finds them there. Ignored by fingerprint. Editing either file shifts these
+# lines and the findings return for re-triage, which is intended.
+.secrets-history-baseline:aws-access-token:21
+.secrets-history-baseline:aws-access-token:22
+.secrets-history-baseline:generic-api-key:23
+.secrets-history-baseline:generic-api-key:24
+.secrets-history-baseline:generic-api-key:25
+.secrets-history-baseline:generic-api-key:26
+.secrets-history-baseline:generic-api-key:27
+.secrets-history-baseline:generic-api-key:28
+.secrets-history-baseline:generic-api-key:29
+.secrets-history-baseline:generic-api-key:30
+.secrets-history-baseline:generic-api-key:31
+.secrets-history-baseline:generic-api-key:32
+.secrets-history-baseline:generic-api-key:33
+.secrets-history-baseline:generic-api-key:34
+.secrets-history-baseline:generic-api-key:35
+.secrets-history-baseline:generic-api-key:36
+.secrets-history-baseline:generic-api-key:37
+.secrets-history-baseline:generic-api-key:38
+.secrets-history-baseline:generic-api-key:39
+.secrets-history-baseline:generic-api-key:40
+.secrets-history-baseline:generic-api-key:41
+.secrets-history-baseline:generic-api-key:42
+.secrets-history-baseline:generic-api-key:43
+.secrets-history-baseline:generic-api-key:44
+.secrets-history-baseline:generic-api-key:45
+.secrets-history-baseline:generic-api-key:46
+.secrets-history-baseline:generic-api-key:47
+.secrets-history-baseline:generic-api-key:48

@@ -23,6 +23,12 @@ Follow those three repos' conventions:
 version` for every internal crate; `[profile.release]` — `lto = true`,
 `strip = true`, `codegen-units = 1`.
 
+**This repository diverges on the licence.** git-std's convention is MIT,
+and git-std is itself MIT-licensed. dashscene is Apache-2.0, for the
+patent grant — see
+`docs/decisions/apache-2-0-for-the-patent-grant.md`. The rest of the
+workspace shape above is followed as written.
+
 `[workspace.package]` also carries **`version`**, added by story #795 when
 the workspace's together-versioning was made structural: every crate takes
 `version.workspace = true` and holds no version of its own to drift
@@ -133,7 +139,8 @@ is npm-only); `tasks` for `check` (`deno check` on entry points), `test`
 `editors/`, `.worktrees/`, `.claude/worktrees/`.
 
 **Governance/docs files**, present in all three reference repos and
-expected here too: `LICENSE` (MIT), `CODE_OF_CONDUCT.md`,
+expected here too: `LICENSE` (MIT in the reference repos; Apache-2.0
+here, per the divergence above), `CODE_OF_CONDUCT.md`,
 `CONTRIBUTING.md`, `SECURITY.md`, `.editorconfig`, `.markdownlint.json`,
 `book.toml` + `docs/book/` (mdBook source — an overview and a usage
 guide, the online guide's actual content).

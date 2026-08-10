@@ -1,0 +1,39 @@
+# gitleaks configuration.
+#
+# The default rule set is kept in full and extended with the one credential
+# class this repository handles that gitleaks does not carry.
+#
+# **There are no allowlists here, deliberately.** Triage lives in
+# `.gitleaksignore` as per-finding fingerprints. An earlier revision used
+# regex allowlists and two of them over-matched: `[A-Z_]*FILE_[A-Z_]*KEY`
+# also matches `PROFILE_`, so any `PROFILE_*_KEY` secret was exempted
+# tree-wide, and an unscoped 40-hex `key:` pattern exempted every 40-hex
+# secret written under a field named `key`. A fingerprint cannot do that:
+# it names one finding in one file at one line, and a finding that moves
+# reappears for re-triage.
+#
+# Two cautions for whoever runs this next:
+#
+# - `gitleaks git --log-opts="--all"` reports `0 commits scanned` and emits
+#   empty `.Commit` fields in 8.30.1. Both are reporting bugs, not a failed
+#   scan. To tell a history finding from a working-tree one, scan a
+#   `git archive HEAD` export separately with `gitleaks dir` and difference
+#   the two reports.
+# - gitleaks' defaults miss shapes this repository can contain. Measured on
+#   2026-08-10 against planted credentials: `ghp_<36>` detected;
+#   `figd_<40>` not detected (no rule existed — added below); a
+#   correctly-shaped AWS access key ID not detected, in a bare assignment
+#   or inside an `X-Amz-Credential=` URL. That last gap is why `just
+#   secrets` runs a deterministic pattern grep as a second, independent
+#   gate. Neither gate alone is sufficient.
+
+title = "dashscene"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "figma-pat"
+description = "Figma personal access token"
+regex = '''figd_[A-Za-z0-9_-]{20,}'''
+keywords = ["figd_"]

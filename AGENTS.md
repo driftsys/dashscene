@@ -6,6 +6,14 @@ code — into pixels on screen, through one intermediate representation
 layout+text runtime, and interchangeable paint backends (Skia
 reference, Unity product, a lean native painter later).
 
+The target is embedded display hardware, defined by its constraints
+rather than by one market: a tiling GPU, a fixed frame budget, and
+layout that must resolve identically on every backend. In-vehicle
+screens are where it is measured; industrial and medical panels,
+kiosks, avionics and handhelds impose the same constraints. Keep prose
+naming the constraint, and name automotive as an instance of it rather
+than as the boundary.
+
 **Read these before doing anything else in this repo:**
 
 - `docs/specification/` — goals, requirements, principles, target-hardware
@@ -44,7 +52,8 @@ intentionally undecided until that point
 ## Crates
 
 19 crates in one Cargo workspace (`resolver = "3"`, `edition = "2024"`,
-`license = "MIT"`). Full role-by-role mapping: `docs/decisions/crate-name-map.md`.
+`license = "Apache-2.0"`). Full role-by-role mapping:
+`docs/decisions/crate-name-map.md`.
 
     dashscene            umbrella / facade
     dashscene-core        semantic model — arena, node tree, layout+paint

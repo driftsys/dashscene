@@ -95,8 +95,8 @@ format."
 
 CANDIDATE, deferred to post-v0.
 
-Penpot is the only serious open-source design tool with a first-class layout
-engine and programmatic access. Its decisive property: **its layout _is_ literal
+Penpot is an open-source, self-hostable design tool with a layout engine and
+programmatic access. Its decisive property: **its layout _is_ literal
 CSS Flexbox and CSS Grid** — direction/wrap/justify/align/gap/padding, fit-fill-fix
 sizing, grid tracks in fr/auto/px, spans, named areas — which is exactly Taffy's
 model and dashscene's layout table. Where Figma needs the whole Figma≠CSS lowering bag,
@@ -134,51 +134,52 @@ Before committing: spike a real Penpot file fetch and confirm the plugin API
 exposes grid spans and areas as cleanly as the UI implies — that is the exact
 corner (Taffy baseline + grid spans) already flagged as least-exercised (Q-4).
 
-## 5. Slint — build-vs-adopt: reference for ideas only
+## 5. Build-vs-adopt — why the pipeline is written rather than taken
 
-DECISION → [`slint-reference-only-do-not-adopt.md`](../decisions/slint-reference-only-do-not-adopt.md)
+DECISION → [`no-gui-toolkit-dependency.md`](../decisions/no-gui-toolkit-dependency.md)
 
-Slint is the closest thing in the Rust world to "the stack you'd reach for instead
-of building this," and DESIGN already credits the Taffy/Servo/Bevy/Slint/Zed
-lineage. But it solves a different problem and its licensing forecloses adoption.
+The reasonable alternative to writing this was building on an existing Rust GUI
+toolkit. Slint is the nearest candidate — DESIGN already credits the
+Taffy/Servo/Bevy/Slint/Zed lineage — so it is the one evaluated here.
 
-Different problem: Slint is a declarative GUI _toolkit that renders itself_; dash
-is a design-source-to-pixels _pipeline that renders the same scene across foreign
-engines it does not own_. Three of our hard requirements are exactly what Slint's
-architecture cannot give, no matter how mature it gets:
+**The requirements are about rendering somewhere else.** Slint describes itself as
+"an open-source declarative GUI toolkit to build native user interfaces for Rust,
+C++, JavaScript, or Python apps": it draws its own output, through its own
+backends. dashscene has to hand one scene to renderers this project does not own
+and have them agree to the pixel. Three requirements follow from that, and each is
+a statement about dashscene rather than about any toolkit:
 
-- **Unity as product renderer (G2).** Slint owns rendering top to bottom (its own
-  software / femtovg / Skia / Qt backends); it has no path into a game engine's
-  lit, world-space SRP. Our painters-only-colour split (P1/P2) exists precisely to
-  render one scene identically across Unity / Skia / native.
-- **Perfect Arabic identical on every backend (R1).** Slint's text is its own
-  integrated, renderer-bound path with historically limited complex-script support;
-  "identical Arabic in Unity _and_ the native painter _and_ the Skia oracle" is not
-  something it targets. Our shape-once-in-Rust + atlas-quads approach gives that by
-  construction.
-- **Design-as-reproducible-source (P5/R7).** Slint's Figma integration is a
-  one-shot "Figma to Slint" code generator; after it runs you own the `.slint`
-  code and the design file stops being the source of truth. Ours is a reproducible
-  pipeline with a validator.
+- **Unity as product renderer (G2).** The scene has to reach a game engine's lit,
+  world-space SRP. The painters-only-colour split (P1/P2) exists so that one
+  document renders identically across Unity, Skia and the lean native painter.
+- **Identical Arabic on every backend (R1).** Shaping happens once in Rust and
+  reaches every painter as atlas quads, so the Skia oracle, the lean painter and
+  Unity cannot disagree about a glyph position. Nothing about that requirement
+  depends on what another project supports.
+- **Design-as-reproducible-source (P5/R7).** The Figma file stays the source of
+  truth and recompiles through a validator, rather than being converted once into
+  code that is then maintained by hand.
 
-Licensing is the decisive, separate blocker (this is the headline, the capability
-gaps are supporting detail). Slint is tri-licensed: royalty-free only for
-proprietary **desktop/mobile/web**, GPLv3 for open source, and a **paid commercial**
-licence for proprietary **embedded**. Our target is embedded/automotive, so the
-royalty-free tier does not apply; the doors are GPLv3 (a non-starter for a
-proprietary automotive product) or a commercial contract with SixtyFPS (recurring
-cost + single-vendor dependency on the critical path). And because our repo is MIT
-(`docs/decisions/house-style.md`), GPLv3 code cannot be lifted into it — so Slint is not even a _code_
-borrow source; the Figma-to-Slint plugin is under the same terms. **Reference for
-ideas only** (its software-renderer design, its MCU/GLES work), clean-room, never
-source.
+**The licence decides it independently of any of that.** Slint's framework is
+triple-licensed, and a user may choose any one of the three
+(<https://github.com/slint-ui/slint/blob/master/LICENSE.md>, retrieved 2026-08-10):
+a royalty-free licence for proprietary desktop, mobile and web applications at no
+cost, which excludes embedded systems; GPL-3.0-only at no cost for open-source
+software on any platform including embedded; and a commercial licence for
+proprietary use including embedded. dashscene targets embedded hardware for
+proprietary products, so of those three only the commercial licence applies.
 
-This strengthens the build decision: our permissive pure-Rust stack (Taffy,
-rustybuzz, ttf-parser, unicode-bidi, msdf-atlas-gen, skia-safe — all MIT/Apache/
-BSD-family) is what keeps dash MIT and promotable into the public `dashscene`
-facade. A GPLv3 dependency anywhere would poison that. The "if Unity softens, fall
-back to Slint" escape hatch is therefore not free — it is GPLv3 (incompatible) or
-commercial (cost + lock-in).
+Separately, this repository is Apache-2.0
+(`docs/decisions/apache-2-0-for-the-patent-grant.md`), and GPL-3.0-only code cannot
+be incorporated into an Apache-2.0 project — so copying source is ruled out on its
+own terms. Ideas may be read and reimplemented clean-room; source is not copied.
+
+That is also why the dependency stack is permissive throughout — Taffy, rustybuzz,
+ttf-parser, unicode-bidi, msdf-atlas-gen, skia-safe, wgpu, all MIT/Apache/BSD-family.
+A GPL-3.0-only dependency anywhere would make this repository's own licence
+unusable. The "if Unity softens, fall back to Slint" escape hatch is therefore not
+free: it would mean taking the commercial licence or changing this repository's
+licence.
 
 ## 6. Layout & placement — Taffy stands; radial/safety placement is absolute box + transform
 

@@ -301,7 +301,8 @@ this repository rejected Slint on licence grounds". Checked against crates.io on
     kurbo           0.13.1   Apache-2.0 OR MIT
     tiny-skia-path  0.12.0   BSD-3-Clause
 
-Not MPL. All permissive, no copyleft, all compatible with this workspace's MIT.
+Not MPL. All permissive, no copyleft, all compatible with this workspace's
+Apache-2.0.
 
 **The stroker needs no new dependency.** `usvg` depends on `tiny-skia-path` and
 re-exports it — `pub use tiny_skia_path;` — so `usvg::tiny_skia_path::PathStroker`

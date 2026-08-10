@@ -144,7 +144,8 @@ Treat it as the bounded escape hatch it is:
 ## 6. ThorVG's role, summarised
 
 - **Runtime**: only in bucket 3 (§5) — a scoped, RT-budgeted, render-to-texture
-  escape hatch for one node, never a general painter behind boundary B.
+  escape hatch for one node. dashscene keeps painting behind boundary B to its own
+  painters; the scope limit is dashscene's, not a limitation of ThorVG.
 - **Build time**: a candidate offline Lottie/SVG frame-renderer for sprite-sheet
   baking (§4). For SVG baking into the atlas, the same-ecosystem Rust path
   (`usvg`/`resvg`/`tiny-skia`, same author as `ttf-parser`/`rustybuzz`/`tiny-skia`,

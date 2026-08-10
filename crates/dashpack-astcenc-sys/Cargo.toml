@@ -2,10 +2,12 @@
 name = "dashpack-astcenc-sys"
 version.workspace = true
 edition.workspace = true
-# The binding code and the build script are MIT, like the rest of the
-# workspace; the sources under `vendor/astcenc` are Arm's, under Apache-2.0.
-# See vendor/VENDOR.md.
-license = "MIT AND Apache-2.0"
+# Inherited like every other crate. This was `license = "MIT AND Apache-2.0"`
+# while the workspace was MIT and only `vendor/astcenc` was Arm's Apache-2.0;
+# both halves are now the same licence, so the override is gone. Arm's SPDX
+# headers and copyright notices in the vendored tree are unmodified. See
+# vendor/VENDOR.md.
+license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Raw bindings to a vendored, version-pinned astcenc — the ASTC encoder and reference decoder dashpack links, with no external binary (story #430)."

@@ -20,7 +20,7 @@ off to `git std bootstrap`, which wires up repo-local git hooks.
 1. Branch from `main`.
 2. Make your change. Every crate under `crates/` inherits
    `[workspace.package]` from the root `Cargo.toml` (`edition = "2024"`,
-   `license = "MIT"`) — do not override those per-crate.
+   `license = "Apache-2.0"`) — do not override those per-crate.
 3. Write commits as [Conventional Commits](https://www.conventionalcommits.org)
    (`feat:`, `fix:`, `chore:`, etc., with a scope when it aids clarity, e.g.
    `feat(dashscene-engine): ...`). `git-std` lints commit messages against

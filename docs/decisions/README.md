@@ -33,6 +33,11 @@ into the records below. Per-story decisions land here directly:
 - [house-style.md](house-style.md) — repo tooling follows
   driftsys/git-std, driftsys/upskill, driftsys/markspec conventions
   (`docs/archive/2026-07-14-scope-decisions.md` §7).
+- [apache-2-0-for-the-patent-grant.md](apache-2-0-for-the-patent-grant.md) —
+  the workspace is Apache-2.0, not MIT and not a dual licence, because a dual
+  licence lets a licensee opt out of the patent terms. This is the one
+  documented divergence from the git-std house style, which is MIT
+  (`house-style.md`).
 - [publishable-and-the-first-version.md](publishable-and-the-first-version.md)
   — the workspace versions together, the first real version is 0.2.0, and the
   registry checks that say so (story #795).
@@ -504,10 +509,10 @@ filed beside their parent rather than apart from it:
 - [two-producer-entry-paths.md](two-producer-entry-paths.md) — every producer
   enters via the offline compile path or the in-memory arena path, never a
   third format (`docs/technotes/producers-and-ir.md` §3).
-- [slint-reference-only-do-not-adopt.md](slint-reference-only-do-not-adopt.md)
-  — Slint is reference for ideas only; never adopted or borrowed as code, on
-  both capability and licensing grounds (`docs/technotes/producers-and-ir.md`
-  §5).
+- [no-gui-toolkit-dependency.md](no-gui-toolkit-dependency.md) — dashscene
+  builds a pipeline rather than sitting on a GUI toolkit, and takes no code
+  from one; Slint is the candidate evaluated
+  (`docs/technotes/producers-and-ir.md` §5).
 - [radial-is-not-a-layout-mode.md](radial-is-not-a-layout-mode.md) — radial /
   anchored placement stays an absolute box plus a transform, never a layout mode;
   the gauge vocabulary is bound-prop animation data and safety-regulated regions
