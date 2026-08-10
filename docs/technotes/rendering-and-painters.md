@@ -185,8 +185,10 @@ wins, on "render anything at runtime" it does not play. (2) The biggest wins dep
 on the lean painter, which does not exist yet; today's Skia interim is _the
 rasteriser Flutter is migrating away from_, and the Unity path is heavier not
 lighter. (3) It is unmeasured — v0.2 vs years-tuned engines; benchmark on target.
-The defensible claim today is **predictability + footprint**, which for automotive
-(must never jank, boots fast on a shared SoC) matters more than peak fps.
+The defensible claim today is **predictability + footprint**, which on a device
+that must never drop a frame and must boot fast on a shared SoC matters more than
+peak fps. That is the automotive requirement, and it is equally the requirement for
+any embedded panel held to a fixed frame budget.
 
 ## 9. Unity painter — quality and calibration
 

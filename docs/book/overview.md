@@ -4,9 +4,13 @@ dashscene turns UI designed in Figma — or authored programmatically in code �
 into pixels on screen, through one intermediate representation, one shared
 layout+text runtime, and interchangeable paint backends.
 
-Primary targets are embedded/automotive-class devices rendered by a game
-engine (Unity) or a lean native renderer, with a Skia backend serving as
-the reference implementation, test oracle, and 2D path.
+Primary targets are embedded display devices — in-vehicle screens among them,
+alongside industrial and medical panels, kiosks, avionics and handhelds —
+rendered by a game engine (Unity) or a lean native renderer, with a Skia
+backend serving as the reference implementation, test oracle, and 2D path.
+What defines the target is the constraint set rather than the market: a tiling
+GPU, a fixed frame budget, and layout that must resolve identically on every
+backend.
 
 ## See it run
 

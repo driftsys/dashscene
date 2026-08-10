@@ -5,10 +5,18 @@ screen, through one intermediate representation (the **dashscene document**,
 written to disk as a `.dsb` file), one shared layout and text runtime, and
 interchangeable paint backends behind a single trait.
 
-It is aimed at embedded and automotive-class hardware, where the same screen has
-to be drawn by a game engine on the product, by a lean native renderer on a
-smaller device, and by a reference rasterizer in a test — and where all three
-have to agree, to the pixel, about where every rectangle and every glyph sits.
+It is aimed at embedded display hardware — industrial and medical panels, kiosks
+and point-of-sale, avionics, set-top boxes, handhelds and in-vehicle screens among
+them — where the same screen has to be drawn by a game engine on the product, by a
+lean native renderer on a smaller device, and by a reference rasterizer in a test,
+and where all three have to agree, to the pixel, about where every rectangle and
+every glyph sits.
+
+What makes a target one of those is a set of constraints rather than a market: a
+tiling GPU that rewards one render pass per frame, a fixed frame budget with no
+room for a shader compiled mid-frame, and a display whose layout must resolve the
+same way everywhere. Those constraints were derived from automotive hardware, which
+is where this runtime is measured, and they hold wherever else they hold.
 
 ![Sixteen tiles on a dark background: solid, linear, radial, angular and diamond fills; strokes inside, centred and outside their edges; a photograph under four fill modes; a star baked to a distance field; drop and inner shadows; a clipped disc; a masked gradient; two overlapping squares at group opacity; and a frosted panel blurring the tiles behind it.](docs/images/showcase-surfaces.png)
 
