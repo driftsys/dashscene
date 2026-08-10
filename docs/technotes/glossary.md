@@ -222,7 +222,8 @@ uses recomposition. Referenced for the code-DSL ergonomics and the perf comparis
 (`@figma/rest-api-spec`). Its auto-layout needs Figma≠CSS lowering in `dashc`.
 
 **Flutter** — Google's Dart UI framework with its own renderer (Skia, now
-Impeller); used in automotive (Toyota). The perf comparison baseline.
+Impeller), used in shipping embedded and in-vehicle products. A reference point
+when comparing frame-time behaviour.
 
 **Glance** — a Jetpack library that builds Android widgets / Wear tiles with the
 Compose runtime but renders _remotely_ (its composition emits a tree translated to
@@ -233,9 +234,10 @@ RemoteViews / protobuf). The template for a streaming producer into a placeholde
 `rustybuzz` _is_ HarfBuzz's algorithm in Rust, so shaping quality equals what Skia
 would produce.
 
-**Impeller** — Flutter's precompiled-shader renderer replacing Skia, built largely
-to remove shader-compilation jank — evidence that frame-time predictability is hard
-for general engines.
+**Impeller** — Flutter's renderer, which precompiles its shaders rather than
+compiling them on demand. Referenced here because dashscene has the same
+requirement, for the same reason: a shader compiled mid-frame costs frame time that
+a fixed budget does not have.
 
 **Lottie** — a JSON vector-animation format (After Effects via Bodymovin). Triaged
 in `dashc`: transform-only → `dashcue` + baked SDF; canned → sprite-sheet; full
@@ -256,9 +258,11 @@ baking. `tiny-skia` is also the parked wasm painter (`docs/design/architecture.m
 painter (CPU raster = bit-exact goldens; GPU on GLES = the entry-tier bridge). Its
 typesetter and codecs are trimmed out (rendering-and-painters §6).
 
-**Slint** — a Rust declarative GUI toolkit (GPLv3 / commercial-embedded). Different
-problem (renders itself) and its licence is incompatible with the MIT stack —
-reference for ideas only, never adopted or code-borrowed (producers-and-ir §5).
+**Slint** — a Rust declarative GUI toolkit that renders its own output, triple
+licensed (royalty-free for non-embedded proprietary use, GPL-3.0-only, or
+commercial). dashscene renders into engines it does not own, and GPL-3.0-only code
+cannot enter an Apache-2.0 repository, so it is neither a dependency nor a source
+(producers-and-ir §5).
 
 **Taffy** — the pure-Rust CSS flex/grid layout solver; the sole layout engine for
 all backends (covers all four Figma auto-layout modes).
@@ -266,10 +270,11 @@ all backends (covers all four Figma auto-layout modes).
 **TextMeshPro (TMP)** — Unity's SDF text solution; the Unity painter uses its
 rendering style ("TMP-style") driven from the shared atlas, not its typesetter.
 
-**ThorVG** — a lightweight (~150KB) MIT vector-graphics engine (SVG + Lottie),
-SW/GL backends, embedded-proven. Used as a runtime render-to-texture escape hatch
-for arbitrary runtime vector, and as an offline Lottie frame-renderer — never a
-general painter (runtime-content §5–6).
+**ThorVG** — a lightweight (~150 KB) MIT vector-graphics engine (SVG + Lottie) with
+software and GL backends. dashscene's use of it is narrow by choice: a runtime
+render-to-texture escape hatch for arbitrary runtime vector, and an offline Lottie
+frame renderer. Painting the document itself stays with dashscene's own painters
+(runtime-content §5–6).
 
 **ttf-parser** — a pure-Rust font-table / metrics parser; supplies the same numbers
 FreeType would, feeding the typesetter and atlas.

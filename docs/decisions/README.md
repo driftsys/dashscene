@@ -508,10 +508,10 @@ filed beside their parent rather than apart from it:
 - [two-producer-entry-paths.md](two-producer-entry-paths.md) — every producer
   enters via the offline compile path or the in-memory arena path, never a
   third format (`docs/technotes/producers-and-ir.md` §3).
-- [slint-reference-only-do-not-adopt.md](slint-reference-only-do-not-adopt.md)
-  — Slint is reference for ideas only; never adopted or borrowed as code, on
-  both capability and licensing grounds (`docs/technotes/producers-and-ir.md`
-  §5).
+- [no-gui-toolkit-dependency.md](no-gui-toolkit-dependency.md) — dashscene
+  builds a pipeline rather than sitting on a GUI toolkit, and takes no code
+  from one; Slint is the candidate evaluated
+  (`docs/technotes/producers-and-ir.md` §5).
 - [radial-is-not-a-layout-mode.md](radial-is-not-a-layout-mode.md) — radial /
   anchored placement stays an absolute box plus a transform, never a layout mode;
   the gauge vocabulary is bound-prop animation data and safety-regulated regions
