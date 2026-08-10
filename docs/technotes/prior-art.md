@@ -140,11 +140,21 @@ Content, not code, and equally depended on:
 [`NOTICE`](../../NOTICE) is the canonical attribution record; this section is a
 reader's summary of it and defers to it wherever the two differ.
 
-**On lineage.** Earlier revisions of this repository credited a
-"Taffy/Servo/Bevy/Slint/Zed lineage" for the ideas the architecture grew from,
-and this page repeated it as though `docs/design/architecture.md` recorded it.
-It does not — the phrase survives only in `docs/archive/`. Taffy is a real
-dependency and is credited above; the others are projects whose designs were
-read, which is not the same relationship and does not belong in a list headed
-"what dashscene is built on". Slint in particular is **not** a dependency; see
+**On the "Taffy/Servo/Bevy/Slint/Zed lineage".** That phrase circulated in this
+repository as though it described dashscene's own intellectual ancestry, and
+this page repeated it, citing `docs/design/architecture.md` — which does not
+contain it. Tracing it back: the only origin is a stack-table row in
+`docs/archive/2026-07-14-design-1-seed.md`, where "(Servo/Bevy/Slint/Zed
+lineage)" is a parenthetical **about Taffy** — an argument that Taffy was a
+proven choice because that ecosystem uses it. It was never a claim about
+dashscene.
+
+The underlying fact, checked against Taffy's own README on 2026-08-10: Taffy
+lists its users as [Servo](https://github.com/servo/servo),
+[Blitz](https://github.com/DioxusLabs/blitz), [Bevy](https://bevyengine.org/),
+and the [Zed](https://zed.dev/) editor via
+[GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui).
+**Slint is not among them** — it has its own layout engine — so the original
+parenthetical was wrong before anything was restated from it. Slint is not a
+dependency of dashscene either; see
 [`no-gui-toolkit-dependency.md`](../decisions/no-gui-toolkit-dependency.md).

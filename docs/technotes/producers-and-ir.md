@@ -152,8 +152,8 @@ corner (Taffy baseline + grid spans) already flagged as least-exercised (Q-4).
 DECISION → [`no-gui-toolkit-dependency.md`](../decisions/no-gui-toolkit-dependency.md)
 
 The reasonable alternative to writing this was building on an existing Rust GUI
-toolkit. Slint is the nearest candidate — DESIGN already credits the
-Taffy/Servo/Bevy/Slint/Zed lineage — so it is the one evaluated here.
+toolkit. Slint is the nearest candidate in that ecosystem, so it is the one
+evaluated here.
 
 **The requirements are about rendering somewhere else.** Slint describes itself as
 "an open-source declarative GUI toolkit to build native user interfaces for Rust,

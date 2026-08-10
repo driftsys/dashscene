@@ -12,8 +12,7 @@
 
 A reasonable question at the start of this project was whether to build on
 an existing Rust GUI toolkit rather than write a pipeline. Slint is the
-closest candidate — `docs/design/architecture.md` credits the
-Taffy/Servo/Bevy/Slint/Zed lineage — so it is the one evaluated here.
+closest candidate in that ecosystem, so it is the one evaluated here.
 
 ## Choice
 
