@@ -240,15 +240,34 @@ secrets:
         echo "  An empty or malformed report is not a clean history."
         exit 1
     fi
-    baseline=$(grep -vE '^#|^[[:space:]]*$' .secrets-history-baseline)
+    # Read the triage records from the EXPORT, not the working tree. An
+    # uncommitted line in one of them must not silence a finding — the rule
+    # gate 1 states, applied to all three gates rather than only the first.
+    baseline_file="$work/head/.secrets-history-baseline"
+    grep -vE '^#|^[[:space:]]*$' "$baseline_file" > "$work/baseline" || true
+    if [ ! -s "$work/baseline" ]; then
+        echo "history: ABORT — the committed baseline is empty or unreadable."
+        exit 1
+    fi
     found=$(jq -r '.[] | "\(.RuleID):\(.Secret)"' "$hist" | sort -u)
-    new=$(printf '%s\n' "$found" | grep -vxF "$baseline" || true)
+    # `-f FILE`, never a pattern argument: a triaged value beginning with `-`
+    # is otherwise read as a grep option and grep exits 2, which the old
+    # `|| true` reported as clean. grep 1 is "nothing selected" and fine; 2+
+    # is an error and must abort.
+    set +e
+    new=$(printf '%s\n' "$found" | grep -vxF -f "$work/baseline")
+    grc=$?
+    set -e
+    if [ "$grc" -gt 1 ]; then
+        echo "history: ABORT — the baseline comparison failed (grep exit $grc)."
+        exit 1
+    fi
     if [ -n "$new" ]; then
         echo "history: NEW findings not in .secrets-history-baseline — triage before publishing:"
         printf '%s\n' "$new" | sed 's/^/  /'
         exit 1
     fi
-    echo "history: clean — $(jq 'length' "$hist") findings, all in the $(printf '%s\n' "$baseline" | wc -l | tr -d ' ') triaged pairs"
+    echo "history: clean — $(jq 'length' "$hist") findings, all in the $(wc -l < "$work/baseline" | tr -d ' ') triaged pairs"
 
     # --- gate 3: pattern grep over every object -----------------------------
     #
@@ -284,9 +303,25 @@ secrets:
     # file on every push and grew with history.
     git rev-list --objects --all > "$work/oids"
     n=$(wc -l < "$work/oids" | tr -d ' ')
-    hits=$(awk '{print $1}' "$work/oids" | git cat-file --batch \
-          | grep -aoE "figd_[A-Za-z0-9_-]{20,}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{30,}|sk-ant-[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{35}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}" \
-          | sort -u | grep -vxF "$(grep -vE '^#|^[[:space:]]*$' .secrets-triaged)" || true)
+    awk '{print $1}' "$work/oids" | git cat-file --batch > "$work/blobs"
+    grep -vE '^#|^[[:space:]]*$' "$work/head/.secrets-triaged" > "$work/triaged" || true
+    set +e
+    grep -aoE "figd_[A-Za-z0-9_-]{20,}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{30,}|sk-ant-[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{35}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}" "$work/blobs" \
+        | sort -u > "$work/raw"
+    hrc=$?
+    set -e
+    if [ "$hrc" -gt 1 ]; then
+        echo "pattern grep: ABORT — scanning the object stream failed (grep exit $hrc)."
+        exit 1
+    fi
+    set +e
+    hits=$(grep -vxF -f "$work/triaged" "$work/raw")
+    trc=$?
+    set -e
+    if [ "$trc" -gt 1 ]; then
+        echo "pattern grep: ABORT — the triage comparison failed (grep exit $trc)."
+        exit 1
+    fi
     if [ -n "$hits" ]; then
         echo "pattern grep: FOUND — triage before publishing, then add to .secrets-triaged:"
         printf '%s\n' "$hits" | sed 's/^/  /'
