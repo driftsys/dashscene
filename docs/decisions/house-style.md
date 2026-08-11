@@ -125,12 +125,16 @@ second. Neither covers the **release**-profile wasm builds `just
 web-build` and `just measure-runtime` run, so a failure that appears only
 under `lto = true` is caught by no job.
 
-Nine of those jobs compile something that reaches `dashbuf`, whose build.rs
-shells out to `flatc` at a release pinned to match the `flatbuffers`
-Rust crate. That install is a **local composite action**,
-`.github/actions/install-flatc`, referenced as a path so it needs no
-release and no third-party trust — one definition where there were nine
-identical copies for a bump to find (issue #909). Why each job needs it
+Every job that compiles something reaching `dashbuf` needs `flatc`, whose
+build.rs shells out to it — nine of them, which is more than this
+paragraph names, so derive the list with
+`grep -c install-flatc .github/workflows/ci.yml` rather than from the
+prose above. That install is a **local composite action**,
+`.github/actions/install-flatc`, referenced as a path so the reference
+needs no release and no third-party trust. It reads the version from the
+workspace manifest's exact `flatbuffers` requirement rather than
+restating it, and asserts what it installed — so the pin has one home and
+a mismatch fails there by name (issue #909). Why each job needs it
 differs per job and stays at the call site.
 
 No cross-platform `build-release` matrix yet — that's
