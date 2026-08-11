@@ -15,8 +15,47 @@
 //! one substitution that would make the whole argument for re-exporting false.
 //! `dashscene-gpu` closes the last link to `wgpu` itself, beside its own
 //! re-export.
+//!
+//! One check here is behavioural: [`Present::adapter`]'s default. That one
+//! needs no window, because a presenter with no device needs no surface to say
+//! so — see `a_presenter_with_no_adapter_answers_none` (issue #902).
 
-use dashscene_desktop::{AdapterInfo, Backend, DeviceType, GpuPresenter, Present, TextureFormat};
+use dashlang::LiveScene;
+use dashscene_core::{Arena, CommittedScene};
+use dashscene_desktop::{
+    Adapter, AdapterInfo, App, Backend, DeviceType, Drawn, GpuPresenter, Present, PresentError,
+    Scene, TextureFormat,
+};
+
+/// A presenter with no adapter: `demo`'s raster one, reduced to what the trait
+/// requires. Nothing here runs a frame — [`Present::present`] exists so the
+/// impl is legal, not to be called.
+struct Raster;
+
+impl Present for Raster {
+    fn name(&self) -> &str {
+        "raster"
+    }
+
+    fn resize(&mut self, _width: u32, _height: u32) -> Result<(), PresentError> {
+        Ok(())
+    }
+
+    fn document_replaced(&mut self) {}
+
+    fn present(&mut self, _scene: &CommittedScene) -> Result<Drawn, PresentError> {
+        Ok(Drawn::No)
+    }
+}
+
+/// The smallest thing that satisfies [`App`], for the signature checks below.
+struct Embedder;
+
+impl App for Embedder {
+    fn build(&mut self, _arena: &mut Arena, _width: u32, _height: u32) -> LiveScene {
+        unimplemented!("no test here builds a scene")
+    }
+}
 
 /// The two accessors exist on `GpuPresenter` and hand back the `wgpu` types.
 ///
@@ -54,4 +93,38 @@ fn the_adapter_fields_are_nameable_without_a_wgpu_dependency() {
 #[test]
 fn the_formatted_line_stays() {
     let _name: fn(&GpuPresenter) -> &str = <GpuPresenter as Present>::name;
+}
+
+/// A presenter with no adapter answers `None`, **by default** — so a new
+/// presenter inherits the honest reply rather than having to write it, and the
+/// raster presenter `demo` ships answers correctly without knowing the method
+/// exists.
+///
+/// This is the one thing in this file that is a behavioural test rather than a
+/// type check: it needs no window, because a presenter without an adapter needs
+/// no surface to say so.
+#[test]
+fn a_presenter_with_no_adapter_answers_none() {
+    assert!(Raster.adapter().is_none());
+}
+
+/// The loop hands the adapter to the embedder.
+///
+/// Without this, the accessors above are reachable only by an embedder that
+/// overrides `App::presenter` and builds a `GpuPresenter` itself: the loop holds
+/// its presenter as a `Box<dyn Present>` and `Present` has no downcast, so the
+/// embedder that takes the default presenter — the case the crate documents as
+/// ordinary — had the string and nothing else (issue #902).
+#[test]
+fn the_attach_hook_carries_the_adapter() {
+    let _attached: fn(&mut Embedder, Scene<'_>, &str, Option<Adapter<'_>>) = App::attached;
+}
+
+/// What the hook carries is the pair, not one of the two: an embedder choosing
+/// a texture path needs the format, and one warning about a software adapter
+/// needs the info, and both come from the same presenter at the same moment.
+#[test]
+fn the_adapter_pair_carries_both_facts() {
+    let _info: fn(Adapter<'_>) -> &AdapterInfo = |adapter| adapter.info;
+    let _format: fn(Adapter<'_>) -> TextureFormat = |adapter| adapter.format;
 }

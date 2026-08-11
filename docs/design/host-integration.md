@@ -226,12 +226,24 @@ changes, and an embedder pinning it inherits that cadence. The web crate already
 leaked one through `WebError::Renderer`. The trade is deliberate: an accessor
 returning a type nobody can name is not an accessor.
 
-**Two limits, each filed.** On the desktop the accessors are reachable only by
-an embedder that builds the presenter itself — `App::presenter` hands back a
-`Box<dyn Present>`, the loop holds it as one, and `Present` has no downcast, so
-the embedder that takes the default presenter still has only the string. That is
-issue #902. And neither accessor's value is checked by anything: that the
-adapter reported is the adapter drawn on needs a device and a surface together.
+**Two routes on the desktop, because the inherent accessors reach only half the
+embedders.** `App::presenter` hands back a `Box<dyn Present>` and the loop holds
+it as one, and `Present` has no downcast — so an embedder that takes the default
+presenter never holds a `GpuPresenter`, and for it the accessors above may as
+well not exist. That was issue #902, and it is closed by a second route rather
+than by widening the first: `Present::adapter` returns `Option<Adapter<'_>>`,
+defaulted to `None`, and the loop passes the answer to `App::attached`.
+
+`Adapter` is the pair — `&AdapterInfo` and `TextureFormat` — because a presenter
+that has one has the other, and an embedder branching on either usually wants
+both. The method is **defaulted**, where `Present::document_replaced` deliberately
+is not, and the two are consistent: a presenter is not obliged to have a device,
+so a presenter that inherits `None` gives the true answer, while a presenter that
+inherited a no-op `document_replaced` would give a stale picture. A default is
+safe exactly when not noticing it is not a mistake.
+
+**What is still not checked** is either accessor's value: that the adapter
+reported is the adapter drawn on needs a device and a surface together.
 
 **What checks them** is a type check rather than a behavioural one, on both
 sides, because neither type can be constructed without a window or a canvas. A
@@ -243,6 +255,11 @@ compiling. Each also pins its crate's re-export against `dashscene-gpu`'s by an
 identity coercion, and `dashscene-gpu` pins its own against `wgpu`'s beside the
 re-export, because a coercion against the local alias alone would still pass if
 that alias became a local type wearing the same name.
+
+One check in the desktop file is behavioural rather than type-level, and it is
+the default: a presenter with no adapter answers `None`, asserted against a
+stub `Present` that the test defines. It needs no window, because a presenter
+without a device needs no surface to say it has none.
 
 `cargo test` runs the desktop one. The web one is compiled for
 `wasm32-unknown-unknown` only, because `Surface` is, so `cargo test` never sees

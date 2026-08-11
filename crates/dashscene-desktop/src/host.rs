@@ -92,7 +92,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy}
 use winit::window::{Window, WindowAttributes, WindowId};
 
 use crate::DesktopError;
-use crate::present::{GpuPresenter, Present, PresentError};
+use crate::present::{Adapter, GpuPresenter, Present, PresentError};
 use crate::recovery::{Recovery, recovery};
 
 /// The pace the loop runs at while the generation advances: 60 Hz.
@@ -304,7 +304,14 @@ pub trait App {
     /// presenter has a different [`Present::name`]. Writing that derived state
     /// here rather than in [`App::build`] is what lets one implementation serve
     /// both, since a rebind does not rebuild and a rebuild does not rebind.
-    fn attached(&mut self, _scene: Scene<'_>, _presenter: &str) {}
+    ///
+    /// `adapter` is the presenter's own answer to [`Present::adapter`], and is
+    /// [`None`] for a presenter that has no device — `demo`'s raster one. It is
+    /// here rather than left to be read off the presenter because the loop owns
+    /// the presenter and hands it to nobody: this hook is the only point at
+    /// which an embedder that did not build it can see what it got (issue
+    /// #902). An embedder that wants only the line still has `presenter`.
+    fn attached(&mut self, _scene: Scene<'_>, _presenter: &str, _adapter: Option<Adapter<'_>>) {}
 
     /// A window event the loop did not consume.
     ///
@@ -509,6 +516,14 @@ impl<A: App> Host<A> {
             .map_or("no presenter", |presenter| presenter.name())
             .to_owned();
         let extent = self.extent;
+        // Borrowed rather than copied out, unlike the name above: `AdapterInfo`
+        // holds four `String`s and this runs on every attach. `self.presenter`,
+        // `self.app`, `self.live` and `self.arena` are four different fields, so
+        // the borrows below are one each rather than one of `self`.
+        let adapter = self
+            .presenter
+            .as_ref()
+            .and_then(|presenter| presenter.adapter());
         // Borrowed field by field rather than through a helper: a method
         // handing back a `Scene` would borrow the whole of `self`, and the call
         // below needs `self.app` at the same time.
@@ -522,6 +537,7 @@ impl<A: App> Host<A> {
                 extent,
             },
             &name,
+            adapter,
         );
     }
 

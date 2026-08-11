@@ -25,7 +25,9 @@ use std::time::{Duration, Instant};
 
 use dashlang::LiveScene;
 use dashscene_core::Arena;
-use dashscene_desktop::{App, DesktopError, Present, PresentError, Reaction, Scene, Waker};
+use dashscene_desktop::{
+    Adapter, App, DesktopError, Present, PresentError, Reaction, Scene, Waker,
+};
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
@@ -254,7 +256,7 @@ impl App for Showcase {
     /// incoming name's included — without a rebuild, which is what keeps a swap
     /// showing the difference between the two painters rather than between two
     /// runs.
-    fn attached(&mut self, scene: Scene<'_>, _presenter: &str) {
+    fn attached(&mut self, scene: Scene<'_>, _presenter: &str, _adapter: Option<Adapter<'_>>) {
         let value = self.painter.badge_value();
         if let Some(signal) = scene.live.signal_named(showcase::badge::BACKEND) {
             scene.live.set(signal, value);
