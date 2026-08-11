@@ -11,10 +11,10 @@ project's convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports ten files
+## Why the WIP gate currently reports eleven files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-ten and exits non-zero. All ten are deliberate, accepted exceptions
+eleven and exits non-zero. All eleven are deliberate, accepted exceptions
 rather than ungardened debt, and they are recorded here so the gate's result is
 explained rather than merely tolerated.
 
@@ -107,8 +107,14 @@ not move — `2026-08-07-motion-in-the-document.md` and
 `2026-08-09-svg-as-a-second-producer.md` were each partly gardened in the same
 commit and each stays for the half that is still undone.
 
-**Nine of the ten are design captures**, described below, and **one driver
-prompt is held**, for one slice.
+**Eleven, when v0.19's shown-root driver prompt landed** (2026-08-11), hours
+after the close above took twelve to ten. It is the second prompt held for the
+same slice and the first time two are held for **one** slice rather than two —
+v0.19 is worked on two tracks, the Android half on `integration/v0.19-android`
+and the shown-root chain on `main`, and each track is handed its own.
+
+**Nine of the eleven are design captures**, described below, and **two driver
+prompts are held**, both for v0.19.
 
 Two were v0.18's, and **both left at that slice's close on 2026-08-11**:
 `2026-08-08-v018-DRIVER-PROMPT.md`, added the day v0.17 closed,
@@ -401,10 +407,18 @@ issue #274 the z-interleave, and the as-built records now carry all of it
 decision record's two resolution sections). Both it and the driver prompt that
 carried out its design are archived verbatim in `docs/archive/`.
 
-One driver prompt is held here now, v0.19's, as the section above says. This
-paragraph said "none" from 2026-08-07, when v0.17's prompt was added and this
-sentence was not touched, until that prompt was archived a day later and the
-sentence became accidentally true again. It is the same shape as the count
+Two driver prompts are held here now, **both v0.19's**, as the section above
+says. `2026-08-09-v019-ANDROID-DRIVER-PROMPT.md` carries stories #841 and #842
+on `integration/v0.19-android`, and leaves at the slice's close.
+`2026-08-11-v019-SHOWN-ROOT-DRIVER-PROMPT.md` carries the shown-root chain,
+stories #836 to #838, on `main`, and leaves on the same condition — its own
+status line says so.
+They are two because the slice is worked on two tracks that share no branch, not
+because one superseded the other, which is what every previous pair here meant.
+
+This paragraph said "none" from 2026-08-07, when v0.17's prompt was added and
+this sentence was not touched, until that prompt was archived a day later and
+the sentence became accidentally true again. It is the same shape as the count
 above it, and for the same reason: adding a file here and editing this file are
 one change, and nothing enforces it. The most recent archived are the two
 v0.18 prompts, `2026-08-08-v018-DRIVER-PROMPT.md` and
