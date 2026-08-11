@@ -247,6 +247,14 @@ independent stories can run in parallel; each story is worked in its
 own git worktree, on the branch named in the story issue, and its body
 lists what it depends on and what it blocks.
 
+**Running CI's expensive path on demand.** `gh workflow run ci --ref main`
+forces every path-filtered gate — `calibration` and `deno` — on. Ordinary work
+already schedules them, and the slowest shape measures about 5 min wall
+(`calibration` 272 s inside a 304 s run, 2026-08-11), so this is for when waiting
+for a diff that happens to trigger them is the problem: after editing the filter
+lists themselves. `--ref <branch>` works too, so a filter change can be measured
+before it merges (`docs/decisions/test-tiers.md`).
+
 **When to run which test tier** (`docs/decisions/test-tiers.md`). The suite
 runs as three tiers, so "tests pass" is no longer a claim about all of it:
 

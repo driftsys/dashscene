@@ -365,6 +365,29 @@ it lints, over the workspace and all three wasm packages — so a compile error
 fails locally. What now reaches CI unverified is a failing test, and the CI
 `test` job runs the regression tier completely on every push and pull request.
 
+**Running the expensive path on demand.** The workflow takes a
+`workflow_dispatch`, which forces every path-filtered gate on:
+
+    gh workflow run ci --ref main
+
+This is not because the expensive shape is otherwise unreachable. `calibration`
+fires on the `packer` filter and `deno` on `figma`, and ordinary work schedules
+them — the push of #905's merge on 2026-08-11 ran `calibration` in 272 s and both
+architectures of `atlas-repro` inside a 304 s wall clock, which is the measured
+cost of the slowest shape this workflow has. The trigger is for the case where
+waiting for the right diff is itself the problem: after editing the filter lists,
+where the change under test is which jobs get scheduled.
+
+A run can target any ref that carries the workflow file, so
+`gh workflow run ci --ref <branch>` measures a filter change before it merges.
+The trigger only has to be on the default branch for GitHub to offer it at all.
+
+There are no inputs: a dispatch always forces. The three gates resolve in one
+step at the end of the `changes` job, from a single `FORCED` definition, and
+that step refuses to publish a gate that is neither `true` nor `false` — an empty
+gate would skip its jobs and let the aggregate report green over a suite that
+never ran.
+
 **CI** (`.github/workflows/ci.yml`). The existing `test` job runs
 `cargo nextest run --workspace` with no `-P` flag, which is the
 `regression` tier because it is nextest's `default` profile. A `calibration`
