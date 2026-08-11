@@ -439,6 +439,12 @@ build: assemble check
 # relative to the remote and would lint commits that are already upstream.
 # The range can legitimately be empty (see the recipe) — that is issue
 # #110, and it is handled rather than avoided by the choice of ref.
+#
+# A documentation-only change takes `lint` and `secrets` instead of `build`,
+# using the CI `changes` job's own definition of documentation. See the recipe
+# for why that classification is shared rather than restated.
+#
+# Commit lint, then build — or lint and secrets when only documentation changed.
 verify:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -463,7 +469,56 @@ verify:
     else
         git std lint --range origin/main..HEAD
     fi
-    just build
+
+    # A documentation-only change runs `lint`, `audit` and `secrets`, and skips
+    # `assemble`, the regression tier, both wasm builds and the C ABI check —
+    # the half no Markdown edit can move.
+    #
+    # This exists because the gate cost the same for every change: 224 s with
+    # nothing to rebuild and 513 s when a crate had moved, against 184-286 s for
+    # CI's entire run. A commit that edited one Markdown file paid the
+    # regression tier, both wasm builds and the C ABI check to establish that
+    # the file was still formatted.
+    #
+    # What stays, and why each is not "a Markdown file cannot break it":
+    #
+    # - `lint` is the whole recipe, including the four clippy invocations and
+    #   the `cargo doc` gate. Only `dprint check` and `markdownlint` can be
+    #   moved by the files classified as documentation, so most of this is kept
+    #   by choice rather than by necessity — the gate is cheap against a warm
+    #   `target/`, and it is what makes a green `verify` mean the same thing on
+    #   both paths. Against a cold or evicted `target/` it is minutes, not
+    #   seconds.
+    # - `audit` stays because it does NOT fail on a changed file. It fails when
+    #   a new advisory is published against a dependency that did not change, so
+    #   "documentation cannot move Cargo.lock" is not a reason to skip it — and
+    #   no CI job runs it, so skipping it here runs it nowhere.
+    # - `secrets` stays because it is the one gate whose failure cannot be
+    #   undone once the commit is pushed: the repository is public, and prose is
+    #   exactly where a pasted credential would sit. CI scans too, but only
+    #   after the commit is published.
+    #
+    # `--include-worktree`, because `verify` is documented as a command run by
+    # hand before opening a pull request as well as the pre-push hook. Only
+    # committed work is pushed, so the hook would not need it; but a developer
+    # with an edited `.rs` file on disk and a documentation-only commit must not
+    # read a green `verify` as "that file was compiled and tested".
+    code=$(scripts/is-code-change origin/main...HEAD --include-worktree)
+
+    if [ "$code" = true ]; then
+        just build
+    else
+        # Say what was classified and how. The CI job prints its file list and
+        # its result; a local gate that silently took the short path would leave
+        # "why did my push skip the tests" unanswerable after the fact.
+        echo "verify: documentation-only change — lint, audit and secrets only."
+        echo "verify: skipping assemble, the regression tier, both wasm gates and c-abi."
+        echo "verify: files considered:"
+        git diff --name-only --no-renames origin/main...HEAD | sed 's/^/  /'
+        just lint
+        just audit
+        just secrets
+    fi
 
 # Reformat everything in place (Rust + markdown).
 fmt:
