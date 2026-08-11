@@ -4,6 +4,27 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Manual trigger: forces every path-filtered job, so the expensive shape can
+  # be run without waiting for a diff that happens to schedule it.
+  #
+  # NOT because that shape is unreachable. `calibration` fires on the `packer`
+  # filter and `deno` on `figma`, and ordinary work schedules them: the push of
+  # #905's merge ran calibration in 272 s inside a 304 s wall clock. This is for
+  # the case where waiting for the right diff is itself the problem — after
+  # editing the filter lists, where the change under test is which jobs run.
+  #
+  # No inputs. A dispatch always forces. An input to make it not force would
+  # describe a mode that barely differs: on a dispatch there is no `before` sha
+  # to diff against, so the range degrades, `scripts/is-code-change` fails closed
+  # to true, and the whole compile-and-test half runs either way. The two
+  # positions would differ only in whether `deno` and `calibration` are
+  # scheduled, and a knob that fine is a second copy of the forcing condition
+  # waiting to disagree with the first.
+  #
+  # The trigger has to be on the default branch before it is offered at all, but
+  # once it is, a run can target any ref carrying the file:
+  # `gh workflow run ci --ref <branch>` uses that branch's copy of the workflow.
+  workflow_dispatch:
 
 # The default token is restricted; dorny/paths-filter needs pull-requests
 # read access to list a PR's changed files via the API.
@@ -11,25 +32,44 @@ permissions:
   contents: read
   pull-requests: read
 
+# Keyed on the event as well as the ref. Without `event_name` a manual run of
+# `main` shares a group with a push to `main`, and `cancel-in-progress` makes the
+# two evict each other: pressing the button kills the post-merge verification a
+# merge just started, and a merge during a forced run kills the forced run. They
+# are different questions about the same ref and both answers are wanted.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   changes:
     name: changes
     runs-on: ubuntu-latest
+    # ONE definition of "this run forces the gates". The filter step reads it as
+    # `env.FORCED` and the resolver reads it as `$FORCED`, so the predicate
+    # cannot drift between them — two copies of it would mean a skipped filter
+    # whose empty outputs are still consumed, which is a green run over a suite
+    # that never ran.
+    env:
+      FORCED: ${{ github.event_name == 'workflow_dispatch' }}
     outputs:
-      figma: ${{ steps.filter.outputs.figma }}
-      packer: ${{ steps.filter.outputs.packer }}
-      code: ${{ steps.code.outputs.code }}
+      figma: ${{ steps.gates.outputs.figma }}
+      packer: ${{ steps.gates.outputs.packer }}
+      code: ${{ steps.gates.outputs.code }}
     steps:
       # Full history: the code detector below diffs two arbitrary commits,
       # which a shallow clone cannot resolve.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # Skipped on a forced run, because its answer would be discarded. On an
+      # event with no `before` sha the action does not compare the ref with the
+      # default branch and find nothing — it logs that `before` is missing and
+      # falls back to the diff of the tip commit alone. That is a well-defined
+      # answer, and the wrong question here: a forced run wants every filter on
+      # regardless of what the tip commit happened to touch.
       - uses: dorny/paths-filter@v3
+        if: env.FORCED != 'true'
         id: filter
         with:
           filters: |
@@ -123,16 +163,58 @@ jobs:
           # merge base when a force-push means it is not.
           echo "changed files:"
           git diff --name-only --no-renames "$BASE...$HEAD" 2>/dev/null || true
-          # The classification lives in scripts/is-code-change, which `just
-          # verify` also calls. It used to be written out here and nowhere else;
-          # once the local gate needed the same rule, a second copy would have
-          # been a partial copy, and AGENTS.md records what those do — the
-          # packer path list "has already drifted three times as a partial copy,
-          # most recently omitting `Cargo.lock`". The script carries the rule,
-          # the reasoning, and the empty-diff-runs-everything default.
+          # The classification lives in scripts/is-code-change. `just verify`
+          # called it too until the pre-push gate stopped running tests, and it
+          # stays a script rather than shell inlined here because the rule can
+          # then be run against a scratch repository — which is how the
+          # rename-reports-only-the-destination defect was found. The script
+          # carries the rule, the reasoning, and the
+          # empty-diff-runs-everything default.
           code=$(scripts/is-code-change "$BASE...$HEAD")
           echo "code=$code" >>"$GITHUB_OUTPUT"
           echo "result: code=$code"
+
+      # The job's three outputs come from here rather than straight off the
+      # filter, so a manual run can force the jobs no ordinary diff schedules.
+      # Everything downstream keeps gating on `needs.changes.outputs.*` and does
+      # not know the difference.
+      - name: resolve the gates
+        id: gates
+        env:
+          FIGMA: ${{ steps.filter.outputs.figma }}
+          PACKER: ${{ steps.filter.outputs.packer }}
+          CODE: ${{ steps.code.outputs.code }}
+        run: |
+          set -uo pipefail
+          if [ "$FORCED" = "true" ]; then
+            echo "manual run: forcing every path-filtered job on."
+            figma=true
+            packer=true
+            code=true
+          else
+            figma=$FIGMA
+            packer=$PACKER
+            code=$CODE
+          fi
+          # Fail closed on anything that is not a plain boolean. Every gate
+          # downstream compares against the string `true`, so an EMPTY value
+          # silently skips the job rather than failing it — and an empty value is
+          # exactly what a step that did not run produces. This is the one place
+          # in the workflow that could publish "nothing changed" without anyone
+          # having decided that, so it refuses instead.
+          for kv in "figma=$figma" "packer=$packer" "code=$code"; do
+            case "${kv#*=}" in
+              true | false) ;;
+              *)
+                echo "changes: refusing to publish '$kv' — the gates must be true or false."
+                echo "  A gate that is neither skips its jobs and reports green over a suite"
+                echo "  that never ran. Something upstream did not run as expected."
+                exit 1
+                ;;
+            esac
+            echo "$kv" >>"$GITHUB_OUTPUT"
+            echo "  $kv"
+          done
 
   fmt:
     name: fmt
