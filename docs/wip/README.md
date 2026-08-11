@@ -107,11 +107,13 @@ not move — `2026-08-07-motion-in-the-document.md` and
 `2026-08-09-svg-as-a-second-producer.md` were each partly gardened in the same
 commit and each stays for the half that is still undone.
 
-**Eleven, when v0.19's shown-root driver prompt landed** (2026-08-11), hours
-after the close above took twelve to ten. It is the second prompt held for the
-same slice and the first time two are held for **one** slice rather than two —
-v0.19 is worked on two tracks, the Android half on `integration/v0.19-android`
-and the shown-root chain on `main`, and each track is handed its own.
+**Eleven, when v0.19's shown-root driver prompt landed** (2026-08-12, the day
+after the close above took twelve to ten — the commit crosses local midnight,
+and this ledger dates by commit day). Two prompts are held for **one** slice,
+which is new: the earlier same-slice pair was v0.18's, where the second
+superseded the first. These two do not. v0.19 is worked on two tracks that share
+no branch — the Android half on `integration/v0.19-android`, the shown-root
+chain on `main` — and each track is handed its own.
 
 **Nine of the eleven are design captures**, described below, and **two driver
 prompts are held**, both for v0.19.
@@ -131,7 +133,7 @@ only what remained of story #771 — and left with the pull request it carried.
 A third v0.18 prompt was held for two days —
 `2026-08-09-773-LOWERING-DRIVER-PROMPT.md`, narrower again, carrying only
 story #773's lowering half after pull request #882 landed that story's
-capture half. It **left with the pull request that closed #773**
+capture half. It **left with the pull request that completed story #773**
 (2026-08-11), archived verbatim as
 `docs/archive/2026-08-09-773-LOWERING-DRIVER-PROMPT.md` on its own stated
 rule. Its scope section was right to insist the story be checked against the
@@ -139,17 +141,24 @@ code first: the lowering needed a variant-set emitter that did not exist, and
 the fifteen `refused-*` nodes it counted turn out to exercise eleven
 constructs, because four of them carry no interaction at all.
 
-The one still held, brought by an earlier merge, is v0.19's:
+The first of the two still held, brought by an earlier merge, is
 `2026-08-09-v019-ANDROID-DRIVER-PROMPT.md`, added at the close of that slice's
 C ABI work to carry stories #841 and #842. **Both of those have landed**, and it
 is still held rather than archived: its own status line says it archives at
 v0.19's close, and that slice is open — D3a (#885), split-screen (#874) and
 story #842's frame-rate number all wait on hardware. It archives when epic #833
 does.
-The two slices' prompts overlapped because v0.18 and v0.19 ran at the same time,
-on `main` and on `integration/v0.19-android` respectively; every earlier pair did
-not. **That overlap ended at the v0.18 close** — one prompt is held again, which
-is the ordinary state. A drop of two in one commit is not unusual — at least
+
+The second is `2026-08-11-v019-SHOWN-ROOT-DRIVER-PROMPT.md`, for the same slice
+and the same close condition, carrying the shown-root chain on `main` while the
+first carries the Android half on its own branch. **Both are v0.19's**, which is
+what is unusual about this pair rather than its size: earlier overlaps were two
+slices at once, or one prompt superseding another within a slice, and this is
+neither.
+
+The two slices' prompts overlapped before that, because v0.18 and v0.19 ran at
+the same time, on `main` and on `integration/v0.19-android` respectively. **That
+overlap ended at the v0.18 close.** A drop of two in one commit is not unusual — at least
 eleven earlier commits removed two or more files from this directory at once,
 and `76f1a72` removed four — so nothing about the size of this fall is
 remarkable. That sentence is written this way because an earlier draft of it
@@ -413,8 +422,10 @@ on `integration/v0.19-android`, and leaves at the slice's close.
 `2026-08-11-v019-SHOWN-ROOT-DRIVER-PROMPT.md` carries the shown-root chain,
 stories #836 to #838, on `main`, and leaves on the same condition — its own
 status line says so.
-They are two because the slice is worked on two tracks that share no branch, not
-because one superseded the other, which is what every previous pair here meant.
+They are two because the slice is worked on two tracks that share no branch. Of
+the earlier concurrent pairs only one was a supersession — v0.18's, at
+`53e61c5` — and the paragraph further down says so; the rest were two slices, or
+two unrelated handoffs, held at once.
 
 This paragraph said "none" from 2026-08-07, when v0.17's prompt was added and
 this sentence was not touched, until that prompt was archived a day later and
