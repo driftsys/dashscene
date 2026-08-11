@@ -72,7 +72,9 @@ pub mod recovery;
 
 pub use document::Document;
 pub use host::{App, FRAME_INTERVAL, Reaction, Scene, Waker, run};
-pub use present::{Drawn, GpuPresenter, Present, PresentError};
+pub use present::{
+    AdapterInfo, Backend, DeviceType, Drawn, GpuPresenter, Present, PresentError, TextureFormat,
+};
 pub use recovery::Recovery;
 
 /// Replays a document already in memory, through the **owning** load path.

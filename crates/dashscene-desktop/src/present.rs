@@ -76,6 +76,10 @@ use winit::window::Window;
 /// `demo`'s raster presenter is one — would otherwise have to depend on the
 /// lean painter to name the type it returns.
 pub use dashscene_gpu::Drawn;
+/// The `wgpu` types [`GpuPresenter::adapter_info`] and [`GpuPresenter::format`]
+/// hand back, re-exported so that an embedder naming one does not have to
+/// declare a `wgpu` dependency and keep its version in step with this crate's.
+pub use dashscene_gpu::{AdapterInfo, Backend, DeviceType, TextureFormat};
 
 /// Puts a committed frame on a window.
 ///
@@ -269,6 +273,26 @@ impl GpuPresenter {
             renderer,
             name,
         })
+    }
+
+    /// The adapter this presenter acquired.
+    ///
+    /// Inherent rather than on [`Present`], because a presenter is not obliged
+    /// to have an adapter — `demo`'s raster one does not — and a trait method
+    /// every implementation had to answer would be the wrong shape for it
+    /// (issue #819).
+    ///
+    /// For an embedder that wants to show the backend in its own interface, or
+    /// branch on it: warn on a software adapter, choose a texture path by
+    /// format. [`Present::name`] stays for the caller that only wants the line,
+    /// and this is for the one that would otherwise have had to parse it.
+    pub fn adapter_info(&self) -> &AdapterInfo {
+        self.renderer.adapter_info()
+    }
+
+    /// The swapchain format this window was configured with.
+    pub fn format(&self) -> TextureFormat {
+        self.renderer.format()
     }
 }
 
