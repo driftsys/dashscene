@@ -40,13 +40,22 @@ off to `git std bootstrap`, which wires up repo-local git hooks.
    prerequisites `./bootstrap` does not install either — `cargo-audit` for
    `just audit`, and a C toolchain for `just c-abi`. Each stops the gate
    rather than being skipped.
-5. Open a PR. CI runs the same gates (`fmt`, `dprint`, `clippy`, `test`,
+5. If your change produced working notes under `docs/wip/`, fold them into the
+   durable records under `docs/specification/`, `docs/design/`, `docs/decisions/`
+   or `docs/technotes/` **before** opening the PR, so they are part of what gets
+   reviewed. A PR that leaves work sitting in `docs/wip/` is not finished.
+6. Open a PR. CI runs the same gates (`fmt`, `dprint`, `clippy`, `test`,
    `convco`, `secrets`) plus `demo-build`, `wasm-build`, `wasm-gates`
    (everything compiled for `wasm32-unknown-unknown`), `android-build`,
    `render-oracle`, the two `exit-gate` jobs, the path-filtered `deno` and
    `calibration` jobs, and the `atlas-repro` job (byte-reproducibility of the
    glyph-atlas pipeline, with a cached `msdf-atlas-gen` build), aggregated into a
    single required `ci` check.
+7. Expect a review alongside CI rather than after it, and expect its findings to
+   appear as a checklist on the PR. Findings that matter are fixed before merge;
+   the rest become `debt`-labelled issues against a milestone. If a fix changes
+   the implementation, the fix gets looked at too — in this repository the
+   serious defects have more often been in a correction than in the original.
 
 ## Recipes
 

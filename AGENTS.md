@@ -293,7 +293,14 @@ runs as three tiers, so "tests pass" is no longer a claim about all of it:
 
 Story workflow — the definition of done for every story:
 
-- `just build` green.
+- `just build` green. **The pre-push hook does not run it** — `just verify` is
+  bounded at seconds and runs no test tier, so this is a deliberate command.
+- **Garden `docs/wip/` BEFORE opening the PR**, not before merging. The gardened
+  records then sit in the diff under review, which is the point of the ordering:
+  prose asserting what the code does not do is this repository's most common
+  defect, and records gardened after review are the one artifact that escapes
+  review entirely. A `main`-targeting PR whose tracked `docs/wip/` still holds
+  work is unfinished, not mergeable. The `sdd-gardening` skill does this.
 - Open the PR as an ordinary pull request — **never a draft**. Draft means
   "not ready for review", which is the opposite of why the PR was opened:
   reviewers are not requested, and `/code-review` stops without reviewing
@@ -301,10 +308,21 @@ Story workflow — the definition of done for every story:
   (`docs/decisions/review-before-ready-not-before-open.md`).
 - Run `/code-review` on the PR (`--comment` posts the findings as inline
   PR comments). Capture every finding as a checklist in the PR
-  description — never drop a finding silently.
-- Fix all critical findings before merging. For minor findings, file one
-  `debt`-labeled issue each (linked to the story) instead of fixing them
-  inline.
+  description — never drop a finding silently. **Run it while CI runs**: CI
+  answers "the tier passed" in three to five minutes, the review answers "is
+  this right" and takes longer, and neither waits on the other.
+- Fix all critical findings before merging. **After a critical fix that changes
+  the implementation, review the fix** — not a second full pass, a pass over
+  what changed. On the CI work of 2026-08-11 four review rounds each found their
+  most serious defect in a correction rather than in the original: a gate that
+  could fail a working runner, a premise ("CI runs the tier on every push")
+  written into six files, a replacement figure that did not reproduce, and a
+  justification for a feature that was already false. A rule that fixes
+  criticals and stops looking would have merged all four.
+- For minor findings, file one `debt`-labeled issue each, linked to the story
+  and **against a milestone**: the current slice when it blocks that slice's
+  definition of done, the next one otherwise. Debt filed with no milestone is
+  debt nobody schedules.
 - The findings checklist is what says the PR is not ready to merge: an
   absent or unticked checklist means the review is still running. Nothing
   on this repo enforces that mechanically — branch protection needs a paid

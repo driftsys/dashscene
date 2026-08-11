@@ -1,7 +1,7 @@
 # Decision: review before merge — a story PR is never a draft
 
     status   accepted
-    date     2026-07-13, revised 2026-08-01
+    date     2026-07-13, revised 2026-08-01 and 2026-08-11
     scope    process — applies to every story PR
     session  marshal/coordinator lane
 
@@ -99,6 +99,40 @@ unfinished. That checklist is an artifact the review already produces, it
 is visible on the PR, and unlike draft it does not tell readers the diff
 is not ready to read.
 
+## Revision, 2026-08-11 — what the review sees, and when
+
+Three additions. Each was cheap to state and each closes something the
+2026-08-01 wording left open.
+
+**Garden `docs/wip/` before opening the PR, not before merging.** The gardening
+rule already required the shelf to be empty before a `main`-targeting PR merged,
+which permitted gardening _after_ the review — and the gardened records then
+landed unreviewed. That is the wrong artifact to exempt: prose asserting what the
+code does not do is this repository's most common defect, and it is the class four
+review rounds on story #49 found across every finding. Gardening first puts those
+records in the diff under review. The cost is real and accepted: a critical
+finding that changes the implementation can invalidate records already gardened,
+so they are re-gardened. That is cheaper than shipping them unread.
+
+**Run the review while CI runs.** CI answers whether the tier passed, in three to
+five minutes. The review answers whether the change is right, takes longer, and
+does not depend on CI's answer. Serialising them wasted the CI window, and the
+merge gate is unchanged: both must be complete.
+
+**Review the fix, when a critical finding changes the implementation.** Not a
+second full pass — a pass over what changed. The CI and pre-push work of
+2026-08-11 ran four review rounds, and each found its most serious defect in a
+_correction_ rather than in the original: a resolver that could fail a working
+runner, a premise ("CI runs the tier on every push") written into six files, a
+replacement measurement that did not reproduce, and a justification for a feature
+that was already false. A rule that fixes criticals and stops looking would have
+merged all four. The findings checklist is unticked until the fix has been looked
+at, not until the fix has been written.
+
+Also: a `debt` issue is filed against a milestone — the current slice when it
+blocks that slice's definition of done, the next one otherwise. Debt filed with
+no milestone is debt nobody schedules, and the review pass produces most of it.
+
 ## Consequences
 
 - `/code-review` runs against story PRs instead of declining them.
@@ -113,6 +147,9 @@ is not ready to read.
   and that the checklist is absent or unticked for the whole window.
 - Nothing enforces the gate mechanically. It is held by the description's
   checklist and by whoever presses merge.
+- Gardening moves earlier in the branch's life, so a session that gardens late
+  has to re-open the PR's diff rather than append to it. `wip-gate.sh` remains
+  the detector; what changed is which side of the review it runs on.
 
 ## Alternatives considered
 
