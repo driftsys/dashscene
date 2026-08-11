@@ -76,9 +76,23 @@ use winit::window::Window;
 /// `demo`'s raster presenter is one — would otherwise have to depend on the
 /// lean painter to name the type it returns.
 pub use dashscene_gpu::Drawn;
-/// The `wgpu` types [`GpuPresenter::adapter_info`] and [`GpuPresenter::format`]
-/// hand back, re-exported so that an embedder naming one does not have to
-/// declare a `wgpu` dependency and keep its version in step with this crate's.
+/// What an embedder has to name to use [`GpuPresenter::adapter_info`] and
+/// [`GpuPresenter::format`], re-exported so that naming one does not oblige it
+/// to declare a `wgpu` dependency and keep the version in step with this
+/// crate's.
+///
+/// [`AdapterInfo`] and [`TextureFormat`] are the two the accessors return.
+/// [`Backend`] and [`DeviceType`] are the field types a caller branches on —
+/// `dashscene-gpu`'s copy of this re-export records which field type is
+/// deliberately absent and why.
+///
+/// **The cost, which is this crate's first:** these are `wgpu` types in a
+/// published signature, so a `wgpu` major bump is a breaking change to
+/// `dashscene-desktop` even when nothing here changes, and an embedder pinning
+/// this crate inherits that cadence. Everything else the crate exposes is
+/// wrapped — `from_gpu` flattens `RendererError` for exactly that reason. The
+/// trade is deliberate: an accessor returning a type nobody can name is not an
+/// accessor, and issue #819 asked for the types rather than the string.
 pub use dashscene_gpu::{AdapterInfo, Backend, DeviceType, TextureFormat};
 
 /// Puts a committed frame on a window.
@@ -286,6 +300,15 @@ impl GpuPresenter {
     /// branch on it: warn on a software adapter, choose a texture path by
     /// format. [`Present::name`] stays for the caller that only wants the line,
     /// and this is for the one that would otherwise have had to parse it.
+    ///
+    /// **Reachable only by an embedder that builds the presenter itself.**
+    /// [`crate::App::presenter`] hands back a `Box<dyn Present>`, the loop
+    /// holds it as one, and `Present` has no downcast — so an embedder that
+    /// takes the default presenter never holds a `GpuPresenter` and still has
+    /// only the string. Overriding `App::presenter`, reading this before
+    /// boxing, is the route. Widening the loop's own seam is a change to
+    /// `Present` and to what every implementation must answer, which issue
+    /// #819 ruled against for the reason above; issue #902 carries the gap.
     pub fn adapter_info(&self) -> &AdapterInfo {
         self.renderer.adapter_info()
     }

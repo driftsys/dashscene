@@ -143,13 +143,15 @@ so it needs bytes for every entry whether or not anything draws them.
 
 ## What holds it
 
-| check                                   | what it fails on                                                                      |
-| --------------------------------------- | ------------------------------------------------------------------------------------- |
-| `demo/tests/integration_surface.rs`     | any of the five pieces missing from an integration crate, or present in its demo      |
-| `demo/tests/host_policy_invariant.rs`   | a host holding its own clamp or its own shown generation                              |
-| `demo/tests/clock_invariant.rs`         | a clock read by any crate at or below `LiveScene`, which R4 rests on                  |
-| `crates/dashscene-web/src/shown.rs`     | a load that reads more than the shown root when nothing else draws (its own tests)    |
-| `crates/dashlang/tests/frame_policy.rs` | the clamp changing shape — including `clamp` for `max`/`min`, which NaN distinguishes |
+| check                                                 | what it fails on                                                                                            |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `demo/tests/integration_surface.rs`                   | any of the five pieces missing from an integration crate, or present in its demo                            |
+| `demo/tests/host_policy_invariant.rs`                 | a host holding its own clamp or its own shown generation                                                    |
+| `demo/tests/clock_invariant.rs`                       | a clock read by any crate at or below `LiveScene`, which R4 rests on                                        |
+| `crates/dashscene-web/src/shown.rs`                   | a load that reads more than the shown root when nothing else draws (its own tests)                          |
+| `crates/dashlang/tests/frame_policy.rs`               | the clamp changing shape — including `clamp` for `max`/`min`, which NaN distinguishes                       |
+| `crates/dashscene-desktop/tests/adapter_accessors.rs` | an adapter accessor going back to a `String`, losing its `pub`, or ceasing to return the painter's own type |
+| `crates/dashscene-web/tests/adapter_accessors.rs`     | the same, for `Surface` — compiled for wasm32 only, so run by no test binary                                |
 
 `integration_surface.rs` is a **source scan** and matches one spelling per
 piece. A demonstration that reimplemented the frame loop through a differently
@@ -211,18 +213,43 @@ both crates, from `dashscene-gpu`, which re-exports them from `wgpu`. Without
 that an embedder would have to declare a `wgpu` dependency of its own and keep
 its version in step with this workspace's, and two `wgpu` versions in one build
 are two unrelated `AdapterInfo` types. `Backend` and `DeviceType` are in the set
-because they are what `AdapterInfo`'s fields hold: branching on the adapter,
-rather than only printing it, means naming them.
+because they are the field types a caller branches on. **The set is not every
+field type** — `AdapterInfo::limit_bucket` holds an `AdapterLimitBucketInfo`
+that `wgpu` does not re-export at its root, reachable only as `wgpu::wgt::`, so
+no crate downstream of `wgpu` can offer it under a stable path.
 
-**What checks it** is a type check rather than a behavioural one, on both sides,
-because neither type can be constructed without a window or a canvas. Each
+**What it costs, on the desktop, is new.** These are the first `wgpu` types in
+`dashscene-desktop`'s published signatures; everything else is wrapped, and
+`from_gpu` flattens `RendererError` to a string for exactly that reason. So a
+`wgpu` major bump is now a breaking change to that crate even when nothing in it
+changes, and an embedder pinning it inherits that cadence. The web crate already
+leaked one through `WebError::Renderer`. The trade is deliberate: an accessor
+returning a type nobody can name is not an accessor.
+
+**Two limits, each filed.** On the desktop the accessors are reachable only by
+an embedder that builds the presenter itself — `App::presenter` hands back a
+`Box<dyn Present>`, the loop holds it as one, and `Present` has no downcast, so
+the embedder that takes the default presenter still has only the string. That is
+issue #902. And neither accessor's value is checked by anything: that the
+adapter reported is the adapter drawn on needs a device and a surface together.
+
+**What checks them** is a type check rather than a behavioural one, on both
+sides, because neither type can be constructed without a window or a canvas. A
+device is not the obstacle — several `dashscene-gpu` tests build one. Each
 crate's `tests/adapter_accessors.rs` names the accessors from outside the crate
 and coerces each to a function pointer with the return type it must have, so an
 accessor that went back to a `String`, or a re-export that went away, stops
-compiling. `cargo test` runs the desktop one. The web one is compiled for
+compiling. Each also pins its crate's re-export against `dashscene-gpu`'s by an
+identity coercion, and `dashscene-gpu` pins its own against `wgpu`'s beside the
+re-export, because a coercion against the local alias alone would still pass if
+that alias became a local type wearing the same name.
+
+`cargo test` runs the desktop one. The web one is compiled for
 `wasm32-unknown-unknown` only, because `Surface` is, so `cargo test` never sees
-it; what compiles it is `just lint`, which already runs clippy over every target
-of `dashscene-web` for wasm32.
+it: what compiles it is `just lint`, and — since this story — the same line in
+CI's `clippy` job, which until then ran no wasm32 job for this crate at all. The
+painter's wasm gate and the browser host's are still run locally and by nothing
+in CI; issue #903 carries them.
 
 ## Known gaps, named
 

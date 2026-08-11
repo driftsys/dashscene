@@ -9,7 +9,9 @@
 //!
 //! 1. **The canvas-to-surface handoff** — `Surface::attach`. Finding the
 //!    canvas, measuring the drawable in device pixels, and acquiring an adapter
-//!    asynchronously.
+//!    asynchronously. What was acquired is readable as types rather than only
+//!    as the line `describe` formats — `Surface::adapter_info` and
+//!    `Surface::format`, added at story #835 (issue #815).
 //! 2. **The `requestAnimationFrame` loop** — `Host::spin`. It **survives a lost
 //!    device**, rebuilding the surface against the same canvas and carrying on
 //!    (`recovery`), and it **can be stopped** — `spin` hands back a
@@ -101,10 +103,15 @@ mod host;
 
 pub use recovery::Recovery;
 
-/// The `wgpu` types `Surface::adapter_info` and `Surface::format` hand back,
-/// re-exported from `dashscene-gpu` so that an embedder naming one does
-/// not have to declare a `wgpu` dependency and keep its version in step with
-/// this crate's.
+/// What an embedder has to name to use `Surface::adapter_info` and
+/// `Surface::format`, re-exported from `dashscene-gpu` so that naming one does
+/// not oblige it to declare a `wgpu` dependency and keep the version in step
+/// with this crate's.
+///
+/// [`AdapterInfo`] and [`TextureFormat`] are the two the accessors return.
+/// [`Backend`] and [`DeviceType`] are the field types a caller branches on —
+/// `dashscene-gpu`'s copy of this re-export records which field type is
+/// deliberately absent and why.
 ///
 /// Not gated on `wasm32`, unlike everything below: the types exist on every
 /// target even where the surface that returns them does not, and a re-export

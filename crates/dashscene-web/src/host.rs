@@ -166,13 +166,16 @@ impl Surface {
     /// The adapter and format actually acquired, for an embedder that wants to
     /// report them. `demo-web` logs this line.
     pub fn describe(&self) -> String {
-        let info = self.renderer.adapter_info();
+        // Through this type's own accessors rather than the renderer's, so the
+        // line and a caller reading the parts cannot come from two paths that
+        // could later disagree.
+        let info = self.adapter_info();
         let (width, height) = self.extent;
         format!(
             "dashscene-gpu ({}, {:?}, {:?}) on a {width}x{height} drawable",
             info.name,
             info.backend,
-            self.renderer.format()
+            self.format()
         )
     }
 }

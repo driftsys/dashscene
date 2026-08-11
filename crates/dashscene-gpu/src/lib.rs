@@ -124,10 +124,24 @@ pub use surface::{Drawn, FrameError, SurfaceRenderer};
 /// are two unrelated `AdapterInfo` types, and the mismatch is a compile error a
 /// long way from its cause.
 ///
-/// [`Backend`] and [`DeviceType`] are here because they are what
-/// [`AdapterInfo`]'s fields hold: branching on the adapter — rather than only
-/// printing it — means naming them.
+/// [`Backend`] and [`DeviceType`] are here because they are the field types a
+/// caller branches on: naming a backend, or asking whether the adapter is a
+/// software one, means naming them. Not every field type is here —
+/// `AdapterInfo::limit_bucket` holds an `AdapterLimitBucketInfo` that `wgpu`
+/// itself does not re-export at its root, so no crate downstream of `wgpu` can
+/// offer it under a stable path. A caller that needs it reaches for
+/// `wgpu::wgt`, and takes the version-matching problem back.
 pub use wgpu::{AdapterInfo, Backend, DeviceType, TextureFormat};
+
+// The re-export above is `wgpu`'s type and not a local stand-in wearing its
+// name. An identity coercion compiles only if the two paths name one type, and
+// both integration crates pin their own re-exports against this crate's, so the
+// chain from `dashscene_desktop::AdapterInfo` to `wgpu::AdapterInfo` is closed
+// by compilation rather than by reading. Without it, the argument the whole
+// re-export rests on — that a caller gets `wgpu`'s type and not a copy — is
+// asserted nowhere.
+const _: fn(wgpu::AdapterInfo) -> AdapterInfo = |info| info;
+const _: fn(wgpu::TextureFormat) -> TextureFormat = |format| format;
 
 /// Which payload formats this painter can be handed, on the device it will draw
 /// on.

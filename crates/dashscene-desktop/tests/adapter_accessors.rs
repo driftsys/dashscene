@@ -2,12 +2,19 @@
 //! (issue #819, story #835).
 //!
 //! A type check rather than a behavioural one, because [`GpuPresenter`] needs a
-//! window and a device and neither exists under `cargo test`. What needs
-//! neither is the property the issue is about: that an embedder can reach the
-//! adapter and the swapchain format **from outside this crate**, as the `wgpu`
-//! types, without parsing [`Present::name`] and without declaring a `wgpu`
-//! dependency of its own. An accessor that went back to a `String`, or a
-//! re-export that went away, stops compiling here.
+//! window and no window exists under `cargo test`. A device does — several
+//! `dashscene-gpu` tests build one — so what is out of reach here is the
+//! surface, not the GPU. What needs neither is the property the issue is about:
+//! that an embedder can reach the adapter and the swapchain format **from
+//! outside this crate**, as the `wgpu` types, without parsing [`Present::name`]
+//! and without declaring a `wgpu` dependency of its own.
+//!
+//! Each check names both paths — this crate's re-export and `dashscene-gpu`'s —
+//! because a coercion against this crate's alias alone would still pass if the
+//! re-export were replaced by a local type wearing the same name, which is the
+//! one substitution that would make the whole argument for re-exporting false.
+//! `dashscene-gpu` closes the last link to `wgpu` itself, beside its own
+//! re-export.
 
 use dashscene_desktop::{AdapterInfo, Backend, DeviceType, GpuPresenter, Present, TextureFormat};
 
@@ -17,8 +24,19 @@ use dashscene_desktop::{AdapterInfo, Backend, DeviceType, GpuPresenter, Present,
 /// presenter has no adapter to answer with.
 #[test]
 fn the_adapter_and_the_format_are_reachable_as_wgpu_types() {
-    let _adapter_info: fn(&GpuPresenter) -> &AdapterInfo = GpuPresenter::adapter_info;
-    let _format: fn(&GpuPresenter) -> TextureFormat = GpuPresenter::format;
+    let _adapter_info: fn(&GpuPresenter) -> &dashscene_gpu::AdapterInfo =
+        GpuPresenter::adapter_info;
+    let _format: fn(&GpuPresenter) -> dashscene_gpu::TextureFormat = GpuPresenter::format;
+}
+
+/// This crate's re-export is the painter's type, not a local one wearing its
+/// name. An identity coercion compiles only if the two paths name one type.
+#[test]
+fn the_re_exports_are_the_painters_own_types() {
+    let _info: fn(dashscene_gpu::AdapterInfo) -> AdapterInfo = |info| info;
+    let _format: fn(dashscene_gpu::TextureFormat) -> TextureFormat = |format| format;
+    let _backend: fn(dashscene_gpu::Backend) -> Backend = |backend| backend;
+    let _kind: fn(dashscene_gpu::DeviceType) -> DeviceType = |kind| kind;
 }
 
 /// Branching on the adapter — warn on a software one, choose a path by format —

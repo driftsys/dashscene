@@ -6,7 +6,11 @@
 //!
 //! 1. **The window-to-surface handoff** — [`GpuPresenter::new`], over
 //!    `dashscene_gpu::SurfaceRenderer`. Blocking, where the browser's is
-//!    asynchronous.
+//!    asynchronous. What was acquired is readable as types rather than only as
+//!    the line [`Present::name`] carries — [`GpuPresenter::adapter_info`] and
+//!    [`GpuPresenter::format`], added at story #835 (issue #819), and reachable
+//!    only by an embedder that builds the presenter itself: see the accessor,
+//!    which records why, and issue #902.
 //! 2. **The frame loop** — [`run`], on `winit`'s event loop, pacing itself at
 //!    60 Hz while the generation advances and parking on an event wait while it
 //!    is steady. It **survives a lost surface**, rebinding the presenter and
