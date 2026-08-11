@@ -92,7 +92,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy}
 use winit::window::{Window, WindowAttributes, WindowId};
 
 use crate::DesktopError;
-use crate::present::{Adapter, GpuPresenter, Present, PresentError};
+use crate::present::{AdapterDetails, GpuPresenter, Present, PresentError};
 use crate::recovery::{Recovery, recovery};
 
 /// The pace the loop runs at while the generation advances: 60 Hz.
@@ -190,6 +190,29 @@ pub struct Scene<'a> {
     /// The drawable extent in physical pixels, for an embedder mapping a
     /// pointer position onto a normalised signal.
     pub extent: (u32, u32),
+}
+
+/// What the loop hands [`App::attached`]: the scene, and what it was bound to.
+///
+/// One struct rather than a parameter each, so that the next fact the loop
+/// learns at attach time is a field rather than a signature change. The adapter
+/// was the second, and adding it broke every implementation of [`App`] in the
+/// workspace — cheap while nothing is published, and not cheap after.
+#[non_exhaustive]
+pub struct Attached<'a> {
+    /// The scene that was just built, or the one the new presenter will draw.
+    pub scene: Scene<'a>,
+    /// [`Present::name`] for the presenter now bound, or `"no presenter"` when
+    /// none is — which is a real state during a rebind, not a placeholder.
+    pub presenter: &'a str,
+    /// The presenter's answer to [`Present::adapter`].
+    ///
+    /// [`None`] means **either** that the bound presenter has no device —
+    /// `demo`'s raster one — **or** that no presenter is bound at all. The two
+    /// are not distinguished here on purpose: an embedder that acts on the
+    /// difference is acting on a transient state of the loop's own rebind, and
+    /// the next attach will tell it what it got.
+    pub adapter: Option<AdapterDetails<'a>>,
 }
 
 /// What the loop should do about something the embedder just handled.
@@ -305,13 +328,13 @@ pub trait App {
     /// here rather than in [`App::build`] is what lets one implementation serve
     /// both, since a rebind does not rebuild and a rebuild does not rebind.
     ///
-    /// `adapter` is the presenter's own answer to [`Present::adapter`], and is
-    /// [`None`] for a presenter that has no device — `demo`'s raster one. It is
-    /// here rather than left to be read off the presenter because the loop owns
-    /// the presenter and hands it to nobody: this hook is the only point at
-    /// which an embedder that did not build it can see what it got (issue
-    /// #902). An embedder that wants only the line still has `presenter`.
-    fn attached(&mut self, _scene: Scene<'_>, _presenter: &str, _adapter: Option<Adapter<'_>>) {}
+    /// Everything the loop knows at that moment arrives as one [`Attached`],
+    /// rather than as a parameter each. The adapter was the second fact this
+    /// hook had to carry and adding it broke every implementation; a third —
+    /// the present mode, the surface capabilities, the recovery generation —
+    /// would break them again, and this crate's freedom to do that ends when it
+    /// is published. A field on a `#[non_exhaustive]` struct is additive.
+    fn attached(&mut self, _attached: Attached<'_>) {}
 
     /// A window event the loop did not consume.
     ///
@@ -510,35 +533,36 @@ impl<A: App> Host<A> {
 
     /// Tells the embedder that the scene or the presenter has just changed.
     fn attached(&mut self) {
+        // Both borrowed from `self.presenter`, which is a different field from
+        // `self.app`, `self.live` and `self.arena` — so these are one borrow
+        // each rather than one of the whole of `self`, and nothing here has to
+        // be copied out. `AdapterInfo` holds four `String`s and this runs on
+        // every attach; the name used to be cloned for a borrow conflict that
+        // this pair demonstrates does not exist.
         let name = self
             .presenter
             .as_ref()
-            .map_or("no presenter", |presenter| presenter.name())
-            .to_owned();
-        let extent = self.extent;
-        // Borrowed rather than copied out, unlike the name above: `AdapterInfo`
-        // holds four `String`s and this runs on every attach. `self.presenter`,
-        // `self.app`, `self.live` and `self.arena` are four different fields, so
-        // the borrows below are one each rather than one of `self`.
+            .map_or("no presenter", |presenter| presenter.name());
         let adapter = self
             .presenter
             .as_ref()
             .and_then(|presenter| presenter.adapter());
+        let extent = self.extent;
         // Borrowed field by field rather than through a helper: a method
         // handing back a `Scene` would borrow the whole of `self`, and the call
         // below needs `self.app` at the same time.
         let Some(live) = self.live.as_mut() else {
             return;
         };
-        self.app.attached(
-            Scene {
+        self.app.attached(Attached {
+            scene: Scene {
                 live,
                 arena: &mut self.arena,
                 extent,
             },
-            &name,
+            presenter: name,
             adapter,
-        );
+        });
     }
 
     /// One frame.
@@ -914,7 +938,11 @@ impl<A: App> ApplicationHandler<Wake> for Host<A> {
 
 #[cfg(test)]
 mod tests {
-    use dashscene_gpu::FrameError;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use dashscene_core::CommittedScene;
+    use dashscene_gpu::{Drawn, FrameError};
 
     use super::*;
 
@@ -923,6 +951,9 @@ mod tests {
     /// takes on a present failure, which happens before any of the rest.
     struct Stub {
         notes: Vec<String>,
+        /// What [`App::attached`] was last handed, or [`None`] if it has not
+        /// been called. The inner `bool` is whether an adapter came with it.
+        attached: Option<bool>,
     }
 
     impl App for Stub {
@@ -932,6 +963,43 @@ mod tests {
 
         fn note(&mut self, message: &str) {
             self.notes.push(message.to_owned());
+        }
+
+        fn attached(&mut self, attached: Attached<'_>) {
+            self.attached = Some(attached.adapter.is_some());
+        }
+    }
+
+    /// A presenter that records whether the loop asked it for its adapter.
+    ///
+    /// It answers [`None`], because it has no device — and because nothing
+    /// outside `wgpu` can construct an `AdapterInfo`, so no test can produce a
+    /// `Some` at all. What is checkable without a device is the wiring: that
+    /// `Host::attached` asks the presenter rather than passing a constant, which
+    /// is the one line that closes issue #902 and which every signature-level
+    /// check in `tests/adapter_accessors.rs` leaves untouched.
+    struct Asked {
+        asked: Rc<Cell<bool>>,
+    }
+
+    impl Present for Asked {
+        fn name(&self) -> &str {
+            "asked"
+        }
+
+        fn resize(&mut self, _width: u32, _height: u32) -> Result<(), PresentError> {
+            Ok(())
+        }
+
+        fn document_replaced(&mut self) {}
+
+        fn present(&mut self, _scene: &CommittedScene) -> Result<Drawn, PresentError> {
+            Ok(Drawn::No)
+        }
+
+        fn adapter(&self) -> Option<AdapterDetails<'_>> {
+            self.asked.set(true);
+            None
         }
     }
 
@@ -943,7 +1011,10 @@ mod tests {
     /// out of `frame`.
     fn host() -> Host<Stub> {
         Host {
-            app: Stub { notes: Vec::new() },
+            app: Stub {
+                notes: Vec::new(),
+                attached: None,
+            },
             window: None,
             presenter: None,
             arena: Arena::new(),
@@ -957,6 +1028,35 @@ mod tests {
             parked: None,
             failure: None,
         }
+    }
+
+    /// The wiring issue #902 closed: the loop asks its presenter for the
+    /// adapter and passes the answer on.
+    ///
+    /// Asserted here rather than in `tests/adapter_accessors.rs`, which cannot
+    /// see it: every check there is a signature, and a `Host` that passed a
+    /// constant `None` would satisfy all of them. This is the only test that
+    /// fails when the wiring is removed.
+    #[test]
+    fn the_loop_asks_its_presenter_for_the_adapter() {
+        let asked = Rc::new(Cell::new(false));
+        let mut host = host();
+        host.presenter = Some(Box::new(Asked {
+            asked: Rc::clone(&asked),
+        }));
+        host.live = Some(host.app.build(&mut host.arena, 0, 0));
+
+        host.attached();
+
+        assert!(
+            asked.get(),
+            "the loop must ask the presenter for its adapter, not pass a constant"
+        );
+        assert_eq!(
+            host.app.attached,
+            Some(false),
+            "the hook must run, and this presenter has no device to report"
+        );
     }
 
     /// The defect issue #818 filed: a recoverable loss ended the loop, and the

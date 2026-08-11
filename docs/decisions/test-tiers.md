@@ -364,8 +364,9 @@ What it still catches: `lint` runs `clippy --all-targets`, which compiles what
 it lints, over the workspace and over every package `wasm-lint` names — so a
 compile error fails locally. There were three of those when this was measured
 and there are four now, `dashscene-gpu` having been added at issue #903; the
-recipe is the list, not this sentence. What now reaches CI unverified is a failing test, and the CI
-`test` job runs the regression tier completely on every push and pull request.
+recipe is the list, not this sentence. What now reaches CI unverified is a
+failing test, and the CI `test` job runs the regression tier completely on every
+push and pull request.
 
 **CI** (`.github/workflows/ci.yml`). The existing `test` job runs
 `cargo nextest run --workspace` with no `-P` flag, which is the

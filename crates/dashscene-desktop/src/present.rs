@@ -102,11 +102,24 @@ pub use dashscene_gpu::{AdapterInfo, Backend, DeviceType, TextureFormat};
 /// branching on one usually wants the other — warn on a software adapter,
 /// choose a texture path by format.
 ///
-/// Borrowed, so answering costs nothing. `AdapterInfo` holds four `String`s and
-/// a presenter is asked this on every attach.
+/// Borrowed, so answering costs nothing. [`AdapterInfo`] holds four `String`s
+/// and a presenter is asked this on every attach.
+///
+/// **Not `Adapter`**, which would read as `wgpu::Adapter` — the handle you call
+/// `request_device` on, a real type reachable through this crate's own
+/// dependency tree. This is what an adapter *reported about itself*, and the
+/// name is kept free in case a later story does hand over the handle.
+///
+/// `#[non_exhaustive]` because nothing outside `wgpu` can construct an
+/// [`AdapterInfo`], so no downstream crate can build one of these anyway: the
+/// attribute costs a caller only exhaustive destructuring, and buys the freedom
+/// to answer a third fact — the present mode, the alpha mode — without a
+/// breaking change.
 #[derive(Clone, Copy, Debug)]
-pub struct Adapter<'a> {
-    /// The adapter itself.
+#[non_exhaustive]
+pub struct AdapterDetails<'a> {
+    /// What the adapter reported about itself: its name, its backend, whether
+    /// it is a discrete GPU or a software rasteriser.
     pub info: &'a AdapterInfo,
     /// The format the swapchain was configured with.
     pub format: TextureFormat,
@@ -177,15 +190,24 @@ pub trait Present {
     /// [`GpuPresenter`] were reachable only by an embedder that overrode
     /// [`crate::App::presenter`] and read the presenter before boxing it.
     ///
-    /// **Defaulted, unlike [`Present::document_replaced`], and for the opposite
-    /// reason.** A presenter is not obliged to have an adapter — `demo`'s
-    /// raster one rasters into CPU memory and has none — so a required method
-    /// would make every implementation answer a question only some can, which
-    /// is what issue #819 ruled against. A presenter that inherits this default
-    /// gives the true answer for a presenter with no device, so nothing goes
-    /// wrong by not noticing it; the no-op default that record warns about is
-    /// the kind that is silently *wrong* for the inheritor.
-    fn adapter(&self) -> Option<Adapter<'_>> {
+    /// **Defaulted, unlike [`Present::document_replaced`], and the difference
+    /// is worth stating because it does not hold for every implementation.** A
+    /// presenter is not obliged to have an adapter — `demo`'s raster one
+    /// rasters into CPU memory and has none — so a required method would make
+    /// every implementation answer a question only some can, which is what
+    /// issue #819 ruled against.
+    ///
+    /// For a presenter **with no device** the inherited `None` is the true
+    /// answer, so nothing goes wrong by not noticing the method exists. For a
+    /// presenter **that owns one** — a second `wgpu` presenter, the Skia-GPU
+    /// fallback the design records name, an embedder's own — the inherited
+    /// `None` is silently wrong in exactly the way `document_replaced`'s
+    /// documentation warns about: an embedder's "warn on a software adapter"
+    /// branch never fires and nothing reports why. **A presenter that owns a
+    /// device is expected to override this.** The default is the safe answer
+    /// for the population that cannot answer, not a licence for the one that
+    /// can to stay quiet.
+    fn adapter(&self) -> Option<AdapterDetails<'_>> {
         None
     }
 }
@@ -329,10 +351,12 @@ impl GpuPresenter {
 
     /// The adapter this presenter acquired.
     ///
-    /// Inherent rather than on [`Present`], because a presenter is not obliged
-    /// to have an adapter — `demo`'s raster one does not — and a trait method
-    /// every implementation had to answer would be the wrong shape for it
-    /// (issue #819).
+    /// Inherent as well as on the trait, and the split is the point. A required
+    /// trait method would make every implementation answer a question only some
+    /// can, which issue #819 ruled against; [`Present::adapter`] is the
+    /// defaulted, `Option`-shaped form that answers it for a presenter behind a
+    /// `Box<dyn Present>`. This one is the concrete answer, with no `Option` to
+    /// unwrap, for a caller that holds a `GpuPresenter`.
     ///
     /// For an embedder that wants to show the backend in its own interface, or
     /// branch on it: warn on a software adapter, choose a texture path by
@@ -341,7 +365,7 @@ impl GpuPresenter {
     ///
     /// This is the concrete answer, for an embedder holding a `GpuPresenter`.
     /// An embedder that took the default presenter holds a `Box<dyn Present>`
-    /// instead, and reads the same two facts from [`Adapter`] through
+    /// instead, and reads the same two facts from [`AdapterDetails`] through
     /// [`crate::App::attached`] — which is what closed issue #902, where they
     /// were reachable from the default path not at all.
     pub fn adapter_info(&self) -> &AdapterInfo {
@@ -384,8 +408,8 @@ impl Present for GpuPresenter {
         self.renderer.resize(width, height).map_err(from_gpu)
     }
 
-    fn adapter(&self) -> Option<Adapter<'_>> {
-        Some(Adapter {
+    fn adapter(&self) -> Option<AdapterDetails<'_>> {
+        Some(AdapterDetails {
             info: self.adapter_info(),
             format: self.format(),
         })

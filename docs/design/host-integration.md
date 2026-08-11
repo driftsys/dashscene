@@ -192,7 +192,7 @@ crates, and `Host::after_paint` on the desktop, which is the loop's own branch
 rather than a copy of the policy. The stop mechanism on both sides has no
 coverage at all; issue #867 carries it.
 
-## The adapter as types, settled at story #835
+## The adapter as types, settled at story #835 and issue #902
 
 The third pair, and the only additive one (#815, #819). Both crates exposed the
 adapter only as the line their demonstration logs, so an embedder that wanted to
@@ -201,12 +201,13 @@ or do without.
 
 `Surface::adapter_info` and `Surface::format` on the web,
 `GpuPresenter::adapter_info` and `GpuPresenter::format` on the desktop, each
-returning the `wgpu` type rather than a string. Inherent on `GpuPresenter`
-rather than on `Present`, because `demo`'s raster presenter has no adapter to
-answer with and a trait method every implementation had to answer would be the
-wrong shape for it. `Surface::describe` and `Present::name` both stay: a caller
-that only wants the line should not have to build it from the parts, and the
-desktop loop's own diagnostic lines read theirs.
+returning the `wgpu` type rather than a string. On the desktop those are
+inherent methods, and there is a second route through the trait for the
+embedder that never holds a `GpuPresenter` — see "Two routes" below, which is
+what issue #902 added and why one shape was not enough. `Surface::describe` and
+`Present::name` both stay: a caller that only wants the line should not have to
+build it from the parts, and the desktop loop's own diagnostic lines read
+theirs.
 
 `AdapterInfo`, `Backend`, `DeviceType` and `TextureFormat` are re-exported by
 both crates, from `dashscene-gpu`, which re-exports them from `wgpu`. Without
@@ -231,16 +232,41 @@ embedders.** `App::presenter` hands back a `Box<dyn Present>` and the loop holds
 it as one, and `Present` has no downcast — so an embedder that takes the default
 presenter never holds a `GpuPresenter`, and for it the accessors above may as
 well not exist. That was issue #902, and it is closed by a second route rather
-than by widening the first: `Present::adapter` returns `Option<Adapter<'_>>`,
-defaulted to `None`, and the loop passes the answer to `App::attached`.
+than by widening the first: `Present::adapter` returns
+`Option<AdapterDetails<'_>>`, defaulted to `None`, and the loop passes the
+answer to `App::attached`.
 
-`Adapter` is the pair — `&AdapterInfo` and `TextureFormat` — because a presenter
-that has one has the other, and an embedder branching on either usually wants
-both. The method is **defaulted**, where `Present::document_replaced` deliberately
-is not, and the two are consistent: a presenter is not obliged to have a device,
-so a presenter that inherits `None` gives the true answer, while a presenter that
-inherited a no-op `document_replaced` would give a stale picture. A default is
-safe exactly when not noticing it is not a mistake.
+`AdapterDetails` is the pair — `&AdapterInfo` and `TextureFormat` — because a
+presenter that has one has the other, and an embedder branching on either
+usually wants both. It is **not** called `Adapter`: `wgpu::Adapter` is a real
+type reachable through this crate's dependency tree, and the name is kept free
+for the handle in case a later story hands one over.
+
+**The default is safe for the population that cannot answer, and not a licence
+for the one that can.** `Present::document_replaced` records that it
+deliberately has no default, because a presenter inheriting a no-op would show a
+stale picture. The two are consistent only for a presenter with no device, where
+the inherited `None` is true. A presenter that owns a device and does not
+override this is wrong in exactly the way that record warns about — an
+embedder's software-adapter branch never fires and nothing says why — so the
+trait documentation states that such a presenter is expected to override it.
+
+**What the loop hands over is one `Attached`, not a parameter each.** The
+adapter was the second fact this hook carried and adding it broke every
+implementation of `App`; a third would break them again, and that freedom ends
+when the crate is published. `Attached` and `AdapterDetails` are both
+`#[non_exhaustive]`, which costs a caller nothing today — nothing outside `wgpu`
+can construct an `AdapterInfo`, so no downstream crate can build either value —
+and makes the next fact a field rather than a signature change.
+
+`Attached::adapter` is `None` for **two** states, deliberately not
+distinguished: a presenter with no device, and no presenter bound at all, which
+is a real condition during a rebind rather than a placeholder.
+
+`demo` reads it, which is what makes the motivating case more than a signature:
+when the adapter reports `DeviceType::Cpu` the showcase says so on its
+diagnostic channel, because a software rasteriser draws it correctly and slowly
+and that is worth stating rather than inferring from the frame rate.
 
 **What is still not checked** is either accessor's value: that the adapter
 reported is the adapter drawn on needs a device and a surface together.
@@ -256,10 +282,19 @@ identity coercion, and `dashscene-gpu` pins its own against `wgpu`'s beside the
 re-export, because a coercion against the local alias alone would still pass if
 that alias became a local type wearing the same name.
 
-One check in the desktop file is behavioural rather than type-level, and it is
-the default: a presenter with no adapter answers `None`, asserted against a
-stub `Present` that the test defines. It needs no window, because a presenter
-without a device needs no surface to say it has none.
+Two checks are behavioural rather than type-level, and both were added because a
+signature check cannot see what they cover. `tests/adapter_accessors.rs` asserts
+the **default**: a presenter with no adapter answers `None`, against a stub
+`Present` the test defines. `host.rs`'s own test module asserts the **wiring**:
+that the loop asks its presenter rather than passing a constant. That one is in
+the crate rather than beside the others because a `Host` cannot be built from
+outside it — and it is the only test that fails when the wiring is removed,
+which a review found by removing it and watching every other check stay green.
+
+Neither needs a device, and neither can check the _value_: nothing outside
+`wgpu` can construct an `AdapterInfo`, so no test can produce a `Some` at all.
+That the adapter reported is the adapter drawn on still needs a device and a
+surface together.
 
 `cargo test` runs the desktop one. The web one is compiled for
 `wasm32-unknown-unknown` only, because `Surface` is, so `cargo test` never sees

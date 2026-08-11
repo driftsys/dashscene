@@ -9,8 +9,8 @@
 //!    asynchronous. What was acquired is readable as types rather than only as
 //!    the line [`Present::name`] carries — [`GpuPresenter::adapter_info`] and
 //!    [`GpuPresenter::format`] for an embedder holding the presenter, and
-//!    [`Adapter`] through [`App::attached`] for one that took the default and
-//!    holds a `Box<dyn Present>`. Story #835 (issue #819) added the first pair;
+//!    [`Attached::adapter`] for one that took the default and holds a
+//!    `Box<dyn Present>`. Story #835 (issue #819) added the first pair;
 //!    issue #902 added the second route, without which the ordinary embedder
 //!    had the string and nothing else.
 //! 2. **The frame loop** — [`run`], on `winit`'s event loop, pacing itself at
@@ -77,9 +77,9 @@ pub mod present;
 pub mod recovery;
 
 pub use document::Document;
-pub use host::{App, FRAME_INTERVAL, Reaction, Scene, Waker, run};
+pub use host::{App, Attached, FRAME_INTERVAL, Reaction, Scene, Waker, run};
 pub use present::{
-    Adapter, AdapterInfo, Backend, DeviceType, Drawn, GpuPresenter, Present, PresentError,
+    AdapterDetails, AdapterInfo, Backend, DeviceType, Drawn, GpuPresenter, Present, PresentError,
     TextureFormat,
 };
 pub use recovery::Recovery;

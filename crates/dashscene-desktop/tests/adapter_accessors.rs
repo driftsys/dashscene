@@ -23,8 +23,8 @@
 use dashlang::LiveScene;
 use dashscene_core::{Arena, CommittedScene};
 use dashscene_desktop::{
-    Adapter, AdapterInfo, App, Backend, DeviceType, Drawn, GpuPresenter, Present, PresentError,
-    Scene, TextureFormat,
+    AdapterDetails, AdapterInfo, App, Attached, Backend, DeviceType, Drawn, GpuPresenter, Present,
+    PresentError, TextureFormat,
 };
 
 /// A presenter with no adapter: `demo`'s raster one, reduced to what the trait
@@ -117,7 +117,7 @@ fn a_presenter_with_no_adapter_answers_none() {
 /// ordinary — had the string and nothing else (issue #902).
 #[test]
 fn the_attach_hook_carries_the_adapter() {
-    let _attached: fn(&mut Embedder, Scene<'_>, &str, Option<Adapter<'_>>) = App::attached;
+    let _attached: fn(&mut Embedder, Attached<'_>) = App::attached;
 }
 
 /// What the hook carries is the pair, not one of the two: an embedder choosing
@@ -125,6 +125,7 @@ fn the_attach_hook_carries_the_adapter() {
 /// needs the info, and both come from the same presenter at the same moment.
 #[test]
 fn the_adapter_pair_carries_both_facts() {
-    let _info: fn(Adapter<'_>) -> &AdapterInfo = |adapter| adapter.info;
-    let _format: fn(Adapter<'_>) -> TextureFormat = |adapter| adapter.format;
+    let _info: fn(AdapterDetails<'_>) -> &AdapterInfo = |adapter| adapter.info;
+    let _format: fn(AdapterDetails<'_>) -> TextureFormat = |adapter| adapter.format;
+    let _carried: fn(Attached<'_>) -> Option<AdapterDetails<'_>> = |attached| attached.adapter;
 }
