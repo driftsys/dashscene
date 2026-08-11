@@ -125,6 +125,102 @@ lint: deno-fmt-check
     dprint check
     markdownlint '**/*.md' --ignore target --ignore node_modules
 
+# Assert every Figma fixture is explicitly link-viewable.
+#
+# The corpus publishes 32 Figma file keys and a key cannot be rotated, so what
+# each file exposes is a published, permanent property. `linkAccess` is the
+# field that answers it, and the capture tooling already commits it — but a
+# capture is a snapshot, so this asks Figma rather than the fixture.
+#
+# `inherit` FAILS. It is not a value: it means the answer lives in a project
+# setting outside this repository, invisible to the corpus and changeable by
+# anyone with project admin without a commit here. Explicit is the only state
+# a reader of this repository can verify.
+#
+# Not part of `check`: it needs a PAT and the network. Run it before
+# publication, and after touching fixture sharing.
+#
+# Needs FIGMA_TOKEN, or the `figma-pat` keychain item — the convention in
+# docs/decisions/figma-access-plan-and-pat-policy.md. Paced, because the API
+# rate-limits at roughly 20 file reads in quick succession.
+
+# Assert every Figma fixture is explicitly link-viewable (needs a PAT).
+figma-sharing:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # FIGMA_TOKEN and `-a "$USER" -s figma-pat`, the convention every other
+    # Figma path here uses (`reprobe`, `render`, `deno-capture`, and
+    # importers/figma/src/fetch.ts) — see
+    # docs/decisions/figma-access-plan-and-pat-policy.md.
+    tok="${FIGMA_TOKEN:-$(security find-generic-password -a "$USER" -s figma-pat -w 2>/dev/null || true)}"
+    if [ -z "$tok" ]; then
+        echo "figma-sharing: ABORT — no token. Export FIGMA_TOKEN, or add the figma-pat keychain item."
+        exit 1
+    fi
+
+    # Read the manifest into a file FIRST. A `while read < <(jq ...)` discards
+    # jq's exit status, so a missing or renamed manifest yields zero iterations
+    # and the recipe reports "all 0 fixtures explicitly link-viewable", exit 0 —
+    # the same fail-open `just secrets` closed by refusing an unusable input.
+    manifest=corpus/figma-fixtures/manifest.json
+    if [ ! -r "$manifest" ]; then
+        echo "figma-sharing: ABORT — $manifest is missing or unreadable."
+        exit 1
+    fi
+    rows=$(mktemp) && trap 'rm -f "$rows" "$rows.body"' EXIT
+    if ! jq -r '.fixtures[] | "\(.name)\t\(.fileKey)"' "$manifest" > "$rows" 2>/dev/null; then
+        echo "figma-sharing: ABORT — $manifest has no readable .fixtures list."
+        exit 1
+    fi
+    expected=$(jq -r '.fixtures | length' "$manifest")
+    rows_n=$(wc -l < "$rows" | tr -d ' ')
+    if [ "$rows_n" -eq 0 ] || [ "$rows_n" -ne "$expected" ]; then
+        echo "figma-sharing: ABORT — the manifest yielded $rows_n rows for $expected fixtures."
+        exit 1
+    fi
+    # Coverage is the manifest, and that is the right scope rather than a
+    # shortcut: a key is published only by being listed here, so a fixture
+    # dropped from the manifest publishes no key and needs no check. What must
+    # not happen is prose elsewhere fixing the count — say "every fixture in
+    # the manifest", never "all 32", or the documents drift the moment the
+    # corpus grows.
+    echo "figma-sharing: checking $expected fixtures (about $((expected * 4))s)…"
+
+    bad=0; checked=0
+    while IFS=$'\t' read -r name key; do
+        [ "$checked" -gt 0 ] && sleep 4
+        code=$(curl -s --fail-with-body --max-time 30 -o "$rows.body" -w '%{http_code}' \
+                 -H "X-Figma-Token: $tok" "https://api.figma.com/v1/files/${key}?depth=1" || true)
+        if [ "$code" != "200" ]; then
+            echo "figma-sharing: ABORT at $name — HTTP $code"
+            echo "  $(head -c 200 "$rows.body" 2>/dev/null)"
+            echo "  $checked of $expected checked before this; the rest are unknown."
+            rm -f "$rows.body"; exit 1
+        fi
+        read -r la err < <(jq -r '[.linkAccess // "", .err // ""] | @tsv' "$rows.body")
+        if [ -n "${err:-}" ]; then
+            echo "figma-sharing: ABORT at $name — Figma said: $err"
+            rm -f "$rows.body"; exit 1
+        fi
+        checked=$((checked+1))
+        if [ "${la:-}" != "view" ]; then
+            printf '  %-26s %s\n' "$name" "${la:-<no linkAccess field>}"
+            bad=$((bad+1))
+        fi
+    done < "$rows"
+    rm -f "$rows.body"
+
+    if [ "$checked" -ne "$expected" ]; then
+        echo "figma-sharing: ABORT — checked $checked of $expected."
+        exit 1
+    fi
+    if [ "$bad" -gt 0 ]; then
+        echo "figma-sharing: $bad of $checked fixtures are not explicitly 'view' (above)."
+        echo "  Set each in Figma: Share -> Anyone -> View -> Save."
+        exit 1
+    fi
+    echo "figma-sharing: all $checked fixtures explicitly link-viewable"
+
 # Copy the root LICENSE and NOTICE into every publishable crate.
 #
 # Cargo packages only files under a crate's own directory, so the root copies

@@ -1,7 +1,8 @@
 # The fixture corpus publishes its Figma file keys
 
     status   accepted
-    date     2026-08-10
+    date     2026-08-10, revised 2026-08-11 — every fixture ruled viewable,
+             applied, and verified by `just figma-sharing`
     scope    corpus/figma-fixtures/manifest.json; .gitleaksignore, which
              deferred this question; the public-release plan
 
@@ -20,37 +21,39 @@ acceptable to publish forever.
 `.gitleaksignore` triages these keys as non-secrets and explicitly declines to
 settle the publication question. This record settles it.
 
-## The two populations
+## What the captures recorded
 
-Sharing is recorded in each capture as `linkAccess`, and the captures split:
+Sharing is recorded in each capture as `linkAccess`. Ten were captured as
+`view` — anyone with the link can open them — and twenty-two as `inherit`,
+which is not a state this repository can see: it means sharing follows the
+containing Figma team or project, and can change without any commit here.
 
-**Ten captured as `view`** — anyone with the link can open them:
-`drop-shadow`, `effects-2025`, `inner-shadow`, `lowering-baseline`,
-`lowering-hug-in-fill`, `lowering-negative-gap`, `lowering-variant-topology`,
-`lowering-wrap`, `text-arabic`, `variables-bound`.
-
-**Twenty-two captured as `inherit`** — sharing follows the containing team or
-project: `backdrop-blur`, `gif-fill`, `grid-basic`, `grid-fr-overflow`,
-`import-image-fill`, `import-text-axes`, `jpeg-fill`, `liga-text`, `node-fx`,
-`prototype-refused`, `prototype-smart-animate`, `real-file`, `stacked-fills`,
-`text-baseline`, `text-bold`, `text-latin`, `trim-demo`, `v03-paint`,
-`vector-backdrop-blur`, `vector-shapes`, `xfile-consumer`, `xfile-library`.
-
-**`inherit` does not mean private.** It means the answer lives somewhere this
-repository cannot see and that can change without any commit.
+`inherit` is therefore not a decision. It is the absence of one.
 
 ## Choice
 
-Publish the 32 keys — they are in `manifest.json` and cannot be withheld
-without withholding the corpus. Keep the ten link-viewable files
-link-viewable.
+Publish the keys — they are in `manifest.json` and cannot be withheld
+without withholding the corpus.
 
-**This record rules on those ten only.** The other 22 are `inherit`, which is
-not a state this repository can see, and each still needs the read-through the
-ten had. That is a precondition of publication, tracked as issue #895 — and
-because #895 carries the `debt` label, which this repository defines as
-non-blocking, the blocking status is asserted here instead: **the repository
-does not go public until #895 is closed.**
+**Every fixture is explicitly link-viewable.** Explicit, not
+inherited: `inherit` is not a value but a deferral, and it defers to a Figma
+project setting outside this repository — invisible to the corpus and
+changeable by anyone with project admin without a commit here. Since the key
+is published and cannot be rotated, what a file exposes must be answerable
+from the repository.
+
+**Every fixture was read through first** — all pages and the comments, not
+only the fixture frame — by the repository owner on 2026-08-10 and 2026-08-11.
+That is the irreversible half, and it is done.
+
+**Applied and verified.** `just figma-sharing` reports every fixture in the
+manifest explicitly `view`, checked against the Figma API on 2026-08-11. Issue #895 closes on that
+measurement rather than on a claim.
+
+The check was written before the setting was applied, and reported 22 fixtures
+still `inherit`, then six, then none. That order matters: the ruling was
+recorded as a decision, the check told the truth about the state, and the two
+were only reconciled by doing the work.
 
 ## Why
 
@@ -62,33 +65,38 @@ does not go public until #895 is closed.**
   fixture corpus's index and cannot be withheld without withholding the corpus.
   Restricting the files would hide the designs while still publishing their
   identifiers, which costs the benefit above and buys nothing.
-- **Each of the ten was read before this ruling** — every page, and the comments
-  panel, not only the fixture frame.
+- **All 32 were read before this ruling** — every page, and the comments panel,
+  not only the fixture frame.
 
 ## Consequences
 
-- **Nothing else goes in the ten.** No scratch pages, no notes, no unrelated
-  work, no client material. A link-viewable fixture's entire contents are
-  public.
+- **Nothing else goes in a fixture file.** No scratch pages, no notes, no
+  unrelated work, no client material. Every fixture's entire contents are
+  public, so the file is the unit of publication, not the frame.
 
-  What to look for is not hypothetical: `trim-demo` — which is one of the 22,
-  not one of the ten — deliberately carries a `_`-prefixed scratch layer and a
-  spec note, as `corpus/figma-fixtures/README.md` records. That is fixture
-  content by design there, and it is exactly the kind of thing #895's
-  read-through has to rule on before any of the 22 becomes viewable.
-- **A new fixture's sharing is set explicitly**, never left to inherit.
-- **The 22 `inherit` fixtures are not covered by this ruling.** Their exposure
-  depends on Figma team and project settings, which are outside this repository.
-  Before publication each needs the same read-through the ten had, and an
-  explicit setting. Tracked as issue #895, which blocks publication.
+  That rule tolerates deliberate fixture content: `trim-demo` carries a
+  `_`-prefixed scratch layer and a spec note, as
+  `corpus/figma-fixtures/README.md` records, and both are there on purpose.
+  The rule is about what arrives by accident.
+- **A new fixture's sharing is set explicitly**, never left to inherit, and it
+  is read through before it is made viewable. Both, every time — the read is
+  the part that cannot be undone once the key is public.
 - **`linkAccess` in a capture is a snapshot**, recorded when the fixture was
-  pulled. It is evidence of what was true then, not of what is true now. Check
-  Figma when the answer matters.
+  pulled. It is evidence of what was true then, not of what is true now.
+  **`just figma-sharing` asks Figma** and fails on anything that is not
+  explicitly `view`. Nothing here restates its result, and nothing should: the
+  sharing state lives in Figma, is changeable by any project admin without a
+  commit, and a paragraph asserting it goes stale silently. Run the check; do
+  not quote it.
 
 ## Alternatives considered
 
-- **Restrict all 32 files.** Rejected: the keys still publish, so the
-  irreversible part happens anyway, and the verifiability above is lost.
+- **Restrict every file.** Rejected: the keys still publish, so the
+  irreversible part happens anyway, and the verifiability above is lost. This
+  was the safer default and was considered — a private file's key opens
+  nothing, so no read-through would have been needed. It was declined because
+  a reader who cannot open the design cannot check the importer against it,
+  which is the whole reason the corpus exists.
 - **Strip the keys from `manifest.json`.** Rejected: `manifest.json` is the
   source of truth mapping fixture to file, and the capture tool parses
   `fileKey`. Removing it would break re-capture, which is the mechanism that

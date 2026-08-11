@@ -42,9 +42,9 @@ into the records below. Per-story decisions land here directly:
   — the workspace versions together, the first real version is 0.2.0, and the
   registry checks that say so (story #795).
 - [figma-file-keys-are-published.md](figma-file-keys-are-published.md) — the
-  corpus publishes its 32 Figma file keys, and the ten link-viewable fixtures
-  stay viewable so a reader can check the importer against the source design;
-  the 22 `inherit` fixtures are explicitly not covered.
+  the corpus publishes a Figma file key for every fixture, and every fixture
+  is explicitly link-viewable so a reader can check the importer against the
+  source design. `just figma-sharing` verifies it.
 - [figma-corpus-self-authored-only.md](figma-corpus-self-authored-only.md)
   — nothing enters `corpus/` that the project did not author
   (`docs/archive/2026-07-14-scope-decisions.md` §8's licensing ruling).
