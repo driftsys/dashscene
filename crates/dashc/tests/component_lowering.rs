@@ -309,16 +309,32 @@ fn an_empty_document_is_still_refused() {
 }
 
 #[test]
-fn the_variant_topology_fixture_compiles_clean() {
+fn the_variant_topology_fixture_compiles_and_names_its_topology_change() {
     // The raw capture: a COMPONENT_SET (with a dashed stroke), two COMPONENT
     // members of different child counts, and one INSTANCE. The set resolves but
     // does not paint, so the dashed stroke never reaches the paint gate; only
     // the instance's baked (collapsed) subtree lowers, and the fixture emits.
+    //
+    // Since story #773 the set is also *read*, for the variant table it could
+    // carry — and this is the fixture that cannot carry one: `state=expanded`
+    // has three children `state=collapsed` does not, and no `VariantOverride`
+    // adds a node. That is now a named warning where it used to be a silent
+    // drop (P4). It stays a warning rather than an error precisely so this
+    // fixture keeps compiling: the document is exactly what it was, and
+    // refusing it would withhold a picture that renders correctly.
     let (bytes, report) = compile_figma(VARIANT_TOPOLOGY, Profile::Core, &BTreeMap::new())
         .expect("the variant-topology fixture compiles since #242");
+    let named = report.diagnostics();
+    assert_eq!(
+        named.len(),
+        1,
+        "one finding, and it is the topology change: {report}",
+    );
+    assert_eq!(named[0].rule, "figma.variants.unlowerable-set");
+    assert_eq!(named[0].severity, Severity::Warning);
     assert!(
-        report.is_empty(),
-        "the component fixture lowers clean: {report}"
+        named[0].message.contains("row-2"),
+        "the message names the child that cannot be expressed: {report}",
     );
     assert!(!bytes.is_empty());
 
@@ -335,9 +351,15 @@ fn the_variant_topology_fixture_emits_the_golden_dsb() {
     // The raw component capture pins its own golden .dsb, the same contract the
     // other raw fixtures use: regenerate with UPDATE_GOLDENS=1, review the diff,
     // and commit (goldens/README.md).
+    // The golden is byte-identical across story #773: the set's topology
+    // change means no variant table is emitted for it, so the one thing that
+    // changed is the report, which the test above pins.
     let (bytes, report) = compile_figma(VARIANT_TOPOLOGY, Profile::Core, &BTreeMap::new())
         .expect("the variant-topology fixture compiles");
-    assert!(report.is_empty(), "{report}");
+    assert!(
+        !report.has_errors(),
+        "a warning does not withhold the bytes: {report}",
+    );
 
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../goldens/dsb/v07-variant-topology.dsb");

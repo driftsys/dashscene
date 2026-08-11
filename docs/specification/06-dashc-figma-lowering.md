@@ -332,13 +332,94 @@ and vertical alignment. Verified in `crates/dashc/tests/text_lowering.rs`.
 4. **A `layoutMode` of `NONE` shall not be treated as auto-layout.**
    (`a_layout_mode_of_none_is_not_auto_layout`)
 
+## The variant table and prototype interactions (story #773)
+
+Verified by `crates/dashc/tests/prototype_lowering.rs` and the unit tests in
+`crates/dashc/src/figma/prototype.rs` unless stated otherwise. The rationale
+is `docs/decisions/figma-component-lowering.md` ("Amendment, 2026-08-11").
+
+1. **A `COMPONENT_SET` shall lower one `VariantSet` per `INSTANCE` of it.**
+   The set's `active_member` shall be the member the instance's `componentId`
+   names, and each override shall address that instance's own baked child by
+   the document node index the walk gave it.
+   (`each_instance_of_a_component_set_lowers_its_own_variant_set`)
+
+2. **Member trees shall be joined by name path, never by node id.** A baked
+   child's id is the synthetic `I<instance>;<source>` form and differs per
+   instance. Two siblings sharing a name shall make the set unlowerable rather
+   than binding an override to either.
+
+3. **The active member shall carry no overrides, and every other member shall
+   carry its own authored value for each prop that differs from the active
+   member's.** (`a_member_overrides_exactly_the_props_that_differ_from_the_active_one`)
+
+4. **A member's computed props shall be checked against what the walk
+   lowered.** Where the active member's computed geometry and the document's
+   own rect table disagree — an instance-level override, or drift in the P1
+   rules the diff replicates — no variant set shall be emitted for that
+   instance, and the disagreement shall be named.
+
+5. **An override shall cover the whole `VariantValue` vocabulary; a
+   transition track shall cover the four rect channels only.** A fill,
+   visibility or rotation difference shall lower as an override and shall be
+   named as unanimatable, because commit resolves a node's paint from the
+   variant overlay ahead of its staged value (issue #891).
+   (`a_fill_only_variant_diff_is_named_rather_than_animated`)
+
+6. **The track list shall be the union of what the members override**, so a
+   switch back to the active member animates the props the others override.
+   (`every_track_names_a_rect_channel_of_a_node_the_document_carries`)
+
+7. **A transition shall be keyed on the destination member**, taken from that
+   member's own reaction, and an instance's own reaction shall override that
+   default member by member rather than replacing the table.
+   (`the_transition_is_keyed_on_the_member_the_switch_travels_to`,
+   `an_instances_own_reaction_overrides_the_sets_default`)
+
+8. **`VariantTransition.stagger` shall lower to 0 from this producer.** Figma
+   has no stagger. (`the_transition_is_keyed_on_the_member_the_switch_travels_to`)
+
+9. **The nested `transition.duration` shall be read as seconds**, and the flat
+   `transitionNodeID`/`transitionDuration`/`transitionEasing` triple shall
+   never be read. `@figma/rest-api-spec` documents the nested field as
+   milliseconds and is wrong; the flat triple cannot express a trigger, a
+   navigation or a second action, and invents a transition where the
+   interaction says there is none
+   (`docs/technotes/figma-rest-shapes.md`).
+   (`the_duration_is_read_in_seconds_not_milliseconds`,
+   `the_flat_triple_is_never_read`)
+
+10. **An interaction the document cannot carry shall be a named diagnostic
+    whose severity follows the emit policy**, under
+    `figma.prototype.unsupported-interaction` — an error that withholds the
+    bytes under `EmitPolicy::Strict` (R6), a warning under
+    `EmitPolicy::Partial`. Unlike `figma.unsupported` it shall **not** skip
+    the node: what has no lowering is the behaviour, not the box.
+    (`the_refused_capture_withholds_the_bytes_and_names_every_construct`,
+    `the_partial_policy_downgrades_an_interaction_refusal`)
+
+11. **A degrade shall never withhold the bytes.** An easing with no `dashcue`
+    spelling (`figma.prototype.unsupported-motion`) and a component set no
+    override can express (`figma.variants.unlowerable-set`) shall be warnings
+    in both policies, because the picture is unchanged and a switch that lands
+    in one frame is what a member with no transition has always meant.
+    (`a_spring_preset_is_named_and_its_switch_lands_in_one_frame`,
+    `the_variant_topology_fixture_compiles_and_names_its_topology_change`)
+
+12. **A component set with fewer than two members shall name nothing.** There
+    is no alternative state, so there is no switch to lose.
+
 ## Verification corpus
 
 Every lowering and triage rule shall be pinned by a captured Figma fixture,
 never by a reading of Figma's documentation (P5).
 `corpus/figma-fixtures/v03-paint.json` is the emission fixture,
 `effects-2025.json` the diagnostic fixture, and
-`lowering-variant-topology.json` pins the dashed-stroke shape. Story #140
+`lowering-variant-topology.json` pins the dashed-stroke shape and, since
+story #773, the topology change no variant override can express. Story #773
+adds `prototype-smart-animate.json` as the prototype lowering's emission
+fixture and `prototype-refused.json` as its diagnostic one — the second
+fixture of that kind, and for the same R6 reason the first exists. Story #140
 adds `lowering-hug-in-fill.json` and `lowering-negative-gap.json` as the
 flex lowering's fixtures (their solve oracles are Figma's own captured
 boxes), and `variables-bound.json` as the fill-on-hug refusal fixture.
