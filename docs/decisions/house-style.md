@@ -109,9 +109,13 @@ that was written and removed on review, is in
 commit-message validation), aggregated by a final `ci` job that fails if
 any of the above failed. For dashscene, add a `deno` job (check/lint/
 test/fmt, scoped to `importers/figma/` via a `dorny/paths-filter` gate so
-Rust-only changes don't trigger it) and a `wasm-build` job (`dashc` →
+Rust-only changes don't trigger it), a `wasm-build` job (`dashc` →
 `wasm32-unknown-unknown`, verifies the Deno importer's dependency
-actually builds). No cross-platform `build-release` matrix yet — that's
+actually builds) and a `wasm-gates` job (everything else this workspace
+compiles for that triple — the painter, the browser host, and the three
+`--all-targets` clippy passes `just lint` runs there). The two are
+separate because `deno` waits on the first for its artifact and must not
+wait on the second. No cross-platform `build-release` matrix yet — that's
 git-std's own binary-distribution concern, not relevant until dashscene
 ships a distributable binary of its own.
 

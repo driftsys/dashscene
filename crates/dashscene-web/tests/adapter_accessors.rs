@@ -21,10 +21,10 @@
 //!
 //! What compiles it is `just lint`, whose
 //! `clippy -p dashscene-web --target wasm32-unknown-unknown --all-targets`
-//! reaches every target of this crate, and the same line in CI's `clippy` job,
-//! which story #835 added there because CI ran no wasm32 job for this crate at
-//! all. Two of the other wasm gates are still local-only; issue #903 carries
-//! them.
+//! reaches every target of this crate, and CI's `wasm-gates` job, which runs
+//! the same line. That job exists because story #835 found CI compiled nothing
+//! for this triple but `dashc`, so this file was checked by no runner at all
+//! (issue #903).
 
 use dashscene_web::{AdapterInfo, Backend, DeviceType, Surface, TextureFormat};
 
