@@ -1,14 +1,20 @@
 # Motion in the document — the vocabulary an animation needs to ship in a file
 
     status   WIP — design-discussion capture (2026-08-07, user + Opus).
-             **Nothing here is implemented.** Every claim below was
-             checked against the code on the day it was written, and each
-             one names where it was checked so a reader can re-derive it
+             **All three gaps below are built** — stories #770, #771 and
+             #772, all on 2026-08-09 — and each section names the record
+             its decisions were gardened into. Every claim was checked
+             against the code on the day it was written, and each one
+             names where it was checked so a reader can re-derive it
              rather than trust this file.
 
-             Gardened when the vocabulary is built, not when it is
-             decided — the two are separate events and only the second
-             empties this file.
+             PARTLY GARDENED 2026-08-11 at the v0.18 close (epic #769):
+             the rejected wasm-expression alternative is now
+             docs/decisions/binding-expressions-are-not-embedded-wasm.md.
+             What is left is the counter-proposal that record
+             deliberately does not rule on — widening the declarative
+             transform union — which is an open input rather than a
+             decision. This file empties when that is ruled on.
     scope    what `.dsb` must carry for a dashscene animation to exist as
              data rather than as Rust; the three gaps that block it; and
              the alternative that was rejected
@@ -88,7 +94,21 @@ rather than from a record:
 - **The gap is vocabulary, not rendering.** The painter could very likely
   rotate today. Nothing in the document can ask it to.
 
-### 2. `.dsb` cannot carry a transition
+### 2. `.dsb` cannot carry a transition — **built at story #771, 2026-08-09**
+
+**This gap is closed.** The schema carries a `TransitionSpec` union, a
+`Keyframe` struct, and `KeyframesSpec`, `PropTransition` and
+`VariantTransition` tables — and `dashbuf` still takes no dependency on
+`dashcue`, so the first of the two constraints below held. The ruling is
+`docs/decisions/motion-is-document-data-keyed-on-the-destination.md` — a
+transition is keyed on the destination variant rather than on the
+interaction that reaches it. Issue #617 closed with the end-to-end check by
+name: `a_document_loaded_from_a_file_animates_through_the_frame_loop`, in
+`goldens/tooling/tests/loaded_variant_flip.rs`. The step arm the section
+does not mention was ruled separately at issue #852 — a step is a pair of
+keyframes, not a fourth `TransitionSpec` variant
+(`docs/decisions/a-step-is-a-pair-of-keyframes.md`). The section is kept as
+written because it is what the gap looked like before it was built.
 
 The rows needed are all scalar data: `TransitionSpec`
 (`Tween { duration, easing }`, `Spring { stiffness, damping_ratio }`,
@@ -135,6 +155,20 @@ coexist; they do not merge. A loop track is the ambient case, not a timeline.
 
 ## Rejected: binding expressions as embedded wasm
 
+**Gardened 2026-08-11 at the v0.18 close into
+`docs/decisions/binding-expressions-are-not-embedded-wasm.md`.** The
+rejection is a decision and now lives there; this section is kept as
+written because the record restates it rather than reproducing it. One
+number below was superseded before it was gardened: the payload argument
+compares against 1.37 MB, which turned out to be `demo_web.wasm` — a host
+linking the whole compiler — and the embeddable runtime measures 497 KiB
+brotli (`docs/decisions/publishable-and-the-first-version.md`). The
+argument holds either way and is stronger against the correct number.
+
+**The counter-proposal below is not gardened, and is why this file is still
+here.** It is an open input rather than a ruling: no arm is scheduled and
+nothing commits to one.
+
 Considered in the session that produced this file — carry expression
 bindings (Slint's `width: parent.width / 2`) as wasm in the document and
 embed a runtime in the player. Rejected, and recorded so it is not
@@ -180,18 +214,30 @@ closure.
 
 ## Open questions
 
-- **Which channel shape does rotation take?** A single `f32` angle is the
-  cheap answer. An anchor point is the next question after it, and Figma,
-  SVG `rotate(a cx cy)` and Lottie all carry one.
-- **Does a rotation channel imply scale and skew?** They are absent for the
-  same reason and would be reached for by the same importers. Adding one
-  channel three times is worse than adding three once, but a full 2×3
-  transform on every node is a larger change than any single importer needs.
+- ~~**Which channel shape does rotation take?**~~ **Answered at story
+  #770**: an angle in radians plus an explicit anchor, the anchor being a
+  point in the node's own coordinate space and canonically `(0, 0)`.
+  Neither producer rotates about a centre — Figma's `relativeTransform`
+  rotates about the local origin, and SVG's bare `rotate(a)` is
+  `rotate(a 0 0)`. All three scalars are bindable
+  (`docs/decisions/rotation-is-paint-only-and-anchored-explicitly.md`).
+- ~~**Does a rotation channel imply scale and skew?**~~ **Answered when the
+  slice was planned**: no. Scale and skew are out of scope, because
+  rotation alone unblocks the spinner, the variant prop union and
+  `BindingChannel` are append-only at the tail so scale can join later
+  without an R7 break, and Figma cannot author skew at all.
 - ~~**Where does a loop track's phase live?**~~ **Answered at story #772**:
   document load, plus a per-track offset in seconds. A visibility-anchored
   phase is a second feature — it needs a per-node clock and a re-entry
   policy — and is deliberately not shipped
   (`docs/decisions/a-loop-is-ambient-paint-anchored-at-load.md`).
-- **What binds a `VariantTransition` to a switch?** Per variant set, per
-  variant, or per interaction. Figma's model is per interaction, which is
-  the level its `reactions` payload is keyed at.
+- ~~**What binds a `VariantTransition` to a switch?**~~ **Answered at story
+  #771**: the destination variant, not the interaction. Figma keys its
+  `reactions` payload per interaction, and the lowering collapses that onto
+  the destination
+  (`docs/decisions/motion-is-document-data-keyed-on-the-destination.md`).
+
+Every question in this section is now answered. It is kept because the
+answers are more legible beside the question that produced them, and
+because one of the four — scale and skew — was answered by a ruling at the
+planning session rather than by a story.

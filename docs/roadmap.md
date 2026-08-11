@@ -1321,9 +1321,12 @@ deferred the gate to issue #825, with the reasons recorded rather than implied.
 Depends on: v0.15 for the painter an embedder embeds, and on v0.16 for the load
 path the `.dsb` half of it wraps.
 
-### v0.18 — animation vocabulary — open
+### v0.18 — animation vocabulary — closed
 
-**Epic #769.** Planned 2026-08-09, at the v0.17 close. The number and the
+**Epic #769.** Planned 2026-08-09, at the v0.17 close. **Closed 2026-08-11**,
+all six stories done. Design capture:
+`docs/archive/2026-08-08-v018-DRIVER-PROMPT.md` and
+`docs/archive/2026-08-09-v018-DRIVER-PROMPT.md`. The number and the
 placement were settled by the v0.16 phase-end revision (2026-08-07), which took
 v0.17's split **without** renumbering: the packaging half stayed v0.17 and the
 mobile half became v0.19, below. So this slice keeps its number and its
@@ -1335,20 +1338,55 @@ The story breakdown is no longer provisional. Three questions the epic left
 open were ruled at the planning session and are recorded under "What was ruled
 when this slice opened", below.
 
-Delivers: **motion as data in the document.** Today a dashscene animation
-cannot ship in a file. `dashbuf` does not depend on `dashcue` — three other
-workspace members do and it is not among them — and nothing in the schema
-carries a spec, an easing, a duration or a keyframe. The document holds the two ends (variants)
-and the wiring (bindings); the motion between them has to be written in Rust
-against `dashlang`.
+Delivered: **motion as data in the document.** When the slice opened, a
+dashscene animation could not ship in a file. `dashbuf` did not depend on
+`dashcue` — three other workspace members did and it was not among them — and
+nothing in the schema carried a spec, an easing, a duration or a keyframe. The
+document held the two ends (variants) and the wiring (bindings); the motion
+between them had to be written in Rust against `dashlang`.
 
-| gap              | what is missing                                                                                                               |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| rotation channel | no node transform of any kind — checked in the schema, `BindingChannel`, the variant prop union, and `Prop`'s 37 variants     |
-| motion rows      | no `TransitionSpec` or `VariantTransition` in the schema; an append, which the `AssetEntry` comment calls the R7-cheap change |
-| loop tracks      | deferred by `dashcue` at v0.4, so nothing ambient is expressible and no route reaches a document with it                      |
+It now ships. The schema carries a `TransitionSpec` union, a `Keyframe` struct
+and `KeyframesSpec`, `PropTransition`, `VariantTransition` and `LoopTrack`
+tables, and **`dashbuf` still takes no dependency on `dashcue`** — the
+constraint the design capture set, held by mirroring the vocabulary as schema
+tables and constructing `dashcue` types in the loader. The epic's headline
+definition of done is met by name:
+`a_document_loaded_from_a_file_animates_through_the_frame_loop`, in
+`goldens/tooling/tests/loaded_variant_flip.rs`. Desktop and web animate a
+loaded document with **no host change at all**, because the transition is data
+the arena carries and the driver lives in `dashlang::LiveScene::tick` — which
+refuted issue #625's premise that the host scene seam needed a new per-frame
+callback.
 
-**Why rotation leads.**
+The as-built decisions:
+[`decisions/rotation-is-paint-only-and-anchored-explicitly.md`](decisions/rotation-is-paint-only-and-anchored-explicitly.md)
+(story #770),
+[`decisions/motion-is-document-data-keyed-on-the-destination.md`](decisions/motion-is-document-data-keyed-on-the-destination.md)
+(story #771),
+[`decisions/a-loop-is-ambient-paint-anchored-at-load.md`](decisions/a-loop-is-ambient-paint-anchored-at-load.md)
+(story #772) and
+[`decisions/a-step-is-a-pair-of-keyframes.md`](decisions/a-step-is-a-pair-of-keyframes.md)
+(story #852). Story #773 landed the Figma half in `figma::variants` and
+`figma::prototype`, with twelve requirements in
+[`specification/06-dashc-figma-lowering.md`](specification/06-dashc-figma-lowering.md)
+each naming its test, and the as-built section in
+[`design/dashc.md`](design/dashc.md). Two further records were gardened at the
+close itself:
+[`decisions/binding-expressions-are-not-embedded-wasm.md`](decisions/binding-expressions-are-not-embedded-wasm.md)
+and
+[`decisions/the-animation-reference-set-is-the-union-of-two-producers.md`](decisions/the-animation-reference-set-is-the-union-of-two-producers.md).
+
+The three gaps the slice opened against, and what closed each. The middle
+column is what was missing when the slice opened, kept as written because it
+is what the gap looked like before it was built:
+
+| gap              | what was missing at the open                                                                                                  | closed by                                        |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| rotation channel | no node transform of any kind — checked in the schema, `BindingChannel`, the variant prop union, and `Prop`'s 37 variants     | story #770, and #832 for the lean painter's half |
+| motion rows      | no `TransitionSpec` or `VariantTransition` in the schema; an append, which the `AssetEntry` comment calls the R7-cheap change | story #771, and #852 for the step arm            |
+| loop tracks      | deferred by `dashcue` at v0.4, so nothing ambient is expressible and no route reaches a document with it                      | story #772                                       |
+
+**Why rotation led.**
 [`technotes/runtime-content.md`](technotes/runtime-content.md) §4 names a
 spinner and a live progress ring as the canonical examples of the bucket it
 says to **prefer whenever it applies**, and neither is expressible. The plan
@@ -1357,10 +1395,12 @@ accident: issue #143 covered node opacity, rotation, mask nodes and hidden
 nodes and was closed as completed on 2026-07-19 with three of its four items
 landed — closing it took the only tracker with it.
 
-Holds: **#770** the rotation channel, **#771** variant transitions serialize
-(sibling of #255, which is the same absence on the binding side — one decision
-should cover both), **#772** loop tracks, **#773** reading Figma's prototype
-reactions. That last one was described here as reading something "the importer
+Held at the open: **#770** the rotation channel, **#771** variant transitions
+serialize (sibling of #255, which is the same absence on the binding side — one
+decision should cover both), **#772** loop tracks, **#773** reading Figma's
+prototype reactions. **Two more were added while the slice ran** — #832, the
+lean painter's half of rotation, and #852, where a discrete step belongs — which
+is why the close counts six stories against the four named here. That last one was described here as reading something "the importer
 already fetches and discards", and **checking it on 2026-08-08 found no code
 and no fixture in this repository mentioning `reactions` at all** — the REST
 call would carry one and nothing strips it, but no captured file has ever held
@@ -1411,6 +1451,38 @@ second extends [`technotes/runtime-content.md`](technotes/runtime-content.md)
 §4-§6 rather than replacing it: that note already fixed the three-bucket triage
 and chose ThorVG. The note itself never mentions Vello; the comparison against
 Vello is in the capture.
+
+**What the close did with those captures.** `motion-in-the-document.md` was
+partly gardened and stays: its three gaps are built and their decisions are
+recorded, its rejected wasm-expression alternative became a decision record,
+and what remains is that record's counter-proposal — widening the declarative
+transform union — which is an open input rather than a gap. The other two are
+untouched, their conditions being an animated-content importer and side-loading,
+neither built. `2026-08-09-svg-as-a-second-producer.md`, added after the slice
+opened, had its reference-set half gardened here on its own stated condition —
+"the reference-set half when the animation vocabulary closes" — and keeps its
+profile half for the SVG importer. Both v0.18 driver prompts archived verbatim,
+taking `docs/wip/` from twelve tracked files to ten.
+
+**Re-checked at the close rather than taken from the stories that claimed it.**
+`dashbuf` still takes no dependency on `dashcue`, re-derived from its
+`Cargo.toml` rather than from the story that promised it. The end-to-end test
+exists under the name the epic's definition of done used. All six stories and
+debt #617 are closed, and pull request #882 is the one pull request attached to
+the milestone.
+
+**What this close did not do.** The phase-end revision `AGENTS.md` requires at
+an epic close is deferred, not done: the remaining epics and stories have not
+been revised against what v0.18 learned, and
+[`features.md`](features.md) has not been re-checked against the code. That
+re-check has a live target — §8's claim about variants importing was false for
+the Figma path until story #773 and is true now, with three named limits.
+Four debt issues (#875, #878, #879, #886) moved to the v0.20 milestone rather
+than being fixed here, classified against
+[`decisions/pre-v1-hardening-slice.md`](decisions/pre-v1-hardening-slice.md).
+Issues #875 and #879 are burn-down work; #878 and #886 both need a Figma
+desktop session, which is that record's third term — an owner-supplied input
+rather than an edit.
 
 Depends on: nothing in v0.16. It touches `dashbuf`, `dashscene-core`,
 `dashcue`, `dashscene-engine` and both painters, none of which is on the
