@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Decide whether a change is documentation-only.
+#
+# Prints `true` when anything outside documentation changed and `false` when
+# only documentation did. Both the CI `changes` job and `just verify` gate on
+# this, and they call THIS script rather than each carrying a copy of the rule:
+# a local gate that disagreed with CI about what documentation means would
+# either skip work CI then demands, or run work CI already skipped. AGENTS.md
+# records what happens otherwise — the packer path list "has already drifted
+# three times as a partial copy, most recently omitting `Cargo.lock`".
+#
+# Usage:
+#   is-code-change <range> [--include-worktree]
+#
+#   <range>              a git range, normally BASE...HEAD. Three dots, so the
+#                        diff is taken from the merge base and a branch behind
+#                        the base does not read the base's own commits as its
+#                        changes.
+#   --include-worktree   also classify uncommitted and untracked files. The
+#                        pre-push hook does not need this — only committed work
+#                        is pushed — but `just verify` is also documented as a
+#                        command run by hand before opening a pull request, and
+#                        there a green result must not mean "your edited Rust
+#                        file was never compiled or tested".
+#
+# THE CLASSIFICATION. Documentation is Markdown under `docs/` at any depth —
+# `*` matches `/` in a `case` pattern — plus the Markdown files at the
+# repository root. Markdown anywhere else is code, `crates/**/*.md` in
+# particular, because a crate's Markdown can reach a doctest through
+# `include_str!`. No crate does that today, which is a fact about today and not
+# a guarantee about tomorrow.
+#
+# `case` rather than `grep`: `case` is a shell builtin that behaves identically
+# everywhere, and `grep`'s `-q` and `-v` combination does not agree across
+# implementations (ugrep 7.5 reports no match on input where GNU grep reports
+# one) and disagrees silently, by returning an exit code rather than failing.
+set -euo pipefail
+
+range=${1:?usage: is-code-change <range> [--include-worktree]}
+include_worktree=${2:-}
+
+# `--no-renames` is load-bearing, not a style choice. `git diff --name-only`
+# reports ONLY the destination path of a detected rename, so moving a Rust file
+# to a Markdown path under `docs/` would list one documentation file and nothing
+# else — and a gate that exists to fail closed would skip the entire compile and
+# test half over a deleted source file. Verified: `git mv crates/foo/src/lib.rs
+# docs/moved.md` prints `docs/moved.md` alone, and prints both paths with this
+# flag.
+changed=$(git diff --name-only --no-renames "$range" 2>/dev/null || true)
+
+if [ "$include_worktree" = "--include-worktree" ]; then
+    # Uncommitted (staged and unstaged) against HEAD, plus untracked files that
+    # are not ignored. A new .rs file that has never been added is still a file
+    # the tests would compile.
+    worktree=$(git diff --name-only --no-renames HEAD 2>/dev/null || true)
+    untracked=$(git ls-files --others --exclude-standard 2>/dev/null || true)
+    changed=$(printf '%s\n%s\n%s\n' "$changed" "$worktree" "$untracked")
+fi
+
+# Strip the blank lines the concatenation above can introduce, so the emptiness
+# test below means "nothing changed" rather than "nothing but separators".
+changed=$(printf '%s\n' "$changed" | sed '/^$/d')
+
+if [ -z "$changed" ]; then
+    # An unreadable or empty diff runs everything. This gate fails closed: a
+    # diff that cannot be read is not evidence that nothing changed.
+    echo "true"
+    exit 0
+fi
+
+code=false
+while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    case "$file" in
+        docs/*.md) ;;      # documentation, at any depth under docs/
+        */*) code=true ;;  # any other path inside a directory
+        *.md) ;;           # Markdown at the repository root
+        *) code=true ;;    # any other file at the repository root
+    esac
+done <<<"$changed"
+
+echo "$code"

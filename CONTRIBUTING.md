@@ -29,6 +29,12 @@ off to `git std bootstrap`, which wires up repo-local git hooks.
    --range main..HEAD` followed by the full `just build` (assemble, test,
    lint, audit, secrets).
 
+   When every changed file is documentation — Markdown under `docs/` or at
+   the repository root — `verify` runs `lint`, `audit` and `secrets` instead
+   of `build`, and no test tier runs. `scripts/is-code-change` decides, and
+   the CI `changes` job gates on that same script, so your local result and
+   CI agree on what documentation means.
+
    The `secrets` step needs [gitleaks](https://github.com/gitleaks/gitleaks),
    which `./bootstrap` reports on but does not install — `brew install
    gitleaks`, or a release binary. `just check` has two other external
@@ -48,7 +54,7 @@ Run `just --list` for the full recipe set. The common ones:
 | recipe        | what it does                                                                                                                                                    |
 | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `just build`  | assemble + check (test, lint, audit, secrets) — the local gate; two tests that re-derive committed asset tables sit outside it (`docs/decisions/test-tiers.md`) |
-| `just verify` | commit-message lint + `just build` — run before a PR                                                                                                            |
+| `just verify` | commit-message lint + `just build` — run before a PR. A documentation-only change takes lint + audit + secrets instead, and runs no test tier                   |
 | `just fmt`    | reformat Rust and markdown in place                                                                                                                             |
 | `just wasm`   | build `dashc` for `wasm32-unknown-unknown`                                                                                                                      |
 | `just book`   | serve the mdBook docs locally                                                                                                                                   |

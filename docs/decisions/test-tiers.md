@@ -341,7 +341,16 @@ so every recipe that claims to run a tier also runs
 **Recipes** (`justfile`). `test` runs `sanity`. `test-regression` runs
 `regression`. `calibrate` diffs the pinned membership file and then runs
 `calibration`. `test-all` runs every tier in one invocation. `check`, and
-therefore `build` and `verify`, take `test-regression`.
+therefore `build`, take `test-regression`.
+
+`verify` takes `build`, and therefore that tier, for every change except one:
+when each changed file is documentation it runs `lint`, `audit` and `secrets`
+and **no tier at all**. So a green `verify` is not by itself a statement that
+the regression tier ran — the output says which path it took, and
+`scripts/is-code-change` is what chose. That script is shared with the CI
+`changes` job rather than copied into it, because the two gates disagreeing
+about the word "documentation" would mean either skipping work CI then demands
+or running work CI already skipped.
 
 **CI** (`.github/workflows/ci.yml`). The existing `test` job runs
 `cargo nextest run --workspace` with no `-P` flag, which is the

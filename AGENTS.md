@@ -165,7 +165,10 @@ members in total, nineteen of them the crates above.
     just figma-sharing  assert every corpus fixture is explicitly link-viewable.
                       Needs a Figma PAT and the network, so it is outside
                       `check`; run it before publication
-    just verify       commit-message lint over the branch range, then build — run before opening a PR
+    just verify       commit-message lint over the branch range, then build — run before opening a PR.
+                      A documentation-only change takes lint + audit + secrets
+                      instead of build (`scripts/is-code-change` decides, and CI
+                      gates on the same script)
     just wasm         build dashc for wasm32-unknown-unknown
     just wasm-painter build dashscene-gpu for wasm32 — the gate that keeps a
                       blocking wait off the web path, where it would deadlock
@@ -250,7 +253,11 @@ runs as three tiers, so "tests pass" is no longer a claim about all of it:
 - **Before pushing, and before opening a PR** — `just build`, which runs the
   regression tier. The `pre-push` hook runs `just verify` and therefore this
   anyway; running it by hand only buys finding out before the push rather
-  than during it.
+  than during it. **Except on a documentation-only change**, where `verify`
+  takes `lint`, `audit` and `secrets` and runs no tier at all — so a green
+  push does not mean the regression tier ran. `scripts/is-code-change` makes
+  that call, and the CI `changes` job gates on the same script, so the two
+  cannot disagree about what counts as documentation.
 - **When the diff touches any path in the `packer` filter** — the filter is
   defined in the `changes` job of `.github/workflows/ci.yml`, and enumerated
   with a reason per entry in `docs/decisions/test-tiers.md`. Run

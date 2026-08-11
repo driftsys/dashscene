@@ -121,37 +121,16 @@ jobs:
           # bug cannot appear. For the push event they still agree whenever
           # "before" is an ancestor of "sha", and three dots degrades to the
           # merge base when a force-push means it is not.
-          changed=$(git diff --name-only "$BASE...$HEAD" 2>/dev/null || true)
-          if [ -z "$changed" ]; then
-            echo "no readable diff between $BASE and $HEAD; running everything"
-            echo "code=true" >>"$GITHUB_OUTPUT"
-            exit 0
-          fi
           echo "changed files:"
-          echo "$changed"
-          # Documentation is Markdown under docs/ and the Markdown files at the
-          # repository root (AGENTS.md, CLAUDE.md, README.md). Markdown anywhere
-          # else counts as code — crates/**/*.md in particular, because a
-          # crate's Markdown can reach a doctest through include_str!, and
-          # letting that skip the test job would let a doctest break unseen. No
-          # crate does that today, which is a fact about today and not a
-          # guarantee about tomorrow.
-          #
-          # Matched with case rather than grep deliberately. case is a shell
-          # builtin that behaves identically everywhere; grep's -q and -v
-          # combination does not agree across implementations (ugrep 7.5 reports
-          # no match on input where GNU grep reports one), and it disagrees
-          # silently, by returning an exit code rather than by failing.
-          code=false
-          while IFS= read -r file; do
-            [ -n "$file" ] || continue
-            case "$file" in
-              docs/*.md) ;;          # documentation, at any depth under docs/
-              */*) code=true ;;      # any other path inside a directory
-              *.md) ;;               # Markdown at the repository root
-              *) code=true ;;        # any other file at the repository root
-            esac
-          done <<<"$changed"
+          git diff --name-only --no-renames "$BASE...$HEAD" 2>/dev/null || true
+          # The classification lives in scripts/is-code-change, which `just
+          # verify` also calls. It used to be written out here and nowhere else;
+          # once the local gate needed the same rule, a second copy would have
+          # been a partial copy, and AGENTS.md records what those do — the
+          # packer path list "has already drifted three times as a partial copy,
+          # most recently omitting `Cargo.lock`". The script carries the rule,
+          # the reasoning, and the empty-diff-runs-everything default.
+          code=$(scripts/is-code-change "$BASE...$HEAD")
           echo "code=$code" >>"$GITHUB_OUTPUT"
           echo "result: code=$code"
 
