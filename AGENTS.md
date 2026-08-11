@@ -1,4 +1,4 @@
-# AGENTS.md — dashscene-staging
+# AGENTS.md — dashscene
 
 dashscene turns UI designed in Figma — or authored programmatically in
 code — into pixels on screen, through one intermediate representation
@@ -33,20 +33,25 @@ directly — don't silently diverge from it.
 
 ## Repo status
 
-This is `driftsys/dashscene-staging`, a **private working repo**.
-`driftsys/dashscene` itself stays public and untouched — it's reserved
-as the project's future facade (docs, book, site), and it's the
-repository every reserved crates.io name points at. There are **21** of
-them: the 12 squatted in March 2026, before this repo's first commit,
-plus 9 reserved during development as the crates needing them arrived.
-Nineteen are this workspace's crates — every one of them — and
-`dashscore` and `dashscene-compose` stay parked. These counts were off
-by one for a while, having not moved when `dashscene-ffi` was reserved,
-so re-derive them from `docs/decisions/crate-name-map.md` rather than
-trusting the number here. Nothing here is public yet. When
-there's a real version running, staging's content gets promoted into
-`dashscene` — the exact mechanism (fresh push vs. history merge) is
-intentionally undecided until that point
+This is `driftsys/dashscene`, still a **private repo**. It was
+`dashscene-staging` until 2026-08-11; the rename kept its history, its
+501 issues and its 21 milestones, which is why every `#N` in these
+records still resolves.
+
+There are **21** reserved crates.io names: the 12 taken on 2026-03-18,
+before this repo's first commit, plus 9 reserved during development as
+the crates needing them arrived. Nineteen are this workspace's crates —
+every one of them — and `dashscore` and `dashscene-compose` stay parked.
+These counts were off by one for a while, having not moved when
+`dashscene-ffi` was reserved, so re-derive them from
+`docs/decisions/crate-name-map.md` rather than trusting the number here.
+Beware `demo`: a crate of that name has existed on crates.io since 2018
+and is not ours, so a naive query over workspace members counts 22.
+
+The repository that made those reservations is archived as
+`driftsys/dashscene-name-reservations`, kept because every published stub
+points its `repository` field there. Nothing here is public yet — the
+visibility flip is the one step still outstanding
 (`docs/decisions/repo-staging-and-public-facade.md`).
 
 ## Crates

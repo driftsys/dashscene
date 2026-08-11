@@ -9,8 +9,9 @@ The project's scope-level decision log lived in
 into the records below. Per-story decisions land here directly:
 
 - [repo-staging-and-public-facade.md](repo-staging-and-public-facade.md) —
-  `dashscene` stays the public facade; `dashscene-staging` is the private
-  working repo (`docs/archive/2026-07-14-scope-decisions.md` §1).
+  one repository, not two: the working repo was renamed to
+  `driftsys/dashscene` and the reservation repo archived beside it
+  (`docs/archive/2026-07-14-scope-decisions.md` §1).
 - [crate-name-map.md](crate-name-map.md) — the workspace reuses the 12
   already-reserved crates.io names, mapped onto
   `docs/design/architecture.md`'s architecture

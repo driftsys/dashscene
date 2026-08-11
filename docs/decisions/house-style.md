@@ -8,7 +8,7 @@
 
 ## Context
 
-`dashscene-staging` needed a set of repo-tooling conventions — workspace
+`dashscene` needed a set of repo-tooling conventions — workspace
 shape, task runner, formatting, versioning, CI — rather than inventing
 its own. `driftsys/git-std`, `driftsys/upskill`, and `driftsys/markspec`
 were read directly as the house-style reference.
@@ -152,7 +152,7 @@ content once gardened), `docs/specification/` (requirements),
 `docs/design/` (architecture), `docs/decisions/` (decision records),
 `docs/technotes/` (explanatory notes).
 
-**Dogfooding**: `dashscene-staging` dogfoods `git-std` from day one. The
+**Dogfooding**: `dashscene` dogfoods `git-std` from day one. The
 `justfile` (`release`/`verify` recipes), `.git-std.toml`, `bootstrap`
 script, and CI `convco` job all wire it in for real rather than as
 stubs/placeholders.
@@ -160,5 +160,5 @@ stubs/placeholders.
 ## Why
 
 Copying conventions already proven across three sibling repos avoids
-re-deriving repo tooling from scratch and keeps `dashscene-staging`
+re-deriving repo tooling from scratch and keeps `dashscene`
 consistent with the rest of the driftsys house style.

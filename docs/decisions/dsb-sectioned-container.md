@@ -23,7 +23,7 @@ sections without touching cold pages. Spike #56 measured how much of
 that a single flatbuffer can express, against the exact toolchain this
 repo pins: `flatc` 25.12.19 and the `flatbuffers` Rust crate 25.12.19.
 Full evidence is on the issue
-(<https://github.com/driftsys/dashscene-staging/issues/56>).
+(<https://github.com/driftsys/dashscene/issues/56>).
 
 ## Options
 

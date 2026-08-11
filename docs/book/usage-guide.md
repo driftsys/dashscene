@@ -23,8 +23,8 @@ the project from source.
 ## Getting started
 
 ```sh
-git clone https://github.com/driftsys/dashscene-staging.git
-cd dashscene-staging
+git clone https://github.com/driftsys/dashscene.git
+cd dashscene
 ./bootstrap   # installs git-std, cargo-nextest, and repo git hooks
 ```
 

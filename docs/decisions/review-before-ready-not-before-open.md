@@ -77,7 +77,7 @@ No server-side replacement is available on this repository. Both
 `GET /repos/{owner}/{repo}/rulesets` and
 `GET /repos/{owner}/{repo}/branches/main/protection` return HTTP 403 —
 "Upgrade to GitHub Pro or make this repository public to enable this
-feature" — because `dashscene-staging` is private on a free plan. Nothing
+feature" — because the repository is private on a free plan. Nothing
 mechanically prevents a merge here, and this record no longer implies
 otherwise.
 

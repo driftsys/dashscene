@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bootstrap — set up a fresh clone or worktree of dashscene-staging.
+# bootstrap — set up a fresh clone or worktree of dashscene.
 #
 # Ensures git-std is installed, then hands off to it: `git std bootstrap`
 # does the repo-specific setup (git hooks, etc.) from there. Run this

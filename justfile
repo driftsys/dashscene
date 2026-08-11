@@ -1,4 +1,4 @@
-# dashscene-staging — task runner
+# dashscene — task runner
 #
 # Recipe set mirrors driftsys/git-std's own justfile (house style, see
 # docs/decisions/house-style.md), plus two dashscene-specific additions: `wasm`

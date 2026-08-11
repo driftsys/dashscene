@@ -192,9 +192,11 @@ publish a placeholder version now, promote it later.
 
 Reserved 2026-08-01 as `dashscene-gpu` 0.1.0: a standalone placeholder built to
 the same shape as the twelve, **not** the workspace crate. Two properties follow
-from that, and both are deliberate. Its `repository` is the public
-`driftsys/dashscene`, not `driftsys/dashscene-staging`, so the reservation does
-not publish the private working repo's name. And the workspace crate stays at
+from that, and both are deliberate. Its `repository` was the public
+reservation repo rather than the private working one, so the reservation did
+not publish the working repo's name. Those are now the same repository —
+renamed 2026-08-11, with the reservation repo archived as
+`driftsys/dashscene-name-reservations` — so the distinction is historical. And the workspace crate stays at
 `0.0.0` like every other crate here, so the reservation does not drag the
 workspace out of the shared version flow — the same split the twelve are
 already in, where a reserved 0.1.0 sits above a workspace 0.0.0 and the real

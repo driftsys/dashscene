@@ -64,7 +64,7 @@ members = [
 version = "0.0.0"
 edition = "2024"
 license = "Apache-2.0"
-repository = "https://github.com/driftsys/dashscene-staging"
+repository = "https://github.com/driftsys/dashscene"
 # Bumped from 1.85 for story B1's `fdsm` MSDF tree (nalgebra 0.34, image 0.25),
 # whose editions/APIs require a newer floor; 1.85 was inaccurate once the
 # vector-field generator landed (dashc, B1.1).

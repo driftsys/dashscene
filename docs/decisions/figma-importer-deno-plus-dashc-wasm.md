@@ -48,7 +48,7 @@ emission, never a silent drop.
 
 Layout:
 
-    dashscene-staging/
+    dashscene/
       crates/            13 dashscene-* / dashbuf / dashpaint / dashcue /
                           dashlang / dashc crates
       importers/figma/   Deno importer + sharedPluginData annotator plugin
