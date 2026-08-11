@@ -95,12 +95,12 @@ not by repo ownership.
 **Extraction bar, recorded now so it is not re-argued.** Revisit a
 separate repo only if an external consumer needs the source tree, not
 merely the binary. Publishing `dashpack` as its own crate happens at the
-staging-to-public promotion regardless, like every other crate here.
+first real release regardless, like every other crate here.
 
 **Availability.** Unlike the other three new names, `dashpack` was not
 reserved on crates.io when this section was written. Nothing here is published
 yet (`docs/decisions/repo-staging-and-public-facade.md`), so the reservation was
-left to the promotion rather than to this story — but the name can be squatted
+left to the first real release rather than to this story — but the name can be squatted
 out from under the project in the meantime, which is the same exposure the
 original three had before they were reserved.
 
@@ -192,13 +192,15 @@ publish a placeholder version now, promote it later.
 
 Reserved 2026-08-01 as `dashscene-gpu` 0.1.0: a standalone placeholder built to
 the same shape as the twelve, **not** the workspace crate. Two properties follow
-from that, and both are deliberate. Its `repository` is the public
-`driftsys/dashscene`, not `driftsys/dashscene-staging`, so the reservation does
-not publish the private working repo's name. And the workspace crate stays at
+from that, and both are deliberate. Its `repository` was the public
+reservation repo rather than the private working one, so the reservation did
+not publish the working repo's name. Those are now the same repository —
+renamed 2026-08-11, with the reservation repo archived as
+`driftsys/dashscene-name-reservations` — so the distinction is historical. And the workspace crate stays at
 `0.0.0` like every other crate here, so the reservation does not drag the
 workspace out of the shared version flow — the same split the twelve are
 already in, where a reserved 0.1.0 sits above a workspace 0.0.0 and the real
-release at promotion is what closes the gap.
+first real release is what closes the gap.
 
 ## `dashpack-astcenc-sys`, recorded late (story #430, v0.12; recorded 2026-08-08)
 
@@ -313,7 +315,8 @@ published, so that neither is published owning a private copy of it.
 
 **Availability.** Unclaimed on crates.io, and reserved 2026-08-08 as a
 standalone placeholder 0.1.0 built to the same shape as the twelve, with
-`repository` pointing at the public `driftsys/dashscene`. The name was held
+`repository` pointing at `driftsys/dashscene` — then the separate
+reservation repository, now this one, renamed 2026-08-11. The name was held
 ahead of the directory; story #794 created `crates/dashscene-desktop` at
 `0.0.0`, like every other crate here, so that story carried the workspace
 registries and not the reservation.
@@ -372,7 +375,8 @@ already names it.
 
 **Availability.** Unclaimed on crates.io, and reserved **2026-08-09** as a
 standalone placeholder 0.1.0 built to the same shape as the twelve, with
-`repository` pointing at the public `driftsys/dashscene`. The name was held
+`repository` pointing at `driftsys/dashscene` — then the separate
+reservation repository, now this one, renamed 2026-08-11. The name was held
 after the directory rather than before it: story #840 created
 `crates/dashscene-ffi` at `0.0.0` and shipped without the reservation, which
 this record and `docs/features.md` both carried as a stated gap until it was
@@ -405,8 +409,8 @@ ABI: driving it as C revealed the one thing missing for layer 0, and
 
 **Availability.** Unclaimed on crates.io, and reserved **2026-08-09** as a
 standalone placeholder 0.1.0 built to the same shape as the twelve, with
-`repository` pointing at the public `driftsys/dashscene` rather than at this
-private working repo. The workspace crate stays at `0.0.0`, so the reservation
+`repository` pointing at `driftsys/dashscene` — which was the separate
+reservation repository then and is this repository now, renamed 2026-08-11. The workspace crate stays at `0.0.0`, so the reservation
 does not drag it out of the shared version flow — the same split every other
 name here sits in.
 

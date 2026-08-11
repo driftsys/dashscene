@@ -7,8 +7,8 @@ layout, start with `docs/design/architecture.md` and `docs/decisions/`.
 ## Getting set up
 
 ```sh
-git clone https://github.com/driftsys/dashscene-staging
-cd dashscene-staging
+git clone https://github.com/driftsys/dashscene
+cd dashscene
 ./bootstrap
 ```
 

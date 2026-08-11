@@ -26,7 +26,7 @@ hold a version of its own to drift, because it does not hold one.
 
 Ruled by the owner on 2026-08-08.
 
-All 17 crate names are reserved on crates.io at **0.1.0** as standalone
+All 21 crate names are reserved on crates.io at **0.1.0** as standalone
 placeholders, on the terms `dashscene-gpu` set at the v0.15 open. Because the
 workspace moves as one, the first real release must clear **every** placeholder,
 so 0.1.0 is not available for any crate.
@@ -38,7 +38,8 @@ first.
 
 ## Two defects this found, and why the second is not one line
 
-**Defect 1 — `[[version_files]]` covered 15 of 17 crates.** `dashpack` and
+**Defect 1 — `[[version_files]]` covered 15 of the crates then in the
+workspace.** `dashpack` and
 `dashpack-astcenc-sys` were absent, so `git std bump` would not have moved
 either. Issue #445 named that exact item with that exact consequence and **was
 closed as completed with it unfixed**; its sibling item in the same file,

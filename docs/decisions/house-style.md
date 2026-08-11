@@ -8,7 +8,7 @@
 
 ## Context
 
-`dashscene-staging` needed a set of repo-tooling conventions — workspace
+`dashscene` needed a set of repo-tooling conventions — workspace
 shape, task runner, formatting, versioning, CI — rather than inventing
 its own. `driftsys/git-std`, `driftsys/upskill`, and `driftsys/markspec`
 were read directly as the house-style reference.
@@ -69,7 +69,7 @@ respective languages.
 **`.git-std.toml`**: `scheme = "semver"`, `strict = true`, `scopes` as
 an explicit list rather than `"auto"`, which only discovers `crates/*`
 and leaves no valid scope for commits that aren't crate-specific. The
-list is every crate name — 13 when this was written, **17 today** — plus a
+list is every crate name — 13 when this was written, **19 today** — plus a
 scope for each non-crate component
 that has its own artifacts and tooling — `goldens` (the golden images
 and their diff tooling), `corpus` (the fixture corpus itself: captured
@@ -93,7 +93,7 @@ description above no longer holds.** There is no longer one entry per crate
 pointing at that crate's own version string: the crates inherit
 `version.workspace = true` and hold no version to point at. The entries are
 now one per **internal dependency requirement** in the root manifest, each
-anchored on its own crate name — seventeen of them — because git-std's
+anchored on its own crate name — nineteen of them — because git-std's
 `write_version` splices exactly one span per entry, so a single unanchored
 entry would move one requirement and leave the rest at the old version
 behind a registry that looked covered. The workspace version itself needs no
@@ -152,7 +152,7 @@ content once gardened), `docs/specification/` (requirements),
 `docs/design/` (architecture), `docs/decisions/` (decision records),
 `docs/technotes/` (explanatory notes).
 
-**Dogfooding**: `dashscene-staging` dogfoods `git-std` from day one. The
+**Dogfooding**: `dashscene` dogfoods `git-std` from day one. The
 `justfile` (`release`/`verify` recipes), `.git-std.toml`, `bootstrap`
 script, and CI `convco` job all wire it in for real rather than as
 stubs/placeholders.
@@ -160,5 +160,5 @@ stubs/placeholders.
 ## Why
 
 Copying conventions already proven across three sibling repos avoids
-re-deriving repo tooling from scratch and keeps `dashscene-staging`
+re-deriving repo tooling from scratch and keeps `dashscene`
 consistent with the rest of the driftsys house style.

@@ -31,8 +31,8 @@ compiler, on `PATH` — the `dashbuf` crate's build script runs it (`brew instal
 flatbuffers`, or `apt-get install flatbuffers-compiler`).
 
 ```sh
-git clone https://github.com/driftsys/dashscene-staging.git
-cd dashscene-staging
+git clone https://github.com/driftsys/dashscene.git
+cd dashscene
 cargo run -p demo --release
 ```
 
@@ -163,10 +163,11 @@ that wasm build rather than reimplementing the lowering
 
 ## The workspace
 
-Seventeen crates in one Cargo workspace, plus five members that are never
+Nineteen crates in one Cargo workspace, plus six members that are never
 published — `demo/` (the windowed showcase), `demo-web/` (the same showcase in a
-browser, on a canvas), `corpus/showcase/` (the scenes they draw),
-`goldens/tooling/` (the golden-image harness), and `measure/web-minimal/` (the
+browser, on a canvas), `demo-android/` (and on a device), `corpus/showcase/`
+(the scenes they draw), `goldens/tooling/` (the golden-image harness), and
+`measure/web-minimal/` (the
 smallest browser embedder that draws a `.dsb`, built to be weighed rather than
 run).
 
@@ -199,18 +200,21 @@ tooling).
 
 ## Status
 
-This is `driftsys/dashscene-staging`, a **private working repository**. Nothing
-here is published: all 17 crate names on crates.io are placeholder
-reservations, and no code from this repository has been released under any of
-them. Ten of the seventeen were reserved in March 2026, before this repository
-existed; the other seven were reserved as the crates that need them arrived,
-the most recent three on 2026-08-08
-([`docs/decisions/crate-name-map.md`](docs/decisions/crate-name-map.md)).
-[`driftsys/dashscene`](https://github.com/driftsys/dashscene) is a
-separate public repository, reserved as the project's future facade; it holds
-those names and no working code. Staging's content is promoted into it once
-there is a real version running, and the mechanism is deliberately still
-undecided
+This is `driftsys/dashscene`, a **private working repository**. Nothing here is
+published: all 21 crate names on crates.io are placeholder reservations at
+`0.1.0`, and no code from this repository has been released under any of them.
+Twelve were reserved on 2026-03-18, before this repository's first commit; the
+other nine as the crates that need them arrived, the most recent two on
+2026-08-09
+([`docs/decisions/crate-name-map.md`](docs/decisions/crate-name-map.md) is the
+list — re-derive from it rather than trusting a count in prose, which has
+drifted before).
+
+The reservations were made from a second repository, now archived as
+[`driftsys/dashscene-name-reservations`](https://github.com/driftsys/dashscene-name-reservations).
+It is kept rather than deleted because every published stub carries a
+`repository` field pointing at it, and a published version's metadata cannot
+be changed
 ([`docs/decisions/repo-staging-and-public-facade.md`](docs/decisions/repo-staging-and-public-facade.md)).
 
 v0 is built one slice at a time. Slices v0.1 to v0.17 have closed. v0.18 —

@@ -122,6 +122,9 @@ capacity.
   hand-off case, and it is why the permit is stated as non-travelling: C stops
   and hands the re-baseline to A.
 - The protocol is written down here rather than only in issue bodies. GitHub
-  issues do not survive the promotion into the public repo if that promotion
-  is a fresh push (`docs/decisions/repo-staging-and-public-facade.md`), and the
-  v0.12 protocol existed only in three issue bodies.
+  issues might not have survived the move to the public name — a fresh push
+  would have carried none of them
+  (`docs/decisions/repo-staging-and-public-facade.md`), and the v0.12 protocol
+  existed only in three issue bodies. The move turned out to be a rename and
+  the issues survived, but that was not knowable when this was written, and a
+  protocol held only in an issue body is fragile for other reasons anyway.

@@ -58,13 +58,13 @@ members = [
 # from one entry each to this single line.
 #
 # `0.0.0` is a placeholder and not a release. The first real version is
-# **0.2.0** (issue #795), because every one of the 17 names is reserved on
+# **0.2.0** (issue #795), because every one of the 21 names is reserved on
 # crates.io at 0.1.0 and the whole workspace moves as one, so the first real
 # release has to clear the entire 0.1.x band.
 version = "0.0.0"
 edition = "2024"
 license = "Apache-2.0"
-repository = "https://github.com/driftsys/dashscene-staging"
+repository = "https://github.com/driftsys/dashscene"
 # Bumped from 1.85 for story B1's `fdsm` MSDF tree (nalgebra 0.34, image 0.25),
 # whose editions/APIs require a newer floor; 1.85 was inaccurate once the
 # vector-field generator landed (dashc, B1.1).

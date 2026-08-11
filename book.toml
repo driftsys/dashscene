@@ -6,5 +6,5 @@ language = "en"
 src = "docs/book"
 
 [output.html]
-git-repository-url = "https://github.com/driftsys/dashscene-staging"
-edit-url-template = "https://github.com/driftsys/dashscene-staging/edit/main/{path}"
+git-repository-url = "https://github.com/driftsys/dashscene"
+edit-url-template = "https://github.com/driftsys/dashscene/edit/main/{path}"

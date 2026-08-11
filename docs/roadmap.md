@@ -30,13 +30,14 @@ under it, and their state, are GitHub's job.
 An earlier position held that GitHub alone was enough, and no in-repo plan
 record was kept. That position is reversed here, for three reasons:
 
-- **It does not survive the promotion.**
+- **It might not have survived the move to the public name.**
   [`decisions/repo-staging-and-public-facade.md`](decisions/repo-staging-and-public-facade.md)
-  records that this repo's content is eventually promoted into the public
-  `driftsys/dashscene`, and that the mechanism — a fresh push or a history
-  merge — is intentionally undecided. If it is a fresh push, the GitHub
-  issues do not come with it, and the plan is the one engineering artifact
-  that is lost.
+  left the mechanism open between a fresh push and a history merge, and a
+  fresh push takes no GitHub issues with it — which would have lost the plan,
+  the one engineering artifact held nowhere else. It was settled on
+  2026-08-11 by renaming the repository instead, so the issues did survive;
+  the reason for writing the plan down in the tree stands regardless, because
+  it was not knowable at the time.
 - **It is not reviewable.** A change to the plan cannot be proposed,
   discussed, and approved in a pull request alongside the code it plans.
 - **It is not readable offline**, and it is not versioned with the code.

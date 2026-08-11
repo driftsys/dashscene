@@ -1,5 +1,5 @@
 #:schema https://driftsys.github.io/git-std/schemas/v1/git-std.schema.json
-# git-std configuration for dashscene-staging.
+# git-std configuration for dashscene.
 # See docs/decisions/house-style.md — dogfoods git-std's own conventions.
 
 scheme = "semver"

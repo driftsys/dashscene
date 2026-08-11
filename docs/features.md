@@ -563,14 +563,16 @@ Checked against `crates/dashbuf/src/container.rs`, `prefix.rs`,
 
 ## Two things worth stating plainly
 
-**Nothing here is released.** This is a private working repository. All 17
-public package names are reserved on crates.io and none holds code from this
-repository. **Seven of the seventeen were reserved after development started**,
-not before it: three of them seventy-two minutes after the first commit, and
-four more as the crates that need them arrived — the most recent three on
-2026-08-08. Only the other ten come from the family of names reserved in March
-2026, before this repository existed
-([`docs/decisions/crate-name-map.md`](decisions/crate-name-map.md)).
+**Nothing here is released.** This is a private working repository. All 21
+public package names are reserved on crates.io at `0.1.0`, and none holds code
+from this repository. **Nine of the twenty-one were reserved after development
+started**, not before it, as the crates that need them arrived — the most
+recent two on 2026-08-09. The other twelve come from the family reserved on
+2026-03-18, before this repository's first commit, and they are exactly the
+twelve stubs in the archived
+[`driftsys/dashscene-name-reservations`](https://github.com/driftsys/dashscene-name-reservations)
+([`docs/decisions/crate-name-map.md`](decisions/crate-name-map.md) is the list;
+re-derive from it rather than from a count in prose).
 
 **The automated checks exist and are not currently running.** Continuous
 integration is blocked at the account level: every job fails within seconds
