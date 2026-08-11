@@ -1,0 +1,31 @@
+name: install flatc
+description: >-
+  Install the flatbuffers compiler at the version this workspace's flatbuffers
+  Rust crate is pinned to.
+
+# Every job that compiles anything reaching `dashbuf` needs this: its build.rs
+# shells out to `flatc`, and the release is pinned to match the `flatbuffers`
+# Rust crate exactly (docs/decisions/crate-name-map.md). A mismatch surfaces as
+# a schema error naming neither the version nor the job.
+#
+# One definition, because there were nine identical copies of it and a bump had
+# to find all nine (issue #909). Which jobs need it, and why each one does, is
+# recorded at the call sites — that reason differs per job and is worth keeping
+# there.
+#
+# A local action rather than a published one: it is referenced as
+# `./.github/actions/install-flatc` and resolves from the checkout, so it needs
+# no release, no version and no third-party trust. It does mean every calling
+# job must `actions/checkout` first, which all of them already do.
+#
+# `linux/amd64` only, like every job that calls it. A runner on another platform
+# would need a different asset name, and adding that before a job needs it would
+# be inventing a matrix nothing runs.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        curl -fsSL -o flatc.zip https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip
+        unzip -o flatc.zip flatc -d /usr/local/bin
+        chmod +x /usr/local/bin/flatc

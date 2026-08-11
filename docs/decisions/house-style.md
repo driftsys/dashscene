@@ -123,8 +123,17 @@ so CI holds no second copy of the list). The two are separate because
 `deno` waits on the first for its artifact and need not wait on the
 second. Neither covers the **release**-profile wasm builds `just
 web-build` and `just measure-runtime` run, so a failure that appears only
-under `lto = true` is caught by no job. No cross-platform
-`build-release` matrix yet — that's
+under `lto = true` is caught by no job.
+
+Nine of those jobs compile something that reaches `dashbuf`, whose build.rs
+shells out to `flatc` at a release pinned to match the `flatbuffers`
+Rust crate. That install is a **local composite action**,
+`.github/actions/install-flatc`, referenced as a path so it needs no
+release and no third-party trust — one definition where there were nine
+identical copies for a bump to find (issue #909). Why each job needs it
+differs per job and stays at the call site.
+
+No cross-platform `build-release` matrix yet — that's
 git-std's own binary-distribution concern, not relevant until dashscene
 ships a distributable binary of its own.
 
