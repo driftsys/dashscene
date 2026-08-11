@@ -118,6 +118,16 @@ pub use render::{ATLAS_EXTENT, Changes, InstanceUpload, Renderer, RendererError}
 pub use residency::{AtlasFormat, Residency, ResidencyError};
 pub use shader::SDF_WGSL;
 pub use surface::{Drawn, FrameError, SurfaceRenderer};
+/// The `wgpu` types this crate's own accessors hand back, re-exported so that
+/// naming one does not oblige a caller to declare a `wgpu` dependency and then
+/// keep its version in step with this crate's. Two `wgpu` versions in one build
+/// are two unrelated `AdapterInfo` types, and the mismatch is a compile error a
+/// long way from its cause.
+///
+/// [`Backend`] and [`DeviceType`] are here because they are what
+/// [`AdapterInfo`]'s fields hold: branching on the adapter — rather than only
+/// printing it — means naming them.
+pub use wgpu::{AdapterInfo, Backend, DeviceType, TextureFormat};
 
 /// Which payload formats this painter can be handed, on the device it will draw
 /// on.
