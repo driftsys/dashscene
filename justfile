@@ -504,24 +504,22 @@ verify:
     # `test` job alongside fifteen other jobs, on runners that became free when
     # the repository went public.
     #
-    # Measured warm, which is what a push actually costs:
+    # The shape, not a table of digits. Warm, every step here is a second or two
+    # and the whole gate is seconds; the regression tier alone was 154 s. That
+    # ratio is the reason for the split and it does not move.
     #
-    #     clippy host + three wasm packages   1.2 s
-    #     cargo fmt --check                   0.8 s
-    #     cargo doc (intra-doc links)         0.2 s
-    #     dprint + deno fmt                   0.0 s
-    #     markdownlint                        3.0 s
-    #     cargo audit                         1.7 s
-    #     secrets, scoped by --not --remotes  3.0 s
-    #     ---------------------------------------
-    #     measured end to end                 8-10 s
-    #     the regression tier, for contrast   154 s
+    # A per-step breakdown used to sit here and was wrong twice in one day —
+    # first quoting one quiet machine's run as a range, then replacing it with a
+    # figure that did not reproduce. Numbers measured once and pasted into a
+    # comment rot silently, and nothing in the gate fails when they do. Time the
+    # recipes if you need current figures; `secrets` is the largest step, and
+    # `cargo audit` the most variable because it fetches the advisory database.
     #
     # Everything except the tier fits the budget. WHAT IS DROPPED, stated in
     # full rather than as "the tier": `assemble`, `test-regression`,
     # `wasm-painter`, `wasm-host` and `c-abi`.
     #
-    # `lint` still TYPE-CHECKS the whole workspace and all three wasm packages —
+    # `lint` still TYPE-CHECKS the whole workspace and all four wasm packages —
     # `clippy --all-targets` compiles what it lints — so a compile error still
     # fails here. It does NOT LINK, so a duplicate or undefined symbol in a
     # cdylib passes, and the C ABI header check no longer runs locally at all;
