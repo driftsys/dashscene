@@ -121,14 +121,50 @@ The suite was developed and run on an **Apple M3 via Metal**, and the adapter is
 printed by a test so that a number always has the device beside it. Every
 measurement above is from that adapter.
 
-**The lavapipe half is not yet verified.** The `mesa-vulkan-drivers` install,
-the `VK_ICD_FILENAMES` path and `WGPU_BACKEND=vulkan` are written from the
-documented setup and have not been executed, because the account's Actions
-billing was unsettled while this story was built and no CI job could be
-scheduled. The first green `test` job after billing is settled is what confirms
-it; if the ICD path is wrong the suite fails by name — "layer-2 conformance
-needs a wgpu adapter and found none" — rather than passing vacuously, which is
-the failure mode that matters.
+That `println!` reaches a reader only when the test fails or when the run asks
+for it: nextest captures the output of a passing test, so the adapter does not
+appear in a green CI log. What does appear there is the `vulkaninfo --summary`
+the `test` job runs after installing the software device, which names the device
+whether the suite passes or not.
+
+**The lavapipe half is verified, since 2026-08-11.** The whole workspace suite
+ran on `ubuntu-latest` with lavapipe as the only available device — 1760 tests,
+no failures — and this suite was part of it. That was the first execution of it
+on a software adapter: the account's Actions billing was unsettled while the
+story was built, so nothing here had ever run in CI.
+
+The device, as the job's own `vulkaninfo --summary` reports it:
+
+    deviceType = PHYSICAL_DEVICE_TYPE_CPU
+    deviceName = llvmpipe (LLVM 20.1.2, 256 bits)
+    driverName = llvmpipe
+    driverInfo = Mesa 25.2.8-0ubuntu0.24.04.2 (LLVM 20.1.2)
+
+That Mesa version is not pinned, and a change in it is the drift issue #900
+exists to make visible; the four lines above are the baseline it would be
+compared against.
+
+Two things the original note got wrong, recorded because both cost time:
+
+- **There was no `WGPU_BACKEND=vulkan`.** The workflow has never set it. wgpu
+  reads that variable only through `InstanceDescriptor::from_env`, and this
+  suite builds its instance with `Instance::default()`, so setting it would be a
+  variable nothing reads.
+- **The `VK_ICD_FILENAMES` path was not merely unverified, it was harmful.**
+  Mesa installs its driver manifests into `/usr/share/vulkan/icd.d/`, which the
+  loader already searches by default, so the variable could never have helped;
+  and it _replaces_ that search rather than adding to it. When Mesa dropped the
+  architecture suffix from the filename and the runner image moved to the 25.2 in
+  noble-updates, the pinned path left the loader with no driver at all. The job
+  now sets no driver path and asserts a device with `vulkaninfo` instead.
+
+The prediction that a missing device would make the suite "fail by name" was
+half right, and the half it missed is the useful part: the failure surfaces in
+whichever test asks for a device first, which was neither of this suite's. Two
+`dashscene-gpu` residency tests absorbed it and named their own crate, and this
+suite did not run at all — nextest cancels at the first failure, so 795 of 1760
+tests were reported as not run. A per-suite `expect` cannot name a job-level
+fault; the step that builds the environment has to fail for it.
 
 ## Consequences
 

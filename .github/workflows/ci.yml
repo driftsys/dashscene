@@ -241,21 +241,6 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     name: test
     runs-on: ubuntu-latest
-    env:
-      # Point the Vulkan loader at the software device the step below installs.
-      # Without it the loader finds no driver on a GPU-less runner and the
-      # layer-2 suite fails by name rather than passing vacuously.
-      #
-      # `VK_ICD_FILENAMES` rather than `VK_DRIVER_FILES`, which replaced it in
-      # Vulkan-Loader 1.3.208: 24.04 ships 1.3.275, which still honours the old
-      # name with a warning, and the old name also works on older images. Worth
-      # revisiting when the runner image moves.
-      #
-      # No `WGPU_BACKEND`. wgpu reads that only through
-      # `InstanceDescriptor::from_env`, and the suite constructs its instance
-      # with `Instance::default()`, so setting it would be a variable nothing
-      # reads — and a comment claiming it steered the backend would be false.
-      VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -281,10 +266,58 @@ jobs:
       # device: giving it a separate job would mean excluding it from the tiers,
       # and it would then stop running on a developer's machine, where it works
       # against whatever adapter is present.
+      #
+      # **No `VK_ICD_FILENAMES`, and no driver path of any kind.** Mesa installs
+      # its manifests into `/usr/share/vulkan/icd.d/`, which the loader already
+      # searches by default — it is `$XDG_DATA_DIRS` (default
+      # `/usr/local/share:/usr/share`) with `/vulkan/icd.d` appended
+      # (Vulkan-Loader, `LoaderDriverInterface.md`). Setting a driver path could
+      # therefore never help here, and `VK_ICD_FILENAMES` REPLACES that search
+      # rather than adding to it, so pinning one filename could only ever break.
+      #
+      # It did. The job pinned `lvp_icd.x86_64.json`; Mesa dropped the
+      # architecture suffix, the runner image moved from the noble Mesa that
+      # shipped that name to the 25.2 in noble-updates that installs
+      # `lvp_icd.json`, and the loader was left with no driver at all.
+      # `vkCreateInstance` returned `VK_ERROR_INCOMPATIBLE_DRIVER`, the Vulkan
+      # backend never became active, and wgpu reported `active_backends:
+      # Backends(0x0)` inside whichever test asked for a device first — which is
+      # why two `dashscene-gpu` residency tests failed at an `expect` naming
+      # their own crate. `VK_ADD_DRIVER_FILES` adds instead of replacing, and is
+      # what to reach for if a path is ever genuinely needed.
+      #
+      # No `WGPU_BACKEND` either. wgpu reads that only through
+      # `InstanceDescriptor::from_env`, and the suite constructs its instance
+      # with `Instance::default()`, so setting it would be a variable nothing
+      # reads — and a comment claiming it steered the backend would be false.
       - name: install a software vulkan device
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers
+          # Install first and refresh the package lists only if that fails,
+          # following the skia step below: `apt-get update` is about 12 s on the
+          # critical path of the job that runs most often, and the runner image
+          # ships lists new enough to resolve these. The retry is what keeps
+          # that an optimisation rather than a bet. `if !` rather than
+          # `install || { update && install; }`, because under `bash -e` the
+          # `||` form exits 0 when BOTH halves fail.
+          if ! sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers vulkan-tools; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers vulkan-tools
+          fi
+          # Assert a working device, not a filename. A manifest that exists
+          # proves nothing: its `library_path` can name a library a package
+          # split moved, and a loader bump can stop honouring an override. This
+          # exercises the same loader path wgpu will take, so an environment
+          # fault fails HERE, by name, instead of surfacing as an `expect` in
+          # whichever crate happens to ask for a device first.
+          vulkaninfo --summary
+          # `--summary` prints a `deviceName` line per physical device. An
+          # instance that creates but enumerates nothing is refused by a wgpu
+          # adapter request too, so the count is the gate rather than the exit
+          # code alone.
+          vulkaninfo --summary | grep -q "deviceName" || {
+            echo "the vulkan loader created an instance but enumerated no device"
+            exit 1
+          }
       - name: install flatc
         run: |
           curl -fsSL -o flatc.zip https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip

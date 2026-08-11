@@ -898,7 +898,13 @@ mod tests {
             compatible_surface: None,
             ..Default::default()
         }))
-        .expect("residency needs a device");
+        .expect(
+            "residency needs a wgpu adapter and found none. On a runner this means no software \
+             device is available: the test job installs mesa-vulkan-drivers, and the loader finds \
+             it without any driver path being set. Setting VK_ICD_FILENAMES replaces the loader's \
+             default search rather than adding to it, and a stale filename there is what reported \
+             this as a residency defect once already.",
+        );
         pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("residency test"),
             required_features: wgpu::Features::empty(),
@@ -907,7 +913,7 @@ mod tests {
             trace: wgpu::Trace::Off,
             ..Default::default()
         }))
-        .expect("residency needs a device")
+        .expect("the adapter provides a device at downlevel defaults")
     }
 
     /// A baked RGBA payload of the given extent, filled with `seed`.

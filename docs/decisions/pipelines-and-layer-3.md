@@ -235,6 +235,23 @@ third guise — after uniform data (#650, #651, #699) and uniform arguments
 (#579), uniform _symmetry_. `the_documents_y_down_origin_maps_to_the_top_of_the_image`
 uses an off-centre rect and kills it.
 
-**Not verified on lavapipe**, for the same reason story #579's suite is not:
-the account's Actions billing is unsettled and no CI job can be scheduled. A
-missing device fails by name rather than passing vacuously.
+**Verified on lavapipe, since 2026-08-11.** This suite ran on `ubuntu-latest`
+with lavapipe as the only available device as part of a full-workspace run of
+1760 tests with no failures — its first execution on a software adapter, the
+account's Actions billing having been unsettled while it was built.
+
+Every assertion here holds on lavapipe unchanged, with no tolerance added and no
+value re-derived. One property of the suite is worth naming as the likely
+reason, though it was not stated in advance as a prediction: none of the four
+`layer3_*` binaries compares against a golden image — the only goldens in the
+crate are the instance-stream text files under `tests/goldens/`, read by
+`layer1_instances`. These tests assert where coverage falls and which pixels
+differ from which, so a software rasteriser does not have to match a desktop
+adapter's blending for them to pass.
+
+The claim that "a missing device fails by name" needs one correction. It fails by
+name in whichever test asks for a device first, and that is not necessarily this
+suite: on 2026-08-11 a stale Vulkan driver path in the `test` job surfaced as a
+failure in two `dashscene-gpu` residency tests, and this suite did not run at all
+because nextest cancels at the first failure
+(`docs/decisions/shader-library-and-layer-2.md`).

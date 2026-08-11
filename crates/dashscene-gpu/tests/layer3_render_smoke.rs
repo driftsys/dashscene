@@ -28,8 +28,13 @@ const H: u32 = 48;
 /// A renderer, or a named failure. Panics rather than skipping: a layer-3
 /// suite that quietly passes with no device is a green result that establishes
 /// nothing.
+///
+/// Panics through `Display` rather than `expect`, which prints `Debug`:
+/// `RendererError::NoAdapter` carries the sentence naming the environment —
+/// that a runner needs a software device installed — and `Debug` renders it as
+/// the bare word `NoAdapter`, losing exactly the part a reader needs.
 fn renderer() -> Renderer {
-    Renderer::new().expect("layer 3 needs a device")
+    Renderer::new().unwrap_or_else(|e| panic!("layer 3 needs a device: {e}"))
 }
 
 fn rect(
@@ -134,7 +139,10 @@ fn the_drawable_maximum_is_the_adapters_and_not_the_downlevel_default() {
         compatible_surface: None,
         ..Default::default()
     }))
-    .expect("layer 3 needs a device");
+    .expect(
+        "layer 3 needs a wgpu adapter and found none. On a runner this means no software device \
+         is available; the test job installs mesa-vulkan-drivers.",
+    );
 
     let max = renderer().max_extent();
     println!(
