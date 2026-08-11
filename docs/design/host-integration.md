@@ -190,14 +190,42 @@ crates, and `Host::after_paint` on the desktop, which is the loop's own branch
 rather than a copy of the policy. The stop mechanism on both sides has no
 coverage at all; issue #867 carries it.
 
+## The adapter as types, settled at story #835
+
+The third pair, and the only additive one (#815, #819). Both crates exposed the
+adapter only as the line their demonstration logs, so an embedder that wanted to
+show the backend in its own interface, or branch on it, had to parse that line
+or do without.
+
+`Surface::adapter_info` and `Surface::format` on the web,
+`GpuPresenter::adapter_info` and `GpuPresenter::format` on the desktop, each
+returning the `wgpu` type rather than a string. Inherent on `GpuPresenter`
+rather than on `Present`, because `demo`'s raster presenter has no adapter to
+answer with and a trait method every implementation had to answer would be the
+wrong shape for it. `Surface::describe` and `Present::name` both stay: a caller
+that only wants the line should not have to build it from the parts, and the
+desktop loop's own diagnostic lines read theirs.
+
+`AdapterInfo`, `Backend`, `DeviceType` and `TextureFormat` are re-exported by
+both crates, from `dashscene-gpu`, which re-exports them from `wgpu`. Without
+that an embedder would have to declare a `wgpu` dependency of its own and keep
+its version in step with this workspace's, and two `wgpu` versions in one build
+are two unrelated `AdapterInfo` types. `Backend` and `DeviceType` are in the set
+because they are what `AdapterInfo`'s fields hold: branching on the adapter,
+rather than only printing it, means naming them.
+
+**What checks it** is a type check rather than a behavioural one, on both sides,
+because neither type can be constructed without a window or a canvas. Each
+crate's `tests/adapter_accessors.rs` names the accessors from outside the crate
+and coerces each to a function pointer with the return type it must have, so an
+accessor that went back to a `String`, or a re-export that went away, stops
+compiling. `cargo test` runs the desktop one. The web one is compiled for
+`wasm32-unknown-unknown` only, because `Surface` is, so `cargo test` never sees
+it; what compiles it is `just lint`, which already runs clippy over every target
+of `dashscene-web` for wasm32.
+
 ## Known gaps, named
 
-Each is filed, and each pairs across the two crates — the pairing matters,
-because settled separately the two crates diverge on what a recoverable failure
-means.
-
-- **The adapter is exposed only as a formatted string** — #815 (web), #819
-  (desktop).
 - **R5 is conditional on the web** — #822, and the fix is in the runtime rather
   than in either crate: confining the solve, the committed table and the paint
   to the shown root. Ruled at the v0.17 close —
