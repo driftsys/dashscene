@@ -47,18 +47,23 @@ There is one repository now. The facade role folded into it.
   numbers, so `#598` still resolves.
 - **A rename is not a migration.** Nothing is copied, so nothing can be copied
   wrongly.
-- **The reservation repo is archived rather than deleted**, because every stub
-  published to crates.io carries a `repository` field pointing at it, and a
-  published version's metadata cannot be changed. Deleting it would leave a
-  dead link on twelve crates permanently. Archived, it stays readable and
-  GitHub's rename redirect keeps those links resolving.
+- **The reservation repo is archived rather than deleted**, to keep the record
+  of when the names were taken and by what. That is the whole reason, and an
+  earlier draft of this record gave a different one that does not survive
+  checking.
 
 ## Consequences
 
-- The reserved crates.io names now point, through that redirect, at an archived
-  repository whose README says where the project went. New releases carry the
-  current `repository` field, so the redirect matters only for the `0.1.0`
-  stubs.
+- **All 21 published stubs carry `repository = https://github.com/driftsys/dashscene`,
+  and that is the working repository, not the archived one.** Renaming the
+  working repo into that name replaced GitHub's redirect rather than following
+  it, so the archived repo is not where those links lead and never will be.
+
+  While this repository is private the links return 404 to anyone outside the
+  organisation. They resolve the moment it goes public, and they then land on
+  the project itself — a better destination than the reservation repo would
+  have been. Checking this authenticated shows 200 and proves nothing;
+  `curl -I` with no credentials is the test.
 - Working memory, decisions and archive all publish from one place. There is no
   promotion step to get wrong later, and no second history to reconcile.
 - **The repository is still private.** The visibility flip is a separate,

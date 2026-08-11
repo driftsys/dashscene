@@ -139,5 +139,6 @@ that can be bypassed without noticing.
 **Branch protection or a ruleset requiring an approving review.** The
 only option that cannot be bypassed, and the right answer if it becomes
 available. Unavailable today: both endpoints return HTTP 403 on this
-repository's plan. Revisit if the plan changes, or when this content is
-promoted into the public `driftsys/dashscene` repository.
+repository's plan. Revisit if the plan changes, or when this repository goes
+public — that is what makes the endpoints available on a free plan, and it is
+the only step still outstanding.

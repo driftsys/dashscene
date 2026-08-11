@@ -46,7 +46,9 @@ These counts were off by one for a while, having not moved when
 `dashscene-ffi` was reserved, so re-derive them from
 `docs/decisions/crate-name-map.md` rather than trusting the number here.
 Beware `demo`: a crate of that name has existed on crates.io since 2018
-and is not ours, so a naive query over workspace members counts 22.
+and is not ours, so querying the 25 workspace member names against
+crates.io returns 20 — the 19 crates plus that one. Neither 20 nor 25 is
+the reservation count.
 
 The repository that made those reservations is archived as
 `driftsys/dashscene-name-reservations`, kept because every published stub

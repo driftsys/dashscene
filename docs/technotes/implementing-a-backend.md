@@ -166,5 +166,7 @@ correct, and one that uses `bounds` as the quad clips every shadow and blur.
 - **A portable conformance suite.** R-T5's promise is better served by a suite a
   second painter can port than by a description of one. That is its own story;
   layer 2's suite is `dashscene-gpu`'s today.
-- **Whether this becomes the public book's chapter.** It would bind the shape to
-  `docs/decisions/repo-staging-and-public-facade.md`, which is undecided.
+- **Whether this becomes the public book's chapter.** It would bind the shape
+  to `docs/decisions/repo-staging-and-public-facade.md`, which was undecided
+  and is now settled — one repository, the facade role folded in. The question
+  is live again rather than blocked.

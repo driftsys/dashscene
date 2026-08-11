@@ -69,7 +69,7 @@ respective languages.
 **`.git-std.toml`**: `scheme = "semver"`, `strict = true`, `scopes` as
 an explicit list rather than `"auto"`, which only discovers `crates/*`
 and leaves no valid scope for commits that aren't crate-specific. The
-list is every crate name — 13 when this was written, **17 today** — plus a
+list is every crate name — 13 when this was written, **19 today** — plus a
 scope for each non-crate component
 that has its own artifacts and tooling — `goldens` (the golden images
 and their diff tooling), `corpus` (the fixture corpus itself: captured
@@ -93,7 +93,7 @@ description above no longer holds.** There is no longer one entry per crate
 pointing at that crate's own version string: the crates inherit
 `version.workspace = true` and hold no version to point at. The entries are
 now one per **internal dependency requirement** in the root manifest, each
-anchored on its own crate name — seventeen of them — because git-std's
+anchored on its own crate name — nineteen of them — because git-std's
 `write_version` splices exactly one span per entry, so a single unanchored
 entry would move one requirement and leave the rest at the old version
 behind a registry that looked covered. The workspace version itself needs no
