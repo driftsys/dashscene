@@ -203,7 +203,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       # dashbuf's build.rs shells out to flatc (docs/decisions/crate-name-map.md —
       # pinned to match the flatbuffers Rust crate's exact version).
@@ -212,17 +211,10 @@ jobs:
           curl -fsSL -o flatc.zip https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip
           unzip -o flatc.zip flatc -d /usr/local/bin
           chmod +x /usr/local/bin/flatc
+      # The host target only. Everything wasm32 is the `wasm-gates` job, which
+      # holds the whole of `just lint`'s wasm32 half in one place rather than
+      # splitting it across two caches.
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      # The line above is the host target, and `dashscene_web::Surface` is
-      # compiled for wasm32 and no other: its whole `host` module is gated, so
-      # every target of this crate that names it — including
-      # `tests/adapter_accessors.rs` — is invisible to the run above. Story
-      # #835 added that test and found nothing in CI compiled it.
-      #
-      # One of the three wasm32 lines `just lint` runs. The painter's gate and
-      # the browser host's are still local-only; issue #903 carries them, and
-      # this is deliberately the narrow step rather than that whole fix.
-      - run: cargo clippy -p dashscene-web --target wasm32-unknown-unknown --all-targets -- -D warnings
 
   test:
     # Compile-heavy: skipped when the diff is documentation only
@@ -478,6 +470,60 @@ jobs:
           name: dashc-wasm
           path: target/wasm32-unknown-unknown/release/dashc_wasm.wasm
           if-no-files-found: error
+
+  wasm-gates:
+    # Everything in `just check` and `just lint` that names
+    # `wasm32-unknown-unknown` and is not `dashc`. Before this job, CI compiled
+    # nothing for that triple but `dashc` and — from PR #901 to this one — one
+    # clippy line for `dashscene-web` that sat in the `clippy` job. The other
+    # gates ran on every developer's machine and on no runner (issue #903, found
+    # by the review on story #835).
+    #
+    # What that cost is not hypothetical for the first two:
+    #
+    #   - `dashscene-gpu` is where `pollster::block_on` must never reach the
+    #     web path. `pollster` is a native-only dependency, so a blocking wait
+    #     that reached wasm fails here — and in a browser it would instead
+    #     deadlock at run time against the very event loop that resolves the
+    #     promise it waits on, which no native test can catch because natively
+    #     it works (story #587).
+    #   - `demo-web`'s browser half compiles on no other target at all.
+    #   - `dashscene-web`'s `host` module is `#[cfg(target_arch = "wasm32")]`
+    #     entire, and so is every test target that names what it holds
+    #     (`tests/adapter_accessors.rs`, story #835).
+    #
+    # It runs the recipes rather than restating them, for the reason
+    # `android-build` gives below: a second copy in YAML drifts against the
+    # first, which is how a wasm32 line could be added to `just lint` and reach
+    # no runner — issue #903 again, one crate later.
+    #
+    # One job rather than steps bolted onto `clippy` and `wasm-build`: these
+    # share one wgpu-for-wasm32 compile, so one cache serves all of them, and
+    # `deno` waits on `wasm-build` for its artifact and need not wait on these.
+    #
+    # Compile-heavy: skipped when the diff is documentation only
+    # (see the changes job's detect step).
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
+    name: wasm-gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v4
+      # `demo-web` reaches dashbuf, whose build.rs shells out to flatc.
+      - name: install flatc
+        run: |
+          curl -fsSL -o flatc.zip https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip
+          unzip -o flatc.zip flatc -d /usr/local/bin
+          chmod +x /usr/local/bin/flatc
+      - run: just wasm-painter
+      - run: just wasm-host
+      - run: just wasm-lint
 
   android-build:
     # Compile-heavy: skipped when the diff is documentation only
@@ -941,10 +987,13 @@ jobs:
     # (docs/decisions/house-style.md). "skipped" is accepted: convco only runs on
     # pull requests, deno only when importers/figma/ changed, and calibration
     # only when the packer paths changed (docs/decisions/test-tiers.md).
-    # clippy, test, demo-build, wasm-build, android-build, atlas-repro and
-    # render-oracle skip when the diff is documentation only, which also skips
-    # deno through its dependency on wasm-build. This is the reason a green
-    # aggregate cannot be read as "the suite ran": read the jobs, not the
+    # clippy, test, demo-build, wasm-build, wasm-gates, android-build,
+    # atlas-repro, render-oracle, exit-gate-tests and exit-gate all skip when
+    # the diff is documentation only, which also skips deno through its
+    # dependency on wasm-build. The list is every job carrying
+    # `needs.changes.outputs.code == 'true'`, which is how to re-derive it
+    # rather than trusting this sentence. This is the reason a
+    # green aggregate cannot be read as "the suite ran": read the jobs, not the
     # aggregate.
     needs:
       [
@@ -955,6 +1004,7 @@ jobs:
         test,
         demo-build,
         wasm-build,
+        wasm-gates,
         android-build,
         convco,
         secrets,

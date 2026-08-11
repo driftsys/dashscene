@@ -246,10 +246,12 @@ that alias became a local type wearing the same name.
 
 `cargo test` runs the desktop one. The web one is compiled for
 `wasm32-unknown-unknown` only, because `Surface` is, so `cargo test` never sees
-it: what compiles it is `just lint`, and — since this story — the same line in
-CI's `clippy` job, which until then ran no wasm32 job for this crate at all. The
-painter's wasm gate and the browser host's are still run locally and by nothing
-in CI; issue #903 carries them.
+it: what compiles it is `just lint`, and CI's `wasm-gates` job, which runs that
+lint's wasm32 half along with the painter's and the browser host's build gates.
+That job is younger than this test. When the test was written CI compiled
+nothing for the triple but `dashc`, so the story added its one clippy line to
+the `clippy` job; issue #903 then found that the painter's and the host's gates
+were in the same position, and moved all of it into one job.
 
 ## Known gaps, named
 

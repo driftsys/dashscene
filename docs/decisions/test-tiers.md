@@ -410,14 +410,18 @@ unchanged: every carrying job succeeded and every covering test passed.
 `clippy` and `demo-build` keep their own caches — `cargo clippy` and
 `cargo build -p demo` produce different artifacts from a test build, so
 sharing would make the three jobs overwrite each other's work. `wasm-build`
-keeps its own because it targets `wasm32-unknown-unknown`. `atlas-repro`
+keeps its own because it targets `wasm32-unknown-unknown`, and `wasm-gates`
+keeps its own for the same reason and because it is the only job that both
+builds and clippies that target. `atlas-repro`
 keeps its own for a subtler reason: it is the only matrix job, and its
 `arm64` leg would look up a key that only the `x86_64` jobs ever write, so
 sharing would leave that leg permanently cold rather than warm.
 
 Since 2026-08-01 the `test` job also skips entirely when the diff is
 documentation only, together with `clippy`, `demo-build`, `wasm-build`,
-`android-build`, `atlas-repro` and `render-oracle`. The `changes` job decides this by asking
+`wasm-gates`, `android-build`, `atlas-repro`, `render-oracle`,
+`exit-gate-tests` and `exit-gate` — every job carrying
+`needs.changes.outputs.code == 'true'`. The `changes` job decides this by asking
 whether every changed file is Markdown under `docs/` or Markdown at the
 repository root. `fmt`, `dprint` and `convco` stay unconditional: a
 documentation-only diff still has to be formatted, and its commit messages

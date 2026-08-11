@@ -96,21 +96,12 @@ test-all:
 # markdownlint, deno fmt check.
 lint: deno-fmt-check
     cargo clippy --workspace --all-targets -- -D warnings
-    # Again for wasm32, because the line above never sees the browser half.
-    # `crates/dashscene-web` gates host.rs and document.rs on
-    # `target_arch = "wasm32"`, so a host-target clippy compiles neither — and
-    # story #741 found two errors sitting in them, carried unchanged from the
-    # host they were extracted from. A published crate whose main logic is
-    # never linted is what this second line exists to prevent.
-    cargo clippy -p dashscene-web --target wasm32-unknown-unknown --all-targets -- -D warnings
-    cargo clippy -p demo-web --target wasm32-unknown-unknown --all-targets -- -D warnings
-    # And `measure/web-minimal`, whose body is `wasm32`-only and which nothing
-    # else builds for that target: `assemble` is a host build where the crate is
-    # empty, and the two wasm gates name other packages. Without this line a
-    # `dashscene-web` change breaks the artifact the payload budget is measured
-    # over while `just build` stays green — the same failure the paragraph above
-    # describes, one crate along.
-    cargo clippy -p web-minimal --target wasm32-unknown-unknown --all-targets -- -D warnings
+    # The wasm32 half, which the line above never sees. Its own recipe rather
+    # than four more lines here, because CI has to run exactly it and a second
+    # copy in YAML is the drift this repository keeps hitting. Called from the
+    # body rather than taken as a dependency so the host pass — the fastest, and
+    # the one most changes fail on — still reports first.
+    just wasm-lint
     cargo fmt --all -- --check
     # Intra-doc links, as a gate. A doc comment naming an item that does not
     # exist is this repository's most common defect, and until v0.16 nothing in
@@ -661,6 +652,32 @@ wasm-painter:
 # nothing until someone opened a page.
 wasm-host:
     cargo build -p demo-web --target wasm32-unknown-unknown
+
+# Clippy over every crate that has a wasm32 half — the part of `lint` a
+# host-target pass cannot see, and what CI's `wasm-gates` job runs.
+#
+# `crates/dashscene-web` gates host.rs and document.rs on
+# `target_arch = "wasm32"`, so a host-target clippy compiles neither — and story
+# #741 found two errors sitting in them, carried unchanged from the host they
+# were extracted from. A published crate whose main logic is never linted is
+# what this exists to prevent. `measure/web-minimal` is here for the same reason
+# one crate along: its body is wasm32-only, `assemble` is a host build where the
+# crate is empty, and the two build gates name other packages, so without this a
+# `dashscene-web` change could break the artifact the payload budget is measured
+# over while `just build` stayed green.
+#
+# `dashscene-gpu` takes `--lib` where the others take `--all-targets`, and the
+# asymmetry is not a preference: its test targets use `pollster`, which is a
+# native-only dependency, so `--all-targets` cannot resolve on this triple at
+# all. `--lib` is the whole of what ships to a browser. Added at issue #903,
+# which found the painter built for wasm32 by `wasm-painter` and linted for it
+# by nothing — `-- -D warnings` reaches the selected package, not its path
+# dependencies, so the three lines below never denied a warning in it.
+wasm-lint:
+    cargo clippy -p dashscene-gpu --target wasm32-unknown-unknown --lib -- -D warnings
+    cargo clippy -p dashscene-web --target wasm32-unknown-unknown --all-targets -- -D warnings
+    cargo clippy -p demo-web --target wasm32-unknown-unknown --all-targets -- -D warnings
+    cargo clippy -p web-minimal --target wasm32-unknown-unknown --all-targets -- -D warnings
 
 # Exercise the C ABI as a C caller, against its own header.
 #

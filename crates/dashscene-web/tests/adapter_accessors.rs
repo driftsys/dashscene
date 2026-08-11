@@ -19,12 +19,13 @@
 //! and this file is empty on every other target. Compiling is the whole of the
 //! check; there is no browser here to run it in.
 //!
-//! What compiles it is `just lint`, whose
+//! What compiles it is `just wasm-lint`, whose
 //! `clippy -p dashscene-web --target wasm32-unknown-unknown --all-targets`
-//! reaches every target of this crate, and the same line in CI's `clippy` job,
-//! which story #835 added there because CI ran no wasm32 job for this crate at
-//! all. Two of the other wasm gates are still local-only; issue #903 carries
-//! them.
+//! reaches every target of this crate, and CI's `wasm-gates` job, which runs
+//! that recipe. Neither existed when this file was written: story #835 found
+//! that CI compiled nothing for this triple but `dashc`, and issue #903 then
+//! found the painter's and the browser host's gates in the same position and
+//! gave all of them one job.
 
 use dashscene_web::{AdapterInfo, Backend, DeviceType, Surface, TextureFormat};
 
