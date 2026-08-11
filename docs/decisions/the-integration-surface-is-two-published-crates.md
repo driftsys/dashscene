@@ -1,7 +1,9 @@
 # The integration surface is two published crates, and the shared part is policy
 
     status   accepted
-    date     2026-08-08
+    date     2026-08-08; D6 re-derived 2026-08-11 — the web list is five items,
+             not four, since story #834 added "when the loop ends", and the
+             difference between the two lists is re-counted with it (issue #904)
     scope    what an embedder consumes on the web and on the desktop:
              `crates/dashscene-web`, `crates/dashscene-desktop`, and the frame
              policy `dashlang::LiveScene` holds for both
@@ -102,16 +104,37 @@ module document carries a "What an embedder still writes" list, which
 epic #793's definition of done asks for in those words. **The two lists are not
 one list plus extras**, because the two hosts do not leave the same things over:
 
-- **Web, four items** — the scene and where it comes from, what happens each
-  frame (`FrameHook`), the page itself, and error reporting.
+- **Web, five items** — the scene and where it comes from, what happens each
+  frame (`FrameHook`), the page itself, when the loop ends, and error
+  reporting. The fourth arrived with story #834, which is what made a started
+  loop stoppable.
 - **Desktop, six** — what to draw (`App::build`), input, anything driven from
   off the loop's thread, where the diagnostics go (`App::note`), which painter,
   and error reporting.
 
-Only two are common. The desktop has no per-frame hook and no page; the web has
-no input surface, no `Waker` and no painter choice, because it has one painter
-to choose from. The point of the list is that an embedder does not discover a
-gap by hitting it.
+**Two are common outright** — what to draw, and error reporting. A third is
+common in substance and factored differently: ending the loop is its own item on
+the web, where an embedder holds a `LoopHandle` for as long as the canvas is
+mounted, or calls `LoopHandle::detach` and never thinks about it again; on the
+desktop it is part of the off-thread item, as `Waker::stop`, because `winit`'s
+`run` owns the calling thread and can hand back no handle before it.
+
+That accounts for all eleven. Web-only: the per-frame hook and the page.
+Desktop-only: input, the off-thread wake mechanism, the painter choice — because
+the web has one painter to choose from — and **where the diagnostics go**. That
+last one is not left over on the web because the crate already ships a
+destination: `log` writes to `console.log` and the default reporter to
+`console.error`. The desktop's `App::note` defaults to discarding the loop's own
+lines, so choosing where they land is the embedder's or they are lost.
+
+The point of the list is that an embedder does not discover a gap by hitting it.
+
+The two counts are **derived, not remembered** — a remembered count is how this
+paragraph went stale between story #834 and issue #904, still saying four after
+the fifth item landed. `-c`, so nothing is counted by eye:
+
+    grep -c '^//! - \*\*' crates/dashscene-web/src/lib.rs
+    grep -c '^//! - \*\*' crates/dashscene-desktop/src/lib.rs
 
 **D7 — the surface is held by a test, not by a reviewer's judgement.**
 `demo/tests/integration_surface.rs` names the five pieces for each half and

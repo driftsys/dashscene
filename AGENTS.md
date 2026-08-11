@@ -309,14 +309,39 @@ Story workflow — the definition of done for every story:
   absent or unticked checklist means the review is still running. Nothing
   on this repo enforces that mechanically — branch protection needs a paid
   plan — so it is held by the checklist and by whoever presses merge.
-- **Never write "closes #N", "fixes #N" or "resolves #N" in PR prose.**
-  GitHub reads a closing keyword anywhere in the body, including inside an
-  ordinary sentence, and closes the issue on merge. Story #49 was closed
-  this way by a docs PR discussing "whoever closes #49" — the story was
-  never built, and two shipped documents then described its deliverable as
-  shipped. Write `Refs #N` when referring to an issue, and reserve a
-  closing keyword for the one issue the PR actually completes. When naming
-  an issue mid-sentence, write "issue #N" or restructure the sentence.
+- **A closing keyword next to an issue number closes that issue — in PR
+  prose and in any commit message that lands on `main`.** The keywords are
+  `close`, `fix` and `resolve`, in any inflection, optionally followed by a
+  colon. GitHub matches them anywhere, including mid-sentence, and **a
+  negation is not a defence**: a sentence saying an issue was _not_ fixed
+  matches exactly as well as one saying it was.
+
+  Three incidents, all of them prose that meant the opposite:
+
+  - Story #49 was closed by a docs PR discussing whoever would close it. The
+    story was never built, and two shipped documents then described its
+    deliverable as shipped.
+  - On 2026-08-11 a commit recording that a debt had been filed **rather
+    than** fixed closed it two seconds after its PR merged. The debt was
+    silently gone from the milestone.
+  - The same phrasing in another commit closed an issue nearly six hours
+    before the work that settled it.
+
+  Only the **first** number after the keyword is taken, so a sentence naming
+  three issues closes one and leaves two — which makes the damage look
+  arbitrary and easy to miss.
+
+  **Write `Refs #N`.** It carries no keyword and cannot fire under any later
+  edit, which a keyword separated from the number by a few words can. Reserve
+  a closing keyword for the one issue the change actually completes, and put
+  it on its own line at the end. When naming an issue mid-sentence, write
+  "issue #N" or restructure.
+
+  After merging, check `gh issue view <n> --json state` for **every** issue
+  the branch's commits named, not only those in the PR body. An issue closed
+  this way is reopened by hand, with a comment saying it was closed by
+  accident and not fixed — otherwise the reopen reads as a reversal of
+  someone's judgement rather than a correction.
 - **Re-read the milestone's open issues before merging**, not only the story's
   own: `gh issue list --milestone "<slice>" --state open`. Debt filed against a
   slice in progress is often a warning about the story that is open right now.
