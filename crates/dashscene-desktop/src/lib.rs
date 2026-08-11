@@ -8,9 +8,11 @@
 //!    `dashscene_gpu::SurfaceRenderer`. Blocking, where the browser's is
 //!    asynchronous. What was acquired is readable as types rather than only as
 //!    the line [`Present::name`] carries — [`GpuPresenter::adapter_info`] and
-//!    [`GpuPresenter::format`], added at story #835 (issue #819), and reachable
-//!    only by an embedder that builds the presenter itself: see the accessor,
-//!    which records why, and issue #902.
+//!    [`GpuPresenter::format`] for an embedder holding the presenter, and
+//!    [`Attached::adapter`] for one that took the default and holds a
+//!    `Box<dyn Present>`. Story #835 (issue #819) added the first pair;
+//!    issue #902 added the second route, without which the ordinary embedder
+//!    had the string and nothing else.
 //! 2. **The frame loop** — [`run`], on `winit`'s event loop, pacing itself at
 //!    60 Hz while the generation advances and parking on an event wait while it
 //!    is steady. It **survives a lost surface**, rebinding the presenter and
@@ -75,9 +77,10 @@ pub mod present;
 pub mod recovery;
 
 pub use document::Document;
-pub use host::{App, FRAME_INTERVAL, Reaction, Scene, Waker, run};
+pub use host::{App, Attached, FRAME_INTERVAL, Reaction, Scene, Waker, run};
 pub use present::{
-    AdapterInfo, Backend, DeviceType, Drawn, GpuPresenter, Present, PresentError, TextureFormat,
+    AdapterDetails, AdapterInfo, Backend, DeviceType, Drawn, GpuPresenter, Present, PresentError,
+    TextureFormat,
 };
 pub use recovery::Recovery;
 

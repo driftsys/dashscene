@@ -25,7 +25,9 @@ use std::time::{Duration, Instant};
 
 use dashlang::LiveScene;
 use dashscene_core::Arena;
-use dashscene_desktop::{App, DesktopError, Present, PresentError, Reaction, Scene, Waker};
+use dashscene_desktop::{
+    App, Attached, DesktopError, DeviceType, Present, PresentError, Reaction, Scene, Waker,
+};
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
@@ -254,10 +256,27 @@ impl App for Showcase {
     /// incoming name's included — without a rebuild, which is what keeps a swap
     /// showing the difference between the two painters rather than between two
     /// runs.
-    fn attached(&mut self, scene: Scene<'_>, _presenter: &str) {
+    ///
+    /// The software-adapter warning is the second half, and it is the first
+    /// thing in this workspace to read the adapter as a value rather than as a
+    /// string. `dashscene-desktop` names "warn on a software adapter" as the
+    /// reason the adapter is handed over as types at all; until this existed,
+    /// that claim was about a signature and nothing exercised it. A software
+    /// rasteriser draws the showcase correctly and slowly, which is worth
+    /// saying out loud rather than leaving someone to infer from the frame
+    /// rate.
+    fn attached(&mut self, attached: Attached<'_>) {
+        if let Some(adapter) = attached.adapter
+            && adapter.info.device_type == DeviceType::Cpu
+        {
+            let name = adapter.info.name.clone();
+            self.note(&format!(
+                "{name} is a software rasteriser — the picture is right and the frame rate is not"
+            ));
+        }
         let value = self.painter.badge_value();
-        if let Some(signal) = scene.live.signal_named(showcase::badge::BACKEND) {
-            scene.live.set(signal, value);
+        if let Some(signal) = attached.scene.live.signal_named(showcase::badge::BACKEND) {
+            attached.scene.live.set(signal, value);
         }
     }
 

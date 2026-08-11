@@ -95,6 +95,36 @@ pub use dashscene_gpu::Drawn;
 /// accessor, and issue #819 asked for the types rather than the string.
 pub use dashscene_gpu::{AdapterInfo, Backend, DeviceType, TextureFormat};
 
+/// What a presenter can say about the device it draws on.
+///
+/// The pair rather than either alone, because they are answered together: a
+/// presenter that has an adapter has a swapchain format, and an embedder
+/// branching on one usually wants the other — warn on a software adapter,
+/// choose a texture path by format.
+///
+/// Borrowed, so answering costs nothing. [`AdapterInfo`] holds four `String`s
+/// and a presenter is asked this on every attach.
+///
+/// **Not `Adapter`**, which would read as `wgpu::Adapter` — the handle you call
+/// `request_device` on, a real type reachable through this crate's own
+/// dependency tree. This is what an adapter *reported about itself*, and the
+/// name is kept free in case a later story does hand over the handle.
+///
+/// `#[non_exhaustive]` because nothing outside `wgpu` can construct an
+/// [`AdapterInfo`], so no downstream crate can build one of these anyway: the
+/// attribute costs a caller only exhaustive destructuring, and buys the freedom
+/// to answer a third fact — the present mode, the alpha mode — without a
+/// breaking change.
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub struct AdapterDetails<'a> {
+    /// What the adapter reported about itself: its name, its backend, whether
+    /// it is a discrete GPU or a software rasteriser.
+    pub info: &'a AdapterInfo,
+    /// The format the swapchain was configured with.
+    pub format: TextureFormat,
+}
+
 /// Puts a committed frame on a window.
 ///
 /// An implementation owns both the painter and the surface it presents to;
@@ -150,6 +180,36 @@ pub trait Present {
     /// to exclude the ones that did not happen — see [`Drawn`] for the
     /// measurement this distinction was added for.
     fn present(&mut self, scene: &CommittedScene) -> Result<Drawn, PresentError>;
+
+    /// The device this presenter draws on, for a presenter that has one.
+    ///
+    /// The loop passes the answer to [`crate::App::attached`], which is the
+    /// only way an embedder that did not build the presenter can reach it: the
+    /// loop holds a `Box<dyn Present>` and this trait has no downcast. Before
+    /// issue #902 there was no way at all, and the accessors on
+    /// [`GpuPresenter`] were reachable only by an embedder that overrode
+    /// [`crate::App::presenter`] and read the presenter before boxing it.
+    ///
+    /// **Defaulted, unlike [`Present::document_replaced`], and the difference
+    /// is worth stating because it does not hold for every implementation.** A
+    /// presenter is not obliged to have an adapter — `demo`'s raster one
+    /// rasters into CPU memory and has none — so a required method would make
+    /// every implementation answer a question only some can, which is what
+    /// issue #819 ruled against.
+    ///
+    /// For a presenter **with no device** the inherited `None` is the true
+    /// answer, so nothing goes wrong by not noticing the method exists. For a
+    /// presenter **that owns one** — a second `wgpu` presenter, the Skia-GPU
+    /// fallback the design records name, an embedder's own — the inherited
+    /// `None` is silently wrong in exactly the way `document_replaced`'s
+    /// documentation warns about: an embedder's "warn on a software adapter"
+    /// branch never fires and nothing reports why. **A presenter that owns a
+    /// device is expected to override this.** The default is the safe answer
+    /// for the population that cannot answer, not a licence for the one that
+    /// can to stay quiet.
+    fn adapter(&self) -> Option<AdapterDetails<'_>> {
+        None
+    }
 }
 
 /// Why a frame did not reach the window.
@@ -291,24 +351,23 @@ impl GpuPresenter {
 
     /// The adapter this presenter acquired.
     ///
-    /// Inherent rather than on [`Present`], because a presenter is not obliged
-    /// to have an adapter — `demo`'s raster one does not — and a trait method
-    /// every implementation had to answer would be the wrong shape for it
-    /// (issue #819).
+    /// Inherent as well as on the trait, and the split is the point. A required
+    /// trait method would make every implementation answer a question only some
+    /// can, which issue #819 ruled against; [`Present::adapter`] is the
+    /// defaulted, `Option`-shaped form that answers it for a presenter behind a
+    /// `Box<dyn Present>`. This one is the concrete answer, with no `Option` to
+    /// unwrap, for a caller that holds a `GpuPresenter`.
     ///
     /// For an embedder that wants to show the backend in its own interface, or
     /// branch on it: warn on a software adapter, choose a texture path by
     /// format. [`Present::name`] stays for the caller that only wants the line,
     /// and this is for the one that would otherwise have had to parse it.
     ///
-    /// **Reachable only by an embedder that builds the presenter itself.**
-    /// [`crate::App::presenter`] hands back a `Box<dyn Present>`, the loop
-    /// holds it as one, and `Present` has no downcast — so an embedder that
-    /// takes the default presenter never holds a `GpuPresenter` and still has
-    /// only the string. Overriding `App::presenter`, reading this before
-    /// boxing, is the route. Widening the loop's own seam is a change to
-    /// `Present` and to what every implementation must answer, which issue
-    /// #819 ruled against for the reason above; issue #902 carries the gap.
+    /// This is the concrete answer, for an embedder holding a `GpuPresenter`.
+    /// An embedder that took the default presenter holds a `Box<dyn Present>`
+    /// instead, and reads the same two facts from [`AdapterDetails`] through
+    /// [`crate::App::attached`] — which is what closed issue #902, where they
+    /// were reachable from the default path not at all.
     pub fn adapter_info(&self) -> &AdapterInfo {
         self.renderer.adapter_info()
     }
@@ -347,6 +406,13 @@ impl Present for GpuPresenter {
         // rather than here because configuring a swapchain past it is not an
         // error wgpu returns — it is a non-unwinding panic (issue #714).
         self.renderer.resize(width, height).map_err(from_gpu)
+    }
+
+    fn adapter(&self) -> Option<AdapterDetails<'_>> {
+        Some(AdapterDetails {
+            info: self.adapter_info(),
+            format: self.format(),
+        })
     }
 
     fn present(&mut self, scene: &CommittedScene) -> Result<Drawn, PresentError> {

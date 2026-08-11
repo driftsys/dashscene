@@ -259,9 +259,9 @@ runs as three tiers, so "tests pass" is no longer a claim about all of it:
   `audit`, and a secret scan scoped to the objects being pushed. So **a green
   push is not a statement that any test ran** — run `just build` by hand when
   you want that before pushing, and read the CI `test` job otherwise.
-  `lint` still type-checks the whole workspace and all three wasm packages
-  (`clippy --all-targets` compiles what it lints), so a compile error still
-  fails locally; a test failure is what now reaches CI unverified.
+  `lint` still type-checks the whole workspace and every package `wasm-lint`
+  names (`clippy --all-targets` compiles what it lints), so a compile error
+  still fails locally; a test failure is what now reaches CI unverified.
 - **When the diff touches any path in the `packer` filter** — the filter is
   defined in the `changes` job of `.github/workflows/ci.yml`, and enumerated
   with a reason per entry in `docs/decisions/test-tiers.md`. Run
