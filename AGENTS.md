@@ -145,8 +145,8 @@ members in total, nineteen of them the crates above.
     just test        sanity tier — ~5 s. Between edits, and before every
                       commit.
     just test-regression  regression tier — every test but the
-                      calibration re-derivations, ~33 s. What `build` and
-                      the pre-push hook run.
+                      calibration re-derivations. What `build` and the CI
+                      `test` job run; the pre-push hook does not.
     just calibrate    calibration tier — 10 tests, ~54 s. Re-derives the
                       committed asset tables; see the schedule below.
     just test-all     every tier in one run.
@@ -165,10 +165,10 @@ members in total, nineteen of them the crates above.
     just figma-sharing  assert every corpus fixture is explicitly link-viewable.
                       Needs a Figma PAT and the network, so it is outside
                       `check`; run it before publication
-    just verify       commit-message lint over the branch range, then build — run before opening a PR.
-                      A documentation-only change takes lint + audit + secrets
-                      instead of build (`scripts/is-code-change` decides, and CI
-                      gates on the same script)
+    just verify       the pre-push hook: commit-message lint, then lint + audit
+                      + a secret scan of the objects being pushed. Seconds, and
+                      it runs NO test tier — `just build` is the thorough local
+                      gate and CI runs the tier on every push
     just wasm         build dashc for wasm32-unknown-unknown
     just wasm-painter build dashscene-gpu for wasm32 — the gate that keeps a
                       blocking wait off the web path, where it would deadlock
@@ -254,13 +254,14 @@ runs as three tiers, so "tests pass" is no longer a claim about all of it:
   and everything except the four slower binaries the regression tier adds.
   There is no reason to skip it.
 - **Before pushing, and before opening a PR** — `just build`, which runs the
-  regression tier. The `pre-push` hook runs `just verify` and therefore this
-  anyway; running it by hand only buys finding out before the push rather
-  than during it. **Except on a documentation-only change**, where `verify`
-  takes `lint`, `audit` and `secrets` and runs no tier at all — so a green
-  push does not mean the regression tier ran. `scripts/is-code-change` makes
-  that call, and the CI `changes` job gates on the same script, so the two
-  cannot disagree about what counts as documentation.
+  regression tier. **The `pre-push` hook no longer runs it.** `just verify`,
+  which the hook runs, is bounded at seconds: commit-message lint, `lint`,
+  `audit`, and a secret scan scoped to the objects being pushed. So **a green
+  push is not a statement that any test ran** — run `just build` by hand when
+  you want that before pushing, and read the CI `test` job otherwise.
+  `lint` still type-checks the whole workspace and all three wasm packages
+  (`clippy --all-targets` compiles what it lints), so a compile error still
+  fails locally; a test failure is what now reaches CI unverified.
 - **When the diff touches any path in the `packer` filter** — the filter is
   defined in the `changes` job of `.github/workflows/ci.yml`, and enumerated
   with a reason per entry in `docs/decisions/test-tiers.md`. Run

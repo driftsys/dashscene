@@ -151,6 +151,62 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dprint/check@v2.3
 
+  # markdownlint and cargo audit, which `just lint` and `just check` run
+  # locally and which had no CI job at all until the pre-push hook stopped
+  # being the place the whole gate ran. Local-only enforcement was already the
+  # wrong shape once the repository went public: a pull request from a fork
+  # runs whatever CI runs and nothing else, and neither of these was in it.
+  #
+  # Not folded into `dprint`: that job is the `dprint/check` action and nothing
+  # else, and neither of these is a formatting check.
+  #
+  # Ungated by `changes`, like `fmt`, `dprint` and `secrets`. `cargo audit`
+  # fails on a newly published advisory against a dependency that did not
+  # change, so gating it on a path filter would mean the one job no diff can
+  # predict runs only when some diff predicts it.
+  # Both tools are PINNED, following the gitleaks and flatc installs in this
+  # file. An unpinned `npm install -g markdownlint-cli` or `cargo install
+  # cargo-audit` resolves to whatever is latest at run time, so a release that
+  # adds a default rule turns a job red on a diff that changed nothing while the
+  # developer's own copy still passes — a CI-only failure with no diff to
+  # explain it, which this repository has already had once.
+  markdownlint:
+    name: markdownlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm install -g markdownlint-cli@0.45.0
+      - run: markdownlint '**/*.md' --ignore target --ignore node_modules
+
+  # `cargo audit` from a prebuilt binary, not `cargo install`. Compiling it from
+  # source is minutes on a runner, and `Swatinem/rust-cache` cannot help:
+  # `cargo install` builds in its own temp target directory, and the cache key
+  # is derived from the workspace `Cargo.lock`, so the dependency bump that
+  # makes an audit interesting is exactly what invalidates it. Every other tool
+  # here is fetched prebuilt — gitleaks as a checksummed tarball, flatc as a
+  # release zip.
+  #
+  # DELIBERATELY UNPINNED, unlike every other tool in this file. `cargo audit`
+  # reads a live upstream database rather than only the repository, so a pinned
+  # version goes stale against a moving input and fails hard: pinning 0.21.2
+  # here produced "error loading advisory database: parse error ...
+  # RUSTSEC-2026-0109.md: TOML parse error at line 6", because that release
+  # predates the advisory format now in the database. A stale pin is a certain
+  # failure on someone else's schedule; tracking the tool is an uncertain one.
+  #
+  # Reproducibility was never available for this job in any case — the same
+  # commit audits differently tomorrow, which is the point of auditing. The
+  # `markdownlint` job above is pinned because its input is this repository.
+  audit:
+    name: audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - run: cargo audit
+
   # The publication gate. `just check` runs this locally; without a CI job it
   # is enforced only where a developer installed gitleaks by hand, which
   # `bootstrap` deliberately does not do.
@@ -1000,6 +1056,8 @@ jobs:
         changes,
         fmt,
         dprint,
+        markdownlint,
+        audit,
         clippy,
         test,
         demo-build,

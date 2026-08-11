@@ -37,8 +37,10 @@ the workspace's together-versioning was made structural: every crate takes
 **`justfile`** (git-std's is the template): `assemble` (cargo build),
 `test`, `lint` (`cargo clippy -- -D warnings` + `cargo fmt -- --check` +
 `dprint check` + `markdownlint-cli`), `audit` (`cargo audit`), `check`
-(test + lint + audit), `build` (assemble + check), `verify` (`git std
-lint --range main..HEAD` + `just build` — run before opening a PR),
+(test + lint + audit), `build` (assemble + check), `verify` (the pre-push
+hook: `git std lint --range origin/main..HEAD` + `lint` + `audit` + a
+secret scan scoped to the objects being pushed — seconds, and no test
+tier; `just build` is the thorough gate),
 `fmt`, `doc` (`cargo doc --open`), `book` (`mdbook serve`), `release`
 (`git std bump`), `publish` (ordered `cargo publish` per crate,
 dependency order), `install`, `clean`. Add two dashscene-specific
@@ -107,7 +109,10 @@ that was written and removed on review, is in
 `clippy` (`cargo clippy -- -D warnings`, `Swatinem/rust-cache`), `test`
 (`cargo test`, `Swatinem/rust-cache`), `convco` (PR-only conventional-
 commit-message validation), aggregated by a final `ci` job that fails if
-any of the above failed. For dashscene, add a `deno` job (check/lint/
+any of the above failed. dashscene adds `markdownlint` and `audit` as jobs
+of their own: both run in `just lint`/`just check`, and until the pre-push
+hook stopped being where the whole gate ran they had no CI job at all —
+which meant a pull request from a fork ran neither. For dashscene, add a `deno` job (check/lint/
 test/fmt, scoped to `importers/figma/` via a `dorny/paths-filter` gate so
 Rust-only changes don't trigger it), a `wasm-build` job (`dashc` →
 `wasm32-unknown-unknown`, verifies the Deno importer's dependency
