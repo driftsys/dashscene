@@ -224,6 +224,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       # dashbuf's build.rs shells out to flatc (docs/decisions/crate-name-map.md —
       # pinned to match the flatbuffers Rust crate's exact version).
@@ -233,6 +234,16 @@ jobs:
           unzip -o flatc.zip flatc -d /usr/local/bin
           chmod +x /usr/local/bin/flatc
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      # The line above is the host target, and `dashscene_web::Surface` is
+      # compiled for wasm32 and no other: its whole `host` module is gated, so
+      # every target of this crate that names it — including
+      # `tests/adapter_accessors.rs` — is invisible to the run above. Story
+      # #835 added that test and found nothing in CI compiled it.
+      #
+      # One of the three wasm32 lines `just lint` runs. The painter's gate and
+      # the browser host's are still local-only; issue #903 carries them, and
+      # this is deliberately the narrow step rather than that whole fix.
+      - run: cargo clippy -p dashscene-web --target wasm32-unknown-unknown --all-targets -- -D warnings
 
   test:
     # Compile-heavy: skipped when the diff is documentation only

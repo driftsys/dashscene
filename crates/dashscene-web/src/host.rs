@@ -10,7 +10,7 @@ use std::rc::{Rc, Weak};
 use dashlang::LiveScene;
 use dashpaint::Painter;
 use dashscene_core::Arena;
-use dashscene_gpu::{Changes, GpuPainter, SurfaceRenderer};
+use dashscene_gpu::{AdapterInfo, Changes, GpuPainter, SurfaceRenderer, TextureFormat};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use web_sys::HtmlCanvasElement;
@@ -147,16 +147,35 @@ impl Surface {
         self.extent
     }
 
+    /// The adapter actually acquired.
+    ///
+    /// For an embedder that wants to show the backend in its own interface, or
+    /// branch on it — warn on a software adapter, choose a texture path by
+    /// format. [`Surface::describe`] stays for the caller that only wants the
+    /// line, and this is for the one that would otherwise have had to parse it
+    /// (issue #815).
+    pub fn adapter_info(&self) -> &AdapterInfo {
+        self.renderer.adapter_info()
+    }
+
+    /// The swapchain format this canvas was configured with.
+    pub fn format(&self) -> TextureFormat {
+        self.renderer.format()
+    }
+
     /// The adapter and format actually acquired, for an embedder that wants to
     /// report them. `demo-web` logs this line.
     pub fn describe(&self) -> String {
-        let info = self.renderer.adapter_info();
+        // Through this type's own accessors rather than the renderer's, so the
+        // line and a caller reading the parts cannot come from two paths that
+        // could later disagree.
+        let info = self.adapter_info();
         let (width, height) = self.extent;
         format!(
             "dashscene-gpu ({}, {:?}, {:?}) on a {width}x{height} drawable",
             info.name,
             info.backend,
-            self.renderer.format()
+            self.format()
         )
     }
 }

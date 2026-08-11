@@ -179,6 +179,12 @@ recoverable failure means.
 The first two pairs are **breaking changes that are free only while nothing is
 published**; the third is additive and can land at any time.
 
+All three are settled — the first two at story #834, the third at story #835,
+which added the typed accessors and re-exported the four `wgpu` types they need
+from both crates. What each settlement decided is recorded in
+[`../design/host-integration.md`](../design/host-integration.md); the pairing is
+what this record is for, and it held in all three cases.
+
 **R5 holds unconditionally on the desktop and conditionally on the web.** The
 mapped load binds a byte range for every asset entry and hashes only the shown
 root's, so an unread row still decodes. A browser has no such free
