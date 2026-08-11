@@ -123,8 +123,21 @@ so CI holds no second copy of the list). The two are separate because
 `deno` waits on the first for its artifact and need not wait on the
 second. Neither covers the **release**-profile wasm builds `just
 web-build` and `just measure-runtime` run, so a failure that appears only
-under `lto = true` is caught by no job. No cross-platform
-`build-release` matrix yet — that's
+under `lto = true` is caught by no job.
+
+Every job that compiles something reaching `dashbuf` needs `flatc`, whose
+build.rs shells out to it — nine of them, which is more than this
+paragraph names, so derive the list with
+`grep -c install-flatc .github/workflows/ci.yml` rather than from the
+prose above. That install is a **local composite action**,
+`.github/actions/install-flatc`, referenced as a path so the reference
+needs no release and no third-party trust. It reads the version from the
+workspace manifest's exact `flatbuffers` requirement rather than
+restating it, and asserts what it installed — so the pin has one home and
+a mismatch fails there by name (issue #909). Why each job needs it
+differs per job and stays at the call site.
+
+No cross-platform `build-release` matrix yet — that's
 git-std's own binary-distribution concern, not relevant until dashscene
 ships a distributable binary of its own.
 

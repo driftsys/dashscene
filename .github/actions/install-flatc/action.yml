@@ -1,0 +1,57 @@
+name: install flatc
+description: >-
+  Install the flatbuffers compiler at the version the workspace's flatbuffers
+  Rust crate is pinned to, and fail if the two disagree.
+
+# Every job that compiles anything reaching `dashbuf` needs this: its build.rs
+# shells out to `flatc`. The generated Rust API can change between `flatc`
+# majors, so the compiler and the runtime crate must match — the reason is
+# recorded in docs/decisions/cargo-lock-is-committed.md, which is also why
+# `flatbuffers` carries an exact `=` requirement rather than a caret.
+#
+# **The version is not written here.** It is read from the workspace manifest,
+# so the pin has exactly one home and a bump to `flatbuffers` moves CI with it.
+# Nine identical copies of this install lived in the workflow before issue #909,
+# and consolidating them to one would still have left the number in two places —
+# the manifest and this file — which is the same failure with a smaller
+# multiplier. The install then asserts what it got, so a version that does not
+# match, or a binary that does not run at all, fails here by name rather than
+# as dashbuf's build.rs telling a maintainer to install the tool this step just
+# installed.
+#
+# Which jobs need it, and why each one does, is recorded at the call sites. That
+# reason differs per job and is worth keeping where it is true.
+#
+# A local action rather than a published one: referenced as
+# `./.github/actions/install-flatc`, it resolves from the checkout, so the
+# *reference* needs no release, no version tag and no third-party trust. The
+# *payload* is a release asset fetched over the network with no checksum, unlike
+# the gitleaks install in the workflow — a checksum cannot be pinned here while
+# the version is derived, and issue #922 carries that tension.
+#
+# `linux/amd64` only, like every job that calls it. The asset name encodes both
+# the platform and the libstdc++ it was built against.
+runs:
+  using: composite
+  steps:
+    - name: install flatc
+      shell: bash
+      run: |
+        set -euo pipefail
+        version=$(awk -F'"' '/^flatbuffers = "=/{print $2}' Cargo.toml | tr -d '=')
+        if [ -z "${version}" ]; then
+          echo "install-flatc: no exact flatbuffers requirement found in Cargo.toml" >&2
+          echo "install-flatc: expected a line of the form: flatbuffers = \"=X.Y.Z\"" >&2
+          exit 1
+        fi
+        curl -fsSL -o flatc.zip \
+          "https://github.com/google/flatbuffers/releases/download/v${version}/Linux.flatc.binary.g++-13.zip"
+        unzip -o flatc.zip flatc -d /usr/local/bin
+        chmod +x /usr/local/bin/flatc
+        rm -f flatc.zip
+        installed=$(flatc --version | awk '{print $NF}')
+        if [ "${installed}" != "${version}" ]; then
+          echo "install-flatc: installed flatc ${installed}, but the workspace pins ${version}" >&2
+          exit 1
+        fi
+        echo "install-flatc: flatc ${installed}, matching the flatbuffers crate"

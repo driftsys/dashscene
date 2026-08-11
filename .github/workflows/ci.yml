@@ -246,8 +246,9 @@ jobs:
   # fails on a newly published advisory against a dependency that did not
   # change, so gating it on a path filter would mean the one job no diff can
   # predict runs only when some diff predicts it.
-  # Both tools are PINNED, following the gitleaks and flatc installs in this
-  # file. An unpinned `npm install -g markdownlint-cli` or `cargo install
+  # Both tools are PINNED, following the gitleaks install in this file and the
+  # flatc one in `.github/actions/install-flatc`, which takes its version from
+  # the workspace manifest. An unpinned `npm install -g markdownlint-cli` or `cargo install
   # cargo-audit` resolves to whatever is latest at run time, so a release that
   # adds a default rule turns a job red on a diff that changed nothing while the
   # developer's own copy still passes — a CI-only failure with no diff to
@@ -265,8 +266,8 @@ jobs:
   # `cargo install` builds in its own temp target directory, and the cache key
   # is derived from the workspace `Cargo.lock`, so the dependency bump that
   # makes an audit interesting is exactly what invalidates it. Every other tool
-  # here is fetched prebuilt — gitleaks as a checksummed tarball, flatc as a
-  # release zip.
+  # is fetched prebuilt — gitleaks as a checksummed tarball here, flatc as a
+  # release zip in `.github/actions/install-flatc`.
   #
   # DELIBERATELY UNPINNED, unlike every other tool in this file. `cargo audit`
   # reads a live upstream database rather than only the repository, so a pinned
@@ -342,13 +343,8 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      # dashbuf's build.rs shells out to flatc (docs/decisions/crate-name-map.md —
-      # pinned to match the flatbuffers Rust crate's exact version).
-      - name: install flatc
-        run: |
-          curl -fsSL -o flatc.zip https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip
-          unzip -o flatc.zip flatc -d /usr/local/bin
-          chmod +x /usr/local/bin/flatc
+      # This job compiles the whole workspace, which reaches dashbuf.
+      - uses: ./.github/actions/install-flatc
       # The host target only. Everything wasm32 is the `wasm-gates` job, which
       # holds the whole of `just lint`'s wasm32 half in one place rather than
       # splitting it across two caches.
@@ -438,11 +434,7 @@ jobs:
             echo "the vulkan loader created an instance but enumerated no device"
             exit 1
           }
-      - name: install flatc
-        run: |
-          curl -fsSL -o flatc.zip https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip
-          unzip -o flatc.zip flatc -d /usr/local/bin
-          chmod +x /usr/local/bin/flatc
+      - uses: ./.github/actions/install-flatc
       # skia-safe's prebuilt Linux binaries link the system fontconfig;
       # the runner image ships the runtime library but not the -dev
       # symlink the linker needs.
@@ -500,13 +492,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      # dashbuf's build.rs shells out to flatc, and `demo` reaches dashbuf
-      # through dashscene-core.
-      - name: install flatc
-        run: |
-          curl -fsSL -o flatc.zip https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip
-          unzip -o flatc.zip flatc -d /usr/local/bin
-          chmod +x /usr/local/bin/flatc
+      # `demo` reaches dashbuf through dashscene-core.
+      - uses: ./.github/actions/install-flatc
       # skia-safe's prebuilt Linux binaries link the system fontconfig;
       # the runner image ships the runtime library but not the -dev
       # symlink the linker needs.
@@ -592,14 +579,9 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      # dashc now depends on dashbuf (story #16: it emits .dsb), and
-      # dashbuf's build.rs shells out to flatc — so the wasm target needs
-      # it too, not just the native jobs.
-      - name: install flatc
-        run: |
-          curl -fsSL -o flatc.zip https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip
-          unzip -o flatc.zip flatc -d /usr/local/bin
-          chmod +x /usr/local/bin/flatc
+      # dashc now depends on dashbuf (story #16: it emits .dsb), so the wasm
+      # target needs flatc too, not just the native jobs.
+      - uses: ./.github/actions/install-flatc
       # --lib: the bin target compiles to a second .wasm that is the CLI, exports
       # none of the ABI, and would sit next to the real module as a decoy.
       - run: cargo build -p dashc --lib --release --target wasm32-unknown-unknown
@@ -653,12 +635,8 @@ jobs:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - uses: extractions/setup-just@v4
-      # `demo-web` reaches dashbuf, whose build.rs shells out to flatc.
-      - name: install flatc
-        run: |
-          curl -fsSL -o flatc.zip https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip
-          unzip -o flatc.zip flatc -d /usr/local/bin
-          chmod +x /usr/local/bin/flatc
+      # `demo-web` reaches dashbuf.
+      - uses: ./.github/actions/install-flatc
       - run: just wasm-painter
       - run: just wasm-host
       - run: just wasm-lint
@@ -687,15 +665,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # flatc is needed, though it was not while this job built the painter
       # alone: `dashscene-gpu` reaches no `dashbuf`, but `dashscene-ffi` depends
-      # on it directly and its build.rs shells out to flatc. The step was
+      # on it directly. The step was
       # removed when the job built only the painter and comes back with the ABI
-      # — which is why the reason is recorded here rather than the step being
-      # copied from a sibling job again.
-      - name: install flatc
-        run: |
-          curl -fsSL -o flatc.zip https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip
-          unzip -o flatc.zip flatc -d /usr/local/bin
-          chmod +x /usr/local/bin/flatc
+      # — which is why the reason is recorded here, next to the job it is true
+      # of, rather than being inferred from a sibling job having the step.
+      - uses: ./.github/actions/install-flatc
       - uses: extractions/setup-just@v4
       # This job runs the recipe rather than inlining `cargo build`, which is
       # what every other compile job does. The difference is deliberate: the
@@ -828,11 +802,7 @@ jobs:
       # 108-binary suite in place of the smaller cache that matched exactly
       # what it builds (issue #680).
       - uses: Swatinem/rust-cache@v2
-      - name: install flatc
-        run: |
-          curl -fsSL -o flatc.zip https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip
-          unzip -o flatc.zip flatc -d /usr/local/bin
-          chmod +x /usr/local/bin/flatc
+      - uses: ./.github/actions/install-flatc
       # skia-safe's prebuilt Linux binaries link the system fontconfig.
       - name: install skia system libraries
         # Install first and refresh the package lists only if that fails.
@@ -938,11 +908,7 @@ jobs:
         with:
           shared-key: workspace-tests
           save-if: "false"
-      - name: install flatc
-        run: |
-          curl -fsSL -o flatc.zip https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip
-          unzip -o flatc.zip flatc -d /usr/local/bin
-          chmod +x /usr/local/bin/flatc
+      - uses: ./.github/actions/install-flatc
       # skia-safe's prebuilt Linux binaries link the system fontconfig; the
       # runner image ships the runtime library but not the -dev symlink the
       # linker needs. The `goldens` crate that perceptual_calibration.rs
@@ -1075,11 +1041,7 @@ jobs:
         with:
           shared-key: workspace-tests
           save-if: "false"
-      - name: install flatc
-        run: |
-          curl -fsSL -o flatc.zip https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip
-          unzip -o flatc.zip flatc -d /usr/local/bin
-          chmod +x /usr/local/bin/flatc
+      - uses: ./.github/actions/install-flatc
       - name: install skia system libraries
         # Install first and refresh the package lists only if that fails.
         # `apt-get update` cost about 12 s of the roughly 20 s this step took
