@@ -10,7 +10,7 @@ use std::rc::{Rc, Weak};
 use dashlang::LiveScene;
 use dashpaint::Painter;
 use dashscene_core::Arena;
-use dashscene_gpu::{Changes, GpuPainter, SurfaceRenderer};
+use dashscene_gpu::{AdapterInfo, Changes, GpuPainter, SurfaceRenderer, TextureFormat};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use web_sys::HtmlCanvasElement;
@@ -145,6 +145,22 @@ impl Surface {
     /// the canvas's CSS size.
     pub fn extent(&self) -> (u32, u32) {
         self.extent
+    }
+
+    /// The adapter actually acquired.
+    ///
+    /// For an embedder that wants to show the backend in its own interface, or
+    /// branch on it — warn on a software adapter, choose a texture path by
+    /// format. [`Surface::describe`] stays for the caller that only wants the
+    /// line, and this is for the one that would otherwise have had to parse it
+    /// (issue #815).
+    pub fn adapter_info(&self) -> &AdapterInfo {
+        self.renderer.adapter_info()
+    }
+
+    /// The swapchain format this canvas was configured with.
+    pub fn format(&self) -> TextureFormat {
+        self.renderer.format()
     }
 
     /// The adapter and format actually acquired, for an embedder that wants to

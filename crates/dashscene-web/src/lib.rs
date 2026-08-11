@@ -101,6 +101,17 @@ mod host;
 
 pub use recovery::Recovery;
 
+/// The `wgpu` types `Surface::adapter_info` and `Surface::format` hand back,
+/// re-exported from `dashscene-gpu` so that an embedder naming one does
+/// not have to declare a `wgpu` dependency and keep its version in step with
+/// this crate's.
+///
+/// Not gated on `wasm32`, unlike everything below: the types exist on every
+/// target even where the surface that returns them does not, and a re-export
+/// that came and went with the target would be one more thing an embedder had
+/// to know.
+pub use dashscene_gpu::{AdapterInfo, Backend, DeviceType, TextureFormat};
+
 #[cfg(target_arch = "wasm32")]
 pub use document::load_document;
 #[cfg(target_arch = "wasm32")]
