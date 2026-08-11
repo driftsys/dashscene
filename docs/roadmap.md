@@ -510,7 +510,7 @@ report and the negative-margin rebate residual, grid/wrap emit-goldens, shadow
 and render-oracle hardening, and the variant-Visible test-locks), all anchored
 to their slices. The v0.9 breakdown is revised at this close — see v0.9 below.
 
-### v0.9 — parity — open
+### v0.9 — parity — closed
 
 **Epic #47.** Closes [`E1`](specification/05-qualification.md). Closing this
 epic asserts the v0 exit gate (`E1`–`E7`). **The gate closes the qualification
@@ -520,15 +520,22 @@ criterion. So "v0" now means the numbering, and `E1`–`E7` mean the
 qualification; the two stopped being the same thing at v0.9 and the roadmap
 should not be read as if they still are.
 
-Delivers: the same-screen-both-ways fixture, and the v0 exit gate — `E1`
-through `E7` asserted in CI. **The fixture landed; the gate did not** — see the
-close note below.
+Delivered: the same-screen-both-ways fixture, and the v0 exit gate — `E1`
+through `E7` asserted in CI.
 
-**This slice is open with an empty milestone**, which is not a bookkeeping
-error: its remaining item, the gate (#49), is blocked on GitHub Actions billing
-(#263), and both it and epic #47 were re-homed to the v0.14 milestone at the
-v0.13 close rather than left on a closed slice's. A slice's open marker is set
-by its exit criterion, never by its milestone count.
+**Marked closed at the v0.18 phase-end revision (2026-08-11), having been
+left open on premises that had all expired.** The slice carried an open
+marker because its remaining item, the gate (#49), was blocked on GitHub
+Actions billing (#263) — and both the gate and epic #47 were re-homed to the
+v0.14 milestone at the v0.13 close rather than left on a closed slice's, so
+neither appears under v0.9 and that is deliberate rather than a lost record.
+Every premise behind the marker has since been satisfied. A slice's open
+marker is set by its exit criterion, never by its milestone count, and that
+criterion is met.
+
+The marker outlived its reason because nothing re-reads a closed slice's
+premises; the revision that notices is the one that goes looking, which is
+what issue #791 was filed to force.
 
 **#49 was closed once without being built** — by a docs pull request containing
 a closing keyword, the incident `AGENTS.md` cites as the reason for its rule
@@ -1471,18 +1478,61 @@ exists under the name the epic's definition of done used. All six stories and
 debt #617 are closed, and pull request #882 is the one pull request attached to
 the milestone.
 
-**What this close did not do.** The phase-end revision `AGENTS.md` requires at
-an epic close is deferred, not done: the remaining epics and stories have not
-been revised against what v0.18 learned, and
-[`features.md`](features.md) has not been re-checked against the code. That
-re-check has a live target — §8's claim about variants importing was false for
-the Figma path until story #773 and is true now, with three named limits.
 Four debt issues (#875, #878, #879, #886) moved to the v0.20 milestone rather
-than being fixed here, classified against
+than being fixed at the close, classified against
 [`decisions/pre-v1-hardening-slice.md`](decisions/pre-v1-hardening-slice.md).
 Issues #875 and #879 are burn-down work; #878 and #886 both need a Figma
 desktop session, which is that record's third term — an owner-supplied input
 rather than an edit.
+
+**The phase-end revision ran on 2026-08-11**, separately from the close and
+after it. What it changed:
+
+- **[`features.md`](features.md) §4 was materially stale**, and the errors
+  ran in both directions. Rotation about a pivot was listed as designed and
+  a v1 candidate; it is built, and the angle and both pivot coordinates are
+  each drivable. Ambient motion — shimmer, spinner, pulse — had no line at
+  all. That the motion now travels in the file, which is the slice's whole
+  point, was stated nowhere. Against that, the arc sweep really is unbuilt,
+  so the one bullet split into a built half and an unbuilt one.
+- **Limits were added rather than removed**, which is the part a feature
+  catalogue is worst at, and the review of the revision itself found more of
+  them than the revision did. A variant switch animates position and size
+  only. A prototype interaction lowers only from a click that changes
+  variant, and only Smart Animate carries motion, so Figma's own spring
+  presets land in one frame. An ambient loop is restricted to appearance
+  channels, which rules out the breathing effect the first draft named. And
+  a Figma Variable reaches spacing, opacity and a fill channel and nothing
+  else, so the rotation the revision had just marked built is drivable from
+  code but not from a design.
+- **§8's prototype claim went from ticked to part-built** on that evidence,
+  and now says which of its three limits refuses a file under the strict
+  setting. The first draft said none of them did, which was wrong in the
+  direction that matters.
+- **The v1 section of this file still called rotation about a pivot a
+  candidate**, four hundred lines below. Corrected above.
+- **The `figma::variants` module doc states its own severity split
+  backwards** — it claims two of three rules follow the emit policy where
+  the code has one following and two hard-coded to warn. Filed as issue
+  #916, not fixed here, because this revision is documentation-only.
+- **v0.9's open marker was stale and is now closed**, above.
+
+**What the revision did not do, and is still owed.** It did not decide what
+v0.20 delivers — that milestone's own description assigns its content to the
+**v0.19** phase-end revision, and this is v0.18's. More importantly it
+**did not revise the remaining epics and stories**, which is half of what
+`AGENTS.md` asks of a phase-end: no issue was re-scoped, split, merged or
+re-ordered, and no decision record was written. The debt this slice
+surfaced was placed on a milestone, which is triage rather than revision.
+v0.19 is already under way, so that half is now owed against a slice in
+flight rather than before it.
+
+`docs/figma-support.md` also names itself as revised at each phase-end
+alongside [`features.md`](features.md), and holds nothing about prototype
+interactions — the page written for designers is silent on the construct
+this slice made importable. It was not touched here; it is issue #918, and
+it deserves its own pass against the importer rather than a transcription of
+what was just written next door.
 
 Depends on: nothing in v0.16. It touches `dashbuf`, `dashscene-core`,
 `dashcue`, `dashscene-engine` and both painters, none of which is on the
@@ -1684,11 +1734,21 @@ platform text raster against the MSDF-atlas path. It feeds the Q-1 small-size
 decision ([`technotes/open-questions.md`](technotes/open-questions.md)), which
 resolved MSDF-only for v0.
 
-Full-feature-set candidate (v1): the gauge and radial animation vocabulary — a
-bound scalar driving rotation about a pivot, or an arc sweep, over absolute
-placement — which rides on dashcue's per-prop smoothing row. It is
-decision-only today and is not a layout mode
+Full-feature-set candidate (v1): the remainder of the gauge and radial
+animation vocabulary. **Revised at the v0.18 phase-end (2026-08-11): the
+rotation half is built and this paragraph said otherwise.** A bound scalar
+driving rotation about a pivot landed at slice v0.18 — the angle and both
+pivot coordinates are bindable channels, with matching document rows and an
+override arm — so what remains a v1 candidate is the **arc sweep** over
+absolute placement, which rides on dashcue's per-prop smoothing row and has
+no property today. Neither is a layout mode
 ([`decisions/radial-is-not-a-layout-mode.md`](decisions/radial-is-not-a-layout-mode.md)).
+
+This paragraph is the reason the phase-end re-check reads the whole file
+rather than the slice being closed: it is four hundred lines from v0.18's
+own entry, and the same stale claim was corrected in
+[`features.md`](features.md) in the same pass without this copy being
+noticed until review.
 
 ## v2 — remote/streaming
 
