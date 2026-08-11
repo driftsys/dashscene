@@ -148,6 +148,19 @@ the same R6 reason `effects-2025` does: a fixture carrying an error emits no
 vocabulary refused by name cannot share a file without the mapping case
 losing its emission test.
 
+Since story #773 that is true of the as-built compiler and not only of the
+intent: under `EmitPolicy::Strict` its ten interaction-carrying nodes earn
+**17** error-severity `figma.prototype.unsupported-interaction` findings and R6
+withholds the bytes, so `manifest.json` now records `emits: false`. Seventeen
+rather than ten because every finding survives one pass (debt #149): seven of
+those nodes carry two independent gaps, a refused navigation beside a refused
+transition or trigger. Under `EmitPolicy::Partial` —
+the importer's default — they downgrade to warnings and the file emits
+unchanged, because an interaction is not paint and no node is skipped over
+one. The split it was built to protect held: `prototype-smart-animate` still
+emits, which is why a refused _easing_ is a warning and a refused _navigation_
+is an error.
+
 It carries one node per refused construct, named for what it holds, so a
 diagnostic bisects to a name. What the committed capture actually carries is
 transitions `DISSOLVE` and `PUSH` (the `DirectionalTransition` arm, which adds
@@ -164,13 +177,30 @@ nothing there. The capture's `_manual-checklist` node names both.
 
 The last cell is the one worth reading twice. Its reaction maps perfectly —
 `ON_CLICK`, `CHANGE_TO`, `SMART_ANIMATE` — but its two variants differ in
-**fill**, so the tracks that diff fans out to are `FillR`/`FillG`/`FillB`,
-which `dashscene_validator`'s `TRANSITION_CHANNEL_NOT_A_RECT` rule refuses: a
-variant transition animates rect channels only. Smart Animate interpolates
-colour happily, so this is the case every real Figma file hits. Whether it is
-an error or a warning that drops the colour tracks is the lowering story's
-call; the fixture only has to carry the case so the call is made against
-captured data.
+**fill**, and a variant transition animates rect channels only. Smart Animate
+interpolates colour happily, so this is the case every real Figma file hits.
+
+**The lowering made that call on 2026-08-11 (story #773): a warning, and the
+producer makes it rather than the load gate.** `dashc` never emits a fill
+track, so `dashscene_validator`'s `TRANSITION_CHANNEL_NOT_A_RECT` is never
+reached from this path. The fill difference itself still lowers, as a
+`VariantFill` override, so the switch carries the colour and changes it in one
+frame; only the animation of it is dropped, under
+`figma.prototype.unsupported-motion`. A warning rather than an error because
+the picture is right — the reasoning is in
+`docs/decisions/figma-component-lowering.md` ("Amendment, 2026-08-11").
+
+This cell carries no `INSTANCE`, which turned out to matter: a variant table
+is emitted per instance, so a lowering that only diffed members when an
+instance asked for one would leave this construct unexercised. The member diff
+is computed at the `COMPONENT_SET` for that reason.
+
+**How many constructs this file actually exercises: eleven, not fifteen.** Of
+its fifteen `refused-*` nodes, `refused-destination` and
+`refused-overlay-target` are navigation targets carrying no interaction, and
+`refused-scroll-animate` and `refused-mouse-enter` carry none either (above).
+The remaining ten interaction constructs plus the fill diff are what a test
+can assert on.
 
 ### Manual authoring step still open
 

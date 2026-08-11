@@ -96,7 +96,15 @@ fn typesetter() -> Typesetter {
 fn lower_and_solve(ts: &mut Typesetter) -> (Arena, NodeId) {
     let (bytes, report) = compile_figma(VARIANT_TOPOLOGY, Profile::Core, &BTreeMap::new())
         .expect("the component fixture compiles");
-    assert!(report.is_empty(), "the raw fixture lowers clean: {report}");
+    // Since story #773 the fixture carries one warning: its two members
+    // differ in child count, so no variant table is emitted for the set. The
+    // bytes this test paints are unchanged by that — a warning withholds
+    // nothing — which is exactly what keeps this golden valid across the
+    // variant-table lowering.
+    assert!(
+        !report.has_errors(),
+        "the raw fixture still emits: {report}",
+    );
     let (document, payloads) = dashbuf::open_verified(&bytes).expect("a valid .dsb file");
 
     let mut arena = Arena::new();

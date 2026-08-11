@@ -1,6 +1,7 @@
 # Motion is document data, keyed on the destination member; a smoothing spec is not
 
-    status   accepted (story #771, 2026-08-09)
+    status   accepted (story #771, 2026-08-09;
+             the #773 producer landed 2026-08-11 — see the second amendment)
     scope    crates/dashbuf schema; crates/dashscene-core's mirrored
              vocabulary and its loader; crates/dashlang's frame loop;
              issues #771, #617, #255, #626, #852
@@ -48,6 +49,14 @@ interaction construct: every reaction into a member usually animates the same
 way, and that is exactly what a per-member spec says. When #773 lands, a
 reaction **overrides** the member's default rather than replacing the field,
 which is an append and not a migration.
+
+**#773 landed on 2026-08-11 and it is an override, as predicted.** A member
+`COMPONENT`'s own reaction gives the set's default for the member it changes
+to; an `INSTANCE`'s own reaction replaces that default for the member it names
+and leaves every other member's alone. `prototype-smart-animate.json` is the
+case that distinguishes the two: `easing-linear` declares only the switch _to_
+`state=active`, so that arm becomes LINEAR / 0.05 s while the switch back
+keeps the set's own EASE_IN / 0.2 s.
 
 ### 2. A smoothing spec stays producer-side, so #255 does not follow this
 
@@ -208,3 +217,29 @@ mechanisms considered and why none is a bolt-on. The cost of leaving it is
 recorded there too: Smart Animate interpolates a colour as readily as a box,
 so a fill diff — "the one every real Figma file will hit" — is refused by
 name until it lands.
+
+## Amendment, 2026-08-11 — the producer, and what it does with a non-rect diff
+
+Story #773's lowering landed, so the rows this record designed now have a
+producer other than `dashlang`: `crates/dashc/src/figma/variants.rs` emits
+them from Figma's component sets, and
+`docs/decisions/figma-component-lowering.md` ("Amendment, 2026-08-11") holds
+the mapping.
+
+Two facts it fixes in place, because they follow from the rect-only rule above
+rather than restating it:
+
+- **A non-rect difference still lowers as an override.** The rule is about
+  `PropTransition`, not about `VariantOverride`: `VariantFill`,
+  `VariantVisible` and `VariantRotation` are v0.4 and #770 vocabulary and are
+  unaffected. So two members differing in fill lower a fill override, the
+  switch carries it, and only the _track_ is refused — named
+  `figma.prototype.unsupported-motion`, which is a warning. Smart Animate
+  would have interpolated it; dashscene changes it in one frame.
+- **`stagger` is always 0 from this producer.** Figma has no stagger, so there
+  is nothing to read it from. The field stays because `dashlang` writes it.
+
+The producer's own refusals are warnings for the reason `figma/bindings.rs`
+gives — the picture is right, only the motion is not carried — so a real Figma
+file whose variants differ in colour still imports, still switches, and says
+so.

@@ -628,10 +628,20 @@ Deno.test("importFigmaFile resolves a remote component from a declared library",
     fetchFn,
   });
 
-  assertEquals(result.diagnostics, []);
+  // Since story #773 the lowering reads the component set for the variant
+  // table it could carry, and this fixture's two members differ in child
+  // count — a topology change no `VariantOverride` expresses. The warning
+  // arriving here rather than only in the single-file case is the useful part:
+  // it says the variant pass sees the *spliced* definition, not just a local
+  // one.
+  assertEquals(result.diagnostics.map((d) => d.rule), [
+    "figma.variants.unlowerable-set",
+  ]);
+  assertEquals(result.diagnostics[0].severity, "warning");
   assertEquals(result.excluded, []);
   // Byte-identical to the local-component golden: the spliced definition does
-  // not paint, so cross-file resolution changes nothing the painter sees.
+  // not paint and lowers no variant table, so cross-file resolution changes
+  // nothing the painter sees.
   assertEquals(result.bytes, Deno.readFileSync(VARIANT_GOLDEN));
   // Two file fetches (consumer, then library); the fixture has no image fills.
   assertEquals(requested, [

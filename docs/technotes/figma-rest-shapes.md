@@ -290,7 +290,15 @@ and Height.
 Two consequences. Figma has no stagger, so `VariantTransition.stagger`
 lowers to 0 from this producer always. And a fill difference between two
 variants — which Smart Animate animates as readily as a rect one — fans out
-onto `FillR`/`FillG`/`FillB`, which `dashscene_validator`'s
-`TRANSITION_CHANNEL_NOT_A_RECT` rule refuses. That case is
-`refused-fill-diff` in `prototype-refused.json`, and it is the one every
-real Figma file will hit.
+onto `FillR`/`FillG`/`FillB`, which a variant transition cannot carry. That
+case is `refused-fill-diff` in `prototype-refused.json`, and it is the one
+every real Figma file will hit.
+
+**As built (story #773, 2026-08-11), the producer refuses it and the load
+gate never sees it.** `dashc` emits no fill track at all, so
+`dashscene_validator`'s `TRANSITION_CHANNEL_NOT_A_RECT` is not reached from
+the Figma path — the refusal is `figma.prototype.unsupported-motion`, a
+warning, and the fill difference itself still lowers as a `VariantFill`
+override. The reason the rule is rect-only is not P1 but the absence of a
+paint seam in commit (issue #891,
+`docs/decisions/motion-is-document-data-keyed-on-the-destination.md`).

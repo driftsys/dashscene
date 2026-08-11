@@ -1,7 +1,8 @@
 # A local INSTANCE lowers its baked subtree; component definitions resolve but do not paint; every top-level node is a root
 
     status   accepted (story #242, 2026-07-16;
-             extended by story #312 / S3, 2026-07-18 — §4)
+             extended by story #312 / S3, 2026-07-18 — §4;
+             amended by story #773, 2026-08-11 — the variant table)
     scope    crates/dashc (the figma module); the export closure
              (importers/figma/src/closure.ts) and its import path (§4)
     binds    #38 (cross-file component resolution builds on local lowering),
@@ -78,6 +79,11 @@ The v0.4 variant table (`docs/decisions/variant-set-flat-index.md`,
 `dashbuf`'s `variant_sets`) is what would carry the alternative members so the
 runtime can switch to them. Emitting it from the Figma lowering is a later
 story; runtime variant switching is consumer-side and out of scope here.
+
+**Amended by story #773 (2026-08-11) — that later story is the one below.** A
+definition still resolves and does not paint, and `Walk::visit` still skips it
+whole. What changed is that a second pass now _reads_ the set, after the walk,
+for the variant table it can carry. See "Amendment, 2026-08-11".
 
 ### 3. Every top-level node is a document root (multi-root: lift)
 
@@ -195,7 +201,8 @@ needed to render the authored state, so it is out of scope here.
   authored state is what this slice renders, and runtime variant switching is
   consumer-side (`docs/decisions/variant-set-flat-index.md`). Emitting the
   variant table from the Figma lowering is its own story with its own overridable
-  -prop mapping.
+  -prop mapping. **That story is #773, and "Amendment, 2026-08-11" below is its
+  overridable-prop mapping.**
 - **Re-defer multi-root and name the dropped siblings with a diagnostic** —
   rejected. Naming a drop is better than a silent one, but lift is better than
   both: the `.dsb`, the load gate, and the core loader all carry several roots,
@@ -220,12 +227,108 @@ needed to render the authored state, so it is out of scope here.
   warning. The warning is cleaner because the baked instance renders without the
   master.
 
+## Amendment, 2026-08-11 — the variant table, and the prototype reaction on it
+
+Story #773 set out to read Figma's prototype interactions and found the
+construct that would consume them did not exist: a `VariantTransition` nests
+on a `VariantMember`, and this producer emitted no variant sets at all. So the
+deferral above was discharged as part of it, and the overridable-prop mapping
+it anticipated is this.
+
+### The variant table hangs off each instance, not off the set
+
+A `VariantOverride` names a **document node index**, and §2 keeps definitions
+lowering to no document node. So the table cannot be expressed against the
+component set: it is expressed against each `INSTANCE` of that set — one
+`VariantSet` per instance, `active_member` from the instance's `componentId`,
+and the overrides pointing at that instance's own baked children.
+
+The two trees are joined **by name**, not by id: a baked child's id is the
+synthetic `I<instance>;<source>` form and differs per instance, while the name
+does not. Two siblings sharing a name make the set unlowerable rather than
+binding an override to whichever came first.
+
+`componentId` is now read, which §1 said the walk does not do. That statement
+still holds of the _walk_; the reference remains closure-validated, and which
+member an instance shows is simply not recoverable from the baked children.
+
+### The active member overrides nothing, and the others diff against it
+
+The document already carries the active member's values, so it is the base and
+its override list is empty. Every other member's overrides are its own
+authored values wherever they differ from the active member's. That is what
+makes an instance-level override survive a round trip: switching away and back
+restores what the instance carries, not what the master authors.
+
+The two-way check for that is `emit`'s: the active member's _computed_ props
+are compared against what the walk actually lowered, and a disagreement is a
+named refusal rather than an override list computed against a base that is not
+the document's. It catches both a genuine instance-level override and any
+drift in the three P1 rules the diff replicates (a solver-placed node lowers to
+`(0, 0)`, a non-`FIXED` axis lowers to `0`, a rotated node's extent comes from
+`size`).
+
+### What differs, and what may be animated, are two different questions
+
+Overrides cover the whole `VariantValue` vocabulary — x, y, width, height,
+fill, visibility, rotation. **Tracks cover the four rect channels only**,
+because commit resolves a node's paint from the variant overlay ahead of its
+staged value, so a paint sample is masked by the member it travels towards.
+That is issue #891 and it is recorded in
+`docs/decisions/motion-is-document-data-keyed-on-the-destination.md`; a fill
+difference therefore lowers as an override and is named as unanimatable.
+
+The track list is the **union** across the set rather than one member's own
+overrides: a switch back to the active member animates exactly the props the
+others override, and the active member overrides nothing.
+
+Everything a `VariantValue` cannot express makes the whole set unlowerable,
+named, with no variant table emitted — a member with a child the others do not
+have (Figma's topology change), a differing corner radius, a differing
+auto-layout mode. The comparison destructures `rest::Node`, so a field added
+to the REST subset later fails to compile until it is classified as overridable
+or compared. Two fields are deliberately excluded from it and one is
+conditional: `fillGeometry` and `strokeGeometry` count only on a `VECTOR`,
+because on a frame Figma emits the rendered outline of the node's own box —
+`bar` at 64 wide and `bar` at 288 wide carry different path strings for no
+reason but their width, so comparing them anywhere else would count a _result_
+(P1) as a structural difference and make every rect-differing set unlowerable.
+
+### Severity: an omission withholds the bytes, a degrade does not
+
+Three rules, and the split is what each one costs:
+
+- `figma.prototype.unsupported-interaction` — a trigger, action or navigation
+  with no lowering. Nothing about it reaches the document, so it follows the
+  emit policy exactly as `figma.unsupported` does: an error under `Strict`
+  (R6), a warning under `Partial`. Unlike `figma.unsupported` it does **not**
+  skip the node — what has no lowering is the behaviour, not the box.
+- `figma.prototype.unsupported-motion` — an easing with no `dashcue` spelling,
+  or a difference on a channel no transition can animate. Always a warning:
+  the switch ships and lands in one frame, which is what a member with no
+  transition has always meant.
+- `figma.variants.unlowerable-set` — always a warning, for the sharper reason:
+  before this story _every_ Figma import emitted no variant table, so a set
+  this pass cannot express leaves the document exactly as it was. Making it an
+  error would stop `lowering-variant-topology.json` compiling at all, which is
+  a capability regression rather than a fix.
+
+The last two follow `figma/bindings.rs`'s posture and its reason — "the
+picture is right; only the live binding is not carried yet". The first follows
+`figma.unsupported`'s, and it is what makes `prototype-refused.json` emit no
+`.dsb`, which is the contract `corpus/figma-fixtures/README.md` states for it.
+
+A set with fewer than two members names nothing at all: there is no
+alternative state, so there is no switch to lose.
+
 ## Trace
 
 - Satisfies: issue #242 (lower local components, instances, and declared roots);
   discharges the walk-side remainder of debt #147; issue #312 / S3 (§4 — the
   closure auto-pulls a buried local master and downgrades an unplaceable master
-  to a named warning); P1/P4/P5.
+  to a named warning); issue #773 (the amendment — the variant table this
+  record's alternatives section deferred, and the prototype reaction that
+  animates a switch); P1/P4/P5.
 - Verified by: `crates/dashc/tests/component_lowering.rs` (instance-as-frame,
   definitions resolve-not-paint, nested-definition skip, out-of-vocabulary
   override diagnostic, multi-root lift, the empty-document refusal, the raw
@@ -237,10 +340,21 @@ needed to render the authored state, so it is out of scope here.
   `remote-master-unplaceable` warnings), `importers/figma/src/import_test.ts`
   (§4 — a remote instance renders from baked children with a warning, a trimmed
   component definition renders with a warning, the CLI surfaces the warning on
-  stderr).
+  stderr), `crates/dashc/tests/prototype_lowering.rs` (the amendment — one
+  variant set per instance, the override list against the instance's own node
+  indices, the transition keyed on the destination member, an instance
+  reaction overriding the set default, the spring-preset degrade, the
+  fill-only diff, and the refused capture withholding its bytes),
+  `crates/dashc/src/figma/prototype.rs` unit tests (the reaction reader: the
+  seconds-not-milliseconds duration, each easing arm, and every refused
+  construct named by its own node).
 - Related: `docs/decisions/figma-flex-lowering.md`,
   `docs/decisions/figma-text-lowering.md`,
   `docs/decisions/figma-ellipse-as-circle.md` (which names this story as lowering
   component shape children), `docs/decisions/dashc-wasm-abi.md`,
   `docs/decisions/variant-set-flat-index.md`,
-  `docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`.
+  `docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`,
+  `docs/decisions/motion-is-document-data-keyed-on-the-destination.md` (the
+  destination key the amendment lowers onto, and the rect-only constraint it
+  inherits), `docs/technotes/figma-rest-shapes.md` (the
+  prototype-interaction shapes the amendment reads).

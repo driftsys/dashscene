@@ -91,7 +91,7 @@ went stale because a commit that removes a file from this directory has to edit
 this file in the same commit, and that is not enforced by anything. **Archiving
 a capture and updating this ledger are one change, not two.**
 
-**Nine of the thirteen are design captures**, described below, and **four
+**Nine of the twelve are design captures**, described below, and **three
 driver prompts are held**, across two slices.
 
 Two are v0.18's: `2026-08-08-v018-DRIVER-PROMPT.md`, added the day v0.17 closed,
@@ -102,10 +102,16 @@ could start at all; the second is what a session should be handed for the slice
 as a whole. Both archive together when epic #769 closes. A third was held for one
 day — `2026-08-09-FINISH-771-DRIVER-PROMPT.md`, narrower than either, carrying
 only what remained of story #771 — and left with the pull request it carried.
-A third v0.18 prompt is held now: `2026-08-09-773-LOWERING-DRIVER-PROMPT.md`,
-narrower again — it carries only story #773's lowering half, after pull
-request #882 landed that story's capture half, and it archives when #773
-closes.
+A third v0.18 prompt was held for two days —
+`2026-08-09-773-LOWERING-DRIVER-PROMPT.md`, narrower again, carrying only
+story #773's lowering half after pull request #882 landed that story's
+capture half. It **left with the pull request that closed #773**
+(2026-08-11), archived verbatim as
+`docs/archive/2026-08-09-773-LOWERING-DRIVER-PROMPT.md` on its own stated
+rule. Its scope section was right to insist the story be checked against the
+code first: the lowering needed a variant-set emitter that did not exist, and
+the fifteen `refused-*` nodes it counted turn out to exercise eleven
+constructs, because four of them carry no interaction at all.
 
 The other, brought by an earlier merge, is v0.19's:
 `2026-08-09-v019-ANDROID-DRIVER-PROMPT.md`, added at the close of that slice's
@@ -121,7 +127,7 @@ not.
 Driver prompts — the brief a session is handed to carry out a named
 piece of work — are transient by construction, spent the moment their work
 lands, and the convention is to archive them verbatim rather than garden them
-into records. Sixteen are in `docs/archive/`: fifteen `*-DRIVER-PROMPT.md`
+into records. Seventeen are in `docs/archive/`: sixteen `*-DRIVER-PROMPT.md`
 plus the one `*-SPIKE.md`, which is counted there because it was archived
 verbatim beside the prompt that carried out its design rather than gardened.
 

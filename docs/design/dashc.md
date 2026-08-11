@@ -117,6 +117,10 @@ guessed.
     figma::lower        the Figma REST JSON → Document walk
     figma::bindings     the joined variable-binding rows → binding tables
                         (story #167)
+    figma::prototype    one node's `interactions` → a variant switch, or a
+                        named refusal (story #773)
+    figma::variants     the COMPONENT_SETs → Document.variant_sets, and the
+                        transitions their reactions declare (story #773)
     figma::image_refs   the imageRefs a lowering of a file will demand
 
 `lower` does no I/O: `dashc` compiles to `wasm32-unknown-unknown`, so it
@@ -285,6 +289,46 @@ would repaint one document's nodes with another document's assets.
 `compile_figma` has no CLI subcommand: the acceptance path for that entry
 point is a library call, consumed by the Deno importer (#17) through the
 `wasm32` target, not by this native binary.
+
+## The variant table and prototype interactions (v0.18, story #773)
+
+`figma::variants::apply` runs after the walk, for the same reason
+`bindings::apply` does: a `VariantOverride` names a document node index,
+so every node has to have landed first. It is also the only pass that
+reads a `COMPONENT_SET` — `Walk::visit` skips definitions whole — so it
+traverses the file itself, building the same diagnostic paths the walk
+would.
+
+One `VariantSet` is emitted **per `INSTANCE`**, never per set: an
+override names a document node index and a definition lowers to none.
+`active_member` comes from the instance's `componentId`, and the member
+trees are joined to the instance's baked children **by name**, because a
+baked child's id is the synthetic `I<instance>;<source>` form and differs
+per instance. The active member overrides nothing — it is the document's
+own state — and every other member's overrides are its authored values
+wherever they differ from the active member's.
+
+Overrides cover the whole `VariantValue` vocabulary; **tracks cover the
+four rect channels only**, because commit resolves a node's paint from
+the variant overlay ahead of a node's staged value (issue #891). The
+track list is the union across the set, so a switch back to the active
+member animates the props the others override. A member's own reaction
+gives the set's default transition, keyed on the destination member, and
+an instance's own reaction overrides that default member by member
+rather than replacing the table
+(`docs/decisions/motion-is-document-data-keyed-on-the-destination.md`).
+
+Anything a `VariantValue` cannot express makes the set unlowerable and
+named: a member with a child the others do not have, a differing corner
+radius, a differing auto-layout mode. The comparison destructures
+`rest::Node`, so a field added to the REST subset fails to compile until
+it is classified. Three rule ids, and their severities differ by what is
+lost — `figma.prototype.unsupported-interaction` follows the emit policy
+(an error under `Strict`, R6) because nothing about the interaction
+reaches the document, while `figma.prototype.unsupported-motion` and
+`figma.variants.unlowerable-set` are always warnings because the picture
+is unchanged. The full reasoning is
+`docs/decisions/figma-component-lowering.md` ("Amendment, 2026-08-11").
 
 ## Bindings (v0.7, story #167)
 

@@ -25,8 +25,10 @@
 //! caller failed to resolve.
 
 pub mod bindings;
+pub(crate) mod prototype;
 pub mod rest;
 pub(crate) mod triage;
+pub mod variants;
 pub mod vector_field;
 
 pub use bindings::{BoundValue, BoundVariable};
@@ -445,6 +447,15 @@ pub fn lower_with_bindings_and_policy(
     // report stays deterministic (R7).
     let binding_diagnostics = bindings::apply(&mut walk.doc, bound, &walk.index_of_id);
     walk.diagnostics.extend(binding_diagnostics);
+
+    // The variant table and the prototype interactions that animate it
+    // (story #773), applied after the walk for the same reason the binding
+    // rows are: a `VariantOverride` names a document node index, so every
+    // node has to have landed first. This pass is also the only one that
+    // reads a `COMPONENT_SET` — the walk skips definitions whole — so it
+    // traverses the file itself rather than riding on the walk's stack.
+    let variant_diagnostics = variants::apply(&mut walk.doc, file, &walk.index_of_id, walk.policy);
+    walk.diagnostics.extend(variant_diagnostics);
 
     if walk.doc.nodes.is_empty()
         && !walk

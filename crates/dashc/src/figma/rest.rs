@@ -310,6 +310,112 @@ pub struct Node {
     /// Pinned empty by both text captures.
     #[serde(default)]
     pub style_override_table: serde_json::Map<String, serde_json::Value>,
+    /// The component an `INSTANCE` currently shows (story #773). For an
+    /// instance of a component *set* this names one member `COMPONENT`, which
+    /// is what selects the lowered `VariantSet`'s `active_member`.
+    ///
+    /// Story #242 stated that the walk does not read this field, because the
+    /// closure had already validated the reference and the baked subtree is
+    /// the authored content. That stays true of the *walk*; the variant-table
+    /// pass reads it, because which member an instance shows is not
+    /// recoverable from the baked children alone.
+    #[serde(default)]
+    pub component_id: Option<String>,
+    /// The node's prototype interactions — the Plugin API's `reactions`,
+    /// which REST serializes under this name (story #773).
+    ///
+    /// Empty on every capture committed before
+    /// `prototype-smart-animate.json`, which is why nothing pinned the shape
+    /// until #882. What is read here and what is deliberately not is
+    /// `docs/technotes/figma-rest-shapes.md`
+    /// §"The prototype-interaction shapes"; the flat
+    /// `transitionNodeID`/`transitionDuration`/`transitionEasing` triple is
+    /// **not** in this struct, and that is the point — it is lossy, it cannot
+    /// express the trigger or the navigation, and where an interaction says
+    /// there is no transition the triple invents one.
+    #[serde(default)]
+    pub interactions: Vec<Interaction>,
+}
+
+/// One prototype interaction: what starts it, and what it does (story #773).
+///
+/// The Plugin API's `Reaction` carries a deprecated singular `action` beside
+/// `actions`; the string appears zero times across both captures, so REST
+/// emits the plural only and no fallback is read.
+#[derive(Debug, Deserialize)]
+pub struct Interaction {
+    /// Absent for a reaction with no trigger. `kind` stays a `String` for
+    /// the same reason `Node::kind` does: the trigger vocabulary is open.
+    #[serde(default)]
+    pub trigger: Option<Trigger>,
+    #[serde(default)]
+    pub actions: Vec<Action>,
+}
+
+/// What starts an interaction — `ON_CLICK`, `AFTER_TIMEOUT`, `ON_KEY_DOWN`, …
+#[derive(Debug, Deserialize)]
+pub struct Trigger {
+    #[serde(rename = "type")]
+    pub kind: String,
+}
+
+/// One thing an interaction does. `NODE` is the only kind with a lowering;
+/// `URL`, `SET_VARIABLE` and `CONDITIONAL` are refused by name (P4), and
+/// `CONDITIONAL` nests `Action[]` recursively inside `conditionalBlocks`,
+/// which is not read: the whole action is refused, so its branches have
+/// nothing to lower into.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Action {
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// The node a `NODE` action targets. For `CHANGE_TO` that is one member
+    /// `COMPONENT` of the set the acting node belongs to.
+    #[serde(default)]
+    pub destination_id: Option<String>,
+    /// `CHANGE_TO` (a variant switch — the one navigation with a lowering),
+    /// `NAVIGATE`, `OVERLAY`, `SCROLL_TO`, …
+    #[serde(default)]
+    pub navigation: Option<String>,
+    /// Absent, or explicitly `null`, when the action carries no transition
+    /// (`refused-on-key-down` pins the `null` spelling).
+    #[serde(default)]
+    pub transition: Option<Transition>,
+}
+
+/// How a `NODE` action animates. `SMART_ANIMATE` is the only kind with a
+/// lowering: it interpolates whatever differs between the two variants,
+/// which is what a `VariantTransition`'s per-prop tracks express.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Transition {
+    #[serde(rename = "type")]
+    pub kind: String,
+    #[serde(default)]
+    pub easing: Option<TransitionEasing>,
+    /// **Seconds**, and `dashcue`'s `TweenSpec::duration` is seconds too, so
+    /// this lowers unscaled.
+    ///
+    /// `@figma/rest-api-spec` documents this field as milliseconds, which is
+    /// wrong — a 0.3 s transition returns `0.30000001192092896` here and
+    /// `300` in the flat `transitionDuration` beside it. Dividing by 1000 on
+    /// the strength of that comment would animate every transition in under a
+    /// millisecond, and both fields are `number`, so nothing would object
+    /// (`docs/technotes/figma-rest-shapes.md`).
+    #[serde(default)]
+    pub duration: Option<f32>,
+}
+
+/// A transition's easing. The four spring presets (`GENTLE`, `QUICK`,
+/// `BOUNCY`, `SLOW`) arrive as a bare `{"type": …}` with no
+/// `easingFunctionSpring`, so the parameters a `dashcue` `Spring` needs are
+/// not in the payload; `CUSTOM_CUBIC_BEZIER` by contrast arrives with its
+/// four control points populated. Neither shape lowers this slice, so
+/// neither is read beyond its name.
+#[derive(Debug, Deserialize)]
+pub struct TransitionEasing {
+    #[serde(rename = "type")]
+    pub kind: String,
 }
 
 /// An `ELLIPSE` node's `arcData` — its pie/ring parameters.
@@ -317,7 +423,7 @@ pub struct Node {
 /// Angles are in radians. A full ellipse is `startingAngle 0`,
 /// `endingAngle 2π`, `innerRadius 0` (a fraction of the radius, `0.0`–`1.0`).
 /// Pinned by `lowering-negative-gap.json`, whose ellipses are all full.
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ArcData {
     pub starting_angle: f32,
@@ -329,7 +435,7 @@ pub struct ArcData {
 /// B1): an SVG path string in the census vocabulary (`M`/`L`/`C`/`Z`) and its
 /// fill rule. Figma emits these only when the file is fetched with
 /// `geometry=paths`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Geometry {
     pub path: String,
@@ -345,7 +451,7 @@ pub struct Geometry {
 /// vocabulary is open (`BASIC`, `DASHED`, and the variable-width types), and
 /// only `BASIC` lowers, so an unrecognized value must be a loud error rather
 /// than a parse failure of the whole file.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ComplexStrokeProperties {
     #[serde(default)]
@@ -363,7 +469,7 @@ pub struct ComplexStrokeProperties {
 /// designer's intent in silence (P4). The default values (`LEFT`/`TOP`,
 /// `INTRINSIC_%` line height, zero letter spacing, upright, no decoration) are
 /// pinned by both text captures, which lower cleanly.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextStyle {
     pub font_family: String,
@@ -460,7 +566,7 @@ where
 }
 
 /// One fill or stroke.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Paint {
     #[serde(rename = "type")]
@@ -500,7 +606,7 @@ pub struct Paint {
 /// An effect. `kind` stays a `String` for the same reason `Node::kind` does:
 /// Figma's effect vocabulary is open, and the triage table (not the parser)
 /// decides which band each one falls in.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Effect {
     #[serde(rename = "type")]
