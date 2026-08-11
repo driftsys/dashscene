@@ -184,9 +184,10 @@ tier.
 
 - **`sanity`** — `just test`, the loop a person runs between edits and
   before every commit.
-- **`regression`** — `just build`, and therefore the pre-push hook and the
-  CI `test` job. nextest's `default` profile is this tier, so a bare
-  `cargo nextest run --workspace` gives the same gate `just build` runs
+- **`regression`** — `just build` and the CI `test` job. **Not the pre-push
+  hook**, which stopped running a tier when it was bounded at seconds (see
+  "Where each tier runs" below). nextest's `default` profile is this tier, so a
+  bare `cargo nextest run --workspace` gives the same gate `just build` runs
   rather than a thinner one by accident.
 - **`calibration`** — `just calibrate`, run when the diff touches a path
   that can move the two committed tables, and at slice close regardless of
@@ -225,7 +226,11 @@ property that matters, because it is the tier's own definition and is
 edited rarely; the workflow file is edited often and almost always for
 reasons the packer cannot see.
 
-The pre-push gate keeps `regression` rather than `sanity` because 35 s is
+**Superseded: the pre-push gate now runs no tier at all**, for the measurements
+recorded further down; what follows is why it kept `regression` while it still
+ran one, and it still describes `just build`'s choice.
+
+The gate keeps `regression` rather than `sanity` because 35 s is
 already close to a ten-fold improvement over the original 325 s and it
 gives up only the two packer re-derivations. Choosing `sanity` for the gate
 would save a further 28 s and drop twenty-four tests, including every
@@ -343,14 +348,22 @@ so every recipe that claims to run a tier also runs
 `calibration`. `test-all` runs every tier in one invocation. `check`, and
 therefore `build`, take `test-regression`.
 
-`verify` takes `build`, and therefore that tier, for every change except one:
-when each changed file is documentation it runs `lint`, `audit` and `secrets`
-and **no tier at all**. So a green `verify` is not by itself a statement that
-the regression tier ran — the output says which path it took, and
-`scripts/is-code-change` is what chose. That script is shared with the CI
-`changes` job rather than copied into it, because the two gates disagreeing
-about the word "documentation" would mean either skipping work CI then demands
-or running work CI already skipped.
+`verify` runs **no tier at all**. It is the pre-push hook, so it is bounded at
+seconds: commit-message lint, `lint`, `audit`, and a secret scan scoped to the
+objects being pushed. **A green `verify` is therefore not a statement that any
+test ran.**
+
+That is a deliberate trade, and the measurement behind it: `verify` was 224 s
+warm and 513 s after a crate moved, against 184-286 s for CI's entire run,
+because it ran the tier here, on the machine you are waiting at, while CI runs
+it in one `test` job alongside fifteen others on runners that became free when
+the repository went public. The tier is 154 s of that; the gate without it
+measures 8-10 s warm.
+
+What it still catches: `lint` runs `clippy --all-targets`, which compiles what
+it lints, over the workspace and all three wasm packages — so a compile error
+fails locally. What now reaches CI unverified is a failing test, and the CI
+`test` job runs the regression tier completely on every push and pull request.
 
 **CI** (`.github/workflows/ci.yml`). The existing `test` job runs
 `cargo nextest run --workspace` with no `-P` flag, which is the
@@ -423,9 +436,12 @@ documentation only, together with `clippy`, `demo-build`, `wasm-build`,
 `exit-gate-tests` and `exit-gate` — every job carrying
 `needs.changes.outputs.code == 'true'`. The `changes` job decides this by asking
 whether every changed file is Markdown under `docs/` or Markdown at the
-repository root. `fmt`, `dprint` and `convco` stay unconditional: a
-documentation-only diff still has to be formatted, and its commit messages
-still have to lint.
+repository root. `fmt`, `dprint`, `markdownlint`, `secrets` and `audit` stay
+unconditional, and `convco` runs on every pull request: a documentation-only
+diff still has to be formatted and linted, its commit messages still have to
+lint, and it still must not publish a credential. `audit` is unconditional for
+a different reason — it fails on a newly published advisory against a
+dependency that did not change, so no path filter can predict it.
 
 Two properties of that detector are deliberate. It reports "code changed"
 on every path except a successfully read documentation-only diff, so an

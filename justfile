@@ -25,9 +25,10 @@ test:
     cargo nextest run --workspace -P sanity
     cargo test --workspace --doc
 
-# Run the regression tier — what `check`, `build`, `verify`, the pre-push hook
-# and the CI `test` job all run. About 33 s. This is the gate; `just test` is
-# not.
+# Run the regression tier — what `check`, `build` and the CI `test` job run.
+# About 33 s locally when warm, 154 s for the whole workspace suite. This is the
+# gate; `just test` is not, and the pre-push hook no longer runs it either
+# (see `verify`).
 test-regression:
     cargo nextest run --workspace -P regression
     cargo test --workspace --doc
@@ -236,9 +237,42 @@ audit:
     cargo audit
 
 # Secret scan — gitleaks over HEAD and history, plus a pattern-grep backstop.
-secrets:
+secrets range="--all":
     #!/usr/bin/env bash
     set -euo pipefail
+
+    # SCOPE. `range` is the history the two history-wide gates read. It defaults
+    # to `--all`, the publication gate: every object any ref can reach. CI runs
+    # that unscoped, on every pull request and on every push to `main`.
+    #
+    # The pre-push hook passes `--all --not --remotes`: every object reachable
+    # from a local ref that is NOT yet on any remote. That is the set a push can
+    # publish, and it is 168 objects here against 10,151 — the whole of the
+    # gate's cost was streaming the rest through `git cat-file`, about 18 s of
+    # its 21.5 s.
+    #
+    # NOT `origin/main..HEAD`, which was the first attempt and is fail-open:
+    # `git push origin some-other-branch`, or any push while HEAD sits at
+    # origin/main, makes that range empty and both gates then pass over zero
+    # objects while printing a clean verdict. `--not --remotes` does not depend
+    # on which branch is checked out. Verified by planting a Figma PAT on a
+    # branch and scanning from a different one.
+    #
+    # Narrowing cannot weaken either gate's verdict for the objects it does
+    # read: both compute "findings minus the triaged baseline" and fail on any
+    # remainder, so a smaller range yields a subset and the same predicate. What
+    # it gives up is re-detection of something already published, which is CI's
+    # job and not a pushing developer's.
+    #
+    # `$range` is deliberately unquoted at the `git rev-list` call because it
+    # carries multiple words (`--all --not --remotes`). It is a recipe argument
+    # from a developer's own command line or from the hook, not untrusted input.
+    range="{{ range }}"
+    if [ "$range" = "--all" ]; then
+        scope_label="every object that would be published"
+    else
+        scope_label="$range — the objects this push adds"
+    fi
 
     # WHY TWO GATES. gitleaks carries the rule set and the triaged ignore
     # files. The grep is a deterministic backstop over every object in
@@ -312,10 +346,10 @@ secrets:
     # and the same content sits at many line numbers across history, so
     # fingerprints never converge. Compare the distinct <rule>:<secret> set
     # against .secrets-history-baseline instead — anything new fails.
-    echo "── gitleaks: full history (against the triaged baseline) ──"
+    echo "── gitleaks: history ($scope_label, against the triaged baseline) ──"
     hist="$work/history.json"
     rc=0
-    gitleaks git --log-opts="--all" --config .gitleaks.toml \
+    gitleaks git --log-opts="$range" --config .gitleaks.toml \
         --report-format json --report-path "$hist" >/dev/null 2>&1 || rc=$?
     # 0 = clean, 1 = findings, anything else = the scan itself failed.
     if [ "$rc" -gt 1 ]; then
@@ -360,7 +394,7 @@ secrets:
     #
     # Plain commands, never a command substitution wrapping a pipeline, so
     # `set -euo pipefail` actually sees a failure of git, awk or cat-file.
-    echo "── pattern grep: every object that would be published ──"
+    echo "── pattern grep: $scope_label ──"
     # SCOPE: objects reachable from a ref — which is exactly the set `git push`
     # sends. That is the question a publication gate asks.
     #
@@ -388,7 +422,7 @@ secrets:
     fi
     # Streamed, not materialized: the previous revision wrote 86 MB to a temp
     # file on every push and grew with history.
-    git rev-list --objects --all > "$work/oids"
+    git rev-list --objects $range > "$work/oids"  # UNQUOTED: see the header
     n=$(wc -l < "$work/oids" | tr -d ' ')
     awk '{print $1}' "$work/oids" | git cat-file --batch > "$work/blobs"
     grep -vE '^#|^[[:space:]]*$' "$work/head/.secrets-triaged" > "$work/triaged" || true
@@ -417,25 +451,25 @@ secrets:
     echo "pattern grep: clean — $n publishable objects read"
 
 # Full non-build verification: the regression tier + lint + audit. Not the
-# sanity tier — `check` is what `build` and the pre-push hook run, so it takes
-# the tier that is the gate (docs/decisions/test-tiers.md).
+# sanity tier — `check` is what `build` runs, so it takes the tier that is the
+# gate (docs/decisions/test-tiers.md). The pre-push hook does not run `check`;
+# see `verify`.
 check: test-regression lint audit secrets wasm-painter wasm-host c-abi
 
 # Everything short of a PR: assemble + check.
 build: assemble check
 
-# Run before opening a PR (and as the pre-push hook): commit-message
-# lint over commits not yet on origin/main, then build. The range is taken
-# against origin/main rather than local main, because local main goes stale
-# relative to the remote and would lint commits that are already upstream.
-# The range can legitimately be empty (see the recipe) — that is issue
+# The pre-push hook: commit-message lint, then the checks that fit in seconds.
+# The range is taken against origin/main rather than local main, because local
+# main goes stale relative to the remote and would lint commits that are already
+# upstream. The range can legitimately be empty (see the recipe) — that is issue
 # #110, and it is handled rather than avoided by the choice of ref.
 #
-# A documentation-only change takes `lint` and `secrets` instead of `build`,
-# using the CI `changes` job's own definition of documentation. See the recipe
-# for why that classification is shared rather than restated.
+# It does NOT run a test tier. `just build` does, and remains the thorough local
+# gate; CI runs the tier completely on every push and pull request. See the
+# recipe for the measured breakdown and for what that leaves unverified.
 #
-# Commit lint, then build — or lint and secrets when only documentation changed.
+# Commit lint, then lint + audit + a secret scan of the objects being pushed.
 verify:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -461,55 +495,62 @@ verify:
         git std lint --range origin/main..HEAD
     fi
 
-    # A documentation-only change runs `lint`, `audit` and `secrets`, and skips
-    # `assemble`, the regression tier, both wasm builds and the C ABI check —
-    # the half no Markdown edit can move.
+    # WHAT THIS GATE IS FOR, and what it deliberately is not.
     #
-    # This exists because the gate cost the same for every change: 224 s with
-    # nothing to rebuild and 513 s when a crate had moved, against 184-286 s for
-    # CI's entire run. A commit that edited one Markdown file paid the
-    # regression tier, both wasm builds and the C ABI check to establish that
-    # the file was still formatted.
+    # It runs on every push, so it is bounded at seconds. It took 224 s with
+    # nothing to rebuild and 513 s when a crate had moved — more than CI's
+    # entire run, which is 184-286 s — because it ran the regression tier here,
+    # serially, on the machine you are waiting at. CI runs the same tier in one
+    # `test` job alongside fifteen other jobs, on runners that became free when
+    # the repository went public.
     #
-    # What stays, and why each is not "a Markdown file cannot break it":
+    # Measured warm, which is what a push actually costs:
     #
-    # - `lint` is the whole recipe, including the four clippy invocations and
-    #   the `cargo doc` gate. Only `dprint check` and `markdownlint` can be
-    #   moved by the files classified as documentation, so most of this is kept
-    #   by choice rather than by necessity — the gate is cheap against a warm
-    #   `target/`, and it is what makes a green `verify` mean the same thing on
-    #   both paths. Against a cold or evicted `target/` it is minutes, not
-    #   seconds.
-    # - `audit` stays because it does NOT fail on a changed file. It fails when
-    #   a new advisory is published against a dependency that did not change, so
-    #   "documentation cannot move Cargo.lock" is not a reason to skip it — and
-    #   no CI job runs it, so skipping it here runs it nowhere.
-    # - `secrets` stays because it is the one gate whose failure cannot be
-    #   undone once the commit is pushed: the repository is public, and prose is
-    #   exactly where a pasted credential would sit. CI scans too, but only
-    #   after the commit is published.
+    #     clippy host + three wasm packages   1.2 s
+    #     cargo fmt --check                   0.8 s
+    #     cargo doc (intra-doc links)         0.2 s
+    #     dprint + deno fmt                   0.0 s
+    #     markdownlint                        3.0 s
+    #     cargo audit                         1.7 s
+    #     secrets, scoped by --not --remotes  3.0 s
+    #     ---------------------------------------
+    #     measured end to end                 8-10 s
+    #     the regression tier, for contrast   154 s
     #
-    # `--include-worktree`, because `verify` is documented as a command run by
-    # hand before opening a pull request as well as the pre-push hook. Only
-    # committed work is pushed, so the hook would not need it; but a developer
-    # with an edited `.rs` file on disk and a documentation-only commit must not
-    # read a green `verify` as "that file was compiled and tested".
-    code=$(scripts/is-code-change origin/main...HEAD --include-worktree)
-
-    if [ "$code" = true ]; then
-        just build
-    else
-        # Say what was classified and how. The CI job prints its file list and
-        # its result; a local gate that silently took the short path would leave
-        # "why did my push skip the tests" unanswerable after the fact.
-        echo "verify: documentation-only change — lint, audit and secrets only."
-        echo "verify: skipping assemble, the regression tier, both wasm gates and c-abi."
-        echo "verify: files considered:"
-        git diff --name-only --no-renames origin/main...HEAD | sed 's/^/  /'
-        just lint
-        just audit
-        just secrets
-    fi
+    # Everything except the tier fits the budget. WHAT IS DROPPED, stated in
+    # full rather than as "the tier": `assemble`, `test-regression`,
+    # `wasm-painter`, `wasm-host` and `c-abi`.
+    #
+    # `lint` still TYPE-CHECKS the whole workspace and all three wasm packages —
+    # `clippy --all-targets` compiles what it lints — so a compile error still
+    # fails here. It does NOT LINK, so a duplicate or undefined symbol in a
+    # cdylib passes, and the C ABI header check no longer runs locally at all;
+    # CI covers that inside `android-build`.
+    #
+    # WHERE THE DROPPED WORK IS CAUGHT. `.github/workflows/ci.yml` triggers on
+    # `pull_request` and on pushes to `main` — NOT on a push to a feature
+    # branch. So between pushing a branch and opening its pull request, none of
+    # the dropped gates run anywhere. That window is the deliberate cost of this
+    # change; `main` itself keeps full coverage, and nothing merges without a
+    # pull request.
+    #
+    # `just build` is unchanged and remains the thorough local gate; run it by
+    # hand when you want the tier before pushing. AGENTS.md names it for that.
+    #
+    # `secrets` is scoped to `--all --not --remotes` — every object a push could
+    # publish. The unscoped sweep re-reads 10,151 already-published objects and
+    # is about 18 s of its 21.5 s; CI runs it unscoped. The scoped scan still
+    # covers the case a push makes irreversible: a credential in the commits
+    # about to be published, including one added and then removed within the
+    # branch, where the HEAD scan sees nothing.
+    #
+    # `audit` and `markdownlint` are kept even though nothing here can move
+    # them, because until the CI jobs added alongside this recipe they ran in no
+    # other place — and `cargo audit` in particular fails on a newly published
+    # advisory against a dependency that did not change, so no diff predicts it.
+    just lint
+    just audit
+    just secrets "--all --not --remotes"
 
 # Reformat everything in place (Rust + markdown).
 fmt:

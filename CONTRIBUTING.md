@@ -25,15 +25,14 @@ off to `git std bootstrap`, which wires up repo-local git hooks.
    (`feat:`, `fix:`, `chore:`, etc., with a scope when it aids clarity, e.g.
    `feat(dashscene-engine): ...`). `git-std` lints commit messages against
    this format and drives changelog generation from them.
-4. Run `just verify` before opening a PR. This runs `git std lint
-   --range main..HEAD` followed by the full `just build` (assemble, test,
-   lint, audit, secrets).
+4. `just verify` runs automatically on every push, and takes seconds:
+   `git std lint --range main..HEAD`, then `lint`, `audit`, and a secret scan
+   of the objects your push adds. It runs **no test tier** — `lint` still
+   type-checks the workspace, so a compile error fails locally, but a failing
+   test does not.
 
-   When every changed file is documentation — Markdown under `docs/` or at
-   the repository root — `verify` runs `lint`, `audit` and `secrets` instead
-   of `build`, and no test tier runs. `scripts/is-code-change` decides, and
-   the CI `changes` job gates on that same script, so your local result and
-   CI agree on what documentation means.
+   Run `just build` by hand when you want the tests before pushing. CI runs
+   the full tier on every push and pull request either way.
 
    The `secrets` step needs [gitleaks](https://github.com/gitleaks/gitleaks),
    which `./bootstrap` reports on but does not install — `brew install
@@ -56,7 +55,7 @@ Run `just --list` for the full recipe set. The common ones:
 | recipe        | what it does                                                                                                                                                    |
 | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `just build`  | assemble + check (test, lint, audit, secrets) — the local gate; two tests that re-derive committed asset tables sit outside it (`docs/decisions/test-tiers.md`) |
-| `just verify` | commit-message lint + `just build` — run before a PR. A documentation-only change takes lint + audit + secrets instead, and runs no test tier                   |
+| `just verify` | the pre-push hook: commit-message lint + lint + audit + a scoped secret scan. Seconds, and runs no test tier                                                    |
 | `just fmt`    | reformat Rust and markdown in place                                                                                                                             |
 | `just wasm`   | build `dashc` for `wasm32-unknown-unknown`                                                                                                                      |
 | `just book`   | serve the mdBook docs locally                                                                                                                                   |
