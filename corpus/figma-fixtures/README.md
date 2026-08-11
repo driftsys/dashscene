@@ -242,9 +242,8 @@ cannot be rotated: once published it is public permanently.
 
 **The ruling is
 [`docs/decisions/figma-file-keys-are-published.md`](../../docs/decisions/figma-file-keys-are-published.md).**
-It names the ten fixtures it covers, the rules that follow, and the 22 it does
-not cover. Nothing is restated here, so there is no second copy to go stale
-when it is revised.
+Nothing is restated here, so there is no second copy to go stale when it is
+revised. `just figma-sharing` checks the live setting against the ruling.
 
 One caveat that belongs beside the fixtures rather than in the ruling: the
 `linkAccess` value inside a captured `.json` is a snapshot from capture time,

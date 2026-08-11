@@ -155,6 +155,9 @@ members in total, nineteen of them the crates above.
                       reports its absence
     just licenses     copy LICENSE and NOTICE into every publishable crate;
                       Apache-2.0 §4 requires both to travel inside the package
+    just figma-sharing  assert every corpus fixture is explicitly link-viewable.
+                      Needs a Figma PAT and the network, so it is outside
+                      `check`; run it before publication
     just verify       commit-message lint over the branch range, then build — run before opening a PR
     just wasm         build dashc for wasm32-unknown-unknown
     just wasm-painter build dashscene-gpu for wasm32 — the gate that keeps a
