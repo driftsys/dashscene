@@ -987,7 +987,10 @@ fn the_adapter_is_recorded() {
         compatible_surface: None,
         ..Default::default()
     }))
-    .expect("layer-2 conformance needs a wgpu adapter");
+    .expect(
+        "layer-2 conformance needs a wgpu adapter and found none. On a runner this means no \
+         software device is available; the test job installs mesa-vulkan-drivers.",
+    );
     let info = adapter.get_info();
     println!(
         "layer-2 adapter: {} | backend {:?} | device_type {:?} | driver {} {}",
