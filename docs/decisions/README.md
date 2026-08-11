@@ -745,3 +745,37 @@ See the `sdd-working-memory-lifecycle` rule.
   also records what the decision does **not** close: every animatable channel
   is scalar, so a discrete change of `Prop::Visible` — SVG's `display` — needs
   a channel rather than a curve shape.
+- [motion-is-document-data-keyed-on-the-destination.md](motion-is-document-data-keyed-on-the-destination.md)
+  — a transition is carried in the document and keyed on the destination
+  variant rather than on the interaction that reaches it, which is where
+  Figma keys its own `reactions` payload. Story #771, slice v0.18.
+- [a-loop-is-ambient-paint-anchored-at-load.md](a-loop-is-ambient-paint-anchored-at-load.md)
+  — a `LoopTrack` is one channel of one node repeating a curve indefinitely;
+  its phase comes from document load plus a per-track offset, nothing ends
+  it, and it is restricted to paint channels because a layout channel would
+  re-solve every frame forever. Story #772, slice v0.18.
+- [binding-expressions-are-not-embedded-wasm.md](binding-expressions-are-not-embedded-wasm.md)
+  — carrying compiled expressions in the document and embedding a wasm
+  runtime in the player is rejected, on P1, P3, P4, payload size,
+  determinism and the fact that a `.dsb` would become executable content.
+  The motivating example is layout, which the solver already does. Recorded
+  so it is not re-proposed without new evidence; the counter-proposal it
+  does not rule on — widen the declarative transform union — stays in
+  `docs/wip/2026-08-07-motion-in-the-document.md`. Gardened at the v0.18
+  close.
+- [the-animation-reference-set-is-the-union-of-two-producers.md](the-animation-reference-set-is-the-union-of-two-producers.md)
+  — SMIL does not define what `dashcue` must express. It is a timeline model
+  against a state-transition one, its `from`/`to` value model is what P1
+  forbids, and most of what it adds is interval timing rather than motion.
+  The reference set is the union of SMIL and Figma expressed in `dashcue`'s
+  own terms, which is P5 restated. Carries the animated-attribute census
+  over the 525 official SVG tests as the ambient half's work-list. Gardened
+  at the v0.18 close.
+
+Two of those four — `motion-is-document-data-keyed-on-the-destination.md` and
+`a-loop-is-ambient-paint-anchored-at-load.md` — were written at stories #771
+and #772 and were absent from this index until the v0.18 close added them.
+**That does not close issue #800**: fourteen records in `docs/decisions/` are
+still unlinked from this file, and #800 asks for a check that fails when one
+is, rather than for another hand-added batch. Adding four by hand is what the
+issue predicts will keep happening until the check exists.

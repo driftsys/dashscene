@@ -13,6 +13,12 @@
              vocabulary closes. The rulings marked **promote** below are
              decision-shaped and should become records in
              `docs/decisions/` rather than being gardened away.
+
+             REFERENCE-SET HALF GARDENED 2026-08-11, at the v0.18 close
+             (epic #769): Part 1 is now
+             docs/decisions/the-animation-reference-set-is-the-union-of-two-producers.md.
+             The profile half — Parts 2, 3 and 4, and the roadmap this
+             implies — is unbuilt and stays here.
     scope    the two official corpora and what they are each good for;
              why SMIL cannot be the animation reference set; what
              "supporting SVG" means when the IR has no path node; what
@@ -66,6 +72,17 @@ the 20 KB threshold is stated there for that reason — every one of the five is
 larger than that and every individual icon is smaller.
 
 ## Part 1 — SMIL cannot be the animation reference feature set
+
+**Promoted 2026-08-11 to
+`docs/decisions/the-animation-reference-set-is-the-union-of-two-producers.md`**,
+at the v0.18 close, on this file's own stated condition. The section is
+kept as written; the record carries the ruling and changes **three** of the
+eleven rows in the table below. The ambient-loop row read "no — story #772"
+and is now built. The rotation row read "closed" where the rest of the
+column says "built". And the discrete-visibility row read "`Prop::Visible`,
+but see below", which the record cannot carry because it has no "below" to
+point at — it names the step ruling instead
+(`docs/decisions/a-step-is-a-pair-of-keyframes.md`).
 
 **Promote.** This is a ruling that binds the animated-SVG importer and the
 remaining v0.18 vocabulary stories.

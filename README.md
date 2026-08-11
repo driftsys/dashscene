@@ -217,9 +217,9 @@ It is kept rather than deleted because every published stub carries a
 be changed
 ([`docs/decisions/repo-staging-and-public-facade.md`](docs/decisions/repo-staging-and-public-facade.md)).
 
-v0 is built one slice at a time. Slices v0.1 to v0.17 have closed. v0.18 —
-animation vocabulary — and v0.19 — the Android bring-up and the C ABI — are both
-open and planned, and run alongside each other.
+v0 is built one slice at a time. Slices v0.1 to v0.18 have closed, the last of
+them being the animation vocabulary. v0.19 — the Android bring-up and the C ABI
+— is open and planned.
 [`docs/roadmap.md`](docs/roadmap.md) carries the slice map and what each one
 delivered; GitHub issues carry the live state.
 
