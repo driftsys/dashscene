@@ -248,9 +248,10 @@ that alias became a local type wearing the same name.
 `wasm32-unknown-unknown` only, because `Surface` is, so `cargo test` never sees
 it: what compiles it is `just lint`, and CI's `wasm-gates` job, which runs that
 lint's wasm32 half along with the painter's and the browser host's build gates.
-Until issue #903 was settled, CI compiled nothing for that triple but `dashc`,
-so all five commands ran on no runner and this test in particular was checked
-by nobody's machine but the author's.
+That job is younger than this test. When the test was written CI compiled
+nothing for the triple but `dashc`, so the story added its one clippy line to
+the `clippy` job; issue #903 then found that the painter's and the host's gates
+were in the same position, and moved all of it into one job.
 
 ## Known gaps, named
 

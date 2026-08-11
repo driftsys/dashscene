@@ -42,9 +42,11 @@ off to `git std bootstrap`, which wires up repo-local git hooks.
    `just audit`, and a C toolchain for `just c-abi`. Each stops the gate
    rather than being skipped.
 5. Open a PR. CI runs the same gates (`fmt`, `dprint`, `clippy`, `test`,
-   `convco`, `secrets`) plus the path-filtered `deno` job, the `wasm-build`
-   job, and the `atlas-repro` job (byte-reproducibility of the glyph-atlas
-   pipeline, with a cached `msdf-atlas-gen` build), aggregated into a
+   `convco`, `secrets`) plus `demo-build`, `wasm-build`, `wasm-gates`
+   (everything compiled for `wasm32-unknown-unknown`), `android-build`,
+   `render-oracle`, the two `exit-gate` jobs, the path-filtered `deno` and
+   `calibration` jobs, and the `atlas-repro` job (byte-reproducibility of the
+   glyph-atlas pipeline, with a cached `msdf-atlas-gen` build), aggregated into a
    single required `ci` check.
 
 ## Recipes

@@ -473,12 +473,13 @@ jobs:
 
   wasm-gates:
     # Everything in `just check` and `just lint` that names
-    # `wasm32-unknown-unknown` and is not `dashc`. Until this job existed, CI
-    # compiled nothing for wasm32 except the job above, so five commands that
-    # run on every developer's machine ran on no runner (issue #903, found by
-    # the review on story #835).
+    # `wasm32-unknown-unknown` and is not `dashc`. Before this job, CI compiled
+    # nothing for that triple but `dashc` and — from PR #901 to this one — one
+    # clippy line for `dashscene-web` that sat in the `clippy` job. The other
+    # gates ran on every developer's machine and on no runner (issue #903, found
+    # by the review on story #835).
     #
-    # What that cost, concretely, is not hypothetical for the first two:
+    # What that cost is not hypothetical for the first two:
     #
     #   - `dashscene-gpu` is where `pollster::block_on` must never reach the
     #     web path. `pollster` is a native-only dependency, so a blocking wait
@@ -491,9 +492,14 @@ jobs:
     #     entire, and so is every test target that names what it holds
     #     (`tests/adapter_accessors.rs`, story #835).
     #
+    # It runs the recipes rather than restating them, for the reason
+    # `android-build` gives below: a second copy in YAML drifts against the
+    # first, which is how a wasm32 line could be added to `just lint` and reach
+    # no runner — issue #903 again, one crate later.
+    #
     # One job rather than steps bolted onto `clippy` and `wasm-build`: these
-    # share one wgpu-for-wasm32 compile, so one cache serves all five, and
-    # `deno` waits on `wasm-build` and should not wait on these.
+    # share one wgpu-for-wasm32 compile, so one cache serves all of them, and
+    # `deno` waits on `wasm-build` for its artifact and need not wait on these.
     #
     # Compile-heavy: skipped when the diff is documentation only
     # (see the changes job's detect step).
@@ -508,19 +514,16 @@ jobs:
           components: clippy
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v4
       # `demo-web` reaches dashbuf, whose build.rs shells out to flatc.
       - name: install flatc
         run: |
           curl -fsSL -o flatc.zip https://github.com/google/flatbuffers/releases/download/v25.12.19/Linux.flatc.binary.g++-13.zip
           unzip -o flatc.zip flatc -d /usr/local/bin
           chmod +x /usr/local/bin/flatc
-      # `just wasm-painter`, then `just wasm-host`.
-      - run: cargo build -p dashscene-gpu --target wasm32-unknown-unknown
-      - run: cargo build -p demo-web --target wasm32-unknown-unknown
-      # The three wasm32 lines of `just lint`, in its order.
-      - run: cargo clippy -p dashscene-web --target wasm32-unknown-unknown --all-targets -- -D warnings
-      - run: cargo clippy -p demo-web --target wasm32-unknown-unknown --all-targets -- -D warnings
-      - run: cargo clippy -p web-minimal --target wasm32-unknown-unknown --all-targets -- -D warnings
+      - run: just wasm-painter
+      - run: just wasm-host
+      - run: just wasm-lint
 
   android-build:
     # Compile-heavy: skipped when the diff is documentation only
@@ -985,10 +988,13 @@ jobs:
     # pull requests, deno only when importers/figma/ changed, and calibration
     # only when the packer paths changed (docs/decisions/test-tiers.md).
     # clippy, test, demo-build, wasm-build, wasm-gates, android-build,
-    # atlas-repro and render-oracle skip when the diff is documentation only,
-    # which also skips deno through its dependency on wasm-build. This is the
-    # reason a green aggregate cannot be read as "the suite ran": read the jobs,
-    # not the aggregate.
+    # atlas-repro, render-oracle, exit-gate-tests and exit-gate all skip when
+    # the diff is documentation only, which also skips deno through its
+    # dependency on wasm-build. The list is every job carrying
+    # `needs.changes.outputs.code == 'true'`, which is how to re-derive it
+    # rather than trusting this sentence. This is the reason a
+    # green aggregate cannot be read as "the suite ran": read the jobs, not the
+    # aggregate.
     needs:
       [
         changes,

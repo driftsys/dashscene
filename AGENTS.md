@@ -174,6 +174,9 @@ members in total, nineteen of them the crates above.
                       blocking wait off the web path, where it would deadlock
     just wasm-host    build demo-web for wasm32 — its browser half compiles on
                       no other target
+    just wasm-lint    clippy every crate with a wasm32 half, on that triple —
+                      the part of `lint` a host pass cannot see. Its own recipe
+                      because CI's `wasm-gates` job runs exactly it
     just android      cross-compile the four Android members for
                       aarch64-linux-android — dashscene-gpu, dashscene-ffi,
                       dashscene-android and demo-android. The second platform's
@@ -274,8 +277,9 @@ runs as three tiers, so "tests pass" is no longer a claim about all of it:
 - **A green `ci` job does not mean the suite ran.** It means nothing red
   ran. When the diff is documentation only — every changed file is Markdown
   under `docs/` or Markdown at the repository root — `test`, `clippy`,
-  `demo-build`, `wasm-build`, `wasm-gates`, `android-build`, `atlas-repro`
-  and `render-oracle` all skip, and `deno` skips with them. Read the individual jobs to see which tiers
+  `demo-build`, `wasm-build`, `wasm-gates`, `android-build`, `atlas-repro`,
+  `render-oracle`, `exit-gate-tests` and `exit-gate` all skip, and `deno`
+  skips with them. Read the individual jobs to see which tiers
   executed (`docs/decisions/test-tiers.md`).
 
 Story workflow — the definition of done for every story:
