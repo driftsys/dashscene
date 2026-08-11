@@ -193,7 +193,9 @@ Checked against `crates/dashc/src/figma/mod.rs`,
 ## 4. Motion and interaction
 
 Checked against `crates/dashcue/`, `crates/dashlang/src/reactive.rs`,
-`crates/dashscene-engine/src/flip.rs`.
+`crates/dashscene-engine/src/flip.rs`,
+`crates/dashscene-core/src/bindings.rs`, and the motion tables in
+`crates/dashbuf/schema/dashbuf.fbs`.
 
 - [x] **Animation is described, not programmed** — nothing anyone writes
       runs inside the frame loop, which is what makes the per-frame cost
@@ -208,18 +210,67 @@ Checked against `crates/dashcue/`, `crates/dashlang/src/reactive.rs`,
       machine, so animation can be tested rather than eyeballed.
 - [x] **Layout transitions** — when a variant switch changes the layout,
       elements animate from where they were to where they are now.
-- [x] **Values from the running application** — a number drives position,
-      size, spacing, opacity, or one channel of a fill colour; a true/false
-      value drives visibility; and a number can be turned into text through
-      any function of it, then shown. The designer declares the connection
-      as a Figma Variable and the application writes it by name.
-- [ ] **Gauges and radial motion** — a value driving a rotation about a
-      pivot, or an arc sweep. Designed, and a v1 candidate.
+- [x] **The motion ships in the file** — a transition is carried in the
+      design file rather than written in code beside it, so an animation
+      travels with the design. Before this, the file held the two ends of a
+      change and the wiring, and the motion between them had to be written
+      in Rust.
+- [x] **Ambient motion** — a shimmer, spinner or pulse that runs without
+      anything triggering it: one channel of one element repeating a curve,
+      with an offset that staggers a row of them out of step. **It is
+      restricted to appearance, and the restriction is enforced at load** —
+      a fill channel, opacity, or a rotation and its pivot. A loop on
+      position or size is refused by name, so a "breathing" effect must be
+      built from opacity or a fill rather than from width and height. It is
+      also refused if the curve is a spring, if the same channel is already
+      driven by something else, or if the element's fill is a gradient or an
+      image rather than a solid colour.
+
+      Figma **can** author this class, with a timeout-triggered variant
+      switch; dashscene does not import that trigger, so an ambient effect
+      is written in code or in the file rather than brought in from a
+      design.
+- [x] **Values from the running application** — the designer declares the
+      connection as a Figma Variable and the application writes it by name.
+      **What a Figma Variable carries today is spacing, opacity and one
+      channel of a fill colour.** Position, size, rotation and the pivot are
+      drivable, but only from code or a hand-authored file — the importer
+      recognises three property paths and nothing else.
+- [ ] **A true/false value driving visibility, and a number shown as text**
+      — **part built.** Both work from code. Neither survives a Figma
+      import: the importer names those rows itself and does not send them,
+      and the file format carries no numeric-to-text transform. Planned
+      (v1), tracked as issues #252 and #256.
+- [x] **Rotation about a pivot** — an element turns about a point given
+      explicitly rather than about its centre, which is what both Figma and
+      SVG mean by a rotation. The angle and both coordinates of the pivot
+      are each drivable, so a gauge needle is expressible — from code, per
+      the item above.
+- [ ] **Arc sweep** — a value driving the sweep of an arc, which is the
+      other half of a gauge. Not built; no such property exists. Designed,
+      and a v1 candidate.
 - [ ] **Known limit, and it is worse than it sounds** — a frame that
       changes only live text clears **all** the text on the screen,
       including the string that just changed, unless something on that same
       frame also changes the layout. There is a documented way to author
       around it, and a fix is tracked.
+- [ ] **Known limit: a switch animates position and size, not colour** —
+      when a variant switch changes a fill, a rotation or whether something
+      is visible, the change **applies at the switch rather than
+      animating**, while position and size changes animate normally. The
+      element ends up correct either way; it arrives immediately rather
+      than travelling.
+
+      **You are told this rather than left to find it.** A file that asks
+      for such an animation is refused by name when it loads, and the Figma
+      importer reports it as a motion degrade rather than emitting it. So
+      nothing is silently dropped, and there is no runtime behaviour to
+      debug — the compiler has already said so.
+
+      Why it cannot simply be lifted: the destination's appearance is
+      resolved ahead of the value travelling towards it, so every sample of
+      such an animation would be masked by the state it is heading for.
+      That was built, measured and reverted, and is tracked as issue #891.
 
 ## 5. Runtime performance
 
@@ -352,6 +403,35 @@ Checked against `importers/figma/src/`, `crates/dashc/src/`,
 - [x] **Figma import** — through Figma's own API, compiled by the same code
       that compiles everything else. Auto-layout, components, instances,
       variants, text, shapes, images and effects all import.
+- [ ] **Prototype interactions** — **part built.** A Figma prototype's
+      interactions become the switches between variants and its Smart
+      Animate transitions become the motion between them, but only along a
+      narrow path. Everything outside it is reported by name; nothing is
+      approximated. **Three limits, and they do not behave the same way:**
+
+      **Only a click that changes to another variant lowers at all.** Any
+      other trigger — hover, timeout, drag, key press — and any other
+      action or navigation is dropped whole, taking its switch with it.
+      Only Smart Animate carries motion; Figma's four spring presets and
+      its custom bezier are refused, so a switch authored with Figma's
+      default spring easing lands in one frame.
+
+      **A variant set lowers only when every difference between its members
+      is one the format can express.** A member with an extra child, a
+      different corner radius or a different auto-layout mode makes the
+      whole set unlowerable.
+
+      **Of the differences that do lower, only position and size animate** —
+      a fill, rotation or visibility difference is carried by the switch and
+      arrives immediately. See the known limit in section 4.
+
+      **The first of those three refuses the file under the strict setting;
+      the other two never do.** An unlowerable set and an unanimated
+      difference each leave a correct picture, so refusing the file would
+      withhold something that renders properly. A dropped interaction is
+      authored intent going missing, which strict mode exists to catch —
+      so a prototype built on hover or timeout triggers will fail a strict
+      build rather than import silently.
 - [x] **Design tokens and designer intent** — Figma Variables reach the
       running application both as values and by name, without a plugin. A
       companion plugin lets a designer mark scaffolding that should not
