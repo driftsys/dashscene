@@ -697,9 +697,11 @@ distinguishable at all.
 
 **The benchmark's own many-frame document is in the widened class**, and that is
 worth stating plainly rather than leaving to be discovered:
-`goldens/tooling/tests/startup_scaling.rs` builds sixty-five root frames each
+`goldens/tooling/tests/common/many_root.rs` builds sixty-five root frames each
 drawing a distinct tile (`frame()` sets `parent: None`), so on the web that
-document reads all 1 935 927 B. The web equality is asserted over
+document reads all 1 935 927 B. It was `startup_scaling.rs`'s own builder until
+story #836, which moved it so the per-frame criterion beside it could be stated
+over the same document. The web equality is asserted over
 `many_frames(64, false)` — sixty-four entries in the file, one of them drawn —
 which falsifies cost-scaling-with-file-size honestly, and is not the document
 this section measured on native.

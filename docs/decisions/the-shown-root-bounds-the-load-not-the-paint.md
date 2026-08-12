@@ -136,6 +136,16 @@ placeholder colour comes from, and P1 forbids inventing one at compile time.
   **per frame** while one is shown. R5 and its benchmark bound the load only.
   Whether this needs its own criterion is a v0.19 planning question, not one
   this record settles.
+
+  **Answered, and measured (story #836, 2026-08-12).** v0.19's planning made it
+  a criterion, and `goldens/tooling/tests/per_frame_scaling.rs` is it. Over this
+  record's own sixty-five-root document, on macos aarch64: a layout frame runs
+  65 Taffy layout computations against a one-root document's 1, and the
+  committed rect table holds 65 rows against 1 — 65.00x on both, on every
+  frame. A paint-only frame solves nothing in either, so the retained tree's
+  fast path (issue #164) is not what D2 removes. The counts are equalities in
+  the `regression` tier, so D2 cannot land without moving them, and story #838
+  is what moves them to 1 and 1.
 - **Issue #825's payload gate waits on this**, as `docs/roadmap.md` records:
   what an embedder links changes if the runtime learns to skip roots.
 

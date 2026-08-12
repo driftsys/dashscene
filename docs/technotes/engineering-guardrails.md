@@ -135,6 +135,21 @@ target-hardware rules.
   pre-slice load path, which is what says the 1.00x it reports now was earned
   rather than assumed.
 
+  **Read the 1.00x for what it covers: the load, and nothing after it.** That
+  benchmark's own D3 puts its boundary at "a committed arena with the shown
+  root's assets resident", so it says nothing about what a frame costs once the
+  document is loaded — and the per-frame cost is **not** bounded by the shown
+  root today. Measured over the same sixty-five-root document by
+  `goldens/tooling/tests/per_frame_scaling.rs` (story #836, macos aarch64): a
+  layout frame runs **65 Taffy layout computations against a one-root
+  document's 1**, and the committed rect table holds **65 rows against 1**, on
+  every frame. Both are 65.00x, and a paint-only frame solves nothing in either
+  document. That is the architecture as designed
+  ([`the-shown-root-bounds-the-load-not-the-paint.md`](../decisions/the-shown-root-bounds-the-load-not-the-paint.md)
+  D1), and story #838 is where the intent changes; the number is recorded here
+  so that reading G-20 as "cost tracks the shown root" is not available without
+  also reading which cost.
+
 ## Format and process
 
 - **G-21** — The document version and the section hashes are a hard load gate.

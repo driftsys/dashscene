@@ -13,11 +13,14 @@
 //! [`manifest`] is the second shared home: the design-source oracle harness
 //! both oracle binaries walk their manifests with (debt #338). [`stress`] is
 //! the third: the generated block-stress payload the profile-preview oracle
-//! and the perceptual calibration both measure (issue #544).
+//! and the perceptual calibration both measure (issue #544). [`many_root`] is
+//! the fourth: the sixty-five-root document the load criterion and the
+//! per-frame criterion are both stated over (story #836).
 
 #![allow(dead_code)]
 
 pub mod manifest;
+pub mod many_root;
 pub mod stress;
 
 use dashpaint::{

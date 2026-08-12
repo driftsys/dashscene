@@ -61,8 +61,9 @@ not (
 
 # The loop between edits and before every commit. Drops, on top of the
 # calibration tier: the profile-preview oracle, the glyph atlas pipeline, the
-# bake oracle, the grid-anchor saturation test, and the startup-scaling
-# criterion. Those cost about 76 s together and each is reachable from a narrow
+# bake oracle, the grid-anchor saturation test, and the two scaling criteria.
+# The first five cost about 76 s together, measured on 2026-08-01 and not
+# re-measured since; the sixth adds about 3 s. Each is reachable from a narrow
 # part of the tree, so the regression tier is where they are caught rather than
 # this one.
 #
@@ -70,6 +71,11 @@ not (
 # compiles two documents from corpus photographs and writes them to disk on
 # every run, which is about 3 s of the loop between edits for a criterion no
 # ordinary edit can move.
+#
+# `per_frame_scaling` (story #836) is here for the same reason and pays the
+# same cost: it is stated over the same generated documents, and builds a third
+# smaller one for its scaling guard. About 3 s. It is not red either — it pins
+# what a frame costs today, and story #838 is the change that moves it.
 [profile.sanity]
 default-filter = """
 not (
@@ -84,6 +90,7 @@ not (
   + test(=arabic_atlas_rows_match_the_table)
   + test(=the_recorded_contract_table)
   + binary(=startup_scaling)
+  + binary(=per_frame_scaling)
   + binary(=profile_preview_oracle)
   + binary(=atlas_pipeline)
   + test(=an_out_of_range_grid_anchor_does_not_panic)

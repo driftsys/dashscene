@@ -1175,8 +1175,9 @@ slice surfaced, and now v0.19's).
 **And "conditionally" understates it, so the line is best read as not met as
 written.** The definition of done asks for R5 on the web "measured the way
 epic #594 measured it on native", and #594's many-frame document is **sixty-five root
-frames each drawing a distinct tile** — `goldens/tooling/tests/startup_scaling.rs`,
-whose `frame()` sets `parent: None`. That document takes `Bound::EveryRoot` on
+frames each drawing a distinct tile** — the document
+`goldens/tooling/tests/common/many_root.rs` builds, whose `frame()` sets
+`parent: None`. That document takes `Bound::EveryRoot` on
 the web and reads all 1 935 927 B of it. The web fixture that passes is
 `many_frames(64, false)`, where the unshown roots draw nothing. So **the shape
 native passes over is exactly the shape web widens on**: the criterion is met on
@@ -1651,9 +1652,10 @@ layering alone:
   without it the per-frame half of #822's justification would ship as an
   assertion. The band lands first so the before-number is committed, because a
   band added in the same change that improves what it measures cannot fail and
-  cannot show what the change was worth. It reuses
-  `goldens/tooling/tests/startup_scaling.rs`'s sixty-five-root document rather
-  than authoring a second one.
+  cannot show what the change was worth. It reuses the startup-scaling
+  criterion's sixty-five-root document rather than authoring a second one —
+  which is what moved that document into
+  `goldens/tooling/tests/common/many_root.rs`, where both criteria now read it.
 
 **Sequencing against v0.18, which is open at the same time.** There is no
 dependency in either direction, but there is a file-level collision: v0.18's
