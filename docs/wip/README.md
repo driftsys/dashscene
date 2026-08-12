@@ -150,8 +150,8 @@ story #842's frame-rate number all wait on hardware. It archives when epic #833
 does.
 
 The second is `2026-08-11-v019-SHOWN-ROOT-DRIVER-PROMPT.md`, for the same slice
-and the same close condition, carrying the shown-root chain on `main` while the
-first carries the Android half on its own branch. **Both are v0.19's**, which is
+and the same close condition. It carries what is left of the `main` track —
+story #838, and issue #863 behind it — while the first carries the Android half. **Both are v0.19's**, which is
 what is unusual about this pair rather than its size: earlier overlaps were two
 slices at once, or one prompt superseding another within a slice, and this is
 neither.
