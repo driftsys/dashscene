@@ -246,10 +246,12 @@ pub(crate) fn layout(document: &Document<'_>, wanted: &[Wanted], root: u32) -> L
 /// `assets_of_root`'s own ordering contract so the two can be compared by
 /// length.
 fn assets_of_every_root(document: &Document<'_>) -> Vec<u32> {
-    let nodes = document.nodes().unwrap_or_default();
-    let mut all: Vec<u32> = (0..nodes.len())
-        .filter(|&index| nodes.get(index).parent() == dashbuf::NO_PARENT)
-        .flat_map(|index| dashbuf::prefetch::assets_of_root(document, index as u32))
+    // `prefetch::roots` rather than a scan of this crate's own: "what counts as
+    // a root" is the format's rule, and it gained a name at story #837. Two
+    // copies of the `parent == NO_PARENT` predicate would be two things to keep
+    // in step for no gain.
+    let mut all: Vec<u32> = dashbuf::prefetch::roots(document)
+        .flat_map(|root| dashbuf::prefetch::assets_of_root(document, root))
         .collect();
     all.sort_unstable();
     all.dedup();
@@ -259,6 +261,7 @@ fn assets_of_every_root(document: &Document<'_>) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::{Bound, Layout, layout};
+    use dashbuf::prefetch::ShownRoot;
     use dashbuf::{
         AssetEntry, AssetEntryArgs, AssetKind, Document, DocumentArgs, Fill, ImageFill,
         ImageFillArgs, ImageFormat, NO_PARENT, Node, NodeArgs, Paint, PaintArgs, Wanted,
@@ -475,6 +478,72 @@ mod tests {
         assert_eq!(layout.bound, Bound::EveryRoot);
         assert_eq!(layout.fetch, vec![0], "root 0's asset, and nothing else");
         assert_eq!(layout.bytes, PAYLOAD);
+    }
+
+    /// A [`ShownRoot`] reaches this module's `root` argument — and on this
+    /// target it moves [`Bound`] rather than the byte count (story #837).
+    ///
+    /// `load_document` is the call that joins the selector to [`layout`], and it
+    /// compiles on `wasm32` alone, so this runs the same two steps in the same
+    /// order on the host target. That is the only place the join can be
+    /// asserted, and it is why `ShownRoot` is not merely re-exported here and
+    /// left unused.
+    ///
+    /// **What it deliberately does not claim.** Naming a different root does not
+    /// narrow what a browser fetches, and cannot for *any* document while the
+    /// runtime paints every root. `shown` is one of the sets
+    /// [`assets_of_every_root`] unions, so `shown ⊆ painted` always, and
+    /// [`layout`] fetches `painted` in both branches — the two are the same set
+    /// exactly when the shown root is the only one that draws. The byte count is
+    /// therefore independent of the ordinal, and the equality below says so
+    /// rather than leaving a reader to look for the document shape where it is
+    /// not.
+    ///
+    /// So the ordinal's observable effect here is the reported [`Bound`], which
+    /// is the honest statement of what #837 delivers on this target: a host can
+    /// *say* which root it shows, and the browser can *say back* whether that
+    /// bounded the load. Story #838 is what makes the answer always
+    /// [`Bound::ShownRoot`].
+    ///
+    /// This fixture's roots are one node each, so ordinal N happens to be node
+    /// N. That the ordinal is an index over roots rather than over nodes is
+    /// pinned where the two differ — `dashbuf`'s `residency` suite, whose second
+    /// root is node 4.
+    ///
+    /// Its two `layout` calls overlap with the tests above, which is deliberate
+    /// and is the whole content: those call `layout` with a root index written
+    /// into the test, and this one gets the same two indices out of an ordinal.
+    /// The assertion neither of them makes is the byte-count equality below.
+    #[test]
+    fn a_shown_root_ordinal_reaches_the_layout_and_moves_the_reported_bound() {
+        let many = many_frames(8, false);
+        let document = dashbuf::root_as_document(&many).expect("the fixture parses");
+        let wanted = wanted_for(8);
+        let resolve = |ordinal| {
+            dashbuf::prefetch::resolve(&document, ShownRoot::nth(ordinal))
+                .expect("the fixture has eight roots")
+        };
+
+        // Root 0 is the only root that draws, so showing it is bounded. Root 5
+        // draws nothing and root 0 does, so the guard widens. Same bytes,
+        // different fact — which is why `Bound` is reported rather than
+        // inferred from a count.
+        let first = layout(&document, &wanted, resolve(0));
+        let fifth = layout(&document, &wanted, resolve(5));
+        assert_eq!(first.bound, Bound::ShownRoot);
+        assert_eq!(fifth.bound, Bound::EveryRoot);
+        assert_eq!(
+            fifth.bytes, first.bytes,
+            "the ordinal moved the bound and not the byte count, which is all this target can \
+             deliver until story #838"
+        );
+
+        assert_eq!(
+            dashbuf::prefetch::resolve(&document, ShownRoot::nth(8)),
+            None,
+            "an ordinal past the last root is no root; `load_document` turns this into \
+             WebError::NoSuchRoot rather than falling back to the first"
+        );
     }
 
     /// Every asset entry gets a row, whether or not it was read, because

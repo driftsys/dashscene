@@ -142,7 +142,11 @@ pub fn map_file(path: PathBuf) -> Result<(), DesktopError> {
 /// embedded golden it never should, since it is frozen and pinned elsewhere.
 pub fn scene(arena: &mut Arena, _width: u32, _height: u32) -> LiveScene {
     let loaded = match MAPPED.get() {
-        Some(mapped) => mapped.load(arena),
+        // The first root, which is what this host showed before there was a
+        // way to say otherwise. The showcase's own scenes are single-root and
+        // `--dsb` takes a path rather than a root, so nothing here has a
+        // second artboard to name yet (story #837).
+        Some(mapped) => mapped.load(dashscene_desktop::ShownRoot::FIRST, arena),
         None => dashscene_desktop::load_bytes(DOCUMENT, arena),
     };
     loaded.unwrap_or_else(|error| panic!("the document does not load: {error}"))

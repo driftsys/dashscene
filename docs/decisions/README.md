@@ -243,6 +243,14 @@ into the records below. Per-story decisions land here directly:
   needs. Until then a host widens its load and reports that it did, and R5's
   status is stated per target **and** per document shape (issue #822, ruled at
   the close of slice v0.17).
+- [the-shown-root-is-named-by-ordinal.md](the-shown-root-is-named-by-ordinal.md)
+  — a host names the shown root by its ordinal over the document's roots, one
+  root at a time, as a parameter on each integration crate's load call rather
+  than as state. A name is rejected because `Node.name` is optional and cannot
+  address every root; a node index because an embedder should not have to know
+  which nodes are roots. `first_root` is deleted, and the C ABI still carries no
+  selection — for a different reason than before, which the record states
+  (story #837, the first half of the record above's D3).
 - [dsb-frozen-fixture-r7-guard.md](dsb-frozen-fixture-r7-guard.md) — a
   frozen, checked-in `.dsb` byte fixture guards R7's append-only schema
   evolution (debt #64); binds every edit to `dashbuf.fbs`.

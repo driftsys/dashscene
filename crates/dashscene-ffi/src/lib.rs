@@ -15,12 +15,29 @@
 //! ABI is affordable because scenes are built outside the frame loop — so
 //! nothing here has to pre-empt that shape.
 //!
-//! **Root selection is absent on purpose.** The ABI would carry it, but no host
-//! can name a root yet: both integration crates call
-//! `dashbuf::prefetch::first_root`, and the selection concept is story #837 on
-//! the `main` track. Adding a parameter now would mean inventing a vocabulary
-//! that story is about to settle. It joins when #837 lands, and the versioning
-//! rule below says what that costs.
+//! **Root selection is absent on purpose, and the reason changed at story
+//! #837.** It used to be that no host could name a root at all. That is settled:
+//! `dashbuf::prefetch::ShownRoot` is the vocabulary, both integration crates
+//! take one, and
+//! `docs/decisions/the-shown-root-is-named-by-ordinal.md` records why it is an
+//! ordinal.
+//!
+//! What is missing here is something for it to bound.
+//! [`ds_runtime_load_document`] takes the whole file as `(ptr, len)` and hands
+//! every payload to `dashscene_core::load_document` — the **owning** loader,
+//! which copies every payload into an owned `ImageAsset` and so needs bytes for
+//! every asset entry whether or not anything draws them. A `ShownRoot`
+//! parameter on that call would be accepted and would change nothing
+//! measurable, which is worse than its absence: it would read as a bound that
+//! is not one.
+//!
+//! Two things unblock it, and either is enough. **Issue #925** — this ABI has no
+//! mapped entry point, and the story its documentation deferred that to closed
+//! without giving it an owner. **Story #838** — once the paint follows the shown
+//! root, a root selection means something on this path even while the load does
+//! not. The versioning rule below says what each shape costs: a second entry
+//! point is a new symbol and is free, where a parameter on this one is a changed
+//! signature and bumps [`DS_ABI_VERSION`].
 //!
 //! # The three rules this ABI keeps
 //!

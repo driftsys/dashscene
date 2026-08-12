@@ -49,7 +49,7 @@ mod embedder {
     use dashlang::LiveScene;
     use dashscene_core::Arena;
     use dashscene_web::{
-        FrameKind, Host, Surface, WebError, install_panic_hook, load_document, log,
+        FrameKind, Host, ShownRoot, Surface, WebError, install_panic_hook, load_document, log,
     };
     use wasm_bindgen::prelude::*;
 
@@ -74,7 +74,7 @@ mod embedder {
     async fn run() -> Result<(), WebError> {
         let surface = Surface::attach(CANVAS).await?;
         let mut arena = Arena::new();
-        let live = load_document(DOCUMENT, &mut arena).await?;
+        let live = load_document(DOCUMENT, ShownRoot::FIRST, &mut arena).await?;
         // Detached: this page has one canvas for its whole life, so there is
         // nothing to stop the loop for. `detach` is the call that says so —
         // dropping the handle would stop the loop instead (story #834), and a

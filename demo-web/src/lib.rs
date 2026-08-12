@@ -145,7 +145,14 @@ mod page {
                     // `demo/src/document.rs` gives. Rebuilding would also mean
                     // fetching again, which a frame callback cannot do.
                     (
-                        dashscene_web::load_document(url, &mut arena).await?,
+                        // The first root: this host takes a url, not a root,
+                        // so it has no second artboard to name (story #837).
+                        dashscene_web::load_document(
+                            url,
+                            dashscene_web::ShownRoot::FIRST,
+                            &mut arena,
+                        )
+                        .await?,
                         None,
                         no_pulse as showcase::ScenePulse,
                     )

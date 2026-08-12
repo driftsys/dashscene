@@ -220,14 +220,36 @@ fn the_scan_catches_a_reintroduced_rule_and_leaves_legitimate_lines_alone() {
         host_policy_definitions_in("        let shown_count = self.presents;").is_empty(),
         "a longer identifier that merely contains the word is not the rule"
     );
-    // The regression that made this matcher what it is. `demo/src/document.rs`
-    // binds a local named `shown` for the *shown root* R5 bounds the load by —
-    // an unrelated sense of the word, and the first version of this scan
-    // reported both of its lines as violations.
+    // The regression that made this matcher what it is. A loader binds a local
+    // named `shown` for the *shown root* R5 bounds the load by — an unrelated
+    // sense of the word, and the first version of this scan reported it as a
+    // violation. The line below is `crates/dashscene-web/src/shown.rs`'s, which
+    // is where that binding lives today: the desktop loader's moved to
+    // `crates/dashscene-desktop/src/document.rs` at story #794 and became
+    // `let root = …` at story #837, but the browser's did not, and it is inside
+    // a scanned host. Pinning a line that is really in the tree is the point —
+    // an earlier revision of this story pinned one that was not, which asserts
+    // nothing.
     assert!(
-        host_policy_definitions_in("    let shown = dashbuf::prefetch::first_root(&document)")
-            .is_empty(),
+        host_policy_definitions_in(
+            "    let shown = dashbuf::prefetch::assets_of_root(document, root);"
+        )
+        .is_empty(),
         "R5's shown root is a different rule with the same word, and is not host policy"
+    );
+    // **The collision story #837 hit, and what the scan is owed for it.**
+    // That story gave both integration crates a root-selection parameter, and
+    // the obvious spelling — `shown: ShownRoot` — put a bare `shown:`
+    // declaration into two published signatures. This scan caught both,
+    // correctly by its own rule, which is why the parameter is `shown_root`.
+    // The positive case further down already pins that a parameter named
+    // `shown` stays caught whatever its type; this note is here so the next
+    // person to add one finds the answer beside the rule rather than in a pull
+    // request.
+    assert!(
+        host_policy_definitions_in("        shown_root: ShownRoot,").is_empty(),
+        "`shown_root` is the spelling both integration crates use, and this is the line the scan \
+         really reads in each of them"
     );
     // The same collision one step further on, found when story #792 named a
     // module `shown` for R5's shown root. A path segment ends in `::`, and a

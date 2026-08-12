@@ -37,7 +37,8 @@
 //! let report = dashscene_validator::validate_document(&doc);
 //! if report.has_errors() { /* refuse; never load */ }
 //! let residency = dashbuf::residency::BlobResidency::new();
-//! for index in dashbuf::prefetch::assets_of_root(&doc, shown_root) {
+//! let root = dashbuf::prefetch::resolve(&doc, shown_root)?;  // which artboard
+//! for index in dashbuf::prefetch::assets_of_root(&doc, root) {
 //!     let want = &wanted[index as usize];        // touch + hash + mark ready
 //!     residency.touch(want, &file_bytes[want.range.start as usize..want.range.end as usize])?;
 //! }

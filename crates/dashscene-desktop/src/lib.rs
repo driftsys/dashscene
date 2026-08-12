@@ -84,6 +84,12 @@ pub use present::{
 };
 pub use recovery::Recovery;
 
+/// Which root [`Document::load`] bounds its read by, re-exported from `dashbuf`
+/// so that naming one does not oblige an embedder to declare a dependency on
+/// the format crate and keep its version in step with this one's — the same
+/// reason the `dashscene-gpu` types above are re-exported (story #837).
+pub use dashbuf::prefetch::ShownRoot;
+
 /// Replays a document already in memory, through the **owning** load path.
 ///
 /// [`Document`] is the path to prefer for a file: it maps, and it reads only
@@ -143,9 +149,19 @@ pub enum DesktopError {
     /// canonical would tag a KTX2 as whatever format the entry claims, which is
     /// the mistake issue #640 exists to prevent.
     Derived { path: String },
-    /// The document carries no root node, so there is nothing to show and no
-    /// subtree to bound the load by.
-    NoRoot { path: String },
+    /// The document has no root at the ordinal the embedder asked to show, so
+    /// there is nothing to show and no subtree to bound the load by.
+    ///
+    /// `roots` is how many the document does carry, which is what separates the
+    /// two ways this happens — a document with no roots at all, and an ordinal
+    /// past the end of one that has some. One variant rather than two, because
+    /// an embedder's recovery is the same either way and the count is what tells
+    /// it which mistake it made (story #837).
+    NoSuchRoot {
+        path: String,
+        ordinal: u32,
+        roots: u32,
+    },
     /// A frame was not put on the window.
     Present(PresentError),
     /// The window could not be created.
@@ -175,7 +191,23 @@ impl std::fmt::Display for DesktopError {
                  has no quality profile to name the rung with: it can map a RAW file only \
                  (issue #640)"
             ),
-            Self::NoRoot { path } => write!(f, "{path} carries no root node"),
+            Self::NoSuchRoot {
+                path,
+                ordinal,
+                roots: 0,
+            } => write!(
+                f,
+                "{path} carries no root node (root {ordinal} was asked for)"
+            ),
+            Self::NoSuchRoot {
+                path,
+                ordinal,
+                roots,
+            } => write!(
+                f,
+                "{path} carries {roots} root{}, and root {ordinal} was asked for",
+                if *roots == 1 { "" } else { "s" }
+            ),
             Self::Present(error) => write!(f, "{error}"),
             Self::Window(message) => write!(f, "the window could not be created: {message}"),
             Self::EventLoop(message) => write!(f, "the event loop: {message}"),
@@ -207,5 +239,50 @@ impl std::error::Error for DesktopError {
             Self::Present(error) => Some(error),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DesktopError;
+
+    /// Both `NoSuchRoot` renderings, and the singular.
+    ///
+    /// Rendered rather than matched. `document::tests`'s
+    /// `an_ordinal_past_the_last_root_is_refused_by_name` asserts the variant
+    /// with `matches!`, which never formats it — so transposing `{ordinal}` and
+    /// `{roots}` in either arm would pass every other test in this crate while
+    /// publishing a message that names the two numbers the wrong way round. The
+    /// count is the whole reason D6 of
+    /// `docs/decisions/the-shown-root-is-named-by-ordinal.md` gives for one
+    /// variant instead of two, so it is worth a test that reads it.
+    ///
+    /// The zero-root arm is reachable from nothing else here: the load gate
+    /// refuses a document with no nodes, so only a constructed value renders it.
+    #[test]
+    fn no_such_root_names_both_numbers_and_counts_in_the_singular() {
+        let rendered = |ordinal, roots| {
+            DesktopError::NoSuchRoot {
+                path: "panel.dsb".to_owned(),
+                ordinal,
+                roots,
+            }
+            .to_string()
+        };
+
+        assert_eq!(
+            rendered(1, 2),
+            "panel.dsb carries 2 roots, and root 1 was asked for"
+        );
+        assert_eq!(
+            rendered(1, 1),
+            "panel.dsb carries 1 root, and root 1 was asked for",
+            "every committed goldens/dsb fixture has exactly one root, so this is the commonest \
+             way to reach this error and it must not read `1 roots`"
+        );
+        assert_eq!(
+            rendered(0, 0),
+            "panel.dsb carries no root node (root 0 was asked for)"
+        );
     }
 }

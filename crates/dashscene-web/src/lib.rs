@@ -119,6 +119,16 @@ pub use recovery::Recovery;
 /// to know.
 pub use dashscene_gpu::{AdapterInfo, Backend, DeviceType, TextureFormat};
 
+/// Which root `load_document` bounds its fetch by, re-exported from `dashbuf`
+/// for the reason the block above gives: naming one must not oblige an embedder
+/// to declare a dependency on the format crate (story #837).
+///
+/// Not gated on `wasm32`, for the same reason the block above is not — and
+/// `load_document` is named here in backticks rather than linked for the
+/// opposite reason: it **is** gated, so an intra-doc link to it does not resolve
+/// on a host build, and intra-doc links are a lint gate here.
+pub use dashbuf::prefetch::ShownRoot;
+
 #[cfg(target_arch = "wasm32")]
 pub use document::load_document;
 #[cfg(target_arch = "wasm32")]
@@ -173,10 +183,19 @@ pub enum WebError {
     /// canonical would tag the bytes with whatever format the entry claims,
     /// which is the mistake issue #640 exists to prevent.
     Derived(String),
-    /// The document carries no root node, so there is nothing to show and no
-    /// subtree to bound the load by. Carries the url, as every other variant
-    /// that can name what failed does.
-    NoRoot(String),
+    /// The document has no root at the ordinal the embedder asked to show, so
+    /// there is nothing to show and no subtree to bound the load by. Carries the
+    /// url, as every other variant that can name what failed does.
+    ///
+    /// `roots` is how many the document does carry, which is what separates a
+    /// document with no roots at all from an ordinal past the end of one that
+    /// has some. `dashscene_desktop::DesktopError::NoSuchRoot` is the same
+    /// variant on the other host, deliberately (story #837).
+    NoSuchRoot {
+        url: String,
+        ordinal: u32,
+        roots: u32,
+    },
     /// The document does not pass the referential load gate.
     ///
     /// Carries the validator's own [`Report`] rather than a formatted string,
@@ -235,7 +254,23 @@ impl std::fmt::Display for WebError {
                  has no quality profile to name the rung with: it can load a RAW file only \
                  (issue #640)"
             ),
-            Self::NoRoot(url) => write!(f, "{url} carries no root node"),
+            Self::NoSuchRoot {
+                url,
+                ordinal,
+                roots: 0,
+            } => write!(
+                f,
+                "{url} carries no root node (root {ordinal} was asked for)"
+            ),
+            Self::NoSuchRoot {
+                url,
+                ordinal,
+                roots,
+            } => write!(
+                f,
+                "{url} carries {roots} root{}, and root {ordinal} was asked for",
+                if *roots == 1 { "" } else { "s" }
+            ),
             // Not `{report}`. `Report`'s own `Display` is one `writeln!` per
             // diagnostic, so interpolating it puts embedded newlines and a
             // trailing one inside an error message — which every sibling
@@ -270,4 +305,37 @@ pub(crate) fn one_line(report: &Report) -> String {
         .map(|diagnostic| diagnostic.to_string())
         .collect::<Vec<_>>()
         .join("; ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WebError;
+
+    /// Both `NoSuchRoot` renderings, and the singular — the browser's copy of
+    /// `dashscene_desktop`'s test of the same variant, deliberately, because the
+    /// two messages are meant to read alike and nothing else holds them to it.
+    #[test]
+    fn no_such_root_names_both_numbers_and_counts_in_the_singular() {
+        let rendered = |ordinal, roots| {
+            WebError::NoSuchRoot {
+                url: "/panel.dsb".to_owned(),
+                ordinal,
+                roots,
+            }
+            .to_string()
+        };
+
+        assert_eq!(
+            rendered(1, 2),
+            "/panel.dsb carries 2 roots, and root 1 was asked for"
+        );
+        assert_eq!(
+            rendered(1, 1),
+            "/panel.dsb carries 1 root, and root 1 was asked for"
+        );
+        assert_eq!(
+            rendered(0, 0),
+            "/panel.dsb carries no root node (root 0 was asked for)"
+        );
+    }
 }
