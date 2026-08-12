@@ -1,160 +1,145 @@
-# v0.19 driver prompt — the shown-root chain
+# v0.19 driver prompt — story #838, and issue #863 behind it
 
-    status  written 2026-08-11, after story #835's merge. Archived to
+    status  written 2026-08-11, rewritten 2026-08-12 when two of the three
+            stories it was written for landed overnight. Archived to
             `docs/archive/` at v0.19's close, with its row removed from
             `docs/wip/README.md` in the same commit.
-    scope   stories #836, #837 and #838, on `main`. The slice's other stories
-            are #834 and #835 (`main`, both closed), #839 to #842 (the Android
-            half, on `integration/v0.19-android`), and #843, the records, which
-            depends on all of them and is nobody's until they land.
+    scope   story #838 on `main`, and issue #863, which is labelled `story` and
+            has no branch yet. The rest of the slice: #834 to #837 closed,
+            #839 to #842 the Android half on `integration/v0.19-android`, and
+            #843, the records, which depends on all of them.
     epic    #833
 
-## The hold on these three is discharged
+## What landed while this prompt sat here, and what it changes
 
-Epic #833 and all three issues open with **"Hold until v0.18's `dashscene-core`
-and `dashscene-engine` stories have landed."** They have: v0.18 closed on
-2026-08-11 when epic #769 closed. Read that instruction as satisfied rather than
-as a stop — the interleaving it was protecting is why these three go to `main`
-story by story instead of onto an integration branch, not a reason to wait.
+**#836 and #837 are closed** (PRs #928 and #935, 2026-08-12). The earlier
+revision of this file described all three as ahead of you; two are behind you.
 
-## Read first
+What #837 built, because #838 stands on it:
 
-- Epic **#833** — the slice's shape, and the story table where these are S19.3
-  to S19.5.
-- [`../decisions/the-shown-root-bounds-the-load-not-the-paint.md`](../decisions/the-shown-root-bounds-the-load-not-the-paint.md)
-  — the ruling #838 builds on. Read it before designing anything.
-- [`../design/host-integration.md`](../design/host-integration.md) — the two
-  integration crates as built, the "Known gaps, named" section, and the
-  `document_replaced` contract named below.
-- `crates/dashscene-web/src/shown.rs` — the module documentation. It states what
-  R5 does and does not do on the web today, in its own words.
-- `crates/dashscene-ffi/src/lib.rs` — the paragraph beginning "**Root selection
-  is absent on purpose.**"
+- **`dashbuf::prefetch::ShownRoot(u32)`**, with `prefetch::resolve`, is the
+  vocabulary. `docs/decisions/the-shown-root-is-named-by-ordinal.md` records
+  why it is an ordinal.
+- **`first_root` is deleted**, not deprecated — the module says leaving it
+  would be "an invitation". Both integration crates now take a `ShownRoot`
+  (`crates/dashscene-web/src/document.rs`,
+  `crates/dashscene-desktop/src/document.rs`).
+- **`dashscene-ffi`'s own module documentation has already been updated** and
+  is worth reading before you touch anything: it explains why a `ShownRoot`
+  parameter there would be "a bound that is not one", and names #838 and #925
+  as the two things that would make one mean something.
 
-## The three stories, and why the order is not negotiable
+**The v0.18 hold is discharged.** #838 opens with "Hold until v0.18's
+`dashscene-core` and `dashscene-engine` stories have landed." They have — v0.18
+closed 2026-08-11 at epic #769. Read it as satisfied.
 
-- **#836 measures and changes nothing.** The engine solves every root and
-  `Arena::dfs_order` walks all of them into one index space; nothing prices
-  that. It is first because the two after it change what it measures, and
-  because #836's own body says that without the band, half of #822's
-  justification "would ship as an assertion, which is the shape v0.13's t2 tier
-  spent a slice removing". Do not pre-empt its number — including in prose.
-- **#837 is a vocabulary.** No host can say which root it shows. It settles what
-  "the shown root" _is_ as a concept.
-- **#838 spends it.** The solve, the committed table and the paint follow the
-  shown root. This is the story that edits `Arena::dfs_order`.
+## Story #838
 
-## #838 is what issue #822 becomes
+**Read the issue rather than a summary of it.** It is precise where a summary
+would not be: it names the three sites with line numbers, it records that D1
+made painting every root the architecture as designed — so this is a change of
+intent and not a bug fix — and it states the consequence that matters, that
+`Arena::dfs_order` is the shared index space and root-scoping it makes a change
+of shown root **a renumbering event** the dirty-set contract must treat the way
+it treats `document_replaced`.
 
-Not a neighbouring gap: epic #833's story table names #822 in S19.5's own row,
-and the shown-root decision record is what that issue becomes. **#822 is still
-open**, and closing it belongs with #838 rather than to a later tidy-up —
-otherwise the milestone keeps an open issue describing work that has shipped, or
-someone files a duplicate against it.
+Two things to carry in beside it:
 
-## What #837 costs beyond `main`
+- The contract it names lives at `Present::document_replaced`
+  (`crates/dashscene-desktop/src/present.rs`) and
+  `SurfaceRenderer::document_replaced` (`crates/dashscene-gpu/src/surface.rs`),
+  described in `docs/design/host-integration.md`.
+  `docs/decisions/dirty-set-advisory-across-boundary-b.md` is about the dirty
+  set across boundary B and does **not** cover this.
+- **Issue #822 is what this story becomes.** Epic #833's table names it in
+  S19.5's own row. Close it with the story, or the milestone keeps an issue
+  describing shipped work.
 
-**The C ABI is waiting on it, in writing.** `dashscene-ffi`'s module
-documentation says root selection is absent on purpose, that the ABI would carry
-it, and that "It joins when #837 lands." So #837 unblocks a parameter on a
-published, version-negotiated boundary, and that crate's versioning rule says
-what adding one costs. Decide whether the ABI change rides with the story or
-follows it, and do not leave the sentence saying the concept is still to come
-once it is not.
+## Issue #863 — read this section before you read the issue
 
-## What #838 has to treat as a renumbering event
+**The issue's report is sound. The triage comments on it are not, and one of
+them is mine.** On 2026-08-12 I claimed the document carries a glyph atlas,
+citing a `GlyphAtlas` table. `grep -rn GlyphAtlas` over the tree returns
+nothing. The table is `VectorAtlas`, for baked vector-shape fields, referenced
+only by `VectorShape.atlas`; the phrase "glyph atlas" appears near it twice, as
+an analogy both times. PR #933 was built on that and closed unmerged. A later
+comment on the issue corrects it. Read the corrections, not the first comment.
 
-`Arena::dfs_order` is the **shared index space**. Root-scoping it makes a change
-of shown root a renumbering event, and it has to be treated the way a replaced
-document is: a new arena's generations restart and nothing in the frames
-themselves says so. The contract is `Present::document_replaced`
-(`crates/dashscene-desktop/src/present.rs`) and
-`SurfaceRenderer::document_replaced` (`crates/dashscene-gpu/src/surface.rs`),
-described in [`../design/host-integration.md`](../design/host-integration.md).
-`docs/decisions/dirty-set-advisory-across-boundary-b.md` is about the dirty set
-across boundary B and does **not** cover this; do not go looking there for it.
+What is actually true, each of it derived:
 
-Getting this wrong does not fail loudly. It patches an instance buffer against
-indices that mean something else now.
+- **Neither the font nor the glyph atlas is in the document.** The atlas set
+  reaches the runtime through one seam,
+  `GlyphRunTable::with_atlases(solver.atlases())`
+  (`crates/dashscene-core/src/arena.rs`) — that is, from the solver the host
+  builds. `AssetKind` has two variants, `Image` and `DistanceField`.
+- **The atlas is the first blocker, not the font.** `TaffySolver::stage_text`
+  checks `self.atlases.is_empty()` **before** the typesetter.
+- **A decision record already covers this**:
+  `docs/decisions/font-resolution-order.md`, accepted 2026-07-25. It rules that
+  an embedded font should use the content-addressed asset table, and says "Step
+  1 is not implementable yet, and **the blocker is the atlas, not the format**"
+  — the render path consumes an `AtlasBundle` and the MSDF baker is an external
+  pinned binary, so nothing turns embedded font bytes into glyphs at load time.
+  It names two exits: bake at pack time (#345, dashpack), or bake in process.
 
-## Where the three integration crates actually stand
+**So #863 does not need a new decision record. It needs that one extended in
+place**, which is what AGENTS.md and the sdd lifecycle rule both require. The
+issue adds two things to it: the gap is now reachable through three shipped
+integration crates rather than being a v1 concern, and the layout half —
+text nodes measuring as empty leaves, so siblings reflow around a box the design
+did not specify — is named nowhere.
 
-Checked in the source on 2026-08-11, because prose written when there were two
-crates says "both integration crates" and there are three:
+Four things a review surfaced that are still open, all checked:
 
-- **`dashscene-web` bounds the load only when no other root draws a payload.**
-  `shown.rs` says it plainly: it reads the shown root's assets "only when no
-  other root draws one, and otherwise reads the union over every root", and "the
-  many-frame document R5's criterion is really about — many roots, one payload
-  each — takes the widened path, so **R5 does not hold** for that shape on this
-  target." That is the shape this chain is about, so do not write that the web
-  already bounds it.
-- **`dashscene-desktop`** maps the file and binds a byte range per asset entry,
-  hashing only the shown root's, so an unread row still decodes.
-- **`dashscene-ffi` selects no root at all.** `ds_runtime_load_document` takes
-  the whole file as bytes and hands every payload to
-  `dashscene_core::load_document`. Its own documentation says a mapped path
-  "belongs with the platform host that has the file (story #841)" — and #841
-  closed without it, while `dashscene-android` says where the document comes
-  from is the embedder's. **So that path is unowned rather than impossible** —
-  issue #925, filed off this prompt's own review. Do not record it as a
-  structural limit; settle it near #838, after which the paint half of R5 holds
-  on that path and the load half still does not.
+- **`dashscene-android` is affected and documented nowhere.** Its "Where the
+  document comes from" bullet points straight at `ds_runtime_load_document`,
+  and it has a "What is not established yet" section where the note belongs.
+- **An `AssetKind` append is not free.** `dashpack`'s `AssetClass::of`
+  (`crates/dashpack/src/profile.rs`) matches the two kinds and returns
+  `PackError::UnknownKind` for anything else, so a `Font` variant would compile
+  and then fail to pack. Making it work needs an `AssetClass`, a colour space
+  and a lossy-rung ladder, none of which mean anything for a binary face.
+- **The bank was never answered.** #863 asked whether these come from the
+  document, the bank, or the host. `dashpack` exists for cold-bank assembly and
+  `crates/dashbuf/tests/bank.rs` assembles one document under two banks — the
+  natural home for bytes shared across many documents.
+- **Both demonstrations with a document path can reproduce it** — `demo --dsb`
+  and `demo-web`'s `Source::Document` arm — and hide it only because their
+  defaults are text-free. `docs/features.md` names the no-glyphs effect and not
+  the layout one.
 
-## The cost this chain exists to remove
+## Environment
 
-The roadmap prices the shape: **sixty-five artboards of solve and committed
-table per frame while one is shown.** What that costs in milliseconds is exactly
-what #836 measures and what nothing has measured yet — on a tiling GPU with a
-fixed frame budget it is the obvious suspect, and "obvious suspect" is not a
-number.
+Verified on 2026-08-11 and 2026-08-12. Each has cost someone an hour:
 
-Story #842 will not supply it either: it measures the showcase's frame rate on
-device, and `corpus/showcase`'s scenes are single-root. The sixty-five-root
-document is `goldens/tooling/tests/startup_scaling.rs`'s.
+- **`just verify` runs no test tier** since PR #908. It still type-checks —
+  `clippy --all-targets` compiles what it lints — so a compile error fails
+  there. No test does. Run `just build` and quote its `Summary` line.
+- **CI compiles for wasm32** since #903: the `wasm-gates` job runs
+  `just wasm-painter`, `just wasm-host`, `just wasm-lint`.
+- **`flatc` installs from `.github/actions/install-flatc`**, deriving its
+  version from the workspace manifest. Do not copy the version anywhere (#909).
+- **A closing keyword next to an issue number closes it**, from a commit
+  message as well as PR prose, and a negation does not help. AGENTS.md carries
+  the rule; two issues were shut by accident on 2026-08-11.
+- **`git push` hangs** behind `git-credential-manager`. Use
+  `git -c credential.helper='!gh auth git-credential' push`, and expect a retry.
+- **Another session works this repository.** `main` moved five times during the
+  session that wrote this, and twice under a branch that was mid-review. Fetch
+  before you branch and rebase before you merge.
 
-## Environment, as of 2026-08-11
-
-Four things changed under this repository the day these stories were queued. All
-are verified, and each has already cost someone an hour:
-
-- **`just verify` no longer runs a test tier.** PR #908 bounded the pre-push
-  gate at seconds: commit-message lint, `lint`, `audit`, a scoped secret scan.
-  It still type-checks — `clippy --all-targets` compiles what it lints, over the
-  workspace and every package `wasm-lint` names — so a compile error still fails
-  there. What no longer runs is any test. Run `just build` by hand for the
-  regression tier and quote its `Summary` line.
-- **CI compiles for wasm32.** The `wasm-gates` job runs `just wasm-painter`,
-  `just wasm-host` and `just wasm-lint` (issue #903). Before it, four of those
-  commands ran on no runner at all; the fifth, a `dashscene-web` clippy line,
-  had been in the `clippy` job since PR #901.
-- **`flatc` installs from `.github/actions/install-flatc`**, which derives its
-  version from the workspace manifest and asserts what it installed. Do not put
-  a copy of the version anywhere (issue #909).
-- **A closing keyword next to an issue number closes that issue** — from a
-  commit message as well as from PR prose, and a negation does not save you. Two
-  issues were shut by accident this way on 2026-08-11. AGENTS.md carries the
-  rule.
-
-Also still true: **`git push` hangs** behind `git-credential-manager`. Use
-`git -c credential.helper='!gh auth git-credential' push`, and expect even that
-to need a retry. `gh` itself works throughout.
-
-## The definition of done these three share
+## Definition of done
 
 AGENTS.md's story workflow is the authority; this is what it means here.
 
 - `just build` green, and the tier named in the pull request.
-- The pull request opened **ready, never a draft** — a draft is not reviewed.
-- `/code-review <pr> high` run, every finding captured as a checklist in the
-  description, criticals fixed and minors filed as one **`debt`-labelled** issue
-  each. Every pull request that ran it on 2026-08-11 came back with nine to
-  fifteen findings, and on several the author's own pass had found none of them.
-  It is not optional, and this prompt is an example: its first draft carried
-  fifteen.
-- **CI green on the commit being merged**, not on an earlier one
-  (`docs/decisions/ci-green-before-story-merge.md`). A local `just build` does
-  not substitute for it, and `just verify` no longer runs a test tier at all.
-- Re-read the milestone's open issues before pressing merge, not only at the
-  start: debt filed against a slice in progress is often a warning about the
-  story that is open right now.
+- The pull request opened **ready, never a draft**.
+- `/code-review <pr> high` run, findings as a checklist in the description,
+  criticals fixed, minors filed one `debt`-labelled issue each. On this slice it
+  has returned nine to fifteen findings on every pull request, including two
+  that were wrong at their foundation and had to be closed rather than patched.
+  Assume it will find something and leave time for that.
+- **CI green on the commit being merged**
+  (`docs/decisions/ci-green-before-story-merge.md`). `just build` locally is not
+  a substitute.
+- Re-read the milestone's open issues before merging, not only at the start.
