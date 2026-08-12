@@ -16,9 +16,10 @@
 
 ## Read first
 
-- **Issue #838 itself**, and `docs/decisions/the-shown-root-bounds-the-load-not-the-paint.md`,
-  the ruling it builds on. D3 and D4 are what make the traversal change a
-  renumbering event and what keep `Bound::EveryRoot` in the API.
+- **Issue #838 itself**, and
+  `docs/decisions/the-shown-root-bounds-the-load-not-the-paint.md`, the ruling
+  it builds on. D3 and D4 are what make the traversal change a renumbering event
+  and what keep `Bound::EveryRoot` in the API.
 - `docs/design/host-integration.md` — "Which root each host shows", "Known gaps,
   named" (which carries the R5 document-shape condition #838 must remove), and
   the `document_replaced` contract.
@@ -32,12 +33,12 @@
 **#836 at PR #928 and #837 at PR #935**, both 2026-08-12.
 
 **#837 built what #838 stands on.** `dashbuf::prefetch::ShownRoot(u32)` with
-`prefetch::resolve`; `first_root` **deleted** rather than deprecated, because the
-module says leaving it would be "an invitation"; both integration crates now take
-a `ShownRoot`; and `docs/decisions/the-shown-root-is-named-by-ordinal.md` records
-why it is an ordinal. `dashscene-ffi`'s module documentation was rewritten with
-it and explains why a `ShownRoot` parameter there would be "a bound that is not
-one" — read that before touching the ABI.
+`prefetch::resolve`; `first_root` **deleted** rather than deprecated, because
+the module says leaving it would be "an invitation"; both integration crates now
+take a `ShownRoot`; and `docs/decisions/the-shown-root-is-named-by-ordinal.md`
+records why it is an ordinal. `dashscene-ffi`'s module documentation was
+rewritten with it and explains why a `ShownRoot` parameter there would be "a
+bound that is not one" — read that before touching the ABI.
 
 **#836 built the band that will fail when you succeed.**
 `goldens/tooling/tests/per_frame_scaling.rs` asserts `MANY_LAYOUT_SOLVES = 65`
@@ -52,10 +53,10 @@ before number from a run on `main` before you change anything.
 
 Read the issue rather than a summary. It names the three sites, records that D1
 made painting every root the architecture as designed — so this is a change of
-intent, not a bug fix — and states the consequence that matters: `Arena::dfs_order`
-is the shared index space, so root-scoping it makes a change of shown root **a
-renumbering event** the dirty-set contract must treat the way it treats
-`document_replaced`.
+intent, not a bug fix — and states the consequence that matters:
+`Arena::dfs_order` is the shared index space, so root-scoping it makes a change
+of shown root **a renumbering event** the dirty-set contract must treat the way
+it treats `document_replaced`.
 
 Its definition of done is five items, and three of them are not code:
 
@@ -99,8 +100,8 @@ What is true, each item derived:
   reads "a baked vector's MSDF, a glyph atlas". So the question is not whether
   the enum needs a new variant — it is whether an atlas may be embedded at all,
   and `docs/decisions/font-resolution-order.md` answers that in its Choice: **"A
-  rasterised atlas is the opposite and must never be embedded: it is a result."**
-  That is P1. Do not design the embedding.
+  rasterised atlas is the opposite and must never be embedded: it is a
+  result."** That is P1. Do not design the embedding.
 - **That record already rules on the rest**, accepted 2026-07-25: an embedded
   font should use the content-addressed asset table, and "Step 1 is not
   implementable yet, and **the blocker is the atlas, not the format**" — the
@@ -130,9 +131,10 @@ Three findings still open, checked:
 - **`docs/features.md` names the glyph effect and not the layout one**, at the
   line citing the issue.
 
-`dashscene-android` is **already** documented — `crates/dashscene-android/src/frames.rs`
-and `demo-android/src/lib.rs` both name the issue, and `docs/features.md` names
-it in the Android section. An earlier draft of this prompt said otherwise.
+`dashscene-android` is **already** documented —
+`crates/dashscene-android/src/frames.rs` and `demo-android/src/lib.rs` both name
+the issue, and `docs/features.md` names it in the Android section. An earlier
+draft of this prompt said otherwise.
 
 **Issue #925 is not a structural limit.** The C ABI has no mapped entry point
 because the story its documentation deferred that to closed without giving it an
@@ -152,8 +154,8 @@ Verified 2026-08-12. Each has cost someone an hour:
   compile error fails there; no test does. Run `just build` and quote its
   `Summary` line.
 - **CI compiles for wasm32** since #903, in the `wasm-gates` job.
-- **`flatc` installs from `.github/actions/install-flatc`**, deriving its version
-  from the workspace manifest. Do not copy the version anywhere (#909).
+- **`flatc` installs from `.github/actions/install-flatc`**, deriving its
+  version from the workspace manifest. Do not copy the version anywhere (#909).
 - **A closing keyword next to an issue number closes it**, from a commit message
   as well as pull-request prose, and a negation does not help. Two issues were
   shut by accident on 2026-08-11.
