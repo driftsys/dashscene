@@ -422,6 +422,7 @@ pub fn run<A: App>(app: A) -> Result<(), DesktopError> {
         ticks: 0,
         presents: 0,
         rebinds: 0,
+        renumber_reported: None,
         parked: None,
         failure: None,
     };
@@ -465,6 +466,16 @@ struct Host<A: App> {
     /// Consecutive presenter rebinds with no successful frame between them. See
     /// [`MAX_CONSECUTIVE_REBINDS`].
     rebinds: u32,
+    /// The committed generation whose renumbering this loop has already
+    /// reported (story #838).
+    ///
+    /// `CommittedScene::renumbered` describes **one commit**, and an idle tick
+    /// commits nothing — so the flag outlives the frame that raised it.
+    /// Without this the loop would report the same renumbering on every frame
+    /// until the scene next moved, and [`Present::document_replaced`] is not a
+    /// cheap call to repeat: it drops every resident texture as well as the
+    /// uploaded instance rows.
+    renumber_reported: Option<u64>,
     parked: Option<Parked>,
     /// The first failure that stopped the loop. `ApplicationHandler`'s methods
     /// return nothing, so a failure is parked here and reported by [`run`]
@@ -596,6 +607,31 @@ impl<A: App> Host<A> {
         let generation = live.tick(dt.as_secs_f32(), &mut self.arena);
         let tick_took = before_tick.elapsed();
         self.ticks += 1;
+
+        // A commit that renumbered the rect table is the one case where a
+        // painter's per-document state goes stale **without** the arena being
+        // replaced: the same rect index names a different node afterwards
+        // (story #838). `rebuild` below reports the arena case; this reports
+        // the other, and both answer the same `Present::document_replaced`.
+        //
+        // Gated on the generation because `renumbered` is a property of a
+        // commit and this runs once a frame: an idle tick returns without
+        // committing, so the last commit's answer is still what
+        // `arena.committed()` gives back, and reporting it again would drop the
+        // presenter's resident textures on every frame of a settled scene.
+        //
+        // The generation is stamped only once the report has been **made**, so
+        // a renumbering that lands on a frame with no presenter — a frame
+        // between `rebind`'s release and the next bind — is still reported to
+        // the presenter that follows, rather than marked as delivered to
+        // nobody.
+        if self.renumber_reported != Some(generation)
+            && self.arena.committed().renumbered()
+            && let Some(presenter) = self.presenter.as_mut()
+        {
+            presenter.document_replaced();
+            self.renumber_reported = Some(generation);
+        }
 
         let advanced = live.advanced();
         let forced = self.forced.take();
@@ -797,6 +833,11 @@ impl<A: App> Host<A> {
             presenter.document_replaced();
         }
         self.arena = Arena::new();
+        // Generations count from the new arena, so one already reported names
+        // nothing in it — and a scene that names a shown root while it builds
+        // would otherwise have that commit's renumbering skipped by a match
+        // against the outgoing arena's numbering.
+        self.renumber_reported = None;
         let live = self.app.build(&mut self.arena, width, height);
         // Generations count from a new arena, so nothing this scene commits can
         // be compared against what the window showed of the last one. The gate
@@ -1025,6 +1066,7 @@ mod tests {
             ticks: 0,
             presents: 0,
             rebinds: 0,
+            renumber_reported: None,
             parked: None,
             failure: None,
         }

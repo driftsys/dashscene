@@ -91,6 +91,14 @@ the alternative leaves two costs proportional to file size rather than to what
 is shown — the browser load, which R5 names, and the per-frame solve and
 committed table, which no criterion currently measures at all.
 
+**D2 is built — story #838 (2026-08-12).** The runtime paints the shown root
+when a host names one, the per-frame band went from 65.00x to 1.00x on both
+terms, the browser's widening is deleted, and R5 lost its document-shape
+qualification. What the story added that this record did not predict is the
+default: nothing is confined until a root is named.
+[`the-runtime-paints-the-shown-root.md`](the-runtime-paints-the-shown-root.md)
+is the as-built record, and D2 of it says why.
+
 **D3 — it is two changes and a renumbering, not one traversal edit.** #822
 describes the traversal. Two further pieces are load-bearing and are recorded
 here so that the estimate is not taken from the issue alone:

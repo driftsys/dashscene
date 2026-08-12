@@ -239,6 +239,15 @@ records below. Per-story decisions land here directly:
   which nodes are roots. `first_root` is deleted, and the C ABI still carries no
   selection — for a different reason than before, which the record states (story
   #837, the first half of the record above's D3).
+- [the-runtime-paints-the-shown-root.md](the-runtime-paints-the-shown-root.md) —
+  the traversal, the solve and the paint follow the shown root, and only when
+  one is named: `Txn::show_root(None)` is the default and means every root,
+  because 69 tests build sibling roots as independent nodes and a shown root is
+  a property of a document rather than of a scene. A change of shown root is a
+  renumbering event the dirty set does not span, reported by
+  `CommittedScene::renumbered`. R5 loses its document-shape qualification, the
+  per-frame band goes from 65.00x to 1.00x, and the browser's widening is
+  deleted (story #838, issue #822, the second half of the record above's D3).
 - [dsb-frozen-fixture-r7-guard.md](dsb-frozen-fixture-r7-guard.md) — a frozen,
   checked-in `.dsb` byte fixture guards R7's append-only schema evolution (debt
   #64); binds every edit to `dashbuf.fbs`.

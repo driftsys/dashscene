@@ -6,6 +6,7 @@
 
 use dashscene_core::{
     Arena, AxisSizing, CrossAxisAlign, GridTrack, LayoutMode, MainAxisAlign, NodeId, Prop,
+    ShownRoot,
 };
 use dashscene_engine::TaffySolver;
 
@@ -1406,5 +1407,105 @@ fn a_fixed_height_wrap_container_packs_its_lines_at_the_cross_start() {
         rect_of(&arena, second),
         (0.0, 40.0, 60.0, 30.0),
         "packed, not spread"
+    );
+}
+
+/// Confining the traversal to one root also confines the **solve**: a frame
+/// runs one Taffy layout computation per shown root, not one per root in the
+/// document (story #838).
+///
+/// `TaffySolver::solves` is the counter story #836's per-frame band is stated
+/// over, and this is the same quantity asserted at the smallest size the two
+/// answers differ at. The band re-measures it over the sixty-five-root document
+/// and states the before and the after; this says the mechanism is the shown
+/// root rather than anything about that document.
+#[test]
+fn the_solve_runs_once_per_shown_root_and_not_once_per_root() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    for _ in 0..4 {
+        let root = txn.add_node(None, None);
+        txn.set_prop(root, Prop::Width(10.0));
+        txn.set_prop(root, Prop::Height(10.0));
+    }
+    txn.commit();
+
+    let mut solver = TaffySolver::new();
+
+    // Every root: the first solve builds the tree and computes all four.
+    let first = arena.roots()[0];
+    let mut txn = arena.open();
+    txn.set_prop(first, Prop::X(1.0));
+    txn.commit_with(&mut solver);
+    assert_eq!(solver.solves(), 4, "four roots, four layout computations");
+
+    // One root shown: the tree is unchanged and one of the four is computed.
+    let before = solver.solves();
+    let mut txn = arena.open();
+    txn.show_root(Some(ShownRoot::nth(2)));
+    txn.commit_with(&mut solver);
+    assert_eq!(
+        solver.solves() - before,
+        1,
+        "showing one root must cost one layout computation, whatever the document holds"
+    );
+}
+
+/// A change of shown root reports the newly shown subtree in full, and the
+/// committed rects are that root's own.
+///
+/// The pruned readback an ordinary frame uses reports what **moved**, measured
+/// against the previous solve — and nothing about a root that was never shown
+/// has moved. Without the full readback here, `commit_with` finds no rect for
+/// any of its nodes and refuses the commit by name, which is the loud version
+/// of this failure; the quiet version would be a subtree carrying another
+/// root's geometry.
+#[test]
+fn a_change_of_shown_root_reports_the_new_subtree_in_full() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let first = txn.add_node(None, None);
+    txn.set_prop(first, Prop::Width(50.0));
+    txn.set_prop(first, Prop::Height(50.0));
+    let second = txn.add_node(None, None);
+    txn.set_prop(second, Prop::X(400.0));
+    txn.set_prop(second, Prop::Y(300.0));
+    txn.set_prop(second, Prop::Width(60.0));
+    txn.set_prop(second, Prop::Height(60.0));
+    let child = txn.add_node(Some(second), None);
+    txn.set_prop(child, Prop::Width(20.0));
+    txn.set_prop(child, Prop::Height(20.0));
+    txn.show_root(Some(ShownRoot::FIRST));
+    txn.commit_with(&mut TaffySolver::new());
+
+    let mut solver = TaffySolver::new();
+    let mut txn = arena.open();
+    txn.set_prop(first, Prop::X(1.0));
+    txn.commit_with(&mut solver);
+    assert_eq!(
+        arena.committed().rects().len(),
+        1,
+        "the first root is a leaf"
+    );
+
+    let mut txn = arena.open();
+    txn.show_root(Some(ShownRoot::nth(1)));
+    txn.commit_with(&mut solver);
+
+    assert_eq!(
+        arena.committed().rects().len(),
+        2,
+        "the second root and its child, and nothing of the first"
+    );
+    assert_eq!(rect_of(&arena, second), (400.0, 300.0, 60.0, 60.0));
+    assert_eq!(
+        rect_of(&arena, child),
+        (400.0, 300.0, 20.0, 20.0),
+        "the child is placed against its own root's origin, not the one that was shown before"
+    );
+    assert_eq!(
+        arena.committed().rect_index_of(first),
+        None,
+        "and the root that is no longer shown has no row"
     );
 }

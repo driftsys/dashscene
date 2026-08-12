@@ -147,10 +147,10 @@ does.
 
 The second is `2026-08-11-v019-SHOWN-ROOT-DRIVER-PROMPT.md`, for the same slice
 and the same close condition. It carries what is left of the `main` track —
-story #838, and issue #863 behind it — while the first carries the Android half.
-**Both are v0.19's**, which is what is unusual about this pair rather than its
-size: earlier overlaps were two slices at once, or one prompt superseding
-another within a slice, and this is neither.
+issue #863, since story #838 landed on 2026-08-12 — while the first carries the
+Android half. **Both are v0.19's**, which is what is unusual about this pair
+rather than its size: earlier overlaps were two slices at once, or one prompt
+superseding another within a slice, and this is neither.
 
 The two slices' prompts overlapped before that, because v0.18 and v0.19 ran at
 the same time, on `main` and on `integration/v0.19-android` respectively. **That
@@ -409,15 +409,15 @@ Two driver prompts are held here now, **both v0.19's**, as the section above
 says. `2026-08-09-v019-ANDROID-DRIVER-PROMPT.md` carries stories #841 and #842
 on `integration/v0.19-android`, and leaves at the slice's close.
 `2026-08-11-v019-SHOWN-ROOT-DRIVER-PROMPT.md` carries what is left of the
-shown-root work on `main` — story #838 and issue #863 — and leaves on the same
-condition, as its own status line says. It was written for #836 to #838 and
-rewritten on 2026-08-12 when the first two landed overnight, which is the hazard
-a handoff held across a working session carries: **its scope line is the first
-thing to go stale, and the file name keeps the original scope forever.** They
-are two because the slice is worked on two tracks that share no branch. Of the
-earlier concurrent pairs only one was a supersession — v0.18's, at `53e61c5` —
-and the paragraph further down says so; the rest were two slices, or two
-unrelated handoffs, held at once.
+shown-root work on `main` — issue #863, since story #838 landed on 2026-08-12 —
+and leaves on the same condition, as its own status line says. It was written
+for #836 to #838 and rewritten on 2026-08-12 when the first two landed
+overnight, which is the hazard a handoff held across a working session carries:
+**its scope line is the first thing to go stale, and the file name keeps the
+original scope forever.** They are two because the slice is worked on two tracks
+that share no branch. Of the earlier concurrent pairs only one was a
+supersession — v0.18's, at `53e61c5` — and the paragraph further down says so;
+the rest were two slices, or two unrelated handoffs, held at once.
 
 This paragraph said "none" from 2026-08-07, when v0.17's prompt was added and
 this sentence was not touched, until that prompt was archived a day later and

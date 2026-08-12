@@ -22,22 +22,32 @@
 //! `docs/decisions/the-shown-root-is-named-by-ordinal.md` records why it is an
 //! ordinal.
 //!
-//! What is missing here is something for it to bound.
+//! What was missing was something for it to bound.
 //! [`ds_runtime_load_document`] takes the whole file as `(ptr, len)` and hands
 //! every payload to `dashscene_core::load_document` — the **owning** loader,
 //! which copies every payload into an owned `ImageAsset` and so needs bytes for
 //! every asset entry whether or not anything draws them. A `ShownRoot`
-//! parameter on that call would be accepted and would change nothing
+//! parameter on that call would have been accepted and changed nothing
 //! measurable, which is worse than its absence: it would read as a bound that
 //! is not one.
 //!
-//! Two things unblock it, and either is enough. **Issue #925** — this ABI has no
-//! mapped entry point, and the story its documentation deferred that to closed
-//! without giving it an owner. **Story #838** — once the paint follows the shown
-//! root, a root selection means something on this path even while the load does
-//! not. The versioning rule below says what each shape costs: a second entry
-//! point is a new symbol and is free, where a parameter on this one is a changed
-//! signature and bumps [`DS_ABI_VERSION`].
+//! **Story #838 ended that half, and it is why this paragraph is no longer a
+//! reason to leave the selection out.** The traversal, the solve and the paint
+//! follow the root a host names, so a `ShownRoot` reaching this ABI would bound
+//! the **per-frame** cost of a many-artboard document here exactly as it does on
+//! the other two targets — one Taffy layout computation and one root's rect table
+//! per frame rather than the document's — while the **load** stayed whole-file.
+//! That is a real bound and a partial one, and both halves have to be said
+//! together: a caller told only the first would read it as R5 on this path,
+//! which it is not.
+//!
+//! It is not built here because that is a signature change on a shipped symbol.
+//! **Issue #925** is the other half — this ABI has no mapped entry point, and
+//! the story its documentation deferred that to closed without giving it an
+//! owner — and adding one is a **new symbol**, which the versioning rule below
+//! makes free, where a parameter on this one is a changed signature and bumps
+//! [`DS_ABI_VERSION`]. So the shape that costs nothing is the shape that also
+//! bounds the load, and doing them together is why neither is here yet.
 //!
 //! # The three rules this ABI keeps
 //!

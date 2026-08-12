@@ -5,10 +5,14 @@
             when a review found the rewrite had reproduced the staleness it was
             written to fix. Archived to `docs/archive/` at v0.19's close, with
             its row removed from `docs/wip/README.md` in the same commit.
-    scope   story #838 on `main`, branch `story/v019-shown-root-paint`, and
-            issue #863, labelled `story` with no branch yet.
+    scope   issue #863, labelled `story` with no branch yet. Story #838 is
+            **done** — it landed from `story/v019-shown-root-paint` on
+            2026-08-12, and the section below describing it is history rather
+            than work. What it built is
+            `docs/decisions/the-runtime-paints-the-shown-root.md`; read that
+            rather than this file's account of it.
     epic    #833
-    slice   #834 to #837 closed. #839 to #841 closed, and
+    slice   #834 to #838 closed. #839 to #841 closed, and
             `integration/v0.19-android` merged into `main` on 2026-08-09 — that
             branch is history, not somewhere to work. #842 is open and owes a
             frame-rate number from hardware. #843, the records, depends on all

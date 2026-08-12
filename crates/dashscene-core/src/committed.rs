@@ -18,6 +18,8 @@ pub use dashpaint::{
 
 use std::sync::Arc;
 
+use dashbuf::prefetch::ShownRoot;
+
 use crate::arena::NodeId;
 
 /// One committed buffer: the resolved rect table, the deduplicated
@@ -64,9 +66,25 @@ pub struct CommittedScene {
     pub(crate) dirty: Vec<u32>,
     /// Rect index → NodeId (DFS order of the commit).
     pub(crate) node_ids: Arc<Vec<NodeId>>,
-    /// NodeId slot → rect index.
+    /// NodeId slot → rect index, or [`NO_RECT`] for a node this commit did not
+    /// resolve — a node under a root that is not the shown one (story #838).
     pub(crate) rect_index: Arc<Vec<u32>>,
+    /// Which root this commit's traversal was confined to, or [`None`] for
+    /// every root.
+    pub(crate) shown_root: Option<ShownRoot>,
+    /// Whether this commit renumbered the rect table against the previous one.
+    pub(crate) renumbered: bool,
 }
+
+/// The [`CommittedScene::rect_index`] value for a node this commit resolved no
+/// rect for.
+///
+/// `u32::MAX` names no row any rect table can hold: `Txn::add_node` refuses an
+/// arena at `u32::MAX` nodes, so a table can never be that long. A node under an
+/// unshown root reads this, and [`CommittedScene::rect_index_of`] turns it into
+/// [`None`] — which is the same answer it already gives for a node added after
+/// the commit, and for the same reason: this scene resolved no rect for it.
+pub(crate) const NO_RECT: u32 = u32::MAX;
 
 impl CommittedScene {
     /// Resolved rect table; index = document DFS node index.
@@ -149,9 +167,41 @@ impl CommittedScene {
         self.node_ids[rect_index as usize]
     }
 
-    /// The rect index a node resolved to in this commit, or `None`
-    /// for a node added after this commit.
+    /// The rect index a node resolved to in this commit, or `None` for a node
+    /// this commit resolved no rect for.
+    ///
+    /// Two ways that happens, and a caller wanting both to mean "not in this
+    /// scene" needs no branch: a node **added after** this commit, and — since
+    /// story #838 — a node under a root that is **not the shown one**. Neither
+    /// has a row, and asking for one is not an error.
     pub fn rect_index_of(&self, node: NodeId) -> Option<u32> {
-        self.rect_index.get(node.index()).copied()
+        match self.rect_index.get(node.index()).copied() {
+            Some(NO_RECT) | None => None,
+            Some(index) => Some(index),
+        }
+    }
+
+    /// Which root this commit's traversal was confined to, or [`None`] when it
+    /// covered every root (story #838).
+    pub fn shown_root(&self) -> Option<ShownRoot> {
+        self.shown_root
+    }
+
+    /// Whether the rect indices of this commit mean something different from
+    /// the previous commit's — because the shown root changed.
+    ///
+    /// **A dirty set does not span a renumbering.** Index 3 named one node
+    /// before and names another now, so a consumer holding per-commit state
+    /// keyed on rect index has to discard it rather than patch it: the two
+    /// integration crates turn this into `Present::document_replaced`, which
+    /// `dashscene-gpu` answers by forgetting what it uploaded.
+    ///
+    /// [`dirty`](Self::dirty) reports **every** rect on such a commit, so a
+    /// consumer that only patches what is dirty is already correct for a table
+    /// of unchanged length. This exists for the one it is not: a consumer that
+    /// caches anything else against a rect index, or that holds a longer table
+    /// than this commit produced.
+    pub fn renumbered(&self) -> bool {
+        self.renumbered
     }
 }

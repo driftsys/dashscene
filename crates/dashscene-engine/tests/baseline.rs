@@ -449,3 +449,75 @@ fn a_mixed_size_text_baseline_row_aligns_on_glyph_baselines() {
         y_small + b_small
     );
 }
+
+/// **The #322 baseline pass follows the shown root too** (story #838).
+///
+/// It was the one place in the solve that story missed. `baseline_pass` walked
+/// `arena.roots()` and re-solved over every Taffy root, so on a document with
+/// more than one artboard it did two wrong things at once, and neither is
+/// visible to the per-frame band — that harness runs `TaffySolver::new()`,
+/// which returns from `baseline_pass` before any of this.
+///
+/// It read `tree.layout()` for nodes no `compute_all` had computed, which is a
+/// zeroed layout, and shaped their text against it — inventing a cross-size
+/// floor from a row that was never solved. And its re-solve then computed
+/// **every** root in the document, which is the per-frame cost the story
+/// exists to remove, restored in full on exactly the documents that carry
+/// text.
+///
+/// **How it fails, unconfined**: `baseline_pass`'s own
+/// `debug_assert_eq!(settled, wanted)` fires. The floors collected from zeroed
+/// layouts are not the floors a real solve of those rows produces, so the pass
+/// does not converge — which is the correctness half, and it arrives before the
+/// counter assertions below. Those bound the cost half, and stand for a release
+/// build where the assertion is compiled out and the only symptom left is a
+/// solve per artboard on every frame.
+#[test]
+fn the_baseline_pass_solves_the_shown_root_and_not_the_document() {
+    let mut ts = typesetter();
+    let mut arena = Arena::new();
+
+    // Two artboards, each a HUG baseline row with a tall box and a text run —
+    // the #322 shape, which is what makes the floor pass run at all. Different
+    // text sizes, so the two rows want different floors and an unshown one
+    // cannot be mistaken for the shown one's.
+    let mut txn = arena.open();
+    let (_, _) = hug_baseline_row(&mut txn, None, 60.0, 18.0);
+    let (_, _) = hug_baseline_row(&mut txn, None, 60.0, 34.0);
+    txn.show_root(Some(dashscene_core::ShownRoot::FIRST));
+    txn.commit_with(&mut TaffySolver::with_typesetter(&mut ts));
+
+    let first_row = arena.roots()[0];
+    let mut solver = TaffySolver::with_typesetter(&mut ts);
+    let mut txn = arena.open();
+    txn.set_prop(first_row, Prop::X(1.0));
+    txn.commit_with(&mut solver);
+    let after_first = solver.solves();
+
+    // A structural rebuild computes the shown root, and the floor pass may
+    // re-solve it once to settle its own cross size. Two computations bound
+    // that, and neither of them is per-root: an unconfined pass computes both
+    // artboards on the re-solve and reports three.
+    assert!(
+        after_first <= 2,
+        "a two-artboard document showing one artboard must not cost a solve per artboard \
+         through the baseline pass: it ran {after_first}"
+    );
+
+    // And a settled frame stays settled. An invented floor for the unshown row
+    // never matches what a real solve of it would produce, so the pass would
+    // re-enter its re-solve arm every frame rather than converging.
+    let mut txn = arena.open();
+    txn.set_prop(first_row, Prop::X(2.0));
+    txn.commit_with(&mut solver);
+    assert!(
+        solver.solves() - after_first <= 2,
+        "a later layout frame must cost no more than the first: it ran {}",
+        solver.solves() - after_first
+    );
+    assert_eq!(
+        arena.committed().rects().len(),
+        3,
+        "the shown artboard's row, its box and its text run — and nothing of the other"
+    );
+}

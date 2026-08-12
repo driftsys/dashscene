@@ -5,6 +5,7 @@
 
 use std::mem::{align_of, size_of};
 
+use dashbuf::prefetch::ShownRoot;
 use dashpaint::{Vec2, VectorField};
 use dashscene_core::{
     Arena, ClipBox, ClipIndex, Color, CornerRadii, Fill, FillSpec, LayoutMode, PaintEntry,
@@ -3345,4 +3346,218 @@ fn assert_solid(paints: &PaintTable, index: PaintIndex, color: Color) {
     assert_eq!(entry.blurs, dashpaint::BlurRange::default());
     assert_eq!(paints.shape(entry), None);
     assert!(paints.extra_fills(entry).is_empty());
+}
+
+/// Two roots of identical shape, each one node with a **distinct** fill — the
+/// smallest arena a shown-root change can renumber without changing the table's
+/// length (story #838). Their rect entries differ, so which root is committed is
+/// readable off the table.
+fn two_distinct_roots() -> (Arena, dashscene_core::NodeId, dashscene_core::NodeId) {
+    const BLUE: Color = Color {
+        r: 0.0,
+        g: 0.0,
+        b: 1.0,
+        a: 1.0,
+    };
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let first = txn.add_node(None, None);
+    txn.set_prop(first, Prop::Fill(RED));
+    txn.set_prop(first, Prop::Width(10.0));
+    let second = txn.add_node(None, None);
+    txn.set_prop(second, Prop::Fill(BLUE));
+    txn.set_prop(second, Prop::Width(10.0));
+    txn.commit();
+    (arena, first, second)
+}
+
+/// Two roots whose rect entries are **bit-identical**: same geometry, and the
+/// same fill, which the paint interner resolves to the same index.
+///
+/// This is the arena the dirty set cannot be derived from a comparison over —
+/// row 0 holds equal bits before and after the shown root moves, so an entry
+/// compare reports it clean while it names a different node. Every other
+/// shown-root fixture here is distinguishable on purpose; this one is
+/// indistinguishable on purpose, and that is what it is for.
+fn two_identical_roots() -> (Arena, dashscene_core::NodeId, dashscene_core::NodeId) {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let first = txn.add_node(None, None);
+    txn.set_prop(first, Prop::Fill(RED));
+    txn.set_prop(first, Prop::Width(10.0));
+    let second = txn.add_node(None, None);
+    txn.set_prop(second, Prop::Fill(RED));
+    txn.set_prop(second, Prop::Width(10.0));
+    txn.commit();
+    (arena, first, second)
+}
+
+/// Naming a root confines the committed table to its subtree, and a node under
+/// an unshown root has no rect index at all.
+///
+/// The default is unchanged and is asserted first, because the whole design
+/// turns on it: an authored scene keeps every root, and only a host that names
+/// one gets the confinement (story #838).
+#[test]
+fn naming_a_shown_root_confines_the_committed_table_to_its_subtree() {
+    let (mut arena, first, second) = two_distinct_roots();
+    assert_eq!(
+        arena.committed().rects().len(),
+        2,
+        "an arena nobody has named a root on commits every root"
+    );
+    assert_eq!(arena.committed().shown_root(), None);
+
+    let mut txn = arena.open();
+    txn.show_root(Some(ShownRoot::nth(1)));
+    txn.commit();
+
+    let scene = arena.committed();
+    assert_eq!(scene.rects().len(), 1, "one root, one node, one row");
+    assert_eq!(scene.shown_root(), Some(ShownRoot::nth(1)));
+    assert_eq!(
+        scene.rect_index_of(second),
+        Some(0),
+        "the shown root is row 0 of its own table"
+    );
+    assert_eq!(
+        scene.rect_index_of(first),
+        None,
+        "a node under an unshown root has no row, and must not read as row 0"
+    );
+    assert_eq!(
+        scene.node_of(0),
+        second,
+        "row 0 resolves back to the shown root, not to the first root"
+    );
+}
+
+/// **A change of shown root is a renumbering event, and a bit compare cannot
+/// see it.**
+///
+/// This is the test story #838 asks for — "a test that fails if it is treated
+/// as an ordinary commit" — and the fixture is what makes it one. The two roots
+/// are **bit-identical**: same geometry, same fill, so the same interned paint
+/// index. The table's length does not move and row 0's entry does not move
+/// either, so the comparison `commit` runs against the previous table reports it
+/// clean. Every row is dirty here because the commit **renumbered**, and for no
+/// other reason — remove that and the assertion below reads `[]`.
+///
+/// A fixture whose roots differ would pass either way, which is worth stating
+/// because that is what this test held before it was mutated to check: with a
+/// distinct fill per root the entry moves, the comparison marks it, and the
+/// renumbering the test is named for contributes nothing to the answer.
+///
+/// It is issue #798's failure stated in advance: a comparison reading clean
+/// because what changed lived outside the compared structure.
+///
+/// **What it does not claim** is that a painter draws the wrong pixels without
+/// it. A `RectEntry` is self-contained — two bit-equal entries index the same
+/// interned paint and resolve the same clip — so today a row this reports dirty
+/// draws what it drew anyway, and the whole sanity tier passes with the
+/// mechanism removed. The contract is what is asserted: [`dirty`] names every
+/// row whose *meaning* moved, because "did the bits at index i change" is the
+/// right question only for a table whose indices mean the same thing on both
+/// sides. What actually depends on it is every consumer caching something else
+/// against a rect index — which is why the commit reports
+/// [`CommittedScene::renumbered`] beside the set, and why both integration
+/// crates turn that into `Present::document_replaced`.
+///
+/// [`dirty`]: dashscene_core::CommittedScene::dirty
+/// [`CommittedScene::renumbered`]: dashscene_core::CommittedScene::renumbered
+#[test]
+fn a_change_of_shown_root_renumbers_and_reports_every_rect_dirty() {
+    let (mut arena, _, _) = two_identical_roots();
+
+    let mut txn = arena.open();
+    txn.show_root(Some(ShownRoot::FIRST));
+    txn.commit();
+    assert!(
+        arena.committed().renumbered(),
+        "going from every root to one root renumbers: the table was two rows and is now one"
+    );
+
+    // Settle, so the next commit's dirty set cannot be inherited from this one.
+    let mut txn = arena.open();
+    txn.show_root(Some(ShownRoot::FIRST));
+    txn.commit();
+    assert!(
+        !arena.committed().renumbered(),
+        "naming the root that is already shown changes nothing and renumbers nothing"
+    );
+    assert!(
+        arena.committed().dirty().is_empty(),
+        "and a commit that changes nothing dirties nothing — without this the assertion below \
+         would pass on a scene that reports everything dirty every frame"
+    );
+
+    let before = arena.committed().rects()[0];
+
+    let mut txn = arena.open();
+    txn.show_root(Some(ShownRoot::nth(1)));
+    txn.commit();
+
+    let scene = arena.committed();
+    assert!(scene.renumbered(), "the shown root changed");
+    assert_eq!(
+        scene.rects().len(),
+        1,
+        "the two roots are the same shape, so the table's length did not move — which is what \
+         makes a length check an insufficient renumbering test"
+    );
+    assert_eq!(
+        scene.rects()[0],
+        before,
+        "and the entry did not move either: this is the fixture's whole job, because it is what \
+         makes the dirty set below underivable from a comparison against the previous table"
+    );
+    assert_eq!(
+        scene.dirty(),
+        [0],
+        "every row of the new table is dirty, because row 0 names a different node than it did — \
+         and nothing but the renumbering can produce that answer here"
+    );
+}
+
+/// A shown ordinal naming no root is refused at the commit, by name and with
+/// both numbers.
+///
+/// Not at `show_root`: a loader names the root it will show and then adds the
+/// nodes, in one transaction, so the ordinal cannot be judged where it is set.
+/// Refused rather than clamped, because confining the traversal to nothing
+/// would commit an empty scene and report success (P4).
+#[test]
+#[should_panic(expected = "the shown root is ordinal 4 and this arena has 2 roots")]
+fn a_shown_ordinal_naming_no_root_is_refused_at_the_commit() {
+    let (mut arena, _, _) = two_distinct_roots();
+    let mut txn = arena.open();
+    txn.show_root(Some(ShownRoot::nth(4)));
+    txn.commit();
+}
+
+/// Clearing the shown root goes back to every root, and that is a renumbering
+/// too — the table grows and its rows mean different nodes.
+#[test]
+fn clearing_the_shown_root_returns_to_every_root_and_renumbers() {
+    let (mut arena, first, second) = two_distinct_roots();
+
+    let mut txn = arena.open();
+    txn.show_root(Some(ShownRoot::nth(1)));
+    txn.commit();
+    assert_eq!(arena.committed().rects().len(), 1);
+
+    let mut txn = arena.open();
+    txn.show_root(None);
+    txn.commit();
+
+    let scene = arena.committed();
+    assert!(scene.renumbered());
+    assert_eq!(scene.rects().len(), 2);
+    assert_eq!(scene.shown_root(), None);
+    assert_eq!(scene.rect_index_of(first), Some(0));
+    assert_eq!(
+        scene.rect_index_of(second),
+        Some(1),
+        "the root that was shown alone is row 1 again, which is the renumbering"
+    );
 }

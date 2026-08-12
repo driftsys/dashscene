@@ -55,24 +55,37 @@
 //! document           frame         solves   rect rows
 //! small-root (1)     paint-only         0           1
 //! small-root (1)     layout             1           1
-//! many-root (65)     paint-only         0          65
-//! many-root (65)     layout            65          65
-//! ratio, many/small  layout         65.00x      65.00x
+//! many-root (65)     paint-only         0           1
+//! many-root (65)     layout             1           1
+//! ratio, many/small  layout          1.00x       1.00x
 //! ```
 //!
-//! **That ratio is the today-number this story exists to commit**, and it is
-//! what story #838 moves: confining the solve, the committed table and the
-//! paint to the shown root makes both columns 1 and both ratios 1.00x. The band
-//! lands first so the before-number is measured rather than remembered — a band
-//! added in the same change that improves what it measures cannot fail, and
-//! cannot show what the change was worth.
+//! # Before and after, because this band exists to state both
 //!
-//! The paint-only row is not a footnote. It says the retained tree's fast path
-//! already holds over sixty-five roots: a commit whose changes are all
-//! paint-only solves nothing at all, whatever the document's size. So the cost
-//! this chain removes is on the **layout** row and in the **table** column, and
-//! stating that is what keeps #838's before-and-after from claiming the
-//! paint-only saving too.
+//! Story #836 wrote this file and measured **65.00x on both terms**: 65 Taffy
+//! layout computations and 65 committed rect rows per frame, against a one-root
+//! document's 1 and 1. Story #838 confined the solve, the committed table and
+//! the paint to the shown root, and the same measurement over the same document
+//! is **1.00x on both**.
+//!
+//! ```text
+//!                    solves        rect rows
+//! before (#836)      65   65.00x   65   65.00x
+//! after  (#838)       1    1.00x    1    1.00x
+//! ```
+//!
+//! The band landed first so that before-number was measured rather than
+//! remembered — a band added in the same change that improves what it measures
+//! cannot fail, and cannot show what the change was worth. And it is still
+//! measured: [`the_confinement_is_what_makes_the_number_one`] removes the
+//! confinement on every run and reports 65 again.
+//!
+//! The paint-only row did not move, and that is worth stating. It was already
+//! zero at 65 roots: a commit whose changes are all paint-only solves nothing,
+//! whatever the document holds, because the retained tree is not recomputed
+//! (issue #164). So #838's saving is on the **layout** row and in the **table**
+//! column, and claiming the paint-only zero as part of it would be claiming
+//! something issue #164 had already bought.
 //!
 //! # The band has been shown to break
 //!
@@ -87,18 +100,19 @@
 //!   misclassifying `set_prop` would produce, from the same path — it does not
 //!   prove the classifier is correct, which is `Arena::layout_dirty`'s own
 //!   tests' job, but it does prove this band would see it.
-//! - [`the_band_measures_the_document_under_it_rather_than_reporting_a_constant`]
-//!   runs the same frames over a seventeen-root document. Both terms move to 17
-//!   and the band rejects them.
+//! - [`the_confinement_is_what_makes_the_number_one`] clears the shown root, so
+//!   the runtime traverses every root exactly as it did before story #838. Both
+//!   terms go to 65 and the band rejects them. It replaced a guard that ran the
+//!   same frames over a seventeen-root document: that one worked while the
+//!   terms tracked the document's size, and cannot work now that they do not —
+//!   which is the story's whole claim, restated as a test that had to be
+//!   retired.
 //!
-//! **No guard drives either term *upward* over the sixty-five-root document,
-//! and that is a fact about today rather than an omission.** Both terms are
-//! already saturated at the document's own size: the solve runs once per root
-//! and the table holds every node, so nothing a test can stage makes either
-//! larger. That saturation is exactly what the chain exists to remove, and
-//! after #838 an upward injection becomes available for the first time —
-//! showing a root while a second root's subtree is still solved would then be a
-//! breach rather than the status quo.
+//! **The upward injection story #836 said was unavailable is available now**,
+//! and it is the second guard. At 65 roots both terms were saturated at the
+//! document's own size, so nothing a test could stage made either larger; with
+//! the traversal confined, removing the confinement is exactly such a mutation
+//! and it breaches both terms at once.
 //!
 //! # It was also run against the two paths it names, once
 //!
@@ -147,7 +161,7 @@ use std::time::Instant;
 
 use dashbuf::map::MappedFile;
 use dashpaint::Color;
-use dashscene_core::{Arena, MappedPayload, NodeId, Prop, Region, load_document_mapped};
+use dashscene_core::{Arena, MappedPayload, NodeId, Prop, Region, ShownRoot, load_document_mapped};
 use dashscene_engine::TaffySolver;
 
 mod common;
@@ -160,14 +174,16 @@ use common::many_root::{EXTRA_FRAMES, document};
 const MANY_PAINT_SOLVES: u64 = 0;
 
 /// Taffy layout computations a **layout** frame runs over the many-root
-/// document — one per root, though one root is shown. This is half of what
-/// story #838 removes.
-const MANY_LAYOUT_SOLVES: u64 = 65;
+/// document while one root is shown. **One — it was 65 until story #838**, one
+/// per root in the document, and that is half of what the story removed.
+const MANY_LAYOUT_SOLVES: u64 = 1;
 
 /// Rows the committed rect table holds over the many-root document, on every
-/// frame. Each root is a leaf here, so this is the root count; in general it is
-/// the node count over every root. This is the other half of what #838 removes.
-const MANY_RECT_ROWS: usize = 65;
+/// frame. **One — it was 65 until story #838.** Each root of this fixture is a
+/// leaf, so the shown root's subtree is one node; in general it is the node
+/// count under the shown root. That is the other half of what the story
+/// removed.
+const MANY_RECT_ROWS: usize = 1;
 
 /// The same three over the single-root document — the denominator the ratio is
 /// taken against, and what the many-root column becomes when #838 lands.
@@ -175,31 +191,14 @@ const SMALL_PAINT_SOLVES: u64 = 0;
 const SMALL_LAYOUT_SOLVES: u64 = 1;
 const SMALL_RECT_ROWS: usize = 1;
 
-// The two many-root constants above are literals on purpose — they are a
-// measurement, not a formula, and #838 moves them to 1 while the fixture keeps
-// its sixty-five roots. But today they happen to equal the fixture's own size,
-// and that coincidence is worth holding at compile time: shrinking
-// `EXTRA_FRAMES` would otherwise fail the band at run time with a message
-// telling the reader to look at `compute_all` and `dfs_order`, when the cause
-// was the fixture. This names the real cause instead, and #838 deletes it
-// along with the coincidence.
-const _: () = assert!(
-    EXTRA_FRAMES + 1 == MANY_LAYOUT_SOLVES as usize
-        && EXTRA_FRAMES + 1 == MANY_RECT_ROWS
-        && GUARD_EXTRA_FRAMES < EXTRA_FRAMES,
-    "the many-root band is pinned at the fixture's current root count, and the scaling guard's \
-     document must be a different size: re-measure the band after changing EXTRA_FRAMES rather \
-     than reading its failure as a regression"
-);
-
-/// The roots the seventeen-root document carries — the scaling guard's fixture.
-///
-/// Fewer than [`EXTRA_FRAMES`] rather than more, because the corpus yields no
-/// sixty-fifth distinct tile (see [`common::many_root::EXTRA_FRAMES`]). The
-/// direction does not matter to the guard: what it establishes is that the
-/// pinned numbers are read off the document under the harness rather than
-/// produced by it.
-const GUARD_EXTRA_FRAMES: usize = 16;
+// Until story #838 the two constants above equalled the fixture's own root
+// count, and a compile-time assertion held them to it so that shrinking the
+// fixture failed by naming the fixture rather than the runtime. **That
+// coincidence is what the story removed**: the band is now independent of how
+// many roots the document carries, which is the whole claim, so there is
+// nothing left to tie. `the_confinement_is_what_makes_the_number_one` below is
+// what the tie became — it measures the document's size on purpose, by removing
+// the confinement, and requires the band to reject it.
 
 /// What one frame cost, exactly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -251,6 +250,14 @@ fn load(extra: usize) -> Loaded {
     let mut arena = Arena::new();
     let region: Arc<dyn Region> = mapped.clone();
     load_document_mapped(&doc, region, &payloads, &mut arena);
+    // What a host does, and what story #838 made the measurement depend on:
+    // name the root being shown, so the traversal, the solve and the paint
+    // follow it. Before that story there was nothing to name and this line did
+    // not exist; the numbers in the module documentation above are the two
+    // sides of adding it.
+    let mut txn = arena.open();
+    txn.show_root(Some(ShownRoot::FIRST));
+    txn.commit();
 
     let roots = arena.roots().len();
     assert_eq!(
@@ -310,10 +317,12 @@ fn warm_up(loaded: &mut Loaded) -> (TaffySolver<'static>, f32, FrameCost) {
     let x = loaded.arena.layout(loaded.shown).x;
     let first = frame(loaded, &mut solver, Prop::X(x));
     assert_eq!(
-        first.solves as usize, loaded.roots,
-        "the first commit through a fresh solver must be the structural rebuild, which solves \
-         every root. If it is not, the frames measured after it ran against a retained tree that \
-         was never built, and their counts are about something other than the steady state"
+        first.solves, 1,
+        "the first commit through a fresh solver must build the retained tree and solve the shown \
+         root. It solved `loaded.roots` of them until story #838 — the tree is still built over \
+         every root, because that is what makes a later change of shown root cheap, and only the \
+         shown one is computed. A zero here means no tree was built and every count after it is \
+         about something other than the steady state"
     );
 
     (solver, x, first)
@@ -397,19 +406,19 @@ fn report(label: &str, roots: usize, first: FrameCost, paint: FrameCost, layout:
     );
 }
 
-/// The criterion. Showing one root costs a solve and a committed-table row for
-/// **every** root in the document, on every frame — measured, so that story
-/// #838 has a before-number rather than an argument.
+/// The criterion. Showing one root costs one solve and one committed-table row
+/// per node of **that root's subtree**, on every frame, whatever else the
+/// document carries — which is what story #838 made true and what story #836
+/// measured at 65:1 before it.
 ///
 /// The equality is the assertion and the ratio is derived from it, which is D4
 /// of `startup-scaling-is-measured-by-a-counter.md` applied to the frame
-/// instead of the load. Unlike that criterion, the ratio this one reports is
-/// **not** 1.00x, and is not supposed to be yet: the runtime paints every root
-/// by design (D1 of
-/// `docs/decisions/the-shown-root-bounds-the-load-not-the-paint.md`), and #838
-/// is where the intent changes.
+/// instead of the load. It reports 1.00x, the same answer the load criterion
+/// beside it reports — which is D2 of
+/// `docs/decisions/the-shown-root-bounds-the-load-not-the-paint.md` built, and
+/// is the sentence that record's D5 could not write before it.
 #[test]
-fn a_frame_costs_every_root_while_one_is_shown() {
+fn a_frame_costs_the_shown_root_and_not_the_document() {
     let started = Instant::now();
 
     let mut small = load(0);
@@ -515,39 +524,64 @@ fn a_paint_only_frame_that_marks_layout_intent_breaches_the_solve_term() {
     );
     assert_eq!(
         mutated_paint.solves, MANY_LAYOUT_SOLVES,
-        "and it must breach it by the whole document: one solve per root"
+        "and it must breach it by a whole solve of the shown root"
     );
 }
 
-/// The band measures the document under it. The same two frames over a
-/// seventeen-root document move both terms to 17, and the band rejects them.
+/// **The confinement is what makes the number one**, and removing it puts the
+/// band back where story #836 measured it.
 ///
-/// Without this, every number in the band could be a constant the harness
-/// reports whatever it is handed — the failure mode
-/// `docs/technotes/measured-verification.md` calls the assertion reading the
-/// near side of a transformation. It is also what says the two terms track the
-/// **root count** specifically, which is the claim story #838's before-and-after
-/// rests on.
+/// This is the guard the scaling one became. Until story #838 the two terms
+/// tracked the document's root count, and a differently-sized document breached
+/// the band — which is what said the numbers were measured rather than
+/// reported. That test cannot exist now: a seventeen-root document measures
+/// exactly what a sixty-five-root one does, which is the story's whole claim.
+///
+/// So the mutation moved from the fixture to the thing under test. Clearing the
+/// shown root is the pre-#838 runtime exactly — every root solved, every root's
+/// subtree in the committed table — and the band must reject it. It is
+/// committed and re-executed, so the before-number is a measurement this suite
+/// takes on every run rather than a figure in a commit message.
 #[test]
-fn the_band_measures_the_document_under_it_rather_than_reporting_a_constant() {
-    let mut guard = load(GUARD_EXTRA_FRAMES);
-    let (_, paint, layout) = steady_state(&mut guard);
+fn the_confinement_is_what_makes_the_number_one() {
+    let mut many = load(EXTRA_FRAMES);
+    let (_, bounded_paint, bounded_layout) = steady_state(&mut many);
+    within_band(bounded_paint, bounded_layout)
+        .expect("the band holds while the shown root is named");
+
+    // The confinement removed, and nothing else. A fresh solver, because the
+    // retained one would report only what moved and this is measuring what a
+    // frame costs, not what a transition costs.
+    let mut txn = many.arena.open();
+    txn.show_root(None);
+    txn.commit();
+    let mut solver = TaffySolver::new();
+    let x = many.arena.layout(many.shown).x;
+    let unbounded_first = frame(&mut many, &mut solver, Prop::X(x));
+    let unbounded_paint = paint_only_frame(&mut many, &mut solver);
+    let unbounded_layout = frame(&mut many, &mut solver, Prop::X(x + 1.0));
 
     println!(
-        "PER-FRAME SCALING — guard: a {}-root document measures {} solves and {} rect rows on a \
-         layout frame, against the band's {MANY_LAYOUT_SOLVES} and {MANY_RECT_ROWS}",
-        guard.roots, layout.solves, layout.rect_rows
+        "PER-FRAME SCALING — guard: with no shown root the same document measures {} solves and \
+         {} rect rows on a layout frame, against the band's {MANY_LAYOUT_SOLVES} and \
+         {MANY_RECT_ROWS} — the before-number story #838 moved",
+        unbounded_layout.solves, unbounded_layout.rect_rows
     );
 
-    let breach = within_band(paint, layout)
-        .expect_err("a document with a different root count must breach the band");
+    let breach = within_band(unbounded_paint, unbounded_layout)
+        .expect_err("an unconfined traversal must breach the band");
     assert!(
         breach.contains("layout frame ran") && breach.contains("rect rows against"),
-        "both terms must move with the root count, not just one; the guard reported: {breach}"
+        "both terms must move when the confinement goes, not just one; it reported: {breach}"
     );
     assert_eq!(
-        (layout.solves as usize, layout.rect_rows),
-        (guard.roots, guard.roots),
-        "both terms are the document's root count exactly — that is the shape #838 changes"
+        (
+            unbounded_first.solves as usize,
+            unbounded_layout.solves as usize,
+            unbounded_layout.rect_rows,
+        ),
+        (many.roots, many.roots, many.roots),
+        "unconfined, both terms are the document's root count exactly — which is what story #836 \
+         measured at 65 and what this story removed"
     );
 }

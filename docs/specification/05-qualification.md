@@ -677,40 +677,46 @@ So the requirement's claim holds on both targets and its parenthetical describes
 one of them. Read it as naming the native mechanism, not as the definition of
 the requirement.
 
-**The document shape differs by target too, and that is the larger of the two
-qualifications.** Added at the v0.17 close (story #796), from
+**The document-shape qualification is gone, and this records that it existed.**
+It was added at the v0.17 close (story #796) from
 [`../decisions/the-shown-root-bounds-the-load-not-the-paint.md`](../decisions/the-shown-root-bounds-the-load-not-the-paint.md)
-D5. The claim that holds is:
+D5, and it read:
 
 > cold-start cost tracks the shown root **on native for any document**, and **on
 > the web for a document whose unshown roots draw no asset**.
 
-The reason is not in either loader. **The runtime paints every root** — the
-solve runs over `arena.roots()`, `Arena::dfs_order` walks all of them into one
-committed table, and a painter walks the whole table — so a payload the load
-skipped is one the painter can still reach. Native survives that because a
-mapping makes every byte addressable whether or not it was verified; that is
-debt #779, and it is the price of the native bound. A browser has no equivalent:
-a payload never fetched has no bytes, so bounding unconditionally would hand the
-painter an empty row. `dashscene_web::shown::Bound` therefore widens to every
-drawing root and **reports that it did**, which is why the two cases are
-distinguishable at all.
+The reason was not in either loader. The runtime painted **every** root — the
+solve ran over `arena.roots()`, `Arena::dfs_order` walked all of them into one
+committed table, and a painter walked the whole table — so a payload the load
+skipped was one the painter could still reach. Native survived that because a
+mapping makes every byte addressable whether or not it was verified (debt #779);
+a browser has no equivalent, so `dashscene_web::shown` widened to every drawing
+root and reported that it had.
 
-**The benchmark's own many-frame document is in the widened class**, and that is
-worth stating plainly rather than leaving to be discovered:
-`goldens/tooling/tests/common/many_root.rs` builds sixty-five root frames each
-drawing a distinct tile (`frame()` sets `parent: None`), so on the web that
-document reads all 1 935 927 B. It was `startup_scaling.rs`'s own builder until
-story #836, which moved it so the per-frame criterion beside it could be stated
-over the same document. The web equality is asserted over
-`many_frames(64, false)` — sixty-four entries in the file, one of them drawn —
-which falsifies cost-scaling-with-file-size honestly, and is not the document
-this section measured on native.
+**Story #838 removed the cause, which is what D2 of that record asked for.**
+`Txn::show_root` names the root a host is showing, and from that commit the
+traversal, the solve and the paint all cover its subtree and nothing else — so a
+row nothing paints is a row nothing can ask for. The browser's widening is
+deleted rather than made rare: `shown::layout` returns the shown root's own set
+for every document, and the `Bound::EveryRoot` variant that reported the
+widening is gone with the code that constructed it.
 
-**What removes the condition is D2 of that record**: confine the solve, the
-committed table and the paint to the root that is shown. It is a change to
-`dashscene-engine`, `dashscene-core` and every painter rather than to either
-integration crate, it needs a root-selection concept that no host has today, and
-it is held against v0.19 as issue #822. Until then this criterion is met on
-native and met on the web for one document shape, and nothing here should be
-read as more than that.
+So the claim that holds now is the one this criterion states, with no
+qualification by document shape on either target:
+
+> cold-start cost tracks the shown root, on native and on the web, for any
+> document.
+
+**The benchmark's own many-frame document is the evidence, and it was the
+counter-example.** `goldens/tooling/tests/common/many_root.rs` builds sixty-five
+root frames each drawing a distinct tile, and on the web that document read all
+1 935 927 B of payloads because every root drew one.
+`a_document_whose_other_roots_draw_is_bounded_by_the_shown_one` measures the
+same fixture at one payload now, and says in its own words what it asserted
+before.
+
+**The mechanism still differs by target**, and that half of the qualification
+stands: native maps the file and binds a range per entry, hashing only the shown
+root's, where the browser fetches only the shown root's bytes and names no range
+for the rest. That is what the note above describes, and it is a fact about how
+each host reads rather than about which documents the criterion covers.
