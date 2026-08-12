@@ -33,7 +33,7 @@ directly — don't silently diverge from it.
 
 ## Repo status
 
-This is `driftsys/dashscene`, still a **private repo**. It was
+This is `driftsys/dashscene`, and it is **public**. It was
 `dashscene-staging` until 2026-08-11; the rename kept its history, its
 501 issues and its 21 milestones, which is why every `#N` in these
 records still resolves.
@@ -52,9 +52,13 @@ the reservation count.
 
 The repository that made those reservations is archived as
 `driftsys/dashscene-name-reservations`, kept because every published stub
-points its `repository` field there. Nothing here is public yet — the
-visibility flip is the one step still outstanding
-(`docs/decisions/repo-staging-and-public-facade.md`).
+points its `repository` field there. **The visibility flip has happened**
+— `gh repo view driftsys/dashscene --json visibility` returns `PUBLIC`,
+and that was the last step this record was waiting on
+(`docs/decisions/repo-staging-and-public-facade.md`). One consequence is
+already load-bearing: branch protection and rulesets are free on a public
+repository, and `main` now carries one
+(`docs/decisions/review-before-ready-not-before-open.md`).
 
 ## Crates
 
@@ -168,7 +172,10 @@ members in total, nineteen of them the crates above.
     just verify       the pre-push hook: commit-message lint, then lint + audit
                       + a secret scan of the objects being pushed. Seconds, and
                       it runs NO test tier — `just build` is the thorough local
-                      gate and CI runs the tier on every push
+                      gate, and CI runs the tier on the pull request. `ci.yml`
+                      fires on `pull_request` and on pushes to `main`, so a
+                      push to a branch with no PR open runs nothing at all;
+                      once one is open, every further push re-runs it
     just wasm         build dashc for wasm32-unknown-unknown
     just wasm-painter build dashscene-gpu for wasm32 — the gate that keeps a
                       blocking wait off the web path, where it would deadlock
@@ -293,6 +300,34 @@ runs as three tiers, so "tests pass" is no longer a claim about all of it:
 
 Story workflow — the definition of done for every story:
 
+- **Garden what this branch added to `docs/wip/` first** — before the
+  `just build` below, so that build covers the prose just written, and
+  before the PR, so the durable records sit inside the reviewed diff.
+  Prose asserting what the code does not do is this repo's most common
+  defect, so a record gardened after the review would be exactly the
+  wrong artifact to exempt.
+
+  Three states are acceptable for a file the branch added, and
+  `docs/decisions/review-before-ready-not-before-open.md` states them in
+  full rather than this file restating them: **gardened** (durable record
+  written, raw original moved to `docs/archive/`, one commit — a record
+  written while the original stays put is a copy), **partly gardened**
+  (the implemented half is a record, the file stays for the rest, its
+  `status` line says which is which), or **held** with the condition that
+  empties it recorded in `docs/wip/README.md` — a table row for a
+  capture, that file's prose for a driver prompt. Anything else the
+  branch added is ungardened debt.
+
+  **Removing a file from `docs/wip/` and updating that ledger is one
+  commit, not two.** It has gone stale both ways: through an archiving
+  that never touched it, and through an edit that updated one of its two
+  copies of the count and left the other. The same commit re-points the
+  records that cited the file at its old path — nineteen records in
+  `docs/decisions/` carry a `docs/wip/` citation, and one has pointed at
+  nothing since 2026-07-29 (issue #914).
+
+  All of it binds **what the branch adds**, not the directory —
+  `docs/wip/` is a standing shelf and is not expected to be empty.
 - `just build` green.
 - Open the PR as an ordinary pull request — **never a draft**. Draft means
   "not ready for review", which is the opposite of why the PR was opened:
@@ -300,15 +335,33 @@ Story workflow — the definition of done for every story:
   when the PR is a draft
   (`docs/decisions/review-before-ready-not-before-open.md`).
 - Run `/code-review` on the PR (`--comment` posts the findings as inline
-  PR comments). Capture every finding as a checklist in the PR
+  PR comments) **while CI runs, not after it**. Neither answer depends on
+  the other, so waiting for green before starting the review only adds
+  the shorter of the two to the wall clock. The merge gate is unchanged:
+  both must be complete. Capture every finding as a checklist in the PR
   description — never drop a finding silently.
 - Fix all critical findings before merging. For minor findings, file one
   `debt`-labeled issue each (linked to the story) instead of fixing them
-  inline.
+  inline, **and put it on a milestone** — the current slice, the next one,
+  or `v1` for anything not scheduled to a slice. Debt with no milestone is
+  invisible at every slice close, and it is the largest population of the
+  four: 52 open `debt` issues carry none, against 42 in `v1`, measured
+  2026-08-12. Re-derive with `gh issue list --label debt --state open
+  --limit 300 --json milestone` rather than trusting those two numbers.
+- **When a critical finding changes the implementation, review the fix
+  too** — a pass over what changed, not a second full pass. The fix is
+  written under more time pressure than the original and lands after the
+  pass that would have caught it.
 - The findings checklist is what says the PR is not ready to merge: an
-  absent or unticked checklist means the review is still running. Nothing
-  on this repo enforces that mechanically — branch protection needs a paid
-  plan — so it is held by the checklist and by whoever presses merge.
+  absent or unticked checklist means the review is still running. **The
+  review half is not enforced mechanically**: the direct mechanism is a
+  required approving review, GitHub refuses self-approvals, and there is
+  no second account to give one — so it is held by the checklist and by
+  whoever presses merge. What _is_ enforced, since 2026-08-12, is the
+  rest: a ruleset on `main` with an empty bypass list requires a pull
+  request and a green `ci`, and refuses force-pushes and deletion. That
+  also means **`main` takes no direct push at all**, so `just release`
+  and any hotfix travel through a PR like everything else.
 - **A closing keyword next to an issue number closes that issue — in PR
   prose and in any commit message that lands on `main`.** The keywords are
   `close`, `fix` and `resolve`, in any inflection, optionally followed by a

@@ -72,10 +72,16 @@ into the records below. Per-story decisions land here directly:
   in v0; resolves `docs/technotes/open-questions.md`'s Q-1; binds
   #27/#28/#30 and the validator's future text checks.
 - [ci-green-before-story-merge.md](ci-green-before-story-merge.md) — story
-  PRs merge only on green CI.
+  PRs merge only on green CI, which a ruleset has enforced since
+  2026-08-12. Its actual decision is the part no ruleset can see: repair
+  CI in its own minimal PR rather than folding the fix into a story PR.
 - [review-before-ready-not-before-open.md](review-before-ready-not-before-open.md)
-  — the review gate is merge, not "PR opened": a story PR is never a
-  draft; the findings checklist says whether it is ready.
+  — the whole story-PR sequence, and the gate is merge rather than "PR
+  opened": garden what the branch added to `docs/wip/` before opening,
+  never a draft, run the review and CI in parallel, review the fix when a
+  critical finding changes the implementation, file debt against a
+  milestone. The findings checklist says whether it is ready, and the
+  `main` ruleset enforces the half of the gate that can be enforced.
 - [dashpaint-owns-boundary-b-types.md](dashpaint-owns-boundary-b-types.md) —
   `dashpaint` owns the painter-side boundary-B types (story #3).
 - [painter-trait-infallible-slice-input.md](painter-trait-infallible-slice-input.md)

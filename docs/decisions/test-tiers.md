@@ -10,8 +10,9 @@
              from, updated to point here),
              docs/decisions/asset-quality-profile-bands.md (the tables the
              calibration tier re-derives),
-             docs/decisions/review-before-ready-not-before-open.md (why
-             the calibration tier is run before a PR is marked ready)
+             docs/decisions/review-before-ready-not-before-open.md (the
+             story-PR sequence the tiers are run against; a PR is never
+             marked ready, so the tier is due before merge)
 
 ## Problem
 

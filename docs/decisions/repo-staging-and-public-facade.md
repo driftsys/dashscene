@@ -4,6 +4,8 @@
     date     2026-07-11
     revised  2026-08-11 — carried out, and not by either mechanism this record
              originally anticipated
+    revised  2026-08-12 — the visibility flip is done; the stub links resolve
+             unauthenticated, and rulesets became available as a side effect
     scope    repo topology — `driftsys/dashscene`,
              `driftsys/dashscene-name-reservations`
 
@@ -59,15 +61,23 @@ There is one repository now. The facade role folded into it.
   working repo into that name replaced GitHub's redirect rather than following
   it, so the archived repo is not where those links lead and never will be.
 
-  While this repository is private the links return 404 to anyone outside the
-  organisation. They resolve the moment it goes public, and they then land on
-  the project itself — a better destination than the reservation repo would
-  have been. Checking this authenticated shows 200 and proves nothing;
-  `curl -I` with no credentials is the test.
+  Those links returned 404 to anyone outside the organisation for as long as
+  this repository was private. **They resolve now.** Checking authenticated
+  shows 200 and proves nothing; `curl -I` with no credentials is the test, and
+  run that way on 2026-08-12 it returns 200 for both
+  `https://github.com/driftsys/dashscene` and the archived
+  `driftsys/dashscene-name-reservations`. The stubs land on the project
+  itself — a better destination than the reservation repo would have been.
 - Working memory, decisions and archive all publish from one place. There is no
   promotion step to get wrong later, and no second history to reconcile.
-- **The repository is still private.** The visibility flip is a separate,
-  irreversible step and is the only part of this not yet done.
+- **The repository is public.** The visibility flip was the last part of this
+  not yet done, and it is done: `gh repo view driftsys/dashscene --json
+  visibility` returns `PUBLIC`. It made one thing possible that this record did
+  not anticipate — branch protection and rulesets are free on a public
+  repository, and `main` now carries a ruleset requiring a pull request and a
+  green `ci` (`docs/decisions/review-before-ready-not-before-open.md`). Every
+  earlier statement in this repository that branch protection needs a paid plan
+  was written against the private state and is superseded.
 
 ## What the original decision got right, and what it did not
 
