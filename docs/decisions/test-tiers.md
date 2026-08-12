@@ -132,11 +132,11 @@ in `[profile.calibration]`.
 Three tiers, nested, each a nextest profile. Re-measured on an idle 8-core
 machine after issue #660 split the perceptual walk per fixture:
 
-| tier          | tests | wall clock | contents                                                                                                                                          |
-| ------------- | ----- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sanity`      | 1287  | **5 s**    | everything an ordinary edit can break, minus the five categories below                                                                            |
-| `regression`  | 1312  | **33 s**   | `sanity` plus the profile-preview oracle, the atlas pipeline, the bake oracle, the grid-anchor saturation test, and the startup-scaling criterion |
-| `calibration` | 10    | **54 s**   | the tests that re-derive a committed table from the packer alone: one per calibration fixture, plus the band contract                             |
+| tier          | tests | wall clock | contents                                                                                                                                 |
+| ------------- | ----- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `sanity`      | 1287  | **5 s**    | everything an ordinary edit can break, minus the six categories below                                                                    |
+| `regression`  | 1312  | **33 s**   | `sanity` plus the profile-preview oracle, the atlas pipeline, the bake oracle, the grid-anchor saturation test, and the scaling criteria |
+| `calibration` | 10    | **54 s**   | the tests that re-derive a committed table from the packer alone: one per calibration fixture, plus the band contract                    |
 
 `regression` is a superset of `sanity`; `regression` and `calibration`
 together are the whole suite (1312 + 10 = 1322 runnable tests, plus 3
@@ -154,7 +154,7 @@ the same `just test-all` measured 185 s idle and 280 s with two formatter
 runs competing for cores. Treat every figure here as the idle case. What does not move,
 and what the other documents state instead of a number, is the shape:
 **the gate runs every test except the two calibration re-derivations**, and
-the sanity tier additionally drops five slower binaries. A count repeated
+the sanity tier additionally drops six slower binaries. A count repeated
 outside this record would be wrong within a slice, which is the same drift
 that put a stale copy of the path filter in three files.
 
@@ -165,20 +165,25 @@ tests, 185 s; close to `calibration` alone because nextest runs
 everything concurrently and the two calibration tests are the longest
 individual tests in the suite.
 
-The five categories `sanity` drops beyond the calibration tier — the
+The six categories `sanity` drops beyond the calibration tier — the
 profile-preview oracle, the glyph atlas pipeline, the bake oracle, the
-grid-anchor saturation test, and the startup-scaling criterion — cost about
-76 s of test time together, and each is reachable from a narrow part of the
+grid-anchor saturation test, and the two scaling criteria — cost about
+79 s of test time together, and each is reachable from a narrow part of the
 tree, so the regression tier is where they are caught rather than the sanity
-tier. The criterion is the cheapest of them at about 3 s, and it is here for
-the same reason as the rest: it compiles two documents from corpus
-photographs and writes them to disk on every run, for a number no ordinary
-edit can move. None of the five
+tier. The two criteria are the cheapest of them at about 3 s each, and they are
+here for the same reason as the rest: each compiles documents from corpus
+photographs and writes them to disk on every run, for numbers no ordinary
+edit can move. None of them
 re-derives a committed table from a bounded input set the way the
 calibration tier's tests do; they are simply expensive, or they exercise
 a large or external input space, and 35 s is a price worth paying to catch
 them on every push rather than only when a person remembers to run a wider
 tier.
+
+**That 79 s is 76 plus 3, not a re-measurement.** The 76 s was measured on
+2026-08-01 over five categories; `per_frame_scaling` joined as the sixth at
+story #836 and was measured at about 3 s on its own. Nothing has re-timed the
+five since.
 
 ### Where each tier runs
 
@@ -268,6 +273,17 @@ temporary one: it compiles two documents from corpus photographs and writes
 them to disk on every run, about 3 s, for a criterion no ordinary edit can
 move. That is the same judgement the profile-preview oracle and the atlas
 pipeline get.
+
+**The per-frame criterion (story #836) needed no such holding, and this is why
+that is not an inconsistency.** `per_frame_scaling.rs` measures the sibling cost
+— what a frame costs over the same many-root document, rather than what loading
+it costs — and it went straight into `regression` and out of `sanity`, without a
+profile of its own. The difference is that it is not red. Story #598's criterion
+was written to fail against a load path three stories were about to change;
+this one pins what a frame costs **today**, so it passes on the commit that adds
+it and story #838 is the change that moves it. A criterion held out of a gate is
+a criterion nothing enforces, so the holding is for redness alone and nothing
+else earns it.
 
 **What to copy if a criterion has to be red again.** A profile of its own,
 run by name, with the redness stated in the assertion message and in this

@@ -109,6 +109,18 @@ jobs:
               # The two tests' own helpers: the deterministic stress fixture
               # they both measure, and the repository-root lookup that finds
               # the committed payloads.
+              #
+              # Since story #836 this glob also covers `common/many_root.rs`,
+              # the sixty-five-root document the two scaling criteria are
+              # stated over, which the calibration tests do not read at all.
+              # Kept as a glob rather than narrowed to a file list, on this
+              # record's own frequency argument
+              # (docs/decisions/test-tiers.md): over-triggering costs one
+              # 272 s run on an edit to a scaling fixture, which is rare,
+              # where under-triggering lets a committed table drift silently.
+              # That is the opposite of the trade that removed
+              # `.github/workflows/ci.yml` from this list, where the edits
+              # were frequent and could not move a table.
               - 'goldens/tooling/tests/common/**'
               # The calibration table is the artifact under test; editing it
               # without re-deriving it is the exact drift this job exists to
@@ -875,6 +887,15 @@ jobs:
       # (docs/decisions/test-tiers.md).
       - name: startup-scaling criterion (R5 / G-20)
         run: cargo test -p goldens --test startup_scaling -- --nocapture
+      # The per-frame scaling criterion — the sibling of the one above, and the
+      # half R5's benchmark does not cover (story #836, epic #833). Same
+      # reasoning for the same reason: it runs in the `test` job as an ordinary
+      # `regression` test whose assertions are equalities, and the numbers it
+      # prints — the solve and committed-table counts per frame, the ratio, and
+      # the machine — are the record story #838 re-measures against when it
+      # confines both to the shown root.
+      - name: per-frame scaling criterion (#822's per-frame half)
+        run: cargo test -p goldens --test per_frame_scaling -- --nocapture
 
   calibration:
     name: calibration

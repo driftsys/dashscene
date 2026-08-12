@@ -86,212 +86,36 @@
 //! `--success-output=immediate` for this, and was deleted with the profile;
 //! that step is what replaces it.
 //!
-//! # Why the many-frame document's payloads are tiles and not repeats
+//! # Where the document itself lives, and why its payloads are all different
 //!
-//! `dashc_wasm::Document::push_asset` deduplicates by content hash, so a
-//! many-frame document that showed the same four corpus photos over and over
-//! would compile to **four** asset entries and four blob sections, and would
-//! read the same number of bytes as the small document. The criterion would
-//! then pass at the base commit while measuring nothing — the uniform-fixture
-//! trap in its plainest form. Every extra frame therefore carries a distinct
-//! payload: a distinct 128x128 tile cut from a distinct place in a corpus
-//! photo, re-encoded. [`the_many_frame_document_carries_one_payload_per_frame`]
-//! is the guard that fails if that ever collapses.
+//! In [`common::many_root`], since story #836. It was defined here while this
+//! was the only criterion stated over it; the per-frame criterion
+//! (`per_frame_scaling.rs`) is stated over the same shape and reuses this
+//! builder rather than authoring a second many-root document. Nothing about
+//! the document changed in the move.
+//!
+//! That module's own documentation carries the reason every extra frame has to
+//! carry a **distinct** payload — `push_asset` deduplicates by content hash, so
+//! repeats would make the two documents the same size and this criterion would
+//! pass while measuring nothing. It is stated there rather than in both places,
+//! because two copies of a reason are two things that have to agree.
+//! [`the_many_frame_document_carries_one_payload_per_frame`] is the guard that
+//! fails if the payloads ever collapse, and it is what says the move changed
+//! nothing.
 
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
 use dashbuf::cost::LoadCost;
 use dashbuf::map::MappedFile;
 use dashbuf::residency::BlobResidency;
-use dashc_wasm::{Asset, AssetKind, Box2D, Document, Node, Paint, PaintEntry, compile};
-use dashpaint::{FillSpec, ImageFill, ImageFormat, Mat23, ScaleMode};
 use dashscene_core::{
     Arena, BoundPayload, MappedPayload, Region, load_document_bound_with_cost, load_document_mapped,
 };
 
-/// The photo the shown root displays, in both documents, byte for byte.
-///
-/// One of the four `corpus/photo` payloads, which are 512x512 crops of CC0
-/// photographs (`corpus/photo/README.md`). It is the largest asset in either
-/// document, so "the shown root's own payload" is a number that stands out from
-/// the tiles around it.
-const ROOT_PHOTO: &str = "corpus/photo/dawn-mountains.png";
+mod common;
 
-/// The photos the many-frame document's tiles are cut from.
-///
-/// All four, so the extra frames are not one photograph's statistics repeated.
-const TILE_PHOTOS: [&str; 4] = [
-    "corpus/photo/interior-render.png",
-    "corpus/photo/coast-forest.png",
-    "corpus/photo/snowy-forest.png",
-    "corpus/photo/dawn-mountains.png",
-];
-
-/// A tile's side, in pixels. Divides 512 exactly, so a 512x512 corpus photo
-/// yields whole tiles with nothing left over.
-const TILE: u32 = 128;
-
-/// Frames the many-frame document carries beyond the shown root.
-///
-/// Sixty-four: sixteen tiles from each of the four photos, which is every tile
-/// of every photo exactly once. Large enough that the failing ratio is
-/// unmistakable rather than marginal, and small enough that the whole
-/// measurement is a few seconds.
-const EXTRA_FRAMES: usize = 64;
-
-/// The repository root — two levels up from this crate (`goldens/tooling`).
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..")
-}
-
-/// A committed corpus payload, exactly as it sits in the tree.
-fn corpus_payload(path: &str) -> Vec<u8> {
-    std::fs::read(repo_root().join(path)).unwrap_or_else(|error| panic!("{path} reads: {error}"))
-}
-
-/// Decodes a corpus PNG to 8-bit RGBA.
-///
-/// The same decode `goldens/tooling/tests/derived_bank.rs` and
-/// `crates/dashpack/tests/band_contract.rs` use, through the same crate.
-fn decode_png(bytes: &[u8]) -> (u32, u32, Vec<u8>) {
-    let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
-    let mut reader = decoder.read_info().expect("a readable PNG header");
-    let mut buffer = vec![0; reader.output_buffer_size().expect("a bounded frame")];
-    let info = reader.next_frame(&mut buffer).expect("it decodes");
-    buffer.truncate(info.buffer_size());
-    let texels = match info.color_type {
-        png::ColorType::Rgba => buffer,
-        png::ColorType::Rgb => buffer
-            .chunks_exact(3)
-            .flat_map(|p| [p[0], p[1], p[2], 255])
-            .collect(),
-        other => panic!("a corpus photo is {other:?}; they are RGB or RGBA"),
-    };
-    (info.width, info.height, texels)
-}
-
-/// Encodes the [`TILE`]-sided tile whose top-left texel is `(x0, y0)` as a PNG.
-///
-/// The tile's pixels are the photograph's, so each one is a distinct payload
-/// with a real photograph's entropy — a synthetic fill would compress to a few
-/// hundred bytes and make the many-frame document smaller than the small one.
-fn encode_tile(texels: &[u8], width: u32, x0: u32, y0: u32) -> Vec<u8> {
-    let mut rows = Vec::with_capacity((TILE * TILE * 4) as usize);
-    for y in y0..y0 + TILE {
-        let start = ((y * width + x0) * 4) as usize;
-        let end = start + (TILE * 4) as usize;
-        rows.extend_from_slice(&texels[start..end]);
-    }
-
-    let mut out = Vec::new();
-    let mut encoder = png::Encoder::new(&mut out, TILE, TILE);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    let mut writer = encoder.write_header().expect("the tile header writes");
-    writer
-        .write_image_data(&rows)
-        .expect("the tile samples write");
-    writer.finish().expect("the tile PNG finishes");
-    out
-}
-
-/// The first `wanted` tiles of the photos in [`TILE_PHOTOS`], in a fixed order.
-///
-/// Each is a different part of a photograph, so no two share bytes and none
-/// shares bytes with [`ROOT_PHOTO`].
-fn tiles(wanted: usize) -> Vec<Vec<u8>> {
-    let mut out = Vec::new();
-    if wanted == 0 {
-        return out;
-    }
-    for path in TILE_PHOTOS {
-        let (width, height, texels) = decode_png(&corpus_payload(path));
-        for y0 in (0..height - height % TILE).step_by(TILE as usize) {
-            for x0 in (0..width - width % TILE).step_by(TILE as usize) {
-                out.push(encode_tile(&texels, width, x0, y0));
-                if out.len() == wanted {
-                    return out;
-                }
-            }
-        }
-    }
-    panic!(
-        "the corpus yields {} tiles of {TILE}px, and {wanted} frames were asked for",
-        out.len()
-    );
-}
-
-/// A root frame whose only paint is an image fill naming `asset`.
-///
-/// `parent: None` makes it a root, so a document with n of these is a document
-/// with n top-level frames — the shape a Figma file with many artboards
-/// compiles to, and the shape the criterion is stated over.
-fn frame(name: &str, asset: u32, side: f32) -> Node {
-    Node {
-        name: Some(name.to_owned()),
-        parent: None,
-        box2d: Box2D {
-            x: 0.0,
-            y: 0.0,
-            width: side,
-            height: side,
-        },
-        paint: Some(Paint {
-            entry: PaintEntry {
-                fill: Some(FillSpec::Image(ImageFill {
-                    image: asset,
-                    scale_mode: ScaleMode::Fill,
-                    transform: Mat23::IDENTITY,
-                    tile_scale: 1.0,
-                })),
-                stroke: None,
-                corners: dashpaint::CornerRadii::default(),
-                extra_fills: Vec::new(),
-            },
-            clip: false,
-            shape_field: None,
-            shadows: Vec::new(),
-            blurs: Vec::new(),
-        }),
-        ..Node::default()
-    }
-}
-
-/// A compiled `.dsb` carrying the shown root, plus `extra` further frames each
-/// showing a distinct tile.
-///
-/// `extra == 0` is the small-root document and `extra == EXTRA_FRAMES` is the
-/// many-frame one. One builder for both, so the shown root is the same subtree
-/// in each by construction rather than by two definitions agreeing.
-fn document(extra: usize) -> Vec<u8> {
-    let root_payload = corpus_payload(ROOT_PHOTO);
-    let (root_width, root_height, _) = decode_png(&root_payload);
-
-    let mut doc = Document::new();
-    let root_asset = doc.push_asset(Asset {
-        format: ImageFormat::Png,
-        kind: AssetKind::Image,
-        bytes: root_payload,
-        width: root_width,
-        height: root_height,
-    });
-    doc.push(frame("shown-root", root_asset, root_width as f32));
-
-    for (index, tile) in tiles(extra).into_iter().enumerate() {
-        let asset = doc.push_asset(Asset {
-            format: ImageFormat::Png,
-            kind: AssetKind::Image,
-            bytes: tile,
-            width: TILE,
-            height: TILE,
-        });
-        doc.push(frame(&format!("frame-{index}"), asset, TILE as f32));
-    }
-
-    compile(&doc).expect("the generated document compiles")
-}
+use common::many_root::{EXTRA_FRAMES, ROOT_PHOTO, corpus_payload, document};
 
 /// What one load of a `.dsb` cost, and how long it took.
 struct Measured {
