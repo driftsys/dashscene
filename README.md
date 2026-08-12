@@ -200,9 +200,11 @@ tooling).
 
 ## Status
 
-This is `driftsys/dashscene`, a **private working repository**. Nothing here is
-published: all 21 crate names on crates.io are placeholder reservations at
+This is `driftsys/dashscene`, a **public working repository — nothing in it is
+released**. All 21 crate names on crates.io are placeholder reservations at
 `0.1.0`, and no code from this repository has been released under any of them.
+The repository being readable is not the same as the crates being published,
+and only the first has happened.
 Twelve were reserved on 2026-03-18, before this repository's first commit; the
 other nine as the crates that need them arrived, the most recent two on
 2026-08-09

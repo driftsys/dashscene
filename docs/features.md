@@ -643,9 +643,9 @@ Checked against `crates/dashbuf/src/container.rs`, `prefix.rs`,
 
 ## Two things worth stating plainly
 
-**Nothing here is released.** This is a private working repository. All 21
-public package names are reserved on crates.io at `0.1.0`, and none holds code
-from this repository. **Nine of the twenty-one were reserved after development
+**Nothing here is released.** This repository is public, which is not the same
+thing: all 21 public package names are reserved on crates.io at `0.1.0`, and
+none holds code from this repository. **Nine of the twenty-one were reserved after development
 started**, not before it, as the crates that need them arrived — the most
 recent two on 2026-08-09. The other twelve come from the family reserved on
 2026-03-18, before this repository's first commit, and they are exactly the
@@ -654,15 +654,18 @@ twelve stubs in the archived
 ([`docs/decisions/crate-name-map.md`](decisions/crate-name-map.md) is the list;
 re-derive from it rather than from a count in prose).
 
-**The automated checks exist and are not currently running.** Continuous
-integration is blocked at the account level: every job fails within seconds
-having executed no steps. Re-checked 2026-08-08 on the run's own annotations,
-which is the only place the reason appears — a failed payment or a spending
-limit. It is a billing block rather
-than a code failure, but the consequence is real — recent work was verified
-by running the same checks locally, with the evidence recorded on each
-change. A ticked box means the tests exist and pass, not that a machine
-other than a developer's ran them.
+**The automated checks run, and a green `ci` still does not mean the suite
+ran.** The billing block that stopped every job within seconds having executed
+no steps — recorded here from 2026-08-08 — is over: no recent run on `main` has
+failed, which `gh run list --branch main --workflow ci` is the derivation for.
+Expect the occasional `cancelled` among them rather than an unbroken row of
+`success`; the workflow sets `cancel-in-progress`, so two merges close together
+leave one behind. What replaces that caveat is a narrower one. The compile and
+test jobs are gated on whether the diff touches code, so a documentation-only
+change skips them and the aggregate passes anyway, and the tier that re-derives
+the committed asset tables sits outside `just build` altogether. A ticked box
+here means the tests exist and pass, not that CI ran them on the change you are
+looking at (`docs/decisions/test-tiers.md`).
 
 ## What this document is not
 
